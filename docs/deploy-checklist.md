@@ -154,6 +154,9 @@ probably does), keep it; do not add a second one.
 
 These need accounts, money or legal judgement, so no script does them.
 
+0. Before staging (see [staging.md](staging.md)): enable R2 on the Cloudflare account and choose
+   the account's `workers.dev` subdomain (Workers & Pages). Both were missing on 2026-11-13, so the
+   staging deploy has not happened yet.
 1. Choose and buy the content domain. It must not be under `aconite.io`. Record the choice in
    `docs/spec.md` (it is listed under "Still open").
 2. Add the content domain as a zone in the Cloudflare account that will run the Worker, and point
@@ -161,7 +164,9 @@ These need accounts, money or legal judgement, so no script does them.
 3. `wrangler login` with an account that can edit Workers, D1, R2 and both zones.
 4. Run `node scripts/setup.mjs --remote --env production ...` (dry run first).
 5. Authenticate the sending domain with SendGrid (hosted) or Resend; add DMARC; turn off click
-   tracking. Put the API key in with `wrangler secret put`.
+   tracking. Put the API key in with `wrangler secret put`. The hosted instance sends as
+   `Plinth <noreply@aconite.io>` (verified in Aconite's SendGrid account); authenticate
+   `plinth.aconite.io` there first if you want a product-specific sender.
 6. `pnpm build` and `wrangler deploy --config wrangler.production.jsonc`.
 7. Add the wildcard `*` DNS record on the content zone (proxied) and confirm the route
    `*.CONTENT_DOMAIN/*` shows under the Worker's Domains & Routes.

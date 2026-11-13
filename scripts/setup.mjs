@@ -12,7 +12,12 @@
 //                          [--content-zone <zone>] [--email-provider sendgrid|resend|console]
 //                          [--email-from "Plinth <noreply@example.com>"] [--admin-email <email>]
 //                          [--environment staging|production] [--single-user]
-//                          [--rotate-secrets] [--dry-run]
+//                          [--workers-dev] [--rotate-secrets] [--dry-run]
+//
+// --workers-dev (staging only): deploy to the account's workers.dev address with no routes or
+// custom domains. workers.dev has no wildcard subdomains, so artifacts are served from the app
+// host under /__content/<id>/ (STAGING_CONTENT_FALLBACK, refused in production). Pass the
+// workers.dev host as --app-host; --content-host defaults to a placeholder that is never served.
 //
 // Secret values are generated here (or read from SENDGRID_API_KEY / RESEND_API_KEY in the
 // environment) and piped to wrangler on stdin. They never appear on a command line or in output,
@@ -36,6 +41,7 @@ const BOOLEAN_FLAGS = new Set([
   "force",
   "single-user",
   "rotate-secrets",
+  "workers-dev",
   "help",
 ]);
 
@@ -349,7 +355,13 @@ function setupRemote() {
   if (adminEmail) vars.ADMIN_EMAIL = adminEmail;
   if (single) vars.SINGLE_USER_MODE = "true";
   cfg.vars = vars;
-  if (appHost && contentHost && contentZone) {
+  if (opts["workers-dev"]) {
+    if (vars.ENVIRONMENT === "production") fail("--workers-dev is for staging only");
+    cfg.workers_dev = true;
+    delete cfg.routes;
+    vars.STAGING_CONTENT_FALLBACK = "true";
+    if (!contentHost) vars.CONTENT_HOST = "content.invalid";
+  } else if (appHost && contentHost && contentZone) {
     cfg.routes = [
       { pattern: appHost, custom_domain: true },
       { pattern: `*.${contentHost}/*`, zone_name: contentZone },
