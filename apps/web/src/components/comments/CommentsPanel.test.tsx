@@ -282,6 +282,9 @@ describe("CommentsPanel", () => {
     await user.keyboard("{Enter}");
     expect(box.value).toBe("Ask @codex ");
     expect(within(panel).queryByRole("listbox")).toBeNull();
+    // The caret sits after the mention, so typing goes on from there.
+    await user.keyboard("now ");
+    expect(box.value).toBe("Ask @codex now ");
     // Escape in the list closes the list, not the panel.
     await user.type(box, "and @cl");
     expect(within(panel).getByRole("listbox")).toBeTruthy();
@@ -484,6 +487,20 @@ describe("CommentsPanel", () => {
     expect(pin?.hasAttribute("data-active")).toBe(false);
     act(() => panel.querySelector<HTMLElement>(`[data-thread-id="${pinned.id}"]`)?.focus());
     expect(pin?.hasAttribute("data-active")).toBe(true);
+  });
+
+  it("does not draw pins that would sit on top of the panel (narrow screens)", async () => {
+    const pinned = comment({ body: "Pinned", anchor: { selector: "h1", text: "Head" } });
+    const { panel, send } = renderPanel({ items: [pinned], calls: [] });
+    await screen.findByText("Pinned");
+    // The panel covers the whole frame, as on a phone.
+    panel.getBoundingClientRect = () =>
+      ({ top: 100, left: 50, width: 800, height: 600, right: 850, bottom: 700 }) as DOMRect;
+    send({
+      type: "positions",
+      items: [{ id: pinned.id, top: 10, left: 10, width: 10, height: 10, visible: true }],
+    });
+    expect(document.querySelectorAll('[data-testid="comment-pins"] button')).toHaveLength(0);
   });
 
   it("polls every 15 seconds while visible and announces new comments", async () => {

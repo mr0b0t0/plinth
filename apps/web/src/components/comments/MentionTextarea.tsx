@@ -1,7 +1,14 @@
 // A Markdown text area with @ suggestions (keyboard navigable) and Ctrl/Cmd+Enter to send.
 // The suggestion list follows the ARIA listbox pattern with aria-activedescendant on the textbox.
 import { RobotIcon } from "@phosphor-icons/react";
-import { type KeyboardEvent, type RefObject, useId, useRef, useState } from "react";
+import {
+  type KeyboardEvent,
+  type RefObject,
+  useId,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import { Field, ICON_SIZE } from "../ui/index.ts";
 import { applyMention, mentionOptions, mentionQuery } from "./model.ts";
 
@@ -46,13 +53,23 @@ export function MentionTextarea({
   const open = options.length > 0;
   const activeIndex = Math.min(active, Math.max(options.length - 1, 0));
 
+  // Where the caret goes after a mention is inserted; applied as soon as React writes the value,
+  // before the next keystroke can land.
+  const pendingCaret = useRef<number | null>(null);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    const at = pendingCaret.current;
+    if (el && at !== null && el.value === value) {
+      pendingCaret.current = null;
+      el.setSelectionRange(at, at);
+    }
+  });
+
   const track = (el: HTMLTextAreaElement) => {
     const q = mentionQuery(el.value, el.selectionStart ?? el.value.length);
-    setQuery((prev) => {
-      if (q && prev && q.start === prev.start && q.query === prev.query) return prev;
-      if (!q || !prev || q.start !== prev.start) setActive(0);
-      return q;
-    });
+    if (q && query && q.start === query.start && q.query === query.query) return;
+    if (!q || !query || q.start !== query.start) setActive(0);
+    setQuery(q);
   };
 
   const choose = (name: string) => {
@@ -60,13 +77,10 @@ export function MentionTextarea({
     if (!el || !query) return;
     const caret = el.selectionStart ?? value.length;
     const next = applyMention(value, caret, query.start, name);
+    pendingCaret.current = next.caret;
     onChange(next.text);
     setQuery(null);
-    // Put the caret after the inserted mention once React has written the value.
-    requestAnimationFrame(() => {
-      el.focus();
-      el.setSelectionRange(next.caret, next.caret);
-    });
+    el.focus();
   };
 
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {

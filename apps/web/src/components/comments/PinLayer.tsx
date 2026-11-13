@@ -2,7 +2,7 @@
 // pointer event through; only the pins themselves take clicks, so the artifact stays usable.
 // Positions come from the bridge (viewport coordinates inside the frame) and are untrusted:
 // they were validated as finite numbers and are only used to place the pins, clamped to the frame.
-import { type RefObject, useEffect, useLayoutEffect, useState } from "react";
+import { type RefObject, useCallback, useEffect, useLayoutEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import type { PinPosition } from "./bridge.ts";
 import { excerpt, type Thread } from "./model.ts";
@@ -67,6 +67,31 @@ function useFrameBox(frame: HTMLIFrameElement | null, tick: unknown): Box | null
   return box;
 }
 
+/** The panel's box, re-measured after every render and whenever it resizes (picking mode). */
+function usePanelBox(panelRef: RefObject<HTMLElement | null>): Box | null {
+  const [box, setBox] = useState<Box | null>(null);
+  const measure = useCallback(() => {
+    const r = panelRef.current?.getBoundingClientRect();
+    const next = r ? { top: r.top, left: r.left, width: r.width, height: r.height } : null;
+    setBox((prev) => (next === null ? null : sameBox(prev, next) ? prev : next));
+  }, [panelRef]);
+  useLayoutEffect(measure);
+  useEffect(() => {
+    const el = panelRef.current;
+    const ro = el && typeof ResizeObserver === "function" ? new ResizeObserver(measure) : null;
+    if (el) ro?.observe(el);
+    window.addEventListener("resize", measure);
+    return () => {
+      ro?.disconnect();
+      window.removeEventListener("resize", measure);
+    };
+  }, [panelRef, measure]);
+  return box;
+}
+
+const inside = (b: Box, x: number, y: number) =>
+  x >= b.left && x <= b.left + b.width && y >= b.top && y <= b.top + b.height;
+
 const clamp = (n: number, min: number, max: number) => Math.min(Math.max(n, min), max);
 
 export function PinLayer({
@@ -78,12 +103,7 @@ export function PinLayer({
   onPinClick,
 }: PinLayerProps) {
   const box = useFrameBox(frame, positions);
-  const [panelBox, setPanelBox] = useState<DOMRect | null>(null);
-
-  // biome-ignore lint/correctness/useExhaustiveDependencies: re-measure with the frame box
-  useEffect(() => {
-    setPanelBox(panelRef.current?.getBoundingClientRect() ?? null);
-  }, [box, panelRef]);
+  const panelBox = usePanelBox(panelRef);
 
   if (!frame || !box || box.width <= 0 || box.height <= 0) return null;
 
@@ -96,15 +116,7 @@ export function PinLayer({
     const y = clamp(p.top + p.height * ay, PIN_SIZE / 2, box.height - PIN_SIZE / 2);
     const vx = box.left + x;
     const vy = box.top + y;
-    if (
-      panelBox &&
-      vx >= panelBox.left &&
-      vx <= panelBox.right &&
-      vy >= panelBox.top &&
-      vy <= panelBox.bottom
-    ) {
-      return [];
-    }
+    if (panelBox && inside(panelBox, vx, vy)) return [];
     return [{ thread: t, x, y }];
   });
 
@@ -112,6 +124,8 @@ export function PinLayer({
     <div
       className="cm-pins"
       data-testid="comment-pins"
+      // Pins sit on the artifact, not on app chrome: one palette that reads on any page.
+      data-theme="light"
       style={{ top: box.top, left: box.left, width: box.width, height: box.height }}
     >
       {pins.map(({ thread, x, y }) => (

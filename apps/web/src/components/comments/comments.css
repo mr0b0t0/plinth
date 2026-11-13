@@ -471,6 +471,13 @@
   .cm-panel[data-picking] .cm-foot {
     border-top: 0;
   }
+  /* A host element that overlays the frame must not swallow the taps meant for the artifact. */
+  :has(> .cm-panel[data-picking]) {
+    pointer-events: none;
+  }
+  .cm-panel[data-picking] {
+    pointer-events: auto;
+  }
 }
 
 /* Pins over the artifact frame. The layer passes every pointer event through; pins take theirs. */
