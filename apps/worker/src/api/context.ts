@@ -20,6 +20,7 @@ export interface AppEnv {
     authVia: "bearer" | "cookie" | "none";
     cookies: Map<string, string>;
     passwordPasses: Map<string, number>;
+    viewerEmail: string | null;
   };
 }
 
@@ -51,6 +52,8 @@ export const authenticate: MiddlewareHandler<AppEnv> = async (c, next) => {
   const authz = c.req.header("authorization");
   let principal: Principal = { kind: "anonymous" };
   let via: AppEnv["Variables"]["authVia"] = "none";
+  /** A confirmed allowlist email (viewer cookie), kept even when a user session also exists. */
+  let viewerEmail: string | null = null;
 
   if (authz) {
     const m = /^Bearer\s+(\S+)$/i.exec(authz);
@@ -63,11 +66,13 @@ export const authenticate: MiddlewareHandler<AppEnv> = async (c, next) => {
   } else {
     const session = cookies.get(COOKIES.session);
     const viewer = cookies.get(COOKIES.viewer);
-    const p =
-      (session ? await resolveSession(db, session) : null) ??
-      (viewer ? await resolveViewerSession(db, viewer) : null);
+    const user = session ? await resolveSession(db, session) : null;
+    const viewerP = viewer ? await resolveViewerSession(db, viewer) : null;
+    if (viewerP?.kind === "viewer") viewerEmail = viewerP.email;
+    const p = user ?? viewerP;
     if (p) {
-      principal = p;
+      // Admin rights follow the current ADMIN_EMAIL, not a flag stored at sign-in.
+      principal = p.kind === "user" ? { ...p, isAdmin: config.adminEmails.includes(p.email) } : p;
       via = "cookie";
     }
   }
@@ -84,6 +89,7 @@ export const authenticate: MiddlewareHandler<AppEnv> = async (c, next) => {
   c.set("principal", principal);
   c.set("authVia", via);
   c.set("passwordPasses", passes);
+  c.set("viewerEmail", viewerEmail);
   await next();
 };
 
@@ -125,6 +131,7 @@ export function serviceCtx(c: AppContext): Ctx {
     db: c.get("db"),
     principal: c.get("principal"),
     passwordPasses: c.get("passwordPasses"),
+    viewerEmail: c.get("viewerEmail") ?? null,
     ip: c.req.header("cf-connecting-ip") ?? null,
     waitUntil: (p) => c.executionCtx.waitUntil(p),
   };

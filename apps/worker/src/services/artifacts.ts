@@ -77,15 +77,23 @@ export function factsOf(a: ArtifactRow): ArtifactFacts {
   };
 }
 
+const ROLE_RANK: Record<Role, number> = { viewer: 1, commenter: 2, editor: 3 };
+
+/** The strongest grant for the principal's email and, for browsers, a confirmed viewer email. */
 export async function grantRoleFor(ctx: Ctx, artifactId: string): Promise<Role | null> {
-  const email = principalEmail(ctx.principal);
-  if (!email) return null;
-  const g = await ctx.db
+  const emails = new Set<string>();
+  const own = principalEmail(ctx.principal);
+  if (own) emails.add(own);
+  if (ctx.viewerEmail && ctx.principal.kind !== "agent") emails.add(ctx.viewerEmail);
+  if (emails.size === 0) return null;
+  const rows = await ctx.db
     .select({ role: accessGrants.role })
     .from(accessGrants)
-    .where(and(eq(accessGrants.artifactId, artifactId), eq(accessGrants.email, email)))
-    .get();
-  return g?.role ?? null;
+    .where(and(eq(accessGrants.artifactId, artifactId), inArray(accessGrants.email, [...emails])))
+    .all();
+  let best: Role | null = null;
+  for (const r of rows) if (!best || ROLE_RANK[r.role] > ROLE_RANK[best]) best = r.role;
+  return best;
 }
 
 export async function accessFactsFor(ctx: Ctx, a: ArtifactRow): Promise<AccessFacts> {
