@@ -540,7 +540,19 @@ async function refresh(
     .innerJoin(agentConnections, eq(agentConnections.id, oauthGrants.connectionId))
     .where(eq(oauthGrants.refreshTokenHash, oldHash))
     .get();
-  if (!row) throw invalidGrant("Unknown or rotated refresh token");
+  if (!row) {
+    // A rotated token presented again: someone holds a copy. Revoke the whole grant.
+    const reused = await db
+      .select()
+      .from(oauthGrants)
+      .where(eq(oauthGrants.previousRefreshTokenHash, oldHash))
+      .get();
+    if (reused && !reused.revokedAt) {
+      await revokeGrant(db, reused.id, reused.connectionId);
+      throw invalidGrant("Refresh token was already used; the grant is revoked");
+    }
+    throw invalidGrant("Unknown or rotated refresh token");
+  }
   const { grant, conn } = row;
   const now = nowIso();
   if (grant.revokedAt || conn.revokedAt) throw invalidGrant("Grant revoked");
@@ -565,7 +577,7 @@ async function refresh(
   const r = await d1
     .prepare(
       `UPDATE oauth_grants SET access_token_hash = ?1, access_expires_at = ?2, refresh_token_hash = ?3,
-         refresh_expires_at = ?4, scope = ?5
+         refresh_expires_at = ?4, scope = ?5, previous_refresh_token_hash = ?7
        WHERE id = ?6 AND refresh_token_hash = ?7 AND revoked_at IS NULL`,
     )
     .bind(

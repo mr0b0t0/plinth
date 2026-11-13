@@ -388,7 +388,19 @@ describe("OAuth endpoints", () => {
     });
     expect(old.status).toBe(400);
     expect((await json(old)).error).toBe("invalid_grant");
+    // Reusing a rotated refresh token revokes the grant: the current tokens stop working too.
+    expect((await mcpPing(t2.access_token)).status).toBe(401);
+    const afterReuse = await token({
+      grant_type: "refresh_token",
+      refresh_token: t2.refresh_token,
+      client_id: c.clientId,
+    });
+    expect(afterReuse.status).toBe(400);
+  });
 
+  it("refresh may narrow scope but not widen it", async () => {
+    const c = await getCode();
+    const t2 = await json(await exchange(c));
     // Narrowing scope on refresh is allowed; widening is not.
     const narrowed = await json(
       await token({

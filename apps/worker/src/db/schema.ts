@@ -160,6 +160,8 @@ export const oauthGrants = sqliteTable("oauth_grants", {
   accessTokenHash: text("access_token_hash"),
   accessExpiresAt: text("access_expires_at"),
   refreshTokenHash: text("refresh_token_hash"),
+  /** The refresh token this one replaced; presenting it again revokes the grant. */
+  previousRefreshTokenHash: text("previous_refresh_token_hash"),
   refreshExpiresAt: text("refresh_expires_at"),
   createdAt: text("created_at").notNull(),
   revokedAt: text("revoked_at"),
