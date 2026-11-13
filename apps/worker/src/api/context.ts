@@ -124,6 +124,12 @@ export function ensureCsrfCookie(c: AppContext, headers: Headers): void {
   );
 }
 
+/** The client IP for rate limits, or null (no header, or DEV_IGNORE_CLIENT_IP in development). */
+export function clientIp(c: Context<AppEnv>): string | null {
+  if (c.get("config").devIgnoreClientIp) return null;
+  return c.req.header("cf-connecting-ip") ?? null;
+}
+
 export function serviceCtx(c: AppContext): Ctx {
   return {
     env: c.env,
@@ -132,7 +138,7 @@ export function serviceCtx(c: AppContext): Ctx {
     principal: c.get("principal"),
     passwordPasses: c.get("passwordPasses"),
     viewerEmail: c.get("viewerEmail") ?? null,
-    ip: c.req.header("cf-connecting-ip") ?? null,
+    ip: clientIp(c),
     waitUntil: (p) => c.executionCtx.waitUntil(p),
   };
 }

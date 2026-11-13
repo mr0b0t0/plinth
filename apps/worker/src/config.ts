@@ -38,6 +38,11 @@ export interface Config {
   contentPathFallback: boolean;
   /** Keep console emails in D1 so local tests can read them. Development only. */
   devOutbox: boolean;
+  /**
+   * Ignore the client IP for per-IP rate limits (per-email limits still apply). Development only:
+   * the local e2e suite signs in hundreds of times from one address.
+   */
+  devIgnoreClientIp: boolean;
   sessionSecret: string;
   tokenSigningKey: string;
   adminToken: string | null;
@@ -121,6 +126,7 @@ export function parseConfig(env: Record<string, unknown>): Config {
     ),
     contentPathFallback: bool(env.STAGING_CONTENT_FALLBACK),
     devOutbox: bool(env.DEV_OUTBOX) && environment === "development",
+    devIgnoreClientIp: bool(env.DEV_IGNORE_CLIENT_IP) && environment === "development",
     sessionSecret: str(env.SESSION_SECRET),
     tokenSigningKey: str(env.TOKEN_SIGNING_KEY),
     adminToken: str(env.ADMIN_TOKEN) || null,

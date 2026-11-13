@@ -24,7 +24,7 @@ import {
   deleteSession,
   sessionCookie,
 } from "../services/sessions.ts";
-import { type AppContext, type AppEnv, parseBody } from "./context.ts";
+import { type AppContext, type AppEnv, clientIp, parseBody } from "./context.ts";
 
 export const authApi = new Hono<AppEnv>();
 
@@ -35,7 +35,7 @@ function loginDeps(c: AppContext): LoginDeps {
     db: c.get("db"),
     d1: c.env.DB,
     mailer: createEmailAdapter(config, c.env),
-    ip: c.req.header("cf-connecting-ip") ?? null,
+    ip: clientIp(c),
   };
 }
 

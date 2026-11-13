@@ -59,3 +59,15 @@ describe("config", () => {
     ).toBe(true);
   });
 });
+
+describe("development-only switches", () => {
+  it("DEV_IGNORE_CLIENT_IP and DEV_OUTBOX are ignored outside development", () => {
+    const prod = parseConfig({ ...base, DEV_IGNORE_CLIENT_IP: "true", DEV_OUTBOX: "true" });
+    expect(prod.devIgnoreClientIp).toBe(false);
+    expect(prod.devOutbox).toBe(false);
+    const staging = parseConfig({ ...base, ENVIRONMENT: "staging", DEV_IGNORE_CLIENT_IP: "true" });
+    expect(staging.devIgnoreClientIp).toBe(false);
+    const dev = parseConfig({ ...base, ENVIRONMENT: "development", DEV_IGNORE_CLIENT_IP: "true" });
+    expect(dev.devIgnoreClientIp).toBe(true);
+  });
+});

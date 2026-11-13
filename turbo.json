@@ -20,7 +20,8 @@
     },
     "test:e2e": {
       "dependsOn": ["@plinth/web#build"],
-      "cache": false
+      "cache": false,
+      "passThroughEnv": ["PLINTH_E2E_PORT", "PLINTH_E2E_SHOTS", "CI"]
     },
     "dev": {
       "cache": false,

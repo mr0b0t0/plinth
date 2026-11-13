@@ -17,6 +17,8 @@ export const DEV_VARS: Record<string, string> = {
   CONTENT_HOST: `content.localhost:${PORT}`,
   PUBLIC_SCHEME: "http",
   DEV_OUTBOX: "true",
+  // Many sign-ins from one address; per-email limits still apply. Honoured only in development.
+  DEV_IGNORE_CLIENT_IP: "true",
   EMAIL_PROVIDER: "console",
   SINGLE_USER_MODE: "false",
   ADMIN_EMAIL: "admin@plinth.local",

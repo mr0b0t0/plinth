@@ -311,11 +311,28 @@ export async function createVersion(
       await ctx.db.delete(versions).where(eq(versions.id, id)).run();
       throw e;
     }
-    await ctx.db
-      .update(artifacts)
-      .set({ currentVersion: sql`max(${artifacts.currentVersion}, ${n})`, updatedAt: nowIso() })
-      .where(eq(artifacts.id, artifact.id))
-      .run();
+    // Advance current_version. If that keeps failing, remove the new version again so it never
+    // lingers as an orphan that blocks every later update with a false conflict.
+    let advanced = false;
+    let lastError: unknown;
+    for (let i = 0; i < 3 && !advanced; i++) {
+      try {
+        await ctx.db
+          .update(artifacts)
+          .set({ currentVersion: sql`max(${artifacts.currentVersion}, ${n})`, updatedAt: nowIso() })
+          .where(eq(artifacts.id, artifact.id))
+          .run();
+        advanced = true;
+      } catch (e) {
+        lastError = e;
+        await new Promise((r) => setTimeout(r, 50 * (i + 1)));
+      }
+    }
+    if (!advanced) {
+      await ctx.db.delete(versions).where(eq(versions.id, id)).run();
+      ctx.waitUntil(deletePrefix(ctx.env.FILES, prefix));
+      throw lastError;
+    }
     return n;
   }
   throw new ApiError("conflict", "Too many concurrent updates, try again");

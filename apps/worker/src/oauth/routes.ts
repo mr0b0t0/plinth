@@ -5,7 +5,7 @@
 // session and CSRF middleware: register, token and revoke are called by non-browser clients with
 // no ambient credentials, and /oauth/authorize only validates and stores a pending request.
 import { Hono } from "hono";
-import type { AppEnv } from "../api/context.ts";
+import { type AppEnv, clientIp } from "../api/context.ts";
 import { escapeHtml } from "../email/templates.ts";
 import { hit } from "../lib/ratelimit.ts";
 import {
@@ -96,7 +96,7 @@ async function readCapped(req: Request, max: number): Promise<string | null> {
 /** RFC 7591 dynamic client registration (public clients only). */
 oauthRoutes.post("/oauth/register", async (c) => {
   try {
-    const ip = c.req.header("cf-connecting-ip");
+    const ip = clientIp(c);
     if (ip) {
       const r = await hit(c.env.DB, `oauth:register:ip:${ip}`, REGISTRATIONS_PER_IP_PER_HOUR, 3600);
       if (!r.allowed) {
