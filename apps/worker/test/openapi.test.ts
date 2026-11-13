@@ -1,0 +1,131 @@
+import { API } from "@plinth/shared";
+import { describe, expect, it } from "vitest";
+import { openApiDocument, toOpenApiPath } from "../src/api/openapi.ts";
+import { call, config, json } from "./helpers.ts";
+
+type Json = Record<string, any>;
+
+const METHODS = ["get", "post", "put", "patch", "delete"];
+
+/** Collect every "$ref" string in a document. */
+function refs(node: unknown, out: string[] = []): string[] {
+  if (Array.isArray(node)) for (const n of node) refs(n, out);
+  else if (node && typeof node === "object") {
+    for (const [k, v] of Object.entries(node)) {
+      if (k === "$ref" && typeof v === "string") out.push(v);
+      else refs(v, out);
+    }
+  }
+  return out;
+}
+
+function operations(doc: Json): [string, string, Json][] {
+  const ops: [string, string, Json][] = [];
+  for (const [path, item] of Object.entries(doc.paths as Json)) {
+    for (const m of METHODS) if (item[m]) ops.push([path, m, item[m]]);
+  }
+  return ops;
+}
+
+describe("OpenAPI document", () => {
+  const doc = openApiDocument(config()) as Json;
+
+  it("is OpenAPI 3.1 with info, a server under /api/v1 and security schemes", () => {
+    expect(doc.openapi).toMatch(/^3\.1\.\d+$/);
+    expect(doc.info.title).toBe("Plinth API");
+    expect(doc.info.version).toBeTypeOf("string");
+    expect(doc.servers[0].url).toBe("http://app.localhost:8787/api/v1");
+    expect(doc.components.securitySchemes.bearerAuth).toMatchObject({
+      type: "http",
+      scheme: "bearer",
+    });
+    expect(doc.components.securitySchemes.sessionCookie).toMatchObject({
+      type: "apiKey",
+      in: "cookie",
+      name: "plinth_session",
+    });
+    expect(doc.components.securitySchemes.csrfHeader).toMatchObject({
+      type: "apiKey",
+      in: "header",
+      name: "x-plinth-csrf",
+    });
+  });
+
+  it("has a path for every entry in the shared API map", () => {
+    const paths = Object.keys(doc.paths);
+    for (const [key, path] of Object.entries(API)) {
+      expect(paths, `API.${key}`).toContain(toOpenApiPath(path));
+    }
+  });
+
+  it("gives every operation a unique id, responses, security and declared path params", () => {
+    const ids = new Set<string>();
+    for (const [path, method, op] of operations(doc)) {
+      const where = `${method.toUpperCase()} ${path}`;
+      expect(op.operationId, where).toBeTypeOf("string");
+      expect(ids.has(op.operationId), `duplicate ${op.operationId}`).toBe(false);
+      ids.add(op.operationId);
+      expect(Object.keys(op.responses).length, where).toBeGreaterThan(0);
+      expect(Array.isArray(op.security), where).toBe(true);
+      const declared = (op.parameters ?? [])
+        .filter((p: Json) => p.in === "path")
+        .map((p: Json) => p.name);
+      const inPath = [...path.matchAll(/\{([a-z_]+)\}/g)].map((m) => m[1]);
+      expect(declared.sort(), where).toEqual(inPath.sort());
+    }
+  });
+
+  it("mirrors every MCP tool with the same auth (bearer token)", () => {
+    const tools = new Set(
+      operations(doc)
+        .filter(([, , op]) => op["x-mcp-tool"])
+        .map(([, , op]) => {
+          expect(op.security.some((s: Json) => "bearerAuth" in s)).toBe(true);
+          return op["x-mcp-tool"] as string;
+        }),
+    );
+    expect([...tools].sort()).toEqual(
+      [
+        "claim_mention",
+        "get_artifact",
+        "list_artifacts",
+        "list_mentions",
+        "list_versions",
+        "publish_artifact",
+        "reply_comment",
+        "restore_version",
+        "set_visibility",
+        "update_artifact",
+      ].sort(),
+    );
+  });
+
+  it("generates request bodies from the shared zod schemas", () => {
+    const publish = doc.components.schemas.PublishArtifactInput;
+    expect(publish.type).toBe("object");
+    expect(publish.required.sort()).toEqual(["html", "title"]);
+    expect(publish.properties.visibility.enum).toEqual([
+      "public",
+      "unlisted",
+      "password",
+      "allowlist",
+    ]);
+    const update = doc.components.schemas.UpdateArtifactInput;
+    expect(update.properties.id).toBeUndefined();
+    expect(update.properties.base_version.type).toBe("integer");
+  });
+
+  it("resolves every $ref", () => {
+    for (const r of refs(doc)) {
+      const [, section, name] = /^#\/components\/(\w+)\/(\w+)$/.exec(r) ?? [];
+      expect(section && name ? doc.components[section]?.[name] : undefined, r).toBeDefined();
+    }
+  });
+
+  it("is served at /openapi.json", async () => {
+    const res = await call("/openapi.json");
+    expect(res.status).toBe(200);
+    const served = await json(res);
+    expect(Object.keys(served.paths)).toEqual(Object.keys(doc.paths));
+  });
+});
