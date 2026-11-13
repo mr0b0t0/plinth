@@ -50,8 +50,9 @@ A package joins a Turbo task by defining that script. Pin dependency versions ex
 Hosting HTML written by strangers is the main risk in this project. Never weaken one of these to
 make a test pass.
 
-- **User HTML never runs on the app host.** The content host is a different registrable domain,
-  and each artifact is served from its own subdomain so artifacts cannot read each other's data.
+- **User HTML never runs on the app host.** The content host is a different registrable domain
+  (or a host on the Public Suffix List, which browsers then treat as one), and each artifact is
+  served from its own subdomain so artifacts cannot read each other's data.
 - **No app cookies on the content host.** App session cookies are host-only on the app host. The
   content host checks access with a short-lived signed token bound to one artifact.
 - **Every artifact response carries a CSP**, built from the configurable CDN allowlist. Network
@@ -74,7 +75,10 @@ make a test pass.
 - Anything a self-hoster may change (hosts, quota, email provider, CDN allowlist) is an env var.
 - The product name must not contain "Claude" or "Codex".
 
-## Open question
+## Content domain
 
-The content domain is not chosen yet. It cannot be any `aconite.io` subdomain. Keep it a config
-value (`CONTENT_HOST`).
+The hosted instance serves artifacts from `<id>.plinth-usercontent.aconite.io`, a subdomain of
+`aconite.io` that must be on the Public Suffix List before production uses it. Until browsers and
+the `tldts` package know the entry, the Worker refuses to run in production with it, and that
+refusal must stay. Never put user content on any other `aconite.io` host. Keep it a config value
+(`CONTENT_HOST`). See `docs/deploy-checklist.md`.

@@ -12,7 +12,8 @@ deploying, and connecting agents. The step-by-step DNS and email work is in
   - an **app host** for sign-in, the dashboard, the API and `/mcp`, e.g. `plinth.example.com`;
   - a **content host** on a *different registrable domain*, e.g. `example-usercontent.net`. Each
     artifact is served from `<artifact_id>.<content host>`. In production Plinth refuses to start
-    if the two hosts share a registrable domain.
+    if the two hosts share a registrable domain. A subdomain of your own domain works only once it
+    is on the Public Suffix List (see [deploy-checklist.md](deploy-checklist.md#the-content-domain)).
 - For multi-user mode: a SendGrid or Resend account with a verified sending domain.
 - Node 22.12+ and pnpm 10 on the machine you deploy from.
 
@@ -38,7 +39,7 @@ Booleans accept `true`, `1`, `yes` or `on`.
 | --- | --- | --- |
 | `ENVIRONMENT` | `production` | `development`, `staging` or `production`. Production refuses unsafe settings (below) |
 | `APP_HOST` | none (required) | Host and optional port of the app: sign-in, dashboard, API, `/mcp` |
-| `CONTENT_HOST` | none (required) | Host for artifact content. Must differ from `APP_HOST` and not be a subdomain of it. In production it must be a different registrable domain |
+| `CONTENT_HOST` | none (required) | Host for artifact content. Must differ from `APP_HOST` and not be a subdomain of it. In production it must be a different registrable domain, or a subdomain listed on the Public Suffix List (see [deploy-checklist.md](deploy-checklist.md#the-content-domain)) |
 | `PUBLIC_SCHEME` | `https` | `http` only for local development. Production requires `https` |
 | `EMAIL_PROVIDER` | `console` | `sendgrid`, `resend` or `console`. `console` logs sign-in links and codes; production refuses it unless in single-user mode |
 | `EMAIL_FROM` | `Plinth <noreply@<APP_HOST>>` | Sender address. Must be on a domain verified with your provider |

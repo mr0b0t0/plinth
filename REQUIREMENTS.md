@@ -246,7 +246,7 @@ Test-file shorthand: `W:` = `apps/worker/test/`, `Wb:` = `apps/web/src/`, `E:` =
 | 7. Design polish, `/design`, accessibility pass | Met | see UI table; independent UI review (0 axe violations on Plinth pages), fixes applied |  |
 | 8. Hosted flags, report and takedown, policy templates | Partial | see Features | Public visibility flag; reports/takedown always on (DECISIONS, **Review**) |
 | 9. README, setup script, deploy guide, license, contribution guide | Met | see Deliverables |  |
-| 10. Staging deploy (named in the review brief, not in the checked-in build prompt) | Blocked | `docs/staging.md`, `e2e/staging/smoke.mjs`, `scripts/setup.mjs --workers-dev` | Account prerequisites missing (R2 not enabled, no workers.dev subdomain); no resources created. Smoke test passes 5/5 locally in staging mode |
+| 10. Staging deploy (named in the review brief, not in the checked-in build prompt) | Met | `docs/staging.md`, `e2e/staging/smoke.mjs`, `scripts/setup.mjs --workers-dev` | Deployed 2026-11-13 to `plinth-staging.aconite-io.workers.dev` after German enabled R2 and approved the workers.dev subdomain; smoke test 5/5 live. Uses the path fallback, so per-artifact subdomain isolation is still verified locally only |
 
 ## Testing and verification
 
@@ -293,7 +293,7 @@ Test-file shorthand: `W:` = `apps/worker/test/`, `Wb:` = `apps/web/src/`, `E:` =
 | `CONTRIBUTING.md` | Met | file | |
 | `DECISIONS.md` | Met | file | |
 | `REQUIREMENTS.md` | Met | this file |  |
-| Setup script: local and remote D1+R2, secrets, config | Partial | `scripts/setup.mjs` (`--local`, `--remote`, `--workers-dev`, `--dry-run`) | Local mode and remote dry runs verified by running; remote creation never run (no cloud access allowed before staging); no automated test |
+| Setup script: local and remote D1+R2, secrets, config | Partial | `scripts/setup.mjs` (`--local`, `--remote`, `--workers-dev`, `--dry-run`) | Local mode verified; remote mode run for real for staging (`--workers-dev`) on 2026-11-13; production remote mode (routes, custom domain) only as a dry run; no automated test |
 | Seed script: demo user and sample artifacts | Met | `scripts/seed.mjs` | Verified by running against `wrangler dev` (4 artifacts, rerun is idempotent); used for the README screenshots and the local preview |
 
 ## Out of scope for v1

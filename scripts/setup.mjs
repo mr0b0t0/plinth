@@ -25,12 +25,17 @@
 import { spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const workerDir = path.join(root, "apps", "worker");
 const wranglerBin = path.join(workerDir, "node_modules", ".bin", "wrangler");
+// tldts is a dependency of the Worker; load it from there so this script needs no install of its own.
+const { getDomain } = createRequire(path.join(workerDir, "package.json"))("tldts");
+const registrableDomain = (h) =>
+  getDomain(h.replace(/:\d+$/, ""), { allowPrivateDomains: true }) ?? h;
 
 // ---------- arguments ----------
 
@@ -270,13 +275,17 @@ function setupRemote() {
   if (single && !adminEmail) fail("--single-user needs --admin-email <email>");
   if (emailProvider && !["sendgrid", "resend", "console"].includes(emailProvider))
     fail("--email-provider must be sendgrid, resend or console");
-  if (appHost && contentHost) {
-    const zoneOf = (h) => h.split(".").slice(-2).join(".");
-    if (zoneOf(appHost) === zoneOf(contentHost))
-      fail("APP_HOST and CONTENT_HOST must be on different registrable domains");
+  // The same Public Suffix List check the Worker makes (tldts, private section included), so a
+  // content host that is a PSL-listed subdomain of the app's domain passes once tldts knows it.
+  if (appHost && contentHost && !opts["workers-dev"]) {
+    if (registrableDomain(appHost) === registrableDomain(contentHost))
+      fail(
+        "APP_HOST and CONTENT_HOST share a registrable domain. Use a separate domain, or a subdomain " +
+          "on the Public Suffix List once the pinned tldts knows it (docs/deploy-checklist.md)",
+      );
   }
   const contentZone =
-    opts["content-zone"] ?? (contentHost ? contentHost.split(".").slice(-2).join(".") : null);
+    opts["content-zone"] ?? (contentHost ? (getDomain(contentHost) ?? contentHost) : null);
 
   const configFile = path.join(workerDir, `wrangler.${envName}.jsonc`);
   const configRel = path.relative(workerDir, configFile);
@@ -358,6 +367,8 @@ function setupRemote() {
   if (opts["workers-dev"]) {
     if (vars.ENVIRONMENT === "production") fail("--workers-dev is for staging only");
     cfg.workers_dev = true;
+    // Preview URLs would serve the Worker on extra <version>-<name> hosts that are not APP_HOST.
+    cfg.preview_urls = false;
     delete cfg.routes;
     vars.STAGING_CONTENT_FALLBACK = "true";
     if (!contentHost) vars.CONTENT_HOST = "content.invalid";

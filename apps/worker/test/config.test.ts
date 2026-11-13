@@ -22,6 +22,21 @@ describe("config", () => {
       parseConfig({ ...base, APP_HOST: "a.example.co.uk", CONTENT_HOST: "b.example.co.uk" }),
     ).toThrow(/registrable domain/);
   });
+  it("refuses the hosted content subdomain until the Public Suffix List entry is known", () => {
+    // plinth-usercontent.aconite.io is pending on the PSL. When a tldts release includes it, this
+    // test fails on purpose: confirm the entry has shipped in current browsers before updating it.
+    expect(registrableDomain("x.plinth-usercontent.aconite.io")).toBe("aconite.io");
+    expect(() => parseConfig({ ...base, CONTENT_HOST: "plinth-usercontent.aconite.io" })).toThrow(
+      /Public Suffix List/,
+    );
+  });
+  it("treats a PSL-listed subdomain as its own registrable domain", () => {
+    // github.io is on the PSL's private section, so two of its subdomains are different sites.
+    expect(registrableDomain("a.example.github.io")).toBe("example.github.io");
+    expect(() =>
+      parseConfig({ ...base, APP_HOST: "app.github.io", CONTENT_HOST: "content.github.io" }),
+    ).not.toThrow();
+  });
   it("allows a shared domain outside production (local development)", () => {
     expect(() =>
       parseConfig({

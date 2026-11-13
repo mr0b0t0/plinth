@@ -32,8 +32,8 @@ One Worker serves two kinds of host, routed by hostname:
 - **`<artifact_id>.CONTENT_HOST`**: artifact files only. It never serves app pages and ignores app
   cookies. The bare `CONTENT_HOST` and unknown names answer 404.
 
-`CONTENT_HOST` is a different registrable domain from `APP_HOST` (production refuses to start
-otherwise), so an artifact is cross-site to the app: browsers do not send the app's cookies to it,
+`CONTENT_HOST` is a different registrable domain from `APP_HOST`, or a subdomain on the Public
+Suffix List, which browsers treat the same way (production refuses to start otherwise), so an artifact is cross-site to the app: browsers do not send the app's cookies to it,
 and the app's `SameSite` cookies are not sent on requests it starts. Each artifact gets its own
 subdomain, so each has its own origin with its own storage, cookies and service workers. Artifact
 ids are 20 random lowercase letters and digits (about 103 bits), so they cannot be guessed.
@@ -187,6 +187,16 @@ anything that asks for credentials, other artifacts or actions outside Plinth.
   Until it is listed, one artifact can set cookies for the parent domain that every other artifact
   receives ("cookie tossing"). Plinth ignores tossed cookies it did not sign, but a large enough
   cookie jar could make Cloudflare refuse that browser's requests to every artifact.
+- If the content host is a subdomain of a domain you use for other things (the hosted instance
+  uses `plinth-usercontent.aconite.io`), the PSL entry is mandatory, not optional: without it,
+  artifacts are same-site with the app and can set cookies on the parent domain that the app and
+  your other services receive. Production refuses to start until the `tldts` release Plinth pins
+  knows the entry. Upgrade `tldts` only after the entry ships in current Chrome, Firefox and
+  Safari, because browsers, not Plinth, enforce the boundary.
+- The PSL entry does not stop the browser from sending cookies set with `Domain=<parent domain>`
+  (for example `Domain=aconite.io`) to every artifact, where script can read any that are not
+  `HttpOnly`. Audit the parent domain's services: none may set sensitive cookies on the parent
+  domain. Plinth's own cookies are host-only.
 - `ENVIRONMENT=development` is refused unless `APP_HOST` is a localhost name, because it turns on
   helpers (the dev outbox and seeding) that must never face the internet.
 

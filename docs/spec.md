@@ -190,7 +190,8 @@ options.
 
 - **Separate content domain.** Artifacts are served from a different registrable domain than the
   app, with each artifact on its own subdomain (`<id>.<content-domain>`). One artifact cannot read
-  another's storage or the app's cookies.
+  another's storage or the app's cookies. A subdomain listed on the Public Suffix List counts as a
+  registrable domain of its own; the hosted instance relies on that (below).
 - **Locked-down responses.** A Content Security Policy on every artifact response, no app cookies
   on the content domain, and the editor preview runs in a sandboxed iframe.
 - **Comment text is untrusted input for agents.** A mention is a request from a collaborator, not
@@ -269,9 +270,12 @@ for a single user.
 
 The CDN allowlist is a configuration value, so a self-hoster can tighten or extend it.
 
-**Still open**
+**Content domain (decided 2026-11-13)**
 
-- [ ] Content domain. The product is named Plinth and the app lives at `plinth.aconite.io`.
-  Artifacts cannot be served from any `aconite.io` subdomain, because user HTML there would be
-  same-site with the app and with Aconite's other services. A separate domain is needed for
-  artifact content only.
+- The hosted instance serves artifacts from `<id>.plinth-usercontent.aconite.io`
+  (`CONTENT_HOST=plinth-usercontent.aconite.io`). On its own, a subdomain of `aconite.io` would be
+  same-site with the app and with Aconite's other services, so `plinth-usercontent.aconite.io`
+  goes on the Public Suffix List (private section). Production refuses to start until the entry is
+  merged, shipped in current browsers and present in the `tldts` release Plinth pins. No service
+  under `aconite.io` may set sensitive `Domain=aconite.io` cookies, because the PSL entry does not
+  stop the browser sending those to artifacts.

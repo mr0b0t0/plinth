@@ -188,7 +188,7 @@ function validate(c: Config): void {
     // Refuse to run if user HTML would be same-site with the app.
     if (registrableDomain(c.appHost) === registrableDomain(c.contentHost)) {
       throw new ConfigError(
-        "APP_HOST and CONTENT_HOST share a registrable domain; the content host must be a separate domain",
+        "APP_HOST and CONTENT_HOST share a registrable domain; the content host must be a separate domain, or a subdomain on the Public Suffix List that the pinned tldts knows",
       );
     }
     if (c.scheme !== "https") throw new ConfigError("PUBLIC_SCHEME must be https in production");
