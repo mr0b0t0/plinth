@@ -1,7 +1,5 @@
-import "@fontsource/instrument-serif/400.css";
-import "@fontsource/instrument-serif/400-italic.css";
-import "@fontsource-variable/geist";
-import "@fontsource-variable/jetbrains-mono";
+// Fonts are self-hosted and trimmed to the subsets and weights the app uses (see fonts.css).
+import "./styles/fonts.css";
 import "./styles/tokens.css";
 import "./styles/base.css";
 import { StrictMode } from "react";

@@ -1,63 +1,95 @@
 /*
  * Plinth design tokens. Every color, size and duration the app uses is defined here, once.
- * Two first-class modes: "Gallery" (light) and "After hours" (dark), switched by
- * [data-theme] on <html> (set before first paint by public/theme.js).
- * One accent only: verdigris. Contrast targets WCAG AA for all text pairs.
+ * Components and pages use these custom properties; they never hard-code a value.
+ *
+ * Two first-class modes, switched by [data-theme] on <html> (set before first paint by
+ * public/theme.js). The selectors also work on any element, so a subtree can render in the
+ * other mode (the /design page uses that for its side-by-side panels):
+ *   "Gallery"     [data-theme="light"]  cool off-white walls, stone greys, near-black ink
+ *   "After hours" [data-theme="dark"]   deep charcoal, soft grey text, the accent lifted
+ *
+ * One accent only: verdigris (the green-blue patina on old bronze), for primary actions, focus
+ * rings and active states. Semantic colors (success, warning, danger) carry status only.
+ *
+ * Contrast (WCAG 2.2, sRGB relative luminance). The ratios in the comments below are computed for
+ * the main background pairs; src/styles/contrast.test.ts parses this file and asserts every pair
+ * listed in src/styles/contrast.ts (4.5:1 for text, 3:1 for focus rings, control borders and
+ * active indicators). The /design page computes the same ratios live.
  */
 :root {
-  /* Type families: self-hosted, open-licensed */
+  /* Type families: self-hosted from the app's own assets (src/styles/fonts.css) */
   --font-display: "Instrument Serif", ui-serif, Georgia, serif;
   --font-ui: "Geist Variable", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-mono: "JetBrains Mono Variable", ui-monospace, "SFMono-Regular", Menlo, monospace;
 
-  /* Type scale (1.2 minor third, rounded) */
-  --text-2xs: 0.6875rem; /* 11 */
-  --text-xs: 0.75rem; /* 12 */
-  --text-sm: 0.8125rem; /* 13 */
-  --text-md: 0.9375rem; /* 15: body */
-  --text-lg: 1.0625rem; /* 17 */
-  --text-xl: 1.375rem; /* 22 */
-  --text-2xl: 1.75rem; /* 28 */
-  --text-3xl: 2.25rem; /* 36 */
-  --text-4xl: 3rem; /* 48 */
-  --leading-tight: 1.15;
+  /*
+   * Type scale. Interface text steps by about 1.13 from a 15px body; display sizes (serif only)
+   * step by about 1.3 so headings read as a separate voice, as on a gallery wall.
+   */
+  --text-2xs: 0.6875rem; /* 11: tiny meta, keyboard hints */
+  --text-xs: 0.75rem; /* 12: captions, badges */
+  --text-sm: 0.8125rem; /* 13: secondary UI text, small buttons */
+  --text-md: 0.9375rem; /* 15: body and controls */
+  --text-lg: 1.0625rem; /* 17: lead paragraphs, card titles in UI face */
+  --text-xl: 1.3125rem; /* 21: serif h3, wordmark */
+  --text-2xl: 1.75rem; /* 28: serif h2 */
+  --text-3xl: 2.25rem; /* 36: serif h1, page titles */
+  --text-4xl: 3rem; /* 48: serif display on wide screens */
+  --text-5xl: 4rem; /* 64: serif display, hero only */
+  --leading-tight: 1.1;
   --leading-snug: 1.35;
   --leading-normal: 1.55;
+  --leading-relaxed: 1.7;
   --weight-regular: 400;
   --weight-medium: 500;
   --weight-semibold: 600;
-  --tracking-tight: -0.01em;
-  --tracking-wide: 0.06em;
+  --tracking-tight: -0.015em;
+  --tracking-normal: 0;
+  --tracking-wide: 0.04em;
 
   /* Spacing (4px grid) */
   --space-0: 0;
-  --space-1: 0.25rem;
-  --space-2: 0.5rem;
-  --space-3: 0.75rem;
-  --space-4: 1rem;
-  --space-5: 1.25rem;
-  --space-6: 1.5rem;
-  --space-8: 2rem;
-  --space-10: 2.5rem;
-  --space-12: 3rem;
-  --space-16: 4rem;
-  --space-24: 6rem;
+  --space-px: 1px;
+  --space-1: 0.25rem; /* 4 */
+  --space-2: 0.5rem; /* 8 */
+  --space-3: 0.75rem; /* 12 */
+  --space-4: 1rem; /* 16 */
+  --space-5: 1.25rem; /* 20 */
+  --space-6: 1.5rem; /* 24 */
+  --space-8: 2rem; /* 32 */
+  --space-10: 2.5rem; /* 40 */
+  --space-12: 3rem; /* 48 */
+  --space-16: 4rem; /* 64 */
+  --space-24: 6rem; /* 96 */
 
-  /* Radii: restrained, gallery-like */
-  --radius-sm: 3px;
+  /* Radii: restrained. Controls are slightly rounded; exhibits keep crisp corners. */
+  --radius-xs: 2px;
+  --radius-sm: 4px;
   --radius-md: 6px;
   --radius-lg: 10px;
   --radius-full: 999px;
 
-  /* Icons: Phosphor, regular weight, on a 4px grid */
+  /* Borders */
+  --border-width: 1px;
+  --border-width-strong: 2px;
+
+  /* Icons: Phosphor, regular weight everywhere, sized on a 4px grid */
   --icon-sm: 16px;
   --icon-md: 20px;
   --icon-lg: 24px;
+  --icon-xl: 32px;
+
+  /* Controls (heights on the 4px grid; md keeps a 36px target, lg 44px for touch-first spots) */
+  --control-sm: 1.75rem; /* 28 */
+  --control-md: 2.25rem; /* 36 */
+  --control-lg: 2.75rem; /* 44 */
 
   /* Layout */
   --content-max: 72rem;
   --reading-max: 40rem;
+  --narrow-max: 28rem;
   --topbar-height: 3.5rem;
+  --gutter: var(--space-4);
   --focus-ring-width: 2px;
   --focus-ring-offset: 2px;
 
@@ -71,85 +103,98 @@
   --z-sticky: 10;
   --z-overlay: 40;
   --z-dialog: 50;
+  --z-menu: 55;
   --z-toast: 60;
   --z-tooltip: 70;
+}
+
+@media (min-width: 40rem) {
+  :root {
+    --gutter: var(--space-8);
+  }
 }
 
 /* Gallery (light): cool off-white walls, stone greys, near-black ink. */
 :root,
 [data-theme="light"] {
   color-scheme: light;
-  --color-wall: #f2f4f4;
-  --color-surface: #fbfcfc;
-  --color-surface-raised: #ffffff;
-  --color-surface-sunk: #e8ebeb;
-  --color-plinth: #e2e6e6; /* the base an exhibit sits on */
-  --color-border: #d5dadb;
-  --color-border-strong: #b8bfc1;
-  --color-ink: #15191a;
-  --color-ink-muted: #4c5557;
-  --color-ink-faint: #677073;
-  --color-ink-inverse: #f4f6f6;
+  --color-wall: #eff1f1; /* page background */
+  --color-surface: #f7f8f8; /* panels, inputs */
+  --color-surface-raised: #ffffff; /* cards, menus, dialogs */
+  --color-surface-sunk: #e4e8e8; /* wells, code, hover on ghost controls */
+  --color-plinth: #d9dfe0; /* the base an exhibit sits on */
+  --color-border: #d3d9da; /* decorative separators */
+  --color-border-strong: #b3bcbe; /* card and button outlines */
+  --color-border-control: #7f8a8d; /* input outlines: 3.13 on wall, 3.55 on raised */
+  --color-ink: #1a2023; /* 14.53 on wall, 16.47 on raised, 13.34 on sunk */
+  --color-ink-muted: #475255; /* 7.11 on wall, 6.53 on sunk */
+  --color-ink-faint: #5b6669; /* 5.22 on wall, 4.79 on sunk */
+  --color-ink-inverse: #f1f3f3; /* text on ink (tooltips): 14.79 */
 
-  --color-accent: #2a7465;
-  --color-accent-hover: #215e52;
-  --color-accent-active: #1a4b41;
-  --color-accent-soft: #dbece7;
-  --color-accent-ink: #1f5b4f; /* accent used as text on wall/surface */
+  --color-accent: #1d6c60; /* verdigris; white on it 6.24, on wall 5.50 */
+  --color-accent-hover: #175a50; /* white on it 8.03 */
+  --color-accent-active: #124a42; /* white on it 10.08 */
+  --color-accent-soft: #d5eae4; /* selected rows, selection; ink on it 13.11 */
+  --color-accent-ink: #18625a; /* accent as text: 6.31 on wall, 5.70 on accent-soft */
   --color-on-accent: #ffffff;
 
-  --color-success: #2c7340;
-  --color-success-soft: #dcefe0;
-  --color-warning: #85570a;
-  --color-warning-soft: #f6ead2;
-  --color-danger: #b0281f;
-  --color-danger-hover: #93211a;
-  --color-danger-soft: #f8e0dd;
+  --color-success: #3a6a1d; /* 6.06 on surface, 5.30 on success-soft */
+  --color-success-soft: #e1edd6;
+  --color-warning: #865100; /* 6.19 on surface, 5.35 on warning-soft */
+  --color-warning-soft: #f6e6c8;
+  --color-danger: #b02a22; /* 6.17 on surface, 5.18 on danger-soft, white on it 6.56 */
+  --color-danger-hover: #93211b;
+  --color-danger-soft: #f8dfdb;
   --color-on-danger: #ffffff;
 
-  --color-overlay: rgb(16 20 21 / 0.42);
-  --shadow-sm: 0 1px 2px rgb(16 20 21 / 0.06);
-  --shadow-md: 0 2px 6px rgb(16 20 21 / 0.07), 0 8px 24px rgb(16 20 21 / 0.06);
-  --shadow-lg: 0 12px 40px rgb(16 20 21 / 0.16);
-  --color-focus: var(--color-accent);
+  --color-overlay: rgb(26 32 35 / 0.44);
+  --color-skeleton: #e4e8e8;
+  --color-skeleton-shine: #eff1f1;
+  --shadow-sm: 0 1px 2px rgb(26 32 35 / 0.06);
+  --shadow-md: 0 1px 2px rgb(26 32 35 / 0.05), 0 6px 20px rgb(26 32 35 / 0.07);
+  --shadow-lg: 0 2px 6px rgb(26 32 35 / 0.06), 0 18px 48px rgb(26 32 35 / 0.16);
+  --color-focus: var(--color-accent); /* 5.50 on wall, 6.24 on raised */
 }
 
 /* After hours (dark): deep charcoal, soft grey text, the same accent at adjusted lightness. */
 [data-theme="dark"] {
   color-scheme: dark;
-  --color-wall: #151718;
-  --color-surface: #1c1f20;
-  --color-surface-raised: #232728;
+  --color-wall: #151819;
+  --color-surface: #1b1f20;
+  --color-surface-raised: #222728;
   --color-surface-sunk: #101213;
-  --color-plinth: #262a2c;
-  --color-border: #2e3335;
-  --color-border-strong: #454c4f;
-  --color-ink: #dfe3e4;
-  --color-ink-muted: #a6aeb0;
-  --color-ink-faint: #8a9396;
-  --color-ink-inverse: #151718;
+  --color-plinth: #2b3133;
+  --color-border: #2c3234;
+  --color-border-strong: #3f474a;
+  --color-border-control: #6d777a; /* 3.88 on wall, 3.29 on raised */
+  --color-ink: #e1e5e6; /* 14.07 on wall, 11.92 on raised, 10.41 on plinth */
+  --color-ink-muted: #a8b0b2; /* 8.09 on wall, 6.85 on raised */
+  --color-ink-faint: #8e979a; /* 5.99 on wall, 5.07 on raised */
+  --color-ink-inverse: #151819; /* text on ink (tooltips): 14.07 */
 
-  --color-accent: #5db3a0;
-  --color-accent-hover: #78c4b3;
-  --color-accent-active: #93d2c4;
-  --color-accent-soft: #1e3530;
-  --color-accent-ink: #6cbfad;
-  --color-on-accent: #0b1a16;
+  --color-accent: #5db5a3; /* verdigris lifted; on-accent on it 7.33, on wall 7.31 */
+  --color-accent-hover: #78c5b5;
+  --color-accent-active: #94d3c6;
+  --color-accent-soft: #1a3430;
+  --color-accent-ink: #6cc0ae; /* 8.32 on wall, 6.20 on accent-soft */
+  --color-on-accent: #0b1a17;
 
-  --color-success: #6dc183;
-  --color-success-soft: #1d3324;
-  --color-warning: #ddb257;
-  --color-warning-soft: #362b14;
-  --color-danger: #ef857c;
-  --color-danger-hover: #f4a29b;
-  --color-danger-soft: #3a1f1d;
-  --color-on-danger: #1d0b0a;
+  --color-success: #94c46f; /* 8.22 on surface, 7.26 on success-soft */
+  --color-success-soft: #1f2c17;
+  --color-warning: #e0b35c; /* 8.53 on surface, 7.32 on warning-soft */
+  --color-warning-soft: #342913;
+  --color-danger: #f08a80; /* 6.85 on surface, 6.21 on danger-soft */
+  --color-danger-hover: #f5a59d;
+  --color-danger-soft: #3a1f1c;
+  --color-on-danger: #200c0a; /* 7.74 on danger */
 
-  --color-overlay: rgb(0 0 0 / 0.6);
+  --color-overlay: rgb(5 7 8 / 0.62);
+  --color-skeleton: #222728;
+  --color-skeleton-shine: #2b3133;
   --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.4);
-  --shadow-md: 0 2px 6px rgb(0 0 0 / 0.35), 0 8px 24px rgb(0 0 0 / 0.3);
-  --shadow-lg: 0 12px 40px rgb(0 0 0 / 0.55);
-  --color-focus: var(--color-accent);
+  --shadow-md: 0 1px 2px rgb(0 0 0 / 0.3), 0 6px 20px rgb(0 0 0 / 0.3);
+  --shadow-lg: 0 2px 6px rgb(0 0 0 / 0.35), 0 18px 48px rgb(0 0 0 / 0.5);
+  --color-focus: var(--color-accent); /* 7.31 on wall, 6.19 on raised */
 }
 
 @media (prefers-reduced-motion: reduce) {
