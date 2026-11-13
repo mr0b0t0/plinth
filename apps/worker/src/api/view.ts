@@ -6,10 +6,13 @@ import {
   REVIEW_MODE_PARAM,
   TTL,
   type ViewGate,
+  viewerCodeInput,
+  viewerEmailInput,
   viewerPasswordInput,
 } from "@plinth/shared";
 import { eq } from "drizzle-orm";
 import { Hono } from "hono";
+import { resolveViewerSession } from "../auth/principal.ts";
 import { contentOrigin } from "../config.ts";
 import { issueEnterUrl, safeNext } from "../content/tokens.ts";
 import { type ArtifactRow, users } from "../db/schema.ts";
@@ -19,7 +22,14 @@ import { ApiError } from "../lib/errors.ts";
 import { hit } from "../lib/ratelimit.ts";
 import { decideFor, findArtifact } from "../services/artifacts.ts";
 import type { Ctx } from "../services/context.ts";
-import { type AppEnv, type PasswordPassPayload, parseBody, serviceCtx } from "./context.ts";
+import { requestViewerCode, verifyViewerCode } from "../services/viewers.ts";
+import {
+  type AppContext,
+  type AppEnv,
+  type PasswordPassPayload,
+  parseBody,
+  serviceCtx,
+} from "./context.ts";
 
 export const viewApi = new Hono<AppEnv>();
 
@@ -40,6 +50,9 @@ export async function computeGate(
 ): Promise<ViewGate> {
   const a = await findArtifact(ctx, ref);
   if (!a || a.currentVersion < 1) return { status: "not_found" };
+  // The content host never serves a taken-down artifact, so nobody gets a token for one (admins
+  // review the source through the API instead).
+  if (a.takenDownAt) return { status: "taken_down", artifact: stub(a) };
   const d = await decideFor(ctx, a, "view");
   if (!d.allow) {
     switch (d.reason) {
@@ -67,7 +80,12 @@ export async function computeGate(
     : version === a.currentVersion && !opts.version
       ? "/"
       : `/__plinth/v/${version}/`;
-  if (opts.review) next += `${next.includes("?") ? "&" : "?"}${REVIEW_MODE_PARAM}=1`;
+  if (opts.review) {
+    // The flag goes in the query, before any fragment.
+    const hashAt = next.indexOf("#");
+    const [path, hash] = hashAt < 0 ? [next, ""] : [next.slice(0, hashAt), next.slice(hashAt)];
+    next = `${path}${path.includes("?") ? "&" : "?"}${REVIEW_MODE_PARAM}=1${hash}`;
+  }
   const owner = await ctx.db
     .select({ name: users.name })
     .from(users)
@@ -96,13 +114,64 @@ function gateOptions(q: (k: string) => string | undefined): GateOptions {
   };
 }
 
+/**
+ * The gate for this request. A signed-in person whose own email is not listed may also hold a
+ * viewer session for an email that is (confirmed by code in this browser); either identity may
+ * open the artifact. The viewer identity is used for this gate only.
+ */
+async function gateForRequest(c: AppContext, ref: string, opts: GateOptions): Promise<ViewGate> {
+  const ctx = serviceCtx(c);
+  const gate = await computeGate(ctx, ref, opts);
+  if (gate.status !== "email_required" || ctx.principal.kind !== "user") return gate;
+  const cookie = c.get("cookies").get(COOKIES.viewer);
+  const viewer = cookie ? await resolveViewerSession(ctx.db, cookie) : null;
+  if (viewer?.kind !== "viewer" || viewer.email === ctx.principal.email) return gate;
+  const alt = await computeGate({ ...ctx, principal: viewer }, ref, opts);
+  return alt.status === "ok" ? alt : gate;
+}
+
 viewApi.get("/view/:ref", async (c) => {
-  const gate = await computeGate(
-    serviceCtx(c),
+  const gate = await gateForRequest(
+    c,
     c.req.param("ref"),
     gateOptions((k) => c.req.query(k)),
   );
   c.header("Cache-Control", "no-store");
+  return c.json(gate);
+});
+
+/**
+ * Allowlist: ask for a code. The answer is the same whether or not the email is listed, so the
+ * allowlist cannot be read through this endpoint. 404 only if the artifact is not an allowlist one.
+ */
+viewApi.post("/view/:ref/email", async (c) => {
+  const { email } = await parseBody(c, viewerEmailInput);
+  await requestViewerCode(serviceCtx(c), c.req.param("ref"), email);
+  return c.json({ ok: true });
+});
+
+/** Allowlist: confirm the code, start a viewer session, and return the gate for that email. */
+viewApi.post("/view/:ref/code", async (c) => {
+  const { email, code } = await parseBody(c, viewerCodeInput);
+  const ctx = serviceCtx(c);
+  const ref = c.req.param("ref");
+  const value = await verifyViewerCode(ctx, ref, email, code);
+  const config = c.get("config");
+  c.header(
+    "Set-Cookie",
+    serializeCookie(COOKIES.viewer, value, {
+      httpOnly: true,
+      secure: secureFlag(config.scheme, config.appHost),
+      sameSite: "Lax",
+      maxAge: TTL.viewerSessionS,
+    }),
+    { append: true },
+  );
+  const gate = await computeGate(
+    { ...ctx, principal: { kind: "viewer", email } },
+    ref,
+    gateOptions((k) => c.req.query(k)),
+  );
   return c.json(gate);
 });
 

@@ -26,10 +26,28 @@ export interface ContentPayload {
   [key: string]: unknown;
 }
 
-/** Only same-origin absolute paths, never "//host" or a scheme. */
+const NEXT_BASE = "https://next.plinth.invalid";
+
+/**
+ * Only same-origin absolute paths, never "//host" or a scheme. Browsers strip tabs and newlines
+ * from URLs and treat "\\" as "/", so "/\t/evil.example" would become "//evil.example": any control
+ * character or backslash is refused, and the result is re-serialized by the URL parser so what we
+ * send in a Location header is exactly what the browser will resolve.
+ */
 export function safeNext(next: string | null | undefined): string {
-  if (!next?.startsWith("/") || next.startsWith("//") || next.includes("\\")) return "/";
-  return next;
+  if (!next || next.length > 2048) return "/";
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: refusing control characters is the point
+  if (/[\u0000-\u0020\u007f\\]/.test(next)) return "/";
+  if (!next.startsWith("/") || next.startsWith("//")) return "/";
+  let u: URL;
+  try {
+    u = new URL(next, NEXT_BASE);
+  } catch {
+    return "/";
+  }
+  if (u.origin !== NEXT_BASE) return "/";
+  const out = `${u.pathname}${u.search}${u.hash}`;
+  return out.startsWith("//") ? "/" : out;
 }
 
 export async function issueEnterUrl(
