@@ -1,0 +1,48 @@
+.pl-skeleton {
+  display: block;
+  width: 100%;
+  height: 1em;
+  background:
+    linear-gradient(
+      90deg,
+      var(--color-skeleton) 0%,
+      var(--color-skeleton-shine) 50%,
+      var(--color-skeleton) 100%
+    )
+    0 0 / 200% 100%;
+  animation: pl-skeleton 1600ms var(--ease-in-out) infinite;
+}
+.pl-skeleton--xs {
+  border-radius: var(--radius-xs);
+}
+.pl-skeleton--sm {
+  border-radius: var(--radius-sm);
+}
+.pl-skeleton--md {
+  border-radius: var(--radius-md);
+}
+.pl-skeleton--lg {
+  border-radius: var(--radius-lg);
+}
+.pl-skeleton--full {
+  border-radius: var(--radius-full);
+}
+.pl-skeleton-text {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6em;
+}
+@keyframes pl-skeleton {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: -100% 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .pl-skeleton {
+    animation: none;
+    background: var(--color-skeleton);
+  }
+}

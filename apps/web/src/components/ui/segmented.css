@@ -1,0 +1,67 @@
+.pl-segmented {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-width: 0;
+}
+.pl-segmented__legend {
+  margin-bottom: var(--space-2);
+  padding: 0;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+}
+.pl-segmented__track {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: var(--space-px);
+  padding: var(--space-px);
+  border: var(--border-width) solid var(--color-border-strong);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-sunk);
+}
+.pl-segmented__option {
+  position: relative;
+  display: inline-flex;
+}
+.pl-segmented__input {
+  position: absolute;
+  inset: 0;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+.pl-segmented__face {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: calc(var(--control-md) - var(--space-1));
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-sm);
+  color: var(--color-ink-muted);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  white-space: nowrap;
+  pointer-events: none;
+  transition:
+    background-color var(--duration-fast) var(--ease-out),
+    color var(--duration-fast) var(--ease-out);
+}
+.pl-segmented--sm .pl-segmented__face {
+  min-height: calc(var(--control-sm) - var(--space-1));
+  padding: 0 var(--space-2);
+  font-size: var(--text-xs);
+}
+.pl-segmented__option:hover .pl-segmented__face {
+  color: var(--color-ink);
+}
+.pl-segmented__input:checked + .pl-segmented__face {
+  background: var(--color-surface-raised);
+  color: var(--color-ink);
+  box-shadow:
+    var(--shadow-sm),
+    inset 0 -2px 0 var(--color-accent);
+}
+.pl-segmented__input:focus-visible + .pl-segmented__face {
+  outline: var(--focus-ring-width) solid var(--color-focus);
+  outline-offset: var(--focus-ring-offset);
+}

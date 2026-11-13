@@ -1,0 +1,99 @@
+.pl-toaster {
+  position: fixed;
+  right: var(--space-4);
+  bottom: var(--space-4);
+  z-index: var(--z-toast);
+  width: min(24rem, calc(100vw - var(--space-8)));
+  pointer-events: none;
+}
+.pl-toaster__region {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.pl-toaster__region:not(:empty) + .pl-toaster__region:not(:empty) {
+  margin-top: var(--space-2);
+}
+.pl-toast {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-3) var(--space-3) var(--space-4);
+  border: var(--border-width) solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-raised);
+  color: var(--color-ink);
+  box-shadow: var(--shadow-lg);
+  pointer-events: auto;
+  animation: pl-toast-in var(--duration-slow) var(--ease-out);
+}
+.pl-toast__icon {
+  margin-top: 0.0625rem;
+  color: var(--color-ink-muted);
+}
+.pl-toast--success .pl-toast__icon {
+  color: var(--color-success);
+}
+.pl-toast--warning .pl-toast__icon {
+  color: var(--color-warning);
+}
+.pl-toast--danger .pl-toast__icon {
+  color: var(--color-danger);
+}
+.pl-toast__text {
+  flex: 1;
+  min-width: 0;
+  padding-top: 0.0625rem;
+}
+.pl-toast__title {
+  font-weight: var(--weight-medium);
+  line-height: var(--leading-snug);
+}
+.pl-toast__description {
+  margin-top: var(--space-1);
+  font-size: var(--text-sm);
+  line-height: var(--leading-snug);
+  color: var(--color-ink-muted);
+}
+.pl-toast__action,
+.pl-toast__close {
+  flex-shrink: 0;
+  display: inline-grid;
+  place-items: center;
+  min-height: var(--control-sm);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  cursor: pointer;
+}
+.pl-toast__action {
+  padding: 0 var(--space-2);
+  color: var(--color-accent-ink);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+}
+.pl-toast__close {
+  width: var(--control-sm);
+  color: var(--color-ink-muted);
+}
+.pl-toast__action:hover,
+.pl-toast__close:hover {
+  background: var(--color-surface-sunk);
+  color: var(--color-ink);
+}
+
+@media (max-width: 30rem) {
+  .pl-toaster {
+    left: var(--space-2);
+    right: var(--space-2);
+    bottom: var(--space-2);
+    width: auto;
+  }
+}
+
+@keyframes pl-toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+}
