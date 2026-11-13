@@ -1,0 +1,101 @@
+import { act, cleanup, render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { Button } from "./Button.tsx";
+import { clearToasts, Toaster, useToast } from "./Toast.tsx";
+
+afterEach(() => {
+  act(() => clearToasts());
+  cleanup();
+  vi.useRealTimers();
+});
+
+function Raise() {
+  const toast = useToast();
+  return (
+    <>
+      <Button onClick={() => toast.success("Link copied")}>Copy</Button>
+      <Button onClick={() => toast.error("Could not save", "Version 8 was published first.")}>
+        Save
+      </Button>
+      <Button onClick={() => toast.toast({ title: "Pinned", duration: 0 })}>Pin</Button>
+    </>
+  );
+}
+
+describe("Toast", () => {
+  it("announces in a polite live region that exists before any toast", async () => {
+    const user = userEvent.setup();
+    render(
+      <>
+        <Toaster />
+        <Raise />
+      </>,
+    );
+    const status = screen.getByRole("status");
+    expect(status.getAttribute("aria-live")).toBe("polite");
+    expect(status.textContent).toBe("");
+    await user.click(screen.getByRole("button", { name: "Copy" }));
+    expect(status.textContent).toContain("Link copied");
+  });
+
+  it("puts errors in the assertive region", async () => {
+    const user = userEvent.setup();
+    render(
+      <>
+        <Toaster />
+        <Raise />
+      </>,
+    );
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    const alert = screen.getByRole("alert");
+    expect(alert.textContent).toContain("Could not save");
+    expect(alert.textContent).toContain("Version 8 was published first.");
+  });
+
+  it("dismisses on its button", async () => {
+    const user = userEvent.setup();
+    render(
+      <>
+        <Toaster />
+        <Raise />
+      </>,
+    );
+    await user.click(screen.getByRole("button", { name: "Pin" }));
+    await user.click(screen.getByRole("button", { name: "Dismiss: Pinned" }));
+    expect(screen.getByRole("status").textContent).toBe("");
+  });
+
+  it("hides by itself after its duration", () => {
+    vi.useFakeTimers();
+    render(
+      <>
+        <Toaster />
+        <Raise />
+      </>,
+    );
+    act(() => screen.getByRole("button", { name: "Copy" }).click());
+    expect(screen.getByRole("status").textContent).toContain("Link copied");
+    act(() => {
+      vi.advanceTimersByTime(4800);
+    });
+    expect(screen.getByRole("status").textContent).toContain("Link copied");
+    act(() => {
+      vi.advanceTimersByTime(400);
+    });
+    expect(screen.getByRole("status").textContent).toBe("");
+  });
+
+  it("renders once even when two toasters are mounted", async () => {
+    const user = userEvent.setup();
+    render(
+      <>
+        <Toaster />
+        <Toaster />
+        <Raise />
+      </>,
+    );
+    await user.click(screen.getByRole("button", { name: "Copy" }));
+    expect(screen.getAllByText("Link copied")).toHaveLength(1);
+  });
+});

@@ -1,0 +1,19 @@
+.pl-spinner {
+  display: block;
+  animation: pl-spin 800ms linear infinite;
+}
+.pl-spinner-wrap {
+  display: inline-flex;
+  color: var(--color-ink-muted);
+}
+@keyframes pl-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  /* A slow turn still says "working" without fast motion. */
+  .pl-spinner {
+    animation-duration: 2400ms;
+  }
+}

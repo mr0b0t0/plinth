@@ -1,0 +1,101 @@
+.pl-dialog-root {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-dialog);
+  display: grid;
+  place-items: center;
+  padding: var(--space-4);
+  overflow-y: auto;
+}
+.pl-dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  background: var(--color-overlay);
+  animation: pl-fade-in var(--duration-normal) var(--ease-out);
+}
+.pl-dialog {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  width: 100%;
+  max-height: calc(100vh - var(--space-8));
+  padding: var(--space-6);
+  border: var(--border-width) solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface-raised);
+  color: var(--color-ink);
+  box-shadow: var(--shadow-lg);
+  animation: pl-dialog-in var(--duration-slow) var(--ease-out);
+}
+.pl-dialog:focus {
+  outline: none;
+}
+.pl-dialog--sm {
+  max-width: 26rem;
+}
+.pl-dialog--md {
+  max-width: 34rem;
+}
+.pl-dialog--lg {
+  max-width: 48rem;
+}
+.pl-dialog__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+.pl-dialog__title {
+  font-size: var(--text-2xl);
+  line-height: var(--leading-tight);
+}
+.pl-dialog__close {
+  margin: calc(var(--space-1) * -1) calc(var(--space-2) * -1) 0 0;
+}
+.pl-dialog__description {
+  color: var(--color-ink-muted);
+  margin-top: calc(var(--space-2) * -1);
+}
+.pl-dialog__body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  min-height: 0;
+  overflow-y: auto;
+  /* room for focus rings on the first and last fields */
+  margin: calc(var(--space-1) * -1);
+  padding: var(--space-1);
+}
+.pl-dialog__footer {
+  display: flex;
+  flex-wrap: wrap-reverse;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  padding-top: var(--space-2);
+}
+
+@media (max-width: 30rem) {
+  .pl-dialog-root {
+    align-items: end;
+    padding: var(--space-2);
+  }
+  .pl-dialog {
+    padding: var(--space-5);
+  }
+  .pl-dialog__footer > * {
+    flex: 1 1 auto;
+  }
+}
+
+@keyframes pl-fade-in {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes pl-dialog-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.99);
+  }
+}

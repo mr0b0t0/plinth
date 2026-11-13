@@ -1,0 +1,189 @@
+.pl-skip-link {
+  position: fixed;
+  top: var(--space-2);
+  left: var(--space-2);
+  z-index: var(--z-tooltip);
+  padding: var(--space-2) var(--space-4);
+  border-radius: var(--radius-md);
+  background: var(--color-accent);
+  color: var(--color-on-accent);
+  font-weight: var(--weight-medium);
+  text-decoration: none;
+}
+/* Hidden until it receives focus (the first Tab on every page). */
+.pl-skip-link:not(:focus) {
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.pl-shell {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+}
+
+/* Top bar: on the wall, quiet. A single hairline separates it from the room. */
+.pl-topbar {
+  position: sticky;
+  top: 0;
+  z-index: var(--z-sticky);
+  background: var(--color-wall);
+  border-bottom: var(--border-width) solid var(--color-border);
+}
+.pl-topbar__inner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  column-gap: var(--space-8);
+  width: 100%;
+  max-width: calc(var(--content-max) + var(--gutter) * 2);
+  min-height: var(--topbar-height);
+  margin-inline: auto;
+  padding-inline: var(--gutter);
+}
+.pl-shell--full .pl-topbar__inner {
+  max-width: none;
+}
+.pl-topbar__brand {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--control-md);
+  color: var(--color-ink);
+  text-decoration: none;
+  border-radius: var(--radius-sm);
+}
+.pl-topbar__brand:hover {
+  text-decoration: none;
+}
+.pl-topbar__word {
+  font-family: var(--font-display);
+  font-size: var(--text-xl);
+  line-height: 1;
+  letter-spacing: var(--tracking-tight);
+  padding-top: 0.08em;
+}
+
+.pl-topbar__nav ul {
+  display: flex;
+  gap: var(--space-6);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.pl-topbar__link {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--topbar-height);
+  color: var(--color-ink-muted);
+  font-weight: var(--weight-medium);
+  text-decoration: none;
+}
+.pl-topbar__link:hover {
+  color: var(--color-ink);
+  text-decoration: none;
+}
+.pl-topbar__link[aria-current="page"] {
+  color: var(--color-ink);
+}
+/* The active page sits on a short verdigris base, echoing the mark. */
+.pl-topbar__link[aria-current="page"]::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(var(--border-width) * -1);
+  height: var(--border-width-strong);
+  background: var(--color-accent);
+}
+.pl-topbar__link:focus-visible {
+  outline-offset: calc(var(--focus-ring-width) * -1 - 6px);
+  border-radius: var(--radius-sm);
+}
+
+.pl-topbar__end {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-left: auto;
+}
+.pl-topbar__email {
+  max-width: 14rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: var(--text-sm);
+}
+.pl-topbar__email--static {
+  color: var(--color-ink-muted);
+}
+.pl-topbar__menu-caption {
+  display: block;
+  font-size: var(--text-xs);
+}
+.pl-topbar__menu-email {
+  display: block;
+  color: var(--color-ink);
+  font-weight: var(--weight-medium);
+}
+
+.pl-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  padding-bottom: var(--space-16);
+}
+.pl-main:focus {
+  outline: none;
+}
+.pl-main--full {
+  padding-bottom: 0;
+}
+.pl-main--public {
+  padding-top: var(--space-12);
+}
+.pl-main--centered {
+  justify-content: center;
+  padding-top: var(--space-8);
+}
+
+.pl-footer {
+  padding-block: var(--space-6);
+  border-top: var(--border-width) solid var(--color-border);
+  font-size: var(--text-sm);
+}
+.pl-footer__nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-6);
+}
+.pl-footer__nav a {
+  color: var(--color-ink-muted);
+  text-decoration: none;
+}
+.pl-footer__nav a:hover {
+  color: var(--color-ink);
+  text-decoration: underline;
+}
+
+/* Narrow screens: nav drops to its own row under the brand; the email collapses to an icon. */
+@media (max-width: 40rem) {
+  .pl-topbar__inner {
+    column-gap: var(--space-4);
+  }
+  .pl-topbar__nav {
+    order: 3;
+    width: 100%;
+  }
+  .pl-topbar__link {
+    min-height: var(--control-lg);
+  }
+  .pl-menu .pl-topbar__email,
+  .pl-topbar__caret {
+    display: none;
+  }
+}
