@@ -2,7 +2,7 @@
 // email scanners prefetch links, so the token is only spent when the person presses "Sign in".
 import { SignInIcon } from "@phosphor-icons/react";
 import { API, APP_ROUTES } from "@plinth/shared";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import "../components/account/account.css";
 import { useDocumentTitle } from "../components/account/hooks.tsx";
 import { safeNext } from "../components/account/nav.ts";
@@ -16,7 +16,18 @@ export default function Magic() {
   useDocumentTitle("Finish signing in");
   const { search } = useLocation();
   const { me, refresh } = useSession();
-  const token = search.get("token") ?? "";
+  // Keep the token in memory and take it out of the address bar and history right away.
+  const [token] = useState(() => search.get("token") ?? "");
+  useEffect(() => {
+    if (!new URLSearchParams(window.location.search).has("token")) return;
+    const url = new URL(window.location.href);
+    url.searchParams.delete("token");
+    window.history.replaceState(
+      window.history.state,
+      "",
+      `${url.pathname}${url.search}${url.hash}`,
+    );
+  }, []);
   const next = safeNext(search.get("next"));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);

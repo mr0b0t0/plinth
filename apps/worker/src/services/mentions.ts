@@ -1,8 +1,8 @@
 // Mention queue (pull mode). The MCP tools list_mentions, claim_mention and reply_comment and their
 // REST mirrors call these. Comment and artifact text is untrusted: a mention is a collaborator's
 // request, not an instruction with the owner's authority.
-import type { CommentInfo, MentionState, MentionTaskInfo } from "@plinth/shared";
-import { and, asc, eq, inArray, isNull, or, type SQL, sql } from "drizzle-orm";
+import { type CommentInfo, type MentionState, type MentionTaskInfo, TTL } from "@plinth/shared";
+import { and, asc, eq, inArray, isNull, lt, or, type SQL, sql } from "drizzle-orm";
 import { agentConnections, artifacts, comments, mentionTasks, users } from "../db/schema.ts";
 import { ApiError, notFound, unauthorized } from "../lib/errors.ts";
 import { nowIso } from "../lib/time.ts";
@@ -111,7 +111,19 @@ export async function claimMention(ctx: Ctx, taskId: string): Promise<MentionTas
   const won = await ctx.db
     .update(mentionTasks)
     .set({ state: "claimed", claimedBy: p.connectionId, claimedAt: nowIso() })
-    .where(and(eq(mentionTasks.id, taskId), eq(mentionTasks.state, "pending")))
+    .where(
+      and(
+        eq(mentionTasks.id, taskId),
+        // Pending, or claimed long ago by an agent that never finished (it may have crashed).
+        or(
+          eq(mentionTasks.state, "pending"),
+          and(
+            eq(mentionTasks.state, "claimed"),
+            lt(mentionTasks.claimedAt, new Date(Date.now() - TTL.mentionClaimMs).toISOString()),
+          ),
+        ),
+      ),
+    )
     .returning({ id: mentionTasks.id })
     .get();
   if (!won) {

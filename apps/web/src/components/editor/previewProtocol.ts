@@ -17,9 +17,10 @@ export const PREVIEW_PATH = `${CONTENT_RESERVED_PREFIX}preview`;
 /** Same cap as a published version's HTML. The loader refuses anything larger. */
 export const MAX_PREVIEW_BYTES = LIMITS.maxHtmlBytes;
 
-/** Sandbox for every artifact frame (DECISIONS.md): never allow-top-navigation. */
-export const ARTIFACT_FRAME_SANDBOX =
-  "allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox allow-modals allow-downloads";
+import { ARTIFACT_IFRAME_SANDBOX } from "@plinth/shared";
+
+/** The one sandbox every artifact frame uses (shared constant; never allow-top-navigation). */
+export const ARTIFACT_FRAME_SANDBOX = ARTIFACT_IFRAME_SANDBOX;
 
 export interface RenderMessage {
   source: typeof PREVIEW_SOURCE;

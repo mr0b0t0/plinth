@@ -886,6 +886,8 @@ describe("Secrets never appear in logs, URLs (other than the one-time viewer tok
     const sources = [...html.matchAll(/(?:src|href)="(\/[^"]+\.(?:js|css))"/g)].map(
       (m) => m[1] ?? "",
     );
+    // The Workers test pool does not serve the static assets binding, so this can only check what
+    // is served; scripts/check-bundle-secrets.mjs (run in CI after the build) scans every built file.
     const c = config();
     const bodies = [html];
     for (const src of sources) bodies.push(await (await call(src)).text());

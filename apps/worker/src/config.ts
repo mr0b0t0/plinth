@@ -28,6 +28,8 @@ export interface Config {
   emailFrom: string;
   maxArtifactsPerUser: number;
   maxPublishesPerHour: number;
+  /** Stored bytes per account (all versions of non-deleted artifacts it owns). */
+  maxStorageBytesPerUser: number;
   cdnAllowlist: string[];
   singleUserMode: boolean;
   /** Admin's email in single-user mode; also gets the admin takedown page on any instance. */
@@ -121,6 +123,7 @@ export function parseConfig(env: Record<string, unknown>): Config {
     emailFrom: str(env.EMAIL_FROM) || `Plinth <noreply@${appHost.replace(/:\d+$/, "")}>`,
     maxArtifactsPerUser: int(env.MAX_ARTIFACTS_PER_USER, DEFAULTS.maxArtifactsPerUser),
     maxPublishesPerHour: int(env.MAX_PUBLISHES_PER_HOUR, DEFAULTS.maxPublishesPerHour),
+    maxStorageBytesPerUser: int(env.MAX_STORAGE_BYTES_PER_USER, DEFAULTS.maxStorageBytesPerUser),
     cdnAllowlist,
     singleUserMode: bool(env.SINGLE_USER_MODE),
     adminEmails: list(env.ADMIN_EMAIL),

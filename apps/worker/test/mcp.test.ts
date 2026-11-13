@@ -39,7 +39,7 @@ describe("MCP endpoint", () => {
         "update_artifact",
       ].sort(),
     );
-    for (const name of ["get_artifact", "list_mentions", "claim_mention", "reply_comment"]) {
+    for (const name of names) {
       expect(tools.find((t) => t.name === name)?.description).toMatch(/untrusted/i);
     }
   });
@@ -119,5 +119,38 @@ describe("MCP endpoint", () => {
     const r = await tool(c, "publish_artifact", { title: "x", html: "<p>x</p>" });
     expect(r.isError).toBe(true);
     expect(r.data.error.code).toBe("forbidden");
+  });
+});
+
+describe("MCP failures on every tool", () => {
+  it("each tool refuses another user's artifact or task", async () => {
+    const a = await agent();
+    const b = await agent();
+    const ca = await mcpClient(a.token);
+    const cb = await mcpClient(b.token);
+    const pub = await tool(ca, "publish_artifact", {
+      title: "Private",
+      html: "<p>x</p>",
+      visibility: "allowlist",
+    });
+    const id = pub.data.id as string;
+    const attempts: [string, Record<string, unknown>][] = [
+      ["update_artifact", { id, html: "<p>y</p>" }],
+      ["get_artifact", { id }],
+      ["list_versions", { id }],
+      ["restore_version", { id, version: 1 }],
+      ["set_visibility", { id, visibility: "unlisted" }],
+      ["claim_mention", { task_id: "nonexistenttask00001" }],
+      ["reply_comment", { comment_id: "nonexistentcomment01", body: "hi" }],
+    ];
+    for (const [name, args] of attempts) {
+      const r = await tool(cb, name, args);
+      expect(r.isError, name).toBe(true);
+      expect(["not_found", "forbidden"], name).toContain(r.data.error.code);
+    }
+    const list = await tool(cb, "list_artifacts", {});
+    expect(list.data.items).toHaveLength(0);
+    const mentions = await tool(cb, "list_mentions", {});
+    expect(mentions.data.items).toHaveLength(0);
   });
 });

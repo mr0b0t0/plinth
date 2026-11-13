@@ -21,6 +21,16 @@ Aconite Software & Investments, Lda.
 
 Works with Claude and Codex. Plinth is not made by or affiliated with Anthropic or OpenAI.
 
+## Deploy
+
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/mr0b0t0/plinth/tree/main/apps/worker)
+
+The button forks the repository and deploys the Worker to your Cloudflare account. You still need
+a content domain, the wildcard route and the secrets: follow
+[docs/deploy-checklist.md](docs/deploy-checklist.md), or use `node scripts/setup.mjs --remote`
+([docs/self-hosting.md](docs/self-hosting.md)). The button has not been tried against this
+repository yet.
+
 ## Quick start (local)
 
 Requires Node 22.12+ and pnpm 10. pnpm runs Node 24.22.2 for this repo (`.npmrc`).

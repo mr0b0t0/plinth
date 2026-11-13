@@ -70,6 +70,8 @@ export const TTL = {
   /** App-host cookie proving a viewer entered an artifact's password. */
   passwordPassS: 12 * 60 * 60,
   oauthCodeMs: 10 * 60 * 1000,
+  /** A claimed mention task nobody completed becomes claimable again after this. */
+  mentionClaimMs: 30 * 60 * 1000,
   oauthAccessTokenS: 60 * 60,
   oauthRefreshTokenS: 90 * 24 * 60 * 60,
 } as const;
@@ -87,6 +89,8 @@ export const RATE_LIMITS = {
 export const DEFAULTS = {
   maxArtifactsPerUser: 100,
   maxPublishesPerHour: 60,
+  /** Stored bytes per account across all versions of live artifacts (1 GiB). */
+  maxStorageBytesPerUser: 1024 * 1024 * 1024,
   publicMinAccountAgeHours: 72,
   cdnAllowlist: [
     "cdnjs.cloudflare.com",
@@ -121,3 +125,11 @@ export const REVIEW_MODE_PARAM = "plinth-review";
 
 /** postMessage protocol between the app and the bridge script injected in review mode. */
 export const BRIDGE_MESSAGE_SOURCE = "plinth-bridge";
+
+/**
+ * The sandbox every artifact iframe uses. The frame's origin is the artifact's own content
+ * subdomain, so allow-same-origin gives it that origin, never the app's (see DECISIONS.md).
+ * Never add allow-top-navigation or allow-top-navigation-by-user-activation.
+ */
+export const ARTIFACT_IFRAME_SANDBOX =
+  "allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox allow-modals allow-downloads";

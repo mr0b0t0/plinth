@@ -6,10 +6,34 @@ You are building **Plinth**, an open-source (MIT), multi-user platform where AI 
 
 - Work autonomously. Do not stop to ask questions. When something is ambiguous, choose the simplest option consistent with this document and record it in `DECISIONS.md`.
 - Before using any library or platform API, check its current documentation. Do not rely on memory for Cloudflare Workers, D1, R2, the MCP TypeScript SDK, OAuth libraries, SendGrid or Resend. Pin versions.
-- Build in the milestone order given under "Build order". After each milestone, run typecheck, lint and the full test suite, fix failures, then commit with a clear message.
-- You have no Cloudflare, DNS or email credentials. Everything must run and pass locally (`wrangler dev` with local D1 and R2). Do not attempt a real deploy. Write the deploy steps for a human instead.
+- "Build order" gives the dependency order. Step 1 comes first and step 10 last; the steps between may run in parallel as described under "Working in parallel". After each step or merged workstream, run typecheck, lint and the full test suite, fix failures, then commit with a clear message.
+- Build and test locally first (`wrangler dev` with local D1 and R2). Everything through build step 9 must run and pass with no cloud access.
+- The official Cloudflare plugin is authorized in this session. Use it only in build step 10, the staging deploy, and only within the limits written there. You have no email provider credentials, so staging uses whatever email secrets are already present, or the `console` provider if none are.
 - Never weaken a security requirement to make a test pass. Never skip, delete or mark tests as expected-fail to get green.
 - Do not claim something works unless you ran it. The final report must separate "verified by running" from "written but not verified".
+
+## Working in parallel
+
+You are the orchestrator. Use subagents (or whatever parallel task mechanism your environment offers) to shorten the run, and keep integration and final verification for yourself. If no such mechanism exists, follow the build order alone.
+
+- **Foundation first, alone.** Do build step 1 yourself, and before fanning out also write and commit the contracts every workstream depends on: the full D1 schema and migrations, shared types and validation schemas in `packages/shared`, the authorization policy module's interface, the REST and MCP tool signatures, the route map by host, and the design tokens. Parallel work starts only once these are committed and tests pass.
+- **Then fan out along boundaries that do not share files.** Suggested workstreams after the foundation:
+  1. Accounts, magic links and the email adapter.
+  2. OAuth for MCP, personal tokens and the connections page.
+  3. Content host serving, viewer token exchange, CSP and the security tests.
+  4. Design system, component set and the `/design` route.
+  5. Dashboard, sharing settings and roles (after 1 and 4 land).
+  6. Version history, diff and restore.
+  7. Comments, anchors and the mention queue.
+  8. Editor with conflict handling.
+  9. Playwright harness and end-to-end flows, written against the contracts and filled in as features land.
+  10. Docs, setup script, seed script and CI workflow.
+- **Isolation.** Each subagent works in its own git worktree or branch and touches only the paths it was given. Schema, shared types and the policy module change only through you: a subagent that needs a change asks for it, you make it once, and everyone rebases.
+- **Briefing.** Give each subagent the relevant sections of this document word for word, the committed contracts, its file boundaries, and its acceptance tests. Subagents start with no context, so do not summarize requirements from memory.
+- **Done means tested.** A subagent reports back only with typecheck, lint and its own tests passing, plus a list of what it ran. Do not accept "implemented" without results.
+- **Integrate in small steps.** Merge one workstream at a time, run the full suite after each merge, and fix breakage before merging the next. Do not merge everything at the end.
+- **Independent review.** Before step 10, start fresh subagents that did not write the code: one audits every bullet in "Security requirements" against the running Worker, one checks `REQUIREMENTS.md` line by line against the code, one reviews the UI in both modes and at mobile width. Fix what they find, then rerun all quality gates yourself.
+- **Never parallel.** Migrations, dependency upgrades, the staging deploy and the final verification run through you, one at a time.
 
 ## Stack
 
@@ -116,6 +140,12 @@ Design an original interface for Plinth. Do not copy the layout, colors, typefac
 7. Design polish across both modes, `/design` route, accessibility pass.
 8. Hosted-instance flags, report and takedown, policy page templates.
 9. Open-source packaging: README, setup script, deploy guide, license, contribution guide.
+10. Staging deploy, only after every quality gate passes locally. Limits:
+    - Create new resources only, all prefixed `plinth-staging`: one Worker, one D1 database, one R2 bucket. Check what the Cloudflare plugin exposes before using it.
+    - Deploy to the account's `workers.dev` address. Do not create, change or delete any DNS record, zone setting, route on an existing domain, or any resource you did not create in this step. Do not touch anything under `aconite.io`.
+    - Do not deploy to production. If a step would need a custom domain or DNS, stop there and add it to `docs/deploy-checklist.md` for a human.
+    - Apply migrations to the staging D1 database, set secrets, then run the staging smoke test described under "Testing and verification".
+    - Record every resource you created, with its name and id, in `docs/staging.md`, along with the command to delete each one.
 
 ## Testing and verification
 
@@ -124,6 +154,7 @@ Design an original interface for Plinth. Do not copy the layout, colors, typefac
 - **Security.** One test per bullet in "Security requirements", asserting on real responses from the running Worker.
 - **End to end (Playwright).** Sign in through the console email provider. Publish through MCP, then open the share link as an anonymous viewer for each visibility. Allowlisted viewer confirms by code; a non-listed email is refused. Comment with a mention, complete it through MCP tools, see the new version and reply. Edit, save, hit a conflict. Restore a version. Theme toggle persists. Run the main flows in both modes and at mobile width.
 - **Quality gates.** `pnpm typecheck`, `pnpm lint`, `pnpm test`, `pnpm test:e2e` and `pnpm build` all pass. Automated accessibility checks (axe) pass on the dashboard, artifact page, editor and login in both modes. A GitHub Actions workflow runs all of it.
+- **Staging smoke test.** Against the live staging URL: health check, sign-in (if an email provider is configured), OAuth discovery metadata reachable, publish and update through `/mcp` with a personal token using the official MCP client, fetch the artifact as an anonymous viewer, and confirm the security headers on the artifact response. `workers.dev` has no wildcard subdomains, so staging may serve content from a single content host or a path-based fallback that is enabled only by an explicit `STAGING_CONTENT_FALLBACK` flag and refused in production mode. State clearly in the report that per-artifact subdomain isolation was verified locally only.
 - **Self-review.** Before finishing, reread this document section by section and tick each requirement against the code in `REQUIREMENTS.md`, linking to the file or test that satisfies it. Fix anything missing rather than noting it.
 
 ## Deliverables
@@ -139,4 +170,4 @@ Design so these can be added later, but do not build them: push-mode agents that
 
 ## Final report
 
-End with a short report: what was built, the exact commands you ran and their results, test counts, anything written but not verified, every entry in `DECISIONS.md` that a human should review, and the remaining human steps to go live.
+End with a short report: what was built, the staging URL and the list of cloud resources created, the exact commands you ran and their results, test counts, anything written but not verified, every entry in `DECISIONS.md` that a human should review, and the remaining human steps to go live.

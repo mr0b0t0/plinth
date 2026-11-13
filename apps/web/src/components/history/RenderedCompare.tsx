@@ -1,14 +1,14 @@
 // Side-by-side rendered comparison: each version in its own sandboxed frame on the artifact's
 // content subdomain, loaded through a fresh viewer gate (each enter_url works once).
 import type { ViewGate } from "@plinth/shared";
+import { ARTIFACT_IFRAME_SANDBOX } from "@plinth/shared";
 import { useEffect, useId, useState } from "react";
 import { ButtonLink, Skeleton } from "../ui/index.ts";
 import { fetchGate } from "./data.ts";
 import { artifactPath } from "./format.ts";
 
-/** The sandbox every artifact frame uses (see DECISIONS.md). Never allow-top-navigation. */
-export const ARTIFACT_SANDBOX =
-  "allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox allow-modals allow-downloads";
+/** The one sandbox every artifact frame uses (shared constant; never allow-top-navigation). */
+export const ARTIFACT_SANDBOX = ARTIFACT_IFRAME_SANDBOX;
 
 export function RenderedCompare({
   slug,

@@ -254,6 +254,7 @@ export async function createVersion(
   const actor = requireActor(ctx);
   const size = checkTotal(files);
   const manifest = JSON.stringify(manifestOf(files));
+  await enforceStorage(ctx, artifact.ownerId, size);
   for (let attempt = 0; attempt < 5; attempt++) {
     const fresh = await ctx.db.select().from(artifacts).where(eq(artifacts.id, artifact.id)).get();
     if (!fresh || fresh.deletedAt) throw notFound();
@@ -329,13 +330,35 @@ export async function createVersion(
       }
     }
     if (!advanced) {
+      // Delete the files before the row: once the row is gone another writer may take this
+      // number (and prefix), and a late delete would remove its files.
+      await deletePrefix(ctx.env.FILES, prefix).catch(() => undefined);
       await ctx.db.delete(versions).where(eq(versions.id, id)).run();
-      ctx.waitUntil(deletePrefix(ctx.env.FILES, prefix));
       throw lastError;
     }
     return n;
   }
   throw new ApiError("conflict", "Too many concurrent updates, try again");
+}
+
+/** Per-account storage cap: every version of every live artifact the owner has. */
+async function enforceStorage(ctx: Ctx, ownerId: string, adding: number): Promise<void> {
+  const limit = ctx.config.maxStorageBytesPerUser;
+  const row = await ctx.env.DB.prepare(
+    `SELECT coalesce(sum(v.size_bytes), 0) AS used FROM versions v
+       JOIN artifacts a ON a.id = v.artifact_id
+      WHERE a.owner_id = ?1 AND a.deleted_at IS NULL`,
+  )
+    .bind(ownerId)
+    .first<{ used: number }>();
+  const used = row?.used ?? 0;
+  if (used + adding > limit) {
+    throw new ApiError(
+      "quota_exceeded",
+      `Storage limit reached (${Math.round(limit / 1024 / 1024)} MB). Delete artifacts to free space.`,
+      { limit_bytes: limit, used_bytes: used },
+    );
+  }
 }
 
 async function getVersionRow(ctx: Ctx, artifactId: string, n: number): Promise<VersionRow | null> {
@@ -444,7 +467,18 @@ export async function publishArtifact(ctx: Ctx, input: PublishInput): Promise<Pu
     deletedAt: null,
     takenDownAt: null,
   };
-  await ctx.db.insert(artifacts).values(row).run();
+  // Insert only while the owner is under the limit, so parallel publishes cannot overshoot it.
+  const inserted = await ctx.env.DB.prepare(
+    `INSERT INTO artifacts (id, owner_id, slug, title, current_version, visibility, password_hash,
+       access_epoch, created_at, updated_at)
+     SELECT ?1, ?2, ?3, ?4, 0, ?5, ?6, 1, ?7, ?7
+      WHERE (SELECT count(*) FROM artifacts WHERE owner_id = ?2 AND deleted_at IS NULL) < ?8`,
+  )
+    .bind(row.id, row.ownerId, row.slug, row.title, row.visibility, row.passwordHash, now, limit)
+    .run();
+  if ((inserted.meta.changes ?? 0) !== 1) {
+    throw new ApiError("quota_exceeded", `Artifact limit reached (${limit}).`, { limit });
+  }
   try {
     await createVersion(ctx, row, files, { baseVersion: 0 });
   } catch (e) {

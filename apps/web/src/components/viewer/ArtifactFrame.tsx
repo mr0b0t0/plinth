@@ -1,11 +1,12 @@
 // The exhibit: an artifact in a sandboxed iframe on its own content subdomain. The sandbox keeps
 // `allow-same-origin` so the artifact has its *own* origin and storage (a different site from the
 // app, see DECISIONS.md); it never gets `allow-top-navigation*`, so it cannot move the app page.
+
+import { ARTIFACT_IFRAME_SANDBOX } from "@plinth/shared";
 import type { Ref } from "react";
 
-/** The one sandbox every artifact frame uses. Never add allow-top-navigation*. */
-export const ARTIFACT_SANDBOX =
-  "allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox allow-modals allow-downloads";
+/** The one sandbox every artifact frame uses (shared constant; never allow-top-navigation). */
+export const ARTIFACT_SANDBOX = ARTIFACT_IFRAME_SANDBOX;
 
 export interface ArtifactFrameProps {
   /** A one-time enter URL from the gate (it trades the token for a cookie, then redirects). */

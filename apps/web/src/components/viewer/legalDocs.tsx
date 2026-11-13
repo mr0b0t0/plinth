@@ -31,7 +31,10 @@ export function Field({ children }: { children: ReactNode }) {
   );
 }
 
-const OPERATOR = <Field>Operator: Aconite Software &amp; Investments, Lda.</Field>;
+// Every instance names its own operator; the hosted instance at plinth.aconite.io is run by Aconite.
+const OPERATOR = (
+  <Field>operator name (on plinth.aconite.io: Aconite Software &amp; Investments, Lda.)</Field>
+);
 const ADDRESS = <Field>registered address</Field>;
 const REG = <Field>company registration number</Field>;
 const ABUSE = <Field>abuse and takedown email address</Field>;

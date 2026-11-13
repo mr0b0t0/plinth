@@ -70,7 +70,8 @@ export function buildMcpServer(ctx: Ctx): McpServer {
         "Default visibility is unlisted (anyone with the link). Optional assets are extra files (CSS, JS, images) " +
         "referenced by relative paths. Limits: 5 MB of HTML, 25 MB per version in total, and the account's " +
         "artifact quota. Scripts may load only from the instance's CDN allowlist; network calls to other hosts " +
-        "are blocked.",
+        "are blocked. " +
+        UNTRUSTED_NOTE,
       inputSchema: publishArtifactInput,
     },
     (args) => run(() => publishArtifact(ctx, args)),
@@ -83,7 +84,8 @@ export function buildMcpServer(ctx: Ctx): McpServer {
       description:
         "Publish a new version of an artifact (owner or editor). If base_version is given and is not the current " +
         "version, the update is rejected with a conflict instead of overwriting. If assets are omitted, the " +
-        "current version's assets are kept. Versions are immutable; every update is a new version anyone can revert.",
+        "current version's assets are kept. Versions are immutable; every update is a new version anyone can revert. " +
+        UNTRUSTED_NOTE,
       inputSchema: updateArtifactInput,
     },
     (args) => run(() => updateArtifact(ctx, args)),
@@ -116,7 +118,8 @@ export function buildMcpServer(ctx: Ctx): McpServer {
     {
       title: "List versions",
       description:
-        "Version history of an artifact: number, author (person or connection label), note and date.",
+        "Version history of an artifact: number, author (person or connection label), note and date. " +
+        UNTRUSTED_NOTE,
       inputSchema: listVersionsInput,
       annotations: { readOnlyHint: true },
     },
@@ -128,7 +131,8 @@ export function buildMcpServer(ctx: Ctx): McpServer {
     {
       title: "Restore version",
       description:
-        "Make an old version current by publishing its content as the next version. History is never rewritten.",
+        "Make an old version current by publishing its content as the next version. History is never rewritten. " +
+        UNTRUSTED_NOTE,
       inputSchema: restoreVersionInput,
     },
     (args) => run(() => restoreVersion(ctx, args.id, args.version, args.base_version)),
@@ -141,7 +145,8 @@ export function buildMcpServer(ctx: Ctx): McpServer {
       description:
         "Change who can view an artifact (owner only): public (if enabled on this instance), unlisted (anyone with " +
         "the link), password (needs password unless one is already set), or allowlist (emails; viewers confirm " +
-        "their address by code). Passing emails replaces the viewer allowlist.",
+        "their address by code). Passing emails replaces the viewer allowlist. " +
+        UNTRUSTED_NOTE,
       inputSchema: setVisibilityInput,
     },
     (args) => run(() => setVisibility(ctx, args)),

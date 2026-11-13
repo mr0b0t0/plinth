@@ -59,7 +59,8 @@ async function meResponse(c: AppContext) {
     created_at: user.createdAt,
     artifact_limit: artifactLimitFor(c.get("config"), user),
     artifact_count: count?.n ?? 0,
-    is_admin: user.isAdmin,
+    // Admin follows the current ADMIN_EMAIL, like every policy check.
+    is_admin: c.get("config").adminEmails.includes(user.email),
   };
   return c.json(me);
 }

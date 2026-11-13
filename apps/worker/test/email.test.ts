@@ -166,3 +166,25 @@ describe("email adapters", () => {
     expect(m.text).toContain("123456");
   });
 });
+
+describe("the configured provider reaches the network through the default fetch", () => {
+  it("createEmailAdapter(sendgrid).send() calls the global fetch with the SendGrid endpoint", async () => {
+    const spy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(new Response(null, { status: 202 }));
+    const adapter = createEmailAdapter(
+      {
+        ...config(),
+        emailProvider: "sendgrid",
+        sendgridApiKey: "SG.wired",
+        emailFrom: "Plinth <a@b.example>",
+      },
+      env,
+    );
+    await adapter.send({ to: "x@example.com", subject: "s", text: "t" });
+    expect(spy).toHaveBeenCalledTimes(1);
+    const [url, init] = spy.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("https://api.sendgrid.com/v3/mail/send");
+    expect((init.headers as Record<string, string>).Authorization).toBe("Bearer SG.wired");
+  });
+});

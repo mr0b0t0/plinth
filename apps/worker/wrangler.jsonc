@@ -1,4 +1,4 @@
-// Local development config. Staging and self-hosted deploys use the env blocks or a copy written
+// Local development config. Staging and self-hosted deploys use a per-environment copy written
 // by scripts/setup.mjs. Every host, limit and provider is a var; secrets live in .dev.vars locally.
 {
   "$schema": "node_modules/wrangler/config-schema.json",
