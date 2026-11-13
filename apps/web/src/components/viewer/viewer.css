@@ -1,0 +1,266 @@
+/*
+ * The artifact page and its gates. The exhibit is the point: the chrome is one slim bar above it
+ * and one line of small print below it. Tokens only.
+ */
+
+/* ---------- The viewing room ---------- */
+.pl-viewer {
+  display: flex;
+  flex-direction: column;
+  height: 100dvh;
+  background: var(--color-wall);
+}
+
+.pl-viewer__bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: var(--control-lg);
+  padding: var(--space-1) var(--space-4);
+  border-bottom: var(--border-width) solid var(--color-border);
+  background: var(--color-wall);
+}
+.pl-viewer__home {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--control-md);
+  height: var(--control-md);
+  margin-left: calc(var(--space-2) * -1);
+  border-radius: var(--radius-sm);
+  flex-shrink: 0;
+}
+.pl-viewer__heading {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.pl-viewer__title {
+  min-width: 0;
+  overflow: hidden;
+  font-family: var(--font-display);
+  font-size: var(--text-xl);
+  line-height: var(--leading-snug);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  text-wrap: nowrap;
+}
+.pl-viewer__version,
+.pl-viewer__badge {
+  display: inline-flex;
+  flex-shrink: 0;
+  color: var(--color-ink-muted);
+  font-size: var(--text-sm);
+}
+.pl-viewer__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  flex-shrink: 0;
+}
+.pl-viewer__actions > .pl-button--secondary {
+  margin-right: var(--space-1);
+}
+.pl-viewer__actions [aria-pressed="true"] {
+  background: var(--color-accent-soft);
+  color: var(--color-ink);
+}
+.pl-viewer__compact {
+  display: none;
+  flex-shrink: 0;
+}
+
+/* A quiet line when an older version is on view. */
+.pl-viewer__notice {
+  padding: var(--space-2) var(--space-4);
+  border-bottom: var(--border-width) solid var(--color-border);
+  background: var(--color-surface);
+  color: var(--color-ink-muted);
+  font-size: var(--text-sm);
+}
+
+.pl-viewer__stage {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.pl-viewer__room {
+  position: relative;
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.pl-viewer__stage:focus {
+  outline: none;
+}
+.pl-viewer__frame-wrap {
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.pl-viewer__frame-wrap--empty {
+  background: var(--color-surface);
+}
+
+/*
+ * The artifact. It renders on a plain canvas like a browser tab (artifacts that do not set a
+ * background expect one), whatever the app's mode.
+ */
+.pl-viewer-frame {
+  display: block;
+  flex: 1 1 auto;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  color-scheme: light;
+  background: Canvas;
+}
+
+.pl-viewer__panel {
+  display: flex;
+  flex-direction: column;
+  width: min(var(--narrow-max), 40vw);
+  flex-shrink: 0;
+  overflow: auto;
+  border-left: var(--border-width) solid var(--color-border);
+  background: var(--color-surface);
+}
+
+/* The small print: the platform's name and the report link, on every artifact page. */
+.pl-viewer__banner {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-4);
+  border-top: var(--border-width) solid var(--color-border);
+  background: var(--color-wall);
+  color: var(--color-ink-muted);
+  font-size: var(--text-xs);
+  line-height: var(--leading-snug);
+  white-space: nowrap;
+}
+.pl-viewer__banner a {
+  color: var(--color-ink-muted);
+}
+.pl-viewer__banner a:hover {
+  color: var(--color-ink);
+}
+.pl-viewer__legal {
+  display: flex;
+  gap: var(--space-3);
+}
+
+@media (max-width: 52rem) {
+  .pl-viewer__actions {
+    display: none;
+  }
+  .pl-viewer__compact {
+    display: flex;
+  }
+  .pl-viewer__bar {
+    padding-inline: var(--space-3);
+    gap: var(--space-2);
+  }
+  .pl-viewer__heading {
+    gap: var(--space-2);
+  }
+  .pl-viewer__title {
+    font-size: var(--text-lg);
+  }
+  .pl-viewer__badge,
+  .pl-viewer__banner-wide {
+    display: none;
+  }
+  .pl-viewer__notice,
+  .pl-viewer__banner {
+    padding-inline: var(--space-3);
+  }
+  /* Comments become a sheet over the bottom of the artifact. */
+  .pl-viewer__panel {
+    position: fixed;
+    inset: auto 0 0 0;
+    z-index: var(--z-overlay);
+    width: auto;
+    height: 75dvh;
+    max-height: calc(100dvh - var(--control-lg));
+    border-left: 0;
+    border-top: var(--border-width) solid var(--color-border-strong);
+    border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+    box-shadow: var(--shadow-lg);
+  }
+}
+
+/* ---------- Gates: password, email, takedown ---------- */
+.pl-gate {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+.pl-gate__icon {
+  color: var(--color-ink-muted);
+}
+.pl-gate__eyebrow {
+  margin-bottom: calc(var(--space-2) * -1);
+  color: var(--color-ink-muted);
+  font-size: var(--text-sm);
+  letter-spacing: var(--tracking-wide);
+}
+.pl-gate__title {
+  font-size: var(--text-3xl);
+  overflow-wrap: anywhere;
+}
+.pl-gate__lead {
+  color: var(--color-ink-muted);
+  margin-bottom: var(--space-2);
+}
+.pl-gate__sent,
+.pl-gate__signed-in {
+  font-size: var(--text-sm);
+  color: var(--color-ink-muted);
+}
+.pl-gate__signed-in {
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-sunk);
+  color: var(--color-ink);
+}
+.pl-gate__sent strong,
+.pl-gate__signed-in strong {
+  color: var(--color-ink);
+  font-weight: var(--weight-medium);
+  overflow-wrap: anywhere;
+}
+.pl-gate__links {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: var(--space-2) var(--space-4);
+}
+.pl-gate__link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--color-accent-ink);
+  font-size: var(--text-sm);
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.2em;
+  cursor: pointer;
+  border-radius: var(--radius-xs);
+}
+.pl-gate__link:hover {
+  text-decoration-thickness: 2px;
+}
+
+/* /open: a short wait before the browser moves to the artifact's own address. */
+.pl-open {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-4);
+  text-align: center;
+  color: var(--color-ink-muted);
+}

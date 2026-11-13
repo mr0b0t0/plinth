@@ -1,9 +1,71 @@
-// Page: ArtifactPage (workstream: artifact-page). Placeholder until that workstream builds it.
-export default function ArtifactPage(_props: { params: Record<string, string> }) {
+// Page: the artifact itself, at /a/:slug and /a/:slug/v/:n (a permanent link to one version).
+// The gate runs first (password, email, takedown); then the artifact fills the page in a sandboxed
+// iframe on its own content subdomain, under a slim bar that stays out of the way.
+import { APP_ROUTES, route, type ViewGate } from "@plinth/shared";
+import { useEffect, useState } from "react";
+import { PublicShell } from "../components/layout/PublicShell.tsx";
+import { Button, EmptyState } from "../components/ui/index.ts";
+import { GateScreen } from "../components/viewer/GateScreen.tsx";
+import { parseVersion } from "../components/viewer/gate.ts";
+import { useGate } from "../components/viewer/useGate.ts";
+import { ViewerSkeleton, ViewerStage } from "../components/viewer/ViewerStage.tsx";
+import { useLocation } from "../lib/router.tsx";
+
+export default function ArtifactPage({ params }: { params: Record<string, string> }) {
+  const slug = params.slug ?? "";
+  const pinned = params.n !== undefined;
+  const version = parseVersion(params.n);
+  const { search } = useLocation();
+  const [commentsOpen, setCommentsOpen] = useState(() => search.has("comments"));
+  const { state, reload, setGate } = useGate(slug, { version, review: commentsOpen });
+
+  useEffect(() => {
+    if (state.kind === "loading") document.title = "Opening artifact · Plinth";
+    else if (state.kind === "error") document.title = "Could not open artifact · Plinth";
+    else if (state.gate.status === "ok") document.title = `${state.gate.artifact.title} · Plinth`;
+  }, [state]);
+
+  if (pinned && version === undefined) {
+    return (
+      <GateScreen gate={{ status: "not_found" }} artifactRef={slug} query={{}} onGate={setGate} />
+    );
+  }
+  if (state.kind === "loading") return <ViewerSkeleton />;
+  if (state.kind === "error") {
+    return (
+      <PublicShell centered width="reading">
+        <EmptyState
+          headingLevel={1}
+          title="This artifact could not be opened"
+          description={`${state.message} Check your connection and try again.`}
+          action={
+            <Button variant="primary" onClick={reload}>
+              Try again
+            </Button>
+          }
+        />
+      </PublicShell>
+    );
+  }
+  const gate: ViewGate = state.gate;
+  if (gate.status !== "ok") {
+    return (
+      <GateScreen
+        gate={gate}
+        artifactRef={slug}
+        query={{ version, review: commentsOpen }}
+        onGate={setGate}
+      />
+    );
+  }
   return (
-    <main style={{ padding: "var(--space-8)" }}>
-      <h1>ArtifactPage</h1>
-      <p>Not built yet.</p>
-    </main>
+    <ViewerStage
+      gate={gate}
+      slug={slug}
+      pinned={pinned}
+      commentsOpen={commentsOpen}
+      onToggleComments={() => setCommentsOpen((o) => !o)}
+      currentHref={route(APP_ROUTES.artifact, { slug })}
+    />
   );
 }
