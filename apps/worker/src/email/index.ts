@@ -27,13 +27,41 @@ export class EmailSendError extends Error {
   constructor(
     readonly provider: string,
     readonly status: number | null,
+    /** The provider's own error text, redacted (no keys, no addresses) and truncated. */
+    readonly reason: string | null = null,
   ) {
     super(
       status === null
         ? `${provider}: request failed`
-        : `${provider}: provider answered HTTP ${status}`,
+        : `${provider}: provider answered HTTP ${status}${reason ? ` (${reason})` : ""}`,
     );
   }
+}
+
+/**
+ * Pull a human-readable reason out of a provider error body (SendGrid `errors[].message`, Resend
+ * `message`) so operators can see problems like an unverified sender in the logs. Anything that
+ * looks like a key or an email address is removed first.
+ */
+export function providerReason(body: string, apiKey: string): string | null {
+  let text: string;
+  try {
+    const j = JSON.parse(body) as { errors?: { message?: unknown }[]; message?: unknown };
+    const parts = Array.isArray(j.errors) ? j.errors.map((e) => e?.message) : [j.message];
+    text = parts.filter((m): m is string => typeof m === "string").join("; ");
+  } catch {
+    return null;
+  }
+  if (!text) return null;
+  if (apiKey) text = text.split(apiKey).join("[redacted]");
+  text = text
+    .replace(/SG\.[A-Za-z0-9_.-]+/g, "[redacted]")
+    .replace(/\bre_[A-Za-z0-9_]+/g, "[redacted]")
+    .replace(/[^\s@<>"']+@[^\s@<>"']+/g, "[address]")
+    .replace(/https?:\/\/\S+/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  return text.length > 200 ? `${text.slice(0, 200)}…` : text || null;
 }
 
 /** Split `Name <addr@host>` (EMAIL_FROM) into its parts. A bare address has no name. */
@@ -131,9 +159,9 @@ async function post(
     // The underlying error may echo the request; do not pass it on.
     throw new EmailSendError(provider, null);
   }
-  // Drain the body so the connection is released; its content is never surfaced.
-  await res.arrayBuffer().catch(() => undefined);
-  if (!res.ok) throw new EmailSendError(provider, res.status);
+  // Read the body so the connection is released. On failure, only a redacted reason is kept.
+  const text = await res.text().catch(() => "");
+  if (!res.ok) throw new EmailSendError(provider, res.status, providerReason(text, apiKey));
 }
 
 export function createEmailAdapter(config: Config, env: { DB: D1Database }): EmailAdapter {

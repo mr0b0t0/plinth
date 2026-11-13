@@ -6,6 +6,7 @@ import {
   createEmailAdapter,
   EmailSendError,
   parseFrom,
+  providerReason,
   ResendEmailAdapter,
   SendGridEmailAdapter,
 } from "../src/email/index.ts";
@@ -86,7 +87,7 @@ describe("email adapters", () => {
     });
   });
 
-  it("provider errors carry the status only, never the key or the provider's body", async () => {
+  it("provider errors carry the status and a redacted reason, never the key", async () => {
     const key = "SG.do-not-leak-this";
     stubFetch(401, `{"errors":[{"message":"bad key ${key}"}]}`);
     const log = vi.spyOn(console, "log");
@@ -96,6 +97,7 @@ describe("email adapters", () => {
       .catch((x: unknown) => x);
     expect(e).toBeInstanceOf(EmailSendError);
     expect((e as Error).message).toContain("401");
+    expect((e as Error).message).toContain("bad key [redacted]");
     expect((e as Error).message).not.toContain(key);
     expect(JSON.stringify(e)).not.toContain(key);
     expect(log).not.toHaveBeenCalled();
@@ -108,6 +110,24 @@ describe("email adapters", () => {
       .catch((x: unknown) => x);
     expect(e2).toBeInstanceOf(EmailSendError);
     expect((e2 as Error).message).not.toContain(key);
+  });
+
+  it("reasons drop keys, addresses and links", () => {
+    const body = JSON.stringify({
+      errors: [
+        {
+          message:
+            "The from address noreply@x.example does not match. See https://docs.example/x SG.abc.def",
+        },
+      ],
+    });
+    expect(providerReason(body, "")).toBe(
+      "The from address [address] does not match. See [redacted]",
+    );
+    expect(providerReason("not json", "k")).toBeNull();
+    expect(providerReason(JSON.stringify({ message: "re_123abc is invalid" }), "")).toBe(
+      "[redacted] is invalid",
+    );
   });
 
   it("the console adapter writes to the dev outbox", async () => {
