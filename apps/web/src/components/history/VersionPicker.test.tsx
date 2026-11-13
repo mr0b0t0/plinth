@@ -76,7 +76,7 @@ describe("VersionPicker", () => {
   it("is keyboard operable: arrows, Home/End, digits, Enter navigates, Escape closes", async () => {
     const user = userEvent.setup();
     render(<VersionPicker slug="doc-1" current={3} shown={3} />);
-    const trigger = screen.getByRole("button", { name: /v3, the current version/ });
+    const trigger = screen.getByRole("button", { name: /v3\s+current version/ });
     trigger.focus();
     await user.keyboard("{ArrowDown}");
     await screen.findAllByRole("menuitemradio");

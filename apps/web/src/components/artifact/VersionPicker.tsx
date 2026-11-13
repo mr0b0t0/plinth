@@ -222,10 +222,8 @@ export function VersionPicker({
     navigate(entry.href);
   };
 
-  const triggerName =
-    shown === current
-      ? `v${shown}, the current version. Choose a version`
-      : `v${shown} of ${current}, an older version. Choose a version`;
+  const triggerHint =
+    shown === current ? " current version, choose a version" : " older version, choose a version";
 
   return (
     <div ref={wrapRef} className="pl-menu hx-picker">
@@ -237,13 +235,14 @@ export function VersionPicker({
         aria-haspopup="menu"
         aria-expanded={open}
         aria-controls={open ? menuId : undefined}
-        aria-label={triggerName}
         onClick={() => (open ? close(false) : openMenu("shown"))}
         onKeyDown={onTriggerKey}
       >
         <span className="pl-button__content">
           <span className="type-mono hx-picker__shown">v{shown}</span>
-          {shown !== current && <span className="hx-picker__of">of {current}</span>}
+          {shown !== current && <span className="hx-picker__of"> of {current}</span>}
+          {/* The accessible name starts with the visible text (WCAG 2.5.3), then explains. */}
+          <span className="visually-hidden">{triggerHint}</span>
           <CaretDownIcon size={ICON_SIZE.sm} aria-hidden="true" />
         </span>
       </button>
