@@ -1,0 +1,92 @@
+/* Version picker (artifact top bar). Builds on the shared menu styles in ui/menu.css. */
+.hx-picker__trigger .pl-button__content {
+  gap: var(--space-1);
+}
+.hx-picker__shown {
+  color: var(--color-ink);
+}
+.hx-picker__of {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--color-ink-muted);
+}
+.hx-picker__list {
+  width: min(22rem, calc(100vw - var(--space-8)));
+  max-width: none;
+  padding: var(--space-1);
+}
+.hx-picker__list:focus {
+  outline: none;
+}
+.hx-picker__header {
+  font-size: var(--text-xs);
+  letter-spacing: var(--tracking-wide);
+  text-transform: uppercase;
+  color: var(--color-ink-muted);
+  padding-bottom: var(--space-2);
+}
+.hx-picker__status {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  font-size: var(--text-sm);
+  color: var(--color-ink-muted);
+}
+.hx-picker__scroll {
+  max-height: min(24rem, 55vh);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.hx-picker__item {
+  align-items: flex-start;
+  gap: var(--space-2);
+}
+.hx-picker__check {
+  display: inline-flex;
+  flex: none;
+  width: var(--icon-sm);
+  margin-top: var(--space-px);
+}
+.hx-picker__item[aria-checked="true"] .hx-picker__check svg {
+  color: var(--color-accent-ink);
+}
+.hx-picker__body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-px);
+  min-width: 0;
+  flex: 1;
+}
+.hx-picker__line {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+}
+.hx-picker__n {
+  color: var(--color-ink);
+}
+.hx-picker__current {
+  font-size: var(--text-xs);
+  color: var(--color-accent-ink);
+}
+.hx-picker__date {
+  margin-left: auto;
+  font-size: var(--text-xs);
+  color: var(--color-ink-muted);
+  white-space: nowrap;
+}
+.hx-picker__author,
+.hx-picker__note {
+  font-size: var(--text-sm);
+  color: var(--color-ink-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.hx-picker__note {
+  color: var(--color-ink);
+}
+.hx-picker__agent {
+  color: var(--color-ink-muted);
+}
