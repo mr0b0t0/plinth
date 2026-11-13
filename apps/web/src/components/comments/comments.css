@@ -13,8 +13,9 @@
 }
 @media (min-width: 48rem) {
   .cm-panel {
-    width: 24rem;
-    flex: 0 0 auto;
+    /* The host decides the width (the artifact page's side panel). */
+    width: 100%;
+    flex: 1 1 auto;
   }
 }
 

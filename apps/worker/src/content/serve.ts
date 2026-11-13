@@ -156,6 +156,23 @@ async function serve(
   // In the path fallback all artifacts share the app origin, so cookies are scoped by path.
   const cookiePath = base ? `${base}/` : "/";
 
+  // Artifacts may not install service workers: one would keep serving (and intercept tokens)
+  // after a takedown, deletion or access change.
+  if (request.headers.get("service-worker") === "script") {
+    return text(config, 403, "Service workers are not allowed on artifacts.");
+  }
+
+  // Artifacts render only inside the app's frame, where the sandbox and the app's frame-src keep
+  // them from navigating away with what a viewer typed. A top-level visit (direct link, popup)
+  // goes to the app's artifact page instead. Browsers send Sec-Fetch-Dest; tools that do not
+  // (curl, scripts) are served as before.
+  if (
+    request.headers.get("sec-fetch-dest") === "document" &&
+    path !== `${CONTENT_RESERVED_PREFIX}enter`
+  ) {
+    return redirect(config, 302, appPageFor(config, artifactId, path, url));
+  }
+
   // Static helpers that hold no artifact data.
   if (path === `${CONTENT_RESERVED_PREFIX}bridge.js`) return serveBridgeScript(config);
   if (path === `${CONTENT_RESERVED_PREFIX}preview`) return servePreviewLoader(config);
@@ -191,7 +208,11 @@ async function serve(
   }
 
   const artifact = await loadArtifact(env, artifactId);
-  if (!artifact || artifact.takenDownAt) return text(config, 404, "Not found");
+  if (!artifact || artifact.takenDownAt) {
+    // Gone or taken down: also wipe anything this origin stored in the browser. Never in the path
+    // fallback, where the origin is the app's own.
+    return text(config, 404, "Not found", base ? undefined : { "Clear-Site-Data": '"storage"' });
+  }
 
   let allowed = false;
   for (const value of cookieValues(request.headers.get("cookie"), cookieName)) {
@@ -202,6 +223,15 @@ async function serve(
     }
   }
   if (!allowed) {
+    // Inside the app's frame the app cannot be framed back (frame-ancestors 'none'): ask for a
+    // reload, which fetches a fresh gate and token.
+    if (request.headers.get("sec-fetch-dest") === "iframe") {
+      return text(
+        config,
+        401,
+        "Your access to this artifact expired. Reload the page to continue.",
+      );
+    }
     // No valid access: send the browser to the app's gate, which comes back with a fresh token.
     const next = `${path}${url.search}`;
     return redirect(
@@ -251,6 +281,18 @@ async function serve(
     res = injectBridge(config, res, base);
   }
   return res;
+}
+
+/** The app page that frames this artifact at the same place: version path or sub-path kept. */
+export function appPageFor(config: Config, artifactId: string, path: string, url: URL): string {
+  const page = `${config.appOrigin}/a/${artifactId}`;
+  const version = /^\/__plinth\/v\/(\d{1,9})\/?$/.exec(path);
+  if (version) return `${page}/v/${version[1]}`;
+  if (path === "/" || path === "" || path === "/index.html") return page;
+  const search = new URLSearchParams(url.search);
+  search.delete(REVIEW_MODE_PARAM);
+  const rest = search.toString();
+  return `${page}?path=${encodeURIComponent(`${path}${rest ? `?${rest}` : ""}`)}`;
 }
 
 /** The bare content host and non-artifact names under it: nothing to see, never app content. */

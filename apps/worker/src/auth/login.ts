@@ -105,7 +105,9 @@ export async function requestLogin(deps: LoginDeps, email: string): Promise<void
 
   // The SPA page POSTs the token; a GET of this URL never signs anyone in, so mail scanners that
   // prefetch links cannot burn or use it.
-  const link = `${config.appOrigin}/login/magic?token=${encodeURIComponent(linkToken)}`;
+  // The token travels in the fragment, which browsers never send to the server, so it cannot end
+  // up in request logs.
+  const link = `${config.appOrigin}/login/magic#token=${encodeURIComponent(linkToken)}`;
   try {
     await deps.mailer.send(
       loginEmail({ to: email, link, code, minutes: Math.round(TTL.loginCodeMs / 60_000) }),

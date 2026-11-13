@@ -159,24 +159,27 @@ These need accounts, money or legal judgement, so no script does them.
    staging deploy has not happened yet.
 1. Choose and buy the content domain. It must not be under `aconite.io`. Record the choice in
    `docs/spec.md` (it is listed under "Still open").
-2. Add the content domain as a zone in the Cloudflare account that will run the Worker, and point
+2. Submit the content domain to the Public Suffix List (private section); see
+   [security.md](security.md#operator-checklist-for-the-content-domain). Approval takes weeks, so
+   start early.
+3. Add the content domain as a zone in the Cloudflare account that will run the Worker, and point
    the registrar's nameservers at Cloudflare.
-3. `wrangler login` with an account that can edit Workers, D1, R2 and both zones.
-4. Run `node scripts/setup.mjs --remote --env production ...` (dry run first).
-5. Authenticate the sending domain with SendGrid (hosted) or Resend; add DMARC; turn off click
+4. `wrangler login` with an account that can edit Workers, D1, R2 and both zones.
+5. Run `node scripts/setup.mjs --remote --env production ...` (dry run first).
+6. Authenticate the sending domain with SendGrid (hosted) or Resend; add DMARC; turn off click
    tracking. Put the API key in with `wrangler secret put`. The hosted instance sends as
    `Plinth <noreply@aconite.io>` (verified in Aconite's SendGrid account); authenticate
    `plinth.aconite.io` there first if you want a product-specific sender.
-6. `pnpm build` and `wrangler deploy --config wrangler.production.jsonc`.
-7. Add the wildcard `*` DNS record on the content zone (proxied) and confirm the route
+7. `pnpm build` and `wrangler deploy --config wrangler.production.jsonc`.
+8. Add the wildcard `*` DNS record on the content zone (proxied) and confirm the route
    `*.CONTENT_DOMAIN/*` shows under the Worker's Domains & Routes.
-8. Run the checks in section 2. Sign in with an address in `ADMIN_EMAIL`, publish a test artifact
+9. Run the checks in section 2. Sign in with an address in `ADMIN_EMAIL`, publish a test artifact
    over MCP, and open its link in a private window for each visibility.
-9. Replace the placeholder terms, privacy and acceptable-use pages (`/legal/*`) with reviewed text,
-   and publish a takedown contact (the operator is a hosting provider under the DSA and a
-   controller under GDPR).
-10. Decide when to set `ALLOW_PUBLIC_VISIBILITY=true`. Until then, artifacts can be unlisted,
+10. Replace the placeholder terms, privacy and acceptable-use pages (`/legal/*`) with reviewed text,
+    and publish a takedown contact (the operator is a hosting provider under the DSA and a
+    controller under GDPR).
+11. Decide when to set `ALLOW_PUBLIC_VISIBILITY=true`. Until then, artifacts can be unlisted,
     password or allowlist only.
-11. Turn on GitHub private vulnerability reporting for the repository (see
+12. Turn on GitHub private vulnerability reporting for the repository (see
     [security.md](security.md)).
-12. Watch the first days with `wrangler tail` and the Cloudflare analytics for the Worker and D1.
+13. Watch the first days with `wrangler tail` and the Cloudflare analytics for the Worker and D1.

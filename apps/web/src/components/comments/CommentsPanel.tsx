@@ -1,6 +1,7 @@
 // The comments panel on the artifact page: threads, replies, resolve, Markdown, anchoring through
 // the review-mode bridge, pins over the frame, and mention task status. The API decides every
-// permission; the panel only reacts to 401 / 403.
+// permission; the panel shows what the comments list says the caller may do, and still reacts to
+// 401 / 403 on writes.
 import { ArrowClockwiseIcon, XIcon } from "@phosphor-icons/react";
 import { API, APP_ROUTES, type CommentInfo, route } from "@plinth/shared";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -106,7 +107,11 @@ export function CommentsPanel({
       loadingRef.current = true;
       if (opts.manual) setRefreshing(true);
       try {
-        const res = await api<{ items: CommentInfo[] }>(commentsPath);
+        const res = await api<{ items: CommentInfo[]; can_comment?: boolean; signed_in?: boolean }>(
+          commentsPath,
+        );
+        // Say up front when this person cannot comment, instead of after they typed something.
+        if (res.can_comment === false) setBlocked(res.signed_in ? "forbidden" : "signin");
         const seen = seenRef.current;
         if (seen) {
           const fresh = res.items.filter((c) => !seen.has(c.id));
@@ -416,7 +421,7 @@ export function CommentsPanel({
               art={<EmptyPlinth size={64} />}
               title={emptyText[filter]}
               description={
-                filter === "open" && threads.length === 0
+                filter === "open" && threads.length === 0 && !blocked
                   ? "Start the conversation below. Pin a comment to an element, or mention @claude or @codex to ask the owner's agent for a change."
                   : undefined
               }

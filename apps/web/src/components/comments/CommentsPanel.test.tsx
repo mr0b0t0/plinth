@@ -33,6 +33,8 @@ function comment(over: Partial<CommentInfo> = {}): CommentInfo {
 
 interface Server {
   items: CommentInfo[];
+  /** Extra fields on the list response (can_comment, signed_in). */
+  list?: Record<string, unknown>;
   post?: (body: Record<string, unknown>) => CommentInfo | Promise<CommentInfo>;
   calls: { path: string; method: string; body: unknown }[];
 }
@@ -42,7 +44,7 @@ function serve(server: Server) {
     async (path: string, opts: { method?: string; body?: unknown } = {}) => {
       const method = opts.method ?? "GET";
       server.calls.push({ path, method, body: opts.body });
-      if (method === "GET") return { items: server.items } as never;
+      if (method === "GET") return { items: server.items, ...server.list } as never;
       if (method === "POST") {
         const created = await (server.post?.(opts.body as Record<string, unknown>) ??
           comment({ body: String((opts.body as { body: string }).body) }));
@@ -290,6 +292,15 @@ describe("CommentsPanel", () => {
     expect(within(panel).getByRole("listbox")).toBeTruthy();
     await user.keyboard("{Escape}");
     expect(within(panel).queryByRole("listbox")).toBeNull();
+  });
+
+  it("says up front when the viewer cannot comment, before anything is typed", async () => {
+    const server: Server = { items: [], calls: [], list: { can_comment: false, signed_in: false } };
+    const { panel, unmount } = renderPanel(server);
+    await within(panel).findByRole("link", { name: "Sign in to comment" });
+    expect(within(panel).queryByRole("textbox", { name: "New comment" })).toBeNull();
+    expect(panel.textContent).not.toContain("mention @claude");
+    unmount();
   });
 
   it("shows sign in on 401 and a view-only note on 403", async () => {

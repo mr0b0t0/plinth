@@ -56,7 +56,7 @@ export const VISIBILITY_META: Record<
 > = {
   public: {
     label: "Public",
-    description: "Anyone can find and open it.",
+    description: "Anyone can open it, no sign-in or password needed.",
     icon: GlobeSimpleIcon,
   },
   unlisted: {

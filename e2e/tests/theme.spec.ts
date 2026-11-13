@@ -35,6 +35,8 @@ test("the manual toggle persists across reloads, applied before the app script r
 });
 
 test("/design shows tokens and components in both modes and passes axe", async ({ page }) => {
+  // Measure settled colors, not the short cross-fade between modes.
+  await page.emulateMedia({ reducedMotion: "reduce" });
   await page.goto("/design");
   await expect(page.getByRole("heading", { name: "Design system", level: 1 })).toBeVisible();
   for (const name of ["Color", "Type", "Components"]) {

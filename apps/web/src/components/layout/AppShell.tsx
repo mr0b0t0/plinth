@@ -1,10 +1,12 @@
 // App shell for signed-in pages: top bar (logo, primary nav, theme toggle, user menu), a skip
 // link, and the <main id="main"> landmark. It reads the session through useSession() only.
-import { CaretDownIcon, SignOutIcon, UserCircleIcon } from "@phosphor-icons/react";
-import { APP_ROUTES } from "@plinth/shared";
-import type { ReactNode } from "react";
-import { Link, useLocation } from "../../lib/router.tsx";
+import { CaretDownIcon, MonitorIcon, SignOutIcon, UserCircleIcon } from "@phosphor-icons/react";
+import { API, APP_ROUTES } from "@plinth/shared";
+import { type ReactNode, useState } from "react";
+import { api } from "../../lib/api.ts";
+import { Link, navigate, useLocation } from "../../lib/router.tsx";
 import { useSession } from "../../lib/session.ts";
+import { getThemePreference, setThemePreference } from "../../lib/theme.ts";
 import { LogoMark } from "../Logo.tsx";
 import {
   ButtonLink,
@@ -29,7 +31,7 @@ const PRIMARY_NAV: NavItem[] = [
 
 export interface AppShellProps {
   children: ReactNode;
-  /** Called by "Sign out" in the user menu. The item is hidden when this is absent. */
+  /** Called by "Sign out" in the user menu. Defaults to signing out and going to /login. */
   onSignOut?: () => void;
   /** Extra user-menu entries, shown above "Sign out". */
   userMenuItems?: MenuEntry[];
@@ -62,13 +64,36 @@ export function AppShell({
   width = "content",
 }: AppShellProps) {
   const { pathname } = useLocation();
-  const { me, loading } = useSession();
+  const { me, loading, refresh } = useSession();
   const nav = me ? [...PRIMARY_NAV, ...extraNav] : [];
+  const [preference, setPreference] = useState(getThemePreference);
+  const signOut =
+    onSignOut ??
+    (async () => {
+      try {
+        await api(API.logout, { method: "POST" });
+      } finally {
+        await refresh().catch(() => undefined);
+        navigate(APP_ROUTES.login);
+      }
+    });
 
   const menuItems: MenuEntry[] = [
     ...userMenuItems,
-    ...(onSignOut && userMenuItems.length > 0 ? [{ type: "separator" as const }] : []),
-    ...(onSignOut ? [{ label: "Sign out", icon: SignOutIcon, onSelect: onSignOut }] : []),
+    ...(preference !== "system"
+      ? [
+          {
+            label: "Follow system theme",
+            icon: MonitorIcon,
+            onSelect: () => {
+              setThemePreference("system");
+              setPreference("system");
+            },
+          },
+        ]
+      : []),
+    { type: "separator" as const },
+    { label: "Sign out", icon: SignOutIcon, onSelect: () => void signOut() },
   ];
 
   return (

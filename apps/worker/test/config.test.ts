@@ -24,7 +24,12 @@ describe("config", () => {
   });
   it("allows a shared domain outside production (local development)", () => {
     expect(() =>
-      parseConfig({ ...base, ENVIRONMENT: "development", CONTENT_HOST: "content.aconite.io" }),
+      parseConfig({
+        ...base,
+        ENVIRONMENT: "development",
+        APP_HOST: "app.localhost:8787",
+        CONTENT_HOST: "content.localhost:8787",
+      }),
     ).not.toThrow();
   });
   it("refuses the path fallback and the console email provider in production", () => {
@@ -76,13 +81,40 @@ describe("development-only switches", () => {
     expect(prod.devIgnoreClientIp).toBe(false);
     expect(prod.devOutbox).toBe(false);
     const staging = parseConfig({ ...base, ENVIRONMENT: "staging", DEV_IGNORE_CLIENT_IP: "true" });
+    const local = { APP_HOST: "app.localhost:8787", CONTENT_HOST: "content.localhost:8787" };
     expect(staging.devIgnoreClientIp).toBe(false);
-    const dev = parseConfig({ ...base, ENVIRONMENT: "development", DEV_IGNORE_CLIENT_IP: "true" });
+    const dev = parseConfig({
+      ...base,
+      ...local,
+      ENVIRONMENT: "development",
+      DEV_IGNORE_CLIENT_IP: "true",
+    });
     expect(dev.devIgnoreClientIp).toBe(true);
     expect(parseConfig({ ...base, DEV_SEED: "true" }).devSeed).toBe(false);
     expect(parseConfig({ ...base, ENVIRONMENT: "staging", DEV_SEED: "true" }).devSeed).toBe(false);
-    expect(parseConfig({ ...base, ENVIRONMENT: "development", DEV_SEED: "true" }).devSeed).toBe(
-      true,
+    expect(
+      parseConfig({ ...base, ...local, ENVIRONMENT: "development", DEV_SEED: "true" }).devSeed,
+    ).toBe(true);
+  });
+});
+
+describe("environment checks", () => {
+  it("development is refused on a public host", () => {
+    expect(() => parseConfig({ ...base, ENVIRONMENT: "development" })).toThrow(/localhost/);
+  });
+  it("staging refuses a shared registrable domain unless the path fallback is on", () => {
+    const shared = {
+      ...base,
+      ENVIRONMENT: "staging",
+      APP_HOST: "plinth.example.com",
+      CONTENT_HOST: "content.example.com",
+    };
+    expect(() => parseConfig(shared)).toThrow(/registrable domain/);
+    expect(() => parseConfig({ ...shared, STAGING_CONTENT_FALLBACK: "true" })).not.toThrow();
+  });
+  it("the two secrets must differ", () => {
+    expect(() => parseConfig({ ...base, TOKEN_SIGNING_KEY: base.SESSION_SECRET })).toThrow(
+      /different/,
     );
   });
 });

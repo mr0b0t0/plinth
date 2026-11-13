@@ -2,7 +2,7 @@
 // permanent version links, the report flow through to an admin takedown, and the legal templates.
 import AxeBuilder from "@axe-core/playwright";
 import { expect, type Page, test } from "@playwright/test";
-import { APP_ORIGIN, CONTENT_HOST, contentOrigin, uniqueEmail } from "../support/api.ts";
+import { APP_ORIGIN, CONTENT_HOST, uniqueEmail } from "../support/api.ts";
 import { signInApi } from "../support/auth.ts";
 import { latestCode } from "../support/mail.ts";
 import { mcpClient, tool } from "../support/mcp.ts";
@@ -239,16 +239,16 @@ test.describe("artifact page", () => {
     await shot(page, "share-dialog");
   });
 
-  test("a direct content link without a cookie goes through /open to the artifact", async ({
-    page,
-  }) => {
+  test("a direct content link opens the artifact framed on its app page", async ({ page }) => {
     const marker = unique("direct");
     const a = await publish({ title: "Direct link", marker });
+    // Top-level visits to a content host are sent to the app page: artifacts only render framed,
+    // where the sandbox and the app's frame-src stop them navigating away with viewer input.
     await page.goto(a.content_url);
-    await expect(page.getByRole("heading", { name: marker })).toBeVisible({ timeout: 10_000 });
-    expect(new URL(page.url()).origin).toBe(contentOrigin(a.id));
+    await expect(page).toHaveURL(`${APP_ORIGIN}/a/${a.slug}`);
+    await expectExhibit(page, a, marker);
 
-    // Password-protected: /open shows the same gate first.
+    // Password-protected deep link: the gate runs on the app page, then the frame opens the page.
     const pwMarker = unique("direct-pw");
     const b = await publish({
       title: "Direct and protected",
@@ -257,7 +257,7 @@ test.describe("artifact page", () => {
       password: "open-sesame",
     });
     await page.goto(`${b.content_url}deep?x=1`);
-    await expect(page).toHaveURL(new RegExp(`^${APP_ORIGIN}/open/${b.id}\\?next=`));
+    await expect(page).toHaveURL(new RegExp(`^${APP_ORIGIN}/a/(${b.slug}|${b.id})\\?path=`));
     await expect(
       page.getByRole("heading", { level: 1, name: "Direct and protected" }),
     ).toBeVisible();
@@ -265,10 +265,10 @@ test.describe("artifact page", () => {
     await expectAccessible(page);
     await page.getByLabel("Password").fill("open-sesame");
     await page.getByRole("button", { name: "Open artifact" }).click();
-    // It lands on the artifact's own subdomain, on the path the link asked for.
-    await page.waitForURL(`${contentOrigin(b.id)}/deep?x=1`);
+    const src = (await frameOf(page).getAttribute("src")) ?? "";
+    expect(new URL(src).searchParams.get("next")).toBe("/deep?x=1");
     await page.goto(b.content_url);
-    await expect(page.getByRole("heading", { name: pwMarker })).toBeVisible();
+    await expectExhibit(page, b, pwMarker);
   });
 
   test("a version link keeps showing that version after an update", async ({ page }) => {
@@ -367,9 +367,14 @@ test.describe("reports and takedown", () => {
     await expect(page.locator("iframe")).toHaveCount(0);
     await shot(page, "taken-down");
     await expectAccessible(page);
-    const res = await page.goto(a.content_url);
-    expect(res?.status()).toBe(404);
+    // A top-level visit to the content address lands on the same notice (artifacts render only
+    // framed); the content host itself answers 404 and clears the origin's storage.
+    await page.goto(a.content_url);
+    await expect(page.getByText("No longer on view")).toBeVisible();
     await expect(page.getByText(marker)).toHaveCount(0);
+    const res = await page.request.get(a.content_url, { maxRedirects: 0 });
+    expect(res.status()).toBe(404);
+    expect(res.headers()["clear-site-data"]).toBe('"storage"');
   });
 });
 

@@ -94,7 +94,7 @@ export function ViewerStage({
     { label: "Share", icon: ShareNetworkIcon, onSelect: () => setShareOpen(true) },
     ...(canEdit(role) ? [{ label: "Edit", icon: PencilSimpleIcon, href: editHref }] : []),
     { label: "History", icon: ClockCounterClockwiseIcon, href: historyHref },
-    { label: "Report", icon: FlagIcon, href: reportHref },
+    ...(canEdit(role) ? [] : [{ label: "Report", icon: FlagIcon, href: reportHref }]),
     { type: "separator" },
     {
       label: `Switch to ${THEME_NAMES[nextTheme]}`,
@@ -154,9 +154,12 @@ export function ViewerStage({
             >
               Comments
             </Button>
-            <ButtonLink size="sm" variant="ghost" icon={FlagIcon} to={reportHref}>
-              Report
-            </ButtonLink>
+            {/* Owners and editors do not report their own work; the footer link stays for all. */}
+            {!canEdit(role) && (
+              <ButtonLink size="sm" variant="ghost" icon={FlagIcon} to={reportHref}>
+                Report
+              </ButtonLink>
+            )}
             <ThemeToggle />
           </div>
           <div className="pl-viewer__compact">

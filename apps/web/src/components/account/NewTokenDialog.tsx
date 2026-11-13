@@ -151,7 +151,11 @@ function TokenDialogBody({ onClose, onCreated }: Omit<NewTokenDialogProps, "open
           value={clientType}
           onChange={(e) => setClientType(e.target.value as ClientType)}
           options={CLIENT_TYPES.map((t) => ({ value: t, label: CLIENT_TYPE_LABEL[t] }))}
-          hint="Lets collaborators reach it with @claude or @codex in comments."
+          hint={
+            clientType === "other"
+              ? "Collaborators can reach it by mentioning this token's name in comments."
+              : `Collaborators can reach it with @${clientType} in comments.`
+          }
         />
         <fieldset
           className="pl-acct-scopes"

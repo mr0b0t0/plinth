@@ -57,6 +57,12 @@ export interface EditorWorkspaceProps {
 
 const isMac = () => /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
 
+/** Monaco's "Tab moves focus" toggle (WCAG 2.1.2: Tab must not trap keyboard users). */
+const TAB_FOCUS_KEYS =
+  typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform)
+    ? "Control+Shift+M"
+    : "Control+M";
+
 export default function EditorWorkspace({
   artifact,
   config,
@@ -67,6 +73,7 @@ export default function EditorWorkspace({
   const id = artifact.id;
   const artifactPath = `/a/${encodeURIComponent(artifact.slug)}`;
   const codePaneId = useId();
+  const tabHintId = useId();
 
   const [html, setHtml] = useState(initial.html);
   const [note, setNote] = useState(initial.note);
@@ -407,6 +414,9 @@ export default function EditorWorkspace({
               <div className="pl-editor-pane">
                 <div className="pl-editor-pane__tools">
                   <span className="pl-editor-pane__label">HTML</span>
+                  <span className="pl-editor-pane__hint type-caption text-faint" id={tabHintId}>
+                    Tab indents. {TAB_FOCUS_KEYS} makes Tab move focus instead.
+                  </span>
                 </div>
                 <div className="pl-editor-pane__body">
                   {mode === "reapply" && reference !== null ? (
@@ -422,7 +432,7 @@ export default function EditorWorkspace({
                     <CodeEditor
                       value={html}
                       onChange={setHtml}
-                      ariaLabel={`HTML of ${artifact.title}`}
+                      ariaLabel={`HTML of ${artifact.title}. Tab indents; press ${TAB_FOCUS_KEYS} to make Tab move focus.`}
                       path={`inmemory://plinth/${id}/draft.html`}
                     />
                   )}

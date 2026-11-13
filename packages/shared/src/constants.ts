@@ -81,6 +81,8 @@ export const RATE_LIMITS = {
   loginPerIpPerHour: 20,
   codeAttemptsPerEmailPerHour: 10,
   passwordAttemptsPerArtifactPerIpPerHour: 10,
+  /** Across all addresses, so guessing cannot be spread over many IPs. */
+  passwordAttemptsPerArtifactPerHour: 100,
   viewerCodesPerEmailPerHour: 5,
   commentsPerUserPerHour: 60,
   reportsPerIpPerHour: 10,

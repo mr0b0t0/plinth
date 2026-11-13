@@ -183,9 +183,8 @@ test("hostile comment text renders inert, and signed-out viewers are asked to si
   expect(await page.locator('[data-testid="comment-pins"] img').count()).toBe(0);
   expect(dialogs).toBe(0);
 
-  // Writing needs an account: the API answers 401 and the panel offers sign-in.
-  await panel.getByRole("textbox", { name: "New comment" }).fill("Hello from a stranger");
-  await panel.getByRole("button", { name: "Comment", exact: true }).click();
+  // Writing needs an account: the panel says so before anything is typed.
+  await expect(panel.getByRole("textbox", { name: "New comment" })).toHaveCount(0);
   const signInLink = panel.getByRole("link", { name: "Sign in to comment" });
   await expect(signInLink).toBeVisible();
   await expect(signInLink).toHaveAttribute(
@@ -200,9 +199,8 @@ test("a signed-in person without a role can read but not comment", async ({ page
   const art = await publishArtifact(request, token, { title: "Read only", html: ARTIFACT_HTML });
   await signInApi(page.request, uniqueEmail("stranger"));
   const panel = await openComments(page, art.slug);
-  await panel.getByRole("textbox", { name: "New comment" }).fill("Can I?");
-  await panel.getByRole("button", { name: "Comment", exact: true }).click();
   await expect(panel.getByText("You can view this artifact but not comment on it")).toBeVisible();
+  await expect(panel.getByRole("textbox", { name: "New comment" })).toHaveCount(0);
 });
 
 test("the comments panel is keyboard friendly and passes axe", async ({ page, request }, info) => {

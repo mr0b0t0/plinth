@@ -15,7 +15,12 @@ const vars = (extra: Record<string, string> = {}) =>
 
 describe("content CSP builder", () => {
   it("frame-ancestors names the configured app origin", () => {
-    const c = vars({ APP_HOST: "plinth.example.com", PUBLIC_SCHEME: "https" });
+    const c = vars({
+      ENVIRONMENT: "staging",
+      APP_HOST: "plinth.example.com",
+      CONTENT_HOST: "plinth-content.example.net",
+      PUBLIC_SCHEME: "https",
+    });
     expect(contentCsp(c)).toContain("frame-ancestors 'self' https://plinth.example.com");
   });
 

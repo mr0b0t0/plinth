@@ -108,7 +108,7 @@ test.describe("sign-in", () => {
     await page.getByRole("button", { name: "Send sign-in link" }).click();
     await expect(page.getByRole("heading", { name: "Check your email" })).toBeVisible();
     const link = await latestLink(page.request, email, { since });
-    expect(link).toContain("/login/magic?token=");
+    expect(link).toContain("/login/magic#token=");
 
     await page.goto(link);
     await expect(page.getByRole("heading", { name: "Finish signing in" })).toBeVisible();

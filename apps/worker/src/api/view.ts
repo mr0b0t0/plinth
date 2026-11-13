@@ -187,9 +187,15 @@ viewApi.post("/view/:ref/password", async (c) => {
     RATE_LIMITS.passwordAttemptsPerArtifactPerIpPerHour,
     3600,
   );
-  if (!limit.allowed) {
+  const overall = await hit(
+    c.env.DB,
+    `pw:${a.id}:all`,
+    RATE_LIMITS.passwordAttemptsPerArtifactPerHour,
+    3600,
+  );
+  if (!limit.allowed || !overall.allowed) {
     throw new ApiError("rate_limited", "Too many password attempts. Try again later.", {
-      retry_after: limit.retryAfter,
+      retry_after: Math.max(limit.retryAfter, overall.retryAfter),
     });
   }
   if (!(await verifyPassword(password, a.passwordHash))) {

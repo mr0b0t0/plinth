@@ -17,7 +17,21 @@ export default function ArtifactPage({ params }: { params: Record<string, string
   const version = parseVersion(params.n);
   const { search } = useLocation();
   const [commentsOpen, setCommentsOpen] = useState(() => search.has("comments"));
-  const { state, reload, setGate } = useGate(slug, { version, review: commentsOpen });
+  // A page inside the artifact (from a direct content link): opened inside the frame.
+  const rawPath = search.get("path");
+  const next = rawPath?.startsWith("/") && !rawPath.startsWith("//") ? rawPath : undefined;
+  const { state, reload, setGate } = useGate(slug, { version, review: commentsOpen, next });
+
+  // Direct links arrive by artifact id; show the readable slug address once the gate knows it.
+  useEffect(() => {
+    if (state.kind !== "gate" || !("artifact" in state.gate)) return;
+    const real = state.gate.artifact.slug;
+    if (real && real !== slug) {
+      const url = new URL(window.location.href);
+      url.pathname = url.pathname.replace(`/a/${encodeURIComponent(slug)}`, `/a/${real}`);
+      window.history.replaceState(window.history.state, "", url.toString());
+    }
+  }, [state, slug]);
 
   useEffect(() => {
     if (state.kind === "loading") document.title = "Opening artifact · Plinth";
@@ -53,7 +67,7 @@ export default function ArtifactPage({ params }: { params: Record<string, string
       <GateScreen
         gate={gate}
         artifactRef={slug}
-        query={{ version, review: commentsOpen }}
+        query={{ version, review: commentsOpen, next }}
         onGate={setGate}
       />
     );

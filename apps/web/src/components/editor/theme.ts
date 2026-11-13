@@ -98,10 +98,11 @@ export function buildMonacoTheme(mode: Theme, t: ThemeTokens): editor.IStandalon
     "scrollbarSlider.hoverBackground": t.borderStrong,
     "scrollbarSlider.activeBackground": t.inkFaint,
     "editorOverviewRuler.border": t.border,
-    "diffEditor.insertedTextBackground": alpha(t.success, "33"),
-    "diffEditor.removedTextBackground": alpha(t.danger, "33"),
-    "diffEditor.insertedLineBackground": alpha(t.successSoft, "cc"),
-    "diffEditor.removedLineBackground": alpha(t.dangerSoft, "cc"),
+    // Light tints so syntax colours keep 4.5:1 on changed lines too.
+    "diffEditor.insertedTextBackground": alpha(t.success, "1f"),
+    "diffEditor.removedTextBackground": alpha(t.danger, "1f"),
+    "diffEditor.insertedLineBackground": alpha(t.successSoft, "80"),
+    "diffEditor.removedLineBackground": alpha(t.dangerSoft, "80"),
     "diffEditor.border": t.border,
     "diffEditor.diagonalFill": alpha(t.border, "99"),
   };

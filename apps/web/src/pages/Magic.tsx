@@ -16,17 +16,17 @@ export default function Magic() {
   useDocumentTitle("Finish signing in");
   const { search } = useLocation();
   const { me, refresh } = useSession();
-  // Keep the token in memory and take it out of the address bar and history right away.
-  const [token] = useState(() => search.get("token") ?? "");
+  // The token arrives in the URL fragment (never sent to the server). Keep it in memory and take it
+  // out of the address bar and history right away. A ?token= query is still accepted.
+  const [token] = useState(
+    () =>
+      new URLSearchParams(window.location.hash.slice(1)).get("token") ?? search.get("token") ?? "",
+  );
   useEffect(() => {
-    if (!new URLSearchParams(window.location.search).has("token")) return;
     const url = new URL(window.location.href);
+    if (!url.hash.includes("token=") && !url.searchParams.has("token")) return;
     url.searchParams.delete("token");
-    window.history.replaceState(
-      window.history.state,
-      "",
-      `${url.pathname}${url.search}${url.hash}`,
-    );
+    window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}`);
   }, []);
   const next = safeNext(search.get("next"));
   const [busy, setBusy] = useState(false);

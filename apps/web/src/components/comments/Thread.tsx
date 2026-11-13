@@ -156,7 +156,10 @@ export function Thread({
               </span>
               <MapPinIcon size={ICON_SIZE.sm} aria-hidden="true" />
               <span className="cm-anchor__text">
-                <span className="visually-hidden">Pinned to </span>“{excerpt(root.anchor.text)}”
+                <span className="visually-hidden">Pinned to </span>
+                {root.anchor.text?.trim()
+                  ? `“${excerpt(root.anchor.text)}”`
+                  : "Pinned to an element"}
               </span>
             </span>
           )}

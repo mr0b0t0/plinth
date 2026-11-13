@@ -3,7 +3,14 @@
 // request, not an instruction with the owner's authority.
 import { type CommentInfo, type MentionState, type MentionTaskInfo, TTL } from "@plinth/shared";
 import { and, asc, eq, inArray, isNull, lt, or, type SQL, sql } from "drizzle-orm";
-import { agentConnections, artifacts, comments, mentionTasks, users } from "../db/schema.ts";
+import {
+  accessGrants,
+  agentConnections,
+  artifacts,
+  comments,
+  mentionTasks,
+  users,
+} from "../db/schema.ts";
 import { ApiError, notFound, unauthorized } from "../lib/errors.ts";
 import { nowIso } from "../lib/time.ts";
 import { canActOnMention, type Principal } from "../policy.ts";
@@ -53,12 +60,20 @@ async function loadTasks(ctx: Ctx, p: AgentPrincipal, where: SQL | undefined, li
       userName: users.name,
       userEmail: users.email,
       connLabel: agentConnections.label,
+      grantRole: accessGrants.role,
     })
     .from(mentionTasks)
     .innerJoin(artifacts, eq(artifacts.id, mentionTasks.artifactId))
     .innerJoin(comments, eq(comments.id, mentionTasks.commentId))
     .leftJoin(users, eq(users.id, comments.authorUserId))
     .leftJoin(agentConnections, eq(agentConnections.id, comments.authorConnection))
+    .leftJoin(
+      accessGrants,
+      and(
+        eq(accessGrants.artifactId, mentionTasks.artifactId),
+        eq(accessGrants.email, comments.authorEmail),
+      ),
+    )
     .where(and(visibleTo(p), where))
     .orderBy(asc(mentionTasks.createdAt), sql`${mentionTasks}.rowid`)
     .limit(limit)
@@ -77,6 +92,11 @@ async function loadTasks(ctx: Ctx, p: AgentPrincipal, where: SQL | undefined, li
         target: r.t.targetLabel,
         comment_body: r.c.body,
         comment_author: authorLabel(r),
+        comment_author_email: r.c.authorConnection
+          ? null
+          : (r.c.authorEmail ?? r.userEmail ?? null),
+        comment_author_role:
+          r.c.authorUserId && r.c.authorUserId === r.ownerId ? "owner" : (r.grantRole ?? null),
         anchor: r.c.anchor ? (JSON.parse(r.c.anchor) as MentionTaskInfo["anchor"]) : null,
         version_number: r.c.versionNumber,
         claimed_by: r.t.claimedBy,

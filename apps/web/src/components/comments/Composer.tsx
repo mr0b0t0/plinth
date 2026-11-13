@@ -58,7 +58,13 @@ export function Composer({
         <div className="cm-anchor-chip">
           <MapPinIcon size={ICON_SIZE.sm} aria-hidden="true" />
           <span className="cm-anchor-chip__text">
-            Pinned to <q>{excerpt(anchor.text, 40)}</q>
+            {anchor.text?.trim() ? (
+              <>
+                Pinned to <q>{excerpt(anchor.text, 40)}</q>
+              </>
+            ) : (
+              "Pinned to an element"
+            )}
           </span>
           <IconButton size="sm" icon={XIcon} label="Remove pin" onClick={onRemoveAnchor} />
         </div>

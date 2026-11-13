@@ -101,8 +101,16 @@ export async function accessFactsFor(ctx: Ctx, a: ArtifactRow): Promise<AccessFa
     grantRole: await grantRoleFor(ctx, a.id),
     passwordPassed: ctx.passwordPasses.get(a.id) === a.accessEpoch,
     publicEnabled: ctx.config.allowPublicVisibility,
-    isAdmin: ctx.principal.kind === "user" && ctx.principal.isAdmin,
+    // Admins may look at an artifact only when someone reported it (to decide on the report).
+    isAdmin: ctx.principal.kind === "user" && ctx.principal.isAdmin && (await hasReport(ctx, a.id)),
   };
+}
+
+async function hasReport(ctx: Ctx, artifactId: string): Promise<boolean> {
+  const r = await ctx.env.DB.prepare("SELECT 1 AS x FROM reports WHERE artifact_id = ?1 LIMIT 1")
+    .bind(artifactId)
+    .first<{ x: number }>();
+  return !!r;
 }
 
 export async function decideFor(
@@ -201,7 +209,10 @@ export function toSummary(
     updated_at: a.updatedAt,
     url: appUrl(ctx.config, `/a/${a.slug}`),
     content_url: `${contentOrigin(ctx.config, a.id)}/`,
-    owner: { id: owner.id, email: owner.email, name: owner.name },
+    // Link viewers (no role) do not learn the owner's address or id.
+    owner: role
+      ? { id: owner.id, email: owner.email, name: owner.name }
+      : { id: null, email: null, name: owner.name },
     // Callers only build summaries for artifacts the principal may view; viewers get "viewer".
     role: role ?? "viewer",
     taken_down: !!a.takenDownAt,
@@ -604,7 +615,7 @@ export async function listArtifacts(ctx: Ctx, query?: string): Promise<ArtifactS
 }
 
 export async function listVersions(ctx: Ctx, ref: string): Promise<VersionInfo[]> {
-  const { artifact } = await requireArtifact(ctx, ref, "view");
+  const { artifact, role } = await requireArtifact(ctx, ref, "view");
   const rows = await ctx.db
     .select({ v: versions, user: users, conn: agentConnections })
     .from(versions)
@@ -620,11 +631,17 @@ export async function listVersions(ctx: Ctx, ref: string): Promise<VersionInfo[]
     .all();
   return rows.map(({ v, user, conn }) => {
     const author: Author = conn
-      ? { kind: "connection", label: conn.label, user_id: v.createdByUser, connection_id: conn.id }
+      ? {
+          kind: "connection",
+          label: conn.label,
+          user_id: role ? v.createdByUser : null,
+          connection_id: role ? conn.id : null,
+        }
       : {
           kind: "user",
-          label: user?.name || user?.email || "Unknown",
-          user_id: v.createdByUser,
+          // Link viewers see a name or the address's local part, never the full email.
+          label: user?.name || (role ? user?.email : user?.email?.split("@")[0]) || "Unknown",
+          user_id: role ? v.createdByUser : null,
           connection_id: null,
         };
     return {

@@ -8,6 +8,7 @@ import {
   updateCommentInput,
 } from "@plinth/shared";
 import { Hono } from "hono";
+import { decideFor, findArtifact } from "../services/artifacts.ts";
 import { createComment, listComments, setCommentStatus } from "../services/comments.ts";
 import { claimMention, listMentions, replyComment } from "../services/mentions.ts";
 import { type AppEnv, parseBody, parseInput, serviceCtx } from "./context.ts";
@@ -16,7 +17,17 @@ export const commentsApi = new Hono<AppEnv>();
 
 // GET /artifacts/:ref/comments (policy "view"): threaded, oldest first, with mention tasks.
 commentsApi.get(API.comments, async (c) => {
-  return c.json({ items: await listComments(serviceCtx(c), c.req.param("ref")) });
+  const ctx = serviceCtx(c);
+  const items = await listComments(ctx, c.req.param("ref"));
+  // Tell the panel up front whether this caller may comment, so nobody types into a box that
+  // cannot work. The POST still enforces the policy.
+  const artifact = await findArtifact(ctx, c.req.param("ref"));
+  const decision = artifact ? await decideFor(ctx, artifact, "comment") : null;
+  return c.json({
+    items,
+    can_comment: !!decision?.allow,
+    signed_in: ctx.principal.kind !== "anonymous",
+  });
 });
 
 // POST /artifacts/:ref/comments (policy "comment"): a comment or a reply (parent_id).

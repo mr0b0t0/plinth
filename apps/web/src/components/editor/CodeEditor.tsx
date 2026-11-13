@@ -130,6 +130,9 @@ export function CodeDiff({
   useEffect(() => () => subscription.current?.dispose(), []);
   const onMount = (ed: MonacoDiffEditor) => {
     const modifiedEditor = ed.getModifiedEditor();
+    // Name both sides' text areas explicitly (screen readers, axe aria-input-field-name).
+    ed.getOriginalEditor().updateOptions({ ariaLabel: originalLabel });
+    modifiedEditor.updateOptions({ ariaLabel: modifiedLabel });
     subscription.current?.dispose();
     subscription.current = modifiedEditor.onDidChangeModelContent(() => {
       changeRef.current?.(modifiedEditor.getValue());

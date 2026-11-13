@@ -45,7 +45,7 @@ async function requestAndRead(email: string, headers = anon()) {
   const [latest] = await outbox(email);
   if (!latest) throw new Error("no email in the outbox");
   const code = /code: (\d{6})/.exec(latest.text)?.[1] ?? "";
-  const token = /\/login\/magic\?token=([A-Za-z0-9%_-]+)/.exec(latest.text)?.[1] ?? "";
+  const token = /\/login\/magic#token=([A-Za-z0-9%_-]+)/.exec(latest.text)?.[1] ?? "";
   return { code, token: decodeURIComponent(token), text: latest.text };
 }
 
@@ -61,7 +61,7 @@ describe("people sign-in", () => {
     const { code, token, text } = await requestAndRead(email);
     expect(code).toMatch(/^\d{6}$/);
     expect(token.length).toBeGreaterThan(30);
-    expect(text).toContain(`${APP}/login/magic?token=`);
+    expect(text).toContain(`${APP}/login/magic#token=`);
 
     // Nothing stored in the clear.
     const row = await db().select().from(loginCodes).where(eq(loginCodes.email, email)).get();

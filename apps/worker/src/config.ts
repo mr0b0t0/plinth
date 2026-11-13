@@ -163,6 +163,24 @@ function validate(c: Config): void {
     throw new ConfigError("SENDGRID_API_KEY is not set");
   if (c.emailProvider === "resend" && !c.resendApiKey)
     throw new ConfigError("RESEND_API_KEY is not set");
+  if (c.sessionSecret === c.tokenSigningKey) {
+    throw new ConfigError("SESSION_SECRET and TOKEN_SIGNING_KEY must be different values");
+  }
+  const isLocal = (h: string) =>
+    /^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$|\.localhost(:\d+)?$/.test(h);
+  if (c.environment === "development" && !isLocal(c.appHost)) {
+    // Development turns on helpers (dev outbox, seeding) that must never face the internet.
+    throw new ConfigError("ENVIRONMENT=development is only allowed on a localhost APP_HOST");
+  }
+  if (
+    c.environment === "staging" &&
+    !c.contentPathFallback &&
+    registrableDomain(c.appHost) === registrableDomain(c.contentHost)
+  ) {
+    throw new ConfigError(
+      "APP_HOST and CONTENT_HOST share a registrable domain; use a separate content domain or STAGING_CONTENT_FALLBACK",
+    );
+  }
   if (c.contentPathFallback && c.environment === "production") {
     throw new ConfigError("STAGING_CONTENT_FALLBACK is refused in production");
   }

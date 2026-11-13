@@ -136,7 +136,15 @@ export const verifyLoginCodeInput = z.object({
   code: z.string().regex(/^\d{6}$/, "Six digits"),
 });
 export const verifyMagicLinkInput = z.object({ token: z.string().min(10).max(200) });
-export const updateProfileInput = z.object({ name: z.string().trim().max(100) });
+export const updateProfileInput = z.object({
+  // No "@": a display name must not look like an email address (or an agent mention) to agents
+  // reading comment authors.
+  name: z
+    .string()
+    .trim()
+    .max(100)
+    .refine((n) => !n.includes("@"), "A name cannot contain @"),
+});
 
 export const createTokenInput = z.object({
   label: z.string().trim().min(1).max(LIMITS.maxLabelLength),

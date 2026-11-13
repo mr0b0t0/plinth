@@ -34,7 +34,7 @@ import { addGrant, type GrantDraft, removeGrant, setGrantRole } from "./grants.t
 import { Note } from "./Note.tsx";
 
 const ACCESS_NOTE =
-  "Saving changes who can open it. Anyone who has it open now will need to open the link again.";
+  "Saving this changes who can open the artifact. Anyone who has it open now will need to open the link again.";
 
 const errMsg = (e: unknown, fallback = "Could not reach Plinth. Try again.") =>
   e instanceof ApiRequestError ? e.message : fallback;
