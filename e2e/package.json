@@ -3,5 +3,15 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "scripts": {}
+  "scripts": {
+    "test:e2e": "playwright test",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "4.14.0",
+    "@modelcontextprotocol/client": "2.4.0",
+    "@playwright/test": "1.65.0",
+    "@types/node": "24.10.1",
+    "typescript": "7.0.2"
+  }
 }

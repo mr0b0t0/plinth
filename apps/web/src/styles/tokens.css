@@ -1,0 +1,161 @@
+/*
+ * Plinth design tokens. Every color, size and duration the app uses is defined here, once.
+ * Two first-class modes: "Gallery" (light) and "After hours" (dark), switched by
+ * [data-theme] on <html> (set before first paint by public/theme.js).
+ * One accent only: verdigris. Contrast targets WCAG AA for all text pairs.
+ */
+:root {
+  /* Type families: self-hosted, open-licensed */
+  --font-display: "Instrument Serif", ui-serif, Georgia, serif;
+  --font-ui: "Geist Variable", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono Variable", ui-monospace, "SFMono-Regular", Menlo, monospace;
+
+  /* Type scale (1.2 minor third, rounded) */
+  --text-2xs: 0.6875rem; /* 11 */
+  --text-xs: 0.75rem; /* 12 */
+  --text-sm: 0.8125rem; /* 13 */
+  --text-md: 0.9375rem; /* 15: body */
+  --text-lg: 1.0625rem; /* 17 */
+  --text-xl: 1.375rem; /* 22 */
+  --text-2xl: 1.75rem; /* 28 */
+  --text-3xl: 2.25rem; /* 36 */
+  --text-4xl: 3rem; /* 48 */
+  --leading-tight: 1.15;
+  --leading-snug: 1.35;
+  --leading-normal: 1.55;
+  --weight-regular: 400;
+  --weight-medium: 500;
+  --weight-semibold: 600;
+  --tracking-tight: -0.01em;
+  --tracking-wide: 0.06em;
+
+  /* Spacing (4px grid) */
+  --space-0: 0;
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.25rem;
+  --space-6: 1.5rem;
+  --space-8: 2rem;
+  --space-10: 2.5rem;
+  --space-12: 3rem;
+  --space-16: 4rem;
+  --space-24: 6rem;
+
+  /* Radii: restrained, gallery-like */
+  --radius-sm: 3px;
+  --radius-md: 6px;
+  --radius-lg: 10px;
+  --radius-full: 999px;
+
+  /* Icons: Phosphor, regular weight, on a 4px grid */
+  --icon-sm: 16px;
+  --icon-md: 20px;
+  --icon-lg: 24px;
+
+  /* Layout */
+  --content-max: 72rem;
+  --reading-max: 40rem;
+  --topbar-height: 3.5rem;
+  --focus-ring-width: 2px;
+  --focus-ring-offset: 2px;
+
+  /* Motion: subtle and short; reduced to none when the user asks */
+  --duration-fast: 120ms;
+  --duration-normal: 180ms;
+  --duration-slow: 260ms;
+  --ease-out: cubic-bezier(0.2, 0.7, 0.2, 1);
+  --ease-in-out: cubic-bezier(0.45, 0, 0.25, 1);
+
+  --z-sticky: 10;
+  --z-overlay: 40;
+  --z-dialog: 50;
+  --z-toast: 60;
+  --z-tooltip: 70;
+}
+
+/* Gallery (light): cool off-white walls, stone greys, near-black ink. */
+:root,
+[data-theme="light"] {
+  color-scheme: light;
+  --color-wall: #f2f4f4;
+  --color-surface: #fbfcfc;
+  --color-surface-raised: #ffffff;
+  --color-surface-sunk: #e8ebeb;
+  --color-plinth: #e2e6e6; /* the base an exhibit sits on */
+  --color-border: #d5dadb;
+  --color-border-strong: #b8bfc1;
+  --color-ink: #15191a;
+  --color-ink-muted: #4c5557;
+  --color-ink-faint: #677073;
+  --color-ink-inverse: #f4f6f6;
+
+  --color-accent: #2a7465;
+  --color-accent-hover: #215e52;
+  --color-accent-active: #1a4b41;
+  --color-accent-soft: #dbece7;
+  --color-accent-ink: #1f5b4f; /* accent used as text on wall/surface */
+  --color-on-accent: #ffffff;
+
+  --color-success: #2c7340;
+  --color-success-soft: #dcefe0;
+  --color-warning: #85570a;
+  --color-warning-soft: #f6ead2;
+  --color-danger: #b0281f;
+  --color-danger-hover: #93211a;
+  --color-danger-soft: #f8e0dd;
+  --color-on-danger: #ffffff;
+
+  --color-overlay: rgb(16 20 21 / 0.42);
+  --shadow-sm: 0 1px 2px rgb(16 20 21 / 0.06);
+  --shadow-md: 0 2px 6px rgb(16 20 21 / 0.07), 0 8px 24px rgb(16 20 21 / 0.06);
+  --shadow-lg: 0 12px 40px rgb(16 20 21 / 0.16);
+  --color-focus: var(--color-accent);
+}
+
+/* After hours (dark): deep charcoal, soft grey text, the same accent at adjusted lightness. */
+[data-theme="dark"] {
+  color-scheme: dark;
+  --color-wall: #151718;
+  --color-surface: #1c1f20;
+  --color-surface-raised: #232728;
+  --color-surface-sunk: #101213;
+  --color-plinth: #262a2c;
+  --color-border: #2e3335;
+  --color-border-strong: #454c4f;
+  --color-ink: #dfe3e4;
+  --color-ink-muted: #a6aeb0;
+  --color-ink-faint: #8a9396;
+  --color-ink-inverse: #151718;
+
+  --color-accent: #5db3a0;
+  --color-accent-hover: #78c4b3;
+  --color-accent-active: #93d2c4;
+  --color-accent-soft: #1e3530;
+  --color-accent-ink: #6cbfad;
+  --color-on-accent: #0b1a16;
+
+  --color-success: #6dc183;
+  --color-success-soft: #1d3324;
+  --color-warning: #ddb257;
+  --color-warning-soft: #362b14;
+  --color-danger: #ef857c;
+  --color-danger-hover: #f4a29b;
+  --color-danger-soft: #3a1f1d;
+  --color-on-danger: #1d0b0a;
+
+  --color-overlay: rgb(0 0 0 / 0.6);
+  --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.4);
+  --shadow-md: 0 2px 6px rgb(0 0 0 / 0.35), 0 8px 24px rgb(0 0 0 / 0.3);
+  --shadow-lg: 0 12px 40px rgb(0 0 0 / 0.55);
+  --color-focus: var(--color-accent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --duration-fast: 0ms;
+    --duration-normal: 0ms;
+    --duration-slow: 0ms;
+  }
+}

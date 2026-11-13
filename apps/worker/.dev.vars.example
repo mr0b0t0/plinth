@@ -1,0 +1,7 @@
+# Local secrets for `wrangler dev`. scripts/setup.mjs writes .dev.vars with fresh random values.
+SESSION_SECRET=dev-session-secret-change-me-0123456789abcdef
+TOKEN_SIGNING_KEY=dev-token-signing-key-change-me-0123456789abcdef
+# Single-user mode only: bearer token for the admin user.
+ADMIN_TOKEN=
+SENDGRID_API_KEY=
+RESEND_API_KEY=
