@@ -200,3 +200,40 @@ export interface ReportInfo {
 export interface Paged<T> {
   items: T[];
 }
+
+/** POST /api/v1/auth/login. The same body whether or not the address has an account. */
+export interface LoginRequestResult {
+  ok: true;
+}
+
+/** POST /api/v1/auth/verify-code and /auth/verify-link. The session cookie is set alongside. */
+export interface LoginResult {
+  ok: true;
+  user: { id: string; email: string };
+}
+
+/** GET /api/v1/oauth/requests/:id — what the consent page shows. */
+export interface OAuthRequestInfo {
+  id: string;
+  client_id: string;
+  /** Name the client registered itself with. Untrusted: any client can pick any name. */
+  client_name: string | null;
+  /** Host (and port) the browser returns to after consent, the part a person can check. */
+  redirect_host: string;
+  redirect_uri: string;
+  scopes: string[];
+  expires_at: string;
+}
+
+/** POST /api/v1/oauth/consent. The SPA navigates to `redirect_to` with location.href. */
+export interface OAuthConsentResult {
+  redirect_to: string;
+}
+
+/** GET /api/v1/__dev/outbox?to=<email> item (development only). */
+export interface DevOutboxItem {
+  to: string;
+  subject: string;
+  text: string;
+  created_at: string;
+}

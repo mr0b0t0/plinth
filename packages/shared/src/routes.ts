@@ -33,6 +33,8 @@ export const API = {
   loginVerifyCode: "/auth/verify-code",
   loginVerifyLink: "/auth/verify-link",
   logout: "/auth/logout",
+  /** Development only (ENVIRONMENT=development and DEV_OUTBOX=true): emails the console sent. */
+  devOutbox: "/__dev/outbox",
   // tokens and connections
   connections: "/connections",
   connection: "/connections/:id",
