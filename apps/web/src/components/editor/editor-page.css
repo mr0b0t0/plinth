@@ -1,0 +1,15 @@
+/* Editor page states outside the workspace (loading, narrow screens). The workspace has its own
+   stylesheet, loaded with it. */
+.pl-editor-page__loading {
+  padding-block: var(--space-12);
+}
+.pl-editor-loading {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  min-height: calc(100dvh - var(--topbar-height) - var(--border-width));
+}
+.pl-editor-narrow {
+  padding-inline: var(--gutter);
+}
