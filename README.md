@@ -1,49 +1,88 @@
 # Plinth
 
 A neutral home for AI-made artifacts. Agents (Claude, Codex, any MCP client) publish HTML artifacts
-to Plinth with one tool call, and owners decide who can view each one: public, anyone with the
-link, a password, or an email allowlist. Viewers need no AI account.
+to Plinth with one tool call. Owners decide who can view each one: public, anyone with the link, a
+password, or an email allowlist. Viewers need no AI account.
 
-Plinth solves two problems with built-in artifact hosting: artifacts are locked to the account that
-made them, and sharing with people outside the same AI product is limited. Every publish is a
-version, people can edit in the browser, and a comment like "@claude make the chart bigger" queues
-a change for the owner's agent.
+Built-in artifact hosting has two limits. Artifacts are locked to the account that made them, so a
+work account's artifacts are invisible from a personal one. And sharing with people outside the
+same AI product is limited. Plinth keeps every artifact under one login, whichever agent made it.
 
-It runs on Cloudflare (Workers, R2, D1) and is cheap enough to self-host on the free tier. The same
-code runs the hosted instance at `plinth.aconite.io`.
+- Every publish is an immutable version. Old versions keep permanent links and can be restored.
+- People edit in the browser, with conflict checks instead of silent overwrites.
+- A comment like "@claude make the chart bigger" queues a request for the owner's agent, which
+  publishes a new version and replies in the thread.
+- Each artifact is served from its own subdomain on a separate content domain, with a strict
+  Content Security Policy. User HTML never runs next to login sessions.
 
-## Status
+It runs on Cloudflare (one Worker, one D1 database, one R2 bucket) and fits the free tier for a
+personal instance. The same code runs the hosted instance at `plinth.aconite.io`, operated by
+Aconite Software & Investments, Lda.
 
-Pre-v1. The repo holds the spec and the workspace scaffold; the platform itself is being built in
-the milestone order in [docs/build-prompt.md](docs/build-prompt.md).
+Works with Claude and Codex. Plinth is not made by or affiliated with Anthropic or OpenAI.
+
+## Quick start (local)
+
+Requires Node 22.12+ and pnpm 10. pnpm runs Node 24.22.2 for this repo (`.npmrc`).
+
+```sh
+git clone https://github.com/mr0b0t0/plinth.git && cd plinth
+pnpm install
+node scripts/setup.mjs --local   # writes apps/worker/.dev.vars, migrates local D1
+pnpm build                       # builds the web app the Worker serves
+pnpm dev                         # http://app.localhost:8787
+pnpm seed                        # in a second terminal: demo user, samples, a token
+```
+
+Open http://app.localhost:8787 and sign in as `demo@plinth.local`. Locally the sign-in code is
+printed in the `wrangler dev` log. To connect an agent, use the token the seed script prints and
+the MCP URL `http://app.localhost:8787/mcp` (see [docs/mcp.md](docs/mcp.md)).
+
+Artifacts are served from `<artifact_id>.content.localhost:8787`. Browsers resolve `*.localhost`
+to your machine, so no hosts-file changes are needed.
+
+## Screenshots
+
+Gallery (light):
+
+![Plinth dashboard in the light "Gallery" theme](docs/screenshots/gallery.png)
+
+After hours (dark):
+
+![Plinth artifact page in the dark "After hours" theme](docs/screenshots/after-hours.png)
 
 ## Docs
 
-- [docs/spec.md](docs/spec.md): what Plinth does and why (the source of truth)
-- [docs/build-prompt.md](docs/build-prompt.md): the v1 build brief
-- [AGENTS.md](AGENTS.md): how to work in this repo, for people and coding agents
-- [DECISIONS.md](DECISIONS.md): choices made where the spec left room
+| Document | What it covers |
+| --- | --- |
+| [docs/mcp.md](docs/mcp.md) | Connecting Claude and Codex; every MCP tool; the mention workflow |
+| [docs/self-hosting.md](docs/self-hosting.md) | Running your own instance; every setting; single-user mode |
+| [docs/deploy-checklist.md](docs/deploy-checklist.md) | Cloudflare resources, DNS, secrets, email, go-live steps |
+| [docs/security.md](docs/security.md) | Threat model and how each boundary is enforced; reporting a vulnerability |
+| [docs/openapi.json](docs/openapi.json) | REST API (`/api/v1`), OpenAPI 3.1; also served at `/openapi.json` |
+| [docs/spec.md](docs/spec.md) | What Plinth does and why (the source of truth) |
+| [docs/build-prompt.md](docs/build-prompt.md) | The v1 build brief |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | Setup, commands, conventions, adding migrations and tools |
+| [AGENTS.md](AGENTS.md) | Rules for people and coding agents working in this repo |
+| [DECISIONS.md](DECISIONS.md) | Choices made where the spec left room |
 
-## Development
+## Repository layout
 
-Requires Node 22 or later and pnpm 10.
-
-```sh
-pnpm install
-pnpm typecheck
-pnpm lint
-pnpm test
-pnpm build
-```
+Turborepo on a pnpm workspace.
 
 | Path | What |
 | --- | --- |
-| `apps/worker` | Cloudflare Worker: app host, content host, MCP endpoint, REST API |
-| `apps/web` | React + Vite front end |
-| `packages/shared` | Types, schemas and constants shared by both |
-| `e2e` | Playwright end-to-end tests |
+| `apps/worker` | The Cloudflare Worker: app host, content host, `/mcp`, `/api/v1` (Hono) |
+| `apps/web` | React + Vite front end, served as static assets by the Worker |
+| `packages/shared` | Types, zod schemas and constants used by both |
 | `migrations` | D1 SQL migrations |
+| `e2e` | Playwright end-to-end tests |
+| `scripts` | `setup.mjs`, `seed.mjs`, `openapi.mjs` |
+| `docs` | Spec, guides, OpenAPI file |
+
+Main commands: `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm build`, `pnpm test:e2e`. See
+[CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 
-MIT. Copyright Aconite Software & Investments, Lda.
+MIT. Copyright (c) 2026 Aconite Software & Investments, Lda. See [LICENSE](LICENSE).
