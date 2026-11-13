@@ -1,0 +1,456 @@
+// The editor itself: Monaco on the left, the live preview on the right, save with an optional
+// note, and conflict handling. Loaded lazily by pages/Editor.tsx (it pulls in Monaco).
+//
+// Saves always send base_version. A save against a stale version is refused by the Worker (409)
+// and this view shows the published version next to the draft; it never merges or overwrites on
+// its own. Saving on top of the newer version needs an explicit confirmation.
+import {
+  ArrowsClockwiseIcon,
+  CodeIcon,
+  ColumnsIcon,
+  EyeIcon,
+  FloppyDiskIcon,
+  InfoIcon,
+} from "@phosphor-icons/react";
+import {
+  API,
+  type AppConfig,
+  type ArtifactDetail,
+  LIMITS,
+  type Paged,
+  type PublishResult,
+  route,
+  type VersionInfo,
+} from "@plinth/shared";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
+import { ApiRequestError, api } from "../../lib/api.ts";
+import { navigate } from "../../lib/router.tsx";
+import {
+  Badge,
+  Button,
+  ConfirmDialog,
+  Input,
+  SegmentedControl,
+  Tooltip,
+  useToast,
+} from "../ui/index.ts";
+import { CodeDiff, CodeEditor } from "./CodeEditor.tsx";
+import { type ConflictInfo, ConflictView } from "./ConflictView.tsx";
+import { clearAllDrafts, clearDraft, saveDraft } from "./draft.ts";
+import type { EditorInitial, VersionText } from "./initial.ts";
+import { PreviewFrame } from "./PreviewFrame.tsx";
+import { SplitPane, type SplitView } from "./SplitPane.tsx";
+import "./editor.css";
+
+/** Keep the draft in sessionStorage this long after the last change. */
+const DRAFT_DEBOUNCE_MS = 300;
+
+type Mode = "edit" | "conflict" | "reapply";
+
+export interface EditorWorkspaceProps {
+  artifact: ArtifactDetail;
+  config: AppConfig;
+  initial: EditorInitial;
+  /** False while the screen is too narrow and the workspace is hidden. */
+  active: boolean;
+}
+
+const isMac = () => /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
+
+export default function EditorWorkspace({
+  artifact,
+  config,
+  initial,
+  active,
+}: EditorWorkspaceProps) {
+  const toast = useToast();
+  const id = artifact.id;
+  const artifactPath = `/a/${encodeURIComponent(artifact.slug)}`;
+  const codePaneId = useId();
+
+  const [html, setHtml] = useState(initial.html);
+  const [note, setNote] = useState(initial.note);
+  const [base, setBase] = useState<VersionText>(initial.base);
+  const [view, setView] = useState<SplitView>("split");
+  const [mode, setMode] = useState<Mode>("edit");
+  const [saving, setSaving] = useState(false);
+  const [conflict, setConflict] = useState<ConflictInfo | null>(null);
+  /** A newer version than the base is known to exist (draft restored or conflict dismissed). */
+  const [newer, setNewer] = useState<number | null>(
+    initial.base.version < initial.latest.version ? initial.latest.version : null,
+  );
+  /** The draft kept for reference while reapplying it on top of the latest version. */
+  const [reference, setReference] = useState<string | null>(null);
+  const [leaving, setLeaving] = useState(false);
+
+  const dirty = html !== base.html;
+  const tooLarge = html.length > LIMITS.maxHtmlBytes;
+
+  // Refs for handlers that must see the newest values (keyboard shortcut, async saves).
+  const latest = useRef({ html, note, base, mode, dirty, active });
+  latest.current = { html, note, base, mode, dirty, active };
+  const savingRef = useRef(false);
+
+  // Keep the draft in this tab so a reload does not lose it.
+  useEffect(() => {
+    const t = window.setTimeout(() => {
+      if (html !== base.html || note.trim() !== "") saveDraft(id, base.version, html, note);
+      else clearDraft(id, base.version);
+    }, DRAFT_DEBOUNCE_MS);
+    return () => window.clearTimeout(t);
+  }, [id, html, note, base]);
+
+  // Warn before the tab closes or reloads with unsaved changes.
+  useEffect(() => {
+    if (!dirty) return;
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = "";
+    };
+    window.addEventListener("beforeunload", onBeforeUnload);
+    return () => window.removeEventListener("beforeunload", onBeforeUnload);
+  }, [dirty]);
+
+  /** Load the newer version and show it next to the draft. */
+  const openConflict = useCallback(
+    async (current: number | null, from: number): Promise<boolean> => {
+      try {
+        const detail = await api<ArtifactDetail>(
+          current ? route(API.version, { ref: id, n: current }) : route(API.artifact, { ref: id }),
+        );
+        let author: string | null = null;
+        let createdAt: string | null = null;
+        try {
+          const { items } = await api<Paged<VersionInfo>>(route(API.versions, { ref: id }));
+          const v = items.find((i) => i.number === detail.version);
+          author = v?.author.label ?? null;
+          createdAt = v?.created_at ?? null;
+        } catch {
+          // The author line is optional.
+        }
+        setConflict({
+          current: detail.version,
+          currentHtml: detail.html,
+          author,
+          createdAt,
+          base: from,
+        });
+        setNewer(detail.version);
+        setMode("conflict");
+        return true;
+      } catch {
+        toast.error(
+          "A newer version could not be loaded",
+          "Nothing was saved. Your draft is kept in this tab; try again.",
+        );
+        return false;
+      }
+    },
+    [id, toast],
+  );
+
+  const save = useCallback(
+    async (baseVersion?: number) => {
+      if (savingRef.current) return;
+      const { html: draft, note: draftNote, base: b } = latest.current;
+      const from = baseVersion ?? b.version;
+      const trimmed = draftNote.trim();
+      savingRef.current = true;
+      setSaving(true);
+      try {
+        const result = await api<PublishResult>(route(API.artifact, { ref: id }), {
+          method: "PUT",
+          body: { html: draft, note: trimmed || undefined, base_version: from },
+        });
+        clearAllDrafts(id);
+        setBase({ version: result.version, html: draft });
+        setNote((n) => (n.trim() === trimmed ? "" : n));
+        setConflict(null);
+        setNewer(null);
+        setReference(null);
+        setMode("edit");
+        toast.success(`Saved as v${result.version}`);
+      } catch (e) {
+        if (e instanceof ApiRequestError && e.status === 409) {
+          const details = e.details as { current_version?: unknown } | undefined;
+          const current =
+            typeof details?.current_version === "number" ? details.current_version : null;
+          await openConflict(current, from);
+        } else if (e instanceof ApiRequestError && e.status === 401) {
+          toast.error(
+            "You are signed out",
+            "Sign in again in another tab, then save. Your draft is kept in this tab.",
+          );
+        } else if (e instanceof ApiRequestError && e.status === 403) {
+          toast.error("You can no longer edit this artifact", e.message);
+        } else {
+          toast.error("Could not save", e instanceof Error ? e.message : undefined);
+        }
+      } finally {
+        savingRef.current = false;
+        setSaving(false);
+      }
+    },
+    [id, openConflict, toast],
+  );
+
+  // Cmd+S / Ctrl+S saves, anywhere on the page (captured before Monaco sees it).
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (!(e.metaKey || e.ctrlKey) || e.altKey || e.shiftKey || e.key.toLowerCase() !== "s")
+        return;
+      if (!latest.current.active) return;
+      e.preventDefault();
+      const s = latest.current;
+      if (s.mode === "conflict") {
+        toast.toast({
+          title: "Choose how to resolve the conflict first",
+          description: "Saving now would be refused again.",
+          tone: "warning",
+        });
+        return;
+      }
+      if (s.dirty) void save();
+    };
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => window.removeEventListener("keydown", onKeyDown, true);
+  }, [save, toast]);
+
+  // Offer to throw away a draft restored from this tab.
+  const restoredOnce = useRef(false);
+  useEffect(() => {
+    if (!initial.restored || restoredOnce.current) return;
+    restoredOnce.current = true;
+    const behind = initial.base.version < initial.latest.version;
+    toast.toast({
+      title: "Restored your unsaved draft",
+      description: behind
+        ? `It is based on v${initial.base.version}; v${initial.latest.version} is now current. Saving will show the differences first.`
+        : "It was kept in this tab since your last visit.",
+      duration: 10_000,
+      action: {
+        label: "Discard draft",
+        onClick: () => {
+          clearAllDrafts(id);
+          setBase(initial.latest);
+          setHtml(initial.latest.html);
+          setNote("");
+          setNewer(null);
+          setConflict(null);
+          setReference(null);
+          setMode("edit");
+        },
+      },
+    });
+  }, [id, initial, toast]);
+
+  const onCopyDraft = () => {
+    const text = latest.current.html;
+    const done = () =>
+      toast.success("Draft copied", "Your draft is on the clipboard and still in the editor.");
+    const failed = () =>
+      toast.error("Could not copy", "The browser blocked the clipboard. Your draft is still here.");
+    try {
+      navigator.clipboard.writeText(text).then(done, failed);
+    } catch {
+      failed();
+    }
+    setMode("edit");
+  };
+
+  const onLoadLatest = () => {
+    if (!conflict) return;
+    setReference(latest.current.html);
+    setBase({ version: conflict.current, html: conflict.currentHtml });
+    setHtml(conflict.currentHtml);
+    setNewer(null);
+    setConflict(null);
+    setMode("reapply");
+    setView("code");
+  };
+
+  const cancel = () => {
+    if (dirty) setLeaving(true);
+    else navigate(artifactPath);
+  };
+
+  const shortcut = isMac() ? "⌘S" : "Ctrl+S";
+  const canSave = dirty && mode !== "conflict" && !tooLarge;
+
+  return (
+    <div className="pl-editor" hidden={!active}>
+      <header className="pl-editor__bar">
+        <div className="pl-editor__heading">
+          <h1 className="pl-editor__title type-title">{artifact.title}</h1>
+          <div className="pl-editor__meta">
+            <Badge mono tone="strong">
+              Editing v{base.version}
+            </Badge>
+            <span className="pl-editor__status" aria-live="polite">
+              {dirty ? (
+                <Badge tone="warning">Unsaved changes</Badge>
+              ) : (
+                <span className="pl-editor__clean">No unsaved changes</span>
+              )}
+            </span>
+          </div>
+        </div>
+        <div className="pl-editor__tools">
+          <SegmentedControl
+            label="Layout"
+            size="sm"
+            value={view}
+            onChange={setView}
+            options={[
+              { value: "split", label: "Split", icon: ColumnsIcon },
+              { value: "code", label: "Code", icon: CodeIcon },
+              { value: "preview", label: "Preview", icon: EyeIcon },
+            ]}
+          />
+          <Input
+            className="pl-editor__note"
+            label="What changed? (optional)"
+            hideLabel
+            placeholder="What changed? (optional)"
+            value={note}
+            maxLength={LIMITS.maxNoteLength}
+            onChange={(e) => setNote(e.currentTarget.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && canSave) {
+                e.preventDefault();
+                void save();
+              }
+            }}
+          />
+          <Button variant="ghost" onClick={cancel}>
+            Cancel
+          </Button>
+          <Tooltip content={`Save a new version (${shortcut})`} placement="bottom">
+            <Button
+              variant="primary"
+              icon={FloppyDiskIcon}
+              loading={saving}
+              disabled={!canSave}
+              onClick={() => void save()}
+              aria-keyshortcuts="Meta+S Control+S"
+            >
+              Save
+            </Button>
+          </Tooltip>
+        </div>
+      </header>
+
+      {mode === "edit" && newer !== null && (
+        <div className="pl-editor__notice" role="status">
+          <InfoIcon aria-hidden="true" />
+          <p>
+            v{newer} is newer than v{base.version}, the version you are editing. Saving will show
+            the differences first and will not overwrite v{newer}.
+          </p>
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => void openConflict(conflict?.current ?? newer, base.version)}
+          >
+            Compare with v{newer}
+          </Button>
+        </div>
+      )}
+      {mode === "edit" && reference !== null && (
+        <div className="pl-editor__notice" role="status">
+          <InfoIcon aria-hidden="true" />
+          <p>Your earlier draft is kept for reference until you save.</p>
+          <Button
+            variant="secondary"
+            size="sm"
+            icon={ArrowsClockwiseIcon}
+            onClick={() => {
+              setMode("reapply");
+              setView("code");
+            }}
+          >
+            Compare with my draft
+          </Button>
+        </div>
+      )}
+      {mode === "reapply" && reference !== null && (
+        <div className="pl-editor__notice" role="status">
+          <InfoIcon aria-hidden="true" />
+          <p>
+            Reapplying your draft on top of v{base.version}. Left: your draft, read only. Right: v
+            {base.version}, where you edit. Copy what you need across, then save.
+          </p>
+          <Button variant="secondary" size="sm" onClick={() => setMode("edit")}>
+            Close comparison
+          </Button>
+        </div>
+      )}
+
+      <div className="pl-editor__body">
+        {mode === "conflict" && conflict && (
+          <ConflictView
+            conflict={conflict}
+            draft={html}
+            artifactId={id}
+            saving={saving}
+            onCopyDraft={onCopyDraft}
+            onLoadLatest={onLoadLatest}
+            onSaveOnTop={() => void save(conflict.current)}
+          />
+        )}
+        <div className="pl-editor__work" hidden={mode === "conflict"}>
+          <SplitPane
+            view={view}
+            label="Resize code and preview"
+            startId={codePaneId}
+            start={
+              <div className="pl-editor-pane">
+                <div className="pl-editor-pane__tools">
+                  <span className="pl-editor-pane__label">HTML</span>
+                </div>
+                <div className="pl-editor-pane__body">
+                  {mode === "reapply" && reference !== null ? (
+                    <CodeDiff
+                      original={reference}
+                      modified={html}
+                      originalLabel="Your earlier draft (read only)"
+                      modifiedLabel={`HTML of ${artifact.title}, based on v${base.version}`}
+                      onModifiedChange={setHtml}
+                      path={`inmemory://plinth/${id}/reapply`}
+                    />
+                  ) : (
+                    <CodeEditor
+                      value={html}
+                      onChange={setHtml}
+                      ariaLabel={`HTML of ${artifact.title}`}
+                      path={`inmemory://plinth/${id}/draft.html`}
+                    />
+                  )}
+                </div>
+              </div>
+            }
+            end={
+              <PreviewFrame artifactId={id} title={artifact.title} html={html} config={config} />
+            }
+          />
+        </div>
+      </div>
+
+      <ConfirmDialog
+        open={leaving}
+        onClose={() => setLeaving(false)}
+        onConfirm={() => {
+          clearAllDrafts(id);
+          setLeaving(false);
+          setHtml(base.html);
+          navigate(artifactPath);
+        }}
+        title="Discard your changes?"
+        description="Your changes have not been saved as a version. Leaving now throws the draft away."
+        confirmLabel="Discard changes"
+        cancelLabel="Keep editing"
+        danger
+      />
+    </div>
+  );
+}
