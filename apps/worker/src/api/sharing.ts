@@ -2,7 +2,7 @@
 import { grantsReplaceInput, type SharingSettings } from "@plinth/shared";
 import { asc, eq } from "drizzle-orm";
 import { Hono } from "hono";
-import { accessGrants, type ArtifactRow } from "../db/schema.ts";
+import { type ArtifactRow, accessGrants } from "../db/schema.ts";
 import { ApiError } from "../lib/errors.ts";
 import { nowIso } from "../lib/time.ts";
 import { canMakePublic } from "../policy.ts";
