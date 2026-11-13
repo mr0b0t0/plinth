@@ -839,7 +839,7 @@ function operations(): Operation[] {
       errors: [401, 403],
     },
     {
-      method: "patch",
+      method: "post",
       path: API.adminReport,
       operationId: "decideReport",
       summary: "Take down the artifact (actioned) or dismiss the report",
@@ -847,7 +847,7 @@ function operations(): Operation[] {
       auth: "admin",
       body: "ReportDecisionInput",
       ok: [200, "ReportInfo"],
-      errors: [400, 401, 403, 404],
+      errors: [400, 401, 403, 404, 409],
     },
   ];
 }

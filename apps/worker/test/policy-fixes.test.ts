@@ -49,3 +49,23 @@ describe("policy fixes", () => {
     expect((await call(`/api/v1/artifacts/${p.id}`, { headers })).status).toBe(200);
   });
 });
+
+describe("PATCH /me", () => {
+  it("updates the display name for people, not agents", async () => {
+    const a = await agent();
+    const s = await browserSession(a.user.id);
+    const res = await call("/api/v1/me", {
+      method: "PATCH",
+      headers: { ...s.headers, "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "Ada" }),
+    });
+    expect(res.status).toBe(200);
+    expect((await json(res)).name).toBe("Ada");
+    const byAgent = await call("/api/v1/me", {
+      method: "PATCH",
+      headers: { ...a.auth, "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "Bot" }),
+    });
+    expect(byAgent.status).toBe(403);
+  });
+});

@@ -51,6 +51,23 @@ describe("OpenAPI document", () => {
     });
   });
 
+  it("documents exactly the routes the Worker serves under /api/v1", async () => {
+    const { app } = await import("../src/index.ts");
+    const doc = openApiDocument(config()) as { paths: Record<string, Record<string, unknown>> };
+    const documented = new Set<string>();
+    for (const [p, ops] of Object.entries(doc.paths)) {
+      for (const m of Object.keys(ops))
+        documented.add(`${m.toUpperCase()} ${p.replace(/\{(\w+)\}/g, ":$1")}`);
+    }
+    const served = new Set<string>();
+    for (const r of app.routes) {
+      if (r.path.startsWith("/api/v1/") && r.method !== "ALL")
+        served.add(`${r.method} ${r.path.slice(7)}`);
+    }
+    expect([...served].filter((x) => !documented.has(x)).sort()).toEqual([]);
+    expect([...documented].filter((x) => !served.has(x)).sort()).toEqual([]);
+  });
+
   it("has a path for every entry in the shared API map", () => {
     const paths = Object.keys(doc.paths);
     for (const [key, path] of Object.entries(API)) {

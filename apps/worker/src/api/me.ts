@@ -1,10 +1,10 @@
-import type { AppConfig, Me } from "@plinth/shared";
+import { type AppConfig, type Me, updateProfileInput } from "@plinth/shared";
 import { and, eq, isNull, sql } from "drizzle-orm";
 import { Hono } from "hono";
-import { artifacts } from "../db/schema.ts";
-import { unauthorized } from "../lib/errors.ts";
+import { artifacts, users } from "../db/schema.ts";
+import { ApiError, unauthorized } from "../lib/errors.ts";
 import { artifactLimitFor, getUserById } from "../services/users.ts";
-import { type AppEnv, ensureCsrfCookie } from "./context.ts";
+import { type AppContext, type AppEnv, ensureCsrfCookie, parseBody } from "./context.ts";
 
 export const meApi = new Hono<AppEnv>();
 
@@ -24,7 +24,24 @@ meApi.get("/config", (c) => {
   return res;
 });
 
-meApi.get("/me", async (c) => {
+/** Update the signed-in person's display name. People only (not agents). */
+meApi.patch("/me", async (c) => {
+  const p = c.get("principal");
+  if (p.kind === "agent") throw new ApiError("forbidden", "Agents cannot change the profile");
+  if (p.kind !== "user") throw unauthorized();
+  const { name } = await parseBody(c, updateProfileInput);
+  await c
+    .get("db")
+    .update(users)
+    .set({ name: name || null })
+    .where(eq(users.id, p.userId))
+    .run();
+  return meResponse(c);
+});
+
+meApi.get("/me", (c) => meResponse(c));
+
+async function meResponse(c: AppContext) {
   const p = c.get("principal");
   if (p.kind !== "user" && p.kind !== "agent") throw unauthorized();
   const user = await getUserById(c.get("db"), p.userId);
@@ -45,4 +62,4 @@ meApi.get("/me", async (c) => {
     is_admin: user.isAdmin,
   };
   return c.json(me);
-});
+}

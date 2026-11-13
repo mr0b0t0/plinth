@@ -1228,7 +1228,7 @@
       }
     },
     "/admin/reports/{id}": {
-      "patch": {
+      "post": {
         "operationId": "decideReport",
         "summary": "Take down the artifact (actioned) or dismiss the report",
         "description": "Instance admins only (emails in ADMIN_EMAIL).",
@@ -1258,6 +1258,7 @@
           "401": { "$ref": "#/components/responses/E401" },
           "403": { "$ref": "#/components/responses/E403" },
           "404": { "$ref": "#/components/responses/E404" },
+          "409": { "$ref": "#/components/responses/E409" },
           "default": { "$ref": "#/components/responses/Error" }
         },
         "security": [{ "sessionCookie": [], "csrfHeader": [] }]
