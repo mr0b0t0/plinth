@@ -259,11 +259,12 @@ function VersionRow({
             <Badge icon={ArrowCounterClockwiseIcon}>Restored from v{v.restored_from}</Badge>
           )}
         </div>
-        {v.note ? (
+        {/* A restore's automatic note repeats the badge; show only notes that add something. */}
+        {v.note && v.note !== `Restored from v${v.restored_from}` ? (
           <p className="hx-row__note">{v.note}</p>
-        ) : (
+        ) : v.restored_from === null ? (
           <p className="hx-row__note hx-row__note--empty">No note</p>
-        )}
+        ) : null}
         <p className="hx-row__meta">
           <AuthorLabel author={v.author} />
           <span aria-hidden="true" className="hx-dot">

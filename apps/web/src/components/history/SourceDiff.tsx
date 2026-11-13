@@ -69,11 +69,11 @@ export function SourceDiff({ from, to, oldHtml, newHtml, oldAssets, newAssets }:
           ) : (
             <>
               <span className="hx-stat hx-stat--added">
-                +{diff.added}
+                +{diff.added.toLocaleString("en")}
                 <span className="visually-hidden"> lines added,</span>
               </span>
               <span className="hx-stat hx-stat--removed">
-                −{diff.removed}
+                −{diff.removed.toLocaleString("en")}
                 <span className="visually-hidden"> lines removed</span>
               </span>
             </>
@@ -181,6 +181,12 @@ function UnifiedTable({
       <caption className="visually-hidden">
         Changes to index.html from v{from} to v{to}
       </caption>
+      <colgroup>
+        <col className="hx-col-no" />
+        <col className="hx-col-no" />
+        <col className="hx-col-mark" />
+        <col />
+      </colgroup>
       <thead className="visually-hidden">
         <tr>
           <th scope="col">v{from} line</th>
@@ -245,6 +251,12 @@ function SplitTable({
       <caption className="visually-hidden">
         Changes to index.html, v{from} on the left and v{to} on the right
       </caption>
+      <colgroup>
+        <col className="hx-col-no" />
+        <col />
+        <col className="hx-col-no" />
+        <col />
+      </colgroup>
       <thead className="visually-hidden">
         <tr>
           <th scope="col">v{from} line</th>
