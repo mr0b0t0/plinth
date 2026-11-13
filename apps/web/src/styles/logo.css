@@ -1,0 +1,29 @@
+.pl-logo {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--color-ink);
+}
+.pl-logo__word {
+  font-family: var(--font-display);
+  font-size: var(--text-xl);
+  line-height: 1;
+  letter-spacing: var(--tracking-tight);
+  /* optical alignment: the serif's baseline sits on the plinth */
+  padding-top: 0.08em;
+}
+.pl-logo--sm .pl-logo__word {
+  font-size: var(--text-lg);
+}
+.pl-logo--lg {
+  gap: var(--space-3);
+}
+.pl-logo--lg .pl-logo__word {
+  font-size: var(--text-3xl);
+}
+.pl-logo-mark__block {
+  fill: var(--color-accent);
+}
+.pl-logo-mark__base {
+  fill: currentColor;
+}
