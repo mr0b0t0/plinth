@@ -1,0 +1,25 @@
+/* Admin reports list. Tokens only. */
+.pl-reports {
+  padding-top: var(--space-6);
+}
+.pl-report__title {
+  font-size: var(--text-xl);
+  overflow-wrap: anywhere;
+}
+.pl-report__title a {
+  color: var(--color-ink);
+}
+.pl-report__meta {
+  color: var(--color-ink-muted);
+  font-size: var(--text-sm);
+  overflow-wrap: anywhere;
+}
+.pl-report__reason {
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+  border-left: var(--border-width-strong) solid var(--color-border-strong);
+  background: var(--color-surface-sunk);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
