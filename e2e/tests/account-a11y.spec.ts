@@ -7,38 +7,10 @@ import path from "node:path";
 import AxeBuilder from "@axe-core/playwright";
 import { expect, type Page, type TestInfo, test } from "@playwright/test";
 import { APP_ORIGIN, publishArtifact, uniqueEmail } from "../support/api.ts";
-import { d1, seedUser, sql } from "../support/db.ts";
+import { seedSession as seedContextSession } from "../support/db.ts";
 import { createToken } from "../support/tokens.ts";
 
 const SHOTS = process.env.PLINTH_E2E_SHOTS;
-
-/**
- * A signed-in browser without the sign-in form: a session row written straight to the e2e
- * database plus its cookie. Used where sign-in is not what the test is about, because wrangler dev
- * sets CF-Connecting-IP and the per-IP sign-in limit (20 an hour) covers the whole run.
- */
-async function seedSession(page: Page, email: string): Promise<void> {
-  const userId = await seedUser(email);
-  const value = randomBytes(32).toString("base64url");
-  const id = createHash("sha256").update(value).digest("hex");
-  const now = new Date();
-  const expires = new Date(now.getTime() + 24 * 60 * 60 * 1000);
-  await d1(
-    "INSERT INTO sessions (id, kind, user_id, viewer_email, expires_at, created_at) " +
-      `VALUES (${sql(id)}, 'user', ${sql(userId)}, NULL, ${sql(expires.toISOString())}, ${sql(now.toISOString())});`,
-  );
-  await page.context().addCookies([
-    {
-      name: "plinth_session",
-      value,
-      domain: "app.localhost",
-      path: "/",
-      httpOnly: true,
-      secure: true,
-      sameSite: "Lax",
-    },
-  ]);
-}
 
 async function check(page: Page, info: TestInfo, name: string): Promise<void> {
   // Let entrance animations settle so axe sees final colors.
@@ -90,7 +62,7 @@ test("signed-out pages: home, sign-in steps, magic link", async ({ page }, info)
 test("signed-in pages: dashboard, connections, consent, settings", async ({ page }, info) => {
   test.setTimeout(90_000);
   const email = uniqueEmail("a11y");
-  await seedSession(page, email);
+  await seedContextSession(page.context(), email);
 
   await page.goto("/dashboard");
   await expect(page.getByRole("heading", { name: "Nothing on display yet" })).toBeVisible();

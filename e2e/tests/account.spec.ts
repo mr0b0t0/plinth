@@ -11,7 +11,7 @@ import {
   uniqueEmail,
 } from "../support/api.ts";
 import { signIn } from "../support/auth.ts";
-import { d1, seedUser, sql } from "../support/db.ts";
+import { seedSession as seedContextSession } from "../support/db.ts";
 import { latestCode, latestLink } from "../support/mail.ts";
 import { mcpClient, tool } from "../support/mcp.ts";
 import { seedToken } from "../support/tokens.ts";
@@ -52,34 +52,6 @@ function authorizeUrl(clientId: string, redirectUri: string, challenge: string, 
     resource: `${APP_ORIGIN}/mcp`,
   });
   return `/oauth/authorize?${q}`;
-}
-
-/**
- * A signed-in browser without the sign-in form: a session row written straight to the e2e
- * database plus its cookie. Used where sign-in is not what the test is about, because wrangler dev
- * sets CF-Connecting-IP and the per-IP sign-in limit (20 an hour) covers the whole run.
- */
-async function seedSession(page: Page, email: string): Promise<void> {
-  const userId = await seedUser(email);
-  const value = randomBytes(32).toString("base64url");
-  const id = createHash("sha256").update(value).digest("hex");
-  const now = new Date();
-  const expires = new Date(now.getTime() + 24 * 60 * 60 * 1000);
-  await d1(
-    "INSERT INTO sessions (id, kind, user_id, viewer_email, expires_at, created_at) " +
-      `VALUES (${sql(id)}, 'user', ${sql(userId)}, NULL, ${sql(expires.toISOString())}, ${sql(now.toISOString())});`,
-  );
-  await page.context().addCookies([
-    {
-      name: "plinth_session",
-      value,
-      domain: "app.localhost",
-      path: "/",
-      httpOnly: true,
-      secure: true,
-      sameSite: "Lax",
-    },
-  ]);
 }
 
 /** A loopback port nobody listens on; the browser never reaches it because page.route answers. */
@@ -156,7 +128,7 @@ test.describe("sign-in", () => {
 
   test("sign out from the account menu", async ({ page }) => {
     const email = uniqueEmail("signout");
-    await seedSession(page, email);
+    await seedContextSession(page.context(), email);
     await page.goto("/dashboard");
     await page.getByRole("button", { name: `Account: ${email}` }).click();
     await page.getByRole("menuitem", { name: "Sign out" }).click();
@@ -366,7 +338,7 @@ test("settings are for the owner only", async ({ page }) => {
     expect(put.status).toBe(200);
 
     // The commenter sees it under "Shared with you", without owner actions or settings.
-    await seedSession(page, commenter);
+    await seedContextSession(page.context(), commenter);
     await page.goto("/dashboard");
     await expect(page.getByRole("heading", { name: /Shared with you/ })).toBeVisible();
     const row = page.getByRole("listitem").filter({ hasText: "Shared plan" });
@@ -456,7 +428,7 @@ test.describe("OAuth consent", () => {
   });
 
   test("Deny returns access_denied; an unknown request says it expired", async ({ page }) => {
-    await seedSession(page, uniqueEmail("deny"));
+    await seedContextSession(page.context(), uniqueEmail("deny"));
     const redirectUri = loopbackRedirect();
     const clientId = await registerClient(page, "Some tool", redirectUri);
     const { challenge } = pkce();

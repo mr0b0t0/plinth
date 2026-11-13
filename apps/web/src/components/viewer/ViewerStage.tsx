@@ -12,7 +12,7 @@ import {
   SunIcon,
 } from "@phosphor-icons/react";
 import { APP_ROUTES, route, type ViewGate } from "@plinth/shared";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Link } from "../../lib/router.tsx";
 import { useSession } from "../../lib/session.ts";
 import { THEME_NAMES, useTheme } from "../../lib/theme.ts";
@@ -23,6 +23,7 @@ import { SkipLink } from "../layout/AppShell.tsx";
 import {
   Button,
   ButtonLink,
+  IconButton,
   IconProvider,
   Menu,
   type MenuEntry,
@@ -76,15 +77,23 @@ export function ViewerStage({
   const historyHref = route(APP_ROUTES.history, { slug });
   const reportHref = route(APP_ROUTES.report, { slug });
 
+  // Whichever comments toggle is visible gets focus back when the panel closes.
+  const wideToggleRef = useRef<HTMLButtonElement>(null);
+  const compactToggleRef = useRef<HTMLButtonElement>(null);
+  const closeComments = () => {
+    onToggleComments();
+    requestAnimationFrame(() => {
+      const visible = [wideToggleRef.current, compactToggleRef.current].find(
+        (el) => el && el.offsetParent !== null,
+      );
+      visible?.focus();
+    });
+  };
+
   const menuItems: MenuEntry[] = [
     { label: "Share", icon: ShareNetworkIcon, onSelect: () => setShareOpen(true) },
     ...(canEdit(role) ? [{ label: "Edit", icon: PencilSimpleIcon, href: editHref }] : []),
     { label: "History", icon: ClockCounterClockwiseIcon, href: historyHref },
-    {
-      label: commentsOpen ? "Hide comments" : "Show comments",
-      icon: ChatCircleIcon,
-      onSelect: onToggleComments,
-    },
     { label: "Report", icon: FlagIcon, href: reportHref },
     { type: "separator" },
     {
@@ -136,6 +145,7 @@ export function ViewerStage({
               History
             </ButtonLink>
             <Button
+              ref={wideToggleRef}
               size="sm"
               variant="ghost"
               icon={ChatCircleIcon}
@@ -150,6 +160,16 @@ export function ViewerStage({
             <ThemeToggle />
           </div>
           <div className="pl-viewer__compact">
+            {/* Comments stays one tap away on small screens; the rest folds into the menu. */}
+            <IconButton
+              ref={compactToggleRef}
+              size="sm"
+              variant="ghost"
+              icon={ChatCircleIcon}
+              label="Comments"
+              aria-pressed={commentsOpen}
+              onClick={onToggleComments}
+            />
             <Menu
               label="Artifact actions"
               icon={DotsThreeIcon}
@@ -186,7 +206,7 @@ export function ViewerStage({
                   version={artifact.version}
                   frame={frame}
                   contentOrigin={contentOrigin}
-                  onClose={onToggleComments}
+                  onClose={closeComments}
                 />
               </div>
             )}

@@ -43,6 +43,11 @@ export interface Config {
    * the local e2e suite signs in hundreds of times from one address.
    */
   devIgnoreClientIp: boolean;
+  /**
+   * POST /__dev/seed creates users, tokens and sessions for the e2e suite without touching the
+   * database file from outside the Worker. Development only, and only with DEV_SEED=true.
+   */
+  devSeed: boolean;
   sessionSecret: string;
   tokenSigningKey: string;
   adminToken: string | null;
@@ -127,6 +132,7 @@ export function parseConfig(env: Record<string, unknown>): Config {
     contentPathFallback: bool(env.STAGING_CONTENT_FALLBACK),
     devOutbox: bool(env.DEV_OUTBOX) && environment === "development",
     devIgnoreClientIp: bool(env.DEV_IGNORE_CLIENT_IP) && environment === "development",
+    devSeed: bool(env.DEV_SEED) && environment === "development",
     sessionSecret: str(env.SESSION_SECRET),
     tokenSigningKey: str(env.TOKEN_SIGNING_KEY),
     adminToken: str(env.ADMIN_TOKEN) || null,

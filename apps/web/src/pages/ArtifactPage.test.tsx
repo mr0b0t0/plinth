@@ -124,7 +124,8 @@ describe("ArtifactPage", () => {
     const user = userEvent.setup();
     render(<ArtifactPage params={{ slug: "garden-plan" }} />);
     await screen.findByTitle("Garden plan, version 3");
-    const toggle = screen.getByRole("button", { name: "Comments" });
+    // Two toggles exist (wide bar and compact bar); CSS shows one. happy-dom applies no CSS.
+    const toggle = screen.getAllByRole("button", { name: "Comments" })[0] as HTMLElement;
     expect(toggle.getAttribute("aria-pressed")).toBe("false");
     await user.click(toggle);
     await waitFor(() => expect(calls.at(-1)?.path).toBe("/view/garden-plan?review=1"));

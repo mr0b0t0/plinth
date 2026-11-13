@@ -19,6 +19,8 @@ export const DEV_VARS: Record<string, string> = {
   DEV_OUTBOX: "true",
   // Many sign-ins from one address; per-email limits still apply. Honoured only in development.
   DEV_IGNORE_CLIENT_IP: "true",
+  // POST /__dev/seed for test setup (users, tokens, sessions). Development only.
+  DEV_SEED: "true",
   EMAIL_PROVIDER: "console",
   SINGLE_USER_MODE: "false",
   ADMIN_EMAIL: "admin@plinth.local",

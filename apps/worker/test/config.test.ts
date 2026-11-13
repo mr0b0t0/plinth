@@ -61,6 +61,16 @@ describe("config", () => {
 });
 
 describe("development-only switches", () => {
+  it("POST /__dev/seed is not served unless DEV_SEED is on in development", async () => {
+    const { call } = await import("./helpers.ts");
+    const res = await call("/__dev/seed", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: "x@example.com", session: true }),
+    });
+    expect(res.status).toBe(404);
+  });
+
   it("DEV_IGNORE_CLIENT_IP and DEV_OUTBOX are ignored outside development", () => {
     const prod = parseConfig({ ...base, DEV_IGNORE_CLIENT_IP: "true", DEV_OUTBOX: "true" });
     expect(prod.devIgnoreClientIp).toBe(false);
@@ -69,5 +79,10 @@ describe("development-only switches", () => {
     expect(staging.devIgnoreClientIp).toBe(false);
     const dev = parseConfig({ ...base, ENVIRONMENT: "development", DEV_IGNORE_CLIENT_IP: "true" });
     expect(dev.devIgnoreClientIp).toBe(true);
+    expect(parseConfig({ ...base, DEV_SEED: "true" }).devSeed).toBe(false);
+    expect(parseConfig({ ...base, ENVIRONMENT: "staging", DEV_SEED: "true" }).devSeed).toBe(false);
+    expect(parseConfig({ ...base, ENVIRONMENT: "development", DEV_SEED: "true" }).devSeed).toBe(
+      true,
+    );
   });
 });

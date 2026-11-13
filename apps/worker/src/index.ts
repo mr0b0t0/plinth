@@ -3,6 +3,7 @@ import { Hono, type MiddlewareHandler } from "hono";
 import { type AppEnv, authenticate, base, serviceCtx } from "./api/context.ts";
 import { api } from "./api/index.ts";
 import { openApiDocument } from "./api/openapi.ts";
+import { devSeed } from "./app/dev-seed.ts";
 import { applyAppHeaders } from "./app/headers.ts";
 import { serveSpa } from "./app/spa.ts";
 import { type Bindings, ConfigError, getConfig } from "./config.ts";
@@ -45,6 +46,7 @@ app.use("*", base);
 app.get("/healthz", (c) => c.json({ ok: true, environment: c.get("config").environment }));
 
 app.route("/", oauthRoutes);
+app.route("/", devSeed);
 app.route("/api/v1", api);
 
 app.get("/openapi.json", (c) => c.json(openApiDocument(c.get("config"))));

@@ -39,6 +39,7 @@
     "PUBLIC_MIN_ACCOUNT_AGE_HOURS": "72",
     "STAGING_CONTENT_FALLBACK": "false",
     "DEV_OUTBOX": "true",
-    "DEV_IGNORE_CLIENT_IP": "false"
+    "DEV_IGNORE_CLIENT_IP": "false",
+    "DEV_SEED": "false"
   }
 }
