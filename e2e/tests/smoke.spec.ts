@@ -1,7 +1,14 @@
 // Smoke test: the Worker is up, both hosts answer with their own security headers, and the
 // agent entry points (REST with a token, MCP) work end to end.
 import { expect, test } from "@playwright/test";
-import { APP_ORIGIN, apiGet, contentOrigin, publishArtifact, uniqueEmail } from "../support/api.ts";
+import {
+  APP_ORIGIN,
+  apiGet,
+  CONTENT_HOST,
+  contentOrigin,
+  publishArtifact,
+  uniqueEmail,
+} from "../support/api.ts";
 import { mcpClient, tool } from "../support/mcp.ts";
 import { seedToken } from "../support/tokens.ts";
 
@@ -17,7 +24,7 @@ test("the SPA shell loads on / with the app CSP", async ({ page }) => {
   const csp = res?.headers()["content-security-policy"] ?? "";
   expect(csp).toContain("default-src 'self'");
   expect(csp).toContain("frame-ancestors 'none'");
-  expect(csp).toContain("frame-src http://*.content.localhost:8787");
+  expect(csp).toContain(`frame-src http://*.${CONTENT_HOST}`);
   expect(res?.headers()["x-frame-options"]).toBe("DENY");
   await expect(page).toHaveTitle(/Plinth/);
   await expect(page.locator("html")).toHaveAttribute("data-theme", /^(light|dark)$/);

@@ -9,7 +9,7 @@ import { existsSync, rmSync } from "node:fs";
 import path from "node:path";
 import { ROOT, STATE_DIR, WORKER_DIR, WRANGLER } from "./paths.ts";
 
-const PORT = 8787;
+const PORT = Number(process.env.PLINTH_E2E_PORT ?? 8787);
 
 export const DEV_VARS: Record<string, string> = {
   ENVIRONMENT: "development",
@@ -52,6 +52,8 @@ const child: ChildProcess = spawn(
     "dev",
     "--port",
     String(PORT),
+    "--inspector-port",
+    String(PORT + 1000),
     "--persist-to",
     STATE_DIR,
     "--show-interactive-dev-session=false",

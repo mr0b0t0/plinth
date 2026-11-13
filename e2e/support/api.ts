@@ -2,8 +2,10 @@
 // (shares the browser's cookies) or one from newApiContext().
 import { type APIRequestContext, request as playwrightRequest } from "@playwright/test";
 
-export const APP_ORIGIN = "http://app.localhost:8787";
-export const CONTENT_HOST = "content.localhost:8787";
+/** Port of the e2e Worker. Override with PLINTH_E2E_PORT to run several suites side by side. */
+export const E2E_PORT = Number(process.env.PLINTH_E2E_PORT ?? 8787);
+export const APP_ORIGIN = `http://app.localhost:${E2E_PORT}`;
+export const CONTENT_HOST = `content.localhost:${E2E_PORT}`;
 export const API_BASE = `${APP_ORIGIN}/api/v1`;
 export const CSRF_COOKIE = "plinth_csrf";
 export const CSRF_HEADER = "x-plinth-csrf";

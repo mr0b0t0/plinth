@@ -1,6 +1,6 @@
 import { defineConfig, devices } from "@playwright/test";
 
-const APP_ORIGIN = "http://app.localhost:8787";
+const APP_ORIGIN = `http://app.localhost:${process.env.PLINTH_E2E_PORT ?? 8787}`;
 
 export default defineConfig({
   testDir: "./tests",
