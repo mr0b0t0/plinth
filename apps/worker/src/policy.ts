@@ -1,7 +1,15 @@
 // The single authorization module. Every read and write of an artifact, its versions, comments,
 // sharing settings and mention tasks goes through these functions, on every request (REST, MCP
 // and the content host). The UI only mirrors these decisions; it never makes them.
-import type { ClientType, EffectiveRole, Role, Scope, Visibility } from "@plinth/shared";
+import {
+  type Capabilities,
+  type ClientType,
+  type EffectiveRole,
+  isPersonalDocId,
+  type Role,
+  type Scope,
+  type Visibility,
+} from "@plinth/shared";
 
 export type Principal =
   /** No credentials. */
@@ -36,7 +44,13 @@ export type ArtifactAction =
   /** Visibility, password, allowlist, roles, title. */
   | "manage"
   | "delete"
-  | "report";
+  | "report"
+  /** Read an artifact's shared data (agents and the app; the page goes through pageDataAccess). */
+  | "data_read"
+  /** Write an artifact's shared data. */
+  | "data_write"
+  /** Delete all of an artifact's shared data: the owner, signed in, never an agent. */
+  | "data_clear";
 
 export interface ArtifactFacts {
   ownerId: string;
@@ -70,7 +84,7 @@ export type Decision =
   | { allow: true; role: EffectiveRole | null }
   | { allow: false; reason: DenyReason; role: EffectiveRole | null };
 
-const READ_ACTIONS: ReadonlySet<ArtifactAction> = new Set(["view", "report"]);
+const READ_ACTIONS: ReadonlySet<ArtifactAction> = new Set(["view", "report", "data_read"]);
 
 export function principalEmail(p: Principal): string | null {
   return p.kind === "anonymous" ? null : p.email;
@@ -144,6 +158,15 @@ export function decide(
       return role === "owner"
         ? { allow: true, role }
         : deny(p.kind === "anonymous" ? "login_required" : "forbidden", role);
+    case "data_read":
+    case "data_write":
+      return role === "owner" || role === "editor"
+        ? { allow: true, role }
+        : deny(p.kind === "anonymous" ? "login_required" : "forbidden", role);
+    case "data_clear":
+      return role === "owner" && p.kind === "user"
+        ? { allow: true, role }
+        : deny(p.kind === "anonymous" ? "login_required" : "forbidden", role);
   }
 }
 
@@ -168,6 +191,57 @@ function canView(
       // Listed emails have a grant and returned above.
       return deny(p.kind === "anonymous" ? "email_required" : "forbidden");
   }
+}
+
+// ---------- shared data on the page (content host, content cookie) ----------
+
+/** The identity a content cookie carries for an identified viewer (sealed claim, opened). */
+export interface PageClaim {
+  email: string;
+  role: EffectiveRole;
+  /** u_ + 24 hex, per artifact and email (crypto.ts viewerIdFor). */
+  viewerId: string;
+}
+
+/**
+ * What a page may do with its artifact's shared data. `enabled` is sharedDataActive(config).
+ * Anyone with a content pass may read once the current version declares `data`; only identified
+ * viewers write; authors and the viewer's email are visible only to identified viewers on a page
+ * that also declares `viewer`.
+ */
+export function pageDataAccess(
+  claim: PageClaim | null,
+  caps: Capabilities | null,
+  enabled: boolean,
+): { read: boolean; write: boolean; seeIdentity: boolean } {
+  const read = enabled && caps?.data === true;
+  const write = read && claim !== null;
+  return { read, write, seeIdentity: write && caps?.viewer === true };
+}
+
+/**
+ * May this writer create, update or delete this document? Rules, in order:
+ * 1. creating a personal (u_) id other than the writer's own: forbidden, for every role;
+ * 2. any other create: allowed;
+ * 3. owner or editor: allowed (moderation);
+ * 4. a personal doc: only by its person;
+ * 5. otherwise: in a collection the page declares shared, or by the document's creator.
+ * A null writer (anonymous link viewer) is read-only. Agents and app writers pass their user's
+ * email, role and viewer id. The guarded write repeats the ownership condition in SQL.
+ */
+export function canModifyDoc(
+  writer: PageClaim | null,
+  doc: { docId: string; creatorEmail: string | null },
+  op: "create" | "update" | "delete",
+  collectionShared: boolean,
+): { allow: true } | { allow: false; reason: "read_only" | "forbidden" } {
+  if (!writer) return { allow: false, reason: "read_only" };
+  const no = { allow: false, reason: "forbidden" } as const;
+  const personal = isPersonalDocId(doc.docId);
+  if (op === "create") return personal && doc.docId !== writer.viewerId ? no : { allow: true };
+  if (writer.role === "owner" || writer.role === "editor") return { allow: true };
+  if (personal) return doc.docId === writer.viewerId ? { allow: true } : no;
+  return collectionShared || doc.creatorEmail === writer.email ? { allow: true } : no;
 }
 
 /** Can this agent see and act on a mention task? Only the owner's agents, matching the target. */

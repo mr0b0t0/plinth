@@ -83,3 +83,18 @@ export async function seedSession(
   ]);
   return r.user_id;
 }
+
+/**
+ * An artifact's shared-data row counts (GET /__dev/data/:id, development only, with DEV_SEED):
+ * for checks no API can make once the artifact is gone, such as a takedown's wipe.
+ */
+export async function dataCounts(
+  artifactId: string,
+  origin = APP_ORIGIN,
+): Promise<{ docs: number; usage_rows: number }> {
+  const res = await fetch(`${origin}/__dev/data/${encodeURIComponent(artifactId)}`);
+  const text = await res.text();
+  if (res.status !== 200)
+    throw new Error(`data counts failed: ${res.status} ${text.slice(0, 300)}`);
+  return JSON.parse(text) as { docs: number; usage_rows: number };
+}

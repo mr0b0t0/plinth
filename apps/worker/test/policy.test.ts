@@ -6,8 +6,11 @@ import {
   type ArtifactFacts,
   canActOnMention,
   canMakePublic,
+  canModifyDoc,
   decide,
+  type PageClaim,
   type Principal,
+  pageDataAccess,
 } from "../src/policy.ts";
 
 const OWNER = "owner-id";
@@ -219,5 +222,272 @@ describe("policy: public visibility gate", () => {
     expect(canMakePublic({ ...base, enabled: false })).toBe(false);
     expect(canMakePublic({ ...base, emailVerifiedAt: null })).toBe(false);
     expect(canMakePublic({ ...base, createdAt: "2026-11-12T12:00:00Z" })).toBe(false);
+  });
+});
+
+// ---------- shared data (docs/superpowers/specs/2026-11-14-shared-state-design.md section 5) ----------
+
+const DATA_ACTIONS = ["data_read", "data_write", "data_clear"] as const;
+
+describe("policy: shared data actions", () => {
+  it("data_read is a read action; data_write and data_clear need the write scope", () => {
+    const readOnly = ownerAgent(["artifacts:read"] as never);
+    expect(decide(readOnly, "data_read", art("allowlist"), access()).allow).toBe(true);
+    expect(decide(readOnly, "data_write", art("allowlist"), access())).toMatchObject({
+      allow: false,
+      reason: "scope",
+    });
+    expect(decide(readOnly, "data_clear", art("allowlist"), access())).toMatchObject({
+      allow: false,
+      reason: "scope",
+    });
+  });
+
+  it("the owner may read, write and clear on every visibility", () => {
+    for (const v of VISIBILITIES)
+      for (const a of DATA_ACTIONS)
+        expect(decide(owner, a, art(v), access()), `${v}/${a}`).toMatchObject({
+          allow: true,
+          role: "owner",
+        });
+  });
+
+  it("editors read and write but never clear; viewers and commenters get nothing", () => {
+    const expected: Record<string, readonly string[]> = {
+      viewer: [],
+      commenter: [],
+      editor: ["data_read", "data_write"],
+    };
+    for (const role of ROLES)
+      for (const v of VISIBILITIES)
+        for (const a of DATA_ACTIONS) {
+          const d = decide(stranger, a, art(v), access({ grantRole: role }));
+          expect(d.allow, `${role}/${v}/${a}`).toBe(expected[role]?.includes(a));
+          if (!d.allow) expect(d).toMatchObject({ reason: "forbidden", role });
+        }
+  });
+
+  it("agents act as their user for read and write, but never clear", () => {
+    const a = ownerAgent();
+    expect(decide(a, "data_read", art("unlisted"), access())).toMatchObject({ allow: true });
+    expect(decide(a, "data_write", art("unlisted"), access())).toMatchObject({ allow: true });
+    expect(decide(a, "data_clear", art("unlisted"), access())).toMatchObject({
+      allow: false,
+      reason: "forbidden",
+      role: "owner",
+    });
+    const editorAgent: Principal = {
+      ...(ownerAgent() as Extract<Principal, { kind: "agent" }>),
+      userId: "ed",
+      email: "ed@example.com",
+    };
+    const ed = access({ grantRole: "editor" });
+    expect(decide(editorAgent, "data_write", art("allowlist"), ed).allow).toBe(true);
+    expect(decide(editorAgent, "data_clear", art("allowlist"), ed).allow).toBe(false);
+    const commenterAgent = decide(
+      editorAgent,
+      "data_read",
+      art("allowlist"),
+      access({ grantRole: "commenter" }),
+    );
+    expect(commenterAgent).toMatchObject({ allow: false, reason: "forbidden" });
+  });
+
+  it("strangers, link viewers and admins get no data access", () => {
+    const admin: Principal = { kind: "user", userId: "adm", email: "a@x.com", isAdmin: true };
+    for (const v of VISIBILITIES)
+      for (const a of DATA_ACTIONS) {
+        expect(decide(anon, a, art(v), access({ passwordPassed: true }))).toMatchObject({
+          allow: false,
+          reason: "login_required",
+          role: null,
+        });
+        for (const p of [stranger, viewerEmail])
+          expect(decide(p, a, art(v), access())).toMatchObject({
+            allow: false,
+            reason: "forbidden",
+            role: null,
+          });
+        expect(decide(admin, a, art(v), access({ isAdmin: true })).allow).toBe(false);
+      }
+  });
+
+  it("takedown and deletion deny all three, owner included", () => {
+    for (const a of DATA_ACTIONS) {
+      expect(decide(owner, a, art("unlisted", { takenDown: true }), access())).toMatchObject({
+        allow: false,
+        reason: "taken_down",
+      });
+      expect(decide(owner, a, art("unlisted", { deleted: true }), access())).toMatchObject({
+        allow: false,
+        reason: "not_found",
+      });
+      expect(decide(ownerAgent(), a, art("unlisted", { takenDown: true }), access()).allow).toBe(
+        false,
+      );
+    }
+  });
+});
+
+describe("policy: pageDataAccess", () => {
+  const claim: PageClaim = {
+    email: "v@example.com",
+    role: "viewer",
+    viewerId: "u_0123456789abcdef01234567",
+  };
+  const caps = (data: boolean, viewer: boolean) => ({ data, viewer, shared: [] });
+  it("full truth table, written out", () => {
+    const T = true;
+    const F = false;
+    const none = null;
+    const off = caps(F, F);
+    const viewerOnly = caps(F, T);
+    const dataOnly = caps(T, F);
+    const both = caps(T, T);
+    // [claim, caps, enabled, read, write, seeIdentity]
+    const rows: [
+      PageClaim | null,
+      ReturnType<typeof caps> | null,
+      boolean,
+      boolean,
+      boolean,
+      boolean,
+    ][] = [
+      [claim, none, T, F, F, F],
+      [claim, none, F, F, F, F],
+      [claim, off, T, F, F, F],
+      [claim, off, F, F, F, F],
+      [claim, viewerOnly, T, F, F, F],
+      [claim, viewerOnly, F, F, F, F],
+      [claim, dataOnly, T, T, T, F],
+      [claim, dataOnly, F, F, F, F],
+      [claim, both, T, T, T, T],
+      [claim, both, F, F, F, F],
+      [null, none, T, F, F, F],
+      [null, none, F, F, F, F],
+      [null, off, T, F, F, F],
+      [null, off, F, F, F, F],
+      [null, viewerOnly, T, F, F, F],
+      [null, viewerOnly, F, F, F, F],
+      [null, dataOnly, T, T, F, F],
+      [null, dataOnly, F, F, F, F],
+      [null, both, T, T, F, F],
+      [null, both, F, F, F, F],
+    ];
+    expect(rows).toHaveLength(20);
+    for (const [c, k, enabled, read, write, seeIdentity] of rows)
+      expect(pageDataAccess(c, k, enabled), JSON.stringify([c, k, enabled])).toEqual({
+        read,
+        write,
+        seeIdentity,
+      });
+    // Independent of the table: an anonymous reader, or a page without `viewer`, never sees
+    // identities, whatever else is true.
+    for (const k of [none, off, viewerOnly, dataOnly, both])
+      for (const enabled of [T, F]) {
+        expect(pageDataAccess(null, k, enabled).seeIdentity).toBe(false);
+        if (!k?.viewer) expect(pageDataAccess(claim, k, enabled).seeIdentity).toBe(false);
+      }
+  });
+  it("spot checks", () => {
+    expect(pageDataAccess(claim, caps(true, true), true)).toEqual({
+      read: true,
+      write: true,
+      seeIdentity: true,
+    });
+    expect(pageDataAccess(null, caps(true, true), true)).toEqual({
+      read: true,
+      write: false,
+      seeIdentity: false,
+    });
+    expect(pageDataAccess(claim, caps(false, true), true)).toEqual({
+      read: false,
+      write: false,
+      seeIdentity: false,
+    });
+    expect(pageDataAccess(claim, caps(true, true), false)).toEqual({
+      read: false,
+      write: false,
+      seeIdentity: false,
+    });
+  });
+});
+
+describe("policy: canModifyDoc", () => {
+  const ME = "u_aaaaaaaaaaaaaaaaaaaaaaaa";
+  const OTHER = "u_bbbbbbbbbbbbbbbbbbbbbbbb";
+  const writer = (role: PageClaim["role"]): PageClaim => ({
+    email: `${role}@example.com`,
+    role,
+    viewerId: ME,
+  });
+  const ROLES_ALL: PageClaim["role"][] = ["owner", "editor", "commenter", "viewer"];
+  const OK = { allow: true };
+  const NO = { allow: false, reason: "forbidden" };
+
+  it("rule 1: nobody creates another person's u_ doc, the owner included", () => {
+    for (const r of ROLES_ALL)
+      for (const shared of [true, false])
+        expect(
+          canModifyDoc(writer(r), { docId: OTHER, creatorEmail: null }, "create", shared),
+        ).toEqual(NO);
+  });
+
+  it("rule 2: any other create is allowed", () => {
+    for (const r of ROLES_ALL)
+      for (const shared of [true, false]) {
+        for (const docId of ["abc", ME])
+          expect(canModifyDoc(writer(r), { docId, creatorEmail: null }, "create", shared)).toEqual(
+            OK,
+          );
+      }
+  });
+
+  it("rule 3: owner and editor may update and delete anything (moderation)", () => {
+    for (const r of ["owner", "editor"] as const)
+      for (const op of ["update", "delete"] as const)
+        for (const docId of ["abc", ME, OTHER])
+          for (const shared of [true, false])
+            expect(
+              canModifyDoc(writer(r), { docId, creatorEmail: "x@example.com" }, op, shared),
+            ).toEqual(OK);
+  });
+
+  it("rule 4: a personal doc only by its person, even in a shared collection", () => {
+    for (const r of ["commenter", "viewer"] as const)
+      for (const op of ["update", "delete"] as const)
+        for (const shared of [true, false]) {
+          const w = writer(r);
+          expect(canModifyDoc(w, { docId: ME, creatorEmail: w.email }, op, shared)).toEqual(OK);
+          expect(canModifyDoc(w, { docId: OTHER, creatorEmail: w.email }, op, shared)).toEqual(NO);
+          expect(
+            canModifyDoc(w, { docId: OTHER, creatorEmail: "x@example.com" }, op, shared),
+          ).toEqual(NO);
+        }
+  });
+
+  it("rule 5: other docs by their creator, or anyone in a shared collection", () => {
+    for (const r of ["commenter", "viewer"] as const)
+      for (const op of ["update", "delete"] as const) {
+        const w = writer(r);
+        expect(canModifyDoc(w, { docId: "abc", creatorEmail: w.email }, op, false)).toEqual(OK);
+        expect(canModifyDoc(w, { docId: "abc", creatorEmail: "x@example.com" }, op, false)).toEqual(
+          NO,
+        );
+        expect(canModifyDoc(w, { docId: "abc", creatorEmail: null }, op, false)).toEqual(NO);
+        expect(canModifyDoc(w, { docId: "abc", creatorEmail: "x@example.com" }, op, true)).toEqual(
+          OK,
+        );
+        expect(canModifyDoc(w, { docId: "abc", creatorEmail: null }, op, true)).toEqual(OK);
+      }
+  });
+
+  it("an anonymous writer is read-only for every op", () => {
+    for (const op of ["create", "update", "delete"] as const)
+      for (const shared of [true, false])
+        expect(canModifyDoc(null, { docId: "abc", creatorEmail: null }, op, shared)).toEqual({
+          allow: false,
+          reason: "read_only",
+        });
   });
 });

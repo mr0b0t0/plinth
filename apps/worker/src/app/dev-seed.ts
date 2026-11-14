@@ -2,6 +2,8 @@
 // written through the Worker's own D1 connection (writing the local SQLite file from another
 // process caused SQLITE_BUSY under parallel tests). Served only when ENVIRONMENT=development and
 // DEV_SEED=true; it is an authentication bypass by design and must never run anywhere else.
+// GET /__dev/data/:id is its read-side twin: an artifact's shared-data row counts, for checks no
+// API can make once the artifact is gone (a takedown's wipe), without spawning wrangler.
 import { TTL } from "@plinth/shared";
 import { Hono } from "hono";
 import { z } from "zod";
@@ -28,11 +30,15 @@ const seedInput = z.object({
 
 export const devSeed = new Hono<AppEnv>();
 
-devSeed.post("/__dev/seed", async (c) => {
-  const config = c.get("config");
+function devOnly(config: AppEnv["Variables"]["config"]): void {
   if (!config.devSeed || config.environment !== "development") {
     throw new ApiError("not_found", "Not found");
   }
+}
+
+devSeed.post("/__dev/seed", async (c) => {
+  const config = c.get("config");
+  devOnly(config);
   const parsed = seedInput.safeParse(await c.req.json().catch(() => null));
   if (!parsed.success)
     throw new ApiError("invalid_input", "Invalid input", { issues: parsed.error.issues });
@@ -75,4 +81,17 @@ devSeed.post("/__dev/seed", async (c) => {
     out.session_cookie_value = value;
   }
   return c.json(out, 201);
+});
+
+/** Counts only: how many documents an artifact holds and whether its usage row exists. */
+devSeed.get("/__dev/data/:id", async (c) => {
+  devOnly(c.get("config"));
+  const id = c.req.param("id");
+  const [docs, usage] = await c.env.DB.batch<{ n: number }>([
+    c.env.DB.prepare("SELECT count(*) AS n FROM artifact_docs WHERE artifact_id = ?1").bind(id),
+    c.env.DB.prepare("SELECT count(*) AS n FROM artifact_data_usage WHERE artifact_id = ?1").bind(
+      id,
+    ),
+  ]);
+  return c.json({ docs: docs?.results[0]?.n ?? 0, usage_rows: usage?.results[0]?.n ?? 0 });
 });

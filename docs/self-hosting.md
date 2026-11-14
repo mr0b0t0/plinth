@@ -117,6 +117,13 @@ Booleans accept `true`, `1`, `yes` or `on`.
 | `ADMIN_EMAIL` | empty | Instance admins (comma separated): they see the report queue and can take artifacts down. In single-user mode, exactly one address: the owner |
 | `ALLOW_PUBLIC_VISIBILITY` | `false` | Allows `public` visibility. Even then an account needs a verified email and a minimum age |
 | `PUBLIC_MIN_ACCOUNT_AGE_HOURS` | `72` | Account age before `public` unlocks |
+| `ALLOW_SHARED_DATA` | `true` | Lets pages that declare it keep shared data (polls, sign-up sheets, trackers among invited people) and learn who is viewing; see [security.md](security.md#shared-data-api). Empty keeps it on; any other value than `true`, `1`, `yes` or `on` turns it off. Off: no identity claims, pages report shared data as unavailable, and MCP and REST writes are refused while reads still work, so owners can export. Always off under `CONTENT_ISOLATION=opaque` |
+| `DATA_MAX_DOCS_PER_ARTIFACT` | `1000` | Shared-data documents per artifact |
+| `DATA_MAX_BYTES_PER_ARTIFACT` | `1048576` (1 MiB) | Shared-data bytes per artifact. At least `DATA_MAX_DOC_BYTES` |
+| `DATA_MAX_BYTES_PER_USER` | `16777216` (16 MiB) | Shared-data bytes across all of one owner's artifacts (checked before each write, so concurrent writers may pass it by a request or two). At least `DATA_MAX_BYTES_PER_ARTIFACT`. D1 has a hard database size limit, so keep this modest |
+| `DATA_MAX_DOC_BYTES` | `16384` (16 KiB) | Size of one shared-data document, `1024` to `65536` |
+| `DATA_WRITES_PER_VIEWER_PER_HOUR` | `300` | Shared-data writes per writer per artifact (page, agent and app writes, deletes included). At least 1 |
+| `DATA_WRITES_PER_ARTIFACT_PER_HOUR` | `2000` | Shared-data writes per artifact by all writers together. At least 1 |
 | `STAGING_CONTENT_FALLBACK` | `false` | Serves content at `APP_HOST/__content/<id>/` instead of subdomains, for a staging deploy on `workers.dev` without a content domain. All artifacts then share the app's origin, so never use it with real users. Refused in production |
 | `DEV_OUTBOX` | `false` (`true` in the committed local config) | Keeps console emails in D1 and exposes `GET /api/v1/__dev/outbox` for tests. Only honoured when `ENVIRONMENT=development` |
 
@@ -234,6 +241,10 @@ Step-by-step instructions for each client are in [mcp.md](mcp.md).
   `pnpm --filter @plinth/worker admin -- erase-artifact <id|slug> --remote --config wrangler.production.jsonc`,
   or `erase-user <email>` for a whole account (artifacts, versions, files, comments, connections).
   Add `--dry-run` first to see what goes.
+- **Shared data.** Pages that declare it store documents in D1 (`artifact_docs`, with exact totals
+  in `artifact_data_usage`). `SELECT sum(bytes), sum(docs), count(*) FROM artifact_data_usage`
+  shows how much there is. Data is deleted with its artifact and on takedown, and `erase-user`
+  removes a person's documents on other people's artifacts too.
 - **Backups.** D1 Time Travel restores the database to any minute in the last 30 days (Workers
   Paid) or 7 days (Free). R2 objects are written once per version and never overwritten.
 - **Logs.** `wrangler tail --config wrangler.production.jsonc` (for `plinth deploy`:

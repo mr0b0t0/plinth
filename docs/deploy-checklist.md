@@ -256,6 +256,10 @@ These need accounts, money or legal judgement, so no script does them.
     controller under GDPR).
 11. Decide when to set `ALLOW_PUBLIC_VISIBILITY=true`. Until then, artifacts can be unlisted,
     password or allowlist only.
-12. Turn on GitHub private vulnerability reporting for the repository (see
+12. Shared data is on unless `ALLOW_SHARED_DATA` is set to a false value. The hosted
+    instance's privacy notice covers it (what viewers enter, the email and role stamped on each
+    write, and the identity in the viewing cookie). An operator with a privacy notice of their own
+    should cover the same, or set `ALLOW_SHARED_DATA` to `"false"`.
+13. Turn on GitHub private vulnerability reporting for the repository (see
     [security.md](security.md)).
-13. Watch the first days with `wrangler tail` and the Cloudflare analytics for the Worker and D1.
+14. Watch the first days with `wrangler tail` and the Cloudflare analytics for the Worker and D1.

@@ -97,3 +97,18 @@ pnpm --filter @plinth/worker exec wrangler deploy --config wrangler.production.j
 ```
 
 Migrations: `pnpm --filter @plinth/worker exec wrangler d1 migrations apply DB --remote --config wrangler.production.jsonc`.
+
+## Shared data usage
+
+Pages that declare shared data keep their documents in D1, which has a hard size limit per database
+(10 GB on Workers Paid, 500 MB on Free). The defaults cap one owner at 16 MiB
+(`DATA_MAX_BYTES_PER_USER`). Watch the total:
+
+```sh
+pnpm --filter @plinth/worker exec wrangler d1 execute DB --remote --config wrangler.production.jsonc \
+  --command "SELECT sum(bytes) AS bytes, sum(docs) AS docs, count(*) AS artifacts FROM artifact_data_usage"
+```
+
+The largest artifacts: `SELECT artifact_id, docs, bytes FROM artifact_data_usage ORDER BY bytes DESC
+LIMIT 20`. Shared data needs migration `0005_shared_state.sql`, applied with the migrations command
+above before the Worker that uses it is deployed.

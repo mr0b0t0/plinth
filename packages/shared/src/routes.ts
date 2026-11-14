@@ -68,6 +68,10 @@ export const API = {
   report: "/artifacts/:ref/report",
   adminReports: "/admin/reports",
   adminReport: "/admin/reports/:id",
+  // shared data (mirror list_artifact_data and write_artifact_data; DELETE clears, owner only)
+  data: "/artifacts/:ref/data", // GET summary, POST ops, DELETE all (signed-in owner)
+  dataCollection: "/artifacts/:ref/data/:collection", // GET a page
+  dataDoc: "/artifacts/:ref/data/:collection/:doc", // GET one document
 } as const;
 
 /** SPA routes on APP_HOST. */

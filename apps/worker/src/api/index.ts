@@ -7,6 +7,7 @@ import { authApi } from "./auth.ts";
 import { commentsApi } from "./comments.ts";
 import { connectionsApi } from "./connections.ts";
 import { type AppEnv, authenticate } from "./context.ts";
+import { dataApi } from "./data.ts";
 import { meApi } from "./me.ts";
 import { reportsApi } from "./reports.ts";
 import { sharingApi } from "./sharing.ts";
@@ -38,6 +39,7 @@ api.route("/", viewApi);
 api.route("/", sharingApi);
 api.route("/", commentsApi);
 api.route("/", reportsApi);
+api.route("/", dataApi);
 
 api.all("*", () => {
   throw new ApiError("not_found", "No such API endpoint");

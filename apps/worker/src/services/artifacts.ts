@@ -6,8 +6,10 @@ import {
   type ArtifactSummary,
   type AssetInput,
   type Author,
+  type Capabilities,
   type EffectiveRole,
   type PublishResult,
+  parseCapabilities,
   type Role,
   type VersionInfo,
   type Visibility,
@@ -40,6 +42,7 @@ import {
 } from "../policy.ts";
 import { requireTypeDef, resolveSource } from "./artifactTypes.ts";
 import type { Ctx } from "./context.ts";
+import { wipeArtifactData } from "./data.ts";
 import {
   checkTotal,
   deletePrefix,
@@ -80,21 +83,39 @@ export function factsOf(a: ArtifactRow): ArtifactFacts {
 
 const ROLE_RANK: Record<Role, number> = { viewer: 1, commenter: 2, editor: 3 };
 
-/** The strongest grant for the principal's email and, for browsers, a confirmed viewer email. */
-export async function grantRoleFor(ctx: Ctx, artifactId: string): Promise<Role | null> {
+/**
+ * The strongest grant for the principal's email and, for browsers, a confirmed viewer email, with
+ * the email that holds it (the principal's own on a tie). Agents never use the viewer email.
+ */
+export async function grantFor(
+  ctx: Ctx,
+  artifactId: string,
+): Promise<{ role: Role; email: string } | null> {
   const emails = new Set<string>();
   const own = principalEmail(ctx.principal);
   if (own) emails.add(own);
   if (ctx.viewerEmail && ctx.principal.kind !== "agent") emails.add(ctx.viewerEmail);
   if (emails.size === 0) return null;
   const rows = await ctx.db
-    .select({ role: accessGrants.role })
+    .select({ role: accessGrants.role, email: accessGrants.email })
     .from(accessGrants)
     .where(and(eq(accessGrants.artifactId, artifactId), inArray(accessGrants.email, [...emails])))
     .all();
-  let best: Role | null = null;
-  for (const r of rows) if (!best || ROLE_RANK[r.role] > ROLE_RANK[best]) best = r.role;
+  let best: { role: Role; email: string } | null = null;
+  for (const r of rows) {
+    if (
+      !best ||
+      ROLE_RANK[r.role] > ROLE_RANK[best.role] ||
+      (ROLE_RANK[r.role] === ROLE_RANK[best.role] && r.email === own)
+    )
+      best = { role: r.role, email: r.email };
+  }
   return best;
+}
+
+/** The strongest grant role for the principal (see grantFor). */
+export async function grantRoleFor(ctx: Ctx, artifactId: string): Promise<Role | null> {
+  return (await grantFor(ctx, artifactId))?.role ?? null;
 }
 
 export async function accessFactsFor(ctx: Ctx, a: ArtifactRow): Promise<AccessFacts> {
@@ -253,6 +274,38 @@ interface NewVersionOptions {
   restoredFrom?: number | null;
 }
 
+// ---------- shared data capabilities (docs/spec.md "Shared data and viewer identity") ----------
+
+const utf8Decoder = new TextDecoder();
+
+/** The capabilities index.html declares, as stored in versions.capabilities (JSON or null). */
+function capabilitiesJson(files: FileEntry[]): string | null {
+  const index = files.find((f) => f.path === "index.html");
+  if (!index) return null;
+  const caps = parseCapabilities(utf8Decoder.decode(index.bytes));
+  return caps ? JSON.stringify(caps) : null;
+}
+
+/** A version row's declared capabilities. Null when none, or when the stored value is malformed. */
+export function versionCapabilities(
+  row: Pick<VersionRow, "capabilities"> | null | undefined,
+): Capabilities | null {
+  if (!row?.capabilities) return null;
+  let v: unknown;
+  try {
+    v = JSON.parse(row.capabilities);
+  } catch {
+    return null;
+  }
+  if (typeof v !== "object" || v === null) return null;
+  const { data, viewer, shared } = v as Record<string, unknown>;
+  if (typeof data !== "boolean" || typeof viewer !== "boolean") return null;
+  // `viewer` alone declares nothing (shared parseCapabilities).
+  if (!data) return null;
+  const names = Array.isArray(shared) ? shared.filter((n) => typeof n === "string") : [];
+  return { data, viewer, shared: names };
+}
+
 /**
  * Write a new immutable version. The version row is inserted first (UNIQUE(artifact_id, number)
  * picks one winner), then files go to R2 under a fresh prefix, then current_version moves forward.
@@ -267,6 +320,7 @@ export async function createVersion(
   const actor = requireActor(ctx);
   const size = checkTotal(files);
   const manifest = JSON.stringify(manifestOf(files));
+  const capabilities = capabilitiesJson(files);
   await enforceStorage(ctx, artifact.ownerId, size);
   for (let attempt = 0; attempt < 5; attempt++) {
     const fresh = await ctx.db.select().from(artifacts).where(eq(artifacts.id, artifact.id)).get();
@@ -308,6 +362,7 @@ export async function createVersion(
           note: opts.note?.trim() || null,
           restoredFrom: opts.restoredFrom ?? null,
           createdAt: nowIso(),
+          capabilities,
         })
         .run();
     } catch (e) {
@@ -803,14 +858,18 @@ export async function renameArtifact(
   return summaryFor(ctx, { ...artifact, title: title.trim() }, role);
 }
 
-/** Soft-delete the row (frees quota, ends all access) and remove the files from R2. */
+/**
+ * Soft-delete the row (frees quota, ends all access), wipe its shared data in the same batch, and
+ * remove the files from R2.
+ */
 export async function deleteArtifact(ctx: Ctx, ref: string): Promise<void> {
   const { artifact } = await requireArtifact(ctx, ref, "delete");
-  await ctx.db
-    .update(artifacts)
-    .set({ deletedAt: nowIso(), accessEpoch: sql`${artifacts.accessEpoch} + 1` })
-    .where(eq(artifacts.id, artifact.id))
-    .run();
+  await ctx.env.DB.batch([
+    ctx.env.DB.prepare(
+      "UPDATE artifacts SET deleted_at = ?1, access_epoch = access_epoch + 1 WHERE id = ?2",
+    ).bind(nowIso(), artifact.id),
+    ...wipeArtifactData(ctx.env.DB, artifact.id),
+  ]);
   ctx.waitUntil(deletePrefix(ctx.env.FILES, `artifacts/${artifact.id}/`));
 }
 

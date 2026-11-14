@@ -5,6 +5,8 @@ import {
   ARTIFACT_ID_RE,
   CONTENT_RESERVED_PREFIX,
   COOKIES,
+  type EffectiveRole,
+  HOST_COOKIE_PREFIX,
   REVIEW_MODE_PARAM,
   TTL,
   typeDef,
@@ -14,12 +16,17 @@ import type { Bindings, Config } from "../config.ts";
 import { getDb } from "../db/client.ts";
 import { type ArtifactRow, artifacts, versions } from "../db/schema.ts";
 import { secureFlag, serializeCookie } from "../lib/cookies.ts";
+import { openJson, viewerIdFor } from "../lib/crypto.ts";
+import type { PageClaim } from "../policy.ts";
 import { parseManifest } from "../services/storage.ts";
 import { injectBridge, serveBridgeScript } from "./bridge.ts";
 import { applyContentHeaders } from "./csp.ts";
+import { DATA_API_PREFIX, serveDataApi } from "./data-api.ts";
 import { servePreviewLoader } from "./preview.ts";
+import { serveRuntimeScript } from "./runtime.ts";
 import {
   consumeNonce,
+  IDENTITY_CLAIM_INFO,
   safeNext,
   signContentCookie,
   verifyContentCookie,
@@ -79,10 +86,27 @@ function redirect(config: Config, status: 301 | 302, location: string): Response
 }
 
 /**
+ * The content cookie's name for a request. On an artifact's own subdomain it is `__Host-`
+ * prefixed whenever it is Secure: browsers refuse a `__Host-` cookie that has a Domain attribute,
+ * so a sibling artifact cannot toss one onto the parent domain (the content host may share a
+ * registrable domain with its siblings until its Public Suffix List entry ships). The plain name is
+ * kept for the staging path fallback (Path=/__content/<id>/ on the app host, where shared data is
+ * off) and for plain-http names, which cannot set Secure cookies.
+ */
+export function contentCookieName(config: Pick<Config, "appHost" | "scheme">, url: URL): string {
+  const host = url.host.toLowerCase();
+  if (host === config.appHost || !secureFlag(config.scheme, host)) return COOKIES.content;
+  return `${HOST_COOKIE_PREFIX}${COOKIES.content}`;
+}
+
+/** At most this many values of the content cookie are checked per request. */
+const MAX_PASS_VALUES = 8;
+
+/**
  * Every value sent for a cookie name. Another artifact cannot set a cookie on this host directly,
  * but where the content host is not on the Public Suffix List a sibling subdomain can set one for
- * the parent domain ("cookie tossing"). Looking at every value means such a cookie can never shadow
- * the real one.
+ * the parent domain ("cookie tossing") under the plain name. Looking at every value means such a
+ * cookie can never shadow the real one.
  */
 function cookieValues(header: string | null, name: string): string[] {
   if (!header) return [];
@@ -91,9 +115,69 @@ function cookieValues(header: string | null, name: string): string[] {
     const i = part.indexOf("=");
     if (i < 0 || part.slice(0, i).trim() !== name) continue;
     out.push(part.slice(i + 1).trim());
-    if (out.length >= 8) break;
+    if (out.length >= MAX_PASS_VALUES) break;
   }
   return out;
+}
+
+const CLAIM_ROLES: ReadonlySet<string> = new Set<EffectiveRole>([
+  "owner",
+  "editor",
+  "commenter",
+  "viewer",
+]);
+
+type ContentPass = { claim: PageClaim | null };
+
+/** One cookie value as a pass for this artifact at its epoch, or null when it is not one. */
+async function openPass(
+  config: Config,
+  artifact: { id: string; accessEpoch: number },
+  value: string,
+): Promise<ContentPass | null> {
+  const pass = await verifyContentCookie(config, value);
+  if (!pass || pass.a !== artifact.id || pass.e !== artifact.accessEpoch) return null;
+  if (pass.x === undefined) return { claim: null };
+  if (typeof pass.x !== "string") return null;
+  const opened = await openJson(config.tokenSigningKey, IDENTITY_CLAIM_INFO, artifact.id, pass.x);
+  if (!opened || typeof opened !== "object") return null;
+  const { m, r } = opened as Record<string, unknown>;
+  if (typeof m !== "string" || !m || typeof r !== "string" || !CLAIM_ROLES.has(r)) return null;
+  return {
+    claim: {
+      email: m,
+      role: r as EffectiveRole,
+      viewerId: await viewerIdFor(config.tokenSigningKey, artifact.id, m),
+    },
+  };
+}
+
+const sameClaim = (a: PageClaim | null, b: PageClaim | null) =>
+  a === null || b === null ? a === b : a.email === b.email && a.role === b.role;
+
+/**
+ * The content pass this request carries for this artifact: a content cookie signed for this
+ * artifact at its current access epoch. `claim` is the viewer's identity when the gate sealed one
+ * in (identified viewers only), else null. A value whose claim does not open, or opens to the wrong
+ * shape, is rejected outright, never downgraded to anonymous. Passes differ by the identity they
+ * carry, so a request with two valid passes that disagree is ambiguous and has none: the page
+ * reloads through the gate rather than act as whoever's pass came first. Null when there is no
+ * valid pass.
+ */
+export async function readContentPass(
+  request: Request,
+  config: Config,
+  artifact: { id: string; accessEpoch: number },
+): Promise<ContentPass | null> {
+  const name = contentCookieName(config, new URL(request.url));
+  let found: ContentPass | null = null;
+  for (const value of cookieValues(request.headers.get("cookie"), name)) {
+    const pass = await openPass(config, artifact, value);
+    if (!pass) continue;
+    if (found && !sameClaim(found.claim, pass.claim)) return null;
+    found ??= pass;
+  }
+  return found;
 }
 
 /**
@@ -149,12 +233,15 @@ async function serve(
   config: Config,
   route: Extract<HostRoute, { kind: "content" }>,
 ): Promise<Response> {
+  // Shared data (content/data-api.ts): its own method, caller and JSON checks, never a redirect.
+  if (route.path.startsWith(DATA_API_PREFIX)) return serveDataApi(request, env, config, route);
+
   if (request.method !== "GET" && request.method !== "HEAD") {
     return text(config, 405, "Method not allowed", { Allow: "GET, HEAD" });
   }
   const url = new URL(request.url);
   const { artifactId, path, base } = route;
-  const cookieName = COOKIES.content;
+  const cookieName = contentCookieName(config, url);
   // In the path fallback all artifacts share the app origin, so cookies are scoped by path.
   const cookiePath = base ? `${base}/` : "/";
 
@@ -177,6 +264,7 @@ async function serve(
 
   // Static helpers that hold no artifact data.
   if (path === `${CONTENT_RESERVED_PREFIX}bridge.js`) return serveBridgeScript(config);
+  if (path === `${CONTENT_RESERVED_PREFIX}runtime.js`) return serveRuntimeScript(config);
   if (path === `${CONTENT_RESERVED_PREFIX}preview`) return servePreviewLoader(config);
   const renderer = rendererRequest(path);
   if (renderer) return serveRendererFile(request, env, config, renderer.id, renderer.file);
@@ -192,7 +280,10 @@ async function serve(
     if (!(await consumeNonce(env.DB, payload.n, payload.exp))) {
       return text(config, 403, "This link was already used. Open the artifact again.");
     }
-    const value = await signContentCookie(config, artifactId, payload.e);
+    // The sealed identity claim, if any, moves into the cookie unchanged. Every enter writes a
+    // fresh cookie, so an anonymous enter replaces an identified one.
+    const x = typeof payload.x === "string" ? payload.x : undefined;
+    const value = await signContentCookie(config, artifactId, payload.e, x);
     const next = safeNext(url.searchParams.get("next"));
     const res = redirect(config, 302, `${base}${next}`);
     res.headers.append(
@@ -218,15 +309,7 @@ async function serve(
     return text(config, 404, "Not found", base ? undefined : { "Clear-Site-Data": '"storage"' });
   }
 
-  let allowed = false;
-  for (const value of cookieValues(request.headers.get("cookie"), cookieName)) {
-    const pass = await verifyContentCookie(config, value);
-    if (pass && pass.a === artifactId && pass.e === artifact.accessEpoch) {
-      allowed = true;
-      break;
-    }
-  }
-  if (!allowed) {
+  if (!(await readContentPass(request, config, artifact))) {
     // Inside the app's frame the app cannot be framed back (frame-ancestors 'none'): ask for a
     // reload, which fetches a fresh gate and token.
     if (request.headers.get("sec-fetch-dest") === "iframe") {

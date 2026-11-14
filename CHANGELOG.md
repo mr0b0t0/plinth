@@ -10,6 +10,17 @@ Add a line under **Unreleased** in the pull request that makes a change people w
 
 ## Unreleased
 
+- **Shared data**: a page that declares `<meta name="plinth-capabilities" content="data viewer">`
+  can keep JSON documents shared by everyone who opens it (polls, sign-up sheets, trackers) through
+  `window.plinth` from `/__plinth/runtime.js`, and learn who is viewing. Only the owner and people
+  the artifact is shared with can write; link viewers read. Agents read and write the data with the
+  new MCP tools `list_artifact_data` and `write_artifact_data`. Off with `ALLOW_SHARED_DATA=false`,
+  and always off under `CONTENT_ISOLATION=opaque`. Applies migration `0005_shared_state.sql`.
+- The content cookie on artifact subdomains is now `__Host-plinth_content`: open artifact frames
+  reload through the gate once after upgrading.
+- The privacy notice covers what people enter on shared pages and how long it is kept.
+- Agent plugin 0.5.0: the skill explains shared data.
+
 ## 0.2.0 (2026-11-14)
 
 - A new artifact type, **doc**: agents publish Markdown (`publish_artifact` with `type: "doc"`)

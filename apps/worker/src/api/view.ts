@@ -1,25 +1,28 @@
 // The viewer gate on APP_HOST. Decides whether the caller may open an artifact (policy.ts), asks
 // for a password or an email when needed, and hands out a one-time token for the content host.
 import {
+  capabilityList,
   RATE_LIMITS,
   REVIEW_MODE_PARAM,
   TTL,
   type ViewGate,
+  type ViewGateData,
   viewerCodeInput,
   viewerEmailInput,
   viewerPasswordInput,
 } from "@plinth/shared";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { Hono } from "hono";
 import { resolveViewerSession } from "../auth/principal.ts";
-import { contentOrigin } from "../config.ts";
-import { issueEnterUrl, safeNext } from "../content/tokens.ts";
-import { type ArtifactRow, users } from "../db/schema.ts";
+import { contentOrigin, sharedDataActive } from "../config.ts";
+import { issueEnterUrl, safeNext, type ViewerIdentity } from "../content/tokens.ts";
+import { type ArtifactRow, users, versions } from "../db/schema.ts";
 import { appCookieName, secureFlag, serializeCookie } from "../lib/cookies.ts";
-import { signToken, verifyPassword } from "../lib/crypto.ts";
+import { signToken, verifyPassword, viewerIdFor } from "../lib/crypto.ts";
 import { ApiError } from "../lib/errors.ts";
 import { hit } from "../lib/ratelimit.ts";
-import { decideFor, findArtifact } from "../services/artifacts.ts";
+import { type Decision, pageDataAccess } from "../policy.ts";
+import { decideFor, findArtifact, grantFor, versionCapabilities } from "../services/artifacts.ts";
 import type { Ctx } from "../services/context.ts";
 import { requestViewerCode, verifyViewerCode } from "../services/viewers.ts";
 import {
@@ -90,6 +93,8 @@ export async function computeGate(
     .from(users)
     .where(eq(users.id, a.ownerId))
     .get();
+  const identity = await identityFor(ctx, a, d);
+  const data = await gateData(ctx, a, identity);
   return {
     status: "ok",
     artifact: {
@@ -100,8 +105,57 @@ export async function computeGate(
       visibility: a.visibility,
       owner_name: owner?.name ?? null,
     },
-    enter_url: await issueEnterUrl(ctx.config, a, next),
+    enter_url: await issueEnterUrl(ctx.config, a, next, identity),
     role: d.role,
+    ...(data ? { data } : {}),
+  };
+}
+
+/**
+ * The identity sealed into the enter token for shared data: only for identified viewers (the
+ * owner, or a person with a grant, signed in or confirmed by code), never agents, never link
+ * viewers or admins without a role, and only while shared data is active (on, origin isolation).
+ * The email is the owner's own, or the one that holds the strongest grant.
+ */
+async function identityFor(
+  ctx: Ctx,
+  a: ArtifactRow,
+  d: Extract<Decision, { allow: true }>,
+): Promise<ViewerIdentity | undefined> {
+  const p = ctx.principal;
+  if (d.role === null || (p.kind !== "user" && p.kind !== "viewer")) return undefined;
+  if (!sharedDataActive(ctx.config)) return undefined;
+  if (d.role === "owner") return { email: p.email, role: "owner" };
+  const g = await grantFor(ctx, a.id);
+  return g ? { email: g.email, role: g.role } : undefined;
+}
+
+/** What the live viewer tells the person about the page's shared data; only when declared. */
+async function gateData(
+  ctx: Ctx,
+  a: ArtifactRow,
+  identity: ViewerIdentity | undefined,
+): Promise<ViewGateData | undefined> {
+  // The current version's declaration governs, whichever version is being opened.
+  const row = await ctx.db
+    .select({ capabilities: versions.capabilities })
+    .from(versions)
+    .where(and(eq(versions.artifactId, a.id), eq(versions.number, a.currentVersion)))
+    .get();
+  const caps = versionCapabilities(row);
+  const capabilities = capabilityList(caps);
+  if (capabilities.length === 0) return undefined;
+  const available = sharedDataActive(ctx.config);
+  const claim = identity
+    ? { ...identity, viewerId: await viewerIdFor(ctx.config.tokenSigningKey, a.id, identity.email) }
+    : null;
+  return {
+    available,
+    capabilities,
+    identified: claim !== null,
+    can_write: pageDataAccess(claim, caps, available).write,
+    // The viewer is told which email the page sees (their own, or the one holding the grant).
+    ...(claim && caps?.viewer ? { email: claim.email } : {}),
   };
 }
 
@@ -117,7 +171,8 @@ function gateOptions(q: (k: string) => string | undefined): GateOptions {
 /**
  * The gate for this request. A signed-in person whose own email is not listed may also hold a
  * viewer session for an email that is (confirmed by code in this browser); either identity may
- * open the artifact. The viewer identity is used for this gate only.
+ * open the artifact. The viewer identity is used for this gate only, and the identity claim for
+ * shared data carries the email of whichever principal produced the ok gate.
  */
 async function gateForRequest(c: AppContext, ref: string, opts: GateOptions): Promise<ViewGate> {
   const ctx = serviceCtx(c);

@@ -58,6 +58,8 @@ export const versions = sqliteTable("versions", {
   note: text("note"),
   restoredFrom: integer("restored_from"),
   createdAt: text("created_at").notNull(),
+  /** JSON Capabilities parsed from index.html (migrations/0005_shared_state.sql), or null. */
+  capabilities: text("capabilities"),
 });
 
 export const accessGrants = sqliteTable(
@@ -205,6 +207,44 @@ export const devOutbox = sqliteTable("dev_outbox", {
   text: text("text").notNull(),
   createdAt: text("created_at").notNull(),
 });
+
+// Shared data (migrations/0005_shared_state.sql). The usage table is kept exact by SQLite
+// triggers on artifact_docs; never write its docs or bytes columns directly.
+const dataRole = ["owner", "editor", "commenter", "viewer"] as const;
+const dataVia = ["page", "agent", "app"] as const;
+
+export const artifactDocs = sqliteTable(
+  "artifact_docs",
+  {
+    artifactId: text("artifact_id").notNull(),
+    collection: text("collection").notNull(),
+    docId: text("doc_id").notNull(),
+    data: text("data").notNull(),
+    sizeBytes: integer("size_bytes").notNull(),
+    rev: integer("rev").notNull().default(1),
+    createdByEmail: text("created_by_email"),
+    createdByRole: text("created_by_role", { enum: dataRole }),
+    createdVia: text("created_via", { enum: dataVia }).notNull(),
+    createdByLabel: text("created_by_label"),
+    createdAt: text("created_at").notNull(),
+    updatedByEmail: text("updated_by_email"),
+    updatedByRole: text("updated_by_role", { enum: dataRole }),
+    updatedVia: text("updated_via", { enum: dataVia }).notNull(),
+    updatedByLabel: text("updated_by_label"),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.artifactId, t.collection, t.docId] })],
+);
+
+export const artifactDataUsage = sqliteTable("artifact_data_usage", {
+  artifactId: text("artifact_id").primaryKey(),
+  docs: integer("docs").notNull().default(0),
+  bytes: integer("bytes").notNull().default(0),
+  seq: integer("seq").notNull().default(0),
+});
+
+export type ArtifactDocRow = typeof artifactDocs.$inferSelect;
+export type ArtifactDataUsageRow = typeof artifactDataUsage.$inferSelect;
 
 export type UserRow = typeof users.$inferSelect;
 export type ArtifactRow = typeof artifacts.$inferSelect;

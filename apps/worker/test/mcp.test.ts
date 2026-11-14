@@ -30,6 +30,7 @@ describe("MCP endpoint", () => {
       [
         "claim_mention",
         "get_artifact",
+        "list_artifact_data",
         "list_artifacts",
         "list_comments",
         "list_mentions",
@@ -40,6 +41,7 @@ describe("MCP endpoint", () => {
         "restore_version",
         "set_visibility",
         "update_artifact",
+        "write_artifact_data",
       ].sort(),
     );
     for (const name of names) {

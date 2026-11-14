@@ -158,11 +158,14 @@ test("an artifact renders with its own subresources, and has no cookies or stora
   const artifactDoc = documents.find((d) => new URL(d.url).pathname === "/");
   expect(artifactDoc?.csp).toMatch(/; sandbox allow-scripts /);
   expect(artifactDoc?.csp).not.toContain("allow-same-origin");
-  // Nothing set a cookie for the artifact, and the app's cookies stayed on the app host.
+  // Nothing set a cookie for the artifact, and the app's cookies stayed on the app host. The
+  // only cookie on the artifact's host is its own host-only content cookie.
   const cookies = await page.context().cookies();
   expect(cookies.find((c) => c.name === "tossed")).toBeUndefined();
   for (const c of cookies.filter((c) => c.name.startsWith("__Host-"))) {
-    expect(c.domain).toBe("app.localhost");
+    if (c.name === "__Host-plinth_content")
+      expect(c.domain).toMatch(/^[a-z0-9]{20}\.content\.localhost$/);
+    else expect(c.domain).toBe("app.localhost");
   }
   expect(problems).toEqual([]);
 });

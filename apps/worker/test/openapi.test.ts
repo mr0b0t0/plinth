@@ -1,5 +1,6 @@
 import { API } from "@plinth/shared";
 import { describe, expect, it } from "vitest";
+import committed from "../../../docs/openapi.json";
 import { openApiDocument, toOpenApiPath } from "../src/api/openapi.ts";
 import { call, config, json } from "./helpers.ts";
 
@@ -105,6 +106,7 @@ describe("OpenAPI document", () => {
       [
         "claim_mention",
         "get_artifact",
+        "list_artifact_data",
         "list_artifacts",
         "list_mentions",
         "list_versions",
@@ -113,6 +115,7 @@ describe("OpenAPI document", () => {
         "restore_version",
         "set_visibility",
         "update_artifact",
+        "write_artifact_data",
       ].sort(),
     );
   });
@@ -186,5 +189,52 @@ describe("OpenAPI document", () => {
     expect(res.status).toBe(200);
     const served = await json(res);
     expect(Object.keys(served.paths)).toEqual(Object.keys(doc.paths));
+  });
+
+  it("documents the shared data endpoints and marks the data untrusted", () => {
+    const data = doc.paths["/artifacts/{ref}/data"];
+    expect(Object.keys(data).sort()).toEqual(["delete", "get", "post"]);
+    expect(data.get["x-mcp-tool"]).toBe("list_artifact_data");
+    expect(data.post["x-mcp-tool"]).toBe("write_artifact_data");
+    expect(data.post.requestBody.content["application/json"].schema).toEqual({
+      $ref: "#/components/schemas/WriteArtifactDataInput",
+    });
+    expect(data.delete["x-mcp-tool"]).toBeUndefined();
+    expect(data.delete.security).toEqual([{ sessionCookie: [], csrfHeader: [] }]);
+    const page = doc.paths["/artifacts/{ref}/data/{collection}"];
+    expect(page.get["x-mcp-tool"]).toBe("list_artifact_data");
+    expect(page.get.parameters.map((p: Json) => p.name).sort()).toEqual(
+      ["collection", "cursor", "limit", "ref"].sort(),
+    );
+    const one = doc.paths["/artifacts/{ref}/data/{collection}/{doc}"];
+    expect(one.get["x-mcp-tool"]).toBe("list_artifact_data");
+    const write = doc.components.schemas.WriteArtifactDataInput;
+    expect(write.properties.id).toBeUndefined();
+    expect(write.required).toEqual(["ops"]);
+    for (const name of ["DataSummary", "DataPage", "DataDoc", "AgentDoc"]) {
+      expect(JSON.stringify(doc.components.schemas[name]), name).toMatch(/UNTRUSTED/);
+    }
+  });
+
+  it("documents the view gate's optional shared-data block", () => {
+    const ok = doc.components.schemas.ViewGate.oneOf.find(
+      (b: Json) => b.properties.status.const === "ok",
+    );
+    expect(ok.properties.data).toEqual({ $ref: "#/components/schemas/ViewGateData" });
+    expect(ok.required).not.toContain("data");
+    const data = doc.components.schemas.ViewGateData;
+    expect(Object.keys(data.properties).sort()).toEqual(
+      ["available", "can_write", "capabilities", "email", "identified"].sort(),
+    );
+    expect(data.required.sort()).toEqual(
+      ["available", "can_write", "capabilities", "identified"].sort(),
+    );
+  });
+
+  it("matches the committed docs/openapi.json (run `pnpm openapi` after a change)", () => {
+    const fresh = JSON.parse(
+      JSON.stringify(openApiDocument({ appOrigin: "https://plinth.aconite.io" })),
+    );
+    expect(committed).toEqual(fresh);
   });
 });

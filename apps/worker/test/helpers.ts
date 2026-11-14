@@ -1,5 +1,6 @@
 // Test helpers: drive the real Worker through exports.default.fetch, seed users and tokens.
 
+import { createExecutionContext, waitOnExecutionContext } from "cloudflare:test";
 import { env, exports } from "cloudflare:workers";
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import { COOKIES, CSRF_HEADER } from "@plinth/shared";
@@ -7,6 +8,7 @@ import { TOKEN_PREFIX } from "../src/auth/principal.ts";
 import { getConfig } from "../src/config.ts";
 import { getDb } from "../src/db/client.ts";
 import { agentConnections, sessions } from "../src/db/schema.ts";
+import worker from "../src/index.ts";
 import { hashToken, newId, newToken } from "../src/lib/crypto.ts";
 import { isoIn, nowIso } from "../src/lib/time.ts";
 import { getOrCreateUser } from "../src/services/users.ts";
@@ -116,11 +118,22 @@ export async function publish(auth: Record<string, string>, body: Record<string,
   return { res, body: await json(res) };
 }
 
-/** Official MCP client connected to the real /mcp endpoint. */
-export async function mcpClient(token: string | null) {
+/**
+ * Official MCP client connected to the real /mcp endpoint. With `vars`, every request runs against
+ * the Worker with those env vars over the test env (as tests that pass vars to worker.fetch do).
+ */
+export async function mcpClient(token: string | null, vars?: Record<string, string>) {
   const client = new Client({ name: "plinth-test", version: "1.0.0" });
+  const fetchWith = vars
+    ? async (input: RequestInfo | URL, init?: RequestInit) => {
+        const ctx = createExecutionContext();
+        const res = await worker.fetch(new Request(input, init), { ...env, ...vars } as never, ctx);
+        await waitOnExecutionContext(ctx);
+        return res;
+      }
+    : workerFetch;
   const transport = new StreamableHTTPClientTransport(new URL(`${APP}/mcp`), {
-    fetch: workerFetch,
+    fetch: fetchWith,
     requestInit: token ? { headers: { Authorization: `Bearer ${token}` } } : undefined,
   });
   await client.connect(transport);

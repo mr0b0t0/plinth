@@ -11,6 +11,11 @@ Gemini CLI, Cursor or VS Code. Claude's artifact experience is the reference (de
   versions at the same link.
 - **Feedback flows back**: the agent reads the comment threads on an artifact, makes the change,
   answers and resolves them; @mentions queue requests for it.
+- **Pages can remember what invited people do** (polls, sign-up sheets, trackers): a page that
+  declares shared data keeps JSON documents that only the owner and people it is shared with can
+  write, and the agent reads and changes them with `list_artifact_data` and `write_artifact_data`,
+  treating every document as untrusted input. The skill has the runtime API and a worked poll;
+  [mcp.md](mcp.md#list_artifact_data) has the tools.
 
 **Pages or documents.** Like Claude's typed artifacts, an agent need not hand-write HTML for prose.
 For a memo, plan, spec, proposal, mostly-text report, meeting notes or a how-to, it publishes

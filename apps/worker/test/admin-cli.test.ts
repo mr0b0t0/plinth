@@ -18,7 +18,7 @@ import {
 } from "../scripts/admin-lib.mjs";
 import { accessGrants, artifacts, comments, users, versions } from "../src/db/schema.ts";
 import { nowIso } from "../src/lib/time.ts";
-import { agent, call, db, publish } from "./helpers.ts";
+import { agent, call, db, json, publish } from "./helpers.ts";
 
 describe("admin CLI: set-limit", () => {
   it("parses arguments and builds the wrangler command", () => {
@@ -227,5 +227,107 @@ describe("admin CLI: erase-user and erase-artifact", () => {
     );
     const [again] = await runStatements(eraseArtifactSql(a.id));
     expect(again).toHaveLength(0);
+  });
+});
+
+// Shared data (docs/superpowers/specs/2026-11-14-shared-state-design.md section 11).
+describe("admin CLI: shared data", () => {
+  const POLL = '<!doctype html><title>Poll</title><meta name="plinth-capabilities" content="data">';
+  const ops = (auth: Record<string, string>, ref: string, list: unknown[]) =>
+    call(`/api/v1/artifacts/${ref}/data`, {
+      method: "POST",
+      headers: { ...auth, "Content-Type": "application/json" },
+      body: JSON.stringify({ ops: list }),
+    });
+  const docsOf = async (artifactId: string) =>
+    (
+      await env.DB.prepare(
+        "SELECT doc_id, created_by_email, updated_by_email, updated_by_role, updated_by_label FROM artifact_docs WHERE artifact_id = ?1 ORDER BY doc_id",
+      )
+        .bind(artifactId)
+        .all<{
+          doc_id: string;
+          created_by_email: string | null;
+          updated_by_email: string | null;
+          updated_by_role: string | null;
+          updated_by_label: string | null;
+        }>()
+    ).results;
+
+  it("erase-user deletes the person's documents and scrubs their edits on others' artifacts", async () => {
+    const sql = eraseUserSql("ann@example.com");
+    const statements = sql.split("; ");
+    const del = "DELETE FROM artifact_docs WHERE created_by_email = 'ann@example.com'";
+    const scrub =
+      "UPDATE artifact_docs SET updated_by_email = NULL, updated_by_role = NULL, updated_by_label = NULL WHERE updated_by_email = 'ann@example.com'";
+    expect(statements).toContain(del);
+    expect(statements).toContain(scrub);
+    const users = statements.findIndex((s) => s.startsWith("DELETE FROM users"));
+    expect(statements.indexOf(del)).toBeLessThan(users);
+    expect(statements.indexOf(scrub)).toBeLessThan(users);
+
+    const owner = await agent();
+    const person = await agent();
+    const { body: a } = await publish(owner.auth, { html: POLL });
+    await db()
+      .insert(accessGrants)
+      .values({ artifactId: a.id, email: person.user.email, role: "editor", createdAt: nowIso() })
+      .run();
+    expect(
+      (
+        await ops(owner.auth, a.id, [
+          { op: "set", collection: "rows", doc_id: "o1", data: { n: 1 }, if_rev: 0 },
+        ])
+      ).status,
+    ).toBe(200);
+    const res = await ops(person.auth, a.id, [
+      { op: "set", collection: "rows", doc_id: "p1", data: { n: 2 }, if_rev: 0 },
+      { op: "set", collection: "rows", doc_id: "o1", data: { n: 3 }, if_rev: 1 },
+    ]);
+    expect((await json(res)).results.map((r: { ok: boolean }) => r.ok)).toEqual([true, true]);
+    // The person's agent connection label was stamped on their edit of o1.
+    expect((await docsOf(a.id)).find((d) => d.doc_id === "o1")?.updated_by_label).toBeTruthy();
+
+    const sets = await runStatements(eraseUserSql(person.user.email));
+    expect(sets[sets.length - 1]).toHaveLength(1);
+    expect(await docsOf(a.id)).toEqual([
+      {
+        doc_id: "o1",
+        created_by_email: owner.user.email,
+        updated_by_email: null,
+        updated_by_role: null,
+        updated_by_label: null,
+      },
+    ]);
+    // The usage row still matches the documents (the triggers ran).
+    const usage = await env.DB.prepare(
+      "SELECT docs, bytes FROM artifact_data_usage WHERE artifact_id = ?1",
+    )
+      .bind(a.id)
+      .first<{ docs: number; bytes: number }>();
+    const sum = await env.DB.prepare(
+      "SELECT count(*) AS docs, coalesce(sum(size_bytes), 0) AS bytes FROM artifact_docs WHERE artifact_id = ?1",
+    )
+      .bind(a.id)
+      .first<{ docs: number; bytes: number }>();
+    expect(usage).toEqual(sum);
+  });
+
+  it("erase-artifact removes the artifact's documents and usage row by cascade", async () => {
+    const owner = await agent();
+    const { body: a } = await publish(owner.auth, { html: POLL });
+    await ops(owner.auth, a.id, [
+      { op: "set", collection: "rows", doc_id: "o1", data: { n: 1 }, if_rev: 0 },
+    ]);
+    expect(await docsOf(a.id)).toHaveLength(1);
+    const [erased] = await runStatements(eraseArtifactSql(a.id));
+    expect(erased).toHaveLength(1);
+    expect(await docsOf(a.id)).toEqual([]);
+    const usage = await env.DB.prepare(
+      "SELECT count(*) AS n FROM artifact_data_usage WHERE artifact_id = ?1",
+    )
+      .bind(a.id)
+      .first<{ n: number }>();
+    expect(usage?.n).toBe(0);
   });
 });

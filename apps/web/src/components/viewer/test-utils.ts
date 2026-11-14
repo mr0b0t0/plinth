@@ -46,6 +46,8 @@ export interface Call {
   method: string;
   path: string;
   body: unknown;
+  /** Request headers, names lowercased. */
+  headers: Record<string, string>;
 }
 
 type Handler = (call: Call) => Response | Promise<Response> | undefined;
@@ -63,6 +65,7 @@ export function stubApi(opts: { me?: Me | null; handle?: Handler; config?: AppCo
       method: init?.method ?? "GET",
       path,
       body: typeof init?.body === "string" ? JSON.parse(init.body) : undefined,
+      headers: Object.fromEntries(new Headers(init?.headers)),
     };
     calls.push(call);
     if (path === "/config") return json(opts.config ?? CONFIG);

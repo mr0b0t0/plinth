@@ -54,6 +54,17 @@ export const LIMITS = {
   minPasswordLength: 6,
   maxPasswordLength: 200,
   maxReportReasonLength: 2_000,
+  // Shared data (docs/spec.md "Shared data and viewer identity"). Fixed rules, not env vars.
+  /** Collections in one artifact's shared data. */
+  maxDataCollections: 50,
+  /** Nesting depth of one shared-data document (objects and arrays). */
+  maxDataDepth: 16,
+  /** Documents per page of a shared-data list. */
+  maxDataListLimit: 200,
+  /** Operations in one write_artifact_data call. */
+  maxDataOps: 50,
+  /** Collection names in a page's plinth-data-shared tag. */
+  maxDataShared: 20,
 } as const;
 
 export const TTL = {
@@ -106,6 +117,16 @@ export const DEFAULTS = {
     "code.jquery.com",
     "cdn.plot.ly",
   ],
+  /** Shared data limits (DATA_* env vars). */
+  data: {
+    maxDocsPerArtifact: 1000,
+    maxBytesPerArtifact: 1 * MB,
+    /** Across all of an owner's artifacts. */
+    maxBytesPerUser: 16 * MB,
+    maxDocBytes: 16 * 1024,
+    writesPerViewerPerHour: 300,
+    writesPerArtifactPerHour: 2000,
+  },
 } as const;
 
 /**
@@ -139,6 +160,16 @@ export const CSRF_HEADER = "x-plinth-csrf";
 
 /** Paths on a content host under this prefix are served by Plinth, never by the artifact. */
 export const CONTENT_RESERVED_PREFIX = "/__plinth/";
+
+/**
+ * Header every request to an artifact's shared-data API (/__plinth/api/) must carry. It is not
+ * CORS-safelisted, so a cross-origin request needs a preflight, which the content host never answers.
+ */
+export const CONTENT_DATA_HEADER = "x-plinth-data";
+
+/** Capabilities a page may declare with <meta name="plinth-capabilities" content="data viewer">. */
+export const DATA_CAPABILITIES = ["data", "viewer"] as const;
+export type DataCapability = (typeof DATA_CAPABILITIES)[number];
 
 /** Query parameter that turns on review mode (comment anchoring bridge) on a content host. */
 export const REVIEW_MODE_PARAM = "plinth-review";

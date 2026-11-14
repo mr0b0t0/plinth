@@ -108,6 +108,39 @@ describe("ArtifactPage", () => {
     expect(dialog.querySelector('a[href="/a/garden-plan/settings"]')).toBeTruthy();
   });
 
+  it("tells the viewer what a page with shared data sees, and nothing otherwise", async () => {
+    stubApi({
+      handle: (c) =>
+        c.path === "/view/garden-plan"
+          ? json(
+              okGate({
+                role: "viewer",
+                data: {
+                  available: true,
+                  capabilities: ["data", "viewer"],
+                  identified: true,
+                  can_write: true,
+                  email: "guest@example.org",
+                },
+              }),
+            )
+          : undefined,
+    });
+    let ArtifactPage = await loadPage();
+    render(<ArtifactPage params={{ slug: "garden-plan" }} />);
+    await screen.findByTitle("Garden plan, version 3");
+    const note = screen.getByRole("note");
+    expect(note.textContent).toContain("This page can see that you are guest@example.org");
+    expect(note.closest("main")).toBeTruthy();
+    cleanup();
+
+    stubApi({ handle: (c) => (c.path === "/view/garden-plan" ? json(okGate()) : undefined) });
+    ArtifactPage = await loadPage();
+    render(<ArtifactPage params={{ slug: "garden-plan" }} />);
+    await screen.findByTitle("Garden plan, version 3");
+    expect(screen.queryByRole("note")).toBeNull();
+  });
+
   it("asks for a version and says when it is not the current one", async () => {
     window.history.replaceState(null, "", "/a/garden-plan/v/2");
     const { calls } = stubApi({

@@ -178,6 +178,12 @@ function privacy(op: OperatorInfo, cfg: LegalConfig): LegalDoc {
               you or your agents publish. They contain whatever you put in them.
             </li>
             <li>
+              <strong>What people enter on shared pages</strong>: some pages can save what their
+              viewers enter (votes, sign-ups, entries on a tracker). We store what you enter, with
+              your email address, your role and the time, and show them to the page, its owner and
+              the agents the owner connects. Only people the owner invited can enter anything.
+            </li>
+            <li>
               <strong>Sharing settings</strong>: the email addresses you give access to, and a
               scrambled (hashed) password if you set one.
             </li>
@@ -227,6 +233,10 @@ function privacy(op: OperatorInfo, cfg: LegalConfig): LegalDoc {
           <ul>
             <li>Your account, artifacts and comments: while your account exists.</li>
             <li>
+              What people enter on shared pages: until the page's owner clears it or deletes the
+              page.
+            </li>
+            <li>
               A deleted artifact disappears from Plinth at once. Its stored copy is erased when you
               ask us to, or when your account is closed.
             </li>
@@ -241,7 +251,8 @@ function privacy(op: OperatorInfo, cfg: LegalConfig): LegalDoc {
           <p>
             Only the cookies the service needs to work: your sign-in, protection against forged
             requests, proof that you entered an artifact's password or confirmed your email, and a
-            viewing cookie for each artifact you open.
+            viewing cookie for each artifact you open. On a page that saves what its viewers enter,
+            that cookie also says who you are, so the page cannot pretend to be someone else.
           </p>
         ),
       },
