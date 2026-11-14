@@ -11,10 +11,18 @@ const ENV_RE = /^[a-z0-9][a-z0-9-]{0,62}$/;
 const REF_RE = /^[a-z0-9][a-z0-9-]{0,79}$/;
 const BUCKET_RE = /^[a-z0-9][a-z0-9-]{1,62}$/;
 const CONFIG_RE = /^[A-Za-z0-9._/-]{1,200}\.jsonc?$/;
-// R2 keys Plinth writes: artifacts/<id>/v<n>/<asset path>; asset paths are validated on publish.
-const KEY_RE = /^artifacts\/[a-z0-9]+\/v[0-9]+\/[A-Za-z0-9._\-/]+$/;
+// R2 keys Plinth writes: artifacts/<id>/v<n>[.<nonce>]/<asset path> (the nonce on versions written
+// from 0.4.0 on); asset paths are validated on publish.
+const KEY_RE = /^artifacts\/[a-z0-9]+\/v[0-9]+(\.[a-z0-9]{12})?\/[A-Za-z0-9._\-/]+$/;
 const isPlinthKey = (key) =>
   KEY_RE.test(key) && !key.split("/").some((seg) => seg === "" || seg === "." || seg === "..");
+// A version prefix: artifacts/<id>/v<n>[.<nonce>]/
+const PREFIX_RE = /^artifacts\/([a-z0-9]+)\/v[0-9]+(\.[a-z0-9]{12})?\/$/;
+// A manifest entry's stored_at (packages/shared/src/constants.ts STORED_AT_RE), relative to the
+// artifact's root. The path part is checked by isPlinthKey once joined.
+const STORED_AT_RE = /^v([1-9][0-9]{0,8})(?:\.([a-z0-9]{12}))?\/(.+)$/;
+const ARTIFACT_ID_RE = /^[a-z0-9]{20}$/;
+const MINUTES_RE = /^[1-9][0-9]{0,5}$/;
 
 export const USAGE = `Usage: pnpm --filter @plinth/worker admin -- <command> [options]
 
@@ -27,6 +35,10 @@ Commands:
                                   their address, and their address on reports.
   erase-artifact <id|slug>        Erase one artifact for good: all versions, stored files,
                                   comments, sharing and reports. Works on deleted artifacts too.
+  sweep-orphans                   Delete stored files no version points to: what an interrupted
+                                  publish left under its own attempt prefix. Only prefixes whose
+                                  newest file is older than --older-than-minutes (default 60).
+    [--artifact <id|slug>]        Only this artifact's files.
 
 Options (one of --local or --remote is required):
   --local            Run against the local D1 database and R2 bucket used by wrangler dev
@@ -34,7 +46,7 @@ Options (one of --local or --remote is required):
   --env <name>       Wrangler environment (for example staging)
   --config <file>    Wrangler config, e.g. wrangler.production.jsonc (relative to apps/worker)
   --bucket <name>    R2 bucket (erase commands; default plinth-files)
-  --dry-run          Erase commands: list what would be erased and change nothing
+  --dry-run          Erase and sweep: list what would be deleted and change nothing
   -h, --help         Show this help`;
 
 export class UsageError extends Error {}
@@ -83,6 +95,8 @@ export function parseArgs(argv) {
   let config = null;
   let bucket = "plinth-files";
   let dryRun = false;
+  let artifact = null;
+  let olderThanMinutes = 60;
   const positional = [];
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
@@ -106,6 +120,14 @@ export function parseArgs(argv) {
       if (!bucket || !BUCKET_RE.test(bucket)) throw new UsageError("--bucket needs a bucket name");
     } else if (a === "--dry-run") {
       dryRun = true;
+    } else if (a === "--artifact") {
+      i += 1;
+      artifact = validateArtifactRef(args[i]);
+    } else if (a === "--older-than-minutes") {
+      i += 1;
+      if (!MINUTES_RE.test(String(args[i] ?? "")))
+        throw new UsageError("--older-than-minutes needs a whole number of minutes (1 or more)");
+      olderThanMinutes = Number(args[i]);
     } else if (a.startsWith("-")) {
       throw new UsageError(`Unknown option ${a}`);
     } else {
@@ -113,6 +135,33 @@ export function parseArgs(argv) {
     }
   }
   const [command, ...rest] = positional;
+  const wranglerExtra = [...(env ? ["--env", env] : []), ...(config ? ["--config", config] : [])];
+  if (command === "sweep-orphans") {
+    if (rest.length !== 0) throw new UsageError("sweep-orphans takes no arguments; use --artifact");
+    if (!target) throw new UsageError("Pass --local or --remote to choose the database");
+    return {
+      help: false,
+      command,
+      target,
+      dryRun,
+      artifact,
+      bucket,
+      env,
+      config,
+      minAgeMs: olderThanMinutes * 60_000,
+      prefixesArgs: [
+        "d1",
+        "execute",
+        "DB",
+        `--${target}`,
+        "--json",
+        "--command",
+        versionPrefixesSql(artifact),
+        ...wranglerExtra,
+      ],
+    };
+  }
+  if (artifact !== null) throw new UsageError("--artifact is for sweep-orphans");
   if (command === "erase-user" || command === "erase-artifact") {
     if (rest.length !== 1) throw new UsageError(`${command} needs exactly one argument`);
     if (!target) throw new UsageError("Pass --local or --remote to choose the database");
@@ -139,6 +188,9 @@ export function parseArgs(argv) {
       subject,
       target,
       dryRun,
+      bucket,
+      env,
+      config,
       keysArgs: sqlArgs(keysSql),
       eraseArgs: sqlArgs(eraseSql),
       deleteObjectArgs: (key) => [
@@ -188,13 +240,24 @@ export function validateArtifactRef(raw) {
   return ref;
 }
 
-/** Every stored version of the artifacts a person owns: r2_prefix plus the file manifest. */
+/**
+ * Every stored version of the artifacts a person owns: r2_prefix plus the file manifest, and every
+ * artifact of theirs (a LEFT JOIN, so one with no version row still names its id and its whole
+ * root is removed).
+ */
 export function userKeysSql(email) {
-  return `SELECT v.r2_prefix AS prefix, v.manifest AS manifest FROM versions v JOIN artifacts a ON a.id = v.artifact_id JOIN users u ON u.id = a.owner_id WHERE u.email = '${email}'`;
+  return `SELECT a.id AS artifact_id, v.r2_prefix AS prefix, v.manifest AS manifest FROM artifacts a JOIN users u ON u.id = a.owner_id LEFT JOIN versions v ON v.artifact_id = a.id WHERE u.email = '${email}'`;
 }
 
 export function artifactKeysSql(ref) {
-  return `SELECT v.r2_prefix AS prefix, v.manifest AS manifest FROM versions v JOIN artifacts a ON a.id = v.artifact_id WHERE a.id = '${ref}' OR a.slug = '${ref}'`;
+  return `SELECT a.id AS artifact_id, v.r2_prefix AS prefix, v.manifest AS manifest FROM artifacts a LEFT JOIN versions v ON v.artifact_id = a.id WHERE a.id = '${ref}' OR a.slug = '${ref}'`;
+}
+
+/** The version prefixes the database names: every artifact's, or one artifact's (id or slug). */
+export function versionPrefixesSql(ref) {
+  return ref === null
+    ? "SELECT v.artifact_id AS artifact_id, v.r2_prefix AS prefix FROM versions v"
+    : `SELECT a.id AS artifact_id, v.r2_prefix AS prefix FROM artifacts a LEFT JOIN versions v ON v.artifact_id = a.id WHERE a.id = '${ref}' OR a.slug = '${ref}'`;
 }
 
 /**
@@ -237,10 +300,23 @@ export function resultSets(stdout) {
   }
 }
 
-/** The R2 keys of the stored versions in `rows` ({prefix, manifest}). Unexpected keys are skipped. */
+/** `artifacts/<id>/` for a version prefix, or null when the prefix is not in Plinth's layout. */
+export function artifactRootOf(prefix) {
+  const m = PREFIX_RE.exec(String(prefix ?? ""));
+  return m ? `artifacts/${m[1]}/` : null;
+}
+
+/**
+ * The R2 keys of the stored versions in `rows` ({prefix, manifest}). An entry with `stored_at`
+ * names its object relative to the artifact's root (a file reused from an earlier version);
+ * others sit under the row's prefix. Unexpected keys are skipped.
+ */
 export function keysFromRows(rows) {
   const keys = new Set();
   for (const row of rows) {
+    if (typeof row?.prefix !== "string" || typeof row?.manifest !== "string") continue;
+    const root = artifactRootOf(row.prefix);
+    if (!root) continue;
     let entries = [];
     try {
       entries = JSON.parse(row.manifest);
@@ -248,9 +324,86 @@ export function keysFromRows(rows) {
       continue;
     }
     for (const e of Array.isArray(entries) ? entries : []) {
-      const key = `${row.prefix}${e?.path ?? ""}`;
+      const storedAt = e?.stored_at;
+      let key;
+      if (storedAt === undefined) key = `${row.prefix}${e?.path ?? ""}`;
+      else if (typeof storedAt === "string" && STORED_AT_RE.test(storedAt))
+        key = `${root}${storedAt}`;
+      else continue;
       if (isPlinthKey(key)) keys.add(key);
     }
   }
   return [...keys];
+}
+
+/** The artifact roots (`artifacts/<id>/`) that rows ({artifact_id}) name. */
+export function rootsFromRows(rows) {
+  const roots = new Set();
+  for (const row of rows) {
+    const id = row?.artifact_id;
+    if (typeof id === "string" && ARTIFACT_ID_RE.test(id)) roots.add(`artifacts/${id}/`);
+  }
+  return [...roots];
+}
+
+/** Every object under a prefix of an R2 bucket binding ({key, uploaded}). */
+export async function listObjects(bucket, prefix) {
+  const out = [];
+  let cursor;
+  do {
+    const page = await bucket.list({ prefix, cursor });
+    for (const o of page.objects) out.push({ key: o.key, uploaded: o.uploaded });
+    cursor = page.truncated ? page.cursor : undefined;
+  } while (cursor);
+  return out;
+}
+
+/**
+ * Group objects by version prefix (`artifacts/<id>/<segment>/`) and keep the prefixes no version
+ * row names whose newest object is older than `minAgeMs`: what an interrupted publish left behind.
+ * A prefix still being written (a publish in flight) is younger than that and is left alone.
+ */
+export function orphanPrefixes(objects, referenced, { now, minAgeMs }) {
+  const groups = new Map();
+  for (const o of objects) {
+    const parts = String(o.key).split("/");
+    if (parts.length < 4 || parts[0] !== "artifacts") continue;
+    const prefix = `${parts[0]}/${parts[1]}/${parts[2]}/`;
+    if (!PREFIX_RE.test(prefix)) continue;
+    const g = groups.get(prefix) ?? { prefix, keys: [], newest: 0 };
+    g.keys.push(o.key);
+    const t = new Date(o.uploaded).getTime();
+    if (Number.isFinite(t) && t > g.newest) g.newest = t;
+    groups.set(prefix, g);
+  }
+  return [...groups.values()].filter((g) => !referenced.has(g.prefix) && now - g.newest > minAgeMs);
+}
+
+/**
+ * sweep-orphans against an R2 bucket binding. `rows` are versionPrefixesSql results; `root` is
+ * `artifacts/` or one artifact's root. Returns what was (or, with dryRun, would be) deleted.
+ */
+export async function sweepOrphans(bucket, rows, { root, now, minAgeMs, dryRun }) {
+  const referenced = new Set(
+    rows.map((r) => r?.prefix).filter((p) => typeof p === "string" && PREFIX_RE.test(p)),
+  );
+  const orphans = orphanPrefixes(await listObjects(bucket, root), referenced, { now, minAgeMs });
+  if (!dryRun) {
+    for (const g of orphans) {
+      for (let i = 0; i < g.keys.length; i += 1000) await bucket.delete(g.keys.slice(i, i + 1000));
+    }
+  }
+  return orphans.map((g) => ({ prefix: g.prefix, files: g.keys.length }));
+}
+
+/** Delete every object under each root (erase: files no version row names go too). */
+export async function deleteRoots(bucket, roots) {
+  let n = 0;
+  for (const root of roots) {
+    if (!/^artifacts\/[a-z0-9]{20}\/$/.test(root)) continue;
+    const keys = (await listObjects(bucket, root)).map((o) => o.key);
+    for (let i = 0; i < keys.length; i += 1000) await bucket.delete(keys.slice(i, i + 1000));
+    n += keys.length;
+  }
+  return n;
 }

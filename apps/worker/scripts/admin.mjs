@@ -10,17 +10,26 @@
 //   --local     The local D1 database that `wrangler dev` uses (.wrangler/state).
 //   --remote    The deployed D1 database (needs `wrangler login` or CLOUDFLARE_API_TOKEN).
 //
+//   sweep-orphans  Delete stored files no version points to (what an interrupted publish left).
+//
 // The email and the number are validated strictly before any SQL is built, and wrangler is run
-// without a shell, so nothing typed here can change the statement.
+// without a shell, so nothing typed here can change the statement. Listing R2 (sweep-orphans, and
+// the last step of the erase commands) goes through wrangler's getPlatformProxy, since the
+// wrangler CLI cannot list objects: the local bucket that `wrangler dev` uses, or with --remote the
+// deployed one (wrangler login or CLOUDFLARE_API_TOKEN, as for the other commands).
 import { spawnSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   changesFromOutput,
+  deleteRoots,
   keysFromRows,
   parseArgs,
   resultSets,
+  rootsFromRows,
+  sweepOrphans,
   USAGE,
   UsageError,
 } from "./admin-lib.mjs";
@@ -52,17 +61,99 @@ function failed(r) {
 }
 
 /**
+ * The R2 bucket as a binding, through a throwaway wrangler config that binds only that bucket:
+ * locally the state `wrangler dev` keeps in .wrangler/state, with --remote the deployed bucket.
+ */
+async function openBucket(parsed) {
+  const { getPlatformProxy } = await import("wrangler");
+  const dir = mkdtempSync(join(tmpdir(), "plinth-admin-"));
+  const configPath = join(dir, "wrangler.json");
+  writeFileSync(
+    configPath,
+    JSON.stringify({
+      name: "plinth-admin",
+      compatibility_date: "2026-11-01",
+      r2_buckets: [
+        {
+          binding: "FILES",
+          bucket_name: parsed.bucket,
+          ...(parsed.target === "remote" ? { remote: true } : {}),
+        },
+      ],
+    }),
+  );
+  try {
+    const proxy = await getPlatformProxy({
+      configPath,
+      persist: { path: join(packageDir, ".wrangler", "state", "v3") },
+      remoteBindings: parsed.target === "remote",
+    });
+    return {
+      bucket: proxy.env.FILES,
+      dispose: async () => {
+        await proxy.dispose();
+        rmSync(dir, { recursive: true, force: true });
+      },
+    };
+  } catch (e) {
+    rmSync(dir, { recursive: true, force: true });
+    throw e;
+  }
+}
+
+/** sweep-orphans: version prefixes no row names, older than the threshold, are deleted. */
+async function sweep(parsed) {
+  const q = wrangler(parsed.prefixesArgs);
+  const qf = failed(q);
+  if (qf) return qf;
+  const rows = resultSets(q.stdout).flat();
+  let root = "artifacts/";
+  if (parsed.artifact !== null) {
+    const [one] = rootsFromRows(rows);
+    if (one) root = one;
+    else if (/^[a-z0-9]{20}$/.test(parsed.artifact)) root = `artifacts/${parsed.artifact}/`;
+    else {
+      console.error(`No artifact ${parsed.artifact} in the ${parsed.target} database.`);
+      return 1;
+    }
+  }
+  const { bucket, dispose } = await openBucket(parsed);
+  try {
+    const swept = await sweepOrphans(bucket, rows, {
+      root,
+      now: Date.now(),
+      minAgeMs: parsed.minAgeMs,
+      dryRun: parsed.dryRun,
+    });
+    for (const g of swept)
+      console.log(
+        `  ${parsed.dryRun ? "would delete" : "deleted"} ${g.prefix} (${g.files} file(s))`,
+      );
+    const files = swept.reduce((n, g) => n + g.files, 0);
+    console.log(
+      `${parsed.dryRun ? "Dry run: would delete" : "Deleted"} ${swept.length} orphaned prefix(es), ${files} file(s), under ${root} (${parsed.target}).`,
+    );
+    return 0;
+  } finally {
+    await dispose();
+  }
+}
+
+/**
  * erase-user / erase-artifact: list the stored files, delete them from R2, then delete the rows
  * (the database cascades do the rest). Files first, so a failure leaves rows that can be erased
- * again rather than files nothing points to.
+ * again rather than files nothing points to. Last of the files, everything else under each erased
+ * artifact's root goes too (objects an interrupted publish left, which no row names).
  */
-function erase(parsed) {
+async function erase(parsed) {
   const what =
     parsed.command === "erase-user" ? `user ${parsed.subject}` : `artifact ${parsed.subject}`;
   const q = wrangler(parsed.keysArgs);
   const qf = failed(q);
   if (qf) return qf;
-  const keys = keysFromRows(resultSets(q.stdout).flat());
+  const rows = resultSets(q.stdout).flat();
+  const keys = keysFromRows(rows);
+  const roots = rootsFromRows(rows);
   console.log(`Erasing ${what} (${parsed.target}): ${keys.length} stored file(s).`);
   if (parsed.dryRun) {
     for (const k of keys) console.log(`  would delete ${k}`);
@@ -79,6 +170,19 @@ function erase(parsed) {
       return f;
     }
   }
+  try {
+    const { bucket, dispose } = await openBucket(parsed);
+    try {
+      const rest = await deleteRoots(bucket, roots);
+      if (rest > 0) console.log(`Deleted ${rest} more file(s) no version pointed to.`);
+    } finally {
+      await dispose();
+    }
+  } catch (err) {
+    console.error(
+      `Could not list the bucket (${err instanceof Error ? err.message : err}); files no version points to may remain. Run sweep-orphans later.`,
+    );
+  }
   const e = wrangler(parsed.eraseArgs);
   const ef = failed(e);
   if (ef) return ef;
@@ -94,7 +198,7 @@ function erase(parsed) {
   return 0;
 }
 
-function main() {
+async function main() {
   let parsed;
   try {
     parsed = parseArgs(process.argv.slice(2));
@@ -110,6 +214,7 @@ function main() {
     return 0;
   }
 
+  if (parsed.command === "sweep-orphans") return sweep(parsed);
   if (parsed.command !== "set-limit") return erase(parsed);
   const r = wrangler(parsed.wranglerArgs);
   const f = failed(r);
@@ -125,4 +230,4 @@ function main() {
   return 0;
 }
 
-process.exitCode = main();
+process.exitCode = await main();
