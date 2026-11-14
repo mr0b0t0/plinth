@@ -343,6 +343,8 @@ version of the same artifact, and new versions are written under a fresh `v<n>.<
 (any update or restore that keeps files reuses them): an older Worker looks each file up under the
 version's own prefix only, so files a version reuses from an earlier one answer 404, and updating
 or restoring such an artifact fails with "Missing stored file". Versions written in full keep
-working. If a release misbehaves, deploy a fix on top
-of it. The migrations only add a column and a table, so an older Worker still starts against the
-new schema.
+working, including those under a `v<n>.<nonce>/` prefix (the older Worker uses the row's
+`r2_prefix` as it is). The older Worker counts storage by logical size, so accounts may reach the
+storage limit sooner while it runs, and versions it writes are full copies that 0.4.0 reads as
+before. If a release misbehaves, deploy a fix on top of it. The migrations only add a column and a
+table, so an older Worker still starts against the new schema; upload tickets are unused by it.

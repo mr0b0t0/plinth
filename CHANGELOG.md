@@ -12,6 +12,47 @@ Add a line under **Unreleased** in the pull request that makes a change people w
 
 - The banner under every artifact links to Plinth's source code ("Hosted on Plinth, open
   source"). Self-hosters can remove the link with `SHOW_SOURCE_LINK=false`.
+- **Big builds**: agents can publish a built site (a Vite `dist/` folder with hundreds of files)
+  without merging chunks. The new MCP tool `start_upload` (and bearer-only `POST /api/v1/uploads`)
+  mints a single-use, 30-minute upload ticket; one `curl` of a gzip tar to its `upload_url`
+  publishes the folder or updates the artifact. Updates of an existing artifact require the
+  `base_version` the agent read. Applies migration `0007_upload_tickets.sql`.
+- **Reuse by hash**: an asset can be sent as `{path, sha256}` to reuse a file of the artifact's
+  current version, so an update sends and stores only what changed. `get_artifact` and
+  `GET /api/v1/artifacts/:ref` list each asset's `sha256`. Restores and updates that keep the
+  assets no longer copy them. The storage quota counts stored bytes, so a reused file counts once.
+  Applies migration `0006_stored_bytes.sql`.
+- **Forward-only storage change**: from this release a version's new files are written under a
+  `v<n>.<nonce>/` prefix and reused files stay where they were first stored. Roll forward, never
+  back: a Worker older than this release still starts against the new schema and serves versions
+  written in full, but answers 404 for files a version reuses, fails to update or restore those
+  artifacts ("Missing stored file"), and counts storage by logical size. See
+  [docs/deploy-checklist.md](docs/deploy-checklist.md#6-upgrading-and-rolling-back).
+- Publishes commit last: files go to storage before the version row, in one database transaction
+  with the base-version, artifact-count and storage checks, so an interrupted publish no longer
+  leaves a broken version or a false conflict. `admin sweep-orphans` removes files an interrupted
+  publish left behind.
+- Publish results list `warnings` (missing files, root-absolute URLs, hosts outside the CDN
+  allowlist, `http:` URLs, module builds on opaque-isolation instances) and `stored` (files
+  written and reused).
+- The per-version limits are settings: `MAX_VERSION_BYTES` (default raised from 25 MB to 50 MB,
+  at most 64 MB) and `MAX_ASSETS_PER_VERSION` (default raised from 200 to 511, at most 900), with
+  `PLINTH_` equivalents in Docker. `GET /api/v1/config` returns the instance's limits and CDN
+  allowlist. Limit errors name the largest files and say what to do next.
+- Artifact files load faster on repeat views: strong ETags from the file's hash, 304s without a
+  storage read, and immutable caching for the files of versioned URLs (always `private`, never at
+  the edge).
+- **CLI**: `plinth login`, `logout`, `whoami`, `publish <dir>` and `upload <dir>` publish a build
+  folder from any machine, with no checkout and no wrangler. `publish` sends only changed files,
+  verifies the result by hash and exits 3 on a conflict. Every request sends a
+  `User-Agent: plinth-cli/<version>`, and a Cloudflare edge block (`error code: 1010`) gets a
+  message pointing at the deploy checklist.
+- Claude Code install guidance puts the Plinth plugin first on the hosted instance and labels the
+  bare `claude mcp add` "tools only"; on a self-hosted or local instance its own server comes
+  first, and the plugin needs `PLINTH_URL`. Agent plugin 0.6.0: the skill explains built sites and
+  big pages, reuse by hash and instance limits.
+- The deploy checklist gives the edge rule for API clients (Browser Integrity Check blocks
+  `Python-urllib` with `error code: 1010`), Free-plan limits and the rollback note.
 
 ## 0.3.0 (2026-11-14)
 
