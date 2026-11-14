@@ -440,6 +440,24 @@ function checkUserBytes(config: Config, userBytes: number, delta: number): void 
   if (delta > 0 && userBytes + delta > config.data.maxBytesPerUser) throw quota("user_bytes");
 }
 
+/**
+ * A document's next rev: one past the artifact's change counter, so revs only ever grow across the
+ * whole artifact. A document deleted and created again (or cleared and recreated) never repeats a
+ * rev an earlier reader saw, so if_rev n can only match the content that reader read.
+ */
+const NEXT_REV_SQL =
+  "coalesce((SELECT seq FROM artifact_data_usage WHERE artifact_id = ?1), 0) + 1";
+
+/**
+ * Checked inside every guarded insert and update: the artifact still exists and is not taken down.
+ * Callers check the artifact once before their ops, so a write already in flight when the artifact
+ * is deleted or taken down (and its data wiped) must not bring data back.
+ */
+const ARTIFACT_LIVE_SQL = `EXISTS (SELECT 1 FROM artifacts WHERE id = ?1
+  AND deleted_at IS NULL AND taken_down_at IS NULL)`;
+
+const artifactGone = () => new ApiError("not_found", "Artifact not found");
+
 async function insertGuarded(
   d1: D1Database,
   config: Config,
@@ -457,8 +475,9 @@ async function insertGuarded(
       `INSERT INTO artifact_docs (artifact_id, collection, doc_id, data, size_bytes, rev,
          created_by_email, created_by_role, created_via, created_by_label, created_at,
          updated_by_email, updated_by_role, updated_via, updated_by_label, updated_at)
-       SELECT ?1, ?2, ?3, ?4, ?5, 1, ?6, ?7, ?8, ?9, ?10, ?6, ?7, ?8, ?9, ?10
-        WHERE coalesce((SELECT docs FROM artifact_data_usage WHERE artifact_id = ?1), 0) < ?11
+       SELECT ?1, ?2, ?3, ?4, ?5, ${NEXT_REV_SQL}, ?6, ?7, ?8, ?9, ?10, ?6, ?7, ?8, ?9, ?10
+        WHERE ${ARTIFACT_LIVE_SQL}
+          AND coalesce((SELECT docs FROM artifact_data_usage WHERE artifact_id = ?1), 0) < ?11
           AND coalesce((SELECT bytes FROM artifact_data_usage WHERE artifact_id = ?1), 0) + ?5 <= ?12
           AND (EXISTS (SELECT 1 FROM artifact_docs WHERE artifact_id = ?1 AND collection = ?2)
                OR (SELECT count(DISTINCT collection) FROM artifact_docs WHERE artifact_id = ?1) < ?13)
@@ -499,11 +518,20 @@ async function whyNotInserted(
               coalesce((SELECT docs FROM artifact_data_usage WHERE artifact_id = ?1), 0) AS docs,
               coalesce((SELECT bytes FROM artifact_data_usage WHERE artifact_id = ?1), 0) AS bytes,
               EXISTS (SELECT 1 FROM artifact_docs WHERE artifact_id = ?1 AND collection = ?2) AS has,
-              (SELECT count(DISTINCT collection) FROM artifact_docs WHERE artifact_id = ?1) AS colls`,
+              (SELECT count(DISTINCT collection) FROM artifact_docs WHERE artifact_id = ?1) AS colls,
+              ${ARTIFACT_LIVE_SQL} AS live`,
     )
     .bind(target.id, collection, docId)
-    .first<{ rev: number | null; docs: number; bytes: number; has: number; colls: number }>();
+    .first<{
+      rev: number | null;
+      docs: number;
+      bytes: number;
+      has: number;
+      colls: number;
+      live: number;
+    }>();
   if (!r) return { retry: true };
+  if (!r.live) throw artifactGone();
   if (r.rev !== null) return { taken: r.rev };
   if (r.docs >= config.data.maxDocsPerArtifact) return { quota: "docs" };
   if (r.bytes + size > config.data.maxBytesPerArtifact) return { quota: "bytes" };
@@ -525,11 +553,12 @@ async function updateGuarded(
 ): Promise<StoredDoc | null> {
   return d1
     .prepare(
-      `UPDATE artifact_docs SET data = ?4, size_bytes = ?5, rev = rev + 1,
+      `UPDATE artifact_docs SET data = ?4, size_bytes = ?5, rev = ${NEXT_REV_SQL},
          updated_by_email = ?6, updated_by_role = ?7, updated_via = ?8, updated_by_label = ?9,
          updated_at = ?10
        WHERE artifact_id = ?1 AND collection = ?2 AND doc_id = ?3 AND rev = ?11
          AND (?12 = 1 OR created_by_email = ?6)
+         AND ${ARTIFACT_LIVE_SQL}
          AND (?5 <= size_bytes OR coalesce((SELECT bytes FROM artifact_data_usage
                WHERE artifact_id = ?1), 0) - size_bytes + ?5 <= ?13)
        RETURNING *`,
@@ -564,12 +593,14 @@ async function whyNotChanged(
 ): Promise<{ gone: true } | { moved: number } | { forbidden: true } | { quota: QuotaLimit }> {
   const r = await d1
     .prepare(
-      `SELECT rev, created_by_email FROM artifact_docs
-        WHERE artifact_id = ?1 AND collection = ?2 AND doc_id = ?3`,
+      `SELECT d.rev, d.created_by_email, ${ARTIFACT_LIVE_SQL} AS live
+         FROM (SELECT 1) LEFT JOIN artifact_docs d
+           ON d.artifact_id = ?1 AND d.collection = ?2 AND d.doc_id = ?3`,
     )
     .bind(target.id, collection, docId)
-    .first<{ rev: number; created_by_email: string | null }>();
-  if (!r) return { gone: true };
+    .first<{ rev: number | null; created_by_email: string | null; live: number }>();
+  if (r && !r.live) throw artifactGone();
+  if (!r || r.rev === null) return { gone: true };
   if (r.rev !== readRev) return { moved: r.rev };
   if (!any && r.created_by_email !== writerEmail) return { forbidden: true };
   return { quota: "bytes" };

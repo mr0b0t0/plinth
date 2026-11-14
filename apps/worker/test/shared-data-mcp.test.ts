@@ -78,23 +78,33 @@ async function collaborator(artifactId: string, role: Role, scopes?: string) {
 }
 
 /** A signed-in viewer's page writes through the content-host API. */
-async function pagePut(artifactId: string, userId: string, path: string, body: unknown) {
+async function pagePut(
+  artifactId: string,
+  userId: string,
+  path: string,
+  body: unknown,
+  vars: Vars = {},
+) {
   const s = await browserSession(userId);
   const { cookie, gate } = await enterContent(artifactId, { headers: s.headers });
   if (!cookie) throw new Error(`no content cookie (gate ${gate.status})`);
-  return run(`${contentOrigin(artifactId)}/__plinth/api/v1${path}`, {
-    method: "PUT",
-    headers: {
-      "x-plinth-data": "1",
-      "sec-fetch-site": "same-origin",
-      "sec-fetch-mode": "cors",
-      "sec-fetch-dest": "empty",
-      origin: contentOrigin(artifactId),
-      "content-type": "application/json",
-      cookie,
+  return run(
+    `${contentOrigin(artifactId)}/__plinth/api/v1${path}`,
+    {
+      method: "PUT",
+      headers: {
+        "x-plinth-data": "1",
+        "sec-fetch-site": "same-origin",
+        "sec-fetch-mode": "cors",
+        "sec-fetch-dest": "empty",
+        origin: contentOrigin(artifactId),
+        "content-type": "application/json",
+        cookie,
+      },
+      body: JSON.stringify(body),
     },
-    body: JSON.stringify(body),
-  });
+    vars,
+  );
 }
 
 const write = (client: Awaited<ReturnType<typeof mcpClient>>, id: string, ops: unknown[]) =>
@@ -266,18 +276,19 @@ describe("write_artifact_data", () => {
       ok: true,
       rev: 1,
     });
-    expect(results[1]).toMatchObject({ op: "set", ok: true, rev: 1 });
+    // Revs grow across the artifact (one past its change counter), not per document.
+    expect(results[1]).toMatchObject({ op: "set", ok: true, rev: 2 });
     expect(results[1]?.doc_id).toMatch(/^[A-Za-z0-9]/);
     expect(results[2]).toMatchObject({
       ok: false,
       error: { code: "conflict", details: { current_rev: 1 } },
     });
-    expect(results[3]).toMatchObject({ ok: true, rev: 2 });
+    expect(results[3]).toMatchObject({ ok: true, rev: 3 });
     expect(results[4]).toMatchObject({ op: "delete", ok: false, error: { code: "not_found" } });
     expect(results[5]).toMatchObject({
       op: "delete",
       ok: false,
-      error: { code: "conflict", details: { current_rev: 2 } },
+      error: { code: "conflict", details: { current_rev: 3 } },
     });
 
     const noRev = await write(client, id, [
@@ -289,7 +300,7 @@ describe("write_artifact_data", () => {
     ]);
     expect(noRevDelete.isError).toBe(true);
     const doc = await tool(client, "list_artifact_data", { id, collection: "votes", doc_id: "a" });
-    expect(doc.data.doc).toMatchObject({ rev: 2, data: { n: 4 } });
+    expect(doc.data.doc).toMatchObject({ rev: 3, data: { n: 4 } });
   });
 
   it("allows owner and editor agents; refuses a commenter agent and a read-only token", async () => {
@@ -363,6 +374,172 @@ describe("write_artifact_data", () => {
     });
   });
 
+  it("rate limits and quotas apply per op, each op counting as one write", async () => {
+    const { owner, id } = await setup();
+    const post = (ops: unknown[], vars: Vars) =>
+      rest(
+        `/artifacts/${id}/data`,
+        owner.auth,
+        { method: "POST", body: JSON.stringify({ ops }) },
+        vars,
+      );
+    const limited = { DATA_WRITES_PER_VIEWER_PER_HOUR: "2" };
+    const r = await post(
+      [
+        { op: "set", collection: "votes", doc_id: "a", data: { n: 1 }, if_rev: 0 },
+        { op: "set", collection: "votes", doc_id: "b", data: { n: 1 }, if_rev: 0 },
+        { op: "set", collection: "votes", doc_id: "c", data: { n: 1 }, if_rev: 0 },
+      ],
+      limited,
+    );
+    expect(r.status).toBe(200);
+    const results = (await json(r)).results;
+    expect(results.map((x: { ok: boolean }) => x.ok)).toEqual([true, true, false]);
+    expect(results[2].error).toMatchObject({
+      code: "rate_limited",
+      details: { retry_after: expect.any(Number) },
+    });
+    expect(results[2].error.details.retry_after).toBeGreaterThan(0);
+
+    const other = await setup(POLL, owner);
+    const q = await rest(
+      `/artifacts/${other.id}/data`,
+      owner.auth,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          ops: [
+            { op: "set", collection: "votes", doc_id: "a", data: { n: 1 }, if_rev: 0 },
+            { op: "set", collection: "votes", doc_id: "b", data: { n: 1 }, if_rev: 0 },
+            { op: "set", collection: "votes", doc_id: "a", data: { n: 2 }, if_rev: 1 },
+          ],
+        }),
+      },
+      { DATA_MAX_DOCS_PER_ARTIFACT: "1" },
+    );
+    const qr = (await json(q)).results;
+    expect(qr.map((x: { ok: boolean }) => x.ok)).toEqual([true, false, true]);
+    expect(qr[1].error).toMatchObject({ code: "quota_exceeded", details: { limit: "docs" } });
+  });
+
+  it("a person's page writes and their agent's writes share one rate limit", async () => {
+    const { owner, id } = await setup();
+    const vars = { DATA_WRITES_PER_VIEWER_PER_HOUR: "2" };
+    expect(
+      (await pagePut(id, owner.user.id, "/data/votes/p1", { data: { n: 1 } }, vars)).status,
+    ).toBe(201);
+    const viaRest = await rest(
+      `/artifacts/${id}/data`,
+      owner.auth,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          ops: [
+            { op: "set", collection: "votes", doc_id: "a1", data: { n: 1 }, if_rev: 0 },
+            { op: "set", collection: "votes", doc_id: "a2", data: { n: 1 }, if_rev: 0 },
+          ],
+        }),
+      },
+      vars,
+    );
+    expect((await json(viaRest)).results.map((x: { ok: boolean }) => x.ok)).toEqual([true, false]);
+    // The page is now limited too: the agent's write counted against the same person.
+    const page = await pagePut(id, owner.user.id, "/data/votes/p2", { data: { n: 1 } }, vars);
+    expect(page.status).toBe(429);
+    // Another person (an editor's agent) has a counter of their own.
+    const editor = await collaborator(id, "editor");
+    const ed = await rest(
+      `/artifacts/${id}/data`,
+      editor.auth,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          ops: [{ op: "set", collection: "votes", doc_id: "e1", data: { n: 1 }, if_rev: 0 }],
+        }),
+      },
+      vars,
+    );
+    expect((await json(ed)).results[0].ok).toBe(true);
+  });
+
+  it("an agent cannot create another person's personal document, the owner's included", async () => {
+    const { client, id } = await setup();
+    const viewer = await createUser();
+    await grant(id, viewer.email, "viewer");
+    const vid = await viewerId(id, viewer.email);
+    const r = await write(client, id, [
+      { op: "set", collection: "votes", doc_id: vid, data: { choice: "forged" }, if_rev: 0 },
+      { op: "set", collection: "votes", doc_id: "u_0123456789abcdef01234567", data: {}, if_rev: 0 },
+    ]);
+    expect(r.isError, r.text).toBe(false);
+    for (const res of r.data.results) {
+      expect(res).toMatchObject({ ok: false, error: { code: "forbidden" } });
+    }
+    const listed = await tool(client, "list_artifact_data", { id, collection: "votes" });
+    expect(listed.data.docs).toEqual([]);
+  });
+
+  it("an editor's agent moderates a viewer's personal document at its rev, stamped editor", async () => {
+    const { id } = await setup();
+    const viewer = await createUser();
+    await grant(id, viewer.email, "viewer");
+    const put = await pagePut(id, viewer.id, "/data/votes/~me", { data: { choice: "y" } });
+    expect(put.status).toBe(201);
+    const { rev, id: vid } = await json(put);
+    const editor = await collaborator(id, "editor");
+    const stale = await write(editor.client, id, [
+      { op: "set", collection: "votes", doc_id: vid, data: { choice: "n" }, if_rev: rev + 100 },
+    ]);
+    expect(stale.data.results[0]).toMatchObject({
+      ok: false,
+      error: { code: "conflict", details: { current_rev: rev } },
+    });
+    const ok = await write(editor.client, id, [
+      { op: "set", collection: "votes", doc_id: vid, data: { choice: "removed" }, if_rev: rev },
+    ]);
+    expect(ok.data.results[0]).toMatchObject({ ok: true });
+    const doc = await tool(editor.client, "list_artifact_data", {
+      id,
+      collection: "votes",
+      doc_id: vid,
+    });
+    expect(doc.data.doc).toMatchObject({
+      personal: true,
+      data: { choice: "removed" },
+      created_by: { email: viewer.email, role: "viewer", via: "page" },
+      updated_by: {
+        email: editor.user.email,
+        role: "editor",
+        via: "agent",
+        connection_label: "editor agent",
+      },
+    });
+  });
+
+  it("~me in list_artifact_data and write_artifact_data is the calling person's own document", async () => {
+    const { owner, client, id } = await setup();
+    const editor = await collaborator(id, "editor");
+    const mine = await write(client, id, [
+      { op: "set", collection: "votes", doc_id: "~me", data: { by: "owner" }, if_rev: 0 },
+    ]);
+    const ownerVid = await viewerId(id, owner.user.email);
+    expect(mine.data.results[0]).toMatchObject({ ok: true, doc_id: ownerVid });
+    await write(editor.client, id, [
+      { op: "set", collection: "votes", doc_id: "~me", data: { by: "editor" }, if_rev: 0 },
+    ]);
+    const o = await tool(client, "list_artifact_data", { id, collection: "votes", doc_id: "~me" });
+    expect(o.data.doc).toMatchObject({ id: ownerVid, data: { by: "owner" } });
+    const e = await tool(editor.client, "list_artifact_data", {
+      id,
+      collection: "votes",
+      doc_id: "~me",
+    });
+    expect(e.data.doc).toMatchObject({
+      id: await viewerId(id, editor.user.email),
+      data: { by: "editor" },
+    });
+  });
+
   it("get_artifact shows capabilities and data usage", async () => {
     const { client, id } = await setup();
     const before = await tool(client, "get_artifact", { id });
@@ -407,6 +584,36 @@ describe("write_artifact_data", () => {
     const r = await rest(`/artifacts/${id}/data`, owner.auth, {}, vars);
     expect(r.status).toBe(200);
     expect((await json(r)).available).toBe(false);
+  });
+
+  it("is refused under opaque isolation, over MCP and REST, while reads still work", async () => {
+    const { owner, id } = await setup();
+    const vars = { CONTENT_ISOLATION: "opaque" };
+    const ops = [{ op: "set", collection: "votes", doc_id: "a", data: { n: 1 }, if_rev: 0 }];
+    const w = await rest(
+      `/artifacts/${id}/data`,
+      owner.auth,
+      { method: "POST", body: JSON.stringify({ ops }) },
+      vars,
+    );
+    expect(w.status).toBe(403);
+    expect((await json(w)).error).toMatchObject({
+      code: "feature_disabled",
+      details: { reason: "opaque_isolation" },
+    });
+    const viaMcp = await tool(await mcpClient(owner.token, vars), "write_artifact_data", {
+      id,
+      ops,
+    });
+    expect(viaMcp.isError).toBe(true);
+    expect(viaMcp.data.error).toMatchObject({
+      code: "feature_disabled",
+      details: { reason: "opaque_isolation" },
+    });
+    const r = await rest(`/artifacts/${id}/data`, owner.auth, {}, vars);
+    expect(r.status).toBe(200);
+    expect((await json(r)).available).toBe(false);
+    expect(await rowCounts(id)).toEqual({ docs: 0, usage: 0 });
   });
 });
 
