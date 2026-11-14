@@ -18,7 +18,7 @@ import {
 } from "../scripts/admin-lib.mjs";
 import { accessGrants, artifacts, comments, users, versions } from "../src/db/schema.ts";
 import { nowIso } from "../src/lib/time.ts";
-import { agent, call, db, json, publish } from "./helpers.ts";
+import { agent, call, db, json, publish, versionRow } from "./helpers.ts";
 
 describe("admin CLI: set-limit", () => {
   it("parses arguments and builds the wrangler command", () => {
@@ -189,7 +189,7 @@ describe("admin CLI: erase-user and erase-artifact", () => {
     expect(res.status).toBe(201);
 
     const keys = await storedKeys(userKeysSql(owner.user.email));
-    expect(keys).toContain(`artifacts/${mine.id}/v1/index.html`);
+    expect(keys).toContain(`${(await versionRow(mine.id, 1))?.r2Prefix}index.html`);
     for (const k of keys) expect(await env.FILES.head(k)).not.toBeNull();
 
     const sets = await runStatements(eraseUserSql(owner.user.email));
@@ -219,7 +219,9 @@ describe("admin CLI: erase-user and erase-artifact", () => {
   it("erase-artifact removes one artifact with its versions, by id or slug", async () => {
     const owner = await agent();
     const { body: a } = await publish(owner.auth, { title: "Gone soon" });
-    expect(await storedKeys(artifactKeysSql(a.slug))).toEqual([`artifacts/${a.id}/v1/index.html`]);
+    expect(await storedKeys(artifactKeysSql(a.slug))).toEqual([
+      `${(await versionRow(a.id, 1))?.r2Prefix}index.html`,
+    ]);
     const [erased] = await runStatements(eraseArtifactSql(a.slug));
     expect(erased).toHaveLength(1);
     expect(await db().select().from(versions).where(eq(versions.artifactId, a.id)).all()).toEqual(

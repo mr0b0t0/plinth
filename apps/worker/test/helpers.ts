@@ -4,13 +4,15 @@ import { createExecutionContext, waitOnExecutionContext } from "cloudflare:test"
 import { env, exports } from "cloudflare:workers";
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import { COOKIES, CSRF_HEADER } from "@plinth/shared";
+import { and, eq } from "drizzle-orm";
 import { TOKEN_PREFIX } from "../src/auth/principal.ts";
 import { getConfig } from "../src/config.ts";
 import { getDb } from "../src/db/client.ts";
-import { agentConnections, sessions } from "../src/db/schema.ts";
+import { agentConnections, sessions, versions } from "../src/db/schema.ts";
 import worker from "../src/index.ts";
 import { hashToken, newId, newToken } from "../src/lib/crypto.ts";
 import { isoIn, nowIso } from "../src/lib/time.ts";
+import { fileKey, type ManifestEntry, parseManifest } from "../src/services/storage.ts";
 import { getOrCreateUser } from "../src/services/users.ts";
 
 export const APP = "http://app.localhost:8787";
@@ -168,4 +170,70 @@ export async function enterContent(
   const setCookie = enter.headers.get("set-cookie") ?? "";
   const cookie = setCookie.split(";")[0] ?? null;
   return { gate, cookie, location: enter.headers.get("location"), enter };
+}
+
+/** One version row of an artifact, or null. */
+export async function versionRow(artifactId: string, n: number) {
+  return (
+    (await db()
+      .select()
+      .from(versions)
+      .where(and(eq(versions.artifactId, artifactId), eq(versions.number, n)))
+      .get()) ?? null
+  );
+}
+
+/** A version's manifest, as stored (stored_at included). */
+export async function manifestOf(artifactId: string, n: number): Promise<ManifestEntry[]> {
+  const v = await versionRow(artifactId, n);
+  return v ? parseManifest(v.manifest) : [];
+}
+
+/**
+ * The R2 object a version serves at `path` (through the manifest and fileKey, so reused files
+ * resolve to their origin), or null when the version does not list the path or the object is gone.
+ */
+export async function storedFile(artifactId: string, n: number, path: string) {
+  const v = await versionRow(artifactId, n);
+  if (!v) return null;
+  const e = parseManifest(v.manifest).find((m) => m.path === path);
+  if (!e) return null;
+  return env.FILES.get(fileKey(artifactId, v, e));
+}
+
+/** Every R2 key under a prefix. */
+export async function r2Keys(prefix: string): Promise<string[]> {
+  const keys: string[] = [];
+  let cursor: string | undefined;
+  do {
+    const page = await env.FILES.list({ prefix, cursor });
+    keys.push(...page.objects.map((o) => o.key));
+    cursor = page.truncated ? page.cursor : undefined;
+  } while (cursor);
+  return keys;
+}
+
+/** Lowercase hex SHA-256 of a string or bytes. */
+export async function sha256Of(data: string | Uint8Array): Promise<string> {
+  const bytes = typeof data === "string" ? new TextEncoder().encode(data) : data;
+  const d = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
+  return [...d].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+/** Wrap a binding so every method call is recorded (name and first argument). */
+export function spy<T extends object>(
+  target: T,
+): { proxy: T; calls: { method: string; arg: unknown }[] } {
+  const calls: { method: string; arg: unknown }[] = [];
+  const proxy = new Proxy(target, {
+    get(t, prop, _receiver) {
+      const v = Reflect.get(t, prop, t);
+      if (typeof v !== "function") return v;
+      return (...args: unknown[]) => {
+        calls.push({ method: String(prop), arg: args[0] });
+        return (v as (...a: unknown[]) => unknown).apply(t, args);
+      };
+    },
+  });
+  return { proxy, calls };
 }

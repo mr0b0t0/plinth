@@ -45,7 +45,7 @@ function insertTicket(userId: string, t: TicketRow) {
 }
 
 describe("migration 0006_stored_bytes", () => {
-  it("adds versions.stored_bytes, NULL for versions written the old way", async () => {
+  it("adds versions.stored_bytes; a new version records the bytes it wrote", async () => {
     const cols = await D1().prepare("PRAGMA table_info(versions)").all<{ name: string }>();
     expect(cols.results.map((c) => c.name)).toContain("stored_bytes");
     const a = await agent();
@@ -54,8 +54,9 @@ describe("migration 0006_stored_bytes", () => {
       .prepare("SELECT stored_bytes, size_bytes FROM versions WHERE artifact_id = ?")
       .bind(body.id)
       .first<{ stored_bytes: number | null; size_bytes: number }>();
-    expect(row?.stored_bytes).toBeNull();
     expect(row?.size_bytes).toBeGreaterThan(0);
+    // A first version writes every file it has.
+    expect(row?.stored_bytes).toBe(row?.size_bytes);
   });
 });
 

@@ -5,7 +5,19 @@ import { env } from "cloudflare:workers";
 import { eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import { artifacts, versions } from "../src/db/schema.ts";
-import { agent, call, db, json, mcpClient, publish, tool } from "./helpers.ts";
+import {
+  agent,
+  call,
+  db,
+  json,
+  mcpClient,
+  publish,
+  r2Keys,
+  sha256Of,
+  storedFile,
+  tool,
+  versionRow,
+} from "./helpers.ts";
 
 const PNG = "iVBORw0KGgo=";
 const MD =
@@ -67,11 +79,18 @@ describe("doc artifacts over REST", () => {
         path: "content.md",
         size_bytes: new TextEncoder().encode(MD).byteLength,
         content_type: "text/markdown; charset=utf-8",
+        sha256: await sha256Of(MD),
       },
-      { path: "img/dot.png", size_bytes: 8, content_type: "image/png" },
+      {
+        path: "img/dot.png",
+        size_bytes: 8,
+        content_type: "image/png",
+        sha256: await sha256Of(Uint8Array.from(atob("iVBORw0KGgo="), (c) => c.charCodeAt(0))),
+      },
     ]);
-    expect(await env.FILES.get(`artifacts/${body.id}/v1/index.html`)).toBeNull();
-    expect(await (await env.FILES.get(`artifacts/${body.id}/v1/content.md`))?.text()).toBe(MD);
+    const v1 = await versionRow(body.id, 1);
+    expect(await r2Keys(v1?.r2Prefix ?? "-")).not.toContain(`${v1?.r2Prefix}index.html`);
+    expect(await (await storedFile(body.id, 1, "content.md"))?.text()).toBe(MD);
 
     const detail = await getDetail(a.auth, body.slug);
     expect(detail).toMatchObject({
@@ -100,7 +119,7 @@ describe("doc artifacts over REST", () => {
     const { res, body } = await publish(a.auth, { assets: [{ path: "a.css", content: "x" }] });
     expect(res.status).toBe(201);
     expect(body.type).toBe("html");
-    expect(await env.FILES.get(`artifacts/${body.id}/v1/index.html`)).not.toBeNull();
+    expect(await storedFile(body.id, 1, "index.html")).not.toBeNull();
     const detail = await getDetail(a.auth, body.id);
     expect(detail).toMatchObject({
       type: "html",
@@ -276,9 +295,7 @@ describe("doc artifacts over REST", () => {
       "content.md",
       "img/dot.png",
     ]);
-    expect(
-      await (await env.FILES.get(`artifacts/${p.id}/v2/img/dot.png`))?.arrayBuffer(),
-    ).toBeTruthy();
+    expect(await (await storedFile(p.id, 2, "img/dot.png"))?.arrayBuffer()).toBeTruthy();
 
     const stale = await put(a.auth, p.id, { content: "# stale\n", base_version: 1 });
     expect(stale.status).toBe(409);
