@@ -236,9 +236,15 @@ the artifact's own content origin, never on the app host. Design:
   `language-` names, and `href` and `src` are checked again by the URL rules.
 - **Strict shell CSP.** The shell's CSP is the content CSP with `script-src 'self'` and nothing
   else in that directive: no `unsafe-inline`, no `unsafe-eval`, no CDN hosts. Every other directive
-  is identical, including the opaque `sandbox`. So even if both Markdown passes failed, injected
-  inline script or handlers could not run. Renderer files, `content.md` (served raw as
-  `text/markdown` with `nosniff`), images and errors keep the default content CSP.
+  is identical, including the opaque `sandbox`. The shell repeats the script policy in a
+  `<meta http-equiv="Content-Security-Policy" content="script-src 'self'">` as the first element of
+  its `<head>`. That covers the editor preview, where the preview loader (served with the default
+  content CSP) writes the shell with `document.write`: a meta policy is enforced on top of the
+  header policy and also binds a written document. So even if both Markdown passes failed,
+  injected inline script or handlers could not run, in the published page or in the preview.
+- **A doc's files run no script.** `content.md` (served raw as `text/markdown` with `nosniff`) and
+  a doc's images are served with `script-src 'none'`, so an SVG image opened as a document cannot
+  run script on the doc's origin. Renderer files and errors keep the default content CSP.
 - **SPA-fallback guard.** ASSETS answers unknown paths with the app's `index.html`
   (`single-page-application` fallback). A renderer response is used only if it is `ok` and its
   Content-Type is exactly `text/javascript` for the script or `text/css` for the style; anything

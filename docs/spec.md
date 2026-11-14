@@ -173,7 +173,8 @@ Print to PDF). A doc version stores `content.md` and its images. Its page is a f
 that embeds the Markdown as escaped JSON and loads Plinth's renderer from the artifact's own origin
 under `/__plinth/types/doc/`, in every isolation mode; no per-artifact server code, and the CDN
 allowlist is unchanged. Raw HTML in the Markdown shows as text, links pass an allowlist and open in
-a new tab, and the shell's CSP allows only `script-src 'self'`. The type is fixed at publish
+a new tab, and the shell's CSP (header and a meta copy, so the editor preview gets it too) allows
+only `script-src 'self'`; a doc's other files run no script. The type is fixed at publish
 (`artifacts.type`, default `html`); versions, `base_version` conflicts and restore work as for HTML.
 The editor edits the Markdown with a live preview and history diffs `content.md`. Decks and sheets
 join the same type registry (`packages/shared/src/artifactTypes.ts`) later; no .docx or .pptx

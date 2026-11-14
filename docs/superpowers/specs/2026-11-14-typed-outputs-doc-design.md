@@ -211,8 +211,10 @@ No new tools or routes. Additive text only (issue #1 edits the same file):
   untrusted like HTML.
 - `UNTRUSTED_NOTE` is left alone; the untrusted wording goes in the `get_artifact` description.
 - `openapi.ts`: the `ArtifactType` enum, `type` on summary, publish result and view;
-  `ArtifactDetail.html` optional ("type html only"), `content` ("UNTRUSTED Markdown, type doc
-  only"), `source_path`. Regenerate `docs/openapi.json` with `pnpm openapi`.
+  `ArtifactDetail` as a `oneOf` of `HtmlArtifactDetail` (`html` required) and `DocArtifactDetail`
+  (`content`, "UNTRUSTED Markdown", required) with a `discriminator` on `type`, built from the
+  registry, plus `source_path`. Clients generated from the document keep a required `html` for
+  pages. Regenerate `docs/openapi.json` with `pnpm openapi`.
 
 ### Content host (`apps/worker/src/content/serve.ts`, new `content/typed.ts`)
 
@@ -222,7 +224,8 @@ No new tools or routes. Additive text only (issue #1 edits the same file):
    registry, never from the request path. The response must be `ok` and have the expected
    Content-Type (`text/javascript` or `text/css`); otherwise 404. That guard matters because ASSETS
    uses `single-page-application` fallback and would hand back the SPA's `index.html`. Headers via
-   `applyContentHeaders`.
+   `applyContentHeaders`, plus the ETag ASSETS gives the file; a matching `If-None-Match` gets a
+   304, so `no-cache` revalidates instead of downloading the renderer on every view and preview.
 2. **Doc entry.** After the existing cookie, epoch, version and path resolution: `def =
    typeDef(artifact.type)`; null gives 404 "This artifact's type is not supported by this instance".
    If `def.renderer` and `rel === "index.html"`, read `v.r2Prefix + def.sourcePath` and return
@@ -231,7 +234,11 @@ No new tools or routes. Additive text only (issue #1 edits the same file):
    the normal manifest lookup (images; `content.md` raw as `text/markdown` with nosniff).
 3. **CSP.** `contentCsp(config, { scripts: "self" })` for the shell only: `script-src 'self'` and
    nothing else in that directive; every other directive identical, including `OPAQUE_SANDBOX`.
-   Renderer files, `content.md`, assets and errors keep `contentCsp(config)` unchanged.
+   The shell repeats `script-src 'self'` in a `<meta http-equiv="Content-Security-Policy">` as the
+   first element of `<head>`, so the editor preview (written into the loader page, which is served
+   with the default content CSP) runs under the same script policy. A doc's other files
+   (`content.md`, images) get `contentCsp(config, { scripts: "none" })`, so an SVG image opened as
+   a document runs no script. Renderer files and errors keep `contentCsp(config)` unchanged.
 4. **App host.** `apps/worker/src/app/spa.ts` returns 404 for `/__plinth-renderers/*`.
 
 Opaque isolation needs nothing extra: the content is in the shell, the renderer and stylesheet are
