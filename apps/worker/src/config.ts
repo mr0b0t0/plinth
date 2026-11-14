@@ -70,6 +70,14 @@ export interface Config {
   adminToken: string | null;
   sendgridApiKey: string | null;
   resendApiKey: string | null;
+  /** OPERATOR_*: who runs this instance, for its legal pages. null when none is published. */
+  operator: {
+    name: string;
+    address: string | null;
+    registration: string | null;
+    email: string;
+    hosting: string;
+  } | null;
 }
 
 export class ConfigError extends Error {}
@@ -102,6 +110,29 @@ export function registrableDomain(host: string): string {
 
 const HOST_RE = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*(:\d{1,5})?$/;
 const CDN_HOST_RE = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/;
+
+const OPERATOR_EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+/**
+ * OPERATOR_NAME, OPERATOR_ADDRESS, OPERATOR_REGISTRATION, OPERATOR_EMAIL, OPERATOR_HOSTING: the
+ * operator named in the instance's terms and privacy notice. All unset: no legal pages (a personal
+ * instance). A name needs a contact email, and the reverse.
+ */
+function parseOperator(env: Record<string, unknown>): Config["operator"] {
+  const name = str(env.OPERATOR_NAME);
+  const email = str(env.OPERATOR_EMAIL).toLowerCase();
+  if (!name && !email) return null;
+  if (!name || !email) throw new ConfigError("Set OPERATOR_NAME and OPERATOR_EMAIL together");
+  if (!OPERATOR_EMAIL_RE.test(email))
+    throw new ConfigError("OPERATOR_EMAIL is not an email address");
+  return {
+    name,
+    address: str(env.OPERATOR_ADDRESS) || null,
+    registration: str(env.OPERATOR_REGISTRATION) || null,
+    email,
+    hosting: str(env.OPERATOR_HOSTING) || "Cloudflare",
+  };
+}
 
 export function parseConfig(env: Record<string, unknown>): Config {
   const environment = str(env.ENVIRONMENT) || "production";
@@ -163,6 +194,7 @@ export function parseConfig(env: Record<string, unknown>): Config {
     adminToken: str(env.ADMIN_TOKEN) || null,
     sendgridApiKey: str(env.SENDGRID_API_KEY) || null,
     resendApiKey: str(env.RESEND_API_KEY) || null,
+    operator: parseOperator(env),
   };
   validate(config);
   return config;

@@ -16,6 +16,9 @@ const config: AppConfig = {
   content_path_fallback: false,
   content_isolation: "origin",
   environment: "development",
+  operator: null,
+  email_provider: "console",
+  max_artifacts_per_user: 100,
 };
 const opaqueConfig: AppConfig = { ...config, content_isolation: "opaque" };
 const ENTER = `${ORIGIN}/__plinth/enter?t=one-time&next=%2F__plinth%2Fpreview`;

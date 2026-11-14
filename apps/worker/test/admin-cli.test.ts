@@ -2,15 +2,23 @@ import { env } from "cloudflare:workers";
 import { eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import {
+  artifactKeysSql,
   changesFromOutput,
+  eraseArtifactSql,
+  eraseUserSql,
+  keysFromRows,
   parseArgs,
+  resultSets,
   setLimitSql,
   UsageError,
+  userKeysSql,
+  validateArtifactRef,
   validateEmail,
   validateLimit,
 } from "../scripts/admin-lib.mjs";
-import { users } from "../src/db/schema.ts";
-import { agent, db, publish } from "./helpers.ts";
+import { accessGrants, artifacts, comments, users, versions } from "../src/db/schema.ts";
+import { nowIso } from "../src/lib/time.ts";
+import { agent, call, db, publish } from "./helpers.ts";
 
 describe("admin CLI: set-limit", () => {
   it("parses arguments and builds the wrangler command", () => {
@@ -21,7 +29,7 @@ describe("admin CLI: set-limit", () => {
       limit: 250,
       target: "remote",
     });
-    if (r.help) throw new Error("unexpected help");
+    if (r.help || r.command !== "set-limit") throw new Error("unexpected parse");
     expect(r.wranglerArgs).toEqual([
       "d1",
       "execute",
@@ -32,7 +40,7 @@ describe("admin CLI: set-limit", () => {
       "UPDATE users SET artifact_limit = 250 WHERE email = 'ann@example.com' RETURNING email",
     ]);
     const d = parseArgs(["set-limit", "a@b.co", "default", "--local", "--env", "staging"]);
-    if (d.help) throw new Error("unexpected help");
+    if (d.help || d.command !== "set-limit") throw new Error("unexpected parse");
     expect(d.sql).toContain("artifact_limit = NULL");
     expect(d.wranglerArgs.slice(-2)).toEqual(["--env", "staging"]);
     expect(parseArgs([])).toEqual({ help: true });
@@ -85,5 +93,139 @@ describe("admin CLI: set-limit", () => {
     expect(changesFromOutput(JSON.stringify([{ results: none.results, success: true }]))).toBe(0);
     expect(changesFromOutput(JSON.stringify([{ results: [{ email }], success: true }]))).toBe(1);
     expect(changesFromOutput("not json")).toBeNull();
+  });
+});
+
+/** Run a `;`-joined statement list the way `wrangler d1 execute --command` does. */
+async function runStatements(sql: string) {
+  const out = [];
+  for (const stmt of sql.split("; ")) out.push((await env.DB.prepare(stmt).all()).results);
+  return out;
+}
+
+async function storedKeys(sql: string) {
+  const rows = (await env.DB.prepare(sql).all()).results as { prefix: string; manifest: string }[];
+  return keysFromRows(rows);
+}
+
+describe("admin CLI: erase-user and erase-artifact", () => {
+  it("parses both commands with --config, --bucket and --dry-run", () => {
+    const r = parseArgs([
+      "erase-user",
+      "Ann@Example.com",
+      "--remote",
+      "--config",
+      "wrangler.production.jsonc",
+      "--bucket",
+      "plinth-files",
+      "--dry-run",
+    ]);
+    if (r.help || r.command !== "erase-user") throw new Error("unexpected parse");
+    expect(r).toMatchObject({ subject: "ann@example.com", target: "remote", dryRun: true });
+    expect(r.keysArgs).toContain("--config");
+    expect(r.deleteObjectArgs("artifacts/abc/v1/index.html")).toEqual([
+      "r2",
+      "object",
+      "delete",
+      "plinth-files/artifacts/abc/v1/index.html",
+      "--remote",
+      "--config",
+      "wrangler.production.jsonc",
+    ]);
+    const a = parseArgs(["erase-artifact", "q3-revenue-4k2j9x0aq1", "--local"]);
+    if (a.help || a.command !== "erase-artifact") throw new Error("unexpected parse");
+    expect(a.subject).toBe("q3-revenue-4k2j9x0aq1");
+  });
+
+  it("refuses anything but a plain email, id or slug, and a sane config path", () => {
+    expect(() => validateArtifactRef("x'; DROP TABLE users; --")).toThrow(UsageError);
+    expect(() => parseArgs(["erase-user", "a@b.co"])).toThrow(/--local or --remote/);
+    expect(() => parseArgs(["erase-user", "a@b.co", "--local", "--config", "../x.json"])).toThrow(
+      UsageError,
+    );
+    expect(() => parseArgs(["erase-user", "a@b.co", "--local", "--bucket", "Bad_Name"])).toThrow(
+      UsageError,
+    );
+  });
+
+  it("keeps only keys in Plinth's own layout", () => {
+    expect(
+      keysFromRows([
+        {
+          prefix: "artifacts/abc/v1/",
+          manifest: JSON.stringify([
+            { path: "index.html" },
+            { path: "img/a.png" },
+            { path: "../x" },
+          ]),
+        },
+        { prefix: "artifacts/abc/v2/", manifest: "not json" },
+      ]),
+    ).toEqual(["artifacts/abc/v1/index.html", "artifacts/abc/v1/img/a.png"]);
+    expect(resultSets('[{"results":[{"id":"u1"}]},{"results":[]}]')).toEqual([[{ id: "u1" }], []]);
+  });
+
+  it("erase-user removes the person and everything theirs, and nothing of anyone else", async () => {
+    const owner = await agent();
+    const other = await agent();
+    const { body: mine } = await publish(owner.auth, { title: "Mine" });
+    await publish(owner.auth, { title: "Mine too" });
+    const { body: theirs } = await publish(other.auth, { title: "Theirs" });
+    // The person was given commenter access to someone else's artifact and commented there.
+    await db()
+      .insert(accessGrants)
+      .values({
+        artifactId: theirs.id,
+        email: owner.user.email,
+        role: "commenter",
+        createdAt: nowIso(),
+      })
+      .run();
+    const res = await call(`/api/v1/artifacts/${theirs.slug}/comments`, {
+      method: "POST",
+      headers: { ...owner.auth, "Content-Type": "application/json" },
+      body: JSON.stringify({ body: "My note on their page" }),
+    });
+    expect(res.status).toBe(201);
+
+    const keys = await storedKeys(userKeysSql(owner.user.email));
+    expect(keys).toContain(`artifacts/${mine.id}/v1/index.html`);
+    for (const k of keys) expect(await env.FILES.head(k)).not.toBeNull();
+
+    const sets = await runStatements(eraseUserSql(owner.user.email));
+    expect(sets[sets.length - 1]).toHaveLength(1);
+
+    expect(
+      await db().select().from(users).where(eq(users.id, owner.user.id)).get(),
+    ).toBeUndefined();
+    expect(
+      await db().select().from(artifacts).where(eq(artifacts.ownerId, owner.user.id)).all(),
+    ).toEqual([]);
+    expect(
+      await db().select().from(versions).where(eq(versions.artifactId, mine.id)).all(),
+    ).toEqual([]);
+    expect(
+      await db().select().from(comments).where(eq(comments.artifactId, theirs.id)).all(),
+    ).toEqual([]);
+    expect(
+      await db().select().from(accessGrants).where(eq(accessGrants.email, owner.user.email)).all(),
+    ).toEqual([]);
+    // The other person's artifact is untouched.
+    expect(
+      await db().select().from(artifacts).where(eq(artifacts.id, theirs.id)).get(),
+    ).toBeDefined();
+  });
+
+  it("erase-artifact removes one artifact with its versions, by id or slug", async () => {
+    const owner = await agent();
+    const { body: a } = await publish(owner.auth, { title: "Gone soon" });
+    expect(await storedKeys(artifactKeysSql(a.slug))).toEqual([`artifacts/${a.id}/v1/index.html`]);
+    const [erased] = await runStatements(eraseArtifactSql(a.slug));
+    expect(erased).toHaveLength(1);
+    expect(await db().select().from(versions).where(eq(versions.artifactId, a.id)).all()).toEqual(
+      [],
+    );
+    const [again] = await runStatements(eraseArtifactSql(a.id));
+    expect(again).toHaveLength(0);
   });
 });

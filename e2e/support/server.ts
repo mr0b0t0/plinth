@@ -30,6 +30,11 @@ export const DEV_VARS: Record<string, string> = {
   EMAIL_PROVIDER: "console",
   SINGLE_USER_MODE: "false",
   ADMIN_EMAIL: "admin@plinth.local",
+  // An operator, so the terms and privacy notice are published.
+  OPERATOR_NAME: "Example Operator, Lda.",
+  OPERATOR_EMAIL: "hello@operator.example",
+  OPERATOR_ADDRESS: "Rua Exemplo 1, 1000-001 Lisboa, Portugal",
+  OPERATOR_REGISTRATION: "VAT PT000000000",
   // Fresh for every run; never committed, never reused.
   SESSION_SECRET: randomBytes(48).toString("base64url"),
   TOKEN_SIGNING_KEY: randomBytes(48).toString("base64url"),

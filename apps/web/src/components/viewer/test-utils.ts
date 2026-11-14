@@ -11,6 +11,15 @@ export const CONFIG: AppConfig = {
   content_path_fallback: false,
   content_isolation: "origin",
   environment: "development",
+  operator: {
+    name: "Example Operator, Lda.",
+    address: "Rua Exemplo 1, 1000-001 Lisboa, Portugal",
+    registration: "VAT PT000000000",
+    email: "hello@example.org",
+    hosting: "Cloudflare",
+  },
+  email_provider: "sendgrid",
+  max_artifacts_per_user: 100,
 };
 
 export const ME: Me = {

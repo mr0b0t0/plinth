@@ -19,6 +19,9 @@ const config: AppConfig = {
   content_path_fallback: false,
   content_isolation: "origin",
   environment: "production",
+  operator: null,
+  email_provider: "console",
+  max_artifacts_per_user: 100,
 };
 
 describe("gate query and paths", () => {

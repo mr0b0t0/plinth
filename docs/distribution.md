@@ -45,7 +45,8 @@ These need the operator's accounts and go out under Aconite's name, so they are 
 
 - **Anthropic connector directory** (Claude web, desktop and mobile): submit the remote MCP server
   `https://plinth.aconite.io/mcp`. The review expects published privacy and terms pages, a support
-  contact, and OAuth that works end to end. The `/legal/*` pages are still placeholders.
+  contact, and OAuth that works end to end: the hosted instance publishes its terms, privacy notice
+  and acceptable use policy at `/legal/*`, with one contact address.
 - **Claude Code plugin directory**: submit `integrations/plugin`. `claude plugin validate --strict`
   runs a subset of the directory's checks; the icon is `.claude-plugin/icon.png`.
 - **OpenAI plugin listing** (ChatGPT and Codex): submit the plugin through OpenAI's developer

@@ -1950,7 +1950,26 @@
             "enum": ["origin", "opaque"],
             "description": "Effective CONTENT_ISOLATION. With \"opaque\", artifact documents have an opaque origin, so their postMessage events arrive with origin \"null\""
           },
-          "environment": { "type": "string", "enum": ["development", "staging", "production"] }
+          "environment": { "type": "string", "enum": ["development", "staging", "production"] },
+          "operator": {
+            "oneOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "name": { "type": "string" },
+                  "address": { "type": ["string", "null"] },
+                  "registration": { "type": ["string", "null"] },
+                  "email": { "type": "string", "format": "email" },
+                  "hosting": { "type": "string" }
+                },
+                "required": ["name", "address", "registration", "email", "hosting"]
+              },
+              { "type": "null" }
+            ],
+            "description": "Who runs this instance (OPERATOR_* settings); null when none is published"
+          },
+          "email_provider": { "type": "string", "enum": ["sendgrid", "resend", "console"] },
+          "max_artifacts_per_user": { "type": "integer" }
         },
         "required": [
           "app_origin",
@@ -1960,7 +1979,10 @@
           "public_visibility_enabled",
           "content_path_fallback",
           "content_isolation",
-          "environment"
+          "environment",
+          "operator",
+          "email_provider",
+          "max_artifacts_per_user"
         ]
       },
       "LoginResult": {

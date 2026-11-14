@@ -226,8 +226,11 @@ options.
   visibility unlocks after email verification and a short account age. Every artifact page carries
   a "report" link and a banner naming the platform, and reported artifacts can be taken down
   quickly.
-- **Hosted instance paperwork.** Terms of use, an acceptable use policy, a privacy notice and a
-  takedown contact, since the operator is a host under EU rules (DSA, GDPR).
+- **Hosted instance paperwork.** Terms of use, a privacy notice and an acceptable use policy:
+  short, final, plain-language pages built from the instance's `OPERATOR_*` settings (operator
+  name, address, registration or VAT number, one contact address), since the operator is a host
+  under EU rules (DSA, GDPR). An instance without an operator publishes only the acceptable use
+  policy. Erasure on request is done with the admin commands `erase-user` and `erase-artifact`.
 
 ## Open source and hosting model
 

@@ -291,6 +291,21 @@ function responseSchemas(): Record<string, Json> {
           'Effective CONTENT_ISOLATION. With "opaque", artifact documents have an opaque origin, so their postMessage events arrive with origin "null"',
       },
       environment: enumOf(["development", "staging", "production"]),
+      operator: {
+        oneOf: [
+          obj({
+            name: str(),
+            address: nullable("string"),
+            registration: nullable("string"),
+            email: str({ format: "email" }),
+            hosting: str(),
+          }),
+          { type: "null" },
+        ],
+        description: "Who runs this instance (OPERATOR_* settings); null when none is published",
+      },
+      email_provider: enumOf(["sendgrid", "resend", "console"]),
+      max_artifacts_per_user: int(),
     }),
     LoginResult: obj({
       ok: { const: true },

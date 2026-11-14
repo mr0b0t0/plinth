@@ -1,5 +1,5 @@
 // The artifact page and its gates, as an anonymous viewer: each visibility, direct content links,
-// permanent version links, the report flow through to an admin takedown, and the legal templates.
+// permanent version links, the report flow through to an admin takedown, and the legal pages.
 import AxeBuilder from "@axe-core/playwright";
 import { expect, type Page, test } from "@playwright/test";
 import { APP_ORIGIN, CONTENT_HOST, uniqueEmail } from "../support/api.ts";
@@ -387,14 +387,14 @@ test.describe("legal pages", () => {
     ["privacy", "Privacy notice"],
     ["acceptable-use", "Acceptable use policy"],
   ] as const) {
-    test(`${doc} renders as a marked template`, async ({ page }) => {
+    test(`${doc} renders with the instance's operator`, async ({ page }) => {
       await page.goto(`/legal/${doc}`);
       await expect(page.getByRole("heading", { level: 1, name: title })).toBeVisible();
       await expect(page).toHaveTitle(`${title} · Plinth`);
+      await expect(page.getByText(/template|placeholder/i)).toHaveCount(0);
       await expect(
-        page.getByText("Template — not legal advice; the operator must replace this text."),
+        page.getByRole("link", { name: "hello@operator.example" }).first(),
       ).toBeVisible();
-      await expect(page.getByText("Aconite Software & Investments, Lda.").first()).toBeVisible();
       await shot(page, `legal-${doc}`);
       await expectAccessible(page);
     });

@@ -2,6 +2,7 @@
 // Comments, Share and a ⋯ menu on the right), the artifact in a sandboxed frame filling the rest,
 // an optional comments panel, and a one-line banner naming the platform with a report link
 // (required on every artifact page).
+
 import {
   ChatCircleIcon,
   ClockCounterClockwiseIcon,
@@ -25,6 +26,7 @@ import { VersionPicker } from "../artifact/VersionPicker.tsx";
 import { useMediaQuery } from "../editor/useMediaQuery.ts";
 import { LogoMark } from "../Logo.tsx";
 import { SkipLink } from "../layout/AppShell.tsx";
+import { LegalLinks } from "../layout/LegalLinks.tsx";
 import {
   Button,
   buttonClassName,
@@ -278,9 +280,7 @@ export function ViewerStage({
             ·
           </span>
           <nav aria-label="Legal" className="pl-viewer__banner-wide pl-viewer__legal">
-            <Link to={APP_ROUTES.terms}>Terms</Link>
-            <Link to={APP_ROUTES.privacy}>Privacy</Link>
-            <Link to={APP_ROUTES.acceptableUse}>Acceptable use</Link>
+            <LegalLinks />
           </nav>
         </footer>
       </div>

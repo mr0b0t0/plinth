@@ -55,6 +55,11 @@ Booleans accept `true`, `1`, `yes` or `on`.
 | `MAX_PUBLISHES_PER_HOUR` | `60` | Publishes and new versions per user per hour |
 | `CDN_ALLOWLIST` | cdnjs.cloudflare.com, cdn.jsdelivr.net, unpkg.com, cdn.tailwindcss.com, code.jquery.com, cdn.plot.ly | Script hosts artifacts may load from, comma or space separated. Empty means the default list |
 | `SINGLE_USER_MODE` | `false` | One-person instance; needs exactly one `ADMIN_EMAIL` |
+| `OPERATOR_NAME` | empty | Who runs the instance, named in its terms of use and privacy notice. With `OPERATOR_EMAIL`, the instance publishes both pages; without, only the acceptable use policy (right for a personal instance) |
+| `OPERATOR_EMAIL` | empty | The one published contact address (questions, privacy, reports, authorities). A monitored inbox |
+| `OPERATOR_ADDRESS` | empty | Registered address, shown in the terms and privacy notice |
+| `OPERATOR_REGISTRATION` | empty | Company registration or VAT number, as it should read, e.g. `VAT PT516696696` |
+| `OPERATOR_HOSTING` | `Cloudflare` | The hosting provider the privacy notice names as a processor |
 | `ADMIN_EMAIL` | empty | Instance admins (comma separated): they see the report queue and can take artifacts down. In single-user mode, exactly one address: the owner |
 | `ALLOW_PUBLIC_VISIBILITY` | `false` | Allows `public` visibility. Even then an account needs a verified email and a minimum age |
 | `PUBLIC_MIN_ACCOUNT_AGE_HOURS` | `72` | Account age before `public` unlocks |
@@ -163,8 +168,17 @@ Step-by-step instructions for each client are in [mcp.md](mcp.md).
   `users.artifact_limit` with the admin command (`pnpm --filter @plinth/worker admin --help`) or
   `wrangler d1 execute`.
 - **Abuse.** Emails in `ADMIN_EMAIL` see the report queue at `/admin/reports` and can take an
-  artifact down. Fill in the terms, privacy and acceptable-use templates under `/legal/*` before
-  opening sign-up to the public.
+  artifact down.
+- **Legal pages.** `/legal/terms`, `/legal/privacy` and `/legal/acceptable-use` are short, final,
+  plain-language pages built from the `OPERATOR_*` settings. Set `OPERATOR_NAME` and
+  `OPERATOR_EMAIL` (and in the EU your address and registration or VAT number) before letting other
+  people sign up. Read them on your instance; if your situation needs different terms, change
+  `apps/web/src/components/viewer/legalDocs.tsx`.
+- **Privacy requests.** The privacy notice promises erasure on request. Deleting an artifact only
+  hides it; to erase for good, run
+  `pnpm --filter @plinth/worker admin -- erase-artifact <id|slug> --remote --config wrangler.production.jsonc`,
+  or `erase-user <email>` for a whole account (artifacts, versions, files, comments, connections).
+  Add `--dry-run` first to see what goes.
 - **Backups.** D1 Time Travel restores the database to any minute in the last 30 days (Workers
   Paid) or 7 days (Free). R2 objects are written once per version and never overwritten.
 - **Logs.** `wrangler tail --config wrangler.production.jsonc`. Secrets and tokens are never logged.

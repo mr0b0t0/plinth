@@ -14,5 +14,22 @@ export declare function parseArgs(argv: string[]):
       target: "local" | "remote";
       sql: string;
       wranglerArgs: string[];
+    }
+  | {
+      help: false;
+      command: "erase-user" | "erase-artifact";
+      subject: string;
+      target: "local" | "remote";
+      dryRun: boolean;
+      keysArgs: string[];
+      eraseArgs: string[];
+      deleteObjectArgs(key: string): string[];
     };
+export declare function validateArtifactRef(raw: unknown): string;
+export declare function userKeysSql(email: string): string;
+export declare function artifactKeysSql(ref: string): string;
+export declare function eraseUserSql(email: string): string;
+export declare function eraseArtifactSql(ref: string): string;
+export declare function resultSets(stdout: string): Record<string, unknown>[][];
+export declare function keysFromRows(rows: { prefix: string; manifest: string }[]): string[];
 export declare function changesFromOutput(stdout: string): number | null;

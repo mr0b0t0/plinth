@@ -16,9 +16,83 @@ import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { changesFromOutput, parseArgs, USAGE, UsageError } from "./admin-lib.mjs";
+import {
+  changesFromOutput,
+  keysFromRows,
+  parseArgs,
+  resultSets,
+  USAGE,
+  UsageError,
+} from "./admin-lib.mjs";
 
 const packageDir = join(dirname(fileURLToPath(import.meta.url)), "..");
+const bin = join(
+  packageDir,
+  "node_modules",
+  ".bin",
+  process.platform === "win32" ? "wrangler.cmd" : "wrangler",
+);
+
+/** Run wrangler in apps/worker without a shell. */
+function wrangler(args) {
+  const [cmd, full] = existsSync(bin) ? [bin, args] : ["npx", ["wrangler", ...args]];
+  return spawnSync(cmd, full, { cwd: packageDir, encoding: "utf8", shell: false });
+}
+
+function failed(r) {
+  if (r.error) {
+    console.error(`Could not run wrangler: ${r.error.message}`);
+    return 1;
+  }
+  if (r.status !== 0) {
+    process.stderr.write(r.stderr || r.stdout || "");
+    return r.status ?? 1;
+  }
+  return 0;
+}
+
+/**
+ * erase-user / erase-artifact: list the stored files, delete them from R2, then delete the rows
+ * (the database cascades do the rest). Files first, so a failure leaves rows that can be erased
+ * again rather than files nothing points to.
+ */
+function erase(parsed) {
+  const what =
+    parsed.command === "erase-user" ? `user ${parsed.subject}` : `artifact ${parsed.subject}`;
+  const q = wrangler(parsed.keysArgs);
+  const qf = failed(q);
+  if (qf) return qf;
+  const keys = keysFromRows(resultSets(q.stdout).flat());
+  console.log(`Erasing ${what} (${parsed.target}): ${keys.length} stored file(s).`);
+  if (parsed.dryRun) {
+    for (const k of keys) console.log(`  would delete ${k}`);
+    console.log("Dry run: nothing changed.");
+    return 0;
+  }
+  for (const key of keys) {
+    const r = wrangler(parsed.deleteObjectArgs(key));
+    const f = failed(r);
+    if (f) {
+      console.error(
+        `Stopped at ${key}; nothing in the database was changed. Run the command again.`,
+      );
+      return f;
+    }
+  }
+  const e = wrangler(parsed.eraseArgs);
+  const ef = failed(e);
+  if (ef) return ef;
+  const sets = resultSets(e.stdout);
+  const erased = sets.length ? sets[sets.length - 1].length : null;
+  if (erased === 0) {
+    console.error(
+      `No ${what} in the ${parsed.target} database (stored files listed above, if any, are gone).`,
+    );
+    return 1;
+  }
+  console.log(`Erased ${what} and ${keys.length} stored file(s) (${parsed.target}).`);
+  return 0;
+}
 
 function main() {
   let parsed;
@@ -36,24 +110,10 @@ function main() {
     return 0;
   }
 
-  const bin = join(
-    packageDir,
-    "node_modules",
-    ".bin",
-    process.platform === "win32" ? "wrangler.cmd" : "wrangler",
-  );
-  const [cmd, args] = existsSync(bin)
-    ? [bin, parsed.wranglerArgs]
-    : ["npx", ["wrangler", ...parsed.wranglerArgs]];
-  const r = spawnSync(cmd, args, { cwd: packageDir, encoding: "utf8", shell: false });
-  if (r.error) {
-    console.error(`Could not run wrangler: ${r.error.message}`);
-    return 1;
-  }
-  if (r.status !== 0) {
-    process.stderr.write(r.stderr || r.stdout || "");
-    return r.status ?? 1;
-  }
+  if (parsed.command !== "set-limit") return erase(parsed);
+  const r = wrangler(parsed.wranglerArgs);
+  const f = failed(r);
+  if (f) return f;
   const changes = changesFromOutput(r.stdout);
   if (changes === 0) {
     console.error(`No user with email ${parsed.email} in the ${parsed.target} database.`);

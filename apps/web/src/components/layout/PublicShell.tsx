@@ -6,6 +6,7 @@ import { Link } from "../../lib/router.tsx";
 import { LogoMark } from "../Logo.tsx";
 import { Container, IconProvider, ThemeToggle, Toaster } from "../ui/index.ts";
 import { SkipLink } from "./AppShell.tsx";
+import { LegalLinks } from "./LegalLinks.tsx";
 import "./shell.css";
 
 export interface PublicShellProps {
@@ -49,9 +50,7 @@ export function PublicShell({
         <footer className="pl-footer">
           <Container>
             <nav aria-label="Legal" className="pl-footer__nav">
-              <Link to={APP_ROUTES.terms}>Terms</Link>
-              <Link to={APP_ROUTES.privacy}>Privacy</Link>
-              <Link to={APP_ROUTES.acceptableUse}>Acceptable use</Link>
+              <LegalLinks />
             </nav>
           </Container>
         </footer>

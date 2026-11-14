@@ -1,7 +1,12 @@
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { LEGAL_DOC_IDS, LEGAL_DOCS } from "../components/viewer/legalDocs.tsx";
-import { stubApi } from "../components/viewer/test-utils.ts";
+import {
+  LEGAL_DOC_IDS,
+  LEGAL_UPDATED,
+  type LegalConfig,
+  legalDoc,
+} from "../components/viewer/legalDocs.tsx";
+import { CONFIG, stubApi } from "../components/viewer/test-utils.ts";
 import Legal from "./Legal.tsx";
 
 afterEach(() => {
@@ -9,25 +14,36 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+const withOperator: LegalConfig = CONFIG;
+const personal: LegalConfig = { ...CONFIG, operator: null };
+
 describe("Legal", () => {
-  it.each(LEGAL_DOC_IDS)("renders %s as a marked template naming the operator", (doc) => {
+  it.each(LEGAL_DOC_IDS)("renders %s as final text naming the operator", async (doc) => {
     stubApi();
     render(<Legal params={{ doc }} />);
-    expect(screen.getByRole("heading", { level: 1, name: LEGAL_DOCS[doc].title })).toBeTruthy();
-    expect(
-      screen.getByText("Template — not legal advice; the operator must replace this text."),
-    ).toBeTruthy();
-    expect(document.body.textContent).toContain("Aconite Software & Investments, Lda.");
-    expect(document.title).toBe(`${LEGAL_DOCS[doc].title} · Plinth`);
+    const title = legalDoc(doc, withOperator)?.title ?? "";
+    expect(await screen.findByRole("heading", { level: 1, name: title })).toBeTruthy();
+    const text = document.body.textContent ?? "";
+    expect(text).not.toMatch(/placeholder|template|\[[a-z ]+\]/i);
+    expect(text).toContain(`Last updated: ${LEGAL_UPDATED}`);
+    expect(text).toContain("hello@example.org");
+    expect(document.title).toBe(`${title} · Plinth`);
   });
 
-  it("covers the DSA and GDPR headings an EU host needs", () => {
-    const headings = (id: keyof typeof LEGAL_DOCS) => LEGAL_DOCS[id].sections.map((s) => s.heading);
-    expect(headings("terms")).toContain("Notice and action (Digital Services Act)");
-    expect(headings("privacy")).toEqual(
-      expect.arrayContaining(["Controller", "Data we process", "Your rights"]),
+  it("names the operator, its address and registration, and the processors", () => {
+    const render = (id: "terms" | "privacy") =>
+      JSON.stringify(legalDoc(id, withOperator), (_k, v) => (typeof v === "function" ? "" : v));
+    expect(render("terms")).toContain("Rua Exemplo 1");
+    expect(render("privacy")).toContain("Twilio SendGrid");
+    expect(legalDoc("terms", withOperator)?.sections.map((s) => s.heading)).toContain(
+      "Reporting content",
     );
-    expect(headings("acceptable-use")).toContain("Reporting content");
+  });
+
+  it("publishes no terms or privacy notice without an operator, but keeps the acceptable use policy", () => {
+    expect(legalDoc("terms", personal)).toBeNull();
+    expect(legalDoc("privacy", personal)).toBeNull();
+    expect(legalDoc("acceptable-use", personal)?.title).toBe("Acceptable use policy");
   });
 
   it("is not found for any other document", async () => {

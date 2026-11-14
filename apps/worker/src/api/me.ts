@@ -19,6 +19,9 @@ meApi.get("/config", (c) => {
     content_path_fallback: config.contentPathFallback,
     content_isolation: config.contentIsolation,
     environment: config.environment,
+    operator: config.operator,
+    email_provider: config.emailProvider,
+    max_artifacts_per_user: config.maxArtifactsPerUser,
   };
   const res = c.json(body);
   ensureCsrfCookie(c, res.headers);

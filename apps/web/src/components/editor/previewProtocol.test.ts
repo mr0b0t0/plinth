@@ -21,6 +21,9 @@ const config: AppConfig = {
   content_path_fallback: false,
   content_isolation: "origin",
   environment: "production",
+  operator: null,
+  email_provider: "console",
+  max_artifacts_per_user: 100,
 };
 
 const NONCE = "0123456789abcdef0123456789abcdef";

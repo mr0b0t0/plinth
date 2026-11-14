@@ -42,8 +42,7 @@ Works with Claude and Codex. Plinth is not made by or affiliated with Anthropic 
 The button forks the repository and deploys the Worker to your Cloudflare account. You still need
 a content domain, the wildcard route and the secrets: follow
 [docs/deploy-checklist.md](docs/deploy-checklist.md), or use `node scripts/setup.mjs --remote`
-([docs/self-hosting.md](docs/self-hosting.md)). The button has not been tried against this
-repository yet.
+([docs/self-hosting.md](docs/self-hosting.md)).
 
 To run an instance on your own computer instead, with the database and files on your disk and a
 Cloudflare Tunnel for access, see [docs/local-hosting.md](docs/local-hosting.md).

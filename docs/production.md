@@ -13,6 +13,7 @@ Status on 2026-11-14: **deployed** at <https://plinth.aconite.io>, with artifact
 | `ENVIRONMENT` | `production` |
 | Email | SendGrid, `EMAIL_FROM="Plinth <noreply@plinth.aconite.io>"` (`plinth.aconite.io` authenticated in SendGrid on 2026-11-14) |
 | `ADMIN_EMAIL` | `german@aconite.io` |
+| Operator (legal pages) | `OPERATOR_NAME="Aconite Software & Investments, Lda."`, `OPERATOR_ADDRESS="Avenida República da Bulgária, Lote 15, Loja A, 1950-375 Lisboa, Portugal"`, `OPERATOR_REGISTRATION="VAT PT516696696"`, `OPERATOR_EMAIL=hello@aconite.io` |
 | Config file | `apps/worker/wrangler.production.jsonc` (git-ignored; written by `scripts/setup.mjs`) |
 
 ## Cloud resources (2026-11-14)
@@ -87,7 +88,6 @@ Full run after the switch (12:34 CET), against public DNS:
 1. **Public Suffix List** (optional): submit `plinthusercontent.com` to the private section so that
    artifacts are separate sites from each other, not only from the app (see
    [deploy-checklist.md](deploy-checklist.md#public-suffix-list)).
-2. **Legal pages**: replace the `/legal/*` placeholder templates and publish a takedown contact.
 
 ## Redeploy
 

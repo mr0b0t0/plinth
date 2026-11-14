@@ -123,6 +123,42 @@ describe("config", () => {
   });
 });
 
+describe("operator settings (legal pages)", () => {
+  it("are optional: no operator means no published terms or privacy notice", () => {
+    expect(parseConfig(base).operator).toBeNull();
+  });
+  it("parse the operator, defaulting the hosting provider to Cloudflare", () => {
+    const c = parseConfig({
+      ...base,
+      OPERATOR_NAME: "Example Operator, Lda.",
+      OPERATOR_ADDRESS: "Rua Exemplo 1, Lisboa",
+      OPERATOR_REGISTRATION: "VAT PT000000000",
+      OPERATOR_EMAIL: "Hello@Example.org",
+    });
+    expect(c.operator).toEqual({
+      name: "Example Operator, Lda.",
+      address: "Rua Exemplo 1, Lisboa",
+      registration: "VAT PT000000000",
+      email: "hello@example.org",
+      hosting: "Cloudflare",
+    });
+  });
+  it("need a name and a contact email together", () => {
+    expect(() => parseConfig({ ...base, OPERATOR_NAME: "Op" })).toThrow(/OPERATOR_EMAIL/);
+    expect(() => parseConfig({ ...base, OPERATOR_EMAIL: "a@b.co" })).toThrow(/OPERATOR_NAME/);
+    expect(() => parseConfig({ ...base, OPERATOR_NAME: "Op", OPERATOR_EMAIL: "nope" })).toThrow(
+      /not an email/,
+    );
+  });
+  it("reach the web app through /api/v1/config", async () => {
+    const { call, json } = await import("./helpers.ts");
+    const cfg = await json(await call("/api/v1/config"));
+    expect(cfg).toHaveProperty("operator");
+    expect(cfg.email_provider).toBeTypeOf("string");
+    expect(cfg.max_artifacts_per_user).toBeTypeOf("number");
+  });
+});
+
 describe("development-only switches", () => {
   it("POST /__dev/seed is not served unless DEV_SEED is on in development", async () => {
     const { call } = await import("./helpers.ts");

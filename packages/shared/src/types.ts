@@ -178,6 +178,27 @@ export interface AppConfig {
    */
   content_isolation: ContentIsolation;
   environment: "development" | "staging" | "production";
+  /**
+   * Who runs this instance (OPERATOR_* settings), for its terms and privacy pages. null on an
+   * instance whose operator published none (a personal or local instance).
+   */
+  operator: OperatorInfo | null;
+  /** The email provider, named as a processor in the privacy notice. */
+  email_provider: "sendgrid" | "resend" | "console";
+  /** Default artifact quota per account (MAX_ARTIFACTS_PER_USER). */
+  max_artifacts_per_user: number;
+}
+
+export interface OperatorInfo {
+  name: string;
+  /** Registered (geographic) address. */
+  address: string | null;
+  /** Company registration or VAT number. */
+  registration: string | null;
+  /** The one published contact address: general, privacy, abuse and authorities. */
+  email: string;
+  /** The hosting provider named as a processor, e.g. "Cloudflare". */
+  hosting: string;
 }
 
 /** GET /api/v1/view/:ref — what the viewer needs to do before the artifact can be shown. */

@@ -1,28 +1,6 @@
-/* Legal page templates. Tokens only. */
+/* Legal pages. Tokens only. */
 .pl-legal {
   padding-bottom: var(--space-8);
-}
-.pl-legal__template {
-  display: flex;
-  gap: var(--space-2);
-  margin-bottom: var(--space-8);
-  padding: var(--space-3);
-  border: var(--border-width) solid var(--color-warning);
-  border-radius: var(--radius-lg);
-  background: var(--color-warning-soft);
-  color: var(--color-ink);
-  font-size: var(--text-sm);
-}
-.pl-legal__template > svg {
-  margin-top: 1px;
-  color: var(--color-warning);
-}
-.pl-legal__template p + p {
-  margin-top: var(--space-1);
-}
-.pl-legal__template-title {
-  font-weight: var(--weight-semibold);
-  font-size: var(--text-md);
 }
 .pl-legal__section {
   display: flex;
@@ -34,21 +12,15 @@
 .pl-legal__section h2 {
   font-size: var(--text-xl);
 }
+.pl-legal__section a {
+  overflow-wrap: anywhere;
+}
 .pl-legal__section ul {
   display: flex;
   flex-direction: column;
   gap: var(--space-1);
   margin: 0;
   padding-left: var(--space-5);
-}
-.pl-legal__field {
-  padding: 0 var(--space-1);
-  border-radius: var(--radius-xs);
-  background: var(--color-warning-soft);
-  color: var(--color-ink);
-  font-family: var(--font-mono);
-  font-size: 0.85em;
-  letter-spacing: 0;
 }
 .pl-legal__updated {
   color: var(--color-ink-muted);

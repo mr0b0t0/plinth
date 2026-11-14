@@ -250,8 +250,9 @@ These need accounts, money or legal judgement, so no script does them.
    Plinth with a valid certificate.
 9. Run the checks in section 2. Sign in with an address in `ADMIN_EMAIL`, publish a test artifact
    over MCP, and open its link in a private window for each visibility.
-10. Replace the placeholder terms, privacy and acceptable-use pages (`/legal/*`) with reviewed text,
-    and publish a takedown contact (the operator is a hosting provider under the DSA and a
+10. Set the `OPERATOR_*` settings (name, contact email, address, registration or VAT number) so the
+    instance publishes its terms and privacy notice, and read `/legal/*` on the instance (the
+    operator is a hosting provider under the DSA and a
     controller under GDPR).
 11. Decide when to set `ALLOW_PUBLIC_VISIBILITY=true`. Until then, artifacts can be unlisted,
     password or allowlist only.
