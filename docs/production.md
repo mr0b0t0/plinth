@@ -11,6 +11,7 @@ Status on 2026-11-14: **deployed** at <https://plinth.aconite.io>, with artifact
 | `CONTENT_HOST` | `plinthusercontent.com` (zone route `*.plinthusercontent.com/*`) |
 | `CONTENT_ISOLATION` | `origin`. The content host is its own registrable domain, so each artifact is its own origin, cross-site to the app (see [security.md](security.md)) |
 | `ENVIRONMENT` | `production` |
+| `ALLOW_SHARED_DATA` | `true`, set explicitly; the `DATA_*` limits use the defaults. The privacy notice covers shared data |
 | Email | SendGrid, `EMAIL_FROM="Plinth <noreply@plinth.aconite.io>"` (`plinth.aconite.io` authenticated in SendGrid on 2026-11-14) |
 | `ADMIN_EMAIL` | The maintainer's address |
 | Operator (legal pages) | `OPERATOR_NAME="Aconite Software & Investments, Lda."`, `OPERATOR_ADDRESS="Avenida República da Bulgária, Lote 15, Loja A, 1950-375 Lisboa, Portugal"`, `OPERATOR_REGISTRATION="VAT PT516696696"`, `OPERATOR_EMAIL=hello@aconite.io` |
@@ -22,9 +23,9 @@ All in the operator's Cloudflare account:
 
 | Resource | Name / ID | Created by |
 | --- | --- | --- |
-| D1 database | `plinth` (`7dd95d0b-dd98-469f-8eac-8c6a06c35b52`), migrations 0001 and 0002 applied | `scripts/setup.mjs --remote --env production` |
+| D1 database | `plinth` (`7dd95d0b-dd98-469f-8eac-8c6a06c35b52`), migrations 0001, 0002, 0004 and 0005 applied (there is no 0003) | `scripts/setup.mjs --remote --env production` |
 | R2 bucket | `plinth-files` | `scripts/setup.mjs` |
-| Worker | `plinth` (version `5a2110ea-309d-441e-97d2-4c6d5a40dd05`, commit `ccbdc77` (v0.2.0): the doc artifact type, migration `0004_typed_artifacts.sql` applied first) | `wrangler deploy --config wrangler.production.jsonc` |
+| Worker | `plinth` (version `9998c568-0cb1-4bac-a7d7-4b8806bb4a1f`, commit `eccfb0b` (v0.3.0): shared data for pages, migration `0005_shared_state.sql` applied first) | `wrangler deploy --config wrangler.production.jsonc` |
 | Worker secrets | `SESSION_SECRET`, `TOKEN_SIGNING_KEY` (generated), `SENDGRID_API_KEY` | `scripts/setup.mjs` |
 | Workers Custom Domain | `plinth.aconite.io`, plus the read-only `AAAA 100::` record and certificate Cloudflare creates for it | `wrangler deploy` |
 | Domain and zone | `plinthusercontent.com`, registered through Cloudflare Registrar (Free plan zone). SSL/TLS "Full (strict)", "Always Use HTTPS" on, Universal SSL for `plinthusercontent.com` and `*.plinthusercontent.com` | Cloudflare dashboard |
