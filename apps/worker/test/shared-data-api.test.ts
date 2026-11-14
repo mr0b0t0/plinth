@@ -15,6 +15,7 @@ import { nowIso } from "../src/lib/time.ts";
 import {
   agent,
   browserSession,
+  call,
   config,
   contentOrigin,
   createUser,
@@ -97,6 +98,7 @@ interface Person {
   email: string;
   cookie: string;
   viewerId: string;
+  userId: string;
 }
 
 /** A published artifact with its owner able to open it. */
@@ -110,6 +112,7 @@ async function setup(
   const id = body.id as string;
   const s = await browserSession(owner.user.id);
   const me: Person = {
+    userId: owner.user.id,
     email: owner.user.email,
     cookie: await cookieFor(id, s.headers),
     viewerId: await viewerIdFor(SECRET, id, owner.user.email),
@@ -123,6 +126,7 @@ async function person(id: string, role: Role): Promise<Person> {
   await grant(id, user.email, role);
   const s = await browserSession(user.id);
   return {
+    userId: user.id,
     email: user.email,
     cookie: await cookieFor(id, s.headers),
     viewerId: await viewerIdFor(SECRET, id, user.email),
@@ -498,6 +502,20 @@ describe("session", () => {
     expect(s.can_write).toBe(true);
   });
 
+  it("`viewer` without `data` declares nothing: /session and the gate agree", async () => {
+    const { owner, id, ownerP } = await setup(
+      '<!doctype html><meta name="plinth-capabilities" content="viewer"><p>x</p>',
+    );
+    const s = await api(id, "/session", { cookie: ownerP.cookie });
+    expect(s.status).toBe(200);
+    expect(await json(s)).toEqual({ available: false, reason: "not_declared" });
+    // The gate shows no data notice, so it never tells the viewer the page sees their email.
+    const bs = await browserSession(owner.user.id);
+    const gate = await json(await call(`/api/v1/view/${id}`, { headers: bs.headers }));
+    expect(gate.status).toBe("ok");
+    expect(gate.data).toBeUndefined();
+  });
+
   it("usage and seq follow writes; /changes returns seq", async () => {
     const { id, ownerP } = await setup();
     expect(await json(await api(id, "/changes", { cookie: ownerP.cookie }))).toEqual({ seq: 0 });
@@ -627,6 +645,59 @@ describe("writes", () => {
     expect((await api(id, "/data/votes/c1", { cookie: ownerP.cookie })).status).toBe(404);
   });
 
+  it("demoting or removing a grant through PUT /sharing ends the cookie's role at once", async () => {
+    const { owner, id } = await setup(POLL);
+    const c = await person(id, "commenter");
+    const e = await person(id, "editor");
+    await api(id, "/data/votes/c1", { cookie: c.cookie, body: { data: { v: 1 } } });
+    // The editor moderates the commenter's document with their current cookie.
+    expect(
+      (await api(id, "/data/votes/c1", { cookie: e.cookie, body: { data: { v: 2 } } })).status,
+    ).toBe(200);
+    const putSharing = (grants: { email: string; role: Role }[]) =>
+      call(`/api/v1/artifacts/${id}/sharing`, {
+        method: "PUT",
+        headers: { ...owner.auth, "Content-Type": "application/json" },
+        body: JSON.stringify({ grants }),
+      });
+    // Only a role changes: the editor becomes a viewer.
+    const demoted = await putSharing([
+      { email: c.email, role: "commenter" },
+      { email: e.email, role: "viewer" },
+    ]);
+    expect(demoted.status).toBe(200);
+    for (const req of [
+      { cookie: e.cookie, body: { data: { v: 3 } } },
+      { cookie: e.cookie, method: "DELETE" },
+      { cookie: e.cookie },
+    ] as ApiOpts[]) {
+      const res = await api(id, "/data/votes/c1", req);
+      expect(res.status, req.method ?? "PUT/GET").toBe(401);
+      expect(await errOf(res)).toMatchObject({
+        code: "unauthorized",
+        details: { reason: "expired" },
+      });
+    }
+    // Back through the gate, the new cookie carries the new role and cannot moderate.
+    const again = await cookieFor(id, (await browserSession(e.userId)).headers);
+    expect((await json(await api(id, "/session", { cookie: again }))).viewer.role).toBe("viewer");
+    const refused = await api(id, "/data/votes/c1", { cookie: again, body: { data: { v: 4 } } });
+    expect(refused.status).toBe(403);
+    expect((await errOf(refused)).code).toBe("forbidden");
+    // Removing a grant ends the commenter's pass the same way.
+    const cAgain = await cookieFor(id, (await browserSession(c.userId)).headers);
+    expect(
+      (await api(id, "/data/votes/~me", { cookie: cAgain, body: { data: { v: 5 } } })).status,
+    ).toBe(201);
+    expect((await putSharing([{ email: e.email, role: "viewer" }])).status).toBe(200);
+    const removed = await api(id, "/data/votes/~me", { cookie: cAgain, body: { data: { v: 6 } } });
+    expect(removed.status).toBe(401);
+    const ownerNow = await cookieFor(id, (await browserSession(owner.user.id)).headers);
+    expect((await json(await api(id, "/data/votes/c1", { cookie: ownerNow }))).data).toEqual({
+      v: 2,
+    });
+  });
+
   it("~me is stable per person and differs between people", async () => {
     const { id } = await setup(POLL);
     const a = await person(id, "viewer");
@@ -746,6 +817,67 @@ describe("limits", () => {
       });
     }
     expect((await api(id, "/data/votes/a", { ...c, body: { data: { v: 2 } } })).status).toBe(200);
+  });
+
+  it("the document and byte caps hold under concurrent writers", async () => {
+    const usageMatches = async (id: string) => {
+      const usage = await env.DB.prepare(
+        "SELECT docs, bytes FROM artifact_data_usage WHERE artifact_id = ?1",
+      )
+        .bind(id)
+        .first<{ docs: number; bytes: number }>();
+      const sum = await env.DB.prepare(
+        "SELECT count(*) AS docs, coalesce(sum(size_bytes), 0) AS bytes FROM artifact_docs WHERE artifact_id = ?1",
+      )
+        .bind(id)
+        .first<{ docs: number; bytes: number }>();
+      expect(usage).toEqual(sum);
+      return sum;
+    };
+    const many = {
+      DATA_WRITES_PER_VIEWER_PER_HOUR: "1000",
+      DATA_WRITES_PER_ARTIFACT_PER_HOUR: "1000",
+    };
+    {
+      const vars = { ...many, DATA_MAX_DOCS_PER_ARTIFACT: "3" };
+      const { id, ownerP } = await setup();
+      const res = await Promise.all(
+        Array.from({ length: 10 }, (_, i) =>
+          i % 2
+            ? api(id, `/data/votes/d${i}`, { cookie: ownerP.cookie, body: { data: { i } }, vars })
+            : api(id, "/data/votes", {
+                cookie: ownerP.cookie,
+                method: "POST",
+                body: { data: { i } },
+                vars,
+              }),
+        ),
+      );
+      const statuses = res.map((r) => r.status).sort();
+      expect(statuses).toEqual([201, 201, 201, 403, 403, 403, 403, 403, 403, 403]);
+      for (const r of res.filter((x) => x.status === 403)) {
+        expect(await errOf(r)).toMatchObject({
+          code: "quota_exceeded",
+          details: { limit: "docs" },
+        });
+      }
+      expect((await usageMatches(id))?.docs).toBe(3);
+    }
+    {
+      const vars = { ...many, DATA_MAX_DOC_BYTES: "1024", DATA_MAX_BYTES_PER_ARTIFACT: "2048" };
+      const { id, ownerP } = await setup();
+      const res = await Promise.all(
+        Array.from({ length: 8 }, (_, i) =>
+          api(id, `/data/votes/b${i}`, {
+            cookie: ownerP.cookie,
+            body: { data: { s: "x".repeat(900) } },
+            vars,
+          }),
+        ),
+      );
+      expect(res.filter((r) => r.status === 201)).toHaveLength(2);
+      expect((await usageMatches(id))?.bytes).toBeLessThanOrEqual(2048);
+    }
   });
 
   it("bytes per artifact: growing past the cap fails, shrinking passes", async () => {
@@ -908,13 +1040,17 @@ describe("reads", () => {
   it("lists in creation order with a cursor", async () => {
     const { id, ownerP } = await setup();
     const c = { cookie: ownerP.cookie };
-    const ids: string[] = [];
+    const made: { id: string; at: string }[] = [];
     for (let i = 0; i < 5; i++) {
       const doc = await json(
         await api(id, "/data/votes", { ...c, method: "POST", body: { data: { i } } }),
       );
-      ids.push(doc.id);
+      made.push({ id: doc.id, at: doc.created_at });
     }
+    // Creation order is (created_at, id): two documents made in the same millisecond sort by id.
+    const ids = made
+      .sort((a, b) => (a.at === b.at ? (a.id < b.id ? -1 : 1) : a.at < b.at ? -1 : 1))
+      .map((d) => d.id);
     const seen: string[] = [];
     let cursor: string | null = null;
     let pages = 0;

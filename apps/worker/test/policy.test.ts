@@ -336,34 +336,58 @@ describe("policy: pageDataAccess", () => {
     viewerId: "u_0123456789abcdef01234567",
   };
   const caps = (data: boolean, viewer: boolean) => ({ data, viewer, shared: [] });
-  it("full truth table", () => {
+  it("full truth table, written out", () => {
+    const T = true;
+    const F = false;
+    const none = null;
+    const off = caps(F, F);
+    const viewerOnly = caps(F, T);
+    const dataOnly = caps(T, F);
+    const both = caps(T, T);
+    // [claim, caps, enabled, read, write, seeIdentity]
     const rows: [
       PageClaim | null,
       ReturnType<typeof caps> | null,
       boolean,
-      [boolean, boolean, boolean],
-    ][] = [];
-    for (const c of [claim, null])
-      for (const k of [
-        null,
-        caps(false, false),
-        caps(false, true),
-        caps(true, false),
-        caps(true, true),
-      ])
-        for (const enabled of [true, false]) {
-          const read = enabled && !!k?.data;
-          const write = read && c !== null;
-          const see = write && !!k?.viewer;
-          rows.push([c, k, enabled, [read, write, see]]);
-        }
+      boolean,
+      boolean,
+      boolean,
+    ][] = [
+      [claim, none, T, F, F, F],
+      [claim, none, F, F, F, F],
+      [claim, off, T, F, F, F],
+      [claim, off, F, F, F, F],
+      [claim, viewerOnly, T, F, F, F],
+      [claim, viewerOnly, F, F, F, F],
+      [claim, dataOnly, T, T, T, F],
+      [claim, dataOnly, F, F, F, F],
+      [claim, both, T, T, T, T],
+      [claim, both, F, F, F, F],
+      [null, none, T, F, F, F],
+      [null, none, F, F, F, F],
+      [null, off, T, F, F, F],
+      [null, off, F, F, F, F],
+      [null, viewerOnly, T, F, F, F],
+      [null, viewerOnly, F, F, F, F],
+      [null, dataOnly, T, T, F, F],
+      [null, dataOnly, F, F, F, F],
+      [null, both, T, T, F, F],
+      [null, both, F, F, F, F],
+    ];
     expect(rows).toHaveLength(20);
-    for (const [c, k, enabled, [read, write, seeIdentity]] of rows)
+    for (const [c, k, enabled, read, write, seeIdentity] of rows)
       expect(pageDataAccess(c, k, enabled), JSON.stringify([c, k, enabled])).toEqual({
         read,
         write,
         seeIdentity,
       });
+    // Independent of the table: an anonymous reader, or a page without `viewer`, never sees
+    // identities, whatever else is true.
+    for (const k of [none, off, viewerOnly, dataOnly, both])
+      for (const enabled of [T, F]) {
+        expect(pageDataAccess(null, k, enabled).seeIdentity).toBe(false);
+        if (!k?.viewer) expect(pageDataAccess(claim, k, enabled).seeIdentity).toBe(false);
+      }
   });
   it("spot checks", () => {
     expect(pageDataAccess(claim, caps(true, true), true)).toEqual({
