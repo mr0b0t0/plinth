@@ -1,9 +1,11 @@
 # Plinth
 
-**A home for the HTML your AI agents make.** Claude Code, Codex and any MCP client publish reports,
-dashboards and prototypes to Plinth with one tool call. Every change is a version you can go back
-to, new pages are private until you share them, and a comment like "@codex add a table" sends the
-request back to the agent.
+**Publish HTML from any agent. Decide exactly who sees it.**
+
+Claude Code, Codex, Cursor or any MCP client publishes reports, dashboards and prototypes to Plinth
+with one tool call. You choose who can open each page: specific email addresses, anyone with the
+link, a password, or everyone. Every change is a version you can go back to, and a comment like
+"@codex add a table" sends the request back to the agent.
 
 ![Claude Code publishes a report; a comment asks Codex for a table; Codex publishes v2 and replies; the page updates; history shows who made each version; the report is private](docs/screenshots/demo.gif)
 
@@ -15,10 +17,13 @@ staged.</sub>
 [![npm](https://img.shields.io/npm/v/@mr0b0t0/plinth)](https://www.npmjs.com/package/@mr0b0t0/plinth)
 [![MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
+> **Beta.** Plinth is before 1.0: the MCP tools and the REST API may still change between minor
+> versions, and every change is listed in the [changelog](CHANGELOG.md).
+
 ## Why Plinth
 
-Artifacts made in an AI product live in that product, under the account that made them. Plinth is
-a neutral place for them:
+Artifacts made in an AI product live in that product, under the account and the plan that made
+them. Plinth is a neutral place for them:
 
 - **Every agent, one place.** Claude Code, Codex, Cursor, VS Code, Claude, ChatGPT and any other
   MCP client publish to the same home, under your login, whichever agent did the work.
@@ -33,6 +38,24 @@ a neutral place for them:
   your login.
 - **Yours to run.** Use the hosted instance, run it on your laptop, deploy it to your own
   Cloudflare account, or run the Docker image anywhere. MIT licensed.
+
+## Next to built-in artifacts
+
+Claude Code can publish artifacts of its own, and they are the quickest way to share a page inside
+a claude.ai organization. Plinth is for the cases they leave out:
+
+| | Claude Code artifacts | Plinth |
+| --- | --- | --- |
+| Agents | Claude Code signed in to claude.ai | Claude Code, Codex, Cursor, VS Code, Gemini CLI, Claude, ChatGPT, any MCP client |
+| Credentials | API keys, gateway tokens, Amazon Bedrock, Google Cloud's Agent Platform and Microsoft Foundry cannot publish | Any client with a Plinth sign-in or token |
+| Scripts and CI | Off by default in the Agent SDK, the GitHub Action and `claude -p` | Scheduled and CI agents publish with a token ([docs/mcp.md](docs/mcp.md#advanced-personal-access-tokens-scripts-and-ci)) |
+| Who can open a page | People in your organization, or anyone with a public link | Listed email addresses, anyone with the link, a password, or public |
+| Comments from outside | Public-link viewers cannot see or add comments | People you list as commenters comment and mention your agent, with no AI account |
+| Where pages live | Anthropic's infrastructure | The hosted instance, your Cloudflare account, Docker, or your own disk |
+
+<sub>The Claude Code column is from [Claude Code's artifacts
+documentation](https://code.claude.com/docs/en/artifacts) as of 2026-11-14, which also lists
+organizations with Zero Data Retention, HIPAA or customer-managed keys as unable to publish.</sub>
 
 ## What people use it for
 
