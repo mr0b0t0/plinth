@@ -112,6 +112,16 @@ export function jsonForScript(value: unknown): string {
 }
 
 /**
+ * The script policy of every typed shell: only the renderer, from the artifact's own origin. The
+ * content host sends it in the shell's CSP header (contentCsp with scripts: "self"), and the shell
+ * repeats it in a <meta http-equiv> CSP as the first element of <head>. A meta policy is enforced
+ * on top of the header and also binds a document written with document.write, so the editor
+ * preview (the preview loader writes this shell into a page served with the default content CSP)
+ * runs under the same script restriction as the published page.
+ */
+export const TYPED_SHELL_SCRIPT_SRC = "script-src 'self'";
+
+/**
  * The page that hosts a typed artifact. Pure; used by the Worker (serve) and the editor (preview).
  * `base` is "" at the artifact root or "/__content/<id>" in the path fallback, so renderer URLs
  * resolve from the artifact root at any document path. Throws for a type without a renderer.
@@ -130,7 +140,9 @@ export function typedShellHtml(
     text: o.text,
   };
   return (
-    '<!doctype html><html lang="en"><head><meta charset="utf-8">\n' +
+    '<!doctype html><html lang="en"><head>' +
+    `<meta http-equiv="Content-Security-Policy" content="${TYPED_SHELL_SCRIPT_SRC}">` +
+    '<meta charset="utf-8">\n' +
     '<meta name="viewport" content="width=device-width, initial-scale=1">\n' +
     '<meta name="color-scheme" content="light dark">\n' +
     `<title>${escapeHtml(o.title)}</title>\n` +

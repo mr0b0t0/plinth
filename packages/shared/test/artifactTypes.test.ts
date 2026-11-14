@@ -8,6 +8,7 @@ import {
   RENDERER_PROTOCOL_VERSION,
   sourceOf,
   TYPE_REGISTRY,
+  TYPED_SHELL_SCRIPT_SRC,
   typeDef,
   typedShellHtml,
 } from "../src/index.ts";
@@ -123,9 +124,17 @@ describe("typedShellHtml", () => {
 
   it("builds the doc shell at the artifact root", () => {
     const shell = typedShellHtml(def, { title: "Notes", text: "# Hi", base: "", appOrigin });
-    expect(shell.startsWith('<!doctype html><html lang="en"><head><meta charset="utf-8">')).toBe(
-      true,
-    );
+    // The script policy comes first, so it binds the shell even when the editor preview writes it
+    // into a loader page served with the default content CSP.
+    expect(
+      shell.startsWith(
+        '<!doctype html><html lang="en"><head>' +
+          `<meta http-equiv="Content-Security-Policy" content="${TYPED_SHELL_SCRIPT_SRC}">` +
+          '<meta charset="utf-8">',
+      ),
+    ).toBe(true);
+    expect(TYPED_SHELL_SCRIPT_SRC).toBe("script-src 'self'");
+    expect(count(shell, "http-equiv")).toBe(1);
     expect(shell).toContain('<meta name="viewport" content="width=device-width, initial-scale=1">');
     expect(shell).toContain('<meta name="color-scheme" content="light dark">');
     expect(shell).toContain("<title>Notes</title>");
