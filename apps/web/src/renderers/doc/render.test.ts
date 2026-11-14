@@ -343,10 +343,12 @@ describe("doc renderer: features", () => {
     expectSafe(f);
   });
 
-  // The Markdown pass is the renderer's own work; a browser parses its output in tens of
-  // milliseconds. happy-dom's parser is far slower than a browser's, so the whole pipeline gets a
-  // looser bound here, which still catches anything quadratic.
-  it("renders a 1 MB mixed document well under a second", () => {
+  // Size scaling, not wall-clock time: absolute bounds flake under parallel test load and on slow
+  // runners. After a warm-up (the first call also pays for JIT compilation), doubling the input
+  // must not much more than double the Markdown time; quadratic behaviour would quadruple it. Each
+  // size takes the best of two runs to shed GC pauses. Absolute bounds run only with
+  // PLINTH_PERF=1 (a browser parses the output in tens of milliseconds; happy-dom is far slower).
+  it("renders a 1 MB mixed document in time linear in its size", () => {
     const block = [
       "## Section heading",
       "",
@@ -368,8 +370,23 @@ describe("doc renderer: features", () => {
       "![img](img/a.png)",
       "",
     ].join("\n");
-    const md = block.repeat(Math.ceil((1024 * 1024) / block.length));
+    const sized = (bytes: number) => block.repeat(Math.ceil(bytes / block.length));
+    const best = (md: string) => {
+      let min = Number.POSITIVE_INFINITY;
+      for (let i = 0; i < 2; i++) {
+        const t = performance.now();
+        renderMarkdown(md);
+        min = Math.min(min, performance.now() - t);
+      }
+      return min;
+    };
+    renderMarkdown(sized(256 * 1024));
+    const half = best(sized(512 * 1024));
+    const md = sized(1024 * 1024);
     expect(md.length).toBeGreaterThanOrEqual(1024 * 1024);
+    const full = best(md);
+    expect(full / half).toBeLessThan(3);
+
     const start = performance.now();
     const html = renderMarkdown(md);
     const markdownMs = performance.now() - start;
@@ -377,7 +394,11 @@ describe("doc renderer: features", () => {
     const totalMs = performance.now() - start;
     expect(frag.querySelectorAll("h2").length).toBeGreaterThan(1000);
     expect(frag.querySelectorAll("[id^='section-heading']").length).toBeGreaterThan(1000);
-    expect(markdownMs).toBeLessThan(600);
-    expect(totalMs).toBeLessThan(6000);
-  });
+    const env = (globalThis as { process?: { env?: Record<string, string | undefined> } }).process
+      ?.env;
+    if (env?.PLINTH_PERF === "1") {
+      expect(markdownMs).toBeLessThan(600);
+      expect(totalMs).toBeLessThan(6000);
+    }
+  }, 30_000);
 });

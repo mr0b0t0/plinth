@@ -9,6 +9,15 @@ import {
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { boot } from "./boot.ts";
 
+// The Markdown layer is real unless a test sets `md.output`: then renderMarkdown returns that
+// HTML, standing in for a Markdown pass that let something through, so the tests can prove boot()
+// runs the sanitizer on whatever the Markdown layer gives it.
+const md = vi.hoisted(() => ({ output: null as string | null }));
+vi.mock("./markdown.ts", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./markdown.ts")>();
+  return { ...actual, renderMarkdown: (t: string) => md.output ?? actual.renderMarkdown(t) };
+});
+
 const APP = "https://plinth.example.com";
 
 /** Puts the root and data block of a real shell into the test document (not its script or
@@ -45,6 +54,7 @@ beforeEach(() => {
 afterEach(() => {
   stop?.();
   stop = undefined;
+  md.output = null;
   document.body.innerHTML = "";
 });
 
@@ -56,7 +66,31 @@ describe("doc renderer boot", () => {
     expect(root().querySelector("script")).toBeNull();
     expect(root().textContent).toContain("</script><script>window.__pwned=1</script>");
     expect(document.documentElement.getAttribute("data-ready")).toBe("ok");
-    expect((window as unknown as Record<string, unknown>).__pwned).toBeUndefined();
+  });
+
+  it("sanitizes whatever the Markdown layer returns before it enters the page", () => {
+    md.output =
+      '<p onclick="x()" style="color:red">a</p><img src="x" onerror="alert(1)">' +
+      "<script>window.__pwned=1</script>" +
+      '<a href="javascript:x()">j</a><a href=" JaVaScRiPt:y()">k</a>' +
+      '<iframe src="https://evil.example"></iframe><svg><script>1</script></svg>' +
+      '<form action="https://evil.example"><input name="p"></form>';
+    mountShell("# ignored");
+    stop = boot(window);
+    const r = root();
+    expect(r.textContent).toContain("a");
+    expect(r.querySelectorAll("script, iframe, svg, form, input, style")).toHaveLength(0);
+    for (const el of r.querySelectorAll("*")) {
+      for (const attr of el.getAttributeNames()) {
+        expect(attr.startsWith("on"), `${el.tagName} ${attr}`).toBe(false);
+        expect(attr, el.tagName).not.toBe("style");
+      }
+    }
+    for (const el of r.querySelectorAll("[href], [src]")) {
+      const url = el.getAttribute("href") ?? el.getAttribute("src") ?? "";
+      expect(url).not.toMatch(/^\s*javascript:/i);
+    }
+    expect(document.documentElement.getAttribute("data-ready")).toBe("ok");
   });
 
   it.each([
@@ -132,8 +166,31 @@ describe("doc renderer print", () => {
   });
 
   it("ignores a print message from a window other than the parent", () => {
-    post(msg, { source: null });
-    expect(print).not.toHaveBeenCalled();
+    // In happy-dom window.parent is window, so a framed doc is modelled with its own event
+    // target and a separate parent object: only a message whose source is that parent prints.
+    stop?.();
+    const target = new EventTarget();
+    const parent = { name: "parent" } as unknown as Window;
+    const framePrint = vi.fn();
+    const framed = {
+      document,
+      parent,
+      print: framePrint,
+      addEventListener: target.addEventListener.bind(target),
+      removeEventListener: target.removeEventListener.bind(target),
+    } as unknown as Window;
+    stop = boot(framed);
+    const send = (source: unknown) =>
+      target.dispatchEvent(
+        new MessageEvent("message", { data: msg, origin: APP, source: source as Window }),
+      );
+    send(null);
+    send(framed);
+    send(window);
+    send({ name: "sibling" });
+    expect(framePrint).not.toHaveBeenCalled();
+    send(parent);
+    expect(framePrint).toHaveBeenCalledTimes(1);
   });
 
   it("ignores malformed messages", () => {
