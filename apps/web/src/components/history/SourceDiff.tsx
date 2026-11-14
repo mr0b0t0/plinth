@@ -1,4 +1,5 @@
-// Source diff of two versions' index.html: unified by default, side by side on wide screens.
+// Source diff of two versions' source file (index.html, or a doc's content.md): unified by default,
+// side by side on wide screens.
 // Long unchanged runs fold behind an expander; very long diffs render in pages of rows so the
 // page stays responsive. Asset changes are listed under the diff.
 import { ColumnsIcon, RowsIcon } from "@phosphor-icons/react";
@@ -41,9 +42,22 @@ export interface SourceDiffProps {
   newHtml: string;
   oldAssets: AssetInfo[];
   newAssets: AssetInfo[];
+  /** The version file being compared (the artifact's source_path). */
+  fileName?: string;
+  /** What the source is called ("HTML", "Markdown"). */
+  sourceLabel?: string;
 }
 
-export function SourceDiff({ from, to, oldHtml, newHtml, oldAssets, newAssets }: SourceDiffProps) {
+export function SourceDiff({
+  from,
+  to,
+  oldHtml,
+  newHtml,
+  oldAssets,
+  newAssets,
+  fileName = "index.html",
+  sourceLabel = "HTML",
+}: SourceDiffProps) {
   const diff = useMemo(() => diffTextLines(oldHtml, newHtml), [oldHtml, newHtml]);
   const blocks = useMemo(() => foldUnchanged(diff.lines), [diff]);
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
@@ -63,7 +77,7 @@ export function SourceDiff({ from, to, oldHtml, newHtml, oldAssets, newAssets }:
     <div className="hx-source">
       <div className="hx-source__bar">
         <p className="hx-source__stats" aria-live="polite">
-          <span className="hx-file type-mono">index.html</span>
+          <span className="hx-file type-mono">{fileName}</span>
           {diff.identical ? (
             <span className="text-muted">No changes</span>
           ) : (
@@ -102,15 +116,27 @@ export function SourceDiff({ from, to, oldHtml, newHtml, oldAssets, newAssets }:
 
       {diff.identical ? (
         <p className="hx-same">
-          The HTML of <span className="type-mono">v{from}</span> and{" "}
+          The {sourceLabel} of <span className="type-mono">v{from}</span> and{" "}
           <span className="type-mono">v{to}</span> is identical.
         </p>
       ) : (
         <div className="hx-diff">
           {split ? (
-            <SplitTable from={from} to={to} rows={shown as SplitRow[]} onExpand={expand} />
+            <SplitTable
+              from={from}
+              to={to}
+              fileName={fileName}
+              rows={shown as SplitRow[]}
+              onExpand={expand}
+            />
           ) : (
-            <UnifiedTable from={from} to={to} rows={shown as UnifiedRow[]} onExpand={expand} />
+            <UnifiedTable
+              from={from}
+              to={to}
+              fileName={fileName}
+              rows={shown as UnifiedRow[]}
+              onExpand={expand}
+            />
           )}
           {total > limit && (
             <div className="hx-more">
@@ -125,7 +151,7 @@ export function SourceDiff({ from, to, oldHtml, newHtml, oldAssets, newAssets }:
         </div>
       )}
 
-      <AssetChanges changes={assets} />
+      <AssetChanges changes={assets} fileName={fileName} />
     </div>
   );
 }
@@ -168,18 +194,20 @@ function FoldRow({
 function UnifiedTable({
   from,
   to,
+  fileName,
   rows,
   onExpand,
 }: {
   from: number;
   to: number;
+  fileName: string;
   rows: UnifiedRow[];
   onExpand: (id: string) => void;
 }) {
   return (
     <table className="hx-table hx-table--unified">
       <caption className="visually-hidden">
-        Changes to index.html from v{from} to v{to}
+        Changes to {fileName} from v{from} to v{to}
       </caption>
       <colgroup>
         <col className="hx-col-no" />
@@ -221,11 +249,13 @@ function UnifiedTable({
 function SplitTable({
   from,
   to,
+  fileName,
   rows,
   onExpand,
 }: {
   from: number;
   to: number;
+  fileName: string;
   rows: SplitRow[];
   onExpand: (id: string) => void;
 }) {
@@ -249,7 +279,7 @@ function SplitTable({
   return (
     <table className="hx-table hx-table--split">
       <caption className="visually-hidden">
-        Changes to index.html, v{from} on the left and v{to} on the right
+        Changes to {fileName}, v{from} on the left and v{to} on the right
       </caption>
       <colgroup>
         <col className="hx-col-no" />
@@ -291,7 +321,7 @@ const ASSET_LABEL: Record<Exclude<AssetChange["kind"], "same">, string> = {
 };
 const ASSET_TONE = { added: "success", removed: "danger", changed: "warning" } as const;
 
-function AssetChanges({ changes }: { changes: AssetChange[] }) {
+function AssetChanges({ changes, fileName }: { changes: AssetChange[]; fileName: string }) {
   const listed = changes.filter((c) => c.kind !== "same");
   const same = changes.length - listed.length;
   return (
@@ -300,7 +330,7 @@ function AssetChanges({ changes }: { changes: AssetChange[] }) {
         Other files
       </h2>
       {changes.length === 0 ? (
-        <p className="type-small text-muted">Neither version has files besides index.html.</p>
+        <p className="type-small text-muted">Neither version has files besides {fileName}.</p>
       ) : (
         <>
           {listed.length > 0 && (

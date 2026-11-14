@@ -2,7 +2,7 @@ import type { ViewArtifact, ViewGate } from "@plinth/shared";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { apiError, json, ME, stubApi } from "../components/viewer/test-utils.ts";
+import { apiError, CONFIG, json, ME, stubApi } from "../components/viewer/test-utils.ts";
 import { VERSION_POLL_MS } from "../components/viewer/useVersionWatch.ts";
 
 // The session store is module state; load a fresh copy of the page for each test.
@@ -41,6 +41,7 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
 });
 
 describe("ArtifactPage", () => {
@@ -226,6 +227,62 @@ describe("ArtifactPage", () => {
       expect((await screen.findByText(/You are viewing/)).textContent).toContain("v3");
       expect(screen.getByTitle("Garden plan, version 3").getAttribute("src")).toBe(ENTER(1));
       expect(screen.queryByText("Updated to v4")).toBeNull();
+    });
+  });
+
+  describe("printing a doc", () => {
+    const PRINT = { source: "plinth-renderer", v: 1, type: "print" };
+    const DOC: ViewArtifact = { ...ARTIFACT, type: "doc" };
+
+    async function openMenu(gate: ViewGate, config = CONFIG) {
+      stubApi({ config, handle: (c) => (c.path.startsWith("/view/") ? json(gate) : undefined) });
+      const ArtifactPage = await loadPage();
+      const user = userEvent.setup();
+      render(<ArtifactPage params={{ slug: "garden-plan" }} />);
+      const frame = (await screen.findByTitle("Garden plan, version 3")) as HTMLIFrameElement;
+      // happy-dom does not load frames; give this one a window to post to.
+      const toFrame = vi.fn();
+      Object.defineProperty(frame, "contentWindow", {
+        configurable: true,
+        value: { postMessage: toFrame },
+      });
+      const toApp = vi.spyOn(window, "postMessage");
+      await user.click(screen.getByRole("button", { name: "Artifact actions" }));
+      return { user, toFrame, toApp };
+    }
+
+    it("is not offered for an HTML page", async () => {
+      await openMenu(okGate());
+      expect(screen.queryByRole("menuitem", { name: "Print or save as PDF" })).toBeNull();
+    });
+
+    it("posts the print message to the doc's frame at its exact content origin", async () => {
+      const { user, toFrame, toApp } = await openMenu(okGate({ artifact: DOC }));
+      await user.click(screen.getByRole("menuitem", { name: "Print or save as PDF" }));
+      expect(toFrame).toHaveBeenCalledTimes(1);
+      expect(toFrame).toHaveBeenCalledWith(PRINT, "http://art123.content.localhost:8787");
+      expect(toApp).not.toHaveBeenCalledWith(PRINT, expect.anything());
+    });
+
+    it("posts to '*' under opaque isolation, where the frame's origin is 'null'", async () => {
+      const { user, toFrame } = await openMenu(okGate({ artifact: DOC }), {
+        ...CONFIG,
+        content_isolation: "opaque",
+      });
+      await user.click(screen.getByRole("menuitem", { name: "Print or save as PDF" }));
+      expect(toFrame).toHaveBeenCalledWith(PRINT, "*");
+    });
+
+    it("posts to '*' in the path fallback", async () => {
+      const { user, toFrame } = await openMenu(
+        okGate({
+          artifact: DOC,
+          enter_url: "http://app.localhost:8787/__content/art123/__plinth/enter?t=x&next=%2F",
+        }),
+        { ...CONFIG, content_path_fallback: true, content_isolation: "opaque" },
+      );
+      await user.click(screen.getByRole("menuitem", { name: "Print or save as PDF" }));
+      expect(toFrame).toHaveBeenCalledWith(PRINT, "*");
     });
   });
 

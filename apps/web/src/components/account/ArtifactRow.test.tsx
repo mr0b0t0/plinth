@@ -1,0 +1,59 @@
+import type { ArtifactSummary } from "@plinth/shared";
+import { cleanup, render, within } from "@testing-library/react";
+import { afterEach, describe, expect, it } from "vitest";
+import { ArtifactCard, ArtifactRow } from "./ArtifactRow.tsx";
+
+afterEach(cleanup);
+
+const NOW = Date.parse("2026-11-14T12:00:00Z");
+
+const summary = (over: Partial<ArtifactSummary> = {}): ArtifactSummary => ({
+  id: "art1",
+  slug: "plan",
+  title: "Release plan",
+  type: "html",
+  visibility: "allowlist",
+  current_version: 2,
+  version_count: 2,
+  created_at: "2026-11-01T00:00:00Z",
+  updated_at: "2026-11-14T11:00:00Z",
+  url: "http://app.localhost:8787/a/plan",
+  content_url: "http://art1.content.localhost:8787/",
+  owner: { id: "u1", email: "ada@example.org", name: null },
+  role: "owner",
+  taken_down: false,
+  ...over,
+});
+
+function badges(el: HTMLElement): string[] {
+  return Array.from(el.querySelectorAll(".pl-badge"), (b) => b.textContent ?? "");
+}
+
+describe("ArtifactRow and ArtifactCard", () => {
+  for (const [name, View] of [
+    ["row", ArtifactRow],
+    ["card", ArtifactCard],
+  ] as const) {
+    it(`shows the Doc badge on a doc's ${name}`, () => {
+      const { container } = render(
+        <ul>
+          <View artifact={summary({ type: "doc" })} now={NOW} />
+        </ul>,
+      );
+      const item = container.querySelector("li") as HTMLElement;
+      expect(badges(item)).toEqual(["Doc"]);
+      expect(within(item).getByText("Doc")).toBeTruthy();
+    });
+
+    it(`shows no type badge on an HTML page's ${name}`, () => {
+      const { container } = render(
+        <ul>
+          <View artifact={summary()} now={NOW} />
+        </ul>,
+      );
+      const item = container.querySelector("li") as HTMLElement;
+      expect(badges(item)).toEqual([]);
+      expect(within(item).queryByText("Doc")).toBeNull();
+    });
+  }
+});

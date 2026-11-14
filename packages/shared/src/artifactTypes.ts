@@ -47,7 +47,7 @@ export const TYPE_REGISTRY: Record<ArtifactType, ArtifactTypeDef> = {
     reservedPaths: ["index.html"],
     assetTypes: null,
     renderer: null,
-    editor: { language: "html", wordWrap: "off" },
+    editor: { language: "html", wordWrap: "on" },
   },
   doc: {
     id: "doc",

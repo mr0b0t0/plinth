@@ -1,5 +1,6 @@
 // Page: /a/:slug/compare?from=&to=&view=. Two versions of an artifact, as a source diff of their
-// index.html (plus asset changes) or side by side as rendered pages.
+// source file (index.html, or a doc's content.md, plus asset changes) or side by side as rendered
+// pages.
 import {
   ArrowsLeftRightIcon,
   ClockCounterClockwiseIcon,
@@ -76,14 +77,17 @@ export default function Compare({ params }: { params: Record<string, string> }) 
   const options = (versions.data?.items ?? []).map((v) => versionOption(v, current));
   const ready = from !== null && to !== null;
 
+  const newer = newVersion.data ? sourceOf(newVersion.data) : null;
   const source =
-    oldVersion.data && newVersion.data && ready ? (
+    oldVersion.data && newVersion.data && newer && ready ? (
       <SourceDiff
         key={`${from}-${to}`}
         from={from}
         to={to}
+        fileName={newVersion.data.source_path}
+        sourceLabel={newer.def.sourceLabel}
         oldHtml={sourceOf(oldVersion.data).text}
-        newHtml={sourceOf(newVersion.data).text}
+        newHtml={newer.text}
         oldAssets={oldVersion.data.assets}
         newAssets={newVersion.data.assets}
       />

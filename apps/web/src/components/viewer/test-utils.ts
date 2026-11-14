@@ -52,9 +52,9 @@ type Handler = (call: Call) => Response | Promise<Response> | undefined;
 
 /**
  * Stub fetch. `me` null answers /me with 401. Handlers get calls under /api/v1 (path includes the
- * query) and return a Response, or undefined to fall through to a 404.
+ * query) and return a Response, or undefined to fall through to a 404. `config` replaces CONFIG.
  */
-export function stubApi(opts: { me?: Me | null; handle?: Handler } = {}) {
+export function stubApi(opts: { me?: Me | null; handle?: Handler; config?: AppConfig } = {}) {
   const calls: Call[] = [];
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = new URL(String(input), "http://app.localhost:8787");
@@ -65,7 +65,7 @@ export function stubApi(opts: { me?: Me | null; handle?: Handler } = {}) {
       body: typeof init?.body === "string" ? JSON.parse(init.body) : undefined,
     };
     calls.push(call);
-    if (path === "/config") return json(CONFIG);
+    if (path === "/config") return json(opts.config ?? CONFIG);
     if (path === "/me") return opts.me ? json(opts.me) : apiError(401, "unauthorized");
     return (await opts.handle?.(call)) ?? apiError(404, "not_found", "Not found");
   });

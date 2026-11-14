@@ -24,9 +24,15 @@ type Status = "loading" | "ready" | "too_large" | "error";
 export interface PreviewFrameProps {
   artifactId: string;
   title: string;
+  /** The page to render: the draft itself, or for a typed artifact the shell built around it. */
   html: string;
   config: AppConfig;
+  /** What to say when `html` is over the loader's cap. Defaults to the HTML page wording. */
+  tooLargeText?: string;
 }
+
+const TOO_LARGE_HTML =
+  "The draft is larger than 5 MB, the most a version can hold, so it cannot be previewed or saved.";
 
 /** One loader frame: its own iframe element (by key) and URL (which carries its nonce). */
 interface Loader {
@@ -34,7 +40,13 @@ interface Loader {
   src: string;
 }
 
-export function PreviewFrame({ artifactId, title, html, config }: PreviewFrameProps) {
+export function PreviewFrame({
+  artifactId,
+  title,
+  html,
+  config,
+  tooLargeText = TOO_LARGE_HTML,
+}: PreviewFrameProps) {
   const { base, messageOrigin, postOrigin } = previewTarget(config, artifactId);
   const sandbox = artifactIframeSandbox(
     config.content_path_fallback ? "opaque" : config.content_isolation,
@@ -167,10 +179,7 @@ export function PreviewFrame({ artifactId, title, html, config }: PreviewFramePr
         )}
         {status === "too_large" && (
           <div className="pl-editor-preview__message" role="status">
-            <p>
-              The draft is larger than 5 MB, the most a version can hold, so it cannot be previewed
-              or saved.
-            </p>
+            <p>{tooLargeText}</p>
           </div>
         )}
         {status === "error" && (
