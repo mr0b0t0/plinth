@@ -140,11 +140,12 @@ test("another artifact cannot read or change an artifact's shared data", async (
 
     // The server refuses the same requests on its own, with A's valid cookie.
     const cookies = await page.context().cookies(origin);
-    const pass = cookies.find((c) => c.name === "plinth_content");
+    // __Host- on an artifact's own subdomain: a sibling cannot toss one onto the parent domain.
+    const pass = cookies.find((c) => c.name === "__Host-plinth_content");
     expect(pass, "the browser holds A's content cookie").toBeTruthy();
     const direct = await newApiContext();
     try {
-      const cookie = `plinth_content=${pass?.value}`;
+      const cookie = `__Host-plinth_content=${pass?.value}`;
       const json = JSON.stringify({ data: { choice: "ramen" } });
       const send = (method: string, url: string, headers: Record<string, string>, data?: string) =>
         direct.fetch(url, { method, headers: { cookie, ...headers }, data, maxRedirects: 0 });

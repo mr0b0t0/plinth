@@ -6,6 +6,7 @@ import {
   CONTENT_RESERVED_PREFIX,
   COOKIES,
   type EffectiveRole,
+  HOST_COOKIE_PREFIX,
   REVIEW_MODE_PARAM,
   TTL,
 } from "@plinth/shared";
@@ -83,10 +84,27 @@ function redirect(config: Config, status: 301 | 302, location: string): Response
 }
 
 /**
+ * The content cookie's name for a request. On an artifact's own subdomain it is `__Host-`
+ * prefixed whenever it is Secure: browsers refuse a `__Host-` cookie that has a Domain attribute,
+ * so a sibling artifact cannot toss one onto the parent domain (the content host may share a
+ * registrable domain with its siblings until its Public Suffix List entry ships). The plain name is
+ * kept for the staging path fallback (Path=/__content/<id>/ on the app host, where shared data is
+ * off) and for plain-http names, which cannot set Secure cookies.
+ */
+export function contentCookieName(config: Pick<Config, "appHost" | "scheme">, url: URL): string {
+  const host = url.host.toLowerCase();
+  if (host === config.appHost || !secureFlag(config.scheme, host)) return COOKIES.content;
+  return `${HOST_COOKIE_PREFIX}${COOKIES.content}`;
+}
+
+/** At most this many values of the content cookie are checked per request. */
+const MAX_PASS_VALUES = 8;
+
+/**
  * Every value sent for a cookie name. Another artifact cannot set a cookie on this host directly,
  * but where the content host is not on the Public Suffix List a sibling subdomain can set one for
- * the parent domain ("cookie tossing"). Looking at every value means such a cookie can never shadow
- * the real one.
+ * the parent domain ("cookie tossing") under the plain name. Looking at every value means such a
+ * cookie can never shadow the real one.
  */
 function cookieValues(header: string | null, name: string): string[] {
   if (!header) return [];
@@ -95,7 +113,7 @@ function cookieValues(header: string | null, name: string): string[] {
     const i = part.indexOf("=");
     if (i < 0 || part.slice(0, i).trim() !== name) continue;
     out.push(part.slice(i + 1).trim());
-    if (out.length >= 8) break;
+    if (out.length >= MAX_PASS_VALUES) break;
   }
   return out;
 }
@@ -107,35 +125,57 @@ const CLAIM_ROLES: ReadonlySet<string> = new Set<EffectiveRole>([
   "viewer",
 ]);
 
+type ContentPass = { claim: PageClaim | null };
+
+/** One cookie value as a pass for this artifact at its epoch, or null when it is not one. */
+async function openPass(
+  config: Config,
+  artifact: { id: string; accessEpoch: number },
+  value: string,
+): Promise<ContentPass | null> {
+  const pass = await verifyContentCookie(config, value);
+  if (!pass || pass.a !== artifact.id || pass.e !== artifact.accessEpoch) return null;
+  if (pass.x === undefined) return { claim: null };
+  if (typeof pass.x !== "string") return null;
+  const opened = await openJson(config.tokenSigningKey, IDENTITY_CLAIM_INFO, artifact.id, pass.x);
+  if (!opened || typeof opened !== "object") return null;
+  const { m, r } = opened as Record<string, unknown>;
+  if (typeof m !== "string" || !m || typeof r !== "string" || !CLAIM_ROLES.has(r)) return null;
+  return {
+    claim: {
+      email: m,
+      role: r as EffectiveRole,
+      viewerId: await viewerIdFor(config.tokenSigningKey, artifact.id, m),
+    },
+  };
+}
+
+const sameClaim = (a: PageClaim | null, b: PageClaim | null) =>
+  a === null || b === null ? a === b : a.email === b.email && a.role === b.role;
+
 /**
  * The content pass this request carries for this artifact: a content cookie signed for this
  * artifact at its current access epoch. `claim` is the viewer's identity when the gate sealed one
  * in (identified viewers only), else null. A value whose claim does not open, or opens to the wrong
- * shape, is rejected outright, never downgraded to anonymous. Null when there is no valid pass.
+ * shape, is rejected outright, never downgraded to anonymous. Passes differ by the identity they
+ * carry, so a request with two valid passes that disagree is ambiguous and has none: the page
+ * reloads through the gate rather than act as whoever's pass came first. Null when there is no
+ * valid pass.
  */
 export async function readContentPass(
   request: Request,
   config: Config,
   artifact: { id: string; accessEpoch: number },
-): Promise<{ claim: PageClaim | null } | null> {
-  for (const value of cookieValues(request.headers.get("cookie"), COOKIES.content)) {
-    const pass = await verifyContentCookie(config, value);
-    if (!pass || pass.a !== artifact.id || pass.e !== artifact.accessEpoch) continue;
-    if (pass.x === undefined) return { claim: null };
-    if (typeof pass.x !== "string") continue;
-    const opened = await openJson(config.tokenSigningKey, IDENTITY_CLAIM_INFO, artifact.id, pass.x);
-    if (!opened || typeof opened !== "object") continue;
-    const { m, r } = opened as Record<string, unknown>;
-    if (typeof m !== "string" || !m || typeof r !== "string" || !CLAIM_ROLES.has(r)) continue;
-    return {
-      claim: {
-        email: m,
-        role: r as EffectiveRole,
-        viewerId: await viewerIdFor(config.tokenSigningKey, artifact.id, m),
-      },
-    };
+): Promise<ContentPass | null> {
+  const name = contentCookieName(config, new URL(request.url));
+  let found: ContentPass | null = null;
+  for (const value of cookieValues(request.headers.get("cookie"), name)) {
+    const pass = await openPass(config, artifact, value);
+    if (!pass) continue;
+    if (found && !sameClaim(found.claim, pass.claim)) return null;
+    found ??= pass;
   }
-  return null;
+  return found;
 }
 
 /**
@@ -199,7 +239,7 @@ async function serve(
   }
   const url = new URL(request.url);
   const { artifactId, path, base } = route;
-  const cookieName = COOKIES.content;
+  const cookieName = contentCookieName(config, url);
   // In the path fallback all artifacts share the app origin, so cookies are scoped by path.
   const cookiePath = base ? `${base}/` : "/";
 

@@ -277,7 +277,7 @@ describe("One artifact cannot read another artifact's cookies, storage or files;
     const { enter } = await enterContent(p.id);
     const sc = enter?.headers.get("set-cookie") ?? "";
     expect(sc).toMatch(
-      /^plinth_content=[^;]+; Path=\/; Max-Age=43200; HttpOnly; Secure; SameSite=None; Partitioned$/,
+      /^__Host-plinth_content=[^;]+; Path=\/; Max-Age=43200; HttpOnly; Secure; SameSite=None; Partitioned$/,
     );
     expect(sc).not.toMatch(/Domain=/i);
   });
@@ -306,7 +306,7 @@ describe("One artifact cannot read another artifact's cookies, storage or files;
       .replace(/\//g, "_")
       .replace(/=+$/, "");
     const forged = await call(`${contentOrigin(pb.id)}/`, {
-      headers: { Cookie: `plinth_content=${forgedBody}.${sig}` },
+      headers: { Cookie: `__Host-plinth_content=${forgedBody}.${sig}` },
     });
     expect(forged.status).toBe(302);
   });
@@ -804,7 +804,7 @@ describe("Secrets never appear in logs, URLs (other than the one-time viewer tok
     expect(cookieValue).not.toBe(token);
     expect(enter.headers.get("referrer-policy")).toBe("no-referrer");
     const page = await call(`${contentOrigin(p.id)}/`, {
-      headers: { Cookie: `plinth_content=${cookieValue}` },
+      headers: { Cookie: `__Host-plinth_content=${cookieValue}` },
     });
     const all = `${await page.text()}${JSON.stringify([...page.headers])}`;
     expect(all).not.toContain(token);

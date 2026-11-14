@@ -8,7 +8,7 @@ import type { Role, ViewGate } from "@plinth/shared";
 import { desc, eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import { computeGate } from "../src/api/view.ts";
-import { readContentPass } from "../src/content/serve.ts";
+import { contentCookieName, readContentPass } from "../src/content/serve.ts";
 import {
   IDENTITY_CLAIM_INFO,
   signContentCookie,
@@ -420,7 +420,7 @@ describe("identity claim: tokens and cookies", () => {
     const { owner, artifact } = await pub("unlisted");
     const row = await db().select().from(artifacts).where(eq(artifacts.id, artifact.id)).get();
     const epoch = row?.accessEpoch ?? 0;
-    const cookieName = "plinth_content";
+    const cookieName = "__Host-plinth_content";
     const garbage = await signContentCookie(config(), artifact.id, epoch, "not-a-sealed-value");
     expect(await passFor(artifact.id, `${cookieName}=${garbage}`)).toBeNull();
     // A claim sealed for another artifact (AAD mismatch) inside a cookie signed for this one.
@@ -487,6 +487,95 @@ describe("identity claim: tokens and cookies", () => {
   });
 });
 
+// ---------- cookie tossing ----------
+
+/** A request to the page API the way the runtime makes it, with the given Cookie header. */
+const sessionWith = (artifactId: string, cookie: string) =>
+  run(`${contentOrigin(artifactId)}/__plinth/api/v1/session`, {
+    headers: {
+      "x-plinth-data": "1",
+      "sec-fetch-site": "same-origin",
+      "sec-fetch-mode": "cors",
+      "sec-fetch-dest": "empty",
+      cookie,
+    },
+  });
+
+describe("identity claim: a tossed pass cannot stand in for the viewer's", () => {
+  it("is named __Host- on an artifact subdomain; plain in the path fallback and on plain http", () => {
+    const c = config();
+    const id = "a".repeat(20);
+    expect(contentCookieName(c, new URL(`${contentOrigin(id)}/`))).toBe("__Host-plinth_content");
+    expect(contentCookieName(c, new URL(`${APP}/__content/${id}/`))).toBe("plinth_content");
+    expect(
+      contentCookieName(
+        { appHost: "app.example.test", scheme: "http" },
+        new URL(`http://${id}.content.example.test/`),
+      ),
+    ).toBe("plinth_content");
+  });
+
+  it("a valid pass under the plain name (one a sibling could toss) is ignored", async () => {
+    // The attacker is a link viewer: their pass is valid for this artifact and epoch.
+    const { owner, artifact } = await pub("unlisted");
+    const attacker = await passFrom(await gateHttp(artifact.id));
+    const s = await browserSession(owner.user.id);
+    const victim = await passFrom(await gateHttp(artifact.id, s.headers));
+    expect(attacker.cookie.startsWith("__Host-plinth_content=")).toBe(true);
+    const tossed = `plinth_content=${attacker.cookie.split("=").slice(1).join("=")}`;
+    // A tossed copy (longer path, so listed first) next to the real one: the real one counts.
+    const both = `${tossed}; ${victim.cookie}`;
+    expect((await passFor(artifact.id, both))?.claim?.email).toBe(owner.user.email);
+    const session = await json(await sessionWith(artifact.id, both));
+    expect(session).toMatchObject({
+      available: true,
+      can_write: true,
+      viewer: { email: owner.user.email, role: "owner" },
+    });
+    // Alone, the plain name opens nothing.
+    expect(await passFor(artifact.id, tossed)).toBeNull();
+    expect((await sessionWith(artifact.id, tossed)).status).toBe(401);
+    // Eight junk values under the plain name do not hide the real pass either.
+    const junk = Array.from({ length: 8 }, (_, i) => `plinth_content=junk${i}`).join("; ");
+    expect((await passFor(artifact.id, `${junk}; ${victim.cookie}`))?.claim?.role).toBe("owner");
+  });
+
+  it("two valid passes that disagree on who is viewing are ambiguous: no pass, 401", async () => {
+    const { owner, artifact } = await pub("unlisted");
+    const anon = await passFrom(await gateHttp(artifact.id));
+    const s = await browserSession(owner.user.id);
+    const ownerPass = await passFrom(await gateHttp(artifact.id, s.headers));
+    const editor = await createUser();
+    await grant(artifact.id, editor.email, "editor");
+    const es = await browserSession(editor.id);
+    const editorPass = await passFrom(await gateHttp(artifact.id, es.headers));
+    for (const [a, b] of [
+      [anon.cookie, ownerPass.cookie],
+      [ownerPass.cookie, anon.cookie],
+      [editorPass.cookie, ownerPass.cookie],
+    ] as const) {
+      const header = `${a}; ${b}`;
+      expect(await passFor(artifact.id, header)).toBeNull();
+      const res = await sessionWith(artifact.id, header);
+      expect(res.status).toBe(401);
+      expect((await json(res)).error).toMatchObject({
+        code: "unauthorized",
+        details: { reason: "expired" },
+      });
+      // Files too: the frame is asked to reload through the gate.
+      const page = await run(`${contentOrigin(artifact.id)}/`, {
+        headers: { Cookie: header, "sec-fetch-dest": "iframe" },
+      });
+      expect(page.status).toBe(401);
+    }
+    // The same identity twice (two passes minted for one person) is not ambiguous.
+    const again = await passFrom(await gateHttp(artifact.id, s.headers));
+    expect((await passFor(artifact.id, `${again.cookie}; ${ownerPass.cookie}`))?.claim?.email).toBe(
+      owner.user.email,
+    );
+  });
+});
+
 // ---------- ViewGate.data ----------
 
 describe("ViewGate.data", () => {
@@ -542,19 +631,15 @@ describe("ViewGate.data", () => {
     });
   });
 
-  it("viewer capability alone: identified, but nothing to write", async () => {
+  it("viewer capability alone declares nothing: no data block, no email", async () => {
     const owner = await agent();
     const { body } = await publish(owner.auth, {
       html: '<!doctype html><meta name="plinth-capabilities" content="viewer"><p>x</p>',
     });
     const s = await browserSession(owner.user.id);
-    expect(asOk(await gateHttp(body.id, s.headers)).data).toEqual({
-      available: true,
-      capabilities: ["viewer"],
-      identified: true,
-      can_write: false,
-      email: owner.user.email,
-    });
+    const gate = asOk(await gateHttp(body.id, s.headers));
+    expect("data" in gate).toBe(false);
+    expect(JSON.stringify(gate)).not.toContain(owner.user.email);
   });
 
   it("unavailable when switched off or under opaque isolation", async () => {
