@@ -141,21 +141,59 @@ describe("doc shell on the content host", () => {
     );
   });
 
-  it("content.md is served raw as Markdown and images as themselves, with the default CSP", async () => {
+  it("content.md is served raw as Markdown and images as themselves, with no script", async () => {
     const { p, cookie } = await openedDoc();
+    const noScript = contentCsp(config(), { scripts: "none" });
     const md = await get(p.id, "/content.md", cookie);
     expect(md.status).toBe(200);
     expect(md.headers.get("content-type")).toBe("text/markdown; charset=utf-8");
     expect(md.headers.get("x-content-type-options")).toBe("nosniff");
-    expect(md.headers.get("content-security-policy")).toBe(contentCsp(config()));
+    expect(md.headers.get("content-security-policy")).toBe(noScript);
     expect(await md.text()).toBe(MD);
     const img = await get(p.id, "/img/dot.png", cookie);
     expect(img.status).toBe(200);
     expect(img.headers.get("content-type")).toBe("image/png");
-    expect(img.headers.get("content-security-policy")).toBe(contentCsp(config()));
+    expect(img.headers.get("content-security-policy")).toBe(noScript);
     // Review mode never rewrites anything but the shell.
     const reviewed = await get(p.id, "/content.md?plinth-review=1", cookie);
     expect(await reviewed.text()).toBe(MD);
+  });
+
+  it("an SVG asset opened as a document runs no script (script-src 'none')", async () => {
+    const svg =
+      '<svg xmlns="http://www.w3.org/2000/svg" onload="alert(1)"><script>alert(2)</script></svg>';
+    const { p, cookie } = await openedDoc({
+      assets: [{ path: "diagram.svg", content: svg }],
+    });
+    for (const vars of [{}, { CONTENT_ISOLATION: "opaque" }]) {
+      const res = await run(
+        `${contentOrigin(p.id)}/diagram.svg`,
+        { headers: { Cookie: cookie } },
+        vars,
+      );
+      expect(res.status).toBe(200);
+      expect(res.headers.get("content-type")).toBe("image/svg+xml");
+      const d = directives(res.headers.get("content-security-policy"));
+      expect(d.get("script-src")).toBe("script-src 'none'");
+      expect(d.get("script-src")).not.toContain("unsafe-inline");
+    }
+    // The opaque sandbox stays on as well.
+    const o = await run(
+      `${contentOrigin(p.id)}/diagram.svg`,
+      { headers: { Cookie: cookie } },
+      { CONTENT_ISOLATION: "opaque" },
+    );
+    expect(directives(o.headers.get("content-security-policy")).get("sandbox")).toBe(
+      OPAQUE_SANDBOX,
+    );
+    // An html artifact's SVG keeps the default content CSP.
+    const a = await agent();
+    const { body: page } = await publish(a.auth, {
+      assets: [{ path: "diagram.svg", content: svg }],
+    });
+    const { cookie: pageCookie } = await enterContent(page.id);
+    const own = await get(page.id, "/diagram.svg", pageCookie ?? "");
+    expect(own.headers.get("content-security-policy")).toBe(contentCsp(config()));
   });
 
   it("?plinth-review=1 injects the comments bridge into the shell", async () => {
@@ -250,6 +288,54 @@ describe("renderer files on the content host", () => {
     });
     expect(head.status).toBe(200);
     expect(await head.text()).toBe("");
+  });
+
+  it("renderer files carry the ASSETS ETag and revalidate with a 304", async () => {
+    const a = await agent();
+    const { body: p } = await publish(a.auth);
+    for (const f of ["doc.js", "doc.css"]) {
+      const url = `${contentOrigin(p.id)}/__plinth/types/doc/${f}`;
+      const first = await call(url);
+      expect(first.status, f).toBe(200);
+      await first.text();
+      const etag = first.headers.get("etag");
+      expect(etag, f).toBeTruthy();
+      expect(first.headers.get("cache-control")).toBe("private, no-cache");
+      const again = await call(url, { headers: { "If-None-Match": etag ?? "" } });
+      expect(again.status, f).toBe(304);
+      expect(again.headers.get("etag")).toBe(etag);
+      expect(again.headers.get("content-security-policy")).toBe(contentCsp(config()));
+      expect(await again.text()).toBe("");
+      const stale = await call(url, { headers: { "If-None-Match": '"stale"' } });
+      expect(stale.status, f).toBe(200);
+      expect((await stale.text()).length).toBeGreaterThan(100);
+    }
+  });
+
+  it("a stubbed ASSETS ETag is passed through, weak or strong", async () => {
+    const a = await agent();
+    const { body: p } = await publish(a.auth);
+    const vars = {
+      ASSETS: {
+        fetch: async () =>
+          new Response("x", { headers: { "Content-Type": "text/javascript", ETag: '"abc"' } }),
+      },
+    };
+    const url = `${contentOrigin(p.id)}/__plinth/types/doc/doc.js`;
+    const ok = await run(url, {}, vars);
+    expect(ok.headers.get("etag")).toBe('"abc"');
+    for (const inm of ['"abc"', 'W/"abc"', '"x", "abc"', "*"]) {
+      const res = await run(url, { headers: { "If-None-Match": inm } }, vars);
+      expect(res.status, inm).toBe(304);
+    }
+    const none = {
+      ASSETS: {
+        fetch: async () => new Response("x", { headers: { "Content-Type": "text/javascript" } }),
+      },
+    };
+    const plain = await run(url, { headers: { "If-None-Match": "*" } }, none);
+    expect(plain.status).toBe(200);
+    expect(plain.headers.get("etag")).toBeNull();
   });
 
   it("only the files the registry lists are served", async () => {
@@ -402,6 +488,13 @@ describe("contentCsp", () => {
     ].join("; ");
     expect(contentCsp(c)).toBe(expected);
     expect(contentCsp(c, {})).toBe(expected);
+  });
+
+  it("scripts: 'none' changes script-src only", () => {
+    const c = config();
+    expect(contentCsp(c, { scripts: "none" })).toBe(
+      contentCsp(c).replace(/script-src [^;]*/, "script-src 'none'"),
+    );
   });
 
   it("scripts: 'self' changes script-src only, and keeps the opaque sandbox", () => {

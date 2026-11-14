@@ -179,7 +179,7 @@ async function serve(
   if (path === `${CONTENT_RESERVED_PREFIX}bridge.js`) return serveBridgeScript(config);
   if (path === `${CONTENT_RESERVED_PREFIX}preview`) return servePreviewLoader(config);
   const renderer = rendererRequest(path);
-  if (renderer) return serveRendererFile(env, config, renderer.id, renderer.file, request.method);
+  if (renderer) return serveRendererFile(request, env, config, renderer.id, renderer.file);
 
   if (path === `${CONTENT_RESERVED_PREFIX}enter`) {
     const expired = () => text(config, 403, "This link has expired. Open the artifact again.");
@@ -282,7 +282,9 @@ async function serve(
   if (!obj) return text(config, 404, "Not found");
 
   const headers = new Headers({ "Content-Type": entry.content_type, ETag: obj.httpEtag });
-  applyContentHeaders(config, headers);
+  // A typed artifact's other files (content.md, images) run no script, not even an SVG opened as
+  // a document: only the shell runs Plinth's renderer.
+  applyContentHeaders(config, headers, def.renderer ? { scripts: "none" } : {});
   // Public artifacts (only when the instance allows public visibility) may be indexed.
   if (artifact.visibility === "public" && config.allowPublicVisibility)
     headers.delete("X-Robots-Tag");

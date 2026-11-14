@@ -38,18 +38,29 @@ function notFound(config: Config, body = "Not found"): Response {
   return new Response(body, { status: 404, headers });
 }
 
+/** Whether an If-None-Match header matches an ETag (weak comparison, RFC 9110 13.1.2). */
+export function etagMatches(ifNoneMatch: string | null, etag: string): boolean {
+  if (!ifNoneMatch) return false;
+  const opaque = (t: string) => t.trim().replace(/^W\//, "");
+  const want = opaque(etag);
+  return ifNoneMatch.split(",").some((t) => t.trim() === "*" || opaque(t) === want);
+}
+
 /**
  * A renderer file, served without the content cookie (it holds no artifact data, like bridge.js).
  * Only a file the registry lists for a known type is served, and the ASSETS URL is built from the
  * registry, never from the request path. ASSETS falls back to the SPA's index.html for a missing
  * file, so the response must be ok and of the expected type; anything else is a 404.
+ * The ETag ASSETS gives the file is passed on, and a matching If-None-Match gets a 304, so the
+ * `no-cache` every content response carries revalidates instead of downloading the renderer again
+ * on each view and each editor preview render.
  */
 export async function serveRendererFile(
+  request: Request,
   env: Bindings,
   config: Config,
   id: string,
   file: string,
-  method = "GET",
 ): Promise<Response> {
   const def = typeDef(id);
   const r = def?.renderer;
@@ -65,7 +76,13 @@ export async function serveRendererFile(
   }
   const headers = new Headers({ "Content-Type": `${expected}; charset=utf-8` });
   applyContentHeaders(config, headers);
-  if (method === "HEAD") {
+  const etag = res.headers.get("ETag");
+  if (etag) headers.set("ETag", etag);
+  if (etag && etagMatches(request.headers.get("If-None-Match"), etag)) {
+    await res.body?.cancel();
+    return new Response(null, { status: 304, headers });
+  }
+  if (request.method === "HEAD") {
     await res.body?.cancel();
     return new Response(null, { status: 200, headers });
   }

@@ -1,4 +1,5 @@
 // Headers for every response on a content host. The CSP is built from CDN_ALLOWLIST.
+import { TYPED_SHELL_SCRIPT_SRC } from "@plinth/shared";
 import type { Config } from "../config.ts";
 
 /**
@@ -13,22 +14,28 @@ export const OPAQUE_SANDBOX =
   "sandbox allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-modals allow-downloads";
 
 /**
- * Options for one content response's CSP. `scripts: "self"` is for Plinth's own typed-artifact
- * shell (docs/superpowers/specs/2026-11-14-typed-outputs-doc-design.md): it runs only the
- * renderer from the artifact's own origin, so its script-src is `'self'` and nothing else. Every
- * other directive, the opaque sandbox included, is the same as for any artifact file.
+ * Options for one content response's CSP (docs/superpowers/specs/2026-11-14-typed-outputs-doc-design.md).
+ * `scripts: "self"` is for Plinth's own typed-artifact shell: it runs only the renderer from the
+ * artifact's own origin, so its script-src is `'self'` and nothing else. `scripts: "none"` is for
+ * every other file of a typed artifact (content.md, images): a doc runs no author script, so an
+ * SVG image opened as a document cannot run any either. Every other directive, the opaque sandbox
+ * included, is the same as for any artifact file.
  */
 export interface ContentCspOptions {
-  scripts?: "self";
+  scripts?: "self" | "none";
+}
+
+function scriptSrc(config: Config, scripts: ContentCspOptions["scripts"]): string {
+  if (scripts === "self") return TYPED_SHELL_SCRIPT_SRC;
+  if (scripts === "none") return "script-src 'none'";
+  const cdn = config.cdnAllowlist.map((h) => `https://${h}`).join(" ");
+  return `script-src 'self' 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval' ${cdn}`;
 }
 
 export function contentCsp(config: Config, opts: ContentCspOptions = {}): string {
-  const cdn = config.cdnAllowlist.map((h) => `https://${h}`).join(" ");
   const directives = [
     "default-src 'none'",
-    opts.scripts === "self"
-      ? "script-src 'self'"
-      : `script-src 'self' 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval' ${cdn}`,
+    scriptSrc(config, opts.scripts),
     "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
     "font-src 'self' https://fonts.gstatic.com data:",
     "img-src 'self' data: blob:",
