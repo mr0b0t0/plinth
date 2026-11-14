@@ -10,6 +10,8 @@ Add a line under **Unreleased** in the pull request that makes a change people w
 
 ## Unreleased
 
+## 0.1.1 (2026-11-14)
+
 - `npx @mr0b0t0/plinth deploy` deploys Plinth to your own Cloudflare account in one command
   (database, bucket, secrets, migrations, the Worker); rerun it to redeploy or upgrade.
 - A Docker image, `ghcr.io/mr0b0t0/plinth` (linux/amd64 and linux/arm64): localhost only, behind
