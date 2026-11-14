@@ -5,8 +5,7 @@
 import path from "node:path";
 import { type Browser, expect, type Frame, type Page, test } from "@playwright/test";
 import { apiPost, uniqueEmail } from "../support/api.ts";
-import { selectLocal, sqlId } from "../support/d1.ts";
-import { seedSession } from "../support/db.ts";
+import { dataCounts, seedSession } from "../support/db.ts";
 import { latestCode } from "../support/mail.ts";
 import { mcpClient, tool } from "../support/mcp.ts";
 import { CURRENT_FRAME, POLL_HTML, POLL_TITLE, pollFrame } from "../support/poll.ts";
@@ -23,6 +22,8 @@ interface Published {
 }
 
 const isMobile = () => test.info().project.name === "mobile";
+/** Changes made elsewhere arrive on the next /changes poll (15 s): wait up to three of them. */
+const POLL_WAIT = 45_000;
 
 async function shot(page: Page, name: string) {
   if (!SHOTS) return;
@@ -80,7 +81,7 @@ test("a poll among invited people, from first vote to takedown", async ({
   browser,
   request,
 }) => {
-  test.setTimeout(180_000);
+  test.setTimeout(240_000);
   const owner = uniqueEmail("poll-owner");
   const a = uniqueEmail("voter-a");
   const b = uniqueEmail("voter-b");
@@ -130,8 +131,9 @@ test("a poll among invited people, from first vote to takedown", async ({
     await expect(tally(pageB)).toHaveText("2");
     await shot(pageB, "voter");
 
-    // 3. The owner's open page picks both votes up by polling.
-    await expect(tally(page)).toHaveText("2", { timeout: 20_000 });
+    // 3. The owner's open page picks both votes up by polling (every 15 s; the margin leaves room
+    // for three projects sharing one Worker).
+    await expect(tally(page)).toHaveText("2", { timeout: POLL_WAIT });
     await shot(page, "owner");
 
     // 4. B changes their vote: still one document per person.
@@ -154,7 +156,9 @@ test("a poll among invited people, from first vote to takedown", async ({
       expect(d.personal).toBe(true);
       expect(d.data).toEqual({ choice: "tacos" });
     }
-    expect(byEmail[b].rev).toBe(2);
+    // Revs grow across the artifact: A's vote (1), B's vote (2), B's change (3).
+    expect(byEmail[a].rev).toBe(1);
+    expect(byEmail[b].rev).toBe(3);
     expect(byEmail[b].updated_by).toMatchObject({ email: b, via: "page" });
 
     // 6. Unlisted: an anonymous link viewer sees the tally, but cannot vote or see who voted.
@@ -214,7 +218,7 @@ test("a poll among invited people, from first vote to takedown", async ({
     const confirm = page.getByRole("alertdialog", { name: "Delete all shared data?" });
     await confirm.getByRole("button", { name: "Delete 2 entries" }).click();
     await expect(page.getByText("Shared data deleted")).toBeVisible();
-    await expect(tally(page)).toHaveText("0", { timeout: 20_000 });
+    await expect(tally(page)).toHaveText("0", { timeout: POLL_WAIT });
     const after = await tool<{ docs: unknown[] }>(client, "list_artifact_data", {
       id: art.id,
       collection: "votes",
@@ -236,13 +240,7 @@ test("a poll among invited people, from first vote to takedown", async ({
     });
     expect(seeded.isError, seeded.text).toBe(false);
     expect(seeded.data.results[0]?.ok).toBe(true);
-    const countDocs = async () =>
-      (
-        await selectLocal<{ n: number }>(
-          `SELECT count(*) AS n FROM artifact_docs WHERE artifact_id = ${sqlId(art.id)}`,
-        )
-      )[0]?.n;
-    expect(await countDocs()).toBe(1);
+    expect(await dataCounts(art.id)).toEqual({ docs: 1, usage_rows: 1 });
 
     const report = await apiPost<{ id: string }>(request, `/artifacts/${art.slug}/report`, {
       reason: "Checking that a takedown wipes shared data.",
@@ -258,12 +256,7 @@ test("a poll among invited people, from first vote to takedown", async ({
     } finally {
       await adminCtx.close();
     }
-    expect(await countDocs()).toBe(0);
-    expect(
-      await selectLocal(
-        `SELECT artifact_id FROM artifact_data_usage WHERE artifact_id = ${sqlId(art.id)}`,
-      ),
-    ).toEqual([]);
+    expect(await dataCounts(art.id)).toEqual({ docs: 0, usage_rows: 0 });
     const gone = await tool(client, "list_artifact_data", { id: art.id });
     expect(gone.isError).toBe(true);
   } finally {

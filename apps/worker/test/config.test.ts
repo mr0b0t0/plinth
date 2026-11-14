@@ -171,6 +171,35 @@ describe("development-only switches", () => {
     expect(res.status).toBe(404);
   });
 
+  it("GET /__dev/data/:id answers counts only with DEV_SEED on in development", async () => {
+    const { call, agent, publish, json } = await import("./helpers.ts");
+    const { createExecutionContext, waitOnExecutionContext } = await import("cloudflare:test");
+    const { env } = await import("cloudflare:workers");
+    const { default: worker } = await import("../src/index.ts");
+    const owner = await agent();
+    const { body } = await publish(owner.auth, {
+      html: '<!doctype html><meta name="plinth-capabilities" content="data"><p>x</p>',
+    });
+    expect((await call(`/__dev/data/${body.id}`)).status).toBe(404);
+    const ops = await call(`/api/v1/artifacts/${body.id}/data`, {
+      method: "POST",
+      headers: { ...owner.auth, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        ops: [{ op: "set", collection: "votes", doc_id: "a", data: { n: 1 }, if_rev: 0 }],
+      }),
+    });
+    expect(ops.status).toBe(200);
+    const ctx = createExecutionContext();
+    const res = await worker.fetch(
+      new Request(`http://app.localhost:8787/__dev/data/${body.id}`),
+      { ...env, DEV_SEED: "true" } as never,
+      ctx,
+    );
+    await waitOnExecutionContext(ctx);
+    expect(res.status).toBe(200);
+    expect(await json(res)).toEqual({ docs: 1, usage_rows: 1 });
+  });
+
   it("DEV_IGNORE_CLIENT_IP and DEV_OUTBOX are ignored outside development", () => {
     const prod = parseConfig({ ...base, DEV_IGNORE_CLIENT_IP: "true", DEV_OUTBOX: "true" });
     expect(prod.devIgnoreClientIp).toBe(false);
