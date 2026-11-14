@@ -303,7 +303,7 @@ export class VersionStager implements Stager {
     this.rel = relativePrefix(this.artifactId, this.prefix);
     if (current) {
       for (const e of parseManifest(current.manifest)) {
-        if (this.def.reservedPaths.includes(e.path) || !e.sha256) continue;
+        if (this.def.reservedPaths.includes(e.path) || !e.sha256 || unservableLegacy(e)) continue;
         const storedAt = e.stored_at ?? this.originOf(current, e.path);
         if (!this.reusable.has(e.sha256)) {
           this.reusable.set(e.sha256, {
@@ -516,9 +516,13 @@ export class VersionStager implements Stager {
     this.reused++;
   }
 
-  /** Carry one entry of a stored version forward unchanged: a reference, no R2 operation. */
+  /**
+   * Carry one entry of a stored version forward unchanged: a reference, no R2 operation. A legacy
+   * entry whose path the content host never served (`a//b.js`, `img/`) is dropped, not carried.
+   */
   carry(from: Pick<VersionRow, "number" | "r2Prefix">, e: ManifestEntry): void {
     this.throwIfFailed();
+    if (unservableLegacy(e)) return;
     if (this.entries.has(e.path)) {
       this.badPaths.push({ path: e.path, reason: "listed twice" });
       return;
@@ -774,6 +778,18 @@ function storageError(limit: number, used: number, adding: number): ApiError {
   );
 }
 
+/**
+ * A manifest entry written before stored_at whose path the current ASSET_PATH_RE refuses. Older
+ * releases accepted such paths (`a//b.js`, `img/`), but the content host never served them, so a
+ * carry-forward or a restore leaves them out rather than failing on them.
+ */
+function unservableLegacy(e: ManifestEntry): boolean {
+  return (
+    e.stored_at === undefined &&
+    (e.path.length > LIMITS.maxAssetPathLength || !ASSET_PATH_RE.test(e.path))
+  );
+}
+
 export function slugify(title: string): string {
   const base = title
     .toLowerCase()
@@ -803,6 +819,12 @@ export async function commitStaged(
   return commitVersion(ctx, target, staged, opts ?? {});
 }
 
+/**
+ * Errors after which the batch may have committed: the attempt's objects are kept (a version row
+ * may name them), and sweep-orphans removes them later if none does.
+ */
+const keepObjects = new WeakSet<object>();
+
 export async function commitVersion(
   ctx: Ctx,
   target: VersionTarget,
@@ -814,8 +836,26 @@ export async function commitVersion(
   try {
     return await commitOnce(ctx, target, staged, extra, opts);
   } catch (e) {
-    await extra.stager.abort().catch(() => undefined);
+    if (!(typeof e === "object" && e !== null && keepObjects.has(e))) {
+      await extra.stager.abort().catch(() => undefined);
+    }
     throw e;
+  }
+}
+
+/**
+ * After DB.batch threw something other than a UNIQUE violation (a lost connection, a timeout),
+ * whether the version row exists: D1 can report an error for a transaction it applied. Null when
+ * that cannot be read either.
+ */
+async function versionLanded(DB: D1Database, versionId: string): Promise<boolean | null> {
+  try {
+    return (
+      (await DB.prepare("SELECT 1 AS one FROM versions WHERE id = ?").bind(versionId).first()) !==
+      null
+    );
+  } catch {
+    return null;
   }
 }
 
@@ -932,11 +972,44 @@ async function commitOnce(
       );
     }
 
+    const committed = (): PublishResult => ({
+      id: artifactId,
+      slug,
+      type: def.id,
+      version: n,
+      url: appUrl(ctx.config, `/a/${slug}`),
+      content_url: `${contentOrigin(ctx.config, artifactId)}/`,
+      visibility,
+      warnings: extra.warnings,
+      stored: {
+        files: staged.entries.length,
+        written: staged.written,
+        reused: staged.reused,
+        bytes: staged.logicalBytes,
+        bytes_written: staged.writtenBytes,
+      },
+    });
+
     let results: D1Result[];
     try {
       results = await DB.batch(stmts);
     } catch (e) {
-      if (!isUniqueViolation(e)) throw e;
+      if (!isUniqueViolation(e)) {
+        // The batch is one transaction: the version row exists exactly when it all applied.
+        const landed = await versionLanded(DB, versionId);
+        if (landed) return committed();
+        if (landed === null) {
+          // Unknown outcome: never delete objects a live version may name.
+          if (typeof e === "object" && e !== null) {
+            keepObjects.add(e);
+            throw e;
+          }
+          const wrapped = new Error(String(e));
+          keepObjects.add(wrapped);
+          throw wrapped;
+        }
+        throw e;
+      }
       const msg = String((e as { message?: unknown }).message ?? e);
       if (target.mode === "publish" && msg.includes("slug")) {
         slug = slugify(`${extra.title} ${randomString(4, "abcdefghijklmnopqrstuvwxyz")}`);
@@ -990,25 +1063,7 @@ async function commitOnce(
       });
     }
 
-    if ((results[versionIndex]?.meta.changes ?? 0) === 1) {
-      return {
-        id: artifactId,
-        slug,
-        type: def.id,
-        version: n,
-        url: appUrl(ctx.config, `/a/${slug}`),
-        content_url: `${contentOrigin(ctx.config, artifactId)}/`,
-        visibility,
-        warnings: extra.warnings,
-        stored: {
-          files: staged.entries.length,
-          written: staged.written,
-          reused: staged.reused,
-          bytes: staged.logicalBytes,
-          bytes_written: staged.writtenBytes,
-        },
-      };
-    }
+    if ((results[versionIndex]?.meta.changes ?? 0) === 1) return committed();
 
     // Nothing was written. Name the cause.
     if (opts.ticketId) {

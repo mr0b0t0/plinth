@@ -299,6 +299,44 @@ describe("versions written before 0006 (legacy layout)", () => {
     expect(await (await serve(p.id, "/img/dot.png")).arrayBuffer()).toEqual(pngBytes.buffer);
     expect(await (await serve(p.id, "/__plinth/v/1/style.css")).text()).toBe(CSS);
   });
+
+  it("drops legacy paths older releases accepted but never served, instead of failing", async () => {
+    const { a, p } = await seed();
+    await makeLegacy(p.id);
+    const v1 = await versionRow(p.id, 1);
+    if (!v1) throw new Error("no v1");
+    // Older releases accepted `a//b.js` and `img/`; the content host never served them.
+    const odd = [
+      { path: "a//b.js", size_bytes: 1, content_type: "text/javascript" },
+      { path: "img/", size_bytes: 1, content_type: "application/octet-stream" },
+      { path: "c//d.js", size_bytes: 1, content_type: "text/javascript", sha256: "a".repeat(64) },
+    ];
+    for (const e of odd) await env.FILES.put(v1.r2Prefix + e.path, "x");
+    await db()
+      .update(versions)
+      .set({ manifest: JSON.stringify([...JSON.parse(v1.manifest), ...odd]) })
+      .where(eq(versions.id, v1.id))
+      .run();
+
+    // An update without assets carries every servable file and leaves the odd ones out.
+    const carry = await put(a.auth, p.id, { html: "<p>2</p>", base_version: 1 });
+    expect(carry.status).toBe(200);
+    expect((await manifestOf(p.id, 2)).map((e) => e.path).sort()).toEqual(
+      ["img/dot.png", "index.html", "style.css"].sort(),
+    );
+    expect(await (await serve(p.id, "/style.css")).text()).toBe(CSS);
+
+    // Restoring the legacy version works too.
+    const restore = await call(`/api/v1/artifacts/${p.id}/versions/1/restore`, {
+      method: "POST",
+      headers: a.auth,
+    });
+    expect(restore.status).toBe(201);
+    expect((await manifestOf(p.id, 3)).map((e) => e.path).sort()).toEqual(
+      ["img/dot.png", "index.html", "style.css"].sort(),
+    );
+    expect(await (await serve(p.id, "/img/dot.png")).arrayBuffer()).toEqual(pngBytes.buffer);
+  });
 });
 
 describe("the stager (as the bundle path uses it)", () => {

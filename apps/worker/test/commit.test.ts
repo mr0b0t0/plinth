@@ -57,6 +57,34 @@ function failingBatch(log: string[] = []) {
   });
 }
 
+async function serveFile(id: string, path: string) {
+  const { cookie } = await enterContent(id);
+  return call(`${contentOrigin(id)}${path}`, { headers: { Cookie: cookie ?? "" } });
+}
+
+/** A D1 whose batch applies and then reports an error (a connection lost after the commit). */
+function appliedThenThrows(opts: { readable: boolean }) {
+  let applied = false;
+  return new Proxy(env.DB, {
+    get(t, prop) {
+      if (prop === "batch") {
+        return async (stmts: D1PreparedStatement[]) => {
+          await t.batch(stmts);
+          applied = true;
+          throw new Error("injected: network connection lost");
+        };
+      }
+      if (prop === "prepare" && applied && !opts.readable) {
+        return () => {
+          throw new Error("injected: still unreachable");
+        };
+      }
+      const v = Reflect.get(t, prop, t);
+      return typeof v === "function" ? v.bind(t) : v;
+    },
+  });
+}
+
 describe("commit last", () => {
   it("writes every object before the one D1 batch", async () => {
     const a = await agent();
@@ -102,6 +130,62 @@ describe("commit last", () => {
       [`put ${seg}/a.css`, `put ${seg}/b.css`, `put ${seg}/index.html`].sort(),
     );
     expect(prefix).toMatch(/\/v2\.[a-z0-9]{12}\/$/);
+  });
+
+  it("a batch that applied and then threw keeps its files and reports the version", async () => {
+    const a = await agent();
+    const { body: p } = await publish(a.auth, { assets: [{ path: "keep.css", content: "k" }] });
+    const ctx = serviceCtxFor(agentPrincipal(a), {
+      env: { DB: appliedThenThrows({ readable: true }) },
+    });
+    const result = await updateArtifact(ctx, {
+      id: p.id,
+      html: "<p>landed</p>",
+      assets: [{ path: "new.css", content: "n" }],
+      base_version: 1,
+    });
+    expect(result).toMatchObject({ id: p.id, version: 2 });
+    expect(await currentVersion(p.id)).toBe(2);
+    // The current version's own objects were not deleted: it serves.
+    const v2 = await versionRow(p.id, 2);
+    expect(await r2Keys(v2?.r2Prefix ?? "-")).toHaveLength(2);
+    const res = await serveFile(p.id, "/new.css");
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe("n");
+    expect(await (await serveFile(p.id, "/")).text()).toBe("<p>landed</p>");
+  });
+
+  it("a publish whose batch applied and then threw returns the new artifact", async () => {
+    const a = await agent();
+    const ctx = serviceCtxFor(agentPrincipal(a), {
+      env: { DB: appliedThenThrows({ readable: true }) },
+    });
+    const result = await publishArtifact(ctx, {
+      title: "Landed",
+      html: "<p>landed</p>",
+      visibility: "allowlist",
+    });
+    expect(result.version).toBe(1);
+    const v1 = await versionRow(result.id, 1);
+    expect(await r2Keys(v1?.r2Prefix ?? "-")).toHaveLength(1);
+  });
+
+  it("when the outcome cannot be read, the attempt's files are kept, not deleted", async () => {
+    const a = await agent();
+    const { body: p } = await publish(a.auth);
+    const before = await prefixesOf(p.id);
+    const ctx = serviceCtxFor(agentPrincipal(a), {
+      env: { DB: appliedThenThrows({ readable: false }) },
+    });
+    await expect(
+      updateArtifact(ctx, { id: p.id, html: "<p>unknown</p>", base_version: 1 }),
+    ).rejects.toThrow(/connection lost/);
+    // The batch did apply: the live version's objects must still be there.
+    expect(await currentVersion(p.id)).toBe(2);
+    const v2 = await versionRow(p.id, 2);
+    expect(v2?.r2Prefix && !before.includes(v2.r2Prefix)).toBe(true);
+    expect(await r2Keys(v2?.r2Prefix ?? "-")).toHaveLength(1);
+    expect(await (await serveFile(p.id, "/")).text()).toBe("<p>unknown</p>");
   });
 
   it("a failed batch leaves no row, no false conflict, and only its own prefix to sweep", async () => {
