@@ -237,15 +237,17 @@ options.
 - **One repo, two deployments.** Aconite operates the hosted instance, which runs the same code as
   a self-hosted one. Hosted-only parts (billing, moderation tooling) sit behind configuration flags.
 - **Self-hosting.** A "Deploy to Cloudflare" button plus a setup script that creates the R2 bucket,
-  the D1 database and the secrets. A single-user mode skips sign-up for everyone but one address (an extra admin token for scripts is optional).
+  the D1 database and the secrets, and `npx @mr0b0t0/plinth deploy`, which does the same and
+  deploys the prebuilt Worker in one command (*Cloudflare* below). A single-user mode skips sign-up for everyone but one address (an extra admin token for scripts is optional).
 - **Local hosting.** The same Worker can run on the owner's machine under `wrangler dev`, with D1
   and R2 on local disk and a named Cloudflare Tunnel on two owned domains for access
   (`setup.mjs --tunnel`, `pnpm local:start`). Production settings and the full security model
   apply. Links work only while the machine is on, and Cloudflare sees traffic in transit. Guide:
   `docs/local-hosting.md`; design: `docs/superpowers/specs/2026-11-14-local-tunnel-hosting-design.md`.
-- **npm CLI.** `npx @mr0b0t0/plinth` (package `packages/cli`) runs a local instance without
-  cloning the repo. It ships the prebuilt Worker, web app and migrations, and shares its setup and
-  start logic with the repo scripts (`apps/worker/scripts/instance.mjs`). Two modes:
+- **npm CLI.** `npx @mr0b0t0/plinth` (package `packages/cli`) runs a local instance, or deploys to
+  the user's Cloudflare account, without cloning the repo. It ships the prebuilt Worker, web app
+  and migrations, and shares its setup, start and deploy logic with the repo scripts
+  (`apps/worker/scripts/instance.mjs`, `deploy.mjs`). Three modes:
   - *Localhost-only* (`plinth init --email ...`): one account, this computer only, no domain and no
     Cloudflare account. The app answers at `127.0.0.1:<port>` and artifacts at
     `<id>.localhost:<port>`; browsers and Node resolve `*.localhost` to the loopback address and
@@ -257,6 +259,15 @@ options.
     `127.0.0.1` because MCP clients allow OAuth over plain http only to `localhost`, `127.0.0.1` or
     `::1` (Claude Code refuses a token endpoint on `app.localhost`). Hosted clients cannot reach it.
   - *Tunnel* (`plinth init --tunnel ...`): the local-hosting setup above, without a checkout.
+  - *Cloudflare* (`plinth deploy --app-host ... --content-host ... --email-provider ...`): the
+    self-hosted production deployment, without a checkout. It logs in with wrangler (or uses
+    `CLOUDFLARE_API_TOKEN`), checks the account and both zones, creates the D1 database, the R2
+    bucket and the secrets if missing, applies the migrations, deploys and checks `/healthz`. The
+    content zone's proxied wildcard record is created with an API token, or printed for the user
+    to add; existing DNS records are never changed. Settings are saved under
+    `<home>/<name>/cloudflare/`, so a rerun with no flags redeploys them, and a newer package
+    version upgrades the same way (migrations first). It applies the same host checks as the
+    Worker and refuses the console email provider outside single-user mode.
 - **Agent plugin.** `integrations/plugin/` is one plugin folder for Claude Code and for Codex and
   ChatGPT (the portable `plugin.json` + `mcp.json` format): the `plinth` MCP server (hosted instance
   by default; Claude Code reads `PLINTH_URL` to point it elsewhere) and a `plinth-artifacts` skill

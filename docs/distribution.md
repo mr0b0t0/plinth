@@ -7,8 +7,10 @@ directory listings. User-facing guides: [local-hosting.md](local-hosting.md) and
 ## npm: `@mr0b0t0/plinth`
 
 `packages/cli` is the package. `pnpm build` assembles `packages/cli/runtime/` (git-ignored): the
-Worker bundle from `apps/worker/dist`, the web app, the migrations, and the instance scripts from
-`apps/worker/scripts/` that `scripts/setup.mjs` and `scripts/local-start.mjs` use too. Its only
+Worker bundle from `apps/worker/dist`, the web app, the migrations, and the instance and deploy scripts from
+`apps/worker/scripts/` (`instance.mjs`, `deploy.mjs` and their helpers) that `scripts/setup.mjs`
+and `scripts/local-start.mjs` use too. The CLI's modes: `init` (localhost only), `init --tunnel`
+(local behind a Cloudflare Tunnel) and `deploy` (Workers, D1 and R2 on the user's account). Its only
 runtime dependencies are `wrangler` (which runs the Worker) and `tldts`.
 
 Release:
@@ -16,7 +18,8 @@ Release:
 1. Bump `version` in `packages/cli/package.json`.
 2. `pnpm install && pnpm build`
 3. `pnpm --filter @mr0b0t0/plinth test:smoke` (packs the package, installs the tarball with npm into
-   a temporary prefix, and runs a localhost-only instance end to end).
+   a temporary prefix, checks `deploy --dry-run` against the installed runtime, and runs a
+   localhost-only instance end to end).
 4. `cd packages/cli && pnpm publish --access public --no-git-checks`. Publishes under the personal
    npm account `mr0b0t0` (the scope is the account name); `--access public` because scoped packages
    are private by default. npm cannot rename a package: moving it to an organization later means

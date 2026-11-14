@@ -37,6 +37,18 @@ Works with Claude and Codex. Plinth is not made by or affiliated with Anthropic 
 
 ## Deploy
 
+One command deploys Plinth to your own Cloudflare account, with two domains on it (one for the
+app, a separate one for artifact content). It creates the database, the bucket and the secrets,
+deploys the prebuilt Worker and prints how to connect your agents:
+
+```sh
+npx @mr0b0t0/plinth deploy --app-host plinth.example.com --content-host example-content.net \
+  --email-provider resend --admin-email you@example.com
+```
+
+Rerun it with no flags to redeploy or upgrade. Details:
+[docs/self-hosting.md](docs/self-hosting.md#deploy-with-one-command).
+
 [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/mr0b0t0/plinth/tree/main/apps/worker)
 
 The button forks the repository and deploys the Worker to your Cloudflare account. You still need
@@ -84,7 +96,7 @@ After hours (dark):
 | Document | What it covers |
 | --- | --- |
 | [docs/mcp.md](docs/mcp.md) | Connecting Claude, ChatGPT, Claude Code, Codex, Cursor and VS Code; tokens for scripts; every MCP tool; the mention workflow |
-| [docs/self-hosting.md](docs/self-hosting.md) | Running your own instance; every setting; single-user mode |
+| [docs/self-hosting.md](docs/self-hosting.md) | Running your own instance: one-command deploy with `npx @mr0b0t0/plinth deploy`, or from a checkout; every setting; single-user mode |
 | [docs/local-hosting.md](docs/local-hosting.md) | Running an instance on your own machine: localhost only with `npx @mr0b0t0/plinth`, or behind a Cloudflare Tunnel; data stays on your disk |
 | [docs/agents.md](docs/agents.md) | The Plinth plugin and skill for Claude Code, Codex and other agents |
 | [docs/distribution.md](docs/distribution.md) | Releasing the npm CLI and the plugin; directory listings |
@@ -106,7 +118,7 @@ Turborepo on a pnpm workspace.
 | `apps/worker` | The Cloudflare Worker: app host, content host, `/mcp`, `/api/v1` (Hono) |
 | `apps/web` | React + Vite front end, served as static assets by the Worker |
 | `packages/shared` | Types, zod schemas and constants used by both |
-| `packages/cli` | `@mr0b0t0/plinth`, the npm CLI that runs a local instance |
+| `packages/cli` | `@mr0b0t0/plinth`, the npm CLI that runs a local instance or deploys to Cloudflare |
 | `integrations/plugin` | The agent plugin (Claude Code, Codex): MCP server config and the `plinth-artifacts` skill |
 | `migrations` | D1 SQL migrations |
 | `e2e` | Playwright end-to-end tests |
