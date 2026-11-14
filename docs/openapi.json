@@ -402,7 +402,7 @@
       "post": {
         "operationId": "publishArtifact",
         "summary": "Publish a new artifact",
-        "description": "Default visibility is unlisted. Limits: 5 MB of HTML, 50 MB per version by default (GET /config lists this instance's limits), the account's artifact quota and publishes per hour.\n\nMirrors the MCP tool `publish_artifact`.",
+        "description": "Default visibility is allowlist (private: only the owner and people they add). Limits: 5 MB of HTML, 50 MB per version by default (GET /config lists this instance's limits), the account's artifact quota and publishes per hour.\n\nMirrors the MCP tool `publish_artifact`.",
         "tags": ["Artifacts"],
         "requestBody": {
           "required": true,
