@@ -122,6 +122,79 @@ const ALLOW = (
   </>
 );
 
+/**
+ * Claude Code: the plugin (server and rules) and the bare server (tools only). On the hosted
+ * instance the plugin comes first. Anywhere else the bare server comes first, because the plugin's
+ * server points at the hosted instance unless PLINTH_URL is set every time Claude Code starts.
+ */
+function ClaudeCodeSteps({ endpoint }: { endpoint: string }) {
+  const origin = originOf(endpoint);
+  const hosted = origin === HOSTED_ORIGIN;
+  const [addMarketplace, install] = claudeCodePluginSlashCommands();
+  const pluginSignIn = (
+    <>
+      Then run <code>/mcp</code> in Claude Code, choose <code>{CLAUDE_CODE_PLUGIN_SERVER}</code> and
+      sign in, {ALLOW}.
+    </>
+  );
+  const bareSignIn = (
+    <>
+      <code>claude mcp login</code> opens Plinth in your browser; click <strong>Allow</strong>.
+    </>
+  );
+  if (hosted) {
+    return (
+      <div className="pl-acct-howto__item">
+        <p>Install the Plinth plugin: the server and Plinth's publishing rules in one step.</p>
+        <CopyBlock
+          label="Run in a terminal"
+          value={claudeCodePluginCommands().join("\n")}
+          copyLabel="Copy plugin commands"
+          copiedMessage="Commands copied"
+        />
+        <p>
+          Or inside Claude Code: <code>{addMarketplace}</code>, then <code>{install}</code>.{" "}
+          {pluginSignIn}
+        </p>
+        <CopyBlock
+          label={`Or, ${CLAUDE_CODE_TOOLS_ONLY}`}
+          value={claudeCodeCommand(endpoint)}
+          copyLabel="Copy tools-only commands"
+          copiedMessage="Commands copied"
+        />
+        <p className="type-small text-muted">
+          {bareSignIn} {CLAUDE_CODE_ONE_OR_THE_OTHER}
+        </p>
+      </div>
+    );
+  }
+  const exportLine = `export PLINTH_URL=${origin}`;
+  return (
+    <div className="pl-acct-howto__item">
+      <p>Add this instance's server to Claude Code. It gives the {CLAUDE_CODE_TOOLS_ONLY}.</p>
+      <CopyBlock
+        label="Run in a terminal"
+        value={claudeCodeCommand(endpoint)}
+        copyLabel="Copy Claude Code commands"
+        copiedMessage="Commands copied"
+      />
+      <p>{bareSignIn}</p>
+      <CopyBlock
+        label="Or, the Plinth plugin: the server and Plinth's rules"
+        value={[exportLine, ...claudeCodePluginCommands()].join("\n")}
+        copyLabel="Copy plugin commands"
+        copiedMessage="Commands copied"
+      />
+      <p className="type-small text-muted">
+        The plugin's server points at plinth.aconite.io, a different instance, unless{" "}
+        <code>PLINTH_URL</code> is set when Claude Code starts. Add <code>{exportLine}</code> to
+        your shell profile (such as <code>~/.zshrc</code> or <code>~/.bashrc</code>) so every
+        terminal has it. {pluginSignIn} {CLAUDE_CODE_ONE_OR_THE_OTHER}
+      </p>
+    </div>
+  );
+}
+
 function ClientSteps({ client, endpoint }: { client: ConnectClient; endpoint: string }) {
   switch (client) {
     case "claude":
@@ -179,42 +252,8 @@ function ClientSteps({ client, endpoint }: { client: ConnectClient; endpoint: st
           </p>
         </div>
       );
-    case "claude-code": {
-      const origin = originOf(endpoint);
-      const [addMarketplace, install] = claudeCodePluginSlashCommands();
-      return (
-        <div className="pl-acct-howto__item">
-          <p>Install the Plinth plugin: the server and Plinth's publishing rules in one step.</p>
-          <CopyBlock
-            label="Run in a terminal"
-            value={claudeCodePluginCommands().join("\n")}
-            copyLabel="Copy plugin commands"
-            copiedMessage="Commands copied"
-          />
-          <p>
-            Or inside Claude Code: <code>{addMarketplace}</code>, then <code>{install}</code>. Then
-            run <code>/mcp</code> in Claude Code, choose <code>{CLAUDE_CODE_PLUGIN_SERVER}</code>{" "}
-            and sign in, {ALLOW}.
-          </p>
-          {origin !== HOSTED_ORIGIN && (
-            <p className="type-small text-muted">
-              The plugin's server points at plinth.aconite.io. For this instance, set{" "}
-              <code>PLINTH_URL={origin}</code> before starting Claude Code.
-            </p>
-          )}
-          <CopyBlock
-            label={`Or, ${CLAUDE_CODE_TOOLS_ONLY}`}
-            value={claudeCodeCommand(endpoint)}
-            copyLabel="Copy Claude Code commands"
-            copiedMessage="Commands copied"
-          />
-          <p className="type-small text-muted">
-            The second command opens Plinth in your browser; click <strong>Allow</strong>.{" "}
-            {CLAUDE_CODE_ONE_OR_THE_OTHER}
-          </p>
-        </div>
-      );
-    }
+    case "claude-code":
+      return <ClaudeCodeSteps endpoint={endpoint} />;
     case "codex":
       return (
         <div className="pl-acct-howto__item">

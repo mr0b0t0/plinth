@@ -46,6 +46,11 @@ describe("connect commands and links", () => {
     expect(g.kind).toBe("plugin");
     expect(g.commands).toBe(claudeCodePluginSlashCommands().join("\n"));
     expect(g.summary).toContain("tools only");
+    // `plinth connect` prints the bare server for the local instance first, then this note: it
+    // must offer keeping that server, so following the output never gives two servers.
+    expect(g.ownInstance).toContain("PLINTH_URL");
+    expect(g.ownInstance).toContain("every time Claude Code starts");
+    expect(g.ownInstance).toContain("skip the plugin's server and keep the one added above");
     expect(CLAUDE_CODE_ONE_OR_THE_OTHER).toContain("plugin:plinth:plinth");
   });
 

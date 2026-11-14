@@ -229,7 +229,7 @@ export const HARNESSES: readonly Harness[] = [
         "Install the Plinth plugin: the server and the skill in one step. A bare claude mcp add gives the tools only, without Plinth's rules.",
       commands: claudeCodePluginSlashCommands().join("\n"),
       ownInstance:
-        "The plugin's server points at plinth.aconite.io. For this instance, set PLINTH_URL to its origin before starting Claude Code.",
+        "The plugin's server points at plinth.aconite.io. For this instance, set PLINTH_URL to its origin every time Claude Code starts (for example in your shell profile), or skip the plugin's server and keep the one added above.",
     },
   },
   {

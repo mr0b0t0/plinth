@@ -137,15 +137,19 @@ const commands = (s: string) => s.split("\n").map(code).join(" then ");
 function connectSection(config: Config): string {
   const endpoint = mcpEndpoint(config);
   const hosted = config.appOrigin === HOSTED_ORIGIN;
-  const plugin = claudeCodePluginCommands().join("\n");
+  const plugin = commands(claudeCodePluginCommands().join("\n"));
+  const bare = commands(claudeCodeCommand(endpoint));
   const codexPlugin = harness("codex").guidance.commands ?? "";
-  const pluginNote = hosted
-    ? ""
-    : ` Its server points at ${escapeHtml(HOSTED_ORIGIN)}; set ${code("PLINTH_URL")} to ${escapeHtml(config.appOrigin)} first.`;
+  const oneOrTheOther = escapeHtml(CLAUDE_CODE_ONE_OR_THE_OTHER);
+  // The plugin's server points at the hosted instance, so elsewhere this instance's server comes
+  // first and the plugin needs PLINTH_URL every time Claude Code starts.
+  const claudeCode = hosted
+    ? `Claude Code: install the Plinth plugin, which adds the server and a publishing skill in one step: ${plugin}. Or, ${escapeHtml(CLAUDE_CODE_TOOLS_ONLY)}: ${bare}. ${oneOrTheOther}`
+    : `Claude Code: add this instance's server (${escapeHtml(CLAUDE_CODE_TOOLS_ONLY)}): ${bare}. Or the Plinth plugin, which adds a server and a publishing skill: ${plugin}. Its server points at ${escapeHtml(HOSTED_ORIGIN)}, a different instance, unless ${code(`PLINTH_URL=${config.appOrigin}`)} is set every time Claude Code starts (for example in a shell profile). ${oneOrTheOther}`;
   return [
     "<h2>Connect an agent</h2>",
     "<ul>",
-    `<li>Claude Code: install the Plinth plugin, which adds the server and a publishing skill in one step: ${commands(plugin)}.${pluginNote} Or, ${escapeHtml(CLAUDE_CODE_TOOLS_ONLY)}: ${commands(claudeCodeCommand(endpoint))}. ${escapeHtml(CLAUDE_CODE_ONE_OR_THE_OTHER)}</li>`,
+    `<li>${claudeCode}</li>`,
     `<li>Codex: ${commands(codexCommand(endpoint))}. The plugin adds the skill: ${commands(codexPlugin)}.</li>`,
     `<li>Gemini CLI: ${commands(geminiCommand(endpoint))}.</li>`,
     `<li>Cursor, VS Code, Claude and ChatGPT: add ${code(endpoint)} as a remote MCP server and sign in with OAuth (${link(DOCS.mcp, "setup for each client")}).</li>`,
@@ -337,11 +341,12 @@ export function llmsTxt(config: Config): string {
     .join(" ");
   const tools = Object.entries(MCP_TOOL_SUMMARIES).map(([name, line]) => `- \`${name}\`: ${line}`);
   const plugin = claudeCodePluginCommands().join("` then `");
+  const bare = claudeCodeCommand(endpoint).split("\n").join("` then `");
   const codexPlugin = harness("codex").guidance.commands ?? "";
-  const pluginTarget =
+  const claudeCode =
     origin === HOSTED_ORIGIN
-      ? ""
-      : ` The plugin's server points at ${HOSTED_ORIGIN}; set PLINTH_URL=${origin} before starting Claude Code.`;
+      ? `Claude Code: the Plinth plugin (server and publishing skill): \`${plugin}\`. Or, ${CLAUDE_CODE_TOOLS_ONLY}: \`${bare}\`. ${CLAUDE_CODE_ONE_OR_THE_OTHER}`
+      : `Claude Code: this instance's server (${CLAUDE_CODE_TOOLS_ONLY}): \`${bare}\`. Or the Plinth plugin (a server and publishing skill): \`${plugin}\`. Its server points at ${HOSTED_ORIGIN}, a different instance, unless PLINTH_URL=${origin} is set every time Claude Code starts (for example in a shell profile). ${CLAUDE_CODE_ONE_OR_THE_OTHER}`;
   const visibility = config.allowPublicVisibility
     ? "public (listed and indexable), unlisted (anyone with the link), password, or private (only the owner, collaborators and listed emails)"
     : "unlisted (anyone with the link), password, or private (only the owner, collaborators and listed emails)";
@@ -357,7 +362,7 @@ ${about} The source code is MIT-licensed: ${REPO_URL}
 - Sign-in: OAuth 2.1 with PKCE and dynamic client registration. Protected resource metadata: ${protectedResourceUrl(endpoint)}. Authorization server metadata: ${origin}/.well-known/oauth-authorization-server
 - Scopes: artifacts:read, artifacts:write, mentions. Clients without OAuth use a personal access token as a bearer token.
 - MCP server card: ${serverCardUrl(config)}
-- Claude Code: the Plinth plugin (server and publishing skill): \`${plugin}\`.${pluginTarget} Or, ${CLAUDE_CODE_TOOLS_ONLY}: \`${claudeCodeCommand(endpoint).split("\n").join("` then `")}\`. ${CLAUDE_CODE_ONE_OR_THE_OTHER}
+- ${claudeCode}
 - Codex: \`${codexCommand(endpoint).split("\n").join("` then `")}\`. The plugin adds the skill: \`${codexPlugin.split("\n").join("` then `")}\`.
 - Gemini CLI: \`${geminiCommand(endpoint)}\`
 - Cursor and VS Code: add ${endpoint} as a remote MCP server; rule files with the publishing guidance are in ${REPO_URL}/tree/main/integrations
@@ -379,7 +384,7 @@ Owners choose who can view each artifact: ${visibility}. New artifacts are priva
 
 ## Publish a build
 
-Inline \`assets\` suit a page of up to about 20 files and 1 MB. For a build folder or anything bigger, call \`start_upload\` and run the command it returns from inside the build folder, or run \`npx -y @mr0b0t0/plinth publish <dir>\` with the Plinth CLI signed in. This instance's limits: ${origin}/api/v1/config. Details: ${DOCS.largeBuilds}
+Inline \`assets\` suit a page of up to about 20 files and 1 MB. For a build folder or anything bigger, call \`start_upload\`, replace \`<folder>\` in the \`commands.curl\` it returns with the build folder (the one with index.html at its top) and run it, or run \`npx -y @mr0b0t0/plinth publish <dir>\` with the Plinth CLI signed in. This instance's limits: ${origin}/api/v1/config. Details: ${DOCS.largeBuilds}
 
 ## REST API
 
