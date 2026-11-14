@@ -31,10 +31,12 @@ describe("MCP endpoint", () => {
         "claim_mention",
         "get_artifact",
         "list_artifacts",
+        "list_comments",
         "list_mentions",
         "list_versions",
         "publish_artifact",
         "reply_comment",
+        "resolve_comment",
         "restore_version",
         "set_visibility",
         "update_artifact",
@@ -50,7 +52,7 @@ describe("MCP endpoint", () => {
     const c = await mcpClient(a.token);
     const pub = await tool(c, "publish_artifact", { title: "Chart", html: "<h1>v1</h1>" });
     expect(pub.isError).toBe(false);
-    expect(pub.data).toMatchObject({ version: 1, visibility: "unlisted" });
+    expect(pub.data).toMatchObject({ version: 1, visibility: "allowlist" });
     const id = pub.data.id as string;
     const up = await tool(c, "update_artifact", {
       id,

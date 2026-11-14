@@ -256,9 +256,7 @@ export function AccessSection({
           />
         )}
         {visibility === "allowlist" && people === 0 && (
-          <Note tone="warning">
-            Nobody is on the list yet. Until you add people below, only you can open it.
-          </Note>
+          <Note>Only you can open it for now. Add people below to share it with them.</Note>
         )}
         {error && visibility !== "password" && (
           <p className="pl-field__error" role="alert">
@@ -355,7 +353,7 @@ export function PeopleSection({
     <Section
       id="settings-people"
       title="People"
-      description="Viewers can open it, and are the list for “Specific people”. Commenters can also comment; editors can also publish new versions."
+      description="Viewers can open it while it is private. Commenters can also comment; editors can also publish new versions."
     >
       {grants.length > 0 ? (
         <ul className="pl-acct-people" aria-busy={busy || undefined}>

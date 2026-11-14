@@ -263,6 +263,7 @@ await check("publish over /mcp with the admin token", async () => {
     arguments: {
       title: "Local smoke",
       html: "<!doctype html><title>s</title><h1>local smoke</h1>",
+      visibility: "unlisted",
     },
   });
   const text = r.content?.find((c) => c.type === "text")?.text ?? "";

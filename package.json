@@ -19,7 +19,8 @@
     "seed": "node scripts/seed.mjs",
     "openapi": "node scripts/openapi.mjs",
     "local:start": "node scripts/local-start.mjs",
-    "test:local": "node e2e/local/smoke.mjs"
+    "test:local": "node e2e/local/smoke.mjs",
+    "integrations": "node scripts/integrations.mjs"
   },
   "devDependencies": {
     "@biomejs/biome": "2.6.6",

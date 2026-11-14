@@ -136,7 +136,13 @@ export async function publishArtifact(
   }>(
     request,
     "/artifacts",
-    { title: "E2E artifact", html: "<!doctype html><h1>Hello from e2e</h1>", ...input },
+    // The API defaults to private; the suite is mostly about link viewers.
+    {
+      title: "E2E artifact",
+      html: "<!doctype html><h1>Hello from e2e</h1>",
+      visibility: "unlisted",
+      ...input,
+    },
     { token },
   );
   if (res.status !== 201)

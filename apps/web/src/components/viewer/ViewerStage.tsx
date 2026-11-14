@@ -70,7 +70,7 @@ const ACCESS_PILL: Record<OkGate["artifact"]["visibility"], string> = {
   public: "Public",
   unlisted: "Anyone with the link",
   password: "Password",
-  allowlist: "Specific people",
+  allowlist: "Private",
 };
 
 export function ViewerStage({

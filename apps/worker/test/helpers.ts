@@ -104,9 +104,12 @@ export async function publish(auth: Record<string, string>, body: Record<string,
   const res = await call("/api/v1/artifacts", {
     method: "POST",
     headers: { ...auth, "Content-Type": "application/json" },
+    // The API defaults to private (allowlist); most tests are about link viewers, so they say
+    // "unlisted" explicitly. Tests of the default pass `visibility: undefined`.
     body: JSON.stringify({
       title: "Test artifact",
       html: "<!doctype html><h1>Hello</h1>",
+      visibility: "unlisted",
       ...body,
     }),
   });

@@ -220,7 +220,8 @@ test("dashboard, tokens, MCP publishing, search, settings and revocation", async
   const row = page.getByRole("listitem").filter({ hasText: "Quarterly revenue" });
   await expect(row).toContainText("v1");
   // List columns: access ("Link" for unlisted), version, owner, updated.
-  await expect(row).toContainText("Link");
+  // Published over MCP without a visibility: private by default.
+  await expect(row).toContainText("Private");
   await expect(row).toContainText("You");
   await expect(row.locator('[title="1 version"]')).toHaveText(/v1/);
 
@@ -270,9 +271,9 @@ test("dashboard, tokens, MCP publishing, search, settings and revocation", async
     page.getByText("Current viewers need to open the link again.", { exact: false }),
   ).toBeVisible();
 
-  // Allowlist ("Specific people"), then a commenter.
-  await page.getByRole("radio", { name: /^Specific people/ }).check();
-  await expect(page.getByText("Nobody is on the list yet.", { exact: false })).toBeVisible();
+  // Allowlist ("Private"), then a commenter.
+  await page.getByRole("radio", { name: /^Private/ }).check();
+  await expect(page.getByText("Only you can open it for now.", { exact: false })).toBeVisible();
   await page.getByRole("button", { name: "Save access" }).click();
   await expect.poll(async () => (await sharing()).visibility).toBe("allowlist");
 

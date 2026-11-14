@@ -2,7 +2,7 @@
 // from this instance's MCP endpoint. When a new connection appears (the page polls while this is
 // open), it says so and offers a first prompt to try. No tokens here; those live under Advanced.
 import { ArrowSquareOutIcon, CheckCircleIcon } from "@phosphor-icons/react";
-import type { ConnectionInfo } from "@plinth/shared";
+import { type ConnectionInfo, HOSTED_ORIGIN, harness } from "@plinth/shared";
 import { type ReactNode, type Ref, useState } from "react";
 import { Button, buttonClassName, ICON_SIZE, Tabs } from "../ui/index.ts";
 import { CopyBlock, CopyField } from "./CopyField.tsx";
@@ -16,6 +16,7 @@ import {
   cursorConfigJson,
   cursorInstallLink,
   firstPrompt,
+  geminiCommand,
   guessConnectClient,
   isLocalEndpoint,
   protectedResourceUrl,
@@ -32,6 +33,7 @@ const CLIENT_LOOK: Record<ConnectClient, { mark: string; hint: string }> = {
   chatgpt: { mark: "G", hint: "web" },
   "claude-code": { mark: "CC", hint: "terminal" },
   codex: { mark: "Cx", hint: "terminal" },
+  "gemini-cli": { mark: "Ge", hint: "terminal" },
   cursor: { mark: "Cu", hint: "1 click" },
   vscode: { mark: "VS", hint: "1 click" },
   other: { mark: "…", hint: "" },
@@ -188,6 +190,21 @@ function ClientSteps({ client, endpoint }: { client: ConnectClient; endpoint: st
           </p>
         </div>
       );
+    case "gemini-cli":
+      return (
+        <div className="pl-acct-howto__item">
+          <CopyBlock
+            label="Run in a terminal"
+            value={geminiCommand(endpoint)}
+            copyLabel="Copy Gemini CLI command"
+            copiedMessage="Command copied"
+          />
+          <p>
+            The first time Gemini uses Plinth it opens Plinth in your browser (or run{" "}
+            <code>/mcp auth plinth</code>); click <strong>Allow</strong>.
+          </p>
+        </div>
+      );
     case "cursor":
       return (
         <div className="pl-acct-howto__item">
@@ -255,6 +272,40 @@ function ClientSteps({ client, endpoint }: { client: ConnectClient; endpoint: st
         </div>
       );
   }
+}
+
+/**
+ * How this client learns "the Plinth way" (the plinth-artifacts skill) beyond what the server's own
+ * instructions say: a plugin, an extension, a rule file or an uploaded skill.
+ */
+function Guidance({ client, endpoint }: { client: ConnectClient; endpoint: string }) {
+  const g = harness(client).guidance;
+  let ownInstance = false;
+  try {
+    ownInstance = new URL(endpoint).origin !== HOSTED_ORIGIN;
+  } catch {
+    // keep the hosted wording
+  }
+  return (
+    <div className="pl-acct-howto__item pl-acct-guidance">
+      <h3 className="type-small">Teach it Plinth's rules</h3>
+      <p className="type-small text-muted">{g.summary}</p>
+      {g.commands && (
+        <CopyBlock
+          label="Run"
+          value={g.commands}
+          copyLabel="Copy commands"
+          copiedMessage="Commands copied"
+        />
+      )}
+      {g.link && (
+        <div>
+          <ExternalButton href={g.link.href}>{g.link.label}</ExternalButton>
+        </div>
+      )}
+      {ownInstance && g.ownInstance && <p className="type-small text-muted">{g.ownInstance}</p>}
+    </div>
+  );
 }
 
 export interface ConnectPanelProps {
@@ -343,7 +394,12 @@ export function ConnectPanel({
           label: c.label,
           lead: CLIENT_LOOK[c.id].mark,
           hint: CLIENT_LOOK[c.id].hint,
-          content: <ClientSteps client={c.id} endpoint={endpoint} />,
+          content: (
+            <>
+              <ClientSteps client={c.id} endpoint={endpoint} />
+              <Guidance client={c.id} endpoint={endpoint} />
+            </>
+          ),
         }))}
       />
     </section>

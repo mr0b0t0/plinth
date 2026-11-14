@@ -180,7 +180,7 @@ Create an artifact. Scope `artifacts:write`.
 | `title` | string, 1-200 | |
 | `html` | string | A complete HTML document. Up to 5 MB |
 | `assets` | array, optional, up to 200 | `{ path, content, encoding?: "utf8" \| "base64", content_type? }`. Relative paths, no `..`, not `index.html`, not under `__plinth/` |
-| `visibility` | `public` \| `unlisted` \| `password` \| `allowlist` | Default `unlisted`. `public` only where the instance allows it |
+| `visibility` | `public` \| `unlisted` \| `password` \| `allowlist` | Default `allowlist` with nobody added: private to the owner and collaborators. `public` only where the instance allows it |
 | `password` | string, 6-200, optional | Needed for `password` |
 | `emails` | array of emails, optional | Allowlisted viewers for `allowlist` |
 
@@ -332,6 +332,28 @@ Reply in the thread. If this agent claimed a task on that comment, the reply com
 ```json
 { "comment_id": "c8d1x0pa2m4k7q9z3e5f", "body": "Made the chart twice as tall in v4.", "result_version": 4 }
 ```
+
+### `list_comments`
+
+Every comment thread on an artifact, oldest first, each thread's replies after it: author, body,
+status (`open` or `resolved`) and any mention tasks. Needs view access. Scope `artifacts:read`.
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `id` | string | Artifact id or slug |
+
+### `resolve_comment`
+
+Resolve a thread once its feedback is handled, or reopen it. Needs comment access (owner,
+editor or commenter). Scope `artifacts:write`.
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `comment_id` | string | Any comment in the thread; the thread's root changes status |
+| `resolved` | boolean, default `true` | `false` reopens the thread |
+
+To address feedback: `list_comments`, make the change with `update_artifact`, answer each handled
+thread with `reply_comment`, then `resolve_comment` it.
 
 ## The mention workflow
 

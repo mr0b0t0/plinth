@@ -89,7 +89,7 @@ export function AccessProblem({
       reason === "password_required"
         ? "This artifact needs a password. Open it, enter the password, then come back."
         : reason === "email_required"
-          ? "This artifact is shared with specific people. Open it and confirm your email, then come back."
+          ? "This artifact is private. If it was shared with you, open it and confirm your email, then come back."
           : reason === "taken_down"
             ? "This artifact was taken down."
             : `You do not have access to this ${what}.`;

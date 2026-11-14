@@ -109,6 +109,26 @@ describe("ConnectPanel", () => {
     expect(screen.getByText(/streamable HTTP/)).toBeTruthy();
   });
 
+  it("shows how each client learns Plinth's rules, from the harness registry", async () => {
+    const user = userEvent.setup();
+    renderPanel();
+    await user.click(screen.getByRole("tab", { name: "Claude Code" }));
+    expect(screen.getByText("Teach it Plinth's rules")).toBeTruthy();
+    expect(codeText("Run")).toBe("/plugin install plinth --marketplace mr0b0t0/plinth");
+    // Not the hosted instance: say how to point the plugin's server here.
+    expect(screen.getByText(/set PLINTH_URL/)).toBeTruthy();
+
+    await user.click(screen.getByRole("tab", { name: "Gemini CLI" }));
+    expect(codeText("Run in a terminal")).toBe(
+      `gemini mcp add --transport http plinth ${ENDPOINT}`,
+    );
+
+    await user.click(screen.getByRole("tab", { name: "Cursor" }));
+    expect(
+      screen.getByRole("link", { name: /plinth-artifacts\.mdc/ }).getAttribute("href"),
+    ).toMatch(/integrations\/cursor\/plinth-artifacts\.mdc$/);
+  });
+
   it("remembers the chosen client", async () => {
     const user = userEvent.setup();
     const { unmount } = renderPanel();

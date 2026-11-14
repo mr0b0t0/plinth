@@ -70,8 +70,8 @@ export const VISIBILITY_META: Record<
     icon: LockSimpleIcon,
   },
   allowlist: {
-    label: "Specific people",
-    description: "Only the email addresses you add can open it.",
+    label: "Private",
+    description: "Only you, your collaborators and the email addresses you add can open it.",
     icon: UserListIcon,
   },
 };

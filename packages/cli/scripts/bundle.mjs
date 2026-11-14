@@ -7,6 +7,7 @@
 //   runtime/migrations/         the D1 migrations
 //   runtime/scripts/            instance.mjs and the tunnel helpers it imports
 //   runtime/wrangler.base.json  compatibility settings, assets settings and default vars
+//   runtime/harnesses.mjs       the harness registry (packages/shared), types stripped
 import {
   cpSync,
   existsSync,
@@ -16,6 +17,7 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
+import { stripTypeScriptTypes } from "node:module";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -65,4 +67,8 @@ const base = {
   ),
 };
 writeFileSync(path.join(out, "wrangler.base.json"), `${JSON.stringify(base, null, 2)}\n`);
+
+// The same registry the web app's Connect panel uses, so `plinth connect` says the same things.
+const registry = readFileSync(path.join(root, "packages/shared/src/harnesses.ts"), "utf8");
+writeFileSync(path.join(out, "harnesses.mjs"), stripTypeScriptTypes(registry));
 console.log(`bundle: wrote ${path.relative(root, out)}`);

@@ -40,7 +40,7 @@ import { PublicShell } from "../components/layout/PublicShell.tsx";
    `aria-hidden="true"`.
 6. **Words.** Sentence case. Buttons say what happens ("Revoke connection", never "OK"); the toast
    uses the same verb ("Connection revoked"). Visibility and roles use `VISIBILITY_META` and
-   `ROLE_META` labels everywhere ("Specific people" for `allowlist`).
+   `ROLE_META` labels everywhere ("Private" for `allowlist`).
 7. **Modes.** Never branch on the theme in code; tokens switch. `data-theme="light|dark"` on any
    element renders that subtree in that mode.
 8. **Motion.** Use `--duration-*` and `--ease-*`; they drop to 0 under reduced motion.

@@ -1,11 +1,20 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "plinth",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Publish, update and share HTML artifacts on Plinth: the Plinth MCP server plus a skill with its publishing rules",
-  "author": { "name": "Aconite Software & Investments, Lda.", "url": "https://aconite.io" },
+  "author": {
+    "name": "Aconite Software & Investments, Lda.",
+    "url": "https://aconite.io"
+  },
   "homepage": "https://github.com/mr0b0t0/plinth/blob/main/docs/agents.md",
   "repository": "https://github.com/mr0b0t0/plinth",
   "license": "MIT",
-  "keywords": ["artifacts", "html", "publishing", "sharing", "mcp"]
+  "keywords": [
+    "artifacts",
+    "html",
+    "publishing",
+    "sharing",
+    "mcp"
+  ]
 }

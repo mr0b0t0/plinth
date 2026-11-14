@@ -1295,7 +1295,7 @@
             }
           },
           "visibility": {
-            "default": "unlisted",
+            "default": "allowlist",
             "type": "string",
             "enum": ["public", "unlisted", "password", "allowlist"]
           },

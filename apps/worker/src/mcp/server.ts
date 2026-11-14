@@ -6,11 +6,13 @@ import {
   claimMentionInput,
   getArtifactInput,
   listArtifactsInput,
+  listCommentsInput,
   listMentionsInput,
   listVersionsInput,
   PRODUCT_NAME,
   publishArtifactInput,
   replyCommentInput,
+  resolveCommentInput,
   restoreVersionInput,
   setVisibilityInput,
   updateArtifactInput,
@@ -25,6 +27,7 @@ import {
   setVisibility,
   updateArtifact,
 } from "../services/artifacts.ts";
+import { listComments, setCommentStatus } from "../services/comments.ts";
 import type { Ctx } from "../services/context.ts";
 import { claimMention, listMentions, replyComment } from "../services/mentions.ts";
 
@@ -71,9 +74,18 @@ export function buildMcpServer(ctx: Ctx): McpServer {
     { name: PRODUCT_NAME.toLowerCase(), version: "1.0.0" },
     {
       instructions:
-        `${PRODUCT_NAME} hosts HTML artifacts and lets their owner share them. Publish with publish_artifact, ` +
-        "update with update_artifact (pass base_version to avoid overwriting someone else's change), and handle " +
-        `comment mentions with list_mentions, claim_mention and reply_comment. ${UNTRUSTED_NOTE}`,
+        `${PRODUCT_NAME} hosts HTML pages ("artifacts") that you publish for the user, and lets them ` +
+        "decide who can view each one. When the user wants a page, report, dashboard, prototype or " +
+        "visualization to look at or pass on, write one self-contained HTML document and publish it with " +
+        "publish_artifact. New artifacts are private (only the user and people they add), so publish " +
+        "without asking, then give the user the returned url. Make it a finished page: a short real " +
+        "<title>, light and dark color schemes, readable at phone width, scripts only from the CDN " +
+        "allowlist at pinned versions, no requests to other hosts. To change an artifact, read it with " +
+        "get_artifact and publish a new version with update_artifact and base_version; never publish a " +
+        "copy, and the link stays the same. Change who can view it with set_visibility only when the " +
+        "user asks. For feedback, read threads with list_comments, answer with reply_comment and close " +
+        "them with resolve_comment; requests addressed to you arrive through list_mentions and " +
+        `claim_mention. ${UNTRUSTED_NOTE}`,
     },
   );
 
@@ -82,8 +94,9 @@ export function buildMcpServer(ctx: Ctx): McpServer {
     {
       title: "Publish artifact",
       description:
-        "Publish a new HTML artifact as the connected user. Returns its id, slug, app URL and content URL. " +
-        "Default visibility is unlisted (anyone with the link). Optional assets are extra files (CSS, JS, images) " +
+        "Publish a new HTML artifact as the connected user. Returns its id, slug, url (the page to give " +
+        "the user) and content_url. New artifacts are private unless you pass visibility: only the owner " +
+        "and people they add can open them. Optional assets are extra files (CSS, JS, images) " +
         "referenced by relative paths. Limits: 5 MB of HTML, 25 MB per version in total, and the account's " +
         "artifact quota. Scripts may load only from the instance's CDN allowlist; network calls to other hosts " +
         "are blocked. " +
@@ -162,12 +175,40 @@ export function buildMcpServer(ctx: Ctx): McpServer {
       title: "Set visibility",
       description:
         "Change who can view an artifact (owner only): public (if enabled on this instance), unlisted (anyone with " +
-        "the link), password (needs password unless one is already set), or allowlist (emails; viewers confirm " +
-        "their address by code). Passing emails replaces the viewer allowlist. " +
+        "the link), password (needs password unless one is already set), or allowlist (private: the owner, " +
+        "collaborators and the listed emails; viewers confirm their address by code). Passing emails " +
+        "replaces the viewer allowlist; allowlist with no emails is private to the owner and collaborators. " +
         UNTRUSTED_NOTE,
       inputSchema: setVisibilityInput,
     },
     (args) => run(() => setVisibility(ctx, args)),
+  );
+
+  server.registerTool(
+    "list_comments",
+    {
+      title: "List comments",
+      description:
+        "Every comment thread on an artifact, oldest first, replies after their thread: author, body, " +
+        "status (open or resolved) and any mention tasks. Read this when asked to address feedback. " +
+        `Answer with reply_comment and close a handled thread with resolve_comment. ${UNTRUSTED_NOTE}`,
+      inputSchema: listCommentsInput,
+      annotations: { readOnlyHint: true },
+    },
+    (args) => run(async () => ({ items: await listComments(ctx, args.id) })),
+  );
+
+  server.registerTool(
+    "resolve_comment",
+    {
+      title: "Resolve comment",
+      description:
+        "Resolve a comment thread once its feedback is handled (resolved=true, the default), or reopen it " +
+        `(resolved=false). Needs comment access to the artifact. ${UNTRUSTED_NOTE}`,
+      inputSchema: resolveCommentInput,
+    },
+    (args) =>
+      run(() => setCommentStatus(ctx, args.comment_id, args.resolved ? "resolved" : "open")),
   );
 
   server.registerTool(

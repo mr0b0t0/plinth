@@ -3,8 +3,14 @@
   "plugins": [
     {
       "name": "plinth",
-      "source": { "source": "local", "path": "./integrations/plugin" },
-      "policy": { "installation": "AVAILABLE", "authentication": "ON_INSTALL" },
+      "source": {
+        "source": "local",
+        "path": "./integrations/plugin"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
       "category": "Productivity"
     }
   ]

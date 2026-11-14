@@ -68,7 +68,7 @@ export const publishArtifactInput = z.object({
   title: titleSchema,
   html: htmlSchema,
   assets: assetsSchema.optional(),
-  visibility: visibilitySchema.default("unlisted"),
+  visibility: visibilitySchema.default("allowlist"),
   /** Needed when visibility is "password". */
   password: passwordSchema.optional(),
   /** Allowlisted viewer emails when visibility is "allowlist". */
@@ -118,6 +118,14 @@ export const listMentionsInput = z.object({
 });
 
 export const claimMentionInput = z.object({ task_id: z.string().min(1).max(64) });
+
+export const listCommentsInput = z.object({ id: artifactRefSchema });
+
+export const resolveCommentInput = z.object({
+  comment_id: z.string().min(1).max(64),
+  /** true resolves the thread, false reopens it. */
+  resolved: z.boolean().default(true),
+});
 
 export const replyCommentInput = z.object({
   comment_id: z.string().min(1).max(64),

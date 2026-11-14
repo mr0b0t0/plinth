@@ -107,6 +107,8 @@ await check("publish and update through /mcp (official MCP client)", async () =>
   const pub = await call("publish_artifact", {
     title: `Staging smoke ${stamp}`,
     html: `<!doctype html><title>smoke</title><h1>smoke v1 ${stamp}</h1>`,
+    // New artifacts are private; the anonymous viewer check below needs a link artifact.
+    visibility: "unlisted",
   });
   const up = await call("update_artifact", {
     id: pub.id,

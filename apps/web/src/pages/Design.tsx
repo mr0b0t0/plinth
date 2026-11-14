@@ -565,7 +565,7 @@ export default function Design() {
             <div className="ds-families">
               <div className="ds-family">
                 <p className="ds-family__sample ds-family__sample--ui">
-                  Share with specific people
+                  Private: only people you add
                 </p>
                 <p className="ds-family__meta">
                   <strong>Geist</strong> variable, 400 to 600. The interface, page titles and the
@@ -900,7 +900,7 @@ function ComponentSpecimens() {
             defaultValue="unlisted"
             options={VISIBILITIES.map((v) => ({
               value: v,
-              label: v === "allowlist" ? "Specific people" : v[0]?.toUpperCase() + v.slice(1),
+              label: v === "allowlist" ? "Private" : v[0]?.toUpperCase() + v.slice(1),
             }))}
           />
           <Textarea

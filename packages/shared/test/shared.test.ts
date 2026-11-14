@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { assetInputSchema, publishArtifactInput, route } from "../src/index.ts";
+import {
+  assetInputSchema,
+  HARNESSES,
+  HOSTED_ORIGIN,
+  harness,
+  PLUGIN,
+  publishArtifactInput,
+  route,
+} from "../src/index.ts";
 import { mentionHandle, parseMentions } from "../src/mentions.ts";
 
 describe("parseMentions", () => {
@@ -19,8 +27,9 @@ describe("parseMentions", () => {
 
 describe("schemas", () => {
   it("defaults visibility to unlisted", () => {
+    // Private by default (allowlist with nobody added), like Claude's artifacts.
     expect(publishArtifactInput.parse({ title: "t", html: "<p>x</p>" }).visibility).toBe(
-      "unlisted",
+      "allowlist",
     );
   });
   it("rejects unsafe asset paths", () => {
@@ -31,5 +40,28 @@ describe("schemas", () => {
   });
   it("fills route params", () => {
     expect(route("/a/:slug/v/:n", { slug: "x y", n: 3 })).toBe("/a/x%20y/v/3");
+  });
+});
+
+describe("harness registry", () => {
+  it("has one entry per client, each with guidance", () => {
+    const ids = HARNESSES.map((h) => h.id);
+    expect(new Set(ids).size).toBe(ids.length);
+    for (const h of HARNESSES) {
+      expect(h.label.length).toBeGreaterThan(0);
+      expect(h.guidance.summary.length).toBeGreaterThan(0);
+      expect(
+        h.guidance.commands || h.guidance.link || h.guidance.kind === "server-only",
+      ).toBeTruthy();
+    }
+  });
+  it("marks hosted chat apps as unable to reach a local instance", () => {
+    expect(harness("claude").reachesLocal).toBe(false);
+    expect(harness("chatgpt").reachesLocal).toBe(false);
+    expect(harness("claude-code").reachesLocal).toBe(true);
+  });
+  it("keeps the product name and plugin name free of Claude and Codex", () => {
+    expect(PLUGIN.name).not.toMatch(/claude|codex/i);
+    expect(HOSTED_ORIGIN).toBe("https://plinth.aconite.io");
   });
 });

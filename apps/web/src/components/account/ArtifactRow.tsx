@@ -48,7 +48,7 @@ export const ACCESS_LABEL: Record<Visibility, string> = {
   public: "Public",
   unlisted: "Link",
   password: "Password",
-  allowlist: "Specific people",
+  allowlist: "Private",
 };
 
 function Access({ visibility }: { visibility: Visibility }) {

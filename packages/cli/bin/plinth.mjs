@@ -152,8 +152,11 @@ function selector(opts) {
   return `${opts.name && opts.name !== "plinth" ? ` --name ${opts.name}` : ""}${opts.home ? ` --home ${opts.home}` : ""}`;
 }
 
-function printConnect(inst) {
+async function printConnect(inst) {
+  const reg = await import(path.join(runtimeDir, "harnesses.mjs"));
   const endpoint = `${inst.appOrigin}/mcp`;
+  const own = inst.appOrigin !== reg.HOSTED_ORIGIN;
+  const indent = (text) => text.replace(/^/gm, "  ");
   console.log(`Plinth MCP endpoint: ${endpoint}`);
   console.log(
     "Agents sign in with OAuth: the first time, a browser opens on Plinth; click Allow.\n",
@@ -163,20 +166,25 @@ function printConnect(inst) {
       "This instance runs on this computer only. Agents on this machine can use it; claude.ai\n" +
         "and ChatGPT connect from their own servers and cannot.\n",
     );
-  console.log("Claude Code:");
-  console.log(`  claude mcp add --transport http --scope user plinth ${endpoint}`);
-  console.log("  claude mcp login plinth\n");
-  console.log("Codex:");
-  console.log(`  codex mcp add plinth --url ${endpoint}`);
-  console.log("  codex mcp login plinth\n");
-  console.log(
-    `Cursor, VS Code${inst.mode === "local" ? "" : ", Claude, ChatGPT"}: sign in at ${inst.appOrigin} and open Connections.\n`,
-  );
-  console.log(
-    "The Plinth plugin adds a skill with Plinth's publishing rules (docs/agents.md):\n" +
-      `  Claude Code: PLINTH_URL=${inst.appOrigin}, then /plugin install plinth --marketplace mr0b0t0/plinth\n` +
-      "  Codex:       codex plugin marketplace add mr0b0t0/plinth && codex plugin add plinth@plinth",
-  );
+  const commands = {
+    "claude-code": reg.claudeCodeCommand(endpoint),
+    codex: reg.codexCommand(endpoint),
+    "gemini-cli": reg.geminiCommand(endpoint),
+  };
+  for (const h of reg.HARNESSES) {
+    if (inst.mode === "local" && !h.reachesLocal) continue;
+    console.log(`${h.label}:`);
+    if (commands[h.id]) console.log(indent(commands[h.id]));
+    else if (h.id === "other")
+      console.log(`  OAuth 2.1 with discovery at ${reg.protectedResourceUrl(endpoint)}`);
+    else console.log(`  Sign in at ${inst.appOrigin} and open Connections > Connect an agent.`);
+    const g = h.guidance;
+    console.log(`  Plinth's rules: ${g.summary}`);
+    if (g.commands) console.log(indent(indent(g.commands)));
+    if (g.link) console.log(`    ${g.link.href}`);
+    if (own && g.ownInstance) console.log(`    ${g.ownInstance}`);
+    console.log("");
+  }
 }
 
 const { command, opts } = parseArgs(process.argv.slice(2));
@@ -222,7 +230,7 @@ try {
     );
     process.exit(h?.ok ? 0 : 3);
   } else if (command === "connect") {
-    printConnect(requireInstance(instance, opts));
+    await printConnect(requireInstance(instance, opts));
   } else die(`Unknown command "${command}". Run plinth --help`);
 } catch (e) {
   if (e instanceof instance.InstanceError) die(e.message);

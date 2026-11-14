@@ -47,6 +47,9 @@ jobs:
       - name: docs/openapi.json is up to date
         run: pnpm openapi --check
 
+      - name: Generated integrations are up to date
+        run: pnpm integrations --check
+
       - name: Install Playwright Chromium
         run: pnpm --filter @plinth/e2e exec playwright install --with-deps chromium
 

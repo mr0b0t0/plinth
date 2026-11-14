@@ -70,9 +70,7 @@ export function GateScreen({ gate, artifactRef, query, onGate }: GateScreenProps
     <PublicShell centered>
       <section className="pl-gate" aria-labelledby="gate-title">
         <Icon size={ICON_SIZE.xl} aria-hidden="true" className="pl-gate__icon" />
-        <p className="pl-gate__eyebrow">
-          {password ? "Protected with a password" : "Shared with specific people"}
-        </p>
+        <p className="pl-gate__eyebrow">{password ? "Protected with a password" : "Private"}</p>
         <h1 id="gate-title" className="pl-gate__title">
           {gate.artifact.title}
         </h1>

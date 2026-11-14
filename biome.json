@@ -14,7 +14,11 @@
       "!**/*.md",
       "!**/worker-configuration.d.ts",
       "!**/playwright-report",
-      "!**/test-results"
+      "!**/test-results",
+      "!integrations/plugin/**/*.json",
+      "!integrations/gemini/**/*.json",
+      "!.claude-plugin",
+      "!.agents"
     ]
   },
   "formatter": {

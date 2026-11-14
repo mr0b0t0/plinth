@@ -95,7 +95,8 @@ async function seedHistory(opts: { visibility?: string; password?: string } = {}
     token,
     TITLE,
     [{ html: V1 }, { html: V2, note: "Second pass" }, { html: V3, note: "Retitle and add gamma" }],
-    opts,
+    // New artifacts are private; these tests are about link viewers unless they say otherwise.
+    { visibility: "unlisted", ...opts },
   );
   return { email, token, slug, id };
 }
