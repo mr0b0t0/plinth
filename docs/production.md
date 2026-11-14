@@ -12,13 +12,13 @@ Status on 2026-11-14: **deployed** at <https://plinth.aconite.io>, with artifact
 | `CONTENT_ISOLATION` | `origin`. The content host is its own registrable domain, so each artifact is its own origin, cross-site to the app (see [security.md](security.md)) |
 | `ENVIRONMENT` | `production` |
 | Email | SendGrid, `EMAIL_FROM="Plinth <noreply@plinth.aconite.io>"` (`plinth.aconite.io` authenticated in SendGrid on 2026-11-14) |
-| `ADMIN_EMAIL` | `german@aconite.io` |
+| `ADMIN_EMAIL` | The maintainer's address |
 | Operator (legal pages) | `OPERATOR_NAME="Aconite Software & Investments, Lda."`, `OPERATOR_ADDRESS="Avenida República da Bulgária, Lote 15, Loja A, 1950-375 Lisboa, Portugal"`, `OPERATOR_REGISTRATION="VAT PT516696696"`, `OPERATOR_EMAIL=hello@aconite.io` |
 | Config file | `apps/worker/wrangler.production.jsonc` (git-ignored; written by `scripts/setup.mjs`) |
 
 ## Cloud resources (2026-11-14)
 
-All in Cloudflare account `ebc2059679ce36868d5e16290c7730eb` (`german@aconite.io`):
+All in the operator's Cloudflare account:
 
 | Resource | Name / ID | Created by |
 | --- | --- | --- |
@@ -32,7 +32,7 @@ All in Cloudflare account `ebc2059679ce36868d5e16290c7730eb` (`german@aconite.io
 | DNS record | `A *.plinthusercontent.com` → `192.0.2.0`, proxied (the zone's only record) | Cloudflare dashboard |
 | SendGrid | Domain authentication for `plinth.aconite.io`: CNAMEs `em9604.plinth`, `s1._domainkey.plinth`, `s2._domainkey.plinth` and `TXT _dmarc.plinth` (`v=DMARC1; p=none;`), all DNS only in `aconite.io` | SendGrid and Cloudflare dashboards |
 
-The `aconite.io` zone itself was moved from Namecheap DNS to Cloudflare by German on 2026-11-14,
+The `aconite.io` zone itself was moved from its registrar's DNS to Cloudflare on 2026-11-14,
 with every existing record kept as DNS-only. Besides the SendGrid records above, nothing else in
 the zone was changed for Plinth.
 
@@ -48,7 +48,7 @@ pointed at Cloudflare's edge while public DNS was still switching over), **4/5**
 sign-in email accepted by SendGrid, OAuth discovery and the `/mcp` 401 challenge, and publish and
 update over `/mcp` passed. The anonymous viewer fetch failed because the old content host had no
 certificate. That smoke test used a personal access token named "Production smoke test" on
-`german@aconite.io`'s account, created for it (a user row for that address was inserted into the
+the maintainer's account, created for it (a user row for that address was inserted into the
 production database).
 
 After the switch to `plinthusercontent.com` (curl against Cloudflare's edge):
@@ -70,12 +70,12 @@ Full run after the switch (12:34 CET), against public DNS:
     `Permissions-Policy` and a single-use token.
 
   The token ("Production smoke test 2") was revoked afterwards.
-- `POST /api/v1/auth/login` for `german@aconite.io`: 200, so SendGrid accepted a sign-in email
+- `POST /api/v1/auth/login` for the maintainer's address: 200, so SendGrid accepted a sign-in email
   from `noreply@plinth.aconite.io`. Delivery to the inbox wasn't checked from here.
 - **Real client**: Claude Code 2.1.325 signed in to `https://plinth.aconite.io/mcp`:
   - The sign-in used dynamic client registration and PKCE, ending with a one-click Allow.
   - `claude mcp add --transport http`, then `claude mcp login`. Playwright drove the browser side
-    with a session for `german@aconite.io`.
+    with a session for the maintainer's account.
   - `claude -p` then published <https://plinth.aconite.io/a/welcome-to-plinth-lftvvkap0l> on the
     owner's Claude subscription. This was before the content-host switch.
   - After the switch it renders for an anonymous visitor in Chromium, light and dark, from

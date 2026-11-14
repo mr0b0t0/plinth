@@ -246,7 +246,7 @@ Test-file shorthand: `W:` = `apps/worker/test/`, `Wb:` = `apps/web/src/`, `E:` =
 | 7. Design polish, `/design`, accessibility pass | Met | see UI table; independent UI review (0 axe violations on Plinth pages), fixes applied |  |
 | 8. Hosted flags, report and takedown, policy templates | Partial | see Features | Public visibility flag; reports/takedown always on (DECISIONS, **Review**) |
 | 9. README, setup script, deploy guide, license, contribution guide | Met | see Deliverables |  |
-| 10. Staging deploy (named in the review brief, not in the checked-in build prompt) | Met | `docs/staging.md`, `e2e/staging/smoke.mjs`, `scripts/setup.mjs --workers-dev` | Deployed 2026-11-13 to `plinth-staging.aconite-io.workers.dev` after German enabled R2 and approved the workers.dev subdomain; smoke test 5/5 live. Uses the path fallback, so per-artifact subdomain isolation is still verified locally only |
+| 10. Staging deploy (named in the review brief, not in the checked-in build prompt) | Met | `docs/staging.md`, `e2e/staging/smoke.mjs`, `scripts/setup.mjs --workers-dev` | Deployed 2026-11-13 to `plinth-staging.aconite-io.workers.dev` after R2 was enabled and the workers.dev subdomain approved; smoke test 5/5 live. Uses the path fallback, so per-artifact subdomain isolation is still verified locally only |
 
 ## Testing and verification
 

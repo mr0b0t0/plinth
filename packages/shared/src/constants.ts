@@ -88,6 +88,8 @@ export const RATE_LIMITS = {
   viewerCodesPerEmailPerHour: 5,
   commentsPerUserPerHour: 60,
   reportsPerIpPerHour: 10,
+  /** GET /a/<slug>/source without signing in: generous, like other link-viewer reads. */
+  sourceReadsPerIpPerHour: 600,
 } as const;
 
 export const DEFAULTS = {

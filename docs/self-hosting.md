@@ -1,13 +1,14 @@
 # Self-hosting Plinth
 
 Plinth runs as one Cloudflare Worker with one D1 database and one R2 bucket. A personal instance
-fits Cloudflare's free tier. This guide covers the two modes, every setting, the setup script,
-deploying, and connecting agents. The step-by-step DNS and email work is in
-[deploy-checklist.md](deploy-checklist.md).
+fits Cloudflare's free tier. This guide covers the two modes, deploying with one command from npm,
+every setting, deploying from a checkout of the repo, and connecting agents. The step-by-step DNS
+and email work is in [deploy-checklist.md](deploy-checklist.md).
 
 ## What you need
 
-- A Cloudflare account. Log in once with `pnpm --filter @plinth/worker exec wrangler login`.
+- A Cloudflare account. `plinth deploy` logs you in with wrangler the first time (from a checkout:
+  `pnpm --filter @plinth/worker exec wrangler login`).
 - Two domains on that account (zones):
   - an **app host** for sign-in, the dashboard, the API and `/mcp`, e.g. `plinth.example.com`;
   - a **content host** on a *different registrable domain*, e.g. `example-usercontent.net`. Each
@@ -17,7 +18,7 @@ deploying, and connecting agents. The step-by-step DNS and email work is in
     before that with `CONTENT_ISOLATION=opaque`, which costs artifacts their browser storage (see
     [security.md](security.md#opaque-content-isolation)).
 - For multi-user mode: a SendGrid or Resend account with a verified sending domain.
-- Node 22.12+ and pnpm 10 on the machine you deploy from.
+- Node 22.12+ on the machine you deploy from (macOS or Linux), and pnpm 10 for the checkout path.
 
 ## Choose a mode
 
@@ -36,10 +37,63 @@ with D1 and R2 on local disk and a Cloudflare Tunnel for access:
 `node scripts/setup.mjs --tunnel`, then `pnpm local:start`. See
 [local-hosting.md](local-hosting.md).
 
+## Deploy with one command
+
+The npm package `@mr0b0t0/plinth` ships the built Worker, web app and migrations, so this needs no
+checkout and no build:
+
+```sh
+export RESEND_API_KEY=...        # or SENDGRID_API_KEY
+npx @mr0b0t0/plinth deploy --app-host plinth.example.com --content-host example-usercontent.net \
+  --email-provider resend --admin-email you@example.com
+```
+
+It:
+
+1. checks the Cloudflare login (with no `CLOUDFLARE_API_TOKEN` and no wrangler login, it runs
+   `wrangler login` in a terminal), the account and that both zones are on it. If the login reaches
+   several accounts, set `CLOUDFLARE_ACCOUNT_ID`;
+2. makes sure the content zone has the proxied wildcard record artifact pages need (`A` `*` →
+   `192.0.2.0`, see [deploy-checklist.md](deploy-checklist.md#content-host-a-wildcard-route-plus-a-wildcard-dns-record)).
+   With `CLOUDFLARE_API_TOKEN` set it creates the record if missing; with the wrangler login, which
+   cannot edit DNS, it prints the record to add. It never changes or deletes a record, and stops if
+   a wildcard record exists that is not proxied;
+3. creates the D1 database and the R2 bucket if they do not exist (`plinth` and `plinth-files`;
+   `--name work` gives `plinth-work` and `plinth-work-files`);
+4. saves the settings to `~/.plinth/<name>/cloudflare/deploy.json` and writes the Worker config
+   next to it, pointing at the installed package;
+5. generates `SESSION_SECRET` and `TOKEN_SIGNING_KEY` (and `ADMIN_TOKEN` with `--single-user`, shown
+   once) and stores them with `wrangler secret put`, piping each value on stdin; stores
+   `RESEND_API_KEY` or `SENDGRID_API_KEY` from your shell;
+6. applies the migrations to the remote database, runs `wrangler deploy` (the app host becomes a
+   Workers custom domain, so Cloudflare creates its DNS record and certificate), and checks
+   `https://<app host>/healthz`. A new custom domain's certificate can take a few minutes; the
+   deploy still succeeds and `npx @mr0b0t0/plinth status --cloudflare` checks again later.
+
+It ends with the commands that connect Claude Code, Codex and the other agents.
+
+Flags: `--app-host`, `--content-host`, `--email-provider sendgrid|resend|console` (console only
+with `--single-user`), `--email-from`, `--admin-email`, `--single-user` or `--multi-user`,
+`--content-isolation origin|opaque` (as in the setup script below), `--operator-name`,
+`--operator-email`, `--operator-address`, `--operator-registration` (the `OPERATOR_*` settings),
+`--name`, `--home`, `--rotate-secrets` and `--dry-run`, which prints every command and the generated
+config without contacting Cloudflare.
+
+**API token.** Instead of the wrangler login you can export `CLOUDFLARE_API_TOKEN`, which wrangler
+uses for every step. Give it Account: Workers Scripts Edit, D1 Edit, Workers R2 Storage Edit; Zone:
+Workers Routes Edit, DNS Edit and Zone Read, on both zones.
+
+**Redeploy and upgrade.** Run `npx @mr0b0t0/plinth deploy` with no flags to deploy the saved
+settings again, and `npx @mr0b0t0/plinth@latest deploy` to upgrade: it applies the new version's
+migrations before deploying its Worker. Flags given on a later run change the saved settings; an
+empty value (`--operator-address ""`) clears an optional one. The Worker config is rewritten on
+every run; to set other variables from the table below, such as `MAX_ARTIFACTS_PER_USER` or
+`ALLOW_PUBLIC_VISIBILITY`, add them under `vars` in `deploy.json` and rerun.
+
 ## Settings
 
-Plain settings are `vars` in the Worker config (`apps/worker/wrangler.jsonc`, or the per-environment
-copy the setup script writes). Secrets are set with `wrangler secret put` and never go in the config.
+Plain settings are `vars` in the Worker config (`apps/worker/wrangler.jsonc`, the per-environment
+copy the setup script writes, or `vars` in `deploy.json` for `plinth deploy`). Secrets are set with `wrangler secret put` and never go in the config.
 Booleans accept `true`, `1`, `yes` or `on`.
 
 | Variable | Default | Meaning |
@@ -82,8 +136,9 @@ both.
 If a setting is missing or unsafe, every request returns a 500 that names the variable (never its
 value), and the Worker log says the same.
 
-## The setup script
+## From a checkout: the setup script
 
+The same deployment from a clone of the repository, for operators who change the code.
 `scripts/setup.mjs` uses the wrangler in `apps/worker` and needs no other tools. It is safe to run
 again: existing resources and secrets are kept unless you pass `--force` (local) or
 `--rotate-secrets` (remote). `--dry-run` prints every command and the generated config without
@@ -129,7 +184,7 @@ does). Run `node scripts/setup.mjs --help` for the full list.
 
 `pnpm run setup -- --local` works too. Plain `pnpm setup` is pnpm's own command, not this script.
 
-## Deploy
+## From a checkout: deploy
 
 ```sh
 pnpm install
@@ -181,4 +236,16 @@ Step-by-step instructions for each client are in [mcp.md](mcp.md).
   Add `--dry-run` first to see what goes.
 - **Backups.** D1 Time Travel restores the database to any minute in the last 30 days (Workers
   Paid) or 7 days (Free). R2 objects are written once per version and never overwritten.
-- **Logs.** `wrangler tail --config wrangler.production.jsonc`. Secrets and tokens are never logged.
+- **Logs.** `wrangler tail --config wrangler.production.jsonc` (for `plinth deploy`:
+  `npx wrangler tail --config ~/.plinth/plinth/cloudflare/wrangler.jsonc`). Secrets and tokens are
+  never logged.
+- **Admin commands on a `plinth deploy` instance.** The quota and erasure commands above run from a
+  checkout; point them at the deployment with
+  `--config $HOME/.plinth/plinth/cloudflare/wrangler.jsonc`.
+
+## Docker
+
+To run Plinth on a server or laptop of your own instead of Cloudflare Workers, the
+`ghcr.io/mr0b0t0/plinth` image runs the same Worker in a container, with D1 and R2 on a volume:
+localhost only, behind your own reverse proxy with your domains, or through a Cloudflare Tunnel.
+It takes its settings as `PLINTH_*` environment variables. See [docker.md](docker.md).

@@ -20,7 +20,7 @@ the Workers Vitest pool can test them, following `admin-lib.mjs`.
 ## Global Constraints
 
 - No Worker code path for local mode. Nothing under `apps/worker/src/` changes. Exception: a
-  shared fix for a proxy bug that Task 1 finds, which must be flagged to German first.
+  shared fix for a proxy bug that Task 1 finds, which must be flagged to the maintainer first.
 - The Worker listens on `127.0.0.1` only, never `0.0.0.0` or a LAN address.
 - Generated config: `ENVIRONMENT=production`, `PUBLIC_SCHEME=https`, `DEV_OUTBOX=false`,
   `DEV_SEED=false`, `DEV_IGNORE_CLIENT_IP=false`, `STAGING_CONTENT_FALLBACK=false`, and no `routes`.
@@ -74,7 +74,7 @@ No product code. This de-risks the design before anything is built on it.
   - `curl -H 'Host: x1.example-content.net' 127.0.0.1:8788/` reaches the content router (a content 4xx, not the SPA).
   - POST `/api/v1/auth/login` with `Host: plinth.example.com`, `Origin: https://plinth.example.com`, the CSRF cookie and header (as in `e2e/staging/smoke.mjs`), and `cf-connecting-ip: 203.0.113.7`. Then `wrangler d1 execute DB --local --config <cfg> --persist-to … --command "SELECT key FROM rate_limits"` lists `login:ip:203.0.113.7`.
   - `lsof -nP -iTCP:8788 -sTCP:LISTEN` shows only `127.0.0.1`.
-- [ ] **Step 4:** If the client IP shows as `127.0.0.1` or is missing, stop. Message German and the
+- [ ] **Step 4:** If the client IP shows as `127.0.0.1` or is missing, stop. Message the maintainer and the
   v1-build session with what you saw before choosing a fix. Otherwise, record the outcome for
   Task 7's DECISIONS row: "Runtime: wrangler dev with a generated config; cf-connecting-ip passes
   through".

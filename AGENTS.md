@@ -13,8 +13,9 @@ an operator's own Cloudflare account.
 - **[docs/build-prompt.md](docs/build-prompt.md)** is the v1 build brief: configuration variables,
   build order, security acceptance criteria, UI design, tests and deliverables.
 - **[DECISIONS.md](DECISIONS.md)** records every choice the spec left open. When something is
-  ambiguous, pick the simplest option consistent with the spec, add a row there, and mark it
-  **Review** if German should look at it.
+  ambiguous, pick the simplest option consistent with the spec and add a row there. If a
+  maintainer should look at the choice, say so in the pull request, not in the row. Open
+  questions go to GitHub issues.
 
 If the spec and the code disagree, the spec wins. If the spec itself changes, update
 `docs/spec.md` in the same commit.

@@ -22,7 +22,8 @@ export const HOSTED_ORIGIN = "https://plinth.aconite.io";
 
 /** The GitHub repository that is also the plugin marketplace. */
 export const MARKETPLACE_REPO = "mr0b0t0/plinth";
-const REPO_URL = `https://github.com/${MARKETPLACE_REPO}`;
+/** The source repository (also the docs and the issue tracker). */
+export const REPO_URL = `https://github.com/${MARKETPLACE_REPO}`;
 const RAW_URL = `https://raw.githubusercontent.com/${MARKETPLACE_REPO}/main`;
 
 /** The skill every harness gets, in whatever form it takes guidance. */

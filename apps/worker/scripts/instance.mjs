@@ -335,9 +335,9 @@ export async function setupInstance(raw, runtime) {
 }
 
 /**
- * Start an instance: apply migrations, then run the Worker under wrangler dev on 127.0.0.1 and, for
- * a tunnel instance, cloudflared. Both stop together. Resolves with the exit code: 0 after Ctrl-C
- * or SIGTERM, 1 when either process stops on its own.
+ * Start an instance: apply migrations, then run the Worker under wrangler dev on 127.0.0.1 (or
+ * `raw.listen`, else PLINTH_LISTEN) and, for a tunnel instance, cloudflared. Both stop together.
+ * Resolves with the exit code: 0 after Ctrl-C or SIGTERM, 1 when either process stops on its own.
  */
 export async function startInstance(raw, runtime) {
   const label = runtime.label ?? "plinth";
@@ -356,6 +356,13 @@ export async function startInstance(raw, runtime) {
     );
   if (useTunnel && spawnSync("cloudflared", ["--version"], { stdio: "ignore" }).status !== 0)
     fail(`cloudflared is not installed: ${CLOUDFLARED_DOWNLOAD}`);
+  let listen;
+  try {
+    listen = lib.validateListen(raw.listen ?? process.env.PLINTH_LISTEN);
+  } catch (e) {
+    if (e instanceof lib.TunnelUsageError) fail(e.message);
+    throw e;
+  }
   runtime.ensureBuilt?.();
 
   const logDir = ensureLogDir(inst.paths);
@@ -364,6 +371,7 @@ export async function startInstance(raw, runtime) {
 
   const cmds = lib.startCommands(inst.paths, inst.port, useTunnel, {
     local: inst.mode === "local",
+    listen,
   });
   const env = wranglerEnv(logDir);
   const children = [];
@@ -402,7 +410,8 @@ export async function startInstance(raw, runtime) {
     children.push(child);
   }
 
-  console.log(`> Starting the Worker on http://127.0.0.1:${inst.port}`);
+  const bound = listen.includes(":") ? `[${listen}]` : listen;
+  console.log(`> Starting the Worker on http://${bound}:${inst.port}`);
   run(
     "wrangler",
     runtime.wrangler.command,

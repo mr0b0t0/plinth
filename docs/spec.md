@@ -1,6 +1,6 @@
 # Plinth: Project Spec
 
-As of 2026-11-13 · German
+As of 2026-11-13
 
 Local copy of [Plinth: Project Spec](https://claude.ai/artifact/ALCnNY6VEnyHMDSjjjiCQc) (doc rev 26).
 This file is the source of truth in the repo. When the spec changes, update this file in the same
@@ -163,6 +163,25 @@ ones as a plugin, extension, rule file or uploaded skill. All per-harness packag
 are static. Guide: `docs/agents.md`; design:
 `docs/superpowers/specs/2026-11-14-agent-experience-design.md`.
 
+**Agent discovery (decided 2026-11-14).** An agent handed a Plinth link learns from the page it
+fetches what Plinth is and how to read the artifact. Every SPA page on the app host carries a
+plain-text note for agents inside `<div id="root">` (hidden by a stylesheet, replaced when the app
+mounts): the MCP endpoint and OAuth discovery, `get_artifact` with the link's id, the plugin and
+client install commands, `/llms.txt`, the docs and the repository. On `/a/...` and `/open/...`
+pages, access is decided by the policy module for an anonymous viewer, ignoring cookies: when an
+anonymous viewer could open the artifact (unlisted, or public), the note and the page title give
+its title (marked as untrusted text), its current version and a link to `GET /a/<slug>/source`,
+which returns the main HTML document (a doc's Markdown) as sandboxed `text/plain` (`?version=<n>`, rate-limited per
+IP, `no-store`). Private, password, deleted, taken-down and missing artifacts get one generic note
+and `404` from the source endpoint, identical in every case. `/a/...` pages send
+`X-Robots-Tag: noindex, nofollow` except a public artifact on an instance with public visibility
+on. The app host also serves `/llms.txt` (built from config, with every MCP tool), an MCP Server
+Card (SEP-2127) at `/mcp/server-card` (also at `/.well-known/mcp.json` and
+`/.well-known/mcp/server-card.json`, listed in `/.well-known/ai-catalog.json`) and `/robots.txt`;
+other `/.well-known/` paths and missing files answer `404` instead of the SPA. Guide:
+`docs/agents.md#agent-discovery`; design:
+`docs/superpowers/specs/2026-11-14-agent-discovery-design.md`.
+
 A plain REST API mirrors these tools for scripts and CI. Size limits for v1: 5 MB of HTML (1 MB of
 Markdown for a doc) and 25 MB in total per version.
 
@@ -251,15 +270,17 @@ options.
 - **One repo, two deployments.** Aconite operates the hosted instance, which runs the same code as
   a self-hosted one. Hosted-only parts (billing, moderation tooling) sit behind configuration flags.
 - **Self-hosting.** A "Deploy to Cloudflare" button plus a setup script that creates the R2 bucket,
-  the D1 database and the secrets. A single-user mode skips sign-up for everyone but one address (an extra admin token for scripts is optional).
+  the D1 database and the secrets, and `npx @mr0b0t0/plinth deploy`, which does the same and
+  deploys the prebuilt Worker in one command (*Cloudflare* below). A single-user mode skips sign-up for everyone but one address (an extra admin token for scripts is optional).
 - **Local hosting.** The same Worker can run on the owner's machine under `wrangler dev`, with D1
   and R2 on local disk and a named Cloudflare Tunnel on two owned domains for access
   (`setup.mjs --tunnel`, `pnpm local:start`). Production settings and the full security model
   apply. Links work only while the machine is on, and Cloudflare sees traffic in transit. Guide:
   `docs/local-hosting.md`; design: `docs/superpowers/specs/2026-11-14-local-tunnel-hosting-design.md`.
-- **npm CLI.** `npx @mr0b0t0/plinth` (package `packages/cli`) runs a local instance without
-  cloning the repo. It ships the prebuilt Worker, web app and migrations, and shares its setup and
-  start logic with the repo scripts (`apps/worker/scripts/instance.mjs`). Two modes:
+- **npm CLI.** `npx @mr0b0t0/plinth` (package `packages/cli`) runs a local instance, or deploys to
+  the user's Cloudflare account, without cloning the repo. It ships the prebuilt Worker, web app
+  and migrations, and shares its setup, start and deploy logic with the repo scripts
+  (`apps/worker/scripts/instance.mjs`, `deploy.mjs`). Three modes:
   - *Localhost-only* (`plinth init --email ...`): one account, this computer only, no domain and no
     Cloudflare account. The app answers at `127.0.0.1:<port>` and artifacts at
     `<id>.localhost:<port>`; browsers and Node resolve `*.localhost` to the loopback address and
@@ -271,6 +292,15 @@ options.
     `127.0.0.1` because MCP clients allow OAuth over plain http only to `localhost`, `127.0.0.1` or
     `::1` (Claude Code refuses a token endpoint on `app.localhost`). Hosted clients cannot reach it.
   - *Tunnel* (`plinth init --tunnel ...`): the local-hosting setup above, without a checkout.
+  - *Cloudflare* (`plinth deploy --app-host ... --content-host ... --email-provider ...`): the
+    self-hosted production deployment, without a checkout. It logs in with wrangler (or uses
+    `CLOUDFLARE_API_TOKEN`), checks the account and both zones, creates the D1 database, the R2
+    bucket and the secrets if missing, applies the migrations, deploys and checks `/healthz`. The
+    content zone's proxied wildcard record is created with an API token, or printed for the user
+    to add; existing DNS records are never changed. Settings are saved under
+    `<home>/<name>/cloudflare/`, so a rerun with no flags redeploys them, and a newer package
+    version upgrades the same way (migrations first). It applies the same host checks as the
+    Worker and refuses the console email provider outside single-user mode.
 - **Agent plugin.** `integrations/plugin/` is one plugin folder for Claude Code and for Codex and
   ChatGPT (the portable `plugin.json` + `mcp.json` format): the `plinth` MCP server (hosted instance
   by default; Claude Code reads `PLINTH_URL` to point it elsewhere) and a `plinth-artifacts` skill

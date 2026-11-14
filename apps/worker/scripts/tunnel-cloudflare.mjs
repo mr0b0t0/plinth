@@ -16,7 +16,12 @@ export class CloudflareError extends Error {
   }
 }
 
-function client(token, fetchFn) {
+/**
+ * A minimal Cloudflare API client: `call(method, path, body)` returns `result` or throws
+ * CloudflareError. `permissions` names what the token needs, for 401 and 403 errors. Also used by
+ * deploy-lib.mjs for the content wildcard record of `plinth deploy`.
+ */
+export function cloudflareApi(token, fetchFn, permissions = REQUIRED_PERMISSIONS) {
   return async (method, path, body) => {
     const res = await fetchFn(`${API}${path}`, {
       method,
@@ -39,7 +44,7 @@ function client(token, fetchFn) {
       const auth = res.status === 401 || res.status === 403;
       throw new CloudflareError(
         `Cloudflare API ${method} ${path.split("?")[0]} failed: ${detail}` +
-          (auth ? `. The API token needs: ${REQUIRED_PERMISSIONS}, on both zones` : ""),
+          (auth ? `. The API token needs: ${permissions}, on both zones` : ""),
         res.status,
       );
     }
@@ -49,7 +54,7 @@ function client(token, fetchFn) {
 
 /** Provision (or confirm) the tunnel and DNS records. See tunnel-cloudflare.d.mts. */
 export async function provision(a) {
-  const call = client(a.token, a.fetch);
+  const call = cloudflareApi(a.token, a.fetch);
   const q = encodeURIComponent;
 
   // Reads.

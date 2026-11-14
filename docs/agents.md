@@ -110,6 +110,44 @@ rules. To give Claude the full ones, upload the
 [`plinth-artifacts`](../integrations/skill/plinth-artifacts) folder as a custom skill in Claude's
 skills settings.
 
+## Agent discovery
+
+People hand agents Plinth links, and an agent that fetches one reads the HTML as text. The app is
+a JavaScript single-page app, so the page an agent receives says where to go instead (design:
+[superpowers/specs/2026-11-14-agent-discovery-design.md](superpowers/specs/2026-11-14-agent-discovery-design.md)):
+
+- **A note in every app page.** Inside `<div id="root">` the Worker puts a short plain-text note:
+  what Plinth is, the MCP endpoint (`<origin>/mcp`) and its OAuth discovery URL, how to read an
+  artifact with `get_artifact`, the install commands for Claude Code, Codex and Gemini CLI, and
+  links to `/llms.txt`, these docs and the repository. A stylesheet in the page hides it from
+  people before the app loads, and the app replaces it when it mounts.
+- **Artifact links** (`/a/<slug>`, `/a/<slug>/v/<n>`, the other `/a/...` pages and `/open/<id>`)
+  add what an anonymous viewer may know. When anyone with the link could open the artifact
+  (unlisted, or public), the note gives its title (written by its author, so untrusted text), its
+  current version and a link to its source, the page title is the artifact's, and the page
+  carries `<link rel="alternate" type="text/plain" href="/a/<slug>/source">`. For private and
+  password-protected artifacts, and for links that lead nowhere, the note is the same generic one,
+  so it does not reveal whether the artifact exists. Cookies are ignored: the owner's browser gets
+  the same note.
+- **`GET /a/<slug>/source`** (`?version=<n>` for another version) returns the main HTML document (a doc's Markdown)
+  as plain text, for the same artifacts only; everything else is `404`. Assets are not included;
+  `get_artifact` lists them.
+- **`GET /llms.txt`**: this instance for agents, from its configuration: what Plinth is, how to
+  connect (MCP, OAuth discovery, plugin and client commands), every MCP tool in one line, how to
+  read an artifact link, the REST API, the untrusted-content rule and the docs.
+- **The MCP server card**, per the MCP Server Card extension
+  ([SEP-2127](https://modelcontextprotocol.io/seps/2127-mcp-server-cards)): `GET /mcp/server-card`
+  (also `/.well-known/mcp.json` and `/.well-known/mcp/server-card.json`), listed in the AI Catalog
+  at `/.well-known/ai-catalog.json`. It names the server, its version, the streamable HTTP endpoint
+  and its protocol versions; the OAuth protected-resource URL is under `_meta`. Tools are not in
+  the card: they depend on who signs in.
+- **`GET /robots.txt`** keeps crawlers off `/a/`, `/open/`, `/api/`, `/mcp` and the signed-in
+  pages. Artifact pages also send `X-Robots-Tag: noindex, nofollow`, except a public artifact on an
+  instance with public visibility on.
+
+Paths under `/.well-known/` that are not one of these or the OAuth metadata, and file names that
+are not app assets (`/AGENTS.md`, `/sitemap.xml`), answer `404` rather than the app.
+
 ## Maintaining it
 
 Everything above comes from these sources. Edit those, never the outputs:
@@ -127,6 +165,10 @@ Then run `pnpm integrations`. It writes the plugin (both formats), both marketpl
 extension, the Cursor rule, the VS Code instructions file and the table above. CI runs
 `pnpm integrations --check`. The web app's Connect panel and the CLI's `connect` read the same
 registry.
+
+A new MCP tool needs a one-line summary in `MCP_TOOL_SUMMARIES` (`apps/worker/src/mcp/server.ts`):
+registration only accepts names from that table, `/llms.txt` lists it, and a test compares it with
+the live `tools/list`.
 
 Adding a harness: add an entry to `HARNESSES`, add its output to `scripts/integrations.mjs` if it
 takes a new file format, add its tab to the Connect panel, and set `verified` only after installing
