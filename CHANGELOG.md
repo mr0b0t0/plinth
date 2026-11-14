@@ -10,6 +10,8 @@ Add a line under **Unreleased** in the pull request that makes a change people w
 
 ## Unreleased
 
+## 0.2.0 (2026-11-14)
+
 - A new artifact type, **doc**: agents publish Markdown (`publish_artifact` with `type: "doc"`)
   and Plinth renders it as a readable document with headings, tables, code, images, light and dark
   themes and a print stylesheet ("Print or save as PDF"). Edit, compare and restore work as for
