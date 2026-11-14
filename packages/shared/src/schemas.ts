@@ -67,11 +67,9 @@ export const assetInputSchema = z.object({
     .string()
     .min(1)
     .max(LIMITS.maxAssetPathLength)
-    .regex(ASSET_PATH_RE, "Relative path without '..', not under __plinth/")
-    .refine(
-      (p) => p !== "index.html",
-      "index.html is the page itself (the html field, or a doc's rendered page), not an asset",
-    ),
+    // Reserved paths (index.html, and content.md for a doc) depend on the artifact's type, so
+    // the Worker refuses them with the type in the error (services/artifactTypes.ts checkAsset).
+    .regex(ASSET_PATH_RE, "Relative path without '..', not under __plinth/"),
   content: z.string().describe("File content, as text (utf8) or base64"),
   encoding: z.enum(["utf8", "base64"]).default("utf8"),
   content_type: z.string().max(100).optional(),

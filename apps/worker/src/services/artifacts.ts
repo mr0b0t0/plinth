@@ -689,6 +689,8 @@ export async function restoreVersion(
   baseVersion?: number,
 ): Promise<PublishResult> {
   const { artifact } = await requireArtifact(ctx, ref, "restore");
+  // Like get and update: a type this instance does not know is refused, not copied blind.
+  requireTypeDef(artifact.type);
   const actor = requireActor(ctx);
   const old = await requireVersion(ctx, artifact, version);
   const files = await readFiles(ctx.env.FILES, old.r2Prefix, parseManifest(old.manifest));

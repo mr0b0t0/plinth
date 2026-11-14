@@ -186,9 +186,20 @@ describe("doc artifacts over REST", () => {
       "content.md and index.html belong to the doc, not its assets",
       "doc",
     );
-    const idx = await publishDoc(a.auth, { assets: [{ path: "index.html", content: "x" }] });
-    expect(idx.res.status).toBe(400);
-    expect(idx.body.error.code).toBe("invalid_input");
+    // index.html too: the same rule and message, with the type and field, for a doc.
+    await expectInvalid(
+      await publishDoc(a.auth, { assets: [{ path: "index.html", content: "x" }] }),
+      "assets",
+      "content.md and index.html belong to the doc, not its assets",
+      "doc",
+    );
+    // An html artifact's index.html asset is refused as before, now with its type and field.
+    await expectInvalid(
+      await publish(a.auth, { assets: [{ path: "index.html", content: "x" }] }),
+      "assets",
+      "index.html is the html field, not an asset",
+      "html",
+    );
     await expectInvalid(
       await publishDoc(a.auth, { assets: [{ path: "app.js", content: "alert(1)" }] }),
       "assets",
@@ -329,6 +340,66 @@ describe("doc artifacts over REST", () => {
   });
 });
 
+describe("an artifact whose stored type this instance does not know", () => {
+  // A row written by a newer Plinth (say, a deck) is refused everywhere, never read as HTML.
+  async function deck() {
+    const a = await agent();
+    const { body: p } = await publishDoc(a.auth);
+    await db()
+      .update(artifacts)
+      .set({ type: "deck" as never })
+      .where(eq(artifacts.id, p.id))
+      .run();
+    return { a, p };
+  }
+
+  const expectUnsupported = (error: { code: string; message: string; details: unknown }) =>
+    expect(error).toMatchObject({
+      code: "feature_disabled",
+      message: "This artifact's type is not supported by this instance",
+      details: { type: "deck" },
+    });
+
+  it("REST get, version get, update and restore refuse it with feature_disabled", async () => {
+    const { a, p } = await deck();
+    for (const path of [`/api/v1/artifacts/${p.id}`, `/api/v1/artifacts/${p.id}/versions/1`]) {
+      const res = await call(path, { headers: a.auth });
+      expect(res.status, path).toBe(403);
+      expectUnsupported((await json(res)).error);
+    }
+    for (const body of [{ content: "# x\n", base_version: 1 }, { html: "<p>x</p>" }]) {
+      const res = await put(a.auth, p.id, body);
+      expect(res.status).toBe(403);
+      expectUnsupported((await json(res)).error);
+    }
+    const restore = await call(`/api/v1/artifacts/${p.id}/versions/1/restore`, {
+      method: "POST",
+      headers: { ...a.auth, "Content-Type": "application/json" },
+      body: JSON.stringify({ base_version: 1 }),
+    });
+    expect(restore.status).toBe(403);
+    expectUnsupported((await json(restore)).error);
+    // Nothing was written.
+    const rows = await db().select().from(versions).where(eq(versions.artifactId, p.id)).all();
+    expect(rows).toHaveLength(1);
+  });
+
+  it("MCP get_artifact, update_artifact and restore_version refuse it the same way", async () => {
+    const { a, p } = await deck();
+    const mcp = await mcpClient(a.token);
+    for (const [name, args] of [
+      ["get_artifact", { id: p.id }],
+      ["update_artifact", { id: p.id, content: "# x\n", base_version: 1 }],
+      ["restore_version", { id: p.id, version: 1 }],
+    ] as const) {
+      const r = await tool(mcp, name, args);
+      expect(r.isError, name).toBe(true);
+      expectUnsupported(r.data.error);
+    }
+    await mcp.close();
+  });
+});
+
 describe("doc artifacts over MCP", () => {
   it("publishes, reads, updates and lists a doc", async () => {
     const a = await agent();
@@ -384,6 +455,89 @@ describe("doc artifacts over MCP", () => {
       code: "invalid_input",
       message: "type doc needs its Markdown in content",
     });
+    await mcp.close();
+  });
+
+  it("gives the same fix-it errors as REST for every refused call", async () => {
+    const a = await agent();
+    const mcp = await mcpClient(a.token);
+    const { body: doc } = await publishDoc(a.auth);
+    const { body: page } = await publish(a.auth);
+    const png = { content: PNG, encoding: "base64" };
+    const rows: Array<{
+      name: string;
+      args: Record<string, unknown>;
+      rest: () => Promise<Result>;
+    }> = [
+      {
+        name: "publish_artifact",
+        args: { title: "x", type: "doc", content: MD, html: "<p>x</p>" },
+        rest: () => publishDoc(a.auth, { html: "<p>x</p>" }),
+      },
+      {
+        name: "publish_artifact",
+        args: { title: "x", content: "# x" },
+        rest: () => publish(a.auth, { content: "# x" }),
+      },
+      {
+        name: "publish_artifact",
+        args: { title: "x" },
+        rest: () => publish(a.auth, { html: undefined }),
+      },
+      {
+        name: "publish_artifact",
+        args: { title: "x", type: "doc", content: "<!doctype html><p>x</p>" },
+        rest: () => publishDoc(a.auth, { content: "<!doctype html><p>x</p>" }),
+      },
+      ...["content.md", "index.html"].map((path) => ({
+        name: "publish_artifact",
+        args: { title: "x", type: "doc", content: MD, assets: [{ path, ...png }] },
+        rest: () => publishDoc(a.auth, { assets: [{ path, ...png }] }),
+      })),
+      {
+        name: "publish_artifact",
+        args: { title: "x", type: "doc", content: MD, assets: [{ path: "a.js", content: "1" }] },
+        rest: () => publishDoc(a.auth, { assets: [{ path: "a.js", content: "1" }] }),
+      },
+      {
+        name: "publish_artifact",
+        args: { title: "x", type: "doc", content: "a".repeat(1024 * 1024 + 1) },
+        rest: () => publishDoc(a.auth, { content: "a".repeat(1024 * 1024 + 1), assets: undefined }),
+      },
+      {
+        name: "update_artifact",
+        args: { id: doc.id, content: "<html><p>x</p>" },
+        rest: () => put(a.auth, doc.id, { content: "<html><p>x</p>" }),
+      },
+      {
+        name: "update_artifact",
+        args: { id: doc.id, note: "x" },
+        rest: () => put(a.auth, doc.id, { note: "x" }),
+      },
+      {
+        name: "update_artifact",
+        args: { id: doc.id, content: "# x", assets: [{ path: "index.html", content: "x" }] },
+        rest: () =>
+          put(a.auth, doc.id, { content: "# x", assets: [{ path: "index.html", content: "x" }] }),
+      },
+      {
+        name: "update_artifact",
+        args: { id: page.id, content: "# x" },
+        rest: () => put(a.auth, page.id, { content: "# x" }),
+      },
+    ];
+    for (const row of rows) {
+      const label = `${row.name} ${JSON.stringify(row.args).slice(0, 80)}`;
+      const r = await row.rest();
+      const restError = (r instanceof Response ? await json(r) : r.body).error;
+      expect(restError.code, label).toMatch(/^(invalid_input|payload_too_large)$/);
+      const m = await tool(mcp, row.name, row.args);
+      expect(m.isError, label).toBe(true);
+      expect(m.data.error, label).toEqual(restError);
+    }
+    // Nothing was written by any of them.
+    expect((await getDetail(a.auth, doc.id)).current_version).toBe(1);
+    expect((await getDetail(a.auth, page.id)).current_version).toBe(1);
     await mcp.close();
   });
 
