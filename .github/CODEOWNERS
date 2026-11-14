@@ -1,0 +1,5 @@
+# Maintainers review every change. Security-sensitive paths are listed so they are never missed.
+* @mr0b0t0
+/apps/worker/src/policy.ts @mr0b0t0
+/apps/worker/src/content/ @mr0b0t0
+/.github/ @mr0b0t0

@@ -11,16 +11,11 @@ Worker bundle from `apps/worker/dist`, the web app, the migrations, and the inst
 `apps/worker/scripts/` that `scripts/setup.mjs` and `scripts/local-start.mjs` use too. Its only
 runtime dependencies are `wrangler` (which runs the Worker) and `tldts`.
 
-Release:
-
-1. Bump `version` in `packages/cli/package.json`.
-2. `pnpm install && pnpm build`
-3. `pnpm --filter @mr0b0t0/plinth test:smoke` (packs the package, installs the tarball with npm into
-   a temporary prefix, and runs a localhost-only instance end to end).
-4. `cd packages/cli && pnpm publish --access public --no-git-checks`. Publishes under the personal
-   npm account `mr0b0t0` (the scope is the account name); `--access public` because scoped packages
-   are private by default. npm cannot rename a package: moving it to an organization later means
-   publishing under the new name and deprecating this one.
+Release: `pnpm release <version> --push` on `main`. The tag runs CI, publishes the package with
+npm provenance and the Docker image, and creates the GitHub release ([releasing.md](releasing.md)).
+The package is under the personal npm account `mr0b0t0` (the scope is the account name). npm cannot
+rename a package: moving it to an organization later means publishing under the new name and
+deprecating this one.
 
 Keep the pinned `wrangler` version in `packages/cli/package.json` equal to the one in
 `apps/worker/package.json`.

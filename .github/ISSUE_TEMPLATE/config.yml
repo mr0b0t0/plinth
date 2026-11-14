@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/mr0b0t0/plinth/security/advisories/new
+    about: Please report security problems privately, never in a public issue.
+  - name: Ask a question
+    url: https://github.com/mr0b0t0/plinth/discussions
+    about: Setup help, ideas and show-and-tell.
+  - name: Report an artifact on plinth.aconite.io
+    url: https://plinth.aconite.io/legal/acceptable-use
+    about: Use the Report link on the artifact's page.

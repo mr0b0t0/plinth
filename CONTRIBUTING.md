@@ -6,6 +6,37 @@ apply to people and coding agents alike. [docs/spec.md](docs/spec.md) is the sou
 behaviour: if the code and the spec disagree, the spec wins, and a change to the spec goes in the
 same commit as the code that follows it.
 
+Everyone taking part follows the [code of conduct](CODE_OF_CONDUCT.md). Security problems go
+through private reporting, never a public issue ([SECURITY.md](SECURITY.md)).
+
+## Ways to help
+
+- **Try it and tell us.** `npx @mr0b0t0/plinth init` runs Plinth on your computer in a minute.
+  Rough edges in setup, docs or the agent experience are worth an issue.
+- **Pick up an issue.** Issues labelled
+  [`good first issue`](https://github.com/mr0b0t0/plinth/labels/good%20first%20issue) are small
+  and well described; [`help wanted`](https://github.com/mr0b0t0/plinth/labels/help%20wanted) ones
+  are bigger. Say in the issue that you are on it, so nobody duplicates the work.
+- **Something bigger?** Open an issue or a discussion first. A short exchange about the approach
+  saves a long review, and some ideas conflict with the security model in ways that are not
+  obvious.
+- **Agents welcome.** Pull requests written with Claude, Codex or any other agent are fine. You are
+  the author: read the diff, run the checks, and answer review comments yourself.
+
+## Your first pull request
+
+1. Fork the repository and clone your fork.
+2. Follow **Setup** below, then branch from `main`: `git switch -c fix/short-name`.
+3. Make the change with its tests. Run `pnpm lint`, `pnpm typecheck`, `pnpm test` and `pnpm build`
+   (and `pnpm test:e2e` if you touched the web app or the Worker's HTTP behaviour).
+4. If users will notice the change, add a line under **Unreleased** in
+   [CHANGELOG.md](CHANGELOG.md).
+5. Push to your fork and open a pull request against `main`. The template asks what changed, why,
+   and how you tested it. CI must pass, and a maintainer reviews every change.
+
+By contributing, you agree that your contribution is licensed under the project's
+[MIT licence](LICENSE).
+
 ## Setup
 
 Node 22.12+ and pnpm 10. pnpm runs Node 24.22.2 for this repo through `use-node-version` in
@@ -47,8 +78,8 @@ run), so stop `pnpm dev` first. If Playwright reports a missing browser, run
 
 ## Conventions
 
-- **Branches.** Branch from `main` (`feature/...`, `fix/...`, `docs/...`). Do not commit to `main`
-  directly.
+- **Branches.** Branch from `main` (`feature/...`, `fix/...`, `docs/...`). `main` only changes
+  through pull requests with green CI.
 - **Commits.** Imperative subject under about 70 characters ("Add allowlist sharing API"), a blank
   line, then what changed and why. One logical change per commit; tests in the same commit as the
   code.
@@ -60,7 +91,10 @@ run), so stop `pnpm dev` first. If Playwright reports a missing browser, run
 - **Style.** TypeScript strict everywhere. Wire format is snake_case. Shared types, schemas and
   constants live in `packages/shared`. Anything a self-hoster may change is an env var.
 - **Docs.** Plain technical English, short sentences. The product name must not contain "Claude"
-  or "Codex".
+  or "Codex". Anything published (README, docs, the npm page, legal pages) is final text: no
+  placeholders or "TODO" notes.
+- **Releases.** Maintainers cut releases with `pnpm release <version>`; see
+  [docs/releasing.md](docs/releasing.md).
 
 ## Security rules
 
