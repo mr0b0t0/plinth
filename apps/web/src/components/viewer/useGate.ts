@@ -36,5 +36,5 @@ export function useGate(ref: string, query: GateQuery) {
   /** Use a gate returned by a password or code step. */
   const setGate = useCallback((gate: ViewGate) => setState({ kind: "gate", gate }), []);
 
-  return { state, reload, setGate };
+  return { state, path, reload, setGate };
 }

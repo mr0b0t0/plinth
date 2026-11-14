@@ -215,3 +215,18 @@ svg {
  * Reduced motion: the --duration-* tokens drop to 0ms (tokens.css), which stops every transition
  * and entrance animation. Looping animations (spinner, skeleton) handle it in their own files.
  */
+
+/*
+ * iOS Safari zooms the page when it focuses a field whose text is under 16px, and the type scale
+ * sets controls at 13px. On touch screens, text fields use 16px so focusing one never zooms. Pinch
+ * zoom stays available (the viewport has no maximum-scale). !important because component rules
+ * (.pl-control, the comment composer) are more specific and must not win here.
+ */
+@media (pointer: coarse) {
+  input:not([type="checkbox"], [type="radio"], [type="range"], [type="color"], [type="file"]),
+  textarea,
+  select {
+    /* biome-ignore lint/complexity/noImportantStyles: must beat every component's control size */
+    font-size: 16px !important;
+  }
+}

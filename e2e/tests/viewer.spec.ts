@@ -10,6 +10,9 @@ import { mcpClient, tool } from "../support/mcp.ts";
 import { shotsDir } from "../support/shots.ts";
 import { seedToken } from "../support/tokens.ts";
 
+// The frame being shown. A reload keeps the outgoing frame (marked) until the new one loads.
+const CURRENT_FRAME = "iframe.pl-viewer-frame:not(.pl-viewer-frame--outgoing)";
+
 const SHOTS = shotsDir("viewer");
 const ADMIN = "admin@plinth.local";
 const SANDBOX = "allow-scripts allow-same-origin allow-forms allow-popups";
@@ -77,19 +80,19 @@ async function shot(page: Page, name: string) {
  */
 async function expectAccessible(page: Page) {
   await settle(page);
-  const results = await new AxeBuilder({ page }).exclude("iframe.pl-viewer-frame").analyze();
+  const results = await new AxeBuilder({ page }).exclude(CURRENT_FRAME).analyze();
   expect(
     results.violations.map((v) => `${v.id}: ${v.nodes.map((n) => n.target.join(" ")).join(", ")}`),
   ).toEqual([]);
 }
 
-const frameOf = (page: Page) => page.locator("iframe.pl-viewer-frame");
+const frameOf = (page: Page) => page.locator(CURRENT_FRAME);
 
 /** The frame is on the artifact's own subdomain, sandboxed, and the app page holds none of its HTML. */
 async function expectExhibit(page: Page, a: Published, marker: string) {
-  await expect(
-    page.frameLocator("iframe.pl-viewer-frame").getByRole("heading", { name: marker }),
-  ).toBeVisible({ timeout: 10_000 });
+  await expect(page.frameLocator(CURRENT_FRAME).getByRole("heading", { name: marker })).toBeVisible(
+    { timeout: 10_000 },
+  );
   const frame = frameOf(page);
   const sandbox = (await frame.getAttribute("sandbox")) ?? "";
   expect(sandbox.split(/\s+/)).toContain("allow-scripts");

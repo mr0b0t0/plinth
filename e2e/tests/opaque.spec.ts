@@ -9,6 +9,9 @@ import { expect, type Page, type Request, test } from "@playwright/test";
 import { OPAQUE_APP_ORIGIN, OPAQUE_CONTENT_HOST, uniqueEmail } from "../support/api.ts";
 import { seedSession, seedToken } from "../support/db.ts";
 
+// The frame being shown. A reload keeps the outgoing frame (marked) until the new one loads.
+const CURRENT_FRAME = "iframe.pl-viewer-frame:not(.pl-viewer-frame--outgoing)";
+
 const OPAQUE_FRAME_SANDBOX =
   "allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-modals allow-downloads";
 
@@ -118,10 +121,10 @@ test("an artifact renders with its own subresources, and has no cookies or stora
   });
 
   await page.goto(`/a/${art.slug}`);
-  const iframe = page.locator("iframe.pl-viewer-frame");
+  const iframe = page.locator(CURRENT_FRAME);
   // Both layers agree: the frame attribute and the response CSP drop allow-same-origin.
   await expect(iframe).toHaveAttribute("sandbox", OPAQUE_FRAME_SANDBOX);
-  const frame = page.frameLocator("iframe.pl-viewer-frame");
+  const frame = page.frameLocator(CURRENT_FRAME);
   await expect(frame.locator("h1")).toHaveText("Opaque artifact", { timeout: 15_000 });
 
   // Its own CSS, script and image loaded.
@@ -168,10 +171,9 @@ test("a direct visit to the artifact still goes to the app page", async ({ page 
   const art = await owner(page, "Direct visit");
   await page.goto(`http://${art.id}.${OPAQUE_CONTENT_HOST}/`);
   await expect(page).toHaveURL(`${OPAQUE_APP_ORIGIN}/a/${art.id}`);
-  await expect(page.frameLocator("iframe.pl-viewer-frame").locator("h1")).toHaveText(
-    "Opaque artifact",
-    { timeout: 15_000 },
-  );
+  await expect(page.frameLocator(CURRENT_FRAME).locator("h1")).toHaveText("Opaque artifact", {
+    timeout: 15_000,
+  });
 });
 
 const TYPED_START =
@@ -223,14 +225,11 @@ test("comment pins work through the bridge with an opaque-origin frame", async (
   await page.getByRole("button", { name: "Comments", exact: true }).click();
   const panel = page.getByRole("region", { name: "Comments" });
   await expect(panel).toBeVisible();
-  const frame = page.frameLocator("iframe.pl-viewer-frame");
+  const frame = page.frameLocator(CURRENT_FRAME);
   await expect(frame.locator("h1")).toBeVisible({ timeout: 15_000 });
   // Review mode: the bridge script is in the opaque-origin document.
   await expect(frame.locator("script[data-plinth-bridge]")).toHaveCount(1);
-  await expect(page.locator("iframe.pl-viewer-frame")).toHaveAttribute(
-    "sandbox",
-    OPAQUE_FRAME_SANDBOX,
-  );
+  await expect(page.locator(CURRENT_FRAME)).toHaveAttribute("sandbox", OPAQUE_FRAME_SANDBOX);
 
   await panel.getByRole("button", { name: "Pin to an element" }).click();
   await expect(panel.getByText("Click an element in the artifact (Esc to cancel)")).toBeVisible();

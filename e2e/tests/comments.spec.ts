@@ -3,8 +3,8 @@
 // Also: hostile comment text renders inert, permissions come from the API, axe passes.
 //
 // Contract with the artifact page (/a/:slug): a button named "Comments" toggles the panel (a region
-// named "Comments"); the artifact iframe is the page's only iframe and reloads in review mode while
-// the panel is open.
+// named "Comments"); the artifact iframe is the page's only iframe once loaded (a reload briefly
+// keeps the outgoing frame on top), and it reloads in review mode when the panel first opens.
 import path from "node:path";
 import AxeBuilder from "@axe-core/playwright";
 import { expect, type Locator, type Page, type TestInfo, test } from "@playwright/test";
