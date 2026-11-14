@@ -44,6 +44,35 @@ each has its own origin with its own storage, cookies and service workers (none 
 opaque isolation). Artifact ids are 20 random lowercase letters and digits (about 103 bits), so
 they cannot be guessed.
 
+### What the app host says about an artifact without signing in
+
+Agents fetch artifact links as text, so the app host answers them without running user HTML
+([agents.md](agents.md#agent-discovery)):
+
+- **The agent note** in the SPA shell (`/a/<slug>`, `/open/<id>`) is built on the server from the
+  instance's config and, at most, the artifact's title and current version. Access is decided by
+  `policy.ts` for the anonymous principal, never from the request's cookies, so the owner's own
+  browser gets the same page as a stranger. Only artifacts an anonymous viewer could open
+  (unlisted, or public) get details; private, password, deleted, taken-down and missing ones get
+  one generic note with the same status, headers and body (apart from the id or slug echoed from
+  the link, which must match `[a-z0-9-]`), so the page is no existence oracle. The title is
+  HTML-escaped and labelled as untrusted text written by the author.
+- **`GET /a/<slug>/source`** returns the main HTML document of such an artifact (`?version=<n>`
+  for another version) as `text/plain; charset=utf-8` with `X-Content-Type-Options: nosniff`,
+  `Content-Security-Policy: sandbox; default-src 'none'`, `Content-Disposition: inline`,
+  `Cache-Control: no-store`, `X-Robots-Tag: noindex, nofollow` and the app's other headers
+  (`Cross-Origin-Resource-Policy: same-origin`, `X-Frame-Options: DENY`). Browsers do not
+  render plain text with `nosniff` as HTML or run it as a script, and the sandbox CSP gives even a
+  forced rendering an opaque origin with nothing allowed to load, so the app host still never
+  serves user HTML as a page. It reads no cookies and sets none; every other case answers the
+  same `404`. `no-store` means a visibility change applies to the next request, with no copy left
+  in a cache. It is rate-limited per IP (600 per hour). The same text is what any link viewer
+  already gets from the content host.
+- `/llms.txt`, `/robots.txt`, the MCP server card (`/mcp/server-card`, also at
+  `/.well-known/mcp.json` and `/.well-known/mcp/server-card.json`) and `/.well-known/ai-catalog.json`
+  carry only configuration. Unknown `/.well-known/` paths and missing files answer `404`, never
+  the SPA.
+
 ## Opaque content isolation
 
 `CONTENT_ISOLATION` is `origin` (the default) or `opaque`. With `opaque`, every response from a
@@ -244,6 +273,7 @@ do not reveal that they exist. Agents act as their user, further limited by toke
 | Viewer codes per email | 5 per hour |
 | Comments per user | 60 per hour |
 | Reports per IP | 10 per hour |
+| Artifact source reads (`/a/<slug>/source`) per IP | 600 per hour |
 | Publishes and new versions per user | `MAX_PUBLISHES_PER_HOUR` (60) |
 | Artifacts per account | `MAX_ARTIFACTS_PER_USER` (100), per-user override |
 | Size per version | 5 MB of HTML, 25 MB in total |

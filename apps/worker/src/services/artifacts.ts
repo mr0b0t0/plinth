@@ -372,7 +372,11 @@ async function enforceStorage(ctx: Ctx, ownerId: string, adding: number): Promis
   }
 }
 
-async function getVersionRow(ctx: Ctx, artifactId: string, n: number): Promise<VersionRow | null> {
+export async function getVersionRow(
+  ctx: Ctx,
+  artifactId: string,
+  n: number,
+): Promise<VersionRow | null> {
   return (
     (await ctx.db
       .select()

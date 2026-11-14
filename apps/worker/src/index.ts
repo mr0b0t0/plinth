@@ -4,6 +4,15 @@ import { type AppEnv, authenticate, base, serviceCtx } from "./api/context.ts";
 import { api } from "./api/index.ts";
 import { openApiDocument } from "./api/openapi.ts";
 import { devSeed } from "./app/dev-seed.ts";
+import {
+  aiCatalog,
+  discoveryJson,
+  llmsTxt,
+  publicHeaders,
+  robotsTxt,
+  serverCard,
+  serveSource,
+} from "./app/discovery.ts";
 import { applyAppHeaders } from "./app/headers.ts";
 import { serveSpa } from "./app/spa.ts";
 import { type Bindings, ConfigError, getConfig } from "./config.ts";
@@ -50,6 +59,57 @@ app.route("/", devSeed);
 app.route("/api/v1", api);
 
 app.get("/openapi.json", (c) => c.json(openApiDocument(c.get("config"))));
+
+// Agent discovery (docs/agents.md#agent-discovery). Public, read-only, no cookies read.
+app.get("/llms.txt", (c) => {
+  const config = c.get("config");
+  return new Response(llmsTxt(config), {
+    headers: publicHeaders(config, {
+      "Content-Type": "text/plain; charset=utf-8",
+      "Cache-Control": "public, max-age=3600",
+    }),
+  });
+});
+app.get("/robots.txt", (c) => {
+  const config = c.get("config");
+  return new Response(robotsTxt(config), {
+    headers: publicHeaders(config, {
+      "Content-Type": "text/plain; charset=utf-8",
+      "Cache-Control": "public, max-age=3600",
+    }),
+  });
+});
+// The MCP Server Card at its reserved path, and the same card where earlier drafts put it.
+for (const path of [
+  "/mcp/server-card",
+  "/.well-known/mcp.json",
+  "/.well-known/mcp/server-card.json",
+]) {
+  app.get(path, (c) =>
+    discoveryJson(c, serverCard(c.get("config")), "application/mcp-server-card+json"),
+  );
+}
+app.get("/.well-known/ai-catalog.json", (c) =>
+  discoveryJson(c, aiCatalog(c.get("config")), "application/ai-catalog+json"),
+);
+for (const path of [
+  "/mcp/server-card",
+  "/.well-known/mcp.json",
+  "/.well-known/mcp/server-card.json",
+  "/.well-known/ai-catalog.json",
+  "/llms.txt",
+]) {
+  app.options(path, (c) => {
+    const headers = publicHeaders(c.get("config"), {
+      "Access-Control-Allow-Methods": "GET",
+      "Access-Control-Allow-Headers": "Content-Type, If-None-Match",
+      "Access-Control-Max-Age": "86400",
+    });
+    return new Response(null, { status: 204, headers });
+  });
+}
+// An artifact's main HTML as plain text, for link viewers' artifacts only. Never HTML here.
+app.get("/a/:ref/source", (c) => serveSource(c));
 
 app.all("/mcp", bearerOnly, authenticate, async (c) => {
   const p = c.get("principal");
