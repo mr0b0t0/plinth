@@ -32,6 +32,8 @@ differently everywhere.
 
 - Runtime capabilities (shared state between viewers, viewer identity inside the page): they
   contradict the invariant that artifacts are static HTML and assets.
+  Now covered by [2026-11-14-shared-state-design.md](2026-11-14-shared-state-design.md): one fixed
+  shared-data service per artifact, with the invariant reworded to "no per-artifact server code".
 - Typed outputs (decks, docs): already on the roadmap, separate work.
 - Inline preview inside harness UIs: controlled by each harness, not by Plinth.
 - Importing a harness's native artifacts: agents push, the platform never pulls. An agent may

@@ -83,9 +83,12 @@ make a test pass.
 
 - Versions are immutable. A restore publishes the old content as the next version.
 - No silent overwrites: a save against a stale version is rejected.
-- An agent's change is always a new version that anyone can revert.
+- An agent's change is always a new version that anyone can revert. Shared data is not versioned:
+  every write is stamped with who made it, and the owner and editors can change or delete it.
 - Agents push; the platform never pulls from Claude or ChatGPT accounts.
-- Artifacts are static HTML plus assets. No server-side code for artifacts.
+- Artifacts are static HTML plus assets, with no per-artifact server code. The only server
+  behaviour a page can reach is Plinth's fixed shared-data service at `/__plinth/api/`, which a page
+  opts into and only the owner, people the artifact is shared with and their agents can write.
 - Anything a self-hoster may change (hosts, quota, email provider, CDN allowlist) is an env var.
 - The product name must not contain "Claude" or "Codex".
 
