@@ -44,6 +44,7 @@ import {
 import { fakeStage, keysUnder } from "./fixtures/bundles/fakeStage.ts";
 import * as real from "./fixtures/bundles/real.ts";
 import {
+  BLOCK,
   END,
   type EntrySpec,
   entry,
@@ -1122,18 +1123,66 @@ describe("end to end with the real stager", () => {
     },
   );
 
-  e2e("concurrent bundles in publish mode create exactly one artifact", async () => {
-    const a = await agent();
-    const t = await mint(a);
-    const results = await Promise.all(
-      [0, 1, 2].map(() => postBundle(t.upload_url, { token: t.upload_token })),
-    );
-    expect(results.filter((r) => r.status === 201)).toHaveLength(1);
-    const n = await env.DB.prepare("SELECT count(*) AS n FROM artifacts WHERE owner_id = ?1")
-      .bind(a.user.id)
-      .first<{ n: number }>();
-    expect(n?.n).toBe(1);
-  });
+  e2e(
+    "publish mode, lease lapsed mid-upload: both requests reach commitStaged, the ticket guard lets exactly one artifact in",
+    async () => {
+      // The receiving lease keeps a second request out while the first is live, so a plain
+      // Promise.all never makes two requests commit. Instead hold the first request mid-stream,
+      // let its lease lapse, commit a second bundle, then release the first: it reaches the real
+      // commit batch with the ticket already used, and the batch's ticket guard must refuse the
+      // artifact INSERT.
+      const a = await agent();
+      const t = await mint(a);
+      const keys = async () =>
+        new Set((await env.FILES.list({ prefix: "artifacts/" })).objects.map((o) => o.key));
+      const before = await keys();
+      const bytes = goodTar();
+      const head = BLOCK * 2; // index.html's header and its first data block
+      let release!: () => void;
+      const gate = new Promise<void>((r) => {
+        release = r;
+      });
+      let paused!: () => void;
+      const reachedPause = new Promise<void>((r) => {
+        paused = r;
+      });
+      const slowBody = lazyStream(async function* () {
+        yield bytes.slice(0, head);
+        paused();
+        await gate;
+        yield bytes.slice(head);
+      });
+      const slow = postBundle(t.upload_url, { token: t.upload_token, body: slowBody });
+      await reachedPause;
+      expect(await ticket(t.upload_id)).toMatchObject({ state: "receiving", attempts: 1 });
+      await setTicket(
+        t.upload_id,
+        "receiving_until = ?2",
+        new Date(Date.now() - 1000).toISOString(),
+      );
+      const fast = await postBundle(t.upload_url, { token: t.upload_token });
+      expect(fast.status).toBe(201);
+      const won = await json(fast);
+      release();
+      const lost = await slow;
+      expect(lost.status).toBe(409);
+      expect((await json(lost)).error.details).toMatchObject({ reason: "upload_used", id: won.id });
+
+      const n = await env.DB.prepare("SELECT count(*) AS n FROM artifacts WHERE owner_id = ?1")
+        .bind(a.user.id)
+        .first<{ n: number }>();
+      expect(n?.n).toBe(1);
+      expect(await ticket(t.upload_id)).toMatchObject({ state: "used", attempts: 2 });
+      // Nothing of the loser's attempt is left: every new object belongs to the winner's artifact.
+      const added = [...(await keys())].filter((k) => !before.has(k));
+      expect(added.length).toBeGreaterThan(0);
+      expect(added.filter((k) => !k.startsWith(`artifacts/${won.id}/`))).toEqual([]);
+      const attempts = new Set(
+        added.map((k) => /^artifacts\/[^/]+\/v\d+\.[^/]+\//.exec(k)?.[0]).filter(Boolean),
+      );
+      expect(attempts.size).toBeLessThanOrEqual(1);
+    },
+  );
 
   e2e(
     "a doc bundle goes through resolveSource and checkAsset: images only, index.html refused",
