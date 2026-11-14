@@ -19,7 +19,9 @@ import type { PageClaim } from "../policy.ts";
 import { parseManifest } from "../services/storage.ts";
 import { injectBridge, serveBridgeScript } from "./bridge.ts";
 import { applyContentHeaders } from "./csp.ts";
+import { DATA_API_PREFIX, serveDataApi } from "./data-api.ts";
 import { servePreviewLoader } from "./preview.ts";
+import { serveRuntimeScript } from "./runtime.ts";
 import {
   consumeNonce,
   IDENTITY_CLAIM_INFO,
@@ -189,6 +191,9 @@ async function serve(
   config: Config,
   route: Extract<HostRoute, { kind: "content" }>,
 ): Promise<Response> {
+  // Shared data (content/data-api.ts): its own method, caller and JSON checks, never a redirect.
+  if (route.path.startsWith(DATA_API_PREFIX)) return serveDataApi(request, env, config, route);
+
   if (request.method !== "GET" && request.method !== "HEAD") {
     return text(config, 405, "Method not allowed", { Allow: "GET, HEAD" });
   }
@@ -217,6 +222,7 @@ async function serve(
 
   // Static helpers that hold no artifact data.
   if (path === `${CONTENT_RESERVED_PREFIX}bridge.js`) return serveBridgeScript(config);
+  if (path === `${CONTENT_RESERVED_PREFIX}runtime.js`) return serveRuntimeScript(config);
   if (path === `${CONTENT_RESERVED_PREFIX}preview`) return servePreviewLoader(config);
 
   if (path === `${CONTENT_RESERVED_PREFIX}enter`) {
