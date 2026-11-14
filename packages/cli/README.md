@@ -1,11 +1,22 @@
 # @mr0b0t0/plinth
 
 Run [Plinth](https://github.com/mr0b0t0/plinth) on your own computer or on your own Cloudflare
-account. Plinth is a home for the HTML artifacts AI agents make (reports, dashboards, prototypes):
-agents publish over MCP, every change is a version you can revert, and you decide who can view each
-page.
+account. Plinth is a home for the HTML your AI agents make (reports, dashboards, prototypes):
+Claude Code, Codex and any MCP client publish to it, every change is a version you can go back to,
+and you decide who can view each page.
 
-Needs Node 22.12+ on macOS or Linux.
+![Claude Code publishes a report, Codex answers a comment with v2, and the page updates](https://raw.githubusercontent.com/mr0b0t0/plinth/main/docs/screenshots/demo.gif)
+
+- **Private by default.** Share with specific people, a link or a password. Viewers need no AI
+  account.
+- **Every agent in one place**, under your login, with a history of who made each version.
+- **Comments that reach your agents.** Mention `@claude` or `@codex`; the agent publishes a new
+  version and replies.
+- **Each artifact isolated** on its own origin, sandboxed, with a strict Content Security Policy.
+
+Needs Node 22.12+ on macOS or Linux. Prefer containers? The same Worker ships as the Docker image
+`ghcr.io/mr0b0t0/plinth`
+([guide](https://github.com/mr0b0t0/plinth/blob/main/docs/docker.md)).
 
 ## Localhost only (no domain, no account)
 

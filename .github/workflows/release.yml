@@ -87,6 +87,22 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24.22.2
+      - name: Build the amd64 image for the smoke test
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          platforms: linux/amd64
+          load: true
+          tags: plinth:smoke
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Smoke test the image (sign-in, OAuth, publish over MCP, restart)
+        env:
+          PLINTH_DOCKER_IMAGE: plinth:smoke
+        run: node scripts/docker-smoke.mjs
       - id: tags
         uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
         with:

@@ -10,6 +10,10 @@ Add a line under **Unreleased** in the pull request that makes a change people w
 
 ## Unreleased
 
+- `npx @mr0b0t0/plinth deploy` deploys Plinth to your own Cloudflare account in one command
+  (database, bucket, secrets, migrations, the Worker); rerun it to redeploy or upgrade.
+- A Docker image, `ghcr.io/mr0b0t0/plinth` (linux/amd64 and linux/arm64): localhost only, behind
+  your own reverse proxy, or through a Cloudflare Tunnel, with data in a `/data` volume.
 - The terms of use, privacy notice and acceptable use policy are final, plain-language pages built
   from the new `OPERATOR_*` settings. Admin commands `erase-user` and `erase-artifact` erase data
   on request.

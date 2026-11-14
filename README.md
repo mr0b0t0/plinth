@@ -1,65 +1,157 @@
 # Plinth
 
-A neutral home for AI-made artifacts. Agents (Claude, Codex, any MCP client) publish HTML artifacts
-to Plinth with one tool call. Owners decide who can view each one: public, anyone with the link, a
-password, or an email allowlist. Viewers need no AI account.
+**A home for the HTML your AI agents make.** Claude Code, Codex and any MCP client publish reports,
+dashboards and prototypes to Plinth with one tool call. Every change is a version you can go back
+to, new pages are private until you share them, and a comment like "@codex add a table" sends the
+request back to the agent.
 
-Built-in artifact hosting has two limits. Artifacts are locked to the account that made them, so a
-work account's artifacts are invisible from a personal one. And sharing with people outside the
-same AI product is limited. Plinth keeps every artifact under one login, whichever agent made it.
+![Claude Code publishes a report; a comment asks Codex for a table; Codex publishes v2 and replies; the page updates; history shows who made each version; the report is private](docs/screenshots/demo.gif)
 
-- Every publish is an immutable version. Old versions keep permanent links and can be restored.
-- People edit in the browser, with conflict checks instead of silent overwrites.
-- A comment like "@claude make the chart bigger" queues a request for the owner's agent, which
-  publishes a new version and replies in the thread.
-- Each artifact is served from its own subdomain on a separate content domain, with a strict
-  Content Security Policy. User HTML never runs next to login sessions.
+<sub>Recorded on a local instance (`npx @mr0b0t0/plinth`). Claude Code published v1, the comment
+went to Codex, and Codex published v2 and replied, both through Plinth's MCP server. Nothing is
+staged.</sub>
 
-It runs on Cloudflare (one Worker, one D1 database, one R2 bucket) and fits the free tier for a
-personal instance. The same code runs the hosted instance at `plinth.aconite.io`, operated by
-Aconite Software & Investments, Lda.
+[![CI](https://github.com/mr0b0t0/plinth/actions/workflows/ci.yml/badge.svg)](https://github.com/mr0b0t0/plinth/actions/workflows/ci.yml)
+[![npm](https://img.shields.io/npm/v/@mr0b0t0/plinth)](https://www.npmjs.com/package/@mr0b0t0/plinth)
+[![MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
-Works with Claude and Codex. Plinth is not made by or affiliated with Anthropic or OpenAI.
+## Why Plinth
 
-## Use it
+Artifacts made in an AI product live in that product, under the account that made them. Plinth is
+a neutral place for them:
 
-- **Hosted**: sign in at `https://plinth.aconite.io` and connect your agent from **Connections**.
-- **Plugin for Claude Code and Codex**: the MCP server plus a skill with Plinth's publishing rules
-  ([docs/agents.md](docs/agents.md)).
+- **Every agent, one place.** Claude Code, Codex, Cursor, VS Code, Claude, ChatGPT and any other
+  MCP client publish to the same home, under your login, whichever agent did the work.
+- **Private by default, shared on purpose.** Share a page with specific people, with anyone who has
+  the link, or behind a password. Viewers need no AI account.
+- **Versions, never overwrites.** Every publish is an immutable version with a permanent link.
+  Compare any two, restore an old one, and see which agent or person made each.
+- **A review loop with your agents.** Pin a comment to an element, mention `@claude` or `@codex`,
+  and the agent publishes a new version and replies in the thread. Open pages update live.
+- **Built to host untrusted HTML.** Each artifact runs on its own subdomain of a separate content
+  domain, sandboxed, under a strict Content Security Policy. Agent-written pages never run next to
+  your login.
+- **Yours to run.** Use the hosted instance, run it on your laptop, deploy it to your own
+  Cloudflare account, or run the Docker image anywhere. MIT licensed.
 
-  ```sh
-  /plugin install plinth --marketplace mr0b0t0/plinth          # Claude Code
-  codex plugin marketplace add mr0b0t0/plinth && codex plugin add plinth@plinth   # Codex
-  ```
+## What people use it for
 
-- **On your computer, no domain needed**: `npx @mr0b0t0/plinth init --email you@example.com`, then
-  `npx @mr0b0t0/plinth start` ([docs/local-hosting.md](docs/local-hosting.md)).
+- **Claude and Codex on one project.** Claude Code drafts a launch report, Codex adds the table you
+  asked for in a comment, and the history shows who changed what (the recording above).
+- **Sharing work with people outside your AI tools.** Publish a prototype for a client, add their
+  email address, and they open it in any browser. Nobody else can.
+- **A design or data review.** Pin comments to the chart that's wrong; the agent fixes it and
+  answers in the thread. Restore the previous version if the fix is worse.
+- **Artifacts on your own domain.** Deploy to your Cloudflare account and every page is served
+  from `<id>.your-content-domain.com`, with the app on a domain of yours.
+- **Nothing leaves your machine.** Run it locally with one `npx` command: the database and files
+  stay on your disk, and agents on the same computer publish to it.
 
-## Deploy
+## Get started
 
-One command deploys Plinth to your own Cloudflare account, with two domains on it (one for the
-app, a separate one for artifact content). It creates the database, the bucket and the secrets,
-deploys the prebuilt Worker and prints how to connect your agents:
+| How | Run | Good for |
+| --- | --- | --- |
+| [Hosted](#hosted) | Sign in at [plinth.aconite.io](https://plinth.aconite.io) | Trying it, small teams |
+| [On your computer](#on-your-computer) | `npx @mr0b0t0/plinth init` | Local agents, private work |
+| [On your computer, reachable online](#on-your-computer-reachable-online) | `npx @mr0b0t0/plinth init --tunnel ...` | Sharing from your machine |
+| [Your Cloudflare account](#your-cloudflare-account) | `npx @mr0b0t0/plinth deploy ...` | Your own domains, free tier |
+| [Docker](#docker) | `docker run ghcr.io/mr0b0t0/plinth` | A VPS, AWS, GCP, or a laptop |
+
+Then add the [agent plugin](#agent-plugin) so your agent knows Plinth's publishing rules.
+
+### Hosted
+
+Sign in at [plinth.aconite.io](https://plinth.aconite.io) with your email address, open
+**Connections > Connect an agent**, and follow the tab for your client. Agents sign in with OAuth:
+a browser opens on Plinth and you click **Allow**. No tokens to copy.
+
+### On your computer
 
 ```sh
+npx @mr0b0t0/plinth init --email you@example.com
+npx @mr0b0t0/plinth start
+```
+
+Open `http://127.0.0.1:8788`; the sign-in code appears in the terminal. `npx @mr0b0t0/plinth
+connect` prints the commands for Claude Code, Codex, Cursor and VS Code. Artifacts are served from
+their own `*.localhost` origins, isolated from the app and from each other. Needs Node 22.12+ on
+macOS or Linux. [docs/local-hosting.md](docs/local-hosting.md)
+
+### On your computer, reachable online
+
+The same instance, served on two domains of yours through a Cloudflare Tunnel, so people and
+cloud-hosted agents (Claude, ChatGPT) can reach it while the data stays on your disk. Needs
+`cloudflared` and two domains on Cloudflare.
+
+```sh
+export CLOUDFLARE_API_TOKEN=...   # setup only: Tunnel Edit, DNS Edit, Zone Read
+export RESEND_API_KEY=...         # or SENDGRID_API_KEY
+npx @mr0b0t0/plinth init --tunnel --app-host plinth.example.com \
+  --content-host example-content.net --email-provider resend
+npx @mr0b0t0/plinth start
+```
+
+[docs/local-hosting.md](docs/local-hosting.md)
+
+### Your Cloudflare account
+
+One command creates the database, the file bucket and the secrets, deploys the prebuilt Worker,
+and prints how to connect your agents. It needs two domains on Cloudflare: one for the app, a
+separate one for artifact content. A personal instance fits Cloudflare's free tier.
+
+```sh
+export RESEND_API_KEY=...         # or SENDGRID_API_KEY
 npx @mr0b0t0/plinth deploy --app-host plinth.example.com --content-host example-content.net \
   --email-provider resend --admin-email you@example.com
 ```
 
-Rerun it with no flags to redeploy or upgrade. Details:
-[docs/self-hosting.md](docs/self-hosting.md#deploy-with-one-command).
+Run it again with no flags to redeploy or upgrade.
+[docs/self-hosting.md](docs/self-hosting.md#deploy-with-one-command)
 
-[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/mr0b0t0/plinth/tree/main/apps/worker)
+### Docker
 
-The button forks the repository and deploys the Worker to your Cloudflare account. You still need
-a content domain, the wildcard route and the secrets: follow
-[docs/deploy-checklist.md](docs/deploy-checklist.md), or use `node scripts/setup.mjs --remote`
-([docs/self-hosting.md](docs/self-hosting.md)).
+```sh
+docker run -d --name plinth -e PLINTH_EMAIL=you@example.com \
+  -p 127.0.0.1:8788:8788 -v plinth-data:/data ghcr.io/mr0b0t0/plinth:latest
+```
 
-To run an instance on your own computer instead, with the database and files on your disk and a
-Cloudflare Tunnel for access, see [docs/local-hosting.md](docs/local-hosting.md).
+That is the localhost mode; the sign-in code is in `docker logs plinth`. The image also runs behind
+your own reverse proxy with your domains, or through a Cloudflare Tunnel. Data lives in the `/data`
+volume. [docs/docker.md](docs/docker.md)
 
-## Quick start (local)
+### Agent plugin
+
+The Plinth plugin adds the MCP server and a skill that teaches the agent what an artifact may
+contain and how to share it. It points at the hosted instance; [docs/agents.md](docs/agents.md)
+shows how to point it at your own.
+
+```sh
+/plugin install plinth --marketplace mr0b0t0/plinth                              # in Claude Code
+codex plugin marketplace add mr0b0t0/plinth && codex plugin add plinth@plinth   # Codex
+```
+
+Gemini CLI, Cursor and VS Code get the same rules as an extension, a rule file and an instructions
+file ([docs/agents.md](docs/agents.md)). Those three have not been tried in each tool yet
+([#8](https://github.com/mr0b0t0/plinth/issues/8)).
+
+## How it keeps artifacts apart
+
+Hosting HTML written by agents (and by whoever prompted them) is the main risk, so the rules are
+strict and enforced on every request:
+
+- The app and the artifacts are on different registrable domains, and each artifact has its own
+  subdomain, so pages cannot read your session or each other's data.
+- Artifacts render in sandboxed frames with a Content Security Policy that blocks network calls to
+  other hosts.
+- Access is checked by one policy module on every read and write. Tokens are stored hashed and can
+  be revoked per connection.
+- Comment text is untrusted input for agents: a mention is a request, never an instruction with
+  the owner's authority.
+
+[docs/security.md](docs/security.md) has the threat model. Report vulnerabilities privately
+([SECURITY.md](SECURITY.md)).
+
+## Develop
 
 Requires Node 22.12+ and pnpm 10. pnpm runs Node 24.22.2 for this repo (`.npmrc`).
 
@@ -72,63 +164,43 @@ pnpm dev                         # http://app.localhost:8787
 pnpm seed                        # in a second terminal: demo user, samples, a token
 ```
 
-Open http://app.localhost:8787 and sign in as `demo@plinth.local`. Locally the sign-in code is
-printed in the `wrangler dev` log. To connect an agent, open **Connections > Connect an agent**
-and follow the tab for your client; it signs in with OAuth, no token needed. Claude and ChatGPT
-connect from their own servers and cannot reach a local instance; use Claude Code, Codex, Cursor or
-VS Code. The token `pnpm seed` prints is for scripts and CI (see [docs/mcp.md](docs/mcp.md)).
-
-Artifacts are served from `<artifact_id>.content.localhost:8787`. Browsers resolve `*.localhost`
-to your machine, so no hosts-file changes are needed.
-
-## Screenshots
-
-Gallery (light):
-
-![Plinth dashboard in the light "Gallery" theme](docs/screenshots/gallery.png)
-
-After hours (dark):
-
-![Plinth artifact page in the dark "After hours" theme](docs/screenshots/after-hours.png)
-
-## Docs
-
-| Document | What it covers |
-| --- | --- |
-| [docs/mcp.md](docs/mcp.md) | Connecting Claude, ChatGPT, Claude Code, Codex, Cursor and VS Code; tokens for scripts; every MCP tool; the mention workflow |
-| [docs/self-hosting.md](docs/self-hosting.md) | Running your own instance: one-command deploy with `npx @mr0b0t0/plinth deploy`, or from a checkout; every setting; single-user mode |
-| [docs/local-hosting.md](docs/local-hosting.md) | Running an instance on your own machine: localhost only with `npx @mr0b0t0/plinth`, or behind a Cloudflare Tunnel; data stays on your disk |
-| [docs/docker.md](docs/docker.md) | Running Plinth in a container: localhost only, behind your own reverse proxy, or through a Cloudflare Tunnel |
-| [docs/agents.md](docs/agents.md) | The Plinth plugin and skill for Claude Code, Codex and other agents |
-| [docs/distribution.md](docs/distribution.md) | Releasing the npm CLI, the Docker image and the plugin; directory listings |
-| [docs/deploy-checklist.md](docs/deploy-checklist.md) | Cloudflare resources, DNS, secrets, email, go-live steps |
-| [docs/security.md](docs/security.md) | Threat model and how each boundary is enforced; reporting a vulnerability |
-| [docs/openapi.json](docs/openapi.json) | REST API (`/api/v1`), OpenAPI 3.1; also served at `/openapi.json` |
-| [docs/spec.md](docs/spec.md) | What Plinth does and why (the source of truth) |
-| [docs/build-prompt.md](docs/build-prompt.md) | The v1 build brief |
-| [CONTRIBUTING.md](CONTRIBUTING.md) | Setup, commands, conventions, adding migrations and tools |
-| [AGENTS.md](AGENTS.md) | Rules for people and coding agents working in this repo |
-| [DECISIONS.md](DECISIONS.md) | Choices made where the spec left room |
-
-## Repository layout
-
-Turborepo on a pnpm workspace.
+Sign in as `demo@plinth.local`; the code is printed in the `wrangler dev` log. Artifacts are served
+from `<id>.content.localhost:8787`. Contributions are welcome: start with
+[CONTRIBUTING.md](CONTRIBUTING.md) and the
+[good first issues](https://github.com/mr0b0t0/plinth/labels/good%20first%20issue).
 
 | Path | What |
 | --- | --- |
 | `apps/worker` | The Cloudflare Worker: app host, content host, `/mcp`, `/api/v1` (Hono) |
 | `apps/web` | React + Vite front end, served as static assets by the Worker |
 | `packages/shared` | Types, zod schemas and constants used by both |
-| `packages/cli` | `@mr0b0t0/plinth`, the npm CLI that runs a local instance or deploys to Cloudflare |
-| `integrations/plugin` | The agent plugin (Claude Code, Codex): MCP server config and the `plinth-artifacts` skill |
+| `packages/cli` | `@mr0b0t0/plinth`: runs a local instance or deploys to Cloudflare |
+| `integrations` | The agent plugin, skill and per-client rules (generated by `pnpm integrations`) |
 | `migrations` | D1 SQL migrations |
 | `e2e` | Playwright end-to-end tests |
-| `scripts` | `setup.mjs`, `local-start.mjs`, `seed.mjs`, `openapi.mjs` |
 | `docs` | Spec, guides, OpenAPI file |
 
-Main commands: `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm build`, `pnpm test:e2e`. See
-[CONTRIBUTING.md](CONTRIBUTING.md).
+## Docs
+
+| Document | What it covers |
+| --- | --- |
+| [docs/mcp.md](docs/mcp.md) | Connecting each client; tokens for scripts; every MCP tool; the mention workflow |
+| [docs/agents.md](docs/agents.md) | The plugin and skill for Claude Code, Codex and other agents |
+| [docs/local-hosting.md](docs/local-hosting.md) | Running Plinth on your computer, localhost only or through a Cloudflare Tunnel |
+| [docs/self-hosting.md](docs/self-hosting.md) | Your own Cloudflare deployment: one command or from a checkout; every setting |
+| [docs/docker.md](docs/docker.md) | The Docker image: localhost, behind a reverse proxy, or through a Cloudflare Tunnel |
+| [docs/deploy-checklist.md](docs/deploy-checklist.md) | Cloudflare resources, DNS, secrets, email, go-live steps |
+| [docs/security.md](docs/security.md) | Threat model and how each boundary is enforced |
+| [docs/openapi.json](docs/openapi.json) | REST API (`/api/v1`), OpenAPI 3.1; also served at `/openapi.json` |
+| [docs/spec.md](docs/spec.md) | What Plinth does and why (the source of truth) |
+| [docs/releasing.md](docs/releasing.md) | How releases are cut and published |
+| [DECISIONS.md](DECISIONS.md) | Why things are the way they are |
+| [CHANGELOG.md](CHANGELOG.md) | What changed in each release |
 
 ## License
 
 MIT. Copyright (c) 2026 Aconite Software & Investments, Lda. See [LICENSE](LICENSE).
+
+Works with Claude and Codex. Plinth is not made by or affiliated with Anthropic or OpenAI. The
+hosted instance at [plinth.aconite.io](https://plinth.aconite.io) is run by Aconite Software &
+Investments, Lda.
