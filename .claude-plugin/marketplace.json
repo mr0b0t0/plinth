@@ -10,7 +10,7 @@
       "name": "plinth",
       "source": "./integrations/plugin",
       "description": "Publish, update and share HTML artifacts on Plinth: the Plinth MCP server plus a skill with its publishing rules",
-      "version": "0.2.0",
+      "version": "0.3.0",
       "category": "productivity"
     }
   ]

@@ -56,6 +56,16 @@ Your own instance: the plugin's server URL is `${PLINTH_URL:-https://plinth.acon
 `PLINTH_URL` to the instance's origin (`https://plinth.example.com`, or `http://127.0.0.1:8788` for
 `npx @mr0b0t0/plinth`) before starting Claude Code.
 
+**Mentions without asking.** Run `/plinth:watch-mentions` once to connect the mention watcher. A
+background monitor in every session then checks Plinth every 30 seconds and wakes Claude when a new
+`@claude` request arrives, and a session-start hook lists the requests still waiting. Claude Code
+does not share its MCP login with other programs, so the watcher has a connection of its own: one
+browser approval, the `mentions` scope only (it sees that requests exist; it cannot read or change
+artifacts), revocable on the Connections page. Its tokens live in `~/.config/plinth/` (mode 0600).
+Each request is announced once per computer, not once per open session. It needs Node.js 18+ on
+the PATH and stays silent without it. The source is `integrations/watcher/`; Codex is not covered
+yet (its plugin hooks need separate trust and a different config).
+
 ### Codex
 
 ```sh
@@ -94,11 +104,13 @@ skills settings.
 
 ## Maintaining it
 
-Everything above comes from two files. Edit those, never the outputs:
+Everything above comes from these sources. Edit those, never the outputs:
 
 - **`packages/shared/src/harnesses.ts`**: the registry. Each harness's label, whether it reaches a
   local instance, its own artifact feature, how it connects, and how it gets the guidance. Plugin
   name and version live here too.
+- **`integrations/watcher/`**: the Claude Code mention watcher script and its
+  `/plinth:watch-mentions` skill, copied into the plugin with a monitor and a SessionStart hook.
 - **`integrations/skill/plinth-artifacts/SKILL.md`**: the Plinth way, written once. It restates
   server behaviour (the CDN allowlist, size limits, the iframe sandbox, the private default, the
   update and comment tools); when one of those changes, change the skill in the same commit.

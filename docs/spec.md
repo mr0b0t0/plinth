@@ -192,7 +192,7 @@ Comments are threaded and can be pinned to an element on the page. Mentioning an
 
 | Mode | How it works | Who pays for tokens | When |
 | --- | --- | --- | --- |
-| Pull | The task waits in a queue. The owner's agent reads it through `list_mentions` in a session or on a schedule, publishes a new version and replies | The user's own Claude or Codex subscription | v1 |
+| Pull | The task waits in a queue. The owner's agent reads it through `list_mentions` in a session or on a schedule, publishes a new version and replies. In Claude Code the plugin's mention watcher (its own `mentions`-only connection) polls every 30 seconds and wakes open sessions when a request arrives | The user's own Claude or Codex subscription | v1 |
 | Push | The platform calls the Anthropic or OpenAI API as soon as the mention is posted, with the artifact, the thread and a scoped token | The user's own API key, or a paid plan on the hosted instance | Later |
 
 Rules for both modes: only the owner's connected agents can be mentioned, only commenters and

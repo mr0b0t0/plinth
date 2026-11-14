@@ -1,0 +1,17 @@
+{
+  "description": "List Plinth @mention requests waiting when a session starts",
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume|clear",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "command -v node >/dev/null 2>&1 && node \"${CLAUDE_PLUGIN_ROOT}/scripts/plinth-mentions.mjs\" pending 2>/dev/null; exit 0",
+            "timeout": 15
+          }
+        ]
+      }
+    ]
+  }
+}

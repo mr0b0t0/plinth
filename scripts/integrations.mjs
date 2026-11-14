@@ -58,7 +58,57 @@ outputs.set(
 );
 outputs.set(
   "integrations/plugin/plugin.json",
-  json({ $schema: "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json", ...meta }),
+  json({
+    $schema: "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+    ...meta,
+    // Codex would otherwise pick up hooks/hooks.json, which is for Claude Code only (the mention
+    // watcher answers @claude). An explicit hooks value replaces Codex's default discovery.
+    extensions: { "com.openai": { hooks: [] } },
+  }),
+);
+
+// Mention watcher (Claude Code only): a monitor that announces new @mentions, a SessionStart hook
+// that lists waiting ones, and a skill to connect it. Source: integrations/watcher/.
+const WATCHER = "scripts/plinth-mentions.mjs";
+const watcherCmd = (sub) => `node "\${CLAUDE_PLUGIN_ROOT}/${WATCHER}" ${sub}`;
+outputs.set(
+  `integrations/plugin/${WATCHER}`,
+  readFileSync(path.join(root, "integrations/watcher/plinth-mentions.mjs"), "utf8"),
+);
+outputs.set(
+  "integrations/plugin/skills/watch-mentions/SKILL.md",
+  readFileSync(path.join(root, "integrations/watcher/watch-mentions/SKILL.md"), "utf8"),
+);
+outputs.set(
+  "integrations/plugin/monitors/monitors.json",
+  json([
+    {
+      name: "plinth-mentions",
+      // Silent when Node is missing or the watcher is not connected (see /plinth:watch-mentions).
+      command: `command -v node >/dev/null 2>&1 && exec ${watcherCmd("watch")}; exit 0`,
+      description: "New @mention requests on your Plinth artifacts",
+    },
+  ]),
+);
+outputs.set(
+  "integrations/plugin/hooks/hooks.json",
+  json({
+    description: "List Plinth @mention requests waiting when a session starts",
+    hooks: {
+      SessionStart: [
+        {
+          matcher: "startup|resume|clear",
+          hooks: [
+            {
+              type: "command",
+              command: `command -v node >/dev/null 2>&1 && ${watcherCmd("pending")} 2>/dev/null; exit 0`,
+              timeout: 15,
+            },
+          ],
+        },
+      ],
+    },
+  }),
 );
 outputs.set(
   "integrations/plugin/mcp.json",

@@ -40,6 +40,16 @@
   },
   "overrides": [
     {
+      "includes": ["integrations/watcher/**", "integrations/plugin/scripts/**"],
+      "linter": {
+        "rules": {
+          "suspicious": {
+            "noUndeclaredEnvVars": "off"
+          }
+        }
+      }
+    },
+    {
       "includes": ["**/test/**", "e2e/**"],
       "linter": {
         "rules": {
