@@ -46,12 +46,12 @@ a claude.ai organization. Plinth is for the cases they leave out:
 
 | | Claude Code artifacts | Plinth |
 | --- | --- | --- |
-| Agents | Claude Code signed in to claude.ai | Claude Code, Codex, Cursor, VS Code, Gemini CLI, Claude, ChatGPT, any MCP client |
+| Agents | Claude Code (CLI or desktop app) signed in to claude.ai, and Claude Tag | Claude Code, Codex, Cursor, VS Code, Gemini CLI, Claude, ChatGPT, any MCP client |
 | Credentials | API keys, gateway tokens, Amazon Bedrock, Google Cloud's Agent Platform and Microsoft Foundry cannot publish | Any client with a Plinth sign-in or token |
-| Scripts and CI | Off by default in the Agent SDK, the GitHub Action and `claude -p` | Scheduled and CI agents publish with a token ([docs/mcp.md](docs/mcp.md#advanced-personal-access-tokens-scripts-and-ci)) |
-| Who can open a page | People in your organization, or anyone with a public link | Listed email addresses, anyone with the link, a password, or public |
+| Scripts and CI | Off by default in the Agent SDK, the GitHub Action, MCP-server contexts and `claude -p` | Scheduled and CI agents publish with a token ([docs/mcp.md](docs/mcp.md#advanced-personal-access-tokens-scripts-and-ci)) |
+| Who can open a page | Only you, your organization or a shared folder (Team and Enterprise), or anyone with a public link | Listed email addresses, anyone with the link, a password, or public |
 | Comments from outside | Public-link viewers cannot see or add comments | People you list as commenters comment and mention your agent, with no AI account |
-| Where pages live | Anthropic's infrastructure | The hosted instance, your Cloudflare account, Docker, or your own disk |
+| Where pages live | Anthropic-operated infrastructure | The hosted instance, your Cloudflare account, Docker, or your own disk |
 
 <sub>The Claude Code column is from [Claude Code's artifacts
 documentation](https://code.claude.com/docs/en/artifacts) as of 2026-11-14, which also lists
