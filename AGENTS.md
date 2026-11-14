@@ -28,6 +28,8 @@ Turborepo on a pnpm workspace.
 | `apps/worker` | The Cloudflare Worker: app host, content host, `/mcp`, `/api/v1` (Hono) |
 | `apps/web` | React + Vite front end, served as static assets by the Worker |
 | `packages/shared` | Types, schemas and constants used by both, imported as TS source |
+| `packages/cli` | `@aconite/plinth`, the npm CLI for local instances (ships a prebuilt Worker) |
+| `integrations/plugin` | Agent plugin for Claude Code and Codex; its skill restates server rules, keep it in sync |
 | `e2e` | Playwright end-to-end tests |
 | `migrations` | D1 SQL migrations, checked in |
 | `docs` | Spec, build brief, and the human-facing guides |
@@ -57,8 +59,9 @@ make a test pass.
   registrable domain (never equal to the app host, inside it or above it). That mode must keep
   the CSP `sandbox` directive without `allow-same-origin` on every content response, so every
   artifact document has an opaque origin (no cookies, no storage, no service workers), and the
-  app's frames must drop `allow-same-origin` too. It is the hosted instance's stopgap until its
-  PSL entry ships (`docs/security.md#opaque-content-isolation`).
+  app's frames must drop `allow-same-origin` too. It is a stopgap for a content subdomain whose
+  PSL entry has not shipped (`docs/security.md#opaque-content-isolation`); the hosted instance no
+  longer needs it.
 - **No app cookies on the content host.** App cookies are host-only on the app host and use the
   `__Host-` prefix whenever they are `Secure`. The content host checks access with a short-lived
   signed token bound to one artifact.

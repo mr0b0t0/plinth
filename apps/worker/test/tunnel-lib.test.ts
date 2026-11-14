@@ -1,13 +1,16 @@
 import { getDomain as tldtsGetDomain } from "tldts";
 import { describe, expect, it } from "vitest";
 import {
+  buildLocalWorkerConfig,
   buildWorkerConfig,
   credentialsJson,
   dnsRecordNames,
   instancePaths,
+  localHosts,
   renderCloudflaredConfig,
   startCommands,
   TunnelUsageError,
+  validateLocalOptions,
   validateTunnelOptions,
 } from "../scripts/tunnel-lib.mjs";
 
@@ -230,5 +233,68 @@ describe("tunnel-lib: paths and configs", () => {
       "/h/p/cloudflared.yml",
       "run",
     ]);
+  });
+});
+
+describe("tunnel-lib: localhost-only instances", () => {
+  it("requires an email and fills defaults", () => {
+    expect(validateLocalOptions({ email: "Me@Example.com" })).toEqual({
+      name: "plinth",
+      port: 8788,
+      adminEmail: "me@example.com",
+    });
+    expect(() => validateLocalOptions({})).toThrow(/--email/);
+    expect(() => validateLocalOptions({ email: "nope" })).toThrow(TunnelUsageError);
+    expect(() => validateLocalOptions({ email: "a@b.co", port: "80" })).toThrow(/--port/);
+    expect(() => validateLocalOptions({ email: "a@b.co", name: "Bad Name" })).toThrow(/--name/);
+  });
+
+  it("serves the app and artifacts from separate *.localhost hosts", () => {
+    expect(localHosts(9000)).toEqual({
+      appHost: "app.localhost:9000",
+      contentHost: "content.localhost:9000",
+    });
+  });
+
+  it("builds a single-user development config from a layout object", () => {
+    const o = validateLocalOptions({ email: "me@example.com", port: "9000" });
+    const layout = { main: "/pkg/w/index.js", assetsDir: "/pkg/web", migrationsDir: "/pkg/m" };
+    const cfg = buildLocalWorkerConfig(o, layout, { vars: { MAX_ARTIFACTS_PER_USER: "100" } }) as {
+      main: string;
+      assets: { directory: string };
+      d1_databases: { migrations_dir: string }[];
+      vars: Record<string, string>;
+    };
+    expect(cfg.main).toBe("/pkg/w/index.js");
+    expect(cfg.assets.directory).toBe("/pkg/web");
+    expect(cfg.d1_databases[0]?.migrations_dir).toBe("/pkg/m");
+    expect(cfg.vars).toMatchObject({
+      ENVIRONMENT: "development",
+      APP_HOST: "app.localhost:9000",
+      CONTENT_HOST: "content.localhost:9000",
+      CONTENT_ISOLATION: "origin",
+      PUBLIC_SCHEME: "http",
+      EMAIL_PROVIDER: "console",
+      SINGLE_USER_MODE: "true",
+      ADMIN_EMAIL: "me@example.com",
+      DEV_OUTBOX: "false",
+      DEV_SEED: "false",
+      DEV_IGNORE_CLIENT_IP: "false",
+      MAX_ARTIFACTS_PER_USER: "100",
+    });
+  });
+
+  it("keeps a repo-root layout working for tunnel configs", () => {
+    const o = validateTunnelOptions(base, deps);
+    const layout = { main: "/pkg/w/index.js", assetsDir: "/pkg/web", migrationsDir: "/pkg/m" };
+    expect((buildWorkerConfig(o, layout) as { main: string }).main).toBe("/pkg/w/index.js");
+  });
+
+  it("starts wrangler without the https upstream rewrite", () => {
+    const paths = instancePaths("/h", "p");
+    const cmd = startCommands(paths, 9000, false, { local: true });
+    expect(cmd.wrangler).not.toContain("--upstream-protocol");
+    expect(cmd.wrangler).toContain("127.0.0.1");
+    expect(cmd.cloudflared).toBeNull();
   });
 });

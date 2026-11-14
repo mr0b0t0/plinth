@@ -28,9 +28,21 @@ export declare function validateTunnelOptions(
   deps: { getDomain(host: string): string | null },
 ): TunnelOptions;
 export declare function instancePaths(home: string, name: string): InstancePaths;
+export type Layout = { main: string; assetsDir: string; migrationsDir: string };
+export type LocalOptions = { name: string; port: number; adminEmail: string };
+export declare function resolveLayout(layout: string | Layout): Layout;
 export declare function buildWorkerConfig(
   o: TunnelOptions,
-  repoRoot: string,
+  layout: string | Layout,
+  base?: Record<string, unknown>,
+): Record<string, unknown>;
+export declare function validateLocalOptions(
+  raw: Record<string, string | true | undefined>,
+): LocalOptions;
+export declare function localHosts(port: number): { appHost: string; contentHost: string };
+export declare function buildLocalWorkerConfig(
+  o: LocalOptions,
+  layout: string | Layout,
   base?: Record<string, unknown>,
 ): Record<string, unknown>;
 export declare function renderCloudflaredConfig(a: {
@@ -50,4 +62,5 @@ export declare function startCommands(
   paths: InstancePaths,
   port: number,
   tunnel: boolean,
+  opts?: { local?: boolean },
 ): { wrangler: string[]; cloudflared: string[] | null };

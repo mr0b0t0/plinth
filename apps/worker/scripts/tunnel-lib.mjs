@@ -110,15 +110,26 @@ export function instancePaths(home, name) {
 }
 
 /**
- * The Wrangler config for a local instance. `base` is the repo's apps/worker/wrangler.jsonc, for
- * the compatibility settings and default limits; everything that makes the instance production and
- * local is set here and wins over `base`.
+ * Where an instance's code lives. A string is a checkout of this repo (the Worker's TypeScript
+ * source, the built web app and the migrations folder); an object names the three paths directly,
+ * as the npm package does with its prebuilt Worker bundle.
  */
-export function buildWorkerConfig(o, repoRoot, base = {}) {
-  const root = repoRoot.replace(/\/+$/, "");
+export function resolveLayout(layout) {
+  if (typeof layout !== "string") return layout;
+  const root = layout.replace(/\/+$/, "");
+  return {
+    main: `${root}/apps/worker/src/index.ts`,
+    assetsDir: `${root}/apps/web/dist`,
+    migrationsDir: `${root}/migrations`,
+  };
+}
+
+/** The parts every instance config shares: code paths, bindings and compatibility settings. */
+function workerBase(o, layout, base) {
+  const l = resolveLayout(layout);
   return {
     name: `plinth-${o.name}`,
-    main: `${root}/apps/worker/src/index.ts`,
+    main: l.main,
     compatibility_date: base.compatibility_date ?? "2026-11-01",
     compatibility_flags: base.compatibility_flags ?? ["nodejs_compat"],
     workers_dev: false,
@@ -128,17 +139,29 @@ export function buildWorkerConfig(o, repoRoot, base = {}) {
         run_worker_first: true,
         not_found_handling: "single-page-application",
       }),
-      directory: `${root}/apps/web/dist`,
+      directory: l.assetsDir,
     },
     d1_databases: [
       {
         binding: "DB",
         database_name: "plinth",
         database_id: "00000000-0000-0000-0000-000000000000",
-        migrations_dir: `${root}/migrations`,
+        migrations_dir: l.migrationsDir,
       },
     ],
     r2_buckets: [{ binding: "FILES", bucket_name: "plinth-files" }],
+  };
+}
+
+/**
+ * The Wrangler config for a tunnel instance. `layout` is a repo root or a layout object (see
+ * resolveLayout). `base` is the repo's apps/worker/wrangler.jsonc, for the compatibility settings
+ * and default limits; everything that makes the instance production and local is set here and
+ * wins over `base`.
+ */
+export function buildWorkerConfig(o, layout, base = {}) {
+  return {
+    ...workerBase(o, layout, base),
     vars: {
       ...(base.vars ?? {}),
       ENVIRONMENT: "production",
@@ -150,6 +173,62 @@ export function buildWorkerConfig(o, repoRoot, base = {}) {
       EMAIL_FROM: o.emailFrom,
       SINGLE_USER_MODE: o.singleUser ? "true" : "false",
       ADMIN_EMAIL: o.adminEmail ?? "",
+      STAGING_CONTENT_FALLBACK: "false",
+      DEV_OUTBOX: "false",
+      DEV_IGNORE_CLIENT_IP: "false",
+      DEV_SEED: "false",
+    },
+  };
+}
+
+/**
+ * Check the options of a localhost-only instance (`plinth init` without --tunnel): one person, on
+ * this computer only, no domain and no Cloudflare account. Same flag conventions as
+ * validateTunnelOptions.
+ */
+export function validateLocalOptions(raw) {
+  const name = raw.name === undefined ? "plinth" : String(raw.name);
+  if (!NAME_RE.test(name)) fail("--name must be lowercase letters, digits and dashes, e.g. plinth");
+  let port = DEFAULT_PORT;
+  if (raw.port !== undefined) {
+    port = Number(raw.port);
+    if (!Number.isInteger(port) || port < 1024 || port > 65535)
+      fail("--port must be a number from 1024 to 65535");
+  }
+  const email = raw.email ?? raw["admin-email"];
+  if (typeof email !== "string" || !EMAIL_RE.test(email))
+    fail("--email <address> is required: it is the one account that can sign in");
+  return { name, port, adminEmail: email.toLowerCase() };
+}
+
+/** The app and content hosts of a localhost-only instance on `port`. */
+export function localHosts(port) {
+  return { appHost: `app.localhost:${port}`, contentHost: `content.localhost:${port}` };
+}
+
+/**
+ * The Wrangler config for a localhost-only instance. Browsers and Node resolve every *.localhost
+ * name to the loopback address and treat each one as its own origin, so artifacts at
+ * <id>.content.localhost:<port> stay isolated from the app and from each other without a domain.
+ * ENVIRONMENT=development is the mode the Worker allows on localhost hosts only (it refuses it
+ * anywhere else); the development helpers stay off. Single-user with console email: sign-in codes
+ * appear in the terminal running `plinth start`.
+ */
+export function buildLocalWorkerConfig(o, layout, base = {}) {
+  const { appHost, contentHost } = localHosts(o.port);
+  return {
+    ...workerBase(o, layout, base),
+    vars: {
+      ...(base.vars ?? {}),
+      ENVIRONMENT: "development",
+      APP_HOST: appHost,
+      CONTENT_HOST: contentHost,
+      CONTENT_ISOLATION: "origin",
+      PUBLIC_SCHEME: "http",
+      EMAIL_PROVIDER: "console",
+      EMAIL_FROM: "Plinth <noreply@plinth.localhost>",
+      SINGLE_USER_MODE: "true",
+      ADMIN_EMAIL: o.adminEmail,
       STAGING_CONTENT_FALLBACK: "false",
       DEV_OUTBOX: "false",
       DEV_IGNORE_CLIENT_IP: "false",
@@ -192,11 +271,12 @@ export function credentialsJson({ accountId, tunnelId, secret }) {
 }
 
 /**
- * Arguments for wrangler and cloudflared. `--upstream-protocol https` keeps the browser's Origin
- * header and an https request URL; without it wrangler dev rewrites both to http and every
- * CSRF-checked request is refused.
+ * Arguments for wrangler and cloudflared. Behind the tunnel, `--upstream-protocol https` keeps the
+ * browser's Origin header and an https request URL; without it wrangler dev rewrites both to http
+ * and every CSRF-checked request is refused. A localhost-only instance (`local: true`) is plain
+ * http end to end, so it leaves the protocol alone.
  */
-export function startCommands(paths, port, tunnel) {
+export function startCommands(paths, port, tunnel, { local = false } = {}) {
   return {
     wrangler: [
       "dev",
@@ -208,8 +288,7 @@ export function startCommands(paths, port, tunnel) {
       String(port),
       "--persist-to",
       paths.state,
-      "--upstream-protocol",
-      "https",
+      ...(local ? [] : ["--upstream-protocol", "https"]),
       "--show-interactive-dev-session=false",
     ],
     cloudflared: tunnel

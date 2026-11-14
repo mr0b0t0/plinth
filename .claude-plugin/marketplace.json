@@ -1,0 +1,14 @@
+{
+  "name": "plinth",
+  "description": "Plinth: a home for the HTML artifacts AI agents make, with owner-controlled sharing",
+  "owner": { "name": "Aconite Software & Investments, Lda.", "url": "https://aconite.io" },
+  "plugins": [
+    {
+      "name": "plinth",
+      "source": "./integrations/plugin",
+      "description": "Publish, update and share HTML artifacts on Plinth: MCP server plus publishing skill",
+      "version": "0.1.0",
+      "category": "productivity"
+    }
+  ]
+}

@@ -41,11 +41,17 @@
 // except a newly generated single-user ADMIN_TOKEN, which is shown once.
 import { spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
-import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  InstanceError,
+  parseJsonc,
+  readEnvFile,
+  setupInstance,
+  writeEnvFile,
+} from "../apps/worker/scripts/instance.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const workerDir = path.join(root, "apps", "worker");
@@ -151,56 +157,6 @@ function probe(args) {
 
 function step(title) {
   console.log(`\n> ${title}`);
-}
-
-/** Read a .dev.vars style file into an ordered list of lines and a key map. */
-function readEnvFile(file) {
-  const lines = existsSync(file) ? readFileSync(file, "utf8").split("\n") : [];
-  const values = new Map();
-  for (const line of lines) {
-    const m = /^\s*([A-Z0-9_]+)\s*=(.*)$/.exec(line);
-    if (m) values.set(m[1], m[2].trim().replace(/^"(.*)"$/, "$1"));
-  }
-  return { lines, values };
-}
-
-/** Set keys in an env file, replacing existing lines and appending new ones. */
-function writeEnvFile(file, lines, updates) {
-  const pending = new Map(Object.entries(updates));
-  const out = lines.map((line) => {
-    const m = /^\s*([A-Z0-9_]+)\s*=/.exec(line);
-    if (m && pending.has(m[1])) {
-      const v = pending.get(m[1]);
-      pending.delete(m[1]);
-      return `${m[1]}=${v}`;
-    }
-    return line;
-  });
-  while (out.length && out[out.length - 1] === "") out.pop();
-  for (const [k, v] of pending) out.push(`${k}=${v}`);
-  mkdirSync(path.dirname(file), { recursive: true });
-  writeFileSync(file, `${out.join("\n")}\n`, { mode: 0o600 });
-}
-
-/** Parse JSONC: strip comments outside strings and trailing commas. */
-function parseJsonc(text) {
-  let out = "";
-  for (let i = 0; i < text.length; i++) {
-    const c = text[i];
-    if (c === '"') {
-      let j = i + 1;
-      while (j < text.length && text[j] !== '"') j += text[j] === "\\" ? 2 : 1;
-      out += text.slice(i, j + 1);
-      i = j;
-    } else if (c === "/" && text[i + 1] === "/") {
-      while (i < text.length && text[i] !== "\n") i++;
-      out += "\n";
-    } else if (c === "/" && text[i + 1] === "*") {
-      i = text.indexOf("*/", i + 2) + 1;
-      if (i === 0) fail("Unterminated comment in wrangler config");
-    } else out += c;
-  }
-  return JSON.parse(out.replace(/,(\s*[}\]])/g, "$1"));
 }
 
 const HOST_RE = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/;
@@ -496,184 +452,27 @@ function setupRemote() {
 // ---------- tunnel (local hosting) ----------
 
 async function setupTunnel() {
-  // Read by destructuring: these are setup-time inputs, not build inputs for turbo.
-  const { PLINTH_HOME: envPlinthHome, CLOUDFLARE_API_TOKEN: envCloudflareToken } = process.env;
-  const lib = await import("../apps/worker/scripts/tunnel-lib.mjs");
-  const { provision, CloudflareError } = await import(
-    "../apps/worker/scripts/tunnel-cloudflare.mjs"
-  );
-  let o;
-  try {
-    o = lib.validateTunnelOptions(opts, {
-      getDomain: (h) => getDomain(h, { allowPrivateDomains: true }),
-    });
-  } catch (e) {
-    if (e instanceof lib.TunnelUsageError) fail(e.message);
-    throw e;
-  }
-  const home = path.resolve(opts.home ?? envPlinthHome ?? path.join(os.homedir(), ".plinth"));
-  const paths = lib.instancePaths(home, o.name);
-  const token = envCloudflareToken;
-  if (o.cloudflare && !token && !dryRun)
-    fail(
-      "CLOUDFLARE_API_TOKEN is not set. Create a token with Account: Cloudflare Tunnel Edit and " +
-        "Zone: DNS Edit + Zone Read on both zones, export it, and rerun (or pass --no-cloudflare)",
-    );
-
-  console.log(`Plinth tunnel setup for instance "${o.name}". Plan:`);
-  console.log(`  1. Instance directory ${paths.dir}`);
-  console.log("  2. Worker config, secrets (.dev.vars) and instance.json");
-  console.log(
-    o.cloudflare
-      ? `  3. Tunnel plinth-${o.name} and DNS for ${lib.dnsRecordNames(o.appHost, o.contentHost).join(", ")}`
-      : "  3. Tunnel and DNS: skipped (--no-cloudflare)",
-  );
-  console.log("  4. Apply D1 migrations to the instance's local database");
-  if (dryRun) console.log("  (dry run: nothing is written, created or executed)");
-
-  step("Instance directory");
-  if (dryRun) console.log(`  would create ${paths.dir} (mode 700)`);
-  else {
-    mkdirSync(paths.dir, { recursive: true, mode: 0o700 });
-    chmodSync(paths.dir, 0o700);
-    console.log(`  ${paths.dir}`);
-  }
-
-  step("Worker config");
+  if (!dryRun && !existsSync(wranglerBin))
+    fail("wrangler is not installed. Run `pnpm install` first.");
   const base = parseJsonc(readFileSync(path.join(workerDir, "wrangler.jsonc"), "utf8"));
-  const built = lib.buildWorkerConfig(o, root, base);
-  const previous = existsSync(paths.wranglerConfig)
-    ? parseJsonc(readFileSync(paths.wranglerConfig, "utf8"))
-    : {};
-  const cfg = { ...previous, ...built, vars: { ...(previous.vars ?? {}), ...built.vars } };
-  const body =
-    `// Generated by scripts/setup.mjs --tunnel for "${o.name}". Rerunning setup updates the keys it\n` +
-    "// owns and keeps anything else you add. Start with: pnpm local:start" +
-    (o.name === "plinth" ? "" : ` --name ${o.name}`) +
-    `\n${JSON.stringify(cfg, null, 2)}\n`;
-  const meta = `${JSON.stringify({ name: o.name, port: o.port }, null, 2)}\n`;
-  if (dryRun) console.log(`  would write ${paths.wranglerConfig} and ${paths.meta}`);
-  else {
-    writeFileSync(paths.wranglerConfig, body);
-    writeFileSync(paths.meta, meta);
-    console.log(`  wrote ${paths.wranglerConfig} and ${paths.meta}`);
-  }
-
-  step("Secrets");
-  const { lines, values } = readEnvFile(paths.devVars);
-  const updates = {};
-  let adminToken = null;
-  const keys = ["SESSION_SECRET", "TOKEN_SIGNING_KEY", ...(o.singleUser ? ["ADMIN_TOKEN"] : [])];
-  for (const key of keys) {
-    if (values.get(key) && !opts.force) console.log(`  ${key}: kept (exists; --force replaces it)`);
-    else {
-      updates[key] = secret();
-      if (key === "ADMIN_TOKEN") adminToken = updates[key];
-      console.log(`  ${key}: generated`);
-    }
-  }
-  for (const name of ["SENDGRID_API_KEY", "RESEND_API_KEY"]) {
-    if (process.env[name]) {
-      updates[name] = process.env[name];
-      console.log(`  ${name}: taken from the environment`);
-    } else if (o.emailProvider === name.split("_")[0].toLowerCase() && !values.get(name)) {
-      console.log(
-        `  warning: ${name} is not set. Export it and rerun, or add it to ${paths.devVars}`,
-      );
-    }
-  }
-  if (dryRun)
-    console.log(
-      `  would write ${Object.keys(updates).join(", ") || "nothing"} to ${paths.devVars}`,
-    );
-  else if (Object.keys(updates).length) {
-    const header = lines.length
-      ? lines
-      : [
-          `# Secrets for the "${o.name}" Plinth instance, written by scripts/setup.mjs --tunnel.`,
-          "# Never share or commit this file.",
-        ];
-    writeEnvFile(paths.devVars, header, updates);
-    chmodSync(paths.devVars, 0o600);
-    console.log(`  wrote ${paths.devVars} (mode 600)`);
-  } else console.log(`  ${paths.devVars}: nothing to change`);
-
-  step("Tunnel and DNS");
-  if (!o.cloudflare) console.log("  skipped (--no-cloudflare)");
-  else if (dryRun)
-    console.log("  would look up both zones, then create the tunnel and DNS records");
-  else {
-    let r;
-    try {
-      r = await provision({
-        token,
-        fetch,
-        tunnelName: `plinth-${o.name}`,
-        appHost: o.appHost,
-        contentHost: o.contentHost,
-        appZone: getDomain(o.appHost, { allowPrivateDomains: true }) ?? o.appHost,
-        contentZone: getDomain(o.contentHost, { allowPrivateDomains: true }) ?? o.contentHost,
-        hasCredentials: existsSync(paths.credentials),
-        newSecret: () => randomBytes(32).toString("base64"),
-        replaceTunnel: !!opts["replace-tunnel"],
-        // Written the moment the tunnel exists: Cloudflare never shows its secret again.
-        onTunnelCreated: (credentials) => {
-          writeFileSync(paths.credentials, credentials, { mode: 0o600 });
-          chmodSync(paths.credentials, 0o600);
-        },
-      });
-    } catch (e) {
-      if (e instanceof CloudflareError) fail(e.message);
-      throw e;
-    }
-    if (r.credentials) {
-      console.log(
-        `  tunnel plinth-${o.name}: created (${r.tunnelId}); credentials in ${paths.credentials}`,
-      );
-    } else console.log(`  tunnel plinth-${o.name}: exists (${r.tunnelId})`);
-    for (const rec of r.records) console.log(`  DNS ${rec.name}: ${rec.action}`);
-    writeFileSync(
-      paths.cloudflaredConfig,
-      lib.renderCloudflaredConfig({
-        tunnelId: r.tunnelId,
-        credentialsFile: paths.credentials,
-        appHost: o.appHost,
-        contentHost: o.contentHost,
-        port: o.port,
-      }),
-    );
-    console.log(`  wrote ${paths.cloudflaredConfig}`);
-    if (spawnSync("cloudflared", ["--version"], { stdio: "ignore" }).status !== 0)
-      console.log(
-        "  warning: cloudflared is not installed. Install it before starting: " +
-          "https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/downloads/",
-      );
-  }
-
-  step("Local D1 migrations");
-  wrangler([
-    "d1",
-    "migrations",
-    "apply",
-    "DB",
-    "--local",
-    "--config",
-    paths.wranglerConfig,
-    "--persist-to",
-    paths.state,
-  ]);
-
-  const nameFlag = o.name === "plinth" ? "" : ` --name ${o.name}`;
-  const homeFlag = opts.home ? ` --home ${home}` : "";
-  console.log(
-    `\nDone. Next: pnpm local:start${nameFlag}${homeFlag}, then open https://${o.appHost}`,
+  await setupInstance(
+    { ...opts, tunnel: true },
+    {
+      layout: root,
+      base,
+      wrangler: { command: wranglerBin, args: [], cwd: workerDir },
+      getDomain: (h) => getDomain(h, { allowPrivateDomains: true }),
+      startCommand: (name, home) =>
+        `pnpm local:start${name === "plinth" ? "" : ` --name ${name}`}${home ? ` --home ${home}` : ""}`,
+    },
   );
-  if (adminToken && !dryRun) {
-    console.log(`\nSingle-user ADMIN_TOKEN (shown once; also in ${paths.devVars}):`);
-    console.log(`  ${adminToken}`);
-  }
 }
 
-if (opts.local) setupLocal();
-else if (opts.tunnel) await setupTunnel();
-else setupRemote();
+try {
+  if (opts.local) setupLocal();
+  else if (opts.tunnel) await setupTunnel();
+  else setupRemote();
+} catch (e) {
+  if (e instanceof InstanceError) fail(e.message);
+  throw e;
+}

@@ -1,0 +1,47 @@
+{
+  "name": "@aconite/plinth",
+  "version": "0.1.0",
+  "description": "Run Plinth, a home for HTML artifacts that AI agents publish, on your own computer",
+  "license": "MIT",
+  "type": "module",
+  "homepage": "https://github.com/mr0b0t0/plinth#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mr0b0t0/plinth.git",
+    "directory": "packages/cli"
+  },
+  "keywords": [
+    "mcp",
+    "artifacts",
+    "agents",
+    "html",
+    "self-hosted"
+  ],
+  "bin": {
+    "plinth": "bin/plinth.mjs"
+  },
+  "files": [
+    "bin",
+    "runtime",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=22.12"
+  },
+  "os": [
+    "darwin",
+    "linux"
+  ],
+  "scripts": {
+    "build": "node scripts/bundle.mjs",
+    "test:smoke": "node scripts/smoke.mjs"
+  },
+  "dependencies": {
+    "tldts": "7.4.19",
+    "wrangler": "4.158.0"
+  },
+  "devDependencies": {
+    "@plinth/web": "workspace:*",
+    "@plinth/worker": "workspace:*"
+  }
+}

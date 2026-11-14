@@ -1,0 +1,14 @@
+{
+  "name": "plinth",
+  "version": "0.1.0",
+  "description": "Publish, update and share HTML artifacts on Plinth from Claude Code: the Plinth MCP server plus a skill with its publishing rules",
+  "author": {
+    "name": "Aconite Software & Investments, Lda.",
+    "url": "https://aconite.io"
+  },
+  "homepage": "https://github.com/mr0b0t0/plinth/blob/main/docs/agents.md",
+  "repository": "https://github.com/mr0b0t0/plinth",
+  "license": "MIT",
+  "keywords": ["artifacts", "html", "publishing", "sharing", "mcp"],
+  "privacyPolicyUrl": "https://plinth.aconite.io/legal/privacy"
+}

@@ -12,6 +12,34 @@ The security model is the same one [self-hosting](self-hosting.md) uses. The loc
 subdomains on a separate content domain, and the Worker accepts connections from your own machine
 only, so the tunnel is the only way in.
 
+## Quickest start: localhost only, with npx
+
+If only you will use it, and only with agents on the same computer (Claude Code, Codex, Cursor, VS
+Code), you need nothing but Node 22.12+ on macOS or Linux. No clone, no domain, no Cloudflare
+account:
+
+```sh
+npx @aconite/plinth init --email you@example.com
+npx @aconite/plinth start          # Ctrl-C stops it
+npx @aconite/plinth connect        # prints the commands that connect your agents
+```
+
+The app answers at `http://app.localhost:8788` and each artifact at
+`http://<id>.content.localhost:8788`. Browsers and Node resolve every `*.localhost` name to your
+machine and treat each one as its own origin, so artifacts stay isolated from the app and from
+each other just as on a real domain. One account (the `--email` you gave) can sign in; its sign-in
+codes appear in the terminal running `start`. Agents authenticate with the instance's
+`ADMIN_TOKEN`, which `init` shows once and `npx @aconite/plinth token` prints again. Data lives in
+`~/.plinth/plinth/` (`--home`, `--name` and `--port` change that). `npx @aconite/plinth status`
+says whether it is running. To upgrade, run a newer version of the package: `start` applies new
+migrations.
+
+Limits of this mode: claude.ai and ChatGPT connect from their own servers and cannot reach it,
+nobody else can open your links, and it runs only while `start` does. For any of that, use the
+tunnel setup below. The CLI does it too, without a checkout of this repo:
+`npx @aconite/plinth init --tunnel --app-host ... --content-host ... --email-provider ...`, with the
+same flags and requirements as `setup.mjs --tunnel`, then `npx @aconite/plinth start`.
+
 ## What you need
 
 - **macOS or Linux** with Node 22.12+ and pnpm 10, and this repo cloned with `pnpm install` run.

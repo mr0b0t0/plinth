@@ -226,6 +226,25 @@ options.
   (`setup.mjs --tunnel`, `pnpm local:start`). Production settings and the full security model
   apply. Links work only while the machine is on, and Cloudflare sees traffic in transit. Guide:
   `docs/local-hosting.md`; design: `docs/superpowers/specs/2026-11-14-local-tunnel-hosting-design.md`.
+- **npm CLI.** `npx @aconite/plinth` (package `packages/cli`) runs a local instance without
+  cloning the repo. It ships the prebuilt Worker, web app and migrations, and shares its setup and
+  start logic with the repo scripts (`apps/worker/scripts/instance.mjs`). Two modes:
+  - *Localhost-only* (`plinth init --email ...`): one account, this computer only, no domain and no
+    Cloudflare account. The app answers at `app.localhost:<port>` and artifacts at
+    `<id>.content.localhost:<port>`; browsers and Node resolve `*.localhost` to the loopback address
+    and treat each name as its own origin, so the isolation model holds without a domain. It runs
+    with `ENVIRONMENT=development` (which the Worker allows on localhost hosts only), the
+    development helpers off, single-user mode and the console email provider. Local agents (Claude
+    Code, Codex, Cursor, VS Code) connect with the instance's `ADMIN_TOKEN`; hosted clients cannot
+    reach it.
+  - *Tunnel* (`plinth init --tunnel ...`): the local-hosting setup above, without a checkout.
+- **Agent plugin.** `integrations/plugin/` is one plugin folder for Claude Code and for Codex and
+  ChatGPT (the portable `plugin.json` + `mcp.json` format): the `plinth` MCP server (hosted instance
+  by default; Claude Code reads `PLINTH_URL` to point it elsewhere) and a `plinth-artifacts` skill
+  that teaches agents what an artifact may contain, the update and conflict rules, the mention
+  workflow, and that artifact and comment text is untrusted. Marketplaces at
+  `.claude-plugin/marketplace.json` and `.agents/plugins/marketplace.json`. MCP stays the only
+  protocol: the plugin adds install convenience and guidance, not new capabilities.
 - **License.** MIT.
 - **Naming.** The product name must not contain "Claude" or "Codex". "Works with Claude and Codex"
   in descriptions is fine.

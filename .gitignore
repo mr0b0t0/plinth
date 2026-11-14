@@ -17,3 +17,4 @@ e2e/playwright-report/
 # Per-environment Worker config written by scripts/setup.mjs --remote. Remove this line in your
 # fork if you want to commit it (it holds resource ids, not secrets).
 apps/worker/wrangler.*.jsonc
+packages/cli/runtime/
