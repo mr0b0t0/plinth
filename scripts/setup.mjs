@@ -6,7 +6,8 @@
 // Local (wrangler dev):
 //   node scripts/setup.mjs --local [--force] [--dev-vars <file>] [--persist-to <dir>]
 //                          [--single-user --admin-email <email>] [--dry-run]
-// Remote (your Cloudflare account; run `wrangler login` first):
+// Remote (your Cloudflare account; run `wrangler login` first). The npm CLI's `plinth deploy` does
+// the same with the prebuilt Worker, and deploys too (packages/cli/README.md):
 //   node scripts/setup.mjs --remote --env <name> --app-host <host> --content-host <host>
 //                          [--db-name plinth] [--bucket plinth-files] [--worker-name <name>]
 //                          [--content-zone <zone>] [--email-provider sendgrid|resend|console]
@@ -45,6 +46,8 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { provisionRemote, wranglerRunner } from "../apps/worker/scripts/deploy.mjs";
+import { hostPairProblem } from "../apps/worker/scripts/deploy-lib.mjs";
 import {
   InstanceError,
   parseJsonc,
@@ -144,15 +147,6 @@ function wrangler(args, { input, capture = false, allowFail = false } = {}) {
     fail(`wrangler exited with status ${r.status}`);
   }
   return { status: r.status ?? 1, stdout: r.stdout ?? "" };
-}
-
-/** A read-only wrangler call whose result decides what to do. Dry run: printed, returns null. */
-function probe(args) {
-  if (dryRun) {
-    console.log(`  $ ${show(args)}`);
-    return null;
-  }
-  return wrangler(args, { capture: true, allowFail: true });
 }
 
 function step(title) {
@@ -265,23 +259,8 @@ function setupRemote() {
       ? String(parseJsonc(readFileSync(configFile, "utf8")).vars?.CONTENT_ISOLATION ?? "origin")
       : "origin");
   if (appHost && contentHost && !opts["workers-dev"]) {
-    // Refused by the Worker in every isolation mode.
-    if (
-      appHost === contentHost ||
-      contentHost.endsWith(`.${appHost}`) ||
-      appHost.endsWith(`.${contentHost}`)
-    )
-      fail("APP_HOST and CONTENT_HOST must differ and must not be subdomains of each other");
-    // The same Public Suffix List check the Worker makes (tldts, private section included), so a
-    // content host that is a PSL-listed subdomain of the app's domain passes once tldts knows it.
-    // A shared registrable domain is allowed only with opaque isolation (docs/security.md).
-    if (registrableDomain(appHost) === registrableDomain(contentHost) && isolation !== "opaque")
-      fail(
-        "APP_HOST and CONTENT_HOST share a registrable domain. Pass --content-isolation opaque to " +
-          "run like this (artifacts get an opaque origin and no browser storage), or use a separate " +
-          "domain, or a subdomain on the Public Suffix List once the pinned tldts knows it " +
-          "(docs/deploy-checklist.md)",
-      );
+    const problem = hostPairProblem(appHost, contentHost, isolation, registrableDomain);
+    if (problem) fail(problem);
   }
   const contentZone =
     opts["content-zone"] ?? (contentHost ? (getDomain(contentHost) ?? contentHost) : null);
@@ -299,145 +278,106 @@ function setupRemote() {
   console.log(`  5. Apply D1 migrations to "${dbName}" (remote)`);
   if (dryRun) console.log("  (dry run: commands are printed, nothing is created or written)");
 
-  step("D1 database");
-  const findDb = () => {
-    const r = probe(["d1", "list", "--json"]);
-    if (r === null) return null;
-    try {
-      return JSON.parse(r.stdout).find((d) => d.name === dbName)?.uuid ?? null;
-    } catch {
-      fail("Could not parse `wrangler d1 list --json` output");
-    }
-  };
-  let dbId = findDb();
-  if (dbId) console.log(`  exists: ${dbName} (${dbId})`);
-  else {
-    wrangler(["d1", "create", dbName]);
-    dbId = dryRun ? "<database id from wrangler d1 list>" : findDb();
-    if (!dbId) fail(`Created ${dbName} but could not find its id with wrangler d1 list`);
-  }
-
-  step("R2 bucket");
-  const info = probe(["r2", "bucket", "info", bucket]);
-  if (info?.status === 0) console.log(`  exists: ${bucket}`);
-  else wrangler(["r2", "bucket", "create", bucket]);
-
-  step(`Config apps/worker/${configRel}`);
-  const base = existsSync(configFile)
-    ? parseJsonc(readFileSync(configFile, "utf8"))
-    : parseJsonc(readFileSync(path.join(workerDir, "wrangler.jsonc"), "utf8"));
-  const cfg = {
-    ...base,
-    name: opts["worker-name"] ?? (existsSync(configFile) ? base.name : workerName),
-  };
-  cfg.d1_databases = [
-    {
-      ...(base.d1_databases?.[0] ?? {}),
-      binding: "DB",
-      database_name: dbName,
-      database_id: dbId,
-      migrations_dir: "../../migrations",
-    },
-  ];
-  cfg.r2_buckets = [{ binding: "FILES", bucket_name: bucket }];
-  const fresh = !existsSync(configFile);
-  const vars = { ...(base.vars ?? {}) };
-  if (fresh) {
-    Object.assign(vars, {
-      ENVIRONMENT: environment,
-      PUBLIC_SCHEME: "https",
-      DEV_OUTBOX: "false",
-      STAGING_CONTENT_FALLBACK: "false",
-    });
-  }
-  if (appHost) vars.APP_HOST = appHost;
-  if (contentHost) vars.CONTENT_HOST = contentHost;
-  if (emailProvider) vars.EMAIL_PROVIDER = emailProvider;
-  if (opts["email-from"]) vars.EMAIL_FROM = opts["email-from"];
-  else if (appHost && /localhost/.test(String(vars.EMAIL_FROM ?? "localhost"))) {
-    vars.EMAIL_FROM = `Plinth <noreply@${appHost}>`;
-  }
-  if (adminEmail) vars.ADMIN_EMAIL = adminEmail;
-  if (single) vars.SINGLE_USER_MODE = "true";
-  if (isolationFlag) vars.CONTENT_ISOLATION = isolationFlag;
-  cfg.vars = vars;
-  if (opts["workers-dev"]) {
-    if (vars.ENVIRONMENT === "production") fail("--workers-dev is for staging only");
-    cfg.workers_dev = true;
-    // Preview URLs would serve the Worker on extra <version>-<name> hosts that are not APP_HOST.
-    cfg.preview_urls = false;
-    delete cfg.routes;
-    vars.STAGING_CONTENT_FALLBACK = "true";
-    if (!contentHost) vars.CONTENT_HOST = "content.invalid";
-  } else if (appHost && contentHost && contentZone) {
-    cfg.routes = [
-      { pattern: appHost, custom_domain: true },
-      { pattern: `*.${contentHost}/*`, zone_name: contentZone },
-    ];
-  }
-  for (const [k, v] of Object.entries(vars)) {
-    if (/localhost/.test(String(v))) console.log(`  warning: ${k}=${v} still points at localhost`);
-  }
-  if (
-    vars.ENVIRONMENT === "production" &&
-    vars.EMAIL_PROVIDER === "console" &&
-    vars.SINGLE_USER_MODE !== "true"
-  ) {
-    console.log(
-      "  warning: production refuses EMAIL_PROVIDER=console; pass --email-provider or --single-user",
-    );
-  }
-  const body =
-    `// Generated by scripts/setup.mjs for "${envName}". Edit freely; rerunning setup keeps your\n` +
-    "// changes and only updates the D1/R2 bindings and the values passed as flags.\n" +
-    `// Deploy: pnpm --filter @plinth/worker exec wrangler deploy --config ${configRel}\n` +
-    `${JSON.stringify(cfg, null, 2)}\n`;
-  if (dryRun) {
-    console.log(`  would ${fresh ? "create" : "update"} ${configFile}:`);
-    console.log(body.replace(/^/gm, "    "));
-  } else {
-    writeFileSync(configFile, body);
-    console.log(`  ${fresh ? "created" : "updated"} ${configFile}`);
-  }
-
-  step("Secrets");
+  if (!dryRun && !existsSync(wranglerBin))
+    fail("wrangler is not installed. Run `pnpm install` first.");
   const cfgArgs = ["--config", configRel];
-  let existing = new Set();
-  const listed = probe(["secret", "list", ...cfgArgs, "--format", "json"]);
-  if (listed?.status === 0) {
-    try {
-      existing = new Set(JSON.parse(listed.stdout).map((s) => s.name));
-    } catch {
-      // No parseable list: treat as none set.
-    }
-  }
-  const secrets = [
-    ["SESSION_SECRET", secret],
-    ["TOKEN_SIGNING_KEY", secret],
-  ];
-  if (single) secrets.push(["ADMIN_TOKEN", secret]);
-  let adminToken = null;
-  for (const [name, make] of secrets) {
-    if (existing.has(name) && !opts["rotate-secrets"]) {
-      console.log(`  ${name}: already set (--rotate-secrets replaces it)`);
-      continue;
-    }
-    const value = make();
-    if (name === "ADMIN_TOKEN") adminToken = value;
-    wrangler(["secret", "put", name, ...cfgArgs], { input: value });
-  }
-  for (const name of ["SENDGRID_API_KEY", "RESEND_API_KEY"]) {
-    const value = process.env[name];
-    if (value) wrangler(["secret", "put", name, ...cfgArgs], { input: value });
-    else if (vars.EMAIL_PROVIDER === name.split("_")[0].toLowerCase() && !existing.has(name)) {
-      console.log(
-        `  ${name}: not set. Export it and rerun, or: wrangler secret put ${name} ${cfgArgs.join(" ")}`,
-      );
-    }
-  }
-
-  step("Remote D1 migrations");
-  wrangler(["d1", "migrations", "apply", "DB", "--remote", ...cfgArgs]);
+  const { adminToken } = provisionRemote(
+    {
+      wrangler: wranglerRunner(
+        { wrangler: { command: wranglerBin, args: [], cwd: workerDir } },
+        { dryRun },
+      ),
+      dbName,
+      bucket,
+      configTitle: `Config apps/worker/${configRel}`,
+      configArgs: cfgArgs,
+      adminToken: single,
+      rotateSecrets: !!opts["rotate-secrets"],
+      missingKeyHint: (name) =>
+        `Export it and rerun, or: wrangler secret put ${name} ${cfgArgs.join(" ")}`,
+      writeConfig: (databaseId) => {
+        const base = existsSync(configFile)
+          ? parseJsonc(readFileSync(configFile, "utf8"))
+          : parseJsonc(readFileSync(path.join(workerDir, "wrangler.jsonc"), "utf8"));
+        const cfg = {
+          ...base,
+          name: opts["worker-name"] ?? (existsSync(configFile) ? base.name : workerName),
+        };
+        cfg.d1_databases = [
+          {
+            ...(base.d1_databases?.[0] ?? {}),
+            binding: "DB",
+            database_name: dbName,
+            database_id: databaseId,
+            migrations_dir: "../../migrations",
+          },
+        ];
+        cfg.r2_buckets = [{ binding: "FILES", bucket_name: bucket }];
+        const fresh = !existsSync(configFile);
+        const vars = { ...(base.vars ?? {}) };
+        if (fresh) {
+          Object.assign(vars, {
+            ENVIRONMENT: environment,
+            PUBLIC_SCHEME: "https",
+            DEV_OUTBOX: "false",
+            STAGING_CONTENT_FALLBACK: "false",
+          });
+        }
+        if (appHost) vars.APP_HOST = appHost;
+        if (contentHost) vars.CONTENT_HOST = contentHost;
+        if (emailProvider) vars.EMAIL_PROVIDER = emailProvider;
+        if (opts["email-from"]) vars.EMAIL_FROM = opts["email-from"];
+        else if (appHost && /localhost/.test(String(vars.EMAIL_FROM ?? "localhost"))) {
+          vars.EMAIL_FROM = `Plinth <noreply@${appHost}>`;
+        }
+        if (adminEmail) vars.ADMIN_EMAIL = adminEmail;
+        if (single) vars.SINGLE_USER_MODE = "true";
+        if (isolationFlag) vars.CONTENT_ISOLATION = isolationFlag;
+        cfg.vars = vars;
+        if (opts["workers-dev"]) {
+          if (vars.ENVIRONMENT === "production") fail("--workers-dev is for staging only");
+          cfg.workers_dev = true;
+          // Preview URLs would serve the Worker on extra <version>-<name> hosts that are not APP_HOST.
+          cfg.preview_urls = false;
+          delete cfg.routes;
+          vars.STAGING_CONTENT_FALLBACK = "true";
+          if (!contentHost) vars.CONTENT_HOST = "content.invalid";
+        } else if (appHost && contentHost && contentZone) {
+          cfg.routes = [
+            { pattern: appHost, custom_domain: true },
+            { pattern: `*.${contentHost}/*`, zone_name: contentZone },
+          ];
+        }
+        for (const [k, v] of Object.entries(vars)) {
+          if (/localhost/.test(String(v)))
+            console.log(`  warning: ${k}=${v} still points at localhost`);
+        }
+        if (
+          vars.ENVIRONMENT === "production" &&
+          vars.EMAIL_PROVIDER === "console" &&
+          vars.SINGLE_USER_MODE !== "true"
+        ) {
+          console.log(
+            "  warning: production refuses EMAIL_PROVIDER=console; pass --email-provider or --single-user",
+          );
+        }
+        const body =
+          `// Generated by scripts/setup.mjs for "${envName}". Edit freely; rerunning setup keeps your\n` +
+          "// changes and only updates the D1/R2 bindings and the values passed as flags.\n" +
+          `// Deploy: pnpm --filter @plinth/worker exec wrangler deploy --config ${configRel}\n` +
+          `${JSON.stringify(cfg, null, 2)}\n`;
+        if (dryRun) {
+          console.log(`  would ${fresh ? "create" : "update"} ${configFile}:`);
+          console.log(body.replace(/^/gm, "    "));
+        } else {
+          writeFileSync(configFile, body);
+          console.log(`  ${fresh ? "created" : "updated"} ${configFile}`);
+        }
+        return { vars };
+      },
+    },
+    {},
+  );
 
   console.log("\nDone. Next steps:");
   console.log("  1. pnpm build");

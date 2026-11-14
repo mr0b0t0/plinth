@@ -7,8 +7,10 @@ directory listings. User-facing guides: [local-hosting.md](local-hosting.md) and
 ## npm: `@mr0b0t0/plinth`
 
 `packages/cli` is the package. `pnpm build` assembles `packages/cli/runtime/` (git-ignored): the
-Worker bundle from `apps/worker/dist`, the web app, the migrations, and the instance scripts from
-`apps/worker/scripts/` that `scripts/setup.mjs` and `scripts/local-start.mjs` use too. Its only
+Worker bundle from `apps/worker/dist`, the web app, the migrations, and the instance and deploy scripts from
+`apps/worker/scripts/` (`instance.mjs`, `deploy.mjs` and their helpers) that `scripts/setup.mjs`
+and `scripts/local-start.mjs` use too. The CLI's modes: `init` (localhost only), `init --tunnel`
+(local behind a Cloudflare Tunnel) and `deploy` (Workers, D1 and R2 on the user's account). Its only
 runtime dependencies are `wrangler` (which runs the Worker) and `tldts`.
 
 Release: `pnpm release <version> --push` on `main`. The tag runs CI, publishes the package with

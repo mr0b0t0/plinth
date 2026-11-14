@@ -1,12 +1,17 @@
 #!/usr/bin/env node
-// plinth: run Plinth on your own computer (docs/local-hosting.md).
+// plinth: run Plinth on your own computer (docs/local-hosting.md), or deploy it to your own
+// Cloudflare account (docs/self-hosting.md).
 //
 //   plinth init --email you@example.com      localhost-only: no domain, no Cloudflare account
 //   plinth init --tunnel --app-host ... --content-host ... --email-provider ...
 //                                            reachable from the internet through a Cloudflare Tunnel
 //   plinth start | status | connect          run it, check it, connect agents to it
+//   plinth deploy --app-host ... --content-host ... --email-provider ...
+//                                            Workers, D1 and R2 on your Cloudflare account; rerun
+//                                            with no flags to redeploy or upgrade
 //
 // Every command takes --name (default plinth) and --home (default ~/.plinth, or PLINTH_HOME).
+// Hints name the command as it was run: `npx @mr0b0t0/plinth <cmd>` under npx, else `plinth <cmd>`.
 import { readFileSync } from "node:fs";
 import http from "node:http";
 import { createRequire } from "node:module";
@@ -19,25 +24,45 @@ const runtimeDir = path.join(pkgDir, "runtime");
 const require = createRequire(import.meta.url);
 const pkg = JSON.parse(readFileSync(path.join(pkgDir, "package.json"), "utf8"));
 
-const USAGE = `plinth ${pkg.version}: run Plinth on your own computer
+/** How to run a plinth command, the way the user ran this one: through npx, or installed. */
+const viaNpx = process.env.npm_command === "exec";
+const cli = (args) => `${viaNpx ? `npx ${pkg.name}` : "plinth"} ${args}`;
+const p = viaNpx ? `npx ${pkg.name}` : "plinth";
+
+const USAGE = `plinth ${pkg.version}: run Plinth on your own computer or on your Cloudflare account
 
 Usage:
-  plinth init [--email you@example.com] [--port 8788]
+  ${p} init [--email you@example.com] [--port 8788]
       Localhost-only instance: one account, this computer only, no domain needed.
-      Sign-in codes appear in the terminal that runs \`plinth start\`.
-  plinth init --tunnel --app-host plinth.example.com --content-host example-content.net
-              --email-provider resend|sendgrid|console [--email-from "Plinth <noreply@...>"]
-              [--single-user --admin-email you@example.com] [--content-isolation origin|opaque]
-              [--no-cloudflare] [--replace-tunnel] [--port 8788]
+      Sign-in codes appear in the terminal that runs \`${cli("start")}\`.
+  ${p} init --tunnel --app-host plinth.example.com --content-host example-content.net
+      --email-provider resend|sendgrid|console [--email-from "Plinth <noreply@...>"]
+      [--single-user --admin-email you@example.com] [--content-isolation origin|opaque]
+      [--no-cloudflare] [--replace-tunnel] [--port 8788]
       Reachable from the internet through a Cloudflare Tunnel. Needs two domains on Cloudflare,
       cloudflared, and CLOUDFLARE_API_TOKEN for setup (see docs/local-hosting.md).
-  plinth start [--no-tunnel]   Run the instance (Ctrl-C stops it). Applies new migrations first.
-  plinth status                Show the instance's address and whether it is running.
-  plinth connect               Print how to connect Claude Code, Codex, Cursor and others.
+  ${p} start [--no-tunnel]
+      Run the instance (Ctrl-C stops it). Applies new migrations first.
+  ${p} status [--cloudflare]
+      Show the instance's address and whether it is running.
+  ${p} connect [--cloudflare]
+      Print how to connect Claude Code, Codex, Cursor and others.
+  ${p} deploy --app-host plinth.example.com --content-host example-content.net
+      --email-provider resend|sendgrid|console [--email-from "Plinth <noreply@...>"]
+      [--admin-email you@example.com] [--single-user | --multi-user]
+      [--content-isolation origin|opaque] [--operator-name "..." --operator-email ...]
+      [--operator-address "..."] [--operator-registration "..."] [--rotate-secrets]
+      Run Plinth on your own Cloudflare account (Workers, D1, R2) with two domains on it.
+      Uses wrangler's login, or CLOUDFLARE_API_TOKEN; takes RESEND_API_KEY or SENDGRID_API_KEY
+      from the environment. Rerun with no flags to redeploy the saved settings or upgrade;
+      flags given then change the saved settings ("" clears an optional one).
 
+status and connect use the local instance of that name if there is one; --cloudflare picks the
+Cloudflare deployment.
 Common options: --name <name> (default plinth), --home <dir> (default ~/.plinth or PLINTH_HOME),
---force (init: replace existing secrets), --dry-run (init: show the plan only).
-Upgrade: run a newer version of this package; \`plinth start\` applies its migrations.`;
+--force (init: replace existing secrets), --dry-run (init, deploy: show the plan only).
+Upgrade: run a newer version of this package. \`${cli("start")}\` applies its migrations;
+\`${cli("deploy")}\` applies them to your Cloudflare deployment and deploys the new Worker.`;
 
 const BOOLEAN = new Set([
   "tunnel",
@@ -47,6 +72,9 @@ const BOOLEAN = new Set([
   "no-tunnel",
   "force",
   "dry-run",
+  "rotate-secrets",
+  "multi-user",
+  "cloudflare",
   "help",
   "version",
 ]);
@@ -80,8 +108,10 @@ function parseArgs(argv) {
 
 async function loadRuntime() {
   let instance;
+  let deploy;
   try {
     instance = await import(path.join(runtimeDir, "scripts", "instance.mjs"));
+    deploy = await import(path.join(runtimeDir, "scripts", "deploy.mjs"));
   } catch {
     die("this copy of plinth has no runtime/ folder. In the repo, run `pnpm build` first.");
   }
@@ -104,11 +134,14 @@ async function loadRuntime() {
       cwd: runtimeDir,
     },
     getDomain: (h) => getDomain(h, { allowPrivateDomains: true }),
+    // The Cloudflare zone a host belongs to: its registrable domain without the private section.
+    getZone: (h) => getDomain(h),
     startCommand: (name, home) =>
-      `plinth start${name === "plinth" ? "" : ` --name ${name}`}${home ? ` --home ${home}` : ""}`,
-    setupHint: "plinth init --email you@example.com",
+      cli(`start${name === "plinth" ? "" : ` --name ${name}`}${home ? ` --home ${home}` : ""}`),
+    setupHint: cli("init --email you@example.com"),
+    command: cli,
   };
-  return { instance, runtime };
+  return { instance, deploy, runtime };
 }
 
 /** GET /healthz on the local Worker, with the instance's own Host header (it routes by host). */
@@ -139,12 +172,22 @@ function health(port, host) {
   });
 }
 
-function requireInstance(instance, opts) {
+/**
+ * The local instance of that name or, with --cloudflare or when there is none, the Cloudflare
+ * deployment.
+ */
+function requireInstance(opts) {
   const name = opts.name ?? "plinth";
   const home = instance.resolveHome(opts.home);
-  const inst = instance.readInstance(home, name);
+  const inst =
+    (opts.cloudflare ? null : instance.readInstance(home, name)) ??
+    deploy.readDeployment(home, name);
   if (!inst)
-    die(`No instance "${name}" in ${home}. Create one with: plinth init --email you@example.com`);
+    die(
+      opts.cloudflare
+        ? `No Cloudflare deployment "${name}" in ${home}. Create one with: ${cli("deploy --app-host ... --content-host ... --email-provider ...")}`
+        : `No instance "${name}" in ${home}. Create one with: ${cli("init --email you@example.com")}`,
+    );
   return inst;
 }
 
@@ -197,7 +240,7 @@ if (opts.help || !command || command === "help") {
   process.exit(command || opts.help ? 0 : 1);
 }
 
-const { instance, runtime } = await loadRuntime();
+const { instance, deploy, runtime } = await loadRuntime();
 try {
   if (command === "init") {
     if (!opts.tunnel && !opts.email && !opts["admin-email"]) {
@@ -210,11 +253,35 @@ try {
       rl.close();
     }
     await instance.setupInstance(opts, runtime);
-    console.log(`\nConnect your agents: plinth connect${selector(opts)}`);
+    console.log(`\nConnect your agents: ${cli(`connect${selector(opts)}`)}`);
   } else if (command === "start") {
     process.exit(await instance.startInstance(opts, runtime));
+  } else if (command === "deploy") {
+    const r = await deploy.deployToCloudflare(opts, runtime);
+    if (opts["dry-run"])
+      console.log(`\nThen connect your agents: ${cli(`connect --cloudflare${selector(opts)}`)}`);
+    else {
+      console.log(
+        `\nConnect your agents (again any time: ${cli(`connect --cloudflare${selector(opts)}`)}):\n`,
+      );
+      await printConnect(r.instance);
+    }
+  } else if (command === "status" && requireInstance(opts).mode === "cloudflare") {
+    const inst = requireInstance(opts);
+    const ok = await deploy.remoteHealthy(inst.appHost);
+    console.log(`Instance:  ${inst.name} (Cloudflare Workers, Worker ${inst.workerName})`);
+    console.log(`App:       ${inst.appOrigin}`);
+    console.log(`Artifacts: <id>.${inst.contentHost}`);
+    console.log(
+      `Account:   ${inst.singleUser ? `${inst.adminEmail} (single user)` : "multi-user"}`,
+    );
+    console.log(`Settings:  ${inst.paths.dir}`);
+    console.log(
+      `Status:    ${ok ? "running" : `not reachable (redeploy: ${cli(`deploy${selector(opts)}`)})`}`,
+    );
+    process.exit(ok ? 0 : 3);
   } else if (command === "status") {
-    const inst = requireInstance(instance, opts);
+    const inst = requireInstance(opts);
     const h = await health(inst.port, inst.appHost);
     console.log(
       `Instance:  ${inst.name} (${inst.mode === "local" ? "localhost only" : "Cloudflare Tunnel"})`,
@@ -226,12 +293,12 @@ try {
     );
     console.log(`Data:      ${inst.paths.state}`);
     console.log(
-      `Status:    ${h?.ok ? `running on 127.0.0.1:${inst.port}` : `not running (start it: plinth start${selector(opts)})`}`,
+      `Status:    ${h?.ok ? `running on 127.0.0.1:${inst.port}` : `not running (start it: ${cli(`start${selector(opts)}`)})`}`,
     );
     process.exit(h?.ok ? 0 : 3);
   } else if (command === "connect") {
-    await printConnect(requireInstance(instance, opts));
-  } else die(`Unknown command "${command}". Run plinth --help`);
+    await printConnect(requireInstance(opts));
+  } else die(`Unknown command "${command}". Run ${cli("--help")}`);
 } catch (e) {
   if (e instanceof instance.InstanceError) die(e.message);
   throw e;

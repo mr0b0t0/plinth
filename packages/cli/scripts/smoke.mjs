@@ -1,12 +1,14 @@
 #!/usr/bin/env node
 // Smoke test for the published CLI: `pnpm pack` the package, install the tarball into a throwaway
-// prefix with npm (as `npx @mr0b0t0/plinth` would), then init and start a localhost-only instance
-// and use it the way an agent does: OAuth (dynamic registration, PKCE, consent), then MCP. Needs `pnpm build` first. Exit code 0 when every check passes.
+// prefix with npm (as `npx @mr0b0t0/plinth` would), check `deploy --dry-run` (no network), then
+// init and start a localhost-only instance and use it the way an agent does: OAuth (dynamic
+// registration, PKCE, consent), then MCP. Needs `pnpm build` first. Exit code 0 when every check
+// passes.
 //
 //   pnpm --filter @mr0b0t0/plinth test:smoke
 import { spawn, spawnSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
-import { existsSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, realpathSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -92,6 +94,64 @@ await check("plinth --version prints the package version", () => {
 await check("init without --email and without a terminal refuses", () => {
   const r = spawnSync(bin, ["init", "--home", home], { encoding: "utf8", input: "" });
   assert(r.status !== 0 && /--email/.test(r.stderr), `exit ${r.status}: ${r.stderr}`);
+});
+
+// ---------- deploy to Cloudflare: plan only, no network ----------
+const deployFlags = [
+  "--app-host",
+  "plinth.example.com",
+  "--content-host",
+  "example-content.net",
+  "--email-provider",
+  "resend",
+  "--admin-email",
+  EMAIL,
+];
+
+await check("deploy --dry-run plans a Cloudflare deploy of the installed runtime", () => {
+  const r = plinth("deploy", ...deployFlags, "--dry-run");
+  assert(r.status === 0, r.stdout + r.stderr);
+  const runtime = realpathSync(path.join(prefix, "node_modules", "@mr0b0t0", "plinth", "runtime"));
+  for (const want of [
+    `"main": "${path.join(runtime, "worker", "index.js")}"`,
+    `"migrations_dir": "${path.join(runtime, "migrations")}"`,
+    '"pattern": "*.example-content.net/*"',
+    '"ENVIRONMENT": "production"',
+    "$ wrangler d1 migrations apply DB --remote --config",
+    "$ wrangler deploy --config",
+    "Type A   Name *   IPv4 address 192.0.2.0   Proxy status: Proxied",
+  ])
+    assert(r.stdout.includes(want), `missing ${want}`);
+  assert(!existsSync(path.join(home, "plinth", "cloudflare")), "a dry run wrote files");
+  assert(!/ADMIN_TOKEN \(shown once/.test(r.stdout), "a dry run printed a token");
+});
+
+await check("deploy refuses unsafe or incomplete settings before touching Cloudflare", () => {
+  const none = plinth("deploy", "--dry-run");
+  assert(none.status !== 0 && /first deploy needs --app-host/.test(none.stderr), none.stderr);
+  const consoleMail = plinth("deploy", ...deployFlags, "--email-provider", "console", "--dry-run");
+  assert(consoleMail.status !== 0 && /--single-user/.test(consoleMail.stderr), consoleMail.stderr);
+  const shared = plinth(
+    "deploy",
+    ...deployFlags,
+    "--content-host",
+    "usercontent.example.com",
+    "--dry-run",
+  );
+  assert(shared.status !== 0 && /registrable domain/.test(shared.stderr), shared.stderr);
+});
+
+await check("hints name npx when run through npx", () => {
+  const env = { ...process.env, npm_command: "exec" };
+  const help = spawnSync(bin, ["--help"], { encoding: "utf8", env });
+  assert(help.stdout.includes("npx @mr0b0t0/plinth deploy --app-host"), help.stdout);
+  const missing = spawnSync(bin, ["connect", "--home", home], { encoding: "utf8", env });
+  assert(missing.stderr.includes("npx @mr0b0t0/plinth init --email"), missing.stderr);
+  const plain = spawnSync(bin, ["connect", "--home", home], {
+    encoding: "utf8",
+    env: { ...process.env, npm_command: "" },
+  });
+  assert(/Create one with: plinth init/.test(plain.stderr), plain.stderr);
 });
 
 await check("init creates a localhost-only instance", () => {

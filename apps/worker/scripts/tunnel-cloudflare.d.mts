@@ -3,6 +3,11 @@ export declare const REQUIRED_PERMISSIONS: string;
 export declare class CloudflareError extends Error {
   status: number | null;
 }
+export declare function cloudflareApi(
+  token: string,
+  fetch: typeof globalThis.fetch,
+  permissions?: string,
+): (method: string, path: string, body?: unknown) => Promise<unknown>;
 export declare function provision(a: {
   token: string;
   fetch: typeof fetch;
