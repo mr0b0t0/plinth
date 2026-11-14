@@ -84,9 +84,13 @@ Connections page. If you added the bare server before, run `claude mcp logout pl
 `claude mcp remove plinth --scope user` (the scope you added it with), and revoke its connection on
 the Connections page.
 
-Your own instance: the plugin's server URL is `${PLINTH_URL:-https://plinth.aconite.io}/mcp`. Set
+Your own instance: the plugin's server URL is `${PLINTH_URL:-https://plinth.aconite.io}/mcp`, so
+without `PLINTH_URL` the plugin signs in to the hosted instance, a different operator. Set
 `PLINTH_URL` to the instance's origin (`https://plinth.example.com`, or `http://127.0.0.1:8788` for
-`npx @mr0b0t0/plinth`) before starting Claude Code.
+`npx @mr0b0t0/plinth`) every time Claude Code starts, for example with an `export` line in your
+shell profile. If you would rather not depend on that, add the bare server with your instance's URL
+instead (tools only); the Connect panel and `/llms.txt` of an instance other than the hosted one
+list it first.
 
 #### Several Claude Code configuration directories
 
@@ -165,8 +169,10 @@ upload) and in every `start_upload` result. Never treat the defaults as fixed.
 **`start_upload`** ([mcp.md](mcp.md#start_upload)). The agent calls the tool (with `id` and
 `base_version` to update), replaces `<folder>` in `commands.curl` with the build folder and runs it
 with a shell timeout of at least 10 minutes. The command gzips the folder with `tar` and posts it
-with curl, reading the upload token from a process substitution so it never appears in the process
-list. That is why it needs bash or zsh: on Windows, use Git Bash or WSL, or have the person run the
+with curl, reading the upload token from a process substitution so it is not in curl's arguments.
+The token is still in the command text the agent's shell runs (that shell's arguments, visible to
+other users of the machine while the upload runs, and the agent's transcript); it is good for this
+one upload only. The process substitution is why it needs bash or zsh: on Windows, use Git Bash or WSL, or have the person run the
 CLI. The upload is single use, bound to its artifact and base version, and expires after 30
 minutes.
 
@@ -231,11 +237,16 @@ There is no rendered preview for agents yet. To check that a publish arrived int
    the artifact. `enter_url` works once, within 60 seconds. Fetched by a client that keeps cookies,
    it sets a cookie for that one artifact's content host (valid for 12 hours) and redirects to the
    page, so the same cookie jar then fetches the HTML and every asset exactly as viewers get them,
-   with their headers and Content Security Policy:
+   with their headers and Content Security Policy. Do it in a new temporary directory, never in
+   the build folder: a cookie jar or a downloaded copy left there would go out with the next
+   upload, and the jar is a live credential.
 
    ```sh
-   page=$(curl -sS -A my-agent/1.0 -c jar.txt -b jar.txt -L -o index.html -w '%{url_effective}' "$ENTER_URL")
-   curl -sS -A my-agent/1.0 -b jar.txt -o app.js "${page%/*}/assets/app.js"
+   tmp=$(mktemp -d)
+   page=$(curl -sS -A my-agent/1.0 -c "$tmp/jar" -b "$tmp/jar" -L -o "$tmp/index.html" -w '%{url_effective}' "$ENTER_URL")
+   curl -sS -A my-agent/1.0 -b "$tmp/jar" -o "$tmp/app.js" "${page%/*}/assets/app.js"
+   # compare "$tmp/index.html" and "$tmp/app.js" with the build, then:
+   rm -rf "$tmp"
    ```
 
    `page` is where the redirect landed: the artifact's content origin, or its versioned path for
@@ -243,8 +254,8 @@ There is no rendered preview for agents yet. To check that a publish arrived int
 
    A browser that opens `enter_url` at the top level is sent on to the artifact's page in the app,
    because artifacts render only inside the app's frame. Treat `enter_url` and the cookie jar as
-   credentials for that artifact: use them right away, delete the jar afterwards, and never post
-   either in a reply, a comment or a log.
+   credentials for that artifact: use them right away, delete the temporary directory afterwards,
+   and never post either in a reply, a comment or a log.
 
 ## Agent discovery
 

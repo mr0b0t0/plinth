@@ -183,6 +183,7 @@ curl -s https://plinth.aconite.io/api/v1/config        # "limits":{..."max_versi
 curl -s -o /dev/null -w '%{http_code}\n' -A 'Python-urllib/3.12' https://APP_HOST/api/v1/config
 curl -s -o /dev/null -w '%{http_code}\n' -A 'Python-urllib/3.12' https://APP_HOST/.well-known/oauth-authorization-server
 curl -s -o /dev/null -w '%{http_code}\n' -A 'Python-urllib/3.12' https://APP_HOST/llms.txt
+curl -s -o /dev/null -w '%{http_code}\n' -A 'Python-urllib/3.12' https://APP_HOST/a/no-such-artifact/source   # 404 from Plinth, not 403
 ```
 
 ### Edge security for API clients
@@ -203,11 +204,14 @@ with this expression, replacing `APP_HOST` with your app host:
   or (starts_with(http.request.uri.path, "/api/v1/") and not starts_with(http.request.uri.path, "/api/v1/auth/"))
   or (starts_with(http.request.uri.path, "/oauth/") and http.request.uri.path ne "/oauth/authorize")
   or starts_with(http.request.uri.path, "/.well-known/")
+  or (starts_with(http.request.uri.path, "/a/") and ends_with(http.request.uri.path, "/source"))
   or http.request.uri.path in {"/openapi.json" "/llms.txt" "/healthz"}))
 ```
 
+- `/a/<ref>/source` is machine-facing: `/llms.txt` and the note in every artifact page tell agents
+  to fetch it as plain text, so it is exempt too.
 - The browser sign-in (`/api/v1/auth/*`), the OAuth consent page (`/oauth/authorize`), the app's
-  pages and `/a/*` keep BIC: people use them in browsers.
+  pages and the rest of `/a/*` keep BIC: people use them in browsers.
 - Skip only BIC. Do not skip the managed rules or lower the security level for these paths.
 - Add no rule on the content zone: agents do not call it, and browsers pass BIC.
 - The upload routes (`/api/v1/uploads` and `/api/v1/uploads/<id>/bundle`) are under `/api/v1/`, so
@@ -216,8 +220,9 @@ with this expression, replacing `APP_HOST` with your app host:
   their own. The Plinth CLI sends `plinth-cli/<version>`, the mention watcher
   `plinth-mentions/<version>`, and the commands `start_upload` returns set one too.
 
-The three `Python-urllib` lines in "Checks after deploy" above test it: each prints `200` with
-the rule and `403` without it.
+The four `Python-urllib` lines in "Checks after deploy" above test it. With the rule, the first
+three print `200` and the last `404` (the artifact does not exist, and Plinth says so); without it,
+each prints `403`.
 
 ## 3. Secrets
 

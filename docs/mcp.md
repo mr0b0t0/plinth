@@ -78,8 +78,10 @@ claude plugin install plinth@plinth
 
 Inside a Claude Code session the same is `/plugin marketplace add mr0b0t0/plinth`, then
 `/plugin install plinth@plinth`. Then run `/mcp`, choose `plugin:plinth:plinth` and sign in; click
-**Allow** on the Plinth page that opens. The plugin's server points at the hosted instance; for your
-own, set `PLINTH_URL` to its origin before starting Claude Code ([agents.md](agents.md#claude-code)).
+**Allow** on the Plinth page that opens. The plugin's server points at the hosted instance. For your
+own instance, either add the bare server below with your instance's URL (the Connect panel puts it
+first there), or set `PLINTH_URL` to your instance's origin every time Claude Code starts, for
+example in your shell profile ([agents.md](agents.md#claude-code)).
 Source: [Install and manage plugins](https://code.claude.com/docs/en/discover-plugins).
 
 **Tools only, without Plinth's rules:**
@@ -320,8 +322,10 @@ Returns `{ upload_id, upload_token, expires_at, upload_url, target, limits, cont
 commands, next }`:
 
 - `commands.curl` is a ready command with a `<folder>` placeholder. It needs bash or zsh and curl
-  7.55 or later: the token reaches curl through `-H @<(printf ...)`, so it never appears in the
-  process list. It sends the folder gzipped (`tar -czf - .`).
+  7.55 or later: the token reaches curl through `-H @<(printf ...)`, so it is not in curl's
+  arguments. It is still in the command text the agent's shell runs, and so in that shell's
+  arguments while the upload runs and in the agent's transcript. It sends the folder gzipped
+  (`tar -czf - .`).
 - `commands.npx` (only on release builds) does the same with the Plinth CLI:
   `PLINTH_UPLOAD_TOKEN=... npx -y @mr0b0t0/plinth@<version> upload <folder> --to '<upload_url>'`.
 - `target` says whether this is a publish or an update, and for an update the artifact's
@@ -329,8 +333,9 @@ commands, next }`:
 - `content_isolation` is `opaque` on instances that serve artifacts with an opaque origin, where
   module scripts fail ([below](#opaque-sandbox-instances)).
 
-Run the command from the build folder (the one with `index.html`, or a doc's `content.md`, at its
-top) with a timeout of at least 10 minutes. It prints the publish result as JSON, plus
+Replace `<folder>` in `commands.curl` with the build folder (the one with `index.html`, or a doc's
+`content.md`, at its top) and run it with a timeout of at least 10 minutes. The command changes
+into that folder itself. It prints the publish result as JSON, plus
 `bundle: { entries, skipped, stripped_prefix }`. If every file sits under one top directory that
 holds the entry file, that directory is removed from the paths. Dotfiles are skipped.
 
@@ -347,7 +352,7 @@ the upload token works on no other route. Errors carry a `reason`:
 | `upload_dead` | A conflict ended it: read the artifact again and start a new upload |
 | `upload_exhausted` | 5 attempts used |
 | `upload_running` | Another upload of yours is in progress; wait for it |
-| `no_entry_file` | No `index.html` (or `content.md`) at the top: run tar from inside the build folder |
+| `no_entry_file` | No `index.html` (or `content.md`) at the top: point `<folder>` at the build folder that has it at its top |
 
 A conflict (someone published after `base_version`) ends the upload; `details.next` says which
 version is current. The archive may not contain links of any kind, devices, `..` or absolute paths,
