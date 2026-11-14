@@ -7,7 +7,7 @@
 //
 //   pnpm test:local
 import { spawn, spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, rmSync, statSync } from "node:fs";
 import http from "node:http";
 import net from "node:net";
 import os from "node:os";
@@ -316,12 +316,22 @@ await check(
   },
 );
 
-await check("wrangler's local explorer is closed to public hosts", async () => {
-  for (const h of [APP, `x1.${CONTENT}`]) {
-    const r = await f(`https://${h}/cdn-cgi/local/explorer/api/d1/database`);
+await check("wrangler's local explorer is off, even for loopback", async () => {
+  for (const h of [APP, `x1.${CONTENT}`, `127.0.0.1:${PORT}`]) {
+    const r = await f(`http://${h}/cdn-cgi/local/explorer/api/d1/database`);
     await r.arrayBuffer();
-    assert(r.status === 403, `${h}: ${r.status}`);
+    // Public hosts were already refused (403); the flags must also close it to loopback (404).
+    const okStatus = h.startsWith("127.0.0.1") ? [404] : [403, 404];
+    assert(okStatus.includes(r.status), `${h}: ${r.status}`);
   }
+});
+
+await check("wrangler logs go to the instance directory, not the global one", async () => {
+  const dir = path.join(home, "single/logs");
+  const files = existsSync(dir) ? readdirSync(dir).filter((n) => n.endsWith(".log")) : [];
+  assert(files.length > 0, `no wrangler log in ${dir}`);
+  const mode = statSync(dir).mode & 0o777;
+  assert(mode === 0o700, `logs dir mode ${mode.toString(8)}`);
 });
 
 await check("the Worker listens on 127.0.0.1 only", async () => {

@@ -7,7 +7,7 @@
 // --no-tunnel runs only the Worker (for tests, or when cloudflared runs as its own service).
 // Exit code: 0 after Ctrl-C or SIGTERM; 1 when either process stops on its own.
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -58,7 +58,20 @@ if (opts.tunnel && spawnSync("cloudflared", ["--version"], { stdio: "ignore" }).
   );
 if (!existsSync(wranglerBin)) fail("wrangler is not installed. Run `pnpm install` first.");
 
-const env = { ...process.env, WRANGLER_SEND_METRICS: "false" };
+// wrangler dev serves a D1/R2 explorer and a log query API at /cdn-cgi/local/* to loopback
+// requests; on a production instance that would let any local process read the database, so both
+// are off. Its logs (which include the Worker's console output) go to the instance directory
+// instead of the world-readable global wrangler log folder.
+const logDir = path.join(paths.dir, "logs");
+mkdirSync(logDir, { recursive: true, mode: 0o700 });
+chmodSync(logDir, 0o700);
+const env = {
+  ...process.env,
+  WRANGLER_SEND_METRICS: "false",
+  X_LOCAL_EXPLORER: "false",
+  X_LOCAL_OBSERVABILITY: "false",
+  WRANGLER_LOG_PATH: logDir,
+};
 
 if (!existsSync(path.join(root, "apps", "web", "dist", "index.html"))) {
   console.log("> Building the web app (first start)");
