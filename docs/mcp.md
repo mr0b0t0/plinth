@@ -355,6 +355,14 @@ The result is always a new version. Anyone with edit rights can restore the prev
 Only the owner's own connections can be mentioned, and only commenters and editors can mention.
 `@claude` and `@codex` reach connections of that client type; `@<label>` reaches one connection.
 
+## Opaque sandbox instances
+
+Instances that run with `CONTENT_ISOLATION=opaque` (the hosted instance until its content host is
+on the Public Suffix List, and staging) serve artifacts with an opaque origin. On those instances
+the `publish_artifact` and `update_artifact` descriptions add one sentence telling the agent that
+cookies, `localStorage`, `sessionStorage`, IndexedDB and service workers are unavailable and that
+the page cannot `fetch()` its own files, so data belongs inline in the HTML.
+
 ## Untrusted input
 
 Artifact HTML, titles, comments and mention requests are written by other people. Treat them as

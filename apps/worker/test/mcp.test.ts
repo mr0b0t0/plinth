@@ -1,6 +1,7 @@
 import { eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import { users } from "../src/db/schema.ts";
+import { contentNote, OPAQUE_NOTE } from "../src/mcp/server.ts";
 import { agent, call, db, mcpClient, tool } from "./helpers.ts";
 
 describe("MCP endpoint", () => {
@@ -152,5 +153,14 @@ describe("MCP failures on every tool", () => {
     expect(list.data.items).toHaveLength(0);
     const mentions = await tool(cb, "list_mentions", {});
     expect(mentions.data.items).toHaveLength(0);
+  });
+});
+
+describe("MCP tool descriptions and content isolation", () => {
+  it("tell agents about the opaque sandbox only when artifacts run in it", () => {
+    expect(contentNote({ contentIsolation: "opaque" })).toBe(OPAQUE_NOTE);
+    expect(OPAQUE_NOTE).toMatch(/localStorage/);
+    expect(OPAQUE_NOTE).toMatch(/fetch\(\)/);
+    expect(contentNote({ contentIsolation: "origin" })).toBe("");
   });
 });

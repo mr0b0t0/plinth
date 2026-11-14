@@ -51,7 +51,22 @@ async function run(fn: () => Promise<unknown>): Promise<ToolResult> {
   }
 }
 
+/**
+ * Said to agents when artifacts run with an opaque origin (CONTENT_ISOLATION=opaque or the staging
+ * path fallback), so they write pages that work there.
+ */
+export const OPAQUE_NOTE =
+  "On this instance artifacts run in an opaque sandbox: cookies, localStorage, sessionStorage, " +
+  "IndexedDB and service workers are unavailable, and the page cannot fetch() its own files, so put " +
+  "data the page needs inline in the HTML or in <script> tags. ";
+
+/** The extra sentence publish_artifact and update_artifact carry on this instance, if any. */
+export function contentNote(config: Pick<Ctx["config"], "contentIsolation">): string {
+  return config.contentIsolation === "opaque" ? OPAQUE_NOTE : "";
+}
+
 export function buildMcpServer(ctx: Ctx): McpServer {
+  const opaque = contentNote(ctx.config);
   const server = new McpServer(
     { name: PRODUCT_NAME.toLowerCase(), version: "1.0.0" },
     {
@@ -72,6 +87,7 @@ export function buildMcpServer(ctx: Ctx): McpServer {
         "referenced by relative paths. Limits: 5 MB of HTML, 25 MB per version in total, and the account's " +
         "artifact quota. Scripts may load only from the instance's CDN allowlist; network calls to other hosts " +
         "are blocked. " +
+        opaque +
         UNTRUSTED_NOTE,
       inputSchema: publishArtifactInput,
     },
@@ -86,6 +102,7 @@ export function buildMcpServer(ctx: Ctx): McpServer {
         "Publish a new version of an artifact (owner or editor). If base_version is given and is not the current " +
         "version, the update is rejected with a conflict instead of overwriting. If assets are omitted, the " +
         "current version's assets are kept. Versions are immutable; every update is a new version anyone can revert. " +
+        opaque +
         UNTRUSTED_NOTE,
       inputSchema: updateArtifactInput,
     },
