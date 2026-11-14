@@ -23,7 +23,7 @@ All in Cloudflare account `ebc2059679ce36868d5e16290c7730eb` (`german@aconite.io
 | --- | --- | --- |
 | D1 database | `plinth` (`7dd95d0b-dd98-469f-8eac-8c6a06c35b52`), migrations 0001 and 0002 applied | `scripts/setup.mjs --remote --env production` |
 | R2 bucket | `plinth-files` | `scripts/setup.mjs` |
-| Worker | `plinth` (version `7b2e4ce9-13b3-4d10-bba8-3a3875065ad3` after the content-host switch) | `wrangler deploy --config wrangler.production.jsonc` |
+| Worker | `plinth` (version `3a6b8ea4-95d6-4334-b127-8203e49989ae`, commit `3bbbdbe`: private by default, `list_comments` and `resolve_comment`) | `wrangler deploy --config wrangler.production.jsonc` |
 | Worker secrets | `SESSION_SECRET`, `TOKEN_SIGNING_KEY` (generated), `SENDGRID_API_KEY` | `scripts/setup.mjs` |
 | Workers Custom Domain | `plinth.aconite.io`, plus the read-only `AAAA 100::` record and certificate Cloudflare creates for it | `wrangler deploy` |
 | Domain and zone | `plinthusercontent.com`, registered through Cloudflare Registrar (Free plan zone). SSL/TLS "Full (strict)", "Always Use HTTPS" on, Universal SSL for `plinthusercontent.com` and `*.plinthusercontent.com` | Cloudflare dashboard |
