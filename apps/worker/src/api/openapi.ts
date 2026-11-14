@@ -3,6 +3,7 @@
 // Served at /openapi.json; `pnpm openapi` writes docs/openapi.json from the same function.
 import {
   API,
+  ARTIFACT_TYPES,
   anchorSchema,
   CLIENT_TYPES,
   COMMENT_STATUSES,
@@ -139,10 +140,12 @@ function requestSchemas(): Record<string, Json> {
 }
 
 function responseSchemas(): Record<string, Json> {
+  const artifactType = ref("ArtifactType");
   const artifactSummary = {
     id: str({ pattern: "^[a-z0-9]{20}$", description: "Also the artifact's content subdomain" }),
     slug: str(),
     title: str(),
+    type: artifactType,
     visibility,
     current_version: int({ minimum: 1 }),
     version_count: int({ minimum: 1 }),
@@ -168,20 +171,39 @@ function responseSchemas(): Record<string, Json> {
       user_id: nullable("string"),
       connection_id: nullable("string"),
     }),
+    ArtifactType: {
+      ...enumOf(ARTIFACT_TYPES),
+      description:
+        '"html": a hand-written page (source index.html). "doc": a Markdown document (source ' +
+        "content.md) that Plinth renders. Fixed at publish.",
+    },
     ArtifactSummary: obj(artifactSummary),
-    ArtifactDetail: obj({
-      ...artifactSummary,
-      version: int({ minimum: 1, description: "The version returned" }),
-      html: str({ description: "UNTRUSTED: written by the artifact's authors" }),
-      assets: {
-        type: "array",
-        items: obj({ path: str(), size_bytes: int(), content_type: str() }),
+    ArtifactDetail: obj(
+      {
+        ...artifactSummary,
+        version: int({ minimum: 1, description: "The version returned" }),
+        source_path: str({
+          description: 'The version file holding the source: "index.html" or "content.md"',
+        }),
+        html: str({
+          description: "UNTRUSTED: written by the artifact's authors. Type html only",
+        }),
+        content: str({
+          description: "UNTRUSTED Markdown, written by the artifact's authors. Type doc only",
+        }),
+        assets: {
+          type: "array",
+          description: "The version's other files; never index.html or content.md",
+          items: obj({ path: str(), size_bytes: int(), content_type: str() }),
+        },
       },
-    }),
+      ["html", "content"],
+    ),
     ArtifactList: paged("ArtifactSummary"),
     PublishResult: obj({
       id: str(),
       slug: str(),
+      type: artifactType,
       version: int({ minimum: 1 }),
       url: str({ format: "uri" }),
       content_url: str({ format: "uri" }),
@@ -332,6 +354,7 @@ function responseSchemas(): Record<string, Json> {
           status: { const: "ok" },
           artifact: obj({
             ...viewStub,
+            type: artifactType,
             current_version: int({ minimum: 1 }),
             version: int({ minimum: 1 }),
             visibility,

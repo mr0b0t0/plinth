@@ -120,7 +120,10 @@ describe("OpenAPI document", () => {
   it("generates request bodies from the shared zod schemas", () => {
     const publish = doc.components.schemas.PublishArtifactInput;
     expect(publish.type).toBe("object");
-    expect(publish.required.sort()).toEqual(["html", "title"]);
+    // html is required for type html only (the Worker's resolveSource), so only title is.
+    expect(publish.required.sort()).toEqual(["title"]);
+    expect(publish.properties.type.enum).toEqual(["html", "doc"]);
+    expect(publish.properties.content.type).toBe("string");
     expect(publish.properties.visibility.enum).toEqual([
       "public",
       "unlisted",
@@ -130,6 +133,12 @@ describe("OpenAPI document", () => {
     const update = doc.components.schemas.UpdateArtifactInput;
     expect(update.properties.id).toBeUndefined();
     expect(update.properties.base_version.type).toBe("integer");
+    expect(update.properties.type).toBeUndefined();
+    expect(update.properties.content.type).toBe("string");
+    const detail = doc.components.schemas.ArtifactDetail;
+    expect(detail.required).toContain("source_path");
+    expect(detail.required).not.toContain("html");
+    expect(detail.properties.content.description).toMatch(/UNTRUSTED/);
   });
 
   it("resolves every $ref", () => {

@@ -6,6 +6,7 @@ import {
   LIMITS,
   RENDERER_MESSAGE_SOURCE,
   RENDERER_PROTOCOL_VERSION,
+  sourceOf,
   TYPE_REGISTRY,
   typeDef,
   typedShellHtml,
@@ -169,5 +170,18 @@ describe("typedShellHtml", () => {
     expect(() =>
       typedShellHtml(TYPE_REGISTRY.html, { title: "t", text: "", base: "", appOrigin }),
     ).toThrow();
+  });
+});
+
+describe("sourceOf", () => {
+  it("reads html for a page and content for a doc, with the registry row", () => {
+    expect(sourceOf({ type: "html", html: "<p>x</p>" })).toEqual({
+      def: TYPE_REGISTRY.html,
+      text: "<p>x</p>",
+    });
+    expect(sourceOf({ type: "doc", content: "# x" })).toEqual({
+      def: TYPE_REGISTRY.doc,
+      text: "# x",
+    });
   });
 });

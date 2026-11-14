@@ -70,6 +70,18 @@ export function typeDef(t: string): ArtifactTypeDef | null {
   return Object.hasOwn(TYPE_REGISTRY, t) ? TYPE_REGISTRY[t as ArtifactType] : null;
 }
 
+/** The source field of an artifact detail: html for a page, content for every typed artifact. */
+export type ArtifactSource =
+  | { type: "html"; html: string }
+  | { type: Exclude<ArtifactType, "html">; content: string };
+
+/** The registry row and source text of an artifact detail, whatever its type. */
+export function sourceOf(d: ArtifactSource): { def: ArtifactTypeDef; text: string } {
+  return d.type === "html"
+    ? { def: TYPE_REGISTRY.html, text: d.html }
+    : { def: TYPE_REGISTRY[d.type], text: d.content };
+}
+
 /** Version of the JSON payload a shell embeds. A breaking content-format change bumps it. */
 export const TYPED_PAYLOAD_VERSION = 1;
 

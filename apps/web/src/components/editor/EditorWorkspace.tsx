@@ -20,6 +20,7 @@ import {
   type Paged,
   type PublishResult,
   route,
+  sourceOf,
   type VersionInfo,
 } from "@plinth/shared";
 import { useCallback, useEffect, useId, useRef, useState } from "react";
@@ -137,7 +138,7 @@ export default function EditorWorkspace({
         }
         setConflict({
           current: detail.version,
-          currentHtml: detail.html,
+          currentHtml: sourceOf(detail).text,
           author,
           createdAt,
           base: from,

@@ -18,6 +18,7 @@ const ARTIFACT: ViewArtifact = {
   id: "art123",
   slug: "garden-plan",
   title: "Garden plan",
+  type: "html",
   current_version: 3,
   version: 3,
   visibility: "unlisted",

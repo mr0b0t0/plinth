@@ -11,6 +11,7 @@ const OK: ViewGate = {
     id: "a1",
     slug: "s1",
     title: "T",
+    type: "html",
     current_version: 1,
     version: 1,
     visibility: "allowlist",

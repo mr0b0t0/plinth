@@ -52,7 +52,7 @@ describe("drafts in sessionStorage", () => {
 });
 
 describe("initialState", () => {
-  const artifact = { id: "a1", version: 5, html: "<p>v5</p>" };
+  const artifact = { id: "a1", version: 5, type: "html" as const, html: "<p>v5</p>" };
   const noFetch = () => Promise.reject(new Error("should not fetch"));
 
   it("opens the current version when no draft was kept", async () => {

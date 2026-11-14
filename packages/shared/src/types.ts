@@ -1,4 +1,6 @@
 // Response shapes for /api/v1 and MCP tool results (structuredContent). snake_case on the wire.
+
+import type { ArtifactSource, ArtifactType } from "./artifactTypes.ts";
 import type {
   ClientType,
   CommentStatus,
@@ -23,6 +25,8 @@ export interface ArtifactSummary {
   id: string;
   slug: string;
   title: string;
+  /** "html" for a hand-written page, "doc" for a Markdown document. Fixed at publish. */
+  type: ArtifactType;
   visibility: Visibility;
   current_version: number;
   version_count: number;
@@ -45,12 +49,20 @@ export interface AssetInfo {
   content_type: string;
 }
 
-export interface ArtifactDetail extends ArtifactSummary {
+export interface ArtifactDetailBase extends ArtifactSummary {
   /** The version returned (current unless one was asked for). */
   version: number;
-  html: string;
+  /** The version file holding the source: "index.html" for a page, "content.md" for a doc. */
+  source_path: string;
+  /** The version's other files. Never lists a reserved path (index.html, content.md). */
   assets: AssetInfo[];
 }
+
+/**
+ * One version of an artifact with its source: `html` for a page, `content` (Markdown) for a doc.
+ * Use sourceOf() to read the source without caring which.
+ */
+export type ArtifactDetail = ArtifactDetailBase & ArtifactSource;
 
 export interface VersionInfo {
   number: number;
@@ -65,6 +77,7 @@ export interface VersionInfo {
 export interface PublishResult {
   id: string;
   slug: string;
+  type: ArtifactType;
   version: number;
   url: string;
   content_url: string;
@@ -216,6 +229,7 @@ export interface ViewArtifactStub {
 }
 
 export interface ViewArtifact extends ViewArtifactStub {
+  type: ArtifactType;
   current_version: number;
   /** The version this gate opened (current, or the one asked for). */
   version: number;

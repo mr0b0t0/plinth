@@ -38,6 +38,7 @@ import {
   principalEmail,
   principalUserId,
 } from "../policy.ts";
+import { requireTypeDef, resolveSource } from "./artifactTypes.ts";
 import type { Ctx } from "./context.ts";
 import {
   checkTotal,
@@ -202,6 +203,7 @@ export function toSummary(
     id: a.id,
     slug: a.slug,
     title: a.title,
+    type: a.type,
     visibility: a.visibility,
     current_version: a.currentVersion,
     version_count: versionCount,
@@ -424,7 +426,10 @@ async function checkPublicAllowed(ctx: Ctx, userId: string): Promise<void> {
 
 export interface PublishInput {
   title: string;
-  html: string;
+  /** Defaults to html. */
+  type?: string;
+  html?: string;
+  content?: string;
   assets?: AssetInput[];
   visibility: Visibility;
   password?: string;
@@ -443,7 +448,8 @@ export async function publishArtifact(ctx: Ctx, input: PublishInput): Promise<Pu
     throw new ApiError("invalid_input", "A password is required for password visibility");
   }
 
-  const files = prepareFiles(input.html, input.assets);
+  const { def, text } = resolveSource(input, null);
+  const files = prepareFiles(def, text, input.assets);
 
   const limit = artifactLimitFor(ctx.config, user);
   const count = await ctx.db
@@ -477,15 +483,26 @@ export async function publishArtifact(ctx: Ctx, input: PublishInput): Promise<Pu
     updatedAt: now,
     deletedAt: null,
     takenDownAt: null,
+    type: def.id,
   };
   // Insert only while the owner is under the limit, so parallel publishes cannot overshoot it.
   const inserted = await ctx.env.DB.prepare(
     `INSERT INTO artifacts (id, owner_id, slug, title, current_version, visibility, password_hash,
-       access_epoch, created_at, updated_at)
-     SELECT ?1, ?2, ?3, ?4, 0, ?5, ?6, 1, ?7, ?7
+       access_epoch, created_at, updated_at, type)
+     SELECT ?1, ?2, ?3, ?4, 0, ?5, ?6, 1, ?7, ?7, ?9
       WHERE (SELECT count(*) FROM artifacts WHERE owner_id = ?2 AND deleted_at IS NULL) < ?8`,
   )
-    .bind(row.id, row.ownerId, row.slug, row.title, row.visibility, row.passwordHash, now, limit)
+    .bind(
+      row.id,
+      row.ownerId,
+      row.slug,
+      row.title,
+      row.visibility,
+      row.passwordHash,
+      now,
+      limit,
+      row.type,
+    )
     .run();
   if ((inserted.meta.changes ?? 0) !== 1) {
     throw new ApiError("quota_exceeded", `Artifact limit reached (${limit}).`, { limit });
@@ -501,6 +518,7 @@ export async function publishArtifact(ctx: Ctx, input: PublishInput): Promise<Pu
   return {
     id: row.id,
     slug: row.slug,
+    type: row.type,
     version: 1,
     url: appUrl(ctx.config, `/a/${row.slug}`),
     content_url: `${contentOrigin(ctx.config, row.id)}/`,
@@ -510,7 +528,9 @@ export async function publishArtifact(ctx: Ctx, input: PublishInput): Promise<Pu
 
 export interface UpdateInput {
   id: string;
-  html: string;
+  /** The field matching the artifact's type (html for a page, content for a doc). */
+  html?: string;
+  content?: string;
   assets?: AssetInput[];
   note?: string;
   base_version?: number;
@@ -519,11 +539,13 @@ export interface UpdateInput {
 export async function updateArtifact(ctx: Ctx, input: UpdateInput): Promise<PublishResult> {
   const { artifact } = await requireArtifact(ctx, input.id, "edit");
   const actor = requireActor(ctx);
-  let files = prepareFiles(input.html, input.assets);
+  // The type is fixed at publish: the input must carry the artifact's own source field.
+  const { def, text } = resolveSource(input, requireTypeDef(artifact.type).id);
+  let files = prepareFiles(def, text, input.assets);
   if (input.assets === undefined && artifact.currentVersion > 0) {
     // No assets given: carry the current version's assets forward unchanged.
     const cur = await requireVersion(ctx, artifact, artifact.currentVersion);
-    const carried = parseManifest(cur.manifest).filter((m) => m.path !== "index.html");
+    const carried = parseManifest(cur.manifest).filter((m) => !def.reservedPaths.includes(m.path));
     if (carried.length > 0)
       files = [...files, ...(await readFiles(ctx.env.FILES, cur.r2Prefix, carried))];
   }
@@ -535,6 +557,7 @@ export async function updateArtifact(ctx: Ctx, input: UpdateInput): Promise<Publ
   return {
     id: artifact.id,
     slug: artifact.slug,
+    type: artifact.type,
     version: n,
     url: appUrl(ctx.config, `/a/${artifact.slug}`),
     content_url: `${contentOrigin(ctx.config, artifact.id)}/`,
@@ -548,16 +571,20 @@ export async function getArtifact(
   version?: number,
 ): Promise<ArtifactDetail> {
   const { artifact, role } = await requireArtifact(ctx, ref, "view");
+  const def = requireTypeDef(artifact.type);
   const v = await requireVersion(ctx, artifact, version ?? artifact.currentVersion);
-  const html = await readText(ctx.env.FILES, `${v.r2Prefix}index.html`);
-  if (html === null) throw new ApiError("internal", "Stored HTML is missing");
-  const summary = await summaryFor(ctx, artifact, role);
-  return {
-    ...summary,
+  const text = await readText(ctx.env.FILES, `${v.r2Prefix}${def.sourcePath}`);
+  if (text === null) throw new ApiError("internal", `Stored ${def.sourceLabel} is missing`);
+  const base = {
+    ...(await summaryFor(ctx, artifact, role)),
     version: v.number,
-    html,
-    assets: parseManifest(v.manifest).filter((m) => m.path !== "index.html"),
+    source_path: def.sourcePath,
+    assets: parseManifest(v.manifest).filter((m) => !def.reservedPaths.includes(m.path)),
   };
+  // html for a page, content for every typed artifact; never both.
+  return def.id === "html"
+    ? { ...base, type: "html", html: text }
+    : { ...base, type: def.id, content: text };
 }
 
 export async function listArtifacts(ctx: Ctx, query?: string): Promise<ArtifactSummary[]> {
@@ -674,6 +701,7 @@ export async function restoreVersion(
   return {
     id: artifact.id,
     slug: artifact.slug,
+    type: artifact.type,
     version: n,
     url: appUrl(ctx.config, `/a/${artifact.slug}`),
     content_url: `${contentOrigin(ctx.config, artifact.id)}/`,

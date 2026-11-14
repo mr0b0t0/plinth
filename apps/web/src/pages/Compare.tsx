@@ -6,7 +6,7 @@ import {
   CodeIcon,
   MonitorIcon,
 } from "@phosphor-icons/react";
-import type { VersionInfo } from "@plinth/shared";
+import { sourceOf, type VersionInfo } from "@plinth/shared";
 import {
   AccessProblem,
   ArtifactCrumbTitle,
@@ -82,8 +82,8 @@ export default function Compare({ params }: { params: Record<string, string> }) 
         key={`${from}-${to}`}
         from={from}
         to={to}
-        oldHtml={oldVersion.data.html}
-        newHtml={newVersion.data.html}
+        oldHtml={sourceOf(oldVersion.data).text}
+        newHtml={sourceOf(newVersion.data).text}
         oldAssets={oldVersion.data.assets}
         newAssets={newVersion.data.assets}
       />
