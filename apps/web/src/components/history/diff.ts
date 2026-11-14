@@ -247,21 +247,32 @@ export interface AssetChange {
 }
 
 /**
- * Asset changes between two versions, by path. Only sizes are known, so a file with the same path
- * and size counts as "same" (it may still differ byte for byte). Sorted: added, removed, changed,
- * same, then by path.
+ * Asset changes between two versions, by path. When both sides list a sha256 (files stored from
+ * 0.4.0 on), they decide: same hash is "same", another is "changed", whatever the size. Otherwise
+ * only sizes are known, so a file with the same path and size counts as "same" (it may still
+ * differ byte for byte). Sorted: added, removed, changed, same, then by path.
  */
 export function diffAssets(before: AssetInfo[], after: AssetInfo[]): AssetChange[] {
-  const old = new Map(before.map((a) => [a.path, a.size_bytes]));
-  const next = new Map(after.map((a) => [a.path, a.size_bytes]));
+  const old = new Map(before.map((a) => [a.path, a]));
+  const next = new Map(after.map((a) => [a.path, a]));
   const out: AssetChange[] = [];
-  for (const [path, size] of next) {
+  for (const [path, now] of next) {
     const was = old.get(path);
-    if (was === undefined) out.push({ path, kind: "added", after: size });
-    else out.push({ path, kind: was === size ? "same" : "changed", before: was, after: size });
+    if (was === undefined) {
+      out.push({ path, kind: "added", after: now.size_bytes });
+      continue;
+    }
+    const same =
+      was.sha256 && now.sha256 ? was.sha256 === now.sha256 : was.size_bytes === now.size_bytes;
+    out.push({
+      path,
+      kind: same ? "same" : "changed",
+      before: was.size_bytes,
+      after: now.size_bytes,
+    });
   }
-  for (const [path, size] of old) {
-    if (!next.has(path)) out.push({ path, kind: "removed", before: size });
+  for (const [path, was] of old) {
+    if (!next.has(path)) out.push({ path, kind: "removed", before: was.size_bytes });
   }
   const order: Record<AssetChangeKind, number> = { added: 0, removed: 1, changed: 2, same: 3 };
   return out.sort((x, y) => order[x.kind] - order[y.kind] || x.path.localeCompare(y.path));
