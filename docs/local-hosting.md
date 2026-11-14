@@ -99,14 +99,15 @@ macOS, `~/Library/LaunchAgents/io.plinth.local.plist` (replace the repo path):
   </array>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
-  <key>StandardOutPath</key><string>/tmp/plinth-local.log</string>
-  <key>StandardErrorPath</key><string>/tmp/plinth-local.log</string>
+  <key>StandardOutPath</key><string>/Users/YOU/Library/Logs/plinth-local.log</string>
+  <key>StandardErrorPath</key><string>/Users/YOU/Library/Logs/plinth-local.log</string>
 </dict>
 </plist>
 ```
 
-Load it with `launchctl load ~/Library/LaunchAgents/io.plinth.local.plist`. Keep the log private,
-because in single-user mode with the `console` provider it holds sign-in codes.
+Load it with `launchctl load ~/Library/LaunchAgents/io.plinth.local.plist`. Keep the log in your
+own `~/Library/Logs`, not `/tmp`, because in single-user mode with the `console` provider it holds
+sign-in codes. Wrangler's own logs go to `~/.plinth/<name>/logs/`, which only you can read.
 
 Linux, `~/.config/systemd/user/plinth.service`:
 
@@ -138,9 +139,15 @@ The copy includes the secrets and the tunnel credentials, so store it as careful
 
 ## Upgrades
 
+Stop the instance first. `wrangler dev` reloads the Worker whenever the checkout changes, so
+pulling while it runs would put new code live against a database that hasn't been migrated yet.
+For the same reason, run your instance from a checkout you don't edit, and use a second checkout
+for development.
+
 ```sh
+launchctl unload ~/Library/LaunchAgents/io.plinth.local.plist   # or: systemctl --user stop plinth, or Ctrl-C
 git pull && pnpm install && pnpm build
-pnpm local:start            # applies new migrations before starting
+pnpm local:start            # applies new migrations before starting (or load/start the service again)
 ```
 
 ## One domain instead of two
@@ -163,6 +170,6 @@ so a second cheap domain is usually the better deal. See [security.md](security.
   browser's `Origin` header.
 - **No sign-in or viewer emails:** check that `RESEND_API_KEY` or `SENDGRID_API_KEY` is in
   `~/.plinth/<name>/.dev.vars`, and that the `--email-from` domain is verified with the provider.
-- **"Tunnel … exists but its credentials file is missing":** delete the tunnel
-  (`cloudflared tunnel delete plinth-<name>`, or in the dashboard under Networks → Tunnels) and
-  rerun setup.
+- **"Tunnel … exists but its credentials file is missing", or "points at an earlier tunnel":** rerun
+  setup with the same flags plus `--replace-tunnel`. It deletes the old tunnel, creates a new one
+  and repoints the DNS records it left. Records that point anywhere else are never changed.
