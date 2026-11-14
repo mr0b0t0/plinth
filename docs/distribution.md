@@ -1,8 +1,8 @@
 # Distribution (maintainers)
 
-How Plinth reaches people besides the hosted instance: the npm CLI, the agent plugin, and the
-directory listings. User-facing guides: [local-hosting.md](local-hosting.md) and
-[agents.md](agents.md).
+How Plinth reaches people besides the hosted instance: the npm CLI, the Docker image, the agent
+plugin, and the directory listings. User-facing guides: [local-hosting.md](local-hosting.md),
+[docker.md](docker.md) and [agents.md](agents.md).
 
 ## npm: `@mr0b0t0/plinth`
 
@@ -21,6 +21,25 @@ deprecating this one.
 
 Keep the pinned `wrangler` version in `packages/cli/package.json` equal to the one in
 `apps/worker/package.json`.
+
+## Docker: `ghcr.io/mr0b0t0/plinth`
+
+The `Dockerfile` at the repository root packages the same CLI: it builds the runtime on the build
+machine's platform, installs the CLI's production dependencies (wrangler, with the native `workerd`
+and `esbuild`, and tldts) for each target platform with `pnpm deploy`, and adds `cloudflared` and a
+CA bundle from the pinned `cloudflare/cloudflared` image. Both base images are pinned by version
+and digest in the `ARG` lines at the top; bump them together with the Node version in `.npmrc`.
+`docker/entrypoint.sh` and `docker/configure.mjs` turn `PLINTH_*` variables into `plinth init` and
+`plinth start` ([docker.md](docker.md)).
+
+Release, for `linux/amd64` and `linux/arm64`:
+
+1. `pnpm test:docker` builds the image for this machine and runs it end to end in localhost mode
+   (sign-in from the log, OAuth, a publish over MCP, the artifact host, restart, stop). With
+   `PLINTH_DOCKER_IMAGE` it tests an image already built; with `PLINTH_DOCKER_PLATFORM` it runs one
+   for another platform under emulation.
+2. Build and push both platforms with `docker buildx build --platform linux/amd64,linux/arm64`,
+   tagged with the CLI's version from `packages/cli/package.json` and `latest`.
 
 ## Agent plugin
 

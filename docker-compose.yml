@@ -1,0 +1,22 @@
+# Plinth on this computer, localhost only (docs/docker.md).
+#
+#   PLINTH_EMAIL=you@example.com docker compose up -d
+#   docker compose logs -f plinth          # sign-in codes appear here
+#   docker compose exec plinth plinth connect
+#
+# Then open http://127.0.0.1:8788. For your own domains or a Cloudflare Tunnel, see docs/docker.md.
+services:
+  plinth:
+    image: ghcr.io/mr0b0t0/plinth:latest
+    restart: unless-stopped
+    environment:
+      # The one account that can sign in.
+      PLINTH_EMAIL: ${PLINTH_EMAIL:?set PLINTH_EMAIL to your email address}
+    ports:
+      # Loopback only, and the same port on both sides: the app's address includes it.
+      - "127.0.0.1:8788:8788"
+    volumes:
+      - plinth-data:/data
+
+volumes:
+  plinth-data:

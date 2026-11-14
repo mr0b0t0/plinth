@@ -242,3 +242,10 @@ Step-by-step instructions for each client are in [mcp.md](mcp.md).
 - **Admin commands on a `plinth deploy` instance.** The quota and erasure commands above run from a
   checkout; point them at the deployment with
   `--config $HOME/.plinth/plinth/cloudflare/wrangler.jsonc`.
+
+## Docker
+
+To run Plinth on a server or laptop of your own instead of Cloudflare Workers, the
+`ghcr.io/mr0b0t0/plinth` image runs the same Worker in a container, with D1 and R2 on a volume:
+localhost only, behind your own reverse proxy with your domains, or through a Cloudflare Tunnel.
+It takes its settings as `PLINTH_*` environment variables. See [docker.md](docker.md).

@@ -1,0 +1,25 @@
+# Only what the image build reads: the workspace manifests, the Worker, web, shared and CLI
+# sources, and the migrations. Never secrets, local state or build output.
+.git
+.github
+.claude
+.agents
+.claude-plugin
+**/node_modules
+**/dist
+**/.turbo
+**/.wrangler
+**/.dev.vars
+**/.env*
+**/coverage
+apps/worker/wrangler.*.jsonc
+packages/cli/runtime
+docs
+integrations
+scripts
+e2e/*
+!e2e/package.json
+Dockerfile
+docker-compose.yml
+.dockerignore
+**/.DS_Store

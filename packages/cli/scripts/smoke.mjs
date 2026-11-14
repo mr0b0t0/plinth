@@ -7,11 +7,11 @@
 //
 //   pnpm --filter @mr0b0t0/plinth test:smoke
 import { spawn, spawnSync } from "node:child_process";
-import { createHash, randomBytes } from "node:crypto";
 import { existsSync, mkdtempSync, readdirSync, realpathSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { appClient, connectAgent, publishArtifact, signIn } from "./agent-flow.mjs";
 
 const pkgDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const PORT = Number(process.env.PLINTH_CLI_SMOKE_PORT ?? 8796);
@@ -161,6 +161,11 @@ await check("init creates a localhost-only instance", () => {
   assert(!/ADMIN_TOKEN/.test(r.stdout), "a localhost-only instance must not get an ADMIN_TOKEN");
 });
 
+await check("start refuses a --listen value that is not an IP address", () => {
+  const r = plinth("start", "--listen", "everywhere");
+  assert(r.status !== 0 && /--listen must be an IP address/.test(r.stderr), r.stdout + r.stderr);
+});
+
 // ---------- run it ----------
 let log = "";
 server = spawn(bin, ["start", "--home", home], { stdio: ["ignore", "pipe", "pipe"] });
@@ -181,6 +186,7 @@ await check("start serves the instance and status says so", () => {
   assert(up, `not running:\n${log}`);
   const s = plinth("status");
   assert(s.stdout.includes(`running on 127.0.0.1:${PORT}`), s.stdout);
+  assert(log.includes(`Starting the Worker on http://127.0.0.1:${PORT}`), "not on loopback");
 });
 
 await check("the app answers on 127.0.0.1 with artifacts on *.localhost", async () => {
@@ -192,136 +198,20 @@ await check("the app answers on 127.0.0.1 with artifacts on *.localhost", async 
 });
 
 // ---------- sign in as the owner, then connect an agent with OAuth ----------
-const jar = new Map();
-function keep(res) {
-  for (const c of res.headers.getSetCookie()) {
-    const [pair] = c.split(";");
-    const at = pair.indexOf("=");
-    jar.set(pair.slice(0, at), pair.slice(at + 1));
-  }
-  return res;
-}
-const cookieHeader = () => [...jar].map(([k, v]) => `${k}=${v}`).join("; ");
-const csrfToken = () => [...jar].find(([k]) => /plinth_csrf$/.test(k))?.[1] ?? "";
-async function app(pathname, init = {}) {
-  const headers = { cookie: cookieHeader(), origin: APP, ...(init.headers ?? {}) };
-  if (init.json !== undefined) {
-    headers["content-type"] = "application/json";
-    headers["x-plinth-csrf"] = csrfToken();
-  }
-  return keep(
-    await fetch(`${APP}${pathname}`, {
-      method: init.method ?? (init.json === undefined ? "GET" : "POST"),
-      headers,
-      body: init.json === undefined ? init.body : JSON.stringify(init.json),
-      redirect: "manual",
-    }),
-  );
-}
-async function codeFor(email, from) {
-  for (let i = 0; i < 50; i++) {
-    const text = log.slice(from);
-    const at = text.lastIndexOf(`[email:console] to=${email}`);
-    const code = at >= 0 ? /\b(\d{6})\b/.exec(text.slice(at))?.[1] : null;
-    if (code) return code;
-    await new Promise((r) => setTimeout(r, 200));
-  }
-  throw new Error(`no sign-in code for ${email} in the instance log`);
-}
+const app = appClient(APP);
 
 await check("the owner signs in with the code printed in the terminal", async () => {
-  await (await app("/api/v1/config")).arrayBuffer();
-  const mark = log.length;
-  const r = await app("/api/v1/auth/login", { json: { email: EMAIL } });
-  assert(r.status === 200, `login ${r.status}`);
-  const code = await codeFor(EMAIL, mark);
-  const v = await app("/api/v1/auth/verify-code", { json: { email: EMAIL, code } });
-  assert(v.status === 200, `verify ${v.status} ${await v.text()}`);
+  await signIn(app, EMAIL, () => log);
 });
 
 let accessToken = null;
 await check("an agent connects with OAuth: registration, PKCE, consent, token", async () => {
-  const redirectUri = "http://127.0.0.1:9/callback";
-  const reg = await (
-    await fetch(`${APP}/oauth/register`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        client_name: "CLI smoke",
-        redirect_uris: [redirectUri],
-        token_endpoint_auth_method: "none",
-        grant_types: ["authorization_code", "refresh_token"],
-        response_types: ["code"],
-      }),
-    })
-  ).json();
-  assert(reg.client_id, `registration: ${JSON.stringify(reg)}`);
-  const verifier = randomBytes(32).toString("base64url");
-  const challenge = createHash("sha256").update(verifier).digest("base64url");
-  const q = new URLSearchParams({
-    response_type: "code",
-    client_id: reg.client_id,
-    redirect_uri: redirectUri,
-    code_challenge: challenge,
-    code_challenge_method: "S256",
-    state: "smoke",
-    scope: "artifacts:read artifacts:write mentions",
-    resource: `${APP}/mcp`,
-  });
-  const auth = await app(`/oauth/authorize?${q}`);
-  const consentUrl = new URL(auth.headers.get("location") ?? "", APP);
-  const requestId = consentUrl.searchParams.get("request");
-  assert(auth.status === 302 && requestId, `authorize ${auth.status} -> ${consentUrl}`);
-  const consent = await app("/api/v1/oauth/consent", {
-    json: { request_id: requestId, label: "CLI smoke", client_type: "other", approve: true },
-  });
-  const consentBody = await consent.text();
-  assert(consent.status === 200, `consent ${consent.status} ${consentBody}`);
-  const back = new URL(JSON.parse(consentBody).redirect_to);
-  assert(back.searchParams.get("state") === "smoke", `state ${back}`);
-  const tok = await fetch(`${APP}/oauth/token`, {
-    method: "POST",
-    headers: { "content-type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({
-      grant_type: "authorization_code",
-      code: back.searchParams.get("code") ?? "",
-      redirect_uri: redirectUri,
-      client_id: reg.client_id,
-      code_verifier: verifier,
-      resource: `${APP}/mcp`,
-    }),
-  });
-  const t = await tok.json();
-  assert(tok.status === 200 && t.access_token, `token ${tok.status} ${JSON.stringify(t)}`);
-  accessToken = t.access_token;
+  accessToken = await connectAgent(app, APP, "CLI smoke");
 });
-
-async function mcp(method, params, id) {
-  const r = await fetch(`${APP}/mcp`, {
-    method: "POST",
-    headers: {
-      authorization: `Bearer ${accessToken}`,
-      "content-type": "application/json",
-      accept: "application/json, text/event-stream",
-      "mcp-protocol-version": "2025-06-18",
-    },
-    body: JSON.stringify({ jsonrpc: "2.0", id, method, params }),
-  });
-  const text = await r.text();
-  if (!r.ok) throw new Error(`${method}: HTTP ${r.status} ${text.slice(0, 200)}`);
-  const json = text.startsWith("{") ? text : (/^data: (.*)$/m.exec(text)?.[1] ?? "");
-  return JSON.parse(json);
-}
 
 let published = null;
 await check("the agent publishes over /mcp with its OAuth access token", async () => {
-  const clientInfo = { name: "smoke", version: "1" };
-  await mcp("initialize", { protocolVersion: "2025-06-18", capabilities: {}, clientInfo }, 1);
-  const args = { title: "CLI smoke", html: "<!doctype html><h1>Hello</h1>" };
-  const res = await mcp("tools/call", { name: "publish_artifact", arguments: args }, 2);
-  assert(!res.result?.isError, JSON.stringify(res));
-  published = JSON.parse(res.result.content[0].text);
-  assert(published.id && published.slug, JSON.stringify(published));
+  published = await publishArtifact(APP, accessToken, "CLI smoke");
   return published.slug;
 });
 
