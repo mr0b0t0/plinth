@@ -344,7 +344,9 @@ options.
 - **Phishing and malware.** New accounts start with unlisted and allowlist visibility only. Public
   visibility unlocks after email verification and a short account age. Every artifact page carries
   a "report" link and a banner naming the platform, and reported artifacts can be taken down
-  quickly.
+  quickly. The banner also links to Plinth's source repository unless the operator turns that
+  off (`SHOW_SOURCE_LINK`). It sits in the app's page around the frame, so the artifact's own
+  HTML is never changed.
 - **Hosted instance paperwork.** Terms of use, a privacy notice and an acceptable use policy:
   short, final, plain-language pages built from the instance's `OPERATOR_*` settings (operator
   name, address, registration or VAT number, one contact address), since the operator is a host

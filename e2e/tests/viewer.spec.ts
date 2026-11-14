@@ -121,6 +121,10 @@ test.describe("artifact page", () => {
     // The banner names the platform and carries a report link on every artifact page.
     const banner = page.getByRole("contentinfo");
     await expect(banner).toContainText("Hosted on Plinth");
+    await expect(banner.getByRole("link", { name: "open source" })).toHaveAttribute(
+      "href",
+      "https://github.com/mr0b0t0/plinth",
+    );
     await expect(banner.getByRole("link", { name: "Report this artifact" })).toHaveAttribute(
       "href",
       `/a/${a.slug}/report`,

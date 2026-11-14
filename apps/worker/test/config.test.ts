@@ -157,6 +157,14 @@ describe("operator settings (legal pages)", () => {
     expect(cfg).toHaveProperty("operator");
     expect(cfg.email_provider).toBeTypeOf("string");
     expect(cfg.max_artifacts_per_user).toBeTypeOf("number");
+    expect(cfg.source_url).toBe("https://github.com/mr0b0t0/plinth");
+  });
+  it("show the source link unless SHOW_SOURCE_LINK is off", () => {
+    expect(parseConfig(base).showSourceLink).toBe(true);
+    expect(parseConfig({ ...base, SHOW_SOURCE_LINK: "" }).showSourceLink).toBe(true);
+    expect(parseConfig({ ...base, SHOW_SOURCE_LINK: "true" }).showSourceLink).toBe(true);
+    expect(parseConfig({ ...base, SHOW_SOURCE_LINK: "false" }).showSourceLink).toBe(false);
+    expect(parseConfig({ ...base, SHOW_SOURCE_LINK: "0" }).showSourceLink).toBe(false);
   });
 });
 

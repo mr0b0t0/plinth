@@ -1,4 +1,4 @@
-import { type AppConfig, type Me, updateProfileInput } from "@plinth/shared";
+import { type AppConfig, type Me, REPO_URL, updateProfileInput } from "@plinth/shared";
 import { and, eq, isNull, sql } from "drizzle-orm";
 import { Hono } from "hono";
 import { artifacts, users } from "../db/schema.ts";
@@ -22,6 +22,7 @@ meApi.get("/config", (c) => {
     operator: config.operator,
     email_provider: config.emailProvider,
     max_artifacts_per_user: config.maxArtifactsPerUser,
+    source_url: config.showSourceLink ? REPO_URL : null,
   };
   const res = c.json(body);
   ensureCsrfCookie(c, res.headers);

@@ -20,6 +20,7 @@ const config: AppConfig = {
   operator: null,
   email_provider: "console",
   max_artifacts_per_user: 100,
+  source_url: null,
 };
 const opaqueConfig: AppConfig = { ...config, content_isolation: "opaque" };
 const ENTER = `${ORIGIN}/__plinth/enter?t=one-time&next=%2F__plinth%2Fpreview`;

@@ -22,6 +22,7 @@ const config: AppConfig = {
   operator: null,
   email_provider: "console",
   max_artifacts_per_user: 100,
+  source_url: null,
 };
 
 describe("gate query and paths", () => {
