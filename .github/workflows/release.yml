@@ -1,8 +1,8 @@
 # Release: a pushed tag v<version> (made by `pnpm release <version>`, docs/releasing.md) runs the
 # full CI, then publishes the npm CLI and the Docker image and creates the GitHub release.
 #
-# The npm token lives in the `npm` environment, which only v* tags can use. Actions that see a
-# secret or a write token are pinned to commit SHAs.
+# npm publishes through trusted publishing (OIDC) from the `npm` environment, which only v* tags
+# can use; no npm token exists. Actions that get a write token are pinned to commit SHAs.
 name: Release
 
 on:
@@ -45,7 +45,7 @@ jobs:
     environment: npm
     permissions:
       contents: read
-      id-token: write # npm provenance
+      id-token: write # trusted publishing and provenance
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
@@ -53,14 +53,15 @@ jobs:
         with:
           node-version: 24.22.2
           cache: pnpm
-          registry-url: https://registry.npmjs.org
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
+      # Trusted publishing: npm checks this workflow's OIDC identity (repository mr0b0t0/plinth,
+      # workflow release.yml, environment npm), so no token is stored anywhere. Needs npm 11.5.1+.
+      - name: npm with trusted publishing
+        run: npm install -g npm@11.21.1
       - name: Publish @mr0b0t0/plinth
         working-directory: packages/cli
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-          NPM_CONFIG_PROVENANCE: "true"
           VERSION: ${{ needs.meta.outputs.version }}
           PRERELEASE: ${{ needs.meta.outputs.prerelease }}
         run: |
@@ -70,7 +71,9 @@ jobs:
           fi
           tag=latest
           if [ "$PRERELEASE" = "true" ]; then tag=next; fi
-          pnpm publish --access public --no-git-checks --tag "$tag"
+          # pnpm pack rewrites workspace: ranges; npm publish does the OIDC exchange and provenance.
+          pnpm pack --pack-destination "$RUNNER_TEMP"
+          npm publish "$RUNNER_TEMP"/mr0b0t0-plinth-"$VERSION".tgz --access public --provenance --tag "$tag"
 
   docker:
     needs: [ci, meta]

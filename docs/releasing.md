@@ -41,12 +41,12 @@ stops after tagging and prints the push command.
 
 Follow it with `gh run watch`, or on the repository's Actions tab.
 
-## Secrets and access
+## Credentials and access
 
-- `NPM_TOKEN` is a granular npm access token with read and write access to `@mr0b0t0/plinth`,
-  stored in the GitHub environment `npm`, which only `v*` tags may use. Granular tokens expire:
-  when it does, make a new one on npmjs.com and run `gh secret set NPM_TOKEN --env npm` (it reads
-  the value from standard input).
+- npm publishes through [trusted publishing](https://docs.npmjs.com/trusted-publishers): the
+  package's settings on npmjs.com trust the workflow `release.yml` in `mr0b0t0/plinth`, running in
+  the GitHub environment `npm` (which only `v*` tags may use). npm checks the workflow's OIDC
+  identity at publish time, so there is no npm token to store, rotate or leak.
 - The Docker job pushes with the workflow's own `GITHUB_TOKEN`; no other secret is involved.
 - Only maintainers can create `v*` tags (a tag ruleset), and every action that handles a secret or
   a write token is pinned to a commit SHA.
