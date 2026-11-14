@@ -138,9 +138,9 @@ support it.
 ```
 
 - `data` gives the page the store. Add `viewer` (`content="data viewer"`) only when the page must
-  show who is viewing or who wrote each entry (a sign-up sheet that lists names). For a poll, use
-  `data` alone with `setMine`: one document per person, and nobody's choice is shown with their
-  email.
+  show who is viewing or who wrote each entry (a sign-up sheet that lists names). `viewer` alone,
+  without `data`, declares nothing. For a poll, use `data` alone with `setMine`: one document per
+  person, and nobody's choice is shown with their email.
 - By default only a document's creator (and the owner and editors) can change it. For a tracker
   where anyone may update any row, declare those collections shared:
   `<meta name="plinth-data-shared" content="tasks">` (up to 20 names, space separated).
@@ -165,8 +165,11 @@ support it.
   - `c.onSnapshot((docs) => render(docs), (err) => show(err))` calls back with every document,
     then again when something changes; it returns a function that stops it.
 - A document is `{ id, data, rev, mine, personal, createdAt, updatedAt }`, plus `createdBy` and
-  `updatedBy` (`{ email, role, via }`) only when the page declares `viewer`. `data` is a JSON
-  object, at most 16 KB by default (`limits.maxDocBytes`).
+  `updatedBy` (`{ email, role, via }`) only when the page declares `viewer` and the reader is
+  identified (the owner or someone it is shared with). A link viewer of the same page gets no
+  authors, so handle a missing `createdBy` (show "someone", or leave the name out). `data` is a
+  JSON object, at most 16 KB by default (`limits.maxDocBytes`). `rev` is only for `ifRev`: it
+  grows across the whole artifact, not by one per document.
 - Errors are `plinth.PlinthError` with `.code`: `unavailable`, `read_only`, `forbidden`,
   `not_found`, `conflict`, `quota_exceeded`, `too_large`, `rate_limited` (with `.retryAfter`),
   `expired`, `invalid` or `network`.
