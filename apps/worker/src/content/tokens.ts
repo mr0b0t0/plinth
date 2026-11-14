@@ -2,9 +2,22 @@
 // to one artifact id and its access epoch. The content subdomain exchanges it for a host-only
 // cookie ("content" token) bound to the same artifact and epoch. A token for artifact A is rejected
 // on artifact B; any visibility, password or grant change bumps the epoch and ends old cookies.
-import { CONTENT_RESERVED_PREFIX, TTL } from "@plinth/shared";
+//
+// For identified viewers (owner and grant holders) both tokens may carry `x`, a sealed identity
+// claim {m: email, r: role} bound to the artifact id (shared data, docs/spec.md "Shared data and
+// viewer identity"). It is sealed because the enter token travels in a URL, and URLs get logged.
+import { CONTENT_RESERVED_PREFIX, type EffectiveRole, TTL } from "@plinth/shared";
 import { type Config, contentOrigin } from "../config.ts";
-import { randomString, signToken, verifyToken } from "../lib/crypto.ts";
+import { randomString, sealJson, signToken, verifyToken } from "../lib/crypto.ts";
+
+/** HKDF info for the identity claim's AES key; changing it invalidates every sealed claim. */
+export const IDENTITY_CLAIM_INFO = "plinth identity claim v1";
+
+/** The identity claim before sealing. */
+export interface ViewerIdentity {
+  email: string;
+  role: EffectiveRole;
+}
 
 export interface EnterPayload {
   k: "enter";
@@ -15,6 +28,8 @@ export interface EnterPayload {
   /** single-use nonce */
   n: string;
   exp: number;
+  /** sealed identity claim (identified viewers only) */
+  x?: string;
   [key: string]: unknown;
 }
 
@@ -23,6 +38,8 @@ export interface ContentPayload {
   a: string;
   e: number;
   exp: number;
+  /** sealed identity claim, copied unchanged from the enter token */
+  x?: string;
   [key: string]: unknown;
 }
 
@@ -54,14 +71,22 @@ export async function issueEnterUrl(
   config: Config,
   artifact: { id: string; accessEpoch: number },
   next = "/",
+  identity?: ViewerIdentity,
 ): Promise<string> {
-  const token = await signToken(config.tokenSigningKey, {
+  const payload: EnterPayload = {
     k: "enter",
     a: artifact.id,
     e: artifact.accessEpoch,
     n: randomString(24),
     exp: Date.now() + TTL.viewerTokenMs,
-  } satisfies EnterPayload);
+  };
+  if (identity) {
+    payload.x = await sealJson(config.tokenSigningKey, IDENTITY_CLAIM_INFO, artifact.id, {
+      m: identity.email,
+      r: identity.role,
+    });
+  }
+  const token = await signToken(config.tokenSigningKey, payload);
   const params = new URLSearchParams({ t: token, next: safeNext(next) });
   return `${contentOrigin(config, artifact.id)}${CONTENT_RESERVED_PREFIX}enter?${params}`;
 }
@@ -74,13 +99,16 @@ export function signContentCookie(
   config: Config,
   artifactId: string,
   epoch: number,
+  x?: string,
 ): Promise<string> {
-  return signToken(config.tokenSigningKey, {
+  const payload: ContentPayload = {
     k: "content",
     a: artifactId,
     e: epoch,
     exp: Date.now() + TTL.contentCookieS * 1000,
-  } satisfies ContentPayload);
+  };
+  if (x !== undefined) payload.x = x;
+  return signToken(config.tokenSigningKey, payload);
 }
 
 export function verifyContentCookie(config: Config, value: string) {

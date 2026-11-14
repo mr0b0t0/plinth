@@ -1,4 +1,4 @@
-// Random ids, hashing, HMAC-signed tokens and password hashing, all on WebCrypto.
+// Random ids, hashing, HMAC-signed tokens, sealed JSON and password hashing, all on WebCrypto.
 
 const LOWER_ALNUM = "abcdefghijklmnopqrstuvwxyz0123456789";
 const BASE62 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
@@ -145,6 +145,97 @@ export async function verifyToken<T extends SignedPayload>(
   const p = payload as SignedPayload;
   if (p.k !== kind || typeof p.exp !== "number" || p.exp <= now) return null;
   return p as T;
+}
+
+// Sealed JSON: AES-256-GCM with a key derived by HKDF-SHA256 from a secret and an info string, so
+// one signing secret yields independent keys per purpose. Output is base64url(iv || ciphertext),
+// where the ciphertext ends with the 16-byte GCM tag. The AAD binds the value to its context (for
+// the identity claim: the artifact id), so it cannot be moved to another artifact.
+
+const IV_BYTES = 12;
+const aesKeyCache = new Map<string, Promise<CryptoKey>>();
+
+function aesKey(secret: string, info: string): Promise<CryptoKey> {
+  const id = `${info}\u0000${secret}`;
+  let k = aesKeyCache.get(id);
+  if (!k) {
+    k = crypto.subtle
+      .importKey("raw", enc.encode(secret), "HKDF", false, ["deriveKey"])
+      .then((base) =>
+        crypto.subtle.deriveKey(
+          { name: "HKDF", hash: "SHA-256", salt: new Uint8Array(0), info: enc.encode(info) },
+          base,
+          { name: "AES-GCM", length: 256 },
+          false,
+          ["encrypt", "decrypt"],
+        ),
+      );
+    aesKeyCache.set(id, k);
+  }
+  return k;
+}
+
+export async function sealJson(
+  secret: string,
+  info: string,
+  aad: string,
+  obj: unknown,
+): Promise<string> {
+  const key = await aesKey(secret, info);
+  const iv = crypto.getRandomValues(new Uint8Array(IV_BYTES));
+  const ct = new Uint8Array(
+    await crypto.subtle.encrypt(
+      { name: "AES-GCM", iv, additionalData: enc.encode(aad) },
+      key,
+      enc.encode(JSON.stringify(obj)),
+    ),
+  );
+  const out = new Uint8Array(IV_BYTES + ct.length);
+  out.set(iv);
+  out.set(ct, IV_BYTES);
+  return base64url(out);
+}
+
+/** The sealed value, or null when it is malformed, tampered with, or sealed for another context. */
+export async function openJson(
+  secret: string,
+  info: string,
+  aad: string,
+  sealed: string,
+): Promise<unknown> {
+  if (typeof sealed !== "string" || !/^[A-Za-z0-9_-]+$/.test(sealed)) return null;
+  let bytes: Uint8Array;
+  try {
+    bytes = fromBase64url(sealed);
+  } catch {
+    return null;
+  }
+  if (bytes.length < IV_BYTES + 16) return null;
+  try {
+    const key = await aesKey(secret, info);
+    const pt = await crypto.subtle.decrypt(
+      { name: "AES-GCM", iv: bytes.slice(0, IV_BYTES), additionalData: enc.encode(aad) },
+      key,
+      bytes.slice(IV_BYTES),
+    );
+    return JSON.parse(new TextDecoder().decode(pt));
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * A person's stable, opaque id on one artifact: "u_" + 24 hex characters of an HMAC. Not linkable
+ * across artifacts and never stored. The input contains spaces and "|", which never occur in the
+ * base64url bodies signToken signs, so a viewer id can never double as a token signature.
+ */
+export async function viewerIdFor(
+  secret: string,
+  artifactId: string,
+  email: string,
+): Promise<string> {
+  const mac = await hmacHex(secret, `plinth viewer id v1|${artifactId}|${email}`);
+  return `u_${mac.slice(0, 24)}`;
 }
 
 // Passwords: PBKDF2-SHA256. Workers caps iterations at 100,000.

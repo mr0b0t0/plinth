@@ -81,21 +81,39 @@ export function factsOf(a: ArtifactRow): ArtifactFacts {
 
 const ROLE_RANK: Record<Role, number> = { viewer: 1, commenter: 2, editor: 3 };
 
-/** The strongest grant for the principal's email and, for browsers, a confirmed viewer email. */
-export async function grantRoleFor(ctx: Ctx, artifactId: string): Promise<Role | null> {
+/**
+ * The strongest grant for the principal's email and, for browsers, a confirmed viewer email, with
+ * the email that holds it (the principal's own on a tie). Agents never use the viewer email.
+ */
+export async function grantFor(
+  ctx: Ctx,
+  artifactId: string,
+): Promise<{ role: Role; email: string } | null> {
   const emails = new Set<string>();
   const own = principalEmail(ctx.principal);
   if (own) emails.add(own);
   if (ctx.viewerEmail && ctx.principal.kind !== "agent") emails.add(ctx.viewerEmail);
   if (emails.size === 0) return null;
   const rows = await ctx.db
-    .select({ role: accessGrants.role })
+    .select({ role: accessGrants.role, email: accessGrants.email })
     .from(accessGrants)
     .where(and(eq(accessGrants.artifactId, artifactId), inArray(accessGrants.email, [...emails])))
     .all();
-  let best: Role | null = null;
-  for (const r of rows) if (!best || ROLE_RANK[r.role] > ROLE_RANK[best]) best = r.role;
+  let best: { role: Role; email: string } | null = null;
+  for (const r of rows) {
+    if (
+      !best ||
+      ROLE_RANK[r.role] > ROLE_RANK[best.role] ||
+      (ROLE_RANK[r.role] === ROLE_RANK[best.role] && r.email === own)
+    )
+      best = { role: r.role, email: r.email };
+  }
   return best;
+}
+
+/** The strongest grant role for the principal (see grantFor). */
+export async function grantRoleFor(ctx: Ctx, artifactId: string): Promise<Role | null> {
+  return (await grantFor(ctx, artifactId))?.role ?? null;
 }
 
 export async function accessFactsFor(ctx: Ctx, a: ArtifactRow): Promise<AccessFacts> {

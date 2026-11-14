@@ -5,6 +5,7 @@ import {
   ARTIFACT_ID_RE,
   CONTENT_RESERVED_PREFIX,
   COOKIES,
+  type EffectiveRole,
   REVIEW_MODE_PARAM,
   TTL,
 } from "@plinth/shared";
@@ -13,12 +14,15 @@ import type { Bindings, Config } from "../config.ts";
 import { getDb } from "../db/client.ts";
 import { type ArtifactRow, artifacts, versions } from "../db/schema.ts";
 import { secureFlag, serializeCookie } from "../lib/cookies.ts";
+import { openJson, viewerIdFor } from "../lib/crypto.ts";
+import type { PageClaim } from "../policy.ts";
 import { parseManifest } from "../services/storage.ts";
 import { injectBridge, serveBridgeScript } from "./bridge.ts";
 import { applyContentHeaders } from "./csp.ts";
 import { servePreviewLoader } from "./preview.ts";
 import {
   consumeNonce,
+  IDENTITY_CLAIM_INFO,
   safeNext,
   signContentCookie,
   verifyContentCookie,
@@ -92,6 +96,44 @@ function cookieValues(header: string | null, name: string): string[] {
     if (out.length >= 8) break;
   }
   return out;
+}
+
+const CLAIM_ROLES: ReadonlySet<string> = new Set<EffectiveRole>([
+  "owner",
+  "editor",
+  "commenter",
+  "viewer",
+]);
+
+/**
+ * The content pass this request carries for this artifact: a content cookie signed for this
+ * artifact at its current access epoch. `claim` is the viewer's identity when the gate sealed one
+ * in (identified viewers only), else null. A value whose claim does not open, or opens to the wrong
+ * shape, is rejected outright, never downgraded to anonymous. Null when there is no valid pass.
+ */
+export async function readContentPass(
+  request: Request,
+  config: Config,
+  artifact: { id: string; accessEpoch: number },
+): Promise<{ claim: PageClaim | null } | null> {
+  for (const value of cookieValues(request.headers.get("cookie"), COOKIES.content)) {
+    const pass = await verifyContentCookie(config, value);
+    if (!pass || pass.a !== artifact.id || pass.e !== artifact.accessEpoch) continue;
+    if (pass.x === undefined) return { claim: null };
+    if (typeof pass.x !== "string") continue;
+    const opened = await openJson(config.tokenSigningKey, IDENTITY_CLAIM_INFO, artifact.id, pass.x);
+    if (!opened || typeof opened !== "object") continue;
+    const { m, r } = opened as Record<string, unknown>;
+    if (typeof m !== "string" || !m || typeof r !== "string" || !CLAIM_ROLES.has(r)) continue;
+    return {
+      claim: {
+        email: m,
+        role: r as EffectiveRole,
+        viewerId: await viewerIdFor(config.tokenSigningKey, artifact.id, m),
+      },
+    };
+  }
+  return null;
 }
 
 /**
@@ -188,7 +230,10 @@ async function serve(
     if (!(await consumeNonce(env.DB, payload.n, payload.exp))) {
       return text(config, 403, "This link was already used. Open the artifact again.");
     }
-    const value = await signContentCookie(config, artifactId, payload.e);
+    // The sealed identity claim, if any, moves into the cookie unchanged. Every enter writes a
+    // fresh cookie, so an anonymous enter replaces an identified one.
+    const x = typeof payload.x === "string" ? payload.x : undefined;
+    const value = await signContentCookie(config, artifactId, payload.e, x);
     const next = safeNext(url.searchParams.get("next"));
     const res = redirect(config, 302, `${base}${next}`);
     res.headers.append(
@@ -214,15 +259,7 @@ async function serve(
     return text(config, 404, "Not found", base ? undefined : { "Clear-Site-Data": '"storage"' });
   }
 
-  let allowed = false;
-  for (const value of cookieValues(request.headers.get("cookie"), cookieName)) {
-    const pass = await verifyContentCookie(config, value);
-    if (pass && pass.a === artifactId && pass.e === artifact.accessEpoch) {
-      allowed = true;
-      break;
-    }
-  }
-  if (!allowed) {
+  if (!(await readContentPass(request, config, artifact))) {
     // Inside the app's frame the app cannot be framed back (frame-ancestors 'none'): ask for a
     // reload, which fetches a fresh gate and token.
     if (request.headers.get("sec-fetch-dest") === "iframe") {
