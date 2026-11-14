@@ -10,6 +10,8 @@ Add a line under **Unreleased** in the pull request that makes a change people w
 
 ## Unreleased
 
+## 0.3.0 (2026-11-14)
+
 - **Shared data**: a page that declares `<meta name="plinth-capabilities" content="data viewer">`
   can keep JSON documents shared by everyone who opens it (polls, sign-up sheets, trackers) through
   `window.plinth` from `/__plinth/runtime.js`, and learn who is viewing. Only the owner and people
