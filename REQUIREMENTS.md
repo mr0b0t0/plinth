@@ -94,7 +94,7 @@ Test-file shorthand: `W:` = `apps/worker/test/`, `Wb:` = `apps/web/src/`, `E:` =
 | `mention_tasks` (... target_connection or target_client_type, state, claimed_by, result_version) | Met | `0001_init.sql` | |
 | `sessions`, `login_codes`, `oauth_clients`, `oauth_grants`, `reports` | Met | `0001_init.sql` | |
 | R2 at `artifacts/<id>/v<n>/index.html` plus assets | Met | `storage.ts#versionPrefix`; `W:artifacts.test.ts` "stores files in R2" | |
-| Limits: 5 MB HTML, 25 MB total per version | Met | `constants.ts` LIMITS; `W:artifacts.test.ts` "enforces size limits"; `W:mcp.test.ts` oversize | |
+| Limits: 5 MB HTML; total and file count per version | Met | `constants.ts` LIMITS (5 MB HTML); `config.ts` `MAX_VERSION_BYTES` (default 50 MB, 1 to 64 MB) and `MAX_ASSETS_PER_VERSION` (default 511, 1 to 900); `W:artifacts.test.ts` "enforces size limits", "enforces MAX_ASSETS_PER_VERSION"; `W:config.test.ts` "read MAX_VERSION_BYTES and MAX_ASSETS_PER_VERSION within their bounds"; `W:mcp.test.ts` oversize | The brief's 25 MB and 200 files became env vars with those defaults in 0.4.0 (big builds) |
 
 ## Auth
 
