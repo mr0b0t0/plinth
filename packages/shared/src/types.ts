@@ -3,6 +3,7 @@ import type {
   ClientType,
   CommentStatus,
   ContentIsolation,
+  DataCapability,
   EffectiveRole,
   MentionState,
   ReportState,
@@ -203,11 +204,28 @@ export interface OperatorInfo {
 
 /** GET /api/v1/view/:ref — what the viewer needs to do before the artifact can be shown. */
 export type ViewGate =
-  | { status: "ok"; artifact: ViewArtifact; enter_url: string; role: EffectiveRole | null }
+  | {
+      status: "ok";
+      artifact: ViewArtifact;
+      enter_url: string;
+      role: EffectiveRole | null;
+      /** Shared data, present only when the current version declares a capability. */
+      data?: ViewGateData;
+    }
   | { status: "password_required"; artifact: ViewArtifactStub }
   | { status: "email_required"; artifact: ViewArtifactStub }
   | { status: "not_found" }
   | { status: "taken_down"; artifact: ViewArtifactStub };
+
+/** What the viewer is told about a page's shared data (the notice in the live viewer). */
+export interface ViewGateData {
+  /** Shared data works on this instance (on, and origin isolation). */
+  available: boolean;
+  capabilities: DataCapability[];
+  /** The page gets an identity claim for this viewer. */
+  identified: boolean;
+  can_write: boolean;
+}
 
 export interface ViewArtifactStub {
   id: string;

@@ -61,6 +61,13 @@ const base = {
       "CDN_ALLOWLIST",
       "ALLOW_PUBLIC_VISIBILITY",
       "PUBLIC_MIN_ACCOUNT_AGE_HOURS",
+      "ALLOW_SHARED_DATA",
+      "DATA_MAX_DOCS_PER_ARTIFACT",
+      "DATA_MAX_BYTES_PER_ARTIFACT",
+      "DATA_MAX_BYTES_PER_USER",
+      "DATA_MAX_DOC_BYTES",
+      "DATA_WRITES_PER_VIEWER_PER_HOUR",
+      "DATA_WRITES_PER_ARTIFACT_PER_HOUR",
     ]
       .filter((k) => k in (repoCfg.vars ?? {}))
       .map((k) => [k, repoCfg.vars[k]]),

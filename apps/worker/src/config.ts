@@ -70,6 +70,13 @@ export interface Config {
   adminToken: string | null;
   sendgridApiKey: string | null;
   resendApiKey: string | null;
+  /**
+   * ALLOW_SHARED_DATA (default on): pages may keep shared data and learn who is viewing. Only in
+   * effect with origin isolation; see sharedDataActive.
+   */
+  allowSharedData: boolean;
+  /** Shared data limits (DATA_* env vars). */
+  data: SharedDataLimits;
   /** OPERATOR_*: who runs this instance, for its legal pages. null when none is published. */
   operator: {
     name: string;
@@ -80,10 +87,30 @@ export interface Config {
   } | null;
 }
 
+export interface SharedDataLimits {
+  /** DATA_MAX_DOCS_PER_ARTIFACT */
+  maxDocsPerArtifact: number;
+  /** DATA_MAX_BYTES_PER_ARTIFACT */
+  maxBytesPerArtifact: number;
+  /** DATA_MAX_BYTES_PER_USER: across all of an owner's artifacts. */
+  maxBytesPerUser: number;
+  /** DATA_MAX_DOC_BYTES: one document, 1024..65536. */
+  maxDocBytes: number;
+  /** DATA_WRITES_PER_VIEWER_PER_HOUR: per writer per artifact. */
+  writesPerViewerPerHour: number;
+  /** DATA_WRITES_PER_ARTIFACT_PER_HOUR: all writers of one artifact. */
+  writesPerArtifactPerHour: number;
+}
+
 export class ConfigError extends Error {}
 
 function bool(v: unknown): boolean {
   return typeof v === "string" && ["1", "true", "yes", "on"].includes(v.trim().toLowerCase());
+}
+
+/** A switch that is on unless set to a false value. */
+function boolDefaultOn(v: unknown): boolean {
+  return str(v) === "" ? true : bool(v);
 }
 
 function int(v: unknown, fallback: number): number {
@@ -194,6 +221,21 @@ export function parseConfig(env: Record<string, unknown>): Config {
     adminToken: str(env.ADMIN_TOKEN) || null,
     sendgridApiKey: str(env.SENDGRID_API_KEY) || null,
     resendApiKey: str(env.RESEND_API_KEY) || null,
+    allowSharedData: boolDefaultOn(env.ALLOW_SHARED_DATA),
+    data: {
+      maxDocsPerArtifact: int(env.DATA_MAX_DOCS_PER_ARTIFACT, DEFAULTS.data.maxDocsPerArtifact),
+      maxBytesPerArtifact: int(env.DATA_MAX_BYTES_PER_ARTIFACT, DEFAULTS.data.maxBytesPerArtifact),
+      maxBytesPerUser: int(env.DATA_MAX_BYTES_PER_USER, DEFAULTS.data.maxBytesPerUser),
+      maxDocBytes: int(env.DATA_MAX_DOC_BYTES, DEFAULTS.data.maxDocBytes),
+      writesPerViewerPerHour: int(
+        env.DATA_WRITES_PER_VIEWER_PER_HOUR,
+        DEFAULTS.data.writesPerViewerPerHour,
+      ),
+      writesPerArtifactPerHour: int(
+        env.DATA_WRITES_PER_ARTIFACT_PER_HOUR,
+        DEFAULTS.data.writesPerArtifactPerHour,
+      ),
+    },
     operator: parseOperator(env),
   };
   validate(config);
@@ -237,6 +279,7 @@ function validate(c: Config): void {
   if (c.contentPathFallback && c.environment === "production") {
     throw new ConfigError("STAGING_CONTENT_FALLBACK is refused in production");
   }
+  validateSharedData(c.data);
   if (c.environment === "production") {
     // User HTML that is same-site with the app runs only with opaque isolation: artifact documents
     // then have no cookies or storage, so they cannot toss cookies onto the shared parent domain.
@@ -254,6 +297,36 @@ function validate(c: Config): void {
       );
     }
   }
+}
+
+function validateSharedData(d: SharedDataLimits): void {
+  if (d.maxDocBytes < 1024 || d.maxDocBytes > 65536) {
+    throw new ConfigError("DATA_MAX_DOC_BYTES must be between 1024 and 65536");
+  }
+  if (d.maxBytesPerArtifact < d.maxDocBytes) {
+    throw new ConfigError("DATA_MAX_BYTES_PER_ARTIFACT must be at least DATA_MAX_DOC_BYTES");
+  }
+  if (d.maxBytesPerUser < d.maxBytesPerArtifact) {
+    throw new ConfigError("DATA_MAX_BYTES_PER_USER must be at least DATA_MAX_BYTES_PER_ARTIFACT");
+  }
+  if (d.maxDocsPerArtifact < 1) {
+    throw new ConfigError("DATA_MAX_DOCS_PER_ARTIFACT must be at least 1");
+  }
+  if (d.writesPerViewerPerHour < 1) {
+    throw new ConfigError("DATA_WRITES_PER_VIEWER_PER_HOUR must be at least 1");
+  }
+  if (d.writesPerArtifactPerHour < 1) {
+    throw new ConfigError("DATA_WRITES_PER_ARTIFACT_PER_HOUR must be at least 1");
+  }
+}
+
+/**
+ * Shared data and identity claims are in effect: switched on, and each artifact has its own origin.
+ * Opaque isolation (the path fallback included, which config forces to opaque) has no cookies, so
+ * the feature is off there; that is not a configuration error.
+ */
+export function sharedDataActive(c: Pick<Config, "allowSharedData" | "contentIsolation">): boolean {
+  return c.allowSharedData && c.contentIsolation === "origin";
 }
 
 let cached: { key: unknown; config: Config } | null = null;

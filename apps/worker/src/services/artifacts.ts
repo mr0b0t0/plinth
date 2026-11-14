@@ -6,8 +6,10 @@ import {
   type ArtifactSummary,
   type AssetInput,
   type Author,
+  type Capabilities,
   type EffectiveRole,
   type PublishResult,
+  parseCapabilities,
   type Role,
   type VersionInfo,
   type Visibility,
@@ -251,6 +253,36 @@ interface NewVersionOptions {
   restoredFrom?: number | null;
 }
 
+// ---------- shared data capabilities (docs/spec.md "Shared data and viewer identity") ----------
+
+const utf8Decoder = new TextDecoder();
+
+/** The capabilities index.html declares, as stored in versions.capabilities (JSON or null). */
+function capabilitiesJson(files: FileEntry[]): string | null {
+  const index = files.find((f) => f.path === "index.html");
+  if (!index) return null;
+  const caps = parseCapabilities(utf8Decoder.decode(index.bytes));
+  return caps ? JSON.stringify(caps) : null;
+}
+
+/** A version row's declared capabilities. Null when none, or when the stored value is malformed. */
+export function versionCapabilities(
+  row: Pick<VersionRow, "capabilities"> | null | undefined,
+): Capabilities | null {
+  if (!row?.capabilities) return null;
+  let v: unknown;
+  try {
+    v = JSON.parse(row.capabilities);
+  } catch {
+    return null;
+  }
+  if (typeof v !== "object" || v === null) return null;
+  const { data, viewer, shared } = v as Record<string, unknown>;
+  if (typeof data !== "boolean" || typeof viewer !== "boolean") return null;
+  const names = Array.isArray(shared) ? shared.filter((n) => typeof n === "string") : [];
+  return { data, viewer, shared: names };
+}
+
 /**
  * Write a new immutable version. The version row is inserted first (UNIQUE(artifact_id, number)
  * picks one winner), then files go to R2 under a fresh prefix, then current_version moves forward.
@@ -265,6 +297,7 @@ export async function createVersion(
   const actor = requireActor(ctx);
   const size = checkTotal(files);
   const manifest = JSON.stringify(manifestOf(files));
+  const capabilities = capabilitiesJson(files);
   await enforceStorage(ctx, artifact.ownerId, size);
   for (let attempt = 0; attempt < 5; attempt++) {
     const fresh = await ctx.db.select().from(artifacts).where(eq(artifacts.id, artifact.id)).get();
@@ -306,6 +339,7 @@ export async function createVersion(
           note: opts.note?.trim() || null,
           restoredFrom: opts.restoredFrom ?? null,
           createdAt: nowIso(),
+          capabilities,
         })
         .run();
     } catch (e) {

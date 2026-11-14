@@ -1,5 +1,6 @@
 // Types, schemas and constants shared by the Worker and the web app.
 export * from "./constants.ts";
+export * from "./data.ts";
 export * from "./errors.ts";
 export * from "./harnesses.ts";
 export * from "./markdown.ts";

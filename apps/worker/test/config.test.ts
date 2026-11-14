@@ -1,5 +1,6 @@
+import { DEFAULTS } from "@plinth/shared";
 import { describe, expect, it } from "vitest";
-import { ConfigError, parseConfig, registrableDomain } from "../src/config.ts";
+import { ConfigError, parseConfig, registrableDomain, sharedDataActive } from "../src/config.ts";
 
 const base = {
   ENVIRONMENT: "production",
@@ -214,5 +215,94 @@ describe("environment checks", () => {
     expect(() => parseConfig({ ...base, TOKEN_SIGNING_KEY: base.SESSION_SECRET })).toThrow(
       /different/,
     );
+  });
+});
+
+describe("shared data settings", () => {
+  it("default to on, with the limits from DEFAULTS.data", () => {
+    const c = parseConfig(base);
+    expect(c.allowSharedData).toBe(true);
+    expect(c.data).toEqual(DEFAULTS.data);
+    expect(c.data).toEqual({
+      maxDocsPerArtifact: 1000,
+      maxBytesPerArtifact: 1048576,
+      maxBytesPerUser: 16777216,
+      maxDocBytes: 16384,
+      writesPerViewerPerHour: 300,
+      writesPerArtifactPerHour: 2000,
+    });
+    expect(sharedDataActive(c)).toBe(true);
+  });
+
+  it("read the DATA_* env vars and ALLOW_SHARED_DATA", () => {
+    const c = parseConfig({
+      ...base,
+      ALLOW_SHARED_DATA: "false",
+      DATA_MAX_DOCS_PER_ARTIFACT: "10",
+      DATA_MAX_BYTES_PER_ARTIFACT: "4096",
+      DATA_MAX_BYTES_PER_USER: "8192",
+      DATA_MAX_DOC_BYTES: "1024",
+      DATA_WRITES_PER_VIEWER_PER_HOUR: "5",
+      DATA_WRITES_PER_ARTIFACT_PER_HOUR: "7",
+    });
+    expect(c.allowSharedData).toBe(false);
+    expect(c.data).toEqual({
+      maxDocsPerArtifact: 10,
+      maxBytesPerArtifact: 4096,
+      maxBytesPerUser: 8192,
+      maxDocBytes: 1024,
+      writesPerViewerPerHour: 5,
+      writesPerArtifactPerHour: 7,
+    });
+    expect(sharedDataActive(c)).toBe(false);
+    // An empty value (as wrangler.jsonc may list it) keeps the default.
+    expect(parseConfig({ ...base, ALLOW_SHARED_DATA: "" }).allowSharedData).toBe(true);
+    expect(parseConfig({ ...base, ALLOW_SHARED_DATA: "true" }).allowSharedData).toBe(true);
+    expect(parseConfig({ ...base, ALLOW_SHARED_DATA: "0" }).allowSharedData).toBe(false);
+  });
+
+  it("refuse limits out of bounds", () => {
+    expect(() => parseConfig({ ...base, DATA_MAX_DOC_BYTES: "1023" })).toThrow(
+      /DATA_MAX_DOC_BYTES/,
+    );
+    expect(() => parseConfig({ ...base, DATA_MAX_DOC_BYTES: "65537" })).toThrow(
+      /DATA_MAX_DOC_BYTES/,
+    );
+    expect(parseConfig({ ...base, DATA_MAX_DOC_BYTES: "65536" }).data.maxDocBytes).toBe(65536);
+    expect(() =>
+      parseConfig({ ...base, DATA_MAX_DOC_BYTES: "4096", DATA_MAX_BYTES_PER_ARTIFACT: "2048" }),
+    ).toThrow(/DATA_MAX_BYTES_PER_ARTIFACT/);
+    expect(() =>
+      parseConfig({
+        ...base,
+        DATA_MAX_DOC_BYTES: "1024",
+        DATA_MAX_BYTES_PER_ARTIFACT: "4096",
+        DATA_MAX_BYTES_PER_USER: "2048",
+      }),
+    ).toThrow(/DATA_MAX_BYTES_PER_USER/);
+    expect(() => parseConfig({ ...base, DATA_WRITES_PER_VIEWER_PER_HOUR: "0" })).toThrow(
+      /DATA_WRITES_PER_VIEWER_PER_HOUR/,
+    );
+    expect(() => parseConfig({ ...base, DATA_WRITES_PER_ARTIFACT_PER_HOUR: "0" })).toThrow(
+      /DATA_WRITES_PER_ARTIFACT_PER_HOUR/,
+    );
+    expect(() => parseConfig({ ...base, DATA_MAX_DOCS_PER_ARTIFACT: "0" })).toThrow(
+      /DATA_MAX_DOCS_PER_ARTIFACT/,
+    );
+  });
+
+  it("are inactive under opaque isolation and the path fallback, which are not errors", () => {
+    const opaque = parseConfig({ ...base, CONTENT_ISOLATION: "opaque" });
+    expect(opaque.allowSharedData).toBe(true);
+    expect(sharedDataActive(opaque)).toBe(false);
+    const fallback = parseConfig({
+      ...base,
+      ENVIRONMENT: "staging",
+      APP_HOST: "plinth.example.com",
+      CONTENT_HOST: "content.example.com",
+      STAGING_CONTENT_FALLBACK: "true",
+    });
+    expect(fallback.configuredContentIsolation).toBe("origin");
+    expect(sharedDataActive(fallback)).toBe(false);
   });
 });
