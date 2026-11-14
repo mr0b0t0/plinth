@@ -80,6 +80,22 @@ describe("plinth-oauth", () => {
     rmSync(config, { recursive: true, force: true });
   });
 
+  it("never hands one origin's token to another origin that shares its state file", async () => {
+    fresh();
+    const { oauth, logs } = client(env);
+    const s = await login(oauth, logs, fake.origin);
+    // http and https on one host:port map to the same file name.
+    const twin = fake.origin.replace(/^http:/, "https:");
+    assert.equal(oauth.paths(twin).state, oauth.paths(fake.origin).state);
+    assert.equal(oauth.readState(twin), null);
+    assert.equal(await oauth.accessToken(twin), null);
+    assert.equal(await oauth.accessToken(twin, { force: true }), null);
+    assert.equal(await oauth.logout(twin), false);
+    // The real origin's sign-in is untouched.
+    assert.equal(await oauth.accessToken(fake.origin), s.access_token);
+    rmSync(config, { recursive: true, force: true });
+  });
+
   it("reuses its client_id on the next login, and registers again when the server forgot it", async () => {
     fresh();
     const { oauth, logs } = client(env);

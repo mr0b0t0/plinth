@@ -165,7 +165,13 @@ export function createOAuth(options) {
     renameSync(tmp, file);
   }
 
-  const readState = (base) => readJson(paths(base).state);
+  // hostKey is lossy (http and https on one host:port share a key, and so do hosts that differ only
+  // in the characters it replaces), so a state file counts only for the origin written in it: a
+  // token is never sent to, or refreshed for, an origin it was not issued for.
+  const readState = (base) => {
+    const s = readJson(paths(base).state);
+    return s && s.origin === base ? s : null;
+  };
   const writeState = (base, state) => writeJson(paths(base), paths(base).state, state);
 
   /** Every request: this tool's User-Agent, JSON accepted, and never a redirect. */
@@ -264,12 +270,12 @@ export function createOAuth(options) {
         return s.access_token;
       }
       if (fresh(s)) return s.access_token;
-      const meta = await metadata(s.origin);
+      const meta = await metadata(base);
       const r = await tokenRequest(meta.token_endpoint, {
         grant_type: "refresh_token",
         refresh_token: s.refresh_token,
         client_id: s.client_id,
-        resource: `${s.origin}/mcp`,
+        resource: `${base}/mcp`,
       });
       if (r.ok) return saveTokens(base, s, r.body).access_token;
       if (r.body?.error === "invalid_grant" || r.body?.error === "invalid_client") {
@@ -434,7 +440,7 @@ export function createOAuth(options) {
     const s = readState(base);
     if (!s) return false;
     try {
-      const meta = await metadata(s.origin);
+      const meta = await metadata(base);
       if (meta.revocation_endpoint && s.refresh_token) {
         await tokenRequest(meta.revocation_endpoint, {
           token: s.refresh_token,
