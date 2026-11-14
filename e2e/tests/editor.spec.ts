@@ -114,7 +114,8 @@ async function typeDraft(page: Page, heading: string) {
   // Clear first: typing "<" over a selection would wrap it (Monaco's auto-surround).
   await page.keyboard.press("Delete");
   await page.keyboard.insertText(TYPED_START);
-  await page.keyboard.type(heading);
+  // A short delay per key: on a loaded CI runner Monaco dropped keys typed back to back.
+  await page.keyboard.type(heading, { delay: 25 });
   await page.keyboard.insertText(TYPED_END);
 }
 
