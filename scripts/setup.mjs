@@ -20,10 +20,12 @@
 //                          --email-provider sendgrid|resend|console [--name plinth] [--home ~/.plinth]
 //                          [--port 8788] [--email-from "Plinth <noreply@example.com>"]
 //                          [--single-user --admin-email <email>] [--content-isolation origin|opaque]
-//                          [--no-cloudflare] [--force] [--dry-run]
+//                          [--no-cloudflare] [--replace-tunnel] [--force] [--dry-run]
 // Writes <home>/<name>/ (Worker config, .dev.vars, cloudflared.yml, tunnel credentials, D1 and R2
 // state), creates the tunnel and DNS records, and applies migrations. Then: pnpm local:start.
 // --no-cloudflare skips the tunnel and DNS (for tests, or to wire the tunnel up by hand).
+// --replace-tunnel deletes the instance's tunnel and makes a new one, repointing the DNS records it
+// (or an already deleted tunnel) left behind. Use it when the credentials file is lost.
 //
 // --workers-dev (staging only): deploy to the account's workers.dev address with no routes or
 // custom domains. workers.dev has no wildcard subdomains, so artifacts are served from the app
@@ -61,6 +63,7 @@ const BOOLEAN_FLAGS = new Set([
   "workers-dev",
   "tunnel",
   "no-cloudflare",
+  "replace-tunnel",
   "help",
 ]);
 
@@ -589,14 +592,18 @@ async function setupTunnel() {
         contentZone: getDomain(o.contentHost, { allowPrivateDomains: true }) ?? o.contentHost,
         hasCredentials: existsSync(paths.credentials),
         newSecret: () => randomBytes(32).toString("base64"),
+        replaceTunnel: !!opts["replace-tunnel"],
+        // Written the moment the tunnel exists: Cloudflare never shows its secret again.
+        onTunnelCreated: (credentials) => {
+          writeFileSync(paths.credentials, credentials, { mode: 0o600 });
+          chmodSync(paths.credentials, 0o600);
+        },
       });
     } catch (e) {
       if (e instanceof CloudflareError) fail(e.message);
       throw e;
     }
     if (r.credentials) {
-      writeFileSync(paths.credentials, r.credentials, { mode: 0o600 });
-      chmodSync(paths.credentials, 0o600);
       console.log(
         `  tunnel plinth-${o.name}: created (${r.tunnelId}); credentials in ${paths.credentials}`,
       );
