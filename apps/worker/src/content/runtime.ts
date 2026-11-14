@@ -193,6 +193,9 @@ export const RUNTIME_SCRIPT = `/* Plinth shared-data runtime v1. */
   var subs = new Set();
   var timer = null;
   var ticking = false;
+  // A refresh asked for while a poll runs (the page's own write): poll again as soon as it ends,
+  // since the running one may have read /changes before the write landed.
+  var again = false;
 
   function pollInterval() {
     var ms = POLL_MS;
@@ -223,8 +226,13 @@ export const RUNTIME_SCRIPT = `/* Plinth shared-data runtime v1. */
   }
   async function tick() {
     timer = null;
-    if (ticking || !subs.size) return;
+    if (!subs.size) return;
+    if (ticking) {
+      again = true;
+      return;
+    }
     ticking = true;
+    again = false;
     try {
       var r = await call("GET", "/changes");
       if (r.seq !== lastSeq) {
@@ -240,11 +248,14 @@ export const RUNTIME_SCRIPT = `/* Plinth shared-data runtime v1. */
       }
     } finally {
       ticking = false;
-      schedule();
+      schedule(again ? 0 : undefined);
+      again = false;
     }
   }
   function kick() {
-    if (subs.size) schedule(0);
+    if (!subs.size) return;
+    if (ticking) again = true;
+    else schedule(0);
   }
   document.addEventListener("visibilitychange", function () {
     if (document.visibilityState === "visible") schedule(0);
@@ -275,6 +286,7 @@ export const RUNTIME_SCRIPT = `/* Plinth shared-data runtime v1. */
         return { docs: r.docs.map(toDoc), nextCursor: r.next_cursor };
       },
       all: async function () {
+        await usable();
         var out = [];
         var cursor = null;
         var max = (state.limits && state.limits.maxDocs) || 1000;
