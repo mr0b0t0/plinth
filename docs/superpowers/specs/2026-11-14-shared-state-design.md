@@ -148,6 +148,9 @@ cookie, so an anonymous enter replaces an identified one in the same browser.
 existing `cookieValues` loop: it accepts only a signed value for this artifact at the current
 `access_epoch`, opens `x` (a value whose `x` fails to open is rejected, never downgraded) and
 returns `{ claim: { email, role } | null } | null`. File serving and the data API both use it.
+Review fix: passes differ by identity, so on artifact subdomains the cookie is named
+`__Host-plinth_content` (a sibling cannot toss one with `Domain`), and a request whose valid passes
+disagree on the claim has none (401 `expired`).
 
 **Revocation.** Unchanged: any grant, role, visibility or password change, takedown or deletion
 bumps `access_epoch`, which kills the cookie and its claim, so a live claim always carries the
@@ -345,9 +348,12 @@ One implementation for the content API, REST and MCP: `session`, `changes`, `sum
    checked **inside** the write statement against the usage row, which is atomic because D1
    serializes writes. A write that shrinks data always passes. Failures: 403 `quota_exceeded
    { limit }`.
-4. **Guarded write**: create is `INSERT … SELECT … WHERE <usage caps> ON CONFLICT DO NOTHING`;
-   update is `UPDATE … SET …, rev = rev + 1 WHERE rev = ?read AND <ownership> AND <byte cap>
-   RETURNING *`. Zero rows: a follow-up `SELECT` picks `not_found`, `conflict`, `forbidden` or
+4. **Guarded write**: create is `INSERT … SELECT … WHERE <artifact live> AND <usage caps> ON
+   CONFLICT DO NOTHING`; update is `UPDATE … SET …, rev = <seq + 1> WHERE rev = ?read AND
+   <ownership> AND <artifact live> AND <byte cap> RETURNING *`. `rev` is one past the artifact's
+   change counter on insert and update (review fix: per-document revs restarted at 1 when a
+   document was deleted and created again), and `<artifact live>` (exists, not deleted, not taken
+   down) keeps a write in flight from recreating data a deletion or takedown wiped. Zero rows: a follow-up `SELECT` picks `not_found`, `conflict`, `forbidden` or
    `quota_exceeded`. A plain `set` without `if_rev` reads the current rev and retries up to three
    times: last writer wins, but never a torn write. Stamps come only from the server-side writer
    (email, role, `via`, connection label).
@@ -538,7 +544,7 @@ Erasure cannot find personal data that someone typed into a document another per
 | Rule | How |
 | --- | --- |
 | User HTML never runs on the app host | The API and runtime exist only on `<id>.CONTENT_HOST`. The path fallback (app origin) is forced opaque, so the API is off and the runtime does not load |
-| No app cookies on the content host | Identity travels in the existing per-artifact `plinth_content` cookie as a sealed claim minted by the gate. No `__Host-` cookie is read or set there, no `Domain` attribute |
+| No app cookies on the content host | Identity travels in the existing per-artifact content cookie as a sealed claim minted by the gate. No app cookie is read or set there, no `Domain` attribute; the content cookie itself is `__Host-plinth_content` on artifact subdomains |
 | Every artifact response carries a CSP | API and runtime responses use `applyContentHeaders`. CSP unchanged; no CORS headers |
 | Sandboxed iframes | Unchanged. Opaque mode keeps its `sandbox` and the feature reports unavailable |
 | Cross-artifact attacks | Every artifact framed by the app shares its partitioned cookie jar, and the cookie is `SameSite=None`, so artifact B could otherwise make credentialed requests to A. The custom header (preflight never answered), `Sec-Fetch-Site: same-origin`, exact `Origin`, JSON-only bodies, CORP and no CORS stop it. The cookie's and the claim's artifact id are both checked. The content host stops being GET-only, so these checks are load-bearing |

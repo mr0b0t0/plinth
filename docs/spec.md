@@ -235,7 +235,8 @@ Decided 2026-11-14 (issue #1). Design:
 - **Declaration.** A page opts in with `<meta name="plinth-capabilities" content="data viewer">`
   (`data`: the store; `viewer`: the page may learn who is viewing and who wrote each document),
   and optionally `<meta name="plinth-data-shared" content="tasks">` for collections any writer may
-  edit. The declaration is parsed at publish into `versions.capabilities`; the current version's
+  edit. `viewer` without `data` declares nothing (the viewer is learned through the data API). The
+  declaration is parsed at publish into `versions.capabilities`; the current version's
   declaration governs, also for old version URLs. Dropping the tag switches the page API off and
   keeps the data.
 - **Writers.** Only identified viewers write: the owner and people with a grant on the artifact
@@ -247,27 +248,33 @@ Decided 2026-11-14 (issue #1). Design:
   person, with the owner and editors able to moderate.
 - **Viewer identity.** The gate seals `{ email, role }` (AES-GCM, key derived from
   `TOKEN_SIGNING_KEY`) into the enter token, and the content host copies it into the per-artifact
-  content cookie. Only identified viewers get a claim; everyone else is anonymous to the page.
+  content cookie (`__Host-` prefixed, so a sibling artifact cannot toss in someone else's; a
+  request whose valid passes disagree on who is viewing has none). Only identified viewers get a
+  claim; everyone else is anonymous to the page.
   `window.plinth.viewer` is `{ id, email, role }` or null; `email` is set only when the page
   declares `viewer`, and `id` is opaque and different on every artifact. The app tells the viewer
   in one line under the bar what the page saves and whether it can see who they are.
 - **Concurrency.** Page writes are last-writer-wins unless they pass `ifRev`; `update(fn)` reads,
-  applies and retries on conflict. Every agent op needs `if_rev`. Data is not versioned and is not
-  part of diffs or restores.
+  applies and retries on conflict. Every agent op needs `if_rev`. A document's `rev` is one past
+  the artifact's change counter, so revs grow across the artifact and a document deleted and
+  created again never repeats one. Data is not versioned and is not part of diffs or restores.
 - **Live updates.** No push: `onSnapshot` polls a one-row change counter every 15 s while the tab
-  is visible (at least 10 s), and refetches when it moves.
+  is visible (at least 10 s), and refetches when it moves, at once after the page's own write.
 - **Limits** (env vars): `ALLOW_SHARED_DATA` (on), `DATA_MAX_DOCS_PER_ARTIFACT` (1000),
   `DATA_MAX_BYTES_PER_ARTIFACT` (1 MiB), `DATA_MAX_BYTES_PER_USER` (16 MiB across an owner's
   artifacts), `DATA_MAX_DOC_BYTES` (16 KiB), `DATA_WRITES_PER_VIEWER_PER_HOUR` (300) and
   `DATA_WRITES_PER_ARTIFACT_PER_HOUR` (2000). Fixed: 50 collections per artifact, nesting depth 16,
   200 documents per page, 50 ops per agent call.
-- **Lifecycle.** Data is deleted with the artifact and wiped on takedown, scrubbed of a person on
+- **Lifecycle.** Data is deleted with the artifact and wiped on takedown (a write already in flight
+  cannot bring it back), scrubbed of a person on
   `erase-user`, and kept across new versions and restores. Any grant, visibility or password change
   bumps the access epoch and ends existing content cookies and their claims, as before. The owner
   can delete all shared data from the Share dialog.
-- **Opaque isolation.** Under `CONTENT_ISOLATION=opaque` and the staging path fallback there are no
-  cookies, so shared data and identity are unavailable; `plinth.ready` resolves
-  `{ available: false, reason: "opaque_isolation" }` without a request.
+- **Opaque isolation.** Under `CONTENT_ISOLATION=opaque` there are no cookies, so shared data and
+  identity are unavailable; `plinth.ready` resolves `{ available: false, reason:
+  "opaque_isolation" }` without a request. Under the staging path fallback (always opaque) the
+  page lives at `APP_HOST/__content/<id>/`, so `/__plinth/runtime.js` resolves to the app host and
+  does not load: `window.plinth` is undefined, and pages guard with `window.plinth?.`.
 - **Agents.** `list_artifact_data` and `write_artifact_data` (MCP) and REST mirrors under
   `/api/v1/artifacts/:ref/data` for the owner and editors. Viewer-written data is untrusted input,
   and the tool descriptions say so.

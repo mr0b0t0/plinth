@@ -11,7 +11,7 @@ make a test pass.
 | --- | --- | --- |
 | Malicious artifact attacks the app | Artifact script reads the app's session cookie or calls the API as the viewer | Separate content domain (or, while the content host shares the app's domain, [opaque isolation](#opaque-content-isolation)); no app cookies there; CSP; CSRF token and `Origin` check on every write |
 | Artifact attacks another artifact | Artifact A reads artifact B's localStorage or files | One origin per artifact (under opaque isolation: no storage at all); viewer tokens and content cookies bound to one artifact |
-| Cookie tossing onto a shared parent domain | An artifact on `<id>.usercontent.example.com` (a content subdomain) sets `Domain=example.com` cookies that the app or other artifacts receive | Public Suffix List entry for the content host; until it ships, `CONTENT_ISOLATION=opaque` (artifact documents have no `document.cookie`); the Worker never sets a `Domain` attribute; app cookies are `__Host-` so no other host can overwrite them; the content host checks every `plinth_content` value it receives |
+| Cookie tossing onto a shared parent domain | An artifact on `<id>.usercontent.example.com` (a content subdomain) sets `Domain=example.com` cookies that the app or other artifacts receive | Public Suffix List entry for the content host; until it ships, `CONTENT_ISOLATION=opaque` (artifact documents have no `document.cookie`); the Worker never sets a `Domain` attribute; app cookies are `__Host-` so no other host can overwrite them; so is the content cookie on artifact subdomains, so a tossed pass (which may carry another viewer's identity) never has the name the server reads, and a request whose valid passes disagree on who is viewing has none |
 | Artifact reads cookies of the parent domain | Script reads a non-`HttpOnly` `Domain=aconite.io` cookie set by another Aconite service | Opaque isolation (`document.cookie` throws); operators must not set sensitive cookies on the parent domain |
 | Artifact exfiltrates viewer data | Script posts form input to an attacker's server | CSP `connect-src 'self'`, `form-action 'self'`, `default-src 'none'`; artifacts render only inside the app's frame (no `allow-top-navigation`, app `frame-src` limited to content hosts), and top-level visits to a content host are redirected to the framed app page. Known gap: WebRTC (STUN/TURN) is not covered by any CSP directive browsers enforce today, so a determined artifact can still leak data that way, including a viewer's email when the page declares the `viewer` capability |
 | Artifact outlives a takedown | A service worker keeps serving cached pages | Service-worker script requests are refused on content hosts; a deleted or taken-down artifact's origin gets `Clear-Site-Data: "storage"` |
@@ -82,11 +82,14 @@ What changes for the app and for artifacts:
   own JSON or text files gets a network error. Data must be inline or loaded with `<script>`,
   `<link>` or `<img>`. Artifacts that rely on browser storage lose it.
 - **No shared data or viewer identity.** The [shared data API](#shared-data-api) needs the content
-  cookie on a same-origin `fetch`, which an opaque origin cannot make, so the feature is off: the
-  gate issues no identity claim, `/__plinth/api/v1/session` answers
-  `{ available: false, reason: "opaque_isolation" }` and every other data endpoint `403
-  feature_disabled`. The runtime script sees `self.origin === "null"` and resolves `plinth.ready`
-  as unavailable without making a request.
+  cookie on a same-origin `fetch`, which an opaque origin cannot make, so the feature is off and
+  the gate issues no identity claim. The runtime script sees `self.origin === "null"` and resolves
+  `plinth.ready` as `{ available: false, reason: "opaque_isolation" }` without making a request.
+  A page's own `fetch` to the API is refused with `403 forbidden` before availability is checked:
+  it carries `Origin: null` and cross-origin fetch metadata. Only a client that sends neither
+  (curl, a script) reaches the availability check, where `/__plinth/api/v1/session` answers `200
+  { available: false, reason: "opaque_isolation" }` and every other data endpoint `403
+  feature_disabled`.
 - **postMessage.** Messages from an artifact frame arrive with `event.origin === "null"`, and a
   message to the frame can only be posted with `targetOrigin "*"`. The comments bridge identifies
   the frame by `event.source === iframe.contentWindow`, still validates every field, and posts only
@@ -153,7 +156,7 @@ password pass at once.
 | `__Host-plinth_csrf` | `APP_HOST` only | `Secure; SameSite=Strict`, readable by the app's JS | 1 year | Double-submit CSRF token |
 | `__Host-plinth_viewer` | `APP_HOST` only | `HttpOnly; Secure; SameSite=Lax` | 7 days | Viewer who confirmed an allowlisted email by code |
 | `__Host-plinth_pw_<id>` | `APP_HOST` only | `HttpOnly; Secure; SameSite=Lax` | 12 hours | Password entered for one artifact (signed, epoch-bound) |
-| `plinth_content` | one artifact subdomain | `HttpOnly; Secure; SameSite=None; Partitioned` | 12 hours | Access to that artifact's files and its shared data. For an identified viewer it may also carry a sealed identity claim (email and role, below) |
+| `__Host-plinth_content` | one artifact subdomain | `HttpOnly; Secure; SameSite=None; Partitioned` | 12 hours | Access to that artifact's files and its shared data. For an identified viewer it may also carry a sealed identity claim (email and role, below). Named `plinth_content` in the staging path fallback and on plain-http instances |
 
 No cookie is set with a `Domain` attribute, so none is shared between hosts. Every app cookie
 carries the `__Host-` prefix: browsers accept such a cookie only when it is `Secure`, on `Path=/`
@@ -161,9 +164,17 @@ and without `Domain`, so no other host, a sibling on a shared parent domain such
 included, can set or overwrite one. The server reads only the prefixed names. `Secure` (and so the
 prefix) is also used in local development, because browsers treat `http://*.localhost` as a secure
 context; a plain-http instance on any other name cannot set `Secure` cookies, so there the Worker
-drops the prefix. The content cookie has no prefix because the staging path fallback scopes it to
-the artifact's path on the app host; on a content subdomain it is host-only, and the content host
-checks every value it receives, so a tossed copy cannot shadow it.
+drops the prefix. The content cookie is `__Host-` prefixed on an artifact's own subdomain as well.
+Until the content domain is on the Public Suffix List, a sibling artifact's script can set a cookie
+for the parent domain, and a pass is not interchangeable: it may carry a viewer's identity. A
+tossed copy of someone else's valid pass under the plain name, with a longer `Path` so the browser
+lists it first, would otherwise make every shared-data request run as that person. Browsers refuse
+a `__Host-` cookie with a `Domain` attribute, so nothing tossed can carry the name the server
+reads. The server also checks every value it receives under that name, and a request with two
+valid passes that disagree on who is viewing has no pass at all (a JSON 401 `expired` on the API,
+a reload through the gate for files), never whichever came first. The staging path fallback keeps
+the plain name, scoped to the artifact's path on the app host, because it cannot use `Path=/`;
+shared data is off there.
 
 ## Content Security Policy
 
@@ -290,12 +301,17 @@ checks, in this order (`apps/worker/src/content/data-api.ts`):
    `DATA_MAX_DOC_BYTES` + 1 KiB whether or not a length is sent, and are parsed with strict
    schemas: unknown keys, such as author fields, are refused.
 7. **Artifact.** Missing, deleted or taken down: 404.
-8. **Access.** The `plinth_content` cookie for this artifact at its current access epoch. Without
-   one the API answers a JSON 401, never the gate redirect.
+8. **Access.** The `__Host-plinth_content` cookie for this artifact at its current access epoch.
+   Without one, or with valid ones that disagree on who is viewing, the API answers a JSON 401,
+   never the gate redirect.
 9. **Declaration.** The current version must declare `data`.
 10. **Policy**, then rate limits, then quotas, then a guarded write. The decisions are pure
     functions in `policy.ts` (`pageDataAccess`, `canModifyDoc`), repeated in the SQL `WHERE` of
-    the write so a race cannot slip past them.
+    the write so a race cannot slip past them. The same `WHERE` requires the artifact to exist and
+    not be taken down, so a write already past step 7 when the artifact is deleted or taken down
+    cannot bring wiped data back. A document's `rev` is one past the artifact's change counter, so
+    a document deleted and created again never repeats a rev, and `if_rev` only ever matches the
+    content its writer read.
 
 Responses carry the same CSP, `nosniff`, CORP and `noindex` as artifact files, plus `Cache-Control:
 no-store`. The CSP is unchanged: `connect-src 'self'` already allowed the call. Request bodies and
@@ -321,7 +337,8 @@ Signing out of the app does not end it sooner. The page sees `viewer.email` only
 **Limits and lifecycle.** Quotas per artifact and per owner, write rate limits per writer and per
 artifact (table below), documents of at most `DATA_MAX_DOC_BYTES` and nesting depth 16. Data is
 deleted with the artifact, wiped in the same request as a takedown (admins lose it as evidence),
-and scrubbed of a person by `erase-user`.
+and scrubbed of a person by `erase-user` (documents they created; their email, role and agent
+connection label on documents they last changed).
 
 **Agents.** Owners' and editors' agents read and write the same data with `list_artifact_data`
 and `write_artifact_data`. Both descriptions say every document is untrusted, owner-stamped ones

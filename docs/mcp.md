@@ -394,7 +394,9 @@ Change a page's shared data. Owner or editor. Scope `artifacts:write`.
 | `ops` | array, 1-50 | `{ op: "set", collection, doc_id?, data, if_rev }` or `{ op: "delete", collection, doc_id, if_rev }` |
 
 `if_rev` is required on every op: `0` creates the document (with a server id when `doc_id` is
-omitted) and fails if it exists; `n` changes or deletes it only while its `rev` is `n`. `data` is a
+omitted) and fails if it exists; `n` changes or deletes it only while its `rev` is `n`. Revs grow
+across the whole artifact (not by one per document), so a document deleted and created again never
+matches a rev you read before. `data` is a
 JSON object of at most `DATA_MAX_DOC_BYTES` (16 KiB by default), nested at most 16 deep. Ops apply
 in order and each succeeds or fails on its own.
 
@@ -403,9 +405,10 @@ in order and each succeeds or fails on its own.
 ```
 
 Returns `{ results: [{ op, collection, doc_id, ok, rev?, error? }] }`. A failed op has `error` with
-a code such as `conflict` (with `current_rev`), `forbidden`, `not_found` or `quota_exceeded`.
-Writes are stamped `via: "agent"` with this connection's label and count against the same quotas
-and rate limits as page writes. They are not versions and cannot be reverted. There is no bulk
+a code such as `conflict` (with `current_rev`), `forbidden`, `not_found`, `quota_exceeded` (with
+`limit`) or `rate_limited` (with `retry_after`). Writes are stamped `via: "agent"` with this
+connection's label and count against the same quotas and rate limits as page writes: each op is
+one write, and the per-person limit is shared with that person's own page writes. They are not versions and cannot be reverted. There is no bulk
 delete: the owner deletes all of an artifact's data from its Share dialog. With
 `ALLOW_SHARED_DATA=false`, or under opaque isolation, the whole call fails with `feature_disabled`;
 reads still work, so the owner can export.
