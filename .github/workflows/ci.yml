@@ -35,6 +35,9 @@ jobs:
       - run: pnpm test
       - run: pnpm build
 
+      - name: Local hosting smoke test (no tunnel)
+        run: pnpm test:local
+
       - name: No secrets in the client bundle
         run: node scripts/check-bundle-secrets.mjs
 

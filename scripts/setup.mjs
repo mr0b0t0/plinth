@@ -18,6 +18,18 @@
 // --content-isolation opaque: writes CONTENT_ISOLATION=opaque (every artifact document gets an
 // opaque origin; docs/security.md). Only with it may APP_HOST and CONTENT_HOST share a registrable
 // domain, e.g. a content host whose Public Suffix List entry has not shipped yet.
+// Local hosting through a Cloudflare Tunnel (docs/local-hosting.md). Needs CLOUDFLARE_API_TOKEN in
+// the environment (Account: Cloudflare Tunnel Edit; Zone: DNS Edit and Zone Read on both zones):
+//   node scripts/setup.mjs --tunnel --app-host <host> --content-host <zone apex>
+//                          --email-provider sendgrid|resend|console [--name plinth] [--home ~/.plinth]
+//                          [--port 8788] [--email-from "Plinth <noreply@example.com>"]
+//                          [--single-user --admin-email <email>] [--content-isolation origin|opaque]
+//                          [--no-cloudflare] [--replace-tunnel] [--force] [--dry-run]
+// Writes <home>/<name>/ (Worker config, .dev.vars, cloudflared.yml, tunnel credentials, D1 and R2
+// state), creates the tunnel and DNS records, and applies migrations. Then: pnpm local:start.
+// --no-cloudflare skips the tunnel and DNS (for tests, or to wire the tunnel up by hand).
+// --replace-tunnel deletes the instance's tunnel and makes a new one, repointing the DNS records it
+// (or an already deleted tunnel) left behind. Use it when the credentials file is lost.
 //
 // --workers-dev (staging only): deploy to the account's workers.dev address with no routes or
 // custom domains. workers.dev has no wildcard subdomains, so artifacts are served from the app
@@ -29,8 +41,9 @@
 // except a newly generated single-user ADMIN_TOKEN, which is shown once.
 import { spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -52,6 +65,9 @@ const BOOLEAN_FLAGS = new Set([
   "single-user",
   "rotate-secrets",
   "workers-dev",
+  "tunnel",
+  "no-cloudflare",
+  "replace-tunnel",
   "help",
 ]);
 
@@ -80,7 +96,7 @@ function fail(message) {
 const opts = parseArgs(process.argv.slice(2));
 const dryRun = !!opts["dry-run"];
 
-if (opts.help || (!opts.local && !opts.remote)) {
+if (opts.help || (!opts.local && !opts.remote && !opts.tunnel)) {
   const usage = readFileSync(fileURLToPath(import.meta.url), "utf8")
     .split("\n")
     .filter((l) => l.startsWith("//"))
@@ -89,7 +105,8 @@ if (opts.help || (!opts.local && !opts.remote)) {
   console.log(usage);
   process.exit(opts.help ? 0 : 1);
 }
-if (opts.local && opts.remote) fail("Choose --local or --remote, not both.");
+if ([opts.local, opts.remote, opts.tunnel].filter(Boolean).length > 1)
+  fail("Choose one of --local, --remote or --tunnel.");
 
 // ---------- helpers ----------
 
@@ -476,5 +493,187 @@ function setupRemote() {
   }
 }
 
+// ---------- tunnel (local hosting) ----------
+
+async function setupTunnel() {
+  // Read by destructuring: these are setup-time inputs, not build inputs for turbo.
+  const { PLINTH_HOME: envPlinthHome, CLOUDFLARE_API_TOKEN: envCloudflareToken } = process.env;
+  const lib = await import("../apps/worker/scripts/tunnel-lib.mjs");
+  const { provision, CloudflareError } = await import(
+    "../apps/worker/scripts/tunnel-cloudflare.mjs"
+  );
+  let o;
+  try {
+    o = lib.validateTunnelOptions(opts, {
+      getDomain: (h) => getDomain(h, { allowPrivateDomains: true }),
+    });
+  } catch (e) {
+    if (e instanceof lib.TunnelUsageError) fail(e.message);
+    throw e;
+  }
+  const home = path.resolve(opts.home ?? envPlinthHome ?? path.join(os.homedir(), ".plinth"));
+  const paths = lib.instancePaths(home, o.name);
+  const token = envCloudflareToken;
+  if (o.cloudflare && !token && !dryRun)
+    fail(
+      "CLOUDFLARE_API_TOKEN is not set. Create a token with Account: Cloudflare Tunnel Edit and " +
+        "Zone: DNS Edit + Zone Read on both zones, export it, and rerun (or pass --no-cloudflare)",
+    );
+
+  console.log(`Plinth tunnel setup for instance "${o.name}". Plan:`);
+  console.log(`  1. Instance directory ${paths.dir}`);
+  console.log("  2. Worker config, secrets (.dev.vars) and instance.json");
+  console.log(
+    o.cloudflare
+      ? `  3. Tunnel plinth-${o.name} and DNS for ${lib.dnsRecordNames(o.appHost, o.contentHost).join(", ")}`
+      : "  3. Tunnel and DNS: skipped (--no-cloudflare)",
+  );
+  console.log("  4. Apply D1 migrations to the instance's local database");
+  if (dryRun) console.log("  (dry run: nothing is written, created or executed)");
+
+  step("Instance directory");
+  if (dryRun) console.log(`  would create ${paths.dir} (mode 700)`);
+  else {
+    mkdirSync(paths.dir, { recursive: true, mode: 0o700 });
+    chmodSync(paths.dir, 0o700);
+    console.log(`  ${paths.dir}`);
+  }
+
+  step("Worker config");
+  const base = parseJsonc(readFileSync(path.join(workerDir, "wrangler.jsonc"), "utf8"));
+  const built = lib.buildWorkerConfig(o, root, base);
+  const previous = existsSync(paths.wranglerConfig)
+    ? parseJsonc(readFileSync(paths.wranglerConfig, "utf8"))
+    : {};
+  const cfg = { ...previous, ...built, vars: { ...(previous.vars ?? {}), ...built.vars } };
+  const body =
+    `// Generated by scripts/setup.mjs --tunnel for "${o.name}". Rerunning setup updates the keys it\n` +
+    "// owns and keeps anything else you add. Start with: pnpm local:start" +
+    (o.name === "plinth" ? "" : ` --name ${o.name}`) +
+    `\n${JSON.stringify(cfg, null, 2)}\n`;
+  const meta = `${JSON.stringify({ name: o.name, port: o.port }, null, 2)}\n`;
+  if (dryRun) console.log(`  would write ${paths.wranglerConfig} and ${paths.meta}`);
+  else {
+    writeFileSync(paths.wranglerConfig, body);
+    writeFileSync(paths.meta, meta);
+    console.log(`  wrote ${paths.wranglerConfig} and ${paths.meta}`);
+  }
+
+  step("Secrets");
+  const { lines, values } = readEnvFile(paths.devVars);
+  const updates = {};
+  let adminToken = null;
+  const keys = ["SESSION_SECRET", "TOKEN_SIGNING_KEY", ...(o.singleUser ? ["ADMIN_TOKEN"] : [])];
+  for (const key of keys) {
+    if (values.get(key) && !opts.force) console.log(`  ${key}: kept (exists; --force replaces it)`);
+    else {
+      updates[key] = secret();
+      if (key === "ADMIN_TOKEN") adminToken = updates[key];
+      console.log(`  ${key}: generated`);
+    }
+  }
+  for (const name of ["SENDGRID_API_KEY", "RESEND_API_KEY"]) {
+    if (process.env[name]) {
+      updates[name] = process.env[name];
+      console.log(`  ${name}: taken from the environment`);
+    } else if (o.emailProvider === name.split("_")[0].toLowerCase() && !values.get(name)) {
+      console.log(
+        `  warning: ${name} is not set. Export it and rerun, or add it to ${paths.devVars}`,
+      );
+    }
+  }
+  if (dryRun)
+    console.log(
+      `  would write ${Object.keys(updates).join(", ") || "nothing"} to ${paths.devVars}`,
+    );
+  else if (Object.keys(updates).length) {
+    const header = lines.length
+      ? lines
+      : [
+          `# Secrets for the "${o.name}" Plinth instance, written by scripts/setup.mjs --tunnel.`,
+          "# Never share or commit this file.",
+        ];
+    writeEnvFile(paths.devVars, header, updates);
+    chmodSync(paths.devVars, 0o600);
+    console.log(`  wrote ${paths.devVars} (mode 600)`);
+  } else console.log(`  ${paths.devVars}: nothing to change`);
+
+  step("Tunnel and DNS");
+  if (!o.cloudflare) console.log("  skipped (--no-cloudflare)");
+  else if (dryRun)
+    console.log("  would look up both zones, then create the tunnel and DNS records");
+  else {
+    let r;
+    try {
+      r = await provision({
+        token,
+        fetch,
+        tunnelName: `plinth-${o.name}`,
+        appHost: o.appHost,
+        contentHost: o.contentHost,
+        appZone: getDomain(o.appHost, { allowPrivateDomains: true }) ?? o.appHost,
+        contentZone: getDomain(o.contentHost, { allowPrivateDomains: true }) ?? o.contentHost,
+        hasCredentials: existsSync(paths.credentials),
+        newSecret: () => randomBytes(32).toString("base64"),
+        replaceTunnel: !!opts["replace-tunnel"],
+        // Written the moment the tunnel exists: Cloudflare never shows its secret again.
+        onTunnelCreated: (credentials) => {
+          writeFileSync(paths.credentials, credentials, { mode: 0o600 });
+          chmodSync(paths.credentials, 0o600);
+        },
+      });
+    } catch (e) {
+      if (e instanceof CloudflareError) fail(e.message);
+      throw e;
+    }
+    if (r.credentials) {
+      console.log(
+        `  tunnel plinth-${o.name}: created (${r.tunnelId}); credentials in ${paths.credentials}`,
+      );
+    } else console.log(`  tunnel plinth-${o.name}: exists (${r.tunnelId})`);
+    for (const rec of r.records) console.log(`  DNS ${rec.name}: ${rec.action}`);
+    writeFileSync(
+      paths.cloudflaredConfig,
+      lib.renderCloudflaredConfig({
+        tunnelId: r.tunnelId,
+        credentialsFile: paths.credentials,
+        appHost: o.appHost,
+        contentHost: o.contentHost,
+        port: o.port,
+      }),
+    );
+    console.log(`  wrote ${paths.cloudflaredConfig}`);
+    if (spawnSync("cloudflared", ["--version"], { stdio: "ignore" }).status !== 0)
+      console.log(
+        "  warning: cloudflared is not installed. Install it before starting: " +
+          "https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/downloads/",
+      );
+  }
+
+  step("Local D1 migrations");
+  wrangler([
+    "d1",
+    "migrations",
+    "apply",
+    "DB",
+    "--local",
+    "--config",
+    paths.wranglerConfig,
+    "--persist-to",
+    paths.state,
+  ]);
+
+  const nameFlag = o.name === "plinth" ? "" : ` --name ${o.name}`;
+  const homeFlag = opts.home ? ` --home ${home}` : "";
+  console.log(
+    `\nDone. Next: pnpm local:start${nameFlag}${homeFlag}, then open https://${o.appHost}`,
+  );
+  if (adminToken && !dryRun) {
+    console.log(`\nSingle-user ADMIN_TOKEN (shown once; also in ${paths.devVars}):`);
+    console.log(`  ${adminToken}`);
+  }
+}
+
 if (opts.local) setupLocal();
+else if (opts.tunnel) await setupTunnel();
 else setupRemote();
