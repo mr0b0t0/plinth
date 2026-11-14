@@ -1,0 +1,26 @@
+-- Out-of-band uploads (start_upload): a single-use ticket for one publish or one update of one
+-- artifact with a stated base. The bundle request commits the version and consumes the ticket in
+-- the same D1 batch. Accessed through raw SQL (services/uploads.ts).
+CREATE TABLE upload_tickets (
+  id TEXT PRIMARY KEY,                       -- newId()
+  token_hash TEXT NOT NULL UNIQUE,           -- SHA-256 of plinth_up_<43 b64url>
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  credential TEXT NOT NULL CHECK (credential IN ('connection','admin')),
+  connection_id TEXT REFERENCES agent_connections(id) ON DELETE CASCADE,
+  admin_token_hash TEXT,                     -- SHA-256 of ADMIN_TOKEN at mint (single-user mode)
+  scopes TEXT NOT NULL,                      -- space-separated, at mint
+  mode TEXT NOT NULL CHECK (mode IN ('publish','update')),
+  artifact_id TEXT REFERENCES artifacts(id) ON DELETE CASCADE,   -- update: target; publish: NULL
+  artifact_type TEXT NOT NULL,
+  title TEXT, note TEXT, base_version INTEGER,
+  state TEXT NOT NULL CHECK (state IN ('open','used','dead')),
+  attempts INTEGER NOT NULL DEFAULT 0,
+  receiving_claim TEXT, receiving_until TEXT, -- concurrency lease only, never decides the commit
+  result_artifact_id TEXT, result_version INTEGER,
+  created_at TEXT NOT NULL, expires_at TEXT NOT NULL, used_at TEXT,
+  CHECK ((credential = 'connection') = (connection_id IS NOT NULL)),
+  CHECK ((credential = 'admin') = (admin_token_hash IS NOT NULL)),
+  CHECK ((mode = 'update') = (artifact_id IS NOT NULL AND base_version IS NOT NULL))
+);
+CREATE INDEX upload_tickets_user ON upload_tickets(user_id, created_at);
+CREATE INDEX upload_tickets_receiving ON upload_tickets(user_id, receiving_until);

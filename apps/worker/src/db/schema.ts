@@ -51,7 +51,13 @@ export const versions = sqliteTable("versions", {
   artifactId: text("artifact_id").notNull(),
   number: integer("number").notNull(),
   r2Prefix: text("r2_prefix").notNull(),
+  /** Logical bytes: what a viewer loads (source plus every asset, reused ones included). */
   sizeBytes: integer("size_bytes").notNull(),
+  /**
+   * Bytes this version wrote to storage (migrations/0006_stored_bytes.sql). NULL for a version
+   * written before 0006, which stored a full copy: it counts as size_bytes.
+   */
+  storedBytes: integer("stored_bytes"),
   manifest: text("manifest").notNull(),
   createdByUser: text("created_by_user"),
   createdByConnection: text("created_by_connection"),
