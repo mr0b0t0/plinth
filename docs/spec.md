@@ -163,6 +163,25 @@ ones as a plugin, extension, rule file or uploaded skill. All per-harness packag
 are static. Guide: `docs/agents.md`; design:
 `docs/superpowers/specs/2026-11-14-agent-experience-design.md`.
 
+**Agent discovery (decided 2026-11-14).** An agent handed a Plinth link learns from the page it
+fetches what Plinth is and how to read the artifact. Every SPA page on the app host carries a
+plain-text note for agents inside `<div id="root">` (hidden by a stylesheet, replaced when the app
+mounts): the MCP endpoint and OAuth discovery, `get_artifact` with the link's id, the plugin and
+client install commands, `/llms.txt`, the docs and the repository. On `/a/...` and `/open/...`
+pages, access is decided by the policy module for an anonymous viewer, ignoring cookies: when an
+anonymous viewer could open the artifact (unlisted, or public), the note and the page title give
+its title (marked as untrusted text), its current version and a link to `GET /a/<slug>/source`,
+which returns the main HTML document as sandboxed `text/plain` (`?version=<n>`, rate-limited per
+IP, `no-store`). Private, password, deleted, taken-down and missing artifacts get one generic note
+and `404` from the source endpoint, identical in every case. `/a/...` pages send
+`X-Robots-Tag: noindex, nofollow` except a public artifact on an instance with public visibility
+on. The app host also serves `/llms.txt` (built from config, with every MCP tool), an MCP Server
+Card (SEP-2127) at `/mcp/server-card` (also at `/.well-known/mcp.json` and
+`/.well-known/mcp/server-card.json`, listed in `/.well-known/ai-catalog.json`) and `/robots.txt`;
+other `/.well-known/` paths and missing files answer `404` instead of the SPA. Guide:
+`docs/agents.md#agent-discovery`; design:
+`docs/superpowers/specs/2026-11-14-agent-discovery-design.md`.
+
 A plain REST API mirrors these tools for scripts and CI. Size limits for v1: 5 MB of HTML and 25 MB
 in total per version.
 

@@ -10,6 +10,12 @@ Add a line under **Unreleased** in the pull request that makes a change people w
 
 ## Unreleased
 
+- Agents that fetch a Plinth link now learn what it is: every app page carries a short note for
+  agents (the MCP server, how to read the artifact, install commands, docs). Artifacts anyone with
+  the link may open add their title, version and a plain-text source at `/a/<slug>/source`. New
+  `/llms.txt`, MCP server card (`/mcp/server-card`, `/.well-known/mcp.json`) and `/robots.txt`;
+  unknown `/.well-known/` paths and missing files now answer 404 instead of the app.
+
 ## 0.1.1 (2026-11-14)
 
 - `npx @mr0b0t0/plinth deploy` deploys Plinth to your own Cloudflare account in one command

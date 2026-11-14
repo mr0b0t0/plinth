@@ -11,6 +11,10 @@ agent.
   no token to copy.
 - **Scopes:** `artifacts:read`, `artifacts:write`, `mentions`. A connection gets all three unless
   you narrow them.
+- **Discovery:** an [MCP Server Card](https://modelcontextprotocol.io/seps/2127-mcp-server-cards)
+  at `/mcp/server-card` (listed in `/.well-known/ai-catalog.json`), and `/llms.txt` with every tool
+  in one line. Every app page, artifact links included, carries a short note for agents that read
+  it as text ([agents.md](agents.md#agent-discovery)).
 
 The quickest way is the **Connect an agent** panel on the Connections page. It has a tab per client
 with the commands and install links already filled in with your instance's URL, and it notices the
@@ -224,7 +228,7 @@ Read metadata, HTML and the asset list. Scope `artifacts:read`.
 
 | Field | Type | Notes |
 | --- | --- | --- |
-| `id` | string | |
+| `id` | string | The artifact's id or slug: the part after `/a/` in its link |
 | `version` | integer, optional | Default: current |
 
 ```json
