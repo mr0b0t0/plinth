@@ -343,6 +343,47 @@ describe("the stager (as the bundle path uses it)", () => {
     expect(JSON.parse(caps ?? "{}")).toMatchObject({ data: true, viewer: true });
   });
 
+  it("a doc bundle goes through the doc's rules: Markdown source, images only, index.html reserved", async () => {
+    const a = await agent();
+    const doc = await publish(a.auth, { type: "doc", html: undefined, content: "# One\n" });
+    const ctx = serviceCtxFor(agentPrincipal(a));
+    const stage = async (files: Record<string, string | Uint8Array>, strip?: string) => {
+      const target = await updateTarget(ctx, doc.body.id, {});
+      const stager = await openStager(ctx, target);
+      try {
+        for (const [path, body] of Object.entries(files))
+          await stager.add(path, typeof body === "string" ? new TextEncoder().encode(body) : body);
+        return await commitStaged(ctx, target, await stager.finish({ stripPrefix: strip }));
+      } catch (e) {
+        await stager.abort();
+        throw e;
+      }
+    };
+    const ok = await stage(
+      { "notes/content.md": "# Two\n", "notes/img/dot.png": pngBytes },
+      "notes/",
+    );
+    expect(ok.version).toBe(2);
+    expect(await (await storedFile(doc.body.id, 2, "content.md"))?.text()).toBe("# Two\n");
+    await expect(stage({ "content.md": "# x\n", "app.js": "1" })).rejects.toMatchObject({
+      code: "invalid_input",
+      details: { path: "app.js" },
+    });
+    await expect(stage({ "content.md": "# x\n", "index.html": "<p>x</p>" })).rejects.toMatchObject({
+      code: "invalid_input",
+      details: { path: "index.html" },
+    });
+    await expect(
+      stage({ "d/content.md": "<!doctype html><p>not markdown</p>" }, "d/"),
+    ).rejects.toMatchObject({ code: "invalid_input", details: { field: "content" } });
+    await expect(
+      stage({ "d/content.md": "# x\n", "d/index.html": "<p>x</p>" }, "d/"),
+    ).rejects.toMatchObject({
+      code: "invalid_input",
+    });
+    expect(await versionRow(doc.body.id, 3)).toBeNull();
+  });
+
   it("refuses an upload with no source file at its top, and leaves nothing behind", async () => {
     const { a, p } = await seed();
     const ctx = serviceCtxFor(agentPrincipal(a));

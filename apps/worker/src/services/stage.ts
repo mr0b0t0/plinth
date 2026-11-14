@@ -429,12 +429,11 @@ export class VersionStager implements Stager {
     this.throwIfFailed();
     const isSource = !!opts.sourceAllowed && path === this.def.sourcePath;
     const contentType = isSource ? this.def.contentType : assetContentType(path, opts.contentType);
-    if (
-      !this.acceptPath(path, isSource ? undefined : () => checkAsset(this.def, path, contentType))
-    )
-      return;
-    if (opts.sourceAllowed) await this.noteTopDir(path);
+    if (pathProblem(path) === null && opts.sourceAllowed) await this.noteTopDir(path);
+    // A held "<dir>/<source>" is checked at finish, once a strip has decided what it is.
     const candidate = !!opts.sourceAllowed && this.isSourceCandidate(path);
+    const check = isSource || candidate ? undefined : () => checkAsset(this.def, path, contentType);
+    if (!this.acceptPath(path, check)) return;
     if (candidate && bytes.byteLength > this.def.maxSourceBytes && path === this.def.sourcePath) {
       throw sourceTooLarge(this.def.sourceLabel, this.def.maxSourceBytes, bytes.byteLength);
     }
