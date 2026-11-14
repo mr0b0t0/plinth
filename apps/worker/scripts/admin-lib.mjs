@@ -202,8 +202,8 @@ export function artifactKeysSql(ref) {
  * versions, grants, comments, mention tasks and reports on them, their connections, OAuth grants
  * and sessions. Before that: comments they wrote on other people's artifacts, grants to their
  * address, codes and viewer sessions for it, rate-limit counters naming it, their address on
- * reports, shared-data documents they created (personal ones included) and their name on documents
- * they last changed. The last statement returns the erased user, so the CLI can tell whether one matched.
+ * reports, shared-data documents they created (personal ones included) and their name, role and
+ * agent connection label on documents they last changed. The last statement returns the erased user, so the CLI can tell whether one matched.
  */
 export function eraseUserSql(email) {
   return [
@@ -215,7 +215,7 @@ export function eraseUserSql(email) {
     `UPDATE reports SET reporter_email = NULL WHERE reporter_email = '${email}'`,
     // Shared data on other people's artifacts (their own artifacts' data cascades with them).
     `DELETE FROM artifact_docs WHERE created_by_email = '${email}'`,
-    `UPDATE artifact_docs SET updated_by_email = NULL, updated_by_role = NULL WHERE updated_by_email = '${email}'`,
+    `UPDATE artifact_docs SET updated_by_email = NULL, updated_by_role = NULL, updated_by_label = NULL WHERE updated_by_email = '${email}'`,
     `DELETE FROM users WHERE email = '${email}' RETURNING id`,
   ].join("; ");
 }

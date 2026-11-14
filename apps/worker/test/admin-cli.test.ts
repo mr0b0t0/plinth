@@ -242,7 +242,7 @@ describe("admin CLI: shared data", () => {
   const docsOf = async (artifactId: string) =>
     (
       await env.DB.prepare(
-        "SELECT doc_id, created_by_email, updated_by_email, updated_by_role FROM artifact_docs WHERE artifact_id = ?1 ORDER BY doc_id",
+        "SELECT doc_id, created_by_email, updated_by_email, updated_by_role, updated_by_label FROM artifact_docs WHERE artifact_id = ?1 ORDER BY doc_id",
       )
         .bind(artifactId)
         .all<{
@@ -250,6 +250,7 @@ describe("admin CLI: shared data", () => {
           created_by_email: string | null;
           updated_by_email: string | null;
           updated_by_role: string | null;
+          updated_by_label: string | null;
         }>()
     ).results;
 
@@ -258,7 +259,7 @@ describe("admin CLI: shared data", () => {
     const statements = sql.split("; ");
     const del = "DELETE FROM artifact_docs WHERE created_by_email = 'ann@example.com'";
     const scrub =
-      "UPDATE artifact_docs SET updated_by_email = NULL, updated_by_role = NULL WHERE updated_by_email = 'ann@example.com'";
+      "UPDATE artifact_docs SET updated_by_email = NULL, updated_by_role = NULL, updated_by_label = NULL WHERE updated_by_email = 'ann@example.com'";
     expect(statements).toContain(del);
     expect(statements).toContain(scrub);
     const users = statements.findIndex((s) => s.startsWith("DELETE FROM users"));
@@ -284,6 +285,8 @@ describe("admin CLI: shared data", () => {
       { op: "set", collection: "rows", doc_id: "o1", data: { n: 3 }, if_rev: 1 },
     ]);
     expect((await json(res)).results.map((r: { ok: boolean }) => r.ok)).toEqual([true, true]);
+    // The person's agent connection label was stamped on their edit of o1.
+    expect((await docsOf(a.id)).find((d) => d.doc_id === "o1")?.updated_by_label).toBeTruthy();
 
     const sets = await runStatements(eraseUserSql(person.user.email));
     expect(sets[sets.length - 1]).toHaveLength(1);
@@ -293,6 +296,7 @@ describe("admin CLI: shared data", () => {
         created_by_email: owner.user.email,
         updated_by_email: null,
         updated_by_role: null,
+        updated_by_label: null,
       },
     ]);
     // The usage row still matches the documents (the triggers ran).
