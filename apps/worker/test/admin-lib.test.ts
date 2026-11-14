@@ -1,6 +1,8 @@
 // The admin CLI's storage helpers with the commit-last layout: stored_at keys, sweep-orphans, and
 // delete and erase leaving nothing under artifacts/<id>/.
+
 import { env } from "cloudflare:workers";
+import { TTL } from "@plinth/shared";
 import { describe, expect, it } from "vitest";
 import {
   artifactKeysSql,
@@ -8,10 +10,14 @@ import {
   deleteRoots,
   eraseArtifactSql,
   eraseUserSql,
+  filesBucket,
   keysFromRows,
+  MIN_SWEEP_MINUTES,
   orphanPrefixes,
   parseArgs,
+  parseResultSets,
   rootsFromRows,
+  SweepRefused,
   sweepOrphans,
   UsageError,
   userKeysSql,
@@ -137,6 +143,26 @@ describe("sweep-orphans", () => {
     expect(() => parseArgs(["sweep-orphans", "--local", "--older-than-minutes", "0"])).toThrow(
       UsageError,
     );
+    // Below the floor an upload that is still streaming could lose its files.
+    expect(() =>
+      parseArgs([
+        "sweep-orphans",
+        "--local",
+        "--older-than-minutes",
+        String(MIN_SWEEP_MINUTES - 1),
+      ]),
+    ).toThrow(/15 or more/);
+    expect(MIN_SWEEP_MINUTES * 60_000).toBeGreaterThan(TTL.uploadReceivingMs);
+    const floor = parseArgs([
+      "sweep-orphans",
+      "--local",
+      "--older-than-minutes",
+      String(MIN_SWEEP_MINUTES),
+    ]);
+    if (floor.help || floor.command !== "sweep-orphans") throw new Error("unexpected parse");
+    expect(floor.minAgeMs).toBe(MIN_SWEEP_MINUTES * 60_000);
+    // No bucket unless --bucket: it comes from the config the database comes from.
+    expect(all.bucket).toBeNull();
     expect(() => parseArgs(["sweep-orphans", "--local", "--artifact", "x'; --"])).toThrow(
       UsageError,
     );
@@ -147,19 +173,112 @@ describe("sweep-orphans", () => {
 
   it("deletes only unreferenced prefixes older than the threshold, never a committed one", async () => {
     const { p, orphan } = await layered();
-    const prefixRows = await rows(versionPrefixesSql(p.id));
     const later = Date.now() + 2 * 3600_000;
-    const swept = await sweepOrphans(env.FILES, prefixRows, {
+    const swept = await sweepOrphans(env.FILES, {
       root: `artifacts/${p.id}/`,
       now: later,
       minAgeMs: 3600_000,
       dryRun: false,
+      loadRows: () => rows(versionPrefixesSql(p.id)),
     });
     expect(swept).toEqual([{ prefix: orphan, files: 1 }]);
     expect(await r2Keys(orphan)).toEqual([]);
     // Every committed version's objects are still there.
     for (const k of keysFromRows(await rows(artifactKeysSql(p.id))))
       expect(await env.FILES.head(k), k).not.toBeNull();
+  });
+
+  it("deletes nothing when the database answer is empty or names nothing in the bucket", async () => {
+    const { p } = await layered();
+    const before = (await r2Keys(`artifacts/${p.id}/`)).sort();
+    const opts = {
+      now: Date.now() + 2 * 3600_000,
+      minAgeMs: 3600_000,
+      dryRun: false,
+    };
+    for (const root of ["artifacts/", `artifacts/${p.id}/`]) {
+      // No rows (an empty or wrong database): every file would look orphaned.
+      await expect(
+        sweepOrphans(env.FILES, { ...opts, root, loadRows: async () => [] }),
+      ).rejects.toThrow(SweepRefused);
+      // Rows of another instance: none of the prefixes they name is in this bucket.
+      await expect(
+        sweepOrphans(env.FILES, {
+          ...opts,
+          root,
+          loadRows: async () => [
+            { artifact_id: "zzzzzzzzzzzzzzzzzzzz", prefix: "artifacts/zzzzzzzzzzzzzzzzzzzz/v1/" },
+          ],
+        }),
+      ).rejects.toThrow(/different instances/);
+      // An answer that is not rows at all.
+      await expect(
+        sweepOrphans(env.FILES, {
+          ...opts,
+          root,
+          loadRows: async () => null as unknown as { prefix?: unknown }[],
+        }),
+      ).rejects.toThrow(SweepRefused);
+    }
+    expect((await r2Keys(`artifacts/${p.id}/`)).sort()).toEqual(before);
+  });
+
+  it("reads the rows after listing, so a version that commits meanwhile keeps its files", async () => {
+    const { p, orphan } = await layered();
+    const order: string[] = [];
+    const bucket = {
+      list: async (o: { prefix: string; cursor?: string }) => {
+        order.push("list");
+        return env.FILES.list(o);
+      },
+      delete: async (keys: string[]) => {
+        order.push("delete");
+        return env.FILES.delete(keys);
+      },
+    };
+    const swept = await sweepOrphans(bucket, {
+      root: `artifacts/${p.id}/`,
+      now: Date.now() + 2 * 3600_000,
+      minAgeMs: 3600_000,
+      dryRun: false,
+      loadRows: async () => {
+        order.push("rows");
+        // The attempt prefix committed between the listing and this read.
+        return [...(await rows(versionPrefixesSql(p.id))), { artifact_id: p.id, prefix: orphan }];
+      },
+    });
+    expect(swept).toEqual([]);
+    expect(order).toEqual(["list", "rows"]);
+    expect(await r2Keys(orphan)).toHaveLength(1);
+  });
+
+  it("parseResultSets tells unparseable output apart from no rows", () => {
+    expect(parseResultSets("not json")).toBeNull();
+    expect(parseResultSets("")).toBeNull();
+    expect(parseResultSets("[]")).toBeNull();
+    expect(parseResultSets(JSON.stringify([{ error: "boom" }]))).toBeNull();
+    expect(parseResultSets(JSON.stringify([{ results: [] }]))).toEqual([[]]);
+    expect(parseResultSets(JSON.stringify({ results: [{ prefix: "x" }] }))).toEqual([
+      [{ prefix: "x" }],
+    ]);
+  });
+
+  it("the bucket is the FILES binding of the database's own config and environment", () => {
+    // What wrangler resolves for `--config wrangler.staging.jsonc` (docs/staging.md).
+    const staging = [
+      { binding: "OTHER", bucket_name: "plinth-files" },
+      { binding: "FILES", bucket_name: "plinth-staging" },
+    ];
+    expect(filesBucket(staging, null)).toBe("plinth-staging");
+    expect(filesBucket(staging, "plinth-staging")).toBe("plinth-staging");
+    // --bucket that disagrees with the config is refused, never used.
+    expect(() => filesBucket(staging, "plinth-files")).toThrow(/different instances/);
+    // An environment section without a FILES bucket is refused, not defaulted.
+    expect(() => filesBucket([], null)).toThrow(UsageError);
+    expect(() => filesBucket(undefined, null)).toThrow(UsageError);
+    expect(() => filesBucket([{ binding: "FILES", bucket_name: "Bad_Name" }], null)).toThrow(
+      UsageError,
+    );
   });
 
   it("groups by top-level prefix and keeps a young prefix", () => {

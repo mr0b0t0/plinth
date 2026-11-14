@@ -148,27 +148,31 @@ describe("commit last", () => {
         .bind(p.id)
         .all()
     ).results;
-    const dry = await sweepOrphans(env.FILES, rows, {
+    const loadRows = async () => rows;
+    const dry = await sweepOrphans(env.FILES, {
       root: `artifacts/${p.id}/`,
       now: Date.now() + 2 * 3600_000,
       minAgeMs: 3600_000,
       dryRun: true,
+      loadRows,
     });
     expect(dry.map((g) => g.prefix)).toEqual([leftover]);
     // A young leftover (a publish possibly still in flight) is left alone.
     expect(
-      await sweepOrphans(env.FILES, rows, {
+      await sweepOrphans(env.FILES, {
         root: `artifacts/${p.id}/`,
         now: Date.now(),
         minAgeMs: 3600_000,
         dryRun: false,
+        loadRows,
       }),
     ).toEqual([]);
-    await sweepOrphans(env.FILES, rows, {
+    await sweepOrphans(env.FILES, {
       root: `artifacts/${p.id}/`,
       now: Date.now() + 2 * 3600_000,
       minAgeMs: 3600_000,
       dryRun: false,
+      loadRows,
     });
     expect(await prefixesOf(p.id)).not.toContain(leftover);
     expect(await prefixesOf(p.id)).toHaveLength(2);

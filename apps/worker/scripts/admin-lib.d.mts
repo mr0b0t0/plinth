@@ -1,6 +1,13 @@
 // Types for admin-lib.mjs (imported by the Vitest suite).
 export declare const USAGE: string;
 export declare class UsageError extends Error {}
+export declare class SweepRefused extends Error {}
+export declare const MIN_SWEEP_MINUTES: number;
+export declare function filesBucket(
+  r2Buckets: { binding?: unknown; bucket_name?: unknown }[] | undefined,
+  explicit: string | null | undefined,
+): string;
+export declare function parseResultSets(stdout: string): Record<string, unknown>[][] | null;
 export declare function validateEmail(raw: unknown): string;
 export declare function validateLimit(raw: unknown): number | null;
 export declare function setLimitSql(email: string, limit: number | null): string;
@@ -21,12 +28,12 @@ export declare function parseArgs(argv: string[]):
       subject: string;
       target: "local" | "remote";
       dryRun: boolean;
-      bucket: string;
+      bucket: string | null;
       env: string | null;
       config: string | null;
       keysArgs: string[];
       eraseArgs: string[];
-      deleteObjectArgs(key: string): string[];
+      deleteObjectArgs(bucket: string, key: string): string[];
     }
   | {
       help: false;
@@ -34,7 +41,7 @@ export declare function parseArgs(argv: string[]):
       target: "local" | "remote";
       dryRun: boolean;
       artifact: string | null;
-      bucket: string;
+      bucket: string | null;
       env: string | null;
       config: string | null;
       minAgeMs: number;
@@ -71,8 +78,13 @@ export declare function orphanPrefixes(
 ): { prefix: string; keys: string[]; newest: number }[];
 export declare function sweepOrphans(
   bucket: BucketLike,
-  rows: { prefix?: unknown }[],
-  opts: { root: string; now: number; minAgeMs: number; dryRun: boolean },
+  opts: {
+    root: string;
+    now: number;
+    minAgeMs: number;
+    dryRun: boolean;
+    loadRows: () => Promise<{ prefix?: unknown }[]>;
+  },
 ): Promise<{ prefix: string; files: number }[]>;
 export declare function deleteRoots(bucket: BucketLike, roots: string[]): Promise<number>;
 export declare function changesFromOutput(stdout: string): number | null;

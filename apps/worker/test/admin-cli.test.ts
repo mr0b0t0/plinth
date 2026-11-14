@@ -123,7 +123,8 @@ describe("admin CLI: erase-user and erase-artifact", () => {
     if (r.help || r.command !== "erase-user") throw new Error("unexpected parse");
     expect(r).toMatchObject({ subject: "ann@example.com", target: "remote", dryRun: true });
     expect(r.keysArgs).toContain("--config");
-    expect(r.deleteObjectArgs("artifacts/abc/v1/index.html")).toEqual([
+    expect(r.bucket).toBe("plinth-files");
+    expect(r.deleteObjectArgs("plinth-files", "artifacts/abc/v1/index.html")).toEqual([
       "r2",
       "object",
       "delete",

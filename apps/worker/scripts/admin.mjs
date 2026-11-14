@@ -16,7 +16,10 @@
 // without a shell, so nothing typed here can change the statement. Listing R2 (sweep-orphans, and
 // the last step of the erase commands) goes through wrangler's getPlatformProxy, since the
 // wrangler CLI cannot list objects: the local bucket that `wrangler dev` uses, or with --remote the
-// deployed one (wrangler login or CLOUDFLARE_API_TOKEN, as for the other commands).
+// deployed one (wrangler login or CLOUDFLARE_API_TOKEN, as for the other commands). The bucket is
+// always the FILES binding of the wrangler config and environment the database comes from
+// (--config, --env), read with wrangler's own config resolution, so the two cannot belong to
+// different instances.
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -25,10 +28,13 @@ import { fileURLToPath } from "node:url";
 import {
   changesFromOutput,
   deleteRoots,
+  filesBucket,
   keysFromRows,
   parseArgs,
+  parseResultSets,
   resultSets,
   rootsFromRows,
+  SweepRefused,
   sweepOrphans,
   USAGE,
   UsageError,
@@ -61,10 +67,24 @@ function failed(r) {
 }
 
 /**
+ * The name of the bucket the database's own config binds as FILES: the config file --config names
+ * (apps/worker/wrangler.jsonc without it) with the --env section applied, exactly as
+ * `wrangler d1 execute` resolves the database. --bucket, when given, must agree.
+ */
+async function resolveBucket(parsed) {
+  const { unstable_readConfig } = await import("wrangler");
+  const config = unstable_readConfig({
+    config: join(packageDir, parsed.config ?? "wrangler.jsonc"),
+    ...(parsed.env ? { env: parsed.env } : {}),
+  });
+  return filesBucket(config.r2_buckets, parsed.bucket);
+}
+
+/**
  * The R2 bucket as a binding, through a throwaway wrangler config that binds only that bucket:
  * locally the state `wrangler dev` keeps in .wrangler/state, with --remote the deployed bucket.
  */
-async function openBucket(parsed) {
+async function openBucket(parsed, bucketName) {
   const { getPlatformProxy } = await import("wrangler");
   const dir = mkdtempSync(join(tmpdir(), "plinth-admin-"));
   const configPath = join(dir, "wrangler.json");
@@ -76,7 +96,7 @@ async function openBucket(parsed) {
       r2_buckets: [
         {
           binding: "FILES",
-          bucket_name: parsed.bucket,
+          bucket_name: bucketName,
           ...(parsed.target === "remote" ? { remote: true } : {}),
         },
       ],
@@ -101,29 +121,54 @@ async function openBucket(parsed) {
   }
 }
 
-/** sweep-orphans: version prefixes no row names, older than the threshold, are deleted. */
-async function sweep(parsed) {
+/** The version prefixes the database names, or SweepRefused when its answer cannot be read. */
+function loadPrefixRows(parsed) {
   const q = wrangler(parsed.prefixesArgs);
-  const qf = failed(q);
-  if (qf) return qf;
-  const rows = resultSets(q.stdout).flat();
+  if (failed(q)) throw new SweepRefused("The database query failed");
+  const sets = parseResultSets(q.stdout);
+  if (!sets) throw new SweepRefused("The database answer could not be read");
+  return sets.flat();
+}
+
+/**
+ * sweep-orphans: version prefixes no row names, older than the threshold, are deleted. The bucket
+ * is listed before the rows are read (sweepOrphans), and every doubt refuses rather than deletes.
+ */
+async function sweep(parsed) {
+  try {
+    return await sweepOrRefuse(parsed);
+  } catch (e) {
+    if (e instanceof UsageError) {
+      console.error(e.message);
+      return 2;
+    }
+    if (!(e instanceof SweepRefused)) throw e;
+    console.error(`Refusing to sweep (${parsed.target}): ${e.message}. Nothing was deleted.`);
+    return 1;
+  }
+}
+
+async function sweepOrRefuse(parsed) {
+  const bucketName = await resolveBucket(parsed);
   let root = "artifacts/";
   if (parsed.artifact !== null) {
-    const [one] = rootsFromRows(rows);
-    if (one) root = one;
-    else if (/^[a-z0-9]{20}$/.test(parsed.artifact)) root = `artifacts/${parsed.artifact}/`;
-    else {
-      console.error(`No artifact ${parsed.artifact} in the ${parsed.target} database.`);
+    const [one] = rootsFromRows(loadPrefixRows(parsed));
+    if (!one) {
+      console.error(
+        `No artifact ${parsed.artifact} in the ${parsed.target} database. Files of an artifact whose first publish failed go with a sweep without --artifact.`,
+      );
       return 1;
     }
+    root = one;
   }
-  const { bucket, dispose } = await openBucket(parsed);
+  const { bucket, dispose } = await openBucket(parsed, bucketName);
   try {
-    const swept = await sweepOrphans(bucket, rows, {
+    const swept = await sweepOrphans(bucket, {
       root,
       now: Date.now(),
       minAgeMs: parsed.minAgeMs,
       dryRun: parsed.dryRun,
+      loadRows: async () => loadPrefixRows(parsed),
     });
     for (const g of swept)
       console.log(
@@ -131,7 +176,7 @@ async function sweep(parsed) {
       );
     const files = swept.reduce((n, g) => n + g.files, 0);
     console.log(
-      `${parsed.dryRun ? "Dry run: would delete" : "Deleted"} ${swept.length} orphaned prefix(es), ${files} file(s), under ${root} (${parsed.target}).`,
+      `${parsed.dryRun ? "Dry run: would delete" : "Deleted"} ${swept.length} orphaned prefix(es), ${files} file(s), under ${root} in ${bucketName} (${parsed.target}).`,
     );
     return 0;
   } finally {
@@ -148,6 +193,16 @@ async function sweep(parsed) {
 async function erase(parsed) {
   const what =
     parsed.command === "erase-user" ? `user ${parsed.subject}` : `artifact ${parsed.subject}`;
+  let bucketName;
+  try {
+    bucketName = await resolveBucket(parsed);
+  } catch (e) {
+    if (e instanceof UsageError) {
+      console.error(e.message);
+      return 2;
+    }
+    throw e;
+  }
   const q = wrangler(parsed.keysArgs);
   const qf = failed(q);
   if (qf) return qf;
@@ -161,7 +216,7 @@ async function erase(parsed) {
     return 0;
   }
   for (const key of keys) {
-    const r = wrangler(parsed.deleteObjectArgs(key));
+    const r = wrangler(parsed.deleteObjectArgs(bucketName, key));
     const f = failed(r);
     if (f) {
       console.error(
@@ -171,7 +226,7 @@ async function erase(parsed) {
     }
   }
   try {
-    const { bucket, dispose } = await openBucket(parsed);
+    const { bucket, dispose } = await openBucket(parsed, bucketName);
     try {
       const rest = await deleteRoots(bucket, roots);
       if (rest > 0) console.log(`Deleted ${rest} more file(s) no version pointed to.`);
