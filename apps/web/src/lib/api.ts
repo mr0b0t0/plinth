@@ -1,11 +1,14 @@
 // Fetch wrapper for /api/v1: JSON in and out, CSRF header on writes, typed errors.
 import {
+  API,
   API_PREFIX,
   COOKIES,
   CSRF_HEADER,
+  type DataSummary,
   type ErrorBody,
   type ErrorCode,
   HOST_COOKIE_PREFIX,
+  route,
 } from "@plinth/shared";
 
 export class ApiRequestError extends Error {
@@ -85,4 +88,16 @@ export async function api<T>(
     );
   }
   return data as T;
+}
+
+// ---------- shared data (owner view in the share dialog) ----------
+
+/** Totals and declaration of an artifact's shared data (owner and editors). */
+export function getDataSummary(ref: string, signal?: AbortSignal): Promise<DataSummary> {
+  return api<DataSummary>(route(API.data, { ref }), { signal });
+}
+
+/** Delete every shared data document of an artifact (signed-in owner; CSRF header). */
+export function deleteAllData(ref: string): Promise<{ deleted: number }> {
+  return api<{ deleted: number }>(route(API.data, { ref }), { method: "DELETE" });
 }

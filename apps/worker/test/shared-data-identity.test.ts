@@ -506,7 +506,30 @@ describe("ViewGate.data", () => {
       capabilities: ["data", "viewer"],
       identified: true,
       can_write: true,
+      email: owner.user.email,
     });
+  });
+
+  it("names the email that holds the grant, and none without the viewer capability", async () => {
+    const user = await createUser();
+    const listed = uniqueEmail("notice");
+    const { artifact } = await pub("allowlist", { emails: [listed] });
+    const s = await browserSession(user.id);
+    const ok = await confirmByCode(artifact.id, listed, {
+      ...browser(),
+      ...s.headers,
+      "Content-Type": "application/json",
+    });
+    expect(asOk(await json<ViewGate>(ok)).data).toMatchObject({ identified: true, email: listed });
+
+    const owner = await agent();
+    const { body } = await publish(owner.auth, {
+      html: '<!doctype html><meta name="plinth-capabilities" content="data"><p>x</p>',
+    });
+    const os = await browserSession(owner.user.id);
+    const dataOnly = asOk(await gateHttp(body.id, os.headers)).data;
+    expect(dataOnly).toMatchObject({ identified: true, can_write: true });
+    expect(dataOnly && "email" in dataOnly).toBe(false);
   });
 
   it("anonymous link viewer reads but cannot write", async () => {
@@ -530,6 +553,7 @@ describe("ViewGate.data", () => {
       capabilities: ["viewer"],
       identified: true,
       can_write: false,
+      email: owner.user.email,
     });
   });
 

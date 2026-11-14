@@ -225,6 +225,8 @@ export interface ViewGateData {
   /** The page gets an identity claim for this viewer. */
   identified: boolean;
   can_write: boolean;
+  /** The email the page sees: only when identified and the page declares `viewer`. */
+  email?: string;
 }
 
 export interface ViewArtifactStub {

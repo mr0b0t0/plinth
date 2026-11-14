@@ -38,6 +38,7 @@ import {
   Tooltip,
   VISIBILITY_META,
 } from "../ui/index.ts";
+import { DataNotice } from "./DataNotice.tsx";
 import { contentOriginOf, shareLink } from "./gate.ts";
 import { ShareDialog } from "./ShareDialog.tsx";
 import { StageFrame } from "./StageFrame.tsx";
@@ -244,6 +245,7 @@ export function ViewerStage({
               <span className="visually-hidden"> (v{artifact.current_version})</span>
             </p>
           )}
+          <DataNotice data={gate.data} />
           <div className="pl-viewer__room">
             <div className="pl-viewer__frame-wrap">
               <StageFrame

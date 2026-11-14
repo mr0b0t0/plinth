@@ -153,6 +153,8 @@ async function gateData(
     capabilities,
     identified: claim !== null,
     can_write: pageDataAccess(claim, caps, available).write,
+    // The viewer is told which email the page sees (their own, or the one holding the grant).
+    ...(claim && caps?.viewer ? { email: claim.email } : {}),
   };
 }
 
