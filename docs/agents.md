@@ -38,7 +38,7 @@ Two channels carry these rules, so every harness gets them whatever it supports:
 <!-- harnesses:end -->
 
 Connecting (the MCP server and OAuth sign-in) is per harness too: **Connections > Connect an agent**
-in the app and `npx @aconite/plinth connect` show the steps, from the same registry.
+in the app and `npx @mr0b0t0/plinth connect` show the steps, from the same registry.
 
 ## Install
 
@@ -54,7 +54,7 @@ Claude loads it on its own when you ask it to make, publish or share a page.
 
 Your own instance: the plugin's server URL is `${PLINTH_URL:-https://plinth.aconite.io}/mcp`. Set
 `PLINTH_URL` to the instance's origin (`https://plinth.example.com`, or `http://127.0.0.1:8788` for
-`npx @aconite/plinth`) before starting Claude Code.
+`npx @mr0b0t0/plinth`) before starting Claude Code.
 
 ### Codex
 

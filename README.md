@@ -32,8 +32,8 @@ Works with Claude and Codex. Plinth is not made by or affiliated with Anthropic 
   codex plugin marketplace add mr0b0t0/plinth && codex plugin add plinth@plinth   # Codex
   ```
 
-- **On your computer, no domain needed**: `npx @aconite/plinth init --email you@example.com`, then
-  `npx @aconite/plinth start` ([docs/local-hosting.md](docs/local-hosting.md)).
+- **On your computer, no domain needed**: `npx @mr0b0t0/plinth init --email you@example.com`, then
+  `npx @mr0b0t0/plinth start` ([docs/local-hosting.md](docs/local-hosting.md)).
 
 ## Deploy
 
@@ -86,7 +86,7 @@ After hours (dark):
 | --- | --- |
 | [docs/mcp.md](docs/mcp.md) | Connecting Claude, ChatGPT, Claude Code, Codex, Cursor and VS Code; tokens for scripts; every MCP tool; the mention workflow |
 | [docs/self-hosting.md](docs/self-hosting.md) | Running your own instance; every setting; single-user mode |
-| [docs/local-hosting.md](docs/local-hosting.md) | Running an instance on your own machine: localhost only with `npx @aconite/plinth`, or behind a Cloudflare Tunnel; data stays on your disk |
+| [docs/local-hosting.md](docs/local-hosting.md) | Running an instance on your own machine: localhost only with `npx @mr0b0t0/plinth`, or behind a Cloudflare Tunnel; data stays on your disk |
 | [docs/agents.md](docs/agents.md) | The Plinth plugin and skill for Claude Code, Codex and other agents |
 | [docs/distribution.md](docs/distribution.md) | Releasing the npm CLI and the plugin; directory listings |
 | [docs/deploy-checklist.md](docs/deploy-checklist.md) | Cloudflare resources, DNS, secrets, email, go-live steps |
@@ -107,7 +107,7 @@ Turborepo on a pnpm workspace.
 | `apps/worker` | The Cloudflare Worker: app host, content host, `/mcp`, `/api/v1` (Hono) |
 | `apps/web` | React + Vite front end, served as static assets by the Worker |
 | `packages/shared` | Types, zod schemas and constants used by both |
-| `packages/cli` | `@aconite/plinth`, the npm CLI that runs a local instance |
+| `packages/cli` | `@mr0b0t0/plinth`, the npm CLI that runs a local instance |
 | `integrations/plugin` | The agent plugin (Claude Code, Codex): MCP server config and the `plinth-artifacts` skill |
 | `migrations` | D1 SQL migrations |
 | `e2e` | Playwright end-to-end tests |

@@ -1,4 +1,4 @@
-# @aconite/plinth
+# @mr0b0t0/plinth
 
 Run [Plinth](https://github.com/mr0b0t0/plinth) on your own computer. Plinth is a home for the HTML
 artifacts AI agents make (reports, dashboards, prototypes): agents publish over MCP, every change
@@ -9,15 +9,15 @@ Needs Node 22.12+ on macOS or Linux.
 ## Localhost only (no domain, no account)
 
 ```sh
-npx @aconite/plinth init --email you@example.com
-npx @aconite/plinth start
+npx @mr0b0t0/plinth init --email you@example.com
+npx @mr0b0t0/plinth start
 ```
 
 Open `http://127.0.0.1:8788` and sign in with the code printed in the terminal. Then connect
 your agents:
 
 ```sh
-npx @aconite/plinth connect
+npx @mr0b0t0/plinth connect
 ```
 
 It prints the commands for Claude Code, Codex, Cursor and VS Code. They sign in with OAuth: a
@@ -32,9 +32,9 @@ With two domains on Cloudflare and `cloudflared` installed:
 ```sh
 export CLOUDFLARE_API_TOKEN=...   # setup only: Tunnel Edit, DNS Edit, Zone Read
 export RESEND_API_KEY=...         # or SENDGRID_API_KEY
-npx @aconite/plinth init --tunnel --app-host plinth.example.com \
+npx @mr0b0t0/plinth init --tunnel --app-host plinth.example.com \
   --content-host example-content.net --email-provider resend
-npx @aconite/plinth start
+npx @mr0b0t0/plinth start
 ```
 
 The full guide, including running at login, backups and the security model:

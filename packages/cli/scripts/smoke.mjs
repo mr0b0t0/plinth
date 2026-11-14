@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 // Smoke test for the published CLI: `pnpm pack` the package, install the tarball into a throwaway
-// prefix with npm (as `npx @aconite/plinth` would), then init and start a localhost-only instance
+// prefix with npm (as `npx @mr0b0t0/plinth` would), then init and start a localhost-only instance
 // and use it the way an agent does: OAuth (dynamic registration, PKCE, consent), then MCP. Needs `pnpm build` first. Exit code 0 when every check passes.
 //
-//   pnpm --filter @aconite/plinth test:smoke
+//   pnpm --filter @mr0b0t0/plinth test:smoke
 import { spawn, spawnSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import { existsSync, mkdtempSync, readdirSync, rmSync } from "node:fs";

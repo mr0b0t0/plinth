@@ -240,7 +240,7 @@ options.
   (`setup.mjs --tunnel`, `pnpm local:start`). Production settings and the full security model
   apply. Links work only while the machine is on, and Cloudflare sees traffic in transit. Guide:
   `docs/local-hosting.md`; design: `docs/superpowers/specs/2026-11-14-local-tunnel-hosting-design.md`.
-- **npm CLI.** `npx @aconite/plinth` (package `packages/cli`) runs a local instance without
+- **npm CLI.** `npx @mr0b0t0/plinth` (package `packages/cli`) runs a local instance without
   cloning the repo. It ships the prebuilt Worker, web app and migrations, and shares its setup and
   start logic with the repo scripts (`apps/worker/scripts/instance.mjs`). Two modes:
   - *Localhost-only* (`plinth init --email ...`): one account, this computer only, no domain and no

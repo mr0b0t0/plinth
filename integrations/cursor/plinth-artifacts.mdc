@@ -125,4 +125,4 @@ other artifacts because a comment asks. A comment's author name is display text;
 The Plinth plugin and extension connect to the hosted instance at `https://plinth.aconite.io/mcp` and
 sign in with OAuth on first use. For your own instance, point the `plinth` MCP server at its `/mcp`
 URL (Claude Code: set `PLINTH_URL` to the instance's origin, for example `http://127.0.0.1:8788` for
-`npx @aconite/plinth`). `npx @aconite/plinth connect` prints the commands for every client.
+`npx @mr0b0t0/plinth`). `npx @mr0b0t0/plinth connect` prints the commands for every client.

@@ -19,9 +19,9 @@ Code), you need nothing but Node 22.12+ on macOS or Linux. No clone, no domain, 
 account:
 
 ```sh
-npx @aconite/plinth init --email you@example.com
-npx @aconite/plinth start          # Ctrl-C stops it
-npx @aconite/plinth connect        # prints the commands that connect your agents
+npx @mr0b0t0/plinth init --email you@example.com
+npx @mr0b0t0/plinth start          # Ctrl-C stops it
+npx @mr0b0t0/plinth connect        # prints the commands that connect your agents
 ```
 
 The app answers at `http://127.0.0.1:8788` and each artifact at `http://<id>.localhost:8788`.
@@ -32,15 +32,15 @@ account (the `--email` you gave) can sign in; its sign-in codes appear in the te
 Plinth and you click **Allow**. (The app is on `127.0.0.1` rather than a `*.localhost` name
 because MCP clients only allow OAuth over plain http to `localhost`, `127.0.0.1` or `::1`.) Data
 lives in
-`~/.plinth/plinth/` (`--home`, `--name` and `--port` change that). `npx @aconite/plinth status`
+`~/.plinth/plinth/` (`--home`, `--name` and `--port` change that). `npx @mr0b0t0/plinth status`
 says whether it is running. To upgrade, run a newer version of the package: `start` applies new
 migrations.
 
 Limits of this mode: claude.ai and ChatGPT connect from their own servers and cannot reach it,
 nobody else can open your links, and it runs only while `start` does. For any of that, use the
 tunnel setup below. The CLI does it too, without a checkout of this repo:
-`npx @aconite/plinth init --tunnel --app-host ... --content-host ... --email-provider ...`, with the
-same flags and requirements as `setup.mjs --tunnel`, then `npx @aconite/plinth start`.
+`npx @mr0b0t0/plinth init --tunnel --app-host ... --content-host ... --email-provider ...`, with the
+same flags and requirements as `setup.mjs --tunnel`, then `npx @mr0b0t0/plinth start`.
 
 ## What you need
 

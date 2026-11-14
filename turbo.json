@@ -27,7 +27,7 @@
       "cache": false,
       "persistent": true
     },
-    "@aconite/plinth#build": {
+    "@mr0b0t0/plinth#build": {
       "dependsOn": ["^build"],
       "outputs": ["runtime/**"]
     }

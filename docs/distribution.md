@@ -4,7 +4,7 @@ How Plinth reaches people besides the hosted instance: the npm CLI, the agent pl
 directory listings. User-facing guides: [local-hosting.md](local-hosting.md) and
 [agents.md](agents.md).
 
-## npm: `@aconite/plinth`
+## npm: `@mr0b0t0/plinth`
 
 `packages/cli` is the package. `pnpm build` assembles `packages/cli/runtime/` (git-ignored): the
 Worker bundle from `apps/worker/dist`, the web app, the migrations, and the instance scripts from
@@ -15,10 +15,12 @@ Release:
 
 1. Bump `version` in `packages/cli/package.json`.
 2. `pnpm install && pnpm build`
-3. `pnpm --filter @aconite/plinth test:smoke` (packs the package, installs the tarball with npm into
+3. `pnpm --filter @mr0b0t0/plinth test:smoke` (packs the package, installs the tarball with npm into
    a temporary prefix, and runs a localhost-only instance end to end).
-4. `cd packages/cli && pnpm publish --access public`. Needs an npm account that owns the `aconite`
-   scope (create the `aconite` organization on npmjs.com once) and two-factor authentication.
+4. `cd packages/cli && pnpm publish --access public --no-git-checks`. Publishes under the personal
+   npm account `mr0b0t0` (the scope is the account name); `--access public` because scoped packages
+   are private by default. npm cannot rename a package: moving it to an organization later means
+   publishing under the new name and deprecating this one.
 
 Keep the pinned `wrangler` version in `packages/cli/package.json` equal to the one in
 `apps/worker/package.json`.

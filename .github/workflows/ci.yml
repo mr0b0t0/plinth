@@ -39,7 +39,7 @@ jobs:
         run: pnpm test:local
 
       - name: npm CLI smoke test (packed tarball, localhost-only instance)
-        run: pnpm --filter @aconite/plinth test:smoke
+        run: pnpm --filter @mr0b0t0/plinth test:smoke
 
       - name: No secrets in the client bundle
         run: node scripts/check-bundle-secrets.mjs
