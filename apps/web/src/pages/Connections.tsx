@@ -14,7 +14,8 @@ import { NewTokenDialog } from "../components/account/NewTokenDialog.tsx";
 import { useConnectionPoll } from "../components/account/useConnectionPoll.ts";
 import { AppShell } from "../components/layout/AppShell.tsx";
 import { focusElement } from "../components/ui/focus.ts";
-import { Button, EmptyState, PageHeader, Skeleton } from "../components/ui/index.ts";
+import { Button, EmptyState, Skeleton } from "../components/ui/index.ts";
+import { publishAgents } from "../lib/agents.ts";
 import { ApiRequestError, api } from "../lib/api.ts";
 import { useLocation } from "../lib/router.tsx";
 import { useSession } from "../lib/session.ts";
@@ -27,7 +28,7 @@ type State =
 export default function Connections() {
   useDocumentTitle("Connections");
   const { pending, redirect } = useSignInRedirect();
-  const { config } = useSession();
+  const { config, me } = useSession();
   const signOut = useSignOut();
   const [state, setState] = useState<State>({ status: "loading" });
   const [creating, setCreating] = useState(false);
@@ -64,6 +65,10 @@ export default function Connections() {
   }, [pending, reload]);
 
   const ready = state.status === "ready";
+  // Keep the sidebar's agent list in step with this page.
+  useEffect(() => {
+    if (me && state.status === "ready") publishAgents(me.id, state.items);
+  }, [me, state]);
   useEffect(() => {
     if (panelOpen !== null || state.status !== "ready") return;
     setPanelOpen(!state.items.some((c) => !c.revoked_at));
@@ -116,16 +121,19 @@ export default function Connections() {
   };
 
   return (
-    <AppShell onSignOut={signOut}>
-      <PageHeader
-        title="Connections"
-        description="Agents that can publish and answer comments as you. Each one has its own access and can be revoked on its own."
-        actions={
-          <Button variant="primary" icon={PlugIcon} onClick={openPanel}>
-            Connect an agent
-          </Button>
-        }
-      />
+    <AppShell
+      onSignOut={signOut}
+      title="Connections"
+      actions={
+        <Button variant="primary" icon={PlugIcon} onClick={openPanel}>
+          Connect an agent
+        </Button>
+      }
+    >
+      <p className="pl-acct-lead">
+        Agents that can publish and answer comments as you. Each one has its own access and can be
+        revoked on its own.
+      </p>
 
       <div className="pl-acct-stack">
         {panelOpen && (
@@ -155,8 +163,8 @@ export default function Connections() {
                 {[0, 1].map((i) => (
                   <li key={i} className="pl-acct-conn" aria-hidden="true">
                     <div className="pl-acct-conn__main">
-                      <Skeleton width="12rem" height="1.25rem" />
-                      <Skeleton width="18rem" height="0.875rem" />
+                      <Skeleton width="10rem" height="0.75rem" />
+                      <Skeleton width="16rem" height="0.625rem" />
                     </div>
                   </li>
                 ))}

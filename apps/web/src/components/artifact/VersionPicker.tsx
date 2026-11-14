@@ -239,11 +239,11 @@ export function VersionPicker({
         onKeyDown={onTriggerKey}
       >
         <span className="pl-button__content">
-          <span className="type-mono hx-picker__shown">v{shown}</span>
+          <span className="type-num hx-picker__shown">v{shown}</span>
           {shown !== current && <span className="hx-picker__of"> of {current}</span>}
           {/* The accessible name starts with the visible text (WCAG 2.5.3), then explains. */}
           <span className="visually-hidden">{triggerHint}</span>
-          <CaretDownIcon size={ICON_SIZE.sm} aria-hidden="true" />
+          <CaretDownIcon size={ICON_SIZE.xs} aria-hidden="true" />
         </span>
       </button>
       {open && (
@@ -295,7 +295,7 @@ export function VersionPicker({
                   </span>
                   <span className="hx-picker__body">
                     <span className="hx-picker__line">
-                      <span className="type-mono hx-picker__n">v{v.number}</span>
+                      <span className="type-num hx-picker__n">v{v.number}</span>
                       {v.number === current && <span className="hx-picker__current">current</span>}
                       <span className="hx-picker__date" title={fullTimestamp(v.created_at)}>
                         <span className="visually-hidden">, </span>

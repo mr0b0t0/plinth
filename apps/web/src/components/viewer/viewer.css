@@ -1,5 +1,5 @@
 /*
- * The artifact page and its gates. The exhibit is the point: the chrome is one slim bar above it
+ * The artifact page and its gates. The exhibit is the point: the chrome is one 44px bar above it
  * and one line of small print below it. Tokens only.
  */
 
@@ -13,68 +13,101 @@
 
 .pl-viewer__bar {
   display: flex;
+  flex-shrink: 0;
   align-items: center;
-  gap: var(--space-3);
-  min-height: var(--control-lg);
-  padding: var(--space-1) var(--space-4);
+  gap: var(--space-2);
+  height: var(--topbar-height);
+  padding: 0 var(--space-3) 0 var(--page-pad);
   border-bottom: var(--border-width) solid var(--color-border);
   background: var(--color-wall);
 }
+.pl-viewer__crumbs {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1-5);
+  min-width: 0;
+  font-weight: var(--weight-medium);
+}
+.pl-viewer__crumb {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: var(--space-2);
+  border-radius: var(--radius-sm);
+  color: var(--color-ink-muted);
+  text-decoration: none;
+}
+.pl-viewer__crumb:hover {
+  color: var(--color-ink);
+}
+.pl-viewer__sep {
+  flex-shrink: 0;
+  color: var(--color-ink-ghost);
+}
 .pl-viewer__home {
   display: inline-flex;
+  flex-shrink: 0;
   align-items: center;
   justify-content: center;
   width: var(--control-md);
   height: var(--control-md);
-  margin-left: calc(var(--space-2) * -1);
-  border-radius: var(--radius-sm);
-  flex-shrink: 0;
+  margin-left: calc(var(--space-1-5) * -1);
+  border-radius: var(--radius-md);
 }
-.pl-viewer__heading {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  flex: 1 1 auto;
-  min-width: 0;
+.pl-viewer__home:hover {
+  background: var(--color-hover);
 }
 .pl-viewer__title {
   min-width: 0;
   overflow: hidden;
-  font-family: var(--font-display);
-  font-size: var(--text-xl);
-  line-height: var(--leading-snug);
+  font-size: var(--text-md);
+  font-weight: var(--weight-medium);
+  line-height: var(--line-ui);
+  letter-spacing: var(--tracking-ui);
   white-space: nowrap;
   text-overflow: ellipsis;
   text-wrap: nowrap;
 }
-.pl-viewer__version,
-.pl-viewer__badge {
+.pl-viewer__version {
   display: inline-flex;
   flex-shrink: 0;
+  margin-left: var(--space-1);
+}
+/* The version picker as a small outlined pill. */
+.pl-viewer__version .hx-picker__trigger {
+  min-height: var(--control-xs);
+  padding: 0 var(--space-1) 0 var(--space-1-5);
+  border-color: var(--color-border-strong);
+  border-radius: var(--radius-sm);
   color: var(--color-ink-muted);
   font-size: var(--text-sm);
 }
-.pl-viewer__actions {
-  display: flex;
+.pl-viewer__access {
+  display: inline-flex;
+  flex-shrink: 0;
   align-items: center;
   gap: var(--space-1);
+  height: var(--control-xs);
+  padding: 0 var(--space-1-5);
+  color: var(--color-ink-muted);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  white-space: nowrap;
+}
+.pl-viewer__actions {
+  display: flex;
   flex-shrink: 0;
+  align-items: center;
+  gap: var(--space-1-5);
+  margin-left: auto;
 }
-.pl-viewer__actions > .pl-button--secondary {
-  margin-right: var(--space-1);
-}
-.pl-viewer__actions [aria-pressed="true"] {
-  background: var(--color-accent-soft);
-  color: var(--color-ink);
-}
-.pl-viewer__compact {
-  display: none;
-  flex-shrink: 0;
+.pl-viewer__count {
+  font-variant-numeric: tabular-nums;
 }
 
 /* A quiet line when an older version is on view. */
 .pl-viewer__notice {
-  padding: var(--space-2) var(--space-4);
+  padding: var(--space-1-5) var(--page-pad);
   border-bottom: var(--border-width) solid var(--color-border);
   background: var(--color-surface);
   color: var(--color-ink-muted);
@@ -122,7 +155,7 @@
 .pl-viewer__panel {
   display: flex;
   flex-direction: column;
-  width: min(var(--narrow-max), 40vw);
+  width: var(--panel-width);
   flex-shrink: 0;
   overflow: auto;
   border-left: var(--border-width) solid var(--color-border);
@@ -132,14 +165,16 @@
 /* The small print: the platform's name and the report link, on every artifact page. */
 .pl-viewer__banner {
   display: flex;
+  flex-shrink: 0;
   align-items: center;
   gap: var(--space-2);
-  padding: var(--space-1) var(--space-4);
+  height: var(--space-6);
+  padding: 0 var(--page-pad);
   border-top: var(--border-width) solid var(--color-border);
   background: var(--color-wall);
   color: var(--color-ink-muted);
   font-size: var(--text-xs);
-  line-height: var(--leading-snug);
+  line-height: 1rem;
   white-space: nowrap;
 }
 .pl-viewer__banner a {
@@ -154,29 +189,17 @@
 }
 
 @media (max-width: 52rem) {
-  .pl-viewer__actions {
-    display: none;
-  }
-  .pl-viewer__compact {
-    display: flex;
-  }
   .pl-viewer__bar {
-    padding-inline: var(--space-3);
-    gap: var(--space-2);
+    gap: var(--space-1-5);
+    padding-inline: var(--space-4) var(--space-2);
   }
-  .pl-viewer__heading {
-    gap: var(--space-2);
-  }
-  .pl-viewer__title {
-    font-size: var(--text-lg);
-  }
-  .pl-viewer__badge,
+  .pl-viewer__access,
   .pl-viewer__banner-wide {
     display: none;
   }
   .pl-viewer__notice,
   .pl-viewer__banner {
-    padding-inline: var(--space-3);
+    padding-inline: var(--space-4);
   }
   /* Comments become a sheet over the bottom of the artifact. */
   .pl-viewer__panel {
@@ -185,7 +208,7 @@
     z-index: var(--z-overlay);
     width: auto;
     height: 75dvh;
-    max-height: calc(100dvh - var(--control-lg));
+    max-height: calc(100dvh - var(--topbar-height));
     border-left: 0;
     border-top: var(--border-width) solid var(--color-border-strong);
     border-radius: var(--radius-lg) var(--radius-lg) 0 0;
@@ -263,4 +286,44 @@
   gap: var(--space-4);
   text-align: center;
   color: var(--color-ink-muted);
+}
+
+/* Comments toggle: the open-thread count is drawn inside the button's box. */
+.pl-viewer__comments-wrap {
+  position: relative;
+  display: inline-flex;
+}
+.pl-viewer__comments--counted {
+  width: auto;
+  padding-inline: var(--space-2) calc(var(--space-2) + 1ch + var(--space-1-5));
+}
+.pl-viewer__count {
+  position: absolute;
+  top: 50%;
+  right: var(--space-2);
+  color: var(--color-ink-muted);
+  font-weight: var(--weight-medium);
+  font-variant-numeric: tabular-nums;
+  line-height: var(--line-ui);
+  pointer-events: none;
+  transform: translateY(-50%);
+}
+.pl-viewer__comments[aria-pressed="true"] + .pl-viewer__count,
+.pl-viewer__comments:hover + .pl-viewer__count {
+  color: var(--color-ink);
+}
+@media (max-width: 52rem) {
+  .pl-viewer__crumb-label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+}
+.pl-viewer__comments:not(.pl-viewer__comments--counted) {
+  width: var(--control-md);
+  padding: 0;
 }

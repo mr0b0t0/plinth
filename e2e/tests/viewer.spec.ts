@@ -223,10 +223,13 @@ test.describe("artifact page", () => {
       await page.getByRole("menuitem", { name: "Share" }).click();
     } else {
       await expect(page.getByText("Visibility:")).toHaveCount(1);
-      await expect(page.getByRole("link", { name: "Edit" })).toHaveAttribute(
+      // Edit sits in the ⋯ menu at every width; Share stays in the bar on wide screens.
+      await page.getByRole("button", { name: "Artifact actions" }).click();
+      await expect(page.getByRole("menuitem", { name: "Edit" })).toHaveAttribute(
         "href",
         `/a/${a.slug}/edit`,
       );
+      await page.keyboard.press("Escape");
       await page.getByRole("button", { name: "Share" }).click();
     }
     const dialog = page.getByRole("dialog", { name: "Share this artifact" });

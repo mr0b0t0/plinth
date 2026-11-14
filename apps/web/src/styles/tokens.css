@@ -5,52 +5,61 @@
  * Two first-class modes, switched by [data-theme] on <html> (set before first paint by
  * public/theme.js). The selectors also work on any element, so a subtree can render in the
  * other mode (the /design page uses that for its side-by-side panels):
- *   "Gallery"     [data-theme="light"]  cool off-white walls, stone greys, near-black ink
- *   "After hours" [data-theme="dark"]   deep charcoal, soft grey text, the accent lifted
+ *   "Gallery"     [data-theme="light"]  warm paper walls, stone greys, near-black ink
+ *   "After hours" [data-theme="dark"]   deep charcoal, soft grey text, the bronze lifted
  *
- * One accent only: verdigris (the green-blue patina on old bronze), for primary actions, focus
- * rings and active states. Semantic colors (success, warning, danger) carry status only.
+ * Working density: one 13/20 type size does most of the work, controls are 28px, rows 32-36px,
+ * top bars 44px, everything on a 4px grid. Icons are 16px and sit on the 20px text line.
  *
- * Contrast (WCAG 2.2, sRGB relative luminance). The ratios in the comments below are computed for
- * the main background pairs; src/styles/contrast.test.ts parses this file and asserts every pair
- * listed in src/styles/contrast.ts (4.5:1 for text, 3:1 for focus rings, control borders and
- * active indicators). The /design page computes the same ratios live.
+ * Color: primary actions are ink (inverted text). Bronze, the one accent, is kept for mentions,
+ * the focus ring, live state and the base of the logo. Semantic colors carry status only.
+ *
+ * Contrast (WCAG 2.2, sRGB relative luminance). src/styles/contrast.test.ts parses this file and
+ * asserts every pair listed in src/styles/contrast.ts (4.5:1 for text, 3:1 for focus rings,
+ * input borders and active marks); translucent fills (hover, selected) are composited over the
+ * surface they sit on first. The /design page computes the same ratios live.
+ * --color-ink-ghost is the one color below 4.5:1: decoration only (separators, glyph art),
+ * never words or numbers a reader needs.
  */
 :root {
   /* Type families: self-hosted from the app's own assets (src/styles/fonts.css) */
-  --font-display: "Instrument Serif", ui-serif, Georgia, serif;
   --font-ui: "Geist Variable", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-mono: "JetBrains Mono Variable", ui-monospace, "SFMono-Regular", Menlo, monospace;
 
   /*
-   * Type scale. Interface text steps by about 1.13 from a 15px body; display sizes (serif only)
-   * step by about 1.3 so headings read as a separate voice, as on a gallery wall.
+   * Type scale. 13px is the interface; 12-12.5px for meta; 15px semibold for the rare section
+   * heading. The larger steps are for the landing page and empty states only.
    */
-  --text-2xs: 0.6875rem; /* 11: tiny meta, keyboard hints */
-  --text-xs: 0.75rem; /* 12: captions, badges */
-  --text-sm: 0.8125rem; /* 13: secondary UI text, small buttons */
-  --text-md: 0.9375rem; /* 15: body and controls */
-  --text-lg: 1.0625rem; /* 17: lead paragraphs, card titles in UI face */
-  --text-xl: 1.3125rem; /* 21: serif h3, wordmark */
-  --text-2xl: 1.75rem; /* 28: serif h2 */
-  --text-3xl: 2.25rem; /* 36: serif h1, page titles */
-  --text-4xl: 3rem; /* 48: serif display on wide screens */
-  --text-5xl: 4rem; /* 64: serif display, hero only */
-  --leading-tight: 1.1;
+  --text-2xs: 0.6875rem; /* 11: keyboard hints, tiny avatars */
+  --text-xs: 0.75rem; /* 12: meta, column headers, captions */
+  --text-sm: 0.78125rem; /* 12.5: secondary UI text, pills */
+  --text-md: 0.8125rem; /* 13: body and controls */
+  --text-lg: 0.875rem; /* 14: lead paragraphs */
+  --text-xl: 0.9375rem; /* 15: section headings, dialog titles */
+  --text-2xl: 1.125rem; /* 18: empty-state titles */
+  --text-3xl: 1.5rem; /* 24: sign-in and gate titles */
+  --text-4xl: 2rem; /* 32: landing headline on phones */
+  --text-5xl: 2.75rem; /* 44: landing headline */
+  --line-ui: 1.25rem; /* 20: the text line every icon and control centers on */
+  --leading-tight: 1.15;
   --leading-snug: 1.35;
-  --leading-normal: 1.55;
-  --leading-relaxed: 1.7;
+  --leading-normal: 1.54; /* 20 on 13 */
+  --leading-relaxed: 1.65;
   --weight-regular: 400;
   --weight-medium: 500;
   --weight-semibold: 600;
+  --tracking-ui: -0.005em;
   --tracking-tight: -0.015em;
+  --tracking-display: -0.025em;
   --tracking-normal: 0;
   --tracking-wide: 0.04em;
 
   /* Spacing (4px grid) */
   --space-0: 0;
   --space-px: 1px;
+  --space-0-5: 0.125rem; /* 2 */
   --space-1: 0.25rem; /* 4 */
+  --space-1-5: 0.375rem; /* 6 */
   --space-2: 0.5rem; /* 8 */
   --space-3: 0.75rem; /* 12 */
   --space-4: 1rem; /* 16 */
@@ -62,45 +71,54 @@
   --space-16: 4rem; /* 64 */
   --space-24: 6rem; /* 96 */
 
-  /* Radii: restrained. Controls are slightly rounded; exhibits keep crisp corners. */
-  --radius-xs: 2px;
+  /* Radii: 4 for small marks and pills, 6 for controls and rows, 8 for cards and panels. */
+  --radius-xs: 3px;
   --radius-sm: 4px;
   --radius-md: 6px;
-  --radius-lg: 10px;
+  --radius-lg: 8px;
   --radius-full: 999px;
 
   /* Borders */
   --border-width: 1px;
   --border-width-strong: 2px;
 
-  /* Icons: Phosphor, regular weight everywhere, sized on a 4px grid */
+  /* Icons: Phosphor, regular weight (a 1px stroke at 16px), sized on a 4px grid */
+  --icon-xs: 14px;
   --icon-sm: 16px;
   --icon-md: 20px;
   --icon-lg: 24px;
   --icon-xl: 32px;
 
-  /* Controls (heights on the 4px grid; md keeps a 36px target, lg 44px for touch-first spots) */
-  --control-sm: 1.75rem; /* 28 */
-  --control-md: 2.25rem; /* 36 */
-  --control-lg: 2.75rem; /* 44 */
+  /* Controls and rows */
+  --control-xs: 1.375rem; /* 22: pills */
+  --control-sm: 1.5rem; /* 24: compact icon buttons inside rows */
+  --control-md: 1.75rem; /* 28: buttons, inputs, menu items */
+  --control-lg: 2.25rem; /* 36: the few large calls to action */
+  --row-sm: 1.75rem; /* 28: sidebar items */
+  --row-md: 2rem; /* 32: sidebar header, account row, menus */
+  --row-lg: 2.25rem; /* 36: list rows */
 
   /* Layout */
-  --content-max: 72rem;
+  --content-max: 68rem;
   --reading-max: 40rem;
-  --narrow-max: 28rem;
-  --topbar-height: 3.5rem;
+  --narrow-max: 24rem;
+  --topbar-height: 2.75rem; /* 44 */
+  --sidebar-width: 14rem; /* 224 */
+  --panel-width: 18.75rem; /* 300: comments */
   --gutter: var(--space-4);
+  --page-pad: var(--space-5); /* 20: left edge of top bars and content */
   --focus-ring-width: 2px;
   --focus-ring-offset: 2px;
 
   /* Motion: subtle and short; reduced to none when the user asks */
-  --duration-fast: 120ms;
-  --duration-normal: 180ms;
-  --duration-slow: 260ms;
+  --duration-fast: 100ms;
+  --duration-normal: 160ms;
+  --duration-slow: 220ms;
   --ease-out: cubic-bezier(0.2, 0.7, 0.2, 1);
   --ease-in-out: cubic-bezier(0.45, 0, 0.25, 1);
 
   --z-sticky: 10;
+  --z-sidebar: 30;
   --z-overlay: 40;
   --z-dialog: 50;
   --z-menu: 55;
@@ -110,91 +128,107 @@
 
 @media (min-width: 40rem) {
   :root {
-    --gutter: var(--space-8);
+    --gutter: var(--space-5);
   }
 }
 
-/* Gallery (light): cool off-white walls, stone greys, near-black ink. */
+/* Gallery (light): warm paper walls, stone greys, near-black ink. */
 :root,
 [data-theme="light"] {
   color-scheme: light;
-  --color-wall: #eff1f1; /* page background */
-  --color-surface: #f7f8f8; /* panels, inputs */
+  --color-wall: #f7f6f3; /* page background */
+  --color-surface: #ffffff; /* panels, inputs */
   --color-surface-raised: #ffffff; /* cards, menus, dialogs */
-  --color-surface-sunk: #e4e8e8; /* wells, code, hover on ghost controls */
-  --color-plinth: #d9dfe0; /* the base an exhibit sits on */
-  --color-border: #d3d9da; /* decorative separators */
-  --color-border-strong: #b3bcbe; /* card and button outlines */
-  --color-border-control: #7f8a8d; /* input outlines: 3.13 on wall, 3.55 on raised */
-  --color-ink: #1a2023; /* 14.53 on wall, 16.47 on raised, 13.34 on sunk */
-  --color-ink-muted: #475255; /* 7.11 on wall, 6.53 on sunk */
-  --color-ink-faint: #5b6669; /* 5.22 on wall, 4.79 on sunk */
-  --color-ink-inverse: #f1f3f3; /* text on ink (tooltips): 14.79 */
+  --color-surface-sunk: #f1f0ec; /* wells, code, thumbnails */
+  --color-sidebar: #f1f0ec; /* the sidebar */
+  --color-plinth: #ebe9e4; /* the base an exhibit sits on */
+  --color-hover: rgb(28 24 18 / 0.045); /* row and ghost-control hover */
+  --color-selected: rgb(28 24 18 / 0.07); /* current nav item, pressed toggles */
+  --color-border: rgb(28 24 18 / 0.08); /* hairlines */
+  --color-border-strong: rgb(28 24 18 / 0.14); /* button and card outlines */
+  --color-border-control: #8a867f; /* input outlines: 3.35 on wall, 3.62 on raised */
+  --color-ink: #1b1a17; /* 16.10 on wall */
+  --color-ink-muted: #66635d; /* 5.54 on wall, 5.25 on sidebar, 4.79 on sidebar hover */
+  --color-ink-faint: #6d6a63; /* 4.99 on wall, 4.73 on sidebar, 4.57 on row hover */
+  --color-ink-ghost: #a29e96; /* decoration only: separators, glyph art */
+  --color-ink-inverse: #fbfaf8; /* text on ink (primary buttons, tooltips): 16.68 */
 
-  --color-accent: #1d6c60; /* verdigris; white on it 6.24, on wall 5.50 */
-  --color-accent-hover: #175a50; /* white on it 8.03 */
-  --color-accent-active: #124a42; /* white on it 10.08 */
-  --color-accent-soft: #d5eae4; /* selected rows, selection; ink on it 13.11 */
-  --color-accent-ink: #18625a; /* accent as text: 6.31 on wall, 5.70 on accent-soft */
+  --color-primary: #1b1a17; /* primary buttons are ink */
+  --color-primary-hover: #34322d;
+  --color-on-primary: #fbfaf8; /* 16.68 on primary, 12.27 on hover */
+
+  --color-accent: #8f5a2a; /* bronze: focus, mentions, live state, logo base. 5.30 on wall */
+  --color-accent-hover: #7a4c22;
+  --color-accent-active: #683f1b;
+  --color-accent-soft: #f0e8e0; /* mention and selection fill; ink on it 14.36 */
+  --color-accent-ink: #855225; /* bronze as text: 6.01 on wall, 5.36 on accent-soft */
   --color-on-accent: #ffffff;
 
-  --color-success: #3a6a1d; /* 6.06 on surface, 5.30 on success-soft */
-  --color-success-soft: #e1edd6;
-  --color-warning: #865100; /* 6.19 on surface, 5.35 on warning-soft */
-  --color-warning-soft: #f6e6c8;
-  --color-danger: #b02a22; /* 6.17 on surface, 5.18 on danger-soft, white on it 6.56 */
-  --color-danger-hover: #93211b;
-  --color-danger-soft: #f8dfdb;
+  --color-success: #356f47; /* 5.97 on surface, 5.12 on success-soft */
+  --color-success-soft: #e6f0e8;
+  --color-warning: #8a5800; /* 6.04 on surface, 5.15 on warning-soft */
+  --color-warning-soft: #f6ecd9;
+  --color-danger: #b4352b; /* 6.03 on surface, 4.97 on danger-soft, white on it 6.03 */
+  --color-danger-hover: #96291f;
+  --color-danger-soft: #f9e5e2;
   --color-on-danger: #ffffff;
 
-  --color-overlay: rgb(26 32 35 / 0.44);
-  --color-skeleton: #e4e8e8;
-  --color-skeleton-shine: #eff1f1;
-  --shadow-sm: 0 1px 2px rgb(26 32 35 / 0.06);
-  --shadow-md: 0 1px 2px rgb(26 32 35 / 0.05), 0 6px 20px rgb(26 32 35 / 0.07);
-  --shadow-lg: 0 2px 6px rgb(26 32 35 / 0.06), 0 18px 48px rgb(26 32 35 / 0.16);
-  --color-focus: var(--color-accent); /* 5.50 on wall, 6.24 on raised */
+  --color-overlay: rgb(27 26 23 / 0.32);
+  --color-skeleton: #eeede9;
+  --color-skeleton-shine: #f7f6f3;
+  --shadow-sm: none;
+  --shadow-md: 0 1px 2px rgb(28 24 18 / 0.04), 0 6px 16px -4px rgb(28 24 18 / 0.1);
+  --shadow-lg: 0 2px 6px rgb(28 24 18 / 0.05), 0 16px 40px -8px rgb(28 24 18 / 0.16);
+  --color-focus: var(--color-accent); /* 5.30 on wall, 5.73 on raised */
 }
 
-/* After hours (dark): deep charcoal, soft grey text, the same accent at adjusted lightness. */
+/* After hours (dark): deep charcoal, soft grey text, the bronze lifted. No shadows. */
 [data-theme="dark"] {
   color-scheme: dark;
-  --color-wall: #151819;
-  --color-surface: #1b1f20;
-  --color-surface-raised: #222728;
-  --color-surface-sunk: #101213;
-  --color-plinth: #2b3133;
-  --color-border: #2c3234;
-  --color-border-strong: #3f474a;
-  --color-border-control: #6d777a; /* 3.88 on wall, 3.29 on raised */
-  --color-ink: #e1e5e6; /* 14.07 on wall, 11.92 on raised, 10.41 on plinth */
-  --color-ink-muted: #a8b0b2; /* 8.09 on wall, 6.85 on raised */
-  --color-ink-faint: #8e979a; /* 5.99 on wall, 5.07 on raised */
-  --color-ink-inverse: #151819; /* text on ink (tooltips): 14.07 */
+  --color-wall: #0f1012;
+  --color-surface: #141619;
+  --color-surface-raised: #181a1e;
+  --color-surface-sunk: #0c0d0f;
+  --color-sidebar: #0c0d0f;
+  --color-plinth: #1c1e22;
+  --color-hover: rgb(255 255 255 / 0.04);
+  --color-selected: rgb(255 255 255 / 0.07);
+  --color-border: rgb(255 255 255 / 0.065);
+  --color-border-strong: rgb(255 255 255 / 0.12);
+  --color-border-control: #6c6a64; /* 3.52 on wall, 3.22 on raised */
+  --color-ink: #ecebe7; /* 15.96 on wall, 14.60 on raised */
+  --color-ink-muted: #9a978f; /* 6.52 on wall, 5.97 on raised */
+  --color-ink-faint: #8a877f; /* 5.31 on wall, 4.86 on raised */
+  --color-ink-ghost: #64625d; /* decoration only */
+  --color-ink-inverse: #0f1012; /* text on ink (tooltips): 15.96 */
 
-  --color-accent: #5db5a3; /* verdigris lifted; on-accent on it 7.33, on wall 7.31 */
-  --color-accent-hover: #78c5b5;
-  --color-accent-active: #94d3c6;
-  --color-accent-soft: #1a3430;
-  --color-accent-ink: #6cc0ae; /* 8.32 on wall, 6.20 on accent-soft */
-  --color-on-accent: #0b1a17;
+  --color-primary: #ecebe7;
+  --color-primary-hover: #ffffff;
+  --color-on-primary: #0f1012; /* 15.96 on primary */
 
-  --color-success: #94c46f; /* 8.22 on surface, 7.26 on success-soft */
-  --color-success-soft: #1f2c17;
-  --color-warning: #e0b35c; /* 8.53 on surface, 7.32 on warning-soft */
-  --color-warning-soft: #342913;
-  --color-danger: #f08a80; /* 6.85 on surface, 6.21 on danger-soft */
-  --color-danger-hover: #f5a59d;
-  --color-danger-soft: #3a1f1c;
-  --color-on-danger: #200c0a; /* 7.74 on danger */
+  --color-accent: #d39a62; /* 7.77 on wall */
+  --color-accent-hover: #ddab79;
+  --color-accent-active: #e6bc91;
+  --color-accent-soft: #27211c; /* ink on it 13.33 */
+  --color-accent-ink: #d39a62; /* 7.77 on wall, 6.49 on accent-soft */
+  --color-on-accent: #0f1012;
 
-  --color-overlay: rgb(5 7 8 / 0.62);
-  --color-skeleton: #222728;
-  --color-skeleton-shine: #2b3133;
-  --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.4);
-  --shadow-md: 0 1px 2px rgb(0 0 0 / 0.3), 0 6px 20px rgb(0 0 0 / 0.3);
-  --shadow-lg: 0 2px 6px rgb(0 0 0 / 0.35), 0 18px 48px rgb(0 0 0 / 0.5);
-  --color-focus: var(--color-accent); /* 7.31 on wall, 6.19 on raised */
+  --color-success: #7cc192; /* 8.55 on surface, 7.46 on success-soft */
+  --color-success-soft: #16261b;
+  --color-warning: #d9a74f; /* 8.28 on surface, 7.17 on warning-soft */
+  --color-warning-soft: #2a2214;
+  --color-danger: #ec8b80; /* 7.40 on surface, 6.76 on danger-soft */
+  --color-danger-hover: #f2a79e;
+  --color-danger-soft: #2c1a18;
+  --color-on-danger: #1b0b09; /* 7.80 on danger */
+
+  --color-overlay: rgb(0 0 0 / 0.6);
+  --color-skeleton: #1a1c20;
+  --color-skeleton-shine: #22252a;
+  --shadow-sm: none;
+  --shadow-md: none;
+  --shadow-lg: none;
+  --color-focus: var(--color-accent); /* 7.77 on wall, 7.11 on raised */
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -1,6 +1,6 @@
 // Page: /a/:slug/settings. Owner only: title, who can open it (visibility and password), people
 // and their roles, the share link, and deletion.
-import { ArrowLeftIcon, ArrowSquareOutIcon } from "@phosphor-icons/react";
+import { ArrowSquareOutIcon } from "@phosphor-icons/react";
 import { API, APP_ROUTES, type ArtifactSummary, route, type SharingSettings } from "@plinth/shared";
 import { useCallback, useEffect, useState } from "react";
 import "../components/account/account.css";
@@ -17,7 +17,6 @@ import {
   Button,
   ButtonLink,
   EmptyState,
-  PageHeader,
   Skeleton,
   SkeletonText,
   VisibilityBadge,
@@ -90,15 +89,28 @@ export default function Settings({ params }: { params: Record<string, string> })
   if (redirect) return redirect;
 
   const artifactHref = (s: string) => route(APP_ROUTES.artifact, { slug: s });
+  const known = state.status === "ready" ? state.artifact : null;
+  const titled = known !== null;
 
   return (
-    <AppShell onSignOut={signOut}>
+    <AppShell
+      onSignOut={signOut}
+      crumbs={titled ? [{ label: "Artifacts", to: APP_ROUTES.dashboard }] : undefined}
+      title={known ? <Link to={artifactHref(known.slug)}>{known.title}</Link> : undefined}
+      trail="Settings"
+      actions={
+        state.status === "ready" ? (
+          <ButtonLink to={artifactHref(state.artifact.slug)} icon={ArrowSquareOutIcon}>
+            Open
+          </ButtonLink>
+        ) : undefined
+      }
+    >
       {pending || state.status === "loading" ? (
         <div aria-busy="true" className="pl-acct-settings">
           <span className="visually-hidden">Loading settings</span>
           <div className="pl-acct-settings__skeleton">
-            <Skeleton width="8rem" height="0.875rem" />
-            <Skeleton width="min(24rem, 80%)" height="2.25rem" />
+            <Skeleton width="8rem" height="0.75rem" />
           </div>
           <SkeletonText lines={4} />
         </div>
@@ -136,32 +148,13 @@ export default function Settings({ params }: { params: Record<string, string> })
         />
       ) : (
         <div className="pl-acct-settings">
-          <PageHeader
-            before={
-              <Link to={artifactHref(state.artifact.slug)} className="pl-acct-back">
-                <ArrowLeftIcon size={16} aria-hidden="true" />
-                Back to artifact
-              </Link>
-            }
-            title={
-              <>
-                <span className="pl-acct-settings__kicker">Settings</span>
-                <span className="visually-hidden">: </span>
-                {state.artifact.title}
-              </>
-            }
-            meta={
-              <>
-                <VisibilityBadge visibility={state.artifact.visibility} />
-                <span className="type-mono text-muted">v{state.artifact.current_version}</span>
-              </>
-            }
-            actions={
-              <ButtonLink to={artifactHref(state.artifact.slug)} icon={ArrowSquareOutIcon}>
-                Open
-              </ButtonLink>
-            }
-          />
+          <p className="pl-acct-settings__meta">
+            <VisibilityBadge visibility={state.artifact.visibility} />
+            <span className="type-num text-muted">
+              <span className="visually-hidden">Current version </span>v
+              {state.artifact.current_version}
+            </span>
+          </p>
           {state.artifact.taken_down && (
             <Note tone="warning">
               This artifact was taken down after a report. Nobody else can open it.

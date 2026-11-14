@@ -17,7 +17,6 @@ import {
   Card,
   ConfirmDialog,
   EmptyState,
-  PageHeader,
   Row,
   SkeletonText,
   Stack,
@@ -62,11 +61,15 @@ export default function AdminReports() {
   if (!me?.is_admin) return <NotFound />;
 
   return (
-    <AppShell onSignOut={signOut} extraNav={[{ label: "Reports", to: APP_ROUTES.adminReports }]}>
-      <PageHeader
-        title="Reports"
-        description="Artifacts people reported on this instance. Taking one down stops its link from opening it, for everyone, at once."
-      />
+    <AppShell
+      onSignOut={signOut}
+      extraNav={[{ label: "Reports", to: APP_ROUTES.adminReports }]}
+      title="Reports"
+    >
+      <p className="pl-reports__lead">
+        Artifacts people reported on this instance. Taking one down stops its link from opening it,
+        for everyone, at once.
+      </p>
       <Tabs
         label="Report state"
         value={tab}
@@ -165,10 +168,10 @@ function ReportList({ state, empty }: { state: ReportState; empty: string }) {
 
   return (
     <>
-      <Stack as="ul" gap={4} className="pl-reports">
+      <Stack as="ul" gap={2} className="pl-reports">
         {list.items.map((r) => (
-          <Card as="li" key={r.id} padding="lg" className="pl-report">
-            <Stack gap={3}>
+          <Card as="li" key={r.id} padding="md" className="pl-report">
+            <Stack gap={2}>
               <Row justify="between" align="baseline" gap={3}>
                 <h2 className="pl-report__title">
                   <Link to={route(APP_ROUTES.artifact, { slug: r.artifact_slug })}>

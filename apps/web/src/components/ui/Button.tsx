@@ -24,6 +24,7 @@ export function buttonClassName(
 }
 
 const join = (...c: (string | false | undefined)[]) => c.filter(Boolean).join(" ");
+/** 16px icons everywhere; only the large call-to-action size steps up. */
 const iconPx = (size: ButtonSize) => (size === "lg" ? ICON_SIZE.md : ICON_SIZE.sm);
 
 function Content({
@@ -130,7 +131,7 @@ export function IconButton({
       onClick={loading ? (e) => e.preventDefault() : onClick}
       {...rest}
     >
-      <Content start={icon} px={size === "sm" ? ICON_SIZE.sm : ICON_SIZE.md} loading={loading} />
+      <Content start={icon} px={iconPx(size)} loading={loading} />
     </button>
   );
 }

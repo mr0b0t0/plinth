@@ -3,6 +3,7 @@ import {
   ArrowBendUpLeftIcon,
   ArrowCounterClockwiseIcon,
   CheckIcon,
+  ClockCounterClockwiseIcon,
   MapPinIcon,
   RobotIcon,
 } from "@phosphor-icons/react";
@@ -18,15 +19,20 @@ type Mention = CommentInfo["mentions"][number];
 /** Mention task state, in words. "done" links the version the agent published. */
 export function MentionChip({ mention, slug }: { mention: Mention; slug: string }) {
   const { state, target, result_version: v } = mention;
+  const published = state === "done" && v;
   return (
     <li className={`cm-chip cm-chip--${state}`} data-state={state}>
-      <RobotIcon size={ICON_SIZE.sm} aria-hidden="true" />
+      {published ? (
+        <ClockCounterClockwiseIcon size={ICON_SIZE.xs} aria-hidden="true" />
+      ) : (
+        <RobotIcon size={ICON_SIZE.xs} aria-hidden="true" />
+      )}
       <span className="cm-chip__target">{target}</span>
       <span className="cm-chip__state">
-        {state === "done" && v ? (
+        {published ? (
           <>
-            done <span aria-hidden="true">→</span>
-            <span className="visually-hidden">, published</span>{" "}
+            done<span className="visually-hidden">,</span> <span aria-hidden="true">·</span>{" "}
+            published{" "}
             <Link to={route(APP_ROUTES.artifactVersion, { slug, n: v })} className="cm-chip__link">
               v{v}
             </Link>
@@ -37,6 +43,17 @@ export function MentionChip({ mention, slug }: { mention: Mention; slug: string 
       </span>
     </li>
   );
+}
+
+/** Two capitals for a comment author's avatar. */
+export function authorInitials(label: string): string {
+  const words = label
+    .replace(/@.*$/, "")
+    .split(/[\s._-]+/)
+    .filter(Boolean);
+  if (words.length > 1) return `${words[0]?.[0] ?? ""}${words[1]?.[0] ?? ""}`.toUpperCase();
+  const w = words[0] ?? "?";
+  return (w.charAt(0).toUpperCase() + w.charAt(1).toLowerCase()).trim() || "?";
 }
 
 function CommentBody({ body }: { body: string }) {
@@ -57,10 +74,13 @@ export function CommentItem({
 }) {
   const isAgent = comment.author.connection_id !== null;
   return (
-    <div className="cm-comment">
+    <div className="cm-comment" data-agent={isAgent || undefined}>
+      {/* People get a round avatar, agents a square one. */}
+      <span className={`cm-avatar${isAgent ? " cm-avatar--agent" : ""}`} aria-hidden="true">
+        {authorInitials(comment.author.label)}
+      </span>
       <p className="cm-meta">
         <span className="cm-author">
-          {isAgent && <RobotIcon size={ICON_SIZE.sm} aria-hidden="true" />}
           <span className="cm-author__name">{comment.author.label}</span>
           {isAgent && <span className="cm-agent">Agent</span>}
         </span>

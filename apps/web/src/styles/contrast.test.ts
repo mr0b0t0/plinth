@@ -2,8 +2,11 @@
 import { describe, expect, it } from "vitest";
 import {
   CONTRAST_PAIRS,
+  composite,
   contrastRatio,
   MIN_RATIO,
+  pairColors,
+  parseAlpha,
   parseColor,
   parseTokenBlock,
   resolveToken,
@@ -38,25 +41,51 @@ describe("contrast helpers", () => {
     expect(parseColor("rgb(1 2 3 / 0.5)")).toEqual([1, 2, 3]);
     expect(parseColor("var(--x)")).toBeNull();
   });
+
+  it("reads alpha and composites translucent fills over a surface", () => {
+    expect(parseAlpha("#ffffff")).toBe(1);
+    expect(parseAlpha("rgb(1 2 3 / 0.07)")).toBeCloseTo(0.07, 5);
+    expect(parseAlpha("rgba(1, 2, 3, 0.5)")).toBeCloseTo(0.5, 5);
+    expect(parseAlpha("rgb(1 2 3 / 40%)")).toBeCloseTo(0.4, 5);
+    expect(parseColor("#1c181212")).toEqual([28, 24, 18]);
+    expect(parseAlpha("#1c181212")).toBeCloseTo(18 / 255, 5);
+    expect(parseAlpha("#fff8")).toBeCloseTo(0x88 / 255, 5);
+    expect(composite("rgb(0 0 0 / 0.5)", [255, 255, 255])).toEqual([128, 128, 128]);
+    expect(composite("#102030", [255, 255, 255])).toEqual([16, 32, 48]);
+  });
 });
 
 for (const [mode, selector] of Object.entries(MODES)) {
   describe(`${mode} tokens meet WCAG AA`, () => {
     const tokens = parseTokenBlock(css, selector);
 
+    const lookup = (name: string) => resolveToken(tokens, name);
+
     it("defines every color the pairs refer to as a plain color", () => {
-      for (const { fg, bg } of CONTRAST_PAIRS) {
-        expect(parseColor(resolveToken(tokens, fg)), `${fg} in ${mode}`).not.toBeNull();
-        expect(parseColor(resolveToken(tokens, bg)), `${bg} in ${mode}`).not.toBeNull();
+      for (const { fg, bg, over } of CONTRAST_PAIRS) {
+        expect(parseColor(lookup(fg)), `${fg} in ${mode}`).not.toBeNull();
+        expect(parseColor(lookup(bg)), `${bg} in ${mode}`).not.toBeNull();
+        if (over) expect(parseColor(lookup(over)), `${over} in ${mode}`).not.toBeNull();
       }
     });
 
-    for (const { fg, bg, kind } of CONTRAST_PAIRS) {
-      it(`${fg} on ${bg} (${kind}, at least ${MIN_RATIO[kind]}:1)`, () => {
-        const a = parseColor(resolveToken(tokens, fg));
-        const b = parseColor(resolveToken(tokens, bg));
-        if (!a || !b) throw new Error("unparseable color");
-        expect(contrastRatio(a, b)).toBeGreaterThanOrEqual(MIN_RATIO[kind]);
+    it("measures text and marks against opaque colors only", () => {
+      // A translucent foreground, or a translucent background without the surface under it,
+      // would make the ratio meaningless.
+      for (const { fg, bg, over } of CONTRAST_PAIRS) {
+        expect(parseAlpha(lookup(fg)), `${fg} in ${mode} is opaque`).toBe(1);
+        if (!over) expect(parseAlpha(lookup(bg)), `${bg} in ${mode} needs \`over\``).toBe(1);
+        else expect(parseAlpha(lookup(over)), `${over} in ${mode} is opaque`).toBe(1);
+      }
+    });
+
+    for (const pair of CONTRAST_PAIRS) {
+      const { fg, bg, over, kind } = pair;
+      const where = over ? `${bg} over ${over}` : bg;
+      it(`${fg} on ${where} (${kind}, at least ${MIN_RATIO[kind]}:1)`, () => {
+        const colors = pairColors(pair, lookup);
+        if (!colors) throw new Error("unparseable color");
+        expect(contrastRatio(...colors)).toBeGreaterThanOrEqual(MIN_RATIO[kind]);
       });
     }
   });

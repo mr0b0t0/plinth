@@ -1,6 +1,10 @@
+/*
+ * Buttons: 28px by default, 13px medium text, 16px icons 6px from the label. Primary is ink with
+ * inverted text; secondary is a quiet outlined surface; ghost is text until hovered.
+ */
 .pl-button {
   --_h: var(--control-md);
-  --_px: var(--space-4);
+  --_px: 0.625rem; /* 10 */
   --_fs: var(--text-md);
   position: relative;
   display: inline-flex;
@@ -13,7 +17,8 @@
   font-family: var(--font-ui);
   font-size: var(--_fs);
   font-weight: var(--weight-medium);
-  line-height: 1;
+  line-height: var(--line-ui);
+  letter-spacing: var(--tracking-ui);
   white-space: nowrap;
   text-decoration: none;
   cursor: pointer;
@@ -21,21 +26,17 @@
   transition:
     background-color var(--duration-fast) var(--ease-out),
     border-color var(--duration-fast) var(--ease-out),
-    color var(--duration-fast) var(--ease-out),
-    transform var(--duration-fast) var(--ease-out);
+    color var(--duration-fast) var(--ease-out);
 }
 .pl-button:hover {
   text-decoration: none;
-}
-.pl-button:active:not(:disabled, [aria-disabled="true"]) {
-  transform: translateY(1px);
 }
 .pl-button:disabled,
 .pl-button[aria-disabled="true"] {
   cursor: not-allowed;
 }
 .pl-button:disabled {
-  opacity: 0.5;
+  opacity: 0.45;
 }
 .pl-button[data-loading] {
   cursor: progress;
@@ -44,7 +45,7 @@
 .pl-button__content {
   display: inline-flex;
   align-items: center;
-  gap: var(--space-2);
+  gap: var(--space-1-5);
 }
 .pl-button__spinner {
   position: absolute;
@@ -56,7 +57,7 @@
 /* Sizes */
 .pl-button--sm {
   --_h: var(--control-sm);
-  --_px: var(--space-3);
+  --_px: var(--space-2);
   --_fs: var(--text-sm);
   border-radius: var(--radius-sm);
 }
@@ -65,7 +66,11 @@
 }
 .pl-button--lg {
   --_h: var(--control-lg);
-  --_px: var(--space-6);
+  --_px: var(--space-4);
+  --_fs: var(--text-md);
+}
+.pl-button--lg .pl-button__content {
+  gap: var(--space-2);
 }
 .pl-button--icon-only {
   --_px: 0;
@@ -82,27 +87,21 @@
 
 /* Variants */
 .pl-button--primary {
-  background: var(--color-accent);
-  color: var(--color-on-accent);
+  background: var(--color-primary);
+  color: var(--color-on-primary);
 }
 .pl-button--primary:hover:not(:disabled, [aria-disabled="true"]) {
-  background: var(--color-accent-hover);
-}
-.pl-button--primary:active:not(:disabled, [aria-disabled="true"]) {
-  background: var(--color-accent-active);
+  background: var(--color-primary-hover);
 }
 
 .pl-button--secondary {
-  background: var(--color-surface-raised);
+  background: var(--color-surface);
   border-color: var(--color-border-strong);
   color: var(--color-ink);
-  box-shadow: var(--shadow-sm);
 }
 .pl-button--secondary:hover:not(:disabled, [aria-disabled="true"]) {
+  background: var(--color-surface-raised);
   border-color: var(--color-border-control);
-}
-.pl-button--secondary:active:not(:disabled, [aria-disabled="true"]) {
-  background: var(--color-surface-sunk);
 }
 
 .pl-button--ghost {
@@ -111,7 +110,13 @@
 }
 .pl-button--ghost:hover:not(:disabled, [aria-disabled="true"]),
 .pl-button--ghost[aria-expanded="true"] {
-  background: var(--color-surface-sunk);
+  background: var(--color-hover);
+  color: var(--color-ink);
+}
+/* A toggle that is on (comments panel open, list view chosen). */
+.pl-button[aria-pressed="true"],
+.pl-button--ghost[aria-pressed="true"]:hover:not(:disabled) {
+  background: var(--color-selected);
   color: var(--color-ink);
 }
 
@@ -121,4 +126,12 @@
 }
 .pl-button--danger:hover:not(:disabled, [aria-disabled="true"]) {
   background: var(--color-danger-hover);
+}
+
+/* Icons inside ghost and secondary buttons stay muted until the button is active. */
+.pl-button--secondary .pl-button__content > svg {
+  color: var(--color-ink-muted);
+}
+.pl-button--secondary:hover .pl-button__content > svg {
+  color: var(--color-ink);
 }

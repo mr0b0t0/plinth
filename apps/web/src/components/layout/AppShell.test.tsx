@@ -42,7 +42,7 @@ describe("AppShell", () => {
     expect(screen.queryByRole("navigation", { name: "Primary" })).toBeNull();
   });
 
-  it("shows primary nav with the current page marked, and a user menu with sign-out", async () => {
+  it("shows the sidebar nav with the current page marked, and a user menu with sign-out", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: RequestInfo | URL) => {
@@ -61,7 +61,7 @@ describe("AppShell", () => {
       </AppShell>,
     );
     const nav = await screen.findByRole("navigation", { name: "Primary" });
-    const dashboard = screen.getByRole("link", { name: "Dashboard" });
+    const dashboard = screen.getByRole("link", { name: "Artifacts" });
     expect(nav.contains(dashboard)).toBe(true);
     expect(dashboard.getAttribute("aria-current")).toBe("page");
     expect(

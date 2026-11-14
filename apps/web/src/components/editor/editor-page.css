@@ -8,7 +8,7 @@
   flex: 1;
   align-items: center;
   justify-content: center;
-  min-height: calc(100dvh - var(--topbar-height) - var(--border-width));
+  min-height: 0;
 }
 .pl-editor-narrow {
   padding-inline: var(--gutter);

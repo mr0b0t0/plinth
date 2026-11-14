@@ -16,6 +16,13 @@ import { latestCode, latestLink } from "../support/mail.ts";
 import { mcpClient, tool } from "../support/mcp.ts";
 import { seedToken } from "../support/tokens.ts";
 
+/** On phones the sidebar is a slide-over: open it before using its links or the account menu. */
+async function openNav(page: Page): Promise<void> {
+  if (test.info().project.name !== "mobile") return;
+  await page.getByRole("button", { name: "Open navigation" }).click();
+  await expect(page.getByRole("dialog", { name: "Sidebar" })).toBeVisible();
+}
+
 const HTML = (h: string) => `<!doctype html><html><body><h1>${h}</h1></body></html>`;
 const b64url = (b: Buffer) => b.toString("base64url");
 
@@ -130,6 +137,7 @@ test.describe("sign-in", () => {
     const email = uniqueEmail("signout");
     await seedContextSession(page.context(), email);
     await page.goto("/dashboard");
+    await openNav(page);
     await page.getByRole("button", { name: `Account: ${email}` }).click();
     await page.getByRole("menuitem", { name: "Sign out" }).click();
     await expect(page).toHaveURL(/\/login$/);
@@ -142,7 +150,7 @@ test("dashboard, tokens, MCP publishing, search, settings and revocation", async
   const email = uniqueEmail("acct");
   await signIn(page, email);
   await expect(page).toHaveURL(/\/dashboard$/);
-  await expect(page).toHaveTitle("Dashboard · Plinth");
+  await expect(page).toHaveTitle("Artifacts · Plinth");
 
   // Empty state: how to connect an agent, with the MCP URL.
   await expect(page.getByRole("heading", { name: "Nothing on display yet" })).toBeVisible();
@@ -153,7 +161,7 @@ test("dashboard, tokens, MCP publishing, search, settings and revocation", async
 
   // Create a token in the UI; it is shown once.
   // "Connect an agent" lands on the open Connect panel; tokens are under Advanced.
-  await page.getByRole("link", { name: "Connect an agent" }).first().click();
+  await page.getByRole("main").getByRole("link", { name: "Connect an agent" }).click();
   await expect(page).toHaveURL(/\/connections\?connect=1$/);
   await expect(page.getByRole("heading", { name: "Connect an agent" })).toBeVisible();
   await expect(page.getByRole("textbox", { name: "MCP server URL" })).toHaveValue(
@@ -204,14 +212,17 @@ test("dashboard, tokens, MCP publishing, search, settings and revocation", async
   );
 
   // The dashboard lists them, with quota; search filters and is kept in the URL.
-  await page.getByRole("link", { name: "Dashboard", exact: true }).click();
+  await openNav(page);
+  await page.getByRole("link", { name: "Artifacts", exact: true }).click();
   await expect(page.getByRole("link", { name: "Quarterly revenue" })).toBeVisible();
   await expect(page.getByRole("link", { name: "Team offsite plan" })).toBeVisible();
   await expect(page.getByText("2 of 100 artifacts")).toBeVisible();
   const row = page.getByRole("listitem").filter({ hasText: "Quarterly revenue" });
   await expect(row).toContainText("v1");
-  await expect(row).toContainText("1 version");
-  await expect(row).toContainText("Unlisted");
+  // List columns: access ("Link" for unlisted), version, owner, updated.
+  await expect(row).toContainText("Link");
+  await expect(row).toContainText("You");
+  await expect(row.locator('[title="1 version"]')).toHaveText(/v1/);
 
   await page.getByLabel("Search artifacts").fill("offsite");
   await expect(page).toHaveURL(/\/dashboard\?q=offsite$/);
@@ -305,6 +316,7 @@ test("dashboard, tokens, MCP publishing, search, settings and revocation", async
   expect((await apiGet(page.request, `/artifacts/${first.id}`)).status).toBe(404);
 
   // Rename and revoke the token; the MCP client is refused afterwards.
+  await openNav(page);
   await page.getByRole("link", { name: "Connections", exact: true }).click();
   await page.getByRole("button", { name: "Rename E2E Codex" }).click();
   const rename = page.getByRole("dialog", { name: "Rename connection" });
@@ -343,10 +355,11 @@ test("settings are for the owner only", async ({ page }) => {
     );
     expect(put.status).toBe(200);
 
-    // The commenter sees it under "Shared with you", without owner actions or settings.
+    // The commenter finds it under the Shared filter, without owner actions or settings.
     await seedContextSession(page.context(), commenter);
     await page.goto("/dashboard");
-    await expect(page.getByRole("heading", { name: /Shared with you/ })).toBeVisible();
+    await page.getByRole("radio", { name: "Shared" }).check();
+    await expect(page.getByRole("listitem").filter({ hasText: "Shared plan" })).toBeVisible();
     const row = page.getByRole("listitem").filter({ hasText: "Shared plan" });
     await expect(row).toContainText("Commenter");
     await expect(row).toContainText(`Shared by ${owner}`);

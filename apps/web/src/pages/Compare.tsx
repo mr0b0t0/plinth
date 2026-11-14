@@ -1,22 +1,32 @@
 // Page: /a/:slug/compare?from=&to=&view=. Two versions of an artifact, as a source diff of their
 // index.html (plus asset changes) or side by side as rendered pages.
-import { ArrowLeftIcon, ArrowsLeftRightIcon, CodeIcon, MonitorIcon } from "@phosphor-icons/react";
+import {
+  ArrowsLeftRightIcon,
+  ClockCounterClockwiseIcon,
+  CodeIcon,
+  MonitorIcon,
+} from "@phosphor-icons/react";
 import type { VersionInfo } from "@plinth/shared";
-import { AccessProblem, HistoryShell, useDocumentTitle } from "../components/history/common.tsx";
+import {
+  AccessProblem,
+  ArtifactCrumbTitle,
+  HistoryShell,
+  useDocumentTitle,
+} from "../components/history/common.tsx";
 import { useArtifact, useVersion, useVersions } from "../components/history/data.ts";
 import { comparePath, excerpt, historyPath, parseVersion } from "../components/history/format.ts";
 import { RenderedCompare } from "../components/history/RenderedCompare.tsx";
 import { SourceDiff } from "../components/history/SourceDiff.tsx";
 import {
+  ButtonLink,
   IconButton,
-  PageHeader,
   Select,
   Skeleton,
   SkeletonText,
   Tabs,
   Tooltip,
 } from "../components/ui/index.ts";
-import { Link, navigate, useLocation } from "../lib/router.tsx";
+import { navigate, useLocation } from "../lib/router.tsx";
 
 type View = "source" | "rendered";
 
@@ -85,19 +95,17 @@ export default function Compare({ params }: { params: Record<string, string> }) 
     );
 
   return (
-    <HistoryShell width="full">
-      <div className="hx-compare pl-container">
-        <PageHeader
-          before={
-            <Link to={historyPath(slug)} className="hx-back">
-              <ArrowLeftIcon size={16} aria-hidden="true" />
-              Version history
-            </Link>
-          }
-          title={title ?? <Skeleton width="16rem" height="2.25rem" />}
-          description="Compare two versions"
-        />
-
+    <HistoryShell
+      width="full"
+      title={title !== undefined ? <ArtifactCrumbTitle slug={slug} title={title} /> : undefined}
+      trail="Compare versions"
+      actions={
+        <ButtonLink to={historyPath(slug)} icon={ClockCounterClockwiseIcon}>
+          History
+        </ButtonLink>
+      }
+    >
+      <div className="hx-compare">
         <div className="hx-pickers">
           {options.length > 0 && ready ? (
             <>

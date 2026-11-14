@@ -4,25 +4,37 @@ import { RobotIcon, UserIcon } from "@phosphor-icons/react";
 import { APP_ROUTES, type Author } from "@plinth/shared";
 import { type ReactNode, useEffect } from "react";
 import type { ApiRequestError } from "../../lib/api.ts";
-import { navigate } from "../../lib/router.tsx";
+import { Link, navigate } from "../../lib/router.tsx";
 import { useSession } from "../../lib/session.ts";
-import { AppShell } from "../layout/AppShell.tsx";
+import { AppShell, type AppShellProps } from "../layout/AppShell.tsx";
 import { ButtonLink, EmptyState, ICON_SIZE, Tooltip } from "../ui/index.ts";
 import { signOut } from "./data.ts";
 import { artifactPath, fullTimestamp, relativeTime } from "./format.ts";
 import "./history.css";
 
+/** The artifact's title in the top bar: "Artifacts / <title> / History". */
+export function ArtifactCrumbTitle({ slug, title }: { slug: string; title: string }) {
+  return <Link to={artifactPath(slug)}>{title}</Link>;
+}
+
 export function HistoryShell({
   children,
   width = "content",
+  title,
+  trail,
+  actions,
 }: {
   children: ReactNode;
   width?: "content" | "full";
-}) {
+} & Pick<AppShellProps, "title" | "trail" | "actions">) {
   const { refresh } = useSession();
   return (
     <AppShell
       width={width}
+      crumbs={title !== undefined ? [{ label: "Artifacts", to: APP_ROUTES.dashboard }] : undefined}
+      title={title}
+      trail={trail}
+      actions={actions}
       onSignOut={async () => {
         await signOut();
         await refresh().catch(() => undefined);

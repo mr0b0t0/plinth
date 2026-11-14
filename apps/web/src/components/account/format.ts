@@ -39,6 +39,31 @@ export function formatRelative(iso: string, now: number = Date.now(), locale?: s
   return formatDate(iso, locale);
 }
 
+/**
+ * The short form for dense columns: "now", "5m", "3h", "2d" within a week, then "Nov 2" (with
+ * the year when it is not this year). Future times (clock skew) read as "now".
+ */
+export function formatRelativeShort(
+  iso: string,
+  now: number = Date.now(),
+  locale?: string,
+): string {
+  const t = new Date(iso).getTime();
+  if (Number.isNaN(t)) return "";
+  const diff = now - t;
+  if (diff < MINUTE) return "now";
+  if (diff < HOUR) return `${Math.floor(diff / MINUTE)}m`;
+  if (diff < DAY) return `${Math.floor(diff / HOUR)}h`;
+  if (diff < 7 * DAY) return `${Math.floor(diff / DAY)}d`;
+  const d = new Date(t);
+  const sameYear = d.getFullYear() === new Date(now).getFullYear();
+  return new Intl.DateTimeFormat(locale, {
+    month: "short",
+    day: "numeric",
+    ...(sameYear ? {} : { year: "numeric" }),
+  }).format(d);
+}
+
 /** "12 of 100 artifacts". */
 export function quotaText(count: number, limit: number): string {
   return `${count} of ${limit} ${limit === 1 ? "artifact" : "artifacts"}`;

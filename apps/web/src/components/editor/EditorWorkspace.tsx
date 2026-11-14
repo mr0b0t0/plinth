@@ -288,11 +288,8 @@ export default function EditorWorkspace({
     <div className="pl-editor" hidden={!active}>
       <header className="pl-editor__bar">
         <div className="pl-editor__heading">
-          <h1 className="pl-editor__title type-title">{artifact.title}</h1>
           <div className="pl-editor__meta">
-            <Badge mono tone="strong">
-              Editing v{base.version}
-            </Badge>
+            <Badge tone="strong">Editing v{base.version}</Badge>
             <span className="pl-editor__status" aria-live="polite">
               {dirty ? (
                 <Badge tone="warning">Unsaved changes</Badge>

@@ -18,8 +18,10 @@ test("the manual toggle persists across reloads, applied before the app script r
   await page.goto("/design");
   const before = await themeOf(page);
   const target = before === "dark" ? "light" : "dark";
+  // The theme moved from a top-bar toggle into the account menu; /design offers the same choice
+  // as a switch.
   await page
-    .getByRole("button", { name: new RegExp(`\\(${target} mode\\)`) })
+    .getByRole("radio", { name: target === "dark" ? "After hours" : "Gallery" })
     .first()
     .click();
   expect(await themeOf(page)).toBe(target);

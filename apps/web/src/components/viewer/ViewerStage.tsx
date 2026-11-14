@@ -1,36 +1,40 @@
-// The artifact on view: a slim bar (title, version, actions), the artifact in a sandboxed frame
-// filling the rest, an optional comments panel, and a one-line banner naming the platform with a
-// report link (required on every artifact page).
+// The artifact on view: one 44px bar (breadcrumb, version, access on the left; History,
+// Comments, Share and a ⋯ menu on the right), the artifact in a sandboxed frame filling the rest,
+// an optional comments panel, and a one-line banner naming the platform with a report link
+// (required on every artifact page).
 import {
   ChatCircleIcon,
   ClockCounterClockwiseIcon,
   DotsThreeIcon,
+  FileIcon,
   FlagIcon,
+  GearSixIcon,
   MoonIcon,
   PencilSimpleIcon,
   ShareNetworkIcon,
   SunIcon,
 } from "@phosphor-icons/react";
-import { APP_ROUTES, route, type ViewGate } from "@plinth/shared";
-import { useRef, useState } from "react";
+import { API, APP_ROUTES, type CommentInfo, route, type ViewGate } from "@plinth/shared";
+import { useEffect, useRef, useState } from "react";
+import { api } from "../../lib/api.ts";
 import { Link } from "../../lib/router.tsx";
 import { useSession } from "../../lib/session.ts";
 import { THEME_NAMES, useTheme } from "../../lib/theme.ts";
 import { CommentsPanel } from "../artifact/CommentsPanel.tsx";
 import { VersionPicker } from "../artifact/VersionPicker.tsx";
+import { useMediaQuery } from "../editor/useMediaQuery.ts";
 import { LogoMark } from "../Logo.tsx";
 import { SkipLink } from "../layout/AppShell.tsx";
 import {
   Button,
-  ButtonLink,
-  IconButton,
+  buttonClassName,
   IconProvider,
   Menu,
   type MenuEntry,
   Skeleton,
-  ThemeToggle,
   Toaster,
-  VisibilityBadge,
+  Tooltip,
+  VISIBILITY_META,
 } from "../ui/index.ts";
 import { ArtifactFrame } from "./ArtifactFrame.tsx";
 import { contentOriginOf, shareLink } from "./gate.ts";
@@ -38,6 +42,9 @@ import { ShareDialog } from "./ShareDialog.tsx";
 import "./viewer.css";
 
 type OkGate = Extract<ViewGate, { status: "ok" }>;
+
+/** Below this width History and Share fold into the ⋯ menu. Keep in step with viewer.css. */
+export const VIEWER_COMPACT_QUERY = "(max-width: 52rem)";
 
 export interface ViewerStageProps {
   gate: OkGate;
@@ -53,6 +60,19 @@ export interface ViewerStageProps {
 /** Who may open the editor. The editor page and the API check again. */
 export const canEdit = (role: OkGate["role"]) => role === "owner" || role === "editor";
 
+/** Open threads in a comments list. */
+export function openThreadCount(items: CommentInfo[]): number {
+  return items.filter((c) => !c.parent_id && c.status === "open").length;
+}
+
+/** Access in words, for the pill next to the version ("Anyone with the link"). */
+const ACCESS_PILL: Record<OkGate["artifact"]["visibility"], string> = {
+  public: "Public",
+  unlisted: "Anyone with the link",
+  password: "Password",
+  allowlist: "Specific people",
+};
+
 export function ViewerStage({
   gate,
   slug,
@@ -65,6 +85,8 @@ export function ViewerStage({
   const [theme, setTheme] = useTheme();
   const [shareOpen, setShareOpen] = useState(false);
   const [frame, setFrame] = useState<HTMLIFrameElement | null>(null);
+  const [openCount, setOpenCount] = useState<number | null>(null);
+  const compact = useMediaQuery(VIEWER_COMPACT_QUERY);
   const { artifact, role } = gate;
   const isOwner = role === "owner";
   const older = artifact.version < artifact.current_version;
@@ -72,28 +94,46 @@ export function ViewerStage({
   const link = shareLink(appOrigin, artifact.slug, pinned ? artifact.version : undefined);
   const contentOrigin = contentOriginOf(gate.enter_url, artifact.id, config);
   const nextTheme = theme === "dark" ? "light" : "dark";
+  const access = VISIBILITY_META[artifact.visibility];
+  const AccessIcon = access.icon;
 
   const editHref = route(APP_ROUTES.editor, { slug });
   const historyHref = route(APP_ROUTES.history, { slug });
   const reportHref = route(APP_ROUTES.report, { slug });
+  const settingsHref = route(APP_ROUTES.settings, { slug });
 
-  // Whichever comments toggle is visible gets focus back when the panel closes.
-  const wideToggleRef = useRef<HTMLButtonElement>(null);
-  const compactToggleRef = useRef<HTMLButtonElement>(null);
+  // The open-thread count on the Comments toggle. The panel reports it while open; while closed
+  // it is read once (and again after the panel closes). Failures just hide the number.
+  useEffect(() => {
+    if (commentsOpen) return;
+    const ctrl = new AbortController();
+    api<{ items: CommentInfo[] }>(route(API.comments, { ref: artifact.id || slug }), {
+      signal: ctrl.signal,
+    })
+      .then((res) => setOpenCount(openThreadCount(res.items)))
+      .catch(() => undefined);
+    return () => ctrl.abort();
+  }, [artifact.id, slug, commentsOpen]);
+
+  const counted = openCount !== null && openCount > 0;
+
+  // The toggle gets focus back when the panel closes.
+  const toggleRef = useRef<HTMLButtonElement>(null);
   const closeComments = () => {
     onToggleComments();
-    requestAnimationFrame(() => {
-      const visible = [wideToggleRef.current, compactToggleRef.current].find(
-        (el) => el && el.offsetParent !== null,
-      );
-      visible?.focus();
-    });
+    requestAnimationFrame(() => toggleRef.current?.focus());
   };
 
   const menuItems: MenuEntry[] = [
-    { label: "Share", icon: ShareNetworkIcon, onSelect: () => setShareOpen(true) },
+    ...(compact
+      ? [
+          { label: "Share", icon: ShareNetworkIcon, onSelect: () => setShareOpen(true) },
+          { label: "History", icon: ClockCounterClockwiseIcon, href: historyHref },
+        ]
+      : []),
     ...(canEdit(role) ? [{ label: "Edit", icon: PencilSimpleIcon, href: editHref }] : []),
-    { label: "History", icon: ClockCounterClockwiseIcon, href: historyHref },
+    ...(isOwner ? [{ label: "Settings", icon: GearSixIcon, href: settingsHref }] : []),
+    // Owners and editors do not report their own work; the footer link stays for all.
     ...(canEdit(role) ? [] : [{ label: "Report", icon: FlagIcon, href: reportHref }]),
     { type: "separator" },
     {
@@ -108,71 +148,81 @@ export function ViewerStage({
       <SkipLink />
       <div className={`pl-viewer${commentsOpen ? " pl-viewer--panel" : ""}`}>
         <header className="pl-viewer__bar">
-          <Link
-            to={me ? APP_ROUTES.dashboard : APP_ROUTES.home}
-            className="pl-viewer__home"
-            aria-label={me ? "Plinth, go to dashboard" : "Plinth, go to home"}
-          >
-            <LogoMark size={24} />
-          </Link>
-          <div className="pl-viewer__heading">
+          <div className="pl-viewer__crumbs">
+            {isOwner ? (
+              <>
+                <Link to={APP_ROUTES.dashboard} className="pl-viewer__crumb">
+                  <FileIcon size={16} aria-hidden="true" />
+                  <span className="pl-viewer__crumb-label">Artifacts</span>
+                </Link>
+                <span className="pl-viewer__sep" aria-hidden="true">
+                  /
+                </span>
+              </>
+            ) : (
+              <Link
+                to={me ? APP_ROUTES.dashboard : APP_ROUTES.home}
+                className="pl-viewer__home"
+                aria-label={me ? "Plinth, go to your artifacts" : "Plinth, go to home"}
+              >
+                <LogoMark size={16} />
+              </Link>
+            )}
             <h1 className="pl-viewer__title" title={artifact.title}>
               {artifact.title}
             </h1>
-            <div className="pl-viewer__version">
-              <VersionPicker
-                slug={slug}
-                current={artifact.current_version}
-                shown={artifact.version}
-              />
-            </div>
-            {isOwner && (
-              <span className="pl-viewer__badge">
-                <VisibilityBadge visibility={artifact.visibility} />
-              </span>
-            )}
           </div>
-          <div className="pl-viewer__actions">
-            <Button size="sm" icon={ShareNetworkIcon} onClick={() => setShareOpen(true)}>
-              Share
-            </Button>
-            {canEdit(role) && (
-              <ButtonLink size="sm" variant="ghost" icon={PencilSimpleIcon} to={editHref}>
-                Edit
-              </ButtonLink>
-            )}
-            <ButtonLink size="sm" variant="ghost" icon={ClockCounterClockwiseIcon} to={historyHref}>
-              History
-            </ButtonLink>
-            <Button
-              ref={wideToggleRef}
-              size="sm"
-              variant="ghost"
-              icon={ChatCircleIcon}
-              aria-pressed={commentsOpen}
-              onClick={onToggleComments}
-            >
-              Comments
-            </Button>
-            {/* Owners and editors do not report their own work; the footer link stays for all. */}
-            {!canEdit(role) && (
-              <ButtonLink size="sm" variant="ghost" icon={FlagIcon} to={reportHref}>
-                Report
-              </ButtonLink>
-            )}
-            <ThemeToggle />
-          </div>
-          <div className="pl-viewer__compact">
-            {/* Comments stays one tap away on small screens; the rest folds into the menu. */}
-            <IconButton
-              ref={compactToggleRef}
-              size="sm"
-              variant="ghost"
-              icon={ChatCircleIcon}
-              label="Comments"
-              aria-pressed={commentsOpen}
-              onClick={onToggleComments}
+          <div className="pl-viewer__version">
+            <VersionPicker
+              slug={slug}
+              current={artifact.current_version}
+              shown={artifact.version}
             />
+          </div>
+          {isOwner && (
+            <span className="pl-viewer__access" title={access.description}>
+              <AccessIcon size={14} aria-hidden="true" />
+              <span className="visually-hidden">Visibility: </span>
+              {ACCESS_PILL[artifact.visibility]}
+            </span>
+          )}
+          <div className="pl-viewer__actions">
+            {!compact && (
+              <Tooltip content="History" placement="bottom">
+                <Link
+                  to={historyHref}
+                  aria-label="History"
+                  className={buttonClassName({ variant: "ghost", iconOnly: true })}
+                >
+                  <span className="pl-button__content">
+                    <ClockCounterClockwiseIcon size={16} aria-hidden="true" />
+                  </span>
+                </Link>
+              </Tooltip>
+            )}
+            {/* The count sits beside the button, not in it, so the button's name stays exactly its
+                visible label (WCAG 2.5.3); the panel announces the numbers. */}
+            <span className="pl-viewer__comments-wrap">
+              <Button
+                ref={toggleRef}
+                variant="ghost"
+                icon={ChatCircleIcon}
+                aria-label="Comments"
+                aria-pressed={commentsOpen}
+                className={`pl-viewer__comments${counted ? " pl-viewer__comments--counted" : ""}`}
+                onClick={commentsOpen ? closeComments : onToggleComments}
+              />
+              {counted && (
+                <span className="pl-viewer__count" aria-hidden="true">
+                  {openCount}
+                </span>
+              )}
+            </span>
+            {!compact && (
+              <Button variant="primary" onClick={() => setShareOpen(true)}>
+                Share
+              </Button>
+            )}
             <Menu
               label="Artifact actions"
               icon={DotsThreeIcon}
@@ -186,7 +236,7 @@ export function ViewerStage({
         <main id="main" tabIndex={-1} className="pl-viewer__stage">
           {older && (
             <p className="pl-viewer__notice">
-              You are viewing <span className="type-mono">v{artifact.version}</span>
+              You are viewing <span className="type-num">v{artifact.version}</span>
               <span aria-hidden="true"> · </span>
               <Link to={currentHref}>Go to current</Link>
               <span className="visually-hidden"> (v{artifact.current_version})</span>
@@ -212,6 +262,7 @@ export function ViewerStage({
                   contentOrigin={contentOrigin}
                   opaque={config?.content_isolation === "opaque"}
                   onClose={closeComments}
+                  onOpenCountChange={setOpenCount}
                 />
               </div>
             )}
@@ -251,11 +302,11 @@ export function ViewerSkeleton() {
   return (
     <div className="pl-viewer" aria-busy="true">
       <header className="pl-viewer__bar">
-        <span className="pl-viewer__home">
-          <LogoMark size={24} />
-        </span>
-        <div className="pl-viewer__heading">
-          <Skeleton width="12rem" height="1.25rem" />
+        <div className="pl-viewer__crumbs">
+          <span className="pl-viewer__home">
+            <LogoMark size={16} />
+          </span>
+          <Skeleton width="10rem" height="0.875rem" />
         </div>
       </header>
       <main id="main" tabIndex={-1} className="pl-viewer__stage">

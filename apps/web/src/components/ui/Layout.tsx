@@ -86,7 +86,7 @@ export function Container({ width = "content", className, ...rest }: ContainerPr
 }
 
 export interface PageHeaderProps {
-  /** The page's h1, set in the display face. */
+  /** The page's h1 (15px semibold; the top bar carries the breadcrumb). */
   title: ReactNode;
   /** One line under the title. */
   description?: ReactNode;
@@ -115,7 +115,7 @@ export function PageHeader({
     <header className={`pl-page-header${className ? ` ${className}` : ""}`}>
       <div className="pl-page-header__text">
         {before && <div className="pl-page-header__before">{before}</div>}
-        <H className="pl-page-header__title type-title">{title}</H>
+        <H className="pl-page-header__title">{title}</H>
         {description && <p className="pl-page-header__description">{description}</p>}
         {meta && <div className="pl-page-header__meta">{meta}</div>}
       </div>

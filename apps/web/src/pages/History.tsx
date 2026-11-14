@@ -2,7 +2,6 @@
 // View any version, compare two, and (owner and editors) restore one as the next version.
 import {
   ArrowCounterClockwiseIcon,
-  ArrowLeftIcon,
   ArrowsLeftRightIcon,
   DotsThreeIcon,
   EyeIcon,
@@ -11,6 +10,7 @@ import type { VersionInfo } from "@plinth/shared";
 import { useState } from "react";
 import {
   AccessProblem,
+  ArtifactCrumbTitle,
   AuthorLabel,
   HistoryShell,
   useDocumentTitle,
@@ -31,13 +31,11 @@ import {
   ConfirmDialog,
   Menu,
   type MenuEntry,
-  PageHeader,
-  Skeleton,
   SkeletonText,
   useToast,
 } from "../components/ui/index.ts";
 import { ApiRequestError } from "../lib/api.ts";
-import { Link, navigate } from "../lib/router.tsx";
+import { navigate } from "../lib/router.tsx";
 
 export default function History({ params }: { params: Record<string, string> }) {
   const slug = params.slug ?? "";
@@ -106,34 +104,32 @@ export default function History({ params }: { params: Record<string, string> }) 
   const [from, to] = [...selected].sort((x, y) => x - y);
 
   return (
-    <HistoryShell>
-      <PageHeader
-        before={
-          <Link to={artifactPath(slug)} className="hx-back">
-            <ArrowLeftIcon size={16} aria-hidden="true" />
-            Back to artifact
-          </Link>
-        }
-        title={title ?? <Skeleton width="16rem" height="2.25rem" />}
-        description="Version history"
-        meta={
-          a && (
-            <>
-              <Badge mono tone="strong">
-                v{a.current_version} current
-              </Badge>
-              <span className="type-small text-muted">
-                {a.version_count === 1 ? "1 version" : `${a.version_count} versions`}
-              </span>
-            </>
-          )
-        }
-      />
-
-      <p className="hx-hint type-small text-muted">
-        Restoring publishes an old version&rsquo;s content as a new version. Nothing is ever
-        overwritten. <span className="hx-hint__select">Tick two versions to compare them.</span>
-      </p>
+    <HistoryShell
+      title={title !== undefined ? <ArtifactCrumbTitle slug={slug} title={title} /> : undefined}
+      trail="History"
+      actions={
+        <ButtonLink to={artifactPath(slug)} icon={EyeIcon}>
+          Open
+        </ButtonLink>
+      }
+    >
+      <div className="hx-intro">
+        {a && (
+          <p className="hx-intro__meta">
+            <span className="type-num">
+              {a.version_count === 1 ? "1 version" : `${a.version_count} versions`}
+            </span>
+            <span aria-hidden="true" className="hx-dot">
+              ·
+            </span>
+            <span className="type-num">v{a.current_version} is current</span>
+          </p>
+        )}
+        <p className="hx-hint">
+          Restoring publishes an old version&rsquo;s content as a new version. Nothing is ever
+          overwritten. <span className="hx-hint__select">Tick two versions to compare them.</span>
+        </p>
+      </div>
 
       {!items ? (
         <ol className="hx-list" aria-busy="true" aria-label="Versions">
@@ -165,13 +161,12 @@ export default function History({ params }: { params: Record<string, string> }) 
           <p className="hx-selbar__text" aria-live="polite">
             {from !== undefined && to !== undefined ? (
               <>
-                <span className="type-mono">v{from}</span> and{" "}
-                <span className="type-mono">v{to}</span> selected
+                <span className="type-num">v{from}</span> and{" "}
+                <span className="type-num">v{to}</span> selected
               </>
             ) : (
               <>
-                <span className="type-mono">v{selected[0]}</span> selected. Tick one more to
-                compare.
+                <span className="type-num">v{selected[0]}</span> selected. Tick one more to compare.
               </>
             )}
           </p>
@@ -254,7 +249,7 @@ function VersionRow({
       <div className="hx-row__main">
         <div className="hx-row__head">
           <h2 className="hx-row__n">v{v.number}</h2>
-          {isCurrent && <Badge tone="accent">Current</Badge>}
+          {isCurrent && <Badge tone="strong">Current</Badge>}
           {v.restored_from !== null && (
             <Badge icon={ArrowCounterClockwiseIcon}>Restored from v{v.restored_from}</Badge>
           )}

@@ -33,7 +33,7 @@ export default function Home() {
       {loading ? null : (
         <div className="pl-acct-home">
           <section className="pl-acct-home__hero" aria-labelledby="home-title">
-            <LogoMark size={48} />
+            <LogoMark size={32} />
             <h1 id="home-title" className="type-display pl-acct-home__title">
               A quiet place to show what your agents make.
             </h1>

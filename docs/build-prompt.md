@@ -120,11 +120,11 @@ These are acceptance criteria, each with a test.
 
 Design an original interface for Plinth. Do not copy the layout, colors, typefaces, icons, logo or wording of any existing product, including the AI products Plinth integrates with. The identity comes from the name: a gallery where work is put on a plinth to be looked at.
 
-- **Feel.** Quiet, editorial, generous whitespace. The artifact is the exhibit; the chrome recedes.
-- **Two modes, both first-class.** "Gallery" (light): cool off-white walls, stone greys, near-black ink. "After hours" (dark): deep charcoal, soft grey text, the same accent at adjusted lightness. Follow the system setting, offer a manual toggle, persist the choice, avoid a flash of the wrong theme on load.
-- **Color.** One accent only, a verdigris green, used for primary actions, focus rings and active states. Semantic colors for success, warning and danger. All colors are CSS custom properties defined once as design tokens. Text contrast meets WCAG AA in both modes.
-- **Type.** Open-licensed fonts, self-hosted from the app's own assets: Instrument Serif for display headings and artifact titles, Geist for interface text, JetBrains Mono for code, versions and tokens. Define a type scale and use it consistently.
-- **Icons.** Phosphor icons, one weight throughout, sized on a consistent grid. Draw a simple original logo mark: a small block on a wider base.
+- **Feel.** Quiet and dense, at working density: small type, tight rows, precise alignment of text and icons. The artifact is the exhibit; the chrome recedes. Navigation sits in a slim sidebar, so pages open with content instead of a big title block.
+- **Two modes, both first-class.** "Gallery" (light): warm paper walls, stone greys, near-black ink. "After hours" (dark): deep charcoal, soft grey text, the same accent at adjusted lightness, no shadows. Follow the system setting, offer a manual toggle, persist the choice, avoid a flash of the wrong theme on load.
+- **Color.** Primary actions are ink with inverted text. One accent only, a weathered bronze, used for mentions, focus rings, live state and the base of the logo. Semantic colors for success, warning and danger. All colors are CSS custom properties defined once as design tokens. Text contrast meets WCAG AA in both modes.
+- **Type.** Open-licensed fonts, self-hosted from the app's own assets: Geist for the whole interface (titles included), JetBrains Mono for code and commands. 13/20 interface text, 12-12.5 for meta, 15 semibold for the rare heading, tabular numbers where digits line up. Controls 28 px, rows 32-36 px, top bars 44 px, on a 4 px grid.
+- **Icons.** Phosphor icons, one weight throughout, 16 px next to text and 8 px from the label, centred on the text line. Draw a simple original logo mark: a small block on a wider base.
 - **Components.** Build a small token-driven component set (button, input, select, dialog, menu, tabs, toast, badge, tooltip, empty state, skeleton). Keyboard accessible, visible focus, reduced-motion respected. Motion is subtle and short.
 - **Responsive.** Dashboard, artifact page and comments work from 360 px wide up. The editor may require 900 px and should say so below that.
 - Include a `/design` route that shows every token and component in both modes.

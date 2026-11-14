@@ -26,6 +26,17 @@ import { Note } from "./Note.tsx";
 
 const STORAGE_KEY = "plinth-connect-client";
 
+/** A two-letter mark and a quiet hint for each client in the list. */
+const CLIENT_LOOK: Record<ConnectClient, { mark: string; hint: string }> = {
+  claude: { mark: "C", hint: "web, desktop" },
+  chatgpt: { mark: "G", hint: "web" },
+  "claude-code": { mark: "CC", hint: "terminal" },
+  codex: { mark: "Cx", hint: "terminal" },
+  cursor: { mark: "Cu", hint: "1 click" },
+  vscode: { mark: "VS", hint: "1 click" },
+  other: { mark: "…", hint: "" },
+};
+
 function initialClient(): ConnectClient {
   try {
     const saved = window.localStorage.getItem(STORAGE_KEY);
@@ -287,14 +298,18 @@ export function ConnectPanel({
       <div role="status" className="pl-acct-connect__status">
         {connected ? (
           <p className="pl-acct-connected__title">
-            <CheckCircleIcon size={ICON_SIZE.md} aria-hidden="true" />
+            <CheckCircleIcon size={ICON_SIZE.sm} aria-hidden="true" />
             <span>
               <strong>{connected.label}</strong> is connected.
             </span>
           </p>
         ) : (
-          <p className="type-small text-muted">
-            This page updates by itself when your agent connects.
+          <p className="pl-acct-wait">
+            <span className="pl-acct-wait__pulse" aria-hidden="true" />
+            <span>Waiting for your agent</span>
+            <span className="pl-acct-wait__note">
+              This page updates by itself when your agent connects.
+            </span>
           </p>
         )}
       </div>
@@ -316,6 +331,8 @@ export function ConnectPanel({
 
       <Tabs
         label="Agent"
+        orientation="vertical"
+        className="pl-acct-connect__tabs"
         value={client}
         onChange={(id) => {
           setClient(id as ConnectClient);
@@ -324,6 +341,8 @@ export function ConnectPanel({
         tabs={CONNECT_CLIENTS.map((c) => ({
           id: c.id,
           label: c.label,
+          lead: CLIENT_LOOK[c.id].mark,
+          hint: CLIENT_LOOK[c.id].hint,
           content: <ClientSteps client={c.id} endpoint={endpoint} />,
         }))}
       />

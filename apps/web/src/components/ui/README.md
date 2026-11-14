@@ -14,23 +14,30 @@ import { PublicShell } from "../components/layout/PublicShell.tsx";
    `src/styles/tokens.css` (`var(--color-ink)`, `var(--space-4)`, `var(--text-sm)`,
    `var(--radius-md)`, `var(--duration-fast)` ...). No hex, rgb, px font sizes or ms in page CSS.
 2. **Colors by role, not by look.** Text: `--color-ink`, `--color-ink-muted` (secondary),
-   `--color-ink-faint` (placeholders and tertiary meta only). Backgrounds: `--color-wall` (page),
-   `--color-surface`, `--color-surface-raised` (cards, inputs, menus), `--color-surface-sunk`
-   (wells, code), `--color-plinth`. Links and accent text: `--color-accent-ink`. Text on the
-   accent: `--color-on-accent`. Status: `--color-success|warning|danger` with their `-soft`
-   backgrounds. These pairs are the ones checked for WCAG AA in both modes
-   (`src/styles/contrast.ts`); if you need a new pair, add it there so the test covers it.
-3. **One accent.** Verdigris (`--color-accent`) is for the primary action, focus rings and the
-   active state. Not for decoration, headings or icons.
-4. **Type.** Headings (`h1`-`h3`) and artifact titles use the display serif automatically or via
-   `.type-title`, `.type-heading`. Interface text is Geist. Versions, ids and tokens use
-   `.type-mono` or `<code>`. Sizes come from the scale: `--text-2xs` ... `--text-5xl`. Role classes:
+   `--color-ink-faint` (meta that must still be read: times, counts, column headers). Ghost
+   (`--color-ink-ghost`) is decoration only, never words. Backgrounds: `--color-wall` (page, top
+   bars), `--color-surface` (panels, cards, inputs), `--color-surface-raised` (menus, dialogs),
+   `--color-surface-sunk` (wells, code), `--color-sidebar`. States: `--color-hover` and
+   `--color-selected` (translucent, laid over whatever is under them). Primary actions:
+   `--color-primary` with `--color-on-primary`. Status: `--color-success|warning|danger` with their
+   `-soft` backgrounds. These pairs are checked for WCAG AA in both modes
+   (`src/styles/contrast.ts`, translucent fills measured over their surface); if you need a new
+   pair, add it there so the test covers it.
+3. **One accent.** Bronze (`--color-accent`, `--color-accent-ink` for text) is for mentions, the
+   focus ring, live state and the base of the logo. Primary buttons are ink, not bronze. Links read
+   as text with a quiet underline.
+4. **Type and density.** One sans (Geist) for everything, titles included; JetBrains Mono for code
+   and commands only. 13/20 body (`--text-md`, `--line-ui`), 12-12.5 for meta, 15 semibold for
+   the rare section heading, -0.005em tracking, tabular numbers (`.type-num`) wherever digits line
+   up. Controls are 28px (`--control-md`), rows 32-36px (`--row-*`), top bars 44px. Role classes:
    `.type-display`, `.type-title`, `.type-heading`, `.type-subhead`, `.type-lead`, `.type-body`,
-   `.type-small`, `.type-caption`, `.type-mono`; helpers `.text-muted`, `.text-faint`,
+   `.type-small`, `.type-caption`, `.type-num`, `.type-mono`; helpers `.text-muted`, `.text-faint`,
    `.text-danger`, `.visually-hidden`.
 5. **Icons.** Phosphor, regular weight only, `*Icon` names (`TrashIcon`, not `Trash`). Pass them
-   as components (`icon={TrashIcon}`); sizes are `ICON_SIZE.sm|md|lg|xl` (16/20/24/32). Decorative
-   icons get `aria-hidden="true"`.
+   as components (`icon={TrashIcon}`); 16px next to text (`ICON_SIZE.sm`), 14px in pills and meta
+   (`ICON_SIZE.xs`), 8px from their label, muted until active. In a list where some items have no
+   icon, give them a 16px slot so labels share one left edge. Decorative icons get
+   `aria-hidden="true"`.
 6. **Words.** Sentence case. Buttons say what happens ("Revoke connection", never "OK"); the toast
    uses the same verb ("Connection revoked"). Visibility and roles use `VISIBILITY_META` and
    `ROLE_META` labels everywhere ("Specific people" for `allowlist`).
@@ -42,11 +49,12 @@ import { PublicShell } from "../components/layout/PublicShell.tsx";
 
 | Component | Use | Key props |
 | --- | --- | --- |
-| `AppShell` | Signed-in pages. Top bar (logo, Dashboard, Connections, theme toggle, user menu), skip link, `<main id="main">`, toaster. Reads the user only through `useSession()`. | `onSignOut?`, `userMenuItems?: MenuEntry[]`, `extraNav?: {label,to}[]`, `width?: "content" \| "full"` |
+| `AppShell` | Signed-in pages. 224px sidebar (logo, Artifacts, Connections, Reports for admins, the person's agents, account menu with theme and sign-out; a slide-over below 48rem), a 44px top bar per page (breadcrumb title, page actions), skip link, `<main id="main">`, toaster. Reads the user only through `useSession()`. | `crumbs?`, `title?` (the h1), `trail?`, `actions?`, `onSignOut?`, `userMenuItems?`, `extraNav?`, `width?: "content" \| "full"` |
 | `PublicShell` | Signed-out pages: sign-in, consent, viewer gates, legal, home. | `width?: "narrow" \| "reading" \| "content"`, `centered?`, `headerEnd?` |
 
-Do not add your own `<main>`; the shells render it. Start the page with `PageHeader` (it renders
-the `h1`).
+Do not add your own `<main>`; the shells render it. In AppShell pages pass `title` (it renders the
+`h1` in the top bar) and put page actions in `actions`; `PageHeader` remains for a compact heading
+inside content (public pages, nested sections).
 
 ## Components
 

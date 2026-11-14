@@ -79,7 +79,7 @@ export function Composer({
           onChange={onChange}
           onSubmit={onSubmit}
           placeholder="Add a comment…"
-          rows={3}
+          rows={2}
           textareaRef={textareaRef}
           maxLength={LIMITS.maxCommentLength}
         />

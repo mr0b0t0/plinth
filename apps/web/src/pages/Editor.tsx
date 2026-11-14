@@ -13,6 +13,7 @@ import {
 import { AppShell } from "../components/layout/AppShell.tsx";
 import { ButtonLink, EmptyState, Row, SkeletonText, Spinner } from "../components/ui/index.ts";
 import { ApiRequestError, api } from "../lib/api.ts";
+import { Link } from "../lib/router.tsx";
 import { useSession } from "../lib/session.ts";
 import "../components/editor/editor-page.css";
 
@@ -102,7 +103,12 @@ export default function Editor({ params }: { params: Record<string, string> }) {
 
   if (state.kind === "ready" && config && (wide || mounted)) {
     return (
-      <AppShell width="full">
+      <AppShell
+        width="full"
+        crumbs={wide ? [{ label: "Artifacts", to: APP_ROUTES.dashboard }] : undefined}
+        title={wide ? <Link to={viewPath}>{state.artifact.title}</Link> : undefined}
+        trail={wide ? "Edit" : undefined}
+      >
         {!wide && (
           <NarrowMessage
             title={state.artifact.title}

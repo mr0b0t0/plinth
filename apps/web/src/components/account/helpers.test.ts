@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
+import { agentInitials } from "../../lib/agents.ts";
 import {
   formatRelative,
+  formatRelativeShort,
   guessClientType,
   mcpUrl,
   quotaText,
@@ -69,6 +71,24 @@ describe("format", () => {
     expect(formatRelative("2026-11-09T12:00:00Z", now, "en")).toBe("4 days ago");
     expect(formatRelative("2026-10-01T12:00:00Z", now, "en")).toBe("Oct 1, 2026");
     expect(formatRelative("not a date", now, "en")).toBe("");
+  });
+
+  it("formats short relative times for dense columns", () => {
+    expect(formatRelativeShort("2026-11-13T11:59:30Z", now, "en")).toBe("now");
+    expect(formatRelativeShort("2026-11-13T13:00:00Z", now, "en")).toBe("now");
+    expect(formatRelativeShort("2026-11-13T11:55:00Z", now, "en")).toBe("5m");
+    expect(formatRelativeShort("2026-11-13T09:00:00Z", now, "en")).toBe("3h");
+    expect(formatRelativeShort("2026-11-09T12:00:00Z", now, "en")).toBe("4d");
+    expect(formatRelativeShort("2026-10-01T12:00:00Z", now, "en")).toBe("Oct 1");
+    expect(formatRelativeShort("2025-10-01T12:00:00Z", now, "en")).toBe("Oct 1, 2025");
+    expect(formatRelativeShort("not a date", now, "en")).toBe("");
+  });
+
+  it("makes two-letter marks for agents", () => {
+    expect(agentInitials("Work Claude")).toBe("WC");
+    expect(agentInitials("codex")).toBe("Co");
+    expect(agentInitials("claude-code")).toBe("CC");
+    expect(agentInitials("  ")).toBe("?");
   });
 
   it("words quota and versions", () => {

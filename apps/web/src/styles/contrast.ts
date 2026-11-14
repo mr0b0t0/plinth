@@ -8,6 +8,11 @@ export interface ContrastPair {
   bg: string;
   /** "text" needs 4.5:1 (AA, normal text); "ui" needs 3:1 (focus rings, control borders, active marks). */
   kind: ContrastKind;
+  /**
+   * The opaque surface under a translucent `bg` (hover and selected fills). The ratio is
+   * measured against `bg` composited over it, which is what the reader sees.
+   */
+  over?: string;
 }
 
 export const MIN_RATIO: Record<ContrastKind, number> = { text: 4.5, ui: 3 };
@@ -17,12 +22,16 @@ const BACKGROUNDS = [
   "--color-surface",
   "--color-surface-raised",
   "--color-surface-sunk",
+  "--color-sidebar",
 ] as const;
 
 const text = (fg: string, bgs: readonly string[]): ContrastPair[] =>
   bgs.map((bg) => ({ fg, bg, kind: "text" as const }));
 const ui = (fg: string, bgs: readonly string[]): ContrastPair[] =>
   bgs.map((bg) => ({ fg, bg, kind: "ui" as const }));
+/** Text on a translucent fill, laid over each of the given surfaces. */
+const textOn = (fg: string, fill: string, surfaces: readonly string[]): ContrastPair[] =>
+  surfaces.map((over) => ({ fg, bg: fill, over, kind: "text" as const }));
 
 /** Every foreground/background combination the components use. */
 export const CONTRAST_PAIRS: ContrastPair[] = [
@@ -30,6 +39,13 @@ export const CONTRAST_PAIRS: ContrastPair[] = [
   ...text("--color-ink-muted", [...BACKGROUNDS, "--color-plinth"]),
   ...text("--color-ink-faint", BACKGROUNDS),
   ...text("--color-ink-inverse", ["--color-ink"]),
+  ...text("--color-on-primary", ["--color-primary", "--color-primary-hover"]),
+  // Rows, nav items and ghost buttons on hover; the current nav item and pressed toggles.
+  ...textOn("--color-ink", "--color-hover", BACKGROUNDS),
+  ...textOn("--color-ink-muted", "--color-hover", BACKGROUNDS),
+  ...textOn("--color-ink-faint", "--color-hover", ["--color-wall", "--color-surface"]),
+  ...textOn("--color-ink", "--color-selected", BACKGROUNDS),
+  ...textOn("--color-ink-muted", "--color-selected", ["--color-sidebar", "--color-wall"]),
   ...text("--color-accent-ink", [
     "--color-wall",
     "--color-surface",
@@ -55,17 +71,66 @@ export const CONTRAST_PAIRS: ContrastPair[] = [
 
 export type Rgb = [number, number, number];
 
-/** Parse #rgb, #rrggbb or rgb(r g b) / rgb(r, g, b). Alpha is ignored; returns null otherwise. */
+/**
+ * Parse #rgb, #rgba, #rrggbb, #rrggbbaa or rgb(r g b) / rgb(r, g, b). Alpha is ignored (see
+ * parseAlpha); returns null otherwise. Browsers serialize translucent custom properties as
+ * #rrggbbaa, so the live /design page needs the long forms.
+ */
 export function parseColor(value: string): Rgb | null {
   const v = value.trim().toLowerCase();
-  const hex = /^#([0-9a-f]{3}|[0-9a-f]{6})$/.exec(v);
+  const hex = /^#([0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})$/.exec(v);
   if (hex?.[1]) {
-    const h = hex[1].length === 3 ? [...hex[1]].map((c) => c + c).join("") : hex[1];
+    const h = hex[1].length <= 4 ? [...hex[1]].map((c) => c + c).join("") : hex[1];
     return [0, 2, 4].map((i) => Number.parseInt(h.slice(i, i + 2), 16)) as Rgb;
   }
   const rgb = /^rgba?\(\s*([\d.]+)[\s,]+([\d.]+)[\s,]+([\d.]+)/.exec(v);
   if (rgb) return [Number(rgb[1]), Number(rgb[2]), Number(rgb[3])];
   return null;
+}
+
+/** The alpha of rgb(r g b / a) or rgba(r, g, b, a); 1 for anything opaque or unknown. */
+export function parseAlpha(value: string): number {
+  const hex = /^#(?:[0-9a-f]{3}([0-9a-f])|[0-9a-f]{6}([0-9a-f]{2}))$/.exec(
+    value.trim().toLowerCase(),
+  );
+  if (hex) {
+    const a = hex[1] ? hex[1] + hex[1] : (hex[2] ?? "ff");
+    return Number.parseInt(a, 16) / 255;
+  }
+  const m = /^rgba?\([^/,)]+[\s,]+[^/,)]+[\s,]+[^/,)]+(?:\s*[/,]\s*([\d.]+)(%)?)?\s*\)$/.exec(
+    value.trim().toLowerCase(),
+  );
+  if (!m?.[1]) return 1;
+  const a = Number(m[1]) / (m[2] ? 100 : 1);
+  return Number.isFinite(a) ? Math.min(1, Math.max(0, a)) : 1;
+}
+
+/** `top` (with its alpha) painted over the opaque `base`. */
+export function composite(top: string, base: Rgb): Rgb | null {
+  const rgb = parseColor(top);
+  if (!rgb) return null;
+  const a = parseAlpha(top);
+  return rgb.map((c, i) => Math.round(c * a + (base[i] ?? 0) * (1 - a))) as Rgb;
+}
+
+/**
+ * The colors a pair compares, resolved through `lookup` (token name to CSS value): `bg` is
+ * composited over `over` when the pair has one. Null when a value is not a plain color.
+ */
+export function pairColors(
+  pair: ContrastPair,
+  lookup: (name: string) => string | undefined,
+): [Rgb, Rgb] | null {
+  const fg = parseColor(lookup(pair.fg) ?? "");
+  const bgValue = lookup(pair.bg) ?? "";
+  let bg: Rgb | null;
+  if (pair.over) {
+    const base = parseColor(lookup(pair.over) ?? "");
+    bg = base ? composite(bgValue, base) : null;
+  } else {
+    bg = parseColor(bgValue);
+  }
+  return fg && bg ? [fg, bg] : null;
 }
 
 function luminance([r, g, b]: Rgb): number {

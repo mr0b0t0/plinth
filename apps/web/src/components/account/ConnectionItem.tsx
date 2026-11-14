@@ -2,6 +2,7 @@
 import { KeyIcon, PlugsConnectedIcon } from "@phosphor-icons/react";
 import { API, type ConnectionInfo, LIMITS, route } from "@plinth/shared";
 import { type FormEvent, useState } from "react";
+import { agentInitials } from "../../lib/agents.ts";
 import { ApiRequestError, api } from "../../lib/api.ts";
 import { Badge, Button, ConfirmDialog, Dialog, Input, useToast } from "../ui/index.ts";
 import {
@@ -44,6 +45,9 @@ export function ConnectionItem({ connection: c, now, onChanged }: ConnectionItem
 
   return (
     <li className="pl-acct-conn" data-revoked={revoked || undefined}>
+      <span className="pl-acct-conn__mark" aria-hidden="true">
+        {agentInitials(c.label)}
+      </span>
       <div className="pl-acct-conn__main">
         <div className="pl-acct-conn__head">
           <h3 className="pl-acct-conn__label">{c.label}</h3>

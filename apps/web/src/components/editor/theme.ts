@@ -1,6 +1,7 @@
 // Monaco themes built from the design tokens, so the editor follows Gallery / After hours without
 // a second palette. Monaco needs literal "#rrggbb" colors, so the tokens are read from the computed
-// style of an element that renders in the wanted mode.
+// style of an element that renders in the wanted mode. Translucent tokens (the hairlines are
+// rgb(... / alpha)) are flattened onto the editor background first.
 import type { editor } from "monaco-editor/editor";
 import type { Theme } from "../../lib/theme.ts";
 
@@ -11,6 +12,7 @@ export const THEME_TOKENS = {
   sunk: "--color-surface-sunk",
   border: "--color-border",
   borderStrong: "--color-border-strong",
+  selected: "--color-selected",
   ink: "--color-ink",
   inkMuted: "--color-ink-muted",
   inkFaint: "--color-ink-faint",
@@ -35,11 +37,45 @@ export function normalizeHex(value: string): string | null {
   return null;
 }
 
+/**
+ * "rgb(r g b / a)" or "rgba(r, g, b, a)" painted over the opaque `base` ("#rrggbb"), as
+ * "#rrggbb"; null for anything else.
+ */
+export function flattenRgb(value: string, base: string | null): string | null {
+  const m = /^rgba?\(\s*([\d.]+)[\s,]+([\d.]+)[\s,]+([\d.]+)(?:\s*[/,]\s*([\d.]+)(%)?)?\s*\)$/.exec(
+    value.trim().toLowerCase(),
+  );
+  if (!m) return null;
+  const a = m[4] === undefined ? 1 : Number(m[4]) / (m[5] ? 100 : 1);
+  const under = base ? [1, 3, 5].map((i) => Number.parseInt(base.slice(i, i + 2), 16)) : null;
+  if (a < 1 && !under) return null;
+  const channel = (i: number) => {
+    const c = Number(m[i + 1]);
+    const v = under ? c * a + (under[i] ?? 0) * (1 - a) : c;
+    return Math.round(Math.min(255, Math.max(0, v)))
+      .toString(16)
+      .padStart(2, "0");
+  };
+  return `#${channel(0)}${channel(1)}${channel(2)}`;
+}
+
 /** Read the theme tokens as hex colors from an element's computed style. */
 export function readThemeTokens(read: (name: string) => string): ThemeTokens {
   const out = {} as ThemeTokens;
+  const raised = normalizeHex(read(THEME_TOKENS.raised));
   for (const [key, prop] of Object.entries(THEME_TOKENS) as [keyof ThemeTokens, string][]) {
-    out[key] = normalizeHex(read(prop));
+    const value = read(prop);
+    const hex = normalizeHex(value);
+    // Browsers may serialize a translucent color as "#rrggbbaa": flatten it too.
+    out[key] =
+      hex && hex.length === 9
+        ? flattenRgb(
+            `rgb(${[1, 3, 5].map((i) => Number.parseInt(hex.slice(i, i + 2), 16)).join(" ")} / ${
+              Number.parseInt(hex.slice(7, 9), 16) / 255
+            })`,
+            raised?.slice(0, 7) ?? null,
+          )
+        : (hex ?? flattenRgb(value, raised));
   }
   return out;
 }
@@ -68,10 +104,10 @@ export function buildMonacoTheme(mode: Theme, t: ThemeTokens): editor.IStandalon
     "editorLineNumber.activeForeground": t.ink,
     "editorCursor.foreground": t.accent,
     "editor.selectionBackground": t.accentSoft,
-    "editor.inactiveSelectionBackground": t.sunk,
+    "editor.inactiveSelectionBackground": t.selected,
     "editor.selectionHighlightBackground": alpha(t.accentSoft, "99"),
-    "editor.lineHighlightBackground": alpha(t.sunk, "80"),
-    "editor.lineHighlightBorder": alpha(t.sunk, "00"),
+    "editor.lineHighlightBackground": t.selected ? alpha(t.selected, "99") : null,
+    "editor.lineHighlightBorder": alpha(t.raised, "00"),
     "editorIndentGuide.background1": t.border,
     "editorIndentGuide.activeBackground1": t.borderStrong,
     "editorWhitespace.foreground": t.border,
@@ -91,7 +127,7 @@ export function buildMonacoTheme(mode: Theme, t: ThemeTokens): editor.IStandalon
     "input.background": t.surface,
     "input.foreground": t.ink,
     "input.border": t.borderStrong,
-    "list.hoverBackground": t.sunk,
+    "list.hoverBackground": t.selected,
     "list.activeSelectionBackground": t.accentSoft,
     "list.activeSelectionForeground": t.ink,
     "scrollbarSlider.background": alpha(t.borderStrong, "99"),

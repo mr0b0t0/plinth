@@ -85,9 +85,17 @@ describe("ArtifactPage", () => {
     const user = userEvent.setup();
     render(<ArtifactPage params={{ slug: "garden-plan" }} />);
     await screen.findByTitle("Garden plan, version 3");
-    expect(screen.getByRole("link", { name: "Edit" }).getAttribute("href")).toBe(
+    // Edit and Settings live in the ⋯ menu; owners get the breadcrumb back to their artifacts.
+    expect(screen.getByRole("link", { name: "Artifacts" }).getAttribute("href")).toBe("/dashboard");
+    await user.click(screen.getByRole("button", { name: "Artifact actions" }));
+    expect(screen.getByRole("menuitem", { name: "Edit" }).getAttribute("href")).toBe(
       "/a/garden-plan/edit",
     );
+    expect(screen.getByRole("menuitem", { name: "Settings" }).getAttribute("href")).toBe(
+      "/a/garden-plan/settings",
+    );
+    expect(screen.queryByRole("menuitem", { name: "Report" })).toBeNull();
+    await user.keyboard("{Escape}");
     expect(screen.getByText("Visibility:")).toBeTruthy();
     await user.click(screen.getByRole("button", { name: "Share" }));
     const dialog = await screen.findByRole("dialog", { name: "Share this artifact" });
@@ -124,7 +132,7 @@ describe("ArtifactPage", () => {
     const user = userEvent.setup();
     render(<ArtifactPage params={{ slug: "garden-plan" }} />);
     await screen.findByTitle("Garden plan, version 3");
-    // Two toggles exist (wide bar and compact bar); CSS shows one. happy-dom applies no CSS.
+    // One toggle in the bar, at every width.
     const toggle = screen.getAllByRole("button", { name: "Comments" })[0] as HTMLElement;
     expect(toggle.getAttribute("aria-pressed")).toBe("false");
     await user.click(toggle);

@@ -1,6 +1,6 @@
 .pl-tabs__list {
   display: flex;
-  gap: var(--space-6);
+  gap: var(--space-5);
   border-bottom: var(--border-width) solid var(--color-border);
   overflow-x: auto;
   scrollbar-width: none;
@@ -12,6 +12,7 @@
   gap: var(--space-2);
   min-height: var(--control-lg);
   padding: 0;
+  line-height: var(--line-ui);
   border: 0;
   background: none;
   color: var(--color-ink-muted);
@@ -39,7 +40,13 @@
   color: var(--color-ink);
 }
 .pl-tabs__tab[aria-selected="true"]::after {
-  background: var(--color-accent);
+  background: var(--color-ink);
+}
+.pl-tabs__tab svg {
+  color: var(--color-ink-muted);
+}
+.pl-tabs__tab[aria-selected="true"] svg {
+  color: var(--color-ink);
 }
 .pl-tabs__tab:focus-visible {
   outline-offset: calc(var(--focus-ring-width) * -1);
@@ -50,14 +57,104 @@
   cursor: not-allowed;
 }
 .pl-tabs__meta {
-  font-family: var(--font-mono);
   font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
   color: var(--color-ink-muted);
 }
 .pl-tabs__panel {
-  padding-top: var(--space-6);
+  padding-top: var(--space-4);
 }
 .pl-tabs__panel:focus-visible {
   outline-offset: var(--space-1);
   border-radius: var(--radius-sm);
+}
+
+/* Vertical: a list of 32px rows beside the panel (stacks above it on narrow screens). */
+.pl-tabs--vertical {
+  display: grid;
+  grid-template-columns: 13.75rem minmax(0, 1fr);
+  min-width: 0;
+}
+.pl-tabs--vertical .pl-tabs__list {
+  flex-direction: column;
+  align-content: start;
+  gap: 1px;
+  padding: var(--space-2);
+  border-bottom: 0;
+  border-right: var(--border-width) solid var(--color-border);
+  overflow: visible;
+}
+.pl-tabs--vertical .pl-tabs__tab {
+  min-height: var(--row-md);
+  width: 100%;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-md);
+  text-align: left;
+}
+.pl-tabs--vertical .pl-tabs__tab::after {
+  content: none;
+}
+.pl-tabs--vertical .pl-tabs__tab:hover:not(:disabled) {
+  background: var(--color-hover);
+}
+.pl-tabs--vertical .pl-tabs__tab[aria-selected="true"] {
+  background: var(--color-selected);
+}
+.pl-tabs--vertical .pl-tabs__tab:focus-visible {
+  outline-offset: calc(var(--focus-ring-width) * -1);
+}
+.pl-tabs--vertical .pl-tabs__panel {
+  min-width: 0;
+  padding: var(--space-5) var(--space-6);
+}
+.pl-tabs__label {
+  min-width: 0;
+}
+.pl-tabs__lead {
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  border: var(--border-width) solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-ink-muted);
+  font-size: 0.5625rem;
+  font-weight: var(--weight-semibold);
+  line-height: 1;
+  letter-spacing: 0;
+}
+.pl-tabs__hint {
+  margin-left: auto;
+  padding-left: var(--space-2);
+  color: var(--color-ink-faint);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-regular);
+}
+@media (max-width: 47.99rem) {
+  .pl-tabs--vertical {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .pl-tabs--vertical .pl-tabs__list {
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: var(--space-1);
+    padding: var(--space-2);
+    border-right: 0;
+    border-bottom: var(--border-width) solid var(--color-border);
+  }
+  .pl-tabs--vertical .pl-tabs__tab {
+    width: auto;
+  }
+  .pl-tabs--vertical .pl-tabs__hint {
+    display: none;
+  }
+  .pl-tabs--vertical .pl-tabs__panel {
+    padding: var(--space-4);
+  }
+}
+/* Faint text is not checked on the selected fill: the chosen tab's hint steps up to muted. */
+.pl-tabs__tab[aria-selected="true"] .pl-tabs__hint {
+  color: var(--color-ink-muted);
 }

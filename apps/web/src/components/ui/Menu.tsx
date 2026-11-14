@@ -1,3 +1,4 @@
+import { CheckIcon } from "@phosphor-icons/react";
 import {
   type KeyboardEvent,
   type MouseEvent,
@@ -25,6 +26,11 @@ export type MenuEntry =
       /** Destructive action: shown in the danger color. */
       danger?: boolean;
       disabled?: boolean;
+      /**
+       * One of a set of choices (e.g. the theme): the item becomes a menuitemradio and shows a
+       * check when true. Leave undefined for a plain action.
+       */
+      checked?: boolean;
     }
   | { type: "separator" };
 
@@ -40,6 +46,10 @@ export interface MenuProps {
   size?: ButtonSize;
   /** Which edge of the trigger the menu lines up with. */
   align?: "start" | "end";
+  /** Open below the trigger (default) or above it (triggers at the bottom of the screen). */
+  placement?: "down" | "up";
+  /** Extra class on the trigger button. */
+  triggerClassName?: string;
   /** Replaces the trigger's visible content (the accessible name stays `label`). */
   triggerContent?: ReactNode;
   /** Non-interactive content at the top of the menu (e.g. the signed-in email). */
@@ -63,6 +73,8 @@ export function Menu({
   variant = "secondary",
   size = "md",
   align = "start",
+  placement = "down",
+  triggerClassName,
   triggerContent,
   header,
   className,
@@ -192,14 +204,19 @@ export function Menu({
   };
 
   const iconPx = size === "lg" ? ICON_SIZE.md : ICON_SIZE.sm;
+  // When some items have icons, the others get an empty 16px slot so every label lines up.
+  const hasIcons = items.some((e) => isItem(e) && e.icon);
 
   return (
-    <div ref={wrapRef} className={`pl-menu${className ? ` ${className}` : ""}`}>
+    <div
+      ref={wrapRef}
+      className={`pl-menu${placement === "up" ? " pl-menu--up" : ""}${className ? ` ${className}` : ""}`}
+    >
       <button
         ref={triggerRef}
         id={triggerId}
         type="button"
-        className={buttonClassName({ variant, size, iconOnly })}
+        className={`${buttonClassName({ variant, size, iconOnly })}${triggerClassName ? ` ${triggerClassName}` : ""}`}
         aria-haspopup="menu"
         aria-expanded={open}
         aria-controls={open ? menuId : undefined}
@@ -236,7 +253,8 @@ export function Menu({
               ref: (el: HTMLElement | null) => {
                 itemRefs.current[i] = el;
               },
-              role: "menuitem",
+              role: entry.checked === undefined ? "menuitem" : "menuitemradio",
+              "aria-checked": entry.checked,
               tabIndex: -1,
               "aria-disabled": entry.disabled || undefined,
               className: `pl-menu__item${entry.danger ? " pl-menu__item--danger" : ""}`,
@@ -245,8 +263,15 @@ export function Menu({
             } as const;
             const body = (
               <>
-                {ItemIcon && <ItemIcon size={ICON_SIZE.sm} aria-hidden="true" />}
-                <span>{entry.label}</span>
+                {ItemIcon ? (
+                  <ItemIcon size={ICON_SIZE.sm} aria-hidden="true" />
+                ) : (
+                  hasIcons && <span className="pl-menu__icon-slot" aria-hidden="true" />
+                )}
+                <span className="pl-menu__label">{entry.label}</span>
+                {entry.checked && (
+                  <CheckIcon size={ICON_SIZE.sm} aria-hidden="true" className="pl-menu__check" />
+                )}
               </>
             );
             return entry.href ? (

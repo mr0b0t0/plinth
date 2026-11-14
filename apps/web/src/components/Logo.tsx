@@ -1,18 +1,18 @@
-// The Plinth mark: a small block (the work, in verdigris) standing on a wider base (the plinth).
-// public/favicon.svg draws the same shapes.
+// The Plinth mark: a dark block (the work) standing above a bronze base (the plinth), and the
+// wordmark in the interface face. public/favicon.svg draws the same shapes on the same 16px grid.
 import "../styles/logo.css";
 
-export function LogoMark({ size = 24, className }: { size?: number; className?: string }) {
+export function LogoMark({ size = 16, className }: { size?: number; className?: string }) {
   return (
     <svg
       className={`pl-logo-mark${className ? ` ${className}` : ""}`}
       width={size}
       height={size}
-      viewBox="0 0 32 32"
+      viewBox="0 0 16 16"
       aria-hidden="true"
     >
-      <rect className="pl-logo-mark__block" x="11" y="6" width="10" height="13" rx="1" />
-      <rect className="pl-logo-mark__base" x="5" y="21" width="22" height="5" rx="1" />
+      <path className="pl-logo-mark__block" d="M5 0h6a2 2 0 0 1 2 2v7H3V2a2 2 0 0 1 2-2z" />
+      <rect className="pl-logo-mark__base" x="0" y="14" width="16" height="2" rx="1" />
     </svg>
   );
 }
@@ -24,7 +24,7 @@ export interface LogoProps {
   className?: string;
 }
 
-const MARK = { sm: 20, md: 24, lg: 40 } as const;
+const MARK = { sm: 16, md: 16, lg: 32 } as const;
 
 export function Logo({ variant = "full", size = "md", className }: LogoProps) {
   return (

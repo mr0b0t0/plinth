@@ -1,5 +1,5 @@
 // Minimal shell for signed-out pages (home, sign-in, consent, viewer gates, legal, not found):
-// logo, theme toggle, a centered column, and the legal links.
+// a 44px bar with the logo and the theme toggle, a centered column, and the legal links.
 import { APP_ROUTES } from "@plinth/shared";
 import type { ReactNode } from "react";
 import { Link } from "../../lib/router.tsx";
@@ -10,7 +10,7 @@ import "./shell.css";
 
 export interface PublicShellProps {
   children: ReactNode;
-  /** narrow (default, 28rem): forms. reading: 40rem. content: 72rem. */
+  /** narrow (default, 24rem): forms. reading: 40rem. content: 68rem. */
   width?: "narrow" | "reading" | "content";
   /** Center the column vertically (sign-in, gates). */
   centered?: boolean;
@@ -28,17 +28,15 @@ export function PublicShell({
     <IconProvider>
       <SkipLink />
       <div className="pl-shell pl-shell--public">
-        <header className="pl-topbar pl-topbar--public">
-          <div className="pl-topbar__inner">
-            <Link to={APP_ROUTES.home} className="pl-topbar__brand">
-              <LogoMark size={24} />
-              <span className="pl-topbar__word">Plinth</span>
-              <span className="visually-hidden">, go to home</span>
-            </Link>
-            <div className="pl-topbar__end">
-              {headerEnd}
-              <ThemeToggle />
-            </div>
+        <header className="pl-public-bar">
+          <Link to={APP_ROUTES.home} className="pl-topbar__brand pl-public-bar__brand">
+            <LogoMark size={16} />
+            <span className="pl-sidebar__word">Plinth</span>
+            <span className="visually-hidden">, go to home</span>
+          </Link>
+          <div className="pl-public-bar__end">
+            {headerEnd}
+            <ThemeToggle />
           </div>
         </header>
         <main

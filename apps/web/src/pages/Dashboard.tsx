@@ -1,10 +1,24 @@
-// Page: /dashboard. The signed-in person's artifacts and the ones shared with them, with search
-// (kept in ?q=) and the artifact quota.
-import { PlugIcon } from "@phosphor-icons/react";
+// Page: /dashboard. The signed-in person's artifacts and the ones shared with them: a filter row
+// (All / Mine / Shared, sort, list or grid), search (kept in ?q=), and the artifact quota.
+import {
+  ArrowsDownUpIcon,
+  ListBulletsIcon,
+  MagnifyingGlassIcon,
+  PlugIcon,
+  SquaresFourIcon,
+} from "@phosphor-icons/react";
 import { API, APP_ROUTES, type ArtifactSummary, type Paged } from "@plinth/shared";
-import { useEffect, useState } from "react";
+import { useEffect, useId, useMemo, useState } from "react";
 import "../components/account/account.css";
-import { ArtifactRow, ArtifactRowSkeleton } from "../components/account/ArtifactRow.tsx";
+import "../components/account/dashboard.css";
+import {
+  ArtifactCard,
+  ArtifactCardSkeleton,
+  ArtifactListHeader,
+  ArtifactRow,
+  ArtifactRowSkeleton,
+  initialsOf,
+} from "../components/account/ArtifactRow.tsx";
 import { CopyField } from "../components/account/CopyField.tsx";
 import { mcpUrl, quotaText } from "../components/account/format.ts";
 import {
@@ -19,9 +33,11 @@ import {
   Button,
   ButtonLink,
   EmptyState,
-  Input,
-  PageHeader,
+  IconButton,
+  Menu,
+  SegmentedControl,
   Spinner,
+  Tooltip,
 } from "../components/ui/index.ts";
 import { ApiRequestError, api } from "../lib/api.ts";
 import { useLocation } from "../lib/router.tsx";
@@ -32,18 +48,63 @@ type ListState =
   | { status: "error"; message: string }
   | { status: "ready"; items: ArtifactSummary[]; query: string };
 
+type Filter = "all" | "mine" | "shared";
+type Sort = "updated" | "created" | "title";
+export type DashboardView = "list" | "grid";
+
+export const VIEW_STORAGE_KEY = "plinth-dashboard-view";
+
+const SORT_LABEL: Record<Sort, string> = {
+  updated: "Updated",
+  created: "Created",
+  title: "Title",
+};
+
+function readView(): DashboardView {
+  try {
+    return localStorage.getItem(VIEW_STORAGE_KEY) === "grid" ? "grid" : "list";
+  } catch {
+    return "list";
+  }
+}
+
+function saveView(v: DashboardView): void {
+  try {
+    localStorage.setItem(VIEW_STORAGE_KEY, v);
+  } catch {
+    // storage blocked: the choice lasts for this page only
+  }
+}
+
+export function sortArtifacts(items: ArtifactSummary[], sort: Sort): ArtifactSummary[] {
+  const out = [...items];
+  if (sort === "title") out.sort((a, b) => a.title.localeCompare(b.title));
+  else if (sort === "created") out.sort((a, b) => b.created_at.localeCompare(a.created_at));
+  else out.sort((a, b) => b.updated_at.localeCompare(a.updated_at));
+  return out;
+}
+
 export default function Dashboard() {
-  useDocumentTitle("Dashboard");
+  useDocumentTitle("Artifacts");
   const { pending, redirect } = useSignInRedirect();
   const { me, config, refresh } = useSession();
   const signOut = useSignOut();
   const { search } = useLocation();
+  const searchId = useId();
   const [query, setQuery] = useState(() => search.get("q") ?? "");
   const settled = useDebouncedValue(query.trim(), 250);
   const [list, setList] = useState<ListState>({ status: "loading" });
   const [busy, setBusy] = useState(false);
   const [reload, setReload] = useState(0);
   const [now, setNow] = useState(() => Date.now());
+  const [filter, setFilter] = useState<Filter>("all");
+  const [sort, setSort] = useState<Sort>("updated");
+  const [view, setView] = useState<DashboardView>(readView);
+
+  const chooseView = (v: DashboardView) => {
+    setView(v);
+    saveView(v);
+  };
 
   // The quota count may have changed since the session loaded (publishes, deletes).
   useEffect(() => {
@@ -84,62 +145,134 @@ export default function Dashboard() {
     return () => ctrl.abort();
   }, [settled, pending, reload]);
 
+  const items = list.status === "ready" ? list.items : [];
+  const hasShared = items.some((a) => a.role !== "owner");
+  const shown = useMemo(() => {
+    const picked =
+      filter === "mine"
+        ? items.filter((a) => a.role === "owner")
+        : filter === "shared"
+          ? items.filter((a) => a.role !== "owner")
+          : items;
+    return sortArtifacts(picked, sort);
+  }, [items, filter, sort]);
+
   if (redirect) return redirect;
 
-  const items = list.status === "ready" ? list.items : [];
-  const own = items.filter((a) => a.role === "owner");
-  const shared = items.filter((a) => a.role !== "owner");
   const searching = list.status === "ready" && list.query !== "";
   const nothingYet = list.status === "ready" && !searching && items.length === 0;
+  const you = me ? initialsOf(me.name || me.email) : undefined;
+
+  const searchField = (
+    <search className="pl-dash-search">
+      <label htmlFor={searchId} className="visually-hidden">
+        Search artifacts
+      </label>
+      <MagnifyingGlassIcon size={16} aria-hidden="true" className="pl-dash-search__icon" />
+      <input
+        id={searchId}
+        className="pl-control pl-dash-search__input"
+        type="search"
+        placeholder="Search"
+        value={query}
+        onChange={(e) => setQuery(e.target.value)}
+        autoComplete="off"
+        spellCheck={false}
+      />
+      <span className="pl-dash-search__status" role="status">
+        {busy && list.status === "ready" ? (
+          <Spinner size={14} label="Searching" />
+        ) : searching ? (
+          <span className="visually-hidden">
+            {`${items.length} ${items.length === 1 ? "match" : "matches"}`}
+          </span>
+        ) : null}
+      </span>
+    </search>
+  );
+
+  const filters: { value: Filter; label: string }[] = [
+    { value: "all", label: "All" },
+    { value: "mine", label: "Mine" },
+    ...(hasShared || filter === "shared" ? [{ value: "shared" as const, label: "Shared" }] : []),
+  ];
+
+  const emptyFilter =
+    list.status === "ready" && items.length > 0 && shown.length === 0
+      ? filter === "mine"
+        ? searching
+          ? "None of your artifacts match."
+          : "You have not published anything yet."
+        : "Nothing has been shared with you."
+      : null;
 
   return (
-    <AppShell onSignOut={signOut}>
-      <PageHeader
-        title="Artifacts"
-        meta={
-          me ? (
-            <span className="pl-acct-quota">{quotaText(me.artifact_count, me.artifact_limit)}</span>
-          ) : null
-        }
-        actions={
-          nothingYet ? undefined : (
-            <ButtonLink to={CONNECT_AGENT_HREF} icon={PlugIcon}>
-              Connect an agent
-            </ButtonLink>
-          )
-        }
-      />
-
-      {!nothingYet && (
-        <search className="pl-acct-search">
-          <Input
-            label="Search artifacts"
-            hideLabel
-            type="search"
-            placeholder="Search by title"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            autoComplete="off"
-            spellCheck={false}
+    <AppShell onSignOut={signOut} title="Artifacts" actions={nothingYet ? undefined : searchField}>
+      {!nothingYet && list.status !== "error" && (
+        <div className="pl-dash-bar">
+          <SegmentedControl<Filter>
+            label="Show"
+            options={filters}
+            value={filter}
+            onChange={setFilter}
+            className="pl-dash-bar__filters"
           />
-          <span className="pl-acct-search__status" role="status">
-            {busy && list.status === "ready" ? (
-              <Spinner size={16} label="Searching" />
-            ) : searching ? (
-              `${items.length} ${items.length === 1 ? "match" : "matches"}`
-            ) : null}
-          </span>
-        </search>
+          <span className="pl-dash-bar__spacer" />
+          <Menu
+            label={`Sort by ${SORT_LABEL[sort].toLowerCase()}`}
+            variant="ghost"
+            icon={ArrowsDownUpIcon}
+            align="end"
+            className="pl-dash-bar__sort"
+            triggerContent={<span className="pl-dash-bar__sort-label">{SORT_LABEL[sort]}</span>}
+            items={(Object.keys(SORT_LABEL) as Sort[]).map((s) => ({
+              label: SORT_LABEL[s],
+              checked: s === sort,
+              onSelect: () => setSort(s),
+            }))}
+          />
+          <fieldset className="pl-dash-bar__views">
+            <legend className="visually-hidden">View</legend>
+            <Tooltip content="Grid">
+              <IconButton
+                icon={SquaresFourIcon}
+                label="Grid view"
+                aria-pressed={view === "grid"}
+                onClick={() => chooseView("grid")}
+              />
+            </Tooltip>
+            <Tooltip content="List">
+              <IconButton
+                icon={ListBulletsIcon}
+                label="List view"
+                aria-pressed={view === "list"}
+                onClick={() => chooseView("list")}
+              />
+            </Tooltip>
+          </fieldset>
+        </div>
       )}
 
       {pending || list.status === "loading" ? (
-        <div aria-busy="true">
+        <div aria-busy="true" className="pl-dash">
           <span className="visually-hidden">Loading artifacts</span>
-          <ul className="pl-acct-list">
-            <ArtifactRowSkeleton />
-            <ArtifactRowSkeleton />
-            <ArtifactRowSkeleton />
-          </ul>
+          {view === "grid" ? (
+            <ul className="pl-dash__grid">
+              <ArtifactCardSkeleton />
+              <ArtifactCardSkeleton />
+              <ArtifactCardSkeleton />
+              <ArtifactCardSkeleton />
+            </ul>
+          ) : (
+            <div className="pl-dash__list">
+              <ArtifactListHeader />
+              <ul className="pl-dash__rows">
+                <ArtifactRowSkeleton />
+                <ArtifactRowSkeleton />
+                <ArtifactRowSkeleton />
+              </ul>
+            </div>
+          )}
         </div>
       ) : list.status === "error" ? (
         <EmptyState
@@ -184,38 +317,30 @@ export default function Dashboard() {
           action={<Button onClick={() => setQuery("")}>Clear search</Button>}
         />
       ) : (
-        <div className="pl-acct-groups" aria-busy={busy || undefined}>
-          <section aria-labelledby="dash-own">
-            <h2 id="dash-own" className="pl-acct-group__title">
-              Yours <span className="pl-acct-group__count">{own.length}</span>
-            </h2>
-            {own.length > 0 ? (
-              <ul className="pl-acct-list">
-                {own.map((a) => (
-                  <ArtifactRow key={a.id} artifact={a} now={now} />
+        <section className="pl-dash" aria-label="Artifacts" aria-busy={busy || undefined}>
+          {emptyFilter ? (
+            <p className="pl-dash__empty">{emptyFilter}</p>
+          ) : view === "grid" ? (
+            <ul className="pl-dash__grid">
+              {shown.map((a) => (
+                <ArtifactCard key={a.id} artifact={a} now={now} you={you} />
+              ))}
+            </ul>
+          ) : (
+            <div className="pl-dash__list">
+              <ArtifactListHeader />
+              <ul className="pl-dash__rows">
+                {shown.map((a) => (
+                  <ArtifactRow key={a.id} artifact={a} now={now} you={you} />
                 ))}
               </ul>
-            ) : (
-              <p className="pl-acct-group__empty">
-                {searching
-                  ? "None of your artifacts match."
-                  : "You have not published anything yet."}
-              </p>
-            )}
-          </section>
-          {shared.length > 0 && (
-            <section aria-labelledby="dash-shared">
-              <h2 id="dash-shared" className="pl-acct-group__title">
-                Shared with you <span className="pl-acct-group__count">{shared.length}</span>
-              </h2>
-              <ul className="pl-acct-list">
-                {shared.map((a) => (
-                  <ArtifactRow key={a.id} artifact={a} now={now} />
-                ))}
-              </ul>
-            </section>
+            </div>
           )}
-        </div>
+        </section>
+      )}
+
+      {me && list.status === "ready" && (
+        <p className="pl-dash__quota">{quotaText(me.artifact_count, me.artifact_limit)}</p>
       )}
     </AppShell>
   );

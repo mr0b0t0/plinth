@@ -43,6 +43,8 @@ export interface CommentsPanelProps {
    */
   opaque?: boolean;
   onClose: () => void;
+  /** Told the number of open threads whenever the list loads (for the toggle's count). */
+  onOpenCountChange?: (n: number) => void;
 }
 
 /** How often to look for new comments and mention progress while the panel is open. */
@@ -66,6 +68,7 @@ export function CommentsPanel({
   contentOrigin,
   opaque = false,
   onClose,
+  onOpenCountChange,
 }: CommentsPanelProps) {
   const { pathname, search } = useLocation();
   const [items, setItems] = useState<CommentInfo[] | null>(null);
@@ -100,6 +103,11 @@ export function CommentsPanel({
     () => threads.filter((t) => t.root.status === "open").length,
     [threads],
   );
+  const onCountRef = useRef(onOpenCountChange);
+  onCountRef.current = onOpenCountChange;
+  useEffect(() => {
+    if (items) onCountRef.current?.(openCount);
+  }, [items, openCount]);
   const anchors = useMemo(() => highlightAnchors(threads), [threads]);
   const anchorsKey = JSON.stringify(anchors);
   const anchorsRef = useRef(anchors);
@@ -389,7 +397,8 @@ export function CommentsPanel({
             </h2>
             {items && (
               <span className="cm-count" data-testid="comments-count">
-                {openCount} open
+                {openCount}
+                <span className="visually-hidden"> open</span>
               </span>
             )}
             <span className="cm-head__tools">

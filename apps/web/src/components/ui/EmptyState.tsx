@@ -50,7 +50,7 @@ export function EmptyState({
   const H = (["h1", "h2", "h3"] as const)[headingLevel - 1] ?? "h2";
   return (
     <div className={`pl-empty pl-empty--${size}${className ? ` ${className}` : ""}`}>
-      {art === undefined ? <EmptyPlinth size={size === "lg" ? 128 : 88} /> : art}
+      {art === undefined ? <EmptyPlinth size={size === "lg" ? 80 : 64} /> : art}
       <H className="pl-empty__title">{title}</H>
       {description && <div className="pl-empty__description">{description}</div>}
       {action && <div className="pl-empty__action">{action}</div>}

@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { contrastRatio, parseColor, parseTokenBlock, resolveToken } from "../../styles/contrast.ts";
 import {
   buildMonacoTheme,
+  flattenRgb,
   MONACO_THEME_NAMES,
   normalizeHex,
   readThemeTokens,
@@ -40,6 +41,25 @@ describe("normalizeHex", () => {
     for (const v of ["", "red", "rgb(1 2 3)", "#12", "#12345", "var(--x)"]) {
       expect(normalizeHex(v)).toBeNull();
     }
+  });
+});
+
+describe("flattenRgb", () => {
+  it("paints a translucent color over the background", () => {
+    expect(flattenRgb("rgb(0 0 0 / 0.5)", "#ffffff")).toBe("#808080");
+    expect(flattenRgb("rgba(255, 255, 255, 0.1)", "#000000")).toBe("#1a1a1a");
+    expect(flattenRgb("rgb(10 20 30)", null)).toBe("#0a141e");
+  });
+  it("flattens #rrggbbaa as browsers serialize translucent custom properties", () => {
+    const tokens = readThemeTokens((name) =>
+      name === "--color-surface-raised" ? "#ffffff" : name === "--color-border" ? "#00000080" : "",
+    );
+    expect(tokens.border).toBe("#7f7f7f");
+    expect(tokens.raised).toBe("#ffffff");
+  });
+  it("needs a background for translucent colors and refuses anything else", () => {
+    expect(flattenRgb("rgb(0 0 0 / 0.5)", null)).toBeNull();
+    expect(flattenRgb("red", "#ffffff")).toBeNull();
   });
 });
 

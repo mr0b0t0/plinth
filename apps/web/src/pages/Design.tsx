@@ -56,10 +56,11 @@ import {
 import { api } from "../lib/api.ts";
 import {
   CONTRAST_PAIRS,
+  type ContrastPair,
   contrastRatio,
   formatRatio,
   MIN_RATIO,
-  parseColor,
+  pairColors,
 } from "../styles/contrast.ts";
 import "../styles/design-page.css";
 import { THEME_NAMES, type Theme, useTheme } from "../lib/theme.ts";
@@ -81,34 +82,47 @@ interface TokenRow {
 const COLOR_GROUPS: { title: string; note: string; tokens: TokenRow[] }[] = [
   {
     title: "Walls and surfaces",
-    note: "The room. Pages sit on the wall; cards, menus and dialogs are raised; wells are sunk.",
+    note: "Warm paper in Gallery, deep charcoal in After hours. Pages sit on the wall, the sidebar is a step darker, cards and panels are white (or a touch lifted at night).",
     tokens: [
-      { name: "--color-wall", use: "Page background" },
-      { name: "--color-surface", use: "Panels, read-only fields" },
-      { name: "--color-surface-raised", use: "Cards, inputs, menus, dialogs" },
-      { name: "--color-surface-sunk", use: "Wells, code, ghost hover, neutral badges" },
+      { name: "--color-wall", use: "Page background, top bars" },
+      { name: "--color-surface", use: "Panels, inputs, cards" },
+      { name: "--color-surface-raised", use: "Menus, dialogs, toasts" },
+      { name: "--color-surface-sunk", use: "Wells, code, thumbnails" },
+      { name: "--color-sidebar", use: "The sidebar" },
       { name: "--color-plinth", use: "The base an exhibit stands on" },
+      { name: "--color-hover", use: "Row, nav item and ghost control hover (translucent)" },
+      { name: "--color-selected", use: "Current nav item, pressed toggles (translucent)" },
     ],
   },
   {
     title: "Ink",
-    note: "Text. Muted for secondary text, faint for placeholders and meta only.",
+    note: "Text. Muted for secondary text, faint for meta that still has to be read (both meet 4.5:1). Ghost is decoration only.",
     tokens: [
       { name: "--color-ink", use: "Body text, headings" },
-      { name: "--color-ink-muted", use: "Secondary text, inactive nav" },
-      { name: "--color-ink-faint", use: "Placeholders, tertiary meta" },
+      { name: "--color-ink-muted", use: "Secondary text, inactive nav, icons" },
+      { name: "--color-ink-faint", use: "Column headers, times, counts" },
+      { name: "--color-ink-ghost", use: "Separators and glyph art, never words" },
       { name: "--color-ink-inverse", use: "Text on ink (tooltips)" },
     ],
   },
   {
-    title: "Verdigris, the one accent",
-    note: "Primary actions, focus rings, the active state. Nothing decorative.",
+    title: "Primary actions",
+    note: "The primary button is ink with inverted text, so color stays for meaning.",
     tokens: [
-      { name: "--color-accent", use: "Primary buttons, active marks, checked controls" },
-      { name: "--color-accent-hover", use: "Primary hover" },
-      { name: "--color-accent-active", use: "Primary pressed" },
-      { name: "--color-accent-soft", use: "Selected rows, text selection" },
-      { name: "--color-accent-ink", use: "Links and accent text" },
+      { name: "--color-primary", use: "Primary buttons, checked controls" },
+      { name: "--color-primary-hover", use: "Primary hover" },
+      { name: "--color-on-primary", use: "Text on primary" },
+    ],
+  },
+  {
+    title: "Bronze, the one accent",
+    note: "Only for mentions, the focus ring, live state and the base of the logo. Nothing decorative.",
+    tokens: [
+      { name: "--color-accent", use: "Focus ring, live dot, logo base" },
+      { name: "--color-accent-hover", use: "Accent hover" },
+      { name: "--color-accent-active", use: "Accent pressed" },
+      { name: "--color-accent-soft", use: "Mention fill, avatars, text selection" },
+      { name: "--color-accent-ink", use: "Mentions as text" },
       { name: "--color-on-accent", use: "Text on the accent" },
     ],
   },
@@ -116,7 +130,7 @@ const COLOR_GROUPS: { title: string; note: string; tokens: TokenRow[] }[] = [
     title: "Status",
     note: "Only for outcomes and risk. Always paired with an icon or words.",
     tokens: [
-      { name: "--color-success", use: "Success text and icons" },
+      { name: "--color-success", use: "Connected dot, success text and icons" },
       { name: "--color-success-soft", use: "Success background" },
       { name: "--color-warning", use: "Warning text and icons" },
       { name: "--color-warning-soft", use: "Warning background" },
@@ -128,13 +142,13 @@ const COLOR_GROUPS: { title: string; note: string; tokens: TokenRow[] }[] = [
   },
   {
     title: "Lines and focus",
-    note: "Borders that only separate can be quiet; borders that identify a control meet 3:1.",
+    note: "Hairlines that only separate are translucent and quiet; outlines that identify an input meet 3:1.",
     tokens: [
-      { name: "--color-border", use: "Separators, card outlines" },
-      { name: "--color-border-strong", use: "Button outlines, plinth edge" },
+      { name: "--color-border", use: "Hairlines, row separators" },
+      { name: "--color-border-strong", use: "Button, card and pill outlines" },
       { name: "--color-border-control", use: "Input, checkbox and switch outlines" },
-      { name: "--color-focus", use: "Focus ring" },
-      { name: "--color-overlay", use: "Dialog backdrop" },
+      { name: "--color-focus", use: "Focus ring (bronze)" },
+      { name: "--color-overlay", use: "Dialog and slide-over backdrop" },
     ],
   },
 ];
@@ -142,37 +156,57 @@ const COLOR_GROUPS: { title: string; note: string; tokens: TokenRow[] }[] = [
 const ALL_COLOR_TOKENS = [
   ...new Set([
     ...COLOR_GROUPS.flatMap((g) => g.tokens.map((t) => t.name)),
-    ...CONTRAST_PAIRS.flatMap((p) => [p.fg, p.bg]),
+    ...CONTRAST_PAIRS.flatMap((p) => [p.fg, p.bg, ...(p.over ? [p.over] : [])]),
   ]),
 ];
 
 const TYPE_SCALE = [
-  ["--text-5xl", 64, "display"],
-  ["--text-4xl", 48, "display"],
-  ["--text-3xl", 36, "display"],
-  ["--text-2xl", 28, "display"],
-  ["--text-xl", 21, "display"],
-  ["--text-lg", 17, "ui"],
-  ["--text-md", 15, "ui"],
-  ["--text-sm", 13, "ui"],
-  ["--text-xs", 12, "ui"],
-  ["--text-2xs", 11, "ui"],
+  ["--text-5xl", 44, "Landing headline"],
+  ["--text-4xl", 32, "Landing headline on phones"],
+  ["--text-3xl", 24, "Sign-in and gate titles"],
+  ["--text-2xl", 18, "Empty states, public page titles"],
+  ["--text-xl", 15, "Section headings (semibold)"],
+  ["--text-lg", 14, "Lead paragraphs"],
+  ["--text-md", 13, "Body and controls, on a 20px line"],
+  ["--text-sm", 12.5, "Secondary text, pills"],
+  ["--text-xs", 12, "Meta, column headers, captions"],
+  ["--text-2xs", 11, "Keyboard hints"],
 ] as const;
 
 const TYPE_ROLES = [
-  ["type-display", "Display", "Hero and full-page empty states"],
-  ["type-title", "Title", "The page's h1 (PageHeader)"],
-  ["type-heading", "Heading", "Section headings"],
+  ["type-display", "Display", "The landing headline only"],
+  ["type-title", "Title", "Standalone pages: sign-in, gates"],
+  ["type-heading", "Heading", "The rare section heading, 15px semibold"],
   ["type-subhead", "Subhead", "Headings inside cards and panels"],
   ["type-lead", "Lead", "The paragraph under a title"],
-  ["type-body", "Body", "Default text"],
+  ["type-body", "Body", "Default text, 13/20"],
   ["type-small", "Small", "Secondary text"],
   ["type-caption", "Caption", "Meta lines under items"],
-  ["type-mono", "Mono", "v12, a1b2c3d4, plt_live_8f2e"],
+  ["type-num", "Numbers", "v12 · 3 versions · 19h (tabular)"],
+  ["type-mono", "Mono", "claude mcp add --transport http plinth"],
 ] as const;
 
-const SPACES = [1, 2, 3, 4, 5, 6, 8, 10, 12, 16, 24] as const;
+/** Heights from the 4px grid, shown at their size. */
+const SIZES = [
+  ["--control-xs", 22, "Pills (version, access)"],
+  ["--control-sm", 24, "Icon buttons inside rows"],
+  ["--control-md", 28, "Buttons, inputs, menu items"],
+  ["--row-sm", 28, "Sidebar items"],
+  ["--row-md", 32, "Sidebar header, account row"],
+  ["--row-lg", 36, "List rows"],
+  ["--control-lg", 36, "The few large calls to action"],
+  ["--topbar-height", 44, "Top bars and the filter row"],
+] as const;
+
+const SPACES = [1, 2, 3, 4, 5, 6, 8, 10, 12, 16] as const;
 const RADII = ["xs", "sm", "md", "lg", "full"] as const;
+const RADIUS_USE: Record<(typeof RADII)[number], string> = {
+  xs: "3px, tiny marks",
+  sm: "4px, pills and badges",
+  md: "6px, controls and rows",
+  lg: "8px, cards and panels",
+  full: "avatars and dots",
+};
 const SHADOWS = ["sm", "md", "lg"] as const;
 
 const ICONS: [Icon, string][] = [
@@ -197,6 +231,7 @@ const SECTIONS = [
   ["contrast", "Contrast"],
   ["modes", "Both modes"],
   ["type", "Type"],
+  ["sizes", "Sizes"],
   ["space", "Spacing"],
   ["shape", "Radii and elevation"],
   ["icons", "Icons and logo"],
@@ -220,10 +255,14 @@ function useComputedTokens(names: string[], theme: Theme) {
   return [ref, values] as const;
 }
 
-function ratioFor(values: Record<string, string>, fg: string, bg: string): number | null {
-  const a = parseColor(values[fg] ?? "");
-  const b = parseColor(values[bg] ?? "");
-  return a && b ? contrastRatio(a, b) : null;
+function ratioFor(values: Record<string, string>, pair: ContrastPair): number | null {
+  const colors = pairColors(pair, (name) => values[name]);
+  return colors ? contrastRatio(...colors) : null;
+}
+
+/** A sample background: a translucent fill shown over the surface it sits on. */
+function pairBackground(p: ContrastPair): string {
+  return p.over ? `linear-gradient(var(${p.bg}), var(${p.bg})), var(${p.over})` : `var(${p.bg})`;
 }
 
 function Section({
@@ -290,16 +329,19 @@ export default function Design() {
   }, []);
 
   return (
-    <AppShell onSignOut={signOut}>
+    <AppShell onSignOut={signOut} title="Design system">
       {/* Probes: each reads the tokens for one mode, whatever the page mode is. */}
       <div ref={lightRef} data-theme="light" hidden />
       <div ref={darkRef} data-theme="dark" hidden />
 
-      <PageHeader
-        title="Design system"
-        description="The tokens and components Plinth is built from. Every color, size and duration comes from tokens.css; every screen uses these components."
-        actions={<ThemeSwitch />}
-      />
+      <div className="ds-lead-row">
+        <ThemeSwitch size="sm" />
+      </div>
+      <p className="ds-lead">
+        The tokens and components Plinth is built from, at working density: 13/20 type, 28px
+        controls, 32 to 36px rows, 44px top bars, 16px icons, all on a 4px grid. Every color, size
+        and duration comes from tokens.css; every screen uses these components.
+      </p>
 
       <div className="ds-layout">
         <nav aria-label="On this page" className="ds-toc">
@@ -316,7 +358,7 @@ export default function Design() {
           <Section
             id="color"
             title="Color"
-            intro="Two modes share one set of names. Gallery is the light room: cool off-white walls, stone greys, near-black ink. After hours is the same room with the lights down."
+            intro="Two modes share one set of names. Gallery is the light room: warm paper walls, stone greys, near-black ink. After hours is the same room with the lights down, and no shadows."
           >
             {COLOR_GROUPS.map((group) => (
               <div key={group.title} className="ds-color-group">
@@ -349,7 +391,9 @@ export default function Design() {
                               <span
                                 className="ds-swatch__chip"
                                 data-theme={m}
-                                style={{ background: `var(${t.name})` }}
+                                style={{
+                                  background: `linear-gradient(var(${t.name}), var(${t.name})), var(--color-wall)`,
+                                }}
                               />
                               <code className="ds-swatch__value">{byMode[m][t.name] ?? ""}</code>
                             </span>
@@ -367,7 +411,7 @@ export default function Design() {
           <Section
             id="contrast"
             title="Contrast"
-            intro="Every text pair the components use meets WCAG AA (4.5:1) in both modes; focus rings, control outlines and active marks meet 3:1. Ratios are computed live from the tokens; contrast.test.ts asserts the same list."
+            intro="Every text pair the components use meets WCAG AA (4.5:1) in both modes, including text on the translucent hover and selected fills (measured over the surface they sit on); focus rings and input outlines meet 3:1. Ratios are computed live from the tokens; contrast.test.ts asserts the same list."
           >
             {/* biome-ignore lint/a11y/noNoninteractiveTabindex: a scrolling region must be reachable by keyboard */}
             <section className="ds-table-wrap" aria-label="Contrast ratios" tabIndex={0}>
@@ -385,14 +429,20 @@ export default function Design() {
                 </thead>
                 <tbody>
                   {CONTRAST_PAIRS.map((p) => (
-                    <tr key={`${p.fg}|${p.bg}|${p.kind}`}>
+                    <tr key={`${p.fg}|${p.bg}|${p.over ?? ""}|${p.kind}`}>
                       <th scope="row">
                         <code className="ds-token">{p.fg.replace("--color-", "")}</code>
                         <span className="ds-on"> on </span>
                         <code className="ds-token">{p.bg.replace("--color-", "")}</code>
+                        {p.over && (
+                          <>
+                            <span className="ds-on"> over </span>
+                            <code className="ds-token">{p.over.replace("--color-", "")}</code>
+                          </>
+                        )}
                       </th>
                       {MODES.map((m) => {
-                        const r = ratioFor(byMode[m], p.fg, p.bg);
+                        const r = ratioFor(byMode[m], p);
                         const ok = r !== null && r >= MIN_RATIO[p.kind];
                         return (
                           <td key={m}>
@@ -402,9 +452,9 @@ export default function Design() {
                                 data-theme={m}
                                 style={
                                   p.kind === "text"
-                                    ? { background: `var(${p.bg})`, color: `var(${p.fg})` }
+                                    ? { background: pairBackground(p), color: `var(${p.fg})` }
                                     : {
-                                        background: `var(${p.bg})`,
+                                        background: pairBackground(p),
                                         boxShadow: `inset 0 0 0 2px var(${p.fg})`,
                                       }
                                 }
@@ -468,7 +518,7 @@ export default function Design() {
                         <span className="ds-exhibit-title">Field notes, spring survey</span>
                         <Row gap={2}>
                           <span className="type-caption">
-                            <span className="type-mono">v7</span>, edited today
+                            <span className="type-num">v7</span>, edited today
                           </span>
                           <VisibilityBadge visibility="password" />
                         </Row>
@@ -510,47 +560,35 @@ export default function Design() {
           <Section
             id="type"
             title="Type"
-            intro="Three open-licensed families, self-hosted. The serif is the gallery's voice; the sans does the work; the mono marks things a machine wrote."
+            intro="One sans for the whole interface, titles included; a mono for code and commands. Both open-licensed and self-hosted. Hierarchy comes from weight and a few sizes, with -0.005em tracking and tabular numbers wherever digits line up."
           >
             <div className="ds-families">
-              <div className="ds-family">
-                <p className="ds-family__sample ds-family__sample--display">
-                  Field notes, spring survey
-                </p>
-                <p className="ds-family__meta">
-                  <strong>Instrument Serif</strong> 400. Display headings and artifact titles.{" "}
-                  <code>--font-display</code>
-                </p>
-              </div>
               <div className="ds-family">
                 <p className="ds-family__sample ds-family__sample--ui">
                   Share with specific people
                 </p>
                 <p className="ds-family__meta">
-                  <strong>Geist</strong> variable, 400 to 600. Interface text.{" "}
-                  <code>--font-ui</code>
+                  <strong>Geist</strong> variable, 400 to 600. The interface, page titles and the
+                  wordmark. <code>--font-ui</code>
                 </p>
               </div>
               <div className="ds-family">
-                <p className="ds-family__sample ds-family__sample--mono">v12 a1b2c3d4 plt_8f2e</p>
+                <p className="ds-family__sample ds-family__sample--mono">claude mcp add plinth</p>
                 <p className="ds-family__meta">
-                  <strong>JetBrains Mono</strong> variable. Code, versions, tokens, ids.{" "}
-                  <code>--font-mono</code>
+                  <strong>JetBrains Mono</strong> variable. Code and commands only; versions and
+                  counts use the sans with tabular numbers. <code>--font-mono</code>
                 </p>
               </div>
             </div>
 
             <h3 className="ds-sub">Scale</h3>
             <ul className="ds-scale">
-              {TYPE_SCALE.map(([token, px, face]) => (
+              {TYPE_SCALE.map(([token, px, use]) => (
                 <li key={token} className="ds-scale__row">
                   <code className="ds-token">{token}</code>
                   <span className="ds-scale__px">{px}px</span>
-                  <span
-                    className={`ds-scale__sample ds-scale__sample--${face}`}
-                    style={{ fontSize: `var(${token})` }}
-                  >
-                    {face === "display" ? "A quiet room for work" : "Publish, share, revise"}
+                  <span className="ds-scale__sample" style={{ fontSize: `var(${token})` }}>
+                    {use}
                   </span>
                 </li>
               ))}
@@ -565,8 +603,8 @@ export default function Design() {
                     <span className="ds-use">{use}</span>
                   </div>
                   <p className={cls}>
-                    {name === "Mono"
-                      ? use
+                    {name === "Mono" || name === "Numbers"
+                      ? use.replace(/ \(tabular\)$/, "")
                       : name === "Display" || name === "Title"
                         ? "Field notes"
                         : `${name}: the artifact is the exhibit; the chrome recedes.`}
@@ -577,9 +615,37 @@ export default function Design() {
           </Section>
 
           <Section
+            id="sizes"
+            title="Sizes"
+            intro="Controls are 28px, rows 32 to 36px, top bars 44px. Every icon and label pair is centred on the 20px text line, 8px apart, and sibling labels share one left edge."
+          >
+            <ul className="ds-sizes">
+              {SIZES.map(([token, px, use]) => (
+                <li key={token} className="ds-sizes__row">
+                  <code className="ds-token">{token}</code>
+                  <span className="ds-scale__px">{px}px</span>
+                  <span className="ds-sizes__bar" style={{ height: `var(${token})` }}>
+                    <span className="ds-use">{use}</span>
+                  </span>
+                </li>
+              ))}
+            </ul>
+            <div className="ds-size-demo" aria-hidden="true">
+              <span className="ds-size-demo__row">
+                <ClockCounterClockwiseIcon size={16} />
+                History
+              </span>
+              <span className="ds-size-demo__row">
+                <span className="ds-size-demo__slot" />
+                No icon, same left edge
+              </span>
+            </div>
+          </Section>
+
+          <Section
             id="space"
             title="Spacing"
-            intro="A 4px grid. Prefer the larger steps between groups; whitespace does the grouping before borders do."
+            intro="A 4px grid (plus 2 and 6 for optical fixes). Pages start 20px from the sidebar; groups are separated by 16 to 32px, not by big headers."
           >
             <ul className="ds-spaces">
               {SPACES.map((n) => (
@@ -595,13 +661,14 @@ export default function Design() {
           <Section
             id="shape"
             title="Radii and elevation"
-            intro="Controls are slightly rounded; exhibits keep crisp corners. Shadows are soft and rare: menus, dialogs and toasts float, cards barely lift."
+            intro="Radii of 4, 6 and 8px. Shadows are rare and soft, for menus, dialogs and toasts in Gallery only; After hours uses none, and separates surfaces with hairlines."
           >
             <div className="ds-shapes">
               {RADII.map((r) => (
                 <div key={r} className="ds-shape">
                   <span className="ds-shape__box" style={{ borderRadius: `var(--radius-${r})` }} />
                   <code className="ds-token">--radius-{r}</code>
+                  <span className="ds-use">{RADIUS_USE[r]}</span>
                 </div>
               ))}
             </div>
@@ -621,7 +688,7 @@ export default function Design() {
           <Section
             id="icons"
             title="Icons and logo"
-            intro="Phosphor, regular weight only, on a 4px grid: 16 in small controls and badges, 20 in buttons and menus, 24 for emphasis, 32 for empty states."
+            intro="Phosphor, regular weight (a 1px stroke at 16px). 16px next to text, 8px from the label, muted until active; 14px inside pills and meta lines; larger only for gates and empty states."
           >
             <div className="ds-icon-sizes">
               {(Object.keys(ICON_SIZE) as (keyof typeof ICON_SIZE)[]).map((k) => (
@@ -635,7 +702,7 @@ export default function Design() {
             <ul className="ds-icons">
               {ICONS.map(([I, name]) => (
                 <li key={name}>
-                  <I size={ICON_SIZE.md} aria-hidden="true" />
+                  <I size={ICON_SIZE.sm} aria-hidden="true" />
                   <span>{name}</span>
                 </li>
               ))}
@@ -643,13 +710,15 @@ export default function Design() {
             <div className="ds-logos">
               {MODES.map((m) => (
                 <div key={m} data-theme={m} className="ds-logo-tile">
-                  <LogoMark size={64} />
+                  <LogoMark size={16} />
                   <span className="ds-logo-tile__word">Plinth</span>
+                  <LogoMark size={48} className="ds-logo-tile__big" />
                 </div>
               ))}
               <p className="ds-use ds-logos__note">
-                The mark: a small block on a wider base. The block is the work, in verdigris; the
-                base is the plinth, in ink. Keep clear space of one block width around it.
+                The mark: a dark block above a bronze base, on a 16px grid. The block is the work,
+                in ink; the base is the plinth, in bronze. The wordmark is Geist semibold, 8px from
+                the mark.
               </p>
             </div>
           </Section>
