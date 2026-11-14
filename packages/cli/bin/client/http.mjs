@@ -106,8 +106,9 @@ export async function readJson(res, what) {
 }
 
 /**
- * A client for one origin. `auth` is { token(): Promise<string|null>, refresh(): Promise<string|null> }
- * or null for anonymous calls. A 401 refreshes once (OAuth sign-ins only) and retries.
+ * A client for one origin. `auth` is { token(): Promise<string|null>, refresh(): Promise<string|null>,
+ * signedOut?(): Error } or null for anonymous calls. A 401 refreshes once (OAuth sign-ins only) and
+ * retries; when the refresh yields no token, it throws signedOut() (else the 401 as an ApiError).
  */
 export function apiClient({ origin, userAgent, auth = null, fetch: fetchFn }) {
   const f = guardedFetch(fetchFn);
@@ -125,12 +126,18 @@ export function apiClient({ origin, userAgent, auth = null, fetch: fetchFn }) {
         },
         body: json !== undefined ? JSON.stringify(json) : undefined,
       });
-    let token = auth ? await auth.token() : null;
+    const token = auth ? await auth.token() : null;
     let res = await send(token);
     if (res.status === 401 && auth?.refresh) {
-      await res.arrayBuffer().catch(() => {});
-      token = await auth.refresh();
-      if (token) res = await send(token);
+      const next = await auth.refresh();
+      if (next) {
+        await res.arrayBuffer().catch(() => {});
+        res = await send(next);
+      } else if (auth.signedOut) {
+        // The grant is gone (revoked on the Connections page, or expired): say how to sign in.
+        await res.arrayBuffer().catch(() => {});
+        throw auth.signedOut();
+      }
     }
     return readJson(res, `${method} ${pathname}`);
   }

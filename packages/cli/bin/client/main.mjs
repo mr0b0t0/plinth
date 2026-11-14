@@ -42,7 +42,7 @@ export const clientUsage = (
       next version of --id. Unchanged files are reused, not sent again.
   ${p} upload <dir> --to <upload_url>      send a folder with a start_upload ticket; the token
                                              comes from PLINTH_UPLOAD_TOKEN only
-Instance: --url, else PLINTH_URL, else the local instance (--name, --home), else the hosted one.
+Instance: --url, else --name/--home, else PLINTH_URL, else the single local instance, else hosted.
 PLINTH_TOKEN (a personal access token) is used only for PLINTH_URL's instance (or the hosted one).
 Exit codes: 0 ok, 1 error, 2 usage, 3 the artifact changed since the version you read.`;
 
@@ -158,21 +158,26 @@ export async function main(argv, io = {}) {
     const resolved = resolveOrigin(opts, env);
     Object.assign(ctx, resolved);
     stderr(`plinth: ${resolved.origin} (${resolved.source})`);
+    if (resolved.note) stderr(`plinth: ${resolved.note}`);
     const oauth = oauthFor(ctx);
+    const signedOut = () => {
+      const s = oauth.readState(resolved.origin);
+      return new CliError(
+        `${s?.signed_out ? "The sign-in was revoked or expired" : "Not signed in"} on ${resolved.origin}. Run: plinth login${urlHint(ctx)}`,
+      );
+    };
     const auth = resolved.envToken
       ? { token: async () => resolved.envToken, refresh: null }
       : {
           token: () => oauth.accessToken(resolved.origin),
           refresh: () => oauth.accessToken(resolved.origin, { force: true }),
+          signedOut,
         };
     ctx.api = () =>
       apiClient({ origin: resolved.origin, userAgent: USER_AGENT, auth, fetch: ctx.rawFetch });
     ctx.requireAuth = async () => {
       if (await auth.token()) return;
-      const s = oauth.readState(resolved.origin);
-      throw new CliError(
-        `${s?.signed_out ? "The sign-in was revoked or expired" : "Not signed in"} on ${resolved.origin}. Run: plinth login${urlHint(ctx)}`,
-      );
+      throw signedOut();
     };
 
     if (command === "login") {

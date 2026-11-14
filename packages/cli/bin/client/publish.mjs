@@ -179,6 +179,13 @@ function apiFailure(e) {
   return new CliError(msg);
 }
 
+/**
+ * The hash the source is compared by: of its text, not its bytes. The API returns the source as a
+ * decoded string (R2's text(), which drops a leading BOM and replaces bytes that are not UTF-8), so
+ * the local file is decoded the same way, and a leading BOM is ignored on both sides.
+ */
+const sourceTextHash = (text) => sha256(Buffer.from(text.replace(/^\uFEFF/, ""), "utf8"));
+
 /** Read the version back and compare every file's hash with the folder's. */
 async function verify(api, result, files) {
   let d;
@@ -191,10 +198,16 @@ async function verify(api, result, files) {
   }
   const remote = new Map((d.assets ?? []).map((a) => [a.path, a.sha256]));
   const source = d.html ?? d.content;
-  if (typeof source === "string") remote.set(d.source_path, sha256(Buffer.from(source, "utf8")));
   const local = new Map(files.map((f) => [f.path, f.sha256]));
+  if (typeof source === "string") {
+    remote.set(d.source_path, sourceTextHash(source));
+    const file = files.find((f) => f.path === d.source_path);
+    if (file)
+      local.set(file.path, sourceTextHash(new TextDecoder().decode(readFileSync(file.abs))));
+  }
   const differ = files.filter(
-    (f) => remote.has(f.path) && remote.get(f.path) !== null && remote.get(f.path) !== f.sha256,
+    (f) =>
+      remote.has(f.path) && remote.get(f.path) !== null && remote.get(f.path) !== local.get(f.path),
   );
   const missing = files.filter((f) => !remote.has(f.path)).map((f) => f.path);
   const extra = [...remote.keys()].filter((p) => !local.has(p));
@@ -253,9 +266,10 @@ function report(result, check, opts, out) {
   }
 }
 
+/** The source as text for an inline update; a leading BOM is kept, so the stored bytes match the file. */
 function utf8Text(f, bytes) {
   try {
-    return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    return new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
   } catch {
     throw new CliError(`${f.path} is not valid UTF-8 text`);
   }

@@ -79,7 +79,9 @@ export async function startFakePlinth(options = {}) {
         content_type: "x",
         sha256: f.sha256,
       }));
-    const src = v.get(sourcePath)?.bytes.toString("utf8") ?? "";
+    // As the Worker's readText (R2 text()): UTF-8 decoding drops a leading BOM.
+    let src = new TextDecoder().decode(v.get(sourcePath)?.bytes ?? new Uint8Array());
+    if (state.tamperSource) src += "<!-- not what was sent -->";
     return {
       id: a.id,
       slug: a.slug,

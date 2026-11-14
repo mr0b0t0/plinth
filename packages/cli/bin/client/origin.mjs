@@ -1,9 +1,9 @@
 // Which Plinth instance a client command talks to, and with what credential.
 //
-// Origin: --url, then PLINTH_URL, then the single local instance (the one --name/--home pick, as
-// `plinth status` does), then the hosted instance. PLINTH_TOKEN (a personal access token) is bound
-// to one origin: PLINTH_URL's, or the hosted one when PLINTH_URL is unset. It is never sent to any
-// other origin, and never written to disk.
+// Origin: --url, then the instance --name/--home pick (as `plinth status` does), then PLINTH_URL,
+// then the single local instance, then the hosted instance. PLINTH_TOKEN (a personal access token)
+// is bound to one origin: PLINTH_URL's, or the hosted one when PLINTH_URL is unset. It is never
+// sent to any other origin, and never written to disk.
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -93,50 +93,29 @@ function originOrUsage(raw, label) {
   }
 }
 
-/**
- * Resolve { origin, source, envToken }. `envToken` is PLINTH_TOKEN when it may be used for this
- * origin, else null.
- */
-export function resolveOrigin(opts, env = process.env) {
-  const envToken = env.PLINTH_TOKEN?.trim() || null;
-  const bound = envToken
-    ? originOrUsage(env.PLINTH_URL || HOSTED_ORIGIN, env.PLINTH_URL ? "PLINTH_URL" : "origin")
-    : null;
-  if (opts.url !== undefined) {
-    const origin = originOrUsage(opts.url, "--url");
-    if (envToken && origin !== bound) {
-      throw new CliError(
-        `PLINTH_TOKEN belongs to ${bound} and is never sent to ${origin}. Unset it, or set PLINTH_URL to the instance it was made on.`,
-        EXIT.usage,
-      );
-    }
-    return { origin, source: "--url", envToken };
+/** The instance `name` in `home` as { origin, source }; exit 2 when there is none. */
+function namedInstance(home, name) {
+  const inst = readInstanceOrigin(home, name);
+  if (!inst) {
+    throw new CliError(`No instance "${name}" in ${home}. Pass --url for another one.`, EXIT.usage);
   }
-  if (env.PLINTH_URL)
-    return {
-      origin: bound ?? originOrUsage(env.PLINTH_URL, "PLINTH_URL"),
-      source: "PLINTH_URL",
-      envToken,
-    };
-  // A token in the environment names its instance; do not guess another one.
-  if (envToken) return { origin: bound, source: "PLINTH_TOKEN (hosted)", envToken };
+  return {
+    origin: originOrUsage(inst.origin, "instance"),
+    source: `${inst.kind} instance "${name}"`,
+  };
+}
 
+/**
+ * The origin, in order: --url, then --name/--home (an explicit choice, like --url, so it wins over
+ * PLINTH_URL), then PLINTH_URL, then the single local instance, then the hosted one.
+ */
+function pickOrigin(opts, env) {
+  if (opts.url !== undefined) return { origin: originOrUsage(opts.url, "--url"), source: "--url" };
   const home = resolveHome(opts.home, env);
-  if (opts.name !== undefined || opts.home !== undefined) {
-    const name = opts.name ?? "plinth";
-    const inst = readInstanceOrigin(home, name);
-    if (!inst) {
-      throw new CliError(
-        `No instance "${name}" in ${home}. Pass --url for another one.`,
-        EXIT.usage,
-      );
-    }
-    return {
-      origin: originOrUsage(inst.origin, "instance"),
-      source: `${inst.kind} instance "${name}"`,
-      envToken,
-    };
-  }
+  if (opts.name !== undefined || opts.home !== undefined)
+    return namedInstance(home, opts.name ?? "plinth");
+  if (env.PLINTH_URL)
+    return { origin: originOrUsage(env.PLINTH_URL, "PLINTH_URL"), source: "PLINTH_URL" };
   const names = listInstances(home);
   const pick = names.length === 1 ? names[0] : names.includes("plinth") ? "plinth" : null;
   if (pick) {
@@ -145,7 +124,6 @@ export function resolveOrigin(opts, env = process.env) {
       return {
         origin: originOrUsage(inst.origin, "instance"),
         source: `${inst.kind} instance "${pick}"`,
-        envToken,
       };
   }
   if (names.length > 1) {
@@ -154,5 +132,33 @@ export function resolveOrigin(opts, env = process.env) {
       EXIT.usage,
     );
   }
-  return { origin: HOSTED_ORIGIN, source: "hosted", envToken };
+  return { origin: HOSTED_ORIGIN, source: "hosted" };
+}
+
+/**
+ * Resolve { origin, source, envToken, note }. `envToken` is PLINTH_TOKEN when the origin is the one
+ * it is bound to (PLINTH_URL's, else the hosted one), else null. An explicit --url, --name or --home
+ * for another origin while PLINTH_TOKEN is set exits 2; an origin picked without a flag simply goes
+ * without the token, and `note` says so.
+ */
+export function resolveOrigin(opts, env = process.env) {
+  const token = env.PLINTH_TOKEN?.trim() || null;
+  const bound = token
+    ? originOrUsage(env.PLINTH_URL || HOSTED_ORIGIN, env.PLINTH_URL ? "PLINTH_URL" : "origin")
+    : null;
+  const picked = pickOrigin(opts, env);
+  if (!token || picked.origin === bound) return { ...picked, envToken: token, note: null };
+  const explicit = opts.url !== undefined || opts.name !== undefined || opts.home !== undefined;
+  if (explicit) {
+    const how = env.PLINTH_URL ? "" : " (PLINTH_URL is unset)";
+    throw new CliError(
+      `PLINTH_TOKEN belongs to ${bound}${how} and is never sent to ${picked.origin}. Unset it, or set PLINTH_URL to the instance it was made on.`,
+      EXIT.usage,
+    );
+  }
+  return {
+    ...picked,
+    envToken: null,
+    note: `PLINTH_TOKEN belongs to ${bound}, so it is not used for ${picked.origin}. Pass --url ${bound} (or set PLINTH_URL) to use it.`,
+  };
 }

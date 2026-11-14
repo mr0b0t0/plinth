@@ -20,7 +20,8 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { after, before, beforeEach, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
-import { HOSTED_ORIGIN } from "../bin/client/origin.mjs";
+import { claudeCodeConnectText } from "../bin/client/connect.mjs";
+import { HOSTED_ORIGIN, resolveOrigin } from "../bin/client/origin.mjs";
 import { PAT, startFakePlinth } from "./helpers/fake-plinth.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -163,6 +164,40 @@ describe("plinth publish", () => {
     const r = await plinth(["publish", dir, "--id", a.id, "--json"], { extraEnv: asPat() });
     assert.equal(r.code, 0, r.stderr);
     assert.equal(fake.state.lastPut.assets.filter((x) => x.content !== undefined).length, 2);
+  });
+
+  it("verifies a source that starts with a BOM, by bundle and inline", async () => {
+    const BOM = Buffer.from([0xef, 0xbb, 0xbf]);
+    const html = (t) => Buffer.concat([BOM, Buffer.from(`<!doctype html><title>${t}</title>`)]);
+    const dir = build({ "index.html": html("one"), "a.js": "1" });
+    const first = await plinth(["publish", dir, "--json"], { extraEnv: asPat() });
+    assert.equal(first.code, 0, first.stderr);
+    const out = JSON.parse(first.stdout);
+    assert.equal(out.verified, true);
+
+    writeFileSync(path.join(dir, "index.html"), html("two"));
+    const r = await plinth(["publish", dir, "--id", out.id, "--json"], { extraEnv: asPat() });
+    assert.equal(r.code, 0, r.stderr);
+    assert.equal(JSON.parse(r.stdout).verified, true);
+    assert.ok(fake.state.lastPut.html.startsWith("\uFEFF<!doctype"), "inline, with the BOM");
+    // The inline update keeps the BOM, so the stored bytes are the file's bytes.
+    const stored = fake.state.artifacts.get(out.id).versions.at(-1).get("index.html").bytes;
+    assert.deepEqual(stored, html("two"));
+  });
+
+  it("still fails verification when the stored source really differs", async () => {
+    const dir = build(site(1));
+    const first = await plinth(["publish", dir, "--json"], { extraEnv: asPat() });
+    const { id } = JSON.parse(first.stdout);
+    fake.state.tamperSource = true;
+    try {
+      writeFileSync(path.join(dir, "index.html"), "<!doctype html><title>Changed</title>");
+      const r = await plinth(["publish", dir, "--id", id], { extraEnv: asPat() });
+      assert.equal(r.code, 1, r.stderr);
+      assert.match(r.stdout, /Verification failed[\s\S]*differs: index\.html/);
+    } finally {
+      fake.state.tamperSource = false;
+    }
   });
 
   it("sends a big update as a bundle with the base version", async () => {
@@ -368,6 +403,80 @@ describe("origin and credentials", () => {
     }
   });
 
+  /** A Plinth home with one local instance "dev" on the fake server's address. */
+  function homeWithDev(name = "dev") {
+    const home = path.join(work, `home-${randomBytes(3).toString("hex")}`);
+    const port = new URL(fake.origin).port;
+    mkdirSync(path.join(home, name), { recursive: true });
+    writeFileSync(path.join(home, name, "instance.json"), JSON.stringify({ name, port }));
+    writeFileSync(
+      path.join(home, name, "wrangler.jsonc"),
+      `{ "vars": { "APP_HOST": "127.0.0.1:${port}", "PUBLIC_SCHEME": "http" } }`,
+    );
+    return home;
+  }
+
+  it("lets --name and --home win over PLINTH_URL and PLINTH_TOKEN, never sending the token", () => {
+    const home = homeWithDev();
+    const dev = { origin: fake.origin, source: 'local instance "dev"' };
+    const none = { PLINTH_HOME: path.join(work, "no-instances") };
+    // --name picks the local instance even with PLINTH_URL set.
+    assert.deepEqual(
+      resolveOrigin({ name: "dev", home }, { ...none, PLINTH_URL: "https://other.example" }),
+      { ...dev, envToken: null, note: null },
+    );
+    // A token bound elsewhere (the hosted instance, or PLINTH_URL's) is refused, not ignored.
+    for (const env of [
+      { PLINTH_TOKEN: PAT },
+      { PLINTH_TOKEN: PAT, PLINTH_URL: "https://other.example" },
+    ]) {
+      for (const opts of [{ name: "dev", home }, { home: homeWithDev("plinth") }]) {
+        assert.throws(
+          () => resolveOrigin(opts, { ...none, ...env }),
+          (e) =>
+            e.exitCode === 2 &&
+            /PLINTH_TOKEN belongs to https:\/\/(plinth\.aconite\.io|other\.example)/.test(
+              e.message,
+            ) &&
+            e.message.includes(`never sent to ${fake.origin}`),
+        );
+      }
+    }
+    // A token bound to that very instance is used there.
+    assert.deepEqual(
+      resolveOrigin({ name: "dev", home }, { PLINTH_TOKEN: PAT, PLINTH_URL: fake.origin }),
+      { ...dev, envToken: PAT, note: null },
+    );
+    // Without a flag the order holds: PLINTH_URL, then the local instance, then hosted.
+    const implicit = resolveOrigin({}, { PLINTH_HOME: home, PLINTH_TOKEN: PAT });
+    assert.equal(implicit.origin, fake.origin);
+    assert.equal(implicit.envToken, null);
+    assert.match(implicit.note, /PLINTH_TOKEN belongs to https:\/\/plinth\.aconite\.io/);
+    assert.equal(
+      resolveOrigin({}, { ...none, PLINTH_TOKEN: PAT }).envToken,
+      PAT,
+      "hosted, with the token",
+    );
+  });
+
+  it("does not send PLINTH_TOKEN to a local instance picked without a flag", async () => {
+    const home = homeWithDev();
+    const from = fake.state.requests.length;
+    const r = await plinth(["whoami"], { extraEnv: { PLINTH_HOME: home, PLINTH_TOKEN: PAT } });
+    assert.equal(r.code, 1, r.stderr);
+    assert.match(r.stderr, new RegExp(`plinth: ${fake.origin} \\(local instance "dev"\\)`));
+    assert.match(
+      r.stderr,
+      /PLINTH_TOKEN belongs to https:\/\/plinth\.aconite\.io, so it is not used/,
+    );
+    assert.match(r.stderr, /Not signed in on/);
+    for (const q of since(from)) assert.ok(!q.authorization?.includes(PAT), q.path);
+    const named = await plinth(["whoami", "--name", "dev", "--home", home], {
+      extraEnv: { PLINTH_TOKEN: PAT },
+    });
+    assert.equal(named.code, 2, named.stderr);
+  });
+
   it("picks the single local instance, refuses to guess between several, else the hosted one", async () => {
     const home = path.join(work, `home-${randomBytes(3).toString("hex")}`);
     const port = new URL(fake.origin).port;
@@ -460,6 +569,47 @@ describe("origin and credentials", () => {
     assert.match(out.stdout, /Signed out of/);
     const again = await plinth(["whoami", "--url", fake.origin]);
     assert.equal(again.code, 1);
+  });
+
+  it("says to sign in again when the connection was revoked while the token looked fresh", async () => {
+    let opened = false;
+    const login = await plinth(["login", "--url", fake.origin, "--no-browser"], {
+      onStderr: (text) => {
+        const url = text.split("\n").find((l) => l.includes("/oauth/authorize?"));
+        if (url && !opened) {
+          opened = true;
+          fetch(url).catch(() => {});
+        }
+      },
+    });
+    assert.equal(login.code, 0, login.stderr);
+    // Revoked on the Connections page: the access token is refused, and so is the refresh.
+    for (const g of fake.state.grants.values()) g.revoked = true;
+    const who = await plinth(["whoami", "--url", fake.origin]);
+    assert.equal(who.code, 1, who.stderr);
+    assert.match(
+      who.stderr,
+      new RegExp(`The sign-in was revoked or expired on ${fake.origin}\\. Run: plinth login --url`),
+    );
+    assert.doesNotMatch(who.stderr, /Body is unusable|already been read/);
+  });
+
+  it("prints PLINTH_URL with the plugin commands for an instance other than the hosted one", () => {
+    const reg = {
+      HOSTED_ORIGIN,
+      claudeCodePluginCommands: () => ["claude plugin install plinth@plinth"],
+      claudeCodeCommand: (endpoint) => `claude mcp add --transport http plinth ${endpoint}`,
+    };
+    const own = claudeCodeConnectText(reg, "http://localhost:8787");
+    const exportAt = own.indexOf("export PLINTH_URL=http://localhost:8787");
+    assert.ok(exportAt > own.indexOf("claude plugin install"), own);
+    assert.ok(exportAt < own.indexOf("Or tools only"), own);
+    assert.doesNotMatch(own, /keep the one added above/);
+    const hosted = claudeCodeConnectText(reg, HOSTED_ORIGIN);
+    assert.doesNotMatch(hosted, /PLINTH_URL/);
+    // The plugin's server really does default to the hosted instance.
+    const mcp = readFileSync(path.resolve(pkgDir, "../../integrations/plugin/.mcp.json"), "utf8");
+    assert.ok(mcp.includes(`\${PLINTH_URL:-${HOSTED_ORIGIN}}/mcp`), mcp);
   });
 
   it("runs from a copy without runtime/ or wrangler", async () => {

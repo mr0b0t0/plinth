@@ -24,6 +24,7 @@ import { createRequire } from "node:module";
 import path from "node:path";
 import { createInterface } from "node:readline/promises";
 import { fileURLToPath } from "node:url";
+import { claudeCodeConnectText } from "./client/connect.mjs";
 import { clientCommandOf, main as clientMain, clientUsage } from "./client/main.mjs";
 
 const pkgDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -229,14 +230,7 @@ async function printConnect(inst) {
     console.log(`${h.label}:`);
     if (h.id === "claude-code") {
       // Plugin first: the server plus the plinth-artifacts skill. The bare server is tools only.
-      console.log("  The Plinth plugin (recommended): the server and Plinth's rules in one step.");
-      console.log(indent(indent(reg.claudeCodePluginCommands().join("\n"))));
-      console.log(
-        "  Or tools only, without Plinth's rules. Use one or the other: both give two servers\n" +
-          "  (plinth and plugin:plinth:plinth) and two connections.",
-      );
-      console.log(indent(indent(commands[h.id])));
-      if (own && h.guidance.ownInstance) console.log(`    ${h.guidance.ownInstance}`);
+      console.log(claudeCodeConnectText(reg, inst.appOrigin));
       console.log("");
       continue;
     }

@@ -121,10 +121,12 @@ npx @mr0b0t0/plinth publish dist --id my-report-k3x9   # the next version of tha
   `url`, `content_url`, `stored`, `warnings` and `verified` for scripts and agents.
 - **Build settings.** Use relative URLs (Vite: `base: './'`).
 
-Which instance: `--url`, else `PLINTH_URL`, else your local instance (the one `--name` and `--home`
-pick), else the hosted one. The address used is printed first. For scripts, `PLINTH_TOKEN` takes a
-personal access token instead of `login`; it is sent only to the instance in `PLINTH_URL` (or the
-hosted one when that is unset), never to another `--url`, and never saved.
+Which instance: `--url`, else the instance `--name` and `--home` pick, else `PLINTH_URL`, else
+your local instance when there is one, else the hosted one. The address used is printed first. For
+scripts, `PLINTH_TOKEN` takes a personal access token instead of `login`; it is sent only to the
+instance in `PLINTH_URL` (or the hosted one when that is unset) and never saved. With it set, a
+`--url`, `--name` or `--home` for another instance stops with exit code 2, and a local instance
+picked without a flag is used without it.
 
 Agents that have only their MCP connection call `start_upload` and run the command it returns;
 `plinth upload <dir> --to <upload_url>` is that step, with the upload token in
