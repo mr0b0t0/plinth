@@ -12,6 +12,14 @@ Gemini CLI, Cursor or VS Code. Claude's artifact experience is the reference (de
 - **Feedback flows back**: the agent reads the comment threads on an artifact, makes the change,
   answers and resolves them; @mentions queue requests for it.
 
+**Pages or documents.** Like Claude's typed artifacts, an agent need not hand-write HTML for prose.
+For a memo, plan, spec, proposal, mostly-text report, meeting notes or a how-to, it publishes
+`type: "doc"` with Markdown in `content`, and Plinth renders a finished page (reading typography,
+heading anchors, tables, code, images from the doc's own files, light and dark, phone width, a print
+stylesheet). Dashboards, charts, anything interactive, custom visual design and slides stay HTML.
+When unsure and the result is mostly text, a doc. The type is fixed at publish; the server's
+instructions and the skill's "Documents (type doc)" section say this to every harness.
+
 ## How each harness gets it
 
 Two channels carry these rules, so every harness gets them whatever it supports:
