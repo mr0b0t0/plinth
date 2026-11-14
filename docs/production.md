@@ -32,10 +32,11 @@ All in the operator's Cloudflare account:
 | Worker route | `*.plinthusercontent.com/*` → `plinth` (zone `plinthusercontent.com`) | `wrangler deploy` |
 | DNS record | `A *.plinthusercontent.com` → `192.0.2.0`, proxied (the zone's only record) | Cloudflare dashboard |
 | SendGrid | Domain authentication for `plinth.aconite.io`: CNAMEs `em9604.plinth`, `s1._domainkey.plinth`, `s2._domainkey.plinth` and `TXT _dmarc.plinth` (`v=DMARC1; p=none;`), all DNS only in `aconite.io` | SendGrid and Cloudflare dashboards |
+| WAF custom rule | `plinth_api_skip_bic` in zone `aconite.io` (phase `http_request_firewall_custom`), action Skip > Browser Integrity Check, logging on. Expression: `(http.host eq "plinth.aconite.io" and (http.request.uri.path eq "/mcp" or starts_with(http.request.uri.path, "/mcp/") or starts_with(http.request.uri.path, "/api/v1/") or starts_with(http.request.uri.path, "/oauth/") or starts_with(http.request.uri.path, "/.well-known/")))`. Added 2026-11-14: Browser Integrity Check (on by default) answered `403` `error code: 1010` to Python's default `Python-urllib/x.y` User-Agent before the Worker ran, so agent scripts could not reach `/mcp`, `/api/v1` or OAuth. Every other path keeps the check, and the content zone has no rule | Cloudflare API |
 
 The `aconite.io` zone itself was moved from its registrar's DNS to Cloudflare on 2026-11-14,
-with every existing record kept as DNS-only. Besides the SendGrid records above, nothing else in
-the zone was changed for Plinth.
+with every existing record kept as DNS-only. Besides the SendGrid records and the WAF custom rule above,
+nothing else in the zone was changed for Plinth.
 
 The first deploy used `plinth-usercontent.aconite.io` with `CONTENT_ISOLATION=opaque`. Its route
 `*.plinth-usercontent.aconite.io/*` and its `A *.plinth-usercontent` record were removed when the
