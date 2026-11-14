@@ -24,7 +24,7 @@ All in the operator's Cloudflare account:
 | --- | --- | --- |
 | D1 database | `plinth` (`7dd95d0b-dd98-469f-8eac-8c6a06c35b52`), migrations 0001 and 0002 applied | `scripts/setup.mjs --remote --env production` |
 | R2 bucket | `plinth-files` | `scripts/setup.mjs` |
-| Worker | `plinth` (version `d628b3c8-229e-419b-b282-447c58fe7a65`, commit `8bb1709`: agent discovery, readable artifact links, `/llms.txt`, MCP server card, `robots.txt`) | `wrangler deploy --config wrangler.production.jsonc` |
+| Worker | `plinth` (version `5a2110ea-309d-441e-97d2-4c6d5a40dd05`, commit `ccbdc77` (v0.2.0): the doc artifact type, migration `0004_typed_artifacts.sql` applied first) | `wrangler deploy --config wrangler.production.jsonc` |
 | Worker secrets | `SESSION_SECRET`, `TOKEN_SIGNING_KEY` (generated), `SENDGRID_API_KEY` | `scripts/setup.mjs` |
 | Workers Custom Domain | `plinth.aconite.io`, plus the read-only `AAAA 100::` record and certificate Cloudflare creates for it | `wrangler deploy` |
 | Domain and zone | `plinthusercontent.com`, registered through Cloudflare Registrar (Free plan zone). SSL/TLS "Full (strict)", "Always Use HTTPS" on, Universal SSL for `plinthusercontent.com` and `*.plinthusercontent.com` | Cloudflare dashboard |
