@@ -1,6 +1,6 @@
 # Plinth: Project Spec
 
-As of 2026-11-13 · German
+As of 2026-11-13
 
 Local copy of [Plinth: Project Spec](https://claude.ai/artifact/ALCnNY6VEnyHMDSjjjiCQc) (doc rev 26).
 This file is the source of truth in the repo. When the spec changes, update this file in the same
