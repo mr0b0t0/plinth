@@ -249,6 +249,17 @@ Step-by-step instructions for each client are in [mcp.md](mcp.md).
   in `artifact_data_usage`). `SELECT sum(bytes), sum(docs), count(*) FROM artifact_data_usage`
   shows how much there is. Data is deleted with its artifact and on takedown, and `erase-user`
   removes a person's documents on other people's artifacts too.
+- **Interrupted publishes.** A version's files go to R2 before its database row, so a publish
+  that dies midway (a closed connection, a CPU or memory limit) leaves files no version points to,
+  under that attempt's own prefix. Deleting or erasing the artifact removes them; so does
+  `pnpm --filter @plinth/worker admin -- sweep-orphans --local|--remote [--artifact <id|slug>] [--older-than-minutes N] [--dry-run] [--env E] [--config C] [--bucket B]`.
+  It deletes only prefixes no version names that are older than `--older-than-minutes` (default
+  60, minimum 15). The R2 bucket is always the `FILES` binding of the same wrangler config and
+  environment as the database; `--bucket` only checks that name and is refused if it differs (the
+  erase commands do the same). The sweep deletes nothing, and says why, when the database answer
+  cannot be read, names no version, or names none of the prefixes in the bucket. Run it with
+  `--dry-run` first, with the same `--config` as the deployment (for example
+  `--config wrangler.production.jsonc`).
 - **Backups.** D1 Time Travel restores the database to any minute in the last 30 days (Workers
   Paid) or 7 days (Free). R2 objects are written once per version and never overwritten.
 - **Logs.** `wrangler tail --config wrangler.production.jsonc` (for `plinth deploy`:

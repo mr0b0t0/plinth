@@ -216,7 +216,7 @@ it starts the instance as it is.
 | `PLINTH_TUNNEL` | `false` | Run a Cloudflare Tunnel from the container |
 | `CLOUDFLARE_API_TOKEN` | none | Tunnel setup only; never stored |
 | `PLINTH_OPERATOR_NAME`, `PLINTH_OPERATOR_EMAIL`, `PLINTH_OPERATOR_ADDRESS`, `PLINTH_OPERATOR_REGISTRATION`, `PLINTH_OPERATOR_HOSTING` | empty | Who runs the instance, for its legal pages |
-| `PLINTH_MAX_ARTIFACTS_PER_USER`, `PLINTH_MAX_PUBLISHES_PER_HOUR`, `PLINTH_MAX_VERSION_BYTES`, `PLINTH_MAX_ASSETS_PER_VERSION`, `PLINTH_CDN_ALLOWLIST`, `PLINTH_ALLOW_PUBLIC_VISIBILITY`, `PLINTH_PUBLIC_MIN_ACCOUNT_AGE_HOURS` | as in self-hosting.md | Limits and the script allowlist. `PLINTH_MAX_VERSION_BYTES` (default 50 MB) and `PLINTH_MAX_ASSETS_PER_VERSION` (default 511) size one version |
+| `PLINTH_MAX_ARTIFACTS_PER_USER`, `PLINTH_MAX_PUBLISHES_PER_HOUR`, `PLINTH_MAX_VERSION_BYTES`, `PLINTH_MAX_ASSETS_PER_VERSION`, `PLINTH_MAX_STORAGE_BYTES_PER_USER`, `PLINTH_CDN_ALLOWLIST`, `PLINTH_ALLOW_PUBLIC_VISIBILITY`, `PLINTH_PUBLIC_MIN_ACCOUNT_AGE_HOURS` | as in self-hosting.md | Limits and the script allowlist. `PLINTH_MAX_VERSION_BYTES` (default 50 MB) and `PLINTH_MAX_ASSETS_PER_VERSION` (default 511) size one version |
 | `PLINTH_LISTEN` | `0.0.0.0`; `127.0.0.1` with the tunnel | The address the Worker listens on inside the container |
 
 Each `PLINTH_OPERATOR_*` and limit variable sets the Worker setting of the same name without the

@@ -594,19 +594,26 @@ describe("origin and credentials", () => {
     assert.doesNotMatch(who.stderr, /Body is unusable|already been read/);
   });
 
-  it("prints PLINTH_URL with the plugin commands for an instance other than the hosted one", () => {
+  it("orders Claude Code like the Connect panel: plugin first only on the hosted instance", () => {
     const reg = {
       HOSTED_ORIGIN,
       claudeCodePluginCommands: () => ["claude plugin install plinth@plinth"],
       claudeCodeCommand: (endpoint) => `claude mcp add --transport http plinth ${endpoint}`,
     };
     const own = claudeCodeConnectText(reg, "http://localhost:8787");
+    const bareAt = own.indexOf("claude mcp add --transport http plinth http://localhost:8787/mcp");
     const exportAt = own.indexOf("export PLINTH_URL=http://localhost:8787");
-    assert.ok(exportAt > own.indexOf("claude plugin install"), own);
-    assert.ok(exportAt < own.indexOf("Or tools only"), own);
-    assert.doesNotMatch(own, /keep the one added above/);
+    const pluginAt = own.indexOf("claude plugin install");
+    assert.ok(bareAt >= 0 && bareAt < exportAt, own);
+    assert.ok(exportAt < pluginAt, own);
+    assert.match(own, /tools only, without Plinth's rules/);
+    assert.match(own, /a different instance, unless PLINTH_URL is set every time/);
+    assert.match(own, /Use one or the other/);
     const hosted = claudeCodeConnectText(reg, HOSTED_ORIGIN);
     assert.doesNotMatch(hosted, /PLINTH_URL/);
+    assert.ok(hosted.indexOf("claude plugin install") < hosted.indexOf("claude mcp add"), hosted);
+    assert.match(hosted, /Or tools only, without Plinth's rules/);
+    assert.match(hosted, /Use one or the other/);
     // The plugin's server really does default to the hosted instance.
     const mcp = readFileSync(path.resolve(pkgDir, "../../integrations/plugin/.mcp.json"), "utf8");
     assert.ok(mcp.includes(`\${PLINTH_URL:-${HOSTED_ORIGIN}}/mcp`), mcp);

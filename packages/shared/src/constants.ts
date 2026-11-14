@@ -77,7 +77,7 @@ export const LIMITS = {
   maxBundleFileBytes: 25 * MB,
   /** Bytes buffered or in flight to R2 while a bundle streams. */
   bundleInFlightBytes: 16 * MB,
-  /** One pax record or GNU long name in a tar. */
+  /** The pax records and GNU long names before one tar entry, in total. */
   maxTarMetaBytes: 64 * KB,
   /** Bundle requests one upload ticket may start. */
   maxTicketAttempts: 5,
