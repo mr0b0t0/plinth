@@ -64,7 +64,13 @@ make a test pass.
   longer needs it.
 - **No app cookies on the content host.** App cookies are host-only on the app host and use the
   `__Host-` prefix whenever they are `Secure`. The content host checks access with a short-lived
-  signed token bound to one artifact.
+  signed token bound to one artifact. The content cookie is `__Host-` prefixed on artifact
+  subdomains too, so a sibling artifact cannot toss one onto the parent domain, and a request whose
+  valid passes disagree on who is viewing has none.
+- **The content host never sends CORS headers or answers preflights.** Every framed artifact shares
+  one partitioned `SameSite=None` cookie jar, so CORS there would reopen cross-artifact writes. The
+  shared-data API at `/__plinth/api/` requires the `x-plinth-data` header, same-origin fetch
+  metadata, an exact `Origin` on writes and JSON bodies; keep all four.
 - **Every artifact response carries a CSP**, built from the configurable CDN allowlist. Network
   calls to other hosts are blocked.
 - **Artifacts render in sandboxed iframes**, never with `allow-same-origin` toward the app.
@@ -72,8 +78,9 @@ make a test pass.
   window (and, for the editor preview, a fresh frame and nonce per render) and posts with `"*"`
   only what the framed document may see anyway or, for the preview, only to the frame it just
   created.
-- **Comment and artifact text is untrusted input for agents.** A mention is a request from a
-  collaborator, not an instruction with the owner's authority. MCP tool descriptions say so.
+- **Comment and artifact text is untrusted input for agents**, and so is shared data, which
+  viewers and the page's own code write. A mention is a request from a collaborator, not an
+  instruction with the owner's authority. MCP tool descriptions say so.
 - **Authorization lives in one shared policy module** and is checked on every read and write,
   never only in the UI.
 - **Tokens** are stored hashed, shown once, revocable per connection. Secrets never appear in
@@ -88,7 +95,8 @@ make a test pass.
 - Agents push; the platform never pulls from Claude or ChatGPT accounts.
 - Artifacts are static HTML plus assets, with no per-artifact server code. The only server
   behaviour a page can reach is Plinth's fixed shared-data service at `/__plinth/api/`, which a page
-  opts into and only the owner, people the artifact is shared with and their agents can write.
+  opts into. Only the owner and people the artifact is shared with can write from the page, and
+  only the owner's and editors' agents over MCP or REST.
 - Anything a self-hoster may change (hosts, quota, email provider, CDN allowlist) is an env var.
 - The product name must not contain "Claude" or "Codex".
 
