@@ -32,6 +32,8 @@
     "EMAIL_FROM": "Plinth <noreply@plinth.localhost>",
     "MAX_ARTIFACTS_PER_USER": "100",
     "MAX_PUBLISHES_PER_HOUR": "60",
+    "MAX_VERSION_BYTES": "52428800",
+    "MAX_ASSETS_PER_VERSION": "511",
     "CDN_ALLOWLIST": "",
     "SINGLE_USER_MODE": "false",
     "ADMIN_EMAIL": "",

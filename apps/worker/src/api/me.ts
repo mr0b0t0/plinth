@@ -1,6 +1,7 @@
-import { type AppConfig, type Me, REPO_URL, updateProfileInput } from "@plinth/shared";
+import { type AppConfig, type Me, REPO_URL, TTL, updateProfileInput } from "@plinth/shared";
 import { and, eq, isNull, sql } from "drizzle-orm";
 import { Hono } from "hono";
+import { instanceLimits } from "../config.ts";
 import { artifacts, users } from "../db/schema.ts";
 import { ApiError, unauthorized } from "../lib/errors.ts";
 import { artifactLimitFor, getUserById } from "../services/users.ts";
@@ -23,6 +24,9 @@ meApi.get("/config", (c) => {
     email_provider: config.emailProvider,
     max_artifacts_per_user: config.maxArtifactsPerUser,
     source_url: config.showSourceLink ? REPO_URL : null,
+    limits: instanceLimits(config),
+    cdn_allowlist: [...config.cdnAllowlist],
+    upload_ticket_ttl_s: TTL.uploadTicketMs / 1000,
   };
   const res = c.json(body);
   ensureCsrfCookie(c, res.headers);

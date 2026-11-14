@@ -11,6 +11,7 @@ import {
   type PublishResult,
   parseCapabilities,
   type Role,
+  type StoredSummary,
   type VersionInfo,
   type Visibility,
 } from "@plinth/shared";
@@ -318,7 +319,7 @@ export async function createVersion(
   opts: NewVersionOptions = {},
 ): Promise<number> {
   const actor = requireActor(ctx);
-  const size = checkTotal(files);
+  const size = checkTotal(files, ctx.config.maxVersionBytes);
   const manifest = JSON.stringify(manifestOf(files));
   const capabilities = capabilitiesJson(files);
   await enforceStorage(ctx, artifact.ownerId, size);
@@ -407,6 +408,12 @@ export async function createVersion(
     return n;
   }
   throw new ApiError("conflict", "Too many concurrent updates, try again");
+}
+
+/** Every file of the version was written by this publish (no reuse yet). */
+function writtenSummary(files: FileEntry[]): StoredSummary {
+  const bytes = files.reduce((n, f) => n + f.bytes.byteLength, 0);
+  return { files: files.length, written: files.length, reused: 0, bytes, bytes_written: bytes };
 }
 
 /** Per-account storage cap: every version of every live artifact the owner has. */
@@ -508,7 +515,7 @@ export async function publishArtifact(ctx: Ctx, input: PublishInput): Promise<Pu
   }
 
   const { def, text } = resolveSource(input, null);
-  const files = prepareFiles(def, text, input.assets);
+  const files = prepareFiles(def, text, input.assets, ctx.config);
 
   const limit = artifactLimitFor(ctx.config, user);
   const count = await ctx.db
@@ -582,6 +589,8 @@ export async function publishArtifact(ctx: Ctx, input: PublishInput): Promise<Pu
     url: appUrl(ctx.config, `/a/${row.slug}`),
     content_url: `${contentOrigin(ctx.config, row.id)}/`,
     visibility: row.visibility,
+    warnings: [],
+    stored: writtenSummary(files),
   };
 }
 
@@ -600,7 +609,7 @@ export async function updateArtifact(ctx: Ctx, input: UpdateInput): Promise<Publ
   const actor = requireActor(ctx);
   // The type is fixed at publish: the input must carry the artifact's own source field.
   const { def, text } = resolveSource(input, requireTypeDef(artifact.type).id);
-  let files = prepareFiles(def, text, input.assets);
+  let files = prepareFiles(def, text, input.assets, ctx.config);
   if (input.assets === undefined && artifact.currentVersion > 0) {
     // No assets given: carry the current version's assets forward unchanged.
     const cur = await requireVersion(ctx, artifact, artifact.currentVersion);
@@ -621,6 +630,8 @@ export async function updateArtifact(ctx: Ctx, input: UpdateInput): Promise<Publ
     url: appUrl(ctx.config, `/a/${artifact.slug}`),
     content_url: `${contentOrigin(ctx.config, artifact.id)}/`,
     visibility: artifact.visibility,
+    warnings: [],
+    stored: writtenSummary(files),
   };
 }
 
@@ -638,7 +649,14 @@ export async function getArtifact(
     ...(await summaryFor(ctx, artifact, role)),
     version: v.number,
     source_path: def.sourcePath,
-    assets: parseManifest(v.manifest).filter((m) => !def.reservedPaths.includes(m.path)),
+    assets: parseManifest(v.manifest)
+      .filter((m) => !def.reservedPaths.includes(m.path))
+      .map((m) => ({
+        path: m.path,
+        size_bytes: m.size_bytes,
+        content_type: m.content_type,
+        sha256: m.sha256 ?? null,
+      })),
   };
   // html for a page, content for every typed artifact; never both.
   return def.id === "html"
@@ -767,6 +785,8 @@ export async function restoreVersion(
     url: appUrl(ctx.config, `/a/${artifact.slug}`),
     content_url: `${contentOrigin(ctx.config, artifact.id)}/`,
     visibility: artifact.visibility,
+    warnings: [],
+    stored: writtenSummary(files),
   };
 }
 

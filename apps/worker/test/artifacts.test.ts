@@ -2,7 +2,36 @@ import { env } from "cloudflare:workers";
 import { eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import { users } from "../src/db/schema.ts";
-import { agent, browserSession, call, db, json, publish } from "./helpers.ts";
+import { APP, agent, browserSession, call, db, json, publish } from "./helpers.ts";
+
+const MB = 1024 * 1024;
+
+/** POST /api/v1/artifacts against the Worker with some env vars over the test env. */
+async function publishWith(
+  auth: Record<string, string>,
+  vars: Record<string, string>,
+  body: Record<string, unknown>,
+) {
+  const { createExecutionContext, waitOnExecutionContext } = await import("cloudflare:test");
+  const worker = (await import("../src/index.ts")).default;
+  const ctx = createExecutionContext();
+  const res = await worker.fetch(
+    new Request(`${APP}/api/v1/artifacts`, {
+      method: "POST",
+      headers: { ...auth, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        title: "Test artifact",
+        html: "<!doctype html><h1>Hello</h1>",
+        visibility: "unlisted",
+        ...body,
+      }),
+    }),
+    { ...env, ...vars } as never,
+    ctx,
+  );
+  await waitOnExecutionContext(ctx);
+  return { res, body: await json(res) };
+}
 
 const put = (auth: Record<string, string>, ref: string, body: Record<string, unknown>) =>
   call(`/api/v1/artifacts/${ref}`, {
@@ -114,13 +143,36 @@ describe("artifacts over REST", () => {
     const a = await agent();
     const big = await publish(a.auth, { html: "x".repeat(5 * 1024 * 1024 + 1) });
     expect(big.res.status).toBe(413);
-    const total = await publish(a.auth, {
-      assets: Array.from({ length: 6 }, (_, i) => ({
-        path: `f${i}.txt`,
-        content: "y".repeat(4.5 * 1024 * 1024),
-      })),
-    });
+    // MAX_VERSION_BYTES set low, so the per-version total is reached well under the body limit.
+    const total = await publishWith(
+      a.auth,
+      { MAX_VERSION_BYTES: String(2 * MB) },
+      {
+        assets: Array.from({ length: 3 }, (_, i) => ({
+          path: `f${i}.txt`,
+          content: "y".repeat(0.9 * MB),
+        })),
+      },
+    );
     expect(total.res.status).toBe(413);
+    expect(total.body.error).toMatchObject({
+      code: "payload_too_large",
+      details: { limit_bytes: 2 * MB },
+    });
+  });
+
+  it("enforces MAX_ASSETS_PER_VERSION", async () => {
+    const a = await agent();
+    const assets = (n: number) =>
+      Array.from({ length: n }, (_, i) => ({ path: `f${i}.txt`, content: "x" }));
+    const vars = { MAX_ASSETS_PER_VERSION: "3" };
+    expect((await publishWith(a.auth, vars, { assets: assets(3) })).res.status).toBe(201);
+    const over = await publishWith(a.auth, vars, { assets: assets(4) });
+    expect(over.res.status).toBe(413);
+    expect(over.body.error).toMatchObject({
+      code: "payload_too_large",
+      details: { limit: 3, count: 4 },
+    });
   });
 
   it("rejects bad asset paths", async () => {

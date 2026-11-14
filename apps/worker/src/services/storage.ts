@@ -1,9 +1,13 @@
 // R2 layout: artifacts/<artifact_id>/v<n>/<source> plus asset paths, where <source> is the type's
 // source file (index.html for an html page, content.md for a doc; packages/shared/src/
 // artifactTypes.ts). A version's prefix is written once and never changed (versions are immutable).
-import { type ArtifactTypeDef, type AssetInput, LIMITS } from "@plinth/shared";
+import type { ArtifactTypeDef, AssetInput } from "@plinth/shared";
+import type { Config } from "../config.ts";
 import { ApiError } from "../lib/errors.ts";
 import { checkAsset } from "./artifactTypes.ts";
+
+/** The instance's per-version limits (MAX_VERSION_BYTES, MAX_ASSETS_PER_VERSION). */
+export type VersionLimits = Pick<Config, "maxVersionBytes" | "maxAssetsPerVersion">;
 
 export interface FileEntry {
   path: string;
@@ -15,6 +19,26 @@ export interface ManifestEntry {
   path: string;
   size_bytes: number;
   content_type: string;
+  /** Lowercase hex SHA-256 of the bytes, computed by the server (files written after 0006). */
+  sha256?: string;
+  /**
+   * Server-written pointer to the object's physical origin inside the same artifact:
+   * `v<m>[.<nonce>]/<path>`, relative to `artifacts/<id>/` (STORED_AT_RE). Never accepted from
+   * input and never returned by the API.
+   */
+  stored_at?: string;
+}
+
+/**
+ * The R2 key of one manifest entry of version `v`: `v.r2Prefix + e.path`, or, with `stored_at`,
+ * `artifacts/<artifactId>/` + `stored_at` after validating it. Throws notFound on a bad stored_at.
+ */
+export function fileKey(
+  _artifactId: string,
+  _v: { number: number; r2Prefix: string },
+  _e: ManifestEntry,
+): string {
+  throw new Error("not implemented");
 }
 
 const TYPES: Record<string, string> = {
@@ -78,6 +102,7 @@ export function prepareFiles(
   def: ArtifactTypeDef,
   source: string,
   assets: AssetInput[] | undefined,
+  limits: VersionLimits,
 ): FileEntry[] {
   const sourceBytes = utf8.encode(source);
   if (sourceBytes.byteLength > def.maxSourceBytes) {
@@ -88,6 +113,14 @@ export function prepareFiles(
         limit_bytes: def.maxSourceBytes,
         size_bytes: sourceBytes.byteLength,
       },
+    );
+  }
+  const count = assets?.length ?? 0;
+  if (count > limits.maxAssetsPerVersion) {
+    throw new ApiError(
+      "payload_too_large",
+      `${count} asset files; this instance allows ${limits.maxAssetsPerVersion} per version`,
+      { limit: limits.maxAssetsPerVersion, count },
     );
   }
   const files: FileEntry[] = [
@@ -105,26 +138,30 @@ export function prepareFiles(
     checkAsset(def, a.path, contentType);
     if (seen.has(a.path)) throw new ApiError("invalid_input", `Duplicate asset path: ${a.path}`);
     seen.add(a.path);
+    const content = a.content;
+    if (content === undefined) {
+      throw new ApiError("invalid_input", `Asset ${a.path} has no content`, { path: a.path });
+    }
     let bytes: Uint8Array;
     try {
-      bytes = a.encoding === "base64" ? decodeBase64(a.content) : utf8.encode(a.content);
+      bytes = a.encoding === "base64" ? decodeBase64(content) : utf8.encode(content);
     } catch {
       throw new ApiError("invalid_input", `Asset ${a.path} is not valid base64`);
     }
     files.push({ path: a.path, bytes, contentType });
   }
-  checkTotal(files);
+  checkTotal(files, limits.maxVersionBytes);
   return files;
 }
 
-export function checkTotal(files: { bytes: Uint8Array }[]): number {
+export function checkTotal(files: { bytes: Uint8Array }[], maxVersionBytes: number): number {
   const total = files.reduce((n, f) => n + f.bytes.byteLength, 0);
-  if (total > LIMITS.maxVersionBytes) {
+  if (total > maxVersionBytes) {
     throw new ApiError(
       "payload_too_large",
-      `Version is over ${LIMITS.maxVersionBytes / 1024 / 1024} MB in total`,
+      `Version is over ${Math.round((maxVersionBytes / 1024 / 1024) * 10) / 10} MB in total`,
       {
-        limit_bytes: LIMITS.maxVersionBytes,
+        limit_bytes: maxVersionBytes,
         size_bytes: total,
       },
     );

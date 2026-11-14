@@ -65,6 +65,14 @@ export function claudeCodeCommand(endpoint: string): string {
   ].join("\n");
 }
 
+/** Claude Code: install the Plinth plugin (the MCP server plus the plinth-artifacts skill). */
+export function claudeCodePluginCommands(): string[] {
+  return [
+    `claude plugin marketplace add ${MARKETPLACE_REPO}`,
+    `claude plugin install ${PLUGIN.name}@${PLUGIN.name}`,
+  ];
+}
+
 /** Codex CLI: add the server, then sign in. */
 export function codexCommand(endpoint: string): string {
   return [`codex mcp add ${SERVER_NAME} --url ${endpoint}`, `codex mcp login ${SERVER_NAME}`].join(

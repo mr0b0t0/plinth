@@ -11,6 +11,7 @@ import { dataApi } from "./data.ts";
 import { meApi } from "./me.ts";
 import { reportsApi } from "./reports.ts";
 import { sharingApi } from "./sharing.ts";
+import { uploadsApi } from "./uploads.ts";
 import { viewApi } from "./view.ts";
 
 export const api = new Hono<AppEnv>();
@@ -40,6 +41,7 @@ api.route("/", sharingApi);
 api.route("/", commentsApi);
 api.route("/", reportsApi);
 api.route("/", dataApi);
+api.route("/", uploadsApi);
 
 api.all("*", () => {
   throw new ApiError("not_found", "No such API endpoint");

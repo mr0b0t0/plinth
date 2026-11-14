@@ -5,3 +5,7 @@ TOKEN_SIGNING_KEY=dev-token-signing-key-change-me-0123456789abcdef
 ADMIN_TOKEN=
 SENDGRID_API_KEY=
 RESEND_API_KEY=
+# Optional overrides of wrangler.jsonc vars. Per-version limits: MAX_VERSION_BYTES from 1048576 to
+# 67108864 bytes (default 52428800), MAX_ASSETS_PER_VERSION from 1 to 900 (default 511).
+# MAX_VERSION_BYTES=52428800
+# MAX_ASSETS_PER_VERSION=511

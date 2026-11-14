@@ -3,6 +3,7 @@
 import { z } from "zod";
 import { ARTIFACT_TYPES } from "./artifactTypes.ts";
 import {
+  ASSET_PATH_RE,
   CLIENT_TYPES,
   COMMENT_STATUSES,
   LIMITS,
@@ -10,6 +11,7 @@ import {
   REPORT_STATES,
   ROLES,
   SCOPES,
+  SHA256_RE,
   VISIBILITIES,
 } from "./constants.ts";
 
@@ -17,8 +19,6 @@ import {
 export const ARTIFACT_ID_RE = /^[a-z0-9]{20}$/;
 /** Slugs: lowercase kebab title plus a random suffix. */
 export const SLUG_RE = /^[a-z0-9](?:[a-z0-9-]{0,78}[a-z0-9])?$/;
-/** Asset paths: relative, no "..", no leading slash, not under the reserved prefix. */
-export const ASSET_PATH_RE = /^(?!\/)(?!__plinth\/)(?!.*(?:^|\/)\.\.?(?:\/|$))[A-Za-z0-9._\-/]+$/;
 
 export const visibilitySchema = z.enum(VISIBILITIES);
 export const roleSchema = z.enum(ROLES);
@@ -70,13 +70,27 @@ export const assetInputSchema = z.object({
     // Reserved paths (index.html, and content.md for a doc) depend on the artifact's type, so
     // the Worker refuses them with the type in the error (services/artifactTypes.ts checkAsset).
     .regex(ASSET_PATH_RE, "Relative path without '..', not under __plinth/"),
-  content: z.string().describe("File content, as text (utf8) or base64"),
+  // An asset needs content or sha256; the Worker's services enforce it (the schemas stay flat).
+  content: z
+    .string()
+    .optional()
+    .describe(
+      "File content as text (utf8) or base64. Omit it and send sha256 to reuse a file the artifact's current version already has",
+    ),
   encoding: z.enum(["utf8", "base64"]).default("utf8"),
+  sha256: z
+    .string()
+    .regex(SHA256_RE)
+    .optional()
+    .describe(
+      "Lowercase hex SHA-256 of the bytes. Alone: reuse those bytes from the current version (get_artifact lists each asset's sha256). With content: checked against it",
+    ),
   content_type: z.string().max(100).optional(),
 });
 export type AssetInput = z.input<typeof assetInputSchema>;
 
-export const assetsSchema = z.array(assetInputSchema).max(LIMITS.maxAssetsPerVersion);
+/** zod keeps only the ceiling; the instance's MAX_ASSETS_PER_VERSION is checked by the Worker. */
+export const assetsSchema = z.array(assetInputSchema).max(LIMITS.maxAssetsCeiling);
 
 // ---------- MCP tools (mirrored as REST) ----------
 
@@ -107,6 +121,25 @@ export const updateArtifactInput = z.object({
   base_version: versionNumberSchema.optional(),
 });
 export type UpdateArtifactInput = z.input<typeof updateArtifactInput>;
+
+/**
+ * start_upload and POST /uploads. Flat, like the other inputs; the service enforces the cross-field
+ * rules: title and type only without id, base_version required with id (and refused without it),
+ * note only with id.
+ */
+export const startUploadInput = z.object({
+  /** Update this artifact; omit for a new one. */
+  id: artifactRefSchema.optional(),
+  /** New artifact only; default "html". */
+  type: artifactTypeSchema.optional(),
+  /** New artifact only; default: index.html's <title> (a doc: its first "# " line), else "Untitled". */
+  title: titleSchema.optional(),
+  /** Required with id: the version you read. */
+  base_version: versionNumberSchema.optional(),
+  /** Update only. */
+  note: noteSchema.optional(),
+});
+export type StartUploadInput = z.input<typeof startUploadInput>;
 
 export const getArtifactInput = z.object({
   id: artifactRefSchema,

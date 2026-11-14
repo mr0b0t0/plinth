@@ -402,7 +402,7 @@
       "post": {
         "operationId": "publishArtifact",
         "summary": "Publish a new artifact",
-        "description": "Default visibility is unlisted. Limits: 5 MB of HTML, 25 MB per version, the account's artifact quota and publishes per hour.\n\nMirrors the MCP tool `publish_artifact`.",
+        "description": "Default visibility is unlisted. Limits: 5 MB of HTML, 50 MB per version by default (GET /config lists this instance's limits), the account's artifact quota and publishes per hour.\n\nMirrors the MCP tool `publish_artifact`.",
         "tags": ["Artifacts"],
         "requestBody": {
           "required": true,
@@ -689,6 +689,77 @@
           { "sessionCookie": [], "csrfHeader": [] }
         ],
         "x-mcp-tool": "restore_version"
+      }
+    },
+    "/uploads": {
+      "post": {
+        "operationId": "startUpload",
+        "summary": "Mint a single-use upload ticket for one publish or one update",
+        "description": "Bearer only: a session cookie is refused. With `id`, `base_version` (the version you read) is required. The ticket is valid for 30 minutes and at most 5 bundle requests, and commits exactly one version.",
+        "tags": ["Artifacts"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": { "schema": { "$ref": "#/components/schemas/StartUploadInput" } }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Success",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/StartUploadResult" } }
+            }
+          },
+          "400": { "$ref": "#/components/responses/E400" },
+          "401": { "$ref": "#/components/responses/E401" },
+          "403": { "$ref": "#/components/responses/E403" },
+          "404": { "$ref": "#/components/responses/E404" },
+          "409": { "$ref": "#/components/responses/E409" },
+          "429": { "$ref": "#/components/responses/E429" },
+          "default": { "$ref": "#/components/responses/Error" }
+        },
+        "security": [{ "bearerAuth": ["artifacts:write"] }]
+      }
+    },
+    "/uploads/{id}/bundle": {
+      "post": {
+        "operationId": "uploadBundle",
+        "summary": "Send the build as one tar and commit it as a version",
+        "description": "Takes only `Authorization: Bearer plinth_up_...` from start_upload; no cookies are read. 201 for a new artifact, 200 for an update. Sizes are limited on uncompressed bytes.",
+        "tags": ["Artifacts"],
+        "parameters": [
+          {
+            "in": "path",
+            "required": true,
+            "name": "id",
+            "schema": { "type": "string", "minLength": 1, "maxLength": 200 }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "description": "A tar of the build folder, optionally gzip (detected by magic bytes)",
+          "content": {
+            "application/x-tar": { "schema": { "type": "string", "format": "binary" } },
+            "application/gzip": { "schema": { "type": "string", "format": "binary" } }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Success",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/BundleResult" } }
+            }
+          },
+          "400": { "$ref": "#/components/responses/E400" },
+          "401": { "$ref": "#/components/responses/E401" },
+          "403": { "$ref": "#/components/responses/E403" },
+          "404": { "$ref": "#/components/responses/E404" },
+          "409": { "$ref": "#/components/responses/E409" },
+          "413": { "$ref": "#/components/responses/E413" },
+          "429": { "$ref": "#/components/responses/E429" },
+          "default": { "$ref": "#/components/responses/Error" }
+        },
+        "security": [{ "uploadToken": [] }]
       }
     },
     "/artifacts/{ref}/visibility": {
@@ -1483,7 +1554,7 @@
             "description": "The source of a typed artifact: for type \"doc\", the Markdown document (stored as content.md). Not for html artifacts, which send html."
           },
           "assets": {
-            "maxItems": 200,
+            "maxItems": 900,
             "type": "array",
             "items": {
               "type": "object",
@@ -1492,16 +1563,21 @@
                   "type": "string",
                   "minLength": 1,
                   "maxLength": 200,
-                  "pattern": "^(?!\\/)(?!__plinth\\/)(?!.*(?:^|\\/)\\.\\.?(?:\\/|$))[A-Za-z0-9._\\-/]+$"
+                  "pattern": "^(?!\\/)(?!__plinth\\/)(?!.*\\/\\/)(?!.*\\/$)(?!(?:.*\\/)?\\.\\.?(?:\\/|$))[A-Za-z0-9._\\-/]+$"
                 },
                 "content": {
-                  "type": "string",
-                  "description": "File content, as text (utf8) or base64"
+                  "description": "File content as text (utf8) or base64. Omit it and send sha256 to reuse a file the artifact's current version already has",
+                  "type": "string"
                 },
                 "encoding": { "default": "utf8", "type": "string", "enum": ["utf8", "base64"] },
+                "sha256": {
+                  "description": "Lowercase hex SHA-256 of the bytes. Alone: reuse those bytes from the current version (get_artifact lists each asset's sha256). With content: checked against it",
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                },
                 "content_type": { "type": "string", "maxLength": 100 }
               },
-              "required": ["path", "content"]
+              "required": ["path"]
             }
           },
           "visibility": {
@@ -1528,7 +1604,7 @@
             "description": "The source of a typed artifact: for type \"doc\", the Markdown document (stored as content.md). Not for html artifacts, which send html."
           },
           "assets": {
-            "maxItems": 200,
+            "maxItems": 900,
             "type": "array",
             "items": {
               "type": "object",
@@ -1537,16 +1613,21 @@
                   "type": "string",
                   "minLength": 1,
                   "maxLength": 200,
-                  "pattern": "^(?!\\/)(?!__plinth\\/)(?!.*(?:^|\\/)\\.\\.?(?:\\/|$))[A-Za-z0-9._\\-/]+$"
+                  "pattern": "^(?!\\/)(?!__plinth\\/)(?!.*\\/\\/)(?!.*\\/$)(?!(?:.*\\/)?\\.\\.?(?:\\/|$))[A-Za-z0-9._\\-/]+$"
                 },
                 "content": {
-                  "type": "string",
-                  "description": "File content, as text (utf8) or base64"
+                  "description": "File content as text (utf8) or base64. Omit it and send sha256 to reuse a file the artifact's current version already has",
+                  "type": "string"
                 },
                 "encoding": { "default": "utf8", "type": "string", "enum": ["utf8", "base64"] },
+                "sha256": {
+                  "description": "Lowercase hex SHA-256 of the bytes. Alone: reuse those bytes from the current version (get_artifact lists each asset's sha256). With content: checked against it",
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                },
                 "content_type": { "type": "string", "maxLength": 100 }
               },
-              "required": ["path", "content"]
+              "required": ["path"]
             }
           },
           "note": { "type": "string", "maxLength": 500 },
@@ -1725,6 +1806,25 @@
         "type": "object",
         "properties": { "state": { "type": "string", "enum": ["actioned", "dismissed"] } },
         "required": ["state"]
+      },
+      "StartUploadInput": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80,
+            "description": "Artifact id or slug"
+          },
+          "type": {
+            "type": "string",
+            "enum": ["html", "doc"],
+            "description": "\"html\" (default): a hand-written page sent as html. \"doc\": a Markdown document sent as content, which Plinth renders as a finished page. Fixed at publish."
+          },
+          "title": { "type": "string", "minLength": 1, "maxLength": 200 },
+          "base_version": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+          "note": { "type": "string", "maxLength": 500 }
+        }
       },
       "Error": {
         "type": "object",
@@ -1909,9 +2009,14 @@
               "properties": {
                 "path": { "type": "string" },
                 "size_bytes": { "type": "integer" },
-                "content_type": { "type": "string" }
+                "content_type": { "type": "string" },
+                "sha256": {
+                  "type": ["string", "null"],
+                  "pattern": "^[0-9a-f]{64}$",
+                  "description": "Lowercase hex SHA-256, computed by the server; null for files stored before reuse by hash"
+                }
               },
-              "required": ["path", "size_bytes", "content_type"]
+              "required": ["path", "size_bytes", "content_type", "sha256"]
             }
           },
           "capabilities": {
@@ -2012,9 +2117,14 @@
               "properties": {
                 "path": { "type": "string" },
                 "size_bytes": { "type": "integer" },
-                "content_type": { "type": "string" }
+                "content_type": { "type": "string" },
+                "sha256": {
+                  "type": ["string", "null"],
+                  "pattern": "^[0-9a-f]{64}$",
+                  "description": "Lowercase hex SHA-256, computed by the server; null for files stored before reuse by hash"
+                }
               },
-              "required": ["path", "size_bytes", "content_type"]
+              "required": ["path", "size_bytes", "content_type", "sha256"]
             }
           },
           "capabilities": {
@@ -2076,9 +2186,217 @@
           "visibility": {
             "type": "string",
             "enum": ["public", "unlisted", "password", "allowlist"]
+          },
+          "warnings": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/PublishWarning" },
+            "description": "Advisory: references the published files make that will not load"
+          },
+          "stored": { "$ref": "#/components/schemas/StoredSummary" }
+        },
+        "required": [
+          "id",
+          "slug",
+          "type",
+          "version",
+          "url",
+          "content_url",
+          "visibility",
+          "warnings",
+          "stored"
+        ]
+      },
+      "PublishWarning": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string",
+            "enum": [
+              "missing_file",
+              "root_absolute",
+              "blocked_host",
+              "insecure_url",
+              "opaque_module",
+              "not_scanned"
+            ]
+          },
+          "file": { "type": "string", "description": "The version file the reference is in" },
+          "ref": { "type": "string", "description": "The reference as written (truncated)" },
+          "host": { "type": "string" },
+          "count": { "type": "integer", "minimum": 1 },
+          "message": { "type": "string" }
+        },
+        "required": ["code", "file", "message"]
+      },
+      "StoredSummary": {
+        "type": "object",
+        "properties": {
+          "files": {
+            "type": "integer",
+            "description": "Files in the version, the source included"
+          },
+          "written": {
+            "type": "integer",
+            "description": "Files written to storage by this publish"
+          },
+          "reused": {
+            "type": "integer",
+            "description": "Files reused from an earlier version of the same artifact"
+          },
+          "bytes": { "type": "integer", "description": "Logical bytes: what a viewer loads" },
+          "bytes_written": {
+            "type": "integer",
+            "description": "Bytes written to storage by this publish"
           }
         },
-        "required": ["id", "slug", "type", "version", "url", "content_url", "visibility"]
+        "required": ["files", "written", "reused", "bytes", "bytes_written"]
+      },
+      "InstanceLimits": {
+        "type": "object",
+        "properties": {
+          "max_html_bytes": { "type": "integer" },
+          "max_doc_bytes": { "type": "integer" },
+          "max_version_bytes": {
+            "type": "integer",
+            "description": "MAX_VERSION_BYTES: source plus assets, uncompressed"
+          },
+          "max_assets_per_version": { "type": "integer", "description": "MAX_ASSETS_PER_VERSION" },
+          "max_asset_path_length": { "type": "integer" },
+          "max_request_bytes": {
+            "type": "integer",
+            "description": "JSON body of an inline publish or update"
+          },
+          "max_bundle_bytes": {
+            "type": "integer",
+            "description": "Bytes on the wire of one bundle"
+          },
+          "max_bundle_file_bytes": { "type": "integer", "description": "One file in a bundle" }
+        },
+        "required": [
+          "max_html_bytes",
+          "max_doc_bytes",
+          "max_version_bytes",
+          "max_assets_per_version",
+          "max_asset_path_length",
+          "max_request_bytes",
+          "max_bundle_bytes",
+          "max_bundle_file_bytes"
+        ]
+      },
+      "StartUploadResult": {
+        "type": "object",
+        "properties": {
+          "upload_id": { "type": "string" },
+          "upload_token": {
+            "type": "string",
+            "pattern": "^plinth_up_",
+            "description": "Single use, shown once, only its SHA-256 hash is stored. Send it only in the Authorization header of the bundle request"
+          },
+          "expires_at": { "type": "string", "format": "date-time" },
+          "upload_url": {
+            "type": "string",
+            "format": "uri",
+            "description": "<APP_ORIGIN>/api/v1/uploads/<id>/bundle"
+          },
+          "target": {
+            "oneOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "mode": { "const": "publish" },
+                  "type": { "$ref": "#/components/schemas/ArtifactType" }
+                },
+                "required": ["mode", "type"]
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "mode": { "const": "update" },
+                  "id": { "type": "string" },
+                  "slug": { "type": "string" },
+                  "type": { "$ref": "#/components/schemas/ArtifactType" },
+                  "base_version": { "type": "integer", "minimum": 1 },
+                  "visibility": {
+                    "type": "string",
+                    "enum": ["public", "unlisted", "password", "allowlist"]
+                  }
+                },
+                "required": ["mode", "id", "slug", "type", "base_version", "visibility"]
+              }
+            ]
+          },
+          "limits": { "$ref": "#/components/schemas/InstanceLimits" },
+          "content_isolation": { "type": "string", "enum": ["origin", "opaque"] },
+          "commands": {
+            "type": "object",
+            "properties": {
+              "curl": {
+                "type": "string",
+                "description": "Needs bash or zsh; <folder> is a placeholder"
+              },
+              "npx": { "type": "string", "description": "Only on release versions of the server" }
+            },
+            "required": ["curl"]
+          },
+          "next": { "type": "string" }
+        },
+        "required": [
+          "upload_id",
+          "upload_token",
+          "expires_at",
+          "upload_url",
+          "target",
+          "limits",
+          "content_isolation",
+          "commands",
+          "next"
+        ]
+      },
+      "BundleResult": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "slug": { "type": "string" },
+          "type": { "$ref": "#/components/schemas/ArtifactType" },
+          "version": { "type": "integer", "minimum": 1 },
+          "url": { "type": "string", "format": "uri" },
+          "content_url": { "type": "string", "format": "uri" },
+          "visibility": {
+            "type": "string",
+            "enum": ["public", "unlisted", "password", "allowlist"]
+          },
+          "warnings": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/PublishWarning" },
+            "description": "Advisory: references the published files make that will not load"
+          },
+          "stored": { "$ref": "#/components/schemas/StoredSummary" },
+          "bundle": {
+            "type": "object",
+            "properties": {
+              "entries": { "type": "integer" },
+              "skipped": {
+                "type": "array",
+                "items": { "type": "string" },
+                "description": "Entries left out (dotfiles)"
+              },
+              "stripped_prefix": { "type": ["string", "null"] }
+            },
+            "required": ["entries", "skipped", "stripped_prefix"]
+          }
+        },
+        "required": [
+          "id",
+          "slug",
+          "type",
+          "version",
+          "url",
+          "content_url",
+          "visibility",
+          "warnings",
+          "stored",
+          "bundle"
+        ]
       },
       "VersionInfo": {
         "type": "object",
@@ -2344,6 +2662,16 @@
             "type": ["string", "null"],
             "format": "uri",
             "description": "Plinth's source repository, linked under every artifact; null when SHOW_SOURCE_LINK is off"
+          },
+          "limits": { "$ref": "#/components/schemas/InstanceLimits" },
+          "cdn_allowlist": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Hosts artifacts may load scripts and styles from (the CSP's CDN_ALLOWLIST)"
+          },
+          "upload_ticket_ttl_s": {
+            "type": "integer",
+            "description": "How long an upload ticket stays valid"
           }
         },
         "required": [
@@ -2358,7 +2686,10 @@
           "operator",
           "email_provider",
           "max_artifacts_per_user",
-          "source_url"
+          "source_url",
+          "limits",
+          "cdn_allowlist",
+          "upload_ticket_ttl_s"
         ]
       },
       "LoginResult": {
@@ -2853,6 +3184,11 @@
         "type": "http",
         "scheme": "bearer",
         "description": "Personal access token (`plinth_pat_...`, created on the Connections page) or an OAuth 2.1 access token (`plinth_at_...`) from /oauth/token. Scopes: artifacts:read, artifacts:write, mentions. In single-user mode with ADMIN_TOKEN set, that token also works."
+      },
+      "uploadToken": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "The single-use upload token (`plinth_up_...`) from start_upload. It works only on its own bundle URL."
       },
       "sessionCookie": {
         "type": "apiKey",

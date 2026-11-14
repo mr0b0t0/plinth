@@ -1,6 +1,14 @@
-import { DEFAULTS } from "@plinth/shared";
+import { DEFAULTS, LIMITS, TTL } from "@plinth/shared";
 import { describe, expect, it } from "vitest";
-import { ConfigError, parseConfig, registrableDomain, sharedDataActive } from "../src/config.ts";
+import {
+  ConfigError,
+  MIN_VERSION_BYTES,
+  maxBundleBytes,
+  parseConfig,
+  registrableDomain,
+  sharedDataActive,
+  uploadTicketsPerHour,
+} from "../src/config.ts";
 
 const base = {
   ENVIRONMENT: "production",
@@ -158,6 +166,62 @@ describe("operator settings (legal pages)", () => {
     expect(cfg.email_provider).toBeTypeOf("string");
     expect(cfg.max_artifacts_per_user).toBeTypeOf("number");
     expect(cfg.source_url).toBe("https://github.com/mr0b0t0/plinth");
+  });
+  it("report the instance's limits, CDN allowlist and upload ticket lifetime in /api/v1/config", async () => {
+    const { call, config, json } = await import("./helpers.ts");
+    const cfg = await json(await call("/api/v1/config"));
+    expect(cfg.limits).toEqual({
+      max_html_bytes: LIMITS.maxHtmlBytes,
+      max_doc_bytes: LIMITS.maxDocBytes,
+      max_version_bytes: DEFAULTS.maxVersionBytes,
+      max_assets_per_version: DEFAULTS.maxAssetsPerVersion,
+      max_asset_path_length: LIMITS.maxAssetPathLength,
+      max_request_bytes: LIMITS.maxInlineRequestBytes,
+      max_bundle_bytes: DEFAULTS.maxVersionBytes + LIMITS.bundleOverheadBytes,
+      max_bundle_file_bytes: LIMITS.maxBundleFileBytes,
+    });
+    expect(cfg.cdn_allowlist).toEqual(config().cdnAllowlist);
+    expect(cfg.upload_ticket_ttl_s).toBe(TTL.uploadTicketMs / 1000);
+  });
+  it("read MAX_VERSION_BYTES and MAX_ASSETS_PER_VERSION within their bounds", () => {
+    const c = parseConfig(base);
+    expect(c.maxVersionBytes).toBe(DEFAULTS.maxVersionBytes);
+    expect(c.maxAssetsPerVersion).toBe(DEFAULTS.maxAssetsPerVersion);
+    expect(maxBundleBytes(c)).toBe(DEFAULTS.maxVersionBytes + LIMITS.bundleOverheadBytes);
+    expect(uploadTicketsPerHour(c)).toBe(c.maxPublishesPerHour);
+    // An empty value (as wrangler.jsonc may list it) keeps the default.
+    expect(
+      parseConfig({ ...base, MAX_VERSION_BYTES: "", MAX_ASSETS_PER_VERSION: "" }),
+    ).toMatchObject({
+      maxVersionBytes: DEFAULTS.maxVersionBytes,
+      maxAssetsPerVersion: DEFAULTS.maxAssetsPerVersion,
+    });
+    const set = parseConfig({
+      ...base,
+      MAX_VERSION_BYTES: String(MIN_VERSION_BYTES),
+      MAX_ASSETS_PER_VERSION: String(LIMITS.maxAssetsCeiling),
+    });
+    expect(set.maxVersionBytes).toBe(MIN_VERSION_BYTES);
+    expect(set.maxAssetsPerVersion).toBe(LIMITS.maxAssetsCeiling);
+    expect(
+      parseConfig({ ...base, MAX_VERSION_BYTES: String(LIMITS.maxVersionBytesCeiling) })
+        .maxVersionBytes,
+    ).toBe(LIMITS.maxVersionBytesCeiling);
+    for (const bad of [
+      String(MIN_VERSION_BYTES - 1),
+      String(LIMITS.maxVersionBytesCeiling + 1),
+      "0",
+      "-5",
+      "50MB",
+      "1.5e7",
+    ]) {
+      expect(() => parseConfig({ ...base, MAX_VERSION_BYTES: bad }), bad).toThrow(ConfigError);
+    }
+    for (const bad of ["0", String(LIMITS.maxAssetsCeiling + 1), "many", "-1"]) {
+      expect(() => parseConfig({ ...base, MAX_ASSETS_PER_VERSION: bad }), bad).toThrow(
+        /MAX_ASSETS_PER_VERSION/,
+      );
+    }
   });
   it("show the source link unless SHOW_SOURCE_LINK is off", () => {
     expect(parseConfig(base).showSourceLink).toBe(true);

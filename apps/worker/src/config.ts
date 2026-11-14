@@ -1,6 +1,12 @@
 // Runtime configuration, parsed from env vars once per isolate. Every host, limit and provider is
 // configurable (AGENTS.md: anything a self-hoster may change is an env var).
-import { CONTENT_ISOLATION_MODES, type ContentIsolation, DEFAULTS } from "@plinth/shared";
+import {
+  CONTENT_ISOLATION_MODES,
+  type ContentIsolation,
+  DEFAULTS,
+  type InstanceLimits,
+  LIMITS,
+} from "@plinth/shared";
 import { getDomain } from "tldts";
 
 /** Secrets are set with `wrangler secret put` (or .dev.vars locally); not in wrangler.jsonc. */
@@ -38,6 +44,13 @@ export interface Config {
   maxPublishesPerHour: number;
   /** Stored bytes per account (all versions of non-deleted artifacts it owns). */
   maxStorageBytesPerUser: number;
+  /**
+   * MAX_VERSION_BYTES: source plus assets of one version, uncompressed (reused files count). From
+   * 1 MB up to LIMITS.maxVersionBytesCeiling.
+   */
+  maxVersionBytes: number;
+  /** MAX_ASSETS_PER_VERSION: asset files in one version, from 1 up to LIMITS.maxAssetsCeiling. */
+  maxAssetsPerVersion: number;
   cdnAllowlist: string[];
   singleUserMode: boolean;
   /** Admin's email in single-user mode; also gets the admin takedown page on any instance. */
@@ -109,6 +122,9 @@ export interface SharedDataLimits {
 
 export class ConfigError extends Error {}
 
+/** The smallest MAX_VERSION_BYTES an instance may set (1 MB). */
+export const MIN_VERSION_BYTES = 1024 * 1024;
+
 function bool(v: unknown): boolean {
   return typeof v === "string" && ["1", "true", "yes", "on"].includes(v.trim().toLowerCase());
 }
@@ -121,6 +137,26 @@ function boolDefaultOn(v: unknown): boolean {
 function int(v: unknown, fallback: number): number {
   const n = typeof v === "string" && v.trim() !== "" ? Number(v) : Number.NaN;
   return Number.isInteger(n) && n >= 0 ? n : fallback;
+}
+
+/**
+ * An integer setting with hard bounds: unset or empty gives the default; anything else must be an
+ * integer from min to max, or the Worker refuses to start.
+ */
+function boundedInt(
+  env: Record<string, unknown>,
+  name: string,
+  fallback: number,
+  min: number,
+  max: number,
+): number {
+  const raw = str(env[name]);
+  if (raw === "") return fallback;
+  const n = /^\d+$/.test(raw) ? Number(raw) : Number.NaN;
+  if (!Number.isSafeInteger(n) || n < min || n > max) {
+    throw new ConfigError(`${name} must be an integer from ${min} to ${max}`);
+  }
+  return n;
 }
 
 function str(v: unknown): string {
@@ -207,6 +243,20 @@ export function parseConfig(env: Record<string, unknown>): Config {
     maxArtifactsPerUser: int(env.MAX_ARTIFACTS_PER_USER, DEFAULTS.maxArtifactsPerUser),
     maxPublishesPerHour: int(env.MAX_PUBLISHES_PER_HOUR, DEFAULTS.maxPublishesPerHour),
     maxStorageBytesPerUser: int(env.MAX_STORAGE_BYTES_PER_USER, DEFAULTS.maxStorageBytesPerUser),
+    maxVersionBytes: boundedInt(
+      env,
+      "MAX_VERSION_BYTES",
+      DEFAULTS.maxVersionBytes,
+      MIN_VERSION_BYTES,
+      LIMITS.maxVersionBytesCeiling,
+    ),
+    maxAssetsPerVersion: boundedInt(
+      env,
+      "MAX_ASSETS_PER_VERSION",
+      DEFAULTS.maxAssetsPerVersion,
+      1,
+      LIMITS.maxAssetsCeiling,
+    ),
     cdnAllowlist,
     singleUserMode: bool(env.SINGLE_USER_MODE),
     adminEmails: list(env.ADMIN_EMAIL),
@@ -333,6 +383,32 @@ function validateSharedData(d: SharedDataLimits): void {
  */
 export function sharedDataActive(c: Pick<Config, "allowSharedData" | "contentIsolation">): boolean {
   return c.allowSharedData && c.contentIsolation === "origin";
+}
+
+/** Bytes on the wire one bundle may have: the version limit plus tar headers and padding. */
+export function maxBundleBytes(c: Pick<Config, "maxVersionBytes">): number {
+  return c.maxVersionBytes + LIMITS.bundleOverheadBytes;
+}
+
+/** Upload tickets one user may mint per hour. Bundle requests are limited to twice this. */
+export function uploadTicketsPerHour(c: Pick<Config, "maxPublishesPerHour">): number {
+  return c.maxPublishesPerHour;
+}
+
+/** This instance's publish limits, as GET /api/v1/config and start_upload report them. */
+export function instanceLimits(
+  c: Pick<Config, "maxVersionBytes" | "maxAssetsPerVersion">,
+): InstanceLimits {
+  return {
+    max_html_bytes: LIMITS.maxHtmlBytes,
+    max_doc_bytes: LIMITS.maxDocBytes,
+    max_version_bytes: c.maxVersionBytes,
+    max_assets_per_version: c.maxAssetsPerVersion,
+    max_asset_path_length: LIMITS.maxAssetPathLength,
+    max_request_bytes: LIMITS.maxInlineRequestBytes,
+    max_bundle_bytes: maxBundleBytes(c),
+    max_bundle_file_bytes: LIMITS.maxBundleFileBytes,
+  };
 }
 
 let cached: { key: unknown; config: Config } | null = null;

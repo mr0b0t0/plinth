@@ -157,14 +157,14 @@ describe("splitRows", () => {
 describe("diffAssets", () => {
   it("lists added, removed and resized files, then unchanged ones", () => {
     const a = [
-      { path: "img/a.png", size_bytes: 100, content_type: "image/png" },
-      { path: "style.css", size_bytes: 50, content_type: "text/css" },
-      { path: "old.js", size_bytes: 10, content_type: "text/javascript" },
+      { path: "img/a.png", size_bytes: 100, content_type: "image/png", sha256: null },
+      { path: "style.css", size_bytes: 50, content_type: "text/css", sha256: null },
+      { path: "old.js", size_bytes: 10, content_type: "text/javascript", sha256: null },
     ];
     const b = [
-      { path: "img/a.png", size_bytes: 100, content_type: "image/png" },
-      { path: "style.css", size_bytes: 70, content_type: "text/css" },
-      { path: "new.js", size_bytes: 5, content_type: "text/javascript" },
+      { path: "img/a.png", size_bytes: 100, content_type: "image/png", sha256: null },
+      { path: "style.css", size_bytes: 70, content_type: "text/css", sha256: null },
+      { path: "new.js", size_bytes: 5, content_type: "text/javascript", sha256: null },
     ];
     expect(diffAssets(a, b)).toEqual([
       { path: "new.js", kind: "added", after: 5 },
