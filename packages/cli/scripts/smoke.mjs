@@ -2,16 +2,25 @@
 // Smoke test for the published CLI: `pnpm pack` the package, install the tarball into a throwaway
 // prefix with npm (as `npx @mr0b0t0/plinth` would), check `deploy --dry-run` (no network), then
 // init and start a localhost-only instance and use it the way an agent does: OAuth (dynamic
-// registration, PKCE, consent), then MCP. Needs `pnpm build` first. Exit code 0 when every check
-// passes.
+// registration, PKCE, consent), then MCP. Then the client commands, with no wrangler on PATH:
+// publish a 300-file build, republish one change, a stale --id, and `upload` with a start_upload
+// ticket. Needs `pnpm build` first. Exit code 0 when every check passes.
 //
 //   pnpm --filter @mr0b0t0/plinth test:smoke
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readdirSync, realpathSync, rmSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { appClient, connectAgent, publishArtifact, signIn } from "./agent-flow.mjs";
+import { appClient, callTool, connectAgent, publishArtifact, signIn } from "./agent-flow.mjs";
 
 const pkgDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const PORT = Number(process.env.PLINTH_CLI_SMOKE_PORT ?? 8796);
@@ -70,6 +79,9 @@ await check("the tarball ships the runtime and nothing from the repo's sources",
   const ls = spawnSync("tar", ["-tzf", tarball], { encoding: "utf8" }).stdout.split("\n");
   for (const f of [
     "package/bin/plinth.mjs",
+    "package/bin/client/main.mjs",
+    "package/bin/client/vendor/plinth-oauth.mjs",
+    "package/bin/client/vendor/constants.mjs",
     "package/runtime/worker/index.js",
     "package/runtime/web/index.html",
   ])
@@ -82,6 +94,7 @@ await check("the tarball ships the runtime and nothing from the repo's sources",
     !ls.some((f) => /\.ts$|\.map$|\.dev\.vars/.test(f)),
     "TypeScript, source maps or secrets in the tarball",
   );
+  assert(!ls.some((f) => f.startsWith("package/test/")), "tests in the tarball");
   return `${ls.filter(Boolean).length} files`;
 });
 
@@ -213,6 +226,97 @@ let published = null;
 await check("the agent publishes over /mcp with its OAuth access token", async () => {
   published = await publishArtifact(APP, accessToken, "CLI smoke");
   return published.slug;
+});
+
+// ---------- the client commands, with no wrangler on PATH ----------
+const clientBin = realpathSync(
+  path.join(prefix, "node_modules", "@mr0b0t0", "plinth", "bin", "plinth.mjs"),
+);
+const clientEnv = () => ({
+  PATH: path.dirname(process.execPath),
+  HOME: work,
+  XDG_CONFIG_HOME: path.join(work, "xdg"),
+  PLINTH_HOME: path.join(work, "no-instances"),
+  PLINTH_URL: APP,
+  PLINTH_TOKEN: accessToken ?? "",
+});
+const client = (args, extraEnv = {}) =>
+  spawnSync(process.execPath, [clientBin, ...args], {
+    encoding: "utf8",
+    env: { ...clientEnv(), ...extraEnv },
+  });
+/** A Vite-like build: index.html plus `n - 1` asset files. */
+function buildFolder(name, n) {
+  const dir = path.join(work, name);
+  mkdirSync(path.join(dir, "assets"), { recursive: true });
+  writeFileSync(
+    path.join(dir, "index.html"),
+    `<!doctype html><title>${name}</title><script type="module" src="./assets/chunk-0.js"></script>`,
+  );
+  for (let i = 0; i < n - 1; i++)
+    writeFileSync(path.join(dir, "assets", `chunk-${i}.js`), `export const v${i} = ${i};\n`);
+  return dir;
+}
+const json = (r) => {
+  assert(r.status === 0, `exit ${r.status}: ${r.stderr}`);
+  return JSON.parse(r.stdout);
+};
+
+await check("client commands run with no wrangler on PATH", () => {
+  const which = spawnSync("/bin/sh", ["-c", "command -v wrangler"], { env: clientEnv() });
+  assert(which.status !== 0, "wrangler is on the restricted PATH");
+  const r = client(["whoami"]);
+  assert(r.status === 0 && r.stdout.includes(EMAIL), r.stdout + r.stderr);
+  assert(r.stderr.includes(`plinth: ${APP} (PLINTH_URL)`), r.stderr);
+});
+
+const site = buildFolder("site", 300);
+let sitePublished = null;
+await check("publish sends a 300-file build as one bundle and verifies it", () => {
+  sitePublished = json(client(["publish", site, "--json"]));
+  assert(sitePublished.version === 1, `version ${sitePublished.version}`);
+  assert(sitePublished.stored.files === 300, JSON.stringify(sitePublished.stored));
+  assert(sitePublished.verified === true, "not verified");
+  return `${sitePublished.slug}, ${sitePublished.stored.written} written`;
+});
+
+await check("republishing one change writes 2 objects (the file and the source)", () => {
+  writeFileSync(path.join(site, "assets", "chunk-7.js"), "export const v7 = 'changed';\n");
+  const r = json(client(["publish", site, "--id", sitePublished.id, "--json"]));
+  assert(r.version === 2, `version ${r.version}`);
+  assert(r.stored.written === 2, JSON.stringify(r.stored));
+  assert(r.stored.reused === 298, JSON.stringify(r.stored));
+  assert(r.verified === true, "not verified");
+});
+
+await check("publish --id with a stale base exits 3 and writes nothing", () => {
+  const r = client(["publish", site, "--id", sitePublished.id, "--base-version", "1"]);
+  assert(r.status === 3, `exit ${r.status}: ${r.stderr}`);
+  assert(/changed since v1 \(now v2\)/.test(r.stderr), r.stderr);
+});
+
+await check("upload sends a folder with a start_upload ticket", async () => {
+  const ticket = await callTool(APP, accessToken, "start_upload", {});
+  assert(ticket.upload_url && ticket.upload_token, JSON.stringify(ticket).slice(0, 300));
+  const dir = buildFolder("uploaded", 5);
+  const r = client(["upload", dir, "--to", ticket.upload_url], {
+    PLINTH_TOKEN: "",
+    PLINTH_UPLOAD_TOKEN: ticket.upload_token,
+  });
+  const out = json(r);
+  assert(out.version === 1 && out.bundle?.entries === 5, r.stdout);
+  // The artifact is private, so read it back through the API rather than the content host.
+  const res = await fetch(`${APP}/api/v1/artifacts/${out.id}`, {
+    headers: { authorization: `Bearer ${accessToken}` },
+  });
+  const detail = await res.json();
+  const paths = (detail.assets ?? []).map((a) => a.path).sort();
+  assert(res.status === 200 && paths.length === 4, `assets ${res.status} ${paths}`);
+  assert(
+    detail.assets.every((a) => /^[0-9a-f]{64}$/.test(a.sha256 ?? "")),
+    "assets without sha256",
+  );
+  return out.slug;
 });
 
 await check("/mcp refuses requests without a token", async () => {

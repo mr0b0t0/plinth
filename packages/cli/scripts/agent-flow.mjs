@@ -134,6 +134,21 @@ export async function mcp(origin, token, method, params, id) {
   return JSON.parse(json);
 }
 
+/** Initialize an MCP session and call one tool; resolves with its JSON result. */
+export async function callTool(origin, token, name, args) {
+  const clientInfo = { name: "smoke", version: "1" };
+  await mcp(
+    origin,
+    token,
+    "initialize",
+    { protocolVersion: "2025-06-18", capabilities: {}, clientInfo },
+    1,
+  );
+  const res = await mcp(origin, token, "tools/call", { name, arguments: args }, 2);
+  assert(!res.result?.isError, `${name}: ${JSON.stringify(res).slice(0, 500)}`);
+  return JSON.parse(res.result.content[0].text);
+}
+
 /** Initialize an MCP session and publish one artifact; resolves with { id, slug, ... }. */
 export async function publishArtifact(origin, token, title) {
   const clientInfo = { name: "smoke", version: "1" };
