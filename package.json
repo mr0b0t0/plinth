@@ -17,7 +17,9 @@
     "format": "biome check --write .",
     "setup": "node scripts/setup.mjs",
     "seed": "node scripts/seed.mjs",
-    "openapi": "node scripts/openapi.mjs"
+    "openapi": "node scripts/openapi.mjs",
+    "local:start": "node scripts/local-start.mjs",
+    "test:local": "node e2e/local/smoke.mjs"
   },
   "devDependencies": {
     "@biomejs/biome": "2.6.6",
