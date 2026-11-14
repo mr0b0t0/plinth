@@ -10,6 +10,9 @@ Add a line under **Unreleased** in the pull request that makes a change people w
 
 ## Unreleased
 
+- The banner under every artifact links to Plinth's source code ("Hosted on Plinth, open
+  source"). Self-hosters can remove the link with `SHOW_SOURCE_LINK=false`.
+
 ## 0.3.0 (2026-11-14)
 
 - **Shared data**: a page that declares `<meta name="plinth-capabilities" content="data viewer">`

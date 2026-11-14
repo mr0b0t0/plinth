@@ -201,6 +201,11 @@ export interface AppConfig {
   email_provider: "sendgrid" | "resend" | "console";
   /** Default artifact quota per account (MAX_ARTIFACTS_PER_USER). */
   max_artifacts_per_user: number;
+  /**
+   * Plinth's source repository, linked from the banner under every artifact. null when the
+   * operator turned the link off (SHOW_SOURCE_LINK=false).
+   */
+  source_url: string | null;
 }
 
 export interface OperatorInfo {

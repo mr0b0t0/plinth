@@ -20,6 +20,7 @@ export const CONFIG: AppConfig = {
   },
   email_provider: "sendgrid",
   max_artifacts_per_user: 100,
+  source_url: "https://github.com/mr0b0t0/plinth",
 };
 
 export const ME: Me = {

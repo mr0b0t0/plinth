@@ -357,6 +357,11 @@ function responseSchemas(): Record<string, Json> {
       },
       email_provider: enumOf(["sendgrid", "resend", "console"]),
       max_artifacts_per_user: int(),
+      source_url: nullable("string", {
+        format: "uri",
+        description:
+          "Plinth's source repository, linked under every artifact; null when SHOW_SOURCE_LINK is off",
+      }),
     }),
     LoginResult: obj({
       ok: { const: true },

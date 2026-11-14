@@ -24,6 +24,7 @@ const config: AppConfig = {
   operator: null,
   email_provider: "console",
   max_artifacts_per_user: 100,
+  source_url: null,
 };
 
 const NONCE = "0123456789abcdef0123456789abcdef";

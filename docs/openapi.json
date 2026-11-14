@@ -2339,7 +2339,12 @@
             "description": "Who runs this instance (OPERATOR_* settings); null when none is published"
           },
           "email_provider": { "type": "string", "enum": ["sendgrid", "resend", "console"] },
-          "max_artifacts_per_user": { "type": "integer" }
+          "max_artifacts_per_user": { "type": "integer" },
+          "source_url": {
+            "type": ["string", "null"],
+            "format": "uri",
+            "description": "Plinth's source repository, linked under every artifact; null when SHOW_SOURCE_LINK is off"
+          }
         },
         "required": [
           "app_origin",
@@ -2352,7 +2357,8 @@
           "environment",
           "operator",
           "email_provider",
-          "max_artifacts_per_user"
+          "max_artifacts_per_user",
+          "source_url"
         ]
       },
       "LoginResult": {

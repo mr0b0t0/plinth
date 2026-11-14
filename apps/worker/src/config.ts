@@ -77,6 +77,11 @@ export interface Config {
   allowSharedData: boolean;
   /** Shared data limits (DATA_* env vars). */
   data: SharedDataLimits;
+  /**
+   * SHOW_SOURCE_LINK (default on): the banner under every artifact links to Plinth's source
+   * repository. Lives in the app's page around the frame, never in the artifact document.
+   */
+  showSourceLink: boolean;
   /** OPERATOR_*: who runs this instance, for its legal pages. null when none is published. */
   operator: {
     name: string;
@@ -236,6 +241,7 @@ export function parseConfig(env: Record<string, unknown>): Config {
         DEFAULTS.data.writesPerArtifactPerHour,
       ),
     },
+    showSourceLink: boolDefaultOn(env.SHOW_SOURCE_LINK),
     operator: parseOperator(env),
   };
   validate(config);

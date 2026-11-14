@@ -1,7 +1,8 @@
 // The artifact on view: one 44px bar (breadcrumb, version, access on the left; History,
 // Comments, Share and a ⋯ menu on the right), the artifact in a sandboxed frame filling the rest,
 // an optional comments panel, and a one-line banner naming the platform with a report link
-// (required on every artifact page).
+// (required on every artifact page) and, unless the operator turned it off (SHOW_SOURCE_LINK), a
+// link to Plinth's source. The banner is app chrome: nothing is ever added to the artifact itself.
 
 import {
   ChatCircleIcon,
@@ -288,6 +289,14 @@ export function ViewerStage({
         <footer className="pl-viewer__banner">
           <span>
             Hosted on <Link to={APP_ROUTES.home}>Plinth</Link>
+            {config?.source_url && (
+              <>
+                {", "}
+                <a href={config.source_url} target="_blank" rel="noopener noreferrer">
+                  open source
+                </a>
+              </>
+            )}
           </span>
           <span aria-hidden="true">·</span>
           <Link to={reportHref}>Report this artifact</Link>

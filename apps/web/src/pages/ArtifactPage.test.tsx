@@ -77,6 +77,23 @@ describe("ArtifactPage", () => {
       "/a/garden-plan/report",
     );
     expect(screen.getByRole("contentinfo").textContent).toContain("Hosted on Plinth");
+    const source = screen.getByRole("link", { name: "open source" });
+    expect(source.getAttribute("href")).toBe("https://github.com/mr0b0t0/plinth");
+    expect(source.getAttribute("rel")).toBe("noopener noreferrer");
+  });
+
+  it("leaves the source link out when the operator turned it off", async () => {
+    stubApi({
+      me: ME,
+      config: { ...CONFIG, source_url: null },
+      handle: (c) => (c.path.startsWith("/view/") ? json(okGate()) : undefined),
+    });
+    const ArtifactPage = await loadPage();
+    render(<ArtifactPage params={{ slug: "garden-plan" }} />);
+    await screen.findByTitle("Garden plan, version 3");
+    expect(screen.getByRole("contentinfo").textContent).toContain("Hosted on Plinth");
+    expect(screen.queryByRole("link", { name: "open source" })).toBeNull();
+    expect(screen.getByRole("link", { name: "Report this artifact" })).toBeTruthy();
   });
 
   it("gives owners Edit, the visibility badge and the sharing settings", async () => {
