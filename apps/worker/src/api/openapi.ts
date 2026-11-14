@@ -332,18 +332,22 @@ function responseSchemas(): Record<string, Json> {
         "What the viewer must do before the artifact can be shown. On `ok`, open `enter_url` " +
         "(a one-time, 60-second token for the artifact's content subdomain).",
       oneOf: [
-        obj({
-          status: { const: "ok" },
-          artifact: obj({
-            ...viewStub,
-            current_version: int({ minimum: 1 }),
-            version: int({ minimum: 1 }),
-            visibility,
-            owner_name: nullable("string"),
-          }),
-          enter_url: str({ format: "uri" }),
-          role: { oneOf: [effectiveRole, { type: "null" }] },
-        }),
+        obj(
+          {
+            status: { const: "ok" },
+            artifact: obj({
+              ...viewStub,
+              current_version: int({ minimum: 1 }),
+              version: int({ minimum: 1 }),
+              visibility,
+              owner_name: nullable("string"),
+            }),
+            enter_url: str({ format: "uri" }),
+            role: { oneOf: [effectiveRole, { type: "null" }] },
+            data: ref("ViewGateData"),
+          },
+          ["data"],
+        ),
         obj({ status: { const: "password_required" }, artifact: obj(viewStub) }),
         obj({ status: { const: "email_required" }, artifact: obj(viewStub) }),
         obj({ status: { const: "taken_down" }, artifact: obj(viewStub) }),
@@ -381,6 +385,31 @@ function dataSchemas(): Record<string, Json> {
   const capabilities = { type: "array", items: enumOf(DATA_CAPABILITIES) };
   return {
     WriteArtifactDataInput: fromZod(writeArtifactDataInput.omit({ id: true })),
+    ViewGateData: {
+      ...obj(
+        {
+          available: {
+            type: "boolean",
+            description: "Shared data works on this instance (on, with origin isolation)",
+          },
+          capabilities,
+          identified: {
+            type: "boolean",
+            description: "The page gets an identity claim (email and role) for this viewer",
+          },
+          can_write: { type: "boolean" },
+          email: str({
+            format: "email",
+            description:
+              "The email the page sees: only when identified and the page declares `viewer`",
+          }),
+        },
+        ["email"],
+      ),
+      description:
+        "Present on `ok` only when the artifact's current version declares `data`: what the " +
+        "viewer is told about the page's shared data",
+    },
     AgentDocAuthor: {
       ...obj({
         email: nullable("string", { description: "NULL only after the person was erased" }),

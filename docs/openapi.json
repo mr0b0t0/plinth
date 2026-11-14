@@ -2283,7 +2283,8 @@
                   { "type": "string", "enum": ["owner", "viewer", "commenter", "editor"] },
                   { "type": "null" }
                 ]
-              }
+              },
+              "data": { "$ref": "#/components/schemas/ViewGateData" }
             },
             "required": ["status", "artifact", "enter_url", "role"]
           },
@@ -2455,6 +2456,31 @@
           }
         },
         "required": ["ops"]
+      },
+      "ViewGateData": {
+        "type": "object",
+        "properties": {
+          "available": {
+            "type": "boolean",
+            "description": "Shared data works on this instance (on, with origin isolation)"
+          },
+          "capabilities": {
+            "type": "array",
+            "items": { "type": "string", "enum": ["data", "viewer"] }
+          },
+          "identified": {
+            "type": "boolean",
+            "description": "The page gets an identity claim (email and role) for this viewer"
+          },
+          "can_write": { "type": "boolean" },
+          "email": {
+            "type": "string",
+            "format": "email",
+            "description": "The email the page sees: only when identified and the page declares `viewer`"
+          }
+        },
+        "required": ["available", "capabilities", "identified", "can_write"],
+        "description": "Present on `ok` only when the artifact's current version declares `data`: what the viewer is told about the page's shared data"
       },
       "AgentDocAuthor": {
         "type": "object",

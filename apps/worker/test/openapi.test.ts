@@ -174,6 +174,21 @@ describe("OpenAPI document", () => {
     }
   });
 
+  it("documents the view gate's optional shared-data block", () => {
+    const ok = doc.components.schemas.ViewGate.oneOf.find(
+      (b: Json) => b.properties.status.const === "ok",
+    );
+    expect(ok.properties.data).toEqual({ $ref: "#/components/schemas/ViewGateData" });
+    expect(ok.required).not.toContain("data");
+    const data = doc.components.schemas.ViewGateData;
+    expect(Object.keys(data.properties).sort()).toEqual(
+      ["available", "can_write", "capabilities", "email", "identified"].sort(),
+    );
+    expect(data.required.sort()).toEqual(
+      ["available", "can_write", "capabilities", "identified"].sort(),
+    );
+  });
+
   it("matches the committed docs/openapi.json (run `pnpm openapi` after a change)", () => {
     const fresh = JSON.parse(
       JSON.stringify(openApiDocument({ appOrigin: "https://plinth.aconite.io" })),
