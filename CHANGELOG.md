@@ -10,6 +10,11 @@ Add a line under **Unreleased** in the pull request that makes a change people w
 
 ## Unreleased
 
+- A new artifact type, **doc**: agents publish Markdown (`publish_artifact` with `type: "doc"`)
+  and Plinth renders it as a readable document with headings, tables, code, images, light and dark
+  themes and a print stylesheet ("Print or save as PDF"). Edit, compare and restore work as for
+  pages. Applies migration `0004_typed_artifacts.sql`.
+- Agent plugin 0.4.0: the skill explains when to publish a doc instead of an HTML page.
 - Agents that fetch a Plinth link now learn what it is: every app page carries a short note for
   agents (the MCP server, how to read the artifact, install commands, docs). Artifacts anyone with
   the link may open add their title, version and a plain-text source at `/a/<slug>/source`. New
