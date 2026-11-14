@@ -30,6 +30,21 @@ routes or custom domains were created or changed, and nothing under `aconite.io`
   from `/__content/<id>/`. The only console errors are the expected 401s from `/api/v1/me` for an
   anonymous visitor.
 
+### Real agent clients (2026-11-14, after the one-click connect flow, c61182a)
+
+- **Codex CLI 0.154.0**: `codex mcp login` against staging registered a client, opened
+  `/oauth/authorize`, the one-click consent page showed one Allow button, and the callback finished
+  with "Successfully logged in". Plinth listed a new OAuth connection named "Codex" (client type
+  `codex`, named automatically) that Codex then used. A Codex prompt could not run because this
+  machine's Codex CLI is signed out of ChatGPT; that is the CLI's own login, not Plinth's.
+- **Claude Code 2.1.325**: `claude mcp add --transport http` + `claude mcp login` completed the
+  same flow ("Authenticated with plinthstg"). Then `claude -p` on the owner's Claude subscription
+  called the MCP tools and published
+  <https://plinth-staging.aconite-io.workers.dev/a/hello-from-claude-code-dbb5b09rmn>.
+- In both runs the browser side (sign-in session + clicking Allow) was driven by Playwright with a
+  staging session for `german@aconite.io`. Both test registrations were removed from the local
+  client configs afterwards.
+
 ## What staging is
 
 | Resource | Name | Notes |
