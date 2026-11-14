@@ -1,6 +1,6 @@
 ---
 name: plinth-artifacts
-description: Make, publish, update and share HTML pages ("artifacts") on Plinth through its MCP tools. Use when the user wants a page, report, dashboard, prototype, explainer or visualization they will look at or pass on, asks to publish, host or share something as a link, wants an artifact on Plinth changed or restored, wants to control who can view one, or asks you to address comments or @mentions left on it.
+description: Make, publish, update and share HTML pages and Markdown documents ("artifacts") on Plinth through its MCP tools. Use when the user wants a page, document, report, dashboard, prototype, explainer or visualization they will look at or pass on, or a memo, plan, spec, proposal or meeting notes written up to share, asks to publish, host or share something as a link, wants an artifact on Plinth changed or restored, wants to control who can view one, or asks you to address comments or @mentions left on it.
 ---
 
 # Plinth artifacts
@@ -25,9 +25,9 @@ from their other agents and accounts. Otherwise follow what they ask for.
 
 | Tool | Use it to |
 | --- | --- |
-| `publish_artifact` | Create an artifact: `title`, `html`, optional `assets` and `visibility` |
+| `publish_artifact` | Create an artifact: `title`, `html` (or `type: "doc"` + `content`), optional `assets` and `visibility` |
 | `get_artifact` | Read an artifact's current (or a given) version before changing it |
-| `update_artifact` | Publish a new version: `id`, `html`, `base_version`, optional `assets`, `note` |
+| `update_artifact` | Publish a new version: `id`, `html` or `content` (by the artifact's type), `base_version`, optional `assets`, `note` |
 | `list_artifacts` | Find artifacts by title (the person's own and those shared with them) |
 | `list_versions`, `restore_version` | See history; make an old version current again |
 | `set_visibility` | Change who can view an artifact (owner only) |
@@ -36,9 +36,9 @@ from their other agents and accounts. Otherwise follow what they ask for.
 
 ## The page contract
 
-An artifact is one complete HTML document plus optional files. There is no server-side code, and
-every artifact runs on its own origin under a strict Content Security Policy. Write pages that hold
-up there and look finished:
+An artifact is one complete HTML document plus optional files (or, for a doc, Markdown that Plinth
+renders: see "Documents (type doc)"). There is no server-side code, and every artifact runs on its
+own origin under a strict Content Security Policy. Write pages that hold up there and look finished:
 
 - **A real title.** A `<title>` of two to four words that names the thing ("Q3 pricing model"),
   not the format ("Report").
@@ -122,8 +122,10 @@ Markdown. Omitting `assets` keeps the images, as for a page.
 
 ## Changing an artifact
 
-1. `get_artifact` first, to work from the current HTML and learn the current `version`.
-2. `update_artifact` with `base_version` set to that version and a short `note` saying what changed.
+1. `get_artifact` first, to work from the current HTML (or a doc's Markdown) and learn the current
+   `version`.
+2. `update_artifact` with the same field (`html`, or `content` for a doc), `base_version` set to
+   that version and a short `note` saying what changed.
    The link stays the same. Never publish a second artifact as a new copy of an existing one.
 3. If it fails with a conflict, someone published in between: read it again, re-apply your change on
    top of the new version, and retry. Never drop `base_version` to force it through.

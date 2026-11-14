@@ -34,7 +34,7 @@ export const PLUGIN = {
   name: "plinth",
   version: "0.3.0",
   description:
-    "Publish, update and share HTML artifacts on Plinth: the Plinth MCP server plus a skill with its publishing rules",
+    "Publish, update and share HTML artifacts and Markdown documents on Plinth: the Plinth MCP server plus a skill with its publishing rules",
   author: { name: "Aconite Software & Investments, Lda.", url: "https://aconite.io" },
   homepage: `${REPO_URL}/blob/main/docs/agents.md`,
   repository: REPO_URL,
