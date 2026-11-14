@@ -9,8 +9,10 @@ make a test pass.
 
 | Threat | Example | Main defence |
 | --- | --- | --- |
-| Malicious artifact attacks the app | Artifact script reads the app's session cookie or calls the API as the viewer | Separate content domain; no app cookies there; CSP |
-| Artifact attacks another artifact | Artifact A reads artifact B's localStorage or files | One origin per artifact; viewer tokens bound to one artifact |
+| Malicious artifact attacks the app | Artifact script reads the app's session cookie or calls the API as the viewer | Separate content domain (or, while the content host shares the app's domain, [opaque isolation](#opaque-content-isolation)); no app cookies there; CSP; CSRF token and `Origin` check on every write |
+| Artifact attacks another artifact | Artifact A reads artifact B's localStorage or files | One origin per artifact (under opaque isolation: no storage at all); viewer tokens and content cookies bound to one artifact |
+| Cookie tossing onto a shared parent domain | An artifact on `<id>.plinth-usercontent.aconite.io` sets `Domain=aconite.io` cookies that the app or other artifacts receive | Public Suffix List entry for the content host; until it ships, `CONTENT_ISOLATION=opaque` (artifact documents have no `document.cookie`); the Worker never sets a `Domain` attribute; app cookies are `__Host-` so no other host can overwrite them; the content host checks every `plinth_content` value it receives |
+| Artifact reads cookies of the parent domain | Script reads a non-`HttpOnly` `Domain=aconite.io` cookie set by another Aconite service | Opaque isolation (`document.cookie` throws); operators must not set sensitive cookies on the parent domain |
 | Artifact exfiltrates viewer data | Script posts form input to an attacker's server | CSP `connect-src 'self'`, `form-action 'self'`, `default-src 'none'`; artifacts render only inside the app's frame (no `allow-top-navigation`, app `frame-src` limited to content hosts), and top-level visits to a content host are redirected to the framed app page. Known gap: WebRTC (STUN/TURN) is not covered by any CSP directive browsers enforce today, so a determined artifact can still leak data that way |
 | Artifact outlives a takedown | A service worker keeps serving cached pages | Service-worker script requests are refused on content hosts; a deleted or taken-down artifact's origin gets `Clear-Site-Data: "storage"` |
 | Collaborator poses as the owner to the owner's agent | A display name like "alice@example.com (owner)" | Names cannot contain `@`; mention tasks carry the server-derived `comment_author_email` and `comment_author_role`; tool descriptions say the name is display text |
@@ -33,10 +35,80 @@ One Worker serves two kinds of host, routed by hostname:
   cookies. The bare `CONTENT_HOST` and unknown names answer 404.
 
 `CONTENT_HOST` is a different registrable domain from `APP_HOST`, or a subdomain on the Public
-Suffix List, which browsers treat the same way (production refuses to start otherwise), so an artifact is cross-site to the app: browsers do not send the app's cookies to it,
-and the app's `SameSite` cookies are not sent on requests it starts. Each artifact gets its own
-subdomain, so each has its own origin with its own storage, cookies and service workers. Artifact
-ids are 20 random lowercase letters and digits (about 103 bits), so they cannot be guessed.
+Suffix List, which browsers treat the same way, so an artifact is cross-site to the app: browsers
+do not send the app's cookies to it, and the app's `SameSite` cookies are not sent on requests it
+starts. Production refuses to start otherwise, with one exception: `CONTENT_ISOLATION=opaque`
+(next section), the hosted instance's mode until its PSL entry ships. A content host equal to the
+app host, inside it or above it is refused in every mode. Each artifact gets its own subdomain, so
+each has its own origin with its own storage, cookies and service workers (none at all under
+opaque isolation). Artifact ids are 20 random lowercase letters and digits (about 103 bits), so
+they cannot be guessed.
+
+## Opaque content isolation
+
+`CONTENT_ISOLATION` is `origin` (the default) or `opaque`. With `opaque`, every response from a
+content host, artifact files, the preview loader, the bridge script, redirects and errors alike,
+adds a CSP `sandbox` directive without `allow-same-origin`:
+
+```
+sandbox allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-modals allow-downloads
+```
+
+The browser then gives every artifact document an opaque origin, even when it is opened outside
+the app's frame. Artifact script has no `document.cookie` (reading or writing it throws), no
+`localStorage`, `sessionStorage`, IndexedDB or Cache API, and cannot register a service worker. So
+an artifact on a content host that shares the app's registrable domain cannot toss cookies onto the
+parent domain, cannot read `Domain=aconite.io` cookies, and keeps no state the next artifact could
+find. The app's iframes drop `allow-same-origin` too, so both layers agree. Everything else stays as
+in origin mode: one subdomain per artifact, the gate, the one-time viewer token and the per-artifact
+content cookie. The staging path fallback (`STAGING_CONTENT_FALLBACK`) always runs in opaque mode.
+
+What changes for the app and for artifacts:
+
+- **Subresources.** An opaque-origin document is same-origin with nothing, so
+  `Cross-Origin-Resource-Policy: same-origin` would block the artifact's own CSS, scripts and
+  images. In opaque mode content responses send `Cross-Origin-Resource-Policy: cross-origin`. The
+  files still need the content cookie, which is host-only, `SameSite=None; Secure; Partitioned`
+  and so only present under the app's top-level site, and every artifact's CSP still limits its own
+  loads to `'self'` and the CDN allowlist, so no other artifact can load them. Chromium sends the
+  content cookie on the opaque document's subresource requests (checked in the e2e suite).
+- **No `fetch` of its own files.** `fetch` and XHR from an opaque origin are CORS requests from
+  origin `null` without credentials; Plinth sends no CORS headers, so an artifact that fetches its
+  own JSON or text files gets a network error. Data must be inline or loaded with `<script>`,
+  `<link>` or `<img>`. Artifacts that rely on browser storage lose it.
+- **postMessage.** Messages from an artifact frame arrive with `event.origin === "null"`, and a
+  message to the frame can only be posted with `targetOrigin "*"`. The comments bridge identifies
+  the frame by `event.source === iframe.contentWindow`, still validates every field, and posts only
+  `pick:start`, `pick:stop` and comment ids with element selectors, which the framed document can
+  already see in origin mode. The editor preview posts the unsaved draft, which is private, so it
+  also mounts a new iframe element for every render (a browsing context no earlier draft, popup
+  or `opener` holds a reference to), requires the loader's `ready` to carry a random per-frame
+  nonce the app put in the loader URL's fragment, and posts the draft once per nonce. The frame
+  side keeps checking the app's exact origin, which is a real origin in every mode.
+
+Residual risks of running the content host on the app's registrable domain, even with opaque
+isolation. They are why the hosted instance switches back to `origin` once its PSL entry ships:
+
+- **Same-site with the app and with the rest of `aconite.io`.** The browser decides "same-site"
+  for some things by URL, not by the document's origin: the app's own navigations of the artifact
+  frame are same-site requests, so `SameSite=Lax` and `Strict` cookies set on `aconite.io` reach the
+  content host (the Worker ignores them); popups an artifact opens to an `aconite.io` page carry
+  `Lax` cookies as any top-level link would; and browsers have differed on how they classify
+  requests from sandboxed documents. Treat `SameSite` as no protection between artifacts and
+  `aconite.io`. Plinth's writes do not rely on it: every state-changing request needs the CSRF
+  token, and any `Origin` other than the app's (an opaque document sends `Origin: null`) is refused.
+- **Same renderer process.** Browsers isolate processes by site. Where a browser does not put
+  sandboxed frames in a process of their own, an artifact may share a renderer process with the
+  app page that frames it, so a renderer exploit or a Spectre-style side channel could reach the
+  app's memory. Recent desktop Chrome isolates sandboxed iframes; not every browser does.
+- **Shared reputation.** Safe Browsing and similar lists may flag `aconite.io` hosts for a
+  phishing artifact, affecting the app and Aconite's other services. Takedown, reports and the
+  gated public visibility remain the controls.
+- **Embedding by other `aconite.io` pages.** With CORP relaxed, any page whose top-level site is
+  `aconite.io` shares the content cookie's partition, so it could embed files of an artifact the
+  viewer opened in the last 12 hours as images, scripts or styles. Other Aconite services must stay
+  trusted.
+- **Artifacts lose browser storage and `fetch` of their own files** (above).
 
 ## Viewer access: token, then cookie
 
@@ -66,14 +138,21 @@ password pass at once.
 
 | Cookie | Host | Flags | Lifetime | Purpose |
 | --- | --- | --- | --- | --- |
-| `plinth_session` | `APP_HOST` only | `HttpOnly; Secure; SameSite=Lax` | 30 days | Signed-in person. Stored server-side as a SHA-256 hash |
-| `plinth_csrf` | `APP_HOST` only | `Secure; SameSite=Strict`, readable by the app's JS | 1 year | Double-submit CSRF token |
-| `plinth_viewer` | `APP_HOST` only | `HttpOnly; Secure; SameSite=Lax` | 7 days | Viewer who confirmed an allowlisted email by code |
-| `plinth_pw_<id>` | `APP_HOST` only | `HttpOnly; Secure; SameSite=Lax` | 12 hours | Password entered for one artifact (signed, epoch-bound) |
+| `__Host-plinth_session` | `APP_HOST` only | `HttpOnly; Secure; SameSite=Lax` | 30 days | Signed-in person. Stored server-side as a SHA-256 hash |
+| `__Host-plinth_csrf` | `APP_HOST` only | `Secure; SameSite=Strict`, readable by the app's JS | 1 year | Double-submit CSRF token |
+| `__Host-plinth_viewer` | `APP_HOST` only | `HttpOnly; Secure; SameSite=Lax` | 7 days | Viewer who confirmed an allowlisted email by code |
+| `__Host-plinth_pw_<id>` | `APP_HOST` only | `HttpOnly; Secure; SameSite=Lax` | 12 hours | Password entered for one artifact (signed, epoch-bound) |
 | `plinth_content` | one artifact subdomain | `HttpOnly; Secure; SameSite=None; Partitioned` | 12 hours | Access to that artifact's files |
 
-No cookie is set with a `Domain` attribute, so none is shared between hosts. `Secure` is also set
-in local development, because browsers treat `http://*.localhost` as a secure context.
+No cookie is set with a `Domain` attribute, so none is shared between hosts. Every app cookie
+carries the `__Host-` prefix: browsers accept such a cookie only when it is `Secure`, on `Path=/`
+and without `Domain`, so no other host, a sibling on a shared parent domain such as `aconite.io`
+included, can set or overwrite one. The server reads only the prefixed names. `Secure` (and so the
+prefix) is also used in local development, because browsers treat `http://*.localhost` as a secure
+context; a plain-http instance on any other name cannot set `Secure` cookies, so there the Worker
+drops the prefix. The content cookie has no prefix because the staging path fallback scopes it to
+the artifact's path on the app host; on a content subdomain it is host-only, and the content host
+checks every value it receives, so a tossed copy cannot shadow it.
 
 ## Content Security Policy
 
@@ -94,8 +173,10 @@ frame-ancestors 'self' <APP_ORIGIN>
 else's. `fetch`, XHR, WebSocket, beacons and form posts to other hosts are blocked. `unsafe-eval`
 is allowed because common chart and notebook libraries need it; it does not widen network reach.
 Content responses also send `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`,
-`Cross-Origin-Resource-Policy: same-origin` and a `Permissions-Policy` that turns off camera,
-microphone, geolocation, payment, USB, serial, HID and similar features.
+`Cross-Origin-Resource-Policy: same-origin` (`cross-origin` under opaque isolation, see above) and
+a `Permissions-Policy` that turns off camera, microphone, geolocation, payment, USB, serial, HID and
+similar features. Under opaque isolation the CSP ends with the `sandbox` directive shown in
+[Opaque content isolation](#opaque-content-isolation).
 
 The app host has its own strict CSP (`script-src 'self'`, `frame-ancestors 'none'`, `frame-src`
 limited to the content host), `X-Frame-Options: DENY`, `Cross-Origin-Opener-Policy: same-origin`
@@ -112,17 +193,21 @@ sandbox="allow-scripts allow-same-origin allow-forms allow-popups
 
 There is no `allow-top-navigation`, so an artifact cannot navigate the app away. `allow-same-origin`
 here grants the artifact *its own* origin (its content subdomain, a different site from the app),
-which many artifacts need for localStorage; it never makes the frame same-origin with the app. The
-editor preview uses the same frame type and receives HTML by `postMessage`.
+which many artifacts need for localStorage; it never makes the frame same-origin with the app.
+Under opaque isolation the frames drop `allow-same-origin`, matching the CSP sandbox. The editor
+preview uses the same frame type and receives HTML by `postMessage`.
 
 Comment anchoring injects a small bridge script, only in review mode. The app and the bridge check
-`event.origin` against each other's exact origin on every message.
+`event.origin` against each other's exact origin on every message. Under opaque isolation the
+frame's origin is `"null"`; the app then checks the frame's window (and, for the preview, a
+per-frame nonce) instead, as described above.
 
 ## CSRF and input handling
 
-- Every state-changing `/api/v1` request without a bearer token must carry the `plinth_csrf` cookie
-  value in the `x-plinth-csrf` header, and any `Origin` header must equal the app origin. This
-  includes anonymous requests (sign-in, viewer password) to stop login CSRF.
+- Every state-changing `/api/v1` request without a bearer token must carry the
+  `__Host-plinth_csrf` cookie value in the `x-plinth-csrf` header, and any `Origin` header must
+  equal the app origin (`Origin: null` from an opaque-origin artifact is refused). This includes
+  anonymous requests (sign-in, viewer password) to stop login CSRF.
 - Bearer-token requests skip CSRF: they carry no ambient credentials. `/mcp` accepts bearer tokens
   only, never cookies.
 - All input is validated with the shared zod schemas (`packages/shared/src/schemas.ts`). Text the
@@ -185,14 +270,16 @@ anything that asks for credentials, other artifacts or actions outside Plinth.
 
 - Put the content domain on the [Public Suffix List](https://publicsuffix.org/) (private section).
   Until it is listed, one artifact can set cookies for the parent domain that every other artifact
-  receives ("cookie tossing"). Plinth ignores tossed cookies it did not sign, but a large enough
+  receives ("cookie tossing"), unless `CONTENT_ISOLATION=opaque`. Plinth ignores tossed cookies it did not sign, but a large enough
   cookie jar could make Cloudflare refuse that browser's requests to every artifact.
 - If the content host is a subdomain of a domain you use for other things (the hosted instance
   uses `plinth-usercontent.aconite.io`), the PSL entry is mandatory, not optional: without it,
   artifacts are same-site with the app and can set cookies on the parent domain that the app and
   your other services receive. Production refuses to start until the `tldts` release Plinth pins
-  knows the entry. Upgrade `tldts` only after the entry ships in current Chrome, Firefox and
-  Safari, because browsers, not Plinth, enforce the boundary.
+  knows the entry, unless `CONTENT_ISOLATION=opaque`, which takes cookies and storage away from
+  artifacts (see [Opaque content isolation](#opaque-content-isolation) for what remains). Switch
+  back to `origin` once the entry ships. Upgrade `tldts` only after the entry ships in current
+  Chrome, Firefox and Safari, because browsers, not Plinth, enforce the boundary.
 - The PSL entry does not stop the browser from sending cookies set with `Domain=<parent domain>`
   (for example `Domain=aconite.io`) to every artifact, where script can read any that are not
   `HttpOnly`. Audit the parent domain's services: none may set sensitive cookies on the parent

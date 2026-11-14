@@ -1,7 +1,6 @@
 // The viewer gate on APP_HOST. Decides whether the caller may open an artifact (policy.ts), asks
 // for a password or an email when needed, and hands out a one-time token for the content host.
 import {
-  COOKIES,
   RATE_LIMITS,
   REVIEW_MODE_PARAM,
   TTL,
@@ -16,7 +15,7 @@ import { resolveViewerSession } from "../auth/principal.ts";
 import { contentOrigin } from "../config.ts";
 import { issueEnterUrl, safeNext } from "../content/tokens.ts";
 import { type ArtifactRow, users } from "../db/schema.ts";
-import { secureFlag, serializeCookie } from "../lib/cookies.ts";
+import { appCookieName, secureFlag, serializeCookie } from "../lib/cookies.ts";
 import { signToken, verifyPassword } from "../lib/crypto.ts";
 import { ApiError } from "../lib/errors.ts";
 import { hit } from "../lib/ratelimit.ts";
@@ -123,7 +122,7 @@ async function gateForRequest(c: AppContext, ref: string, opts: GateOptions): Pr
   const ctx = serviceCtx(c);
   const gate = await computeGate(ctx, ref, opts);
   if (gate.status !== "email_required" || ctx.principal.kind !== "user") return gate;
-  const cookie = c.get("cookies").get(COOKIES.viewer);
+  const cookie = c.get("cookies").get(appCookieName(ctx.config, "viewer"));
   const viewer = cookie ? await resolveViewerSession(ctx.db, cookie) : null;
   if (viewer?.kind !== "viewer" || viewer.email === ctx.principal.email) return gate;
   const alt = await computeGate({ ...ctx, principal: viewer }, ref, opts);
@@ -159,7 +158,7 @@ viewApi.post("/view/:ref/code", async (c) => {
   const config = c.get("config");
   c.header(
     "Set-Cookie",
-    serializeCookie(COOKIES.viewer, value, {
+    serializeCookie(appCookieName(config, "viewer"), value, {
       httpOnly: true,
       secure: secureFlag(config.scheme, config.appHost),
       sameSite: "Lax",
@@ -210,7 +209,7 @@ viewApi.post("/view/:ref/password", async (c) => {
   } satisfies PasswordPassPayload);
   c.header(
     "Set-Cookie",
-    serializeCookie(`${COOKIES.passwordPassPrefix}${a.id}`, value, {
+    serializeCookie(`${appCookieName(config, "passwordPassPrefix")}${a.id}`, value, {
       httpOnly: true,
       secure: secureFlag(config.scheme, config.appHost),
       sameSite: "Lax",

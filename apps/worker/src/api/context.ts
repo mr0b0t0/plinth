@@ -1,10 +1,10 @@
 // Per-request context for the app host: config, database, the calling principal, CSRF.
-import { COOKIES, CSRF_HEADER } from "@plinth/shared";
+import { CSRF_HEADER } from "@plinth/shared";
 import type { Context, MiddlewareHandler } from "hono";
 import { resolveBearer, resolveSession, resolveViewerSession } from "../auth/principal.ts";
 import { type Bindings, type Config, getConfig } from "../config.ts";
 import { type Db, getDb } from "../db/client.ts";
-import { parseCookies, secureFlag, serializeCookie } from "../lib/cookies.ts";
+import { appCookieName, parseCookies, secureFlag, serializeCookie } from "../lib/cookies.ts";
 import { randomString, timingSafeEqual, verifyToken } from "../lib/crypto.ts";
 import { ApiError } from "../lib/errors.ts";
 import type { Principal } from "../policy.ts";
@@ -64,8 +64,8 @@ export const authenticate: MiddlewareHandler<AppEnv> = async (c, next) => {
     principal = p;
     via = "bearer";
   } else {
-    const session = cookies.get(COOKIES.session);
-    const viewer = cookies.get(COOKIES.viewer);
+    const session = cookies.get(appCookieName(config, "session"));
+    const viewer = cookies.get(appCookieName(config, "viewer"));
     const user = session ? await resolveSession(db, session) : null;
     const viewerP = viewer ? await resolveViewerSession(db, viewer) : null;
     if (viewerP?.kind === "viewer") viewerEmail = viewerP.email;
@@ -80,10 +80,11 @@ export const authenticate: MiddlewareHandler<AppEnv> = async (c, next) => {
   if (via !== "bearer" && UNSAFE.has(c.req.method)) checkCsrf(c, config);
 
   const passes = new Map<string, number>();
+  const passPrefix = appCookieName(config, "passwordPassPrefix");
   for (const [name, value] of cookies) {
-    if (!name.startsWith(COOKIES.passwordPassPrefix)) continue;
+    if (!name.startsWith(passPrefix)) continue;
     const p = await verifyToken<PasswordPassPayload>(config.tokenSigningKey, value, "pw");
-    if (p && name === `${COOKIES.passwordPassPrefix}${p.a}`) passes.set(p.a, p.e);
+    if (p && name === `${passPrefix}${p.a}`) passes.set(p.a, p.e);
   }
 
   c.set("principal", principal);
@@ -102,7 +103,7 @@ function checkCsrf(c: AppContext, config: Config): void {
   const origin = c.req.header("origin");
   if (origin && origin !== config.appOrigin)
     throw new ApiError("csrf", "Cross-origin request refused");
-  const cookie = c.get("cookies").get(COOKIES.csrf);
+  const cookie = c.get("cookies").get(appCookieName(config, "csrf"));
   const header = c.req.header(CSRF_HEADER);
   if (!cookie || !header || !timingSafeEqual(cookie, header)) {
     throw new ApiError("csrf", "Missing or invalid CSRF token. Reload the page and try again.");
@@ -111,11 +112,12 @@ function checkCsrf(c: AppContext, config: Config): void {
 
 /** Set the CSRF cookie if the browser does not have one yet. Readable by the app's own JS. */
 export function ensureCsrfCookie(c: AppContext, headers: Headers): void {
-  if (c.get("cookies").get(COOKIES.csrf)) return;
   const config = c.get("config");
+  const name = appCookieName(config, "csrf");
+  if (c.get("cookies").get(name)) return;
   headers.append(
     "Set-Cookie",
-    serializeCookie(COOKIES.csrf, randomString(32), {
+    serializeCookie(name, randomString(32), {
       httpOnly: false,
       secure: secureFlag(config.scheme, config.appHost),
       sameSite: "Strict",

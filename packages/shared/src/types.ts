@@ -2,6 +2,7 @@
 import type {
   ClientType,
   CommentStatus,
+  ContentIsolation,
   EffectiveRole,
   MentionState,
   ReportState,
@@ -170,6 +171,12 @@ export interface AppConfig {
   public_visibility_enabled: boolean;
   /** Path-based content fallback (staging on workers.dev only). */
   content_path_fallback: boolean;
+  /**
+   * Effective content isolation. "opaque": artifact documents run with an opaque origin (CSP
+   * sandbox without allow-same-origin), so messages from artifact frames arrive with origin
+   * "null". Always "opaque" with the path fallback.
+   */
+  content_isolation: ContentIsolation;
   environment: "development" | "staging" | "production";
 }
 

@@ -57,7 +57,7 @@ describe("content host basics", () => {
     const gate = await json(await call(`/api/v1/view/${p.slug}`));
     expect(gate.status).toBe("password_required");
     const csrf = {
-      Cookie: "plinth_csrf=abc",
+      Cookie: "__Host-plinth_csrf=abc",
       "x-plinth-csrf": "abc",
       "Content-Type": "application/json",
     };
@@ -75,7 +75,7 @@ describe("content host basics", () => {
     expect(right.status).toBe(200);
     expect((await json(right)).status).toBe("ok");
     const pass = (right.headers.get("set-cookie") ?? "").split(";")[0] ?? "";
-    expect(pass.startsWith(`plinth_pw_${p.id}=`)).toBe(true);
+    expect(pass.startsWith(`__Host-plinth_pw_${p.id}=`)).toBe(true);
     const again = await json(await call(`/api/v1/view/${p.slug}`, { headers: { Cookie: pass } }));
     expect(again.status).toBe("ok");
   });

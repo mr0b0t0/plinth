@@ -42,7 +42,7 @@ let ip = 0;
 function anonymous() {
   ip += 1;
   return {
-    Cookie: "plinth_csrf=r",
+    Cookie: "__Host-plinth_csrf=r",
     "x-plinth-csrf": "r",
     Origin: APP,
     "Content-Type": "application/json",

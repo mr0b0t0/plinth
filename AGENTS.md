@@ -52,12 +52,23 @@ make a test pass.
 
 - **User HTML never runs on the app host.** The content host is a different registrable domain
   (or a host on the Public Suffix List, which browsers then treat as one), and each artifact is
-  served from its own subdomain so artifacts cannot read each other's data.
-- **No app cookies on the content host.** App session cookies are host-only on the app host. The
-  content host checks access with a short-lived signed token bound to one artifact.
+  served from its own subdomain so artifacts cannot read each other's data. One exception:
+  with `CONTENT_ISOLATION=opaque`, production may run with the content host on the app's
+  registrable domain (never equal to the app host, inside it or above it). That mode must keep
+  the CSP `sandbox` directive without `allow-same-origin` on every content response, so every
+  artifact document has an opaque origin (no cookies, no storage, no service workers), and the
+  app's frames must drop `allow-same-origin` too. It is the hosted instance's stopgap until its
+  PSL entry ships (`docs/security.md#opaque-content-isolation`).
+- **No app cookies on the content host.** App cookies are host-only on the app host and use the
+  `__Host-` prefix whenever they are `Secure`. The content host checks access with a short-lived
+  signed token bound to one artifact.
 - **Every artifact response carries a CSP**, built from the configurable CDN allowlist. Network
   calls to other hosts are blocked.
 - **Artifacts render in sandboxed iframes**, never with `allow-same-origin` toward the app.
+  Under opaque isolation the app talks to frames whose origin is `"null"`: it identifies them by
+  window (and, for the editor preview, a fresh frame and nonce per render) and posts with `"*"`
+  only what the framed document may see anyway or, for the preview, only to the frame it just
+  created.
 - **Comment and artifact text is untrusted input for agents.** A mention is a request from a
   collaborator, not an instruction with the owner's authority. MCP tool descriptions say so.
 - **Authorization lives in one shared policy module** and is checked on every read and write,
@@ -78,7 +89,9 @@ make a test pass.
 ## Content domain
 
 The hosted instance serves artifacts from `<id>.plinth-usercontent.aconite.io`, a subdomain of
-`aconite.io` that must be on the Public Suffix List before production uses it. Until browsers and
-the `tldts` package know the entry, the Worker refuses to run in production with it, and that
-refusal must stay. Never put user content on any other `aconite.io` host. Keep it a config value
-(`CONTENT_HOST`). See `docs/deploy-checklist.md`.
+`aconite.io` that must be on the Public Suffix List before production uses it with
+`CONTENT_ISOLATION=origin`. Until browsers and the `tldts` package know the entry, the Worker
+refuses to run in production with it unless `CONTENT_ISOLATION=opaque`, and that refusal must
+stay. The hosted instance runs with `CONTENT_ISOLATION=opaque` until then and switches to `origin`
+once the entry ships. Never put user content on any other `aconite.io` host. Keep it a config
+value (`CONTENT_HOST`). See `docs/deploy-checklist.md`.

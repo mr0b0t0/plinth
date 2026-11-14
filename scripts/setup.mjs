@@ -12,7 +12,12 @@
 //                          [--content-zone <zone>] [--email-provider sendgrid|resend|console]
 //                          [--email-from "Plinth <noreply@example.com>"] [--admin-email <email>]
 //                          [--environment staging|production] [--single-user]
+//                          [--content-isolation origin|opaque]
 //                          [--workers-dev] [--rotate-secrets] [--dry-run]
+//
+// --content-isolation opaque: writes CONTENT_ISOLATION=opaque (every artifact document gets an
+// opaque origin; docs/security.md). Only with it may APP_HOST and CONTENT_HOST share a registrable
+// domain, e.g. a content host whose Public Suffix List entry has not shipped yet.
 //
 // --workers-dev (staging only): deploy to the account's workers.dev address with no routes or
 // custom domains. workers.dev has no wildcard subdomains, so artifacts are served from the app
@@ -275,20 +280,38 @@ function setupRemote() {
   if (single && !adminEmail) fail("--single-user needs --admin-email <email>");
   if (emailProvider && !["sendgrid", "resend", "console"].includes(emailProvider))
     fail("--email-provider must be sendgrid, resend or console");
-  // The same Public Suffix List check the Worker makes (tldts, private section included), so a
-  // content host that is a PSL-listed subdomain of the app's domain passes once tldts knows it.
+  const configFile = path.join(workerDir, `wrangler.${envName}.jsonc`);
+  const configRel = path.relative(workerDir, configFile);
+  const isolationFlag = opts["content-isolation"]?.toLowerCase();
+  if (isolationFlag !== undefined && !["origin", "opaque"].includes(isolationFlag))
+    fail("--content-isolation must be origin or opaque");
+  // The mode the deploy will run with: the flag, else what an existing config already says.
+  const isolation =
+    isolationFlag ??
+    (existsSync(configFile)
+      ? String(parseJsonc(readFileSync(configFile, "utf8")).vars?.CONTENT_ISOLATION ?? "origin")
+      : "origin");
   if (appHost && contentHost && !opts["workers-dev"]) {
-    if (registrableDomain(appHost) === registrableDomain(contentHost))
+    // Refused by the Worker in every isolation mode.
+    if (
+      appHost === contentHost ||
+      contentHost.endsWith(`.${appHost}`) ||
+      appHost.endsWith(`.${contentHost}`)
+    )
+      fail("APP_HOST and CONTENT_HOST must differ and must not be subdomains of each other");
+    // The same Public Suffix List check the Worker makes (tldts, private section included), so a
+    // content host that is a PSL-listed subdomain of the app's domain passes once tldts knows it.
+    // A shared registrable domain is allowed only with opaque isolation (docs/security.md).
+    if (registrableDomain(appHost) === registrableDomain(contentHost) && isolation !== "opaque")
       fail(
-        "APP_HOST and CONTENT_HOST share a registrable domain. Use a separate domain, or a subdomain " +
-          "on the Public Suffix List once the pinned tldts knows it (docs/deploy-checklist.md)",
+        "APP_HOST and CONTENT_HOST share a registrable domain. Pass --content-isolation opaque to " +
+          "run like this (artifacts get an opaque origin and no browser storage), or use a separate " +
+          "domain, or a subdomain on the Public Suffix List once the pinned tldts knows it " +
+          "(docs/deploy-checklist.md)",
       );
   }
   const contentZone =
     opts["content-zone"] ?? (contentHost ? (getDomain(contentHost) ?? contentHost) : null);
-
-  const configFile = path.join(workerDir, `wrangler.${envName}.jsonc`);
-  const configRel = path.relative(workerDir, configFile);
 
   console.log(`Plinth remote setup for "${envName}". Plan:`);
   console.log(`  1. D1 database "${dbName}" (create if missing)`);
@@ -363,6 +386,7 @@ function setupRemote() {
   }
   if (adminEmail) vars.ADMIN_EMAIL = adminEmail;
   if (single) vars.SINGLE_USER_MODE = "true";
+  if (isolationFlag) vars.CONTENT_ISOLATION = isolationFlag;
   cfg.vars = vars;
   if (opts["workers-dev"]) {
     if (vars.ENVIRONMENT === "production") fail("--workers-dev is for staging only");

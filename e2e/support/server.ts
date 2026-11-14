@@ -1,8 +1,11 @@
 // Starts the Worker for Playwright (webServer.command). Run with Node 22.18+ (type stripping).
 //  1. Builds the web app if apps/web/dist/index.html is missing.
-//  2. Wipes e2e/.wrangler-state and applies the D1 migrations into it.
-//  3. Runs `wrangler dev` on port 8787 with the development vars and throwaway secrets, passed
-//     with --var so a developer's own apps/worker/.dev.vars cannot change the test setup.
+//  2. Wipes this server's state directory (e2e/.wrangler-state) and applies the D1 migrations.
+//  3. Runs `wrangler dev` on PLINTH_E2E_PORT (default 8787) with the development vars and
+//     throwaway secrets, passed with --var so a developer's own apps/worker/.dev.vars cannot change
+//     the test setup.
+// With PLINTH_E2E_CONTENT_ISOLATION=opaque it is the second Worker, the one the "opaque" Playwright
+// project uses: CONTENT_ISOLATION=opaque, with its own state directory.
 import { type ChildProcess, spawn, spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { existsSync, rmSync } from "node:fs";
@@ -10,12 +13,15 @@ import path from "node:path";
 import { ROOT, STATE_DIR, WORKER_DIR, WRANGLER } from "./paths.ts";
 
 const PORT = Number(process.env.PLINTH_E2E_PORT ?? 8787);
+const ISOLATION = process.env.PLINTH_E2E_CONTENT_ISOLATION === "opaque" ? "opaque" : "origin";
+const STATE = ISOLATION === "opaque" ? `${STATE_DIR}-opaque` : STATE_DIR;
 
 export const DEV_VARS: Record<string, string> = {
   ENVIRONMENT: "development",
   APP_HOST: `app.localhost:${PORT}`,
   CONTENT_HOST: `content.localhost:${PORT}`,
   PUBLIC_SCHEME: "http",
+  CONTENT_ISOLATION: ISOLATION,
   DEV_OUTBOX: "true",
   // Many sign-ins from one address; per-email limits still apply. Honoured only in development.
   DEV_IGNORE_CLIENT_IP: "true",
@@ -42,12 +48,8 @@ if (!existsSync(path.join(ROOT, "apps", "web", "dist", "index.html"))) {
   run("pnpm", ["--filter", "@plinth/web", "build"], ROOT);
 }
 
-rmSync(STATE_DIR, { recursive: true, force: true });
-run(
-  WRANGLER,
-  ["d1", "migrations", "apply", "DB", "--local", "--persist-to", STATE_DIR],
-  WORKER_DIR,
-);
+rmSync(STATE, { recursive: true, force: true });
+run(WRANGLER, ["d1", "migrations", "apply", "DB", "--local", "--persist-to", STATE], WORKER_DIR);
 
 const vars = Object.entries(DEV_VARS).flatMap(([k, v]) => ["--var", `${k}:${v}`]);
 const child: ChildProcess = spawn(
@@ -59,7 +61,7 @@ const child: ChildProcess = spawn(
     "--inspector-port",
     String(PORT + 1000),
     "--persist-to",
-    STATE_DIR,
+    STATE,
     "--show-interactive-dev-session=false",
     "--log-level",
     "warn",

@@ -413,6 +413,36 @@ describe("CommentsPanel", () => {
     for (const call of frameWin.postMessage.mock.calls) expect(call[1]).toBe(ORIGIN);
   });
 
+  it("pins through the bridge under opaque isolation: origin null from the frame's window", async () => {
+    const server: Server = { items: [], calls: [] };
+    const { panel, send, sent } = renderPanel(server, { opaque: true });
+    const user = userEvent.setup();
+    await screen.findByText("No comments yet.");
+    await user.click(within(panel).getByRole("button", { name: "Pin to an element" }));
+    // An opaque origin cannot be named: the post goes to "*", and carries no secret.
+    expect(sent()).toContainEqual({
+      type: "pick:start",
+      source: BRIDGE_MESSAGE_SOURCE,
+      v: 1,
+      origin: "*",
+    });
+    // The artifact origin (which an opaque document never reports) and other windows: ignored.
+    send(
+      { type: "pick", anchor: { selector: "h1", text: "Evil", x: 0, y: 0 } },
+      { origin: ORIGIN },
+    );
+    send(
+      { type: "pick", anchor: { selector: "h1", text: "Evil", x: 0, y: 0 } },
+      { origin: "null", source: window },
+    );
+    expect(within(panel).queryByText(/Evil/)).toBeNull();
+    send(
+      { type: "pick", anchor: { selector: "body > h1:nth-of-type(1)", text: "Hello", x: 0, y: 0 } },
+      { origin: "null" },
+    );
+    expect(within(panel).getByText("Hello")).toBeTruthy();
+  });
+
   it("cancels picking with Escape without closing the panel, and the anchor chip is removable", async () => {
     const { panel, send, sent, onClose } = renderPanel({ items: [], calls: [] });
     const user = userEvent.setup();

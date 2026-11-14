@@ -244,7 +244,7 @@ describe("comments: who may comment", () => {
     });
     expect(pw.status).toBeLessThan(400);
     const passCookie = (pw.headers.get("set-cookie") ?? "").split(";")[0] ?? "";
-    expect(passCookie).toMatch(/^plinth_pw_/);
+    expect(passCookie).toMatch(/^__Host-plinth_pw_/);
     const headers = { ...anonymous, Cookie: `${anonymous.Cookie}; ${passCookie}` };
     expect((await listComments(headers, p.slug)).res.status).toBe(200);
     expect((await postComment(headers, p.slug, { body: "hi" })).status).toBe(401);

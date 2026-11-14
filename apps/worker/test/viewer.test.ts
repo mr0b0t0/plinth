@@ -38,7 +38,7 @@ let ipCounter = 0;
 /** Anonymous browser: CSRF cookie and header, and its own client IP for rate limits. */
 function browser(extraCookie = "") {
   ipCounter += 1;
-  const cookie = ["plinth_csrf=viewer-csrf", extraCookie].filter(Boolean).join("; ");
+  const cookie = ["__Host-plinth_csrf=viewer-csrf", extraCookie].filter(Boolean).join("; ");
   return {
     Cookie: cookie,
     "x-plinth-csrf": "viewer-csrf",
@@ -124,7 +124,7 @@ describe("allowlist viewers", () => {
     expect(gate.enter_url.startsWith(`${contentOrigin(artifact.id)}/__plinth/enter?t=`)).toBe(true);
 
     const setCookie = ok.headers.get("set-cookie") ?? "";
-    expect(setCookie).toMatch(/^plinth_viewer=plinth_vs_[A-Za-z0-9]+;/);
+    expect(setCookie).toMatch(/^__Host-plinth_viewer=plinth_vs_[A-Za-z0-9]+;/);
     expect(setCookie).toMatch(/; HttpOnly/);
     expect(setCookie).toMatch(/; Secure/);
     expect(setCookie).toMatch(/; SameSite=Lax/);
@@ -337,7 +337,7 @@ describe("allowlist viewers", () => {
     expect((await call("/api/v1/me", { headers: { Cookie: cookie } })).status).toBe(401);
     const edit = await call(`/api/v1/artifacts/${artifact.id}`, {
       method: "PUT",
-      headers: { ...browser(cookie), Cookie: `${cookie}; plinth_csrf=viewer-csrf` },
+      headers: { ...browser(cookie), Cookie: `${cookie}; __Host-plinth_csrf=viewer-csrf` },
       body: JSON.stringify({ html: "<p>defaced</p>" }),
     });
     expect([401, 403, 404]).toContain(edit.status);

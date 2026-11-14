@@ -12,8 +12,10 @@ deploying, and connecting agents. The step-by-step DNS and email work is in
   - an **app host** for sign-in, the dashboard, the API and `/mcp`, e.g. `plinth.example.com`;
   - a **content host** on a *different registrable domain*, e.g. `example-usercontent.net`. Each
     artifact is served from `<artifact_id>.<content host>`. In production Plinth refuses to start
-    if the two hosts share a registrable domain. A subdomain of your own domain works only once it
-    is on the Public Suffix List (see [deploy-checklist.md](deploy-checklist.md#the-content-domain)).
+    if the two hosts share a registrable domain. A subdomain of your own domain works once it is on
+    the Public Suffix List (see [deploy-checklist.md](deploy-checklist.md#the-content-domain)), or
+    before that with `CONTENT_ISOLATION=opaque`, which costs artifacts their browser storage (see
+    [security.md](security.md#opaque-content-isolation)).
 - For multi-user mode: a SendGrid or Resend account with a verified sending domain.
 - Node 22.12+ and pnpm 10 on the machine you deploy from.
 
@@ -39,7 +41,8 @@ Booleans accept `true`, `1`, `yes` or `on`.
 | --- | --- | --- |
 | `ENVIRONMENT` | `production` | `development`, `staging` or `production`. Production refuses unsafe settings (below) |
 | `APP_HOST` | none (required) | Host and optional port of the app: sign-in, dashboard, API, `/mcp` |
-| `CONTENT_HOST` | none (required) | Host for artifact content. Must differ from `APP_HOST` and not be a subdomain of it. In production it must be a different registrable domain, or a subdomain listed on the Public Suffix List (see [deploy-checklist.md](deploy-checklist.md#the-content-domain)) |
+| `CONTENT_HOST` | none (required) | Host for artifact content. Must differ from `APP_HOST`, not be a subdomain of it, and not be its parent. In production it must be a different registrable domain, or a subdomain listed on the Public Suffix List (see [deploy-checklist.md](deploy-checklist.md#the-content-domain)), unless `CONTENT_ISOLATION=opaque` |
+| `CONTENT_ISOLATION` | `origin` | `origin` or `opaque`. `origin`: each artifact is its own origin with its own storage. `opaque`: every content response adds a CSP `sandbox` without `allow-same-origin`, so artifacts get an opaque origin: no cookies, `localStorage`, IndexedDB or service workers, and no `fetch` of their own files (load data with `<script>` or inline it). Editor preview and comment pins keep working. Required to run production with `APP_HOST` and `CONTENT_HOST` on one registrable domain, e.g. while the content host's Public Suffix List entry is pending; switch back to `origin` once it ships. See [security.md](security.md#opaque-content-isolation) for what it does not protect. `STAGING_CONTENT_FALLBACK` always behaves as `opaque` |
 | `PUBLIC_SCHEME` | `https` | `http` only for local development. Production requires `https` |
 | `EMAIL_PROVIDER` | `console` | `sendgrid`, `resend` or `console`. `console` logs sign-in links and codes; production refuses it unless in single-user mode |
 | `EMAIL_FROM` | `Plinth <noreply@<APP_HOST>>` | Sender address. Must be on a domain verified with your provider |
@@ -110,7 +113,9 @@ It:
 Other flags: `--worker-name` (default `plinth`, or `plinth-<env>` for other environments),
 `--content-zone` (the Cloudflare zone for the content route; default: the last two labels of the
 content host), `--environment staging|production` (default: `staging` for `--env staging`,
-otherwise `production`). Run `node scripts/setup.mjs --help` for the full list.
+otherwise `production`), `--content-isolation origin|opaque` (writes `CONTENT_ISOLATION`; the
+script refuses app and content hosts on one registrable domain unless it is `opaque`, as the Worker
+does). Run `node scripts/setup.mjs --help` for the full list.
 
 `pnpm run setup -- --local` works too. Plain `pnpm setup` is pnpm's own command, not this script.
 

@@ -8,6 +8,7 @@ import { describe, expect, it } from "vitest";
 import { contentCsp } from "../src/content/csp.ts";
 import {
   PREVIEW_MESSAGE_SOURCE,
+  PREVIEW_PROTOCOL_VERSION,
   previewLoaderHtml,
   servePreviewLoader,
 } from "../src/content/preview.ts";
@@ -87,25 +88,32 @@ describe("preview loader", () => {
     expect(hostile).toContain('var APP_ORIGIN = "https://x.test\\";alert(1);\\"";');
   });
 
-  it("runs as expected: renders only messages from the app origin and the parent window", async () => {
+  /** Run the loader script against stand-ins for the browser objects it touches. */
+  function runLoader(hash: string) {
     const script = loaderScript(previewLoaderHtml(config()));
-    const appOrigin = config().appOrigin;
-    // A minimal stand-in for the browser objects the loader touches.
     const posted: { msg: unknown; target: string }[] = [];
     const written: string[] = [];
     const listeners = new Map<string, (e: unknown) => void>();
     const parent = {
       postMessage: (msg: unknown, target: string) => posted.push({ msg, target }),
     };
-    let url = "/__plinth/preview";
+    const state = { url: "/__plinth/preview", hash };
     const win = {
       parent,
       location: {
         get pathname() {
-          return url;
+          return state.url;
+        },
+        get hash() {
+          return state.hash;
         },
       },
-      history: { replaceState: (_s: unknown, _t: string, u: string) => (url = u) },
+      history: {
+        replaceState: (_s: unknown, _t: string, u: string) => {
+          state.url = u;
+          state.hash = "";
+        },
+      },
       addEventListener: (type: string, fn: (e: unknown) => void) => listeners.set(type, fn),
       removeEventListener: (type: string) => listeners.delete(type),
     };
@@ -115,21 +123,49 @@ describe("preview loader", () => {
       close: () => written.push("<close>"),
     };
     new Function("window", "document", "TextEncoder", script)(win, doc, TextEncoder);
+    const send = (e: unknown) => listeners.get("message")?.(e);
+    return { posted, written, listeners, parent, state, send };
+  }
 
+  it("says ready only with the nonce the app put in its URL, and sends the nonce back", () => {
+    const nonce = "0123456789abcdef0123456789abcdef";
+    const { posted } = runLoader(`#plinth-preview=${nonce}`);
     expect(posted).toEqual([
-      { msg: { source: PREVIEW_MESSAGE_SOURCE, v: 1, type: "ready" }, target: appOrigin },
+      {
+        msg: { source: PREVIEW_MESSAGE_SOURCE, v: PREVIEW_PROTOCOL_VERSION, type: "ready", nonce },
+        target: config().appOrigin,
+      },
+    ]);
+    for (const hash of ["", "#plinth-preview=", "#plinth-preview=xyz", `#other=${nonce}`]) {
+      const r = runLoader(hash);
+      expect(r.posted).toEqual([]);
+      expect(r.listeners.size).toBe(0);
+    }
+  });
+
+  it("runs as expected: renders only messages from the app origin and the parent window", async () => {
+    const appOrigin = config().appOrigin;
+    const nonce = "abcdef0123456789abcdef0123456789";
+    const { posted, written, listeners, parent, state, send } = runLoader(
+      `#plinth-preview=${nonce}`,
+    );
+    expect(posted).toEqual([
+      {
+        msg: { source: PREVIEW_MESSAGE_SOURCE, v: 2, type: "ready", nonce },
+        target: appOrigin,
+      },
     ]);
     const render = (html: unknown) => ({
       source: PREVIEW_MESSAGE_SOURCE,
-      v: 1,
+      v: 2,
       type: "render",
       html,
     });
-    const send = (e: unknown) => listeners.get("message")?.(e);
     send({ origin: "https://evil.example", source: parent, data: render("<p>evil</p>") });
+    send({ origin: "null", source: parent, data: render("<p>opaque</p>") });
     send({ origin: appOrigin, source: {}, data: render("<p>not the parent</p>") });
     send({ origin: appOrigin, source: parent, data: "<p>a string</p>" });
-    send({ origin: appOrigin, source: parent, data: { ...render("<p>v2</p>"), v: 2 } });
+    send({ origin: appOrigin, source: parent, data: { ...render("<p>v1</p>"), v: 1 } });
     send({ origin: appOrigin, source: parent, data: render(42) });
     send({ origin: appOrigin, source: parent, data: render("x".repeat(LIMITS.maxHtmlBytes + 1)) });
     // Multi-byte characters count in UTF-8 bytes, not string length.
@@ -142,8 +178,10 @@ describe("preview loader", () => {
 
     send({ origin: appOrigin, source: parent, data: render("<p>draft</p>") });
     expect(written).toEqual(["<open>", "<p>draft</p>", "<close>"]);
-    // Relative URLs resolve against the artifact root, like the published page.
-    expect(url).toBe("/");
+    // Relative URLs resolve against the artifact root, like the published page, and the nonce
+    // leaves the URL before the draft runs.
+    expect(state.url).toBe("/");
+    expect(state.hash).toBe("");
     // One render per loader; the listener is gone.
     expect(listeners.has("message")).toBe(false);
   });

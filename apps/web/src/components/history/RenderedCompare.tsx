@@ -1,14 +1,12 @@
 // Side-by-side rendered comparison: each version in its own sandboxed frame on the artifact's
 // content subdomain, loaded through a fresh viewer gate (each enter_url works once).
 import type { ViewGate } from "@plinth/shared";
-import { ARTIFACT_IFRAME_SANDBOX } from "@plinth/shared";
+import { artifactIframeSandbox } from "@plinth/shared";
 import { useEffect, useId, useState } from "react";
+import { useSession } from "../../lib/session.ts";
 import { ButtonLink, Skeleton } from "../ui/index.ts";
 import { fetchGate } from "./data.ts";
 import { artifactPath } from "./format.ts";
-
-/** The one sandbox every artifact frame uses (shared constant; never allow-top-navigation). */
-export const ARTIFACT_SANDBOX = ARTIFACT_IFRAME_SANDBOX;
 
 export function RenderedCompare({
   slug,
@@ -35,6 +33,7 @@ type FrameState =
   | { status: "blocked"; gate: ViewGate["status"] | "error"; message?: string };
 
 function VersionFrame({ slug, title, n }: { slug: string; title: string; n: number }) {
+  const { config } = useSession();
   const [state, setState] = useState<FrameState>({ status: "loading" });
 
   useEffect(() => {
@@ -74,7 +73,7 @@ function VersionFrame({ slug, title, n }: { slug: string; title: string; n: numb
           <iframe
             src={state.url}
             title={`v${n} of ${title}`}
-            sandbox={ARTIFACT_SANDBOX}
+            sandbox={artifactIframeSandbox(config?.content_isolation)}
             referrerPolicy="no-referrer"
             allow=""
             className="hx-frame__iframe"

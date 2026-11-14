@@ -17,6 +17,7 @@ const config: AppConfig = {
   single_user_mode: false,
   public_visibility_enabled: false,
   content_path_fallback: false,
+  content_isolation: "origin",
   environment: "production",
 };
 

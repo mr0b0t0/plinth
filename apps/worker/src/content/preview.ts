@@ -6,20 +6,28 @@
 // draft's own asset requests still need the cookie: the editor opens the frame through a one-time
 // enter link whose `next` is this page.
 //
-// Protocol (version 1). Every message is an object { source: PREVIEW_MESSAGE_SOURCE, v: 1, type }.
-//   loader -> app: { type: "ready" }, posted to the app origin only
+// Protocol (version 2). Every message is an object { source: PREVIEW_MESSAGE_SOURCE, v: 2, type }.
+//   The app opens the loader at a URL ending in #plinth-preview=<nonce>, a fresh value per frame.
+//   loader -> app: { type: "ready", nonce }, posted to the app origin only
 //   app -> loader: { type: "render", html }, accepted only from the app origin and the parent
 //                  window, html a string of at most LIMITS.maxHtmlBytes bytes (UTF-8)
+// The nonce lets the app tell this loader from any other document in the frame. That matters
+// under opaque isolation, where the loader's origin is "null" and the app must post the draft to
+// "*" (apps/web/src/components/editor/previewProtocol.ts). The app's own origin is a real origin
+// in every mode, so the loader's checks stay exact.
 // On "render" the loader points its URL at the artifact root (so relative URLs in the draft resolve
-// as they do on the published page), then replaces itself with the HTML (document.open/write/close).
-// That removes the loader and its listener: the app reloads the frame for each new render.
+// as they do on the published page, and the nonce leaves the URL), then replaces itself with the
+// HTML (document.open/write/close). That removes the loader and its listener: the app opens a new
+// frame for each new render.
 import { CONTENT_RESERVED_PREFIX, LIMITS } from "@plinth/shared";
 import type { Config } from "../config.ts";
 import { applyContentHeaders } from "./csp.ts";
 
 export const PREVIEW_MESSAGE_SOURCE = "plinth-preview";
-export const PREVIEW_PROTOCOL_VERSION = 1;
+export const PREVIEW_PROTOCOL_VERSION = 2;
 export const PREVIEW_LOADER_PATH = `${CONTENT_RESERVED_PREFIX}preview`;
+/** Fragment key for the frame's nonce: #plinth-preview=<nonce>. */
+export const PREVIEW_NONCE_KEY = "plinth-preview";
 
 /** The loader page, self-contained, with the app origin embedded as a JSON string. */
 export function previewLoaderHtml(config: Config): string {
@@ -41,8 +49,12 @@ export function previewLoaderHtml(config: Config): string {
   var VERSION = ${PREVIEW_PROTOCOL_VERSION};
   var MAX_BYTES = ${LIMITS.maxHtmlBytes};
   var LOADER_PATH = ${JSON.stringify(PREVIEW_LOADER_PATH.slice(1))};
+  var NONCE_PREFIX = ${JSON.stringify(`#${PREVIEW_NONCE_KEY}=`)};
   var parentWindow = window.parent;
   var rendered = false;
+  var hash = String(window.location.hash || "");
+  var nonce = hash.indexOf(NONCE_PREFIX) === 0 ? hash.slice(NONCE_PREFIX.length) : "";
+  if (!/^[0-9a-f]{16,64}$/.test(nonce)) return;
 
   function tooLarge(html) {
     // UTF-8 is never shorter than the UTF-16 length.
@@ -76,7 +88,7 @@ export function previewLoaderHtml(config: Config): string {
   }
 
   window.addEventListener("message", onMessage);
-  parentWindow.postMessage({ source: SOURCE, v: VERSION, type: "ready" }, APP_ORIGIN);
+  parentWindow.postMessage({ source: SOURCE, v: VERSION, type: "ready", nonce: nonce }, APP_ORIGIN);
 })();
 </script>
 </body>

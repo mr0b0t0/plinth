@@ -127,7 +127,7 @@ describe("L3: password guessing is capped per artifact across all addresses", ()
     const res = await call(`/api/v1/view/${p.id}/password`, {
       method: "POST",
       headers: {
-        Cookie: "plinth_csrf=x",
+        Cookie: "__Host-plinth_csrf=x",
         "x-plinth-csrf": "x",
         "Content-Type": "application/json",
         "cf-connecting-ip": "203.0.113.77",

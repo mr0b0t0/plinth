@@ -104,16 +104,30 @@ export const DEFAULTS = {
   ],
 } as const;
 
+/**
+ * Browsers accept a `__Host-` cookie only when it is Secure, has Path=/ and no Domain, and no other
+ * host (a sibling subdomain included) can set or overwrite one. Every app cookie uses it.
+ */
+export const HOST_COOKIE_PREFIX = "__Host-";
+
+/**
+ * App cookie names as set over https (and on localhost, where Secure cookies work over http). A
+ * plain-http instance on another name cannot set Secure cookies; there the Worker drops the
+ * `__Host-` prefix (apps/worker/src/lib/cookies.ts appCookieName).
+ */
 export const COOKIES = {
   /** App session (people). Host-only on APP_HOST. */
-  session: "plinth_session",
+  session: "__Host-plinth_session",
   /** Double-submit CSRF token. Host-only on APP_HOST, readable by the app's own JS. */
-  csrf: "plinth_csrf",
+  csrf: "__Host-plinth_csrf",
   /** Confirmed allowlist email for a viewer without an account. Host-only on APP_HOST. */
-  viewer: "plinth_viewer",
+  viewer: "__Host-plinth_viewer",
   /** Password pass for one artifact, name suffixed with the artifact id. Host-only on APP_HOST. */
-  passwordPassPrefix: "plinth_pw_",
-  /** Viewer cookie on one artifact's content subdomain. Host-only on that subdomain. */
+  passwordPassPrefix: "__Host-plinth_pw_",
+  /**
+   * Viewer cookie on one artifact's content subdomain. Host-only on that subdomain. No `__Host-`
+   * prefix: in the staging path fallback it is scoped to the artifact's path on the app host.
+   */
   content: "plinth_content",
 } as const;
 
@@ -129,9 +143,28 @@ export const REVIEW_MODE_PARAM = "plinth-review";
 export const BRIDGE_MESSAGE_SOURCE = "plinth-bridge";
 
 /**
+ * CONTENT_ISOLATION. `origin`: each artifact is its own origin. `opaque`: artifact documents get an
+ * opaque origin (CSP sandbox without allow-same-origin on every content response).
+ */
+export const CONTENT_ISOLATION_MODES = ["origin", "opaque"] as const;
+export type ContentIsolation = (typeof CONTENT_ISOLATION_MODES)[number];
+
+/**
  * The sandbox every artifact iframe uses. The frame's origin is the artifact's own content
  * subdomain, so allow-same-origin gives it that origin, never the app's (see DECISIONS.md).
  * Never add allow-top-navigation or allow-top-navigation-by-user-activation.
  */
 export const ARTIFACT_IFRAME_SANDBOX =
   "allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox allow-modals allow-downloads";
+
+/**
+ * The iframe sandbox under opaque isolation: the same flags without allow-same-origin, matching
+ * the CSP sandbox every content response carries in that mode, so both layers agree.
+ */
+export const ARTIFACT_IFRAME_SANDBOX_OPAQUE =
+  "allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-modals allow-downloads";
+
+/** The iframe sandbox for an artifact frame on this instance. */
+export function artifactIframeSandbox(isolation: ContentIsolation | undefined): string {
+  return isolation === "opaque" ? ARTIFACT_IFRAME_SANDBOX_OPAQUE : ARTIFACT_IFRAME_SANDBOX;
+}

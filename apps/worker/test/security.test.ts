@@ -815,7 +815,9 @@ describe("Secrets never appear in logs, URLs (other than the one-time viewer tok
       headers: anonymousBrowser(),
       body: JSON.stringify({ password: "secret99" }),
     });
-    expect(pw.headers.get("set-cookie")).toMatch(/^plinth_pw_[a-z0-9]{20}=[^;]+;.*; HttpOnly;/);
+    expect(pw.headers.get("set-cookie")).toMatch(
+      /^__Host-plinth_pw_[a-z0-9]{20}=[^;]+;.*; HttpOnly;/,
+    );
     const enter = await call((await json(pw)).enter_url);
     expect(enter.headers.get("set-cookie")).toMatch(/; HttpOnly;/);
   });

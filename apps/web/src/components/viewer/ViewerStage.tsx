@@ -199,6 +199,7 @@ export function ViewerStage({
                 ref={setFrame}
                 src={gate.enter_url}
                 title={`${artifact.title}, version ${artifact.version}`}
+                isolation={config?.content_isolation}
               />
             </div>
             {commentsOpen && (
@@ -209,6 +210,7 @@ export function ViewerStage({
                   version={artifact.version}
                   frame={frame}
                   contentOrigin={contentOrigin}
+                  opaque={config?.content_isolation === "opaque"}
                   onClose={closeComments}
                 />
               </div>

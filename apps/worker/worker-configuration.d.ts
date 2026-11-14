@@ -19,6 +19,7 @@ interface __BaseEnv_Env {
 	ALLOW_PUBLIC_VISIBILITY: string;
 	PUBLIC_MIN_ACCOUNT_AGE_HOURS: string;
 	STAGING_CONTENT_FALLBACK: string;
+	CONTENT_ISOLATION: string;
 	DEV_OUTBOX: string;
 	DEV_IGNORE_CLIENT_IP: string;
 	DEV_SEED: string;
@@ -39,7 +40,7 @@ type StringifyValues<EnvType extends Record<string, unknown>> = {
 	[Binding in keyof EnvType]: EnvType[Binding] extends string ? EnvType[Binding] : string;
 };
 declare namespace NodeJS {
-	interface ProcessEnv extends StringifyValues<Pick<Cloudflare.Env, "ENVIRONMENT" | "APP_HOST" | "CONTENT_HOST" | "PUBLIC_SCHEME" | "EMAIL_PROVIDER" | "EMAIL_FROM" | "MAX_ARTIFACTS_PER_USER" | "MAX_PUBLISHES_PER_HOUR" | "CDN_ALLOWLIST" | "SINGLE_USER_MODE" | "ADMIN_EMAIL" | "ALLOW_PUBLIC_VISIBILITY" | "PUBLIC_MIN_ACCOUNT_AGE_HOURS" | "STAGING_CONTENT_FALLBACK" | "DEV_OUTBOX" | "DEV_IGNORE_CLIENT_IP" | "DEV_SEED" | "SESSION_SECRET" | "TOKEN_SIGNING_KEY" | "ADMIN_TOKEN" | "SENDGRID_API_KEY" | "RESEND_API_KEY">> {}
+	interface ProcessEnv extends StringifyValues<Pick<Cloudflare.Env, "ENVIRONMENT" | "APP_HOST" | "CONTENT_HOST" | "PUBLIC_SCHEME" | "EMAIL_PROVIDER" | "EMAIL_FROM" | "MAX_ARTIFACTS_PER_USER" | "MAX_PUBLISHES_PER_HOUR" | "CDN_ALLOWLIST" | "SINGLE_USER_MODE" | "ADMIN_EMAIL" | "ALLOW_PUBLIC_VISIBILITY" | "PUBLIC_MIN_ACCOUNT_AGE_HOURS" | "STAGING_CONTENT_FALLBACK" | "CONTENT_ISOLATION" | "DEV_OUTBOX" | "DEV_IGNORE_CLIENT_IP" | "DEV_SEED" | "SESSION_SECRET" | "TOKEN_SIGNING_KEY" | "ADMIN_TOKEN" | "SENDGRID_API_KEY" | "RESEND_API_KEY">> {}
 }
 declare module "*.txt" {
 	const value: string;

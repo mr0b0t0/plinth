@@ -35,7 +35,7 @@ test("GET /api/v1/config sets the CSRF cookie", async ({ request }) => {
   expect(res.status).toBe(200);
   expect(res.body).toMatchObject({ app_origin: APP_ORIGIN, environment: "development" });
   const cookies = (await request.storageState()).cookies;
-  expect(cookies.find((c) => c.name === "plinth_csrf")?.domain).toBe("app.localhost");
+  expect(cookies.find((c) => c.name === "__Host-plinth_csrf")?.domain).toBe("app.localhost");
 });
 
 test("a content subdomain without a cookie redirects to the app gate", async ({ request }) => {

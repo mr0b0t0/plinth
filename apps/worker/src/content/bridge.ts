@@ -10,6 +10,11 @@
 // validate shapes and sizes, never render it as HTML, and never act on it beyond positioning pins
 // and prefilling an anchor the person then confirms.
 //
+// Under opaque isolation (CONTENT_ISOLATION=opaque, or the path fallback) this document has an
+// opaque origin. Its own checks are unchanged (the app's origin is a real origin), but the app sees
+// its messages with origin "null" and can only post to it with "*": the app then identifies the
+// frame by its window, and sends it nothing the framed document may not see.
+//
 // Protocol (version 1). Every message is an object { source: BRIDGE_MESSAGE_SOURCE, v: 1, type, ... }.
 //   app -> frame: { type: "pick:start" } | { type: "pick:stop" }
 //                 | { type: "highlight", anchors: [{ id, selector }] }

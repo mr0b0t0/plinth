@@ -2,12 +2,13 @@
 // written through the Worker's own D1 connection (writing the local SQLite file from another
 // process caused SQLITE_BUSY under parallel tests). Served only when ENVIRONMENT=development and
 // DEV_SEED=true; it is an authentication bypass by design and must never run anywhere else.
-import { COOKIES, TTL } from "@plinth/shared";
+import { TTL } from "@plinth/shared";
 import { Hono } from "hono";
 import { z } from "zod";
 import type { AppEnv } from "../api/context.ts";
 import { TOKEN_PREFIX } from "../auth/principal.ts";
 import { agentConnections, sessions } from "../db/schema.ts";
+import { appCookieName } from "../lib/cookies.ts";
 import { hashToken, newId, newToken } from "../lib/crypto.ts";
 import { ApiError } from "../lib/errors.ts";
 import { isoIn, nowIso } from "../lib/time.ts";
@@ -70,7 +71,7 @@ devSeed.post("/__dev/seed", async (c) => {
         createdAt: nowIso(),
       })
       .run();
-    out.session_cookie_name = COOKIES.session;
+    out.session_cookie_name = appCookieName(config, "session");
     out.session_cookie_value = value;
   }
   return c.json(out, 201);

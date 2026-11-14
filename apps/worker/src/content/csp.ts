@@ -2,12 +2,14 @@
 import type { Config } from "../config.ts";
 
 /**
- * Sandbox flags for the path fallback (STAGING_CONTENT_FALLBACK). There every artifact is served
- * from the app's own origin, so the CSP `sandbox` directive (no allow-same-origin) gives each
- * document an opaque origin: artifact script cannot read the app's cookies, call the API with them,
- * or reach into another artifact's frame. Never used with per-artifact subdomains.
+ * Sandbox flags for opaque content isolation (CONTENT_ISOLATION=opaque, and always with the path
+ * fallback STAGING_CONTENT_FALLBACK). The CSP `sandbox` directive without allow-same-origin gives
+ * every artifact document an opaque origin, even when opened outside the app's frame: artifact
+ * script has no document.cookie, no localStorage or IndexedDB and no service workers, so it cannot
+ * read or set cookies on a parent domain it shares with the app (cookie tossing), and in the path
+ * fallback it cannot use the app origin's cookies or reach into another artifact's frame.
  */
-export const FALLBACK_SANDBOX =
+export const OPAQUE_SANDBOX =
   "sandbox allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-modals allow-downloads";
 
 export function contentCsp(config: Config): string {
@@ -29,7 +31,7 @@ export function contentCsp(config: Config): string {
     "form-action 'self'",
     `frame-ancestors 'self' ${config.appOrigin}`,
   ];
-  if (config.contentPathFallback) directives.push(FALLBACK_SANDBOX);
+  if (config.contentIsolation === "opaque") directives.push(OPAQUE_SANDBOX);
   return directives.join("; ");
 }
 
@@ -64,6 +66,18 @@ export const PERMISSIONS_POLICY = [
 ].join(", ");
 
 /**
+ * Cross-Origin-Resource-Policy for content responses. `same-origin` keeps every other origin from
+ * loading an artifact's files as images, scripts or styles. An opaque-origin document is
+ * same-origin with nothing, so under opaque isolation `same-origin` would block the artifact's own
+ * stylesheets, scripts and images too; there it is `cross-origin`. Other sites still get nothing:
+ * every file needs the content cookie, which is host-only and partitioned by the top-level site
+ * (the app's), and every artifact's CSP limits its own loads to 'self' and the CDN allowlist.
+ */
+export function contentResourcePolicy(config: Config): "same-origin" | "cross-origin" {
+  return config.contentIsolation === "opaque" ? "cross-origin" : "same-origin";
+}
+
+/**
  * Applied to every content-host response, including redirects and errors. Content is not indexed
  * unless the artifact is public (serve.ts removes X-Robots-Tag for public artifact files).
  */
@@ -72,7 +86,7 @@ export function applyContentHeaders(config: Config, headers: Headers): void {
   headers.set("X-Content-Type-Options", "nosniff");
   headers.set("Permissions-Policy", PERMISSIONS_POLICY);
   headers.set("Referrer-Policy", "no-referrer");
-  headers.set("Cross-Origin-Resource-Policy", "same-origin");
+  headers.set("Cross-Origin-Resource-Policy", contentResourcePolicy(config));
   headers.set("X-Robots-Tag", "noindex, nofollow");
   headers.set("Cache-Control", "private, no-cache");
 }
