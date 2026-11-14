@@ -1059,159 +1059,141 @@ describe("redeeming a ticket", () => {
 
 // ---------- end to end with the real stager ----------
 
-// These run once services/stage.ts is implemented (the server-core workstream). Until then they
-// are todo; flip STAGER_LANDED to run them.
-const STAGER_LANDED = false;
-const e2e = STAGER_LANDED ? it : (name: string, _fn: () => Promise<void>) => it.todo(name);
-
 describe("end to end with the real stager", () => {
-  e2e(
-    "MCP start_upload {} then the curl bundle of a 420-file Vite build: 201 and the content host serves every file",
-    async () => {
-      const a = await agent();
-      const c = await mcpClient(a.token);
-      const r = await tool<StartUploadResult>(c, "start_upload", {});
-      expect(r.isError).toBe(false);
-      const files = viteBuild(420, { dir: "." });
-      const res = await postBundle(r.data.upload_url, {
-        token: r.data.upload_token,
-        body: await gzip(tar(files)),
-        headers: { "Content-Type": "application/gzip" },
+  it("MCP start_upload {} then the curl bundle of a 420-file Vite build: 201 and the content host serves every file", async () => {
+    const a = await agent();
+    const c = await mcpClient(a.token);
+    const r = await tool<StartUploadResult>(c, "start_upload", {});
+    expect(r.isError).toBe(false);
+    const files = viteBuild(420, { dir: "." });
+    const res = await postBundle(r.data.upload_url, {
+      token: r.data.upload_token,
+      body: await gzip(tar(files)),
+      headers: { "Content-Type": "application/gzip" },
+    });
+    expect(res.status).toBe(201);
+    const out = await json(res);
+    expect(out.bundle.entries).toBe(420);
+    expect(out.stored.files).toBe(420);
+    const entered = await enterContent(out.slug, { headers: a.auth });
+    for (const f of files) {
+      const path = f.name.replace(/^\.\//, "");
+      const page = await call(`${contentOrigin(out.id)}/${path}`, {
+        headers: { Cookie: entered.cookie ?? "" },
       });
-      expect(res.status).toBe(201);
-      const out = await json(res);
-      expect(out.bundle.entries).toBe(420);
-      expect(out.stored.files).toBe(420);
-      const entered = await enterContent(out.slug, { headers: a.auth });
-      for (const f of files) {
-        const path = f.name.replace(/^\.\//, "");
-        const page = await call(`${contentOrigin(out.id)}/${path}`, {
-          headers: { Cookie: entered.cookie ?? "" },
-        });
-        expect(page.status, path).toBe(200);
-        expect(await page.text()).toBe(String(f.data));
-      }
-    },
-  );
+      expect(page.status, path).toBe(200);
+      expect(await page.text()).toBe(String(f.data));
+    }
+  });
 
-  e2e(
-    "a bundle update that changes one file writes exactly 2 objects (the file and the source)",
-    async () => {
-      const a = await agent();
-      const c = await mcpClient(a.token);
-      const files = viteBuild(30);
-      const t1 = await tool<StartUploadResult>(c, "start_upload", {});
-      const first = await json(
-        await postBundle(t1.data.upload_url, { token: t1.data.upload_token, body: tar(files) }),
-      );
-      const before = new Set(
-        (await env.FILES.list({ prefix: `artifacts/${first.id}/` })).objects.map((o) => o.key),
-      );
-      const changed = files.map((f, i) => (i === 5 ? { ...f, data: "changed" } : f));
-      const t2 = await tool<StartUploadResult>(c, "start_upload", {
-        id: first.id,
-        base_version: 1,
-      });
-      const second = await json(
-        await postBundle(t2.data.upload_url, { token: t2.data.upload_token, body: tar(changed) }),
-      );
-      expect(second.stored).toMatchObject({ written: 2, reused: 28 });
-      const after = (await env.FILES.list({ prefix: `artifacts/${first.id}/` })).objects.map(
-        (o) => o.key,
-      );
-      expect(after.filter((k) => !before.has(k))).toHaveLength(2);
-    },
-  );
+  it("a bundle update that changes one file writes exactly 2 objects (the file and the source)", async () => {
+    const a = await agent();
+    const c = await mcpClient(a.token);
+    const files = viteBuild(30);
+    const t1 = await tool<StartUploadResult>(c, "start_upload", {});
+    const first = await json(
+      await postBundle(t1.data.upload_url, { token: t1.data.upload_token, body: tar(files) }),
+    );
+    const before = new Set(
+      (await env.FILES.list({ prefix: `artifacts/${first.id}/` })).objects.map((o) => o.key),
+    );
+    const changed = files.map((f, i) => (i === 5 ? { ...f, data: "changed" } : f));
+    const t2 = await tool<StartUploadResult>(c, "start_upload", {
+      id: first.id,
+      base_version: 1,
+    });
+    const second = await json(
+      await postBundle(t2.data.upload_url, { token: t2.data.upload_token, body: tar(changed) }),
+    );
+    expect(second.stored).toMatchObject({ written: 2, reused: 28 });
+    const after = (await env.FILES.list({ prefix: `artifacts/${first.id}/` })).objects.map(
+      (o) => o.key,
+    );
+    expect(after.filter((k) => !before.has(k))).toHaveLength(2);
+  });
 
-  e2e(
-    "publish mode, lease lapsed mid-upload: both requests reach commitStaged, the ticket guard lets exactly one artifact in",
-    async () => {
-      // The receiving lease keeps a second request out while the first is live, so a plain
-      // Promise.all never makes two requests commit. Instead hold the first request mid-stream,
-      // let its lease lapse, commit a second bundle, then release the first: it reaches the real
-      // commit batch with the ticket already used, and the batch's ticket guard must refuse the
-      // artifact INSERT.
-      const a = await agent();
-      const t = await mint(a);
-      const keys = async () =>
-        new Set((await env.FILES.list({ prefix: "artifacts/" })).objects.map((o) => o.key));
-      const before = await keys();
-      const bytes = goodTar();
-      const head = BLOCK * 2; // index.html's header and its first data block
-      let release!: () => void;
-      const gate = new Promise<void>((r) => {
-        release = r;
-      });
-      let paused!: () => void;
-      const reachedPause = new Promise<void>((r) => {
-        paused = r;
-      });
-      const slowBody = lazyStream(async function* () {
-        yield bytes.slice(0, head);
-        paused();
-        await gate;
-        yield bytes.slice(head);
-      });
-      const slow = postBundle(t.upload_url, { token: t.upload_token, body: slowBody });
-      await reachedPause;
-      expect(await ticket(t.upload_id)).toMatchObject({ state: "receiving", attempts: 1 });
-      await setTicket(
-        t.upload_id,
-        "receiving_until = ?2",
-        new Date(Date.now() - 1000).toISOString(),
-      );
-      const fast = await postBundle(t.upload_url, { token: t.upload_token });
-      expect(fast.status).toBe(201);
-      const won = await json(fast);
-      release();
-      const lost = await slow;
-      expect(lost.status).toBe(409);
-      expect((await json(lost)).error.details).toMatchObject({ reason: "upload_used", id: won.id });
+  it("publish mode, lease lapsed mid-upload: both requests reach commitStaged, the ticket guard lets exactly one artifact in", async () => {
+    // The receiving lease keeps a second request out while the first is live, so a plain
+    // Promise.all never makes two requests commit. Instead hold the first request mid-stream,
+    // let its lease lapse, commit a second bundle, then release the first: it reaches the real
+    // commit batch with the ticket already used, and the batch's ticket guard must refuse the
+    // artifact INSERT.
+    const a = await agent();
+    const t = await mint(a);
+    const keys = async () =>
+      new Set((await env.FILES.list({ prefix: "artifacts/" })).objects.map((o) => o.key));
+    const before = await keys();
+    const bytes = goodTar();
+    const head = BLOCK * 2; // index.html's header and its first data block
+    let release!: () => void;
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    let paused!: () => void;
+    const reachedPause = new Promise<void>((r) => {
+      paused = r;
+    });
+    const slowBody = lazyStream(async function* () {
+      yield bytes.slice(0, head);
+      paused();
+      await gate;
+      yield bytes.slice(head);
+    });
+    const slow = postBundle(t.upload_url, { token: t.upload_token, body: slowBody });
+    await reachedPause;
+    // The first request holds the receiving lease; the ticket itself stays open until a commit.
+    const held = await ticket(t.upload_id);
+    expect(held).toMatchObject({ state: "open", attempts: 1 });
+    expect(held?.receiving_until).not.toBeNull();
+    await setTicket(t.upload_id, "receiving_until = ?2", new Date(Date.now() - 1000).toISOString());
+    const fast = await postBundle(t.upload_url, { token: t.upload_token });
+    expect(fast.status).toBe(201);
+    const won = await json(fast);
+    release();
+    const lost = await slow;
+    expect(lost.status).toBe(409);
+    expect((await json(lost)).error.details).toMatchObject({ reason: "upload_used", id: won.id });
 
-      const n = await env.DB.prepare("SELECT count(*) AS n FROM artifacts WHERE owner_id = ?1")
-        .bind(a.user.id)
-        .first<{ n: number }>();
-      expect(n?.n).toBe(1);
-      expect(await ticket(t.upload_id)).toMatchObject({ state: "used", attempts: 2 });
-      // Nothing of the loser's attempt is left: every new object belongs to the winner's artifact.
-      const added = [...(await keys())].filter((k) => !before.has(k));
-      expect(added.length).toBeGreaterThan(0);
-      expect(added.filter((k) => !k.startsWith(`artifacts/${won.id}/`))).toEqual([]);
-      const attempts = new Set(
-        added.map((k) => /^artifacts\/[^/]+\/v\d+\.[^/]+\//.exec(k)?.[0]).filter(Boolean),
-      );
-      expect(attempts.size).toBeLessThanOrEqual(1);
-    },
-  );
+    const n = await env.DB.prepare("SELECT count(*) AS n FROM artifacts WHERE owner_id = ?1")
+      .bind(a.user.id)
+      .first<{ n: number }>();
+    expect(n?.n).toBe(1);
+    expect(await ticket(t.upload_id)).toMatchObject({ state: "used", attempts: 2 });
+    // Nothing of the loser's attempt is left: every new object belongs to the winner's artifact.
+    const added = [...(await keys())].filter((k) => !before.has(k));
+    expect(added.length).toBeGreaterThan(0);
+    expect(added.filter((k) => !k.startsWith(`artifacts/${won.id}/`))).toEqual([]);
+    const attempts = new Set(
+      added.map((k) => /^artifacts\/[^/]+\/v\d+\.[^/]+\//.exec(k)?.[0]).filter(Boolean),
+    );
+    expect(attempts.size).toBeLessThanOrEqual(1);
+  });
 
-  e2e(
-    "a doc bundle goes through resolveSource and checkAsset: images only, index.html refused",
-    async () => {
-      const a = await agent();
-      const ok = await mint(a, { type: "doc" });
-      const res = await postBundle(ok.upload_url, {
-        token: ok.upload_token,
-        body: tar([
-          { name: "content.md", data: "# Notes\n\n![x](img/a.png)" },
-          { name: "img/a.png", data: "png" },
-        ]),
+  it("a doc bundle goes through resolveSource and checkAsset: images only, index.html refused", async () => {
+    const a = await agent();
+    const ok = await mint(a, { type: "doc" });
+    const res = await postBundle(ok.upload_url, {
+      token: ok.upload_token,
+      body: tar([
+        { name: "content.md", data: "# Notes\n\n![x](img/a.png)" },
+        { name: "img/a.png", data: "png" },
+      ]),
+    });
+    expect(res.status).toBe(201);
+    for (const extra of [
+      { name: "index.html", data: "<p>x</p>" },
+      { name: "app.js", data: "x" },
+    ]) {
+      const t = await mint(a, { type: "doc" });
+      const r = await postBundle(t.upload_url, {
+        token: t.upload_token,
+        body: tar([{ name: "content.md", data: "# Notes" }, extra]),
       });
-      expect(res.status).toBe(201);
-      for (const extra of [
-        { name: "index.html", data: "<p>x</p>" },
-        { name: "app.js", data: "x" },
-      ]) {
-        const t = await mint(a, { type: "doc" });
-        const r = await postBundle(t.upload_url, {
-          token: t.upload_token,
-          body: tar([{ name: "content.md", data: "# Notes" }, extra]),
-        });
-        expect(r.status).toBe(400);
-      }
-    },
-  );
+      expect(r.status).toBe(400);
+    }
+  });
 
-  e2e("a bundled page that declares shared data stores its capabilities", async () => {
+  it("a bundled page that declares shared data stores its capabilities", async () => {
     const a = await agent();
     const t = await mint(a);
     const res = await postBundle(t.upload_url, {
@@ -1232,7 +1214,7 @@ describe("end to end with the real stager", () => {
     expect(row?.capabilities).not.toBeNull();
   });
 
-  e2e("REST POST /uploads mints a ticket (201) that the bundle redeems", async () => {
+  it("REST POST /uploads mints a ticket (201) that the bundle redeems", async () => {
     const a = await agent();
     const res = await call("/api/v1/uploads", {
       method: "POST",
@@ -1246,7 +1228,7 @@ describe("end to end with the real stager", () => {
     expect((await json(b)).bundle.entries).toBe(2);
   });
 
-  e2e("a 50 MB, 511-file bundle passes through the real stager in the Workers pool", async () => {
+  it("a 50 MB, 511-file bundle passes through the real stager in the Workers pool", async () => {
     const a = await agent();
     const t = await mint(a);
     const per = Math.floor((50 * 1024 * 1024 - 2048) / 510) - 512;
