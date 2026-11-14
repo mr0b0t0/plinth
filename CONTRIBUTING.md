@@ -87,7 +87,8 @@ run), so stop `pnpm dev` first. If Playwright reports a missing browser, run
   green; never skip, delete or mark tests as expected failures to get there.
 - **Dependencies.** Pin exact versions, prefer releases at least a week old, and say why in the PR.
 - **Decisions.** Where the spec leaves room, pick the simplest option that fits it and add a row
-  to [DECISIONS.md](DECISIONS.md). Mark it **Review** if a maintainer should look.
+  to [DECISIONS.md](DECISIONS.md). If you want a maintainer's view on it, say so in the pull
+  request description.
 - **Style.** TypeScript strict everywhere. Wire format is snake_case. Shared types, schemas and
   constants live in `packages/shared`. Anything a self-hoster may change is an env var.
 - **Docs.** Plain technical English, short sentences. The product name must not contain "Claude"
