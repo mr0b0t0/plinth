@@ -285,6 +285,137 @@ test.describe("a published doc", () => {
   });
 });
 
+/**
+ * Stands in for a renderer or sanitizer bug: a doc.js that renders nothing safely and instead puts
+ * inline script, inline handlers and eval into the page. The shell's script policy must block all
+ * of it, whatever CSP the document was served with. It records what it saw and every violation.
+ */
+const LEAKY_RENDERER = `(function () {
+  var w = window;
+  w.__violations = [];
+  document.addEventListener("securitypolicyviolation", function (e) {
+    w.__violations.push(e.effectiveDirective + " " + e.blockedURI);
+  });
+  w.__rendererRan = true;
+  var main = document.querySelector("main");
+  var s = document.createElement("script");
+  s.textContent = "window.__pwned = 'inline script'";
+  main.appendChild(s);
+  main.insertAdjacentHTML("beforeend", '<img id="leak-img" src="missing.png" onerror="window.__pwned = \\'img handler\\'">');
+  var b = document.createElement("button");
+  b.id = "leak-button";
+  b.textContent = "probe";
+  b.setAttribute("onclick", "window.__pwned = 'click handler'");
+  main.appendChild(b);
+  try { eval("window.__pwned = 'eval'"); } catch (e) { w.__evalBlocked = e.name; }
+  document.documentElement.setAttribute("data-ready", "ok");
+})();`;
+
+/** Checks the leaky renderer ran in `frame` and every injected script was refused. */
+async function expectLeaksBlocked(frame: Frame) {
+  type Probe = {
+    __rendererRan?: boolean;
+    __pwned?: string;
+    __evalBlocked?: string;
+    __violations?: string[];
+  };
+  await expect
+    .poll(() => frame.evaluate(() => (window as Probe).__rendererRan === true))
+    .toBe(true);
+  await frame.locator("#leak-button").click();
+  // Three refusals at least: the inline script, the image's handler and the button's handler
+  // (Chromium reports eval as a fourth). Waiting for them means the handlers had their chance.
+  await expect
+    .poll(() => frame.evaluate(() => (window as Probe).__violations?.length ?? 0))
+    .toBeGreaterThanOrEqual(3);
+  const probe = await frame.evaluate(() => {
+    const w = window as Probe;
+    return { pwned: w.__pwned, evalBlocked: w.__evalBlocked, violations: w.__violations ?? [] };
+  });
+  expect(probe.pwned).toBeUndefined();
+  expect(probe.evalBlocked).toBe("EvalError");
+  expect(probe.violations.some((v) => /^script-src-elem inline/.test(v))).toBe(true);
+  expect(probe.violations.some((v) => /^script-src-attr inline/.test(v))).toBe(true);
+}
+
+test.describe("the doc shell's script policy", () => {
+  test.use({ viewport: WIDE });
+
+  test("blocks inline script and handlers a renderer bug lets through, in the view and the editor preview", async ({
+    page,
+  }) => {
+    test.setTimeout(60_000);
+    await page.route(/\/__plinth\/types\/doc\/doc\.js$/, (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "text/javascript; charset=utf-8",
+        body: LEAKY_RENDERER,
+      }),
+    );
+    const { artifact, client } = await publishDoc(page, `# ${TITLE}\n\nText.\n`);
+    try {
+      // The published page: the shell's CSP header and its meta copy.
+      await page.goto(`/a/${artifact.slug}`);
+      await expectLeaksBlocked(await docFrame(page));
+
+      // The editor preview: the loader page was served with the default content CSP (inline
+      // script allowed) and writes the shell into itself; the shell's meta CSP still applies.
+      await page.goto(`/a/${artifact.slug}/edit`);
+      await editorReady(page);
+      await expectLeaksBlocked(await docFrame(page, PREVIEW_FRAME));
+    } finally {
+      await client.close();
+    }
+  });
+});
+
+test.describe("comments on a doc", () => {
+  test("review mode pins a comment to a rendered heading", async ({ page }, info) => {
+    // On a touch screen a tap on the heading lands on its anchor link; pins over the frame are a
+    // desktop layout (comments.spec.ts does not check them on mobile either).
+    test.skip(info.project.name === "mobile", "pin placement is checked at desktop widths");
+    test.setTimeout(60_000);
+    const { artifact, client } = await publishDoc(page);
+    try {
+      await page.goto(`/a/${artifact.slug}`);
+      await page.getByRole("button", { name: "Comments", exact: true }).click();
+      const panel = page.getByRole("region", { name: "Comments" });
+      await expect(panel).toBeVisible();
+      const frame = page.frameLocator(CURRENT_FRAME);
+      // The renderer has run and the bridge is in the review-mode shell.
+      await expect(frame.locator('html[data-ready="ok"]')).toHaveCount(1, { timeout: 15_000 });
+      await expect(frame.locator("script[data-plinth-bridge]")).toHaveCount(1);
+
+      await panel.getByRole("button", { name: "Pin to an element" }).click();
+      await expect(
+        panel.getByText("Click an element in the artifact (Esc to cancel)"),
+      ).toBeVisible();
+      await frame.locator("h2#measurements").click();
+      await expect(panel.getByText("Pinned to")).toBeVisible();
+      await expect(panel.getByText("Measurements").first()).toBeVisible();
+
+      await panel.getByRole("textbox", { name: "New comment" }).fill("Check the depth column");
+      await panel.getByRole("button", { name: "Comment", exact: true }).click();
+      await expect(
+        panel.locator("article").filter({ hasText: "Check the depth column" }),
+      ).toBeVisible();
+      // The bridge found the heading in the rendered doc and reported its place: the pin is on
+      // the frame, not listed as orphaned.
+      const pin = page.getByTestId("comment-pins").getByRole("button", { name: /^Comment 1/ });
+      await expect(pin).toBeVisible();
+
+      // After a reload the pin finds the heading again in the freshly rendered doc.
+      await page.reload();
+      await page.getByRole("button", { name: "Comments", exact: true }).click();
+      await expect(
+        page.getByTestId("comment-pins").getByRole("button", { name: /^Comment 1/ }),
+      ).toBeVisible({ timeout: 15_000 });
+    } finally {
+      await client.close();
+    }
+  });
+});
+
 test.describe("editing a doc", () => {
   test.use({ viewport: WIDE });
 

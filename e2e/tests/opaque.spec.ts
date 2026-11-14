@@ -308,6 +308,29 @@ test("a doc renders from its embedded content, with its image, and previews in t
   expect(shell?.csp).not.toContain("allow-same-origin");
   expect(shell?.csp).toMatch(/script-src 'self'(;|$)/);
 
+  // Print or save as PDF reaches the opaque-origin frame: the app posts to "*" and the renderer
+  // checks the app origin and that the message came from its parent.
+  const docFrame = await (await page.locator(CURRENT_FRAME).elementHandle())?.contentFrame();
+  if (!docFrame) throw new Error("no doc frame");
+  expect(await docFrame.evaluate(() => self.origin)).toBe("null");
+  await docFrame.evaluate(() => {
+    const w = window as unknown as { __printed: number };
+    w.__printed = 0;
+    window.print = () => {
+      w.__printed += 1;
+    };
+  });
+  await page.evaluate(() => {
+    window.print = () => {
+      throw new Error("the app page was printed");
+    };
+  });
+  await page.getByRole("button", { name: "Artifact actions" }).click();
+  await page.getByRole("menuitem", { name: "Print or save as PDF" }).click();
+  await expect
+    .poll(() => docFrame.evaluate(() => (window as unknown as { __printed: number }).__printed))
+    .toBe(1);
+
   // The editor's preview renders the draft through the same renderer, under an opaque origin.
   await page.goto(`/a/${art.slug}/edit`);
   const editor = page.locator(".pl-editor .monaco-editor .view-lines").first();
