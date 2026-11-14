@@ -259,11 +259,12 @@ describe("versions written before 0006 (legacy layout)", () => {
     }));
     for (const e of entries) {
       const obj = await storedFile(id, 1, e.path);
-      await env.FILES.put(legacy + e.path, await obj?.arrayBuffer(), {
+      if (!obj) throw new Error(`no stored ${e.path}`);
+      await env.FILES.put(legacy + e.path, await obj.arrayBuffer(), {
         httpMetadata: { contentType: e.content_type },
       });
     }
-    await env.FILES.delete((await r2Keys(v1.r2Prefix)) as string[]);
+    await env.FILES.delete(await r2Keys(v1.r2Prefix));
     await db()
       .update(versions)
       .set({ r2Prefix: legacy, manifest: JSON.stringify(entries), storedBytes: null })
