@@ -4,6 +4,8 @@
 import {
   API,
   ARTIFACT_TYPES,
+  type ArtifactType,
+  type ArtifactTypeDef,
   anchorSchema,
   CLIENT_TYPES,
   COMMENT_STATUSES,
@@ -30,6 +32,7 @@ import {
   restoreVersionInput,
   SCOPES,
   setVisibilityInput,
+  TYPE_REGISTRY,
   updateArtifactInput,
   updateCommentInput,
   updateProfileInput,
@@ -139,6 +142,14 @@ function requestSchemas(): Record<string, Json> {
   };
 }
 
+/** Component name of one type's artifact detail: HtmlArtifactDetail, DocArtifactDetail. */
+const detailSchemaName = (t: ArtifactType) => `${t[0]?.toUpperCase()}${t.slice(1)}ArtifactDetail`;
+
+const SOURCE_DESCRIPTIONS: Record<ArtifactTypeDef["sourceField"], string> = {
+  html: "UNTRUSTED: written by the artifact's authors",
+  content: "UNTRUSTED Markdown, written by the artifact's authors",
+};
+
 function responseSchemas(): Record<string, Json> {
   const artifactType = ref("ArtifactType");
   const artifactSummary = {
@@ -178,26 +189,40 @@ function responseSchemas(): Record<string, Json> {
         "content.md) that Plinth renders. Fixed at publish.",
     },
     ArtifactSummary: obj(artifactSummary),
-    ArtifactDetail: obj(
-      {
-        ...artifactSummary,
-        version: int({ minimum: 1, description: "The version returned" }),
-        source_path: str({
-          description: 'The version file holding the source: "index.html" or "content.md"',
-        }),
-        html: str({
-          description: "UNTRUSTED: written by the artifact's authors. Type html only",
-        }),
-        content: str({
-          description: "UNTRUSTED Markdown, written by the artifact's authors. Type doc only",
-        }),
-        assets: {
-          type: "array",
-          description: "The version's other files; never index.html or content.md",
-          items: obj({ path: str(), size_bytes: int(), content_type: str() }),
-        },
+    // One schema per type, keyed on `type`, like the ArtifactDetail union in shared/types.ts:
+    // `html` is required for an HTML page and `content` for a doc, and each has only its own.
+    ArtifactDetail: {
+      description: "An artifact and one version's source. The source field depends on `type`",
+      oneOf: ARTIFACT_TYPES.map((t) => ref(detailSchemaName(t))),
+      discriminator: {
+        propertyName: "type",
+        mapping: Object.fromEntries(
+          ARTIFACT_TYPES.map((t) => [t, `#/components/schemas/${detailSchemaName(t)}`]),
+        ),
       },
-      ["html", "content"],
+    },
+    ...Object.fromEntries(
+      ARTIFACT_TYPES.map((t) => {
+        const def = TYPE_REGISTRY[t];
+        return [
+          detailSchemaName(t),
+          obj({
+            ...artifactSummary,
+            type: { ...enumOf([t]), description: `${def.label}: always "${t}"` },
+            version: int({ minimum: 1, description: "The version returned" }),
+            source_path: str({
+              enum: [def.sourcePath],
+              description: "The version file holding the source",
+            }),
+            [def.sourceField]: str({ description: SOURCE_DESCRIPTIONS[def.sourceField] }),
+            assets: {
+              type: "array",
+              description: "The version's other files; never index.html or content.md",
+              items: obj({ path: str(), size_bytes: int(), content_type: str() }),
+            },
+          }),
+        ];
+      }),
     ),
     ArtifactList: paged("ArtifactSummary"),
     PublishResult: obj({
