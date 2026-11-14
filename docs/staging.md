@@ -13,6 +13,7 @@ All in Cloudflare account `ebc2059679ce36868d5e16290c7730eb` (`german@aconite.io
 | R2 bucket | `plinth-staging` | `scripts/setup.mjs --remote` |
 | Worker | `plinth-staging`, `workers_dev` on, preview URLs off | `wrangler deploy` |
 | Worker secrets | `SESSION_SECRET`, `TOKEN_SIGNING_KEY` (generated), `SENDGRID_API_KEY` | `scripts/setup.mjs --remote` |
+| Test data (2026-11-14) | User `german@aconite.io` with a token "Orchestrator session" (used to publish the design mockups; revoked 2026-11-14), and the Codex and Claude Code OAuth test connections (revoked) |
 | Test data | User `smoke@aconite.io` with one agent connection "Staging smoke", and the artifacts the smoke test published | Smoke test steps below |
 
 R2 was enabled on the account by German before the deploy. No DNS records, zone settings,
