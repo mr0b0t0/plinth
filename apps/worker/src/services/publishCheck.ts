@@ -542,8 +542,9 @@ function scanCss(
       continue;
     }
     if ((c === "u" || c === "U") && indexOfCi(s.slice(i, i + 4), "url(", 0) === 0) {
+      // url( starts a token unless it continues an identifier (my-url(...) is not url()).
       const prev = s[i - 1];
-      if (prev === undefined || !isNameChar(prev) || prev === "(") {
+      if (prev === undefined || !(isIdent(prev) || prev === "-")) {
         const r = readUrl(s, i + 4);
         const inFont = fontFaceDepth >= 0;
         if (inFont) flags.opaque = true;
@@ -642,9 +643,11 @@ function* jsTokens(s: string): Generator<JsToken> {
       continue;
     }
     if (c === "`") {
-      // Skip a template literal, including nested ${ } expressions, by depth only.
+      // A template literal, nested ${ } expressions skipped by depth only. One without
+      // substitutions is a plain string (bundlers such as Vite emit import(`./chunk.js`)).
       let k = i + 1;
       let depthT = 0;
+      let substituted = false;
       while (k < n) {
         const d = s[k];
         if (d === "\\") {
@@ -654,15 +657,18 @@ function* jsTokens(s: string): Generator<JsToken> {
         if (depthT === 0 && d === "`") break;
         if (d === "$" && s[k + 1] === "{") {
           depthT++;
+          substituted = true;
           k += 2;
           continue;
         }
         if (depthT > 0 && d === "}") depthT--;
         k++;
       }
+      const value = s.slice(i + 1, Math.min(k, n));
       i = k + 1;
       prevSignificant = '"';
       prevWord = "";
+      if (!substituted && !value.includes("\\")) yield { kind: "string", value };
       continue;
     }
     if (c === "/") {

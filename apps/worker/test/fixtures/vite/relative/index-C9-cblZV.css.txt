@@ -1,0 +1,1 @@
+@font-face{font-family:Fx;src:url(./font-CpRM4X3c.woff2)format("woff2")}body{background:url(./bg-DxFACEDw.png);font-family:Fx,sans-serif}

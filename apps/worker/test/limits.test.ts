@@ -1,5 +1,6 @@
 // Storage cap, atomic artifact quota, stale mention claims, and the public-visibility gate.
 import { env } from "cloudflare:workers";
+import { DEFAULTS, LIMITS } from "@plinth/shared";
 import { eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import { mentionTasks, users } from "../src/db/schema.ts";
@@ -7,7 +8,6 @@ import type { Principal } from "../src/policy.ts";
 import { publishArtifact, setVisibility } from "../src/services/artifacts.ts";
 import type { Ctx } from "../src/services/context.ts";
 import { claimMention } from "../src/services/mentions.ts";
-import { DEFAULTS, LIMITS } from "@plinth/shared";
 import {
   agent,
   call,
