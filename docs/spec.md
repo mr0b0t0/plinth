@@ -51,6 +51,7 @@ account.
 | Collaborator | A viewer the owner has given comment or edit rights |
 | Agent | Claude, Codex or another MCP client acting for a publisher: publishes, updates, reads comments, replies |
 | Self-hoster | Deploys the repo to their own Cloudflare account and runs a private instance |
+| Local host | Runs an instance on their own machine, with all data on their disk, reachable through a Cloudflare Tunnel |
 
 The three flows that must work well:
 
@@ -214,6 +215,11 @@ options.
   a self-hosted one. Hosted-only parts (billing, moderation tooling) sit behind configuration flags.
 - **Self-hosting.** A "Deploy to Cloudflare" button plus a setup script that creates the R2 bucket,
   the D1 database and the secrets. A single-user mode skips sign-up and uses one admin token.
+- **Local hosting.** The same Worker can run on the owner's machine under `wrangler dev`, with D1
+  and R2 on local disk and a named Cloudflare Tunnel on two owned domains for access
+  (`setup.mjs --tunnel`, `pnpm local:start`). Production settings and the full security model
+  apply. Links work only while the machine is on, and Cloudflare sees traffic in transit. Guide:
+  `docs/local-hosting.md`; design: `docs/superpowers/specs/2026-11-14-local-tunnel-hosting-design.md`.
 - **License.** MIT.
 - **Naming.** The product name must not contain "Claude" or "Codex". "Works with Claude and Codex"
   in descriptions is fine.

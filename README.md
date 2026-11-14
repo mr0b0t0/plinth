@@ -31,6 +31,9 @@ a content domain, the wildcard route and the secrets: follow
 ([docs/self-hosting.md](docs/self-hosting.md)). The button has not been tried against this
 repository yet.
 
+To run an instance on your own computer instead, with the database and files on your disk and a
+Cloudflare Tunnel for access, see [docs/local-hosting.md](docs/local-hosting.md).
+
 ## Quick start (local)
 
 Requires Node 22.12+ and pnpm 10. pnpm runs Node 24.22.2 for this repo (`.npmrc`).
@@ -67,6 +70,7 @@ After hours (dark):
 | --- | --- |
 | [docs/mcp.md](docs/mcp.md) | Connecting Claude and Codex; every MCP tool; the mention workflow |
 | [docs/self-hosting.md](docs/self-hosting.md) | Running your own instance; every setting; single-user mode |
+| [docs/local-hosting.md](docs/local-hosting.md) | Running an instance on your own machine behind a Cloudflare Tunnel; data stays on your disk |
 | [docs/deploy-checklist.md](docs/deploy-checklist.md) | Cloudflare resources, DNS, secrets, email, go-live steps |
 | [docs/security.md](docs/security.md) | Threat model and how each boundary is enforced; reporting a vulnerability |
 | [docs/openapi.json](docs/openapi.json) | REST API (`/api/v1`), OpenAPI 3.1; also served at `/openapi.json` |

@@ -29,6 +29,11 @@ single-user mode production accepts `EMAIL_PROVIDER=console`, which writes the c
 log instead of sending mail; read it with `wrangler tail`. Use a real provider if the log is shared
 with anyone else.
 
+**On your own machine.** Either mode can also run on your computer instead of Cloudflare Workers,
+with D1 and R2 on local disk and a Cloudflare Tunnel for access:
+`node scripts/setup.mjs --tunnel`, then `pnpm local:start`. See
+[local-hosting.md](local-hosting.md).
+
 ## Settings
 
 Plain settings are `vars` in the Worker config (`apps/worker/wrangler.jsonc`, or the per-environment
