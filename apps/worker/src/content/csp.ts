@@ -12,11 +12,23 @@ import type { Config } from "../config.ts";
 export const OPAQUE_SANDBOX =
   "sandbox allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-modals allow-downloads";
 
-export function contentCsp(config: Config): string {
+/**
+ * Options for one content response's CSP. `scripts: "self"` is for Plinth's own typed-artifact
+ * shell (docs/superpowers/specs/2026-11-14-typed-outputs-doc-design.md): it runs only the
+ * renderer from the artifact's own origin, so its script-src is `'self'` and nothing else. Every
+ * other directive, the opaque sandbox included, is the same as for any artifact file.
+ */
+export interface ContentCspOptions {
+  scripts?: "self";
+}
+
+export function contentCsp(config: Config, opts: ContentCspOptions = {}): string {
   const cdn = config.cdnAllowlist.map((h) => `https://${h}`).join(" ");
   const directives = [
     "default-src 'none'",
-    `script-src 'self' 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval' ${cdn}`,
+    opts.scripts === "self"
+      ? "script-src 'self'"
+      : `script-src 'self' 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval' ${cdn}`,
     "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
     "font-src 'self' https://fonts.gstatic.com data:",
     "img-src 'self' data: blob:",
@@ -81,8 +93,12 @@ export function contentResourcePolicy(config: Config): "same-origin" | "cross-or
  * Applied to every content-host response, including redirects and errors. Content is not indexed
  * unless the artifact is public (serve.ts removes X-Robots-Tag for public artifact files).
  */
-export function applyContentHeaders(config: Config, headers: Headers): void {
-  headers.set("Content-Security-Policy", contentCsp(config));
+export function applyContentHeaders(
+  config: Config,
+  headers: Headers,
+  opts: ContentCspOptions = {},
+): void {
+  headers.set("Content-Security-Policy", contentCsp(config, opts));
   headers.set("X-Content-Type-Options", "nosniff");
   headers.set("Permissions-Policy", PERMISSIONS_POLICY);
   headers.set("Referrer-Policy", "no-referrer");

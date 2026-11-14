@@ -7,6 +7,7 @@ import {
   COOKIES,
   REVIEW_MODE_PARAM,
   TTL,
+  typeDef,
 } from "@plinth/shared";
 import { and, eq, isNull } from "drizzle-orm";
 import type { Bindings, Config } from "../config.ts";
@@ -24,6 +25,7 @@ import {
   verifyContentCookie,
   verifyEnterToken,
 } from "./tokens.ts";
+import { rendererRequest, serveRendererFile, serveTypedEntry, unsupportedType } from "./typed.ts";
 
 export type HostRoute =
   | { kind: "app" }
@@ -176,6 +178,8 @@ async function serve(
   // Static helpers that hold no artifact data.
   if (path === `${CONTENT_RESERVED_PREFIX}bridge.js`) return serveBridgeScript(config);
   if (path === `${CONTENT_RESERVED_PREFIX}preview`) return servePreviewLoader(config);
+  const renderer = rendererRequest(path);
+  if (renderer) return serveRendererFile(env, config, renderer.id, renderer.file, request.method);
 
   if (path === `${CONTENT_RESERVED_PREFIX}enter`) {
     const expired = () => text(config, 403, "This link has expired. Open the artifact again.");
@@ -264,6 +268,13 @@ async function serve(
     .where(and(eq(versions.artifactId, artifactId), eq(versions.number, versionNumber)))
     .get();
   if (!v) return text(config, 404, "No such version");
+  // A typed artifact (a doc): its page is Plinth's shell around the content file; every other
+  // path (the content file itself, images) is the version's own file, as for any artifact.
+  const def = typeDef(artifact.type);
+  if (!def) return unsupportedType(config);
+  if (def.renderer && rel === "index.html") {
+    return serveTypedEntry(request, env, config, { artifact, version: v, def, base, url });
+  }
   const entry = parseManifest(v.manifest).find((m) => m.path === rel);
   if (!entry) return text(config, 404, "Not found");
   const key = v.r2Prefix + entry.path;
