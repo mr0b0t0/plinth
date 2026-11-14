@@ -1,17 +1,15 @@
 // Version history: the list, compare (source and rendered), restore with conflict handling,
 // permanent version links, access states and the axe checks for History and Compare.
-import { mkdirSync } from "node:fs";
 import path from "node:path";
 import AxeBuilder from "@axe-core/playwright";
 import { type Browser, expect, type Page, type TestInfo, test } from "@playwright/test";
 import { apiGet, uniqueEmail } from "../support/api.ts";
 import { signInApi } from "../support/auth.ts";
 import { mcpClient, tool } from "../support/mcp.ts";
+import { shotsDir } from "../support/shots.ts";
 import { seedToken } from "../support/tokens.ts";
 
-const SHOTS =
-  process.env.PLINTH_SHOTS_DIR ??
-  "/private/tmp/claude-501/-Users-germanvoronin-Desktop-dev-plinth/c1991650-3525-4b3e-bfae-4f86919521e3/scratchpad/shots-history";
+const SHOTS = shotsDir("history");
 
 const TITLE = "Quarterly notes";
 const SANDBOX =
@@ -102,7 +100,7 @@ async function seedHistory(opts: { visibility?: string; password?: string } = {}
 }
 
 async function shot(page: Page, info: TestInfo, name: string) {
-  mkdirSync(SHOTS, { recursive: true });
+  if (!SHOTS) return;
   await page.screenshot({
     path: path.join(SHOTS, `${info.project.name}-${name}.png`),
     fullPage: true,

@@ -5,15 +5,16 @@
 // Contract with the artifact page (/a/:slug): a button named "Comments" toggles the panel (a region
 // named "Comments"); the artifact iframe is the page's only iframe and reloads in review mode while
 // the panel is open.
+import path from "node:path";
 import AxeBuilder from "@axe-core/playwright";
 import { expect, type Locator, type Page, type TestInfo, test } from "@playwright/test";
 import { apiPost, apiPut, publishArtifact, uniqueEmail } from "../support/api.ts";
 import { signInApi } from "../support/auth.ts";
 import { mcpClient, tool } from "../support/mcp.ts";
+import { shotsDir } from "../support/shots.ts";
 import { seedToken } from "../support/tokens.ts";
 
-const SHOTS =
-  "/private/tmp/claude-501/-Users-germanvoronin-Desktop-dev-plinth/c1991650-3525-4b3e-bfae-4f86919521e3/scratchpad/shots-comments";
+const SHOTS = shotsDir("comments");
 
 const ARTIFACT_HTML = `<!doctype html>
 <html lang="en">
@@ -23,8 +24,10 @@ const ARTIFACT_HTML = `<!doctype html>
 <body><h1>Launch plan</h1><p>Three steps to a calm launch.</p><ol><li>Draft</li><li>Review</li><li>Ship</li></ol></body>
 </html>`;
 
-const shot = (page: Page, info: TestInfo, name: string) =>
-  page.screenshot({ path: `${SHOTS}/${info.project.name}-${name}.png` });
+async function shot(page: Page, info: TestInfo, name: string) {
+  if (!SHOTS) return;
+  await page.screenshot({ path: path.join(SHOTS, `${info.project.name}-${name}.png`) });
+}
 
 async function openComments(page: Page, slug: string): Promise<Locator> {
   await page.goto(`/a/${slug}`);

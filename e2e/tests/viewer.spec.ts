@@ -1,16 +1,16 @@
 // The artifact page and its gates, as an anonymous viewer: each visibility, direct content links,
 // permanent version links, the report flow through to an admin takedown, and the legal pages.
+import path from "node:path";
 import AxeBuilder from "@axe-core/playwright";
 import { expect, type Page, test } from "@playwright/test";
 import { APP_ORIGIN, CONTENT_HOST, uniqueEmail } from "../support/api.ts";
 import { signInApi } from "../support/auth.ts";
 import { latestCode } from "../support/mail.ts";
 import { mcpClient, tool } from "../support/mcp.ts";
+import { shotsDir } from "../support/shots.ts";
 import { seedToken } from "../support/tokens.ts";
 
-const SHOTS =
-  process.env.PLINTH_VIEWER_SHOTS ??
-  "/private/tmp/claude-501/-Users-germanvoronin-Desktop-dev-plinth/c1991650-3525-4b3e-bfae-4f86919521e3/scratchpad/shots-viewer";
+const SHOTS = shotsDir("viewer");
 const ADMIN = "admin@plinth.local";
 const SANDBOX = "allow-scripts allow-same-origin allow-forms allow-popups";
 
@@ -67,7 +67,8 @@ async function settle(page: Page) {
 
 async function shot(page: Page, name: string) {
   await settle(page);
-  await page.screenshot({ path: `${SHOTS}/${test.info().project.name}-${name}.png` });
+  if (!SHOTS) return;
+  await page.screenshot({ path: path.join(SHOTS, `${test.info().project.name}-${name}.png`) });
 }
 
 /**

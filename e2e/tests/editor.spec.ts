@@ -1,7 +1,6 @@
 // Editor: Monaco with a live preview on the artifact's own origin, save with a note, conflict
 // handling (never overwrite, never merge), access for owners and editors only, the narrow-screen
 // message, no CSP violations, and axe in both modes.
-import { mkdirSync } from "node:fs";
 import path from "node:path";
 import AxeBuilder from "@axe-core/playwright";
 import {
@@ -14,11 +13,10 @@ import {
 import { apiGet, apiPut, contentOrigin, newApiContext, uniqueEmail } from "../support/api.ts";
 import { signInApi } from "../support/auth.ts";
 import { mcpClient, tool } from "../support/mcp.ts";
+import { shotsDir } from "../support/shots.ts";
 import { seedToken } from "../support/tokens.ts";
 
-const SHOTS =
-  process.env.PLINTH_E2E_SHOTS ??
-  "/private/tmp/claude-501/-Users-germanvoronin-Desktop-dev-plinth/c1991650-3525-4b3e-bfae-4f86919521e3/scratchpad/shots-editor";
+const SHOTS = shotsDir("editor");
 
 const WIDE = { width: 1280, height: 860 };
 
@@ -121,7 +119,7 @@ async function typeDraft(page: Page, heading: string) {
 }
 
 async function shot(page: Page, name: string) {
-  mkdirSync(SHOTS, { recursive: true });
+  if (!SHOTS) return;
   const project = test.info().project.name;
   await page.screenshot({ path: path.join(SHOTS, `${project}-${name}.png`) });
 }
