@@ -244,3 +244,92 @@ test("comment pins work through the bridge with an opaque-origin frame", async (
   const pin = page.getByTestId("comment-pins").getByRole("button", { name: /^Comment 1/ });
   await expect(pin).toBeVisible();
 });
+
+const PIXEL_PNG =
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=";
+const DOC_MD = "# Opaque doc\n\nRendered from embedded content.\n\n![A tiny square](pixel.png)\n";
+
+test("a doc renders from its embedded content, with its image, and previews in the editor", async ({
+  page,
+}) => {
+  test.setTimeout(60_000);
+  const problems = watchConsole(page);
+  const email = uniqueEmail("opaque-doc");
+  const { token } = await seedToken(email, {
+    label: "Opaque agent",
+    clientType: "claude",
+    origin: OPAQUE_APP_ORIGIN,
+  });
+  await seedSession(page.context(), email, OPAQUE_APP_ORIGIN);
+  const res = await fetch(`${OPAQUE_APP_ORIGIN}/api/v1/artifacts`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+    body: JSON.stringify({
+      title: "Opaque doc",
+      type: "doc",
+      content: DOC_MD,
+      assets: [
+        { path: "pixel.png", content: PIXEL_PNG, encoding: "base64", content_type: "image/png" },
+      ],
+    }),
+  });
+  const art = (await res.json()) as Published & { type: string };
+  expect(res.status, JSON.stringify(art)).toBe(201);
+  expect(art.type).toBe("doc");
+
+  // The shell carries the Markdown itself: an opaque-origin document cannot fetch its own files.
+  const shells: { csp: string; body: string }[] = [];
+  page.on("response", async (r) => {
+    if (!onContentHost(r.request()) || r.request().resourceType() !== "document") return;
+    if (r.status() >= 300 && r.status() < 400) return;
+    shells.push({ csp: r.headers()["content-security-policy"] ?? "", body: await r.text() });
+  });
+  const fetched: string[] = [];
+  page.on("request", (r) => {
+    if (onContentHost(r)) fetched.push(new URL(r.url()).pathname);
+  });
+
+  await page.goto(`/a/${art.slug}`);
+  await expect(page.locator(CURRENT_FRAME)).toHaveAttribute("sandbox", OPAQUE_FRAME_SANDBOX);
+  const frame = page.frameLocator(CURRENT_FRAME);
+  await expect(frame.locator('html[data-ready="ok"]')).toHaveCount(1, { timeout: 15_000 });
+  await expect(frame.locator("h1#opaque-doc")).toContainText("Opaque doc");
+  await expect(frame.getByText("Rendered from embedded content.")).toBeVisible();
+  await expect
+    .poll(() =>
+      frame.locator('img[alt="A tiny square"]').evaluate((i: HTMLImageElement) => i.naturalWidth),
+    )
+    .toBeGreaterThan(0);
+  expect(fetched).not.toContain("/content.md");
+  await expect.poll(() => shells.length).toBeGreaterThan(0);
+  const shell = shells.find((s) => s.body.includes('id="__plinth-content"'));
+  expect(shell?.body).toContain("Rendered from embedded content.");
+  expect(shell?.csp).toMatch(/; sandbox allow-scripts /);
+  expect(shell?.csp).not.toContain("allow-same-origin");
+  expect(shell?.csp).toMatch(/script-src 'self'(;|$)/);
+
+  // The editor's preview renders the draft through the same renderer, under an opaque origin.
+  await page.goto(`/a/${art.slug}/edit`);
+  const editor = page.locator(".pl-editor .monaco-editor .view-lines").first();
+  await expect(editor).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator('iframe[title^="Preview of"]')).toHaveAttribute(
+    "sandbox",
+    OPAQUE_FRAME_SANDBOX,
+  );
+  const preview = page.frameLocator('iframe[title^="Preview of"]');
+  await expect(preview.locator("h1#opaque-doc")).toContainText("Opaque doc", { timeout: 15_000 });
+  await expect
+    .poll(() =>
+      preview.locator('img[alt="A tiny square"]').evaluate((i: HTMLImageElement) => i.naturalWidth),
+    )
+    .toBeGreaterThan(0);
+  await editor.click();
+  await page.keyboard.press("ControlOrMeta+End");
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("## Typed under opaque isolation", { delay: 25 });
+  await expect(page.getByText("Unsaved changes")).toBeVisible();
+  await expect(preview.locator("h2#typed-under-opaque-isolation")).toContainText(
+    "Typed under opaque isolation",
+  );
+  expect(problems).toEqual([]);
+});
