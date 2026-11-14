@@ -59,19 +59,35 @@ After the switch to `plinthusercontent.com` (curl against Cloudflare's edge):
   `sandbox` directive) and `X-Content-Type-Options: nosniff`, certificate `*.plinthusercontent.com`
   (Let's Encrypt); `http://` answers 301 to `https://`
 
-Not yet re-run after the switch: the full smoke test (publish, update and the anonymous viewer
-fetch), which needs a personal access token, and a sign-in email from the new
-`noreply@plinth.aconite.io` sender.
+Full run after the switch (12:34 CET), against public DNS:
+
+- `node e2e/staging/smoke.mjs --url https://plinth.aconite.io --token <token>`: **4/4**:
+  - health;
+  - OAuth discovery and the `/mcp` 401 challenge;
+  - publish and update over `/mcp` with the official MCP client;
+  - the anonymous viewer fetch, served from `<id>.plinthusercontent.com` with CSP, `nosniff`,
+    `Permissions-Policy` and a single-use token.
+
+  The token ("Production smoke test 2") was revoked afterwards.
+- `POST /api/v1/auth/login` for `german@aconite.io`: 200, so SendGrid accepted a sign-in email
+  from `noreply@plinth.aconite.io`. Delivery to the inbox wasn't checked from here.
+- **Real client**: Claude Code 2.1.325 signed in to `https://plinth.aconite.io/mcp`:
+  - The sign-in used dynamic client registration and PKCE, ending with a one-click Allow.
+  - `claude mcp add --transport http`, then `claude mcp login`. Playwright drove the browser side
+    with a session for `german@aconite.io`.
+  - `claude -p` then published <https://plinth.aconite.io/a/welcome-to-plinth-lftvvkap0l> on the
+    owner's Claude subscription. This was before the content-host switch.
+  - After the switch it renders for an anonymous visitor in Chromium, light and dark, from
+    `<id>.plinthusercontent.com`, with no console errors.
+  - The OAuth connection was revoked and the server removed from the local Claude Code config
+    afterwards.
 
 ## Waiting on a human
 
-1. **Full smoke test**: create a personal access token on <https://plinth.aconite.io> and run
-   `node e2e/staging/smoke.mjs --url https://plinth.aconite.io --token <token> --email german@aconite.io`.
-   Expect 5/5, and check that the sign-in email comes from `noreply@plinth.aconite.io`.
-2. **Public Suffix List** (optional): submit `plinthusercontent.com` to the private section so that
+1. **Public Suffix List** (optional): submit `plinthusercontent.com` to the private section so that
    artifacts are separate sites from each other, not only from the app (see
    [deploy-checklist.md](deploy-checklist.md#public-suffix-list)).
-3. **Legal pages**: replace the `/legal/*` placeholder templates and publish a takedown contact.
+2. **Legal pages**: replace the `/legal/*` placeholder templates and publish a takedown contact.
 
 ## Redeploy
 
