@@ -1,6 +1,8 @@
+import { LIMITS } from "@plinth/shared";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { MAX_PREVIEW_BYTES, utf8Bytes } from "../components/editor/previewProtocol.ts";
 
 // Monaco and the preview frame cannot run in happy-dom: stand-ins record what the workspace gives
 // them. Only the doc tests below reach the workspace.
@@ -8,6 +10,7 @@ const seen = vi.hoisted(() => ({
   editor: [] as Array<{ language?: string; wordWrap?: string; path: string; value: string }>,
   diff: [] as Array<{ language?: string; original: string; modified: string; path: string }>,
   preview: [] as string[],
+  tooLargeText: [] as Array<string | undefined>,
 }));
 vi.mock("../components/editor/CodeEditor.tsx", () => ({
   CodeEditor: (p: {
@@ -42,8 +45,9 @@ vi.mock("../components/editor/CodeEditor.tsx", () => ({
 }));
 vi.mock("../components/editor/PreviewFrame.tsx", () => ({
   PREVIEW_DEBOUNCE_MS: 300,
-  PreviewFrame: (p: { html: string }): ReactNode => {
+  PreviewFrame: (p: { html: string; tooLargeText?: string }): ReactNode => {
     seen.preview.push(p.html);
+    seen.tooLargeText.push(p.tooLargeText);
     return <div data-testid="preview" />;
   },
 }));
@@ -127,6 +131,7 @@ afterEach(() => {
   seen.editor.length = 0;
   seen.diff.length = 0;
   seen.preview.length = 0;
+  seen.tooLargeText.length = 0;
 });
 
 describe("Editor page", () => {
@@ -367,7 +372,7 @@ describe("Editor page", () => {
     });
 
     it("refuses to save Markdown over the doc limit and says why", async () => {
-      docApi(() => json({}));
+      const sent = docApi(() => json({}));
       const Editor = await loadPage();
       render(<Editor params={{ slug: "demo" }} />);
       const box = await editorBox();
@@ -376,6 +381,105 @@ describe("Editor page", () => {
       expect((screen.getByRole("button", { name: "Save" }) as HTMLButtonElement).disabled).toBe(
         true,
       );
+      // Ctrl+S does not get around the disabled button: no PUT, and it says why.
+      fireEvent.keyDown(window, { key: "s", ctrlKey: true });
+      expect(await screen.findByText("Too large to save")).toBeTruthy();
+      expect(
+        screen.getByText("The Markdown is larger than 1 MB. Shorten it to save."),
+      ).toBeTruthy();
+      expect(sent.filter((s) => s.method === "PUT")).toHaveLength(0);
+    });
+
+    it("counts UTF-8 bytes: 600 K three-byte characters are over the 1 MB doc limit", async () => {
+      docApi(() => json({}));
+      const Editor = await loadPage();
+      render(<Editor params={{ slug: "demo" }} />);
+      const box = await editorBox();
+      fireEvent.change(box, { target: { value: "\u20ac".repeat(600_000) } });
+      expect(await screen.findByText(/larger than 1 MB, the most a doc can hold/)).toBeTruthy();
+      expect((screen.getByRole("button", { name: "Save" }) as HTMLButtonElement).disabled).toBe(
+        true,
+      );
+    });
+
+    it("a doc under 1 MB whose shell is over the preview cap still saves", async () => {
+      // Each "<" becomes \u003c (6 bytes) in the shell: 900 KB of Markdown, a 5.4 MB shell.
+      const sent = docApi(() => json({ id: "art1", version: 4, type: "doc" }));
+      const Editor = await loadPage();
+      render(<Editor params={{ slug: "demo" }} />);
+      const box = await editorBox();
+      const draft = "<".repeat(900 * 1024);
+      fireEvent.change(box, { target: { value: draft } });
+      await waitFor(() =>
+        expect(utf8Bytes(seen.preview.at(-1) ?? "")).toBeGreaterThan(MAX_PREVIEW_BYTES),
+      );
+      expect(seen.tooLargeText.at(-1)).toBe(
+        "Too large to preview. The page built from this Markdown is over 5 MB, the most the preview can show; saving still works while the Markdown is under 1 MB.",
+      );
+      expect(screen.queryByText(/the most a doc can hold/)).toBeNull();
+      const save = screen.getByRole("button", { name: "Save" }) as HTMLButtonElement;
+      expect(save.disabled).toBe(false);
+      fireEvent.click(save);
+      expect(await screen.findByText("Saved as v4")).toBeTruthy();
+      const puts = sent.filter((s) => s.method === "PUT");
+      expect(puts).toHaveLength(1);
+      expect(puts[0]?.body).toEqual({ content: draft, base_version: 3 });
+    });
+  });
+
+  describe("an HTML page", () => {
+    function htmlApi() {
+      const sent: Array<{ method: string; path: string }> = [];
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (input: string, init?: RequestInit) => {
+          const path = String(input).replace(/\?.*$/, "");
+          const method = init?.method ?? "GET";
+          sent.push({ method, path });
+          if (path === "/api/v1/config") return json(CONFIG);
+          if (path === "/api/v1/me") return json(ME);
+          if (path === "/api/v1/artifacts/demo") return json(artifact("owner"));
+          if (method === "PUT") return json({ id: "art1", version: 4, type: "html" });
+          return json({ error: { code: "not_found", message: "nope" } }, 404);
+        }),
+      );
+      return sent;
+    }
+
+    const box = async () =>
+      (await screen.findByRole("textbox", { name: /^HTML of Demo piece/ })) as HTMLTextAreaElement;
+
+    it("counts UTF-8 bytes: multibyte HTML under 5 M characters but over 5 MB cannot be saved", async () => {
+      const sent = htmlApi();
+      const Editor = await loadPage();
+      render(<Editor params={{ slug: "demo" }} />);
+      const editor = await box();
+      // 1.75 M three-byte characters: about 5.24 MB of UTF-8.
+      const over = "\u20ac".repeat(Math.floor(LIMITS.maxHtmlBytes / 3) + 1);
+      expect(over.length).toBeLessThan(LIMITS.maxHtmlBytes);
+      fireEvent.change(editor, { target: { value: over } });
+      const save = screen.getByRole("button", { name: "Save" }) as HTMLButtonElement;
+      await waitFor(() => expect(save.disabled).toBe(true));
+      // The page wording comes from the preview; the doc banner is not shown for HTML.
+      expect(seen.tooLargeText.at(-1)).toBeUndefined();
+      expect(screen.queryByText(/the most a html can hold/)).toBeNull();
+      fireEvent.keyDown(window, { key: "s", ctrlKey: true });
+      expect(await screen.findByText("Too large to save")).toBeTruthy();
+      expect(sent.filter((s) => s.method === "PUT")).toHaveLength(0);
+    });
+
+    it("saves multibyte HTML just under 5 MB", async () => {
+      const sent = htmlApi();
+      const Editor = await loadPage();
+      render(<Editor params={{ slug: "demo" }} />);
+      const editor = await box();
+      const under = "\u20ac".repeat(Math.floor(LIMITS.maxHtmlBytes / 3));
+      fireEvent.change(editor, { target: { value: under } });
+      const save = screen.getByRole("button", { name: "Save" }) as HTMLButtonElement;
+      await waitFor(() => expect(save.disabled).toBe(false));
+      fireEvent.click(save);
+      expect(await screen.findByText("Saved as v4")).toBeTruthy();
+      expect(sent.filter((s) => s.method === "PUT")).toHaveLength(1);
     });
   });
 });

@@ -136,8 +136,8 @@ export default function EditorWorkspace({
   );
 
   // Refs for handlers that must see the newest values (keyboard shortcut, async saves).
-  const latest = useRef({ html, note, base, mode, dirty, active });
-  latest.current = { html, note, base, mode, dirty, active };
+  const latest = useRef({ html, note, base, mode, dirty, active, tooLarge });
+  latest.current = { html, note, base, mode, dirty, active, tooLarge };
   const savingRef = useRef(false);
 
   // Keep the draft in this tab so a reload does not lose it.
@@ -259,11 +259,20 @@ export default function EditorWorkspace({
         });
         return;
       }
+      if (s.tooLarge) {
+        // The Save button is disabled and the banner says why; the Worker would refuse it.
+        toast.toast({
+          title: "Too large to save",
+          description: `The ${label} is larger than ${megabytes(def.maxSourceBytes)}. Shorten it to save.`,
+          tone: "warning",
+        });
+        return;
+      }
       if (s.dirty) void save();
     };
     window.addEventListener("keydown", onKeyDown, true);
     return () => window.removeEventListener("keydown", onKeyDown, true);
-  }, [save, toast]);
+  }, [save, toast, label, def]);
 
   // Offer to throw away a draft restored from this tab.
   const restoredOnce = useRef(false);
