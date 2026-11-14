@@ -111,6 +111,9 @@ function bodyFor(method: string, path: string): unknown {
     "POST /view/:ref/email": { email: "someone@example.com" },
     "POST /view/:ref/code": { email: "someone@example.com", code: "123456" },
     "POST /admin/reports/:id": { state: "actioned" },
+    "POST /artifacts/:ref/data": {
+      ops: [{ op: "set", collection: "votes", doc_id: "x", data: { v: 1 }, if_rev: 0 }],
+    },
   };
   return known[`${method} ${p}`] ?? {};
 }

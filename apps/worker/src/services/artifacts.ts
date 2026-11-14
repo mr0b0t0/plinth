@@ -41,6 +41,7 @@ import {
   principalUserId,
 } from "../policy.ts";
 import type { Ctx } from "./context.ts";
+import { wipeArtifactData } from "./data.ts";
 import {
   checkTotal,
   deletePrefix,
@@ -821,14 +822,18 @@ export async function renameArtifact(
   return summaryFor(ctx, { ...artifact, title: title.trim() }, role);
 }
 
-/** Soft-delete the row (frees quota, ends all access) and remove the files from R2. */
+/**
+ * Soft-delete the row (frees quota, ends all access), wipe its shared data in the same batch, and
+ * remove the files from R2.
+ */
 export async function deleteArtifact(ctx: Ctx, ref: string): Promise<void> {
   const { artifact } = await requireArtifact(ctx, ref, "delete");
-  await ctx.db
-    .update(artifacts)
-    .set({ deletedAt: nowIso(), accessEpoch: sql`${artifacts.accessEpoch} + 1` })
-    .where(eq(artifacts.id, artifact.id))
-    .run();
+  await ctx.env.DB.batch([
+    ctx.env.DB.prepare(
+      "UPDATE artifacts SET deleted_at = ?1, access_epoch = access_epoch + 1 WHERE id = ?2",
+    ).bind(nowIso(), artifact.id),
+    ...wipeArtifactData(ctx.env.DB, artifact.id),
+  ]);
   ctx.waitUntil(deletePrefix(ctx.env.FILES, `artifacts/${artifact.id}/`));
 }
 

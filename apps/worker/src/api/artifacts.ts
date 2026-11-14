@@ -9,9 +9,9 @@ import {
   updateArtifactInput,
 } from "@plinth/shared";
 import { Hono } from "hono";
+import { getArtifactWithData } from "../services/artifactData.ts";
 import {
   deleteArtifact,
-  getArtifact,
   listArtifacts,
   listVersions,
   publishArtifact,
@@ -42,7 +42,7 @@ artifactsApi.get("/artifacts/:ref", async (c) => {
     id: c.req.param("ref"),
     version: v ? Number(v) : undefined,
   });
-  return c.json(await getArtifact(serviceCtx(c), input.id, input.version));
+  return c.json(await getArtifactWithData(serviceCtx(c), input.id, input.version));
 });
 
 artifactsApi.put("/artifacts/:ref", async (c) => {
@@ -70,7 +70,7 @@ artifactsApi.get("/artifacts/:ref/versions/:n", async (c) => {
     id: c.req.param("ref"),
     version: Number(c.req.param("n")),
   });
-  return c.json(await getArtifact(serviceCtx(c), input.id, input.version));
+  return c.json(await getArtifactWithData(serviceCtx(c), input.id, input.version));
 });
 
 artifactsApi.post("/artifacts/:ref/versions/:n/restore", async (c) => {

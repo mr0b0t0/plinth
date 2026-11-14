@@ -3,7 +3,7 @@
 // artifacts.taken_down_at and bumps the access epoch, so every content cookie and pending viewer
 // token stops working at once and the content host serves nothing for it.
 import { RATE_LIMITS, type ReportInfo, type ReportState } from "@plinth/shared";
-import { and, desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import { appUrl } from "../config.ts";
 import { artifacts, reports } from "../db/schema.ts";
 import { createEmailAdapter } from "../email/index.ts";
@@ -14,6 +14,7 @@ import { nowIso } from "../lib/time.ts";
 import { isAdmin, type Principal, principalEmail } from "../policy.ts";
 import { requireArtifact } from "./artifacts.ts";
 import type { Ctx } from "./context.ts";
+import { wipeArtifactData } from "./data.ts";
 
 export interface ReportInput {
   reason: string;
@@ -169,15 +170,14 @@ export async function decideReport(
     });
   }
   if (state === "actioned") {
-    await ctx.db
-      .update(artifacts)
-      .set({
-        takenDownAt: sql`coalesce(${artifacts.takenDownAt}, ${now})`,
-        accessEpoch: sql`${artifacts.accessEpoch} + 1`,
-        updatedAt: now,
-      })
-      .where(eq(artifacts.id, report.artifact_id))
-      .run();
+    // The takedown and the wipe of the artifact's shared data go in one batch.
+    await ctx.env.DB.batch([
+      ctx.env.DB.prepare(
+        `UPDATE artifacts SET taken_down_at = coalesce(taken_down_at, ?1),
+           access_epoch = access_epoch + 1, updated_at = ?1 WHERE id = ?2`,
+      ).bind(now, report.artifact_id),
+      ...wipeArtifactData(ctx.env.DB, report.artifact_id),
+    ]);
     await ctx.db
       .update(reports)
       .set({ state: "actioned", decidedAt: now, decidedBy: admin.userId })

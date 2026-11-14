@@ -14,6 +14,7 @@ import {
   DATA_COLLECTION_RE,
   DATA_DOC_ID_RE,
   type DataOp,
+  type DataOpResult,
   type DataSession,
   type DataUnavailableReason,
   type DataVia,
@@ -710,14 +711,7 @@ export async function deleteDoc(
   throw conflict(lastRev);
 }
 
-export interface OpResult {
-  op: "set" | "delete";
-  collection: string;
-  doc_id: string | null;
-  ok: boolean;
-  rev?: number;
-  error?: { code: string; message: string; details?: unknown };
-}
+export type OpResult = DataOpResult;
 
 /**
  * write_artifact_data: ops apply in order and each succeeds or fails on its own. Every op names

@@ -289,3 +289,52 @@ export type DataSession =
       usage: { docs: number; bytes: number };
       seq: number;
     };
+
+/** What get_artifact adds to an artifact's detail (owners' and editors' agents see the usage). */
+export interface ArtifactDataInfo {
+  /** What the returned version declares; empty when nothing. */
+  capabilities: DataCapability[];
+  /** Totals of the artifact's shared data; null when there is none or the caller cannot read it. */
+  data_usage: { docs: number; bytes: number } | null;
+}
+
+/** Limits as list_artifact_data and the page session report them. */
+export interface DataLimits {
+  max_doc_bytes: number;
+  max_docs: number;
+  max_bytes: number;
+}
+
+/** list_artifact_data without a collection. Untrusted input for agents. */
+export interface DataSummary {
+  capabilities: DataCapability[];
+  /** Pages can use shared data right now (on, origin isolation, declared). */
+  available: boolean;
+  usage: { docs: number; bytes: number };
+  limits: DataLimits;
+  collections: { name: string; docs: number; bytes: number; updated_at: string }[];
+  untrusted: string;
+}
+
+/** list_artifact_data with a collection. */
+export interface DataPage {
+  docs: AgentDoc[];
+  next_cursor: string | null;
+  untrusted: string;
+}
+
+/** list_artifact_data with a collection and doc_id. */
+export interface DataDocResult {
+  doc: AgentDoc;
+  untrusted: string;
+}
+
+/** One write_artifact_data op's outcome; ops succeed or fail on their own. */
+export interface DataOpResult {
+  op: "set" | "delete";
+  collection: string;
+  doc_id: string | null;
+  ok: boolean;
+  rev?: number;
+  error?: { code: string; message: string; details?: unknown };
+}
