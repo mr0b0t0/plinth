@@ -1,8 +1,9 @@
 import type { ViewArtifact, ViewGate } from "@plinth/shared";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { apiError, json, ME, stubApi } from "../components/viewer/test-utils.ts";
+import { VERSION_POLL_MS } from "../components/viewer/useVersionWatch.ts";
 
 // The session store is module state; load a fresh copy of the page for each test.
 async function loadPage() {
@@ -142,6 +143,89 @@ describe("ArtifactPage", () => {
     );
     expect(n).toBeGreaterThanOrEqual(2);
     expect(toggle.getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("keeps review mode after comments close, so toggling again does not reload the frame", async () => {
+    let n = 0;
+    const { calls } = stubApi({
+      handle: (c) => (c.path.startsWith("/view/") ? json(okGate({}, ++n)) : undefined),
+    });
+    const ArtifactPage = await loadPage();
+    const user = userEvent.setup();
+    render(<ArtifactPage params={{ slug: "garden-plan" }} />);
+    await screen.findByTitle("Garden plan, version 3");
+    const toggle = screen.getAllByRole("button", { name: "Comments" })[0] as HTMLElement;
+    await user.click(toggle);
+    await waitFor(() =>
+      expect(screen.getByTitle("Garden plan, version 3").getAttribute("src")).toBe(ENTER(2)),
+    );
+    const gates = () => calls.filter((c) => c.path.startsWith("/view/")).length;
+    const before = gates();
+    await user.click(toggle); // close
+    await user.click(toggle); // open again
+    expect(toggle.getAttribute("aria-pressed")).toBe("true");
+    expect(gates()).toBe(before);
+    expect(screen.getByTitle("Garden plan, version 3").getAttribute("src")).toBe(ENTER(2));
+  });
+
+  describe("when a newer version is published", () => {
+    beforeEach(() => vi.useFakeTimers({ shouldAdvanceTime: true }));
+    afterEach(() => vi.useRealTimers());
+
+    it("loads it in place of the shown one and says so", async () => {
+      let current = 3;
+      let n = 0;
+      stubApi({
+        handle: (c) =>
+          c.path === "/view/garden-plan"
+            ? json(
+                okGate(
+                  { artifact: { ...ARTIFACT, current_version: current, version: current } },
+                  ++n,
+                ),
+              )
+            : undefined,
+      });
+      const ArtifactPage = await loadPage();
+      render(<ArtifactPage params={{ slug: "garden-plan" }} />);
+      await screen.findByTitle("Garden plan, version 3");
+
+      // Nothing new: the frame stays as it is.
+      await vi.advanceTimersByTimeAsync(VERSION_POLL_MS);
+      expect(screen.getByTitle("Garden plan, version 3").getAttribute("src")).toBe(ENTER(1));
+
+      current = 4;
+      await vi.advanceTimersByTimeAsync(VERSION_POLL_MS);
+      // The new version loads under the old one, which stays on screen until it has loaded.
+      const frame = await screen.findByTitle("Garden plan, version 4");
+      expect(frame.getAttribute("src")).toBe(ENTER(3));
+      expect(screen.getByTitle("Garden plan, version 3").hasAttribute("inert")).toBe(true);
+      fireEvent.load(frame);
+      expect(screen.queryByTitle("Garden plan, version 3")).toBeNull();
+      expect(await screen.findByText("Updated to v4")).toBeTruthy();
+      expect(document.title).toBe("Garden plan · Plinth");
+    });
+
+    it("keeps a permanent version link on its version and points to the new current one", async () => {
+      window.history.replaceState(null, "", "/a/garden-plan/v/3");
+      let current = 3;
+      stubApi({
+        handle: (c) =>
+          c.path === "/view/garden-plan?version=3"
+            ? json(okGate({ artifact: { ...ARTIFACT, current_version: current, version: 3 } }))
+            : undefined,
+      });
+      const ArtifactPage = await loadPage();
+      render(<ArtifactPage params={{ slug: "garden-plan", n: "3" }} />);
+      await screen.findByTitle("Garden plan, version 3");
+      expect(screen.queryByText(/You are viewing/)).toBeNull();
+
+      current = 4;
+      await vi.advanceTimersByTimeAsync(VERSION_POLL_MS);
+      expect((await screen.findByText(/You are viewing/)).textContent).toContain("v3");
+      expect(screen.getByTitle("Garden plan, version 3").getAttribute("src")).toBe(ENTER(1));
+      expect(screen.queryByText("Updated to v4")).toBeNull();
+    });
   });
 
   it("runs the password gate, then shows the artifact", async () => {

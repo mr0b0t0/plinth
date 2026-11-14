@@ -36,9 +36,9 @@ import {
   Tooltip,
   VISIBILITY_META,
 } from "../ui/index.ts";
-import { ArtifactFrame } from "./ArtifactFrame.tsx";
 import { contentOriginOf, shareLink } from "./gate.ts";
 import { ShareDialog } from "./ShareDialog.tsx";
+import { StageFrame } from "./StageFrame.tsx";
 import "./viewer.css";
 
 type OkGate = Extract<ViewGate, { status: "ok" }>;
@@ -244,12 +244,12 @@ export function ViewerStage({
           )}
           <div className="pl-viewer__room">
             <div className="pl-viewer__frame-wrap">
-              <ArtifactFrame
-                key={gate.enter_url}
+              <StageFrame
                 ref={setFrame}
                 src={gate.enter_url}
                 title={`${artifact.title}, version ${artifact.version}`}
                 isolation={config?.content_isolation}
+                loadingLabel={`Loading version ${artifact.version}`}
               />
             </div>
             {commentsOpen && (

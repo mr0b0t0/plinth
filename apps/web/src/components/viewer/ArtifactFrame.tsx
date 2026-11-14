@@ -23,14 +23,28 @@ export interface ArtifactFrameProps {
   isolation?: ContentIsolation;
   ref?: Ref<HTMLIFrameElement>;
   className?: string;
+  onLoad?: () => void;
+  /** A frame on its way out (see StageFrame): out of the tab order and the accessibility tree. */
+  inert?: boolean;
 }
 
-export function ArtifactFrame({ src, title, isolation, ref, className }: ArtifactFrameProps) {
+export function ArtifactFrame({
+  src,
+  title,
+  isolation,
+  ref,
+  className,
+  onLoad,
+  inert,
+}: ArtifactFrameProps) {
   return (
     <iframe
       ref={ref}
       src={src}
       title={title}
+      onLoad={onLoad}
+      inert={inert}
+      aria-hidden={inert || undefined}
       sandbox={artifactIframeSandbox(isolation)}
       referrerPolicy="no-referrer"
       allow=""
