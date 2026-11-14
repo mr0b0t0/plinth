@@ -11,7 +11,7 @@ make a test pass.
 | --- | --- | --- |
 | Malicious artifact attacks the app | Artifact script reads the app's session cookie or calls the API as the viewer | Separate content domain (or, while the content host shares the app's domain, [opaque isolation](#opaque-content-isolation)); no app cookies there; CSP; CSRF token and `Origin` check on every write |
 | Artifact attacks another artifact | Artifact A reads artifact B's localStorage or files | One origin per artifact (under opaque isolation: no storage at all); viewer tokens and content cookies bound to one artifact |
-| Cookie tossing onto a shared parent domain | An artifact on `<id>.plinth-usercontent.aconite.io` sets `Domain=aconite.io` cookies that the app or other artifacts receive | Public Suffix List entry for the content host; until it ships, `CONTENT_ISOLATION=opaque` (artifact documents have no `document.cookie`); the Worker never sets a `Domain` attribute; app cookies are `__Host-` so no other host can overwrite them; the content host checks every `plinth_content` value it receives |
+| Cookie tossing onto a shared parent domain | An artifact on `<id>.usercontent.example.com` (a content subdomain) sets `Domain=example.com` cookies that the app or other artifacts receive | Public Suffix List entry for the content host; until it ships, `CONTENT_ISOLATION=opaque` (artifact documents have no `document.cookie`); the Worker never sets a `Domain` attribute; app cookies are `__Host-` so no other host can overwrite them; the content host checks every `plinth_content` value it receives |
 | Artifact reads cookies of the parent domain | Script reads a non-`HttpOnly` `Domain=aconite.io` cookie set by another Aconite service | Opaque isolation (`document.cookie` throws); operators must not set sensitive cookies on the parent domain |
 | Artifact exfiltrates viewer data | Script posts form input to an attacker's server | CSP `connect-src 'self'`, `form-action 'self'`, `default-src 'none'`; artifacts render only inside the app's frame (no `allow-top-navigation`, app `frame-src` limited to content hosts), and top-level visits to a content host are redirected to the framed app page. Known gap: WebRTC (STUN/TURN) is not covered by any CSP directive browsers enforce today, so a determined artifact can still leak data that way |
 | Artifact outlives a takedown | A service worker keeps serving cached pages | Service-worker script requests are refused on content hosts; a deleted or taken-down artifact's origin gets `Clear-Site-Data: "storage"` |
@@ -273,7 +273,8 @@ anything that asks for credentials, other artifacts or actions outside Plinth.
   receives ("cookie tossing"), unless `CONTENT_ISOLATION=opaque`. Plinth ignores tossed cookies it did not sign, but a large enough
   cookie jar could make Cloudflare refuse that browser's requests to every artifact.
 - If the content host is a subdomain of a domain you use for other things (the hosted instance
-  uses `plinth-usercontent.aconite.io`), the PSL entry is mandatory, not optional: without it,
+  avoids this with a separate domain, `plinthusercontent.com`), the PSL entry is mandatory, not
+  optional: without it,
   artifacts are same-site with the app and can set cookies on the parent domain that the app and
   your other services receive. Production refuses to start until the `tldts` release Plinth pins
   knows the entry, unless `CONTENT_ISOLATION=opaque`, which takes cookies and storage away from

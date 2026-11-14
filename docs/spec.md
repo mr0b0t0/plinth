@@ -282,16 +282,18 @@ for a single user.
 
 The CDN allowlist is a configuration value, so a self-hoster can tighten or extend it.
 
-**Content domain (decided 2026-11-13)**
+**Content domain (decided 2026-11-14, replacing the 2026-11-13 choice)**
 
-- The hosted instance serves artifacts from `<id>.plinth-usercontent.aconite.io`
-  (`CONTENT_HOST=plinth-usercontent.aconite.io`). On its own, a subdomain of `aconite.io` would be
-  same-site with the app and with Aconite's other services, so `plinth-usercontent.aconite.io`
-  goes on the Public Suffix List (private section). Production refuses to start until the entry is
-  merged, shipped in current browsers and present in the `tldts` release Plinth pins, unless
-  `CONTENT_ISOLATION=opaque`. The hosted instance runs in opaque mode until then (decided
-  2026-11-14), and switches to `CONTENT_ISOLATION=origin` once the entry ships. In opaque mode
-  artifacts have no cookies, `localStorage`, IndexedDB or service workers and cannot `fetch` their
-  own files; editor preview and comment pins keep working. No service
-  under `aconite.io` may set sensitive `Domain=aconite.io` cookies, because the PSL entry does not
-  stop the browser sending those to artifacts.
+- The hosted instance serves artifacts from `<id>.plinthusercontent.com`
+  (`CONTENT_HOST=plinthusercontent.com`, `CONTENT_ISOLATION=origin`), a domain registered only for
+  artifact content. It is a different registrable domain from `aconite.io`, so artifacts are
+  cross-site to the app and to Aconite's other services without waiting for a Public Suffix List
+  entry, and Cloudflare's free Universal SSL covers `*.plinthusercontent.com`.
+- The earlier choice, `plinth-usercontent.aconite.io`, needed a PSL entry before it could run in
+  origin mode and a paid Advanced Certificate for the second-level wildcard. It is no longer used.
+- A content host that is a subdomain of the app's domain stays possible for self-hosters: it needs
+  a PSL entry that the pinned `tldts` knows, or `CONTENT_ISOLATION=opaque` (artifacts then have no
+  cookies, `localStorage`, IndexedDB or service workers and cannot `fetch` their own files; editor
+  preview and comment pins keep working). Production refuses it otherwise.
+- `plinthusercontent.com` should still go on the PSL (private section), so that artifacts are
+  separate sites from each other, not only from the app.

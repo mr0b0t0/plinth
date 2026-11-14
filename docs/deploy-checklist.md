@@ -2,39 +2,43 @@
 
 Everything needed to take a Plinth instance live on Cloudflare: resources, DNS for both hosts,
 secrets, email authentication, and checks. The examples use the hosted instance's app host,
-`plinth.aconite.io`; `CONTENT_DOMAIN` stands for a self-hoster's separate content domain, and the
-hosted instance's content host, `plinth-usercontent.aconite.io`, is covered where it differs. Cloudflare and email
-provider screens change; the details below were checked on 2026-11-13.
+`plinth.aconite.io`; `CONTENT_DOMAIN` stands for the separate content domain, which for the hosted
+instance is `plinthusercontent.com`. Cloudflare and email provider screens change; the details
+below were checked on 2026-11-13 and 2026-11-14.
 
 ## The content domain
 
-The hosted instance uses `CONTENT_HOST=plinth-usercontent.aconite.io`, so artifacts live at
-`<id>.plinth-usercontent.aconite.io` (decided 2026-11-13, see `DECISIONS.md`). A self-hoster can
-do either of the following:
+The hosted instance uses `CONTENT_HOST=plinthusercontent.com` with `CONTENT_ISOLATION=origin`, so
+artifacts live at `<id>.plinthusercontent.com` (decided 2026-11-14, replacing
+`plinth-usercontent.aconite.io`; see `DECISIONS.md`). Two options:
 
-- **A registrable domain of its own** (e.g. `plinthusercontent.net`), used for nothing but
-  artifact content. Prefer its apex as `CONTENT_HOST`: `*.plinthusercontent.net` is a first-level
-  wildcard that Cloudflare's free Universal SSL covers. Still submit it to the Public Suffix List.
-- **A subdomain of a domain you already use** (the hosted instance's choice). It is safe only once
-  it is on the Public Suffix List, because until then user HTML there is same-site with the app
-  and can set cookies on the parent domain. Production refuses to start until the `tldts` version
-  Plinth pins knows the entry (see "Public Suffix List" below), unless `CONTENT_ISOLATION=opaque`
-  (next section). The wildcard is second-level, so it needs a paid Advanced Certificate.
+- **A registrable domain of its own** (the hosted instance's choice), used for nothing but
+  artifact content. Use its apex as `CONTENT_HOST`: `*.plinthusercontent.com` is a first-level
+  wildcard that Cloudflare's free Universal SSL covers, and the domain is cross-site to the app
+  from day one. Still submit it to the Public Suffix List (below), so artifacts are separate sites
+  from each other too.
+- **A subdomain of a domain you already use.** It is safe only once it is on the Public Suffix
+  List, because until then user HTML there is same-site with the app and can set cookies on the
+  parent domain. Production refuses to start until the `tldts` version Plinth pins knows the entry
+  (see "Public Suffix List" below), unless `CONTENT_ISOLATION=opaque` (next section). The wildcard
+  is second-level, so on Cloudflare it needs a paid Advanced Certificate (Advanced Certificate
+  Manager, about $10/month). This is why the hosted instance moved off
+  `plinth-usercontent.aconite.io`.
 
-### Until the PSL entry ships: `CONTENT_ISOLATION=opaque`
+### A content subdomain before its PSL entry ships: `CONTENT_ISOLATION=opaque`
 
-The hosted instance runs with `CONTENT_ISOLATION=opaque` while `plinth-usercontent.aconite.io` is
-not yet on the Public Suffix List (or not yet in current browsers and the pinned `tldts`). Every
-content response then carries a CSP `sandbox` without `allow-same-origin`, so artifacts get an
-opaque origin: they cannot set or read cookies, so no cookie tossing onto `aconite.io`, and they
-have no browser storage. Editor preview and comment pins keep working. What it does not cover
-(same-site with `aconite.io`, a shared renderer process in some browsers, shared Safe Browsing
-reputation) is in [security.md](security.md#opaque-content-isolation).
+With a content subdomain that is not yet on the Public Suffix List (or not yet in current browsers
+and the pinned `tldts`), production runs only with `CONTENT_ISOLATION=opaque`. Every content
+response then carries a CSP `sandbox` without `allow-same-origin`, so artifacts get an opaque
+origin: they cannot set or read cookies, so no cookie tossing onto the parent domain, and they have
+no browser storage. Editor preview and comment pins keep working. What it does not cover
+(same-site with the parent domain, a shared renderer process in some browsers, shared Safe
+Browsing reputation) is in [security.md](security.md#opaque-content-isolation).
 
 - Setup: pass `--content-isolation opaque` to `scripts/setup.mjs`; without it the script, like the
   Worker, refuses the shared registrable domain.
 - Tell artifact authors (and agents) that `localStorage`, cookies and `fetch` of the artifact's own
-  files do not work on the hosted instance for now.
+  files do not work on that instance for now.
 - When the PSL entry is in current Chrome, Firefox and Safari and the pinned `tldts` knows it
   (step 4 below), set `CONTENT_ISOLATION=origin` (rerun setup with `--content-isolation origin`,
   or edit the var), deploy, and check that artifact responses no longer carry `sandbox`.
@@ -44,22 +48,26 @@ the app host itself or a subdomain of it.
 
 ### Public Suffix List
 
-1. Add `_psl.plinth-usercontent.aconite.io` as a `TXT` record whose value is the URL of the pull
-   request below. The PSL maintainers check it.
+For a separate content domain (the hosted instance) this is recommended; for a content subdomain
+it is mandatory.
+
+1. Add `_psl.CONTENT_DOMAIN` as a `TXT` record whose value is the URL of the pull request below.
+   The PSL maintainers check it.
 2. Open a pull request on [github.com/publicsuffix/list](https://github.com/publicsuffix/list)
-   adding `plinth-usercontent.aconite.io` to the private section under an
-   "Aconite Software & Investments, Lda." heading. Follow the repository's current guidelines.
-   Among other things, they want the domain registered for some time ahead (check `aconite.io`'s
-   expiry first) and a reason, here: isolating user-uploaded HTML per subdomain.
+   adding the content domain (hosted instance: `plinthusercontent.com`) to the private section
+   under your organisation's heading ("Aconite Software & Investments, Lda." for the hosted
+   instance). Follow the repository's current guidelines. Among other things, they want the domain
+   registered for some time ahead (check its expiry first) and a reason, here: isolating
+   user-uploaded HTML per subdomain.
 3. After the merge, wait until the entry is in current Chrome, Firefox and Safari releases (each
    bundles a copy of the list, so this takes weeks to months).
 4. Upgrade `tldts` in `apps/worker` and the root to a release that contains the entry, then run
-   `pnpm test`. Until then the Worker answers 500 on every request in production with this
-   configuration unless `CONTENT_ISOLATION=opaque`, and `setup.mjs` refuses it without
-   `--content-isolation opaque`. Do not work around either check in any other way. Once the
-   upgrade lands, switch the hosted instance to `CONTENT_ISOLATION=origin`.
-5. Audit `aconite.io`: no service may set a sensitive cookie with `Domain=aconite.io`. The PSL
-   entry stops artifacts from setting such cookies but not from receiving them.
+   `pnpm test`. For a content subdomain, until then the Worker answers 500 on every request in
+   production unless `CONTENT_ISOLATION=opaque`, and `setup.mjs` refuses it without
+   `--content-isolation opaque`. Do not work around either check in any other way.
+5. For a content subdomain, audit the parent domain: no service may set a sensitive cookie with
+   `Domain=<parent>`. The PSL entry stops artifacts from setting such cookies but not from
+   receiving them.
 
 ## 1. Cloudflare resources
 
@@ -69,8 +77,8 @@ the app host itself or a subdomain of it.
 | D1 database | `plinth` | `node scripts/setup.mjs --remote` |
 | R2 bucket | `plinth-files` | `node scripts/setup.mjs --remote` |
 | Zone for the app host | `aconite.io` | Cloudflare dashboard (already exists for the hosted instance) |
-| Zone for the content host | `aconite.io` for the hosted instance (shared with the app host); for a separate domain, its own zone | Cloudflare dashboard |
-| Advanced Certificate for `*.plinth-usercontent.aconite.io` | hosted instance only | Cloudflare dashboard → SSL/TLS → Edge Certificates → Order Advanced Certificate (Advanced Certificate Manager, paid) |
+| Zone for the content host | `plinthusercontent.com` for the hosted instance (registered through Cloudflare Registrar, so the zone already uses Cloudflare's nameservers); for a separate domain bought elsewhere, add it as a zone and point the registrar's nameservers at Cloudflare | Cloudflare dashboard |
+| Advanced Certificate for `*.<content subdomain>` | only for a content subdomain (second-level wildcard); not needed for the hosted instance | Cloudflare dashboard → SSL/TLS → Edge Certificates → Order Advanced Certificate (Advanced Certificate Manager, paid) |
 
 Workers Free is enough to start. The Workers Paid plan ($5/month) raises request and CPU limits
 and D1 Time Travel from 7 to 30 days.
@@ -78,10 +86,9 @@ and D1 Time Travel from 7 to 30 days.
 ```sh
 pnpm --filter @plinth/worker exec wrangler login
 node scripts/setup.mjs --remote --env production --dry-run \
-  --app-host plinth.aconite.io --content-host plinth-usercontent.aconite.io \
-  --content-isolation opaque \
-  --email-provider sendgrid --email-from "Plinth <noreply@aconite.io>" --admin-email you@aconite.io
-# --content-isolation opaque only until the PSL entry ships (see "The content domain")
+  --app-host plinth.aconite.io --content-host plinthusercontent.com \
+  --email-provider sendgrid --email-from "Plinth <noreply@plinth.aconite.io>" --admin-email you@aconite.io
+# a content subdomain without a shipped PSL entry also needs --content-isolation opaque
 # read the plan, then run the same command without --dry-run
 ```
 
@@ -121,17 +128,19 @@ SSL/TLS for the content zone: encryption mode "Full (strict)" and "Always Use HT
 under SSL/TLS > Edge Certificates that a certificate lists `*.CONTENT_DOMAIN`. Universal SSL
 covers only first-level wildcards.
 
-For the hosted instance the content host is a subdomain inside the existing `aconite.io` zone:
+For the hosted instance (`CONTENT_DOMAIN` = `plinthusercontent.com`, its own zone):
 
-- Route: `{ "pattern": "*.plinth-usercontent.aconite.io/*", "zone_name": "aconite.io" }`
+- Route: `{ "pattern": "*.plinthusercontent.com/*", "zone_name": "plinthusercontent.com" }`
   (`setup.mjs` writes it).
-- DNS in the `aconite.io` zone: `A` record `*.plinth-usercontent` → `192.0.2.0`, proxied (and
-  optionally `AAAA` `*.plinth-usercontent` → `100::`, proxied). Add nothing else under
-  `plinth-usercontent`.
-- Certificate: an Advanced Certificate covering `*.plinth-usercontent.aconite.io` (and
-  `plinth-usercontent.aconite.io`). Universal SSL's `*.aconite.io` does not match
-  `<id>.plinth-usercontent.aconite.io`.
-- The `_psl.plinth-usercontent.aconite.io` `TXT` record from the PSL steps above.
+- DNS in the `plinthusercontent.com` zone: only `A` `*` → `192.0.2.0`, proxied.
+- Certificate: Universal SSL (`plinthusercontent.com`, `*.plinthusercontent.com`), issued
+  automatically. SSL/TLS "Full (strict)" and "Always Use HTTPS" are on.
+- Once submitted, the `_psl.plinthusercontent.com` `TXT` record from the PSL steps above.
+
+A content subdomain inside the app's zone instead (e.g. `<sub>.example.com`) needs the route
+`*.<sub>.example.com/*` on that zone, a proxied `A` `*.<sub>` record, and an Advanced Certificate
+for `*.<sub>.example.com`, because Universal SSL's `*.example.com` does not match
+`<id>.<sub>.example.com`.
 
 ### Checks after deploy
 
@@ -140,9 +149,10 @@ curl -sI https://plinth.aconite.io/healthz                 # 200, {"ok":true,"en
 curl -sI https://abcdefghijklmnopqrst.CONTENT_DOMAIN/      # 404 from Plinth, with a CSP header
 curl -s -o /dev/null -w '%{http_code}\n' -X POST https://plinth.aconite.io/mcp   # 401
 curl -sI -X POST https://plinth.aconite.io/mcp | grep -i www-authenticate        # resource_metadata=...
-# CONTENT_ISOLATION=opaque: the CSP ends in "sandbox allow-scripts ..." without allow-same-origin
-curl -sI https://abcdefghijklmnopqrst.plinth-usercontent.aconite.io/ | grep -i content-security-policy
-curl -s https://plinth.aconite.io/api/v1/config        # "content_isolation":"opaque" (until the PSL entry ships)
+# CONTENT_ISOLATION=origin (hosted instance): no "sandbox" directive in the content CSP;
+# with opaque it ends in "sandbox allow-scripts ..." without allow-same-origin
+curl -sI https://abcdefghijklmnopqrst.plinthusercontent.com/ | grep -i content-security-policy
+curl -s https://plinth.aconite.io/api/v1/config        # "content_host":"plinthusercontent.com","content_isolation":"origin"
 curl -sI https://plinth.aconite.io/api/v1/config | grep -i set-cookie   # __Host-plinth_csrf=...; Path=/; ...; Secure
 ```
 
@@ -218,28 +228,26 @@ These need accounts, money or legal judgement, so no script does them.
 
 0. Before staging (see [staging.md](staging.md)): enable R2 on the Cloudflare account and choose
    the account's `workers.dev` subdomain. Done on 2026-11-13 (`aconite-io.workers.dev`).
-1. Content host: `plinth-usercontent.aconite.io` (chosen 2026-11-13). Submit it to the Public
-   Suffix List now. Until browsers and `tldts` know it, production runs only with
-   `CONTENT_ISOLATION=opaque` (see "The content domain" and "Public Suffix List" above); switch to
-   `origin` once they do. Self-hosters: choose a domain and record the choice in
-   `docs/spec.md`, and submit it to the Public Suffix List (private section) early, since approval
-   takes weeks.
-2. Add the content host's DNS and certificate. Hosted instance: the `*.plinth-usercontent` record
-   and the Advanced Certificate in the `aconite.io` zone (section 2). Separate domain: add it as a
-   zone in the Cloudflare account that runs the Worker and point the registrar's nameservers at
-   Cloudflare.
-3. Audit `aconite.io` for sensitive `Domain=aconite.io` cookies (see
+1. Content host: `plinthusercontent.com` (chosen 2026-11-14, replacing
+   `plinth-usercontent.aconite.io`), with `CONTENT_ISOLATION=origin`. Submit it to the Public
+   Suffix List (private section). Self-hosters: choose a domain, record the choice in
+   `docs/spec.md`, and submit it to the PSL early, since approval takes weeks.
+2. Add the content host's DNS and certificate (section 2). Separate domain: its own zone in the
+   Cloudflare account that runs the Worker (a domain bought through Cloudflare Registrar already
+   has one), with the proxied `*` record; Universal SSL covers it. Content subdomain: the
+   `*.<sub>` record and an Advanced Certificate in the parent zone.
+3. Content subdomain only: audit the parent domain for sensitive `Domain=<parent>` cookies (see
    [security.md](security.md#operator-checklist-for-the-content-domain)).
 4. `wrangler login` with an account that can edit Workers, D1, R2 and both zones.
 5. Run `node scripts/setup.mjs --remote --env production ...` (dry run first).
 6. Authenticate the sending domain with SendGrid (hosted) or Resend; add DMARC; turn off click
    tracking. Put the API key in with `wrangler secret put`. The hosted instance sends as
-   `Plinth <noreply@aconite.io>` (verified in Aconite's SendGrid account); authenticate
-   `plinth.aconite.io` there first if you want a product-specific sender.
+   `Plinth <noreply@plinth.aconite.io>` (`plinth.aconite.io` authenticated in Aconite's SendGrid
+   account on 2026-11-14).
 7. `pnpm build` and `wrangler deploy --config wrangler.production.jsonc`.
-8. Confirm the route `*.plinth-usercontent.aconite.io/*` (or `*.CONTENT_DOMAIN/*`) shows under
-   the Worker's Domains & Routes, and that `https://<any id>.plinth-usercontent.aconite.io/`
-   answers 404 from Plinth with a valid certificate.
+8. Confirm the route `*.plinthusercontent.com/*` (or `*.CONTENT_DOMAIN/*`) shows under the
+   Worker's Domains & Routes, and that `https://<any id>.plinthusercontent.com/` answers 404 from
+   Plinth with a valid certificate.
 9. Run the checks in section 2. Sign in with an address in `ADMIN_EMAIL`, publish a test artifact
    over MCP, and open its link in a private window for each visibility.
 10. Replace the placeholder terms, privacy and acceptable-use pages (`/legal/*`) with reviewed text,

@@ -60,8 +60,8 @@ export default defineConfig({
       },
     },
     {
-      // CONTENT_ISOLATION=opaque: artifacts with an opaque origin (the hosted instance's mode
-      // until its content host is on the Public Suffix List). Chromium only.
+      // CONTENT_ISOLATION=opaque: artifacts with an opaque origin (staging's mode, and any
+      // instance whose content subdomain is not yet on the Public Suffix List). Chromium only.
       name: "opaque",
       testMatch: OPAQUE_SPECS,
       use: { ...devices["Desktop Chrome"], colorScheme: "light", baseURL: OPAQUE_ORIGIN },

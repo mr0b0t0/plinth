@@ -22,10 +22,10 @@ describe("config", () => {
       parseConfig({ ...base, APP_HOST: "a.example.co.uk", CONTENT_HOST: "b.example.co.uk" }),
     ).toThrow(/registrable domain/);
   });
-  it("refuses the hosted content subdomain with origin isolation until the PSL entry is known", () => {
-    // plinth-usercontent.aconite.io is pending on the PSL. When a tldts release includes it, this
-    // test fails on purpose: confirm the entry has shipped in current browsers before updating it
-    // (and then switch the hosted instance back to CONTENT_ISOLATION=origin).
+  it("refuses a content subdomain with origin isolation until the PSL entry is known", () => {
+    // plinth-usercontent.aconite.io (the hosted instance's former content host, never listed on
+    // the PSL) stands in for any unlisted content subdomain of the app's registrable domain. If a
+    // tldts release ever lists it, pick another unlisted subdomain for this test.
     expect(registrableDomain("x.plinth-usercontent.aconite.io")).toBe("aconite.io");
     const hosted = { ...base, CONTENT_HOST: "plinth-usercontent.aconite.io" };
     expect(() => parseConfig(hosted)).toThrow(/Public Suffix List/);

@@ -1,6 +1,6 @@
-// Opaque content isolation (CONTENT_ISOLATION=opaque), against the second e2e Worker. The hosted
-// instance runs like this while its content host shares aconite.io with the app: every artifact
-// document gets an opaque origin from the CSP sandbox, so it has no cookies and no storage, and
+// Opaque content isolation (CONTENT_ISOLATION=opaque), against the second e2e Worker. Staging,
+// and any instance whose content host shares a registrable domain with the app, runs like this:
+// every artifact document gets an opaque origin from the CSP sandbox, so it has no cookies and no storage, and
 // cannot set cookies on the shared parent domain. Checked here: the artifact and its own
 // subresources still load (the host-only, partitioned content cookie reaches them), cookies and
 // storage throw inside it, and the editor preview and comment pins work over the opaque-origin

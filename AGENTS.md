@@ -88,10 +88,11 @@ make a test pass.
 
 ## Content domain
 
-The hosted instance serves artifacts from `<id>.plinth-usercontent.aconite.io`, a subdomain of
-`aconite.io` that must be on the Public Suffix List before production uses it with
-`CONTENT_ISOLATION=origin`. Until browsers and the `tldts` package know the entry, the Worker
-refuses to run in production with it unless `CONTENT_ISOLATION=opaque`, and that refusal must
-stay. The hosted instance runs with `CONTENT_ISOLATION=opaque` until then and switches to `origin`
-once the entry ships. Never put user content on any other `aconite.io` host. Keep it a config
-value (`CONTENT_HOST`). See `docs/deploy-checklist.md`.
+The hosted instance serves artifacts from `<id>.plinthusercontent.com`, a domain registered only
+for user content, with `CONTENT_ISOLATION=origin` (decided 2026-11-14; it replaces
+`plinth-usercontent.aconite.io`). Never put user content on any `aconite.io` host, and never serve
+anything but artifacts on `plinthusercontent.com`. In production the Worker refuses an app host
+and content host that share a registrable domain unless `CONTENT_ISOLATION=opaque` (a subdomain on
+the Public Suffix List counts as its own domain once the pinned `tldts` knows it), and that
+refusal must stay: it protects self-hosters. Keep it a config value (`CONTENT_HOST`). See
+`docs/deploy-checklist.md`.

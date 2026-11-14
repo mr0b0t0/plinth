@@ -357,8 +357,9 @@ Only the owner's own connections can be mentioned, and only commenters and edito
 
 ## Opaque sandbox instances
 
-Instances that run with `CONTENT_ISOLATION=opaque` (the hosted instance until its content host is
-on the Public Suffix List, and staging) serve artifacts with an opaque origin. On those instances
+Instances that run with `CONTENT_ISOLATION=opaque` (staging, and any instance whose content
+subdomain is not yet on the Public Suffix List) serve artifacts with an opaque origin. The hosted
+instance runs with `origin`. On those instances
 the `publish_artifact` and `update_artifact` descriptions add one sentence telling the agent that
 cookies, `localStorage`, `sessionStorage`, IndexedDB and service workers are unavailable and that
 the page cannot `fetch()` its own files, so data belongs inline in the HTML.
