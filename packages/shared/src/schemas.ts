@@ -1,6 +1,7 @@
 // Validation schemas for every MCP tool and REST body. The Worker validates all input with these;
 // the web app may reuse them for client-side checks. Field names are snake_case on the wire.
 import { z } from "zod";
+import { ARTIFACT_TYPES } from "./artifactTypes.ts";
 import {
   CLIENT_TYPES,
   COMMENT_STATUSES,
@@ -41,6 +42,20 @@ export const versionNumberSchema = z.number().int().min(1);
 
 export const titleSchema = z.string().trim().min(1).max(LIMITS.maxTitleLength);
 export const htmlSchema = z.string().min(1).describe("Complete HTML document");
+/** The source of a typed artifact (Markdown for a doc). */
+export const contentSchema = z
+  .string()
+  .min(1)
+  .describe(
+    'The source of a typed artifact: for type "doc", the Markdown document (stored as content.md). ' +
+      "Not for html artifacts, which send html.",
+  );
+export const artifactTypeSchema = z
+  .enum(ARTIFACT_TYPES)
+  .describe(
+    '"html" (default): a hand-written page sent as html. "doc": a Markdown document sent as ' +
+      "content, which Plinth renders as a finished page. Fixed at publish.",
+  );
 export const noteSchema = z.string().trim().max(LIMITS.maxNoteLength);
 export const passwordSchema = z
   .string()
@@ -52,8 +67,9 @@ export const assetInputSchema = z.object({
     .string()
     .min(1)
     .max(LIMITS.maxAssetPathLength)
-    .regex(ASSET_PATH_RE, "Relative path without '..', not under __plinth/")
-    .refine((p) => p !== "index.html", "index.html is the html field, not an asset"),
+    // Reserved paths (index.html, and content.md for a doc) depend on the artifact's type, so
+    // the Worker refuses them with the type in the error (services/artifactTypes.ts checkAsset).
+    .regex(ASSET_PATH_RE, "Relative path without '..', not under __plinth/"),
   content: z.string().describe("File content, as text (utf8) or base64"),
   encoding: z.enum(["utf8", "base64"]).default("utf8"),
   content_type: z.string().max(100).optional(),
@@ -66,7 +82,11 @@ export const assetsSchema = z.array(assetInputSchema).max(LIMITS.maxAssetsPerVer
 
 export const publishArtifactInput = z.object({
   title: titleSchema,
-  html: htmlSchema,
+  type: artifactTypeSchema.default("html"),
+  /** Required for type html. Cross-field rules live in the Worker's resolveSource. */
+  html: htmlSchema.optional(),
+  /** Required for a typed artifact (type doc). */
+  content: contentSchema.optional(),
   assets: assetsSchema.optional(),
   visibility: visibilitySchema.default("allowlist"),
   /** Needed when visibility is "password". */
@@ -78,7 +98,9 @@ export type PublishArtifactInput = z.input<typeof publishArtifactInput>;
 
 export const updateArtifactInput = z.object({
   id: artifactRefSchema,
-  html: htmlSchema,
+  /** The field matching the artifact's type: html for a page, content for a doc. No type: fixed. */
+  html: htmlSchema.optional(),
+  content: contentSchema.optional(),
   assets: assetsSchema.optional(),
   note: noteSchema.optional(),
   /** If given and not the current version, the update is rejected with a conflict. */

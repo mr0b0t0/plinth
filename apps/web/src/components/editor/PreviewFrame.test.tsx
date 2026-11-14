@@ -2,6 +2,7 @@ import type { AppConfig } from "@plinth/shared";
 import { act, cleanup, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { PREVIEW_DEBOUNCE_MS, PreviewFrame } from "./PreviewFrame.tsx";
+import { MAX_PREVIEW_BYTES } from "./previewProtocol.ts";
 
 // happy-dom never loads frame pages (it logs a NotSupportedError per frame); each frame's window is
 // replaced by a stub below, which is all these tests need.
@@ -49,12 +50,20 @@ function current() {
   return { frame, win, src, nonce };
 }
 
-async function renderFrame(html = "<p>one</p>", cfg = config) {
+async function renderFrame(html = "<p>one</p>", cfg = config, tooLargeText?: string) {
   const fetchMock = vi.fn(async (_url: string) =>
     json({ status: "ok", enter_url: ENTER, role: "owner", artifact: {} }),
   );
   vi.stubGlobal("fetch", fetchMock);
-  const view = render(<PreviewFrame artifactId="art1" title="Demo" html={html} config={cfg} />);
+  const view = render(
+    <PreviewFrame
+      artifactId="art1"
+      title="Demo"
+      html={html}
+      config={cfg}
+      tooLargeText={tooLargeText}
+    />,
+  );
   await screen.findByTitle("Preview of Demo");
   return { view, fetchMock, ...current() };
 }
@@ -134,6 +143,38 @@ describe("PreviewFrame", () => {
       ORIGIN,
     );
     expect(win.postMessage).toHaveBeenCalledTimes(1);
+  });
+
+  describe("over the preview cap", () => {
+    it("says the HTML wording by default and posts nothing", async () => {
+      // 1.75 M three-byte characters: under the cap in UTF-16 units, over it in UTF-8 bytes.
+      const { win, nonce } = await renderFrame(
+        "\u20ac".repeat(Math.floor(MAX_PREVIEW_BYTES / 3) + 1),
+      );
+      message(ready(nonce), ORIGIN, win);
+      expect(win.postMessage).not.toHaveBeenCalled();
+      expect(screen.getByRole("status").textContent).toBe(
+        "The draft is larger than 5 MB, the most a version can hold, so it cannot be previewed or saved.",
+      );
+    });
+
+    it("shows the caller's text for a typed artifact's shell", async () => {
+      const text = "Too large to preview. Saving still works.";
+      const { win, nonce } = await renderFrame("<".repeat(MAX_PREVIEW_BYTES + 1), config, text);
+      message(ready(nonce), ORIGIN, win);
+      expect(win.postMessage).not.toHaveBeenCalled();
+      expect(screen.getByRole("status").textContent).toBe(text);
+    });
+
+    it("renders a draft exactly at the cap", async () => {
+      const draft = "a".repeat(MAX_PREVIEW_BYTES);
+      const { win, nonce } = await renderFrame(draft);
+      message(ready(nonce), ORIGIN, win);
+      expect(win.postMessage).toHaveBeenCalledWith(
+        expect.objectContaining({ type: "render", html: draft }),
+        ORIGIN,
+      );
+    });
   });
 
   describe("under opaque isolation", () => {

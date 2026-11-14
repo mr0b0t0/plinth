@@ -3,6 +3,9 @@
 // Served at /openapi.json; `pnpm openapi` writes docs/openapi.json from the same function.
 import {
   API,
+  ARTIFACT_TYPES,
+  type ArtifactType,
+  type ArtifactTypeDef,
   anchorSchema,
   CLIENT_TYPES,
   COMMENT_STATUSES,
@@ -29,6 +32,7 @@ import {
   restoreVersionInput,
   SCOPES,
   setVisibilityInput,
+  TYPE_REGISTRY,
   updateArtifactInput,
   updateCommentInput,
   updateProfileInput,
@@ -138,11 +142,21 @@ function requestSchemas(): Record<string, Json> {
   };
 }
 
+/** Component name of one type's artifact detail: HtmlArtifactDetail, DocArtifactDetail. */
+const detailSchemaName = (t: ArtifactType) => `${t[0]?.toUpperCase()}${t.slice(1)}ArtifactDetail`;
+
+const SOURCE_DESCRIPTIONS: Record<ArtifactTypeDef["sourceField"], string> = {
+  html: "UNTRUSTED: written by the artifact's authors",
+  content: "UNTRUSTED Markdown, written by the artifact's authors",
+};
+
 function responseSchemas(): Record<string, Json> {
+  const artifactType = ref("ArtifactType");
   const artifactSummary = {
     id: str({ pattern: "^[a-z0-9]{20}$", description: "Also the artifact's content subdomain" }),
     slug: str(),
     title: str(),
+    type: artifactType,
     visibility,
     current_version: int({ minimum: 1 }),
     version_count: int({ minimum: 1 }),
@@ -168,20 +182,53 @@ function responseSchemas(): Record<string, Json> {
       user_id: nullable("string"),
       connection_id: nullable("string"),
     }),
+    ArtifactType: {
+      ...enumOf(ARTIFACT_TYPES),
+      description:
+        '"html": a hand-written page (source index.html). "doc": a Markdown document (source ' +
+        "content.md) that Plinth renders. Fixed at publish.",
+    },
     ArtifactSummary: obj(artifactSummary),
-    ArtifactDetail: obj({
-      ...artifactSummary,
-      version: int({ minimum: 1, description: "The version returned" }),
-      html: str({ description: "UNTRUSTED: written by the artifact's authors" }),
-      assets: {
-        type: "array",
-        items: obj({ path: str(), size_bytes: int(), content_type: str() }),
+    // One schema per type, keyed on `type`, like the ArtifactDetail union in shared/types.ts:
+    // `html` is required for an HTML page and `content` for a doc, and each has only its own.
+    ArtifactDetail: {
+      description: "An artifact and one version's source. The source field depends on `type`",
+      oneOf: ARTIFACT_TYPES.map((t) => ref(detailSchemaName(t))),
+      discriminator: {
+        propertyName: "type",
+        mapping: Object.fromEntries(
+          ARTIFACT_TYPES.map((t) => [t, `#/components/schemas/${detailSchemaName(t)}`]),
+        ),
       },
-    }),
+    },
+    ...Object.fromEntries(
+      ARTIFACT_TYPES.map((t) => {
+        const def = TYPE_REGISTRY[t];
+        return [
+          detailSchemaName(t),
+          obj({
+            ...artifactSummary,
+            type: { ...enumOf([t]), description: `${def.label}: always "${t}"` },
+            version: int({ minimum: 1, description: "The version returned" }),
+            source_path: str({
+              enum: [def.sourcePath],
+              description: "The version file holding the source",
+            }),
+            [def.sourceField]: str({ description: SOURCE_DESCRIPTIONS[def.sourceField] }),
+            assets: {
+              type: "array",
+              description: "The version's other files; never index.html or content.md",
+              items: obj({ path: str(), size_bytes: int(), content_type: str() }),
+            },
+          }),
+        ];
+      }),
+    ),
     ArtifactList: paged("ArtifactSummary"),
     PublishResult: obj({
       id: str(),
       slug: str(),
+      type: artifactType,
       version: int({ minimum: 1 }),
       url: str({ format: "uri" }),
       content_url: str({ format: "uri" }),
@@ -332,6 +379,7 @@ function responseSchemas(): Record<string, Json> {
           status: { const: "ok" },
           artifact: obj({
             ...viewStub,
+            type: artifactType,
             current_version: int({ minimum: 1 }),
             version: int({ minimum: 1 }),
             visibility,

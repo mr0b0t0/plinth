@@ -3,7 +3,7 @@
 import { ArrowsClockwiseIcon, CopyIcon, FloppyDiskIcon, WarningIcon } from "@phosphor-icons/react";
 import { useState } from "react";
 import { Button, Checkbox, Dialog } from "../ui/index.ts";
-import { CodeDiff } from "./CodeEditor.tsx";
+import { CodeDiff, type EditorLanguage } from "./CodeEditor.tsx";
 
 export interface ConflictInfo {
   /** The version now current. */
@@ -24,6 +24,9 @@ export interface ConflictViewProps {
   onCopyDraft: () => void;
   onLoadLatest: () => void;
   onSaveOnTop: () => void;
+  /** The source's editor language and name (the type's registry row); HTML by default. */
+  language?: EditorLanguage;
+  sourceLabel?: string;
 }
 
 export function formatWhen(iso: string | null): string | null {
@@ -41,6 +44,8 @@ export function ConflictView({
   onCopyDraft,
   onLoadLatest,
   onSaveOnTop,
+  language = "html",
+  sourceLabel = "HTML",
 }: ConflictViewProps) {
   const [confirming, setConfirming] = useState(false);
   const [reviewed, setReviewed] = useState(false);
@@ -93,9 +98,10 @@ export function ConflictView({
         <CodeDiff
           original={conflict.currentHtml}
           modified={draft}
-          originalLabel={`v${current}, published (read only)`}
-          modifiedLabel={`Your draft, based on v${base} (read only)`}
+          originalLabel={`${sourceLabel} of v${current}, published (read only)`}
+          modifiedLabel={`Your ${sourceLabel} draft, based on v${base} (read only)`}
           path={`inmemory://plinth/${artifactId}/conflict-v${current}`}
+          language={language}
         />
       </div>
       {same && (

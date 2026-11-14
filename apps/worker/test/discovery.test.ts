@@ -264,6 +264,22 @@ describe("GET /a/<slug>/source", () => {
     }
   });
 
+  it("serves a doc's Markdown, and the note calls it Markdown source", async () => {
+    const a = await agent();
+    const { body: p } = await publish(a.auth, {
+      html: undefined,
+      type: "doc",
+      content: "# Notes\n\nPlain <b>text</b>.",
+    });
+    const res = await run(`/a/${p.slug}/source`);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toBe("text/plain; charset=utf-8");
+    expect(await res.text()).toBe("# Notes\n\nPlain <b>text</b>.");
+    const html = await (await run(`/a/${p.slug}`)).text();
+    expect(html).toContain(`title="Markdown source"`);
+    expect(note(html)).toContain("Markdown source as plain text");
+  });
+
   it("serves earlier versions with ?version and 404s on a bad one", async () => {
     const a = await agent();
     const { body: p } = await publish(a.auth, { html: "<p>one</p>" });

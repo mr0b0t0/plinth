@@ -98,7 +98,7 @@ Metadata lives in D1 (SQLite). Artifact files live in R2 under `artifacts/<artif
 | --- | --- | --- |
 | `users` | id, email, name, auth provider, created_at | One row per person who signs in |
 | `agent_connections` | id, user_id, label, client type, token hash, last_used_at | One per connected agent, e.g. "Work Claude". Revocable individually |
-| `artifacts` | id, owner_id, slug, title, current_version, visibility, password hash, created_at | `visibility` is public, unlisted, password or allowlist |
+| `artifacts` | id, owner_id, slug, title, type, current_version, visibility, password hash, created_at | `visibility` is public, unlisted, password or allowlist. `type` is `html` (a hand-written `index.html`) or `doc` (Markdown in `content.md`), fixed at publish |
 | `versions` | id, artifact_id, number, R2 key, size, created_by (user or agent), note, created_at | Immutable. A restore creates a new row |
 | `access_grants` | artifact_id, email, role | Role is viewer, commenter or editor. Used for allowlists and collaborators |
 | `comments` | id, artifact_id, version, parent_id, author, body, mentions, status | Threaded. `status` is open or resolved |
@@ -138,9 +138,9 @@ One remote MCP server over streamable HTTP at `/mcp`. All tools act as the conne
 
 | Tool | Purpose |
 | --- | --- |
-| `publish_artifact(title, html, assets?, visibility?)` | Create an artifact. Returns its id and URL. Private by default (`allowlist` with nobody added) |
-| `update_artifact(id, html, assets?, note?)` | Publish a new version of an existing artifact |
-| `get_artifact(id, version?)` | Read metadata and HTML, so an agent can edit from the current state |
+| `publish_artifact(title, html \| type+content, assets?, visibility?)` | Create an artifact. Returns its id and URL. Private by default (`allowlist` with nobody added). `type: "doc"` with Markdown in `content` makes a document |
+| `update_artifact(id, html \| content, assets?, note?)` | Publish a new version of an existing artifact, in the source field its type takes |
+| `get_artifact(id, version?)` | Read metadata, `type` and the source (`html` for a page, `content` for a doc, and `source_path`), so an agent can edit from the current state |
 | `list_artifacts(query?)` | List the user's artifacts |
 | `list_versions(id)` | Version history with notes and authors |
 | `restore_version(id, version)` | Make an old version current by publishing it as a new one |
@@ -171,7 +171,7 @@ client install commands, `/llms.txt`, the docs and the repository. On `/a/...` a
 pages, access is decided by the policy module for an anonymous viewer, ignoring cookies: when an
 anonymous viewer could open the artifact (unlisted, or public), the note and the page title give
 its title (marked as untrusted text), its current version and a link to `GET /a/<slug>/source`,
-which returns the main HTML document as sandboxed `text/plain` (`?version=<n>`, rate-limited per
+which returns the main HTML document (a doc's Markdown) as sandboxed `text/plain` (`?version=<n>`, rate-limited per
 IP, `no-store`). Private, password, deleted, taken-down and missing artifacts get one generic note
 and `404` from the source endpoint, identical in every case. `/a/...` pages send
 `X-Robots-Tag: noindex, nofollow` except a public artifact on an instance with public visibility
@@ -182,8 +182,22 @@ other `/.well-known/` paths and missing files answer `404` instead of the SPA. G
 `docs/agents.md#agent-discovery`; design:
 `docs/superpowers/specs/2026-11-14-agent-discovery-design.md`.
 
-A plain REST API mirrors these tools for scripts and CI. Size limits for v1: 5 MB of HTML and 25 MB
-in total per version.
+A plain REST API mirrors these tools for scripts and CI. Size limits for v1: 5 MB of HTML (1 MB of
+Markdown for a doc) and 25 MB in total per version.
+
+**Typed outputs (decided 2026-11-14).** The first type is `doc`: an agent sends Markdown in
+`content` and Plinth renders it as a finished page (reading typography, heading anchors, tables,
+code, images from the artifact's own files, light and dark, phone width, a print stylesheet for
+Print to PDF). A doc version stores `content.md` and its images. Its page is a fixed Plinth shell
+that embeds the Markdown as escaped JSON and loads Plinth's renderer from the artifact's own origin
+under `/__plinth/types/doc/`, in every isolation mode; no per-artifact server code, and the CDN
+allowlist is unchanged. Raw HTML in the Markdown shows as text, links pass an allowlist and open in
+a new tab, and the shell's CSP (header and a meta copy, so the editor preview gets it too) allows
+only `script-src 'self'`; a doc's other files run no script. The type is fixed at publish
+(`artifacts.type`, default `html`); versions, `base_version` conflicts and restore work as for HTML.
+The editor edits the Markdown with a live preview and history diffs `content.md`. Decks and sheets
+join the same type registry (`packages/shared/src/artifactTypes.ts`) later; no .docx or .pptx
+export yet. Design: `docs/superpowers/specs/2026-11-14-typed-outputs-doc-design.md`.
 
 ## Features
 
@@ -334,8 +348,8 @@ for a single user.
 7. **Open-source launch.** Deploy button, setup script, docs, license, contribution guide.
 8. **Hosted public instance.** Public visibility, report and takedown flow, terms and privacy
    pages.
-9. **Later.** Typed outputs (docs, sheets, decks), push agents with bring-your-own key, team
-   workspaces, paid plans, visual editing, custom domains.
+9. **Later.** Typed outputs: docs done (2026-11-14); sheets and decks later. Push agents with
+   bring-your-own key, team workspaces, paid plans, visual editing, custom domains.
 
 ## Decisions
 
@@ -346,7 +360,7 @@ for a single user.
 | Sign-in | Email magic link only for now. Email goes through a small adapter chosen by an environment variable, with SendGrid and Resend both supported. The hosted instance uses Aconite's existing SendGrid account |
 | Quota | 100 artifacts per account by default. Set by an environment variable, with a per-account override |
 | What an artifact may load | Same rules as Claude's artifact platform. Scripts inline or from an allowlist of public CDNs (cdnjs, jsDelivr, unpkg, Tailwind, jQuery, Plotly). Styles inline or Google Fonts. Images from the artifact's own files or data URIs. `fetch`, XHR and WebSocket calls to other hosts are blocked. The page runs in a sandboxed frame |
-| Typed outputs | In scope, modelled as on Claude: a type is a renderer page plus a content format, and an artifact made from a type stores content files instead of hand-written HTML. Plain HTML ships first; docs, sheets and decks follow as types |
+| Typed outputs | In scope, modelled as on Claude: a type is a renderer page plus a content format, and an artifact made from a type stores content files instead of hand-written HTML. Plain HTML ships first; docs, sheets and decks follow as types. Docs shipped 2026-11-14 (Markdown in `content.md`, rendered by a fixed Plinth renderer on the artifact's origin); sheets and decks next |
 
 The CDN allowlist is a configuration value, so a self-hoster can tighten or extend it.
 

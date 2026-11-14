@@ -1,7 +1,9 @@
-// R2 layout: artifacts/<artifact_id>/v<n>/index.html plus asset paths. A version's prefix is
-// written once and never changed (versions are immutable).
-import { type AssetInput, LIMITS } from "@plinth/shared";
+// R2 layout: artifacts/<artifact_id>/v<n>/<source> plus asset paths, where <source> is the type's
+// source file (index.html for an html page, content.md for a doc; packages/shared/src/
+// artifactTypes.ts). A version's prefix is written once and never changed (versions are immutable).
+import { type ArtifactTypeDef, type AssetInput, LIMITS } from "@plinth/shared";
 import { ApiError } from "../lib/errors.ts";
+import { checkAsset } from "./artifactTypes.ts";
 
 export interface FileEntry {
   path: string;
@@ -68,24 +70,39 @@ function decodeBase64(s: string): Uint8Array {
   return out;
 }
 
-/** Validate and encode the files of one version. Enforces the per-version size limits. */
-export function prepareFiles(html: string, assets: AssetInput[] | undefined): FileEntry[] {
-  const htmlBytes = utf8.encode(html);
-  if (htmlBytes.byteLength > LIMITS.maxHtmlBytes) {
+/**
+ * Validate and encode the files of one version: the type's source file at def.sourcePath, then the
+ * assets. Enforces the source and per-version size limits and the type's asset rules.
+ */
+export function prepareFiles(
+  def: ArtifactTypeDef,
+  source: string,
+  assets: AssetInput[] | undefined,
+): FileEntry[] {
+  const sourceBytes = utf8.encode(source);
+  if (sourceBytes.byteLength > def.maxSourceBytes) {
     throw new ApiError(
       "payload_too_large",
-      `HTML is over ${LIMITS.maxHtmlBytes / 1024 / 1024} MB`,
+      `${def.sourceLabel} is over ${def.maxSourceBytes / 1024 / 1024} MB`,
       {
-        limit_bytes: LIMITS.maxHtmlBytes,
-        size_bytes: htmlBytes.byteLength,
+        limit_bytes: def.maxSourceBytes,
+        size_bytes: sourceBytes.byteLength,
       },
     );
   }
   const files: FileEntry[] = [
-    { path: "index.html", bytes: htmlBytes, contentType: contentTypeFor("index.html") },
+    { path: def.sourcePath, bytes: sourceBytes, contentType: def.contentType },
   ];
-  const seen = new Set(["index.html"]);
+  const seen = new Set([def.sourcePath]);
   for (const a of assets ?? []) {
+    const byExt = contentTypeFor(a.path);
+    const contentType =
+      byExt === "application/octet-stream" &&
+      a.content_type &&
+      /^[\w.+-]+\/[\w.+-]+$/.test(a.content_type)
+        ? a.content_type
+        : byExt;
+    checkAsset(def, a.path, contentType);
     if (seen.has(a.path)) throw new ApiError("invalid_input", `Duplicate asset path: ${a.path}`);
     seen.add(a.path);
     let bytes: Uint8Array;
@@ -94,13 +111,6 @@ export function prepareFiles(html: string, assets: AssetInput[] | undefined): Fi
     } catch {
       throw new ApiError("invalid_input", `Asset ${a.path} is not valid base64`);
     }
-    const byExt = contentTypeFor(a.path);
-    const contentType =
-      byExt === "application/octet-stream" &&
-      a.content_type &&
-      /^[\w.+-]+\/[\w.+-]+$/.test(a.content_type)
-        ? a.content_type
-        : byExt;
     files.push({ path: a.path, bytes, contentType });
   }
   checkTotal(files);

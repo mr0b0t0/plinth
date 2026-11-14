@@ -4,6 +4,9 @@ import { ensureCsrfCookie } from "../api/context.ts";
 import { renderShell } from "./discovery.ts";
 import { applyAppHeaders } from "./headers.ts";
 
+/** Where the web build puts typed-artifact renderers; they are served only on content hosts. */
+const RENDERERS_PREFIX = "/__plinth-renderers/";
+
 /**
  * A path that names a file (its last segment has an extension). The assets binding answers a
  * missing file with the SPA's index.html; for these paths that would be a 200 page standing in for
@@ -26,6 +29,10 @@ export async function serveSpa(c: AppContext): Promise<Response> {
   const path = url.pathname;
   // Only the OAuth metadata and the MCP discovery documents (routed before this) are well-known.
   if (path.startsWith("/.well-known/")) return notFoundText(c);
+  // Renderer bundles run only on an artifact's content origin (/__plinth/types/<id>/), never here.
+  if (path.startsWith(RENDERERS_PREFIX) || path === RENDERERS_PREFIX.slice(0, -1)) {
+    return notFoundText(c);
+  }
 
   if (isFilePath(path)) {
     const res = await c.env.ASSETS.fetch(c.req.raw);

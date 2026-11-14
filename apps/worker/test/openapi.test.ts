@@ -120,7 +120,10 @@ describe("OpenAPI document", () => {
   it("generates request bodies from the shared zod schemas", () => {
     const publish = doc.components.schemas.PublishArtifactInput;
     expect(publish.type).toBe("object");
-    expect(publish.required.sort()).toEqual(["html", "title"]);
+    // html is required for type html only (the Worker's resolveSource), so only title is.
+    expect(publish.required.sort()).toEqual(["title"]);
+    expect(publish.properties.type.enum).toEqual(["html", "doc"]);
+    expect(publish.properties.content.type).toBe("string");
     expect(publish.properties.visibility.enum).toEqual([
       "public",
       "unlisted",
@@ -130,6 +133,45 @@ describe("OpenAPI document", () => {
     const update = doc.components.schemas.UpdateArtifactInput;
     expect(update.properties.id).toBeUndefined();
     expect(update.properties.base_version.type).toBe("integer");
+    expect(update.properties.type).toBeUndefined();
+    expect(update.properties.content.type).toBe("string");
+  });
+
+  it("describes ArtifactDetail per type, with html required for an HTML page", () => {
+    const schemas = doc.components.schemas;
+    const detail = schemas.ArtifactDetail;
+    expect(detail.oneOf).toEqual([
+      { $ref: "#/components/schemas/HtmlArtifactDetail" },
+      { $ref: "#/components/schemas/DocArtifactDetail" },
+    ]);
+    expect(detail.discriminator).toEqual({
+      propertyName: "type",
+      mapping: {
+        html: "#/components/schemas/HtmlArtifactDetail",
+        doc: "#/components/schemas/DocArtifactDetail",
+      },
+    });
+    const page = schemas.HtmlArtifactDetail;
+    // Existing clients keep a required html field, as before typed artifacts.
+    expect(page.required).toContain("html");
+    expect(page.required).toContain("type");
+    expect(page.required).toContain("source_path");
+    expect(page.properties.type.enum).toEqual(["html"]);
+    expect(page.properties.source_path.enum).toEqual(["index.html"]);
+    expect(page.properties.content).toBeUndefined();
+    expect(page.properties.html.description).toMatch(/UNTRUSTED/);
+    const d = schemas.DocArtifactDetail;
+    expect(d.required).toContain("content");
+    expect(d.properties.type.enum).toEqual(["doc"]);
+    expect(d.properties.source_path.enum).toEqual(["content.md"]);
+    expect(d.properties.html).toBeUndefined();
+    expect(d.properties.content.description).toMatch(/UNTRUSTED Markdown/);
+    // Apart from the source field, both carry the same properties.
+    const rest = (o: Json, f: string) => Object.keys(o.properties).filter((k) => k !== f);
+    expect(rest(page, "html")).toEqual(rest(d, "content"));
+    expect([...page.required].filter((k: string) => k !== "html")).toEqual(
+      [...d.required].filter((k: string) => k !== "content"),
+    );
   });
 
   it("resolves every $ref", () => {

@@ -2,7 +2,7 @@
 // kept, then the workspace (Monaco and the live preview), which is a separate lazy chunk so nothing
 // of Monaco loads for people who cannot edit or whose screen is too narrow.
 import { ArrowLeftIcon, ClockCounterClockwiseIcon, EyeIcon } from "@phosphor-icons/react";
-import { API, APP_ROUTES, type ArtifactDetail, route } from "@plinth/shared";
+import { API, APP_ROUTES, type ArtifactDetail, route, sourceOf } from "@plinth/shared";
 import { lazy, Suspense, useEffect, useState } from "react";
 import { type EditorInitial, initialState } from "../components/editor/initial.ts";
 import {
@@ -35,7 +35,7 @@ async function load(slug: string): Promise<Load> {
     if (!canEdit(artifact)) return { kind: "forbidden", artifact };
     const initial = await initialState(artifact, async (n) => {
       const old = await api<ArtifactDetail>(route(API.version, { ref: artifact.id, n }));
-      return old.html;
+      return sourceOf(old).text;
     });
     return { kind: "ready", artifact, initial };
   } catch (e) {

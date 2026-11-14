@@ -10,6 +10,7 @@ const gate = (current: number, version: number, enter = `e${current}`): OkGate =
     id: "a1",
     slug: "s",
     title: "T",
+    type: "html",
     current_version: current,
     version,
     visibility: "unlisted",

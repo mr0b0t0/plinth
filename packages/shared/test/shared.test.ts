@@ -33,10 +33,13 @@ describe("schemas", () => {
     );
   });
   it("rejects unsafe asset paths", () => {
-    for (const path of ["../a", "/a", "__plinth/x", "a/./b", "a//b/../c", "index.html"]) {
+    for (const path of ["../a", "/a", "__plinth/x", "a/./b", "a//b/../c"]) {
       expect(assetInputSchema.safeParse({ path, content: "" }).success, path).toBe(false);
     }
     expect(assetInputSchema.safeParse({ path: "img/a-1_b.png", content: "" }).success).toBe(true);
+    // Reserved paths depend on the artifact's type: the Worker refuses them (checkAsset, tested in
+    // apps/worker/test/typed-docs.test.ts), not the schema.
+    expect(assetInputSchema.safeParse({ path: "index.html", content: "" }).success).toBe(true);
   });
   it("fills route params", () => {
     expect(route("/a/:slug/v/:n", { slug: "x y", n: 3 })).toBe("/a/x%20y/v/3");
