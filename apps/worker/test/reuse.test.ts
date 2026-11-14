@@ -325,6 +325,24 @@ describe("the stager (as the bundle path uses it)", () => {
     expect(await (await serve(p.id, "/")).text()).toContain("Built");
   });
 
+  it("parses a bundled page's capabilities, as the inline path does", async () => {
+    const { a, p } = await seed();
+    const ctx = serviceCtxFor(agentPrincipal(a));
+    const target = await updateTarget(ctx, p.id, { baseVersion: 1 });
+    const stager = await openStager(ctx, target);
+    await stager.add(
+      "site/index.html",
+      new TextEncoder().encode(
+        '<!doctype html><meta name="plinth-capabilities" content="data viewer"><title>Poll</title>',
+      ),
+    );
+    await stager.add("site/app.js", new TextEncoder().encode("1"));
+    const r = await commitStaged(ctx, target, await stager.finish({ stripPrefix: "site/" }));
+    const caps = (await versionRow(p.id, r.version))?.capabilities;
+    expect(caps).not.toBeNull();
+    expect(JSON.parse(caps ?? "{}")).toMatchObject({ data: true, viewer: true });
+  });
+
   it("refuses an upload with no source file at its top, and leaves nothing behind", async () => {
     const { a, p } = await seed();
     const ctx = serviceCtxFor(agentPrincipal(a));
