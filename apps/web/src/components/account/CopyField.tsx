@@ -1,4 +1,5 @@
-// A read-only, monospace value with a copy button: MCP URL, share link, a new token.
+// A read-only, monospace value with a copy button: MCP URL, share link, a new token. CopyBlock is
+// the same for multi-line text such as shell commands and config files.
 import { CheckIcon, CopyIcon } from "@phosphor-icons/react";
 import { type ReactNode, useEffect, useState } from "react";
 import { Field, IconButton, Tooltip, useToast } from "../ui/index.ts";
@@ -18,16 +19,8 @@ export interface CopyFieldProps {
   className?: string;
 }
 
-export function CopyField({
-  label,
-  value,
-  hint,
-  hideLabel,
-  copyLabel = "Copy",
-  copiedMessage = "Copied",
-  multiline = false,
-  className,
-}: CopyFieldProps) {
+/** Copy `value` on demand, with a toast and a check mark for two seconds. */
+function useCopy(value: string, copiedMessage: string): { copied: boolean; onCopy: () => void } {
   const toast = useToast();
   const [copied, setCopied] = useState(false);
   useEffect(() => {
@@ -44,6 +37,20 @@ export function CopyField({
       toast.error("Could not copy", "Select the text and copy it by hand.");
     }
   };
+  return { copied, onCopy: () => void onCopy() };
+}
+
+export function CopyField({
+  label,
+  value,
+  hint,
+  hideLabel,
+  copyLabel = "Copy",
+  copiedMessage = "Copied",
+  multiline = false,
+  className,
+}: CopyFieldProps) {
+  const { copied, onCopy } = useCopy(value, copiedMessage);
 
   return (
     <Field label={label} hint={hint} hideLabel={hideLabel} className={className}>
@@ -80,5 +87,37 @@ export function CopyField({
         </div>
       )}
     </Field>
+  );
+}
+
+export interface CopyBlockProps {
+  /** Visible caption above the block, e.g. "Run in a terminal". */
+  label: ReactNode;
+  value: string;
+  /** Accessible name of the button, e.g. "Copy commands". */
+  copyLabel: string;
+  copiedMessage?: string;
+}
+
+/** Preformatted text (commands, JSON) with a copy button. Wraps instead of scrolling. */
+export function CopyBlock({ label, value, copyLabel, copiedMessage = "Copied" }: CopyBlockProps) {
+  const { copied, onCopy } = useCopy(value, copiedMessage);
+  return (
+    <figure className="pl-acct-block">
+      <figcaption className="pl-acct-block__label">{label}</figcaption>
+      <div className="pl-acct-copy">
+        <pre className="pl-acct-block__code">
+          <code>{value}</code>
+        </pre>
+        <Tooltip content={copyLabel}>
+          <IconButton
+            icon={copied ? CheckIcon : CopyIcon}
+            label={copyLabel}
+            variant="secondary"
+            onClick={onCopy}
+          />
+        </Tooltip>
+      </div>
+    </figure>
   );
 }

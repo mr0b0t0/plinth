@@ -6,20 +6,27 @@ agent.
 - **URL:** `https://<APP_HOST>/mcp`. Hosted instance: `https://plinth.aconite.io/mcp`. Local:
   `http://app.localhost:8787/mcp`.
 - **Auth:** OAuth 2.1 with PKCE and dynamic client registration (RFC 7591), discovered through
-  `/.well-known/oauth-protected-resource/mcp` and `/.well-known/oauth-authorization-server`. On
-  first use your browser opens Plinth's consent page, where you name the connection (for example
-  "Work Claude"). Clients without OAuth send a **personal access token** instead:
-  `Authorization: Bearer plinth_pat_...`, created on the Connections page and shown once.
-  In single-user mode, `ADMIN_TOKEN` works the same way.
+  `/.well-known/oauth-protected-resource/mcp` and `/.well-known/oauth-authorization-server`. Every
+  client below signs in this way: it opens Plinth in your browser and you click **Allow**. There is
+  no token to copy.
 - **Scopes:** `artifacts:read`, `artifacts:write`, `mentions`. A connection gets all three unless
   you narrow them.
+
+The quickest way is the **Connect an agent** panel on the Connections page. It has a tab per client
+with the commands and install links already filled in with your instance's URL, and it notices the
+new connection by itself, so you see "Claude Code is connected" and a first prompt to try.
+
+The consent page names the connection after the client (for example "Claude Code"; "Claude Code 2"
+if you already have one by that name) and guesses its type, so it is one click. **Change name**
+on that page edits both before you allow. The client's name is its own claim; check the "you return
+to" host on the same page.
 
 Each connection appears on the Connections page with its label and last-used time and can be
 revoked on its own. Every tool also exists as a REST endpoint under `/api/v1`, with the same auth
 ([openapi.json](openapi.json)).
 
 Client screens and flags change often. The steps below were checked against each product's
-documentation as of 2026-11.
+documentation as of 2026-11 (sources listed with each client).
 
 ## Claude (claude.ai and Claude Desktop)
 
@@ -27,60 +34,103 @@ Custom connectors are available on all plans (the Free plan allows one). Claude 
 Anthropic's cloud, so this needs a publicly reachable instance; a local `app.localhost` instance
 will not work here (use Claude Code below).
 
-1. Open **Customize > Connectors**, click **+ Add**, then **Add custom connector**.
+1. Open **Customize > Connectors** (<https://claude.ai/customize/connectors>), click **+ Add**, then
+   **Add custom connector**.
 2. Name: `Plinth`. Remote MCP server URL: `https://plinth.aconite.io/mcp`. Click **Continue**.
-3. Authentication: sign in with OAuth. If Claude asks which OAuth client to use, choose automatic
-   registration (Plinth supports dynamic client registration).
-4. Click **Add**, then **Connect**. Plinth's consent page opens: sign in if needed, label the
-   connection (e.g. "Personal Claude"), and approve.
+3. If Claude asks which OAuth client to use, choose **Register automatically** (Plinth supports
+   dynamic client registration). Click **Add**.
+4. Click **Connect**. Plinth's consent page opens: sign in if needed and click **Allow**.
 
 On Team and Enterprise plans an owner adds the connector once under **Organization settings >
 Connectors** (**Add > Custom > Web**); members then click **Connect**. Each member still approves
 Plinth's consent screen with their own Plinth account.
 
 To change the URL later, remove the connector and add it again.
+Source: [Get started with custom connectors](https://support.claude.com/en/articles/11175166-get-started-with-custom-connectors-using-remote-mcp).
+
+## ChatGPT
+
+ChatGPT adds custom MCP servers as plugins. Like Claude, it connects from its own servers, so it
+needs a publicly reachable instance. Whether you can add one depends on your plan and workspace
+settings.
+
+1. Open <https://chatgpt.com/plugins>, click **+** and choose **Add custom MCP server**.
+2. Name it `Plinth`. Under **Connection**, enter the server URL `https://plinth.aconite.io/mcp`.
+3. Choose **OAuth** for authentication, read the warning, click **I understand and want to
+   continue**, then **Create as a plugin**.
+4. Connect the plugin. Plinth's consent page opens: click **Allow**.
+
+Source: [Connect from ChatGPT](https://developers.openai.com/plugins/deploy/connect-chatgpt).
 
 ## Claude Code
 
 ```sh
-# OAuth (recommended): add the server, then run /mcp in a session to sign in
-claude mcp add --transport http plinth https://plinth.aconite.io/mcp
-
-# Personal access token instead of OAuth
-claude mcp add --transport http plinth https://plinth.aconite.io/mcp \
-  --header "Authorization: Bearer $PLINTH_TOKEN"
-
-# Local development instance (token from `pnpm seed`)
-claude mcp add --transport http plinth-local http://app.localhost:8787/mcp \
-  --header "Authorization: Bearer $PLINTH_TOKEN"
+claude mcp add --transport http --scope user plinth https://plinth.aconite.io/mcp
+claude mcp login plinth
 ```
 
-`--scope user` makes the server available in every project; the default is the current project
-only. With a fixed `Authorization` header Claude Code does not fall back to OAuth.
+`claude mcp login` opens Plinth in your browser; click **Allow**. Instead of the second command you
+can run `/mcp` inside Claude Code, choose `plinth` and sign in. `--scope user` makes the server
+available in every project; leave it out to add it to the current project only.
+Source: [Claude Code MCP docs](https://code.claude.com/docs/en/mcp).
 
 ## Codex
 
-Codex reads MCP servers from `~/.codex/config.toml`. With OAuth:
+```sh
+codex mcp add plinth --url https://plinth.aconite.io/mcp
+codex mcp login plinth
+```
+
+`codex mcp login` opens Plinth in your browser; click **Allow**. The first command writes this to
+`~/.codex/config.toml`:
 
 ```toml
 [mcp_servers.plinth]
 url = "https://plinth.aconite.io/mcp"
 ```
 
-then run `codex mcp login plinth` once to complete the consent flow in your browser. The same
-entry can be created with `codex mcp add plinth --url https://plinth.aconite.io/mcp`.
+Source: [Codex MCP docs](https://learn.chatgpt.com/docs/extend/mcp?surface=cli).
 
-With a personal access token, name an environment variable that holds it (the variable name goes
-in the file, never the token):
+## Cursor
 
-```toml
-[mcp_servers.plinth]
-url = "https://plinth.aconite.io/mcp"
-bearer_token_env_var = "PLINTH_TOKEN"
+The **Add to Cursor** button on the Connections page is Cursor's MCP install deeplink:
+
+```
+cursor://anysphere.cursor-deeplink/mcp/install?name=plinth&config=<base64 of {"url":"https://plinth.aconite.io/mcp"}>
 ```
 
-or `codex mcp add plinth --url https://plinth.aconite.io/mcp --bearer-token-env-var PLINTH_TOKEN`.
-Export `PLINTH_TOKEN` in the shell that starts Codex.
+Cursor asks to install the server; then sign in to it from Cursor's MCP settings and click
+**Allow** in Plinth. To set it up by hand, add this to `~/.cursor/mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "plinth": { "url": "https://plinth.aconite.io/mcp" }
+  }
+}
+```
+
+Sources: [MCP install links](https://cursor.com/docs/context/mcp/install-links),
+[Cursor MCP](https://cursor.com/docs/context/mcp).
+
+## VS Code
+
+The **Add to VS Code** button is VS Code's MCP install link, `vscode:mcp/install?` followed by the
+URL-encoded JSON `{"name":"plinth","type":"http","url":"https://plinth.aconite.io/mcp"}`, wrapped
+in `https://vscode.dev/redirect?url=...` as VS Code's docs recommend for web pages. VS Code shows
+the server; click **Install**, and when it asks to sign in to `plinth`, allow it and click
+**Allow** in Plinth. By hand, in `.vscode/mcp.json` or your user configuration:
+
+```json
+{
+  "servers": {
+    "plinth": { "type": "http", "url": "https://plinth.aconite.io/mcp" }
+  }
+}
+```
+
+Sources: [MCP developer guide](https://code.visualstudio.com/api/extension-guides/ai/mcp),
+[MCP configuration](https://code.visualstudio.com/docs/agents/reference/mcp-configuration).
 
 ## Any other MCP client
 
@@ -92,7 +142,27 @@ HTTP/1.1 401 Unauthorized
 WWW-Authenticate: Bearer resource_metadata="https://plinth.aconite.io/.well-known/oauth-protected-resource/mcp"
 ```
 
-Otherwise send a personal access token as a bearer header.
+## Advanced: personal access tokens (scripts and CI)
+
+For scripts, CI and clients that cannot do OAuth. Create one on the Connections page under
+**Advanced: personal access tokens for scripts and CI**; it is shown once. Send it as
+`Authorization: Bearer plinth_pat_...`. In single-user mode, `ADMIN_TOKEN` works the same way.
+
+```sh
+# Claude Code with a token (it then does not fall back to OAuth)
+claude mcp add --transport http plinth https://plinth.aconite.io/mcp \
+  --header "Authorization: Bearer $PLINTH_TOKEN"
+
+# Local development instance, with the token `pnpm seed` prints
+claude mcp add --transport http plinth-local http://app.localhost:8787/mcp \
+  --header "Authorization: Bearer $PLINTH_TOKEN"
+
+# Codex: name the environment variable that holds the token (never the token itself)
+codex mcp add plinth --url https://plinth.aconite.io/mcp --bearer-token-env-var PLINTH_TOKEN
+```
+
+For Codex the last command writes `bearer_token_env_var = "PLINTH_TOKEN"` under
+`[mcp_servers.plinth]`; export `PLINTH_TOKEN` in the shell that starts Codex.
 
 ## Tools
 

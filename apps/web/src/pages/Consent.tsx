@@ -1,6 +1,8 @@
 // Page: /oauth/consent?request=<id>. An MCP client asked to act for the signed-in person. Shows
 // who is asking (the name is the client's own claim), where the browser will return (the part a
-// person can check), and what it may do; the person names the connection and allows or denies.
+// person can check), and what it may do, with one Allow button. The connection is named after the
+// client ("Claude Code", or "Claude Code 2" when that name is taken); "Change name" edits the name
+// and client type before allowing.
 // The answer is POSTed with fetch and the browser then goes to `redirect_to` with location.href:
 // the app CSP's form-action 'self' would block a form redirect to another origin.
 import { ArrowRightIcon, CheckIcon, WarningIcon } from "@phosphor-icons/react";
@@ -9,14 +11,21 @@ import {
   APP_ROUTES,
   CLIENT_TYPES,
   type ClientType,
+  type ConnectionInfo,
   LIMITS,
   type OAuthConsentResult,
   type OAuthRequestInfo,
+  type Paged,
   route,
 } from "@plinth/shared";
-import { type FormEvent, useEffect, useState } from "react";
+import { type FormEvent, useEffect, useId, useState } from "react";
 import "../components/account/account.css";
-import { CLIENT_TYPE_LABEL, guessClientType, SCOPE_META } from "../components/account/format.ts";
+import {
+  CLIENT_TYPE_LABEL,
+  defaultConnectionLabel,
+  guessClientType,
+  SCOPE_META,
+} from "../components/account/format.ts";
 import { useDocumentTitle, useSignInRedirect } from "../components/account/hooks.tsx";
 import { Note } from "../components/account/Note.tsx";
 import { LogoMark } from "../components/Logo.tsx";
@@ -52,8 +61,10 @@ export default function Consent() {
   const requestId = search.get("request") ?? "";
   const [state, setState] = useState<State>({ status: "loading" });
   const [label, setLabel] = useState("");
+  const [defaultLabel, setDefaultLabel] = useState("Agent");
   const [clientType, setClientType] = useState<ClientType>("other");
-  const [labelError, setLabelError] = useState<string | null>(null);
+  const [editing, setEditing] = useState(false);
+  const editId = useId();
   const [submitting, setSubmitting] = useState<"allow" | "deny" | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
 
@@ -64,12 +75,20 @@ export default function Consent() {
       return;
     }
     const ctrl = new AbortController();
-    api<OAuthRequestInfo>(route(API.oauthRequest, { id: requestId }), { signal: ctrl.signal })
-      .then((req) => {
+    // The existing labels only make the default name distinct; without them it is still usable.
+    const labels = api<Paged<ConnectionInfo>>(API.connections, { signal: ctrl.signal })
+      .then((res) => res.items.filter((c) => !c.revoked_at).map((c) => c.label))
+      .catch(() => [] as string[]);
+    Promise.all([
+      api<OAuthRequestInfo>(route(API.oauthRequest, { id: requestId }), { signal: ctrl.signal }),
+      labels,
+    ])
+      .then(([req, taken]) => {
+        const name = defaultConnectionLabel(req.client_name, taken, LIMITS.maxLabelLength);
+        setDefaultLabel(name);
+        setLabel(name);
+        setClientType(guessClientType(req.client_name));
         setState({ status: "ready", req });
-        const name = (req.client_name ?? "").trim();
-        setLabel(name ? name.slice(0, LIMITS.maxLabelLength) : "Agent");
-        setClientType(guessClientType(name));
       })
       .catch((e: unknown) => {
         if (ctrl.signal.aborted) return;
@@ -88,11 +107,7 @@ export default function Consent() {
 
   const decide = async (approve: boolean) => {
     if (state.status !== "ready" || submitting) return;
-    const name = label.trim();
-    if (approve && !name) {
-      setLabelError("Name this connection.");
-      return;
-    }
+    const name = label.trim() || defaultLabel;
     setSubmitting(approve ? "allow" : "deny");
     setSubmitError(null);
     try {
@@ -100,7 +115,7 @@ export default function Consent() {
         method: "POST",
         body: {
           request_id: state.req.id,
-          label: name || "Agent",
+          label: name,
           client_type: clientType,
           approve,
         },
@@ -206,27 +221,48 @@ export default function Consent() {
                 </ul>
               </div>
 
-              <div className="pl-acct-form">
-                <Input
-                  label="Name this connection"
-                  hint="Shown on your Connections page and next to what it publishes. Collaborators can mention it by this name."
-                  value={label}
-                  maxLength={LIMITS.maxLabelLength}
-                  error={labelError ?? undefined}
-                  onChange={(e) => {
-                    setLabel(e.target.value);
-                    setLabelError(null);
-                  }}
-                  autoComplete="off"
-                />
-                <Select
-                  label="Client"
-                  value={clientType}
-                  onChange={(e) => setClientType(e.target.value as ClientType)}
-                  options={CLIENT_TYPES.map((t) => ({ value: t, label: CLIENT_TYPE_LABEL[t] }))}
-                  hint="Mentions of @claude or @codex in comments go to connections of that kind."
-                />
+              <div className="pl-acct-consent__name">
+                <p>
+                  <span className="pl-acct-consent__dest-label">Saved as</span>{" "}
+                  <strong className="pl-acct-consent__label">{label.trim() || defaultLabel}</strong>
+                  <span className="text-muted">
+                    {" "}
+                    ·{" "}
+                    {clientType === "other"
+                      ? "Other client"
+                      : `${CLIENT_TYPE_LABEL[clientType]} client`}
+                  </span>
+                </p>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  aria-expanded={editing}
+                  aria-controls={editId}
+                  onClick={() => setEditing((v) => !v)}
+                >
+                  Change name
+                </Button>
               </div>
+              {editing && (
+                <div id={editId} className="pl-acct-form">
+                  <Input
+                    label="Name this connection"
+                    hint="Shown on your Connections page and next to what it publishes. Collaborators can mention it by this name."
+                    value={label}
+                    maxLength={LIMITS.maxLabelLength}
+                    placeholder={defaultLabel}
+                    onChange={(e) => setLabel(e.target.value)}
+                    autoComplete="off"
+                  />
+                  <Select
+                    label="Client"
+                    value={clientType}
+                    onChange={(e) => setClientType(e.target.value as ClientType)}
+                    options={CLIENT_TYPES.map((t) => ({ value: t, label: CLIENT_TYPE_LABEL[t] }))}
+                    hint="Mentions of @claude or @codex in comments go to connections of that kind."
+                  />
+                </div>
+              )}
 
               <Note tone="warning">
                 Only allow agents you started yourself. You can revoke this connection at any time

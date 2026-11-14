@@ -45,8 +45,10 @@ pnpm seed                        # in a second terminal: demo user, samples, a t
 ```
 
 Open http://app.localhost:8787 and sign in as `demo@plinth.local`. Locally the sign-in code is
-printed in the `wrangler dev` log. To connect an agent, use the token the seed script prints and
-the MCP URL `http://app.localhost:8787/mcp` (see [docs/mcp.md](docs/mcp.md)).
+printed in the `wrangler dev` log. To connect an agent, open **Connections > Connect an agent**
+and follow the tab for your client; it signs in with OAuth, no token needed. Claude and ChatGPT
+connect from their own servers and cannot reach a local instance; use Claude Code, Codex, Cursor or
+VS Code. The token `pnpm seed` prints is for scripts and CI (see [docs/mcp.md](docs/mcp.md)).
 
 Artifacts are served from `<artifact_id>.content.localhost:8787`. Browsers resolve `*.localhost`
 to your machine, so no hosts-file changes are needed.
@@ -65,7 +67,7 @@ After hours (dark):
 
 | Document | What it covers |
 | --- | --- |
-| [docs/mcp.md](docs/mcp.md) | Connecting Claude and Codex; every MCP tool; the mention workflow |
+| [docs/mcp.md](docs/mcp.md) | Connecting Claude, ChatGPT, Claude Code, Codex, Cursor and VS Code; tokens for scripts; every MCP tool; the mention workflow |
 | [docs/self-hosting.md](docs/self-hosting.md) | Running your own instance; every setting; single-user mode |
 | [docs/deploy-checklist.md](docs/deploy-checklist.md) | Cloudflare resources, DNS, secrets, email, go-live steps |
 | [docs/security.md](docs/security.md) | Threat model and how each boundary is enforced; reporting a vulnerability |

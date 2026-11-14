@@ -30,6 +30,9 @@ export function safeNext(
   }
 }
 
+/** The Connections page with the Connect panel open: where "Connect an agent" links land. */
+export const CONNECT_AGENT_HREF = `${APP_ROUTES.connections}?connect=1`;
+
 /** The sign-in page, returning to `next` (a path on this app) afterwards. */
 export function loginHref(next?: string): string {
   if (!next || next === APP_ROUTES.home) return APP_ROUTES.login;

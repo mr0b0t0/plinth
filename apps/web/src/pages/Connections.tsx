@@ -1,17 +1,22 @@
-// Page: /connections. The agents (OAuth connections and personal access tokens) that can act for
-// the signed-in person: create tokens, rename, revoke; plus how to connect a new one.
-import { PlusIcon } from "@phosphor-icons/react";
+// Page: /connections (?connect=1 opens the Connect panel). The agents (OAuth connections and
+// personal access tokens) that can act for the signed-in person: connect a new one, rename,
+// revoke. While the Connect panel is open the list refreshes itself, so a newly approved agent
+// shows up with a first prompt to try. Tokens sit under Advanced, for scripts and CI.
+import { PlugIcon, PlusIcon } from "@phosphor-icons/react";
 import { API, type ConnectionInfo, type Paged } from "@plinth/shared";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import "../components/account/account.css";
 import { ConnectionItem } from "../components/account/ConnectionItem.tsx";
+import { ConnectPanel } from "../components/account/ConnectPanel.tsx";
 import { mcpUrl } from "../components/account/format.ts";
-import { HowToConnect } from "../components/account/HowToConnect.tsx";
 import { useDocumentTitle, useSignInRedirect, useSignOut } from "../components/account/hooks.tsx";
 import { NewTokenDialog } from "../components/account/NewTokenDialog.tsx";
+import { useConnectionPoll } from "../components/account/useConnectionPoll.ts";
 import { AppShell } from "../components/layout/AppShell.tsx";
+import { focusElement } from "../components/ui/focus.ts";
 import { Button, EmptyState, PageHeader, Skeleton } from "../components/ui/index.ts";
 import { ApiRequestError, api } from "../lib/api.ts";
+import { useLocation } from "../lib/router.tsx";
 import { useSession } from "../lib/session.ts";
 
 type State =
@@ -28,6 +33,16 @@ export default function Connections() {
   const [creating, setCreating] = useState(false);
   const [reload, setReload] = useState(0);
   const [now, setNow] = useState(() => Date.now());
+  const { search } = useLocation();
+  // null until the list loads: then open when nothing is connected yet.
+  const [panelOpen, setPanelOpen] = useState<boolean | null>(
+    search.get("connect") !== null ? true : null,
+  );
+  const [connected, setConnected] = useState<ConnectionInfo | null>(null);
+  const [focusPanel, setFocusPanel] = useState(0);
+  const panelHeading = useRef<HTMLHeadingElement>(null);
+  // Connections that existed when the panel opened; anything else is new.
+  const known = useRef<Set<string> | null>(null);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: `reload` re-runs the fetch (Try again)
   useEffect(() => {
@@ -48,6 +63,38 @@ export default function Connections() {
     return () => ctrl.abort();
   }, [pending, reload]);
 
+  const ready = state.status === "ready";
+  useEffect(() => {
+    if (panelOpen !== null || state.status !== "ready") return;
+    setPanelOpen(!state.items.some((c) => !c.revoked_at));
+  }, [panelOpen, state]);
+
+  useEffect(() => {
+    if (!panelOpen) {
+      known.current = null;
+      return;
+    }
+    if (state.status === "ready" && known.current === null) {
+      known.current = new Set(state.items.map((c) => c.id));
+    }
+  }, [panelOpen, state]);
+
+  useEffect(() => {
+    if (!focusPanel) return;
+    const h = panelHeading.current;
+    h?.scrollIntoView?.({ block: "start" });
+    focusElement(h);
+  }, [focusPanel]);
+
+  useConnectionPoll(!!panelOpen && ready && !connected, (fresh) => {
+    setState({ status: "ready", items: fresh });
+    setNow(Date.now());
+    const seen = known.current;
+    if (!seen) return;
+    const added = fresh.find((c) => c.kind === "oauth" && !c.revoked_at && !seen.has(c.id));
+    if (added) setConnected(added);
+  });
+
   if (redirect) return redirect;
 
   const items = state.status === "ready" ? state.items : [];
@@ -59,6 +106,14 @@ export default function Connections() {
         ? { status: "ready", items: s.items.map((c) => (c.id === next.id ? next : c)) }
         : s,
     );
+  const openPanel = () => {
+    setPanelOpen(true);
+    setFocusPanel((n) => n + 1);
+  };
+  const connectAnother = () => {
+    known.current = new Set(items.map((c) => c.id));
+    setConnected(null);
+  };
 
   return (
     <AppShell onSignOut={signOut}>
@@ -66,13 +121,26 @@ export default function Connections() {
         title="Connections"
         description="Agents that can publish and answer comments as you. Each one has its own access and can be revoked on its own."
         actions={
-          <Button variant="primary" icon={PlusIcon} onClick={() => setCreating(true)}>
-            New token
+          <Button variant="primary" icon={PlugIcon} onClick={openPanel}>
+            Connect an agent
           </Button>
         }
       />
 
       <div className="pl-acct-stack">
+        {panelOpen && (
+          <ConnectPanel
+            endpoint={mcpUrl(config?.app_origin)}
+            connected={connected}
+            onConnectAnother={connectAnother}
+            onHide={() => {
+              setPanelOpen(false);
+              setConnected(null);
+            }}
+            headingRef={panelHeading}
+          />
+        )}
+
         <section className="pl-acct-section" aria-labelledby="conn-active">
           <h2 id="conn-active" className="pl-acct-group__title">
             Connected agents
@@ -104,8 +172,7 @@ export default function Connections() {
             />
           ) : active.length === 0 ? (
             <p className="pl-acct-group__empty">
-              No agent is connected yet. Connect Claude with the steps below, or create a token for
-              Codex and other clients.
+              No agent is connected yet. Pick yours under “Connect an agent” and follow the steps.
             </p>
           ) : (
             <ul className="pl-acct-list">
@@ -129,7 +196,18 @@ export default function Connections() {
           </section>
         )}
 
-        <HowToConnect endpoint={mcpUrl(config?.app_origin)} />
+        <details className="pl-acct-advanced">
+          <summary>Advanced: personal access tokens for scripts and CI</summary>
+          <div className="pl-acct-advanced__body">
+            <p className="text-muted">
+              For scripts, CI and clients that cannot sign in with OAuth. A token is shown once and
+              is sent as <code>Authorization: Bearer …</code>. The agents above do not need one.
+            </p>
+            <Button icon={PlusIcon} onClick={() => setCreating(true)}>
+              New token
+            </Button>
+          </div>
+        </details>
       </div>
 
       <NewTokenDialog

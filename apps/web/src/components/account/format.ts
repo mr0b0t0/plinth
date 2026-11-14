@@ -84,6 +84,26 @@ export function guessClientType(name: string | null | undefined): ClientType {
   return "other";
 }
 
+/**
+ * The name a new connection gets unless the person changes it: the client's own name, made
+ * distinct from `taken` (compared without case) by appending " 2", " 3", ... so mentions by label
+ * stay unambiguous. Fits within `max` characters.
+ */
+export function defaultConnectionLabel(
+  clientName: string | null | undefined,
+  taken: Iterable<string>,
+  max: number,
+): string {
+  const base = (clientName ?? "").trim().replace(/\s+/g, " ").slice(0, max).trim() || "Agent";
+  const used = new Set([...taken].map((t) => t.trim().toLowerCase()));
+  if (!used.has(base.toLowerCase())) return base;
+  for (let n = 2; ; n++) {
+    const suffix = ` ${n}`;
+    const name = `${base.slice(0, max - suffix.length).trimEnd()}${suffix}`;
+    if (!used.has(name.toLowerCase())) return name;
+  }
+}
+
 /** The MCP endpoint agents connect to. */
 export function mcpUrl(appOrigin: string | null | undefined): string {
   const origin = appOrigin || (typeof window === "undefined" ? "" : window.location.origin);

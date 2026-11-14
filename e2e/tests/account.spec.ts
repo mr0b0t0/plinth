@@ -152,11 +152,17 @@ test("dashboard, tokens, MCP publishing, search, settings and revocation", async
   await expect(page.getByText("0 of 100 artifacts")).toBeVisible();
 
   // Create a token in the UI; it is shown once.
+  // "Connect an agent" lands on the open Connect panel; tokens are under Advanced.
   await page.getByRole("link", { name: "Connect an agent" }).first().click();
-  await expect(page).toHaveURL(/\/connections$/);
+  await expect(page).toHaveURL(/\/connections\?connect=1$/);
+  await expect(page.getByRole("heading", { name: "Connect an agent" })).toBeVisible();
   await expect(page.getByRole("textbox", { name: "MCP server URL" })).toHaveValue(
     `${APP_ORIGIN}/mcp`,
   );
+  await page.getByRole("tab", { name: "Codex" }).click();
+  await expect(page.getByText(`codex mcp add plinth --url ${APP_ORIGIN}/mcp`)).toBeVisible();
+  await expect(page.getByRole("button", { name: "New token" })).toBeHidden();
+  await page.getByText("Advanced: personal access tokens for scripts and CI").click();
   await page.getByRole("button", { name: "New token" }).click();
   const create = page.getByRole("dialog", { name: "New token" });
   await create.getByLabel("Name").fill("E2E Codex");
@@ -390,6 +396,9 @@ test.describe("OAuth consent", () => {
     await expect(page.getByText(email)).toBeVisible();
     await expect(page.getByText("Read artifacts")).toBeVisible();
     await expect(page.getByText("Answer mentions")).toBeVisible();
+    // One click by default; the name and client type are behind "Change name".
+    await expect(page.getByLabel("Name this connection")).toHaveCount(0);
+    await page.getByRole("button", { name: "Change name" }).click();
     await expect(page.getByLabel("Name this connection")).toHaveValue("Claude");
     await expect(page.getByLabel("Client")).toHaveValue("claude");
     await page.getByLabel("Name this connection").fill("Work Claude");
@@ -427,6 +436,46 @@ test.describe("OAuth consent", () => {
     await expect(conn).toContainText("Claude");
   });
 
+  test("one-click Allow names the connection after the client; the Connect panel sees it", async ({
+    page,
+  }) => {
+    await seedContextSession(page.context(), uniqueEmail("oneclick"));
+    const watcher = await page.context().newPage();
+    await watcher.goto("/connections");
+    // Nothing connected yet, so the panel is open and waiting.
+    await expect(watcher.getByRole("heading", { name: "Connect an agent" })).toBeVisible();
+
+    const allowOnce = async (expectedName: string) => {
+      const redirectUri = loopbackRedirect();
+      const clientId = await registerClient(page, "Claude Code", redirectUri);
+      const { challenge } = pkce();
+      await page.route(`${new URL(redirectUri).origin}/**`, (route) =>
+        route.fulfill({ status: 200, contentType: "text/plain", body: "callback reached" }),
+      );
+      await page.goto(authorizeUrl(clientId, redirectUri, challenge, "s1"));
+      await expect(page.getByText("Saved as")).toBeVisible();
+      await expect(page.locator(".pl-acct-consent__label")).toHaveText(expectedName);
+      await page.getByRole("button", { name: "Allow" }).click();
+      await page.waitForURL((u) => u.host === new URL(redirectUri).host);
+      expect(new URL(page.url()).searchParams.get("code")).toBeTruthy();
+    };
+
+    await allowOnce("Claude Code");
+    await expect(watcher.getByText("Claude Code is connected.")).toBeVisible({ timeout: 10_000 });
+    await expect(watcher.getByText("Try this first")).toBeVisible();
+    await expect(
+      watcher.getByRole("listitem").filter({ hasText: "Claude Code" }).first(),
+    ).toContainText("OAuth");
+
+    // A second connection from the same client gets a distinct name.
+    await watcher.getByRole("button", { name: "Connect another agent" }).click();
+    await allowOnce("Claude Code 2");
+    await expect(watcher.getByText("Claude Code 2 is connected.")).toBeVisible({
+      timeout: 10_000,
+    });
+    await watcher.close();
+  });
+
   test("Deny returns access_denied; an unknown request says it expired", async ({ page }) => {
     await seedContextSession(page.context(), uniqueEmail("deny"));
     const redirectUri = loopbackRedirect();
@@ -437,6 +486,7 @@ test.describe("OAuth consent", () => {
     );
     await page.goto(authorizeUrl(clientId, redirectUri, challenge, "s1"));
     await expect(page.getByRole("heading", { level: 1 })).toContainText("Connect Some tool");
+    await page.getByRole("button", { name: "Change name" }).click();
     await expect(page.getByLabel("Client")).toHaveValue("other");
     await page.getByRole("button", { name: "Deny" }).click();
     await page.waitForURL((u) => u.host === new URL(redirectUri).host);

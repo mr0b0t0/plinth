@@ -68,6 +68,18 @@ test("signed-in pages: dashboard, connections, consent, settings", async ({ page
   await expect(page.getByRole("heading", { name: "Nothing on display yet" })).toBeVisible();
   await check(page, info, "dashboard-empty");
 
+  // Nothing connected yet: the Connect panel is open. Check a tab with a link and one with a
+  // copyable command block.
+  await page.goto("/connections");
+  await expect(page.getByRole("heading", { name: "Connect an agent" })).toBeVisible();
+  await check(page, info, "connections-connect");
+  await page.getByRole("tab", { name: "Claude Code" }).click();
+  await expect(page.getByRole("button", { name: "Copy Claude Code commands" })).toBeVisible();
+  await check(page, info, "connections-connect-cli");
+  await page.getByRole("tab", { name: "Cursor" }).click();
+  await expect(page.getByRole("link", { name: "Add to Cursor" })).toBeVisible();
+  await check(page, info, "connections-connect-cursor");
+
   const { token } = await createToken(page.request, {
     label: "Work Claude",
     client_type: "claude",
@@ -88,6 +100,8 @@ test("signed-in pages: dashboard, connections, consent, settings", async ({ page
   await page.goto("/connections");
   await expect(page.getByRole("heading", { name: "Work Claude" })).toBeVisible();
   await check(page, info, "connections");
+  await page.getByText("Advanced: personal access tokens for scripts and CI").click();
+  await check(page, info, "connections-advanced");
   await page.getByRole("button", { name: "New token" }).click();
   await expect(page.getByRole("dialog", { name: "New token" })).toBeVisible();
   await check(page, info, "connections-new-token");
@@ -124,9 +138,26 @@ test("signed-in pages: dashboard, connections, consent, settings", async ({ page
     state: "a11y",
     resource: `${APP_ORIGIN}/mcp`,
   });
+  // The Connections page waits for the new agent in a second tab.
+  const watcher = await page.context().newPage();
+  await watcher.goto("/connections?connect=1");
+  await expect(watcher.getByRole("heading", { name: "Connect an agent" })).toBeVisible();
+
+  await page.route("http://127.0.0.1:47123/**", (route) =>
+    route.fulfill({ status: 200, contentType: "text/plain", body: "callback reached" }),
+  );
   await page.goto(`/oauth/authorize?${q}`);
   await expect(page.getByRole("button", { name: "Allow" })).toBeVisible();
   await check(page, info, "consent");
+  await page.getByRole("button", { name: "Change name" }).click();
+  await expect(page.getByLabel("Name this connection")).toBeVisible();
+  await check(page, info, "consent-change-name");
+  await page.getByRole("button", { name: "Allow" }).click();
+  await page.waitForURL((u) => u.host === "127.0.0.1:47123");
+
+  await expect(watcher.getByText("Claude is connected.")).toBeVisible({ timeout: 10_000 });
+  await check(watcher, info, "connections-connected");
+  await watcher.close();
 
   await page.goto("/oauth/consent?request=unknown");
   await expect(page.getByRole("heading", { name: "This request has expired" })).toBeVisible();

@@ -13,6 +13,7 @@ import {
   useSignInRedirect,
   useSignOut,
 } from "../components/account/hooks.tsx";
+import { CONNECT_AGENT_HREF } from "../components/account/nav.ts";
 import { AppShell } from "../components/layout/AppShell.tsx";
 import {
   Button,
@@ -102,7 +103,7 @@ export default function Dashboard() {
         }
         actions={
           nothingYet ? undefined : (
-            <ButtonLink to={APP_ROUTES.connections} icon={PlugIcon}>
+            <ButtonLink to={CONNECT_AGENT_HREF} icon={PlugIcon}>
               Connect an agent
             </ButtonLink>
           )
@@ -170,7 +171,7 @@ export default function Dashboard() {
             </div>
           }
           action={
-            <ButtonLink to={APP_ROUTES.connections} variant="primary" icon={PlugIcon}>
+            <ButtonLink to={CONNECT_AGENT_HREF} variant="primary" icon={PlugIcon}>
               Connect an agent
             </ButtonLink>
           }

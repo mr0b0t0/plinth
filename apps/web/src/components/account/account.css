@@ -372,19 +372,86 @@
   font-weight: var(--weight-medium);
 }
 
-.pl-acct-howto {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 20rem), 1fr));
-  gap: var(--space-6) var(--space-10);
+/* Connect panel: a section with a hide button, a live status line, then one tab per client. */
+.pl-acct-connect__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+.pl-acct-connect__status p {
+  margin: 0;
+}
+.pl-acct-connected__title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-md);
+  background: var(--color-success-soft);
+  color: var(--color-ink);
+}
+.pl-acct-connected__title svg {
+  flex-shrink: 0;
+  color: var(--color-success);
+}
+.pl-acct-connected {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  max-width: var(--reading-max);
 }
 .pl-acct-howto__item {
   display: flex;
   flex-direction: column;
-  gap: var(--space-3);
+  gap: var(--space-4);
+  max-width: var(--reading-max);
   min-width: 0;
 }
-.pl-acct-howto code {
+.pl-acct-howto__item code {
   overflow-wrap: anywhere;
+}
+.pl-acct-steps__action {
+  margin-top: var(--space-2);
+}
+
+/* Copyable commands and config: wrap long lines rather than scroll. */
+.pl-acct-block {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: 0;
+  min-width: 0;
+}
+.pl-acct-block__label {
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+}
+.pl-acct-block__code {
+  flex: 1;
+  min-width: 0;
+  padding: var(--space-3) var(--space-4);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* Advanced: personal access tokens, collapsed by default. */
+.pl-acct-advanced {
+  border-top: var(--border-width) solid var(--color-border);
+  padding-top: var(--space-5);
+}
+.pl-acct-advanced > summary {
+  cursor: pointer;
+  width: fit-content;
+  font-weight: var(--weight-medium);
+}
+.pl-acct-advanced__body {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-4);
+  max-width: var(--reading-max);
+  padding-top: var(--space-4);
 }
 .pl-acct-steps {
   display: flex;
@@ -485,6 +552,21 @@
   display: block;
   font-size: var(--text-sm);
   color: var(--color-ink-muted);
+}
+.pl-acct-consent__name {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2) var(--space-4);
+}
+.pl-acct-consent__name p {
+  margin: 0;
+  min-width: 0;
+}
+.pl-acct-consent__label {
+  font-weight: var(--weight-medium);
+  overflow-wrap: anywhere;
 }
 .pl-acct-consent__actions {
   display: grid;
