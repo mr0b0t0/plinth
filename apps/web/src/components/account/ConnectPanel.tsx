@@ -2,7 +2,16 @@
 // from this instance's MCP endpoint. When a new connection appears (the page polls while this is
 // open), it says so and offers a first prompt to try. No tokens here; those live under Advanced.
 import { ArrowSquareOutIcon, CheckCircleIcon } from "@phosphor-icons/react";
-import { type ConnectionInfo, HOSTED_ORIGIN, harness } from "@plinth/shared";
+import {
+  CLAUDE_CODE_ONE_OR_THE_OTHER,
+  CLAUDE_CODE_PLUGIN_SERVER,
+  CLAUDE_CODE_TOOLS_ONLY,
+  type ConnectionInfo,
+  claudeCodePluginCommands,
+  claudeCodePluginSlashCommands,
+  HOSTED_ORIGIN,
+  harness,
+} from "@plinth/shared";
 import { type ReactNode, type Ref, useState } from "react";
 import { Button, buttonClassName, ICON_SIZE, Tabs } from "../ui/index.ts";
 import { CopyBlock, CopyField } from "./CopyField.tsx";
@@ -98,6 +107,15 @@ function HostedOnlyNote({ endpoint, app }: { endpoint: string; app: string }) {
   );
 }
 
+/** The endpoint's origin; the hosted one when it does not parse, which keeps the hosted wording. */
+function originOf(endpoint: string): string {
+  try {
+    return new URL(endpoint).origin;
+  } catch {
+    return HOSTED_ORIGIN;
+  }
+}
+
 const ALLOW = (
   <>
     then click <strong>Allow</strong> on the Plinth page that opens
@@ -161,21 +179,42 @@ function ClientSteps({ client, endpoint }: { client: ConnectClient; endpoint: st
           </p>
         </div>
       );
-    case "claude-code":
+    case "claude-code": {
+      const origin = originOf(endpoint);
+      const [addMarketplace, install] = claudeCodePluginSlashCommands();
       return (
         <div className="pl-acct-howto__item">
+          <p>Install the Plinth plugin: the server and Plinth's publishing rules in one step.</p>
           <CopyBlock
             label="Run in a terminal"
+            value={claudeCodePluginCommands().join("\n")}
+            copyLabel="Copy plugin commands"
+            copiedMessage="Commands copied"
+          />
+          <p>
+            Or inside Claude Code: <code>{addMarketplace}</code>, then <code>{install}</code>. Then
+            run <code>/mcp</code> in Claude Code, choose <code>{CLAUDE_CODE_PLUGIN_SERVER}</code>{" "}
+            and sign in, {ALLOW}.
+          </p>
+          {origin !== HOSTED_ORIGIN && (
+            <p className="type-small text-muted">
+              The plugin's server points at plinth.aconite.io. For this instance, set{" "}
+              <code>PLINTH_URL={origin}</code> before starting Claude Code.
+            </p>
+          )}
+          <CopyBlock
+            label={`Or, ${CLAUDE_CODE_TOOLS_ONLY}`}
             value={claudeCodeCommand(endpoint)}
             copyLabel="Copy Claude Code commands"
             copiedMessage="Commands copied"
           />
-          <p>
-            The second command opens Plinth in your browser; click <strong>Allow</strong>. Or run{" "}
-            <code>/mcp</code> inside Claude Code, choose <code>plinth</code> and sign in.
+          <p className="type-small text-muted">
+            The second command opens Plinth in your browser; click <strong>Allow</strong>.{" "}
+            {CLAUDE_CODE_ONE_OR_THE_OTHER}
           </p>
         </div>
       );
+    }
     case "codex":
       return (
         <div className="pl-acct-howto__item">
@@ -279,13 +318,10 @@ function ClientSteps({ client, endpoint }: { client: ConnectClient; endpoint: st
  * instructions say: a plugin, an extension, a rule file or an uploaded skill.
  */
 function Guidance({ client, endpoint }: { client: ConnectClient; endpoint: string }) {
+  // Claude Code's steps already install the plugin, which carries the rules.
+  if (client === "claude-code") return null;
   const g = harness(client).guidance;
-  let ownInstance = false;
-  try {
-    ownInstance = new URL(endpoint).origin !== HOSTED_ORIGIN;
-  } catch {
-    // keep the hosted wording
-  }
+  const ownInstance = originOf(endpoint) !== HOSTED_ORIGIN;
   return (
     <div className="pl-acct-howto__item pl-acct-guidance">
       <h3 className="type-small">Teach it Plinth's rules</h3>

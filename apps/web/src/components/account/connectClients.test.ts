@@ -1,3 +1,9 @@
+import {
+  CLAUDE_CODE_ONE_OR_THE_OTHER,
+  claudeCodePluginCommands,
+  claudeCodePluginSlashCommands,
+  harness,
+} from "@plinth/shared";
 import { describe, expect, it } from "vitest";
 import {
   claudeCodeCommand,
@@ -23,6 +29,24 @@ describe("connect commands and links", () => {
     expect(codexCommand(URL_)).toBe(
       "codex mcp add plinth --url https://plinth.example/mcp\ncodex mcp login plinth",
     );
+  });
+
+  it("installs the Claude Code plugin from the marketplace, in the shell and in a session", () => {
+    // Syntax checked against code.claude.com/docs/en/discover-plugins: add the marketplace by
+    // its GitHub repository, then install <plugin>@<marketplace name> (.claude-plugin/marketplace.json).
+    expect(claudeCodePluginCommands()).toEqual([
+      "claude plugin marketplace add mr0b0t0/plinth",
+      "claude plugin install plinth@plinth",
+    ]);
+    expect(claudeCodePluginSlashCommands()).toEqual([
+      "/plugin marketplace add mr0b0t0/plinth",
+      "/plugin install plinth@plinth",
+    ]);
+    const g = harness("claude-code").guidance;
+    expect(g.kind).toBe("plugin");
+    expect(g.commands).toBe(claudeCodePluginSlashCommands().join("\n"));
+    expect(g.summary).toContain("tools only");
+    expect(CLAUDE_CODE_ONE_OR_THE_OTHER).toContain("plugin:plinth:plinth");
   });
 
   it("builds Cursor's install deeplink with the base64 server entry", () => {

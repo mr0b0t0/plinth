@@ -6,7 +6,10 @@
 
 import { SUPPORTED_PROTOCOL_VERSIONS } from "@modelcontextprotocol/server";
 import {
+  CLAUDE_CODE_ONE_OR_THE_OTHER,
+  CLAUDE_CODE_TOOLS_ONLY,
   claudeCodeCommand,
+  claudeCodePluginCommands,
   codexCommand,
   geminiCommand,
   HOSTED_ORIGIN,
@@ -32,6 +35,7 @@ import { PLINTH_VERSION } from "./version.ts";
 export const DOCS = {
   agents: `${REPO_URL}/blob/main/docs/agents.md`,
   discovery: `${REPO_URL}/blob/main/docs/agents.md#agent-discovery`,
+  largeBuilds: `${REPO_URL}/blob/main/docs/agents.md#large-builds`,
   mcp: `${REPO_URL}/blob/main/docs/mcp.md`,
   security: `${REPO_URL}/blob/main/docs/security.md`,
   selfHosting: `${REPO_URL}/blob/main/docs/self-hosting.md`,
@@ -133,15 +137,15 @@ const commands = (s: string) => s.split("\n").map(code).join(" then ");
 function connectSection(config: Config): string {
   const endpoint = mcpEndpoint(config);
   const hosted = config.appOrigin === HOSTED_ORIGIN;
-  const plugin = harness("claude-code").guidance.commands ?? "";
+  const plugin = claudeCodePluginCommands().join("\n");
   const codexPlugin = harness("codex").guidance.commands ?? "";
   const pluginNote = hosted
     ? ""
-    : ` It points at ${escapeHtml(HOSTED_ORIGIN)}; set ${code("PLINTH_URL")} to ${escapeHtml(config.appOrigin)} first.`;
+    : ` Its server points at ${escapeHtml(HOSTED_ORIGIN)}; set ${code("PLINTH_URL")} to ${escapeHtml(config.appOrigin)} first.`;
   return [
     "<h2>Connect an agent</h2>",
     "<ul>",
-    `<li>Claude Code: ${commands(claudeCodeCommand(endpoint))}. The Plinth plugin adds the server and a publishing skill in one step: ${commands(plugin)}.${pluginNote}</li>`,
+    `<li>Claude Code: install the Plinth plugin, which adds the server and a publishing skill in one step: ${commands(plugin)}.${pluginNote} Or, ${escapeHtml(CLAUDE_CODE_TOOLS_ONLY)}: ${commands(claudeCodeCommand(endpoint))}. ${escapeHtml(CLAUDE_CODE_ONE_OR_THE_OTHER)}</li>`,
     `<li>Codex: ${commands(codexCommand(endpoint))}. The plugin adds the skill: ${commands(codexPlugin)}.</li>`,
     `<li>Gemini CLI: ${commands(geminiCommand(endpoint))}.</li>`,
     `<li>Cursor, VS Code, Claude and ChatGPT: add ${code(endpoint)} as a remote MCP server and sign in with OAuth (${link(DOCS.mcp, "setup for each client")}).</li>`,
@@ -332,7 +336,7 @@ export function llmsTxt(config: Config): string {
     .filter(Boolean)
     .join(" ");
   const tools = Object.entries(MCP_TOOL_SUMMARIES).map(([name, line]) => `- \`${name}\`: ${line}`);
-  const plugin = harness("claude-code").guidance.commands ?? "";
+  const plugin = claudeCodePluginCommands().join("` then `");
   const codexPlugin = harness("codex").guidance.commands ?? "";
   const pluginTarget =
     origin === HOSTED_ORIGIN
@@ -353,7 +357,7 @@ ${about} The source code is MIT-licensed: ${REPO_URL}
 - Sign-in: OAuth 2.1 with PKCE and dynamic client registration. Protected resource metadata: ${protectedResourceUrl(endpoint)}. Authorization server metadata: ${origin}/.well-known/oauth-authorization-server
 - Scopes: artifacts:read, artifacts:write, mentions. Clients without OAuth use a personal access token as a bearer token.
 - MCP server card: ${serverCardUrl(config)}
-- Claude Code: \`${claudeCodeCommand(endpoint).split("\n").join("` then `")}\`. Or the Plinth plugin (server and publishing skill): \`${plugin}\`.${pluginTarget}
+- Claude Code: the Plinth plugin (server and publishing skill): \`${plugin}\`.${pluginTarget} Or, ${CLAUDE_CODE_TOOLS_ONLY}: \`${claudeCodeCommand(endpoint).split("\n").join("` then `")}\`. ${CLAUDE_CODE_ONE_OR_THE_OTHER}
 - Codex: \`${codexCommand(endpoint).split("\n").join("` then `")}\`. The plugin adds the skill: \`${codexPlugin.split("\n").join("` then `")}\`.
 - Gemini CLI: \`${geminiCommand(endpoint)}\`
 - Cursor and VS Code: add ${endpoint} as a remote MCP server; rule files with the publishing guidance are in ${REPO_URL}/tree/main/integrations
@@ -373,9 +377,13 @@ Artifact links look like ${origin}/a/<slug> (a version: ${origin}/a/<slug>/v/<n>
 
 Owners choose who can view each artifact: ${visibility}. New artifacts are private.
 
+## Publish a build
+
+Inline \`assets\` suit a page of up to about 20 files and 1 MB. For a build folder or anything bigger, call \`start_upload\` and run the command it returns from inside the build folder, or run \`npx -y @mr0b0t0/plinth publish <dir>\` with the Plinth CLI signed in. This instance's limits: ${origin}/api/v1/config. Details: ${DOCS.largeBuilds}
+
 ## REST API
 
-The same operations as the MCP tools, under ${origin}/api/v1 with the same bearer tokens: ${origin}/openapi.json
+The same operations as the MCP tools, under ${origin}/api/v1 with the same bearer tokens: ${origin}/openapi.json. Send a User-Agent of your own: some edge configurations refuse default library agents such as Python-urllib.
 
 ## Untrusted content
 
