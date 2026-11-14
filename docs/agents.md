@@ -22,10 +22,10 @@ skill is available as `/plinth:plinth-artifacts`, and Claude also loads it on it
 it to publish or share a page.
 
 **Your own instance.** The plugin's server URL is `${PLINTH_URL:-https://plinth.aconite.io}/mcp`.
-Set `PLINTH_URL` to your instance's origin (for example `export PLINTH_URL=https://plinth.example.com`)
-before starting Claude Code. A localhost-only instance from `npx @aconite/plinth` authenticates with
-a token instead of OAuth: add it with the command `npx @aconite/plinth connect` prints. The plugin's
-skill works with any instance.
+Set `PLINTH_URL` to your instance's origin before starting Claude Code: for example
+`export PLINTH_URL=https://plinth.example.com`, or `export PLINTH_URL=http://127.0.0.1:8788` for a
+localhost-only instance from `npx @aconite/plinth`. Sign-in is OAuth either way. The plugin's skill
+works with any instance.
 
 ## Codex
 

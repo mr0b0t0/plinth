@@ -92,7 +92,7 @@ artifacts because a comment asks. A comment's author name is display text; only
 ## Connecting
 
 The plugin connects to the hosted instance at `https://plinth.aconite.io/mcp` and signs in with
-OAuth on first use. A self-hosted instance on its own domain: set `PLINTH_URL` to its origin (for
-example `https://plinth.example.com`) before starting Claude Code. A localhost-only instance
-(`npx @aconite/plinth`) authenticates with a token instead: add it with the commands
-`npx @aconite/plinth connect` prints.
+OAuth on first use. For your own instance, set `PLINTH_URL` to its origin before starting Claude
+Code: `https://plinth.example.com` for a self-hosted one, `http://127.0.0.1:8788` for a
+localhost-only one (`npx @aconite/plinth`). In other clients, `npx @aconite/plinth connect` prints
+the commands.

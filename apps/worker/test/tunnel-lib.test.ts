@@ -249,10 +249,10 @@ describe("tunnel-lib: localhost-only instances", () => {
     expect(() => validateLocalOptions({ email: "a@b.co", name: "Bad Name" })).toThrow(/--name/);
   });
 
-  it("serves the app and artifacts from separate *.localhost hosts", () => {
+  it("serves the app on 127.0.0.1 and artifacts on *.localhost", () => {
     expect(localHosts(9000)).toEqual({
-      appHost: "app.localhost:9000",
-      contentHost: "content.localhost:9000",
+      appHost: "127.0.0.1:9000",
+      contentHost: "localhost:9000",
     });
   });
 
@@ -270,8 +270,8 @@ describe("tunnel-lib: localhost-only instances", () => {
     expect(cfg.d1_databases[0]?.migrations_dir).toBe("/pkg/m");
     expect(cfg.vars).toMatchObject({
       ENVIRONMENT: "development",
-      APP_HOST: "app.localhost:9000",
-      CONTENT_HOST: "content.localhost:9000",
+      APP_HOST: "127.0.0.1:9000",
+      CONTENT_HOST: "localhost:9000",
       CONTENT_ISOLATION: "origin",
       PUBLIC_SCHEME: "http",
       EMAIL_PROVIDER: "console",

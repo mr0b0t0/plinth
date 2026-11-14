@@ -229,8 +229,10 @@ export async function setupInstance(raw, runtime) {
   const { lines, values } = readEnvFile(paths.devVars);
   const updates = {};
   let adminToken = null;
-  const singleUser = tunnel ? o.singleUser : true;
-  const keys = ["SESSION_SECRET", "TOKEN_SIGNING_KEY", ...(singleUser ? ["ADMIN_TOKEN"] : [])];
+  // A localhost-only instance has no ADMIN_TOKEN: its agents connect with OAuth, which MCP clients
+  // allow over plain http to 127.0.0.1. A single-user tunnel instance keeps one for scripts.
+  const withAdminToken = tunnel && o.singleUser;
+  const keys = ["SESSION_SECRET", "TOKEN_SIGNING_KEY", ...(withAdminToken ? ["ADMIN_TOKEN"] : [])];
   for (const key of keys) {
     if (values.get(key) && raw.force !== true) log(`  ${key}: kept (exists; --force replaces it)`);
     else {

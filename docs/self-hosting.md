@@ -24,9 +24,9 @@ deploying, and connecting agents. The step-by-step DNS and email work is in
 **Multi-user (default).** People sign in with an email magic link or six-digit code. Each person
 connects their own agents and owns their own artifacts. Needs an email provider.
 
-**Single-user.** For one person. Set `SINGLE_USER_MODE=true`, exactly one `ADMIN_EMAIL`, and a
-secret `ADMIN_TOKEN` of at least 32 characters. Agents and scripts send `ADMIN_TOKEN` as a bearer
-token and act as `ADMIN_EMAIL`. The web app still signs that one address in by email code. In
+**Single-user.** For one person. Set `SINGLE_USER_MODE=true` and exactly one `ADMIN_EMAIL`. Agents
+connect with OAuth as on any instance. Optionally set a secret `ADMIN_TOKEN` of at least 32
+characters: agents and scripts can then also send it as a bearer token and act as `ADMIN_EMAIL`. The web app still signs that one address in by email code. In
 single-user mode production accepts `EMAIL_PROVIDER=console`, which writes the code to the Worker
 log instead of sending mail; read it with `wrangler tail`. Use a real provider if the log is shared
 with anyone else.
@@ -54,7 +54,7 @@ Booleans accept `true`, `1`, `yes` or `on`.
 | `MAX_ARTIFACTS_PER_USER` | `100` | Artifact quota per account. A per-user override lives in `users.artifact_limit` |
 | `MAX_PUBLISHES_PER_HOUR` | `60` | Publishes and new versions per user per hour |
 | `CDN_ALLOWLIST` | cdnjs.cloudflare.com, cdn.jsdelivr.net, unpkg.com, cdn.tailwindcss.com, code.jquery.com, cdn.plot.ly | Script hosts artifacts may load from, comma or space separated. Empty means the default list |
-| `SINGLE_USER_MODE` | `false` | One-person instance; needs `ADMIN_EMAIL` and `ADMIN_TOKEN` |
+| `SINGLE_USER_MODE` | `false` | One-person instance; needs exactly one `ADMIN_EMAIL` |
 | `ADMIN_EMAIL` | empty | Instance admins (comma separated): they see the report queue and can take artifacts down. In single-user mode, exactly one address: the owner |
 | `ALLOW_PUBLIC_VISIBILITY` | `false` | Allows `public` visibility. Even then an account needs a verified email and a minimum age |
 | `PUBLIC_MIN_ACCOUNT_AGE_HOURS` | `72` | Account age before `public` unlocks |
@@ -65,7 +65,7 @@ Booleans accept `true`, `1`, `yes` or `on`.
 | --- | --- | --- |
 | `SESSION_SECRET` | yes | At least 32 characters. Server-side key for sign-in codes and sessions. The setup script generates 64 |
 | `TOKEN_SIGNING_KEY` | yes | At least 32 characters. Signs viewer tokens, content cookies and password passes |
-| `ADMIN_TOKEN` | single-user mode | At least 32 characters. Bearer token for the owner |
+| `ADMIN_TOKEN` | optional, single-user mode | At least 32 characters if set. Extra bearer token for the owner, for scripts |
 | `SENDGRID_API_KEY` | with `EMAIL_PROVIDER=sendgrid` | API key with Mail Send permission only |
 | `RESEND_API_KEY` | with `EMAIL_PROVIDER=resend` | Sending-access API key |
 
@@ -153,7 +153,7 @@ The MCP endpoint is `https://<APP_HOST>/mcp`.
 
 - **Multi-user:** add Plinth as a remote MCP server in Claude or Codex and approve the OAuth
   consent screen, or create a personal access token on the Connections page.
-- **Single-user:** use `ADMIN_TOKEN` as the bearer token.
+- **Single-user:** OAuth or a personal access token as above, or `ADMIN_TOKEN` if you set one.
 
 Step-by-step instructions for each client are in [mcp.md](mcp.md).
 

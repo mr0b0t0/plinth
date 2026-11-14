@@ -201,18 +201,24 @@ export function validateLocalOptions(raw) {
   return { name, port, adminEmail: email.toLowerCase() };
 }
 
-/** The app and content hosts of a localhost-only instance on `port`. */
+/**
+ * The app and content hosts of a localhost-only instance on `port`. The app is on 127.0.0.1
+ * because MCP clients allow OAuth over plain http only to exactly localhost, 127.0.0.1 or [::1]
+ * (Claude Code refuses a token endpoint on app.localhost). Artifacts are on <id>.localhost: every
+ * *.localhost name resolves to loopback and is its own origin, and none of them can set or read
+ * cookies for the IP address the app uses. The content host cannot be a subdomain of the app host
+ * (the Worker refuses that), which rules out app=localhost with artifacts on *.localhost.
+ */
 export function localHosts(port) {
-  return { appHost: `app.localhost:${port}`, contentHost: `content.localhost:${port}` };
+  return { appHost: `127.0.0.1:${port}`, contentHost: `localhost:${port}` };
 }
 
 /**
- * The Wrangler config for a localhost-only instance. Browsers and Node resolve every *.localhost
- * name to the loopback address and treat each one as its own origin, so artifacts at
- * <id>.content.localhost:<port> stay isolated from the app and from each other without a domain.
- * ENVIRONMENT=development is the mode the Worker allows on localhost hosts only (it refuses it
- * anywhere else); the development helpers stay off. Single-user with console email: sign-in codes
- * appear in the terminal running `plinth start`.
+ * The Wrangler config for a localhost-only instance. Artifacts at <id>.localhost:<port> stay
+ * isolated from the app and from each other without a domain. ENVIRONMENT=development is the mode
+ * the Worker allows on localhost hosts only (it refuses it anywhere else); the development helpers
+ * stay off. Single-user with console email: sign-in codes appear in the terminal running
+ * `plinth start`. Agents connect with OAuth, so there is no ADMIN_TOKEN.
  */
 export function buildLocalWorkerConfig(o, layout, base = {}) {
   const { appHost, contentHost } = localHosts(o.port);

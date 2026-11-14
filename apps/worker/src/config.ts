@@ -174,10 +174,12 @@ function validate(c: Config): void {
   if (c.tokenSigningKey.length < 32) {
     throw new ConfigError("TOKEN_SIGNING_KEY must be at least 32 characters");
   }
+  // ADMIN_TOKEN is optional: without it, agents connect with OAuth or a personal access token like
+  // on any instance. If set, it must be long enough to be a secret.
+  if (c.adminToken && c.adminToken.length < 32) {
+    throw new ConfigError("ADMIN_TOKEN must be at least 32 characters");
+  }
   if (c.singleUserMode) {
-    if (!c.adminToken || c.adminToken.length < 32) {
-      throw new ConfigError("SINGLE_USER_MODE needs ADMIN_TOKEN of at least 32 characters");
-    }
     if (c.adminEmails.length !== 1)
       throw new ConfigError("SINGLE_USER_MODE needs exactly one ADMIN_EMAIL");
   }

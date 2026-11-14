@@ -220,7 +220,7 @@ options.
 - **One repo, two deployments.** Aconite operates the hosted instance, which runs the same code as
   a self-hosted one. Hosted-only parts (billing, moderation tooling) sit behind configuration flags.
 - **Self-hosting.** A "Deploy to Cloudflare" button plus a setup script that creates the R2 bucket,
-  the D1 database and the secrets. A single-user mode skips sign-up and uses one admin token.
+  the D1 database and the secrets. A single-user mode skips sign-up for everyone but one address (an extra admin token for scripts is optional).
 - **Local hosting.** The same Worker can run on the owner's machine under `wrangler dev`, with D1
   and R2 on local disk and a named Cloudflare Tunnel on two owned domains for access
   (`setup.mjs --tunnel`, `pnpm local:start`). Production settings and the full security model
@@ -230,13 +230,15 @@ options.
   cloning the repo. It ships the prebuilt Worker, web app and migrations, and shares its setup and
   start logic with the repo scripts (`apps/worker/scripts/instance.mjs`). Two modes:
   - *Localhost-only* (`plinth init --email ...`): one account, this computer only, no domain and no
-    Cloudflare account. The app answers at `app.localhost:<port>` and artifacts at
-    `<id>.content.localhost:<port>`; browsers and Node resolve `*.localhost` to the loopback address
-    and treat each name as its own origin, so the isolation model holds without a domain. It runs
-    with `ENVIRONMENT=development` (which the Worker allows on localhost hosts only), the
-    development helpers off, single-user mode and the console email provider. Local agents (Claude
-    Code, Codex, Cursor, VS Code) connect with the instance's `ADMIN_TOKEN`; hosted clients cannot
-    reach it.
+    Cloudflare account. The app answers at `127.0.0.1:<port>` and artifacts at
+    `<id>.localhost:<port>`; browsers and Node resolve `*.localhost` to the loopback address and
+    treat each name as its own origin, so the isolation model holds without a domain, and no
+    `*.localhost` page can set or read cookies for the app's IP address. It runs with
+    `ENVIRONMENT=development` (which the Worker allows on localhost hosts only), the development
+    helpers off, single-user mode and the console email provider. Local agents (Claude Code, Codex,
+    Cursor, VS Code) connect with OAuth like everywhere else; there is no admin token. The app is on
+    `127.0.0.1` because MCP clients allow OAuth over plain http only to `localhost`, `127.0.0.1` or
+    `::1` (Claude Code refuses a token endpoint on `app.localhost`). Hosted clients cannot reach it.
   - *Tunnel* (`plinth init --tunnel ...`): the local-hosting setup above, without a checkout.
 - **Agent plugin.** `integrations/plugin/` is one plugin folder for Claude Code and for Codex and
   ChatGPT (the portable `plugin.json` + `mcp.json` format): the `plinth` MCP server (hosted instance

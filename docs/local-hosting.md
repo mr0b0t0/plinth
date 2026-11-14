@@ -24,12 +24,14 @@ npx @aconite/plinth start          # Ctrl-C stops it
 npx @aconite/plinth connect        # prints the commands that connect your agents
 ```
 
-The app answers at `http://app.localhost:8788` and each artifact at
-`http://<id>.content.localhost:8788`. Browsers and Node resolve every `*.localhost` name to your
-machine and treat each one as its own origin, so artifacts stay isolated from the app and from
-each other just as on a real domain. One account (the `--email` you gave) can sign in; its sign-in
-codes appear in the terminal running `start`. Agents authenticate with the instance's
-`ADMIN_TOKEN`, which `init` shows once and `npx @aconite/plinth token` prints again. Data lives in
+The app answers at `http://127.0.0.1:8788` and each artifact at `http://<id>.localhost:8788`.
+Browsers and Node resolve every `*.localhost` name to your machine and treat each one as its own
+origin, so artifacts stay isolated from the app and from each other just as on a real domain. One
+account (the `--email` you gave) can sign in; its sign-in codes appear in the terminal running
+`start`. Agents connect with OAuth, as on the hosted instance: the first time, a browser opens on
+Plinth and you click **Allow**. (The app is on `127.0.0.1` rather than a `*.localhost` name
+because MCP clients only allow OAuth over plain http to `localhost`, `127.0.0.1` or `::1`.) Data
+lives in
 `~/.plinth/plinth/` (`--home`, `--name` and `--port` change that). `npx @aconite/plinth status`
 says whether it is running. To upgrade, run a newer version of the package: `start` applies new
 migrations.

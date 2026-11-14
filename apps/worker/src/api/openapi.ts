@@ -1014,7 +1014,7 @@ export function openApiDocument(config: Pick<Config, "appOrigin">): Json {
           description:
             "Personal access token (`plinth_pat_...`, created on the Connections page) or an " +
             "OAuth 2.1 access token (`plinth_at_...`) from /oauth/token. Scopes: " +
-            `${SCOPES.join(", ")}. In single-user mode, ADMIN_TOKEN also works.`,
+            `${SCOPES.join(", ")}. In single-user mode with ADMIN_TOKEN set, that token also works.`,
         },
         sessionCookie: {
           type: "apiKey",

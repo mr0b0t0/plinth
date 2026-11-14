@@ -1,13 +1,13 @@
 #!/usr/bin/env node
-import { readFileSync } from "node:fs";
 // plinth: run Plinth on your own computer (docs/local-hosting.md).
 //
 //   plinth init --email you@example.com      localhost-only: no domain, no Cloudflare account
 //   plinth init --tunnel --app-host ... --content-host ... --email-provider ...
 //                                            reachable from the internet through a Cloudflare Tunnel
-//   plinth start | status | connect | token  run it, check it, connect agents to it
+//   plinth start | status | connect          run it, check it, connect agents to it
 //
 // Every command takes --name (default plinth) and --home (default ~/.plinth, or PLINTH_HOME).
+import { readFileSync } from "node:fs";
 import http from "node:http";
 import { createRequire } from "node:module";
 import path from "node:path";
@@ -34,7 +34,6 @@ Usage:
   plinth start [--no-tunnel]   Run the instance (Ctrl-C stops it). Applies new migrations first.
   plinth status                Show the instance's address and whether it is running.
   plinth connect               Print how to connect Claude Code, Codex, Cursor and others.
-  plinth token                 Print the instance's ADMIN_TOKEN (single-user instances).
 
 Common options: --name <name> (default plinth), --home <dir> (default ~/.plinth or PLINTH_HOME),
 --force (init: replace existing secrets), --dry-run (init: show the plan only).
@@ -153,43 +152,30 @@ function selector(opts) {
   return `${opts.name && opts.name !== "plinth" ? ` --name ${opts.name}` : ""}${opts.home ? ` --home ${opts.home}` : ""}`;
 }
 
-function printConnect(inst, opts) {
+function printConnect(inst) {
   const endpoint = `${inst.appOrigin}/mcp`;
-  const tokenCmd = `$(npx -y @aconite/plinth token${selector(opts)})`;
-  console.log(`Plinth MCP endpoint: ${endpoint}\n`);
-  if (inst.mode === "local") {
-    console.log(
-      "This instance runs on this computer only: agents on this machine can use it (Claude Code,\n" +
-        "Codex, Cursor, VS Code); claude.ai and ChatGPT connect from their own servers and cannot.\n" +
-        "Agents authenticate with the instance's ADMIN_TOKEN.\n",
-    );
-    console.log("Claude Code:");
-    console.log(
-      `  claude mcp add --transport http --scope user plinth ${endpoint} \\\n    --header "Authorization: Bearer ${tokenCmd}"\n`,
-    );
-    console.log("Codex (reads the token from PLINTH_TOKEN; export it in your shell profile):");
-    console.log(`  export PLINTH_TOKEN=${tokenCmd}`);
-    console.log(`  codex mcp add plinth --url ${endpoint} --bearer-token-env-var PLINTH_TOKEN\n`);
-    console.log('Cursor (~/.cursor/mcp.json) and VS Code (.vscode/mcp.json use "servers"):');
-    console.log(
-      `  ${JSON.stringify({ mcpServers: { plinth: { url: endpoint, headers: { Authorization: "Bearer <plinth token>" } } } })}\n`,
-    );
-  } else {
-    console.log("Every client signs in with OAuth; no token is needed.\n");
-    console.log("Claude Code:");
-    console.log(`  claude mcp add --transport http --scope user plinth ${endpoint}`);
-    console.log("  claude mcp login plinth\n");
-    console.log("Codex:");
-    console.log(`  codex mcp add plinth --url ${endpoint}`);
-    console.log("  codex mcp login plinth\n");
-    console.log(
-      `Claude, ChatGPT, Cursor, VS Code: open ${inst.appOrigin}/connections after signing in.\n`,
-    );
-  }
+  console.log(`Plinth MCP endpoint: ${endpoint}`);
   console.log(
-    "Teach your agent Plinth's rules with the skill (docs/agents.md):\n" +
-      "  Claude Code: /plugin marketplace add mr0b0t0/plinth, then /plugin install plinth@plinth\n" +
-      "  Codex:       codex plugin marketplace add mr0b0t0/plinth",
+    "Agents sign in with OAuth: the first time, a browser opens on Plinth; click Allow.\n",
+  );
+  if (inst.mode === "local")
+    console.log(
+      "This instance runs on this computer only. Agents on this machine can use it; claude.ai\n" +
+        "and ChatGPT connect from their own servers and cannot.\n",
+    );
+  console.log("Claude Code:");
+  console.log(`  claude mcp add --transport http --scope user plinth ${endpoint}`);
+  console.log("  claude mcp login plinth\n");
+  console.log("Codex:");
+  console.log(`  codex mcp add plinth --url ${endpoint}`);
+  console.log("  codex mcp login plinth\n");
+  console.log(
+    `Cursor, VS Code${inst.mode === "local" ? "" : ", Claude, ChatGPT"}: sign in at ${inst.appOrigin} and open Connections.\n`,
+  );
+  console.log(
+    "The Plinth plugin adds a skill with Plinth's publishing rules (docs/agents.md):\n" +
+      `  Claude Code: PLINTH_URL=${inst.appOrigin}, then /plugin install plinth --marketplace mr0b0t0/plinth\n` +
+      "  Codex:       codex plugin marketplace add mr0b0t0/plinth && codex plugin add plinth@plinth",
   );
 }
 
@@ -236,13 +222,7 @@ try {
     );
     process.exit(h?.ok ? 0 : 3);
   } else if (command === "connect") {
-    printConnect(requireInstance(instance, opts), opts);
-  } else if (command === "token") {
-    const inst = requireInstance(instance, opts);
-    const token = instance.readEnvFile(inst.paths.devVars).values.get("ADMIN_TOKEN");
-    if (!token)
-      die("this instance has no ADMIN_TOKEN (multi-user instances use OAuth or personal tokens)");
-    process.stdout.write(`${token}\n`);
+    printConnect(requireInstance(instance, opts));
   } else die(`Unknown command "${command}". Run plinth --help`);
 } catch (e) {
   if (e instanceof instance.InstanceError) die(e.message);

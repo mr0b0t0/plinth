@@ -112,16 +112,14 @@ describe("config", () => {
     expect(registrableDomain("plinth.aconite.io")).toBe("aconite.io");
     expect(registrableDomain("x.user.workers.dev:443")).toBe("user.workers.dev");
   });
-  it("single-user mode needs an admin token and one admin email", () => {
-    expect(() => parseConfig({ ...base, SINGLE_USER_MODE: "true" })).toThrow(/ADMIN_TOKEN/);
-    expect(
-      parseConfig({
-        ...base,
-        SINGLE_USER_MODE: "true",
-        ADMIN_TOKEN: "a".repeat(40),
-        ADMIN_EMAIL: "me@x.com",
-      }).singleUserMode,
-    ).toBe(true);
+  it("single-user mode needs one admin email; the admin token is optional but long", () => {
+    expect(() => parseConfig({ ...base, SINGLE_USER_MODE: "true" })).toThrow(/ADMIN_EMAIL/);
+    const single = { ...base, SINGLE_USER_MODE: "true", ADMIN_EMAIL: "me@x.com" };
+    const noToken = parseConfig(single);
+    expect(noToken.singleUserMode).toBe(true);
+    expect(noToken.adminToken).toBeNull();
+    expect(parseConfig({ ...single, ADMIN_TOKEN: "a".repeat(40) }).adminToken).toBe("a".repeat(40));
+    expect(() => parseConfig({ ...single, ADMIN_TOKEN: "short" })).toThrow(/ADMIN_TOKEN/);
   });
 });
 
