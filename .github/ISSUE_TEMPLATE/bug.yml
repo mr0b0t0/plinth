@@ -1,0 +1,49 @@
+name: Bug report
+description: Something in Plinth does not work as documented.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: Thanks for reporting. For security problems, use private reporting instead (see the links on the previous page).
+  - type: dropdown
+    id: where
+    attributes:
+      label: Where does it happen?
+      options:
+        - Hosted instance (plinth.aconite.io)
+        - npx @mr0b0t0/plinth (local or tunnel)
+        - Self-hosted on Cloudflare
+        - Docker
+        - Agent plugin or MCP client
+        - Development checkout
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+      description: "`npx @mr0b0t0/plinth --version`, the image tag, or the commit you run."
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what did you expect?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: "1. Publish an artifact with ...\n2. Open ...\n3. See ..."
+    validations:
+      required: true
+  - type: input
+    id: agent
+    attributes:
+      label: Agent and client, if involved
+      description: e.g. Claude Code 2.1.x, Codex CLI 0.15x, Cursor
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs or screenshots
+      description: Remove tokens, cookies and email addresses first.
+      render: text

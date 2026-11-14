@@ -555,6 +555,16 @@ describe("write_artifact_data", () => {
     const p = await tool(plain.client, "get_artifact", { id: plain.id });
     expect(p.data).toMatchObject({ capabilities: [], data_usage: null });
 
+    // A doc has no index.html to declare anything: it reads like a plain page.
+    const doc = await tool(plain.client, "publish_artifact", {
+      title: "Notes",
+      type: "doc",
+      content: '# Notes\n\n<meta name="plinth-capabilities" content="data viewer">',
+    });
+    expect(doc.isError, doc.text).toBe(false);
+    const d = await tool(plain.client, "get_artifact", { id: doc.data.id });
+    expect(d.data).toMatchObject({ type: "doc", capabilities: [], data_usage: null });
+
     // Someone who may view but not read the data learns nothing about it.
     const commenter = await collaborator(id, "commenter");
     const c = await tool(commenter.client, "get_artifact", { id });

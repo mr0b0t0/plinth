@@ -5,7 +5,7 @@
 //   runtime/worker/index.js     the Worker, bundled by `wrangler deploy --dry-run` (apps/worker/dist)
 //   runtime/web/                the built web app (apps/web/dist)
 //   runtime/migrations/         the D1 migrations
-//   runtime/scripts/            instance.mjs and the tunnel helpers it imports
+//   runtime/scripts/            instance.mjs, deploy.mjs and the helpers they import
 //   runtime/wrangler.base.json  compatibility settings, assets settings and default vars
 //   runtime/harnesses.mjs       the harness registry (packages/shared), types stripped
 import {
@@ -44,7 +44,13 @@ mkdirSync(path.join(out, "migrations"));
 for (const f of readdirSync(path.join(root, "migrations")).filter((f) => f.endsWith(".sql")))
   cpSync(path.join(root, "migrations", f), path.join(out, "migrations", f));
 mkdirSync(path.join(out, "scripts"));
-for (const f of ["instance.mjs", "tunnel-lib.mjs", "tunnel-cloudflare.mjs"])
+for (const f of [
+  "instance.mjs",
+  "tunnel-lib.mjs",
+  "tunnel-cloudflare.mjs",
+  "deploy.mjs",
+  "deploy-lib.mjs",
+])
   cpSync(path.join(root, "apps/worker/scripts", f), path.join(out, "scripts", f));
 
 // The repo's wrangler.jsonc, minus everything instance-specific (setup writes those per instance).
@@ -53,6 +59,7 @@ const repoCfg = parseJsonc(readFileSync(path.join(root, "apps/worker/wrangler.js
 const base = {
   compatibility_date: repoCfg.compatibility_date,
   compatibility_flags: repoCfg.compatibility_flags,
+  observability: repoCfg.observability,
   assets: { ...repoCfg.assets, directory: undefined },
   vars: Object.fromEntries(
     [

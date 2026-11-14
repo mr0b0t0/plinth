@@ -1,6 +1,6 @@
 # Local hosting through a Cloudflare Tunnel
 
-As of 2026-11-14 · German (requirements), Claude (design)
+As of 2026-11-14 · requirements from the maintainer, design by Claude
 
 ## Intent
 
@@ -11,7 +11,7 @@ a named Cloudflare Tunnel makes it reachable from the internet. Nothing is hoste
 **Why:** privacy and no hosting. The owner keeps every artifact, version, comment and account on
 their own disk, and still gets the whole product.
 
-**Requirement from German:** absolutely the same functionality as the hosted and self-hosted
+**Requirement:** absolutely the same functionality as the hosted and self-hosted
 deployments. That means external sharing with people who have no Plinth or AI account, real
 links that last, sign-in, allowlists with email codes, comments and mentions, the editor, and
 agents connecting over MCP, including cloud clients such as Claude.ai connectors that call the
@@ -56,7 +56,7 @@ MCP endpoint from the internet.
   wildcard only, so `*.content.example.net` would get no certificate.
 - **Cloudflare sees traffic in transit.** TLS ends at Cloudflare's edge, and the tunnel carries
   traffic to the machine from there. Files are stored only on the machine, but Cloudflare can
-  read pages as it serves them. German accepted this. The docs state it plainly.
+  read pages as it serves them. The maintainer accepted this. The docs state it plainly.
 - **Email.** Outsiders on an allowlist confirm their address with a code. That needs SendGrid or
   Resend, as in self-hosting. `console` is allowed only in single-user mode, as production rules
   already say, and then only the owner can sign in and allowlisted viewers can't get codes. The
@@ -76,7 +76,7 @@ MCP endpoint from the internet.
 
 | Approach | Trade-off | Outcome |
 | --- | --- | --- |
-| **A. Named Cloudflare Tunnel on two owned domains** | Keeps per-artifact subdomains, through a wildcard route, so all security rules hold. Links never change. Needs a free Cloudflare account, two domains (about $10–15 each per year), and `cloudflared`. Cloudflare decrypts traffic at the edge | **Chosen by German** |
+| **A. Named Cloudflare Tunnel on two owned domains** | Keeps per-artifact subdomains, through a wildcard route, so all security rules hold. Links never change. Needs a free Cloudflare account, two domains (about $10–15 each per year), and `cloudflared`. Cloudflare decrypts traffic at the edge | **Chosen** |
 | B. Quick tunnel (trycloudflare), Tailscale Funnel, or free ngrok | No domain and no account. But at most one hostname, so every artifact would share one origin and could read the others' data. Quick-tunnel URLs change on every restart, which breaks shared links | Dropped: fails "same functionality" and the isolation rule |
 | C. Tailscale Funnel alone | End-to-end TLS to the machine. But it has B's single-hostname problem, so artifact isolation would need redesigning for every deployment | Dropped: too big, and it weakens the shared security model |
 

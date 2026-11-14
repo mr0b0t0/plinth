@@ -131,7 +131,7 @@ covers only first-level wildcards.
 For the hosted instance (`CONTENT_DOMAIN` = `plinthusercontent.com`, its own zone):
 
 - Route: `{ "pattern": "*.plinthusercontent.com/*", "zone_name": "plinthusercontent.com" }`
-  (`setup.mjs` writes it).
+  (`setup.mjs` and `plinth deploy` write it).
 - DNS in the `plinthusercontent.com` zone: only `A` `*` → `192.0.2.0`, proxied.
 - Certificate: Universal SSL (`plinthusercontent.com`, `*.plinthusercontent.com`), issued
   automatically. SSL/TLS "Full (strict)" and "Always Use HTTPS" are on.

@@ -99,6 +99,7 @@ export async function computeGate(
     status: "ok",
     artifact: {
       ...stub(a),
+      type: a.type,
       current_version: a.currentVersion,
       version,
       visibility: a.visibility,

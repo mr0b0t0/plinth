@@ -1,29 +1,45 @@
 # Distribution (maintainers)
 
-How Plinth reaches people besides the hosted instance: the npm CLI, the agent plugin, and the
-directory listings. User-facing guides: [local-hosting.md](local-hosting.md) and
-[agents.md](agents.md).
+How Plinth reaches people besides the hosted instance: the npm CLI, the Docker image, the agent
+plugin, and the directory listings. User-facing guides: [local-hosting.md](local-hosting.md),
+[docker.md](docker.md) and [agents.md](agents.md).
 
 ## npm: `@mr0b0t0/plinth`
 
 `packages/cli` is the package. `pnpm build` assembles `packages/cli/runtime/` (git-ignored): the
-Worker bundle from `apps/worker/dist`, the web app, the migrations, and the instance scripts from
-`apps/worker/scripts/` that `scripts/setup.mjs` and `scripts/local-start.mjs` use too. Its only
+Worker bundle from `apps/worker/dist`, the web app, the migrations, and the instance and deploy scripts from
+`apps/worker/scripts/` (`instance.mjs`, `deploy.mjs` and their helpers) that `scripts/setup.mjs`
+and `scripts/local-start.mjs` use too. The CLI's modes: `init` (localhost only), `init --tunnel`
+(local behind a Cloudflare Tunnel) and `deploy` (Workers, D1 and R2 on the user's account). Its only
 runtime dependencies are `wrangler` (which runs the Worker) and `tldts`.
 
-Release:
-
-1. Bump `version` in `packages/cli/package.json`.
-2. `pnpm install && pnpm build`
-3. `pnpm --filter @mr0b0t0/plinth test:smoke` (packs the package, installs the tarball with npm into
-   a temporary prefix, and runs a localhost-only instance end to end).
-4. `cd packages/cli && pnpm publish --access public --no-git-checks`. Publishes under the personal
-   npm account `mr0b0t0` (the scope is the account name); `--access public` because scoped packages
-   are private by default. npm cannot rename a package: moving it to an organization later means
-   publishing under the new name and deprecating this one.
+Release: `pnpm release <version> --push` on `main`. The tag runs CI, publishes the package with
+npm provenance and the Docker image, and creates the GitHub release ([releasing.md](releasing.md)).
+The package is under the personal npm account `mr0b0t0` (the scope is the account name). npm cannot
+rename a package: moving it to an organization later means publishing under the new name and
+deprecating this one.
 
 Keep the pinned `wrangler` version in `packages/cli/package.json` equal to the one in
 `apps/worker/package.json`.
+
+## Docker: `ghcr.io/mr0b0t0/plinth`
+
+The `Dockerfile` at the repository root packages the same CLI: it builds the runtime on the build
+machine's platform, installs the CLI's production dependencies (wrangler, with the native `workerd`
+and `esbuild`, and tldts) for each target platform with `pnpm deploy`, and adds `cloudflared` and a
+CA bundle from the pinned `cloudflare/cloudflared` image. Both base images are pinned by version
+and digest in the `ARG` lines at the top; bump them together with the Node version in `.npmrc`.
+`docker/entrypoint.sh` and `docker/configure.mjs` turn `PLINTH_*` variables into `plinth init` and
+`plinth start` ([docker.md](docker.md)).
+
+Release, for `linux/amd64` and `linux/arm64`:
+
+1. `pnpm test:docker` builds the image for this machine and runs it end to end in localhost mode
+   (sign-in from the log, OAuth, a publish over MCP, the artifact host, restart, stop). With
+   `PLINTH_DOCKER_IMAGE` it tests an image already built; with `PLINTH_DOCKER_PLATFORM` it runs one
+   for another platform under emulation.
+2. Build and push both platforms with `docker buildx build --platform linux/amd64,linux/arm64`,
+   tagged with the CLI's version from `packages/cli/package.json` and `latest`.
 
 ## Agent plugin
 

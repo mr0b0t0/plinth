@@ -1470,7 +1470,18 @@
         "type": "object",
         "properties": {
           "title": { "type": "string", "minLength": 1, "maxLength": 200 },
+          "type": {
+            "default": "html",
+            "type": "string",
+            "enum": ["html", "doc"],
+            "description": "\"html\" (default): a hand-written page sent as html. \"doc\": a Markdown document sent as content, which Plinth renders as a finished page. Fixed at publish."
+          },
           "html": { "type": "string", "minLength": 1, "description": "Complete HTML document" },
+          "content": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The source of a typed artifact: for type \"doc\", the Markdown document (stored as content.md). Not for html artifacts, which send html."
+          },
           "assets": {
             "maxItems": 200,
             "type": "array",
@@ -1505,12 +1516,17 @@
             "items": { "type": "string", "maxLength": 254 }
           }
         },
-        "required": ["title", "html"]
+        "required": ["title"]
       },
       "UpdateArtifactInput": {
         "type": "object",
         "properties": {
           "html": { "type": "string", "minLength": 1, "description": "Complete HTML document" },
+          "content": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The source of a typed artifact: for type \"doc\", the Markdown document (stored as content.md). Not for html artifacts, which send html."
+          },
           "assets": {
             "maxItems": 200,
             "type": "array",
@@ -1535,8 +1551,7 @@
           },
           "note": { "type": "string", "maxLength": 500 },
           "base_version": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 }
-        },
-        "required": ["html"]
+        }
       },
       "RenameArtifactInput": {
         "type": "object",
@@ -1755,6 +1770,11 @@
         },
         "required": ["kind", "label", "user_id", "connection_id"]
       },
+      "ArtifactType": {
+        "type": "string",
+        "enum": ["html", "doc"],
+        "description": "\"html\": a hand-written page (source index.html). \"doc\": a Markdown document (source content.md) that Plinth renders. Fixed at publish."
+      },
       "ArtifactSummary": {
         "type": "object",
         "properties": {
@@ -1765,6 +1785,7 @@
           },
           "slug": { "type": "string" },
           "title": { "type": "string" },
+          "type": { "$ref": "#/components/schemas/ArtifactType" },
           "visibility": {
             "type": "string",
             "enum": ["public", "unlisted", "password", "allowlist"]
@@ -1799,6 +1820,7 @@
           "id",
           "slug",
           "title",
+          "type",
           "visibility",
           "current_version",
           "version_count",
@@ -1812,6 +1834,20 @@
         ]
       },
       "ArtifactDetail": {
+        "description": "An artifact and one version's source. The source field depends on `type`",
+        "oneOf": [
+          { "$ref": "#/components/schemas/HtmlArtifactDetail" },
+          { "$ref": "#/components/schemas/DocArtifactDetail" }
+        ],
+        "discriminator": {
+          "propertyName": "type",
+          "mapping": {
+            "html": "#/components/schemas/HtmlArtifactDetail",
+            "doc": "#/components/schemas/DocArtifactDetail"
+          }
+        }
+      },
+      "HtmlArtifactDetail": {
         "type": "object",
         "properties": {
           "id": {
@@ -1821,6 +1857,11 @@
           },
           "slug": { "type": "string" },
           "title": { "type": "string" },
+          "type": {
+            "type": "string",
+            "enum": ["html"],
+            "description": "HTML page: always \"html\""
+          },
           "visibility": {
             "type": "string",
             "enum": ["public", "unlisted", "password", "allowlist"]
@@ -1851,12 +1892,18 @@
           "role": { "type": "string", "enum": ["owner", "viewer", "commenter", "editor"] },
           "taken_down": { "type": "boolean" },
           "version": { "type": "integer", "minimum": 1, "description": "The version returned" },
+          "source_path": {
+            "type": "string",
+            "enum": ["index.html"],
+            "description": "The version file holding the source"
+          },
           "html": {
             "type": "string",
             "description": "UNTRUSTED: written by the artifact's authors"
           },
           "assets": {
             "type": "array",
+            "description": "The version's other files; never index.html or content.md",
             "items": {
               "type": "object",
               "properties": {
@@ -1888,6 +1935,7 @@
           "id",
           "slug",
           "title",
+          "type",
           "visibility",
           "current_version",
           "version_count",
@@ -1899,7 +1947,111 @@
           "role",
           "taken_down",
           "version",
+          "source_path",
           "html",
+          "assets",
+          "capabilities",
+          "data_usage"
+        ]
+      },
+      "DocArtifactDetail": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z0-9]{20}$",
+            "description": "Also the artifact's content subdomain"
+          },
+          "slug": { "type": "string" },
+          "title": { "type": "string" },
+          "type": { "type": "string", "enum": ["doc"], "description": "Document: always \"doc\"" },
+          "visibility": {
+            "type": "string",
+            "enum": ["public", "unlisted", "password", "allowlist"]
+          },
+          "current_version": { "type": "integer", "minimum": 1 },
+          "version_count": { "type": "integer", "minimum": 1 },
+          "created_at": { "type": "string", "format": "date-time" },
+          "updated_at": { "type": "string", "format": "date-time" },
+          "url": {
+            "type": "string",
+            "format": "uri",
+            "description": "App page: <APP_HOST>/a/<slug>"
+          },
+          "content_url": {
+            "type": "string",
+            "format": "uri",
+            "description": "Artifact origin on the content host. Needs a viewer token unless entered"
+          },
+          "owner": {
+            "type": "object",
+            "properties": {
+              "id": { "type": "string" },
+              "email": { "type": "string", "format": "email" },
+              "name": { "type": ["string", "null"] }
+            },
+            "required": ["id", "email", "name"]
+          },
+          "role": { "type": "string", "enum": ["owner", "viewer", "commenter", "editor"] },
+          "taken_down": { "type": "boolean" },
+          "version": { "type": "integer", "minimum": 1, "description": "The version returned" },
+          "source_path": {
+            "type": "string",
+            "enum": ["content.md"],
+            "description": "The version file holding the source"
+          },
+          "content": {
+            "type": "string",
+            "description": "UNTRUSTED Markdown, written by the artifact's authors"
+          },
+          "assets": {
+            "type": "array",
+            "description": "The version's other files; never index.html or content.md",
+            "items": {
+              "type": "object",
+              "properties": {
+                "path": { "type": "string" },
+                "size_bytes": { "type": "integer" },
+                "content_type": { "type": "string" }
+              },
+              "required": ["path", "size_bytes", "content_type"]
+            }
+          },
+          "capabilities": {
+            "type": "array",
+            "items": { "type": "string", "enum": ["data", "viewer"] },
+            "description": "What the returned version declares (shared data, viewer identity)"
+          },
+          "data_usage": {
+            "oneOf": [
+              {
+                "type": "object",
+                "properties": { "docs": { "type": "integer" }, "bytes": { "type": "integer" } },
+                "required": ["docs", "bytes"]
+              },
+              { "type": "null" }
+            ],
+            "description": "Shared data totals; null when there is none or the caller cannot read it"
+          }
+        },
+        "required": [
+          "id",
+          "slug",
+          "title",
+          "type",
+          "visibility",
+          "current_version",
+          "version_count",
+          "created_at",
+          "updated_at",
+          "url",
+          "content_url",
+          "owner",
+          "role",
+          "taken_down",
+          "version",
+          "source_path",
+          "content",
           "assets",
           "capabilities",
           "data_usage"
@@ -1917,6 +2069,7 @@
         "properties": {
           "id": { "type": "string" },
           "slug": { "type": "string" },
+          "type": { "$ref": "#/components/schemas/ArtifactType" },
           "version": { "type": "integer", "minimum": 1 },
           "url": { "type": "string", "format": "uri" },
           "content_url": { "type": "string", "format": "uri" },
@@ -1925,7 +2078,7 @@
             "enum": ["public", "unlisted", "password", "allowlist"]
           }
         },
-        "required": ["id", "slug", "version", "url", "content_url", "visibility"]
+        "required": ["id", "slug", "type", "version", "url", "content_url", "visibility"]
       },
       "VersionInfo": {
         "type": "object",
@@ -2259,6 +2412,7 @@
                   "id": { "type": "string" },
                   "slug": { "type": "string" },
                   "title": { "type": "string" },
+                  "type": { "$ref": "#/components/schemas/ArtifactType" },
                   "current_version": { "type": "integer", "minimum": 1 },
                   "version": { "type": "integer", "minimum": 1 },
                   "visibility": {
@@ -2271,6 +2425,7 @@
                   "id",
                   "slug",
                   "title",
+                  "type",
                   "current_version",
                   "version",
                   "visibility",

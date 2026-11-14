@@ -276,20 +276,37 @@ export function credentialsJson({ accountId, tunnelId, secret }) {
   return `${JSON.stringify({ AccountTag: accountId, TunnelID: tunnelId, TunnelSecret: secret }, null, 2)}\n`;
 }
 
+const IPV4_RE = /^(25[0-5]|2[0-4]\d|1?\d?\d)(\.(25[0-5]|2[0-4]\d|1?\d?\d)){3}$/;
+const IPV6_RE = /^[0-9a-f]*:[0-9a-f:]*$/i;
+
+/**
+ * The address the Worker listens on: 127.0.0.1 unless `--listen` (or PLINTH_LISTEN) names another
+ * IP address. Listening beyond loopback is for a container, where the published port or a reverse
+ * proxy decides who can connect (docs/docker.md).
+ */
+export function validateListen(value) {
+  if (value === undefined || value === null || value === "") return "127.0.0.1";
+  const v = String(value);
+  if (!IPV4_RE.test(v) && !IPV6_RE.test(v))
+    fail("--listen must be an IP address, e.g. 127.0.0.1 or 0.0.0.0");
+  return v;
+}
+
 /**
  * Arguments for wrangler and cloudflared. Behind the tunnel, `--upstream-protocol https` keeps the
  * browser's Origin header and an https request URL; without it wrangler dev rewrites both to http
  * and every CSRF-checked request is refused. A localhost-only instance (`local: true`) is plain
- * http end to end, so it leaves the protocol alone.
+ * http end to end, so it leaves the protocol alone. `listen` is the Worker's address
+ * (validateListen).
  */
-export function startCommands(paths, port, tunnel, { local = false } = {}) {
+export function startCommands(paths, port, tunnel, { local = false, listen = "127.0.0.1" } = {}) {
   return {
     wrangler: [
       "dev",
       "--config",
       paths.wranglerConfig,
       "--ip",
-      "127.0.0.1",
+      listen,
       "--port",
       String(port),
       "--persist-to",

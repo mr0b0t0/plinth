@@ -62,5 +62,6 @@ export declare function startCommands(
   paths: InstancePaths,
   port: number,
   tunnel: boolean,
-  opts?: { local?: boolean },
+  opts?: { local?: boolean; listen?: string },
 ): { wrangler: string[]; cloudflared: string[] | null };
+export declare function validateListen(value: unknown): string;

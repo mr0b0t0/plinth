@@ -11,7 +11,12 @@
 //   POST /oauth/revoke                              RFC 7009
 //   *    /api/v1/...                                REST (see API below). Bearer token or session+CSRF
 //   GET  /openapi.json                              OpenAPI document for /api/v1
-//   GET  everything else                            SPA (static assets, index.html fallback)
+//   GET  /llms.txt, /robots.txt                     agent and crawler guidance, from config
+//   GET  /mcp/server-card                           MCP Server Card (SEP-2127); also at
+//        /.well-known/mcp.json, /.well-known/mcp/server-card.json; /.well-known/ai-catalog.json
+//   GET  /a/<slug>/source[?version=n]               main HTML as sandboxed text/plain, link viewers only
+//   GET  /.well-known/<other>, missing files        404
+//   GET  everything else                            SPA (static assets, index.html with the agent note)
 //
 // <artifact_id>.CONTENT_HOST (user HTML only, never app pages, never app cookies):
 //   GET /__plinth/enter?t=<viewer token>&next=<path>  one-time token -> host-only cookie -> redirect

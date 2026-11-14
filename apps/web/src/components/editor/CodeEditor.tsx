@@ -37,9 +37,12 @@ function useTypeSettings(): { fontFamily: string; fontSize: number; lineHeight: 
 
 const loading = <Spinner label="Loading the editor" />;
 
+/** The languages the editor holds, from the type registry's editor settings. */
+export type EditorLanguage = "html" | "markdown";
+export type EditorWordWrap = "on" | "off";
+
 const BASE_OPTIONS = {
   minimap: { enabled: false },
-  wordWrap: "on" as const,
   scrollBeyondLastLine: false,
   automaticLayout: true,
   tabSize: 2,
@@ -55,6 +58,21 @@ const BASE_OPTIONS = {
   acceptSuggestionOnCommitCharacter: false,
 };
 
+/**
+ * Options for one language. HTML keeps the HTML language service's completion. Markdown is prose:
+ * no suggestions pop up while typing, and no quick suggestions inside words.
+ */
+function languageOptions(language: EditorLanguage, wordWrap: EditorWordWrap) {
+  if (language === "html") return { wordWrap };
+  return {
+    wordWrap,
+    quickSuggestions: false,
+    suggestOnTriggerCharacters: false,
+    autoClosingBrackets: "never" as const,
+    autoClosingQuotes: "never" as const,
+  };
+}
+
 export interface CodeEditorProps {
   value: string;
   onChange: (value: string) => void;
@@ -62,18 +80,32 @@ export interface CodeEditorProps {
   ariaLabel: string;
   /** Model URI, so undo history belongs to one artifact. */
   path: string;
+  /** The source language (the type's editor settings). Defaults to HTML. */
+  language?: EditorLanguage;
+  wordWrap?: EditorWordWrap;
 }
 
-export function CodeEditor({ value, onChange, ariaLabel, path }: CodeEditorProps) {
+export function CodeEditor({
+  value,
+  onChange,
+  ariaLabel,
+  path,
+  language = "html",
+  wordWrap = "on",
+}: CodeEditorProps) {
   const theme = useMonacoTheme();
   const type = useTypeSettings();
-  const options = useMemo(() => ({ ...BASE_OPTIONS, ...type, ariaLabel }), [type, ariaLabel]);
+  const options = useMemo(
+    () => ({ ...BASE_OPTIONS, ...languageOptions(language, wordWrap), ...type, ariaLabel }),
+    [type, ariaLabel, language, wordWrap],
+  );
   return (
     <Editor
       className="pl-code-editor"
       value={value}
       onChange={(v) => onChange(v ?? "")}
-      defaultLanguage="html"
+      defaultLanguage={language}
+      language={language}
       path={path}
       theme={theme}
       loading={loading}
@@ -95,6 +127,8 @@ export interface CodeDiffProps {
   onModifiedChange?: (value: string) => void;
   /** Model URI prefix; the two sides get "/original" and "/modified". */
   path: string;
+  language?: EditorLanguage;
+  wordWrap?: EditorWordWrap;
 }
 
 export function CodeDiff({
@@ -104,6 +138,8 @@ export function CodeDiff({
   modifiedLabel,
   onModifiedChange,
   path,
+  language = "html",
+  wordWrap = "on",
 }: CodeDiffProps) {
   const theme = useMonacoTheme();
   const type = useTypeSettings();
@@ -111,6 +147,7 @@ export function CodeDiff({
   const options = useMemo(
     () => ({
       ...BASE_OPTIONS,
+      ...languageOptions(language, wordWrap),
       ...type,
       readOnly: !editable,
       originalEditable: false,
@@ -120,7 +157,7 @@ export function CodeDiff({
       originalAriaLabel: originalLabel,
       modifiedAriaLabel: modifiedLabel,
     }),
-    [type, editable, originalLabel, modifiedLabel],
+    [type, editable, originalLabel, modifiedLabel, language, wordWrap],
   );
   // Fresh model URIs per mount: models of an unmounted diff are disposed a moment later.
   const [instance] = useState(() => ++diffInstances);
@@ -152,7 +189,7 @@ export function CodeDiff({
       className="pl-code-editor"
       original={original}
       modified={modified}
-      language="html"
+      language={language}
       originalModelPath={`${path}/${instance}/original`}
       modifiedModelPath={`${path}/${instance}/modified`}
       keepCurrentOriginalModel

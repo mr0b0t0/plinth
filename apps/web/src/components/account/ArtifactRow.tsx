@@ -8,7 +8,7 @@ import {
   LinkSimpleIcon,
   PencilSimpleIcon,
 } from "@phosphor-icons/react";
-import { APP_ROUTES, type ArtifactSummary, route, type Visibility } from "@plinth/shared";
+import { APP_ROUTES, type ArtifactSummary, route, typeDef, type Visibility } from "@plinth/shared";
 import { Link } from "../../lib/router.tsx";
 import {
   Badge,
@@ -108,9 +108,13 @@ function Owner({ artifact: a, you }: { artifact: ArtifactSummary; you?: string }
 }
 
 function Tags({ artifact: a }: { artifact: ArtifactSummary }) {
-  if (!a.taken_down && a.role === "owner") return null;
+  // The type badge ("Doc"); plain HTML pages have none.
+  const def = typeDef(a.type);
+  const badge = def?.badge ?? null;
+  if (!badge && !a.taken_down && a.role === "owner") return null;
   return (
     <span className="pl-dash__tags">
+      {badge && <Badge title={def?.label}>{badge}</Badge>}
       {a.taken_down && <Badge tone="danger">Taken down</Badge>}
       {a.role !== "owner" && (
         <span className="pl-dash__role" title={ROLE_META[a.role].description}>

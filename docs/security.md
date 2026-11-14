@@ -49,6 +49,35 @@ each has its own origin with its own storage, cookies and service workers (none 
 opaque isolation). Artifact ids are 20 random lowercase letters and digits (about 103 bits), so
 they cannot be guessed.
 
+### What the app host says about an artifact without signing in
+
+Agents fetch artifact links as text, so the app host answers them without running user HTML
+([agents.md](agents.md#agent-discovery)):
+
+- **The agent note** in the SPA shell (`/a/<slug>`, `/open/<id>`) is built on the server from the
+  instance's config and, at most, the artifact's title and current version. Access is decided by
+  `policy.ts` for the anonymous principal, never from the request's cookies, so the owner's own
+  browser gets the same page as a stranger. Only artifacts an anonymous viewer could open
+  (unlisted, or public) get details; private, password, deleted, taken-down and missing ones get
+  one generic note with the same status, headers and body (apart from the id or slug echoed from
+  the link, which must match `[a-z0-9-]`), so the page is no existence oracle. The title is
+  HTML-escaped and labelled as untrusted text written by the author.
+- **`GET /a/<slug>/source`** returns the main HTML document (a doc's Markdown) of such an artifact (`?version=<n>`
+  for another version) as `text/plain; charset=utf-8` with `X-Content-Type-Options: nosniff`,
+  `Content-Security-Policy: sandbox; default-src 'none'`, `Content-Disposition: inline`,
+  `Cache-Control: no-store`, `X-Robots-Tag: noindex, nofollow` and the app's other headers
+  (`Cross-Origin-Resource-Policy: same-origin`, `X-Frame-Options: DENY`). Browsers do not
+  render plain text with `nosniff` as HTML or run it as a script, and the sandbox CSP gives even a
+  forced rendering an opaque origin with nothing allowed to load, so the app host still never
+  serves user HTML as a page. It reads no cookies and sets none; every other case answers the
+  same `404`. `no-store` means a visibility change applies to the next request, with no copy left
+  in a cache. It is rate-limited per IP (600 per hour). The same text is what any link viewer
+  already gets from the content host.
+- `/llms.txt`, `/robots.txt`, the MCP server card (`/mcp/server-card`, also at
+  `/.well-known/mcp.json` and `/.well-known/mcp/server-card.json`) and `/.well-known/ai-catalog.json`
+  carry only configuration. Unknown `/.well-known/` paths and missing files answer `404`, never
+  the SPA.
+
 ## Opaque content isolation
 
 `CONTENT_ISOLATION` is `origin` (the default) or `opaque`. With `opaque`, every response from a
@@ -224,6 +253,62 @@ Comment anchoring injects a small bridge script, only in review mode. The app an
 frame's origin is `"null"`; the app then checks the frame's window (and, for the preview, a
 per-frame nonce) instead, as described above.
 
+## Typed artifacts
+
+A doc (`artifacts.type = 'doc'`) stores Markdown in `content.md` instead of a hand-written page.
+Its page is a fixed Plinth shell, and the Markdown is turned into HTML in the viewer's browser, on
+the artifact's own content origin, never on the app host. Design:
+`docs/superpowers/specs/2026-11-14-typed-outputs-doc-design.md`.
+
+- **Shell and renderer path.** For a doc, `/` (and `/index.html`, and each `/__plinth/v/<n>/`) is
+  answered with the shell from `typedShellHtml` (`packages/shared/src/artifactTypes.ts`) after the
+  usual content cookie, epoch and version checks. The shell loads `/__plinth/types/doc/doc.css` and
+  `doc.js` from the same origin (prefixed with `/__content/<id>` in the path fallback). Those
+  renderer files are Plinth's own bytes from the web build, served like `bridge.js` before the
+  cookie check, because they hold no artifact data. Only a file the type registry lists for a known
+  type is served; the ASSETS URL is built from the registry, never from the request path, so
+  `/__plinth/types/<anything else>` is a 404.
+- **Embedded JSON.** The shell carries the Markdown in `<script type="application/json"
+  id="__plinth-content">`, written by `jsonForScript`: `JSON.stringify` with `<`, `>`, `&`, U+2028
+  and U+2029 as `\uXXXX`, so `</script>` or `<!--` in the Markdown cannot leave the data block. The
+  title is HTML-escaped. The shell's ids start with `__`, which the heading slugger never makes, and
+  the renderer reads no globals by name, so heading ids cannot clobber anything it uses.
+- **Markdown rules.** markdown-it with `html: false`: every tag in the Markdown, `<script>`,
+  `<iframe>`, `<img onerror>` and comments included, shows as text. Links pass an allowlist
+  (`http:`, `https:`, `mailto:`, `#fragment`, relative paths; not `//`, no backslash, no control
+  characters) instead of a denylist, and a refused link shows as its text. Images are relative
+  paths or `data:image/(png|jpeg|gif|webp|avif);base64`; an `http(s)` image becomes a new-tab link,
+  anything else shows its alt text. Links other than `#` get `target="_blank" rel="noopener
+  noreferrer nofollow"`.
+- **Sanitizer pass.** The rendered HTML is parsed into a `<template>` and walked against a tag and
+  attribute allowlist (`apps/web/src/renderers/doc/sanitize.ts`) before it enters the page: scripts,
+  styles, frames, SVG and MathML are removed with their content, other unknown elements are
+  unwrapped, `style` and event handlers never survive, `class` keeps only `plinth-doc__` and
+  `language-` names, and `href` and `src` are checked again by the URL rules.
+- **Strict shell CSP.** The shell's CSP is the content CSP with `script-src 'self'` and nothing
+  else in that directive: no `unsafe-inline`, no `unsafe-eval`, no CDN hosts. Every other directive
+  is identical, including the opaque `sandbox`. The shell repeats the script policy in a
+  `<meta http-equiv="Content-Security-Policy" content="script-src 'self'">` as the first element of
+  its `<head>`. That covers the editor preview, where the preview loader (served with the default
+  content CSP) writes the shell with `document.write`: a meta policy is enforced on top of the
+  header policy and also binds a written document. So even if both Markdown passes failed,
+  injected inline script or handlers could not run, in the published page or in the preview.
+- **A doc's files run no script.** `content.md` (served raw as `text/markdown` with `nosniff`) and
+  a doc's images are served with `script-src 'none'`, so an SVG image opened as a document cannot
+  run script on the doc's origin. Renderer files and errors keep the default content CSP.
+- **SPA-fallback guard.** ASSETS answers unknown paths with the app's `index.html`
+  (`single-page-application` fallback). A renderer response is used only if it is `ok` and its
+  Content-Type is exactly `text/javascript` for the script or `text/css` for the style; anything
+  else is a 404. The app host answers `/__plinth-renderers/*` with a 404, so the renderer is only
+  ever reachable on content origins.
+- **Printing.** The app's "Print or save as PDF" posts `{ source: "plinth-renderer", v: 1, type:
+  "print" }` to the frame it shows. The renderer acts on it only when `event.source` is its parent
+  and `event.origin` is the exact app origin; the message carries no data.
+- **Opaque mode.** Nothing extra is needed: the content is already in the shell, so the doc never
+  has to `fetch()` its own files, and the renderer and stylesheet are cookie-less subresources with
+  `Cross-Origin-Resource-Policy: cross-origin` like every opaque content response. Images carry the
+  partitioned content cookie as for HTML artifacts, and the shell keeps the CSP `sandbox`.
+
 ## CSRF and input handling
 
 - Every state-changing `/api/v1` request without a bearer token must carry the
@@ -266,6 +351,7 @@ do not reveal that they exist. Agents act as their user, further limited by toke
 | Viewer codes per email | 5 per hour |
 | Comments per user | 60 per hour |
 | Reports per IP | 10 per hour |
+| Artifact source reads (`/a/<slug>/source`) per IP | 600 per hour |
 | Publishes and new versions per user | `MAX_PUBLISHES_PER_HOUR` (60) |
 | Artifacts per account | `MAX_ARTIFACTS_PER_USER` (100), per-user override |
 | Size per version | 5 MB of HTML, 25 MB in total |

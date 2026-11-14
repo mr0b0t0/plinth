@@ -3,7 +3,7 @@
 // decision goes through policy.ts (pageDataAccess, canModifyDoc); the ownership condition is
 // repeated in the SQL of each guarded write, so a delete-and-recreate race cannot slip past it.
 //
-// Exact totals live in artifact_data_usage, kept by triggers (migrations/0003_shared_state.sql).
+// Exact totals live in artifact_data_usage, kept by triggers (migrations/0005_shared_state.sql).
 // D1's meta.changes counts the rows those triggers touch, so writes learn what happened from
 // RETURNING, never from a change count.
 import {

@@ -1,4 +1,4 @@
-// Shared data foundations: migration 0003 (artifact_docs, the trigger-kept usage table,
+// Shared data foundations: migration 0005 (artifact_docs, the trigger-kept usage table,
 // versions.capabilities) and createVersion storing each version's declared capabilities.
 import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
@@ -60,7 +60,7 @@ function insertDoc(artifactId: string, collection: string, docId: string, size: 
     .bind(artifactId, collection, docId, JSON.stringify({ n: size }), size, NOW, NOW);
 }
 
-describe("migration 0003_shared_state", () => {
+describe("migration 0005_shared_state", () => {
   it("applies: the column, both tables, three triggers and the indexes exist", async () => {
     const cols = await D1().prepare("PRAGMA table_info(versions)").all<{ name: string }>();
     expect(cols.results.map((c) => c.name)).toContain("capabilities");
@@ -246,7 +246,7 @@ describe("createVersion stores capabilities", () => {
   it("versions from before the migration read as NULL, and versionCapabilities parses rows", async () => {
     const a = await agent();
     const id = (await publish(a.auth, { html: DECLARED })).body.id as string;
-    // A row written the way versions were written before 0003: no capabilities column at all.
+    // A row written the way versions were written before 0005: no capabilities column at all.
     await D1()
       .prepare(
         `INSERT INTO versions (id, artifact_id, number, r2_prefix, size_bytes, manifest, created_at)

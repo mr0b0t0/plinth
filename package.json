@@ -20,7 +20,9 @@
     "openapi": "node scripts/openapi.mjs",
     "local:start": "node scripts/local-start.mjs",
     "test:local": "node e2e/local/smoke.mjs",
-    "integrations": "node scripts/integrations.mjs"
+    "test:docker": "node scripts/docker-smoke.mjs",
+    "integrations": "node scripts/integrations.mjs",
+    "release": "node scripts/release.mjs"
   },
   "devDependencies": {
     "@biomejs/biome": "2.6.6",

@@ -10,6 +10,7 @@ import {
   renderCloudflaredConfig,
   startCommands,
   TunnelUsageError,
+  validateListen,
   validateLocalOptions,
   validateTunnelOptions,
 } from "../scripts/tunnel-lib.mjs";
@@ -296,5 +297,26 @@ describe("tunnel-lib: localhost-only instances", () => {
     expect(cmd.wrangler).not.toContain("--upstream-protocol");
     expect(cmd.wrangler).toContain("127.0.0.1");
     expect(cmd.cloudflared).toBeNull();
+  });
+});
+
+describe("tunnel-lib: listen address", () => {
+  it("defaults to loopback and accepts IP addresses only", () => {
+    expect(validateListen(undefined)).toBe("127.0.0.1");
+    expect(validateListen("")).toBe("127.0.0.1");
+    expect(validateListen("0.0.0.0")).toBe("0.0.0.0");
+    expect(validateListen("::")).toBe("::");
+    expect(validateListen("::1")).toBe("::1");
+    for (const bad of ["localhost", "0.0.0.256", "example.com", "1.2.3", "*"])
+      expect(() => validateListen(bad)).toThrow(TunnelUsageError);
+  });
+
+  it("passes the address to wrangler dev", () => {
+    const paths = instancePaths("/h", "p");
+    const cmd = startCommands(paths, 8788, false, { local: true, listen: "0.0.0.0" });
+    expect(
+      cmd.wrangler.slice(cmd.wrangler.indexOf("--ip"), cmd.wrangler.indexOf("--ip") + 2),
+    ).toEqual(["--ip", "0.0.0.0"]);
+    expect(startCommands(paths, 8788, false).wrangler).toContain("127.0.0.1");
   });
 });

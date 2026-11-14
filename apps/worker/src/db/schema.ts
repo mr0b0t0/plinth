@@ -1,5 +1,6 @@
 // Drizzle schema mirroring migrations/0001_init.sql. The SQL migrations are the source of truth for
 // the database; keep this file in step with them (test/schema.test.ts checks the column lists).
+import type { ArtifactType } from "@plinth/shared";
 import { integer, primaryKey, sqliteTable, text } from "drizzle-orm/sqlite-core";
 
 export const users = sqliteTable("users", {
@@ -41,6 +42,8 @@ export const artifacts = sqliteTable("artifacts", {
   updatedAt: text("updated_at").notNull(),
   deletedAt: text("deleted_at"),
   takenDownAt: text("taken_down_at"),
+  /** migrations/0004: the artifact type (packages/shared/src/artifactTypes.ts), fixed at publish. */
+  type: text("type").$type<ArtifactType>().notNull().default("html"),
 });
 
 export const versions = sqliteTable("versions", {
@@ -55,7 +58,7 @@ export const versions = sqliteTable("versions", {
   note: text("note"),
   restoredFrom: integer("restored_from"),
   createdAt: text("created_at").notNull(),
-  /** JSON Capabilities parsed from index.html (migrations/0003_shared_state.sql), or null. */
+  /** JSON Capabilities parsed from index.html (migrations/0005_shared_state.sql), or null. */
   capabilities: text("capabilities"),
 });
 
@@ -205,7 +208,7 @@ export const devOutbox = sqliteTable("dev_outbox", {
   createdAt: text("created_at").notNull(),
 });
 
-// Shared data (migrations/0003_shared_state.sql). The usage table is kept exact by SQLite
+// Shared data (migrations/0005_shared_state.sql). The usage table is kept exact by SQLite
 // triggers on artifact_docs; never write its docs or bytes columns directly.
 const dataRole = ["owner", "editor", "commenter", "viewer"] as const;
 const dataVia = ["page", "agent", "app"] as const;

@@ -1,6 +1,10 @@
 // The editor itself: Monaco on the left, the live preview on the right, save with an optional
 // note, and conflict handling. Loaded lazily by pages/Editor.tsx (it pulls in Monaco).
 //
+// What is edited comes from the artifact's type (TYPE_REGISTRY): an HTML page's index.html, or a
+// doc's content.md in Markdown. A typed artifact's preview is the same shell the content host
+// serves, built around the draft, so the preview runs the real renderer.
+//
 // Saves always send base_version. A save against a stale version is refused by the Worker (409)
 // and this view shows the published version next to the draft; it never merges or overwrites on
 // its own. Saving on top of the newer version needs an explicit confirmation.
@@ -16,13 +20,16 @@ import {
   API,
   type AppConfig,
   type ArtifactDetail,
+  type ArtifactTypeDef,
   LIMITS,
   type Paged,
   type PublishResult,
   route,
+  sourceOf,
+  typedShellHtml,
   type VersionInfo,
 } from "@plinth/shared";
-import { useCallback, useEffect, useId, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { ApiRequestError, api } from "../../lib/api.ts";
 import { navigate } from "../../lib/router.tsx";
 import {
@@ -39,6 +46,7 @@ import { type ConflictInfo, ConflictView } from "./ConflictView.tsx";
 import { clearAllDrafts, clearDraft, saveDraft } from "./draft.ts";
 import type { EditorInitial, VersionText } from "./initial.ts";
 import { PreviewFrame } from "./PreviewFrame.tsx";
+import { utf8Bytes } from "./previewProtocol.ts";
 import { SplitPane, type SplitView } from "./SplitPane.tsx";
 import "./editor.css";
 
@@ -53,6 +61,33 @@ export interface EditorWorkspaceProps {
   initial: EditorInitial;
   /** False while the screen is too narrow and the workspace is hidden. */
   active: boolean;
+}
+
+/** The model file name for the draft: draft.html, draft.md. */
+export function draftModelName(def: ArtifactTypeDef): string {
+  const ext = def.sourcePath.slice(def.sourcePath.lastIndexOf(".") + 1);
+  return `draft.${ext}`;
+}
+
+/** A size in whole megabytes for messages ("1 MB", "5 MB"). */
+const megabytes = (n: number) => `${Math.round(n / (1024 * 1024))} MB`;
+
+/**
+ * What the preview frame renders: the draft itself for an HTML page; for a typed artifact the
+ * shell page the content host serves, with the draft as its content. `base` puts the renderer URLs
+ * under the artifact root in the path fallback, where the loader lives at /__content/<id>/.
+ */
+export function previewDocument(
+  def: ArtifactTypeDef,
+  o: { id: string; title: string; text: string; config: AppConfig },
+): string {
+  if (!def.renderer) return o.text;
+  return typedShellHtml(def, {
+    title: o.title,
+    text: o.text,
+    base: o.config.content_path_fallback ? `/__content/${o.id}` : "",
+    appOrigin: o.config.app_origin,
+  });
 }
 
 const isMac = () => /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
@@ -71,6 +106,8 @@ export default function EditorWorkspace({
 }: EditorWorkspaceProps) {
   const toast = useToast();
   const id = artifact.id;
+  const { def } = sourceOf(artifact);
+  const label = def.sourceLabel;
   const artifactPath = `/a/${encodeURIComponent(artifact.slug)}`;
   const codePaneId = useId();
   const tabHintId = useId();
@@ -91,11 +128,16 @@ export default function EditorWorkspace({
   const [leaving, setLeaving] = useState(false);
 
   const dirty = html !== base.html;
-  const tooLarge = html.length > LIMITS.maxHtmlBytes;
+  // UTF-8 bytes, as the Worker counts them.
+  const tooLarge = useMemo(() => utf8Bytes(html) > def.maxSourceBytes, [html, def]);
+  const preview = useMemo(
+    () => previewDocument(def, { id, title: artifact.title, text: html, config }),
+    [def, id, artifact.title, html, config],
+  );
 
   // Refs for handlers that must see the newest values (keyboard shortcut, async saves).
-  const latest = useRef({ html, note, base, mode, dirty, active });
-  latest.current = { html, note, base, mode, dirty, active };
+  const latest = useRef({ html, note, base, mode, dirty, active, tooLarge });
+  latest.current = { html, note, base, mode, dirty, active, tooLarge };
   const savingRef = useRef(false);
 
   // Keep the draft in this tab so a reload does not lose it.
@@ -137,7 +179,7 @@ export default function EditorWorkspace({
         }
         setConflict({
           current: detail.version,
-          currentHtml: detail.html,
+          currentHtml: sourceOf(detail).text,
           author,
           createdAt,
           base: from,
@@ -167,7 +209,7 @@ export default function EditorWorkspace({
       try {
         const result = await api<PublishResult>(route(API.artifact, { ref: id }), {
           method: "PUT",
-          body: { html: draft, note: trimmed || undefined, base_version: from },
+          body: { [def.sourceField]: draft, note: trimmed || undefined, base_version: from },
         });
         clearAllDrafts(id);
         setBase({ version: result.version, html: draft });
@@ -198,7 +240,7 @@ export default function EditorWorkspace({
         setSaving(false);
       }
     },
-    [id, openConflict, toast],
+    [id, def, openConflict, toast],
   );
 
   // Cmd+S / Ctrl+S saves, anywhere on the page (captured before Monaco sees it).
@@ -217,11 +259,20 @@ export default function EditorWorkspace({
         });
         return;
       }
+      if (s.tooLarge) {
+        // The Save button is disabled and the banner says why; the Worker would refuse it.
+        toast.toast({
+          title: "Too large to save",
+          description: `The ${label} is larger than ${megabytes(def.maxSourceBytes)}. Shorten it to save.`,
+          tone: "warning",
+        });
+        return;
+      }
       if (s.dirty) void save();
     };
     window.addEventListener("keydown", onKeyDown, true);
     return () => window.removeEventListener("keydown", onKeyDown, true);
-  }, [save, toast]);
+  }, [save, toast, label, def]);
 
   // Offer to throw away a draft restored from this tab.
   const restoredOnce = useRef(false);
@@ -344,6 +395,15 @@ export default function EditorWorkspace({
         </div>
       </header>
 
+      {tooLarge && def.renderer && (
+        <div className="pl-editor__notice" role="status">
+          <InfoIcon aria-hidden="true" />
+          <p>
+            The {label} is larger than {megabytes(def.maxSourceBytes)}, the most a {def.id} can
+            hold, so it cannot be saved. Shorten it to save.
+          </p>
+        </div>
+      )}
       {mode === "edit" && newer !== null && (
         <div className="pl-editor__notice" role="status">
           <InfoIcon aria-hidden="true" />
@@ -400,6 +460,8 @@ export default function EditorWorkspace({
             onCopyDraft={onCopyDraft}
             onLoadLatest={onLoadLatest}
             onSaveOnTop={() => void save(conflict.current)}
+            language={def.editor.language}
+            sourceLabel={label}
           />
         )}
         <div className="pl-editor__work" hidden={mode === "conflict"}>
@@ -410,7 +472,7 @@ export default function EditorWorkspace({
             start={
               <div className="pl-editor-pane">
                 <div className="pl-editor-pane__tools">
-                  <span className="pl-editor-pane__label">HTML</span>
+                  <span className="pl-editor-pane__label">{label}</span>
                   <span className="pl-editor-pane__hint type-caption text-faint" id={tabHintId}>
                     Tab indents. {TAB_FOCUS_KEYS} makes Tab move focus instead.
                   </span>
@@ -421,23 +483,37 @@ export default function EditorWorkspace({
                       original={reference}
                       modified={html}
                       originalLabel="Your earlier draft (read only)"
-                      modifiedLabel={`HTML of ${artifact.title}, based on v${base.version}`}
+                      modifiedLabel={`${label} of ${artifact.title}, based on v${base.version}`}
                       onModifiedChange={setHtml}
                       path={`inmemory://plinth/${id}/reapply`}
+                      language={def.editor.language}
+                      wordWrap={def.editor.wordWrap}
                     />
                   ) : (
                     <CodeEditor
                       value={html}
                       onChange={setHtml}
-                      ariaLabel={`HTML of ${artifact.title}. Tab indents; press ${TAB_FOCUS_KEYS} to make Tab move focus.`}
-                      path={`inmemory://plinth/${id}/draft.html`}
+                      ariaLabel={`${label} of ${artifact.title}. Tab indents; press ${TAB_FOCUS_KEYS} to make Tab move focus.`}
+                      path={`inmemory://plinth/${id}/${draftModelName(def)}`}
+                      language={def.editor.language}
+                      wordWrap={def.editor.wordWrap}
                     />
                   )}
                 </div>
               </div>
             }
             end={
-              <PreviewFrame artifactId={id} title={artifact.title} html={html} config={config} />
+              <PreviewFrame
+                artifactId={id}
+                title={artifact.title}
+                html={preview}
+                config={config}
+                tooLargeText={
+                  def.renderer
+                    ? `Too large to preview. The page built from this ${label} is over ${megabytes(LIMITS.maxHtmlBytes)}, the most the preview can show; saving still works while the ${label} is under ${megabytes(def.maxSourceBytes)}.`
+                    : undefined
+                }
+              />
             }
           />
         </div>

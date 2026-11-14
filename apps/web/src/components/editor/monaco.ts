@@ -2,16 +2,18 @@
 // @monaco-editor/react's loader is pointed at this local copy, and the workers are Vite `?worker`
 // chunks served from the app's own origin (worker-src 'self' blob:).
 //
-// Only what an HTML editor needs is registered: the editor features, the HTML, CSS and JavaScript
-// grammars (HTML embeds the other two), and the HTML language service (completion, hover,
-// formatting), which runs in the html worker. CSS and TypeScript workers are never requested
-// because the editor only ever holds HTML models.
+// Only what the editor needs is registered: the editor features, the HTML, CSS and JavaScript
+// grammars (HTML embeds the other two), the HTML language service (completion, hover,
+// formatting), which runs in the html worker, and the Markdown grammar for docs (a tokenizer
+// only: it needs no worker). CSS and TypeScript workers are never requested because the editor
+// only ever holds HTML and Markdown models.
 import { loader } from "@monaco-editor/react";
 import * as monaco from "monaco-editor/editor";
 import "monaco-editor/features/register.all";
 import "monaco-editor/languages/definitions/css/register";
 import "monaco-editor/languages/definitions/html/register";
 import "monaco-editor/languages/definitions/javascript/register";
+import "monaco-editor/languages/definitions/markdown/register";
 import "monaco-editor/languages/features/html/register";
 import EditorWorker from "monaco-editor/editor/editor.worker?worker";
 import HtmlWorker from "monaco-editor/languages/features/html/html.worker?worker";

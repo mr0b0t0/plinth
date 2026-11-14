@@ -472,6 +472,7 @@ describe("No route on a content host serves app pages or accepts app cookies; no
       `/a/${p.slug}`,
       `/a/${p.slug}/v/1`,
       `/a/${p.slug}/edit`,
+      `/a/${p.slug}/source`,
       `/open/${p.id}`,
       `/__content/${p.id}/`,
       `/__content/${p.id}/index.html`,
@@ -488,10 +489,18 @@ describe("No route on a content host serves app pages or accepts app cookies; no
         const body = await res.text();
         const type = res.headers.get("content-type") ?? "";
         if (body.includes(MARKER)) {
-          // Only the API carries the source, as a JSON string the browser never renders.
-          expect(type, path).toMatch(/^application\/json/);
+          // Only the API (a JSON string) and the source endpoint (sandboxed plain text) carry the
+          // source; no browser renders either.
           expect(res.headers.get("x-content-type-options"), path).toBe("nosniff");
-          expect(path.startsWith("/api/v1/artifacts/"), path).toBe(true);
+          if (path.endsWith("/source")) {
+            expect(type, path).toBe("text/plain; charset=utf-8");
+            expect(res.headers.get("content-security-policy"), path).toBe(
+              "sandbox; default-src 'none'",
+            );
+          } else {
+            expect(type, path).toMatch(/^application\/json/);
+            expect(path.startsWith("/api/v1/artifacts/"), path).toBe(true);
+          }
         }
         if (type.includes("text/html")) {
           expect(res.headers.get("content-security-policy"), path).toBe(appCsp(config()));

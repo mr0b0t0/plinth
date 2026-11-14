@@ -12,6 +12,7 @@ import {
   GearSixIcon,
   MoonIcon,
   PencilSimpleIcon,
+  PrinterIcon,
   ShareNetworkIcon,
   SunIcon,
 } from "@phosphor-icons/react";
@@ -40,6 +41,7 @@ import {
 } from "../ui/index.ts";
 import { DataNotice } from "./DataNotice.tsx";
 import { contentOriginOf, shareLink } from "./gate.ts";
+import { postPrint, rendererTargetOrigin } from "./rendererProtocol.ts";
 import { ShareDialog } from "./ShareDialog.tsx";
 import { StageFrame } from "./StageFrame.tsx";
 import "./viewer.css";
@@ -136,6 +138,17 @@ export function ViewerStage({
       : []),
     ...(canEdit(role) ? [{ label: "Edit", icon: PencilSimpleIcon, href: editHref }] : []),
     ...(isOwner ? [{ label: "Settings", icon: GearSixIcon, href: settingsHref }] : []),
+    // A doc prints itself: the renderer in the frame calls its own print(), so the browser prints
+    // the document (or saves it as PDF), not this page around it.
+    ...(artifact.type === "doc"
+      ? [
+          {
+            label: "Print or save as PDF",
+            icon: PrinterIcon,
+            onSelect: () => postPrint(frame, rendererTargetOrigin(config, contentOrigin)),
+          },
+        ]
+      : []),
     // Owners and editors do not report their own work; the footer link stays for all.
     ...(canEdit(role) ? [] : [{ label: "Report", icon: FlagIcon, href: reportHref }]),
     { type: "separator" },

@@ -1,4 +1,5 @@
 // Headers for every response on a content host. The CSP is built from CDN_ALLOWLIST.
+import { TYPED_SHELL_SCRIPT_SRC } from "@plinth/shared";
 import type { Config } from "../config.ts";
 
 /**
@@ -12,11 +13,29 @@ import type { Config } from "../config.ts";
 export const OPAQUE_SANDBOX =
   "sandbox allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-modals allow-downloads";
 
-export function contentCsp(config: Config): string {
+/**
+ * Options for one content response's CSP (docs/superpowers/specs/2026-11-14-typed-outputs-doc-design.md).
+ * `scripts: "self"` is for Plinth's own typed-artifact shell: it runs only the renderer from the
+ * artifact's own origin, so its script-src is `'self'` and nothing else. `scripts: "none"` is for
+ * every other file of a typed artifact (content.md, images): a doc runs no author script, so an
+ * SVG image opened as a document cannot run any either. Every other directive, the opaque sandbox
+ * included, is the same as for any artifact file.
+ */
+export interface ContentCspOptions {
+  scripts?: "self" | "none";
+}
+
+function scriptSrc(config: Config, scripts: ContentCspOptions["scripts"]): string {
+  if (scripts === "self") return TYPED_SHELL_SCRIPT_SRC;
+  if (scripts === "none") return "script-src 'none'";
   const cdn = config.cdnAllowlist.map((h) => `https://${h}`).join(" ");
+  return `script-src 'self' 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval' ${cdn}`;
+}
+
+export function contentCsp(config: Config, opts: ContentCspOptions = {}): string {
   const directives = [
     "default-src 'none'",
-    `script-src 'self' 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval' ${cdn}`,
+    scriptSrc(config, opts.scripts),
     "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
     "font-src 'self' https://fonts.gstatic.com data:",
     "img-src 'self' data: blob:",
@@ -81,8 +100,12 @@ export function contentResourcePolicy(config: Config): "same-origin" | "cross-or
  * Applied to every content-host response, including redirects and errors. Content is not indexed
  * unless the artifact is public (serve.ts removes X-Robots-Tag for public artifact files).
  */
-export function applyContentHeaders(config: Config, headers: Headers): void {
-  headers.set("Content-Security-Policy", contentCsp(config));
+export function applyContentHeaders(
+  config: Config,
+  headers: Headers,
+  opts: ContentCspOptions = {},
+): void {
+  headers.set("Content-Security-Policy", contentCsp(config, opts));
   headers.set("X-Content-Type-Options", "nosniff");
   headers.set("Permissions-Policy", PERMISSIONS_POLICY);
   headers.set("Referrer-Policy", "no-referrer");

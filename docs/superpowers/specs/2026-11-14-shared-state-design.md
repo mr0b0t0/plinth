@@ -162,7 +162,7 @@ artifactId + "|" + email)).slice(0, 24)`. Stable for one person on one artifact,
 across artifacts, never stored. The page gets `viewer.id` for any identified viewer, and
 `viewer.email` only with the `viewer` capability.
 
-### 3. Data model: `migrations/0003_shared_state.sql`
+### 3. Data model: `migrations/0005_shared_state.sql`
 
 ```sql
 -- Shared data: one fixed document store per artifact (docs/spec.md "Shared data and viewer identity").
@@ -218,7 +218,7 @@ END;
   `apps/worker/src/db/schema.ts`.
 - Fallback if the trigger bodies ever misparse: keep the usage table and apply the same deltas in
   the write's `d1.batch()`. The usage-equals-`SUM` test catches drift either way.
-- Issue #2 must not also use number 0003; whichever branch merges second renumbers.
+- Issue #2 took 0004 and merged first, so this migration is 0005.
 
 ### 4. Content-host API (`apps/worker/src/content/data-api.ts`)
 

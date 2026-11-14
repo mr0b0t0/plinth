@@ -22,7 +22,8 @@ export const HOSTED_ORIGIN = "https://plinth.aconite.io";
 
 /** The GitHub repository that is also the plugin marketplace. */
 export const MARKETPLACE_REPO = "mr0b0t0/plinth";
-const REPO_URL = `https://github.com/${MARKETPLACE_REPO}`;
+/** The source repository (also the docs and the issue tracker). */
+export const REPO_URL = `https://github.com/${MARKETPLACE_REPO}`;
 const RAW_URL = `https://raw.githubusercontent.com/${MARKETPLACE_REPO}/main`;
 
 /** The skill every harness gets, in whatever form it takes guidance. */
@@ -32,9 +33,9 @@ export const SKILL_SOURCE = `integrations/skill/${SKILL_NAME}/SKILL.md`;
 /** Plugin metadata, shared by the Claude Code and portable (Codex, ChatGPT) manifests. */
 export const PLUGIN = {
   name: "plinth",
-  version: "0.3.0",
+  version: "0.5.0",
   description:
-    "Publish, update and share HTML artifacts on Plinth: the Plinth MCP server plus a skill with its publishing rules",
+    "Publish, update and share HTML artifacts and Markdown documents on Plinth: the Plinth MCP server plus a skill with its publishing rules",
   author: { name: "Aconite Software & Investments, Lda.", url: "https://aconite.io" },
   homepage: `${REPO_URL}/blob/main/docs/agents.md`,
   repository: REPO_URL,

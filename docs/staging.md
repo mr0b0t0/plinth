@@ -4,26 +4,26 @@ Status on 2026-11-13: **deployed** at <https://plinth-staging.aconite-io.workers
 
 ## Cloud resources created
 
-All in Cloudflare account `ebc2059679ce36868d5e16290c7730eb` (`german@aconite.io`):
+All in the operator's Cloudflare account:
 
 | Resource | Name / ID | Created by |
 | --- | --- | --- |
-| `workers.dev` subdomain for the account | `aconite-io` (`aconite` was taken). Account-wide; chosen by German | Cloudflare API, `PUT /accounts/<id>/workers/subdomain` |
+| `workers.dev` subdomain for the account | `aconite-io` (`aconite` was taken). Account-wide | Cloudflare API, `PUT /accounts/<id>/workers/subdomain` |
 | D1 database | `plinth-staging` (`757e3e98-7966-4f42-a0dd-dd1cfea29eb3`), migrations 0001 and 0002 applied | `scripts/setup.mjs --remote` |
 | R2 bucket | `plinth-staging` | `scripts/setup.mjs --remote` |
 | Worker | `plinth-staging`, `workers_dev` on, preview URLs off | `wrangler deploy` |
 | Worker secrets | `SESSION_SECRET`, `TOKEN_SIGNING_KEY` (generated), `SENDGRID_API_KEY` | `scripts/setup.mjs --remote` |
-| Test data (2026-11-14) | User `german@aconite.io` with a token "Orchestrator session" (used to publish the design mockups; revoked 2026-11-14), and the Codex and Claude Code OAuth test connections (revoked) |
+| Test data (2026-11-14) | The maintainer's user, with a token "Orchestrator session" (used to publish the design mockups; revoked 2026-11-14), and the Codex and Claude Code OAuth test connections (revoked) |
 | Test data | User `smoke@aconite.io` with one agent connection "Staging smoke", and the artifacts the smoke test published | Smoke test steps below |
 
-R2 was enabled on the account by German before the deploy. No DNS records, zone settings,
+R2 was enabled on the account before the deploy. No DNS records, zone settings,
 routes or custom domains were created or changed, and nothing under `aconite.io` was touched.
-`ADMIN_EMAIL=german@aconite.io` on staging.
+`ADMIN_EMAIL` on staging is the maintainer's address.
 
 ## Verified against the live deployment (2026-11-13)
 
 - `e2e/staging/smoke.mjs`: **5/5 passed**: health, a sign-in code email accepted by SendGrid
-  for `german@aconite.io`, OAuth discovery and the 401 challenge on `/mcp`, publish and update
+  for the maintainer's address, OAuth discovery and the 401 challenge on `/mcp`, publish and update
   through `/mcp` with the official MCP client (v1 → v2), and an anonymous viewer fetch through the
   gate and one-time token with CSP, `nosniff` and `Permissions-Policy`, where the token can't be
   replayed.
@@ -43,7 +43,7 @@ routes or custom domains were created or changed, and nothing under `aconite.io`
   called the MCP tools and published
   <https://plinth-staging.aconite-io.workers.dev/a/hello-from-claude-code-dbb5b09rmn>.
 - In both runs the browser side (sign-in session + clicking Allow) was driven by Playwright with a
-  staging session for `german@aconite.io`. Both test registrations were removed from the local
+  staging session for the maintainer's account. Both test registrations were removed from the local
   client configs afterwards.
 
 ## What staging is
@@ -100,7 +100,7 @@ pnpm --filter @plinth/worker exec wrangler d1 execute DB --remote --config wrang
   "INSERT INTO users (id,email,created_at,email_verified_at) VALUES ('smokeuser00000000001','smoke@aconite.io','$NOW','$NOW') ON CONFLICT(email) DO NOTHING;
    INSERT INTO agent_connections (id,user_id,label,client_type,kind,token_hash,scopes,created_at)
    SELECT 'smoke$(date +%s)abcdefg', id, 'Staging smoke', 'other', 'token', '$HASH', 'artifacts:read artifacts:write mentions', '$NOW' FROM users WHERE email='smoke@aconite.io';"
-node e2e/staging/smoke.mjs --url https://plinth-staging.aconite-io.workers.dev --token "$TOKEN" --email german@aconite.io
+node e2e/staging/smoke.mjs --url https://plinth-staging.aconite-io.workers.dev --token "$TOKEN" --email you@example.com
 ```
 
 The smoke test checks health, that a sign-in email is accepted (with `--email`), OAuth discovery

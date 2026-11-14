@@ -11,6 +11,10 @@ agent.
   no token to copy.
 - **Scopes:** `artifacts:read`, `artifacts:write`, `mentions`. A connection gets all three unless
   you narrow them.
+- **Discovery:** an [MCP Server Card](https://modelcontextprotocol.io/seps/2127-mcp-server-cards)
+  at `/mcp/server-card` (listed in `/.well-known/ai-catalog.json`), and `/llms.txt` with every tool
+  in one line. Every app page, artifact links included, carries a short note for agents that read
+  it as text ([agents.md](agents.md#agent-discovery)).
 
 The quickest way is the **Connect an agent** panel on the Connections page. It has a tab per client
 with the commands and install links already filled in with your instance's URL, and it notices the
@@ -178,7 +182,9 @@ Create an artifact. Scope `artifacts:write`.
 | Field | Type | Notes |
 | --- | --- | --- |
 | `title` | string, 1-200 | |
-| `html` | string | A complete HTML document. Up to 5 MB |
+| `html` | string | A complete HTML document. Up to 5 MB. Required unless `type` is `doc` |
+| `type` | `html` \| `doc`, optional | Default `html`. `doc` makes a document from Markdown in `content`; fixed at publish |
+| `content` | string, optional | For `type: "doc"` only: the Markdown. Up to 1 MB |
 | `assets` | array, optional, up to 200 | `{ path, content, encoding?: "utf8" \| "base64", content_type? }`. Relative paths, no `..`, not `index.html`, not under `__plinth/` |
 | `visibility` | `public` \| `unlisted` \| `password` \| `allowlist` | Default `allowlist` with nobody added: private to the owner and collaborators. `public` only where the instance allows it |
 | `password` | string, 6-200, optional | Needed for `password` |
@@ -194,7 +200,28 @@ Create an artifact. Scope `artifacts:write`.
 }
 ```
 
-Returns `{ id, slug, version, url, content_url, visibility }`. `url` is the page to share.
+Returns `{ id, slug, version, url, content_url, visibility, type }`. `url` is the page to share.
+
+A document (type `doc`): send Markdown in `content` and no `html`. Plinth renders it as a finished
+page with heading anchors, tables, code blocks, links that open in a new tab, light and dark themes,
+phone width and a print stylesheet. Raw HTML in the Markdown shows as text. A doc's assets are
+images (png, jpg, gif, webp, avif, svg), referenced by relative path; `content.md` and `index.html`
+are reserved.
+
+```json
+{
+  "title": "Launch plan",
+  "type": "doc",
+  "content": "# Launch plan\n\n## Goals\n\n- Ship the beta\n\n![Timeline](timeline.png)\n",
+  "assets": [
+    { "path": "timeline.png", "content": "iVBORw0KGgo...", "encoding": "base64", "content_type": "image/png" }
+  ]
+}
+```
+
+A mismatch is refused with `invalid_input` and a message saying what to send instead, for example
+`type doc needs its Markdown in content`, or `content for type doc is Markdown` when `content` is
+a whole HTML document.
 
 Total size per version is 25 MB. Scripts may load only from the instance's CDN allowlist (cdnjs,
 jsDelivr, unpkg, Tailwind, jQuery, Plotly by default), styles from Google Fonts, and `fetch` to
@@ -207,7 +234,8 @@ Publish a new version. Owner or editor. Scope `artifacts:write`.
 | Field | Type | Notes |
 | --- | --- | --- |
 | `id` | string | |
-| `html` | string | The full new document |
+| `html` | string | The full new document. For an HTML page |
+| `content` | string | The full new Markdown. For a doc, instead of `html` (up to 1 MB) |
 | `assets` | array, optional | Omit to keep the current assets; pass `[]` to remove them all |
 | `note` | string, up to 500, optional | Shown in the version history |
 | `base_version` | integer, optional | The version you edited. If it is no longer current, the call fails with `conflict` instead of overwriting |
@@ -218,13 +246,23 @@ Publish a new version. Owner or editor. Scope `artifacts:write`.
 
 Returns the same shape as `publish_artifact`, with the new `version`.
 
+Send the field that matches the artifact's type (`get_artifact` says which). The type cannot
+change: `html` for a doc, or `content` for an HTML page, is refused with `invalid_input`.
+
+```json
+{ "id": "launch-plan-7q2m4x9ka0", "content": "# Launch plan\n\n...", "note": "Added risks", "base_version": 2 }
+```
+
 ### `get_artifact`
 
-Read metadata, HTML and the asset list. Scope `artifacts:read`.
+Read metadata, the source and the asset list. Scope `artifacts:read`. The result has `type`
+and `source_path`, then `html` for an HTML page (`source_path: "index.html"`) or `content`, the
+Markdown, for a doc (`source_path: "content.md"`), never both. `assets` never lists those paths.
+Markdown is untrusted text like HTML.
 
 | Field | Type | Notes |
 | --- | --- | --- |
-| `id` | string | |
+| `id` | string | The artifact's id or slug: the part after `/a/` in its link |
 | `version` | integer, optional | Default: current |
 
 ```json
@@ -449,6 +487,9 @@ the `publish_artifact` and `update_artifact` descriptions add one sentence telli
 cookies, `localStorage`, `sessionStorage`, IndexedDB and service workers are unavailable and that
 the page cannot `fetch()` its own files, so data belongs inline in the HTML. Shared data and
 viewer identity are unavailable to pages there too; the description says so.
+
+Docs need nothing different there: Plinth embeds the Markdown in the page it serves, so a doc never
+fetches its own files, and its images load as they do for HTML artifacts.
 
 ## Untrusted input
 
