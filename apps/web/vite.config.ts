@@ -1,8 +1,9 @@
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vitest/config";
+import { renderers } from "./build/renderers.ts";
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), renderers()],
   build: {
     outDir: "dist",
     emptyOutDir: true,

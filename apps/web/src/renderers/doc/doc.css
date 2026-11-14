@@ -1,0 +1,443 @@
+/* The doc type's page (served as /__plinth/types/doc/doc.css on content origins). System fonts
+   only: the content CSP allows no font host for Plinth's own files, and a doc must look the same
+   offline and in print. Every class here comes from markdown.ts and starts with plinth-doc__. */
+
+:root {
+  color-scheme: light dark;
+  --doc-bg: #ffffff;
+  --doc-fg: #1f2328;
+  --doc-muted: #59636e;
+  --doc-heading: #0d1117;
+  --doc-link: #0a58ca;
+  --doc-link-visited: #6f42c1;
+  --doc-border: #d8dee4;
+  --doc-rule: #e4e8ec;
+  --doc-code-bg: #f3f5f7;
+  --doc-th-bg: #f3f5f7;
+  --doc-stripe: #fafbfc;
+  --doc-quote: #8a949e;
+  --doc-focus: #0a58ca;
+  --doc-font:
+    system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif,
+    "Apple Color Emoji", "Segoe UI Emoji";
+  --doc-mono:
+    ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --doc-bg: #121417;
+    --doc-fg: #d6dbe0;
+    --doc-muted: #9aa4ae;
+    --doc-heading: #f0f3f6;
+    --doc-link: #6cb2ff;
+    --doc-link-visited: #c29bff;
+    --doc-border: #343a42;
+    --doc-rule: #2a2f36;
+    --doc-code-bg: #1c2026;
+    --doc-th-bg: #1c2026;
+    --doc-stripe: #16191d;
+    --doc-quote: #6b7580;
+    --doc-focus: #6cb2ff;
+  }
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--doc-bg);
+  color: var(--doc-fg);
+  font-family: var(--doc-font);
+  font-size: 1.0625rem;
+  line-height: 1.65;
+  overflow-x: hidden;
+  font-kerning: normal;
+  text-rendering: optimizeLegibility;
+}
+
+.plinth-doc {
+  display: block;
+  max-width: calc(68ch + 32px);
+  margin: 0 auto;
+  padding: 40px 16px 72px;
+  overflow-wrap: break-word;
+}
+
+.plinth-doc:focus {
+  outline: none;
+}
+
+.plinth-doc > :first-child {
+  margin-top: 0;
+}
+
+.plinth-doc > :last-child {
+  margin-bottom: 0;
+}
+
+/* Text */
+
+.plinth-doc p,
+.plinth-doc ul,
+.plinth-doc ol,
+.plinth-doc blockquote,
+.plinth-doc pre,
+.plinth-doc .plinth-doc__table {
+  margin: 0 0 1.1em;
+}
+
+.plinth-doc h1,
+.plinth-doc h2,
+.plinth-doc h3,
+.plinth-doc h4,
+.plinth-doc h5,
+.plinth-doc h6 {
+  color: var(--doc-heading);
+  font-weight: 650;
+  line-height: 1.25;
+  letter-spacing: -0.01em;
+  margin: 1.8em 0 0.6em;
+  scroll-margin-top: 16px;
+  text-wrap: balance;
+}
+
+.plinth-doc h1 {
+  font-size: 2.1rem;
+  letter-spacing: -0.02em;
+  margin-top: 0;
+  margin-bottom: 0.7em;
+}
+
+.plinth-doc h2 {
+  font-size: 1.5rem;
+  padding-bottom: 0.25em;
+  border-bottom: 1px solid var(--doc-rule);
+}
+
+.plinth-doc h3 {
+  font-size: 1.22rem;
+}
+
+.plinth-doc h4 {
+  font-size: 1.06rem;
+}
+
+.plinth-doc h5,
+.plinth-doc h6 {
+  font-size: 0.95rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--doc-muted);
+}
+
+.plinth-doc__anchor {
+  margin-left: 0.35em;
+  color: var(--doc-muted);
+  font-weight: 400;
+  text-decoration: none;
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+.plinth-doc h1:hover .plinth-doc__anchor,
+.plinth-doc h2:hover .plinth-doc__anchor,
+.plinth-doc h3:hover .plinth-doc__anchor,
+.plinth-doc h4:hover .plinth-doc__anchor,
+.plinth-doc__anchor:focus-visible {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .plinth-doc__anchor {
+    opacity: 0.45;
+  }
+}
+
+.plinth-doc a {
+  color: var(--doc-link);
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.18em;
+}
+
+.plinth-doc a:visited {
+  color: var(--doc-link-visited);
+}
+
+.plinth-doc a.plinth-doc__anchor,
+.plinth-doc a.plinth-doc__anchor:visited {
+  color: var(--doc-muted);
+  text-decoration: none;
+}
+
+.plinth-doc a:focus-visible,
+.plinth-doc pre:focus-visible,
+.plinth-doc .plinth-doc__table:focus-visible {
+  outline: 2px solid var(--doc-focus);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+.plinth-doc strong {
+  font-weight: 650;
+}
+
+.plinth-doc del {
+  color: var(--doc-muted);
+}
+
+.plinth-doc ul,
+.plinth-doc ol {
+  padding-left: 1.6em;
+}
+
+.plinth-doc li + li,
+.plinth-doc li > ul,
+.plinth-doc li > ol {
+  margin-top: 0.3em;
+}
+
+.plinth-doc li > ul,
+.plinth-doc li > ol {
+  margin-bottom: 0;
+}
+
+.plinth-doc li > p {
+  margin-bottom: 0.5em;
+}
+
+.plinth-doc blockquote {
+  padding: 0 0 0 1em;
+  border-left: 3px solid var(--doc-quote);
+  color: var(--doc-muted);
+}
+
+.plinth-doc blockquote > :last-child {
+  margin-bottom: 0;
+}
+
+.plinth-doc hr {
+  height: 0;
+  margin: 2.2em 0;
+  border: 0;
+  border-top: 1px solid var(--doc-border);
+}
+
+/* Code */
+
+.plinth-doc code {
+  font-family: var(--doc-mono);
+  font-size: 0.88em;
+  padding: 0.12em 0.35em;
+  border-radius: 4px;
+  background: var(--doc-code-bg);
+}
+
+.plinth-doc pre {
+  overflow-x: auto;
+  padding: 14px 16px;
+  border: 1px solid var(--doc-rule);
+  border-radius: 6px;
+  background: var(--doc-code-bg);
+  line-height: 1.5;
+  tab-size: 2;
+}
+
+.plinth-doc pre code {
+  display: block;
+  padding: 0;
+  border-radius: 0;
+  background: none;
+  font-size: 0.85rem;
+  white-space: pre;
+}
+
+/* Tables: the wrapper scrolls sideways so a wide table never widens the page. */
+
+.plinth-doc .plinth-doc__table {
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.plinth-doc table {
+  border-collapse: collapse;
+  min-width: 100%;
+  font-size: 0.95rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.plinth-doc th,
+.plinth-doc td {
+  padding: 7px 12px;
+  border: 1px solid var(--doc-border);
+  text-align: left;
+  vertical-align: top;
+}
+
+.plinth-doc th {
+  background: var(--doc-th-bg);
+  color: var(--doc-heading);
+  font-weight: 600;
+}
+
+.plinth-doc tbody tr:nth-child(even) td {
+  background: var(--doc-stripe);
+}
+
+.plinth-doc .plinth-doc__align-left {
+  text-align: left;
+}
+
+.plinth-doc .plinth-doc__align-center {
+  text-align: center;
+}
+
+.plinth-doc .plinth-doc__align-right {
+  text-align: right;
+}
+
+/* Images */
+
+.plinth-doc img {
+  max-width: 100%;
+  height: auto;
+  border-radius: 4px;
+  vertical-align: middle;
+}
+
+.plinth-doc p > img:only-child {
+  display: block;
+  margin: 0 auto;
+}
+
+.plinth-doc__error {
+  color: var(--doc-muted);
+  text-align: center;
+}
+
+@media (max-width: 480px) {
+  body {
+    font-size: 1rem;
+  }
+
+  .plinth-doc {
+    padding-top: 24px;
+    padding-bottom: 48px;
+  }
+
+  .plinth-doc h1 {
+    font-size: 1.75rem;
+  }
+
+  .plinth-doc h2 {
+    font-size: 1.35rem;
+  }
+}
+
+/* Print: browser Print to PDF should give a clean document. */
+
+@page {
+  margin: 18mm 16mm;
+}
+
+@media print {
+  :root {
+    color-scheme: light;
+  }
+
+  body {
+    background: #ffffff;
+    color: #000000;
+    font-size: 11pt;
+    line-height: 1.5;
+  }
+
+  .plinth-doc {
+    max-width: none;
+    padding: 0;
+  }
+
+  .plinth-doc h1,
+  .plinth-doc h2,
+  .plinth-doc h3,
+  .plinth-doc h4,
+  .plinth-doc h5,
+  .plinth-doc h6 {
+    color: #000000;
+    break-after: avoid;
+    page-break-after: avoid;
+  }
+
+  .plinth-doc h2 {
+    border-bottom-color: #999999;
+  }
+
+  .plinth-doc__anchor {
+    display: none;
+  }
+
+  .plinth-doc a,
+  .plinth-doc a:visited {
+    color: #000000;
+  }
+
+  .plinth-doc a[href^="http"]::after,
+  .plinth-doc a[href^="mailto:"]::after {
+    content: " (" attr(href) ")";
+    font-size: 0.85em;
+    word-break: break-all;
+  }
+
+  .plinth-doc th,
+  .plinth-doc td {
+    border-color: #999999;
+  }
+
+  .plinth-doc code,
+  .plinth-doc th,
+  .plinth-doc tbody tr:nth-child(even) td {
+    background: #ffffff;
+  }
+
+  .plinth-doc pre {
+    white-space: pre-wrap;
+    border-color: #999999;
+    background: #ffffff;
+  }
+
+  .plinth-doc pre code {
+    white-space: pre-wrap;
+  }
+
+  .plinth-doc blockquote {
+    color: #333333;
+  }
+
+  .plinth-doc .plinth-doc__table {
+    overflow: visible;
+  }
+
+  .plinth-doc pre,
+  .plinth-doc table,
+  .plinth-doc img,
+  .plinth-doc blockquote {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  .plinth-doc p,
+  .plinth-doc li {
+    orphans: 3;
+    widows: 3;
+  }
+}
