@@ -12,6 +12,8 @@ import { agentConnections, sessions, versions } from "../src/db/schema.ts";
 import worker from "../src/index.ts";
 import { hashToken, newId, newToken } from "../src/lib/crypto.ts";
 import { isoIn, nowIso } from "../src/lib/time.ts";
+import type { Principal } from "../src/policy.ts";
+import type { Ctx } from "../src/services/context.ts";
 import { fileKey, type ManifestEntry, parseManifest } from "../src/services/storage.ts";
 import { getOrCreateUser } from "../src/services/users.ts";
 
@@ -236,4 +238,53 @@ export function spy<T extends object>(
     },
   });
   return { proxy, calls };
+}
+
+/** The principal an agent() token resolves to (all scopes unless given). */
+export function agentPrincipal(
+  a: { user: { id: string; email: string }; connectionId: string },
+  scopes: string[] = ["artifacts:read", "artifacts:write", "mentions"],
+): Principal {
+  return {
+    kind: "agent",
+    userId: a.user.id,
+    email: a.user.email,
+    connectionId: a.connectionId,
+    connectionLabel: "Test token",
+    clientType: "other",
+    scopes: new Set(scopes) as Set<never>,
+  };
+}
+
+/** A service Ctx for direct calls, with optional bindings (spies) and config over the test's. */
+export function serviceCtxFor(
+  principal: Principal,
+  opts: { env?: Partial<Ctx["env"]>; config?: Partial<ReturnType<typeof config>> } = {},
+): Ctx {
+  return {
+    env: { ...(env as unknown as Ctx["env"]), ...opts.env },
+    config: { ...config(), ...opts.config },
+    db: db(),
+    principal,
+    passwordPasses: new Map(),
+    ip: null,
+    waitUntil: () => undefined,
+  };
+}
+
+/** Run a request through the Worker with some bindings or vars replaced (spies, env vars). */
+export async function fetchWith(
+  overrides: Record<string, unknown>,
+  input: string,
+  init?: RequestInit,
+): Promise<Response> {
+  const url = input.startsWith("http") ? input : `${APP}${input}`;
+  const ctx = createExecutionContext();
+  const res = await worker.fetch(
+    new Request(url, { redirect: "manual", ...init }),
+    { ...env, ...overrides } as never,
+    ctx,
+  );
+  await waitOnExecutionContext(ctx);
+  return res;
 }
