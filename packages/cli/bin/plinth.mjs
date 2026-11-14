@@ -31,7 +31,10 @@ Usage:
               [--no-cloudflare] [--replace-tunnel] [--port 8788]
       Reachable from the internet through a Cloudflare Tunnel. Needs two domains on Cloudflare,
       cloudflared, and CLOUDFLARE_API_TOKEN for setup (see docs/local-hosting.md).
-  plinth start [--no-tunnel]   Run the instance (Ctrl-C stops it). Applies new migrations first.
+  plinth start [--no-tunnel] [--listen 127.0.0.1]
+                               Run the instance (Ctrl-C stops it). Applies new migrations first.
+                               --listen (or PLINTH_LISTEN) sets the Worker's address, e.g. 0.0.0.0
+                               in a container; the default is 127.0.0.1.
   plinth status                Show the instance's address and whether it is running.
   plinth connect               Print how to connect Claude Code, Codex, Cursor and others.
 

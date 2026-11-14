@@ -182,3 +182,10 @@ Step-by-step instructions for each client are in [mcp.md](mcp.md).
 - **Backups.** D1 Time Travel restores the database to any minute in the last 30 days (Workers
   Paid) or 7 days (Free). R2 objects are written once per version and never overwritten.
 - **Logs.** `wrangler tail --config wrangler.production.jsonc`. Secrets and tokens are never logged.
+
+## Docker
+
+To run Plinth on a server or laptop of your own instead of Cloudflare Workers, the
+`ghcr.io/mr0b0t0/plinth` image runs the same Worker in a container, with D1 and R2 on a volume:
+localhost only, behind your own reverse proxy with your domains, or through a Cloudflare Tunnel.
+It takes its settings as `PLINTH_*` environment variables. See [docker.md](docker.md).

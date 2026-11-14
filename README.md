@@ -86,8 +86,9 @@ After hours (dark):
 | [docs/mcp.md](docs/mcp.md) | Connecting Claude, ChatGPT, Claude Code, Codex, Cursor and VS Code; tokens for scripts; every MCP tool; the mention workflow |
 | [docs/self-hosting.md](docs/self-hosting.md) | Running your own instance; every setting; single-user mode |
 | [docs/local-hosting.md](docs/local-hosting.md) | Running an instance on your own machine: localhost only with `npx @mr0b0t0/plinth`, or behind a Cloudflare Tunnel; data stays on your disk |
+| [docs/docker.md](docs/docker.md) | Running Plinth in a container: localhost only, behind your own reverse proxy, or through a Cloudflare Tunnel |
 | [docs/agents.md](docs/agents.md) | The Plinth plugin and skill for Claude Code, Codex and other agents |
-| [docs/distribution.md](docs/distribution.md) | Releasing the npm CLI and the plugin; directory listings |
+| [docs/distribution.md](docs/distribution.md) | Releasing the npm CLI, the Docker image and the plugin; directory listings |
 | [docs/deploy-checklist.md](docs/deploy-checklist.md) | Cloudflare resources, DNS, secrets, email, go-live steps |
 | [docs/security.md](docs/security.md) | Threat model and how each boundary is enforced; reporting a vulnerability |
 | [docs/openapi.json](docs/openapi.json) | REST API (`/api/v1`), OpenAPI 3.1; also served at `/openapi.json` |
