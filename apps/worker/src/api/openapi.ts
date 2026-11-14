@@ -947,7 +947,7 @@ function operations(): Operation[] {
       path: API.artifacts,
       operationId: "publishArtifact",
       summary: "Publish a new artifact",
-      description: `Default visibility is unlisted. Limits: ${LIMITS.maxHtmlBytes / 1048576} MB of HTML, ${DEFAULTS.maxVersionBytes / 1048576} MB per version by default (GET /config lists this instance's limits), the account's artifact quota and publishes per hour.`,
+      description: `Default visibility is allowlist (private: only the owner and people they add). Limits: ${LIMITS.maxHtmlBytes / 1048576} MB of HTML, ${DEFAULTS.maxVersionBytes / 1048576} MB per version by default (GET /config lists this instance's limits), the account's artifact quota and publishes per hour.`,
       tag: "Artifacts",
       auth: "agent",
       scope: "artifacts:write",

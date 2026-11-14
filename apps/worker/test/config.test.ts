@@ -183,6 +183,32 @@ describe("operator settings (legal pages)", () => {
     expect(cfg.cdn_allowlist).toEqual(config().cdnAllowlist);
     expect(cfg.upload_ticket_ttl_s).toBe(TTL.uploadTicketMs / 1000);
   });
+  it("report the same CDN allowlist the content host's CSP and publish warnings use", async () => {
+    const { call, config, fetchWith, json } = await import("./helpers.ts");
+    const { contentCsp, contentSources } = await import("../src/content/csp.ts");
+    const cfg = await json(await call("/api/v1/config"));
+    expect(contentSources(config()).script).toEqual(cfg.cdn_allowlist);
+    const scriptSrc = contentCsp(config())
+      .split("; ")
+      .find((d) => d.startsWith("script-src"));
+    for (const h of cfg.cdn_allowlist) expect(scriptSrc).toContain(`https://${h}`);
+    // A self-hoster's CDN_ALLOWLIST reaches /config unchanged.
+    const custom = await json(
+      await fetchWith({ CDN_ALLOWLIST: "cdn.example.org, esm.sh" }, "/api/v1/config"),
+    );
+    expect(custom.cdn_allowlist).toEqual(["cdn.example.org", "esm.sh"]);
+    const limited = await json(
+      await fetchWith(
+        { MAX_VERSION_BYTES: String(2 * 1024 * 1024), MAX_ASSETS_PER_VERSION: "40" },
+        "/api/v1/config",
+      ),
+    );
+    expect(limited.limits).toMatchObject({
+      max_version_bytes: 2 * 1024 * 1024,
+      max_assets_per_version: 40,
+      max_bundle_bytes: 2 * 1024 * 1024 + LIMITS.bundleOverheadBytes,
+    });
+  });
   it("read MAX_VERSION_BYTES and MAX_ASSETS_PER_VERSION within their bounds", () => {
     const c = parseConfig(base);
     expect(c.maxVersionBytes).toBe(DEFAULTS.maxVersionBytes);

@@ -1,0 +1,1 @@
+function e(){console.log(`lazy loaded, a long string to avoid inlining`)}export{e as lazy};

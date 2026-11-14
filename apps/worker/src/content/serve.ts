@@ -14,11 +14,12 @@ import {
 import { and, eq, isNull } from "drizzle-orm";
 import type { Bindings, Config } from "../config.ts";
 import { getDb } from "../db/client.ts";
-import { type ArtifactRow, artifacts, versions } from "../db/schema.ts";
+import { type ArtifactRow, artifacts, type VersionRow } from "../db/schema.ts";
 import { secureFlag, serializeCookie } from "../lib/cookies.ts";
 import { openJson, viewerIdFor } from "../lib/crypto.ts";
+import { ApiError } from "../lib/errors.ts";
 import type { PageClaim } from "../policy.ts";
-import { parseManifest } from "../services/storage.ts";
+import { fileKey, type ManifestEntry } from "../services/storage.ts";
 import { injectBridge, serveBridgeScript } from "./bridge.ts";
 import { applyContentHeaders } from "./csp.ts";
 import { DATA_API_PREFIX, serveDataApi } from "./data-api.ts";
@@ -33,6 +34,31 @@ import {
   verifyEnterToken,
 } from "./tokens.ts";
 import { rendererRequest, serveRendererFile, serveTypedEntry, unsupportedType } from "./typed.ts";
+import { loadVersion } from "./versionCache.ts";
+
+/**
+ * Cache-Control for a file of an explicitly versioned URL (/__plinth/v/<n>/...): its bytes can
+ * never change. Still private (the content cookie gates every file) and never for HTML, whose
+ * response depends on review mode and which is the document a revoked viewer must not keep.
+ */
+export const IMMUTABLE_CACHE = "private, max-age=31536000, immutable";
+
+/** The strong ETag of a manifest entry: from its server-computed sha256 when it has one. */
+export function entryEtag(e: Pick<ManifestEntry, "sha256">): string | null {
+  return e.sha256 ? `"sha256-${e.sha256}"` : null;
+}
+
+/** Whether an If-None-Match header matches an ETag (weak comparison, as RFC 9110 asks). */
+export function etagMatches(header: string | null, etag: string): boolean {
+  if (!header) return false;
+  const bare = (t: string) => (t.startsWith("W/") ? t.slice(2) : t);
+  const want = bare(etag.trim());
+  for (const part of header.split(",")) {
+    const t = part.trim();
+    if (t === "*" || bare(t) === want) return true;
+  }
+  return false;
+}
 
 export type HostRoute =
   | { kind: "app" }
@@ -345,37 +371,63 @@ async function serve(
   const rel = resolveFilePath(filePath);
   if (rel === null) return text(config, 400, "Bad path");
 
-  const v = await getDb(env.DB)
-    .select()
-    .from(versions)
-    .where(and(eq(versions.artifactId, artifactId), eq(versions.number, versionNumber)))
-    .get();
+  const v = await loadVersion(env.DB, artifactId, versionNumber);
   if (!v) return text(config, 404, "No such version");
   // A typed artifact (a doc): its page is Plinth's shell around the content file; every other
   // path (the content file itself, images) is the version's own file, as for any artifact.
   const def = typeDef(artifact.type);
   if (!def) return unsupportedType(config);
   if (def.renderer && rel === "index.html") {
-    return serveTypedEntry(request, env, config, { artifact, version: v, def, base, url });
+    // serveTypedEntry reads only the version's prefix (its source file is always under it).
+    const version = { r2Prefix: v.r2Prefix } as Pick<VersionRow, "r2Prefix"> as VersionRow;
+    return serveTypedEntry(request, env, config, { artifact, version, def, base, url });
   }
-  const entry = parseManifest(v.manifest).find((m) => m.path === rel);
+  const entry = v.entries.get(rel);
   if (!entry) return text(config, 404, "Not found");
-  const key = v.r2Prefix + entry.path;
-  const obj = request.method === "HEAD" ? await env.FILES.head(key) : await env.FILES.get(key);
-  if (!obj) return text(config, 404, "Not found");
+  let key: string;
+  try {
+    key = fileKey(artifactId, v, entry);
+  } catch (e) {
+    if (e instanceof ApiError && e.code === "not_found") return text(config, 404, "Not found");
+    throw e;
+  }
 
-  const headers = new Headers({ "Content-Type": entry.content_type, ETag: obj.httpEtag });
+  const isHtml = entry.content_type.startsWith("text/html");
+  const review = url.searchParams.has(REVIEW_MODE_PARAM) && isHtml;
+  // Opaque isolation keeps the original caching: R2's tag, no-cache everywhere, no early 304.
+  const caching = config.contentIsolation === "origin" && !review;
+  const headers = new Headers({ "Content-Type": entry.content_type });
   // A typed artifact's other files (content.md, images) run no script, not even an SVG opened as
   // a document: only the shell runs Plinth's renderer.
   applyContentHeaders(config, headers, def.renderer ? { scripts: "none" } : {});
   // Public artifacts (only when the instance allows public visibility) may be indexed.
   if (artifact.visibility === "public" && config.allowPublicVisibility)
     headers.delete("X-Robots-Tag");
+  // Files of an explicitly versioned URL never change: let the browser keep them (still private).
+  if (caching && vm && !isHtml) headers.set("Cache-Control", IMMUTABLE_CACHE);
+
+  // Every access check above has passed. A file with a server-computed hash answers a matching
+  // conditional request without touching R2.
+  const strong = caching ? entryEtag(entry) : null;
+  const ifNoneMatch = request.headers.get("if-none-match");
+  if (strong) {
+    headers.set("ETag", strong);
+    if (etagMatches(ifNoneMatch, strong)) return new Response(null, { status: 304, headers });
+  }
+  if (caching && !strong && ifNoneMatch) {
+    const head = await env.FILES.head(key);
+    if (!head) return text(config, 404, "Not found");
+    if (etagMatches(ifNoneMatch, head.httpEtag)) {
+      headers.set("ETag", head.httpEtag);
+      return new Response(null, { status: 304, headers });
+    }
+  }
+  const obj = request.method === "HEAD" ? await env.FILES.head(key) : await env.FILES.get(key);
+  if (!obj) return text(config, 404, "Not found");
+  if (!strong) headers.set("ETag", obj.httpEtag);
   const body = request.method !== "HEAD" && "body" in obj ? (obj as R2ObjectBody).body : null;
   let res = new Response(body, { status: 200, headers });
-  if (url.searchParams.has(REVIEW_MODE_PARAM) && entry.content_type.startsWith("text/html")) {
-    res = injectBridge(config, res, base);
-  }
+  if (review) res = injectBridge(config, res, base);
   return res;
 }
 

@@ -173,4 +173,25 @@ describe("diffAssets", () => {
       { path: "img/a.png", kind: "same", before: 100, after: 100 },
     ]);
   });
+
+  it("compares sha256 when both sides have it, and sizes otherwise", () => {
+    const h = (c: string) => c.repeat(64);
+    const a = [
+      { path: "same-size.js", size_bytes: 10, content_type: "text/javascript", sha256: h("a") },
+      { path: "same-hash.js", size_bytes: 10, content_type: "text/javascript", sha256: h("b") },
+      { path: "legacy.css", size_bytes: 10, content_type: "text/css", sha256: null },
+    ];
+    const b = [
+      // Same size, other bytes: only the hash can tell.
+      { path: "same-size.js", size_bytes: 10, content_type: "text/javascript", sha256: h("c") },
+      { path: "same-hash.js", size_bytes: 10, content_type: "text/javascript", sha256: h("b") },
+      // One side stored before hashes: sizes decide, as before.
+      { path: "legacy.css", size_bytes: 10, content_type: "text/css", sha256: h("d") },
+    ];
+    expect(diffAssets(a, b)).toEqual([
+      { path: "same-size.js", kind: "changed", before: 10, after: 10 },
+      { path: "legacy.css", kind: "same", before: 10, after: 10 },
+      { path: "same-hash.js", kind: "same", before: 10, after: 10 },
+    ]);
+  });
 });
