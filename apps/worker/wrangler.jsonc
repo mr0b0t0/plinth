@@ -38,6 +38,7 @@
     "ALLOW_PUBLIC_VISIBILITY": "false",
     "PUBLIC_MIN_ACCOUNT_AGE_HOURS": "72",
     "STAGING_CONTENT_FALLBACK": "false",
+    "CONTENT_ISOLATION": "origin",
     "DEV_OUTBOX": "true",
     "DEV_IGNORE_CLIENT_IP": "false",
     "DEV_SEED": "false"

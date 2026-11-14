@@ -11,6 +11,7 @@ test-results/
 .DS_Store
 .claude/worktrees/
 e2e/.wrangler-state/
+e2e/.wrangler-state-opaque/
 e2e/test-results/
 e2e/playwright-report/
 # Per-environment Worker config written by scripts/setup.mjs --remote. Remove this line in your

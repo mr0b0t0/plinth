@@ -2,7 +2,6 @@
 // the CSRF middleware in api/index.ts (anonymous POSTs included), which also stops login CSRF.
 import {
   API,
-  COOKIES,
   type DevOutboxItem,
   type LoginRequestResult,
   type LoginResult,
@@ -17,6 +16,7 @@ import type { Config } from "../config.ts";
 import type { Db } from "../db/client.ts";
 import { devOutbox, type UserRow } from "../db/schema.ts";
 import { createEmailAdapter } from "../email/index.ts";
+import { appCookieName } from "../lib/cookies.ts";
 import { ApiError } from "../lib/errors.ts";
 import {
   clearSessionCookie,
@@ -65,7 +65,7 @@ authApi.post(API.loginVerifyLink, async (c) => {
 });
 
 authApi.post(API.logout, async (c) => {
-  const value = c.get("cookies").get(COOKIES.session);
+  const value = c.get("cookies").get(appCookieName(c.get("config"), "session"));
   if (value) await deleteSession(c.get("db"), value);
   const res = c.json({ ok: true });
   res.headers.append("Set-Cookie", clearSessionCookie(c.get("config")));

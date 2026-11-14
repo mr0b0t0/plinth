@@ -16,7 +16,13 @@ import {
   Spinner,
   Tooltip,
 } from "../ui/index.ts";
-import { type BridgeClient, connectBridge, type PickedAnchor, type PinPosition } from "./bridge.ts";
+import {
+  type BridgeClient,
+  connectBridge,
+  type FrameMessage,
+  type PickedAnchor,
+  type PinPosition,
+} from "./bridge.ts";
 import { Composer } from "./Composer.tsx";
 import "./comments.css";
 import { buildThreads, type CommentFilter, filterThreads, highlightAnchors } from "./model.ts";
@@ -31,6 +37,11 @@ export interface CommentsPanelProps {
   frame: HTMLIFrameElement | null;
   /** Content origin of the artifact (postMessage target). */
   contentOrigin: string;
+  /**
+   * Opaque content isolation: the frame's documents have an opaque origin, so the bridge checks
+   * the frame's window instead of an origin (see comments/bridge.ts).
+   */
+  opaque?: boolean;
   onClose: () => void;
 }
 
@@ -53,6 +64,7 @@ export function CommentsPanel({
   version,
   frame,
   contentOrigin,
+  opaque = false,
   onClose,
 }: CommentsPanelProps) {
   const { pathname, search } = useLocation();
@@ -160,8 +172,8 @@ export function CommentsPanel({
 
   useEffect(() => {
     if (!frame || !contentOrigin) return;
-    const client = connectBridge(frame, contentOrigin, {
-      onMessage(msg) {
+    const handlers = {
+      onMessage(msg: FrameMessage) {
         if (msg.type === "ready") {
           // The frame (re)loaded: it lost the anchors and any pick mode.
           client.post({ type: "highlight", anchors: anchorsRef.current });
@@ -179,7 +191,8 @@ export function CommentsPanel({
           setPositions(next);
         }
       },
-    });
+    };
+    const client = connectBridge(frame, contentOrigin, handlers, { opaque });
     bridgeRef.current = client;
     return () => {
       client.post({ type: "pick:stop" });
@@ -187,12 +200,12 @@ export function CommentsPanel({
       client.destroy();
       if (bridgeRef.current === client) bridgeRef.current = null;
     };
-  }, [frame, contentOrigin]);
+  }, [frame, contentOrigin, opaque]);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: anchorsKey stands for anchors
   useEffect(() => {
     bridgeRef.current?.post({ type: "highlight", anchors: anchorsRef.current });
-  }, [anchorsKey, frame, contentOrigin]);
+  }, [anchorsKey, frame, contentOrigin, opaque]);
 
   const startPick = () => {
     if (!bridgeRef.current?.post({ type: "pick:start" })) return;

@@ -99,23 +99,65 @@ describe("connectBridge", () => {
     for (const c of cleanups.splice(0)) c();
   });
 
-  function setup(origin = ORIGIN) {
+  function setup(origin = ORIGIN, opts: { opaque?: boolean } = {}) {
     const frameWin = { postMessage: vi.fn() };
     const frame = document.createElement("iframe");
     Object.defineProperty(frame, "contentWindow", { value: frameWin, configurable: true });
     const onMessage = vi.fn();
-    const client = connectBridge(frame, origin, { onMessage });
+    const client = connectBridge(frame, origin, { onMessage }, opts);
     cleanups.push(() => client.destroy());
-    const deliver = (data: unknown, opts: { origin?: string; source?: unknown } = {}) =>
+    const deliver = (data: unknown, o: { origin?: string; source?: unknown } = {}) =>
       window.dispatchEvent(
         new MessageEvent("message", {
           data,
-          origin: opts.origin ?? origin,
-          source: (opts.source ?? frameWin) as MessageEventSource,
+          origin: o.origin ?? (opts.opaque ? "null" : origin),
+          source: (o.source ?? frameWin) as MessageEventSource,
         }),
       );
     return { frameWin, client, onMessage, deliver };
   }
+
+  describe("under opaque isolation", () => {
+    it("accepts origin null, but only from the frame's own window", () => {
+      const { onMessage, deliver } = setup(ORIGIN, { opaque: true });
+      // An opaque document never reports the artifact origin; anything else is not the frame.
+      deliver(msg({ type: "ready" }), { origin: ORIGIN });
+      deliver(msg({ type: "ready" }), { origin: "http://app.localhost:8787" });
+      deliver(msg({ type: "ready" }), { source: window });
+      deliver(msg({ type: "ready" }), { source: { postMessage() {} } });
+      deliver({ type: "ready" });
+      expect(onMessage).not.toHaveBeenCalled();
+      deliver(msg({ type: "ready" }));
+      expect(onMessage).toHaveBeenCalledWith({ type: "ready" });
+      // Still validated as untrusted data.
+      deliver(msg({ type: "pick", anchor: { selector: "", x: 0, y: 0 } }));
+      expect(onMessage).toHaveBeenCalledTimes(1);
+    });
+
+    it("posts to * (an opaque origin cannot be named), only the non-secret bridge messages", () => {
+      const { frameWin, client } = setup(ORIGIN, { opaque: true });
+      expect(client.post({ type: "highlight", anchors: [{ id: "c1", selector: "h1" }] })).toBe(
+        true,
+      );
+      expect(frameWin.postMessage).toHaveBeenCalledWith(
+        {
+          type: "highlight",
+          anchors: [{ id: "c1", selector: "h1" }],
+          source: BRIDGE_MESSAGE_SOURCE,
+          v: 1,
+        },
+        "*",
+      );
+    });
+
+    it("does nothing without a content origin", () => {
+      const { frameWin, client, onMessage, deliver } = setup("", { opaque: true });
+      expect(client.post({ type: "pick:start" })).toBe(false);
+      deliver(msg({ type: "ready" }));
+      expect(frameWin.postMessage).not.toHaveBeenCalled();
+      expect(onMessage).not.toHaveBeenCalled();
+    });
+  });
 
   it("posts to the content origin only, with the protocol tag", () => {
     const { frameWin, client } = setup();

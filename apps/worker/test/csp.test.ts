@@ -6,7 +6,8 @@ import { parseConfig } from "../src/config.ts";
 import {
   applyContentHeaders,
   contentCsp,
-  FALLBACK_SANDBOX,
+  contentResourcePolicy,
+  OPAQUE_SANDBOX,
   PERMISSIONS_POLICY,
 } from "../src/content/csp.ts";
 
@@ -24,13 +25,32 @@ describe("content CSP builder", () => {
     expect(contentCsp(c)).toContain("frame-ancestors 'self' https://plinth.example.com");
   });
 
-  it("adds an opaque-origin sandbox only in the staging path fallback", () => {
+  it("adds an opaque-origin sandbox under opaque isolation and in the path fallback only", () => {
     expect(contentCsp(vars())).not.toContain("sandbox");
+    expect(contentCsp(vars({ CONTENT_ISOLATION: "origin" }))).not.toContain("sandbox");
+    const opaque = contentCsp(vars({ CONTENT_ISOLATION: "opaque" }));
+    expect(opaque).toContain(`; ${OPAQUE_SANDBOX}`);
     const fallback = contentCsp(vars({ STAGING_CONTENT_FALLBACK: "true" }));
-    expect(fallback).toContain(FALLBACK_SANDBOX);
-    expect(FALLBACK_SANDBOX).toContain("allow-scripts");
-    expect(FALLBACK_SANDBOX).not.toContain("allow-same-origin");
-    expect(FALLBACK_SANDBOX).not.toContain("allow-top-navigation");
+    expect(fallback).toContain(OPAQUE_SANDBOX);
+    expect(OPAQUE_SANDBOX).toMatch(/^sandbox /);
+    expect(OPAQUE_SANDBOX).toContain("allow-scripts");
+    expect(OPAQUE_SANDBOX).not.toContain("allow-same-origin");
+    expect(OPAQUE_SANDBOX).not.toContain("allow-top-navigation");
+    // The sandbox is the only difference: the opaque CSP keeps every other directive.
+    expect(opaque.replace(`; ${OPAQUE_SANDBOX}`, "")).toBe(contentCsp(vars()));
+  });
+
+  it("allows the artifact's own subresources under opaque isolation (CORP)", () => {
+    // An opaque-origin document is same-origin with nothing, so CORP same-origin would block the
+    // artifact's own CSS, scripts and images. The content cookie and CSP still gate every load.
+    expect(contentResourcePolicy(vars())).toBe("same-origin");
+    expect(contentResourcePolicy(vars({ CONTENT_ISOLATION: "opaque" }))).toBe("cross-origin");
+    expect(contentResourcePolicy(vars({ STAGING_CONTENT_FALLBACK: "true" }))).toBe("cross-origin");
+  });
+
+  it("refuses an unknown CONTENT_ISOLATION", () => {
+    expect(() => vars({ CONTENT_ISOLATION: "none" })).toThrow(/CONTENT_ISOLATION/);
+    expect(vars({ CONTENT_ISOLATION: "OPAQUE" }).contentIsolation).toBe("opaque");
   });
 
   it("Permissions-Policy grants no powerful feature to anyone", () => {

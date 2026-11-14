@@ -17,6 +17,7 @@ meApi.get("/config", (c) => {
     single_user_mode: config.singleUserMode,
     public_visibility_enabled: config.allowPublicVisibility,
     content_path_fallback: config.contentPathFallback,
+    content_isolation: config.contentIsolation,
     environment: config.environment,
   };
   const res = c.json(body);

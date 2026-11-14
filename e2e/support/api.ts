@@ -7,11 +7,16 @@ export const E2E_PORT = Number(process.env.PLINTH_E2E_PORT ?? 8787);
 export const APP_ORIGIN = `http://app.localhost:${E2E_PORT}`;
 export const CONTENT_HOST = `content.localhost:${E2E_PORT}`;
 export const API_BASE = `${APP_ORIGIN}/api/v1`;
-export const CSRF_COOKIE = "plinth_csrf";
+export const CSRF_COOKIE = "__Host-plinth_csrf";
 export const CSRF_HEADER = "x-plinth-csrf";
 
 /** Origin of one artifact on the content host. */
 export const contentOrigin = (artifactId: string) => `http://${artifactId}.${CONTENT_HOST}`;
+
+/** The second Worker, with CONTENT_ISOLATION=opaque ("opaque" Playwright project). */
+export const OPAQUE_PORT = Number(process.env.PLINTH_E2E_OPAQUE_PORT ?? E2E_PORT + 100);
+export const OPAQUE_APP_ORIGIN = `http://app.localhost:${OPAQUE_PORT}`;
+export const OPAQUE_CONTENT_HOST = `content.localhost:${OPAQUE_PORT}`;
 
 let counter = 0;
 /** A fresh address for each test, so rate limits and outbox lookups never collide. */
@@ -29,7 +34,7 @@ export function newApiContext(opts: { token?: string } = {}): Promise<APIRequest
 }
 
 /**
- * The CSRF token for this context. GET /api/v1/config sets the `plinth_csrf` cookie when the
+ * The CSRF token for this context. GET /api/v1/config sets the `__Host-plinth_csrf` cookie when the
  * context has none; the value must come back in the `x-plinth-csrf` header on writes.
  */
 export async function csrfToken(request: APIRequestContext): Promise<string> {
@@ -41,7 +46,7 @@ export async function csrfToken(request: APIRequestContext): Promise<string> {
     if (!res.ok()) throw new Error(`GET /config failed: ${res.status()}`);
     token = await find();
   }
-  if (!token) throw new Error("GET /api/v1/config did not set the plinth_csrf cookie");
+  if (!token) throw new Error("GET /api/v1/config did not set the CSRF cookie");
   return token;
 }
 

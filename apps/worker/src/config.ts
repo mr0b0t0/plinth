@@ -1,6 +1,6 @@
 // Runtime configuration, parsed from env vars once per isolate. Every host, limit and provider is
 // configurable (AGENTS.md: anything a self-hoster may change is an env var).
-import { DEFAULTS } from "@plinth/shared";
+import { CONTENT_ISOLATION_MODES, type ContentIsolation, DEFAULTS } from "@plinth/shared";
 import { getDomain } from "tldts";
 
 /** Secrets are set with `wrangler secret put` (or .dev.vars locally); not in wrangler.jsonc. */
@@ -16,6 +16,14 @@ export type Bindings = Env & Secrets;
 
 export type Environment = "development" | "staging" | "production";
 export type EmailProvider = "sendgrid" | "resend" | "console";
+/**
+ * How artifact documents are isolated (CONTENT_ISOLATION). `origin`: each artifact is its own
+ * origin (its subdomain), with its own storage. `opaque`: every content response also carries a
+ * CSP `sandbox` without allow-same-origin, so artifact documents get an opaque origin (no cookies,
+ * no storage, no service workers). Opaque is the compensating control for a content host that
+ * shares a registrable domain with the app (see docs/security.md).
+ */
+export type { ContentIsolation };
 
 export interface Config {
   environment: Environment;
@@ -38,6 +46,13 @@ export interface Config {
   publicMinAccountAgeHours: number;
   /** Serve content at APP_HOST/__content/<id>/ (staging on workers.dev only). */
   contentPathFallback: boolean;
+  /**
+   * The effective isolation mode: CONTENT_ISOLATION, except that the path fallback is always
+   * opaque (it serves user HTML from the app's own origin).
+   */
+  contentIsolation: ContentIsolation;
+  /** CONTENT_ISOLATION as configured, before the path fallback forces opaque. */
+  configuredContentIsolation: ContentIsolation;
   /** Keep console emails in D1 so local tests can read them. Development only. */
   devOutbox: boolean;
   /**
@@ -107,6 +122,11 @@ export function parseConfig(env: Record<string, unknown>): Config {
   if (!["sendgrid", "resend", "console"].includes(emailProvider)) {
     throw new ConfigError("EMAIL_PROVIDER must be sendgrid, resend or console");
   }
+  const isolation = (str(env.CONTENT_ISOLATION).toLowerCase() || "origin") as ContentIsolation;
+  if (!CONTENT_ISOLATION_MODES.includes(isolation)) {
+    throw new ConfigError("CONTENT_ISOLATION must be origin or opaque");
+  }
+  const contentPathFallback = bool(env.STAGING_CONTENT_FALLBACK);
   const cdn = list(env.CDN_ALLOWLIST);
   const cdnAllowlist = cdn.length > 0 ? cdn : [...DEFAULTS.cdnAllowlist];
   for (const h of cdnAllowlist) {
@@ -132,7 +152,9 @@ export function parseConfig(env: Record<string, unknown>): Config {
       env.PUBLIC_MIN_ACCOUNT_AGE_HOURS,
       DEFAULTS.publicMinAccountAgeHours,
     ),
-    contentPathFallback: bool(env.STAGING_CONTENT_FALLBACK),
+    contentPathFallback,
+    contentIsolation: contentPathFallback ? "opaque" : isolation,
+    configuredContentIsolation: isolation,
     devOutbox: bool(env.DEV_OUTBOX) && environment === "development",
     devIgnoreClientIp: bool(env.DEV_IGNORE_CLIENT_IP) && environment === "development",
     devSeed: bool(env.DEV_SEED) && environment === "development",
@@ -172,23 +194,23 @@ function validate(c: Config): void {
     // Development turns on helpers (dev outbox, seeding) that must never face the internet.
     throw new ConfigError("ENVIRONMENT=development is only allowed on a localhost APP_HOST");
   }
-  if (
-    c.environment === "staging" &&
-    !c.contentPathFallback &&
-    registrableDomain(c.appHost) === registrableDomain(c.contentHost)
-  ) {
+  const sharedSite = registrableDomain(c.appHost) === registrableDomain(c.contentHost);
+  if (c.environment === "staging" && sharedSite && c.contentIsolation !== "opaque") {
     throw new ConfigError(
-      "APP_HOST and CONTENT_HOST share a registrable domain; use a separate content domain or STAGING_CONTENT_FALLBACK",
+      "APP_HOST and CONTENT_HOST share a registrable domain; use a separate content domain, CONTENT_ISOLATION=opaque or STAGING_CONTENT_FALLBACK",
     );
   }
   if (c.contentPathFallback && c.environment === "production") {
     throw new ConfigError("STAGING_CONTENT_FALLBACK is refused in production");
   }
   if (c.environment === "production") {
-    // Refuse to run if user HTML would be same-site with the app.
-    if (registrableDomain(c.appHost) === registrableDomain(c.contentHost)) {
+    // User HTML that is same-site with the app runs only with opaque isolation: artifact documents
+    // then have no cookies or storage, so they cannot toss cookies onto the shared parent domain.
+    // (A content host equal to, or a subdomain of, the app host is refused in parseConfig in
+    // every mode.)
+    if (sharedSite && c.configuredContentIsolation !== "opaque") {
       throw new ConfigError(
-        "APP_HOST and CONTENT_HOST share a registrable domain; the content host must be a separate domain, or a subdomain on the Public Suffix List that the pinned tldts knows",
+        "APP_HOST and CONTENT_HOST share a registrable domain. Set CONTENT_ISOLATION=opaque to run like this (artifacts then get an opaque origin and no browser storage), or keep CONTENT_ISOLATION=origin with a separate content domain or a content host on the Public Suffix List that the pinned tldts knows",
       );
     }
     if (c.scheme !== "https") throw new ConfigError("PUBLIC_SCHEME must be https in production");

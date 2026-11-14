@@ -22,12 +22,53 @@ describe("config", () => {
       parseConfig({ ...base, APP_HOST: "a.example.co.uk", CONTENT_HOST: "b.example.co.uk" }),
     ).toThrow(/registrable domain/);
   });
-  it("refuses the hosted content subdomain until the Public Suffix List entry is known", () => {
+  it("refuses the hosted content subdomain with origin isolation until the PSL entry is known", () => {
     // plinth-usercontent.aconite.io is pending on the PSL. When a tldts release includes it, this
-    // test fails on purpose: confirm the entry has shipped in current browsers before updating it.
+    // test fails on purpose: confirm the entry has shipped in current browsers before updating it
+    // (and then switch the hosted instance back to CONTENT_ISOLATION=origin).
     expect(registrableDomain("x.plinth-usercontent.aconite.io")).toBe("aconite.io");
-    expect(() => parseConfig({ ...base, CONTENT_HOST: "plinth-usercontent.aconite.io" })).toThrow(
-      /Public Suffix List/,
+    const hosted = { ...base, CONTENT_HOST: "plinth-usercontent.aconite.io" };
+    expect(() => parseConfig(hosted)).toThrow(/Public Suffix List/);
+    expect(() => parseConfig(hosted)).toThrow(/CONTENT_ISOLATION=opaque/);
+    expect(() => parseConfig({ ...hosted, CONTENT_ISOLATION: "origin" })).toThrow(
+      /registrable domain/,
+    );
+  });
+
+  it("runs production on a shared registrable domain only with opaque isolation", () => {
+    const hosted = { ...base, CONTENT_HOST: "plinth-usercontent.aconite.io" };
+    const c = parseConfig({ ...hosted, CONTENT_ISOLATION: "opaque" });
+    expect(c.contentIsolation).toBe("opaque");
+    expect(c.configuredContentIsolation).toBe("opaque");
+    expect(() =>
+      parseConfig({
+        ...base,
+        APP_HOST: "a.example.co.uk",
+        CONTENT_HOST: "b.example.co.uk",
+        CONTENT_ISOLATION: "opaque",
+      }),
+    ).not.toThrow();
+  });
+
+  it("refuses a content host equal to, inside or above the app host in every isolation mode", () => {
+    for (const mode of ["origin", "opaque"]) {
+      for (const [app, content] of [
+        ["plinth.aconite.io", "plinth.aconite.io"],
+        ["plinth.aconite.io", "content.plinth.aconite.io"],
+        ["app.plinth.aconite.io", "plinth.aconite.io"],
+      ]) {
+        expect(() =>
+          parseConfig({ ...base, APP_HOST: app, CONTENT_HOST: content, CONTENT_ISOLATION: mode }),
+        ).toThrow(ConfigError);
+      }
+    }
+  });
+
+  it("defaults to origin isolation and keeps it with a separate content domain", () => {
+    expect(parseConfig(base).contentIsolation).toBe("origin");
+    expect(parseConfig({ ...base, CONTENT_ISOLATION: "opaque" }).contentIsolation).toBe("opaque");
+    expect(() => parseConfig({ ...base, CONTENT_ISOLATION: "sandbox" })).toThrow(
+      /CONTENT_ISOLATION must be origin or opaque/,
     );
   });
   it("treats a PSL-listed subdomain as its own registrable domain", () => {
@@ -51,6 +92,10 @@ describe("config", () => {
     expect(() => parseConfig({ ...base, STAGING_CONTENT_FALLBACK: "true" })).toThrow(
       /refused in production/,
     );
+    // Opaque isolation does not make the fallback acceptable in production.
+    expect(() =>
+      parseConfig({ ...base, STAGING_CONTENT_FALLBACK: "true", CONTENT_ISOLATION: "opaque" }),
+    ).toThrow(/STAGING_CONTENT_FALLBACK is refused in production/);
     expect(() => parseConfig({ ...base, EMAIL_PROVIDER: "console" })).toThrow(/console/);
   });
   it("needs strong secrets", () => {
@@ -117,7 +162,7 @@ describe("environment checks", () => {
   it("development is refused on a public host", () => {
     expect(() => parseConfig({ ...base, ENVIRONMENT: "development" })).toThrow(/localhost/);
   });
-  it("staging refuses a shared registrable domain unless the path fallback is on", () => {
+  it("staging refuses a shared registrable domain unless isolation is opaque", () => {
     const shared = {
       ...base,
       ENVIRONMENT: "staging",
@@ -125,7 +170,11 @@ describe("environment checks", () => {
       CONTENT_HOST: "content.example.com",
     };
     expect(() => parseConfig(shared)).toThrow(/registrable domain/);
-    expect(() => parseConfig({ ...shared, STAGING_CONTENT_FALLBACK: "true" })).not.toThrow();
+    expect(() => parseConfig({ ...shared, CONTENT_ISOLATION: "opaque" })).not.toThrow();
+    // The path fallback implies opaque isolation, whatever CONTENT_ISOLATION says.
+    const fallback = parseConfig({ ...shared, STAGING_CONTENT_FALLBACK: "true" });
+    expect(fallback.contentIsolation).toBe("opaque");
+    expect(fallback.configuredContentIsolation).toBe("origin");
   });
   it("the two secrets must differ", () => {
     expect(() => parseConfig({ ...base, TOKEN_SIGNING_KEY: base.SESSION_SECRET })).toThrow(

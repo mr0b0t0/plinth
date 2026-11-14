@@ -8,7 +8,10 @@
 // The frame runs the artifact's own scripts next to the bridge, and they can post look-alike
 // messages. So a message is accepted only from the artifact's content origin AND from this exact
 // frame's window, and then every field is validated as untrusted data. Messages to the frame go to
-// the content origin only, never "*".
+// the content origin only, never "*". Under opaque content isolation the frame has no origin to
+// check or address ("null"): there the frame's window is the check and posts use "*", which is safe
+// only because no app -> frame message carries anything the framed document may not see (see
+// BridgeOptions.opaque).
 import { BRIDGE_MESSAGE_SOURCE } from "@plinth/shared";
 
 export const BRIDGE_VERSION = 1;
@@ -125,19 +128,36 @@ export interface BridgeClient {
   destroy: () => void;
 }
 
-/**
- * Connect to the bridge inside `frame`. `win` is the app window (injectable for tests).
- */
+export interface BridgeOptions {
+  /**
+   * Opaque content isolation (AppConfig.content_isolation): the frame's documents have an opaque
+   * origin, so their messages arrive with origin "null" and a message to them cannot name an
+   * origin. The frame is then identified by its window alone, and posts use "*". That is safe
+   * because nothing the app posts is secret from the framed document: pick:start, pick:stop, and
+   * comment ids with element selectors, all of which the artifact's own scripts can already see in
+   * origin mode (they share the bridge's origin there).
+   */
+  opaque?: boolean;
+  /** The app window (injectable for tests). */
+  win?: Window;
+}
+
+/** Connect to the bridge inside `frame`. */
 export function connectBridge(
   frame: HTMLIFrameElement,
   contentOrigin: string,
   handlers: BridgeHandlers,
-  win: Window = window,
+  opts: BridgeOptions = {},
 ): BridgeClient {
-  const exact = isExactOrigin(contentOrigin);
+  const win = opts.win ?? window;
+  const opaque = opts.opaque === true;
+  // Origin mode: an exact content origin or nothing. Opaque mode: the frame's window is the check.
+  const usable = opaque ? contentOrigin !== "" : isExactOrigin(contentOrigin);
+  const expectedOrigin = opaque ? "null" : contentOrigin;
+  const targetOrigin = opaque ? "*" : contentOrigin;
   const listener = (event: MessageEvent) => {
-    if (!exact) return;
-    if (event.origin !== contentOrigin) return;
+    if (!usable) return;
+    if (event.origin !== expectedOrigin) return;
     // The frame's window, checked at delivery time: it stays the same object across reloads.
     if (!frame.contentWindow || event.source !== frame.contentWindow) return;
     const msg = parseFrameMessage(event.data);
@@ -147,10 +167,10 @@ export function connectBridge(
   return {
     post(msg) {
       const target = frame.contentWindow;
-      if (!exact || !target) return false;
+      if (!usable || !target) return false;
       target.postMessage(
         { ...msg, source: BRIDGE_MESSAGE_SOURCE, v: BRIDGE_VERSION },
-        contentOrigin,
+        targetOrigin,
       );
       return true;
     },

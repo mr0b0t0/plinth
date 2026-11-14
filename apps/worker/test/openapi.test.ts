@@ -42,7 +42,7 @@ describe("OpenAPI document", () => {
     expect(doc.components.securitySchemes.sessionCookie).toMatchObject({
       type: "apiKey",
       in: "cookie",
-      name: "plinth_session",
+      name: "__Host-plinth_session",
     });
     expect(doc.components.securitySchemes.csrfHeader).toMatchObject({
       type: "apiKey",

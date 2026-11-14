@@ -43,9 +43,12 @@ No DNS records, zone settings, routes or custom domains. Nothing under `aconite.
 `workers.dev` has no wildcard subdomains, so staging serves artifacts from the app host under
 `/__content/<artifact_id>/` (`STAGING_CONTENT_FALLBACK=true`). The Worker refuses that flag in
 production. In this mode artifact HTML is same-origin with the app, so its CSP adds `sandbox`
-without `allow-same-origin` (an opaque origin, no app cookies or API access), and the editor live
-preview and comment pins are disabled. **Per-artifact subdomain isolation is verified locally
-only** (Workers Vitest suite and Playwright against `*.content.localhost`).
+without `allow-same-origin` (an opaque origin, no app cookies or API access): the fallback always
+runs as `CONTENT_ISOLATION=opaque`. The editor live preview and comment pins use the opaque-mode
+protocol there (frames identified by window and nonce); that path is verified locally with
+subdomains (`CONTENT_ISOLATION=opaque` e2e project), not on staging's path fallback yet.
+**Per-artifact subdomain isolation is verified locally only** (Workers Vitest suite and Playwright
+against `*.content.localhost`).
 
 Email: `EMAIL_PROVIDER=sendgrid`, `EMAIL_FROM="Plinth <noreply@aconite.io>"` (a test email through
 the real adapter was accepted on 2026-11-13; `noreply@plinth.aconite.io` is not a verified sender).

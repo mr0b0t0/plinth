@@ -18,8 +18,26 @@ do either of the following:
 - **A subdomain of a domain you already use** (the hosted instance's choice). It is safe only once
   it is on the Public Suffix List, because until then user HTML there is same-site with the app
   and can set cookies on the parent domain. Production refuses to start until the `tldts` version
-  Plinth pins knows the entry (see "Public Suffix List" below). The wildcard is second-level, so
-  it needs a paid Advanced Certificate.
+  Plinth pins knows the entry (see "Public Suffix List" below), unless `CONTENT_ISOLATION=opaque`
+  (next section). The wildcard is second-level, so it needs a paid Advanced Certificate.
+
+### Until the PSL entry ships: `CONTENT_ISOLATION=opaque`
+
+The hosted instance runs with `CONTENT_ISOLATION=opaque` while `plinth-usercontent.aconite.io` is
+not yet on the Public Suffix List (or not yet in current browsers and the pinned `tldts`). Every
+content response then carries a CSP `sandbox` without `allow-same-origin`, so artifacts get an
+opaque origin: they cannot set or read cookies, so no cookie tossing onto `aconite.io`, and they
+have no browser storage. Editor preview and comment pins keep working. What it does not cover
+(same-site with `aconite.io`, a shared renderer process in some browsers, shared Safe Browsing
+reputation) is in [security.md](security.md#opaque-content-isolation).
+
+- Setup: pass `--content-isolation opaque` to `scripts/setup.mjs`; without it the script, like the
+  Worker, refuses the shared registrable domain.
+- Tell artifact authors (and agents) that `localStorage`, cookies and `fetch` of the artifact's own
+  files do not work on the hosted instance for now.
+- When the PSL entry is in current Chrome, Firefox and Safari and the pinned `tldts` knows it
+  (step 4 below), set `CONTENT_ISOLATION=origin` (rerun setup with `--content-isolation origin`,
+  or edit the var), deploy, and check that artifact responses no longer carry `sandbox`.
 
 Either way, do not send email from the content host or serve anything else on it, and never use
 the app host itself or a subdomain of it.
@@ -37,7 +55,9 @@ the app host itself or a subdomain of it.
    bundles a copy of the list, so this takes weeks to months).
 4. Upgrade `tldts` in `apps/worker` and the root to a release that contains the entry, then run
    `pnpm test`. Until then the Worker answers 500 on every request in production with this
-   configuration, and `setup.mjs` refuses it. Do not work around either check.
+   configuration unless `CONTENT_ISOLATION=opaque`, and `setup.mjs` refuses it without
+   `--content-isolation opaque`. Do not work around either check in any other way. Once the
+   upgrade lands, switch the hosted instance to `CONTENT_ISOLATION=origin`.
 5. Audit `aconite.io`: no service may set a sensitive cookie with `Domain=aconite.io`. The PSL
    entry stops artifacts from setting such cookies but not from receiving them.
 
@@ -59,7 +79,9 @@ and D1 Time Travel from 7 to 30 days.
 pnpm --filter @plinth/worker exec wrangler login
 node scripts/setup.mjs --remote --env production --dry-run \
   --app-host plinth.aconite.io --content-host plinth-usercontent.aconite.io \
+  --content-isolation opaque \
   --email-provider sendgrid --email-from "Plinth <noreply@aconite.io>" --admin-email you@aconite.io
+# --content-isolation opaque only until the PSL entry ships (see "The content domain")
 # read the plan, then run the same command without --dry-run
 ```
 
@@ -118,6 +140,10 @@ curl -sI https://plinth.aconite.io/healthz                 # 200, {"ok":true,"en
 curl -sI https://abcdefghijklmnopqrst.CONTENT_DOMAIN/      # 404 from Plinth, with a CSP header
 curl -s -o /dev/null -w '%{http_code}\n' -X POST https://plinth.aconite.io/mcp   # 401
 curl -sI -X POST https://plinth.aconite.io/mcp | grep -i www-authenticate        # resource_metadata=...
+# CONTENT_ISOLATION=opaque: the CSP ends in "sandbox allow-scripts ..." without allow-same-origin
+curl -sI https://abcdefghijklmnopqrst.plinth-usercontent.aconite.io/ | grep -i content-security-policy
+curl -s https://plinth.aconite.io/api/v1/config        # "content_isolation":"opaque" (until the PSL entry ships)
+curl -sI https://plinth.aconite.io/api/v1/config | grep -i set-cookie   # __Host-plinth_csrf=...; Path=/; ...; Secure
 ```
 
 ## 3. Secrets
@@ -193,8 +219,9 @@ These need accounts, money or legal judgement, so no script does them.
 0. Before staging (see [staging.md](staging.md)): enable R2 on the Cloudflare account and choose
    the account's `workers.dev` subdomain. Done on 2026-11-13 (`aconite-io.workers.dev`).
 1. Content host: `plinth-usercontent.aconite.io` (chosen 2026-11-13). Submit it to the Public
-   Suffix List now; production cannot start until browsers and `tldts` know it (see
-   "Public Suffix List" above). Self-hosters: choose a domain and record the choice in
+   Suffix List now. Until browsers and `tldts` know it, production runs only with
+   `CONTENT_ISOLATION=opaque` (see "The content domain" and "Public Suffix List" above); switch to
+   `origin` once they do. Self-hosters: choose a domain and record the choice in
    `docs/spec.md`, and submit it to the Public Suffix List (private section) early, since approval
    takes weeks.
 2. Add the content host's DNS and certificate. Hosted instance: the `*.plinth-usercontent` record

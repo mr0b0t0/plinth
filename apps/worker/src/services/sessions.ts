@@ -1,12 +1,12 @@
 // App sessions for people. The cookie holds a random token; the database holds only its SHA-256,
 // so a database leak does not hand out live sessions. The cookie is host-only on APP_HOST (no
-// Domain attribute), HttpOnly, Secure and SameSite=Lax.
-import { COOKIES, TTL } from "@plinth/shared";
+// Domain attribute, `__Host-` prefix), HttpOnly, Secure and SameSite=Lax.
+import { TTL } from "@plinth/shared";
 import { eq } from "drizzle-orm";
 import type { Config } from "../config.ts";
 import type { Db } from "../db/client.ts";
 import { sessions } from "../db/schema.ts";
-import { secureFlag, serializeCookie } from "../lib/cookies.ts";
+import { appCookieName, secureFlag, serializeCookie } from "../lib/cookies.ts";
 import { hashToken, randomString } from "../lib/crypto.ts";
 import { isoIn, nowIso } from "../lib/time.ts";
 
@@ -36,7 +36,7 @@ export async function deleteSession(db: Db, value: string): Promise<void> {
 }
 
 export function sessionCookie(config: Config, value: string): string {
-  return serializeCookie(COOKIES.session, value, {
+  return serializeCookie(appCookieName(config, "session"), value, {
     httpOnly: true,
     secure: secureFlag(config.scheme, config.appHost),
     sameSite: "Lax",
@@ -45,7 +45,7 @@ export function sessionCookie(config: Config, value: string): string {
 }
 
 export function clearSessionCookie(config: Config): string {
-  return serializeCookie(COOKIES.session, "", {
+  return serializeCookie(appCookieName(config, "session"), "", {
     httpOnly: true,
     secure: secureFlag(config.scheme, config.appHost),
     sameSite: "Lax",

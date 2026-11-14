@@ -1,5 +1,12 @@
 // Fetch wrapper for /api/v1: JSON in and out, CSRF header on writes, typed errors.
-import { API_PREFIX, CSRF_HEADER, type ErrorBody, type ErrorCode } from "@plinth/shared";
+import {
+  API_PREFIX,
+  COOKIES,
+  CSRF_HEADER,
+  type ErrorBody,
+  type ErrorCode,
+  HOST_COOKIE_PREFIX,
+} from "@plinth/shared";
 
 export class ApiRequestError extends Error {
   constructor(
@@ -12,9 +19,26 @@ export class ApiRequestError extends Error {
   }
 }
 
-function csrfToken(): string {
-  const m = /(?:^|;\s*)plinth_csrf=([^;]+)/.exec(document.cookie);
-  return m?.[1] ?? "";
+/**
+ * The CSRF cookie's name here, by the Worker's rule (lib/cookies.ts appCookieName): `__Host-`
+ * prefixed wherever cookies can be Secure (https, and localhost); a plain-http instance on another
+ * name uses the unprefixed name. Never both, so a leftover cookie under the other name is ignored.
+ */
+export function csrfCookieName(loc: { protocol: string; hostname: string } = location): string {
+  const secure = loc.protocol === "https:" || /(^|\.)localhost$/.test(loc.hostname);
+  return secure ? COOKIES.csrf : COOKIES.csrf.slice(HOST_COOKIE_PREFIX.length);
+}
+
+/** The double-submit token: the value of the CSRF cookie, or "" when there is none. */
+export function csrfToken(
+  cookies: string = document.cookie,
+  name: string = csrfCookieName(),
+): string {
+  for (const part of cookies.split(";")) {
+    const i = part.indexOf("=");
+    if (i > 0 && part.slice(0, i).trim() === name) return part.slice(i + 1).trim();
+  }
+  return "";
 }
 
 /** Make sure the CSRF cookie exists (GET /config sets it). */

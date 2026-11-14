@@ -6,6 +6,7 @@ import {
   anchorSchema,
   CLIENT_TYPES,
   COMMENT_STATUSES,
+  CONTENT_ISOLATION_MODES,
   COOKIES,
   CSRF_HEADER,
   claimMentionInput,
@@ -284,6 +285,11 @@ function responseSchemas(): Record<string, Json> {
       single_user_mode: { type: "boolean" },
       public_visibility_enabled: { type: "boolean" },
       content_path_fallback: { type: "boolean" },
+      content_isolation: {
+        ...enumOf(CONTENT_ISOLATION_MODES),
+        description:
+          'Effective CONTENT_ISOLATION. With "opaque", artifact documents have an opaque origin, so their postMessage events arrive with origin "null"',
+      },
       environment: enumOf(["development", "staging", "production"]),
     }),
     LoginResult: obj({

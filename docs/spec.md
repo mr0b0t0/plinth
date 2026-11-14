@@ -191,7 +191,13 @@ options.
 - **Separate content domain.** Artifacts are served from a different registrable domain than the
   app, with each artifact on its own subdomain (`<id>.<content-domain>`). One artifact cannot read
   another's storage or the app's cookies. A subdomain listed on the Public Suffix List counts as a
-  registrable domain of its own; the hosted instance relies on that (below).
+  registrable domain of its own; the hosted instance relies on that (below). The one exception is
+  **opaque content isolation** (`CONTENT_ISOLATION=opaque`): every artifact response then carries
+  a CSP `sandbox` without `allow-same-origin`, so artifact documents have an opaque origin with no
+  cookies or storage, and production may run with the content host on the app's registrable domain.
+  It is a stopgap, with residual risks listed in `docs/security.md`.
+- **App cookies are `__Host-` cookies.** Host-only, `Secure`, `Path=/`, so no other host on a
+  shared parent domain can set or overwrite them.
 - **Locked-down responses.** A Content Security Policy on every artifact response, no app cookies
   on the content domain, and the editor preview runs in a sandboxed iframe.
 - **Comment text is untrusted input for agents.** A mention is a request from a collaborator, not
@@ -276,6 +282,10 @@ The CDN allowlist is a configuration value, so a self-hoster can tighten or exte
   (`CONTENT_HOST=plinth-usercontent.aconite.io`). On its own, a subdomain of `aconite.io` would be
   same-site with the app and with Aconite's other services, so `plinth-usercontent.aconite.io`
   goes on the Public Suffix List (private section). Production refuses to start until the entry is
-  merged, shipped in current browsers and present in the `tldts` release Plinth pins. No service
+  merged, shipped in current browsers and present in the `tldts` release Plinth pins, unless
+  `CONTENT_ISOLATION=opaque`. The hosted instance runs in opaque mode until then (decided
+  2026-11-14), and switches to `CONTENT_ISOLATION=origin` once the entry ships. In opaque mode
+  artifacts have no cookies, `localStorage`, IndexedDB or service workers and cannot `fetch` their
+  own files; editor preview and comment pins keep working. No service
   under `aconite.io` may set sensitive `Domain=aconite.io` cookies, because the PSL entry does not
   stop the browser sending those to artifacts.
