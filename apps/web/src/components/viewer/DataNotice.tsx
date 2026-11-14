@@ -16,14 +16,10 @@ const UNAVAILABLE = "Shared data is not available on this server.";
 export function dataNoticeText(data: ViewGateData | undefined): string | null {
   if (!data) return null;
   if (!data.available) return UNAVAILABLE;
-  const saves = data.capabilities.includes("data");
+  // `viewer` is declared only together with `data` (parseCapabilities); anything else says nothing.
+  if (!data.capabilities.includes("data")) return null;
   const email = data.capabilities.includes("viewer") && data.identified ? data.email : undefined;
-  if (email) {
-    return saves
-      ? `This page can see that you are ${email} and ${SAVES_WITH_AUTHORS}`
-      : `This page can see that you are ${email}.`;
-  }
-  if (!saves) return null;
+  if (email) return `This page can see that you are ${email} and ${SAVES_WITH_AUTHORS}`;
   return data.identified ? SAVES : READ_ONLY;
 }
 

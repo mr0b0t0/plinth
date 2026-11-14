@@ -31,7 +31,13 @@ describe("parseCapabilities", () => {
       shared: [],
     });
     expect(parseCapabilities(caps("data"))).toEqual({ data: true, viewer: false, shared: [] });
-    expect(parseCapabilities(caps("viewer"))).toEqual({ data: false, viewer: true, shared: [] });
+  });
+
+  it("viewer without data declares nothing: the viewer is learned through the data API", () => {
+    expect(parseCapabilities(caps("viewer"))).toBeNull();
+    expect(
+      parseCapabilities(`${caps("viewer")}<meta name="plinth-data-shared" content="tasks">`),
+    ).toBeNull();
   });
 
   it("ignores unknown tokens and returns null when no known one is left", () => {
@@ -66,8 +72,8 @@ describe("parseCapabilities", () => {
   it("does not mistake a longer attribute name or a value containing > for the real one", () => {
     expect(parseCapabilities(`<meta data-name="plinth-capabilities" content="data">`)).toBeNull();
     expect(
-      parseCapabilities(`<meta title="a > b" name="plinth-capabilities" content="viewer">`),
-    ).toEqual({ data: false, viewer: true, shared: [] });
+      parseCapabilities(`<meta title="a > b" name="plinth-capabilities" content="data viewer">`),
+    ).toEqual({ data: true, viewer: true, shared: [] });
   });
 
   it("counts only the first tag of each name", () => {

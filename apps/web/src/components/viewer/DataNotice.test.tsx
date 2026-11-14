@@ -80,11 +80,11 @@ describe("DataNotice", () => {
     );
   });
 
-  it("viewer only: names the email without claiming to save entries", () => {
-    expect(dataNoticeText(data({ capabilities: ["viewer"], identified: true, email: EMAIL }))).toBe(
-      `This page can see that you are ${EMAIL}.`,
-    );
-    // Anonymous on a viewer-only page: the page learns nothing, so there is nothing to say.
+  it("viewer without data: nothing to say, the page learns nothing", () => {
+    // The server never sends this (viewer alone declares nothing); the notice stays quiet anyway.
+    expect(
+      dataNoticeText(data({ capabilities: ["viewer"], identified: true, email: EMAIL })),
+    ).toBeNull();
     expect(dataNoticeText(data({ capabilities: ["viewer"] }))).toBeNull();
   });
 });

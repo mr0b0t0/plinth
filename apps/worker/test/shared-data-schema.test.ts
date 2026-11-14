@@ -268,6 +268,8 @@ describe("createVersion stores capabilities", () => {
     // Malformed stored values read as nothing declared, never as a crash.
     expect(versionCapabilities({ capabilities: "not json" })).toBeNull();
     expect(versionCapabilities({ capabilities: '{"data":"yes"}' })).toBeNull();
+    // A stored `viewer` without `data` declares nothing, as parseCapabilities reads it.
+    expect(versionCapabilities({ capabilities: '{"data":false,"viewer":true}' })).toBeNull();
     expect(versionCapabilities({ capabilities: '{"data":true,"viewer":false}' })).toEqual({
       data: true,
       viewer: false,

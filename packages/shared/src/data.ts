@@ -47,7 +47,8 @@ function tokens(content: string): string[] {
  * first <meta name="plinth-data-shared">, in any attribute order and quote style, names compared
  * case-insensitively, tags inside HTML comments ignored. Unknown tokens are ignored, and so are
  * shared names that break the collection rule; at most LIMITS.maxDataShared are kept. Returns null
- * when no known capability is declared (a shared list alone declares nothing).
+ * unless `data` is declared: the viewer is learned through the data API, so `viewer` alone declares
+ * nothing, and neither does a shared list alone.
  */
 export function parseCapabilities(html: string): Capabilities | null {
   if (!/plinth-/i.test(html)) return null;
@@ -69,13 +70,13 @@ export function parseCapabilities(html: string): Capabilities | null {
       (DATA_CAPABILITIES as readonly string[]).includes(t),
     ),
   );
-  if (known.size === 0) return null;
+  if (!known.has("data")) return null;
   const shared: string[] = [];
   for (const n of sharedNames ?? []) {
     if (shared.length >= LIMITS.maxDataShared) break;
     if (DATA_COLLECTION_RE.test(n) && !shared.includes(n)) shared.push(n);
   }
-  return { data: known.has("data"), viewer: known.has("viewer"), shared };
+  return { data: true, viewer: known.has("viewer"), shared };
 }
 
 /** The declared capabilities as a list, in a fixed order. */

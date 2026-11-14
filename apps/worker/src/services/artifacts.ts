@@ -298,6 +298,8 @@ export function versionCapabilities(
   if (typeof v !== "object" || v === null) return null;
   const { data, viewer, shared } = v as Record<string, unknown>;
   if (typeof data !== "boolean" || typeof viewer !== "boolean") return null;
+  // `viewer` alone declares nothing (shared parseCapabilities).
+  if (!data) return null;
   const names = Array.isArray(shared) ? shared.filter((n) => typeof n === "string") : [];
   return { data, viewer, shared: names };
 }
