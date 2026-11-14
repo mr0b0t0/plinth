@@ -109,14 +109,73 @@ describe("ConnectPanel", () => {
     expect(screen.getByText(/streamable HTTP/)).toBeTruthy();
   });
 
-  it("shows how each client learns Plinth's rules, from the harness registry", async () => {
+  it("on the hosted instance, puts the Claude Code plugin first and labels the bare server as tools only", async () => {
+    const user = userEvent.setup();
+    const hosted = "https://plinth.aconite.io/mcp";
+    renderPanel({ endpoint: hosted });
+    await user.click(screen.getByRole("tab", { name: "Claude Code" }));
+    const panel = screen.getByRole("tabpanel");
+    const captions = [...panel.querySelectorAll("figcaption")].map((f) => f.textContent);
+    expect(captions).toEqual(["Run in a terminal", "Or, tools only, without Plinth's rules"]);
+    expect(codeText("Run in a terminal")).toBe(
+      "claude plugin marketplace add mr0b0t0/plinth\nclaude plugin install plinth@plinth",
+    );
+    expect(codeText("Or, tools only, without Plinth's rules")).toBe(claudeCodeCommand(hosted));
+    // Each copy button is named for what it copies, in the order shown.
+    const pluginButton = screen.getByRole("button", { name: "Copy plugin commands" });
+    const bareButton = screen.getByRole("button", { name: "Copy tools-only commands" });
+    expect(
+      pluginButton.compareDocumentPosition(bareButton) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Copy Claude Code commands" })).toBeNull();
+    // The in-session form, checked against code.claude.com/docs/en/discover-plugins.
+    expect(screen.getByText("/plugin marketplace add mr0b0t0/plinth")).toBeTruthy();
+    expect(screen.getByText("/plugin install plinth@plinth")).toBeTruthy();
+    expect(screen.getByText("plugin:plinth:plinth")).toBeTruthy();
+    // Doing both gives two servers: say so.
+    expect(panel.textContent).toContain(
+      "Use one or the other: doing both gives Claude Code two Plinth servers (plinth and plugin:plinth:plinth) and two connections.",
+    );
+    expect(screen.queryByText(/PLINTH_URL/)).toBeNull();
+    // The plugin is the guidance, so there is no separate "Teach it" block repeating it.
+    expect(screen.queryByText("Teach it Plinth's rules")).toBeNull();
+  });
+
+  it("on another instance, puts this instance's server first and points the plugin here", async () => {
     const user = userEvent.setup();
     renderPanel();
     await user.click(screen.getByRole("tab", { name: "Claude Code" }));
+    const panel = screen.getByRole("tabpanel");
+    const captions = [...panel.querySelectorAll("figcaption")].map((f) => f.textContent);
+    expect(captions).toEqual([
+      "Run in a terminal",
+      "Or, the Plinth plugin: the server and Plinth's rules",
+    ]);
+    // What a person runs first connects to this instance, not to the hosted one.
+    expect(codeText("Run in a terminal")).toBe(claudeCodeCommand(ENDPOINT));
+    expect(screen.getByRole("button", { name: "Copy Claude Code commands" })).toBeTruthy();
+    expect(panel.textContent).toContain("tools only, without Plinth's rules");
+    // The plugin's block sets PLINTH_URL before installing, and the note says to keep it set.
+    expect(codeText(/the Plinth plugin/)).toBe(
+      "export PLINTH_URL=https://plinth.example\nclaude plugin marketplace add mr0b0t0/plinth\nclaude plugin install plinth@plinth",
+    );
+    expect(screen.getByRole("button", { name: "Copy plugin commands" })).toBeTruthy();
+    expect(panel.textContent).toContain("a different instance");
+    expect(panel.textContent).toMatch(/shell profile/);
+    expect(panel.textContent).toContain(
+      "Use one or the other: doing both gives Claude Code two Plinth servers (plinth and plugin:plinth:plinth) and two connections.",
+    );
+    expect(screen.queryByText("Teach it Plinth's rules")).toBeNull();
+  });
+
+  it("shows how each client learns Plinth's rules, from the harness registry", async () => {
+    const user = userEvent.setup();
+    renderPanel();
+    await user.click(screen.getByRole("tab", { name: "Codex" }));
     expect(screen.getByText("Teach it Plinth's rules")).toBeTruthy();
-    expect(codeText("Run")).toBe("/plugin install plinth --marketplace mr0b0t0/plinth");
-    // Not the hosted instance: say how to point the plugin's server here.
-    expect(screen.getByText(/set PLINTH_URL/)).toBeTruthy();
+    expect(codeText("Run")).toBe(
+      "codex plugin marketplace add mr0b0t0/plinth\ncodex plugin add plinth@plinth",
+    );
 
     await user.click(screen.getByRole("tab", { name: "Gemini CLI" }));
     expect(codeText("Run in a terminal")).toBe(

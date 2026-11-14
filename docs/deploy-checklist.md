@@ -3,7 +3,8 @@
 Everything needed to take a Plinth instance live on Cloudflare: resources, DNS for both hosts,
 secrets, email authentication, and checks. The examples use the hosted instance's app host,
 `plinth.aconite.io`; `CONTENT_DOMAIN` stands for the separate content domain, which for the hosted
-instance is `plinthusercontent.com`. Cloudflare and email provider screens change; the details
+instance is `plinthusercontent.com`, and `APP_HOST` for the app host where a rule or command must
+name your own (hosted instance: `plinth.aconite.io`). Cloudflare and email provider screens change; the details
 below were checked on 2026-11-13 and 2026-11-14.
 
 ## The content domain
@@ -80,8 +81,31 @@ it is mandatory.
 | Zone for the content host | `plinthusercontent.com` for the hosted instance (registered through Cloudflare Registrar, so the zone already uses Cloudflare's nameservers); for a separate domain bought elsewhere, add it as a zone and point the registrar's nameservers at Cloudflare | Cloudflare dashboard |
 | Advanced Certificate for `*.<content subdomain>` | only for a content subdomain (second-level wildcard); not needed for the hosted instance | Cloudflare dashboard → SSL/TLS → Edge Certificates → Order Advanced Certificate (Advanced Certificate Manager, paid) |
 
-Workers Free is enough to start. The Workers Paid plan ($5/month) raises request and CPU limits
-and D1 Time Travel from 7 to 30 days.
+Workers Free is enough to start with small pages. The Workers Paid plan ($5/month) raises request
+and CPU limits and D1 Time Travel from 7 to 30 days.
+
+### Version limits and the Workers plan
+
+Two settings size what one version may hold; both are `vars` like the others
+([self-hosting.md](self-hosting.md#settings)):
+
+| Variable | Default | Allowed |
+| --- | --- | --- |
+| `MAX_VERSION_BYTES` | `52428800` (50 MB) | `1048576` to `67108864` (1 to 64 MB) |
+| `MAX_ASSETS_PER_VERSION` | `511` | `1` to `900` |
+
+A value outside the range stops the Worker with a configuration error. `GET /api/v1/config` reports
+the values in effect under `limits`, with `max_bundle_bytes` (the version limit plus 8 MB of tar
+overhead), the largest body an upload from `start_upload` or the CLI sends.
+
+- **Workers Free:** a big inline publish or an uploaded build cannot finish within Free's 10 ms of
+  CPU per request and fails with Cloudflare error 1102. Set `MAX_VERSION_BYTES=5242880` and
+  `MAX_ASSETS_PER_VERSION=50`. Uploaded builds (`start_upload` and `plinth publish`) effectively
+  need Workers Paid.
+- **Workers Paid:** the defaults fit. You may also raise the CPU limit per request with
+  `"limits": { "cpu_ms": 300000 }` in the Worker config (5 minutes, the Paid maximum).
+- A reverse proxy in front of the Worker (the Docker setup's nginx, for example) must accept bodies
+  of at least `max_bundle_bytes` ([docker.md](docker.md)).
 
 ```sh
 pnpm --filter @plinth/worker exec wrangler login
@@ -154,7 +178,51 @@ curl -sI -X POST https://plinth.aconite.io/mcp | grep -i www-authenticate       
 curl -sI https://abcdefghijklmnopqrst.plinthusercontent.com/ | grep -i content-security-policy
 curl -s https://plinth.aconite.io/api/v1/config        # "content_host":"plinthusercontent.com","content_isolation":"origin"
 curl -sI https://plinth.aconite.io/api/v1/config | grep -i set-cookie   # __Host-plinth_csrf=...; Path=/; ...; Secure
+curl -s https://plinth.aconite.io/api/v1/config        # "limits":{..."max_version_bytes":52428800,"max_assets_per_version":511,...}
+# API clients pass the edge (next section): 200, not 403 "error code: 1010"
+curl -s -o /dev/null -w '%{http_code}\n' -A 'Python-urllib/3.12' https://APP_HOST/api/v1/config
+curl -s -o /dev/null -w '%{http_code}\n' -A 'Python-urllib/3.12' https://APP_HOST/.well-known/oauth-authorization-server
+curl -s -o /dev/null -w '%{http_code}\n' -A 'Python-urllib/3.12' https://APP_HOST/llms.txt
+curl -s -o /dev/null -w '%{http_code}\n' -A 'Python-urllib/3.12' https://APP_HOST/a/no-such-artifact/source   # 404 from Plinth, not 403
 ```
+
+### Edge security for API clients
+
+Cloudflare's Browser Integrity Check (BIC, on by default in every zone) answers some programs with
+403 and the text `error code: 1010` before the Worker runs. It targets HTTP clients with a default
+library User-Agent such as Python's `Python-urllib/*` and Perl's `libwww-perl`: exactly what an
+agent's hand-written script sends. Plinth never sees those requests.
+
+On the app zone, exempt the machine-facing paths from BIC, and nothing else. Either add a WAF
+custom rule (Security > WAF > Custom rules, action **Skip**, skip **Browser Integrity Check**, with
+logging on) or a Configuration Rule (Rules > Configuration Rules, Browser Integrity Check **Off**),
+with this expression, replacing `APP_HOST` with your app host:
+
+```
+(http.host eq "APP_HOST" and (
+  http.request.uri.path eq "/mcp" or starts_with(http.request.uri.path, "/mcp/")
+  or (starts_with(http.request.uri.path, "/api/v1/") and not starts_with(http.request.uri.path, "/api/v1/auth/"))
+  or (starts_with(http.request.uri.path, "/oauth/") and http.request.uri.path ne "/oauth/authorize")
+  or starts_with(http.request.uri.path, "/.well-known/")
+  or (starts_with(http.request.uri.path, "/a/") and ends_with(http.request.uri.path, "/source"))
+  or http.request.uri.path in {"/openapi.json" "/llms.txt" "/healthz"}))
+```
+
+- `/a/<ref>/source` is machine-facing: `/llms.txt` and the note in every artifact page tell agents
+  to fetch it as plain text, so it is exempt too.
+- The browser sign-in (`/api/v1/auth/*`), the OAuth consent page (`/oauth/authorize`), the app's
+  pages and the rest of `/a/*` keep BIC: people use them in browsers.
+- Skip only BIC. Do not skip the managed rules or lower the security level for these paths.
+- Add no rule on the content zone: agents do not call it, and browsers pass BIC.
+- The upload routes (`/api/v1/uploads` and `/api/v1/uploads/<id>/bundle`) are under `/api/v1/`, so
+  the expression covers them.
+- On `workers.dev` (staging) BIC cannot be turned off, so clients there must send a User-Agent of
+  their own. The Plinth CLI sends `plinth-cli/<version>`, the mention watcher
+  `plinth-mentions/<version>`, and the commands `start_upload` returns set one too.
+
+The four `Python-urllib` lines in "Checks after deploy" above test it. With the rule, the first
+three print `200` and the last `404` (the artifact does not exist, and Plinth says so); without it,
+each prints `403`.
 
 ## 3. Secrets
 
@@ -263,3 +331,18 @@ These need accounts, money or legal judgement, so no script does them.
 13. Turn on GitHub private vulnerability reporting for the repository (see
     [security.md](security.md)).
 14. Watch the first days with `wrangler tail` and the Cloudflare analytics for the Worker and D1.
+
+## 6. Upgrading and rolling back
+
+Upgrades apply the new release's D1 migrations before its Worker (`plinth deploy` does this; by
+hand, `wrangler d1 migrations apply` first). Plinth 0.4.0 adds migrations `0006_stored_bytes` and
+`0007_upload_tickets` and a new storage layout: a version may reuse files stored under an earlier
+version of the same artifact, and new versions are written under a fresh `v<n>.<nonce>/` prefix.
+
+**Roll forward, not back.** Rolling the Worker back past 0.4.0 breaks artifacts updated since then
+(any update or restore that keeps files reuses them): an older Worker looks each file up under the
+version's own prefix only, so files a version reuses from an earlier one answer 404, and updating
+or restoring such an artifact fails with "Missing stored file". Versions written in full keep
+working. If a release misbehaves, deploy a fix on top
+of it. The migrations only add a column and a table, so an older Worker still starts against the
+new schema.

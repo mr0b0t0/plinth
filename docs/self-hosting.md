@@ -106,7 +106,10 @@ Booleans accept `true`, `1`, `yes` or `on`.
 | `EMAIL_PROVIDER` | `console` | `sendgrid`, `resend` or `console`. `console` logs sign-in links and codes; production refuses it unless in single-user mode |
 | `EMAIL_FROM` | `Plinth <noreply@<APP_HOST>>` | Sender address. Must be on a domain verified with your provider |
 | `MAX_ARTIFACTS_PER_USER` | `100` | Artifact quota per account. A per-user override lives in `users.artifact_limit` |
-| `MAX_PUBLISHES_PER_HOUR` | `60` | Publishes and new versions per user per hour |
+| `MAX_PUBLISHES_PER_HOUR` | `60` | Publishes and new versions per user per hour. Uploads (`start_upload`) are limited to the same number per hour, and upload requests to twice it |
+| `MAX_VERSION_BYTES` | `52428800` (50 MB) | Source plus assets of one version, uncompressed, reused files included: what a viewer loads. `1048576` to `67108864` (64 MB). An upload's body may be this plus 8 MB of tar overhead. On Workers Free set `5242880` ([deploy-checklist.md](deploy-checklist.md#version-limits-and-the-workers-plan)) |
+| `MAX_ASSETS_PER_VERSION` | `511` | Asset files in one version, besides the main document. `1` to `900`. On Workers Free set `50` |
+| `MAX_STORAGE_BYTES_PER_USER` | `1073741824` (1 GiB) | Bytes stored per account across all versions of its artifacts. A file a version reuses from an earlier version of the same artifact is stored, and counted, once |
 | `CDN_ALLOWLIST` | cdnjs.cloudflare.com, cdn.jsdelivr.net, unpkg.com, cdn.tailwindcss.com, code.jquery.com, cdn.plot.ly | Script hosts artifacts may load from, comma or space separated. Empty means the default list |
 | `SINGLE_USER_MODE` | `false` | One-person instance; needs exactly one `ADMIN_EMAIL` |
 | `OPERATOR_NAME` | empty | Who runs the instance, named in its terms of use and privacy notice. With `OPERATOR_EMAIL`, the instance publishes both pages; without, only the acceptable use policy (right for a personal instance) |

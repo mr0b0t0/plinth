@@ -41,7 +41,7 @@ Two channels carry these rules, so every harness gets them whatever it supports:
 | --- | --- | --- | --- | --- |
 | Claude | Claude artifacts | no | Uploaded skill: The connector carries the core rules. For the full ones, upload the plinth-artifacts skill folder as a custom skill in Claude's skills settings. | not yet |
 | ChatGPT | ChatGPT Sites | no | Server instructions: The connection carries the core rules. The Plinth plugin (integrations/plugin) uses the portable format ChatGPT reads, for when it is listed. | not yet |
-| Claude Code | Claude artifacts | yes | Plugin: Install the Plinth plugin: the server and the skill in one step. | yes |
+| Claude Code | Claude artifacts | yes | Plugin: Install the Plinth plugin: the server and the skill in one step. A bare claude mcp add gives the tools only, without Plinth's rules. | yes |
 | Codex | Codex Sites | yes | Plugin: Install the Plinth plugin for the skill. | yes |
 | Gemini CLI | none | yes | Extension: Install the Plinth extension (server and skill) from a checkout of the repository. | not yet |
 | Cursor | none | yes | Rule file: Save the Plinth rule into your project's .cursor/rules/ folder. | not yet |
@@ -57,17 +57,52 @@ in the app and `npx @mr0b0t0/plinth connect` show the steps, from the same regis
 
 ### Claude Code
 
+Install the plugin. In a terminal:
+
 ```sh
-/plugin install plinth --marketplace mr0b0t0/plinth
+claude plugin marketplace add mr0b0t0/plinth
+claude plugin install plinth@plinth
 ```
 
-Or `claude plugin marketplace add mr0b0t0/plinth`, then `claude plugin install plinth@plinth`. Run
-`/mcp` and choose `plugin:plinth:plinth` to sign in. The skill is `/plinth:plinth-artifacts`, and
-Claude loads it on its own when you ask it to make, publish or share a page.
+Or inside a Claude Code session:
 
-Your own instance: the plugin's server URL is `${PLINTH_URL:-https://plinth.aconite.io}/mcp`. Set
+```text
+/plugin marketplace add mr0b0t0/plinth
+/plugin install plinth@plinth
+```
+
+(Claude Code v2.1.275 and later also take the one-step `/plugin install plinth --marketplace
+mr0b0t0/plinth`. Syntax as of 2026-11:
+[Install and manage plugins](https://code.claude.com/docs/en/discover-plugins).) Run `/mcp` and
+choose `plugin:plinth:plinth` to sign in. The skill is `/plinth:plinth-artifacts`, and Claude loads
+it on its own when you ask it to make, publish or share a page.
+
+The bare `claude mcp add --transport http --scope user plinth <origin>/mcp` gives the tools only,
+without Plinth's rules ([mcp.md](mcp.md#claude-code)). Use one or the other: doing both gives Claude
+Code two Plinth servers (`plinth` and `plugin:plinth:plinth`) and two connections on the
+Connections page. If you added the bare server before, run `claude mcp logout plinth`, then
+`claude mcp remove plinth --scope user` (the scope you added it with), and revoke its connection on
+the Connections page.
+
+Your own instance: the plugin's server URL is `${PLINTH_URL:-https://plinth.aconite.io}/mcp`, so
+without `PLINTH_URL` the plugin signs in to the hosted instance, a different operator. Set
 `PLINTH_URL` to the instance's origin (`https://plinth.example.com`, or `http://127.0.0.1:8788` for
-`npx @mr0b0t0/plinth`) before starting Claude Code.
+`npx @mr0b0t0/plinth`) every time Claude Code starts, for example with an `export` line in your
+shell profile. If you would rather not depend on that, add the bare server with your instance's URL
+instead (tools only); the Connect panel and `/llms.txt` of an instance other than the hosted one
+list it first.
+
+#### Several Claude Code configuration directories
+
+If you run Claude Code with `CLAUDE_CONFIG_DIR` set (to keep separate profiles, for example), each
+configuration directory has its own plugins and MCP servers:
+
+- Install the plugin in each one: run the commands above with `CLAUDE_CONFIG_DIR` set to the same
+  value as the sessions, or run `/plugin` inside a session of that profile.
+- `claude mcp add` run without the variable lands in `~/.claude.json`, the default profile, and
+  sessions of another profile never see it.
+- The sign-ins that Plinth's own programs keep (the mention watcher and the CLI) live in
+  `~/.config/plinth/` and are shared by every profile on the computer.
 
 **Mentions without asking.** Run `/plinth:watch-mentions` once to connect the mention watcher. A
 background monitor in every session then checks Plinth every 30 seconds and wakes Claude when a new
@@ -114,6 +149,113 @@ Add Plinth as a custom connector or plugin ([mcp.md](mcp.md)); the connection ca
 rules. To give Claude the full ones, upload the
 [`plinth-artifacts`](../integrations/skill/plinth-artifacts) folder as a custom skill in Claude's
 skills settings.
+
+## Large builds
+
+A page built by a tool (Vite, Astro, a static export) is a folder of many files. There are three
+ways to publish one; all of them end in the same new version, with the same checks.
+
+| Size | How | Needs |
+| --- | --- | --- |
+| Up to about 20 files and 1 MB | Inline `assets` on `publish_artifact` or `update_artifact` | Nothing beyond MCP |
+| A build folder, from an agent | `start_upload`, then the one command it returns | bash or zsh, curl 7.55+ (or Node.js for `commands.npx`) |
+| A build folder, by a person or an agent with the CLI signed in | `npx -y @mr0b0t0/plinth publish <dir>` | Node.js 22.12+, macOS or Linux |
+
+Inline assets travel inside the tool call as JSON (binary files as base64), so a large build costs
+the agent its context and can pass the 40 MB body limit. The instance's own limits are in
+`GET /api/v1/config` (`limits`: by default 50 MB and 511 files per version, 25 MB per file in an
+upload) and in every `start_upload` result. Never treat the defaults as fixed.
+
+**`start_upload`** ([mcp.md](mcp.md#start_upload)). The agent calls the tool (with `id` and
+`base_version` to update), replaces `<folder>` in `commands.curl` with the build folder and runs it
+with a shell timeout of at least 10 minutes. The command gzips the folder with `tar` and posts it
+with curl, reading the upload token from a process substitution so it is not in curl's arguments.
+The token is still in the command text the agent's shell runs (that shell's arguments, visible to
+other users of the machine while the upload runs, and the agent's transcript); it is good for this
+one upload only. The process substitution is why it needs bash or zsh: on Windows, use Git Bash or WSL, or have the person run the
+CLI. The upload is single use, bound to its artifact and base version, and expires after 30
+minutes.
+
+**The CLI** ([packages/cli/README.md](../packages/cli/README.md)). `npx -y @mr0b0t0/plinth login`
+once, then `publish <dir>` (`--id <id>` to update). It refuses symlinks, skips dotfiles and source
+maps, checks the instance's limits before sending, sends only the files that changed, and verifies
+every file's hash afterwards. A conflict exits with code 3 and is never retried.
+
+Rules that keep a build working on Plinth:
+
+- **Relative URLs.** Build with relative asset URLs (Vite: `base: './'`). A root-absolute
+  `/assets/x.js` always loads the current version's file, so an older version shows the wrong code.
+- **Never merge or delete chunks to fit a limit.** Leave out `*.map`; if it is still too big, the
+  operator can raise `MAX_VERSION_BYTES` or `MAX_ASSETS_PER_VERSION` up to their ceilings.
+- **No links.** Uploads refuse symlinks and hard links. Never follow them with `tar -h`, and never
+  copy files from outside the project into the build folder to make it work.
+- **Opaque isolation.** When `content_isolation` is `opaque` (in `start_upload`'s result or
+  `GET /api/v1/config`), module scripts, `crossorigin` links and web fonts fail. Build a classic
+  bundle (Vite: `build.modulePreload: false` and an `iife` or legacy output). The `opaque_module`
+  warning flags them.
+- **Fix the warnings** the result lists before handing over the link.
+
+### Calling the REST API yourself
+
+The REST API under `/api/v1` takes the same bearer tokens as MCP ([openapi.json](openapi.json)). An
+HTTP client you write must send a `User-Agent` of its own: an edge in front of an instance may refuse
+the default one of a library before Plinth sees the request (Python's `urllib` gets 403
+`error code: 1010` from Cloudflare's Browser Integrity Check). With a personal access token in
+`PLINTH_TOKEN`:
+
+```python
+import json, os, urllib.request
+
+req = urllib.request.Request(
+    "https://plinth.aconite.io/api/v1/artifacts",
+    data=json.dumps({"title": "Build status", "html": "<!doctype html><title>Build status</title><p>Green.</p>"}).encode(),
+    headers={
+        "Authorization": f"Bearer {os.environ['PLINTH_TOKEN']}",
+        "Content-Type": "application/json",
+        "User-Agent": "build-status-script/1.0",
+    },
+    method="POST",
+)
+with urllib.request.urlopen(req) as res:
+    print(json.load(res)["url"])
+```
+
+## Verifying a publish
+
+There is no rendered preview for agents yet. To check that a publish arrived intact:
+
+1. **Read the warnings.** Every publish result lists `warnings`: references to files the version
+   does not have, root-absolute URLs, hosts outside the allowlist, `http:` URLs, and module scripts
+   on opaque-isolation instances ([mcp.md](mcp.md#publish-warnings)). Fix them and publish again.
+2. **Compare hashes.** `get_artifact` and `GET /api/v1/artifacts/<id>` list every asset with the
+   `sha256` the server computed from the stored bytes. Compare them with the local files
+   (`shasum -a 256 <file>`, or `sha256sum`). The CLI does this after every publish and prints
+   "Verified N files".
+3. **Fetch what the content host serves.** With a bearer token (scope `artifacts:read`),
+   `GET /api/v1/view/<id>` (the id or the slug; `?version=<n>` for an older version) already
+   answers `{"status": "ok", "artifact": {...}, "enter_url": "..."}` when the token's user may view
+   the artifact. `enter_url` works once, within 60 seconds. Fetched by a client that keeps cookies,
+   it sets a cookie for that one artifact's content host (valid for 12 hours) and redirects to the
+   page, so the same cookie jar then fetches the HTML and every asset exactly as viewers get them,
+   with their headers and Content Security Policy. Do it in a new temporary directory, never in
+   the build folder: a cookie jar or a downloaded copy left there would go out with the next
+   upload, and the jar is a live credential.
+
+   ```sh
+   tmp=$(mktemp -d)
+   page=$(curl -sS -A my-agent/1.0 -c "$tmp/jar" -b "$tmp/jar" -L -o "$tmp/index.html" -w '%{url_effective}' "$ENTER_URL")
+   curl -sS -A my-agent/1.0 -b "$tmp/jar" -o "$tmp/app.js" "${page%/*}/assets/app.js"
+   # compare "$tmp/index.html" and "$tmp/app.js" with the build, then:
+   rm -rf "$tmp"
+   ```
+
+   `page` is where the redirect landed: the artifact's content origin, or its versioned path for
+   an older version, so relative paths resolve against it as they do in the page.
+
+   A browser that opens `enter_url` at the top level is sent on to the artifact's page in the app,
+   because artifacts render only inside the app's frame. Treat `enter_url` and the cookie jar as
+   credentials for that artifact: use them right away, delete the temporary directory afterwards,
+   and never post either in a reply, a comment or a log.
 
 ## Agent discovery
 
