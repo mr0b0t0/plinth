@@ -372,6 +372,91 @@ describe("sizes and bounds", () => {
     }
   });
 
+  /** A pax header of about `bytes` bytes, made of distinct keys (`tag` keeps headers apart). */
+  const bigPax = (tag: string, bytes: number) => {
+    const records: Record<string, string> = {};
+    for (let i = 0; i * 16 < bytes; i++) records[`k${tag}${String(i).padStart(7, "0")}`] = "";
+    return paxEntry(records);
+  };
+
+  it("refuses many consecutive pax headers once their total passes the cap, before buffering more", async () => {
+    // Each header is under 64 KB on its own; the second takes the total over it. Only the second
+    // header block is sent, so the refusal comes from its declared size, not from reading it.
+    const first = bigPax("a", 40 * 1024);
+    const e = await refusal(
+      concat([INDEX, first, header({ name: "PaxHeaders/x", type: "x", size: 30 * 1024 })]),
+    );
+    expect(e.code).toBe("invalid_input");
+    expect(e.message).toMatch(
+      /extended headers before one entry .* over 64 KB in total \(entry 3\)/,
+    );
+    expect(details(e)).toMatchObject({ limit_bytes: LIMITS.maxTarMetaBytes });
+
+    // The same holds for a long name after a pax header, and for a run of global headers.
+    const e2 = await refusal(
+      concat([INDEX, first, header({ name: "L", type: "L", magic: "gnu", size: 30 * 1024 })]),
+    );
+    expect(e2.message).toMatch(/in total/);
+    const e3 = await refusal(
+      concat([INDEX, first, header({ name: "PaxHeaders/g", type: "g", size: 30 * 1024 })]),
+    );
+    expect(e3.message).toMatch(/in total/);
+  });
+
+  it("stops a long run of 60 KB pax headers at the second one, having read almost nothing", async () => {
+    // 900 headers of distinct keys (about 54 MB, under the raw and inflated caps) before one file.
+    // A reader that merged them would hold millions of keys; this one reads two and refuses.
+    let produced = 0;
+    const body = lazyStream(async function* () {
+      yield INDEX;
+      for (let i = 0; i < 900; i++) {
+        const h = bigPax(String(i), 60 * 1024);
+        produced += h.byteLength;
+        yield h;
+      }
+      yield entry({ name: "a.js", data: "x" });
+      yield END;
+    });
+    const e = await refusal(body);
+    expect(e.message).toMatch(/in total/);
+    expect(produced).toBeLessThan(10 * 60 * 1024);
+  });
+
+  it("resets the extended-header total at every entry, and keeps only pax path and size", async () => {
+    // Two files, each after its own 60 KB pax header with a path record: both pass.
+    const nearCap = (path: string, tag: string) => {
+      const records: Record<string, string> = { path };
+      for (let i = 0; i * 16 < 60 * 1024; i++) records[`k${tag}${String(i).padStart(7, "0")}`] = "";
+      return paxEntry(records);
+    };
+    const { files } = await read(
+      tar([
+        INDEX,
+        nearCap("assets/one.js", "a"),
+        { name: "ignored-1", data: "1" },
+        nearCap("assets/two.js", "b"),
+        { name: "ignored-2", data: "2" },
+      ]),
+    );
+    expect(files.map((f) => f.path)).toEqual(["index.html", "assets/one.js", "assets/two.js"]);
+    // A path from one pax header still applies when a later header before the same entry sets
+    // only the size; neither carries over to the entry after.
+    const { files: f2 } = await read(
+      tar([
+        INDEX,
+        paxEntry({ path: "assets/from-pax.js" }),
+        paxEntry({ size: "3" }),
+        { name: "ignored", data: "abc" },
+        { name: "assets/plain.js", data: "p" },
+      ]),
+    );
+    expect(f2.map((f) => [f.path, f.text])).toEqual([
+      ["index.html", "<!doctype html><title>t</title>"],
+      ["assets/from-pax.js", "abc"],
+      ["assets/plain.js", "p"],
+    ]);
+  });
+
   it("refuses malformed pax records", () => {
     const enc = (s: string) => new TextEncoder().encode(s);
     expect(parsePax(enc("16 path=abc/def\n")).get("path")).toBe("abc/def");

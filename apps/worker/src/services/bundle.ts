@@ -5,9 +5,10 @@
 // Every bound is enforced while streaming, before anything is allocated: raw bytes on the wire,
 // inflated bytes (a gzip bomb stops at the cap), each file's declared size, the version's total
 // and the number of files. Headers are checksummed; links, devices, sparse files and unknown
-// typeflags are refused by name; pax and GNU long-name records are capped at LIMITS.maxTarMetaBytes
-// before they are buffered; every path is validated after the ustar prefix, pax `path` and GNU `L`
-// overrides are applied. Dotfiles are skipped and listed. The archive's one top directory is
+// typeflags are refused by name; the pax and GNU long-name records before one entry are capped at
+// LIMITS.maxTarMetaBytes in total before they are buffered, and only pax `path` and `size` are
+// kept; every path is validated after the ustar prefix, pax `path` and GNU `L` overrides are
+// applied. Dotfiles are skipped and listed. The archive's one top directory is
 // stripped only when every kept file is inside it and it holds the source file.
 import { ASSET_PATH_RE, LIMITS } from "@plinth/shared";
 import { ApiError } from "../lib/errors.ts";
@@ -23,7 +24,7 @@ export interface BundleBounds {
   maxFileBytes: number;
   /** Kept files (config.maxAssetsPerVersion + 1 for the source). */
   maxEntries: number;
-  /** One pax record set or GNU long name (LIMITS.maxTarMetaBytes). */
+  /** The pax records and GNU long names before one entry, in total (LIMITS.maxTarMetaBytes). */
   maxMetaBytes?: number;
   /** The target type's source file ("index.html" or "content.md"), for the prefix strip. */
   sourcePath: string;
@@ -432,8 +433,13 @@ async function* entries(
   let badCount = 0;
   let total = 0;
   const largest: { path: string; size_bytes: number }[] = [];
-  let pax: Map<string, string> | null = null;
+  // Pending extended-header state for the next entry: only the two pax keys the reader uses, and
+  // the bytes of every x, g and L record since the last entry (capped at maxMeta in total, so a
+  // run of extended headers can never build up state).
+  let paxPath: string | undefined;
+  let paxSize: string | undefined;
   let longName: string | null = null;
+  let metaBytes = 0;
   let index = 0;
 
   const header = new Uint8Array(BLOCK);
@@ -466,6 +472,13 @@ async function* entries(
             { limit_bytes: maxMeta },
           );
         }
+        metaBytes += declared;
+        if (metaBytes > maxMeta) {
+          throw invalid(
+            `The extended headers before one entry in the bundle are over ${maxMeta / 1024} KB in total (entry ${index + 1})`,
+            { limit_bytes: maxMeta },
+          );
+        }
         const meta = new Uint8Array(declared);
         if ((await src.readInto(meta)) < declared) {
           throw invalid("The bundle ends in the middle of an entry");
@@ -478,7 +491,8 @@ async function* entries(
               throw invalid("The bundle contains a sparse file; archive it as a regular file");
             }
           }
-          pax = new Map([...(pax ?? []), ...records]);
+          paxPath = records.get("path") ?? paxPath;
+          paxSize = records.get("size") ?? paxSize;
         } else if (flag === "L") {
           const end = meta.indexOf(0);
           longName = decoder.decode(end === -1 ? meta : meta.subarray(0, end));
@@ -489,17 +503,18 @@ async function* entries(
       const ustar = field(header, 257, 6) === "ustar" && header[262] === 0;
       const prefix = ustar ? field(header, 345, 155) : "";
       const plain = field(header, 0, 100);
-      const archived = pax?.get("path") ?? longName ?? (prefix ? `${prefix}/${plain}` : plain);
+      const archived = paxPath ?? longName ?? (prefix ? `${prefix}/${plain}` : plain);
       let size = declared;
-      const paxSize = pax?.get("size");
       if (paxSize !== undefined) {
         if (!/^\d{1,16}$/.test(paxSize) || Number(paxSize) > Number.MAX_SAFE_INTEGER) {
           throw invalid(`A pax header in the bundle has an invalid size (${echo(archived)})`);
         }
         size = Number(paxSize);
       }
-      pax = null;
+      paxPath = undefined;
+      paxSize = undefined;
       longName = null;
+      metaBytes = 0;
 
       const refused = REFUSED[flag];
       if (refused || (!REGULAR.has(flag) && flag !== "5")) {
