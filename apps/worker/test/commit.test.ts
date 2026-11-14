@@ -427,3 +427,111 @@ describe("the storage quota counts stored bytes", () => {
     expect(await currentVersion(p.id)).toBe(3);
   });
 });
+
+describe("carry-forward and the upload ticket guard", () => {
+  it("an update without assets carries every file with no asset R2 operation", async () => {
+    const a = await agent();
+    const { body: p } = await publish(a.auth, {
+      assets: [
+        { path: "a.css", content: "a" },
+        { path: "b/c.js", content: "c" },
+      ],
+    });
+    const files = spy(env.FILES);
+    const ctx = serviceCtxFor(agentPrincipal(a), { env: { FILES: files.proxy } });
+    const r = await updateArtifact(ctx, { id: p.id, html: "<p>2</p>" });
+    expect(r.stored).toMatchObject({ files: 3, written: 1, reused: 2 });
+    expect(files.calls.map((c) => c.method)).toEqual(["put"]);
+    expect(String(files.calls[0]?.arg)).toMatch(/\/index\.html$/);
+  });
+
+  /** An open ticket row for a's connection (W2 mints these; the commit only consumes them). */
+  async function ticket(
+    a: Awaited<ReturnType<typeof agent>>,
+    artifactId: string,
+    base: number,
+    opts: { state?: string; expiresAt?: string } = {},
+  ) {
+    const id = `t${Math.random().toString(36).slice(2, 12)}`;
+    const now = new Date().toISOString();
+    await env.DB.prepare(
+      `INSERT INTO upload_tickets (id, token_hash, user_id, credential, connection_id, scopes,
+         mode, artifact_id, artifact_type, base_version, state, created_at, expires_at)
+       VALUES (?, ?, ?, 'connection', ?, 'artifacts:write', 'update', ?, 'html', ?, ?, ?, ?)`,
+    )
+      .bind(
+        id,
+        `hash-${id}`,
+        a.user.id,
+        a.connectionId,
+        artifactId,
+        base,
+        opts.state ?? "open",
+        now,
+        opts.expiresAt ?? new Date(Date.now() + 30 * 60_000).toISOString(),
+      )
+      .run();
+    return id;
+  }
+
+  async function staged(a: Awaited<ReturnType<typeof agent>>, id: string) {
+    const ctx = serviceCtxFor(agentPrincipal(a));
+    const target = await updateTarget(ctx, id, { baseVersion: 1 });
+    const stager = await openStager(ctx, target);
+    await stager.add("index.html", enc.encode("<p>bundle</p>"));
+    return { ctx, target, staged: await stager.finish() };
+  }
+
+  it("consumes an open ticket in the same batch as the version", async () => {
+    const a = await agent();
+    const { body: p } = await publish(a.auth);
+    const t = await ticket(a, p.id, 1);
+    const s = await staged(a, p.id);
+    const r = await commitStaged(s.ctx, s.target, s.staged, { ticketId: t });
+    expect(r.version).toBe(2);
+    const row = await env.DB.prepare(
+      "SELECT state, result_artifact_id, result_version, used_at FROM upload_tickets WHERE id = ?",
+    )
+      .bind(t)
+      .first<{
+        state: string;
+        result_artifact_id: string;
+        result_version: number;
+        used_at: string;
+      }>();
+    expect(row).toMatchObject({ state: "used", result_artifact_id: p.id, result_version: 2 });
+    expect(row?.used_at).toBeTruthy();
+  });
+
+  it("a used, dead or expired ticket commits nothing and its objects are deleted", async () => {
+    const a = await agent();
+    const { body: p } = await publish(a.auth);
+    for (const [opts, reason] of [
+      [{ state: "used" }, "upload_used"],
+      [{ state: "dead" }, "upload_dead"],
+      [{ expiresAt: new Date(Date.now() - 1000).toISOString() }, "upload_expired"],
+    ] as const) {
+      const t = await ticket(a, p.id, 1, opts);
+      const s = await staged(a, p.id);
+      await expect(commitStaged(s.ctx, s.target, s.staged, { ticketId: t })).rejects.toMatchObject({
+        details: { reason },
+      });
+      expect(await r2Keys(s.staged.prefix)).toEqual([]);
+      expect(await currentVersion(p.id)).toBe(1);
+    }
+  });
+
+  it("two commits on one ticket: exactly one wins", async () => {
+    const a = await agent();
+    const { body: p } = await publish(a.auth);
+    const t = await ticket(a, p.id, 1);
+    const one = await staged(a, p.id);
+    const two = await staged(a, p.id);
+    const results = await Promise.allSettled([
+      commitStaged(one.ctx, one.target, one.staged, { ticketId: t }),
+      commitStaged(two.ctx, two.target, two.staged, { ticketId: t }),
+    ]);
+    expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+    expect(await versionCount(p.id)).toBe(2);
+  });
+});
