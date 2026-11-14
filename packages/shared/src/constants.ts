@@ -40,6 +40,8 @@ const MB = 1024 * 1024;
 export const LIMITS = {
   /** Bytes of HTML per version. */
   maxHtmlBytes: 5 * MB,
+  /** Bytes of Markdown (content.md) per version of a doc artifact. */
+  maxDocBytes: 1 * MB,
   /** Bytes of HTML plus assets per version. */
   maxVersionBytes: 25 * MB,
   maxAssetsPerVersion: 200,
@@ -141,6 +143,10 @@ export const REVIEW_MODE_PARAM = "plinth-review";
 
 /** postMessage protocol between the app and the bridge script injected in review mode. */
 export const BRIDGE_MESSAGE_SOURCE = "plinth-bridge";
+
+/** postMessage protocol between the app and a typed artifact's renderer (artifactTypes.ts). */
+export const RENDERER_MESSAGE_SOURCE = "plinth-renderer";
+export const RENDERER_PROTOCOL_VERSION = 1;
 
 /**
  * CONTENT_ISOLATION. `origin`: each artifact is its own origin. `opaque`: artifact documents get an
