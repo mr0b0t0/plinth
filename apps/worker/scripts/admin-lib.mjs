@@ -33,6 +33,14 @@ const MINUTES_RE = /^[1-9][0-9]{0,5}$/;
  */
 export const MIN_SWEEP_MINUTES = 45;
 
+/**
+ * started_at for the staging attempt rows of an erased artifact, by D1's clock: a tombstone
+ * (services/attempts.ts tombstoneAt) that the Worker's sweep takes only once no attempt still
+ * running can put any more (STAGING_SWEEP_AFTER_MS minus STAGING_SWEEP_CLAIM_MS, 35 minutes, from
+ * now), and then deletes what it put after the erase.
+ */
+export const TOMBSTONE_SQL = "'0' || strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '+35 minutes')";
+
 export const USAGE = `Usage: pnpm --filter @plinth/worker admin -- <command> [options]
 
 Commands:
@@ -285,13 +293,14 @@ export function versionPrefixesSql(ref) {
  * and sessions. Before that: comments they wrote on other people's artifacts, grants to their
  * address, codes and viewer sessions for it, rate-limit counters naming it, their address on
  * reports, shared-data documents they created (personal ones included) and their name, role and
- * agent connection label on documents they last changed, and the staging attempt rows of their
- * artifacts (no foreign key; the files go with each artifact's root). The last statement returns
- * the erased user, so the CLI can tell whether one matched.
+ * agent connection label on documents they last changed. Their artifacts' staging attempt rows (no
+ * foreign key) become tombstones: the files go with each artifact's root, and the Worker's sweep
+ * deletes what an attempt still running puts after that, then the rows. The last statement
+ * returns the erased user, so the CLI can tell whether one matched.
  */
 export function eraseUserSql(email) {
   return [
-    `DELETE FROM staging_attempts WHERE artifact_id IN (SELECT a.id FROM artifacts a JOIN users u ON u.id = a.owner_id WHERE u.email = '${email}')`,
+    `UPDATE staging_attempts SET started_at = ${TOMBSTONE_SQL} WHERE artifact_id IN (SELECT a.id FROM artifacts a JOIN users u ON u.id = a.owner_id WHERE u.email = '${email}')`,
     `DELETE FROM comments WHERE author_user_id IN (SELECT id FROM users WHERE email = '${email}')`,
     `DELETE FROM access_grants WHERE email = '${email}'`,
     `DELETE FROM login_codes WHERE email = '${email}'`,
@@ -308,12 +317,12 @@ export function eraseUserSql(email) {
 /**
  * Erase one artifact; its versions, grants, comments, tasks, reports and update tickets cascade.
  * The ticket that published it names it only in result_artifact_id (no foreign key) and holds
- * the title the agent gave, so it goes first, with its staging attempt rows (no foreign key
- * either; their files go with the artifact's root). The last statement's rows say what was erased.
+ * the title the agent gave, so it goes first. Its staging attempt rows (no foreign key either)
+ * become tombstones, as in eraseUserSql. The last statement's rows say what was erased.
  */
 export function eraseArtifactSql(ref) {
   return [
-    `DELETE FROM staging_attempts WHERE artifact_id IN (SELECT id FROM artifacts WHERE id = '${ref}' OR slug = '${ref}')`,
+    `UPDATE staging_attempts SET started_at = ${TOMBSTONE_SQL} WHERE artifact_id IN (SELECT id FROM artifacts WHERE id = '${ref}' OR slug = '${ref}')`,
     `DELETE FROM upload_tickets WHERE result_artifact_id IN (SELECT id FROM artifacts WHERE id = '${ref}' OR slug = '${ref}')`,
     `DELETE FROM artifacts WHERE id = '${ref}' OR slug = '${ref}' RETURNING id`,
   ].join("; ");

@@ -276,7 +276,8 @@ Step-by-step instructions for each client are in [mcp.md](mcp.md).
   ticket and posting a bundle also start a sweep of at most 20 attempts after the response (at
   most once a minute per Worker isolate), which is how a local, tunnel or Docker instance clears
   them: `wrangler dev` fires no cron triggers. Deleting, taking down or erasing the artifact removes
-  them too. The admin command is for legacy orphans, files written before 0.4.0 that no row names:
+  them too, and keeps its attempts' rows for at least 45 minutes so the sweep also deletes what an attempt
+  still running wrote afterwards. The admin command is for legacy orphans, files written before 0.4.0 that no row names:
   `pnpm --filter @plinth/worker admin -- sweep-orphans --local|--remote [--artifact <id|slug>] [--older-than-minutes N] [--dry-run] [--env E] [--config C] [--bucket B]`.
   It deletes only prefixes no version names that are older than `--older-than-minutes` (default
   60, minimum 45: an upload ticket can still commit for 30 minutes after it is minted). The R2 bucket is always the `FILES` binding of the same wrangler config and

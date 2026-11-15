@@ -442,7 +442,8 @@ file.
   and consumes the upload, with the quota and artifact-count checks inside it. A crash or a lost
   race leaves only unreferenced objects under that attempt's own prefix, never a half-made version;
   the hourly scheduled sweep of `staging_attempts` rows removes them, and so does deleting or
-  erasing the artifact. The sweep (like an abort or a takedown) claims a row before deleting
+  erasing the artifact. A delete, takedown or erase keeps the artifact's rows as tombstones until
+  no attempt can still be running, so files an attempt puts after it are swept too. The sweep (like an abort or a takedown) claims a row before deleting
   anything and deletes the row only after the files, and a commit needs the row unclaimed, so a
   sweep never deletes the files of a version that commits and a failed cleanup is retried. A bundle whose client disconnects before
   the commit cleans up after itself: the request's abort signal hands the deletion of its attempt prefix and the

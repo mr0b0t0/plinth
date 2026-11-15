@@ -19,10 +19,12 @@ import {
   rootsFromRows,
   SweepRefused,
   sweepOrphans,
+  TOMBSTONE_SQL,
   UsageError,
   userKeysSql,
   versionPrefixesSql,
 } from "../scripts/admin-lib.mjs";
+import { STAGING_SWEEP_AFTER_MS, STAGING_SWEEP_CLAIM_MS } from "../src/services/attempts.ts";
 import { commitStaged, openStager, updateTarget } from "../src/services/stage.ts";
 import {
   agent,
@@ -358,7 +360,7 @@ describe("after delete or erase, R2 holds nothing under artifacts/<id>/", () => 
     expect(await r2Keys(`artifacts/${p.id}/`)).toEqual([]);
   });
 
-  it("erase-artifact and erase-user remove the artifacts' staging attempt rows", async () => {
+  it("erase-artifact and erase-user park the artifacts' staging attempt rows as tombstones", async () => {
     const owner = await agent();
     const { body: one } = await publish(owner.auth, { title: "one" });
     const { body: two } = await publish(owner.auth, { title: "two" });
@@ -368,18 +370,36 @@ describe("after delete or erase, R2 holds nothing under artifacts/<id>/", () => 
       await stager.add("index.html", new TextEncoder().encode("<p>left</p>"));
       await stager.add("left.css", new TextEncoder().encode("left"));
     }
-    const count = async (id: string) =>
+    // Live rows (unclaimed: they sort at or above "1"), and tombstones parked by D1's clock.
+    const count = async (id: string, parked: boolean) =>
       (
-        await env.DB.prepare("SELECT count(*) AS n FROM staging_attempts WHERE artifact_id = ?")
+        await env.DB.prepare(
+          `SELECT count(*) AS n FROM staging_attempts WHERE artifact_id = ? AND started_at ${parked ? "<" : ">="} '1'`,
+        )
           .bind(id)
           .first<{ n: number }>()
       )?.n;
-    expect(await count(one.id)).toBe(1);
+    expect(await count(one.id, false)).toBe(1);
+    const before = Date.now();
     await runStatements(eraseArtifactSql(one.id));
-    expect(await count(one.id)).toBe(0);
-    expect(await count(two.id)).toBe(1);
+    expect(await count(one.id, false)).toBe(0);
+    expect(await count(one.id, true)).toBe(1);
+    expect(await count(two.id, false)).toBe(1);
     await runStatements(eraseUserSql(owner.user.email));
-    expect(await count(two.id)).toBe(0);
+    expect(await count(two.id, false)).toBe(0);
+    // The tombstone is tombstoneAt by D1's clock: the sweep takes it once no attempt can put.
+    const row = await env.DB.prepare(
+      "SELECT started_at FROM staging_attempts WHERE artifact_id = ?",
+    )
+      .bind(two.id)
+      .first<{ started_at: string }>();
+    const at = Date.parse(row?.started_at.slice(1) ?? "");
+    const hold = STAGING_SWEEP_AFTER_MS - STAGING_SWEEP_CLAIM_MS;
+    expect(at).toBeGreaterThanOrEqual(before + hold - 5000);
+    expect(at).toBeLessThanOrEqual(Date.now() + hold + 5000);
+    expect(row?.started_at.slice(0, 1)).toBe("0");
+    expect(row?.started_at.slice(1)).toMatch(/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/);
+    expect(TOMBSTONE_SQL).toContain(`+${hold / 60_000} minutes`);
   });
 
   it("erase-user: roots of artifacts with no version row are listed too", async () => {

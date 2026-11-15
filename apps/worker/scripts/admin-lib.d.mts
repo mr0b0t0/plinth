@@ -3,6 +3,7 @@ export declare const USAGE: string;
 export declare class UsageError extends Error {}
 export declare class SweepRefused extends Error {}
 export declare const MIN_SWEEP_MINUTES: number;
+export declare const TOMBSTONE_SQL: string;
 export declare function filesBucket(
   r2Buckets: { binding?: unknown; bucket_name?: unknown }[] | undefined,
   explicit: string | null | undefined,

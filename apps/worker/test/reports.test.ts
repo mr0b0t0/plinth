@@ -10,7 +10,11 @@ import { describe, expect, it } from "vitest";
 import { parseConfig } from "../src/config.ts";
 import { artifacts, devOutbox, reports, versions } from "../src/db/schema.ts";
 import worker from "../src/index.ts";
-import { STAGING_SWEEP_CLAIM_MS, STAGING_SWEEP_CRON } from "../src/services/attempts.ts";
+import {
+  STAGING_SWEEP_AFTER_MS,
+  STAGING_SWEEP_CRON,
+  sweepStagingAttempts,
+} from "../src/services/attempts.ts";
 import { commitStaged, openStager, updateTarget } from "../src/services/stage.ts";
 import { getOrCreateUser } from "../src/services/users.ts";
 import {
@@ -248,7 +252,7 @@ describe("admin takedown", () => {
     expect(twice.status).toBe(409);
   });
 
-  it("actioned: removes the artifact's staging attempts and their files, keeps its versions", async () => {
+  it("actioned: deletes the artifact's staging attempts' files, keeps its versions and the rows as tombstones", async () => {
     const a = await agent();
     const { body: p } = await publish(a.auth);
     const ctx = serviceCtxFor(agentPrincipal(a));
@@ -265,8 +269,12 @@ describe("admin takedown", () => {
     expect((await adm.post(`/api/v1/admin/reports/${r.id}`, { state: "actioned" })).status).toBe(
       200,
     );
-    expect((await rows()).results).toEqual([]);
+    // The row stays parked until no attempt can still put; the sweep after that removes it.
+    expect((await rows()).results).toHaveLength(1);
     expect(await r2Keys(stager.prefix)).toEqual([]);
+    expect(await r2Keys(v1?.r2Prefix ?? "-")).toEqual(live);
+    await sweepStagingAttempts(env, Date.now() + STAGING_SWEEP_AFTER_MS + 1000);
+    expect((await rows()).results).toEqual([]);
     expect(await r2Keys(v1?.r2Prefix ?? "-")).toEqual(live);
   });
 
@@ -289,7 +297,10 @@ describe("admin takedown", () => {
     );
     await stager.add("big.css", new TextEncoder().encode("big"));
     const staged = await stager.finish();
-    await expect(commitStaged(ctx, target, staged)).rejects.toBeTruthy();
+    await expect(commitStaged(ctx, target, staged)).rejects.toMatchObject({
+      code: "forbidden",
+      details: { reason: "taken_down" },
+    });
     await stager.abort();
     expect(await r2Keys(stager.prefix)).toEqual([]);
     expect(
@@ -358,11 +369,11 @@ describe("admin takedown", () => {
     expect(art?.takenDownAt).toBeTruthy();
     // The row stays (it can no longer commit) until the files are gone.
     expect(await r2Keys(stager.prefix)).toEqual(keys);
-    // The next sweep run once the takedown's claim is STAGING_SWEEP_CLAIM_MS old.
+    // The first sweep run once the takedown's tombstone is STAGING_SWEEP_AFTER_MS old.
     const ctl = createExecutionContext();
     await worker.scheduled(
       createScheduledController({
-        scheduledTime: Date.now() + STAGING_SWEEP_CLAIM_MS + 1000,
+        scheduledTime: Date.now() + STAGING_SWEEP_AFTER_MS + 1000,
         cron: STAGING_SWEEP_CRON,
       }),
       env as never,

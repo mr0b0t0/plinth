@@ -39,9 +39,11 @@ Add a line under **Unreleased** in the pull request that makes a change people w
 - Local, tunnel and Docker instances (which run no cron) clear what interrupted uploads left:
   minting an upload ticket or posting a bundle starts a small sweep (at most 20 attempts, once a
   minute per Worker isolate) on every instance.
-- An update or restore that started before an admin takedown can no longer commit after it, and
-  files an upload was still writing when its artifact was deleted or taken down are deleted when
-  it fails instead of staying in storage.
+- An update, restore or bundle that started before an admin takedown can no longer commit after
+  it, and answers `forbidden` with `reason: "taken_down"` (a bundle's upload is no longer reported
+  as ended by someone else's version). Files an upload was still writing when its artifact was
+  deleted, taken down or erased are deleted instead of staying in storage, even when the upload's
+  request dies before it cleans up: the sweep deletes them once the upload can no longer run.
 - **Upgrading**:
   - Apply migrations `0006_stored_bytes.sql` and `0007_upload_tickets.sql` before deploying the
     Worker (`plinth deploy` does; by hand, `wrangler d1 migrations apply` first).

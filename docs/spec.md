@@ -360,9 +360,9 @@ files) and big pages without merging chunks, and an update stores only what chan
   every cutoff) and deletes the row only once the objects are gone, so a failure in between leaves
   the claimed row for the next sweep. An abort claims the row, deletes the prefix, then the row.
   With no row to claim it looks for a version naming the prefix: one there (a commit batch D1
-  applied after reporting an error) keeps the objects; none means a delete, takedown or erase
-  removed the row of an attempt that was still putting files, which can never commit now, so the
-  abort parks a fresh row and deletes the objects like any other. A
+  applied after reporting an error) keeps the objects; none means the row was lost (an
+  attempt from before tombstones, whose row a delete, takedown or erase removed), so the abort
+  parks a fresh row and deletes the objects like any other. A
   killed request can leave only unreferenced objects under its own prefix, with its row. An hourly
   cron trigger (`0 * * * *`) sweeps them: it claims at most 50 rows older than the ticket's
   lifetime plus 15 minutes (and rows claimed more than 10 minutes earlier, longest-claimed first)
@@ -373,10 +373,14 @@ files) and big pages without merging chunks, and an update stores only what chan
   sweeps that overlap never take the same row. Because the
   commit needs the row unclaimed, a commit after a claim is refused with a retryable `conflict`
   (`reason: "attempt_expired"`) whatever the committer's clock, and a claim after a commit finds
-  nothing. Deleting or erasing an artifact removes its rows with its files; a takedown claims them
-  in its own batch, then deletes their files, leaving any that fail to the sweep. The version
+  nothing. Deleting, taking down or erasing an artifact parks its rows as tombstones in the same
+  batch (or statement list): no sweep takes one until the ticket's lifetime plus 15 minutes have
+  passed, so whatever an attempt that is still running puts afterwards stays under its row, and its
+  own abort or that later sweep deletes it. A delete's and an erase's files go with the root; a
+  takedown deletes the attempts' files after its batch and keeps the rows. The version
   insert also requires the artifact not to be taken down, so an update or restore that passed its
-  edit check before a takedown never commits after it (`forbidden`, `reason: "taken_down"`). `sweep-orphans` (an admin command) stays for
+  edit check before a takedown never commits after it (`forbidden`, `reason: "taken_down"`, also
+  when the takedown came after the attempt's first put). `sweep-orphans` (an admin command) stays for
   objects no row names, such as those written before 0.4.0. A version row left by the pre-0.4.0 order (row first) that blocks a number
   is cleared when it is above `current_version` and more than 10 minutes old. Manifest entries
   from older releases whose paths the current `ASSET_PATH_RE` refuses (such as `a//b.js`, which

@@ -8,6 +8,12 @@
 // whatever fails in between (a D1 error, an R2 error, an evicted invocation), the next sweep run
 // still finds the prefix.
 //
+// A delete, a takedown or an admin erase can end an attempt that is still putting files: the
+// stager never learns of it. Those park the artifact's rows as tombstones (tombstoneAt), which no
+// sweep takes before STAGING_SWEEP_AFTER_MS has passed, the longest an attempt can live, and a
+// takedown's own cleanup deletes the objects but keeps the row. So whatever the attempt puts later
+// is still under a row: its own abort deletes it, or the sweep does once the attempt is over.
+//
 // `wrangler dev` (local, tunnel and Docker instances) fires no cron, so minting an upload ticket
 // and posting a bundle also start a smaller sweep through waitUntil (sweepSoon), at most once per
 // isolate per minute, on every runtime. A sweep takes a claimed row again only once its claim is
@@ -79,6 +85,14 @@ export function parkedAt(now: number): string {
   return `0${new Date(now).toISOString()}`;
 }
 
+/**
+ * started_at of a row parked as a tombstone at `now`: claimed, and taken by a sweep only once
+ * STAGING_SWEEP_AFTER_MS has passed, when no attempt that started before `now` can still put.
+ */
+export function tombstoneAt(now: number): string {
+  return parkedAt(now + STAGING_SWEEP_AFTER_MS - STAGING_SWEEP_CLAIM_MS);
+}
+
 /** Sweep order: an unclaimed row by its start, a claimed one by its claim time. */
 const SWEEP_ORDER = "CASE WHEN started_at < '1' THEN substr(started_at, 2) ELSE started_at END";
 
@@ -88,7 +102,9 @@ const SWEEP_ORDER = "CASE WHEN started_at < '1' THEN substr(started_at, 2) ELSE 
  * version's. A row can also be gone without a commit: a delete, a takedown or an admin erase
  * removes the rows of attempts that are still running, and those keep putting. ATTEMPT_GUARD
  * refuses every commit once the row is gone, so such an attempt never commits; the claim parks a
- * fresh row for it (a failed delete then leaves the prefix to the sweep) and its objects go.
+ * fresh row for it (a failed delete then leaves the prefix to the sweep) and its objects go. (A
+ * delete, takedown or erase now parks the rows as tombstones instead; rows they removed before
+ * this release, or any lost row, still take this path.)
  */
 export async function claimAttempt(
   DB: D1Database,
@@ -111,16 +127,10 @@ export async function claimAttempt(
   return true;
 }
 
-/** The statement that removes an artifact's rows (its files go with the artifact's root). */
-export function dropArtifactAttempts(DB: D1Database, artifactId: string): D1PreparedStatement {
-  return DB.prepare("DELETE FROM staging_attempts WHERE artifact_id = ? RETURNING prefix").bind(
-    artifactId,
-  );
-}
-
 /**
- * The statement that claims every row of an artifact whose versions stay (takedown): its attempts
- * can no longer commit. Pass its result to clearClaimedAttempts.
+ * The statement that parks every row of an artifact as a tombstone (a delete or a takedown): its
+ * attempts can no longer commit, and what they put until they end stays under their rows for the
+ * sweep. A takedown passes its result to clearClaimedAttempts; a delete's files go with the root.
  */
 export function claimArtifactAttempts(
   DB: D1Database,
@@ -129,7 +139,7 @@ export function claimArtifactAttempts(
 ): D1PreparedStatement {
   return DB.prepare(
     "UPDATE staging_attempts SET started_at = ? WHERE artifact_id = ? RETURNING prefix, artifact_id",
-  ).bind(parkedAt(now), artifactId);
+  ).bind(tombstoneAt(now), artifactId);
 }
 
 type ClaimedRow = { prefix: string; artifact_id: string };
@@ -137,12 +147,13 @@ type Outcome = "deleted" | "referenced" | "skipped";
 
 /**
  * Finish one claimed row: delete its objects when its prefix is an attempt prefix of its artifact
- * that no version names, then the row. Throws, leaving the claimed row for the next sweep run,
- * when either fails.
+ * that no version names, then the row (unless `keepRow`: a tombstone whose attempt may still
+ * put). Throws, leaving the claimed row for the next sweep run, when either fails.
  */
 async function clearClaimed(
   env: { DB: D1Database; FILES: R2Bucket },
   row: ClaimedRow,
+  keepRow = false,
 ): Promise<Outcome> {
   let outcome: Outcome = "deleted";
   if (!ownPrefix(row.prefix, row.artifact_id)) outcome = "skipped";
@@ -151,20 +162,21 @@ async function clearClaimed(
     outcome = "referenced";
     console.warn(`staging sweep: a version references the attempt prefix ${row.prefix}`);
   } else await deletePrefix(env.FILES, row.prefix);
-  await forgetAttempt(env.DB, row.prefix);
+  if (!keepRow) await forgetAttempt(env.DB, row.prefix);
   return outcome;
 }
 
 /**
- * Delete what a claimArtifactAttempts statement claimed (its result), now and best effort: a row
- * whose cleanup fails stays claimed, and the next sweep run finishes it.
+ * Delete the objects of what a claimArtifactAttempts statement claimed (its result), now and best
+ * effort. The rows stay as tombstones: the attempts may still put, and a sweep takes each row once
+ * its attempt is over, deleting whatever came later.
  */
 export async function clearClaimedAttempts(
   env: { DB: D1Database; FILES: R2Bucket },
   result: D1Result | undefined,
 ): Promise<void> {
   for (const row of (result?.results ?? []) as ClaimedRow[]) {
-    await clearClaimed(env, row).catch(() => undefined);
+    await clearClaimed(env, row, true).catch(() => undefined);
   }
 }
 

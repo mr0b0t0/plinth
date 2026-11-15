@@ -12,10 +12,13 @@ import { env, exports } from "cloudflare:workers";
 import { TTL } from "@plinth/shared";
 import { eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
+import { eraseArtifactSql, eraseUserSql } from "../scripts/admin-lib.mjs";
 import { artifacts, versions } from "../src/db/schema.ts";
 import worker from "../src/index.ts";
 import { deleteArtifact, publishArtifact, updateArtifact } from "../src/services/artifacts.ts";
 import {
+  claimArtifactAttempts,
+  clearClaimedAttempts,
   OPPORTUNISTIC_SWEEP_BATCH,
   OPPORTUNISTIC_SWEEP_EVERY_MS,
   resetSweepThrottle,
@@ -523,7 +526,7 @@ describe("staging attempts: committed files are never touched", () => {
 });
 
 describe("staging attempts: deleting an artifact", () => {
-  it("delete removes the artifact's attempt rows with its files", async () => {
+  it("delete parks the artifact's attempt rows and removes its files; the sweep drops the rows", async () => {
     const a = await agent();
     const { body: p } = await publish(a.auth);
     const { stager } = await abandonedUpdate(a, p.id);
@@ -535,8 +538,11 @@ describe("staging attempts: deleting an artifact", () => {
     };
     await deleteArtifact(ctx, p.id);
     await Promise.all(waits);
-    expect(await attemptRows(p.id)).toEqual([]);
+    // The row stays parked (a tombstone) until no attempt can still put; then the sweep drops it.
+    expect((await attemptRows(p.id)).map((r) => r.started_at < "1")).toEqual([true]);
     expect(await r2Keys(stager.prefix)).toEqual([]);
+    await runSweep(later() + HOUR);
+    expect(await attemptRows(p.id)).toEqual([]);
   });
 
   it("an attempt still streaming when its artifact is deleted leaves no objects behind", async () => {
@@ -554,8 +560,8 @@ describe("staging attempts: deleting an artifact", () => {
       p.id,
     );
     await Promise.all(waits);
-    expect(await attemptRows(p.id)).toEqual([]);
-    // The stager never learns its row is gone and keeps putting.
+    expect((await attemptRows(p.id)).map((r) => r.started_at < "1")).toEqual([true]);
+    // The stager never learns its row is parked and keeps putting.
     await stager.add("big.css", enc.encode("big"));
     const staged = await stager.finish();
     await expect(commitStaged(ctx, target, staged)).rejects.toBeTruthy();
@@ -564,6 +570,67 @@ describe("staging attempts: deleting an artifact", () => {
     expect(await r2Keys(stager.prefix)).toEqual([]);
     expect(await attemptRow(stager.prefix)).toBeNull();
   });
+});
+
+describe("staging attempts: an attempt that dies after its artifact is deleted, taken down or erased", () => {
+  // The stager keeps putting after the action, then its invocation dies: no finish(), no abort().
+  async function streamingAttempt(a: Agent, id: string) {
+    const ctx = serviceCtxFor(agentPrincipal(a));
+    const stager = await openStager(ctx, await updateTarget(ctx, id, {}));
+    await stager.add("index.html", enc.encode("<p>streaming</p>"));
+    await stager.add("first.css", enc.encode("first"));
+    await until(async () => (await r2Keys(stager.prefix)).length === 1);
+    return stager;
+  }
+
+  const actions = {
+    "taken down": async (_a: Agent, id: string) => {
+      // The calls decideReport makes.
+      const now = Date.now();
+      const results = await env.DB.batch([
+        env.DB.prepare("UPDATE artifacts SET taken_down_at = ?1 WHERE id = ?2").bind(
+          new Date(now).toISOString(),
+          id,
+        ),
+        claimArtifactAttempts(env.DB, id, now),
+      ]);
+      await clearClaimedAttempts(env, results[1]);
+    },
+    deleted: async (a: Agent, id: string) => {
+      const waits: Promise<unknown>[] = [];
+      await deleteArtifact(
+        { ...serviceCtxFor(agentPrincipal(a)), waitUntil: (w: Promise<unknown>) => waits.push(w) },
+        id,
+      );
+      await Promise.all(waits);
+    },
+    "erased (erase-artifact)": async (_a: Agent, id: string) => {
+      for (const stmt of eraseArtifactSql(id).split("; ")) await env.DB.prepare(stmt).all();
+      await env.FILES.delete(
+        (await env.FILES.list({ prefix: `artifacts/${id}/v1/` })).objects.map((o) => o.key),
+      );
+    },
+    "erased (erase-user)": async (a: Agent) => {
+      for (const stmt of eraseUserSql(a.user.email).split("; ")) await env.DB.prepare(stmt).all();
+    },
+  };
+
+  for (const [how, act] of Object.entries(actions)) {
+    it(`${how}: the files it puts afterwards are still swept`, async () => {
+      const a = await agent();
+      const { body: p } = await publish(a.auth);
+      const stager = await streamingAttempt(a, p.id);
+      await act(a, p.id);
+      await stager.add("big.css", enc.encode("big"));
+      await until(async () => (await r2Keys(stager.prefix)).some((k) => k.endsWith("/big.css")));
+      // A sweep before the attempt's longest life leaves its row; one after deletes the files.
+      await runSweep(Date.now() + STAGING_SWEEP_CLAIM_MS + 60_000);
+      expect(await attemptRow(stager.prefix)).not.toBeNull();
+      await runSweep(later() + HOUR);
+      expect(await r2Keys(stager.prefix)).toEqual([]);
+      expect(await attemptRow(stager.prefix)).toBeNull();
+    });
+  }
 });
 
 /** Poll `check` (a few seconds at most) until it holds. */
