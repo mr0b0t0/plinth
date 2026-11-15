@@ -78,7 +78,11 @@ export interface Stager {
    * the count, size, references and paths.
    */
   finish(opts?: { stripPrefix?: string }): Promise<StagedVersion>;
-  /** Settle every put, then delete this attempt's prefix. */
+  /**
+   * Abandon the attempt: settle every put, then delete this attempt's prefix. Once the commit has
+   * begun (commitStaged) it does nothing: the commit owns the objects from then on, deleting them
+   * itself if its batch fails. So an abort and a commit never both proceed.
+   */
   abort(): Promise<void>;
 }
 
@@ -292,6 +296,8 @@ export class VersionStager implements Stager {
   private written = 0;
   private reused = 0;
   private aborted = false;
+  /** Set synchronously by beginCommit: from then on abort() leaves the objects alone. */
+  private committing = false;
   /** Restore copies the old row's capabilities instead of parsing the source. */
   capabilitiesOverride: string | null | undefined;
   /** Restore returns no warnings. */
@@ -442,13 +448,19 @@ export class VersionStager implements Stager {
     const isSource = !!opts.sourceAllowed && path === this.def.sourcePath;
     const contentType = isSource ? this.def.contentType : assetContentType(path, opts.contentType);
     if (pathProblem(path) === null && opts.sourceAllowed) await this.noteTopDir(path);
-    // A held "<dir>/<source>" is checked at finish, once a strip has decided what it is.
-    const candidate = !!opts.sourceAllowed && this.isSourceCandidate(path);
-    const check = isSource || candidate ? undefined : () => checkAsset(this.def, path, contentType);
+    // A "<dir>/<source>" is checked at finish, once a strip has decided what it is.
+    const possibleSource = !!opts.sourceAllowed && this.isSourceCandidate(path);
+    const check =
+      isSource || possibleSource ? undefined : () => checkAsset(this.def, path, contentType);
     if (!this.acceptPath(path, check)) return;
-    if (candidate && bytes.byteLength > this.def.maxSourceBytes && path === this.def.sourcePath) {
+    const oversize = bytes.byteLength > this.def.maxSourceBytes;
+    if (possibleSource && oversize && path === this.def.sourcePath) {
       throw sourceTooLarge(this.def.sourceLabel, this.def.maxSourceBytes, bytes.byteLength);
     }
+    // Only a candidate that could still be the source is held in memory until finish. One past the
+    // source limit goes out at once like any file: if a strip makes it the source, finish
+    // refuses it for its size, and it never sits outside the in-flight budget meanwhile.
+    const candidate = possibleSource && !oversize;
     const sha256 = await sha256Hex(bytes);
     if (opts.expectedSha256 !== undefined && opts.expectedSha256 !== sha256) {
       throw new ApiError("invalid_input", `Asset ${path} does not match its sha256`, {
@@ -641,6 +653,9 @@ export class VersionStager implements Stager {
     }
 
     const source = list.find((e) => e.path === def.sourcePath);
+    if (source && !source.pending && source.size_bytes > def.maxSourceBytes) {
+      throw sourceTooLarge(def.sourceLabel, def.maxSourceBytes, source.size_bytes);
+    }
     if (!source?.pending) throw noEntryFile(def);
     for (const e of list) {
       if (e !== source) checkAsset(def, e.path, e.content_type);
@@ -685,6 +700,9 @@ export class VersionStager implements Stager {
       }
     }
     await this.settle();
+    // An abort while the last puts settled (a client disconnect) wins: never stage a version
+    // whose objects are being deleted.
+    this.throwIfFailed();
 
     const entries: ManifestEntry[] = list.map((e) => ({
       path: e.path,
@@ -752,8 +770,27 @@ export class VersionStager implements Stager {
     return staged;
   }
 
+  /**
+   * The point of no abort, taken synchronously right before the commit's first await: refuses an
+   * attempt already aborted, and from then on abort() is a no-op. Without an await between the
+   * check and the set, an abort and a commit cannot interleave.
+   */
+  beginCommit(): void {
+    this.throwIfFailed();
+    this.committing = true;
+  }
+
   async abort(): Promise<void> {
+    if (this.committing) return;
+    await this.discard();
+  }
+
+  /** Delete this attempt's objects whatever the state (the commit's own failure path). */
+  async discard(): Promise<void> {
     this.aborted = true;
+    this.committing = false;
+    // A put whose call is under way registers itself synchronously; let it, then wait for all.
+    await Promise.resolve();
     while (this.running.size > 0) await Promise.allSettled([...this.running]);
     await deletePrefix(this.ctx.env.FILES, this.prefix);
   }
@@ -795,8 +832,11 @@ export interface CommitOptions {
 
 const QUOTA_GUARD = `(SELECT coalesce(sum(coalesce(v.stored_bytes, v.size_bytes)), 0) FROM versions v
     JOIN artifacts x ON x.id = v.artifact_id WHERE x.owner_id = ? AND x.deleted_at IS NULL) + ? <= ?`;
-const TICKET_GUARD =
-  "EXISTS (SELECT 1 FROM upload_tickets WHERE id = ? AND state = 'open' AND expires_at > ?)";
+// The ticket is open and unexpired, and the connection that minted it is still live: revoking a
+// connection while its bundle streams stops the commit, in the same transaction.
+const TICKET_GUARD = `EXISTS (SELECT 1 FROM upload_tickets t WHERE t.id = ? AND t.state = 'open' AND t.expires_at > ?
+    AND (t.connection_id IS NULL OR EXISTS (SELECT 1 FROM agent_connections c
+          WHERE c.id = t.connection_id AND c.user_id = t.user_id AND c.revoked_at IS NULL)))`;
 
 /** Bytes counted against the owner's storage quota (live artifacts, stored bytes). */
 export async function storageUsed(ctx: Ctx, ownerId: string): Promise<number> {
@@ -878,11 +918,14 @@ export async function commitVersion(
 ): Promise<PublishResult> {
   const extra = stagedExtras.get(staged);
   if (!extra) throw new ApiError("internal", "Version was not staged");
+  // Synchronous, before any await: an attempt aborted by now (a client disconnect) never commits,
+  // and one that commits can no longer be aborted.
+  extra.stager.beginCommit();
   try {
     return await commitOnce(ctx, target, staged, extra, opts);
   } catch (e) {
     if (!(typeof e === "object" && e !== null && keepObjects.has(e))) {
-      await extra.stager.abort().catch(() => undefined);
+      await extra.stager.discard().catch(() => undefined);
     }
     throw e;
   }
@@ -1113,7 +1156,11 @@ async function commitOnce(
     // Nothing was written. Name the cause.
     if (opts.ticketId) {
       const t = await DB.prepare(
-        "SELECT state, expires_at, result_artifact_id, result_version FROM upload_tickets WHERE id = ?",
+        `SELECT t.state, t.expires_at, t.result_artifact_id, t.result_version,
+                (t.connection_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM agent_connections c
+                   WHERE c.id = t.connection_id AND c.user_id = t.user_id AND c.revoked_at IS NULL))
+                  AS revoked
+           FROM upload_tickets t WHERE t.id = ?`,
       )
         .bind(opts.ticketId)
         .first<{
@@ -1121,6 +1168,7 @@ async function commitOnce(
           expires_at: string;
           result_artifact_id: string | null;
           result_version: number | null;
+          revoked: number;
         }>();
       if (!t) throw notFound("Upload");
       if (t.state === "used") {
@@ -1142,6 +1190,7 @@ async function commitOnce(
           next: "Call start_upload again",
         });
       }
+      if (t.revoked) throw unauthorized("The connection that started this upload was revoked");
     }
     if (target.mode === "publish") {
       if ((await liveArtifactCount(ctx, ownerId)) >= artifactLimit)

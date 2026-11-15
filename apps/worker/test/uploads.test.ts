@@ -1424,6 +1424,326 @@ describe("an abandoned, slow or over-quota bundle leaves nothing behind", () => 
     expect(await ticket(t.upload_id)).toMatchObject({ state: "open", receiving_until: null });
   });
 
+  /** stageDeps whose stager writes through `files` (a proxy over the real bucket). */
+  function depsWithFiles(files: R2Bucket): StageDeps {
+    return {
+      ...stageDeps,
+      openStager: (ctx, target, opts) =>
+        stageDeps.openStager({ ...ctx, env: { ...ctx.env, FILES: files } }, target, opts),
+    };
+  }
+
+  /** A proxy over env.FILES that calls `onPut` before a put whose key matches `match`. */
+  function filesWith(match: (key: string) => boolean, onPut: () => Promise<void> | void) {
+    const files = env.FILES;
+    return new Proxy(files, {
+      get(target, prop) {
+        if (prop === "put") {
+          return async (key: string, value: Uint8Array, o?: R2PutOptions) => {
+            if (match(key)) await onPut();
+            return target.put(key, value, o);
+          };
+        }
+        const v = Reflect.get(target, prop);
+        return typeof v === "function" ? v.bind(target) : v;
+      },
+    });
+  }
+
+  it.each([
+    ["held while the abort runs", "held"],
+    ["aborting inside the put call", "inside"],
+  ] as const)(
+    "a disconnect while finish writes the source never commits (%s): no version, no files, the ticket stays open",
+    async (_label, how) => {
+      const { a, id } = await ownerWithArtifact();
+      const t = await mint(a, { id, base_version: 1 }, stageDeps);
+      const v1 = (await versionRow(id, 1))?.r2Prefix as string;
+      const ac = new AbortController();
+      let release!: () => void;
+      const gate = new Promise<void>((ok) => {
+        release = ok;
+      });
+      let reached!: () => void;
+      const atSource = new Promise<void>((ok) => {
+        reached = ok;
+      });
+      // The source is held until finish, so its put is always finish's last write.
+      const files = filesWith(
+        (key) => key.endsWith("/index.html") && !key.startsWith(v1),
+        async () => {
+          reached();
+          if (how === "inside") {
+            ac.abort();
+            await new Promise((ok) => setTimeout(ok, 50));
+          } else await gate;
+        },
+      );
+      const waits: Promise<unknown>[] = [];
+      const pending = redeemBundle(
+        { ...bundleEnv(), waitUntil: (p) => void waits.push(p) },
+        {
+          uploadId: t.upload_id,
+          authorization: `Bearer ${t.upload_token}`,
+          contentLength: undefined,
+          body: streamOf(
+            tar([
+              {
+                name: "index.html",
+                data: "<!doctype html><title>x</title><script src=a.js></script>",
+              },
+              { name: "a.js", data: filler(10_000, 1) },
+            ]),
+          ),
+          signal: ac.signal,
+        },
+        depsWithFiles(files),
+      ).catch((e: unknown) => e);
+      await atSource;
+      if (how === "held") {
+        ac.abort();
+        release();
+      }
+      const e = (await pending) as ApiError;
+      await Promise.all(waits);
+      expect(e).toBeInstanceOf(ApiError);
+      expect((await versionRow(id, 2)) ?? null).toBeNull();
+      const art = await env.DB.prepare("SELECT current_version AS cur FROM artifacts WHERE id = ?1")
+        .bind(id)
+        .first<{ cur: number }>();
+      expect(art?.cur).toBe(1);
+      expect(await newKeys(id)).toEqual([]);
+      expect(await ticket(t.upload_id)).toMatchObject({ state: "open", receiving_until: null });
+    },
+  );
+
+  it("a disconnect once the commit has begun leaves its files alone: the version serves whole", async () => {
+    const { a, id } = await ownerWithArtifact();
+    const t = await mint(a, { id, base_version: 1 }, stageDeps);
+    const ac = new AbortController();
+    const waits: Promise<unknown>[] = [];
+    const deps: StageDeps = {
+      ...stageDeps,
+      commitStaged: async (ctx, target, staged, o) => {
+        // The client goes away after the batch has been sent.
+        const done = stageDeps.commitStaged(ctx, target, staged, o);
+        ac.abort();
+        return done;
+      },
+    };
+    const res = await redeemBundle(
+      { ...bundleEnv(), waitUntil: (p) => void waits.push(p) },
+      {
+        uploadId: t.upload_id,
+        authorization: `Bearer ${t.upload_token}`,
+        contentLength: undefined,
+        body: streamOf(
+          tar([
+            { name: "index.html", data: "<!doctype html><title>x</title>" },
+            { name: "a.js", data: filler(10_000, 2) },
+          ]),
+        ),
+        signal: ac.signal,
+      },
+      deps,
+    );
+    await Promise.all(waits);
+    expect(res).toMatchObject({ status: 200, body: { version: 2 } });
+    const v2 = (await versionRow(id, 2))?.r2Prefix as string;
+    expect((await keysUnder(v2)).sort()).toEqual([`${v2}a.js`, `${v2}index.html`]);
+    expect((await ticket(t.upload_id)).state).toBe("used");
+  });
+
+  it("a connection revoked while its bundle streams stops the commit: 401, nothing committed", async () => {
+    for (const when of ["while streaming", "just before the batch"] as const) {
+      const { a, id } = await ownerWithArtifact();
+      const t = await mint(a, { id, base_version: 1 }, stageDeps);
+      let resume!: () => void;
+      const resumed = new Promise<void>((ok) => {
+        resume = ok;
+      });
+      let stalled!: () => void;
+      const atStall = new Promise<void>((ok) => {
+        stalled = ok;
+      });
+      const parts = [
+        entry({ name: "index.html", data: "<!doctype html><title>x</title>" }),
+        entry({ name: "a.js", data: filler(10_000, 3) }),
+        END,
+      ];
+      let i = 0;
+      const body = new ReadableStream<Uint8Array>({
+        async pull(c) {
+          if (i === 2 && when === "while streaming") {
+            stalled();
+            await resumed;
+          }
+          if (i < parts.length) c.enqueue(parts[i++] as Uint8Array);
+          else c.close();
+        },
+      });
+      const deps: StageDeps = {
+        ...stageDeps,
+        commitStaged: async (ctx, target, staged, o) => {
+          // Past every check in the handler: only the batch's guard is left.
+          if (when === "just before the batch") {
+            await revokeConnection(db(), a.user.id, a.connectionId);
+          }
+          return stageDeps.commitStaged(ctx, target, staged, o);
+        },
+      };
+      const pending = redeem(t, body, deps).catch((e: unknown) => e);
+      if (when === "while streaming") {
+        await atStall;
+        await revokeConnection(db(), a.user.id, a.connectionId);
+        resume();
+      }
+      const e = (await pending) as ApiError;
+      expect(e, when).toBeInstanceOf(ApiError);
+      expect(e.code, when).toBe("unauthorized");
+      expect((await versionRow(id, 2)) ?? null, when).toBeNull();
+      expect(await newKeys(id), when).toEqual([]);
+      expect((await ticket(t.upload_id)).state, when).toBe("open");
+    }
+  });
+
+  it("an editor removed while the bundle streams is refused before the commit", async () => {
+    const { id } = await ownerWithArtifact();
+    const editor = await agent();
+    await db()
+      .insert(accessGrants)
+      .values({ artifactId: id, email: editor.user.email, role: "editor", createdAt: nowIso() })
+      .run();
+    const t = await mint(editor, { id, base_version: 1 }, stageDeps);
+    let resume!: () => void;
+    const resumed = new Promise<void>((ok) => {
+      resume = ok;
+    });
+    let stalled!: () => void;
+    const atStall = new Promise<void>((ok) => {
+      stalled = ok;
+    });
+    const parts = [entry({ name: "index.html", data: "<!doctype html><title>x</title>" }), END];
+    let i = 0;
+    const body = new ReadableStream<Uint8Array>({
+      async pull(c) {
+        if (i === 1) {
+          stalled();
+          await resumed;
+        }
+        if (i < parts.length) c.enqueue(parts[i++] as Uint8Array);
+        else c.close();
+      },
+    });
+    const pending = redeem(t, body, stageDeps).catch((e: unknown) => e);
+    await atStall;
+    await db().delete(accessGrants).where(eq(accessGrants.email, editor.user.email)).run();
+    resume();
+    const e = (await pending) as ApiError;
+    expect(e).toBeInstanceOf(ApiError);
+    expect(["forbidden", "not_found"]).toContain(e.code);
+    expect((await versionRow(id, 2)) ?? null).toBeNull();
+    expect(await newKeys(id)).toEqual([]);
+  });
+
+  it("a sender that declares a file and goes quiet is cut off at the deadline, with no more data", async () => {
+    const { a, id } = await ownerWithArtifact();
+    const t = await mint(a, { id, base_version: 1 }, stageDeps);
+    const big = LIMITS.maxBundleFileBytes;
+    const head = entry({ name: "a.wasm", data: new Uint8Array(big) }).subarray(0, 2 * BLOCK);
+    const parts = [entry({ name: "index.html", data: "<!doctype html><title>x</title>" }), head];
+    let i = 0;
+    let cancelled = false;
+    let quiet!: () => void;
+    const wentQuiet = new Promise<void>((ok) => {
+      quiet = ok;
+    });
+    const body = new ReadableStream<Uint8Array>(
+      {
+        async pull(c) {
+          if (i < parts.length) {
+            c.enqueue(parts[i++] as Uint8Array);
+            return;
+          }
+          quiet();
+          await new Promise<never>(() => {});
+        },
+        cancel() {
+          cancelled = true;
+        },
+      },
+      { highWaterMark: 0 },
+    );
+    const realNow = Date.now;
+    let settled = false;
+    const pending = redeem(t, body, stageDeps)
+      .catch((e: unknown) => e)
+      .finally(() => {
+        settled = true;
+      });
+    let e: ApiError;
+    try {
+      await wentQuiet;
+      await new Promise((ok) => setTimeout(ok, 50));
+      expect(settled).toBe(false);
+      Date.now = () => realNow() + TTL.uploadReceivingMs + 60_000;
+      e = (await pending) as ApiError;
+    } finally {
+      Date.now = realNow;
+    }
+    expect(e).toBeInstanceOf(ApiError);
+    expect(details(e).reason).toBe("upload_too_slow");
+    expect(cancelled).toBe(true);
+    expect(await newKeys(id)).toEqual([]);
+    expect(await ticket(t.upload_id)).toMatchObject({ state: "open", receiving_until: null });
+  });
+
+  it("a top-directory source past the source limit is not held in memory: it goes out at once and is refused at finish", async () => {
+    const a = await agent();
+    const t = await mint(a, {}, stageDeps);
+    const puts: string[] = [];
+    let pendingAtWasm = null as string[] | null;
+    const files = env.FILES;
+    const spy = new Proxy(files, {
+      get(target, prop) {
+        if (prop === "put") {
+          return (key: string, value: Uint8Array, o?: R2PutOptions) => {
+            if (key.endsWith("dist/a.wasm")) pendingAtWasm = [...puts];
+            puts.push(key);
+            return target.put(key, value, o);
+          };
+        }
+        const v = Reflect.get(target, prop);
+        return typeof v === "function" ? v.bind(target) : v;
+      },
+    });
+    const bigHtml = `<!doctype html><title>big</title>${"x".repeat(6 * 1024 * 1024)}`;
+    const e = await redeemError(
+      t,
+      tar([
+        { name: "dist/index.html", data: bigHtml },
+        { name: "dist/a.wasm", data: filler(100_000, 4) },
+      ]),
+      depsWithFiles(spy),
+    );
+    expect(e.code).toBe("payload_too_large");
+    expect(e.message).toBe("HTML is over 5 MB");
+    // dist/index.html was put before the next file arrived, not held until finish.
+    expect((pendingAtWasm ?? []).some((k) => k.endsWith("dist/index.html"))).toBe(true);
+
+    // The same file beside a root index.html is an ordinary asset (no strip).
+    const t2 = await mint(a, {}, stageDeps);
+    const ok = await redeem(
+      t2,
+      tar([
+        { name: "dist/index.html", data: bigHtml },
+        { name: "index.html", data: "<!doctype html><title>root</title>" },
+      ]),
+      stageDeps,
+    );
+    expect(ok.status).toBe(201);
+  });
+
   it("an account at its storage quota stages nothing; below it, puts stop at the room left", async () => {
     const { a, id } = await ownerWithArtifact();
     const used = (await env.DB.prepare(

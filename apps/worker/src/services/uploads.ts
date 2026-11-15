@@ -398,17 +398,9 @@ export async function redeemBundle(
   };
   req.signal?.addEventListener("abort", onDisconnect, { once: true });
   const inTime = () => {
-    if (Date.now() > deadline) {
-      throw new ApiError(
-        "invalid_input",
-        `The bundle took longer than ${TTL.uploadReceivingMs / 60_000} minutes to arrive`,
-        {
-          reason: "upload_too_slow",
-          next: "Send it again on a faster connection (the ticket keeps its remaining attempts), and leave out files the page does not load",
-        },
-      );
-    }
+    if (Date.now() > deadline) throw tooSlow();
   };
+  let stopClock = () => {};
   try {
     const ctx = await ticketCtx(w, ticket);
     if (!req.body) {
@@ -441,7 +433,10 @@ export async function redeemBundle(
     stager = await deps.openStager(ctx, target, { storageRoom: { limit: storageLimit, used } });
     if (req.signal?.aborted) throw new ApiError("invalid_input", "The client went away");
     const staging = stager;
-    const reader = readBundle(req.body, {
+    // A sender that goes quiet is cut off at the deadline, not only checked between files.
+    const timed = withDeadline(req.body, deadline);
+    stopClock = timed.stop;
+    const reader = readBundle(timed.stream, {
       maxRawBytes: maxBundle,
       maxInflatedBytes: maxBundle,
       maxTotalBytes: w.config.maxVersionBytes,
@@ -455,12 +450,21 @@ export async function redeemBundle(
       inTime();
       await stager.add(entry.path, entry.bytes);
     }
+    stopClock();
+    // Rights are checked again now the bundle is in: a connection revoked or an editor removed
+    // while it streamed stops the commit (the batch also re-checks the connection).
+    const fresh = await ticketCtx(w, ticket);
+    await ticketTarget(fresh, ticket, deps, target);
     const staged = await stager.finish(
       reader.summary.strippedPrefix ? { stripPrefix: reader.summary.strippedPrefix } : undefined,
     );
     inTime();
-    // From here on commitStaged owns cleanup: it aborts the stager itself when the batch fails,
-    // and nothing here may delete objects a committed version references.
+    // A disconnect while finish settled its last puts already started the cleanup: never commit
+    // after it. Synchronous from here into commitStaged, which takes the stager's point of no
+    // abort before its first await; from then on commitStaged owns cleanup.
+    if (abortedStager !== null || req.signal?.aborted) {
+      throw new ApiError("invalid_input", "The client went away");
+    }
     committing = true;
     const result: PublishResult = await deps.commitStaged(ctx, target, staged, {
       ticketId: ticket.id,
@@ -480,8 +484,76 @@ export async function redeemBundle(
     await cleanup();
     throw await afterFailure(w, ticket, tokenHash, e);
   } finally {
+    stopClock();
     req.signal?.removeEventListener("abort", onDisconnect);
   }
+}
+
+function tooSlow(): ApiError {
+  return new ApiError(
+    "invalid_input",
+    `The bundle took longer than ${TTL.uploadReceivingMs / 60_000} minutes to arrive`,
+    {
+      reason: "upload_too_slow",
+      next: "Send it again on a faster connection (the ticket keeps its remaining attempts), and leave out files the page does not load",
+    },
+  );
+}
+
+/** How often a waiting body read looks at the clock (the deadline is re-read, never cached). */
+const DEADLINE_CHECK_MS = 1000;
+
+/**
+ * The body, cut off with upload_too_slow once `deadline` passes while a read waits: a sender that
+ * declares a file and then goes quiet holds the request and its buffers only until then.
+ */
+function withDeadline(
+  body: ReadableStream<Uint8Array>,
+  deadline: number,
+): { stream: ReadableStream<Uint8Array>; stop: () => void } {
+  const reader = body.getReader();
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  let stopped = false;
+  const stop = () => {
+    stopped = true;
+    clearTimeout(timer);
+  };
+  const expired = (): Promise<never> =>
+    new Promise<never>((_, fail) => {
+      const check = () => {
+        if (stopped) return;
+        const left = deadline - Date.now();
+        if (left <= 0) {
+          fail(tooSlow());
+          return;
+        }
+        timer = setTimeout(check, Math.min(left, DEADLINE_CHECK_MS));
+      };
+      timer = setTimeout(check, Math.min(Math.max(deadline - Date.now(), 0), DEADLINE_CHECK_MS));
+    });
+  const stream = new ReadableStream<Uint8Array>(
+    {
+      async pull(c) {
+        let r: ReadableStreamReadResult<Uint8Array>;
+        try {
+          r = await Promise.race([reader.read(), expired()]);
+        } catch (e) {
+          reader.cancel(e).catch(() => undefined);
+          throw e;
+        } finally {
+          clearTimeout(timer);
+        }
+        if (r.done) c.close();
+        else c.enqueue(r.value);
+      },
+      cancel(reason) {
+        stop();
+        return reader.cancel(reason);
+      },
+    },
+    { highWaterMark: 0 },
+  );
+  return { stream, stop };
 }
 
 /**
@@ -690,7 +762,23 @@ async function ticketCtx(w: BundleEnv, t: TicketRow): Promise<Ctx> {
 }
 
 /** The ticket's target, re-checked now: edit rights and the stated base, or a fresh artifact. */
-async function ticketTarget(ctx: Ctx, t: TicketRow, deps: StageDeps): Promise<VersionTarget> {
+/**
+ * The ticket's target. With `staged` (the target the attempt is staging into), only re-checks the
+ * rights for it with the current principal: edit rights and the base for an update, the write
+ * scope for a publish.
+ */
+async function ticketTarget(
+  ctx: Ctx,
+  t: TicketRow,
+  deps: StageDeps,
+  staged?: VersionTarget,
+): Promise<VersionTarget> {
+  if (staged?.mode === "publish") {
+    if (!hasWriteScope(ctx.principal)) {
+      throw forbidden("This token lacks the artifacts:write scope");
+    }
+    return staged;
+  }
   if (t.mode === "update") {
     if (!t.artifact_id || !ARTIFACT_ID_RE.test(t.artifact_id) || t.base_version === null) {
       throw notFound();
