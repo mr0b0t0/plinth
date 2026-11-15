@@ -178,14 +178,19 @@ minutes.
 
 **When the answer is lost.** A connection lost while the folder is still being sent never
 publishes: the tar is incomplete. Once the whole folder has been sent, a curl error or timeout says
-nothing about whether it published, and it may have. So the agent does not retry blindly: it calls
-`get_artifact` first, with the artifact's id for an update, or for a new artifact with `target.id`
-from the `start_upload` result (the id that upload creates; `not_found` means nothing was
-published). If the version is there, it uses it; if not, it calls `start_upload` again with the
-same `base_version`. Retrying never duplicates anything: against the old `base_version` it gets a
+nothing about whether it published, and it may have. So the agent does not retry blindly: it asks
+the upload first, with a GET to `/api/v1/uploads/<upload_id>` (the `upload_url` without `/bundle`)
+and the upload token ([mcp.md](mcp.md#start_upload)). `used` means this upload published that
+version; `dead` means someone else published first and the change was not saved; `open`, `expired`
+or `exhausted` mean nothing was published. Only when that cannot be read does it call
+`get_artifact`, with the artifact's id for an update, or for a new artifact with `target.id` from
+the `start_upload` result (the id that upload creates; `not_found` means nothing was published). A
+new version there may be a collaborator's, so it compares the files with what it sent before
+calling it its own. When nothing was published, it calls `start_upload` again with the same
+`base_version`. Retrying never duplicates anything: against the old `base_version` it gets a
 version conflict, a used upload sent again answers `upload_used` with the url, and one upload never
-creates two artifacts. `GET /api/v1/uploads/<upload_id>` with the upload token tells a script the
-same thing ([mcp.md](mcp.md#start_upload)); the CLI checks it before it reports a failure.
+creates two artifacts. The CLI asks the upload before it reports a failure, and when it cannot,
+names the artifact id and upload id to check.
 
 **The CLI** ([packages/cli/README.md](../packages/cli/README.md)). The client commands need
 `@mr0b0t0/plinth` 0.4.0 or later; if `npx` answers "Unknown command", that release is not on npm
@@ -337,7 +342,11 @@ Everything above comes from these sources. Edit those, never the outputs:
 
 Then run `pnpm integrations`. It writes the plugin (both formats), both marketplace files, the Gemini
 extension, the Cursor rule, the VS Code instructions file and the table above. CI runs
-`pnpm integrations --check`. The web app's Connect panel and the CLI's `connect` read the same
+`pnpm integrations --check`. Installed plugins update only when `PLUGIN.version` changes, so after
+an edit under `integrations/skill/` or `integrations/watcher/` it refuses (and writes nothing) until
+`PLUGIN.version` is bumped one minor above main; it then records the sources' hash and that version
+(`PLUGIN.skillHash`, `PLUGIN.skillHashVersion`). For a second edit on a branch that already bumped
+it, run `pnpm integrations --same-version`. Files git ignores (a Finder `.DS_Store`) do not count. The web app's Connect panel and the CLI's `connect` read the same
 registry.
 
 A new MCP tool needs a one-line summary in `MCP_TOOL_SUMMARIES` (`apps/worker/src/mcp/server.ts`):

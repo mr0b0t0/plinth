@@ -24,13 +24,21 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   stops its commit, and an account at its storage quota cannot start one. A gzip body is inflated
   only as fast as it is read, so a small compressed body cannot fill the Worker's memory.
 - **Lost answers**: a bundle whose connection drops after the whole folder was sent may still have
-  published. `start_upload` now names the artifact a new publish will create (`target.id`), so an
-  agent checks with `get_artifact` before it retries; its `next` and the skill say so. A retry
-  never duplicates anything: the old `base_version` gets a conflict, a used upload answers
-  `upload_used` with the url, and one upload never makes two artifacts. The new
-  `GET /api/v1/uploads/:id`, with the upload token only, says whether an upload committed.
-  `plinth publish` and `plinth upload` check it (or read the artifact, for an inline update) after
-  a lost answer and report the version they find instead of sending again.
+  published. The new `GET /api/v1/uploads/:id`, with the upload token only, says whether that
+  upload committed (`used`), was ended by someone else's version (`dead`, the change was not
+  saved) or published nothing (`open`); once it reads `open` after a lease ran out, that request
+  can no longer commit. Agents ask it first; `start_upload` also names the artifact a new publish
+  will create (`target.id`) for a `get_artifact` check, and its `next` and the skill say that a new
+  version there may be a collaborator's. A retry never duplicates anything: the old
+  `base_version` gets a conflict, a used upload answers `upload_used` with the url, and one upload
+  never makes two artifacts. `plinth publish` and `plinth upload` check the upload (or read the
+  artifact twice, for an inline update) after a lost answer and report the version they find
+  instead of sending again; when the status cannot be read after a few tries, they name the
+  artifact id and upload id to check. `plinth publish --id --base-version N` exits 0 without
+  sending anything when the current version already matches the folder.
+- An update or restore that started before an admin takedown can no longer commit after it, and
+  files an upload was still writing when its artifact was deleted or taken down are deleted when
+  it fails instead of staying in storage.
 - **Upgrading**:
   - Apply migrations `0006_stored_bytes.sql` and `0007_upload_tickets.sql` before deploying the
     Worker (`plinth deploy` does; by hand, `wrangler d1 migrations apply` first).

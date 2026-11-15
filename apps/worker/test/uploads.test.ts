@@ -36,6 +36,7 @@ import {
   type BundleEnv,
   curlCommand,
   isReleaseAtLeast,
+  lostResponseNext,
   npxCommand,
   redeemBundle,
   type StageDeps,
@@ -220,8 +221,8 @@ describe("start_upload mints a single-use ticket", () => {
       type: "html",
     });
     const reserved = (r.target as { id: string }).id;
-    // A lost answer is checked with get_artifact on that id, before any retry.
-    expect(r.next).toContain(`call get_artifact with id ${reserved} first`);
+    // A lost answer is checked with the upload's status, then get_artifact on that id, before any retry.
+    expect(r.next).toContain(`call get_artifact with id ${reserved}:`);
     expect(r.limits).toEqual(instanceLimits(config()));
     expect(r.content_isolation).toBe("origin");
     const ttl = Date.parse(r.expires_at) - before;
@@ -2046,6 +2047,60 @@ describe("a lost response, then a retry", () => {
     expect(late.status).toBe(409);
     const otherStatus = await status(other.upload_token, other.upload_url.replace(/\/bundle$/, ""));
     expect((await json(otherStatus)).state).toBe("dead");
+  });
+
+  it("once GET /uploads/:id says open after a lease ran out, that request's commit is refused", async () => {
+    const a = await agent();
+    let release!: () => void;
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    let paused!: () => void;
+    const reachedPause = new Promise<void>((r) => {
+      paused = r;
+    });
+    // The whole body was read and the last deadline check passed; the commit has not been
+    // applied yet when the lease runs out.
+    const deps: StageDeps = {
+      ...stageDeps,
+      async commitStaged(...args) {
+        paused();
+        await gate;
+        return stageDeps.commitStaged(...args);
+      },
+    };
+    const t = await mint(a, { title: "Lease" }, deps);
+    const statusUrl = t.upload_url.replace(/\/bundle$/, "");
+    const read = async () =>
+      json(await call(statusUrl, { headers: { Authorization: `Bearer ${t.upload_token}` } }));
+    const slow = redeemError(t, tar(SITE), deps);
+    await reachedPause;
+    expect((await read()).state).toBe("receiving");
+    await setTicket(t.upload_id, "receiving_until = ?2", new Date(Date.now() - 1000).toISOString());
+    // A client that lost its answer reads the status now and is told nothing was published.
+    expect(await read()).toMatchObject({ state: "open", version: null });
+    release();
+    const e = await slow;
+    expect(details(e)).toMatchObject({ reason: "upload_too_slow" });
+    expect(await read()).toMatchObject({ state: "open", version: null });
+    const n = await env.DB.prepare("SELECT count(*) AS n FROM artifacts WHERE owner_id = ?1")
+      .bind(a.user.id)
+      .first<{ n: number }>();
+    expect(n?.n).toBe(0);
+  });
+
+  it("the lost-answer hint asks the upload first, and never takes a new version as proof", () => {
+    const update = lostResponseNext("x".repeat(20), 3);
+    // The upload's own status tells this upload's commit apart from a collaborator's version.
+    expect(update).toMatch(/GET the upload_url without \/bundle/);
+    expect(update).toMatch(/dead: someone else published first and this change was not saved/);
+    expect(update).toMatch(/with the same base_version 3/);
+    // Without it: v4 may be a collaborator's, and anything past v4 certainly includes theirs.
+    expect(update).toMatch(/version 4 may be a collaborator's/);
+    expect(update).toMatch(/past 4/);
+    const pub = lostResponseNext("y".repeat(20), null);
+    expect(pub).toMatch(/GET the upload_url without \/bundle/);
+    expect(pub).toMatch(/not_found/);
   });
 
   it("GET /uploads/:id reports a publish-mode ticket's reserved id, then the version it made", async () => {

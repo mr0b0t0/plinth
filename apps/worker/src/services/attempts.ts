@@ -67,16 +67,32 @@ export function parkedAt(now: number): string {
 const SWEEP_ORDER = "CASE WHEN started_at < '1' THEN substr(started_at, 2) ELSE started_at END";
 
 /**
- * Claim one attempt's row before deleting its objects (an abort). False when there is no row: a
- * commit has taken it (its version names the objects), or it was never written (nothing was put).
+ * Claim one attempt's row before deleting its objects (an abort of an attempt that recorded one).
+ * False only when a version names the prefix: its commit took the row, and the objects are the
+ * version's. A row can also be gone without a commit: a delete, a takedown or an admin erase
+ * removes the rows of attempts that are still running, and those keep putting. ATTEMPT_GUARD
+ * refuses every commit once the row is gone, so such an attempt never commits; the claim parks a
+ * fresh row for it (a failed delete then leaves the prefix to the sweep) and its objects go.
  */
-export async function claimAttempt(DB: D1Database, prefix: string, now: number): Promise<boolean> {
+export async function claimAttempt(
+  DB: D1Database,
+  prefix: string,
+  artifactId: string,
+  now: number,
+): Promise<boolean> {
   const { results } = await DB.prepare(
     "UPDATE staging_attempts SET started_at = ? WHERE prefix = ? RETURNING prefix",
   )
     .bind(parkedAt(now), prefix)
     .all();
-  return results.length > 0;
+  if (results.length > 0) return true;
+  if (!ownPrefix(prefix, artifactId) || (await referenced(DB, artifactId, prefix))) return false;
+  await DB.prepare(
+    "INSERT OR IGNORE INTO staging_attempts (prefix, artifact_id, started_at) VALUES (?, ?, ?)",
+  )
+    .bind(prefix, artifactId, parkedAt(now))
+    .run();
+  return true;
 }
 
 /** The statement that removes an artifact's rows (its files go with the artifact's root). */

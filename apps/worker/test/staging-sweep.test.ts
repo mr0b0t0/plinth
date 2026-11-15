@@ -529,7 +529,42 @@ describe("staging attempts: deleting an artifact", () => {
     expect(await attemptRows(p.id)).toEqual([]);
     expect(await r2Keys(stager.prefix)).toEqual([]);
   });
+
+  it("an attempt still streaming when its artifact is deleted leaves no objects behind", async () => {
+    const a = await agent();
+    const { body: p } = await publish(a.auth);
+    const ctx = serviceCtxFor(agentPrincipal(a));
+    const target = await updateTarget(ctx, p.id, {});
+    const stager = await openStager(ctx, target);
+    await stager.add("index.html", enc.encode("<p>streaming</p>"));
+    await stager.add("first.css", enc.encode("first"));
+    await until(async () => (await r2Keys(stager.prefix)).length === 1);
+    const waits: Promise<unknown>[] = [];
+    await deleteArtifact(
+      { ...serviceCtxFor(agentPrincipal(a)), waitUntil: (w: Promise<unknown>) => waits.push(w) },
+      p.id,
+    );
+    await Promise.all(waits);
+    expect(await attemptRows(p.id)).toEqual([]);
+    // The stager never learns its row is gone and keeps putting.
+    await stager.add("big.css", enc.encode("big"));
+    const staged = await stager.finish();
+    await expect(commitStaged(ctx, target, staged)).rejects.toBeTruthy();
+    await stager.abort();
+    await runSweep(later() + HOUR);
+    expect(await r2Keys(stager.prefix)).toEqual([]);
+    expect(await attemptRow(stager.prefix)).toBeNull();
+  });
 });
+
+/** Poll `check` (a few seconds at most) until it holds. */
+async function until(check: () => Promise<boolean>) {
+  for (let i = 0; i < 200; i++) {
+    if (await check()) return;
+    await new Promise((r) => setTimeout(r, 10));
+  }
+  throw new Error("condition never held");
+}
 
 /** `env.DB` whose prepare throws for SQL matching `match` (a D1 error mid-sweep). */
 function dbFailing(match: RegExp) {

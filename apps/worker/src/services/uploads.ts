@@ -41,6 +41,7 @@ import { readBundle } from "./bundle.ts";
 import type { Ctx } from "./context.ts";
 import {
   commitStaged,
+  DB_NOW,
   enforcePublishRate,
   newArtifactTarget,
   openStager,
@@ -48,6 +49,7 @@ import {
   storageError,
   storageUsed,
   updateTarget,
+  uploadTooSlow,
   type VersionTarget,
 } from "./stage.ts";
 
@@ -319,17 +321,27 @@ export function uploadNext(o: {
 
 /**
  * What to do when the bundle request ends without its JSON answer (a curl error, a timeout). Once
- * the whole body was read, the request may have committed; before that it never did.
+ * the whole body was read, the request may have committed; before that it never did. The upload's
+ * own status is the check that tells this upload's commit apart from a collaborator's version.
  */
 export function lostResponseNext(id: string, baseVersion: number | null): string {
-  return (
-    "If the command ends without JSON (a curl error or a timeout), do not run it again blindly: " +
-    (baseVersion === null
-      ? `call get_artifact with id ${id} first. If it exists, it was published: use it. If it is not found, `
-      : `call get_artifact with id ${id} first. If its version is ${baseVersion + 1}, check it is yours and use it. If it is still ${baseVersion}, `) +
+  const again =
     "call start_upload again" +
-    (baseVersion === null ? "" : ` with the same base_version ${baseVersion}`) +
-    ". This upload can never commit twice: sending it again after it committed answers upload_used with the url."
+    (baseVersion === null ? "" : ` with the same base_version ${baseVersion}`);
+  return (
+    "If the command ends without JSON (a curl error or a timeout), do not run it again blindly. " +
+    "Ask the upload first: GET the upload_url without /bundle, with the same Authorization header " +
+    "(state used: this upload published that version, give the user its url; dead: someone else " +
+    "published first and this change was not saved, so read the artifact again; receiving: still " +
+    `running, ask again in a few seconds; open, expired or exhausted: nothing was published, ${again}). ` +
+    `If the upload cannot be read, call get_artifact with id ${id}: ` +
+    (baseVersion === null
+      ? `if it exists, this upload created it; if it is not_found, nothing was published, so ${again}. `
+      : `if it is still version ${baseVersion}, nothing was published, so ${again}; version ` +
+        `${baseVersion + 1} may be a collaborator's, so compare its files with what you sent before ` +
+        `you call it yours; past ${baseVersion + 1}, others published too, so check with ` +
+        "list_versions and compare before you claim any of it. ") +
+    "This upload can never commit twice: sending it again after it committed answers upload_used with the url."
   );
 }
 
@@ -401,7 +413,8 @@ export async function redeemBundle(
   const ticket = await takeLease(w, req.uploadId, tokenHash, claim);
   // The bundle must arrive within the receiving lease: past it another request may take the
   // lease, and the staging sweep's threshold assumes no attempt commits after its ticket's lifetime.
-  const deadline = Date.now() + TTL.uploadReceivingMs;
+  // The commit batch also requires the lease (CommitOptions.receivingClaim).
+  const deadline = Date.parse(ticket.receiving_until ?? "") || Date.now() + TTL.uploadReceivingMs;
 
   let stager: Stager | null = null;
   let committing = false;
@@ -499,6 +512,7 @@ export async function redeemBundle(
     committing = true;
     const result: PublishResult = await deps.commitStaged(ctx, target, staged, {
       ticketId: ticket.id,
+      receivingClaim: claim,
     });
     return {
       status: ticket.mode === "publish" ? 201 : 200,
@@ -520,16 +534,7 @@ export async function redeemBundle(
   }
 }
 
-function tooSlow(): ApiError {
-  return new ApiError(
-    "invalid_input",
-    `The bundle took longer than ${TTL.uploadReceivingMs / 60_000} minutes to arrive`,
-    {
-      reason: "upload_too_slow",
-      next: "Send it again on a faster connection (the ticket keeps its remaining attempts), and leave out files the page does not load",
-    },
-  );
-}
+const tooSlow = uploadTooSlow;
 
 /** How often a waiting body read looks at the clock (the deadline is re-read, never cached). */
 const DEADLINE_CHECK_MS = 1000;
@@ -617,14 +622,17 @@ async function takeLease(
   throw await stateError(w, cur);
 }
 
+/** The ticket, with D1's clock at the read (`db_now`, the format of receiving_until). */
 async function readTicket(
   w: Pick<BundleEnv, "env">,
   id: string,
   tokenHash: string,
-): Promise<TicketRow | null> {
-  return w.env.DB.prepare("SELECT * FROM upload_tickets WHERE id = ?1 AND token_hash = ?2")
+): Promise<(TicketRow & { db_now: string }) | null> {
+  return w.env.DB.prepare(
+    `SELECT *, ${DB_NOW} AS db_now FROM upload_tickets WHERE id = ?1 AND token_hash = ?2`,
+  )
     .bind(id, tokenHash)
-    .first<TicketRow>();
+    .first<TicketRow & { db_now: string }>();
 }
 
 /** Why a ticket cannot take a bundle now (it exists and the token matches). */
@@ -845,11 +853,13 @@ export async function uploadStatus(
 ): Promise<UploadStatus> {
   const token = bundleToken(req.authorization);
   if (!UPLOAD_ID_RE.test(req.uploadId) || !UPLOAD_TOKEN_RE.test(token)) throw notFound("Upload");
+  // The row and D1's clock in one read: a bundle request's commit requires its lease by the same
+  // clock, so a lease reported over here can no longer commit.
   const t = await readTicket(w, req.uploadId, await hashToken(token));
   if (!t) throw notFound("Upload");
   const id =
     (t.mode === "update" ? t.artifact_id : (t.result_artifact_id ?? t.reserved_artifact_id)) ?? "";
-  const now = nowIso();
+  const now = t.db_now;
   let url: string | null = null;
   if (t.state === "used" && t.result_artifact_id) {
     const a = await w.env.DB.prepare("SELECT slug FROM artifacts WHERE id = ?1")

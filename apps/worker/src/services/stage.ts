@@ -14,6 +14,7 @@ import {
   type PublishResult,
   type PublishWarning,
   parseCapabilities,
+  TTL,
   type Visibility,
 } from "@plinth/shared";
 import { appUrl, contentOrigin } from "../config.ts";
@@ -815,9 +816,10 @@ export class VersionStager implements Stager {
   /**
    * Delete this attempt's objects whatever the state (the commit's own failure path), then its
    * row. The row is claimed first (services/attempts.ts), so a commit batch D1 applies late is
-   * refused from then on; when there is no row to claim, a late batch has already committed (or
-   * nothing was put) and the objects stay. A failed delete throws and leaves the claimed row, so
-   * the scheduled sweep finishes the job.
+   * refused from then on; when a version names the prefix, a late batch has already committed and
+   * the objects stay. A row removed by a delete or takedown while this attempt still put files is
+   * parked again and its objects go. A failed delete throws and leaves the claimed row, so the
+   * scheduled sweep finishes the job.
    */
   async discard(): Promise<void> {
     this.aborted = true;
@@ -827,8 +829,15 @@ export class VersionStager implements Stager {
     while (this.running.size > 0) await Promise.allSettled([...this.running]);
     // Every put waits for the row's insert, so an attempt that never recorded one put nothing.
     if (!this.recorded) return;
-    await this.recorded.catch(() => undefined);
-    if (!(await claimAttempt(this.ctx.env.DB, this.prefix, Date.now()))) return;
+    // A failed insert let no put through either.
+    if (
+      !(await this.recorded.then(
+        () => true,
+        () => false,
+      ))
+    )
+      return;
+    if (!(await claimAttempt(this.ctx.env.DB, this.prefix, this.artifactId, Date.now()))) return;
     await deletePrefix(this.ctx.env.FILES, this.prefix);
     await forgetAttempt(this.ctx.env.DB, this.prefix);
   }
@@ -862,6 +871,12 @@ export async function openStager(
 
 export interface CommitOptions {
   ticketId?: string;
+  /**
+   * With `ticketId`: the bundle request's receiving lease. The batch also requires that lease to be
+   * held and unexpired by D1's clock, so once the upload's status reads `open` again (the lease
+   * ran out) that request can no longer commit.
+   */
+  receivingClaim?: string;
   /** Publish only: the new artifact's visibility and password hash (default allowlist). */
   visibility?: Visibility;
   passwordHash?: string | null;
@@ -875,6 +890,23 @@ const QUOTA_GUARD = `(SELECT coalesce(sum(coalesce(v.stored_bytes, v.size_bytes)
 const TICKET_GUARD = `EXISTS (SELECT 1 FROM upload_tickets t WHERE t.id = ? AND t.state = 'open' AND t.expires_at > ?
     AND (t.connection_id IS NULL OR EXISTS (SELECT 1 FROM agent_connections c
           WHERE c.id = t.connection_id AND c.user_id = t.user_id AND c.revoked_at IS NULL)))`;
+
+/** D1's clock as an ISO time (the format of receiving_until), read where the statement runs. */
+export const DB_NOW = "strftime('%Y-%m-%dT%H:%M:%fZ', 'now')";
+const LEASE_GUARD = `EXISTS (SELECT 1 FROM upload_tickets l WHERE l.id = ? AND l.receiving_claim = ?
+    AND l.receiving_until > ${DB_NOW})`;
+
+/** A bundle request whose receiving lease ran out before it could commit. */
+export function uploadTooSlow(): ApiError {
+  return new ApiError(
+    "invalid_input",
+    `The bundle took longer than ${TTL.uploadReceivingMs / 60_000} minutes to arrive`,
+    {
+      reason: "upload_too_slow",
+      next: "Send it again on a faster connection (the ticket keeps its remaining attempts), and leave out files the page does not load",
+    },
+  );
+}
 
 /** Bytes counted against the owner's storage quota (live artifacts, stored bytes). */
 export async function storageUsed(ctx: Ctx, ownerId: string): Promise<number> {
@@ -937,7 +969,7 @@ export async function commitStaged(
   ctx: Ctx,
   target: VersionTarget,
   staged: StagedVersion,
-  opts?: { ticketId?: string },
+  opts?: { ticketId?: string; receivingClaim?: string },
 ): Promise<PublishResult> {
   return commitVersion(ctx, target, staged, opts ?? {});
 }
@@ -1022,8 +1054,13 @@ async function commitOnce(
     const now = nowIso();
     const n = base + 1;
     const versionId = newId();
-    const ticketBinds = opts.ticketId ? [opts.ticketId, now] : [];
-    const ticketClause = opts.ticketId ? ` AND ${TICKET_GUARD}` : "";
+    const leased = opts.ticketId !== undefined && opts.receivingClaim !== undefined;
+    const ticketBinds = opts.ticketId
+      ? [opts.ticketId, now, ...(leased ? [opts.ticketId, opts.receivingClaim] : [])]
+      : [];
+    const ticketClause = opts.ticketId
+      ? ` AND ${TICKET_GUARD}${leased ? ` AND ${LEASE_GUARD}` : ""}`
+      : "";
     // The attempt's row must still be there (the scheduled sweep has not claimed it): the version
     // and the artifact row depend on it, and the batch deletes it.
     const cutoff = attemptCutoff(Date.now());
@@ -1063,7 +1100,8 @@ async function commitOnce(
         `INSERT INTO versions (id, artifact_id, number, r2_prefix, size_bytes, stored_bytes, manifest,
            created_by_user, created_by_connection, note, restored_from, created_at, capabilities)
          SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
-          WHERE EXISTS (SELECT 1 FROM artifacts WHERE id = ? AND deleted_at IS NULL AND current_version = ?)
+          WHERE EXISTS (SELECT 1 FROM artifacts WHERE id = ? AND deleted_at IS NULL
+                          AND taken_down_at IS NULL AND current_version = ?)
             AND ${QUOTA_GUARD}${ticketClause} AND ${ATTEMPT_GUARD}`,
       ).bind(
         versionId,
@@ -1240,6 +1278,15 @@ async function commitOnce(
         });
       }
       if (t.revoked) throw unauthorized("The connection that started this upload was revoked");
+      if (opts.receivingClaim !== undefined) {
+        const lease = await DB.prepare(
+          `SELECT 1 AS one FROM upload_tickets WHERE id = ? AND receiving_claim = ?
+            AND receiving_until > ${DB_NOW}`,
+        )
+          .bind(opts.ticketId, opts.receivingClaim)
+          .first();
+        if (!lease) throw uploadTooSlow();
+      }
     }
     const row = await DB.prepare(
       "SELECT 1 AS one FROM staging_attempts WHERE prefix = ? AND started_at > ?",
@@ -1264,11 +1311,15 @@ async function commitOnce(
         throw artifactLimitError(artifactLimit);
     } else {
       const art = await DB.prepare(
-        "SELECT current_version AS cur, deleted_at AS deleted FROM artifacts WHERE id = ?",
+        "SELECT current_version AS cur, deleted_at AS deleted, taken_down_at AS down FROM artifacts WHERE id = ?",
       )
         .bind(artifactId)
-        .first<{ cur: number; deleted: string | null }>();
+        .first<{ cur: number; deleted: string | null; down: string | null }>();
       if (!art || art.deleted) throw notFound();
+      // Policy refuses edits once an artifact is taken down; this one passed before the takedown.
+      if (art.down) {
+        throw new ApiError("forbidden", "This artifact was taken down", { reason: "taken_down" });
+      }
       if (art.cur !== base) {
         if (target.baseVersion !== undefined) throw conflictError(target.baseVersion, art.cur);
         base = art.cur;

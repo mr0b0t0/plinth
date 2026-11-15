@@ -178,12 +178,19 @@ at once at the artifact's current visibility.
 
 If the command ends without its JSON (a curl error, a timeout, an answer that is not JSON), do not
 run it again blindly: once the whole folder was sent, the upload may have published anyway. (A
-connection lost while the folder was still being sent never publishes.) Call `get_artifact` first,
-with the artifact's `id` for an update or with `target.id` from the `start_upload` result for a new
-artifact (that is the id the upload creates; `not_found` means nothing was published). If the new
-version is there, use it. If not, call `start_upload` again with the same `base_version`. A retry
-can never publish twice: a stale `base_version` gets a conflict, and sending a used upload again
-answers `upload_used` with the url. The Plinth CLI does this check itself.
+connection lost while the folder was still being sent never publishes.) Ask the upload first: a
+GET to the `upload_url` without its `/bundle`, with the same `Authorization` header as
+`commands.curl`. Its `state` says what happened to this upload: `used` means it published
+`version` (give the user its `url`); `dead` means someone else published first and this change was
+not saved (read the artifact again, then `start_upload` with the new `base_version`); `receiving`
+means it is still running (ask again in a few seconds); `open`, `expired` or `exhausted` mean
+nothing was published (call `start_upload` again with the same `base_version`). Only if the upload
+cannot be read, call `get_artifact` with the artifact's `id` for an update, or with `target.id`
+from the `start_upload` result for a new artifact (the id the upload creates; `not_found` means
+nothing was published). A new version there does not prove it is yours: a collaborator may have
+published it, so compare its files with what you sent before you tell the user it was published. A
+retry can never publish twice: a stale `base_version` gets a conflict, and sending a used upload
+again answers `upload_used` with the url. The Plinth CLI does this check itself.
 
 Rules for builds:
 

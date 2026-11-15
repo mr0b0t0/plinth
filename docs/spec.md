@@ -358,8 +358,11 @@ files) and big pages without merging chunks, and an update stores only what chan
   that row, unclaimed and younger than the sweep threshold, and deletes it. Whatever deletes an
   attempt's objects claims its row first (an `UPDATE ... RETURNING` that moves `started_at` below
   every cutoff) and deletes the row only once the objects are gone, so a failure in between leaves
-  the claimed row for the next sweep. An abort claims the row, deletes the prefix, then the row; with
-  no row to claim (a commit batch D1 applied after reporting an error) it keeps the objects. A
+  the claimed row for the next sweep. An abort claims the row, deletes the prefix, then the row.
+  With no row to claim it looks for a version naming the prefix: one there (a commit batch D1
+  applied after reporting an error) keeps the objects; none means a delete, takedown or erase
+  removed the row of an attempt that was still putting files, which can never commit now, so the
+  abort parks a fresh row and deletes the objects like any other. A
   killed request can leave only unreferenced objects under its own prefix, with its row. An hourly
   cron trigger (`0 * * * *`) sweeps them: it claims at most 50 rows older than the ticket's
   lifetime plus 15 minutes (claimed rows included, longest-claimed first) and deletes the objects
@@ -367,7 +370,9 @@ files) and big pages without merging chunks, and an update stores only what chan
   commit needs the row unclaimed, a commit after a claim is refused with a retryable `conflict`
   (`reason: "attempt_expired"`) whatever the committer's clock, and a claim after a commit finds
   nothing. Deleting or erasing an artifact removes its rows with its files; a takedown claims them
-  in its own batch, then deletes their files, leaving any that fail to the sweep. `sweep-orphans` (an admin command) stays for
+  in its own batch, then deletes their files, leaving any that fail to the sweep. The version
+  insert also requires the artifact not to be taken down, so an update or restore that passed its
+  edit check before a takedown never commits after it (`forbidden`, `reason: "taken_down"`). `sweep-orphans` (an admin command) stays for
   objects no row names, such as those written before 0.4.0. A version row left by the pre-0.4.0 order (row first) that blocks a number
   is cleared when it is above `current_version` and more than 10 minutes old. Manifest entries
   from older releases whose paths the current `ASSET_PATH_RE` refuses (such as `a//b.js`, which
@@ -423,20 +428,30 @@ files) and big pages without merging chunks, and an update stores only what chan
   `apps/worker/test/uploads.test.ts`). What is not: a client that disconnects, or times out, after
   the whole body has been read may find that the request committed anyway. So a client whose
   bundle request ends without its JSON answer (a curl error, a timeout, a body that is not JSON)
-  does not retry blindly. It calls `get_artifact` first: for an update with the artifact's id, for
-  a new publish with `target.id`, which `start_upload` reserves for that ticket (the commit creates
-  the artifact with exactly that id; `not_found` means nothing was published). If the version is
-  there, it uses it; if not, it calls `start_upload` again with the same `base_version`. Retrying is
+  does not retry blindly. It asks the upload first (`GET /api/v1/uploads/:id`, below): `used` means
+  this upload committed, `dead` that someone else published first and the change was not saved,
+  `open`, `expired` or `exhausted` that nothing was published. Only when that cannot be read does
+  it call `get_artifact`: for an update with the artifact's id, for a new publish with `target.id`,
+  which `start_upload` reserves for that ticket (the commit creates the artifact with exactly that
+  id; `not_found` means nothing was published). A new version of an existing artifact may be a
+  collaborator's, so it compares the files with what it sent before calling it its own. When
+  nothing was published, it calls `start_upload` again with the same `base_version`. Retrying is
   safe in every case: a retry against the old `base_version` after a commit gets the usual version
   conflict (at mint, or on the bundle of a ticket minted earlier), never a second version;
   re-running the same `commands.curl` with a used ticket answers `upload_used` with the version and
   url and commits nothing; and in publish mode one ticket never creates a second artifact.
   `GET /api/v1/uploads/:id` with the upload token (and nothing else) answers whether the upload
   committed: `state` (`open`, `receiving`, `used`, `dead`, `expired`, `exhausted`), `id`,
-  `version` and `url` once used. It counts no attempt and takes no lease. The Plinth CLI uses it:
-  `plinth publish` and `plinth upload` read the upload's status after a lost bundle answer (and
-  `plinth publish --id` reads the artifact after a lost inline answer), report the version they
-  find, exit 3 when a conflict ended the upload, and never send the bundle again.
+  `version` and `url` once used. It counts no attempt and takes no lease. It reads the ticket and
+  D1's clock in one statement, and a bundle's commit batch requires that request's receiving lease
+  to be unexpired by the same clock, so once the status reads `open` after a lease ran out, that
+  request can no longer commit (it fails with `upload_too_slow`). The Plinth CLI uses it:
+  `plinth publish` and `plinth upload` read the upload's status after a lost bundle answer (tried
+  again a few times over about five seconds when the read itself fails; and `plinth publish --id`
+  reads the artifact after a lost inline answer), report the version they find, exit 3 when a
+  conflict ended the upload, and never send the bundle again. When the status cannot be read, the
+  message (and `--json`: `{"published": "unknown", "id", "upload_id"}`) names the artifact id to
+  check, the reserved one for a new publish.
 - **Serving cost.** The content host keeps an in-isolate cache (8 MB) of immutable version rows and
   their parsed manifests; it still reads the artifact row and checks access on every request. Under
   `CONTENT_ISOLATION=origin`, a file with a sha256 gets the strong ETag `"sha256-<hex>"`, and a

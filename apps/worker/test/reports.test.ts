@@ -11,7 +11,7 @@ import { parseConfig } from "../src/config.ts";
 import { artifacts, devOutbox, reports, versions } from "../src/db/schema.ts";
 import worker from "../src/index.ts";
 import { STAGING_SWEEP_CRON } from "../src/services/attempts.ts";
-import { openStager, updateTarget } from "../src/services/stage.ts";
+import { commitStaged, openStager, updateTarget } from "../src/services/stage.ts";
 import { getOrCreateUser } from "../src/services/users.ts";
 import {
   APP,
@@ -268,6 +268,63 @@ describe("admin takedown", () => {
     expect((await rows()).results).toEqual([]);
     expect(await r2Keys(stager.prefix)).toEqual([]);
     expect(await r2Keys(v1?.r2Prefix ?? "-")).toEqual(live);
+  });
+
+  it("actioned while an attempt streams: the attempt's later files are deleted too", async () => {
+    const a = await agent();
+    const { body: p } = await publish(a.auth);
+    const ctx = serviceCtxFor(agentPrincipal(a));
+    const target = await updateTarget(ctx, p.id, {});
+    const stager = await openStager(ctx, target);
+    await stager.add("index.html", new TextEncoder().encode("<p>streaming</p>"));
+    await stager.add("first.css", new TextEncoder().encode("first"));
+    for (let i = 0; i < 200 && (await r2Keys(stager.prefix)).length === 0; i++) {
+      await new Promise((r) => setTimeout(r, 10));
+    }
+    expect(await r2Keys(stager.prefix)).toHaveLength(1);
+    const adm = await admin();
+    const r = await json(await report(p.id, { reason: "takedown mid-stream" }));
+    expect((await adm.post(`/api/v1/admin/reports/${r.id}`, { state: "actioned" })).status).toBe(
+      200,
+    );
+    await stager.add("big.css", new TextEncoder().encode("big"));
+    const staged = await stager.finish();
+    await expect(commitStaged(ctx, target, staged)).rejects.toBeTruthy();
+    await stager.abort();
+    expect(await r2Keys(stager.prefix)).toEqual([]);
+    expect(
+      (
+        await env.DB.prepare("SELECT prefix FROM staging_attempts WHERE artifact_id = ?")
+          .bind(p.id)
+          .all()
+      ).results,
+    ).toEqual([]);
+  });
+
+  it("actioned before an in-flight update records its row: the update never commits", async () => {
+    const a = await agent();
+    const { body: p } = await publish(a.auth);
+    const ctx = serviceCtxFor(agentPrincipal(a));
+    const target = await updateTarget(ctx, p.id, {});
+    const stager = await openStager(ctx, target);
+    // The source is held until finish(): nothing is put and no row is recorded yet.
+    await stager.add("index.html", new TextEncoder().encode("<p>late edit</p>"));
+    const adm = await admin();
+    const r = await json(await report(p.id, { reason: "takedown before the row" }));
+    expect((await adm.post(`/api/v1/admin/reports/${r.id}`, { state: "actioned" })).status).toBe(
+      200,
+    );
+    await stager.add("big.css", new TextEncoder().encode("big"));
+    const staged = await stager.finish();
+    await expect(commitStaged(ctx, target, staged)).rejects.toMatchObject({
+      code: "forbidden",
+      details: { reason: "taken_down" },
+    });
+    const nums = (await db().select().from(versions).where(eq(versions.artifactId, p.id)).all())
+      .map((v) => v.number)
+      .sort();
+    expect(nums).toEqual([1]);
+    expect(await r2Keys(stager.prefix)).toEqual([]);
   });
 
   it("actioned while R2 fails: the takedown completes and the sweep deletes the attempt's files", async () => {
