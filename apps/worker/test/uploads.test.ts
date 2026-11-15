@@ -69,6 +69,7 @@ import {
 import {
   APP,
   agent,
+  BIG_BUNDLE_TIMEOUT_MS,
   browserSession,
   call,
   config,
@@ -1089,7 +1090,9 @@ describe("redeeming a ticket", () => {
 // ---------- end to end with the real stager ----------
 
 describe("end to end with the real stager", () => {
-  it("MCP start_upload {} then the curl bundle of a 420-file Vite build: 201 and the content host serves every file", async () => {
+  it("MCP start_upload {} then the curl bundle of a 420-file Vite build: 201 and the content host serves every file", {
+    timeout: BIG_BUNDLE_TIMEOUT_MS,
+  }, async () => {
     const a = await agent();
     const c = await mcpClient(a.token);
     const r = await tool<StartUploadResult>(c, "start_upload", {});
@@ -1257,7 +1260,9 @@ describe("end to end with the real stager", () => {
     expect((await json(b)).bundle.entries).toBe(2);
   });
 
-  it("a 50 MB, 511-file bundle passes through the real stager in the Workers pool", async () => {
+  it("a 50 MB, 511-file bundle passes through the real stager in the Workers pool", {
+    timeout: BIG_BUNDLE_TIMEOUT_MS,
+  }, async () => {
     const a = await agent();
     const t = await mint(a);
     const per = Math.floor((50 * 1024 * 1024 - 2048) / 510) - 512;
@@ -1747,7 +1752,9 @@ describe("an abandoned, slow or over-quota bundle leaves nothing behind", () => 
     expect(await newKeys(id)).toEqual([]);
   });
 
-  it("a sender that declares a file and goes quiet is cut off at the deadline, with no more data", async () => {
+  it("a sender that declares a file and goes quiet is cut off at the deadline, with no more data", {
+    timeout: BIG_BUNDLE_TIMEOUT_MS,
+  }, async () => {
     const { a, id } = await ownerWithArtifact();
     const t = await mint(a, { id, base_version: 1 }, stageDeps);
     const big = LIMITS.maxBundleFileBytes;

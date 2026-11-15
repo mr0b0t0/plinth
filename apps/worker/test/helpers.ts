@@ -288,3 +288,10 @@ export async function fetchWith(
   await waitOnExecutionContext(ctx);
   return res;
 }
+
+/**
+ * Timeout for tests that move a full-size bundle (tens of MB, hundreds of files) through the
+ * Workers pool. The bundle size is the point of those tests, so they get headroom instead of a
+ * smaller bundle: they take about 1.5 s locally and 7 s on a GitHub runner, over the 5 s default.
+ */
+export const BIG_BUNDLE_TIMEOUT_MS = 60_000;

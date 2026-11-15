@@ -10,6 +10,7 @@ import type { Ctx } from "../src/services/context.ts";
 import { claimMention } from "../src/services/mentions.ts";
 import {
   agent,
+  BIG_BUNDLE_TIMEOUT_MS,
   call,
   config,
   createUser,
@@ -153,7 +154,9 @@ const files = (n: number, size = 1) =>
   Array.from({ length: n }, (_, i) => ({ path: `f/${i}.txt`, content: `${i}`.padEnd(size, "x") }));
 
 describe("per-version limits (MAX_ASSETS_PER_VERSION, MAX_VERSION_BYTES)", () => {
-  it("default instance: 511 assets pass and 512 fail, over REST, as an ApiError with next", async () => {
+  it("default instance: 511 assets pass and 512 fail, over REST, as an ApiError with next", {
+    timeout: BIG_BUNDLE_TIMEOUT_MS,
+  }, async () => {
     expect(config().maxAssetsPerVersion).toBe(DEFAULTS.maxAssetsPerVersion);
     const a = await agent();
     const ok = await publish(a.auth, { assets: files(511) });
@@ -177,7 +180,9 @@ describe("per-version limits (MAX_ASSETS_PER_VERSION, MAX_VERSION_BYTES)", () =>
     expect(up.status).toBe(413);
   });
 
-  it("default instance: 511 pass and 512 fail over MCP, as the same error", async () => {
+  it("default instance: 511 pass and 512 fail over MCP, as the same error", {
+    timeout: BIG_BUNDLE_TIMEOUT_MS,
+  }, async () => {
     const a = await agent();
     const client = await mcpClient(a.token);
     const ok = await tool(client, "publish_artifact", {

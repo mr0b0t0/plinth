@@ -31,6 +31,7 @@ import {
   tar,
   viteBuild,
 } from "./fixtures/bundles/tar.ts";
+import { BIG_BUNDLE_TIMEOUT_MS } from "./helpers.ts";
 
 const MB = 1024 * 1024;
 const LONG =
@@ -584,7 +585,9 @@ describe("sizes and bounds", () => {
     expect(e.message).toMatch(/inflates to over 2 MB/);
   });
 
-  it("inflates only as the reader reads: a stalled reader stops the gzip body being fed", async () => {
+  it("inflates only as the reader reads: a stalled reader stops the gzip body being fed", {
+    timeout: BIG_BUNDLE_TIMEOUT_MS,
+  }, async () => {
     // workerd's DecompressionStream takes every write and queues all its output unread, so a
     // decompressor fed ahead of the reader could hold hundreds of MB from a body of a few
     // hundred KB. Here: index.html, then 8 entries of 25 MB of zeros (200 MB inflated), and the
