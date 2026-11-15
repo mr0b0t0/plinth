@@ -9,6 +9,7 @@ import { eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import { version as cliVersion } from "../../../packages/cli/package.json";
 import { appCsp } from "../src/app/headers.ts";
+import { cliPublishReleased, orRunCliPublish } from "../src/app/version.ts";
 import { artifacts } from "../src/db/schema.ts";
 import worker from "../src/index.ts";
 import { MCP_TOOL_SUMMARIES } from "../src/mcp/server.ts";
@@ -373,7 +374,6 @@ describe("Discovery documents", () => {
       "two Plinth servers (plinth and plugin:plinth:plinth) and two connections",
       "## Publish a build",
       "call `start_upload`, replace `<folder>` in the `commands.curl` it returns with the build folder (the one with index.html at its top) and run it",
-      "npx -y @mr0b0t0/plinth publish <dir>",
       `${APP}/api/v1/config`,
       "https://github.com/mr0b0t0/plinth/blob/main/docs/agents.md#large-builds",
       "Send a User-Agent of your own",
@@ -382,6 +382,9 @@ describe("Discovery documents", () => {
     ]) {
       expect(text).toContain(s);
     }
+    // The CLI's publish command is named only from the release that ships it on npm.
+    if (cliPublishReleased()) expect(text).toContain("npx -y @mr0b0t0/plinth publish <dir>");
+    else expect(text).not.toContain("@mr0b0t0/plinth publish");
     // The summary table and the live tools/list name the same tools, so the list cannot drift.
     const a = await agent();
     const client = await mcpClient(a.token);
@@ -554,5 +557,15 @@ describe("Discovery documents", () => {
       expect(res.status, path).toBe(200);
       expect(res.headers.get("content-type"), path).toContain("application/json");
     }
+  });
+});
+
+describe("CLI hints follow the npm release", () => {
+  it("names the publish command only on releases from MIN_UPLOAD_CLI_VERSION", () => {
+    expect(cliPublishReleased("0.3.0")).toBe(false);
+    expect(cliPublishReleased("0.4.0-rc.1")).toBe(false);
+    expect(cliPublishReleased("0.4.0")).toBe(true);
+    expect(orRunCliPublish("0.3.0")).toBe("");
+    expect(orRunCliPublish("0.4.1")).toBe(", or run npx @mr0b0t0/plinth publish <dir>");
   });
 });

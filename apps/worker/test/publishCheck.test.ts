@@ -179,6 +179,20 @@ describe("publish warning rules", () => {
     ]);
   });
 
+  it("not_scanned for small chunks past the total budget says no action is needed", () => {
+    // A big build: 200 chunks of 60 KB, each far under the per-file cap, past 8 MB in all.
+    const chunks = Array.from({ length: 200 }, (_, i) =>
+      file(`assets/c${i}.js`, `export const c${i} = "${"y".repeat(60 * 1024)}";`),
+    );
+    const w = scan(chunks);
+    expect(w).toHaveLength(1);
+    const [n] = w;
+    expect(n?.code).toBe("not_scanned");
+    expect(n?.message).not.toMatch(/too large/);
+    expect(n?.message).toMatch(/were not checked for references/);
+    expect(n?.message).toMatch(/8 MB per publish\. No action needed$/);
+  });
+
   it("not_scanned past the per-file budget; a clean file gives []", () => {
     const big = file("big.js", `/*${"x".repeat(LIMITS.maxScanFileBytes)}*/`);
     const w = scan([big, file("ok.css", "a{color:red}")]);

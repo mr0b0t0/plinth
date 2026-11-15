@@ -2,6 +2,7 @@
 import { API, LIMITS } from "@plinth/shared";
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
+import { orRunCliPublish } from "../app/version.ts";
 import { ApiError } from "../lib/errors.ts";
 import { artifactsApi } from "./artifacts.ts";
 import { authApi } from "./auth.ts";
@@ -36,7 +37,7 @@ api.use(
         `Request body is over ${LIMITS.maxInlineRequestBytes / 1024 / 1024} MB. Inline assets travel as base64; send a build with start_upload or the CLI`,
         {
           limit_bytes: LIMITS.maxInlineRequestBytes,
-          next: "Send unchanged files as {path, sha256}; for a build folder call start_upload, or run npx @mr0b0t0/plinth publish <dir>",
+          next: `Send unchanged files as {path, sha256}; for a build folder call start_upload${orRunCliPublish()}`,
         },
       );
     },

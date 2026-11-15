@@ -30,7 +30,7 @@ import { decideFor, findArtifact, getVersionRow } from "../services/artifacts.ts
 import type { Ctx } from "../services/context.ts";
 import { readText } from "../services/storage.ts";
 import { applyAppHeaders } from "./headers.ts";
-import { PLINTH_VERSION } from "./version.ts";
+import { cliPublishReleased, PLINTH_VERSION } from "./version.ts";
 
 export const DOCS = {
   agents: `${REPO_URL}/blob/main/docs/agents.md`,
@@ -384,7 +384,7 @@ Owners choose who can view each artifact: ${visibility}. New artifacts are priva
 
 ## Publish a build
 
-Inline \`assets\` suit a page of up to about 20 files and 1 MB. For a build folder or anything bigger, call \`start_upload\`, replace \`<folder>\` in the \`commands.curl\` it returns with the build folder (the one with index.html at its top) and run it, or run \`npx -y @mr0b0t0/plinth publish <dir>\` with the Plinth CLI signed in. This instance's limits: ${origin}/api/v1/config. Details: ${DOCS.largeBuilds}
+Inline \`assets\` suit a page of up to about 20 files and 1 MB. For a build folder or anything bigger, call \`start_upload\`, replace \`<folder>\` in the \`commands.curl\` it returns with the build folder (the one with index.html at its top) and run it${cliPublishReleased() ? ", or run `npx -y @mr0b0t0/plinth publish <dir>` with the Plinth CLI signed in" : ""}. This instance's limits: ${origin}/api/v1/config. Details: ${DOCS.largeBuilds}
 
 ## REST API
 

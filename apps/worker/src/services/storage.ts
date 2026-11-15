@@ -6,6 +6,7 @@
 // its manifest entry carries `stored_at`, the object's physical origin. A prefix is written once and
 // never changed (versions are immutable), and objects are never deleted one version at a time.
 import { ASSET_PATH_RE, LIMITS, STORED_AT_RE } from "@plinth/shared";
+import { orRunCliPublish } from "../app/version.ts";
 import { randomString } from "../lib/crypto.ts";
 import { ApiError, notFound } from "../lib/errors.ts";
 
@@ -180,7 +181,10 @@ export function tooManyAssets(limit: number, count: number): ApiError {
     {
       limit,
       count,
-      next: "Leave out source maps (*.map). Never merge chunks to fit. Large builds: call start_upload, or run npx @mr0b0t0/plinth publish <dir>",
+      next:
+        "Leave out source maps (*.map) and files the page does not load. Never merge chunks to fit. " +
+        `Large builds: call start_upload${orRunCliPublish()}. The instance operator can raise ` +
+        `MAX_ASSETS_PER_VERSION (up to ${LIMITS.maxAssetsCeiling})`,
     },
   );
 }

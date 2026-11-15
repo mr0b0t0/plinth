@@ -161,9 +161,12 @@ travel as JSON inside the tool call, so keep them for small pages: **20 files or
    `index.html`, or a doc's `content.md`, at its top) and run it with a shell timeout of at least
    10 minutes. Or run `commands.npx` instead when it is present and Node.js is available. The
    command prints JSON with the `url` to give the person, plus `warnings` and `stored`.
-2. **With the Plinth CLI signed in** (`npx -y @mr0b0t0/plinth login` once): run
-   `npx -y @mr0b0t0/plinth publish <dir> --json`, adding `--id <id>` to update an artifact. It
-   uploads only the files that changed and checks every file's hash afterwards.
+2. **With the Plinth CLI signed in** (`npx -y @mr0b0t0/plinth login` once; the client commands
+   need `@mr0b0t0/plinth` 0.4.0 or later, so if `npx` answers "Unknown command", use route 1):
+   run `npx -y @mr0b0t0/plinth publish <dir> --json`, adding `--id <id>` to update an artifact.
+   It stores only the files that changed (it sends just those when they fit in one request of
+   about 24 MB, otherwise the whole folder as one compressed upload) and checks every file's hash
+   afterwards.
 3. **On Windows without Git Bash or WSL, or with no shell at all:** ask the person to run the CLI
    command above themselves.
 
@@ -185,8 +188,10 @@ Rules for builds:
   classic, non-module bundle (Vite: `build.modulePreload: false` and an `iife` or legacy output).
 - **Fix `warnings` before you hand over the link.** Every publish result lists them:
   `missing_file` (a referenced file is not in the upload), `root_absolute`, `blocked_host` (a
-  host outside the allowlist), `insecure_url` (`http:`), `opaque_module` and `not_scanned`.
-  Publish again with the fix; a warning never blocks a publish on its own.
+  host outside the allowlist), `insecure_url` (`http:`) and `opaque_module`. Publish again with
+  the fix; a warning never blocks a publish on its own. `not_scanned` is different: it only says
+  the reference check stopped at its budget (any build over about 8 MB of HTML, CSS and JS). It
+  needs no action; never re-upload or trim files because of it.
 - **Your own HTTP client** (a script calling the REST API) must send a `User-Agent` of its own,
   such as `my-agent/1.0`. Some instances' edge refuses default library agents: Python's
   `urllib` gets 403 `error code: 1010` before Plinth sees the request.

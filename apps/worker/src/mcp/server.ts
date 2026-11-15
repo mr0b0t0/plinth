@@ -99,7 +99,8 @@ export const BUILD_NOTE =
   "start_upload instead of sending inline assets. Limits are per instance (GET /api/v1/config, or the " +
   "limits in a start_upload result): HTML up to 5 MB, a version's total size and file count as " +
   "configured, and the account's artifact and storage quotas. The result lists warnings (missing " +
-  "files, root-absolute URLs, blocked hosts); fix them before you hand over the link. ";
+  "files, root-absolute URLs, blocked hosts); fix them before you hand over the link. not_scanned " +
+  "only says the reference check stopped at its budget and needs no action. ";
 
 /** What update_artifact says about reusing unchanged files. */
 const REUSE_NOTE =
@@ -181,7 +182,7 @@ export function buildMcpServer(ctx: Ctx): McpServer {
         "user asks. A page can keep shared data (polls, sign-up sheets, trackers among invited people): " +
         "read it with list_artifact_data and change it with write_artifact_data. " +
         "For a build folder or more than ~1 MB, call start_upload instead of inline assets. " +
-        "Results list warnings; fix them before handing over the link. " +
+        "Results list warnings; fix them before handing over the link (not_scanned needs no action). " +
         "For feedback, read threads with list_comments, answer with reply_comment and close " +
         "them with resolve_comment; requests addressed to you arrive through list_mentions and " +
         `claim_mention. ${UNTRUSTED_NOTE} ${TYPES_NOTE} ${PLUGIN_NOTE}`,

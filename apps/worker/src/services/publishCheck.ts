@@ -84,7 +84,9 @@ export function scanPublish(input: ScanInput): PublishWarning[] {
       code: "not_scanned",
       file: echo(unscanned[0] ?? ""),
       count: unscanned.length,
-      message: `${unscanned.length} file(s) were too large to check for references (${LIMITS.maxScanFileBytes / 1024 / 1024} MB per file, ${LIMITS.maxScanBytes / 1024 / 1024} MB in all)`,
+      // Information, not something to fix: the files are published; only the reference check
+      // stopped at its budget (big builds always pass it).
+      message: `${unscanned.length} file(s) were not checked for references: the check reads at most ${LIMITS.maxScanFileBytes / 1024 / 1024} MB per file and ${LIMITS.maxScanBytes / 1024 / 1024} MB per publish. No action needed`,
     });
   }
   return cap(out);
