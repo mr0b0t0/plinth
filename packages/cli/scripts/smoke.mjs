@@ -13,6 +13,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readdirSync,
+  readFileSync,
   realpathSync,
   rmSync,
   writeFileSync,
@@ -290,9 +291,19 @@ await check("republishing one change writes 2 objects (the file and the source)"
 });
 
 await check("publish --id with a stale base exits 3 and writes nothing", () => {
+  const chunk = path.join(site, "assets", "chunk-7.js");
+  const v2 = readFileSync(chunk, "utf8");
+  writeFileSync(chunk, "export const v7 = 'changed again';\n");
   const r = client(["publish", site, "--id", sitePublished.id, "--base-version", "1"]);
+  writeFileSync(chunk, v2);
   assert(r.status === 3, `exit ${r.status}: ${r.stderr}`);
   assert(/changed since v1 \(now v2\)/.test(r.stderr), r.stderr);
+});
+
+await check("a stale-base rerun whose update already landed sends nothing (exit 0)", () => {
+  const r = client(["publish", site, "--id", sitePublished.id, "--base-version", "1"]);
+  assert(r.status === 0, `exit ${r.status}: ${r.stderr}`);
+  assert(/already at v2, which matches this folder/.test(r.stderr), r.stderr);
 });
 
 await check("upload sends a folder with a start_upload ticket", async () => {
