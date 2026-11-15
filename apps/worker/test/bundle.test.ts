@@ -1,5 +1,7 @@
 // The bounded tar reader (services/bundle.ts): formats real tars use, every refusal, and every
-// streaming bound, including memory bounds proven with a lazily generated 50 MB bundle.
+// streaming bound, including a lazily generated 50 MB bundle. These check what the reader counts
+// and allocates, not heap use: workerd reports no heap figures and enforces no isolate limit in
+// the pool. The structural memory bound (in-flight plus the next file) is in uploads.test.ts.
 import { LIMITS } from "@plinth/shared";
 import { describe, expect, it } from "vitest";
 import { ApiError } from "../src/lib/errors.ts";
@@ -102,6 +104,57 @@ describe("tar formats real archivers write", () => {
       ["assets/app.js", "assets/style.css", LONG, "index.html"].sort(),
     );
     expect(summary.skipped).toEqual([".DS_Store"]);
+  });
+
+  it("reads what `tar -czf - .` writes to a pipe on macOS: gzip plus NUL padding", async () => {
+    const body = fromBase64(real.stdoutTgz);
+    expect(body.byteLength).toBe(10240);
+    expect(body[body.byteLength - 1]).toBe(0);
+    for (const chunk of [997, 10240, 1]) {
+      const { files, summary } = await read(streamOf(body, chunk));
+      expect(files.map((f) => f.path).sort()).toEqual(
+        ["assets/app.js", "assets/style.css", LONG, "index.html"].sort(),
+      );
+      expect(summary.skipped).toEqual([".DS_Store"]);
+    }
+  });
+
+  it("reads a padded gzip of a tar that ends at EOF, without end-of-archive blocks", async () => {
+    // The reader needs the stream's end here, so the held zeros that finish the trailer are fed
+    // and the decompressor closes (CRC and ISIZE checked); the rest of the padding is dropped.
+    for (const n of [1, 300, 4000]) {
+      const member = await gzip(
+        tar([...site, { name: `f${n}.js`, data: filler(n, n) }], { end: false }),
+      );
+      const { files } = await read(
+        concat([member, new Uint8Array(10240 - (member.byteLength % 10240))]),
+      );
+      expect(files.map((f) => f.path)).toEqual(["index.html", "assets/app.js", `f${n}.js`]);
+    }
+  });
+
+  it("feeds zero runs that more data follows, wherever chunks split the gzip", async () => {
+    // Deflate output is full of zero bytes; a run held back at a chunk's end must be fed once the
+    // next chunk arrives, or the inflated bytes would be wrong.
+    const zeroy = new Uint8Array(70_000);
+    for (let i = 0; i < zeroy.byteLength; i += 509) zeroy[i] = i % 251;
+    const body = await gzip(tar([...site, { name: "z.bin", data: zeroy }]));
+    for (const chunk of [3, 64, 4096]) {
+      const reader = readBundle(streamOf(body, chunk), BOUNDS);
+      const got: Uint8Array[] = [];
+      for await (const e of reader) if (e.path === "z.bin") got.push(e.bytes);
+      expect(got[0]).toEqual(zeroy);
+    }
+  });
+
+  it("still refuses a padded gzip whose trailer does not match", async () => {
+    const member = await gzip(tar(site, { end: false }));
+    member[member.byteLength - 6] = (member[member.byteLength - 6] ?? 0) ^ 0xff; // a CRC byte
+    const e = await refusal(concat([member, new Uint8Array(5000)]));
+    expect(e.message).toBe("The gzip data is corrupt or truncated");
+    const cut = await gzip(tar(site, { end: false }));
+    const e2 = await refusal(concat([cut.subarray(0, cut.byteLength - 12), new Uint8Array(64)]));
+    expect(e2.message).toBe("The gzip data is corrupt or truncated");
   });
 
   it("strips the one top directory of `tar -czf - dist`", async () => {
@@ -219,7 +272,7 @@ describe("refusals", () => {
     const e = await refusal(zip);
     expect(e.code).toBe("invalid_input");
     expect(e.message).toMatch(/zip archive, not a tar/);
-    expect(details(e).next).toMatch(/tar -czf/);
+    expect(details(e).next).toMatch(/tar -cf - \. \| gzip -c/);
     const html = await refusal(new TextEncoder().encode("<!doctype html>".padEnd(600, " ")));
     expect(html.message).toMatch(/not a tar/);
   });
@@ -494,8 +547,13 @@ describe("sizes and bounds", () => {
     const files = viteBuild(12);
     const e = await refusal(tar(files), { maxEntries: 11 });
     expect(e.code).toBe("payload_too_large");
-    expect(details(e)).toMatchObject({ limit: 10, count: 12 });
-    expect(details(e).next).toMatch(/source maps/);
+    expect(details(e)).toMatchObject({ limit: 10, count: 12, count_is_minimum: true });
+    expect(e.message).toBe(
+      "The bundle has at least 12 files; this instance allows 10 asset files per version",
+    );
+    // How to leave the maps out of the archive, and the operator's setting.
+    expect(details(e).next).toContain("tar --exclude='*.map'");
+    expect(details(e).next).toContain(`MAX_ASSETS_PER_VERSION (up to ${LIMITS.maxAssetsCeiling})`);
   });
 
   it("refuses a body over the raw cap while streaming (no Content-Length needed)", async () => {

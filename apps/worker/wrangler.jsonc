@@ -5,7 +5,7 @@
   "name": "plinth",
   "main": "src/index.ts",
   "compatibility_date": "2026-11-01",
-  "compatibility_flags": ["nodejs_compat"],
+  "compatibility_flags": ["nodejs_compat", "enable_request_signal"],
   "workers_dev": false,
   "observability": { "enabled": true },
   "assets": {

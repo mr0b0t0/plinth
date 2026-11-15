@@ -75,7 +75,10 @@ export const LIMITS = {
   bundleOverheadBytes: 8 * MB,
   /** One file in a bundle (the source file keeps its own limit). */
   maxBundleFileBytes: 25 * MB,
-  /** Bytes buffered or in flight to R2 while a bundle streams. */
+  /**
+   * Bytes in flight to R2 while a bundle streams. The reader allocates the next file only once it
+   * fits beside them (a bigger file waits until none is in flight).
+   */
   bundleInFlightBytes: 16 * MB,
   /** The pax records and GNU long names before one tar entry, in total. */
   maxTarMetaBytes: 64 * KB,
@@ -130,7 +133,7 @@ export const TTL = {
   oauthRefreshTokenS: 90 * 24 * 60 * 60,
   /** An upload ticket from start_upload. */
   uploadTicketMs: 30 * 60 * 1000,
-  /** The receiving lease one bundle request holds on its ticket (concurrency only). */
+  /** The receiving lease one bundle request holds on its ticket, and its deadline to arrive. */
   uploadReceivingMs: 10 * 60 * 1000,
 } as const;
 

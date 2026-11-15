@@ -38,6 +38,7 @@ import {
   npxCommand,
   redeemBundle,
   type StageDeps,
+  stageDeps,
   startUpload,
   type TicketRow,
 } from "../src/services/uploads.ts";
@@ -70,6 +71,7 @@ import {
   mcpClient,
   publish,
   tool,
+  versionRow,
 } from "./helpers.ts";
 
 const SITE = [
@@ -247,7 +249,8 @@ describe("start_upload mints a single-use ticket", () => {
     const url = "https://plinth.example/api/v1/uploads/abcdefghij0123456789/bundle";
     const cmd = curlCommand(token, url);
     expect(cmd).toBe(
-      `cd <folder> && tar -czf - . | curl -sS --fail-with-body --max-time 600 -A plinth-agent/1 ` +
+      `cd <folder> && COPYFILE_DISABLE=1 tar --exclude='*.map' -cf - . | gzip -c | ` +
+        `curl -sS --fail-with-body --max-time 600 -A plinth-agent/1 ` +
         `-H @<(printf 'Authorization: Bearer %s' '${token}') ` +
         `-H 'Content-Type: application/gzip' --data-binary @- '${url}'`,
     );
@@ -257,6 +260,8 @@ describe("start_upload mints a single-use ticket", () => {
     expect(cmd).toMatch(new RegExp(`@<\\(printf '[^']+' '${token}'\\)`));
     expect(url).not.toContain(token);
     expect(cmd).not.toMatch(/\btar -h|\s-h\s/);
+    // Never `tar -z` to a pipe: bsdtar pads it past the gzip member.
+    expect(cmd).not.toMatch(/tar [^|]*-[a-y]*z/);
   });
 
   it("offers commands.npx only on release versions from MIN_UPLOAD_CLI_VERSION", async () => {
@@ -581,6 +586,12 @@ describe("the bundle route and the upload token", () => {
     const running = await err(other);
     expect(running).toMatchObject({ code: "conflict", details: { reason: "upload_running" } });
     expect(running.message).toBe("Another upload of yours is in progress; wait for it");
+    // It says when the blocking lease ends at the latest, so a stuck lease is not a mystery.
+    const lease = (await ticket(busy.upload_id)).receiving_until as string;
+    expect(running.details).toMatchObject({ receiving_until: lease });
+    expect(details(running).retry_after).toBeGreaterThan(0);
+    expect(details(running).retry_after).toBeLessThanOrEqual(60);
+    expect(details(running).next).toContain(lease);
     // The same ticket while it is receiving.
     expect((await err(busy)).details.reason).toBe("upload_running");
     await setTicket(busy.upload_id, "state = 'dead', receiving_until = NULL");
@@ -1242,5 +1253,223 @@ describe("end to end with the real stager", () => {
     );
     const res = await postBundle(t.upload_url, { token: t.upload_token, body });
     expect(res.status).toBe(201);
+  });
+
+  it("holds at most max(in-flight budget, one file) of file bytes at once while R2 is slow", async () => {
+    // workerd exposes no heap figures and enforces no isolate limit in the pool, so the bound is
+    // checked structurally: every file's bytes are counted from the moment they exist (the
+    // reserve before the reader allocates them, then add) until their R2 put settles. Without
+    // the reserve, the reader allocates the next 25 MB file while the last one is still in flight.
+    const a = await agent();
+    const t = await mint(a, {}, stageDeps);
+    const files = env.FILES;
+    let inflight = 0;
+    let atReserve = 0;
+    let atAdd = 0;
+    const slow = new Proxy(files, {
+      get(target, prop) {
+        if (prop === "put") {
+          return async (key: string, value: Uint8Array, o?: R2PutOptions) => {
+            const n = value.byteLength;
+            inflight += n;
+            try {
+              await new Promise((ok) => setTimeout(ok, 150));
+              return await target.put(key, value, o);
+            } finally {
+              inflight -= n;
+            }
+          };
+        }
+        const v = Reflect.get(target, prop);
+        return typeof v === "function" ? v.bind(target) : v;
+      },
+    });
+    const deps: StageDeps = {
+      ...stageDeps,
+      openStager: async (ctx, target) => {
+        const s = await stageDeps.openStager({ ...ctx, env: { ...ctx.env, FILES: slow } }, target);
+        return {
+          prefix: s.prefix,
+          reserve: async (size) => {
+            await s.reserve(size);
+            atReserve = Math.max(atReserve, inflight + size);
+          },
+          add: async (path, bytes) => {
+            atAdd = Math.max(atAdd, inflight + bytes.byteLength);
+            await s.add(path, bytes);
+          },
+          addRef: (p, h) => s.addRef(p, h),
+          finish: (o) => s.finish(o),
+          abort: () => s.abort(),
+        };
+      },
+    };
+    const big = LIMITS.maxBundleFileBytes - 4096;
+    const body = gzipStream(
+      lazyStream(async function* () {
+        yield entry({ name: "index.html", data: "<!doctype html><title>big</title>" });
+        yield entry({ name: "a.wasm", data: filler(big, 1) });
+        yield entry({ name: "b.wasm", data: filler(big, 2) });
+        for (let i = 0; i < 4; i++)
+          yield entry({ name: `c${i}.js`, data: filler(3 * 1024 * 1024, 10 + i) });
+        yield END;
+      }),
+    );
+    const cfg = parseConfig({ ...env, MAX_VERSION_BYTES: String(64 * 1024 * 1024) } as never);
+    const { status } = await redeem(t, body, deps, cfg);
+    expect(status).toBe(201);
+    const bound = Math.max(LIMITS.bundleInFlightBytes, LIMITS.maxBundleFileBytes);
+    expect(atAdd).toBeLessThanOrEqual(bound);
+    expect(atReserve).toBeGreaterThan(0);
+    expect(atReserve).toBeLessThanOrEqual(bound);
+    expect(inflight).toBe(0);
+  }, 120_000);
+});
+
+// ---------- an abandoned or slow attempt ----------
+
+describe("an abandoned, slow or over-quota bundle leaves nothing behind", () => {
+  /** A body that sends `parts`, then stalls until `fail` is called. */
+  function stallingBody(parts: Uint8Array[]) {
+    let fail!: (e: unknown) => void;
+    const stalled = new Promise<never>((_, reject) => {
+      fail = reject;
+    });
+    let i = 0;
+    const body = new ReadableStream<Uint8Array>({
+      async pull(c) {
+        if (i < parts.length) c.enqueue(parts[i++] as Uint8Array);
+        else await stalled;
+      },
+    });
+    return { body, fail: (e: unknown) => fail(e) };
+  }
+
+  async function newKeys(id: string): Promise<string[]> {
+    const v1 = (await versionRow(id, 1))?.r2Prefix as string;
+    return (await keysUnder(`artifacts/${id}/`)).filter((k) => !k.startsWith(v1));
+  }
+
+  it("a client disconnect deletes the attempt's files and frees the lease through waitUntil", async () => {
+    const { a, id } = await ownerWithArtifact();
+    const t = await mint(a, { id, base_version: 1 }, stageDeps);
+    const s = stallingBody([
+      entry({ name: "index.html", data: "<!doctype html><title>x</title>" }),
+      entry({ name: "a.js", data: filler(100_000, 1) }),
+      entry({ name: "b.js", data: filler(100_000, 2) }),
+    ]);
+    const ac = new AbortController();
+    const waits: Promise<unknown>[] = [];
+    const pending = redeemBundle(
+      { ...bundleEnv(), waitUntil: (p) => void waits.push(p) },
+      {
+        uploadId: t.upload_id,
+        authorization: `Bearer ${t.upload_token}`,
+        contentLength: undefined,
+        body: s.body,
+        signal: ac.signal,
+      },
+      stageDeps,
+    ).catch((e: unknown) => e);
+    // The two assets reach R2 while the body is still arriving.
+    for (let i = 0; i < 200 && (await newKeys(id)).length < 2; i++) {
+      await new Promise((ok) => setTimeout(ok, 10));
+    }
+    expect(await newKeys(id)).toHaveLength(2);
+    expect((await ticket(t.upload_id)).receiving_until).not.toBeNull();
+    // The client goes away; the handler is still waiting on the body. The cleanup is handed to
+    // waitUntil at once, without waiting for the read to fail.
+    ac.abort();
+    expect(waits).toHaveLength(1);
+    await Promise.all(waits);
+    expect(await newKeys(id)).toEqual([]);
+    expect((await ticket(t.upload_id)).receiving_until).toBeNull();
+    s.fail(new Error("connection lost"));
+    const e = (await pending) as ApiError;
+    expect(e).toBeInstanceOf(ApiError);
+    expect(await newKeys(id)).toEqual([]);
+    const row = await ticket(t.upload_id);
+    expect(row).toMatchObject({ state: "open", attempts: 1, receiving_until: null });
+  });
+
+  it("refuses a bundle that is still arriving when its receiving lease ends", async () => {
+    const { a, id } = await ownerWithArtifact();
+    const t = await mint(a, { id, base_version: 1 }, stageDeps);
+    const parts = [
+      entry({ name: "a.js", data: filler(50_000, 1) }),
+      entry({ name: "index.html", data: "<!doctype html><title>x</title>" }),
+      END,
+    ];
+    let i = 0;
+    const realNow = Date.now;
+    const body = new ReadableStream<Uint8Array>({
+      pull(c) {
+        // The rest of the bundle arrives 11 minutes after the lease was taken.
+        if (i === 1) Date.now = () => realNow() + TTL.uploadReceivingMs + 60_000;
+        if (i < parts.length) c.enqueue(parts[i++] as Uint8Array);
+        else c.close();
+      },
+    });
+    let e: ApiError;
+    try {
+      e = (await redeem(t, body, stageDeps).catch((x: unknown) => x)) as ApiError;
+    } finally {
+      Date.now = realNow;
+    }
+    expect(e).toBeInstanceOf(ApiError);
+    expect(e.code).toBe("invalid_input");
+    expect(details(e).reason).toBe("upload_too_slow");
+    expect(await newKeys(id)).toEqual([]);
+    expect((await versionRow(id, 2)) ?? null).toBeNull();
+    expect(await ticket(t.upload_id)).toMatchObject({ state: "open", receiving_until: null });
+  });
+
+  it("an account at its storage quota stages nothing; below it, puts stop at the room left", async () => {
+    const { a, id } = await ownerWithArtifact();
+    const used = (await env.DB.prepare(
+      `SELECT coalesce(sum(coalesce(stored_bytes, size_bytes)), 0) AS n FROM versions v
+         JOIN artifacts x ON x.id = v.artifact_id WHERE x.owner_id = (SELECT owner_id FROM artifacts WHERE id = ?1)`,
+    )
+      .bind(id)
+      .first<{ n: number }>()) as { n: number };
+    const full = parseConfig({ ...env, MAX_STORAGE_BYTES_PER_USER: String(used.n) } as never);
+    const t1 = await mint(a, { id, base_version: 1 }, stageDeps, full);
+    const reads: number[] = [];
+    let n = 0;
+    const body = new ReadableStream<Uint8Array>(
+      {
+        pull(c) {
+          reads.push(n++);
+          c.enqueue(goodTar());
+          c.close();
+        },
+      },
+      { highWaterMark: 0 },
+    );
+    const e1 = await redeemError(t1, body, stageDeps, full);
+    expect(e1.code).toBe("quota_exceeded");
+    expect(reads).toEqual([]);
+    expect(await newKeys(id)).toEqual([]);
+
+    const room = parseConfig({
+      ...env,
+      MAX_STORAGE_BYTES_PER_USER: String(used.n + 150_000),
+    } as never);
+    const t2 = await mint(a, { id, base_version: 1 }, stageDeps, room);
+    const e2 = await redeemError(
+      t2,
+      tar([
+        { name: "a.js", data: filler(100_000, 1) },
+        { name: "b.js", data: filler(100_000, 2) },
+        { name: "c.js", data: filler(100_000, 3) },
+        { name: "index.html", data: "<!doctype html><title>x</title>" },
+      ]),
+      stageDeps,
+      room,
+    );
+    expect(e2.code).toBe("quota_exceeded");
+    expect(details(e2).adding_bytes).toBe(200_000);
+    expect(await newKeys(id)).toEqual([]);
+    expect((await ticket(t2.upload_id)).state).toBe("open");
   });
 });

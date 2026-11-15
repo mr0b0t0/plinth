@@ -28,6 +28,11 @@ export interface BundleBounds {
   maxMetaBytes?: number;
   /** The target type's source file ("index.html" or "content.md"), for the prefix strip. */
   sourcePath: string;
+  /**
+   * Awaited with a file's size just before its bytes are allocated: the stager's back-pressure
+   * (Stager.reserve), so the next file is not read while the in-flight budget is full.
+   */
+  reserve?: (size: number) => Promise<void>;
 }
 
 export interface BundleEntry {
@@ -56,7 +61,7 @@ const MAX_BAD_PATHS = 20;
 const ECHO_CHARS = 200;
 
 const SEND_TAR_NEXT =
-  "Send a tar or a gzip tar of the build folder: cd <folder> && tar -czf - . | curl ... " +
+  "Send a tar or a gzip tar of the build folder: cd <folder> && tar -cf - . | gzip -c | curl ... " +
   "(the commands.curl from start_upload)";
 const LINK_NEXT = "Copy the specific files the page needs into the build folder";
 
@@ -79,7 +84,7 @@ function invalid(message: string, details: Record<string, unknown> = {}): ApiErr
 function rawTooLarge(limit: number): ApiError {
   return new ApiError("payload_too_large", `The bundle is over ${mb(limit)} on the wire`, {
     limit_bytes: limit,
-    next: "Leave out source maps (*.map) and files the page does not load, or compress the tar (tar -czf)",
+    next: "Leave out source maps (*.map) and files the page does not load, and gzip the tar (tar -cf - . | gzip -c)",
   });
 }
 
@@ -98,7 +103,7 @@ interface RawState {
 
 /**
  * The tar byte stream of a request body: the raw bytes counted against the wire cap and, when the
- * first two bytes are gzip's magic number, inflated through DecompressionStream.
+ * first two bytes are gzip's magic number, inflated through DecompressionStream (gunzip below).
  */
 async function tarStream(
   body: ReadableStream<Uint8Array>,
@@ -155,10 +160,127 @@ async function tarStream(
       return raw.cancel(reason);
     },
   });
-  const stream = gzip
-    ? counted.pipeThrough(new DecompressionStream("gzip") as unknown as TransformStream)
-    : counted;
+  const stream = gzip ? gunzip(counted) : counted;
   return { stream: stream as ReadableStream<Uint8Array>, gzip, empty: headLength === 0 };
+}
+
+const FEED_SLICE = 16 * 1024;
+const IDLE_MS = 25;
+const ZEROS = new Uint8Array(FEED_SLICE);
+const WAKE = Symbol("wake");
+const IDLE = Symbol("idle");
+
+/**
+ * Inflate one gzip member, tolerating NUL padding after it. bsdtar (macOS tar) pads `tar -czf -`
+ * to a 10240-byte record when it writes to a pipe, and workerd's DecompressionStream errors on
+ * any byte after the gzip trailer, discarding output not yet read. So a trailing run of zero bytes
+ * is held back: it is fed only when more bytes follow it. The tar reader normally stops at its
+ * end-of-archive block before the held run matters. When it needs more once everything else has
+ * been inflated, the held zeros that end the trailer are those whose ISIZE (the trailer's last
+ * four bytes) equals the inflated length; they are fed and the decompressor is closed, so its
+ * CRC check still runs. The rest of the run is padding and is dropped.
+ */
+function gunzip(src: ReadableStream<Uint8Array>): ReadableStream<Uint8Array> {
+  const ds = new DecompressionStream("gzip");
+  const writer = ds.writable.getWriter();
+  const out = ds.readable.getReader() as ReadableStreamDefaultReader<Uint8Array>;
+  const input = src.getReader();
+  let zeros = 0;
+  const tail: number[] = [];
+  let inflated = 0;
+  let held = false;
+  let closing = false;
+
+  // The last eight bytes fed: the trailer's candidates come from them.
+  const noteTail = (bytes: Uint8Array) => {
+    for (const b of bytes.subarray(Math.max(0, bytes.byteLength - 8))) tail.push(b);
+    if (tail.length > 8) tail.splice(0, tail.length - 8);
+  };
+  const write = async (bytes: Uint8Array) => {
+    for (let i = 0; i < bytes.byteLength; i += FEED_SLICE) {
+      await writer.write(bytes.subarray(i, i + FEED_SLICE));
+    }
+    noteTail(bytes);
+  };
+  const writeZeros = async (n: number) => {
+    for (let left = n; left > 0; left -= FEED_SLICE) {
+      await writer.write(ZEROS.subarray(0, Math.min(left, FEED_SLICE)));
+    }
+    noteTail(ZEROS.subarray(0, Math.min(n, 8)));
+  };
+  const feeding = (async () => {
+    for (;;) {
+      const r = await input.read();
+      if (r.done) break;
+      const chunk = toBytes(r.value);
+      let end = chunk.byteLength;
+      while (end > 0 && chunk[end - 1] === 0) end--;
+      if (end === 0) {
+        zeros += chunk.byteLength;
+        continue;
+      }
+      if (zeros > 0) await writeZeros(zeros);
+      zeros = chunk.byteLength - end;
+      await write(chunk.subarray(0, end));
+    }
+    if (zeros === 0) await writer.close();
+    else held = true;
+  })();
+  const fed = feeding.then(
+    () => WAKE,
+    (e: unknown) => {
+      writer.abort(e).catch(() => undefined);
+      return WAKE;
+    },
+  );
+
+  /** Feed the held zeros that complete the trailer, then close (an unmatched trailer errors). */
+  const closeHeld = () => {
+    closing = true;
+    for (let j = 0; j <= Math.min(zeros, 8); j++) {
+      const t = [...tail, ...new Array<number>(j).fill(0)].slice(-8);
+      if (t.length < 8) continue;
+      const isize =
+        ((t[4] ?? 0) | ((t[5] ?? 0) << 8) | ((t[6] ?? 0) << 16) | ((t[7] ?? 0) << 24)) >>> 0;
+      if (isize === inflated % 2 ** 32) {
+        (j > 0 ? writer.write(ZEROS.subarray(0, j)) : Promise.resolve())
+          .then(() => writer.close())
+          .catch(() => undefined);
+        return;
+      }
+    }
+    writer.close().catch(() => undefined);
+  };
+
+  return new ReadableStream<Uint8Array>({
+    async pull(c) {
+      const read = out.read();
+      let r = await Promise.race([read, fed]);
+      while (r === WAKE || r === IDLE) {
+        if (!held || closing) {
+          r = await read;
+          break;
+        }
+        // Everything but the held zeros is inflated; output still queued arrives well within
+        // IDLE_MS. Past that, the decompressor has nothing more to give without its trailer.
+        r = await Promise.race([
+          read,
+          new Promise<symbol>((ok) => setTimeout(() => ok(IDLE), IDLE_MS)),
+        ]);
+        if (r === IDLE) closeHeld();
+      }
+      const res = r as ReadableStreamReadResult<Uint8Array>;
+      if (res.done) {
+        c.close();
+        return;
+      }
+      inflated += res.value.byteLength;
+      c.enqueue(res.value);
+    },
+    async cancel(reason) {
+      await Promise.allSettled([input.cancel(reason), out.cancel(reason), writer.abort(reason)]);
+    },
+  });
 }
 
 function toBytes(v: unknown): Uint8Array {
@@ -561,11 +683,16 @@ async function* entries(
       if (kept.size + 1 > bounds.maxEntries) {
         throw new ApiError(
           "payload_too_large",
-          `The bundle has more than ${bounds.maxEntries} files; this instance allows ${bounds.maxEntries - 1} asset files per version`,
+          `The bundle has at least ${kept.size + 1} files; this instance allows ${bounds.maxEntries - 1} asset files per version`,
           {
             limit: bounds.maxEntries - 1,
+            // The reader stops at the first file over the limit, so this is a lower bound.
             count: kept.size + 1,
-            next: "Leave out source maps (*.map). Never merge chunks to fit",
+            count_is_minimum: true,
+            next:
+              "Leave out source maps (tar --exclude='*.map', as commands.curl does) and files the page " +
+              "does not load. Never merge chunks to fit. The instance operator can raise " +
+              `MAX_ASSETS_PER_VERSION (up to ${LIMITS.maxAssetsCeiling})`,
           },
         );
       }
@@ -601,6 +728,7 @@ async function* entries(
         continue;
       }
       total += size;
+      if (bounds.reserve) await bounds.reserve(size);
       const bytes = new Uint8Array(size);
       if ((await src.readInto(bytes)) < size) {
         throw invalid(`The bundle ends in the middle of ${echo(path)}`);

@@ -3,7 +3,7 @@
 // objects go to R2 first under a unique per-attempt prefix `artifacts/<id>/v<n>.<nonce>/`, then
 // one guarded D1 batch inserts the version row (and, for a publish, the artifact row), advances
 // current_version and consumes the upload ticket, or does none of it. A killed invocation can only
-// leave unreferenced objects under its own attempt prefix (plinth-admin sweep-orphans removes them).
+// leave unreferenced objects under its own attempt prefix (the admin command sweep-orphans removes them).
 import {
   type ArtifactType,
   type ArtifactTypeDef,
@@ -63,6 +63,12 @@ export interface StagedVersion {
 export interface Stager {
   /** `artifacts/<id>/v<n>.<nonce>/` */
   readonly prefix: string;
+  /**
+   * Wait until a file of `size` bytes fits the in-flight budget (or nothing is in flight), so the
+   * caller allocates it only then. With it, the file bytes alive at once stay within
+   * max(LIMITS.bundleInFlightBytes, the largest file), not one file more.
+   */
+  reserve(size: number): Promise<void>;
   /** Validate, hash, then reuse or put one file; awaits back-pressure from the in-flight budget. */
   add(path: string, bytes: Uint8Array): Promise<void>;
   /** An inline `{path, sha256}`: reuse that file from the current version. */
@@ -290,6 +296,12 @@ export class VersionStager implements Stager {
   capabilitiesOverride: string | null | undefined;
   /** Restore returns no warnings. */
   scan = true;
+  /**
+   * The owner's free storage when the attempt began (bundles): a put that would go past it is
+   * refused at once, so a refused or abandoned attempt never writes more than the quota allows.
+   * The commit batch's quota guard stays the authority.
+   */
+  storageRoom: { limit: number; used: number } | null = null;
 
   constructor(
     private readonly ctx: Ctx,
@@ -553,6 +565,13 @@ export class VersionStager implements Stager {
     }
   }
 
+  async reserve(size: number): Promise<void> {
+    while (this.running.size > 0 && this.inflightBytes + size > LIMITS.bundleInFlightBytes) {
+      await Promise.race(this.running);
+    }
+    this.throwIfFailed();
+  }
+
   private async put(path: string, bytes: Uint8Array, contentType: string): Promise<void> {
     const size = bytes.byteLength;
     while (
@@ -563,6 +582,10 @@ export class VersionStager implements Stager {
       await Promise.race(this.running);
     }
     this.throwIfFailed();
+    const room = this.storageRoom;
+    if (room && room.used + this.writtenBytes + size > room.limit) {
+      throw storageError(room.limit, room.used, this.writtenBytes + size);
+    }
     this.inflightBytes += size;
     this.written++;
     this.writtenBytes += size;
@@ -734,8 +757,18 @@ export async function openVersionStager(ctx: Ctx, target: VersionTarget): Promis
   return new VersionStager(ctx, target, await currentVersionRow(ctx, target));
 }
 
-export async function openStager(ctx: Ctx, target: VersionTarget): Promise<Stager> {
-  return openVersionStager(ctx, target);
+/**
+ * `storageRoom`: the owner's quota and use when the attempt began; puts past it are refused while
+ * streaming instead of only at commit (the bundle path).
+ */
+export async function openStager(
+  ctx: Ctx,
+  target: VersionTarget,
+  opts: { storageRoom?: { limit: number; used: number } } = {},
+): Promise<Stager> {
+  const s = await openVersionStager(ctx, target);
+  s.storageRoom = opts.storageRoom ?? null;
+  return s;
 }
 
 // ---------- the commit ----------
@@ -765,7 +798,7 @@ export async function storageUsed(ctx: Ctx, ownerId: string): Promise<number> {
   return row?.used ?? 0;
 }
 
-function storageError(limit: number, used: number, adding: number): ApiError {
+export function storageError(limit: number, used: number, adding: number): ApiError {
   return new ApiError(
     "quota_exceeded",
     `Storage limit reached (${Math.round(limit / 1024 / 1024)} MB). Delete artifacts to free space.`,

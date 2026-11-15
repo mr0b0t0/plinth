@@ -44,6 +44,7 @@ export function bundleHandler(deps: StageDeps = stageDeps): Handler<AppEnv> {
         authorization: c.req.header("authorization"),
         contentLength: c.req.header("content-length"),
         body: c.req.raw.body,
+        signal: c.req.raw.signal,
       },
       deps,
     );

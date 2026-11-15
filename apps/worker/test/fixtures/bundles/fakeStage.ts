@@ -100,6 +100,7 @@ export function fakeStage(opts: FakeOptions = {}): { deps: StageDeps; log: FakeL
       let bytes = 0;
       const stager: Stager = {
         prefix,
+        async reserve() {},
         async add(path, data) {
           await opts.beforeAdd?.(path, prefix);
           paths.push(path);

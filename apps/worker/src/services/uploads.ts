@@ -11,7 +11,6 @@ import {
   type ArtifactType,
   type BundleResult,
   LIMITS,
-  MIN_UPLOAD_CLI_VERSION,
   type PublishResult,
   SCOPES,
   type Scope,
@@ -21,7 +20,7 @@ import {
   typeDef,
   UPLOAD_TOKEN_PREFIX,
 } from "@plinth/shared";
-import { PLINTH_VERSION } from "../app/version.ts";
+import { cliPublishReleased, isReleaseAtLeast, PLINTH_VERSION } from "../app/version.ts";
 import { parseScopes } from "../auth/principal.ts";
 import {
   appUrl,
@@ -45,6 +44,8 @@ import {
   newArtifactTarget,
   openStager,
   type Stager,
+  storageError,
+  storageUsed,
   updateTarget,
   type VersionTarget,
 } from "./stage.ts";
@@ -250,34 +251,30 @@ export async function startUpload(
   };
 }
 
+/** The archive part of commands.curl (and of the hints that point at it). */
+export const TAR_PIPE = "COPYFILE_DISABLE=1 tar --exclude='*.map' -cf - . | gzip -c";
+
 /**
  * The bundle request as one shell line (bash or zsh). The token reaches curl through a process
  * substitution read by `-H @file`, so it is never in curl's argv; printf is a shell builtin.
+ * The tar goes through gzip rather than `tar -z`: bsdtar (macOS) pads `tar -czf -` with NUL
+ * bytes past the gzip member when it writes to a pipe (the server tolerates that too).
+ * COPYFILE_DISABLE stops macOS adding `._*` AppleDouble entries, and source maps stay out, as
+ * the CLI leaves them out.
  */
 export function curlCommand(token: string, uploadUrl: string): string {
   return (
-    "cd <folder> && tar -czf - . | curl -sS --fail-with-body --max-time 600 -A plinth-agent/1 " +
+    `cd <folder> && ${TAR_PIPE} | curl -sS --fail-with-body --max-time 600 -A plinth-agent/1 ` +
     `-H @<(printf 'Authorization: Bearer %s' '${token}') ` +
     `-H 'Content-Type: application/gzip' --data-binary @- '${uploadUrl}'`
   );
 }
 
-/** A plain release version x.y.z at or above `min`. */
-export function isReleaseAtLeast(version: string, min: string): boolean {
-  const v = /^(\d+)\.(\d+)\.(\d+)$/.exec(version);
-  const m = /^(\d+)\.(\d+)\.(\d+)$/.exec(min);
-  if (!v || !m) return false;
-  for (let i = 1; i <= 3; i++) {
-    const a = Number(v[i]);
-    const b = Number(m[i]);
-    if (a !== b) return a > b;
-  }
-  return true;
-}
+export { isReleaseAtLeast };
 
 /** The CLI form, offered only on release builds that ship `plinth upload` (macOS and Linux). */
 export function npxCommand(version: string, token: string, uploadUrl: string): string | null {
-  if (!isReleaseAtLeast(version, MIN_UPLOAD_CLI_VERSION)) return null;
+  if (!cliPublishReleased(version)) return null;
   return `PLINTH_UPLOAD_TOKEN='${token}' npx -y @mr0b0t0/plinth@${version} upload <folder> --to '${uploadUrl}'`;
 }
 
@@ -292,7 +289,7 @@ export function uploadNext(o: {
       "commands.curl in bash or zsh with a shell timeout of at least 10 minutes" +
       (o.npx ? " (or commands.npx where Node is available)" : "") +
       ". It prints JSON: give the user its url.",
-    "If it lists warnings, fix them and publish again with a new start_upload.",
+    "If it lists warnings, fix them and publish again with a new start_upload; not_scanned needs no action.",
     "The token works once, for 30 minutes; never put it in a URL, a file or a message.",
   ];
   if (o.visibility) {
@@ -325,6 +322,12 @@ export interface BundleRequest {
   /** The Content-Length header as sent. */
   contentLength: string | undefined;
   body: ReadableStream<Uint8Array> | null;
+  /**
+   * The request's signal (compatibility flag enable_request_signal): it aborts when the client
+   * disconnects, and the attempt's cleanup is then handed to waitUntil, which outlives the
+   * request; an `await` in the handler may be cancelled with it.
+   */
+  signal?: AbortSignal;
 }
 
 /** The upload-token check: format first (no database), so strangers learn nothing. */
@@ -358,7 +361,7 @@ export async function redeemBundle(
         {
           limit_bytes: maxBundle,
           size_bytes: declared,
-          next: "Leave out source maps (*.map) and files the page does not load, or compress the tar (tar -czf)",
+          next: "Leave out source maps (*.map) and files the page does not load, and gzip the tar (the commands.curl from start_upload does both)",
         },
       );
     }
@@ -367,14 +370,50 @@ export async function redeemBundle(
   const tokenHash = await hashToken(token);
   const claim = randomString(24);
   const ticket = await takeLease(w, req.uploadId, tokenHash, claim);
+  // The bundle must arrive within the receiving lease: past it another request may take the
+  // lease, and sweep-orphans' floor assumes no attempt commits after its ticket's lifetime.
+  const deadline = Date.now() + TTL.uploadReceivingMs;
 
   let stager: Stager | null = null;
   let committing = false;
+  // Cleanup runs once: on a failure, or as soon as the client disconnects (the body read may
+  // only fail later, or the invocation may be cancelled first). It goes through waitUntil so it
+  // finishes even when the request does not. Once the commit has begun, commitStaged owns it.
+  let abortedStager: Stager | null = null;
+  let released: Promise<void> | null = null;
+  const cleanup = (): Promise<void> => {
+    const tasks: Promise<unknown>[] = [];
+    if (stager && !committing && abortedStager !== stager) {
+      abortedStager = stager;
+      tasks.push(stager.abort().catch(() => undefined));
+    }
+    released ??= releaseLease(w, ticket.id, claim);
+    tasks.push(released);
+    const done = Promise.all(tasks).then(() => undefined);
+    w.waitUntil(done);
+    return done;
+  };
+  const onDisconnect = () => {
+    if (!committing) void cleanup();
+  };
+  req.signal?.addEventListener("abort", onDisconnect, { once: true });
+  const inTime = () => {
+    if (Date.now() > deadline) {
+      throw new ApiError(
+        "invalid_input",
+        `The bundle took longer than ${TTL.uploadReceivingMs / 60_000} minutes to arrive`,
+        {
+          reason: "upload_too_slow",
+          next: "Send it again on a faster connection (the ticket keeps its remaining attempts), and leave out files the page does not load",
+        },
+      );
+    }
+  };
   try {
     const ctx = await ticketCtx(w, ticket);
     if (!req.body) {
       throw new ApiError("invalid_input", "Send the tar as the request body", {
-        next: "cd <folder> && tar -czf - . | curl ... --data-binary @- (the commands.curl from start_upload)",
+        next: `cd <folder> && ${TAR_PIPE} | curl ... --data-binary @- (the commands.curl from start_upload)`,
       });
     }
     const def = typeDef(ticket.artifact_type);
@@ -393,6 +432,15 @@ export async function redeemBundle(
     }
     const target = await ticketTarget(ctx, ticket, deps);
     await deps.enforcePublishRate(ctx);
+    // An account already at its quota stages nothing; below it, the stager refuses puts past the
+    // room left, so an abandoned attempt cannot leave more than that behind.
+    const ownerId = target.mode === "update" ? target.artifact.ownerId : ticket.user_id;
+    const storageLimit = w.config.maxStorageBytesPerUser;
+    const used = await storageUsed(ctx, ownerId);
+    if (used >= storageLimit) throw storageError(storageLimit, used, 0);
+    stager = await deps.openStager(ctx, target, { storageRoom: { limit: storageLimit, used } });
+    if (req.signal?.aborted) throw new ApiError("invalid_input", "The client went away");
+    const staging = stager;
     const reader = readBundle(req.body, {
       maxRawBytes: maxBundle,
       maxInflatedBytes: maxBundle,
@@ -401,12 +449,16 @@ export async function redeemBundle(
       maxEntries: w.config.maxAssetsPerVersion + 1,
       maxMetaBytes: LIMITS.maxTarMetaBytes,
       sourcePath: def.sourcePath,
+      reserve: (size) => staging.reserve(size),
     });
-    stager = await deps.openStager(ctx, target);
-    for await (const entry of reader) await stager.add(entry.path, entry.bytes);
+    for await (const entry of reader) {
+      inTime();
+      await stager.add(entry.path, entry.bytes);
+    }
     const staged = await stager.finish(
       reader.summary.strippedPrefix ? { stripPrefix: reader.summary.strippedPrefix } : undefined,
     );
+    inTime();
     // From here on commitStaged owns cleanup: it aborts the stager itself when the batch fails,
     // and nothing here may delete objects a committed version references.
     committing = true;
@@ -425,9 +477,10 @@ export async function redeemBundle(
       },
     };
   } catch (e) {
-    if (stager && !committing) await stager.abort().catch(() => undefined);
-    await releaseLease(w, ticket.id, claim);
+    await cleanup();
     throw await afterFailure(w, ticket, tokenHash, e);
+  } finally {
+    req.signal?.removeEventListener("abort", onDisconnect);
   }
 }
 
@@ -505,9 +558,21 @@ async function stateError(w: BundleEnv, t: TicketRow): Promise<ApiError> {
       },
     );
   }
+  // The lease that blocks this one: this ticket's own, or another ticket of the same user's.
+  const other = await w.env.DB.prepare(
+    `SELECT max(receiving_until) AS until FROM upload_tickets
+      WHERE user_id = ?1 AND state = 'open' AND receiving_until > ?2`,
+  )
+    .bind(t.user_id, nowIso())
+    .first<{ until: string | null }>();
+  const until = other?.until ?? null;
   return new ApiError("conflict", "Another upload of yours is in progress; wait for it", {
     reason: "upload_running",
-    next: "Wait for the other bundle request to finish, then send this one again",
+    receiving_until: until,
+    retry_after: until ? Math.max(1, Math.ceil((Date.parse(until) - Date.now()) / 1000)) : null,
+    next:
+      "Wait for the other bundle request to finish, then send this one again" +
+      (until ? ` (its lease ends at ${until} at the latest)` : ""),
   });
 }
 
