@@ -13,6 +13,12 @@ export class CliError extends Error {
   }
 }
 
+/**
+ * A request that got no usable answer: the connection dropped, or a proxy answered in place of
+ * Plinth. It may still have been applied, so the caller checks before it reports a failure.
+ */
+export class LostResponse extends CliError {}
+
 /** Plinth's `{ error: { code, message, details } }`. */
 export class ApiError extends Error {
   constructor(status, code, message, details) {
@@ -65,7 +71,7 @@ function networkError(url, e) {
   if (/redirect/i.test(cause)) {
     return new CliError(`${origin} answered with a redirect; plinth does not follow redirects`);
   }
-  return new CliError(`Could not reach ${origin}: ${cause}`);
+  return new LostResponse(`Could not reach ${origin}: ${cause}`);
 }
 
 function safeOrigin(url) {
@@ -88,13 +94,21 @@ export function printable(text) {
 
 /** Parse a response: JSON on success, ApiError on Plinth's error envelope, CliError otherwise. */
 export async function readJson(res, what) {
-  const text = await res.text();
+  let text;
+  try {
+    text = await res.text();
+  } catch (e) {
+    throw new LostResponse(
+      `${what}: the connection broke while the answer arrived (${e?.message ?? e})`,
+    );
+  }
   let body = null;
   try {
     body = text ? JSON.parse(text) : null;
   } catch {}
   if (res.ok) {
-    if (body === null) throw new CliError(`${what}: the answer was not JSON (HTTP ${res.status})`);
+    if (body === null)
+      throw new LostResponse(`${what}: the answer was not JSON (HTTP ${res.status})`);
     return body;
   }
   const err = body?.error;
@@ -102,7 +116,10 @@ export async function readJson(res, what) {
     throw new ApiError(res.status, err.code, String(err.message ?? err.code), err.details);
   }
   const snippet = printable(text.slice(0, 200));
-  throw new CliError(`${what}: HTTP ${res.status}${snippet ? ` ${snippet}` : ""}`);
+  const message = `${what}: HTTP ${res.status}${snippet ? ` ${snippet}` : ""}`;
+  // A 5xx that is not Plinth's own (a proxy timeout, a 502 or 524 from the edge) says nothing
+  // about whether Plinth applied the request.
+  throw res.status >= 500 ? new LostResponse(message) : new CliError(message);
 }
 
 /**

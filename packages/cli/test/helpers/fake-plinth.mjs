@@ -28,6 +28,12 @@ export async function startFakePlinth(options = {}) {
     redirectApi: false,
     refreshDelayMs: options.refreshDelayMs ?? 0,
     forgetOnce: false, // the next PUT reports every reused file as missing
+    // A lost response: "after" commits (or refuses) and then drops the connection without an
+    // answer; "before" reads the whole body and drops it without committing; "midway" (bundles
+    // only) drops it after the first chunk. Applies to the next
+    // bundle POST (dropBundle) or inline PUT (dropPut), then resets.
+    dropBundle: null,
+    dropPut: null,
     limits: {
       max_html_bytes: 5 * 1024 * 1024,
       max_doc_bytes: 1024 * 1024,
@@ -131,6 +137,9 @@ export async function startFakePlinth(options = {}) {
       },
     };
   }
+
+  /** Drop the connection without an answer (the client sees a lost response). */
+  const drop = (res) => res.socket.destroy();
 
   async function body(req) {
     const chunks = [];
@@ -250,20 +259,54 @@ export async function startFakePlinth(options = {}) {
         if (!principal(req)) return apiError(res, 401, "unauthorized", "no");
         return send(res, 200, { items: [] });
       }
+      // GET /uploads/:id: the ticket's state, for a client whose bundle answer was lost.
+      const status = /^\/api\/v1\/uploads\/([a-z0-9]{20})$/.exec(p);
+      if (status && req.method === "GET") {
+        const t = state.tickets.get(status[1]);
+        const m = /^Bearer (plinth_up_\S+)$/.exec(req.headers.authorization ?? "");
+        if (!m) return apiError(res, 401, "unauthorized", "Upload token only");
+        if (!t || m[1] !== t.token) return apiError(res, 404, "not_found", "Not found");
+        const state_ = t.used ? "used" : t.dead ? "dead" : "open";
+        return send(res, 200, {
+          upload_id: status[1],
+          state: state_,
+          mode: t.mode,
+          id: t.mode === "update" ? t.artifact_id : t.reserved,
+          version: t.used ? t.version : null,
+          url: t.used ? t.url : null,
+          expires_at: new Date(Date.now() + 1800_000).toISOString(),
+          receiving_until: null,
+          next: "...",
+        });
+      }
       const bundle = /^\/api\/v1\/uploads\/([a-z0-9]{20})\/bundle$/.exec(p);
       if (bundle && req.method === "POST") {
         const t = state.tickets.get(bundle[1]);
         const m = /^Bearer (plinth_up_\S+)$/.exec(req.headers.authorization ?? "");
         if (!t || !m || m[1] !== t.token) return apiError(res, 404, "not_found", "Not found");
         if (t.used)
-          return apiError(res, 409, "conflict", "Used", { reason: "upload_used", url: t.url });
+          return apiError(res, 409, "conflict", "Used", {
+            reason: "upload_used",
+            id: t.result_id,
+            version: t.version,
+            url: t.url,
+          });
+        if (t.dead) return apiError(res, 409, "conflict", "Dead", { reason: "upload_dead" });
+        const dropping = state.dropBundle;
+        state.dropBundle = null;
+        if (dropping === "midway") {
+          // The connection breaks while the bundle is still arriving.
+          await new Promise((r) => req.once("data", r));
+          return drop(res);
+        }
         const raw = await body(req);
+        if (dropping === "before") return drop(res);
         state.lastBundle = raw;
         const entries = readTar(raw);
         const files = new Map(entries.map((e) => [e.path, e.bytes]));
         let a;
         if (t.mode === "publish") {
-          a = { id: rid(20), slug: `page-${rid(6)}`, type: t.type, versions: [] };
+          a = { id: t.reserved, slug: `page-${rid(6)}`, type: t.type, versions: [] };
           state.artifacts.set(a.id, a);
         } else {
           a = state.artifacts.get(t.artifact_id);
@@ -274,16 +317,23 @@ export async function startFakePlinth(options = {}) {
           }
           // The body the real server sends (services/uploads.ts afterFailure): a version conflict
           // on a bundle carries reason "conflict" and a next step.
-          if (a.versions.length !== t.base_version)
+          if (a.versions.length !== t.base_version) {
+            t.dead = true;
+            if (dropping === "after") return drop(res);
             return apiError(res, 409, "conflict", "Not current", {
               current_version: a.versions.length,
               reason: "conflict",
               next: `v${a.versions.length} is current; check what changed (get_artifact), then start_upload again with base_version ${a.versions.length}`,
             });
+          }
         }
         t.used = true;
         const result = commit(a, files);
         t.url = result.url;
+        t.result_id = result.id;
+        t.version = result.version;
+        state.bundleCommits = (state.bundleCommits ?? 0) + 1;
+        if (dropping === "after") return drop(res);
         return send(res, t.mode === "publish" ? 201 : 200, {
           ...result,
           bundle: { entries: entries.length, skipped: [], stripped_prefix: null },
@@ -317,6 +367,7 @@ export async function startFakePlinth(options = {}) {
             mode: "publish",
             type: input.type ?? "html",
             title: input.title,
+            reserved: rid(20),
           });
         }
         state.lastUploadInput = input;
@@ -325,7 +376,9 @@ export async function startFakePlinth(options = {}) {
           upload_token: token,
           expires_at: new Date(Date.now() + 1800_000).toISOString(),
           upload_url: options.uploadUrl ?? `${origin}/api/v1/uploads/${id}/bundle`,
-          target: { mode: input.id ? "update" : "publish", type: input.type ?? "html" },
+          target: input.id
+            ? { mode: "update", id: input.id, type: input.type ?? "html" }
+            : { mode: "publish", id: state.tickets.get(id).reserved, type: input.type ?? "html" },
           limits: state.limits,
           content_isolation: "origin",
           commands: { curl: "..." },
@@ -375,7 +428,13 @@ export async function startFakePlinth(options = {}) {
             return apiError(res, 400, "invalid_input", "Files not found", {
               missing_paths: missing,
             });
-          return send(res, 200, commit(a, files));
+          const dropping = state.dropPut;
+          state.dropPut = null;
+          if (dropping === "before") return drop(res);
+          const committed = commit(a, files);
+          state.putCommits = (state.putCommits ?? 0) + 1;
+          if (dropping === "after") return drop(res);
+          return send(res, 200, committed);
         }
       }
       return apiError(res, 404, "not_found", `No route ${req.method} ${p}`);

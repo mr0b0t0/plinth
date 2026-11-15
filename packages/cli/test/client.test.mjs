@@ -407,6 +407,162 @@ describe("plinth upload", () => {
   });
 });
 
+describe("a lost response", () => {
+  async function ticket(input = {}) {
+    const res = await fetch(`${fake.origin}/api/v1/uploads`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${PAT}`, "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    });
+    return res.json();
+  }
+  const bundles = (from) => since(from).filter((q) => q.path.endsWith("/bundle"));
+  const statusReads = (from) =>
+    since(from).filter(
+      (q) => q.method === "GET" && /^\/api\/v1\/uploads\/[a-z0-9]{20}$/.test(q.path),
+    );
+  const bigFolder = () => ({
+    "index.html": "<title>big</title>",
+    "small.js": "2",
+    "one.bin": randomBytes(13 * 1024 * 1024),
+    "two.bin": randomBytes(13 * 1024 * 1024),
+  });
+
+  it("publish: the server commits, then drops the connection; it reports that version and sends nothing twice", async () => {
+    const before = fake.state.artifacts.size;
+    const commits = fake.state.bundleCommits ?? 0;
+    const from = fake.state.requests.length;
+    fake.state.dropBundle = "after";
+    const r = await plinth(["publish", build(site(3)), "--json"], { extraEnv: asPat() });
+    assert.equal(r.code, 0, r.stderr);
+    const out = JSON.parse(r.stdout);
+    assert.equal(out.version, 1);
+    assert.equal(out.verified, true);
+    assert.equal(out.recovered, true);
+    assert.match(out.url, /\/a\/page-/);
+    assert.match(r.stderr, /answer was lost/);
+    assert.equal(bundles(from).length, 1);
+    assert.equal(fake.state.bundleCommits, commits + 1);
+    assert.equal(fake.state.artifacts.size, before + 1);
+    // It asked the ticket's status with the upload token, on the same origin, before anything else.
+    const status = statusReads(from);
+    assert.equal(status.length, 1);
+    assert.match(status[0].authorization, /^Bearer plinth_up_/);
+    for (const q of since(from).filter((x) => !x.path.startsWith("/api/v1/uploads/")))
+      assert.ok(!q.authorization?.includes("plinth_up_"), q.path);
+  });
+
+  it("publish: dropped before the commit, it says nothing was published (exit 1) and does not resend", async () => {
+    const before = fake.state.artifacts.size;
+    const from = fake.state.requests.length;
+    fake.state.dropBundle = "before";
+    const r = await plinth(["publish", build(site(2))], { extraEnv: asPat() });
+    assert.equal(r.code, 1, r.stderr);
+    assert.match(r.stderr, /nothing was published/i);
+    assert.equal(bundles(from).length, 1);
+    assert.equal(statusReads(from).length, 1);
+    assert.equal(fake.state.artifacts.size, before);
+  });
+
+  it("publish: a connection lost while the bundle is still being sent fails at once, with no status check", async () => {
+    const before = fake.state.artifacts.size;
+    const from = fake.state.requests.length;
+    fake.state.dropBundle = "midway";
+    const r = await plinth(["publish", build(bigFolder())], { extraEnv: asPat() });
+    assert.equal(r.code, 1, r.stderr);
+    assert.match(r.stderr, /did not arrive in full, so nothing was published/);
+    assert.equal(statusReads(from).length, 0);
+    assert.equal(fake.state.artifacts.size, before);
+  });
+
+  it("publish --id, big update: a conflict whose answer was lost still exits 3", async () => {
+    const a = fake.seed({ "index.html": "<title>big</title>", "small.js": "1" });
+    const from = fake.state.requests.length;
+    fake.state.bumpBeforeBundle = () => fake.bump(a);
+    fake.state.dropBundle = "after";
+    try {
+      const r = await plinth(["publish", build(bigFolder()), "--id", a.id], { extraEnv: asPat() });
+      assert.equal(r.code, 3, r.stderr);
+      assert.match(r.stderr, new RegExp(`${a.id} changed since v1`));
+    } finally {
+      fake.state.bumpBeforeBundle = null;
+      fake.state.dropBundle = null;
+    }
+    assert.equal(bundles(from).length, 1);
+    assert.equal(a.versions.length, 2);
+  });
+
+  it("publish --id, inline: the PUT commits and the answer is lost; it reads the artifact and reports v2, one PUT", async () => {
+    const a = fake.seed(site(2));
+    const dir = build({ ...site(2), "assets/a1.js": "console.log('new');" });
+    const from = fake.state.requests.length;
+    fake.state.dropPut = "after";
+    const r = await plinth(["publish", dir, "--id", a.id, "--json"], { extraEnv: asPat() });
+    assert.equal(r.code, 0, r.stderr);
+    const out = JSON.parse(r.stdout);
+    assert.equal(out.version, 2);
+    assert.equal(out.verified, true);
+    assert.equal(out.recovered, true);
+    assert.equal(since(from).filter((q) => q.method === "PUT").length, 1);
+    assert.equal(a.versions.length, 2);
+  });
+
+  it("publish --id, inline: lost before the commit, it says nothing was published (exit 1)", async () => {
+    const a = fake.seed(site(2));
+    const dir = build({ ...site(2), "assets/a1.js": "console.log('new');" });
+    fake.state.dropPut = "before";
+    const r = await plinth(["publish", dir, "--id", a.id], { extraEnv: asPat() });
+    assert.equal(r.code, 1, r.stderr);
+    assert.match(r.stderr, /nothing was published/i);
+    assert.equal(a.versions.length, 1);
+  });
+
+  it("upload: the server commits, then drops the connection; it prints the existing version and does not publish twice", async () => {
+    const t = await ticket({ type: "html" });
+    const before = fake.state.artifacts.size;
+    const from = fake.state.requests.length;
+    fake.state.dropBundle = "after";
+    const r = await plinth(["upload", build(site(2)), "--to", t.upload_url], {
+      extraEnv: { PLINTH_UPLOAD_TOKEN: t.upload_token },
+    });
+    assert.equal(r.code, 0, r.stderr);
+    const out = JSON.parse(r.stdout);
+    assert.equal(out.id, t.target.id);
+    assert.equal(out.version, 1);
+    assert.equal(out.recovered, true);
+    assert.match(out.url, /\/a\/page-/);
+    assert.match(r.stderr, /Published v1: .*answer was lost/s);
+    assert.equal(bundles(from).length, 1);
+    assert.equal(statusReads(from).length, 1);
+    assert.equal(fake.state.artifacts.size, before + 1);
+
+    // Running it again is safe too: the used ticket is refused, and still nothing is added.
+    const again = await plinth(["upload", build(site(2)), "--to", t.upload_url], {
+      extraEnv: { PLINTH_UPLOAD_TOKEN: t.upload_token },
+    });
+    assert.equal(again.code, 1);
+    assert.match(again.stderr, /already published/);
+    assert.equal(fake.state.artifacts.size, before + 1);
+  });
+
+  it("upload: a conflict whose answer was lost exits 3", async () => {
+    const a = fake.seed(site(1));
+    const t = await ticket({ id: a.id, base_version: 1 });
+    fake.state.bumpBeforeBundle = () => fake.bump(a);
+    fake.state.dropBundle = "after";
+    try {
+      const r = await plinth(["upload", build(site(1)), "--to", t.upload_url], {
+        extraEnv: { PLINTH_UPLOAD_TOKEN: t.upload_token },
+      });
+      assert.equal(r.code, 3, r.stderr);
+      assert.match(r.stderr, /changed since start_upload/);
+    } finally {
+      fake.state.bumpBeforeBundle = null;
+      fake.state.dropBundle = null;
+    }
+  });
+});
+
 describe("origin and credentials", () => {
   it("never sends PLINTH_TOKEN to another --url (exit 2) and never writes it to disk", async () => {
     const r = await plinth(["whoami", "--url", "https://other.example"], {

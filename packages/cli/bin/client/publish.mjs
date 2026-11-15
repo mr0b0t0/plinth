@@ -7,6 +7,9 @@
 // read back and every file's hash compared.
 // upload: the agent's variant of the bundle step, with a ticket from start_upload; the token comes
 // from PLINTH_UPLOAD_TOKEN only, never from the command line.
+// A lost answer (the connection dropped, a proxy timeout) is never resent blindly: once the whole
+// body was sent the request may have committed, so the command asks first (the upload's status, or
+// the artifact for an inline update) and reports what it finds.
 import { readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import {
@@ -26,6 +29,7 @@ import {
   EXIT,
   formatBytes,
   guardedFetch,
+  LostResponse,
   printable,
   readJson,
 } from "./http.mjs";
@@ -135,12 +139,20 @@ async function instanceLimits(origin, ctx) {
   }
 }
 
-/** POST one gzipped tar to the upload URL with the upload token. */
+/**
+ * POST one gzipped tar to the upload URL with the upload token. A LostResponse from it means the
+ * whole body went out and no answer came back; a connection lost before that is a plain failure,
+ * since an incomplete tar never commits.
+ */
 export async function sendBundle({ uploadUrl, uploadToken, files, ctx }) {
   const body = gzipTarStream(files);
   let streamError = null;
+  let sent = false;
   body.on("error", (e) => {
     streamError = e;
+  });
+  body.on("end", () => {
+    sent = true;
   });
   let res;
   try {
@@ -157,10 +169,101 @@ export async function sendBundle({ uploadUrl, uploadToken, files, ctx }) {
     });
   } catch (e) {
     if (streamError) throw new CliError(streamError.message);
+    if (e instanceof LostResponse && !sent) {
+      throw new CliError(
+        `${e.message}\nThe bundle did not arrive in full, so nothing was published (an incomplete upload never commits). Run the same command again.`,
+      );
+    }
     throw e;
   }
   return readJson(res, "POST bundle");
 }
+
+/** How long a lost bundle's status is watched while a request still holds its upload. */
+const STATUS_WAIT_MS = 30_000;
+const STATUS_POLL_MS = 2_000;
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/** GET /api/v1/uploads/<id>: the upload's state, with the upload token only, on its own origin. */
+async function uploadStatus({ uploadUrl, uploadToken, ctx }) {
+  const res = await guardedFetch(ctx.fetch)(uploadUrl.replace(/\/bundle$/, ""), {
+    headers: {
+      "User-Agent": ctx.userAgent,
+      Accept: "application/json",
+      Authorization: `Bearer ${uploadToken}`,
+    },
+  });
+  return readJson(res, "GET upload status");
+}
+
+/**
+ * The whole bundle was sent but its answer was lost, so it may have committed. Ask the upload
+ * (waiting while a request still holds it) instead of sending it again. Returns `{ id, version,
+ * url, recovered }` when it committed; otherwise throws: exit 3 when a conflict ended it.
+ */
+async function afterLostBundle(lost, { uploadUrl, uploadToken, ctx, conflictMessage, retry }) {
+  const deadline = Date.now() + STATUS_WAIT_MS;
+  let s;
+  for (;;) {
+    try {
+      s = await uploadStatus({ uploadUrl, uploadToken, ctx });
+    } catch (e) {
+      throw new CliError(
+        `${lost.message}\nThe whole bundle was sent, so it may have been published, but the upload's status could not be read (${e.message}). Check the artifact before sending it again; an upload commits at most once.`,
+      );
+    }
+    if (s.state !== "receiving" || Date.now() >= deadline) break;
+    await sleep(STATUS_POLL_MS);
+  }
+  if (s.state === "used") return { id: s.id, version: s.version, url: s.url, recovered: true };
+  if (s.state === "dead") throw new CliError(conflictMessage(), EXIT.conflict);
+  if (s.state === "receiving") {
+    throw new CliError(
+      `${lost.message}\nThe server is still working on the bundle. Check ${s.id} in a minute before sending it again; an upload commits at most once.`,
+    );
+  }
+  throw new CliError(
+    `${lost.message}\nThe answer was lost, and nothing was published with this upload (${s.state}). ${s.state === "open" ? retry.open : retry.ended}`,
+  );
+}
+
+/**
+ * An inline update whose answer was lost: read the artifact. Still at the base: nothing was
+ * published. One version past it and matching the folder: that is this update. Anything else is a
+ * conflict (exit 3).
+ */
+async function afterLostPut(lost, { api, ref, detail, base, files, ctx }) {
+  let now;
+  try {
+    now = await api.get(`/artifacts/${encodeURIComponent(detail.id)}`);
+  } catch (e) {
+    throw new CliError(
+      `${lost.message}\nIt may have been published, but ${ref} could not be read to check (${e.message}). Check it before you publish again.`,
+    );
+  }
+  if (now.version === base) {
+    throw new CliError(
+      `${lost.message}\nThe answer was lost, and nothing was published: ${ref} is still v${base}. Run the same command again.`,
+    );
+  }
+  const mine = await verify(api, { id: detail.id, version: base + 1 }, files);
+  if (mine.verified) {
+    return {
+      id: detail.id,
+      slug: now.slug,
+      version: base + 1,
+      url: now.url ?? `${ctx.origin}/a/${now.slug}`,
+      recovered: true,
+    };
+  }
+  if (mine.failed) throw new CliError(staleBase(ref, base)(now.version), EXIT.conflict);
+  throw new CliError(
+    `${lost.message}\n${ref} is now v${now.version}, but it could not be compared with the folder (${mine.note}). Check it before you publish again.`,
+  );
+}
+
+const LOST_NOTE =
+  "The server's answer was lost after it published; nothing was sent twice. Warnings, if there were any, were in that answer.";
 
 /**
  * A version conflict: someone published past the base. The bundle route sends it with
@@ -241,7 +344,7 @@ async function verify(api, result, files) {
 
 function report(result, check, opts, out) {
   if (opts.json) {
-    const { id, slug, version, url, content_url, stored, warnings } = result;
+    const { id, slug, version, url, content_url, stored, warnings, recovered } = result;
     out.stdout(
       JSON.stringify(
         {
@@ -253,15 +356,18 @@ function report(result, check, opts, out) {
           stored,
           warnings: warnings ?? [],
           verified: check.verified,
+          ...(recovered ? { recovered: true } : {}),
         },
         null,
         2,
       ),
     );
+    if (recovered) out.stderr(LOST_NOTE);
     if (check.note && !check.verified) out.stderr(check.note);
     return;
   }
   out.stdout(`Published v${result.version}: ${result.url}`);
+  if (result.recovered) out.stdout(LOST_NOTE);
   const s = result.stored;
   if (s) {
     out.stdout(
@@ -299,6 +405,12 @@ function utf8Text(f, bytes) {
     throw new CliError(`${f.path} is not valid UTF-8 text`);
   }
 }
+
+const RETRY_PUBLISH = { open: "Run the same command again.", ended: "Run the same command again." };
+const RETRY_UPLOAD = {
+  open: "Run the same command again (the upload keeps its remaining attempts).",
+  ended: "Call start_upload again for a new upload.",
+};
 
 /** plinth publish <dir> */
 export async function publish(dir, opts, ctx) {
@@ -357,7 +469,14 @@ export async function publish(dir, opts, ctx) {
         ctx,
       });
     } catch (e) {
-      throw apiFailure(e);
+      if (!(e instanceof LostResponse)) throw apiFailure(e);
+      result = await afterLostBundle(e, {
+        uploadUrl,
+        uploadToken: ticket.upload_token,
+        ctx,
+        conflictMessage: () => "This upload was ended by a conflict. Run the same command again.",
+        retry: RETRY_PUBLISH,
+      });
     }
   } else {
     await ctx.requireAuth();
@@ -414,14 +533,19 @@ export async function publish(dir, opts, ctx) {
           ...note,
         });
         try {
-          result = await api.put(`/artifacts/${encodeURIComponent(detail.id)}`, body());
+          try {
+            result = await api.put(`/artifacts/${encodeURIComponent(detail.id)}`, body());
+          } catch (e) {
+            const missing =
+              e instanceof ApiError && e.code === "invalid_input" ? e.details?.missing_paths : null;
+            if (!Array.isArray(missing) || missing.length === 0) throw e;
+            // The server no longer has those bytes: send them once with content.
+            for (const m of missing) withContent.add(typeof m === "string" ? m : m?.path);
+            result = await api.put(`/artifacts/${encodeURIComponent(detail.id)}`, body());
+          }
         } catch (e) {
-          const missing =
-            e instanceof ApiError && e.code === "invalid_input" ? e.details?.missing_paths : null;
-          if (!Array.isArray(missing) || missing.length === 0) throw e;
-          // The server no longer has those bytes: send them once with content.
-          for (const m of missing) withContent.add(typeof m === "string" ? m : m?.path);
-          result = await api.put(`/artifacts/${encodeURIComponent(detail.id)}`, body());
+          if (!(e instanceof LostResponse)) throw e;
+          result = await afterLostPut(e, { api, ref, detail, base, files, ctx });
         }
       } else {
         const ticket = await api.post("/uploads", { id: detail.id, base_version: base, ...note });
@@ -429,12 +553,23 @@ export async function publish(dir, opts, ctx) {
           expectedOrigin: ctx.origin,
           exitCode: EXIT.error,
         });
-        result = await sendBundle({
-          uploadUrl,
-          uploadToken: ticket.upload_token,
-          files: sendOrder(files, sourcePath),
-          ctx,
-        });
+        try {
+          result = await sendBundle({
+            uploadUrl,
+            uploadToken: ticket.upload_token,
+            files: sendOrder(files, sourcePath),
+            ctx,
+          });
+        } catch (e) {
+          if (!(e instanceof LostResponse)) throw e;
+          result = await afterLostBundle(e, {
+            uploadUrl,
+            uploadToken: ticket.upload_token,
+            ctx,
+            conflictMessage: () => staleBase(ref, base)(undefined),
+            retry: RETRY_PUBLISH,
+          });
+        }
       }
     } catch (e) {
       throw conflict(e, staleBase(ref, base)) ?? apiFailure(e);
@@ -472,6 +607,8 @@ export async function upload(dir, opts, ctx) {
   const sourcePath = SOURCE_FILES[type];
   const { limits } = await instanceLimits(origin, ctx);
   checkLimits(files, sourcePath, type, limits);
+  const changed = (now) =>
+    `The artifact changed since start_upload${now ? ` (now v${now})` : ""}. Read it again (get_artifact), then call start_upload with the new base_version.`;
   let result;
   try {
     result = await sendBundle({
@@ -481,13 +618,19 @@ export async function upload(dir, opts, ctx) {
       ctx,
     });
   } catch (e) {
-    throw (
-      conflict(
-        e,
-        (now) =>
-          `The artifact changed since start_upload${now ? ` (now v${now})` : ""}. Read it again (get_artifact), then call start_upload with the new base_version.`,
-      ) ?? apiFailure(e)
+    if (!(e instanceof LostResponse)) throw conflict(e, changed) ?? apiFailure(e);
+    const found = await afterLostBundle(e, {
+      uploadUrl,
+      uploadToken: token,
+      ctx,
+      conflictMessage: () => changed(undefined),
+      retry: RETRY_UPLOAD,
+    });
+    ctx.stdout(JSON.stringify(found, null, 2));
+    ctx.stderr(
+      `Published v${found.version}: ${found.url}\nThe server's answer was lost after it published; nothing was sent twice.`,
     );
+    return EXIT.ok;
   }
   ctx.stdout(JSON.stringify(result, null, 2));
   ctx.stderr(`Published v${result.version}: ${result.url}`);
