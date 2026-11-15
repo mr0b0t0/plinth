@@ -1661,7 +1661,10 @@ describe("an abandoned, slow or over-quota bundle leaves nothing behind", () => 
         if (prop === "put") {
           return async (key: string, value: Uint8Array, o?: R2PutOptions) => {
             if (key.endsWith("/index.html") && !key.startsWith(v1)) {
-              await db().delete(accessGrants).where(eq(accessGrants.email, editor.user.email)).run();
+              await db()
+                .delete(accessGrants)
+                .where(eq(accessGrants.email, editor.user.email))
+                .run();
             }
             return target.put(key, value, o);
           };
