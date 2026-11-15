@@ -772,6 +772,8 @@ async function* entries(
       }
       // Bounds, all checked against the declared size before a byte is allocated.
       if (kept.size + 1 > bounds.maxEntries) {
+        // maxEntries counts the source too, so this many fewer files fit.
+        const drop = kept.size + 1 - bounds.maxEntries;
         throw new ApiError(
           "payload_too_large",
           `The bundle has at least ${kept.size + 1} files; this instance allows ${bounds.maxEntries - 1} asset files per version`,
@@ -782,7 +784,7 @@ async function* entries(
             count_is_minimum: true,
             // The actionable part first: commands.curl already leaves out source maps.
             next:
-              `Remove at least ${kept.size + 1 - (bounds.maxEntries - 1)} files the page does not load ` +
+              `Remove at least ${drop} file${drop === 1 ? "" : "s"} the page does not load ` +
               "(and source maps, if your tar command did not leave them out with tar --exclude='*.map' " +
               "as commands.curl does). " +
               "Never merge chunks to fit. The instance operator can raise " +
