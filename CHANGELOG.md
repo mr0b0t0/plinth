@@ -37,8 +37,10 @@ Add a line under **Unreleased** in the pull request that makes a change people w
     neither: re-run setup (it adds both to an existing config and moves its `compatibility_date`
     up to the release's when that is later) or add them by hand. `plinth deploy` takes both from
     the release; `plinth start`, `pnpm local:start` and the Docker image add them to an existing
-    instance's config on start. On Workers Free the cron counts toward the account's 5 Cron
-    Triggers. See
+    instance's config on start. From a checkout, `pnpm build` and
+    `pnpm --filter @plinth/worker check-config` refuse a `wrangler.<env>.jsonc` that lacks either,
+    so the documented update stops before the migrations and `wrangler deploy`. On Workers Free
+    the cron counts toward the account's 5 Cron Triggers. See
     [docs/deploy-checklist.md](docs/deploy-checklist.md#6-upgrading-and-rolling-back).
 - **Reuse by hash**: an asset can be sent as `{path, sha256}` to reuse a file of the artifact's
   current version, so an update sends and stores only what changed. `get_artifact` and

@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "wrangler dev --port 8787",
-    "build": "wrangler deploy --dry-run --outdir dist",
+    "build": "node scripts/check-config.mjs && wrangler deploy --dry-run --outdir dist",
+    "check-config": "node scripts/check-config.mjs",
     "typecheck": "tsc --noEmit",
     "types": "wrangler types --strict-vars=false",
     "test": "vitest run",

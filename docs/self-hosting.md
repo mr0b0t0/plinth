@@ -210,6 +210,7 @@ To update later:
 ```sh
 git pull
 pnpm install
+pnpm --filter @plinth/worker check-config wrangler.production.jsonc
 pnpm build
 pnpm --filter @plinth/worker exec wrangler d1 migrations apply DB --remote --config wrangler.production.jsonc
 pnpm --filter @plinth/worker exec wrangler deploy --config wrangler.production.jsonc
@@ -221,11 +222,14 @@ stored versions.
 Your `wrangler.production.jsonc` keeps the compatibility flags and cron triggers it was written
 with. When a release adds one (0.4.0 adds the `enable_request_signal` flag, which lets an abandoned
 upload clean up after itself, and the hourly cron trigger `0 * * * *`, which sweeps what abandoned
-uploads leave), re-run `node scripts/setup.mjs --remote` with the arguments you first used, which
-adds the release's flags and cron triggers, moves `compatibility_date` up to the committed
-config's when that is later (a date you pinned earlier is replaced) and keeps the rest, or copy
-`compatibility_flags` and `triggers` from `apps/worker/wrangler.jsonc` by hand. [deploy-checklist.md](deploy-checklist.md#6-upgrading-and-rolling-back)
-lists what each release needs.
+uploads leave), `check-config` stops with the file and the missing lines, and so does `pnpm build`,
+which checks every `apps/worker/wrangler.<env>.jsonc` before it builds. Re-run
+`node scripts/setup.mjs --remote` with the arguments you first used, which adds the release's flags
+and cron triggers, moves `compatibility_date` up to the committed config's when that is later (a
+date you pinned earlier is replaced) and keeps the rest, or copy `compatibility_flags` and
+`triggers` from `apps/worker/wrangler.jsonc` by hand, then run the update again.
+[deploy-checklist.md](deploy-checklist.md#6-upgrading-and-rolling-back) lists what each release
+needs.
 
 ## Connect agents
 

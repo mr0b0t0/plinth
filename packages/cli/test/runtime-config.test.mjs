@@ -284,3 +284,63 @@ describe("deploys refuse a config without them", () => {
     assert.ok(!calls.some((m) => /> Cloudflare account/.test(m)));
   });
 });
+
+// A checkout deploy runs `wrangler deploy --config wrangler.<env>.jsonc` itself, so nothing on that
+// path runs setup's or plinth deploy's refusal. The Worker's build (which the documented update
+// runs before migrations and the deploy) and `check-config` refuse such a config.
+describe("checkout deploys refuse a per-environment config without them", () => {
+  const checkScript = path.join(workerDir, "scripts", "check-config.mjs");
+  const oldCfg = { ...runtimeBase(repoCfg), name: "plinth", triggers: undefined };
+  oldCfg.compatibility_flags = ["nodejs_compat"];
+  const runCheck = (dir, ...files) =>
+    spawnSync(process.execPath, [checkScript, "--dir", dir, ...files], { encoding: "utf8" });
+  const workerCopy = (name) => {
+    const dir = path.join(tmp, name);
+    mkdirSync(dir, { recursive: true });
+    cpSync(path.join(workerDir, "wrangler.jsonc"), path.join(dir, "wrangler.jsonc"));
+    return dir;
+  };
+
+  it("passes the committed config and a setup-refreshed one", () => {
+    const dir = workerCopy("check-ok");
+    const refreshed = refreshRuntime(oldCfg, repoCfg);
+    writeFileSync(path.join(dir, "wrangler.production.jsonc"), JSON.stringify(refreshed, null, 2));
+    const r = runCheck(dir);
+    assert.equal(r.status, 0, r.stderr);
+  });
+
+  it("refuses every wrangler.<env>.jsonc that setup wrote before 0.4.0, naming the file", () => {
+    const dir = workerCopy("check-old");
+    writeFileSync(path.join(dir, "wrangler.production.jsonc"), JSON.stringify(oldCfg, null, 2));
+    writeFileSync(
+      path.join(dir, "wrangler.staging.jsonc"),
+      `// written by setup\n${JSON.stringify({ ...oldCfg, compatibility_flags: ["nodejs_compat", FLAG] }, null, 2)}`,
+    );
+    const r = runCheck(dir);
+    assert.equal(r.status, 1);
+    assert.match(r.stderr, /wrangler\.production\.jsonc: [^\n]*enable_request_signal/);
+    assert.match(r.stderr, /wrangler\.staging\.jsonc: [^\n]*0 \* \* \* \*/);
+    assert.match(r.stderr, /scripts\/setup\.mjs --remote/);
+    // Naming one file checks only that one.
+    assert.equal(runCheck(dir, "wrangler.jsonc").status, 0);
+    assert.equal(runCheck(dir, "wrangler.production.jsonc").status, 1);
+    assert.equal(runCheck(dir, "wrangler.missing.jsonc").status, 1);
+  });
+
+  it("the Worker's build runs the check first, and turbo rebuilds when a per-env config changes", () => {
+    const pkg = JSON.parse(readFileSync(path.join(workerDir, "package.json"), "utf8"));
+    assert.match(pkg.scripts.build, /^node scripts\/check-config\.mjs && /);
+    assert.equal(pkg.scripts["check-config"], "node scripts/check-config.mjs");
+    const turbo = JSON.parse(readFileSync(path.join(root, "turbo.json"), "utf8"));
+    assert.ok(turbo.tasks["@plinth/worker#build"].inputs.includes("wrangler.*.jsonc"));
+  });
+
+  it("the documented checkout update runs the check before migrations and the deploy", () => {
+    const doc = readFileSync(path.join(root, "docs", "self-hosting.md"), "utf8");
+    const block = doc.split("To update later:")[1].split("```")[1];
+    const check = block.indexOf("check-config");
+    assert.ok(check > 0, "the update block runs check-config");
+    assert.ok(check < block.indexOf("migrations apply"));
+    assert.ok(check < block.indexOf("wrangler deploy"));
+  });
+});

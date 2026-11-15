@@ -74,13 +74,17 @@ the real adapter was accepted on 2026-11-13; `noreply@plinth.aconite.io` is not 
 From the repo root, with `wrangler login` done for the account:
 
 ```sh
-pnpm install && pnpm build
+pnpm install
 SENDGRID_API_KEY=... node scripts/setup.mjs --remote --env staging --workers-dev \
   --worker-name plinth-staging --db-name plinth-staging --bucket plinth-staging \
   --app-host plinth-staging.aconite-io.workers.dev \
   --email-provider sendgrid --email-from "Plinth <noreply@aconite.io>"
+pnpm build
 pnpm --filter @plinth/worker exec wrangler deploy --config wrangler.staging.jsonc
 ```
+
+Setup runs before the build because the build refuses a `wrangler.<env>.jsonc` that lacks the
+release's compatibility flags or cron trigger, and a setup re-run adds them.
 
 `setup.mjs` creates the D1 database and R2 bucket if missing, writes
 `apps/worker/wrangler.staging.jsonc` (git-ignored), sets `SESSION_SECRET`, `TOKEN_SIGNING_KEY` and
