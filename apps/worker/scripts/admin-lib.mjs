@@ -24,11 +24,14 @@ const STORED_AT_RE = /^v([1-9][0-9]{0,8})(?:\.([a-z0-9]{12}))?\/(.+)$/;
 const ARTIFACT_ID_RE = /^[a-z0-9]{20}$/;
 const MINUTES_RE = /^[1-9][0-9]{0,5}$/;
 /**
- * The lowest --older-than-minutes sweep-orphans accepts. A live attempt prefix must be younger than
- * the threshold: an upload streams for up to TTL.uploadReceivingMs (10 minutes) before it commits,
- * so the floor sits above that with a margin.
+ * The lowest --older-than-minutes sweep-orphans accepts. A live attempt prefix must be older than
+ * the threshold before it can be swept. A bundle must arrive within its receiving lease
+ * (TTL.uploadReceivingMs, 10 minutes, enforced by redeemBundle), and a ticket can commit only
+ * while it is open and unexpired (TTL.uploadTicketMs, 30 minutes, checked in the commit batch).
+ * The floor sits above the ticket's whole lifetime with a margin, so it holds even if the
+ * stream deadline were missed: 30 + 15 minutes.
  */
-export const MIN_SWEEP_MINUTES = 15;
+export const MIN_SWEEP_MINUTES = 45;
 
 export const USAGE = `Usage: pnpm --filter @plinth/worker admin -- <command> [options]
 
@@ -138,7 +141,7 @@ export function parseArgs(argv) {
       i += 1;
       if (!MINUTES_RE.test(String(args[i] ?? "")) || Number(args[i]) < MIN_SWEEP_MINUTES)
         throw new UsageError(
-          `--older-than-minutes needs a whole number of minutes, ${MIN_SWEEP_MINUTES} or more (an upload may still be streaming for 10 minutes)`,
+          `--older-than-minutes needs a whole number of minutes, ${MIN_SWEEP_MINUTES} or more (an upload ticket may still commit for 30 minutes)`,
         );
       olderThanMinutes = Number(args[i]);
     } else if (a.startsWith("-")) {
@@ -296,9 +299,16 @@ export function eraseUserSql(email) {
   ].join("; ");
 }
 
-/** Erase one artifact; its versions, grants, comments, tasks and reports cascade. */
+/**
+ * Erase one artifact; its versions, grants, comments, tasks, reports and update tickets cascade.
+ * The ticket that published it names it only in result_artifact_id (no foreign key) and holds
+ * the title the agent gave, so it goes first. The last statement's rows say what was erased.
+ */
 export function eraseArtifactSql(ref) {
-  return `DELETE FROM artifacts WHERE id = '${ref}' OR slug = '${ref}' RETURNING id`;
+  return [
+    `DELETE FROM upload_tickets WHERE result_artifact_id IN (SELECT id FROM artifacts WHERE id = '${ref}' OR slug = '${ref}')`,
+    `DELETE FROM artifacts WHERE id = '${ref}' OR slug = '${ref}' RETURNING id`,
+  ].join("; ");
 }
 
 /**

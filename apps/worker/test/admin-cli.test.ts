@@ -223,13 +223,45 @@ describe("admin CLI: erase-user and erase-artifact", () => {
     expect(await storedKeys(artifactKeysSql(a.slug))).toEqual([
       `${(await versionRow(a.id, 1))?.r2Prefix}index.html`,
     ]);
-    const [erased] = await runStatements(eraseArtifactSql(a.slug));
+    const erased = (await runStatements(eraseArtifactSql(a.slug))).at(-1);
     expect(erased).toHaveLength(1);
     expect(await db().select().from(versions).where(eq(versions.artifactId, a.id)).all()).toEqual(
       [],
     );
-    const [again] = await runStatements(eraseArtifactSql(a.id));
+    const again = (await runStatements(eraseArtifactSql(a.id))).at(-1);
     expect(again).toHaveLength(0);
+  });
+
+  it("erase-artifact also removes the upload ticket that published it, with its title", async () => {
+    const owner = await agent();
+    const { body: a } = await publish(owner.auth, { title: "Gone soon" });
+    const now = new Date().toISOString();
+    // A used publish-mode ticket names the artifact only through result_artifact_id.
+    await env.DB.prepare(
+      `INSERT INTO upload_tickets (id, token_hash, user_id, credential, connection_id, scopes, mode,
+         artifact_type, title, state, attempts, result_artifact_id, result_version, created_at,
+         expires_at, used_at)
+       SELECT ?1, ?2, c.user_id, 'connection', c.id, 'artifacts:write', 'publish', 'html',
+              'Secret project name', 'used', 1, ?3, 1, ?4, ?4, ?4
+         FROM agent_connections c WHERE c.user_id = (SELECT owner_id FROM artifacts WHERE id = ?3)
+        LIMIT 1`,
+    )
+      .bind("t".repeat(20), "h".repeat(64), a.id, now)
+      .run();
+    const before = await env.DB.prepare(
+      "SELECT count(*) AS n FROM upload_tickets WHERE result_artifact_id = ?1",
+    )
+      .bind(a.id)
+      .first<{ n: number }>();
+    expect(before?.n).toBe(1);
+    const erased = (await runStatements(eraseArtifactSql(a.slug))).at(-1);
+    expect(erased).toHaveLength(1);
+    const after = await env.DB.prepare(
+      "SELECT count(*) AS n FROM upload_tickets WHERE result_artifact_id = ?1",
+    )
+      .bind(a.id)
+      .first<{ n: number }>();
+    expect(after?.n).toBe(0);
   });
 });
 
@@ -323,7 +355,7 @@ describe("admin CLI: shared data", () => {
       { op: "set", collection: "rows", doc_id: "o1", data: { n: 1 }, if_rev: 0 },
     ]);
     expect(await docsOf(a.id)).toHaveLength(1);
-    const [erased] = await runStatements(eraseArtifactSql(a.id));
+    const erased = (await runStatements(eraseArtifactSql(a.id))).at(-1);
     expect(erased).toHaveLength(1);
     expect(await docsOf(a.id)).toEqual([]);
     const usage = await env.DB.prepare(

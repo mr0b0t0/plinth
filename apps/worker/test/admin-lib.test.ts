@@ -23,14 +23,18 @@ import {
   userKeysSql,
   versionPrefixesSql,
 } from "../scripts/admin-lib.mjs";
+import { commitStaged, openStager, updateTarget } from "../src/services/stage.ts";
 import {
   agent,
+  agentPrincipal,
   call,
   fetchWith,
   manifestOf,
   publish,
   r2Keys,
+  serviceCtxFor,
   sha256Of,
+  storedFile,
   versionRow,
 } from "./helpers.ts";
 
@@ -151,8 +155,10 @@ describe("sweep-orphans", () => {
         "--older-than-minutes",
         String(MIN_SWEEP_MINUTES - 1),
       ]),
-    ).toThrow(/15 or more/);
-    expect(MIN_SWEEP_MINUTES * 60_000).toBeGreaterThan(TTL.uploadReceivingMs);
+    ).toThrow(/45 or more/);
+    // Above a ticket's whole lifetime, not only the receiving lease: a slow bundle can commit
+    // until the ticket expires.
+    expect(MIN_SWEEP_MINUTES * 60_000).toBeGreaterThanOrEqual(TTL.uploadTicketMs + 15 * 60_000);
     const floor = parseArgs([
       "sweep-orphans",
       "--local",
@@ -186,6 +192,33 @@ describe("sweep-orphans", () => {
     // Every committed version's objects are still there.
     for (const k of keysFromRows(await rows(artifactKeysSql(p.id))))
       expect(await env.FILES.head(k), k).not.toBeNull();
+  });
+
+  it("a sweep at the floor never takes the files of an upload its ticket may still commit", async () => {
+    // A slow bundle's early files reach R2 at once; the ticket may commit up to 30 minutes after
+    // it was minted. A sweep at --older-than-minutes MIN_SWEEP_MINUTES, run as late as the
+    // ticket allows, must leave those files alone.
+    const a = await agent();
+    const { body: p } = await publish(a.auth);
+    const ctx = serviceCtxFor(agentPrincipal(a));
+    const target = await updateTarget(ctx, p.id, { baseVersion: 1 });
+    const stager = await openStager(ctx, target);
+    const enc = new TextEncoder();
+    await stager.add("a.js", enc.encode("console.log('a')"));
+    await stager.add("b.css", enc.encode("h1{}"));
+    const swept = await sweepOrphans(env.FILES, {
+      root: `artifacts/${p.id}/`,
+      now: Date.now() + TTL.uploadTicketMs - 1000,
+      minAgeMs: MIN_SWEEP_MINUTES * 60_000,
+      dryRun: false,
+      loadRows: () => rows(versionPrefixesSql(p.id)),
+    });
+    expect(swept).toEqual([]);
+    await stager.add("index.html", enc.encode("<!doctype html><script src=a.js></script>"));
+    const r = await commitStaged(ctx, target, await stager.finish());
+    expect(r.version).toBe(2);
+    expect(await storedFile(p.id, 2, "a.js")).not.toBeNull();
+    expect(await storedFile(p.id, 2, "b.css")).not.toBeNull();
   });
 
   it("deletes nothing when the database answer is empty or names nothing in the bucket", async () => {
