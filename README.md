@@ -1,10 +1,11 @@
 # Plinth
 
-**Publish HTML from any agent. Decide exactly who sees it.**
+**Don't leave your best work in a chat window.**
 
-Cursor, Codex, Claude Code, any MCP client or a plain script publishes reports, dashboards and
-prototypes to Plinth with one call. You choose who can open each page: specific email addresses,
-anyone with the link, a password, or everyone. Every change is a version you can go back to, and a
+Publish HTML from any agent and decide exactly who sees it. Cursor, Codex, Claude Code, any MCP
+client or a plain script publishes reports, dashboards and prototypes to Plinth with one call. They
+stay your work, in one place: you choose who can open each page (specific email addresses, anyone
+with the link, a password, or everyone), every change is a version you can go back to, and a
 comment like "@codex add a table" sends the request back to the agent.
 
 ![Claude Code publishes a report; a comment asks Codex for a table; Codex publishes v2 and replies; the page updates; history shows who made each version; the report is private](docs/screenshots/demo.gif)
