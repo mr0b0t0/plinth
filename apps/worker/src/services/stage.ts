@@ -1288,6 +1288,22 @@ async function commitOnce(
         if (!lease) throw uploadTooSlow();
       }
     }
+    // A takedown or a delete also claims the attempt's row, so name those before the row.
+    const art =
+      target.mode === "update"
+        ? await DB.prepare(
+            "SELECT current_version AS cur, deleted_at AS deleted, taken_down_at AS down FROM artifacts WHERE id = ?",
+          )
+            .bind(artifactId)
+            .first<{ cur: number; deleted: string | null; down: string | null }>()
+        : null;
+    if (target.mode === "update") {
+      if (!art || art.deleted) throw notFound();
+      // Policy refuses edits once an artifact is taken down; this one passed before the takedown.
+      if (art.down) {
+        throw new ApiError("forbidden", "This artifact was taken down", { reason: "taken_down" });
+      }
+    }
     const row = await DB.prepare(
       "SELECT 1 AS one FROM staging_attempts WHERE prefix = ? AND started_at > ?",
     )
@@ -1309,17 +1325,7 @@ async function commitOnce(
     if (target.mode === "publish") {
       if ((await liveArtifactCount(ctx, ownerId)) >= artifactLimit)
         throw artifactLimitError(artifactLimit);
-    } else {
-      const art = await DB.prepare(
-        "SELECT current_version AS cur, deleted_at AS deleted, taken_down_at AS down FROM artifacts WHERE id = ?",
-      )
-        .bind(artifactId)
-        .first<{ cur: number; deleted: string | null; down: string | null }>();
-      if (!art || art.deleted) throw notFound();
-      // Policy refuses edits once an artifact is taken down; this one passed before the takedown.
-      if (art.down) {
-        throw new ApiError("forbidden", "This artifact was taken down", { reason: "taken_down" });
-      }
+    } else if (art) {
       if (art.cur !== base) {
         if (target.baseVersion !== undefined) throw conflictError(target.baseVersion, art.cur);
         base = art.cur;

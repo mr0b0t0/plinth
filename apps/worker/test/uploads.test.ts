@@ -30,6 +30,7 @@ import { hit } from "../src/lib/ratelimit.ts";
 import { isoIn, nowIso } from "../src/lib/time.ts";
 import { revokeToken } from "../src/oauth/service.ts";
 import type { Principal } from "../src/policy.ts";
+import { claimArtifactAttempts, clearClaimedAttempts } from "../src/services/attempts.ts";
 import { revokeConnection } from "../src/services/connections.ts";
 import type { Ctx } from "../src/services/context.ts";
 import {
@@ -43,6 +44,7 @@ import {
   stageDeps,
   startUpload,
   type TicketRow,
+  uploadStatus,
 } from "../src/services/uploads.ts";
 import { fakeStage, keysUnder } from "./fixtures/bundles/fakeStage.ts";
 import * as real from "./fixtures/bundles/real.ts";
@@ -1615,6 +1617,45 @@ describe("an abandoned, slow or over-quota bundle leaves nothing behind", () => 
       expect(await newKeys(id), when).toEqual([]);
       expect((await ticket(t.upload_id)).state, when).toBe("open");
     }
+  });
+
+  it("a takedown while the bundle commits is reported as one, not as someone else's publish", async () => {
+    const { a, id } = await ownerWithArtifact();
+    const t = await mint(a, { id, base_version: 1 }, stageDeps);
+    const deps: StageDeps = {
+      ...stageDeps,
+      commitStaged: async (ctx, target, staged, o) => {
+        // The files are put and the attempt's row exists: the takedown claims it (decideReport).
+        const now = Date.now();
+        const results = await env.DB.batch([
+          env.DB.prepare("UPDATE artifacts SET taken_down_at = ?1 WHERE id = ?2").bind(
+            new Date(now).toISOString(),
+            id,
+          ),
+          claimArtifactAttempts(env.DB, id, now),
+        ]);
+        expect(results[1]?.results).toHaveLength(1);
+        await clearClaimedAttempts(env, results[1]);
+        return stageDeps.commitStaged(ctx, target, staged, o);
+      },
+    };
+    const e = await redeemError(
+      t,
+      tar([
+        { name: "index.html", data: "<!doctype html><title>x</title>" },
+        { name: "a.js", data: filler(10_000, 4) },
+      ]),
+      deps,
+    );
+    expect(e).toMatchObject({ code: "forbidden", details: { reason: "taken_down" } });
+    expect((await versionRow(id, 2)) ?? null).toBeNull();
+    expect((await ticket(t.upload_id)).state).not.toBe("dead");
+    const status = await uploadStatus(bundleEnv(), {
+      uploadId: t.upload_id,
+      authorization: `Bearer ${t.upload_token}`,
+    });
+    expect(status.state).not.toBe("dead");
+    expect(status.next).not.toMatch(/Someone published/);
   });
 
   it("an editor removed while the bundle streams is refused before the commit", async () => {
