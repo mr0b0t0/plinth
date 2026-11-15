@@ -10,6 +10,8 @@ Add a line under **Unreleased** in the pull request that makes a change people w
 
 ## Unreleased
 
+## 0.4.0 (2026-11-15)
+
 - **Big builds.** Agents can publish a built site, such as a Vite `dist/` folder with hundreds of
   files, in one step. The new MCP tool `start_upload` (and `POST /api/v1/uploads`) returns a
   single-use, 30-minute upload ticket. One `curl` of a gzipped tar to its `upload_url` publishes the
