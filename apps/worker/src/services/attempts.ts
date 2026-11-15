@@ -1,9 +1,12 @@
 // Staging attempts (docs/spec.md, commit last): every attempt at writing a version records its R2
 // prefix in staging_attempts before its first put, so what a killed invocation leaves is bounded
 // and found without listing the bucket. The commit batch deletes the row and cannot commit
-// without it; an abort deletes the prefix and then the row; the hourly scheduled sweep claims rows
-// past the threshold and deletes their objects. The claim is a DELETE ... RETURNING, so a sweep
-// and a commit never both proceed on one prefix: whichever removes the row first wins.
+// without a row younger than the threshold. Whoever deletes an attempt's objects (an abort, the
+// hourly scheduled sweep, a takedown) first claims the row: an UPDATE that moves started_at to a
+// parked value below every cutoff, so a commit that comes after the claim is refused, and one that
+// came before leaves nothing to claim. The row is deleted only once the objects are gone, so
+// whatever fails in between (a D1 error, an R2 error, an evicted invocation), the next sweep run
+// still finds the prefix.
 //
 // The admin command sweep-orphans (scripts/admin-lib.mjs) stays the full-bucket tool for objects
 // written before this table existed, which no row names.
@@ -51,6 +54,31 @@ export async function forgetAttempt(DB: D1Database, prefix: string): Promise<voi
   await DB.prepare("DELETE FROM staging_attempts WHERE prefix = ?").bind(prefix).run();
 }
 
+/**
+ * started_at of a claimed row: "0" and the claim time. It sorts below every ISO time, so
+ * ATTEMPT_GUARD refuses the row's commit and every sweep run past the claim picks it up again
+ * until its objects are gone; among claimed rows the sweep takes the longest-claimed first.
+ */
+export function parkedAt(now: number): string {
+  return `0${new Date(now).toISOString()}`;
+}
+
+/** Sweep order: an unclaimed row by its start, a claimed one by its claim time. */
+const SWEEP_ORDER = "CASE WHEN started_at < '1' THEN substr(started_at, 2) ELSE started_at END";
+
+/**
+ * Claim one attempt's row before deleting its objects (an abort). False when there is no row: a
+ * commit has taken it (its version names the objects), or it was never written (nothing was put).
+ */
+export async function claimAttempt(DB: D1Database, prefix: string, now: number): Promise<boolean> {
+  const { results } = await DB.prepare(
+    "UPDATE staging_attempts SET started_at = ? WHERE prefix = ? RETURNING prefix",
+  )
+    .bind(parkedAt(now), prefix)
+    .all();
+  return results.length > 0;
+}
+
 /** The statement that removes an artifact's rows (its files go with the artifact's root). */
 export function dropArtifactAttempts(DB: D1Database, artifactId: string): D1PreparedStatement {
   return DB.prepare("DELETE FROM staging_attempts WHERE artifact_id = ? RETURNING prefix").bind(
@@ -59,19 +87,52 @@ export function dropArtifactAttempts(DB: D1Database, artifactId: string): D1Prep
 }
 
 /**
- * Delete the objects of attempt rows a dropArtifactAttempts statement removed (its result), for an
- * artifact whose versions stay (takedown). Only prefixes no version names.
+ * The statement that claims every row of an artifact whose versions stay (takedown): its attempts
+ * can no longer commit. Pass its result to clearClaimedAttempts.
  */
-export async function deleteClaimedAttempts(
-  env: { DB: D1Database; FILES: R2Bucket },
+export function claimArtifactAttempts(
+  DB: D1Database,
   artifactId: string,
-  result: D1Result,
+  now: number,
+): D1PreparedStatement {
+  return DB.prepare(
+    "UPDATE staging_attempts SET started_at = ? WHERE artifact_id = ? RETURNING prefix, artifact_id",
+  ).bind(parkedAt(now), artifactId);
+}
+
+type ClaimedRow = { prefix: string; artifact_id: string };
+type Outcome = "deleted" | "referenced" | "skipped";
+
+/**
+ * Finish one claimed row: delete its objects when its prefix is an attempt prefix of its artifact
+ * that no version names, then the row. Throws, leaving the claimed row for the next sweep run,
+ * when either fails.
+ */
+async function clearClaimed(
+  env: { DB: D1Database; FILES: R2Bucket },
+  row: ClaimedRow,
+): Promise<Outcome> {
+  let outcome: Outcome = "deleted";
+  if (!ownPrefix(row.prefix, row.artifact_id)) outcome = "skipped";
+  else if (await referenced(env.DB, row.artifact_id, row.prefix)) {
+    // The commit batch deletes its row, so a version naming a row's prefix should not happen.
+    outcome = "referenced";
+    console.warn(`staging sweep: a version references the attempt prefix ${row.prefix}`);
+  } else await deletePrefix(env.FILES, row.prefix);
+  await forgetAttempt(env.DB, row.prefix);
+  return outcome;
+}
+
+/**
+ * Delete what a claimArtifactAttempts statement claimed (its result), now and best effort: a row
+ * whose cleanup fails stays claimed, and the next sweep run finishes it.
+ */
+export async function clearClaimedAttempts(
+  env: { DB: D1Database; FILES: R2Bucket },
+  result: D1Result | undefined,
 ): Promise<void> {
-  for (const row of (result.results ?? []) as { prefix?: unknown }[]) {
-    const prefix = typeof row.prefix === "string" ? row.prefix : "";
-    if (!ownPrefix(prefix, artifactId)) continue;
-    if (await referenced(env.DB, artifactId, prefix)) continue;
-    await deletePrefix(env.FILES, prefix);
+  for (const row of (result?.results ?? []) as ClaimedRow[]) {
+    await clearClaimed(env, row).catch(() => undefined);
   }
 }
 
@@ -99,28 +160,27 @@ export interface SweepCounts {
   referenced: number;
   /** Rows whose prefix is not an attempt prefix: only the row went. */
   skipped: number;
-  /** Prefixes whose delete failed: their rows are back for the next run. */
+  /** Rows whose cleanup failed: they stay claimed for the next run. */
   failed: number;
 }
 
 /**
- * One sweep run at `now` (ms): claim up to STAGING_SWEEP_BATCH rows older than the threshold, then
- * delete the objects of each claimed prefix no version references. Logs counts only.
+ * One sweep run at `now` (ms): claim up to STAGING_SWEEP_BATCH rows older than the threshold
+ * (rows claimed earlier included), then delete the objects of each claimed prefix no version
+ * references, and its row. Logs counts only.
  */
 export async function sweepStagingAttempts(
   env: { DB: D1Database; FILES: R2Bucket },
   now: number,
 ): Promise<SweepCounts> {
-  const cutoff = attemptCutoff(now);
   const { results } = await env.DB.prepare(
-    `DELETE FROM staging_attempts
-      WHERE started_at < ?1
-        AND prefix IN (SELECT prefix FROM staging_attempts WHERE started_at < ?1
-                        ORDER BY started_at LIMIT ?2)
-      RETURNING prefix, artifact_id, started_at`,
+    `UPDATE staging_attempts SET started_at = ?3
+      WHERE prefix IN (SELECT prefix FROM staging_attempts WHERE started_at < ?1
+                        ORDER BY ${SWEEP_ORDER} LIMIT ?2)
+      RETURNING prefix, artifact_id`,
   )
-    .bind(cutoff, STAGING_SWEEP_BATCH)
-    .all<{ prefix: string; artifact_id: string; started_at: string }>();
+    .bind(attemptCutoff(now), STAGING_SWEEP_BATCH, parkedAt(now))
+    .all<ClaimedRow>();
   const counts: SweepCounts = {
     claimed: results.length,
     deleted: 0,
@@ -129,29 +189,10 @@ export async function sweepStagingAttempts(
     failed: 0,
   };
   for (const row of results) {
-    if (!ownPrefix(row.prefix, row.artifact_id)) {
-      counts.skipped++;
-      continue;
-    }
-    if (await referenced(env.DB, row.artifact_id, row.prefix)) {
-      // The commit batch deletes its row, so a version naming a row's prefix should not happen.
-      counts.referenced++;
-      console.warn(`staging sweep: a version references the attempt prefix ${row.prefix}`);
-      continue;
-    }
     try {
-      await deletePrefix(env.FILES, row.prefix);
-      counts.deleted++;
+      counts[await clearClaimed(env, row)]++;
     } catch {
-      // Put the row back with its own time, so the next run tries again. Its commit stays refused:
-      // the row is past the threshold the commit guard checks.
       counts.failed++;
-      await env.DB.prepare(
-        "INSERT OR IGNORE INTO staging_attempts (prefix, artifact_id, started_at) VALUES (?, ?, ?)",
-      )
-        .bind(row.prefix, row.artifact_id, row.started_at)
-        .run()
-        .catch(() => undefined);
     }
   }
   if (counts.claimed > 0) console.log(`staging sweep: ${JSON.stringify(counts)}`);

@@ -25,7 +25,13 @@ import { enforce } from "../lib/ratelimit.ts";
 import { nowIso } from "../lib/time.ts";
 import { getVersionRow, requireArtifact } from "./artifacts.ts";
 import { checkAsset, requireTypeDef, resolveSource } from "./artifactTypes.ts";
-import { ATTEMPT_GUARD, attemptCutoff, forgetAttempt, recordAttempt } from "./attempts.ts";
+import {
+  ATTEMPT_GUARD,
+  attemptCutoff,
+  claimAttempt,
+  forgetAttempt,
+  recordAttempt,
+} from "./attempts.ts";
 import type { Ctx } from "./context.ts";
 import { scanPublish } from "./publishCheck.ts";
 import {
@@ -82,8 +88,8 @@ export interface Stager {
    */
   finish(opts?: { stripPrefix?: string }): Promise<StagedVersion>;
   /**
-   * Abandon the attempt: settle every put, delete this attempt's prefix, then its staging_attempts
-   * row (a failed delete leaves the row for the scheduled sweep). Once the commit has
+   * Abandon the attempt: settle every put, claim its staging_attempts row, delete this attempt's
+   * prefix, then the row (a failed delete leaves the claimed row for the scheduled sweep). Once the commit has
    * begun (commitStaged) it does nothing: the commit owns the objects from then on, deleting them
    * itself if its batch fails. So an abort and a commit never both proceed.
    */
@@ -805,7 +811,10 @@ export class VersionStager implements Stager {
 
   /**
    * Delete this attempt's objects whatever the state (the commit's own failure path), then its
-   * row. A failed delete throws and leaves the row, so the scheduled sweep finishes the job.
+   * row. The row is claimed first (services/attempts.ts), so a commit batch D1 applies late is
+   * refused from then on; when there is no row to claim, a late batch has already committed (or
+   * nothing was put) and the objects stay. A failed delete throws and leaves the claimed row, so
+   * the scheduled sweep finishes the job.
    */
   async discard(): Promise<void> {
     this.aborted = true;
@@ -813,12 +822,12 @@ export class VersionStager implements Stager {
     // A put whose call is under way registers itself synchronously; let it, then wait for all.
     await Promise.resolve();
     while (this.running.size > 0) await Promise.allSettled([...this.running]);
+    // Every put waits for the row's insert, so an attempt that never recorded one put nothing.
+    if (!this.recorded) return;
+    await this.recorded.catch(() => undefined);
+    if (!(await claimAttempt(this.ctx.env.DB, this.prefix, Date.now()))) return;
     await deletePrefix(this.ctx.env.FILES, this.prefix);
-    if (this.recorded) {
-      // Delete the row only after its insert, so an insert still under way cannot outlive it.
-      await this.recorded.catch(() => undefined);
-      await forgetAttempt(this.ctx.env.DB, this.prefix);
-    }
+    await forgetAttempt(this.ctx.env.DB, this.prefix);
   }
 }
 

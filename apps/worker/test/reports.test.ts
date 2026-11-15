@@ -1,11 +1,16 @@
 // Reports and the admin takedown backend.
-import { createExecutionContext, waitOnExecutionContext } from "cloudflare:test";
+import {
+  createExecutionContext,
+  createScheduledController,
+  waitOnExecutionContext,
+} from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import { parseConfig } from "../src/config.ts";
 import { artifacts, devOutbox, reports, versions } from "../src/db/schema.ts";
 import worker from "../src/index.ts";
+import { STAGING_SWEEP_CRON } from "../src/services/attempts.ts";
 import { openStager, updateTarget } from "../src/services/stage.ts";
 import { getOrCreateUser } from "../src/services/users.ts";
 import {
@@ -66,7 +71,7 @@ async function admin() {
     user,
     vars,
     get: (path: string) => run(path, { headers: s.headers }, vars),
-    post: (path: string, body: unknown) =>
+    post: (path: string, body: unknown, bindings: Record<string, unknown> = {}) =>
       run(
         path,
         {
@@ -74,7 +79,7 @@ async function admin() {
           headers: { ...s.headers, "Content-Type": "application/json" },
           body: JSON.stringify(body),
         },
-        vars,
+        { ...vars, ...(bindings as Record<string, string>) },
       ),
   };
 }
@@ -263,6 +268,54 @@ describe("admin takedown", () => {
     expect((await rows()).results).toEqual([]);
     expect(await r2Keys(stager.prefix)).toEqual([]);
     expect(await r2Keys(v1?.r2Prefix ?? "-")).toEqual(live);
+  });
+
+  it("actioned while R2 fails: the takedown completes and the sweep deletes the attempt's files", async () => {
+    const a = await agent();
+    const { body: p } = await publish(a.auth);
+    const ctx = serviceCtxFor(agentPrincipal(a));
+    const stager = await openStager(ctx, await updateTarget(ctx, p.id, {}));
+    await stager.add("index.html", new TextEncoder().encode("<p>in flight</p>"));
+    await stager.finish();
+    const keys = await r2Keys(stager.prefix);
+    expect(keys.length).toBe(1);
+    const adm = await admin();
+    const r1 = await json(await report(p.id, { reason: "one" }));
+    const r2 = await json(await report(p.id, { reason: "two" }));
+    const FILES = new Proxy(env.FILES, {
+      get(t, prop) {
+        if (prop === "delete")
+          return async () => {
+            throw new Error("injected: R2 down");
+          };
+        const v = Reflect.get(t, prop, t);
+        return typeof v === "function" ? v.bind(t) : v;
+      },
+    });
+    const res = await adm.post(`/api/v1/admin/reports/${r1.id}`, { state: "actioned" }, { FILES });
+    expect(res.status).toBe(200);
+    expect((await db().select().from(reports).where(eq(reports.id, r2.id)).get())?.state).toBe(
+      "actioned",
+    );
+    const art = await db().select().from(artifacts).where(eq(artifacts.id, p.id)).get();
+    expect(art?.takenDownAt).toBeTruthy();
+    // The row stays (it can no longer commit) until the files are gone.
+    expect(await r2Keys(stager.prefix)).toEqual(keys);
+    const ctl = createExecutionContext();
+    await worker.scheduled(
+      createScheduledController({ scheduledTime: Date.now(), cron: STAGING_SWEEP_CRON }),
+      env as never,
+      ctl,
+    );
+    await waitOnExecutionContext(ctl);
+    expect(await r2Keys(stager.prefix)).toEqual([]);
+    expect(
+      (
+        await env.DB.prepare("SELECT prefix FROM staging_attempts WHERE artifact_id = ?")
+          .bind(p.id)
+          .all()
+      ).results,
+    ).toEqual([]);
   });
 
   it("dismissed: closes only that report, the artifact stays up", async () => {

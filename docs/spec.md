@@ -355,14 +355,19 @@ files) and big pages without merging chunks, and an update stores only what chan
   if it does, the publish succeeded; if that cannot be read, the attempt's objects are kept; only
   when the row is known to be absent are they deleted. Every attempt records its prefix in
   `staging_attempts` (prefix, artifact id, start time) before its first put; the batch requires
-  that row, younger than the sweep threshold, and deletes it, and an abort deletes the prefix and
-  then the row. A killed request can leave only unreferenced objects under its own prefix, with its
-  row. An hourly cron trigger (`0 * * * *`) sweeps them: it claims at most 50 rows older than the
-  ticket's lifetime plus 15 minutes with `DELETE ... RETURNING` and deletes the objects only of
-  rows it removed and no version names (by `r2_prefix` or a `stored_at`). Because the claim and
-  the commit both need the row, a commit after a claim is refused with a retryable `conflict`
-  (`reason: "attempt_expired"`) and a claim after a commit removes nothing. Deleting, taking down
-  or erasing an artifact removes its rows too. `sweep-orphans` (an admin command) stays for
+  that row, unclaimed and younger than the sweep threshold, and deletes it. Whatever deletes an
+  attempt's objects claims its row first (an `UPDATE ... RETURNING` that moves `started_at` below
+  every cutoff) and deletes the row only once the objects are gone, so a failure in between leaves
+  the claimed row for the next sweep. An abort claims the row, deletes the prefix, then the row; with
+  no row to claim (a commit batch D1 applied after reporting an error) it keeps the objects. A
+  killed request can leave only unreferenced objects under its own prefix, with its row. An hourly
+  cron trigger (`0 * * * *`) sweeps them: it claims at most 50 rows older than the ticket's
+  lifetime plus 15 minutes (claimed rows included, longest-claimed first) and deletes the objects
+  only of rows it claimed and no version names (by `r2_prefix` or a `stored_at`). Because the
+  commit needs the row unclaimed, a commit after a claim is refused with a retryable `conflict`
+  (`reason: "attempt_expired"`) whatever the committer's clock, and a claim after a commit finds
+  nothing. Deleting or erasing an artifact removes its rows with its files; a takedown claims them
+  in its own batch, then deletes their files, leaving any that fail to the sweep. `sweep-orphans` (an admin command) stays for
   objects no row names, such as those written before 0.4.0. A version row left by the pre-0.4.0 order (row first) that blocks a number
   is cleared when it is above `current_version` and more than 10 minutes old. Manifest entries
   from older releases whose paths the current `ASSET_PATH_RE` refuses (such as `a//b.js`, which

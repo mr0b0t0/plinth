@@ -1,8 +1,8 @@
 // Bounded orphans (docs/spec.md, commit last): every attempt at writing a version records its
 // prefix in staging_attempts before its first R2 put; the commit batch removes the row, an abort
-// removes the prefix and then the row, and the hourly scheduled sweep claims rows past the
-// threshold and deletes their objects. A commit needs its row, so a sweep and a commit never
-// both proceed on one prefix.
+// claims the row, removes the prefix and then the row, and the hourly scheduled sweep claims rows
+// past the threshold and deletes their objects before their rows. A commit needs its row unclaimed,
+// so a sweep and a commit never both proceed on one prefix.
 import {
   createExecutionContext,
   createScheduledController,
@@ -356,7 +356,8 @@ describe("staging attempts: committed files are never touched", () => {
           if (prop === "prepare")
             return (sql: string) => {
               const stmt = t.prepare(sql);
-              if (!/^\s*DELETE FROM staging_attempts/.test(sql) || committed) return stmt;
+              if (!/^\s*UPDATE staging_attempts SET started_at = \?3/.test(sql) || committed)
+                return stmt;
               // The commit lands before the claim statement executes.
               committed = commitStaged(ctx, target, staged);
               return new Proxy(stmt, {
@@ -527,5 +528,179 @@ describe("staging attempts: deleting an artifact", () => {
     await Promise.all(waits);
     expect(await attemptRows(p.id)).toEqual([]);
     expect(await r2Keys(stager.prefix)).toEqual([]);
+  });
+});
+
+/** `env.DB` whose prepare throws for SQL matching `match` (a D1 error mid-sweep). */
+function dbFailing(match: RegExp) {
+  return new Proxy(env.DB, {
+    get(t, prop) {
+      if (prop === "prepare")
+        return (sql: string) => {
+          if (match.test(sql)) throw new Error("injected: D1 error");
+          return t.prepare(sql);
+        };
+      const v = Reflect.get(t, prop, t);
+      return typeof v === "function" ? v.bind(t) : v;
+    },
+  });
+}
+
+describe("staging attempts: a claimed row stays until its objects are gone", () => {
+  it("a sweep that fails after its claim leaves the row, so the next run deletes the objects", async () => {
+    const a = await agent();
+    const { body: p } = await publish(a.auth);
+    const { stager } = await abandonedUpdate(a, p.id);
+    const keys = await r2Keys(stager.prefix);
+    expect(keys.length).toBe(2);
+    // The check for versions naming the prefix fails after the claim.
+    await runSweep(later(), { DB: dbFailing(/FROM versions WHERE artifact_id/) }).catch(
+      () => undefined,
+    );
+    expect(await attemptRow(stager.prefix)).not.toBeNull();
+    expect(await r2Keys(stager.prefix)).toEqual(keys);
+    await runSweep(later());
+    expect(await r2Keys(stager.prefix)).toEqual([]);
+    expect(await attemptRow(stager.prefix)).toBeNull();
+  });
+
+  it("a partly failed delete never lets the attempt commit, whatever the committer's clock", async () => {
+    const a = await agent();
+    const { body: p } = await publish(a.auth);
+    const { ctx, target, stager, staged } = await abandonedUpdate(a, p.id, { "more.css": "m" });
+    // R2 deletes the first key, then fails: some of the attempt's objects are gone.
+    const FILES = new Proxy(env.FILES, {
+      get(t, prop) {
+        if (prop === "delete")
+          return async (keys: string | string[]) => {
+            await t.delete(Array.isArray(keys) ? (keys[0] as string) : keys);
+            throw new Error("injected: partial delete");
+          };
+        const v = Reflect.get(t, prop, t);
+        return typeof v === "function" ? v.bind(t) : v;
+      },
+    });
+    // The sweep's scheduledTime is past the threshold; the committer's own clock is not.
+    await runSweep(later(), { FILES });
+    expect(await attemptRow(stager.prefix)).not.toBeNull();
+    expect((await r2Keys(stager.prefix)).length).toBe(2);
+    const err = await commitStaged(ctx, target, staged).catch((e) => e);
+    expect(err).toMatchObject({ code: "conflict" });
+    expect(await versionsAt(stager.prefix)).toBe(0);
+    const art = await db().select().from(artifacts).where(eq(artifacts.id, p.id)).get();
+    expect(art?.currentVersion).toBe(1);
+    await runSweep(Date.now());
+    expect(await r2Keys(stager.prefix)).toEqual([]);
+    expect(await attemptRow(stager.prefix)).toBeNull();
+  });
+});
+
+describe("staging attempts: a commit batch D1 applies after reporting an error", () => {
+  /** DB whose first commit batch throws without applying; `apply` runs the held batch later. */
+  function heldBatch() {
+    let held: D1PreparedStatement[] | null = null;
+    const state = {
+      async apply() {
+        const h = held;
+        held = [];
+        if (h && h.length > 0) await env.DB.batch(h).catch(() => undefined);
+      },
+    };
+    const DB = new Proxy(env.DB, {
+      get(t, prop) {
+        if (prop === "batch")
+          return async (stmts: D1PreparedStatement[]) => {
+            if (held === null && stmts.length >= 3) {
+              held = stmts;
+              throw new Error("Network connection lost.");
+            }
+            return t.batch(stmts);
+          };
+        const v = Reflect.get(t, prop, t);
+        return typeof v === "function" ? v.bind(t) : v;
+      },
+    });
+    return { DB, state };
+  }
+
+  it("applied while the failed commit deletes its objects: the late batch is refused", async () => {
+    const a = await agent();
+    const { body: p } = await publish(a.auth);
+    const { DB, state } = heldBatch();
+    const FILES = new Proxy(env.FILES, {
+      get(t, prop) {
+        if (prop === "delete")
+          return async (keys: string | string[]) => {
+            const r = await t.delete(keys);
+            await state.apply();
+            return r;
+          };
+        const v = Reflect.get(t, prop, t);
+        return typeof v === "function" ? v.bind(t) : v;
+      },
+    });
+    const ctx = serviceCtxFor(agentPrincipal(a), { env: { DB, FILES } });
+    const target = await updateTarget(ctx, p.id, {});
+    const stager = await openStager(ctx, target);
+    await stager.add("index.html", enc.encode("<p>late</p>"));
+    await stager.add("late.css", enc.encode("late"));
+    const staged = await stager.finish();
+    await expect(commitStaged(ctx, target, staged)).rejects.toBeTruthy();
+    expect(await versionsAt(stager.prefix)).toBe(0);
+    const art = await db().select().from(artifacts).where(eq(artifacts.id, p.id)).get();
+    expect(art?.currentVersion).toBe(1);
+    expect(await r2Keys(stager.prefix)).toEqual([]);
+    expect(await attemptRow(stager.prefix)).toBeNull();
+  });
+
+  it("applied before the cleanup starts: the version's objects are kept", async () => {
+    const a = await agent();
+    const { body: p } = await publish(a.auth);
+    const { DB: held, state } = heldBatch();
+    // The read-back finds no version; the batch lands right after it.
+    const DB = new Proxy(held, {
+      get(t, prop) {
+        if (prop === "prepare")
+          return (sql: string) => {
+            const stmt = t.prepare(sql);
+            if (!/^SELECT 1 AS one FROM versions WHERE id = \?$/.test(sql)) return stmt;
+            return new Proxy(stmt, {
+              get(s, sp) {
+                if (sp === "bind")
+                  return (...args: unknown[]) => {
+                    const b = s.bind(...args);
+                    return new Proxy(b, {
+                      get(bb, bp) {
+                        if (bp === "first")
+                          return async () => {
+                            const r = await bb.first();
+                            await state.apply();
+                            return r;
+                          };
+                        const bv = Reflect.get(bb, bp, bb);
+                        return typeof bv === "function" ? bv.bind(bb) : bv;
+                      },
+                    });
+                  };
+                const sv = Reflect.get(s, sp, s);
+                return typeof sv === "function" ? sv.bind(s) : sv;
+              },
+            });
+          };
+        const v = Reflect.get(t, prop, t);
+        return typeof v === "function" ? v.bind(t) : v;
+      },
+    });
+    const ctx = serviceCtxFor(agentPrincipal(a), { env: { DB } });
+    const target = await updateTarget(ctx, p.id, {});
+    const stager = await openStager(ctx, target);
+    await stager.add("index.html", enc.encode("<p>landed</p>"));
+    await stager.add("landed.css", enc.encode("landed"));
+    const staged = await stager.finish();
+    await commitStaged(ctx, target, staged).catch(() => undefined);
+    // Whatever the client was told, a version that landed keeps its files.
+    expect(await versionsAt(stager.prefix)).toBe(1);
+    expect((await r2Keys(stager.prefix)).length).toBe(2);
+    expect(await (await serveFile(p.id, "/landed.css")).text()).toBe("landed");
   });
 });
