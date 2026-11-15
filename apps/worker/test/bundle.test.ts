@@ -579,6 +579,58 @@ describe("sizes and bounds", () => {
     expect(e.message).toMatch(/inflates to over 2 MB/);
   });
 
+  it("inflates only as the reader reads: a stalled reader stops the gzip body being fed", async () => {
+    // workerd's DecompressionStream takes every write and queues all its output unread, so a
+    // decompressor fed ahead of the reader could hold hundreds of MB from a body of a few
+    // hundred KB. Here: index.html, then 8 entries of 25 MB of zeros (200 MB inflated), and the
+    // reader stalls before the first zero file (its reserve never resolves).
+    const zeroFile = new Uint8Array(LIMITS.maxBundleFileBytes);
+    const wire = new Uint8Array(
+      await new Response(
+        gzipStream(
+          lazyStream(async function* () {
+            yield INDEX;
+            for (let i = 0; i < 8; i++) {
+              yield header({ name: `assets/z${i}.bin`, size: zeroFile.byteLength });
+              yield zeroFile;
+            }
+            yield END;
+          }),
+        ),
+      ).arrayBuffer(),
+    );
+    expect(wire.byteLength).toBeLessThan(400 * 1024);
+    let pulled = 0;
+    const body = new ReadableStream<Uint8Array>(
+      {
+        pull(c) {
+          if (pulled >= wire.byteLength) {
+            c.close();
+            return;
+          }
+          const chunk = wire.slice(pulled, pulled + 4096);
+          pulled += chunk.byteLength;
+          c.enqueue(chunk);
+        },
+      },
+      { highWaterMark: 0 },
+    );
+    let reserves = 0;
+    const reader = readBundle(body, {
+      ...BOUNDS,
+      reserve: () => (++reserves === 1 ? Promise.resolve() : new Promise<void>(() => {})),
+    });
+    const it = reader[Symbol.asyncIterator]();
+    const first = await it.next();
+    expect(first.value?.path).toBe("index.html");
+    void it.next();
+    await new Promise((ok) => setTimeout(ok, 500));
+    expect(reserves).toBe(2);
+    // About one slice past what the reader read: never the rest of the body. Each compressed
+    // byte inflates to at most 1032, so 16 KB fed bounds what sits inflated at ~16 MB.
+    expect(pulled).toBeLessThanOrEqual(16 * 1024);
+  });
+
   it("refuses a stream truncated inside a file, inside a header, or inside gzip", async () => {
     const whole = tar([...site, { name: "assets/a.bin", data: filler(4000, 2) }]);
     const midData = await refusal(whole.slice(0, 5 * BLOCK + 1000));

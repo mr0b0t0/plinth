@@ -164,80 +164,113 @@ async function tarStream(
   return { stream: stream as ReadableStream<Uint8Array>, gzip, empty: headLength === 0 };
 }
 
-const FEED_SLICE = 16 * 1024;
+/** The smallest and largest compressed slice written to the decompressor at once. */
+const MIN_SLICE = 1024;
+const MAX_SLICE = 8 * 1024;
+/** Inflated bytes one write aims for: the slice shrinks as the data compresses better. */
+const TARGET_OUT = 1024 * 1024;
 const IDLE_MS = 25;
-const ZEROS = new Uint8Array(FEED_SLICE);
-const WAKE = Symbol("wake");
+const ZEROS = new Uint8Array(MAX_SLICE);
+const TICK = Symbol("tick");
 const IDLE = Symbol("idle");
 
+/** `p`, or `tag` once `ms` have passed (a timer turn, so output already queued wins). */
+function within<T>(p: Promise<T>, ms: number, tag: symbol): Promise<T | symbol> {
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  return Promise.race([
+    p,
+    new Promise<symbol>((ok) => {
+      timer = setTimeout(() => ok(tag), ms);
+    }),
+  ]).finally(() => clearTimeout(timer));
+}
+
 /**
- * Inflate one gzip member, tolerating NUL padding after it. bsdtar (macOS tar) pads `tar -czf -`
- * to a 10240-byte record when it writes to a pipe, and workerd's DecompressionStream errors on
- * any byte after the gzip trailer, discarding output not yet read. So a trailing run of zero bytes
- * is held back: it is fed only when more bytes follow it. The tar reader normally stops at its
- * end-of-archive block before the held run matters. When it needs more once everything else has
- * been inflated, the held zeros that end the trailer are those whose ISIZE (the trailer's last
- * four bytes) equals the inflated length; they are fed and the decompressor is closed, so its
- * CRC check still runs. The rest of the run is padding and is dropped.
+ * Inflate one gzip member, driven by the reader. workerd's DecompressionStream accepts every write
+ * at once and queues all of its output whether or not anyone reads it, so the compressed body is
+ * fed one small slice at a time, and only when the reader wants bytes and the output of the
+ * slices before has been read. What sits inflated and unread is then about one slice's output
+ * (TARGET_OUT, at most MAX_SLICE x 1032 for the first slice after the data starts compressing
+ * better), however small the body or slow the reader.
+ *
+ * It tolerates NUL padding after the member. bsdtar (macOS tar) pads `tar -czf -` to a
+ * 10240-byte record when it writes to a pipe, and the decompressor errors on any byte after the
+ * gzip trailer, discarding output not yet read. So a trailing run of zero bytes is held back: it
+ * is fed only when more bytes follow it. The tar reader normally stops at its end-of-archive
+ * block before the held run matters. When it needs more once everything else has been inflated,
+ * the held zeros that end the trailer are those whose ISIZE (the trailer's last four bytes)
+ * equals the inflated length; they are fed and the decompressor is closed, so its CRC check
+ * still runs. The rest of the run is padding and is dropped.
  */
 function gunzip(src: ReadableStream<Uint8Array>): ReadableStream<Uint8Array> {
   const ds = new DecompressionStream("gzip");
   const writer = ds.writable.getWriter();
   const out = ds.readable.getReader() as ReadableStreamDefaultReader<Uint8Array>;
   const input = src.getReader();
-  let zeros = 0;
+  /** Compressed bytes read from the body and not yet fed: `zerosBefore` zero bytes, then `data`. */
+  let data: Uint8Array = new Uint8Array(0);
+  let zerosBefore = 0;
+  /** A trailing zero run, fed only once data follows it. */
+  let held = 0;
+  let inputDone = false;
+  let closing = false;
   const tail: number[] = [];
   let inflated = 0;
-  let held = false;
-  let closing = false;
+  let slice = MIN_SLICE;
+  let sliceFed = 0;
+  let outSinceFeed = 0;
+  let read: Promise<ReadableStreamReadResult<Uint8Array>> | null = null;
 
   // The last eight bytes fed: the trailer's candidates come from them.
   const noteTail = (bytes: Uint8Array) => {
     for (const b of bytes.subarray(Math.max(0, bytes.byteLength - 8))) tail.push(b);
     if (tail.length > 8) tail.splice(0, tail.length - 8);
   };
-  const write = async (bytes: Uint8Array) => {
-    for (let i = 0; i < bytes.byteLength; i += FEED_SLICE) {
-      await writer.write(bytes.subarray(i, i + FEED_SLICE));
-    }
-    noteTail(bytes);
-  };
-  const writeZeros = async (n: number) => {
-    for (let left = n; left > 0; left -= FEED_SLICE) {
-      await writer.write(ZEROS.subarray(0, Math.min(left, FEED_SLICE)));
-    }
-    noteTail(ZEROS.subarray(0, Math.min(n, 8)));
-  };
-  const feeding = (async () => {
-    for (;;) {
+
+  /** Feed one slice; false when the body has ended and only held zeros (if any) are left. */
+  const feedOne = async (): Promise<boolean> => {
+    while (zerosBefore === 0 && data.byteLength === 0) {
+      if (inputDone) return false;
       const r = await input.read();
-      if (r.done) break;
+      if (r.done) {
+        inputDone = true;
+        return false;
+      }
       const chunk = toBytes(r.value);
       let end = chunk.byteLength;
       while (end > 0 && chunk[end - 1] === 0) end--;
       if (end === 0) {
-        zeros += chunk.byteLength;
+        held += chunk.byteLength;
         continue;
       }
-      if (zeros > 0) await writeZeros(zeros);
-      zeros = chunk.byteLength - end;
-      await write(chunk.subarray(0, end));
+      zerosBefore = held;
+      held = chunk.byteLength - end;
+      data = chunk.subarray(0, end);
     }
-    if (zeros === 0) await writer.close();
-    else held = true;
-  })();
-  const fed = feeding.then(
-    () => WAKE,
-    (e: unknown) => {
-      writer.abort(e).catch(() => undefined);
-      return WAKE;
-    },
-  );
+    // Size the slice from the last one's yield, so one write inflates to about TARGET_OUT.
+    if (sliceFed > 0) {
+      const ratio = Math.max(1, outSinceFeed / sliceFed);
+      slice = Math.min(MAX_SLICE, Math.max(MIN_SLICE, Math.floor(TARGET_OUT / ratio)));
+    }
+    let bytes: Uint8Array;
+    if (zerosBefore > 0) {
+      bytes = ZEROS.subarray(0, Math.min(zerosBefore, slice));
+      zerosBefore -= bytes.byteLength;
+    } else {
+      bytes = data.subarray(0, slice);
+      data = data.subarray(bytes.byteLength);
+    }
+    sliceFed = bytes.byteLength;
+    outSinceFeed = 0;
+    await writer.write(bytes);
+    noteTail(bytes);
+    return true;
+  };
 
   /** Feed the held zeros that complete the trailer, then close (an unmatched trailer errors). */
   const closeHeld = () => {
     closing = true;
-    for (let j = 0; j <= Math.min(zeros, 8); j++) {
+    for (let j = 0; j <= Math.min(held, 8); j++) {
       const t = [...tail, ...new Array<number>(j).fill(0)].slice(-8);
       if (t.length < 8) continue;
       const isize =
@@ -252,35 +285,53 @@ function gunzip(src: ReadableStream<Uint8Array>): ReadableStream<Uint8Array> {
     writer.close().catch(() => undefined);
   };
 
-  return new ReadableStream<Uint8Array>({
-    async pull(c) {
-      const read = out.read();
-      let r = await Promise.race([read, fed]);
-      while (r === WAKE || r === IDLE) {
-        if (!held || closing) {
-          r = await read;
-          break;
+  return new ReadableStream<Uint8Array>(
+    {
+      async pull(c) {
+        for (;;) {
+          read ??= out.read();
+          // Output already inflated comes first; only once there is none is another slice fed.
+          let r = closing ? await read : await within(read, 0, TICK);
+          if (r === TICK) {
+            let more: boolean;
+            try {
+              more = await feedOne();
+            } catch (e) {
+              await writer.abort(e).catch(() => undefined);
+              throw e;
+            }
+            if (more) continue;
+            if (held === 0) {
+              closing = true;
+              writer.close().catch(() => undefined);
+              continue;
+            }
+            // Everything but the held zeros is fed; output still queued arrives well within
+            // IDLE_MS. Past that, the decompressor has nothing more to give without its trailer.
+            r = await within(read, IDLE_MS, IDLE);
+            if (r === IDLE) {
+              closeHeld();
+              continue;
+            }
+          }
+          read = null;
+          const res = r as ReadableStreamReadResult<Uint8Array>;
+          if (res.done) {
+            c.close();
+            return;
+          }
+          inflated += res.value.byteLength;
+          outSinceFeed += res.value.byteLength;
+          c.enqueue(res.value);
+          return;
         }
-        // Everything but the held zeros is inflated; output still queued arrives well within
-        // IDLE_MS. Past that, the decompressor has nothing more to give without its trailer.
-        r = await Promise.race([
-          read,
-          new Promise<symbol>((ok) => setTimeout(() => ok(IDLE), IDLE_MS)),
-        ]);
-        if (r === IDLE) closeHeld();
-      }
-      const res = r as ReadableStreamReadResult<Uint8Array>;
-      if (res.done) {
-        c.close();
-        return;
-      }
-      inflated += res.value.byteLength;
-      c.enqueue(res.value);
+      },
+      async cancel(reason) {
+        await Promise.allSettled([input.cancel(reason), out.cancel(reason), writer.abort(reason)]);
+      },
     },
-    async cancel(reason) {
-      await Promise.allSettled([input.cancel(reason), out.cancel(reason), writer.abort(reason)]);
-    },
-  });
+    { highWaterMark: 0 },
+  );
 }
 
 function toBytes(v: unknown): Uint8Array {
