@@ -382,8 +382,11 @@ files) and big pages without merging chunks, and an update stores only what chan
   version and per entry metadata), into the same stager and commit as an inline publish. The
   reader allocates a file only once it fits the 16 MB in-flight budget beside the running puts, so
   a bundle holds at most max(16 MB, 25 MB) of file bytes at once, plus kept scan text (8 MB) and
-  the source (5 MB). A gzip body is fed to the decompressor only as the reader reads (about 1 MB
-  of output at a time), so unread inflated bytes stay small whatever the body inflates to. A
+  the source (5 MB). A gzip body is fed to the decompressor only as the reader reads (in 1-8 KB
+  slices sized to inflate to about 1 MB; at most about 8.4 MB, 8 KB at the deflate maximum of
+  1032:1, for the first slice after the data starts compressing better), so unread inflated bytes
+  stay bounded whatever the body inflates to. The decompressor is read BYOB, so a read that does
+  not fill its buffer shows it is drained; pacing needs a timer turn only after a full read. A
   source candidate under the top directory that is over the source limit is not held until the
   end: it is written like any file and refused at the end if it turns out to be the source. The
   bundle must arrive within its 10-minute receiving lease (`upload_too_slow` otherwise, also when

@@ -113,7 +113,9 @@ overhead), the largest body an upload from `start_upload` or the CLI sends.
   budget, 25 MB per-file cap) of file bytes at once, plus the copy WebCrypto makes of the file
   being hashed (up to 25 MB), up to 8 MB of scan text, a 5 MB source, and what the gzip
   decompressor has inflated but the reader has not read yet (it is fed only as the reader reads,
-  about 1 MB at a time). Tests check that bound by counting bytes; the local runtime reports no
+  in slices sized to inflate to about 1 MB, but up to about 8.4 MB for the first slice after the
+  data turns from incompressible to maximally compressible, which a sender can arrange; count
+  8.4 MB per bundle). Tests check that bound by counting bytes; the local runtime reports no
   heap figures.
   Bundles of different users can share one 128 MB isolate. Before relying on the 25 MB per-file
   default on a busy instance, try two concurrent maximum-size bundles plus a large inline publish

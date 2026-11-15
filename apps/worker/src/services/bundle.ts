@@ -170,9 +170,27 @@ const MAX_SLICE = 8 * 1024;
 /** Inflated bytes one write aims for: the slice shrinks as the data compresses better. */
 const TARGET_OUT = 1024 * 1024;
 const IDLE_MS = 25;
+/**
+ * Microtask turns a slice's output gets to show up after its write resolves. workerd fulfils a
+ * pending read during the write, so it is readable within one; a timer turn (about 1 ms in
+ * workerd) per slice would cap inflation near 3 MB/s.
+ */
+const OUTPUT_TURNS = 8;
+/** The decompressor is read into a buffer this big: a read that does not fill it took all there was. */
+const OUT_CHUNK = 256 * 1024;
 const ZEROS = new Uint8Array(MAX_SLICE);
 const TICK = Symbol("tick");
 const IDLE = Symbol("idle");
+
+async function turns(n: number): Promise<symbol> {
+  for (let i = 0; i < n; i++) await undefined;
+  return TICK;
+}
+
+/** `p` if it settles within a few microtask turns, else TICK. */
+function soon<T>(p: Promise<T>): Promise<T | symbol> {
+  return Promise.race([p, turns(OUTPUT_TURNS)]);
+}
 
 /** `p`, or `tag` once `ms` have passed (a timer turn, so output already queued wins). */
 function within<T>(p: Promise<T>, ms: number, tag: symbol): Promise<T | symbol> {
@@ -190,8 +208,14 @@ function within<T>(p: Promise<T>, ms: number, tag: symbol): Promise<T | symbol> 
  * at once and queues all of its output whether or not anyone reads it, so the compressed body is
  * fed one small slice at a time, and only when the reader wants bytes and the output of the
  * slices before has been read. What sits inflated and unread is then about one slice's output
- * (TARGET_OUT, at most MAX_SLICE x 1032 for the first slice after the data starts compressing
- * better), however small the body or slow the reader.
+ * (TARGET_OUT, at most MAX_SLICE x 1032, about 8.4 MB, for the first slice after the data starts
+ * compressing better), however small the body or slow the reader. "Has been read" needs no
+ * timer in the common case: the decompressor is read BYOB into an OUT_CHUNK buffer, and a read
+ * that does not fill it has taken everything queued, while a slice's output fulfils the pending
+ * read within a few microtask turns of its write. A timer turn is waited only after a read that
+ * filled the buffer (more may be queued, and it arrives on the event loop, not in microtasks), or
+ * after a MAX_SLICE of input with no output at all (output that lags, or a run of empty blocks),
+ * so output that lags cannot let the feed run ahead by more than one more slice.
  *
  * It tolerates NUL padding after the member. bsdtar (macOS tar) pads `tar -czf -` to a
  * 10240-byte record when it writes to a pipe, and the decompressor errors on any byte after the
@@ -205,7 +229,10 @@ function within<T>(p: Promise<T>, ms: number, tag: symbol): Promise<T | symbol> 
 function gunzip(src: ReadableStream<Uint8Array>): ReadableStream<Uint8Array> {
   const ds = new DecompressionStream("gzip");
   const writer = ds.writable.getWriter();
-  const out = ds.readable.getReader() as ReadableStreamDefaultReader<Uint8Array>;
+  const out = ds.readable.getReader({ mode: "byob" });
+  let buf = new Uint8Array(OUT_CHUNK);
+  /** The last read filled `buf`, so more output may be queued. */
+  let maybeMore = false;
   const input = src.getReader();
   /** Compressed bytes read from the body and not yet fed: `zerosBefore` zero bytes, then `data`. */
   let data: Uint8Array = new Uint8Array(0);
@@ -219,6 +246,8 @@ function gunzip(src: ReadableStream<Uint8Array>): ReadableStream<Uint8Array> {
   let slice = MIN_SLICE;
   let sliceFed = 0;
   let outSinceFeed = 0;
+  /** Compressed bytes fed since output was last read. */
+  let fedSinceOut = 0;
   let read: Promise<ReadableStreamReadResult<Uint8Array>> | null = null;
 
   // The last eight bytes fed: the trailer's candidates come from them.
@@ -261,7 +290,9 @@ function gunzip(src: ReadableStream<Uint8Array>): ReadableStream<Uint8Array> {
       data = data.subarray(bytes.byteLength);
     }
     sliceFed = bytes.byteLength;
+    fedSinceOut += bytes.byteLength;
     outSinceFeed = 0;
+    maybeMore = false;
     await writer.write(bytes);
     noteTail(bytes);
     return true;
@@ -289,9 +320,12 @@ function gunzip(src: ReadableStream<Uint8Array>): ReadableStream<Uint8Array> {
     {
       async pull(c) {
         for (;;) {
-          read ??= out.read();
+          read ??= out.read(buf);
           // Output already inflated comes first; only once there is none is another slice fed.
-          let r = closing ? await read : await within(read, 0, TICK);
+          let r = closing ? await read : await soon(read);
+          if (r === TICK && (maybeMore || fedSinceOut >= MAX_SLICE)) {
+            r = await within(read, 0, TICK);
+          }
           if (r === TICK) {
             let more: boolean;
             try {
@@ -320,9 +354,15 @@ function gunzip(src: ReadableStream<Uint8Array>): ReadableStream<Uint8Array> {
             c.close();
             return;
           }
-          inflated += res.value.byteLength;
-          outSinceFeed += res.value.byteLength;
-          c.enqueue(res.value);
+          const n = res.value.byteLength;
+          // The read transferred `buf`: copy the bytes out and read into it again.
+          const chunk = res.value.slice();
+          buf = new Uint8Array(res.value.buffer);
+          maybeMore = n === buf.byteLength;
+          inflated += n;
+          outSinceFeed += n;
+          fedSinceOut = 0;
+          c.enqueue(chunk);
           return;
         }
       },

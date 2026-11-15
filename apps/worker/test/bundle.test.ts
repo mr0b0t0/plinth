@@ -3,7 +3,7 @@
 // and allocates, not heap use: workerd reports no heap figures and enforces no isolate limit in
 // the pool. The structural memory bound (in-flight plus the next file) is in uploads.test.ts.
 import { LIMITS } from "@plinth/shared";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { ApiError } from "../src/lib/errors.ts";
 import {
   type BundleBounds,
@@ -631,6 +631,24 @@ describe("sizes and bounds", () => {
     // About one slice past what the reader read: never the rest of the body. Each compressed
     // byte inflates to at most 1032, so 16 KB fed bounds what sits inflated at ~16 MB.
     expect(pulled).toBeLessThanOrEqual(16 * 1024);
+  });
+
+  it("paces gzip without a timer per slice: an incompressible body reads at CPU speed", async () => {
+    // A setTimeout(0) costs about 1 ms in workerd, and a slice is at most 8 KB and one body
+    // chunk, so waiting a timer turn before each slice capped inflation near 3 MB/s.
+    const data = new Uint8Array(2 * MB);
+    for (let o = 0; o < data.byteLength; o += 65536)
+      crypto.getRandomValues(data.subarray(o, o + 65536));
+    const wire = await gzip(tar([...site, { name: "assets/blob.bin", data }]));
+    const timers = vi.spyOn(globalThis, "setTimeout");
+    try {
+      const { files } = await read(streamOf(wire, 4096));
+      expect(files.map((f) => f.size)).toEqual([31, 14, data.byteLength]);
+      // About 500 slices; only the wait for held padding (none here) may use a timer.
+      expect(timers.mock.calls.length).toBeLessThan(10);
+    } finally {
+      timers.mockRestore();
+    }
   });
 
   it("refuses a stream truncated inside a file, inside a header, or inside gzip", async () => {
