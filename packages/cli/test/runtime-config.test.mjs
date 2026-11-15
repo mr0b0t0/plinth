@@ -363,11 +363,29 @@ describe("checkout deploys refuse a per-environment config without them", () => 
     assert.equal(ok.stderr, "");
   });
 
-  it("the Worker's build only warns, and turbo does not hash the git-ignored per-env configs", () => {
+  it("the Worker's build only warns, and turbo hashes the git-ignored per-env configs it warns about", () => {
     assert.match(pkg.scripts.build, /^node scripts\/check-config\.mjs --warn && /);
     assert.equal(pkg.scripts["check-config"], "node scripts/check-config.mjs");
-    const turbo = JSON.parse(readFileSync(path.join(root, "turbo.json"), "utf8"));
-    assert.ok(!turbo.tasks["@plinth/worker#build"].inputs.includes("wrangler.*.jsonc"));
+    // $TURBO_DEFAULT$ leaves out git-ignored files, so without the explicit input a cache hit
+    // replays the old warning after the config was fixed.
+    const hash = () => {
+      const r = spawnSync(
+        path.join(root, "node_modules", ".bin", "turbo"),
+        ["run", "build", "--filter=@plinth/worker", "--dry=json"],
+        { cwd: root, encoding: "utf8" },
+      );
+      assert.equal(r.status, 0, r.stderr);
+      return JSON.parse(r.stdout).tasks.find((t) => t.taskId === "@plinth/worker#build").hash;
+    };
+    const probe = path.join(workerDir, `wrangler.turbo-probe-${process.pid}.jsonc`);
+    try {
+      writeFileSync(probe, '{ "compatibility_flags": [] }\n');
+      const stale = hash();
+      writeFileSync(probe, '{ "compatibility_flags": ["enable_request_signal"] }\n');
+      assert.notEqual(hash(), stale, "a fixed per-env config misses the build cache");
+    } finally {
+      rmSync(probe, { force: true });
+    }
   });
 
   // The deploy scripts as package.json has them, run by a shell in a copy of apps/worker with a
