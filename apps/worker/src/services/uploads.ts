@@ -451,13 +451,15 @@ export async function redeemBundle(
       await stager.add(entry.path, entry.bytes);
     }
     stopClock();
-    // Rights are checked again now the bundle is in: a connection revoked or an editor removed
-    // while it streamed stops the commit (the batch also re-checks the connection).
-    const fresh = await ticketCtx(w, ticket);
-    await ticketTarget(fresh, ticket, deps, target);
     const staged = await stager.finish(
       reader.summary.strippedPrefix ? { stripPrefix: reader.summary.strippedPrefix } : undefined,
     );
+    // Rights are checked again once every file is written, right before the commit: a connection
+    // revoked or an editor removed while the bundle streamed or finish settled its puts stops it
+    // (the batch also re-checks the connection). What is left is the commit's own reads, the same
+    // window as any publish.
+    const fresh = await ticketCtx(w, ticket);
+    await ticketTarget(fresh, ticket, deps, target);
     inTime();
     // A disconnect while finish settled its last puts already started the cleanup: never commit
     // after it. Synchronous from here into commitStaged, which takes the stager's point of no

@@ -392,8 +392,8 @@ files) and big pages without merging chunks, and an update stores only what chan
   deletion of the attempt's files and the release of the lease to `waitUntil`. Abort and commit
   exclude each other: the commit takes a point of no abort synchronously before its first await,
   so a disconnect before it never commits and one after it never deletes. The principal and edit
-  rights are checked again once the body is in, and the commit batch requires the minting
-  connection to be unrevoked. A folder
+  rights are checked again once every file is written (after the last puts settle, right before
+  the commit), and the commit batch requires the minting connection to be unrevoked. A folder
   prefix is stripped only when every kept entry is under it. A conflict kills the ticket; other
   errors leave it open for its remaining attempts. One bundle per user streams at a time; minting
   is limited to `MAX_PUBLISHES_PER_HOUR` per hour and bundle requests to twice that. The token is

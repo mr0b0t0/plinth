@@ -1646,6 +1646,46 @@ describe("an abandoned, slow or over-quota bundle leaves nothing behind", () => 
     expect(await newKeys(id)).toEqual([]);
   });
 
+  it("an editor removed while finish writes the held source is refused before the commit", async () => {
+    const { id } = await ownerWithArtifact();
+    const editor = await agent();
+    await db()
+      .insert(accessGrants)
+      .values({ artifactId: id, email: editor.user.email, role: "editor", createdAt: nowIso() })
+      .run();
+    const t = await mint(editor, { id, base_version: 1 }, stageDeps);
+    const v1 = (await versionRow(id, 1))?.r2Prefix as string;
+    // The source is held until finish; its put is the last write before the commit.
+    const files = new Proxy(env.FILES, {
+      get(target, prop) {
+        if (prop === "put") {
+          return async (key: string, value: Uint8Array, o?: R2PutOptions) => {
+            if (key.endsWith("/index.html") && !key.startsWith(v1)) {
+              await db().delete(accessGrants).where(eq(accessGrants.email, editor.user.email)).run();
+            }
+            return target.put(key, value, o);
+          };
+        }
+        const v = Reflect.get(target, prop);
+        return typeof v === "function" ? v.bind(target) : v;
+      },
+    });
+    const deps: StageDeps = {
+      ...stageDeps,
+      openStager: (ctx, target, opts) =>
+        stageDeps.openStager({ ...ctx, env: { ...ctx.env, FILES: files } }, target, opts),
+    };
+    const body = tar([
+      { name: "index.html", data: "<!doctype html><title>x</title><script src=a.js></script>" },
+      { name: "a.js", data: filler(20_000, 7) },
+    ]);
+    const e = (await redeem(t, streamOf(body), deps).catch((x: unknown) => x)) as ApiError;
+    expect(e).toBeInstanceOf(ApiError);
+    expect(["forbidden", "not_found"]).toContain(e.code);
+    expect((await versionRow(id, 2)) ?? null).toBeNull();
+    expect(await newKeys(id)).toEqual([]);
+  });
+
   it("a sender that declares a file and goes quiet is cut off at the deadline, with no more data", async () => {
     const { a, id } = await ownerWithArtifact();
     const t = await mint(a, { id, base_version: 1 }, stageDeps);
