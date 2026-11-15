@@ -367,7 +367,8 @@ files) and big pages without merging chunks, and an update stores only what chan
   `blocked_host` (outside the CSP's allowlist), `insecure_url` (`http:`), `opaque_module` (module
   scripts, `crossorigin` links and fonts, which fail under `CONTENT_ISOLATION=opaque`) and
   `not_scanned` (a note, not something to fix: the reference check reads at most 2 MB per file and
-  8 MB per publish, so every big build gets it). The result's `stored` reports files, `written`,
+  8 MB per publish, so every big build gets it; an inline update also gets it for text files reused
+  by `{path, sha256}` or carried forward, whose bytes were not sent and so were not re-checked). The result's `stored` reports files, `written`,
   `reused` and bytes. Agents verify a publish by comparing `get_artifact`'s asset hashes.
 - **Out-of-band upload.** `start_upload` (MCP) or bearer-only `POST /api/v1/uploads` mints a
   ticket: single use, 30 minutes, at most 5 attempts, bound to its connection (or, in single-user

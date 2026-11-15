@@ -191,8 +191,9 @@ Rules for builds:
   `missing_file` (a referenced file is not in the upload), `root_absolute`, `blocked_host` (a
   host outside the allowlist), `insecure_url` (`http:`) and `opaque_module`. Publish again with
   the fix; a warning never blocks a publish on its own. `not_scanned` is different: it only says
-  the reference check stopped at its budget (any build over about 8 MB of HTML, CSS and JS). It
-  needs no action; never re-upload or trim files because of it.
+  the reference check did not read some files, either past its budget (any build over about 8 MB
+  of HTML, CSS and JS) or, in an update, text files reused unchanged by `{path, sha256}` or
+  carried forward. It needs no action; never re-upload or trim files because of it.
 - **Your own HTTP client** (a script calling the REST API) must send a `User-Agent` of its own,
   such as `my-agent/1.0`. Some instances' edge refuses default library agents: Python's
   `urllib` gets 403 `error code: 1010` before Plinth sees the request.

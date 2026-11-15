@@ -230,8 +230,9 @@ There is no rendered preview for agents yet. To check that a publish arrived int
 1. **Read the warnings.** Every publish result lists `warnings`: references to files the version
    does not have, root-absolute URLs, hosts outside the allowlist, `http:` URLs, and module scripts
    on opaque-isolation instances ([mcp.md](mcp.md#publish-warnings)). Fix them and publish again.
-   `not_scanned` is only a note that the reference check stopped at its budget (8 MB of HTML, CSS
-   and JS per publish); it needs no action.
+   `not_scanned` is only a note that the reference check did not read some files: those past its
+   budget (8 MB of HTML, CSS and JS per publish), or in an update the text files reused unchanged
+   by `{path, sha256}` or carried forward; it needs no action.
 2. **Compare hashes.** `get_artifact` and `GET /api/v1/artifacts/<id>` list every asset with the
    `sha256` the server computed from the stored bytes. Compare them with the local files
    (`shasum -a 256 <file>`, or `sha256sum`). The CLI does this after every publish and prints

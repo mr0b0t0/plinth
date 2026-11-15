@@ -100,7 +100,8 @@ export const BUILD_NOTE =
   "limits in a start_upload result): HTML up to 5 MB, a version's total size and file count as " +
   "configured, and the account's artifact and storage quotas. The result lists warnings (missing " +
   "files, root-absolute URLs, blocked hosts); fix them before you hand over the link. not_scanned " +
-  "only says the reference check stopped at its budget and needs no action. ";
+  "only says the reference check did not read some files (past its budget, or reused unchanged) " +
+  "and needs no action. ";
 
 /** What update_artifact says about reusing unchanged files. */
 const REUSE_NOTE =

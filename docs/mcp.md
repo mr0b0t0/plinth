@@ -385,7 +385,7 @@ fix them and publish again (all but `not_scanned`, which needs no action). Each 
 | `blocked_host` | A script, style, image or font from a host outside the CSP's allowlist |
 | `insecure_url` | An `http:` reference |
 | `opaque_module` | Only on opaque-isolation instances: module scripts, `crossorigin` links and web fonts fail there |
-| `not_scanned` | A note, not something to fix: the reference check reads at most 2 MB per file and 8 MB per publish, and this many files were past that. Big builds always get it |
+| `not_scanned` | A note, not something to fix: this many files were not checked for references. Either they were past the check's budget (at most 2 MB per file and 8 MB per publish; big builds always get it), or, in an inline update, they are HTML, CSS or JS files reused by `{path, sha256}` or carried forward, whose bytes were not sent. A bundle checks every file it carries |
 
 At most 50 are listed, then one "and N more".
 

@@ -279,8 +279,9 @@ function report(result, check, opts, out) {
 }
 
 /**
- * Warnings to fix, and notes that need no action: `not_scanned` only says the reference check
- * stopped at its budget; nothing in the folder can or should change for it.
+ * Warnings to fix, and notes that need no action: `not_scanned` only says the reference check did
+ * not read some files (past its budget, or sent unchanged as {path, sha256}); nothing in the
+ * folder can or should change for it.
  */
 export function splitWarnings(warnings) {
   const all = warnings ?? [];
