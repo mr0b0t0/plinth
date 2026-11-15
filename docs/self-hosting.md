@@ -218,6 +218,13 @@ pnpm --filter @plinth/worker exec wrangler deploy --config wrangler.production.j
 Apply migrations before deploying code that needs them. Migrations only add; they never rewrite
 stored versions.
 
+Your `wrangler.production.jsonc` keeps the compatibility flags it was written with. When a
+release adds one (0.4.0 adds `enable_request_signal`, which lets an abandoned upload clean up
+after itself), re-run `node scripts/setup.mjs --remote` with the arguments you first used, which
+adds the release's flags and keeps the rest, or copy `compatibility_flags` from
+`apps/worker/wrangler.jsonc` by hand. [deploy-checklist.md](deploy-checklist.md#6-upgrading-and-rolling-back)
+lists what each release needs.
+
 ## Connect agents
 
 The MCP endpoint is `https://<APP_HOST>/mcp`.

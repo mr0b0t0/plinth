@@ -110,13 +110,17 @@ overhead), the largest body an upload from `start_upload` or the CLI sends.
 - A reverse proxy in front of the Worker (the Docker setup's nginx, for example) must accept bodies
   of at least `max_bundle_bytes` ([docker.md](docker.md)).
 - **Memory was not measured on a live isolate.** A bundle holds at most max(16 MB in-flight
-  budget, 25 MB per-file cap) of file bytes at once, plus up to 8 MB of scan text and a 5 MB
-  source, and tests check that bound by counting bytes; the local runtime reports no heap figures.
+  budget, 25 MB per-file cap) of file bytes at once, plus the copy WebCrypto makes of the file
+  being hashed (up to 25 MB), up to 8 MB of scan text, a 5 MB source, and what the gzip
+  decompressor has inflated but the reader has not read yet (it is fed only as the reader reads,
+  about 1 MB at a time). Tests check that bound by counting bytes; the local runtime reports no
+  heap figures.
   Bundles of different users can share one 128 MB isolate. Before relying on the 25 MB per-file
   default on a busy instance, try two concurrent maximum-size bundles plus a large inline publish
   on staging.
 - **Orphaned upload files.** A bundle whose client disconnects deletes its own files (the
-  `enable_request_signal` compatibility flag in `wrangler.jsonc` is what lets it notice), but a
+  `enable_request_signal` compatibility flag is what lets it notice; it must be in the config you
+  deploy with, see [§6](#6-upgrading-and-rolling-back)), but a
   request the runtime kills outright can still leave files no version names. They do not count
   toward any quota. On an instance open to sign-ups, run
   `pnpm --filter @plinth/worker admin -- sweep-orphans --remote` regularly, for example weekly
@@ -353,6 +357,18 @@ Upgrades apply the new release's D1 migrations before its Worker (`plinth deploy
 hand, `wrangler d1 migrations apply` first). Plinth 0.4.0 adds migrations `0006_stored_bytes` and
 `0007_upload_tickets` and a new storage layout: a version may reuse files stored under an earlier
 version of the same artifact, and new versions are written under a fresh `v<n>.<nonce>/` prefix.
+
+Plinth 0.4.0 also needs the `enable_request_signal` compatibility flag: without it a bundle whose
+client disconnects never notices, and its files stay behind until `sweep-orphans` runs. `plinth
+deploy` and the Docker image take the flags from the release. A `wrangler.<env>.jsonc` that
+`scripts/setup.mjs` wrote before 0.4.0 does not have it: re-run setup with the same arguments
+(it now adds the release's flags to an existing config and keeps everything else), or add it by
+hand so the line reads `"compatibility_flags": ["nodejs_compat", "enable_request_signal"]`.
+Check before you deploy:
+
+```sh
+grep compatibility_flags apps/worker/wrangler.production.jsonc
+```
 
 **Roll forward, not back.** Rolling the Worker back past 0.4.0 breaks artifacts updated since then
 (any update or restore that keeps files reuses them): an older Worker looks each file up under the

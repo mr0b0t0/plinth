@@ -47,7 +47,7 @@ import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { provisionRemote, wranglerRunner } from "../apps/worker/scripts/deploy.mjs";
-import { hostPairProblem } from "../apps/worker/scripts/deploy-lib.mjs";
+import { hostPairProblem, refreshRuntime } from "../apps/worker/scripts/deploy-lib.mjs";
 import {
   InstanceError,
   parseJsonc,
@@ -296,9 +296,11 @@ function setupRemote() {
       missingKeyHint: (name) =>
         `Export it and rerun, or: wrangler secret put ${name} ${cfgArgs.join(" ")}`,
       writeConfig: (databaseId) => {
+        const repoCfg = parseJsonc(readFileSync(path.join(workerDir, "wrangler.jsonc"), "utf8"));
+        // An existing config keeps its own settings but takes the flags this release needs.
         const base = existsSync(configFile)
-          ? parseJsonc(readFileSync(configFile, "utf8"))
-          : parseJsonc(readFileSync(path.join(workerDir, "wrangler.jsonc"), "utf8"));
+          ? refreshRuntime(parseJsonc(readFileSync(configFile, "utf8")), repoCfg)
+          : repoCfg;
         const cfg = {
           ...base,
           name: opts["worker-name"] ?? (existsSync(configFile) ? base.name : workerName),

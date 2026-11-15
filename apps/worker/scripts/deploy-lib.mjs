@@ -73,6 +73,23 @@ export function hostPairProblem(appHost, contentHost, isolation, registrable) {
 }
 
 /** The --name flag, checked: lowercase letters, digits and dashes; default plinth. */
+/**
+ * The runtime settings a re-run of setup carries into an existing per-environment config: every
+ * compatibility flag of either file (the repo's config names the flags this release needs, such
+ * as enable_request_signal), and the later compatibility date. The rest of `existing` is kept.
+ */
+export function refreshRuntime(existing, repo) {
+  const flags = [
+    ...new Set([...(existing.compatibility_flags ?? []), ...(repo.compatibility_flags ?? [])]),
+  ];
+  const dates = [existing.compatibility_date, repo.compatibility_date].filter(Boolean).sort();
+  return {
+    ...existing,
+    ...(dates.length > 0 ? { compatibility_date: dates[dates.length - 1] } : {}),
+    compatibility_flags: flags,
+  };
+}
+
 export function instanceName(raw) {
   const name = raw.name === undefined ? "plinth" : String(raw.name);
   if (!NAME_RE.test(name)) fail("--name must be lowercase letters, digits and dashes, e.g. plinth");
