@@ -95,10 +95,16 @@ Full run after the switch (12:34 CET), against public DNS:
 
 ```sh
 pnpm install && pnpm build
-pnpm --filter @plinth/worker exec wrangler deploy --config wrangler.production.jsonc
+pnpm --filter @plinth/worker check-config wrangler.production.jsonc
+pnpm --filter @plinth/worker exec wrangler d1 migrations apply DB --remote --config wrangler.production.jsonc
+pnpm --filter @plinth/worker run deploy:production
 ```
 
-Migrations: `pnpm --filter @plinth/worker exec wrangler d1 migrations apply DB --remote --config wrangler.production.jsonc`.
+`deploy:production` runs `check-config` on `wrangler.production.jsonc` and then
+`wrangler deploy --config wrangler.production.jsonc`; it refuses a config without the
+`enable_request_signal` compatibility flag or the `0 * * * *` cron trigger, which 0.4.0 needs
+(`pnpm build` only warns about one). The `check-config` line stops before the migrations; they
+only add, so applying them before the Worker is safe.
 
 ## Shared data usage
 

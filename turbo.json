@@ -7,7 +7,7 @@
     },
     "@plinth/worker#build": {
       "dependsOn": ["@plinth/web#build"],
-      "inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/packages/cli/package.json", "wrangler.*.jsonc"],
+      "inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/packages/cli/package.json"],
       "outputs": ["dist/**"]
     },
     "typecheck": {

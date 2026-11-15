@@ -80,11 +80,13 @@ SENDGRID_API_KEY=... node scripts/setup.mjs --remote --env staging --workers-dev
   --app-host plinth-staging.aconite-io.workers.dev \
   --email-provider sendgrid --email-from "Plinth <noreply@aconite.io>"
 pnpm build
-pnpm --filter @plinth/worker exec wrangler deploy --config wrangler.staging.jsonc
+pnpm --filter @plinth/worker run deploy:staging
 ```
 
-Setup runs before the build because the build refuses a `wrangler.<env>.jsonc` that lacks the
-release's compatibility flags or cron trigger, and a setup re-run adds them.
+`deploy:staging` runs `check-config` on `wrangler.staging.jsonc` and then
+`wrangler deploy --config wrangler.staging.jsonc`, so it refuses a config that lacks the release's
+compatibility flags or cron trigger (`pnpm build` only prints a warning for one). Setup runs first
+because a setup re-run adds them to an existing config.
 
 `setup.mjs` creates the D1 database and R2 bucket if missing, writes
 `apps/worker/wrangler.staging.jsonc` (git-ignored), sets `SESSION_SECRET`, `TOKEN_SIGNING_KEY` and

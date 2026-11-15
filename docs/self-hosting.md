@@ -200,7 +200,7 @@ does). Run `node scripts/setup.mjs --help` for the full list.
 ```sh
 pnpm install
 pnpm build
-pnpm --filter @plinth/worker exec wrangler deploy --config wrangler.production.jsonc
+pnpm --filter @plinth/worker run deploy:production
 ```
 
 Then do the DNS, email and verification steps in [deploy-checklist.md](deploy-checklist.md).
@@ -213,8 +213,13 @@ pnpm install
 pnpm --filter @plinth/worker check-config wrangler.production.jsonc
 pnpm build
 pnpm --filter @plinth/worker exec wrangler d1 migrations apply DB --remote --config wrangler.production.jsonc
-pnpm --filter @plinth/worker exec wrangler deploy --config wrangler.production.jsonc
+pnpm --filter @plinth/worker run deploy:production
 ```
+
+`deploy:production` checks `wrangler.production.jsonc` again and runs
+`wrangler deploy --config wrangler.production.jsonc`; `deploy:staging` does the same with
+`wrangler.staging.jsonc`. For another environment name, run `check-config wrangler.<env>.jsonc`
+and then `exec wrangler deploy --config wrangler.<env>.jsonc`.
 
 Apply migrations before deploying code that needs them. Migrations only add; they never rewrite
 stored versions.
@@ -222,8 +227,9 @@ stored versions.
 Your `wrangler.production.jsonc` keeps the compatibility flags and cron triggers it was written
 with. When a release adds one (0.4.0 adds the `enable_request_signal` flag, which lets an abandoned
 upload clean up after itself, and the hourly cron trigger `0 * * * *`, which sweeps what abandoned
-uploads leave), `check-config` stops with the file and the missing lines, and so does `pnpm build`,
-which checks every `apps/worker/wrangler.<env>.jsonc` before it builds. Re-run
+uploads leave), `check-config` and the deploy scripts stop with the file and the missing lines.
+`pnpm build` only prints a warning line for each `apps/worker/wrangler.<env>.jsonc` that lacks them,
+so a stale config never breaks a build. Re-run
 `node scripts/setup.mjs --remote` with the arguments you first used, which adds the release's flags
 and cron triggers, moves `compatibility_date` up to the committed config's when that is later (a
 date you pinned earlier is replaced) and keeps the rest, or copy `compatibility_flags` and

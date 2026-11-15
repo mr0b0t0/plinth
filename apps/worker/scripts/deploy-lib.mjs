@@ -133,17 +133,23 @@ export function runtimeBase(repoCfg) {
   };
 }
 
+/** The runtime settings this release needs that a Worker config lacks (empty when it has both). */
+export function runtimeConfigMissing(cfg) {
+  const missing = [];
+  if (!(cfg?.compatibility_flags ?? []).includes("enable_request_signal"))
+    missing.push('"enable_request_signal" in compatibility_flags');
+  if (!(cfg?.triggers?.crons ?? []).includes(SWEEP_CRON))
+    missing.push(`"${SWEEP_CRON}" in triggers.crons`);
+  return missing;
+}
+
 /**
  * Why a Worker config must not be deployed with this release, or null: it lacks the
  * enable_request_signal flag (an abandoned upload's cleanup would never start) or the hourly cron
  * trigger (nothing would remove what abandoned uploads leave).
  */
 export function runtimeConfigProblem(cfg) {
-  const missing = [];
-  if (!(cfg?.compatibility_flags ?? []).includes("enable_request_signal"))
-    missing.push('"enable_request_signal" in compatibility_flags');
-  if (!(cfg?.triggers?.crons ?? []).includes(SWEEP_CRON))
-    missing.push(`"${SWEEP_CRON}" in triggers.crons`);
+  const missing = runtimeConfigMissing(cfg);
   if (missing.length === 0) return null;
   return (
     `the Worker config lacks ${missing.join(" and ")}. Plinth needs both from 0.4.0 on. ` +

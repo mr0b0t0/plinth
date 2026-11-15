@@ -342,8 +342,9 @@ These need accounts, money or legal judgement, so no script does them.
    tracking. Put the API key in with `wrangler secret put`. The hosted instance sends as
    `Plinth <noreply@plinth.aconite.io>` (`plinth.aconite.io` authenticated in Aconite's SendGrid
    account on 2026-11-14).
-7. `pnpm build` and `wrangler deploy --config wrangler.production.jsonc`. The build refuses a
-   `wrangler.<env>.jsonc` without the release's compatibility flags and cron trigger (section 6).
+7. `pnpm build`, then `pnpm --filter @plinth/worker run deploy:production`, which refuses a
+   `wrangler.production.jsonc` without the release's compatibility flags and cron trigger before
+   it runs `wrangler deploy --config wrangler.production.jsonc` (section 6).
 8. Confirm the route `*.plinthusercontent.com/*` (or `*.CONTENT_DOMAIN/*`) shows under the
    Worker's Domains & Routes, and that `https://<any id>.plinthusercontent.com/` answers 404 from
    Plinth with a valid certificate.
@@ -381,16 +382,20 @@ setup with the same arguments (it adds the release's flags and cron trigger to a
 moves its `compatibility_date` up to the committed config's when that is later, keeps everything
 else, and refuses to go on if the result would still lack them), or add them by hand:
 `compatibility_flags` must include `"nodejs_compat"` and `"enable_request_signal"`, and
-`triggers.crons` must include `"0 * * * *"`. Check before you deploy (it exits 1 and names what is
-missing):
+`triggers.crons` must include `"0 * * * *"`. A checkout update checks the config before the
+migrations (`check-config` exits 1 and names what is missing) and deploys through the Worker's
+deploy script, which runs the same check first:
 
 ```sh
+git pull && pnpm install && pnpm build
 pnpm --filter @plinth/worker check-config wrangler.production.jsonc
+pnpm --filter @plinth/worker exec wrangler d1 migrations apply DB --remote --config wrangler.production.jsonc
+pnpm --filter @plinth/worker run deploy:production
 ```
 
-`pnpm build` runs the same check on `wrangler.jsonc` and every `wrangler.<env>.jsonc` in
-`apps/worker`, so a checkout build stops before the migrations and `wrangler deploy` while one of
-them lacks either.
+`deploy:staging` does the same with `wrangler.staging.jsonc`. `pnpm build` only prints a warning
+line for each `wrangler.<env>.jsonc` in `apps/worker` that lacks either, and never fails because
+of one: the refusal is in `check-config` and the deploy scripts.
 
 **Roll forward, not back.** Rolling the Worker back past 0.4.0 breaks artifacts updated since then
 (any update or restore that keeps files reuses them): an older Worker looks each file up under the

@@ -47,6 +47,7 @@ export declare function refreshRuntime<T extends Runtime>(
   repo: Runtime,
 ): T & { compatibility_flags: string[]; triggers?: { crons: string[] } };
 export declare function runtimeBase(repoCfg: Record<string, unknown>): Record<string, unknown>;
+export declare function runtimeConfigMissing(cfg: unknown): string[];
 export declare function runtimeConfigProblem(cfg: unknown): string | null;
 export declare function instanceName(raw: Raw): string;
 export declare function deployPaths(
