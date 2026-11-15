@@ -15,6 +15,8 @@ Status on 2026-11-14: **deployed** at <https://plinth.aconite.io>, with artifact
 | Email | SendGrid, `EMAIL_FROM="Plinth <noreply@plinth.aconite.io>"` (`plinth.aconite.io` authenticated in SendGrid on 2026-11-14) |
 | `ADMIN_EMAIL` | The maintainer's address |
 | Operator (legal pages) | `OPERATOR_NAME="Aconite Software & Investments, Lda."`, `OPERATOR_ADDRESS="Avenida República da Bulgária, Lote 15, Loja A, 1950-375 Lisboa, Portugal"`, `OPERATOR_REGISTRATION="VAT PT516696696"`, `OPERATOR_EMAIL=hello@aconite.io` |
+| Browser Rendering | `BROWSER` binding, for thumbnails and link-preview images (0.4.1); `THUMBNAILS` uses its default (on) |
+| Compatibility and cron | `nodejs_compat` and `enable_request_signal`; hourly cron `0 * * * *` for the staging sweep and upload-ticket pruning (0.4.0) |
 | Config file | `apps/worker/wrangler.production.jsonc` (git-ignored; written by `scripts/setup.mjs`) |
 
 ## Cloud resources (2026-11-14)
@@ -23,9 +25,9 @@ All in the operator's Cloudflare account:
 
 | Resource | Name / ID | Created by |
 | --- | --- | --- |
-| D1 database | `plinth` (`7dd95d0b-dd98-469f-8eac-8c6a06c35b52`), migrations 0001, 0002, 0004 and 0005 applied (there is no 0003) | `scripts/setup.mjs --remote --env production` |
+| D1 database | `plinth` (`7dd95d0b-dd98-469f-8eac-8c6a06c35b52`), migrations 0001, 0002 and 0004 to 0008 applied (there is no 0003) | `scripts/setup.mjs --remote --env production` |
 | R2 bucket | `plinth-files` | `scripts/setup.mjs` |
-| Worker | `plinth` (version `9998c568-0cb1-4bac-a7d7-4b8806bb4a1f`, commit `eccfb0b` (v0.3.0): shared data for pages, migration `0005_shared_state.sql` applied first) | `wrangler deploy --config wrangler.production.jsonc` |
+| Worker | `plinth` (version `a2ef6a7c-7ecd-4a45-b5e2-0a1e901a99d5`, commit `6155b64` (v0.4.1): big builds and uploads (0.4.0) and thumbnails, migrations `0006_stored_bytes.sql`, `0007_upload_tickets.sql` and `0008_thumbnails.sql` applied first) | `wrangler deploy --config wrangler.production.jsonc` |
 | Worker secrets | `SESSION_SECRET`, `TOKEN_SIGNING_KEY` (generated), `SENDGRID_API_KEY` | `scripts/setup.mjs` |
 | Workers Custom Domain | `plinth.aconite.io`, plus the read-only `AAAA 100::` record and certificate Cloudflare creates for it | `wrangler deploy` |
 | Domain and zone | `plinthusercontent.com`, registered through Cloudflare Registrar (Free plan zone). SSL/TLS "Full (strict)", "Always Use HTTPS" on, Universal SSL for `plinthusercontent.com` and `*.plinthusercontent.com` | Cloudflare dashboard |
@@ -84,6 +86,17 @@ Full run after the switch (12:34 CET), against public DNS:
     `<id>.plinthusercontent.com`, with no console errors.
   - The OAuth connection was revoked and the server removed from the local Claude Code config
     afterwards.
+
+After the v0.4.1 deploy (2026-11-15):
+
+- `GET /healthz`: `{"ok":true,"environment":"production"}`. `GET /api/v1/config` reports the
+  0.4.0 limits: `max_version_bytes` 52428800 and `max_assets_per_version` 511.
+- **Thumbnails.** Fetching the link-viewable "Welcome to Plinth" page started the first capture
+  (v5). Browser Rendering stored a 1200x630 JPEG of the artifact itself, not the app page, about
+  20 seconds later. The page then carried `og:image` and `twitter:card` `summary_large_image`, and
+  `/a/<slug>/og.jpg?version=5` answered 200 `image/jpeg` with `no-cache` and `nosniff`.
+- **Private links.** A private (allowlist) artifact's page carried only the generic "Plinth
+  artifact" card with no image, and its `og.jpg` answered 404.
 
 ## Waiting on a human
 
