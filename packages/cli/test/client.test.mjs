@@ -21,7 +21,10 @@ import path from "node:path";
 import { after, before, beforeEach, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import { claudeCodeConnectText } from "../bin/client/connect.mjs";
+import { checkLimits } from "../bin/client/files.mjs";
+import { ApiError } from "../bin/client/http.mjs";
 import { HOSTED_ORIGIN, resolveOrigin } from "../bin/client/origin.mjs";
+import { isVersionConflict, splitWarnings } from "../bin/client/publish.mjs";
 import { PAT, startFakePlinth } from "./helpers/fake-plinth.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -239,6 +242,27 @@ describe("plinth publish", () => {
     assert.equal(r2.code, 3, r2.stderr);
     assert.match(r2.stderr, /changed since v1 \(now v2\)/);
     assert.equal(since(from).filter((q) => q.method === "PUT").length, 1);
+  });
+
+  it("exits 3 when someone publishes while a big update's bundle is on its way", async () => {
+    const a = fake.seed({ "index.html": "<title>big</title>", "small.js": "1" });
+    const dir = build({
+      "index.html": "<title>big</title>",
+      "small.js": "2",
+      "one.bin": randomBytes(13 * 1024 * 1024),
+      "two.bin": randomBytes(13 * 1024 * 1024),
+    });
+    const from = fake.state.requests.length;
+    fake.state.bumpBeforeBundle = () => fake.bump(a);
+    try {
+      const r = await plinth(["publish", dir, "--id", a.id], { extraEnv: asPat() });
+      assert.equal(r.code, 3, r.stderr);
+      assert.match(r.stderr, new RegExp(`${a.id} changed since v1 \\(now v2\\)`));
+    } finally {
+      fake.state.bumpBeforeBundle = null;
+    }
+    assert.ok(since(from).some((q) => q.path.endsWith("/bundle")));
+    assert.equal(since(from).filter((q) => q.path.endsWith("/bundle")).length, 1);
   });
 
   it("refuses symlinks, skips dotfiles and source maps, and suggests renames", async () => {
@@ -648,5 +672,60 @@ describe("origin and credentials", () => {
       const r = await plinth(args);
       assert.equal(r.code, 2, `${args.join(" ")}: ${r.stderr}`);
     }
+  });
+});
+
+describe("reporting", () => {
+  it("treats not_scanned as a note, never as a warning to fix", () => {
+    const w = [
+      {
+        code: "missing_file",
+        file: "index.html",
+        ref: "a.js",
+        message: "a.js is not in the version",
+      },
+      { code: "not_scanned", file: "c1.js", count: 166, message: "166 files were not checked" },
+    ];
+    const { fix, notes } = splitWarnings(w);
+    assert.deepEqual(
+      fix.map((x) => x.code),
+      ["missing_file"],
+    );
+    assert.deepEqual(
+      notes.map((x) => x.code),
+      ["not_scanned"],
+    );
+    assert.deepEqual(splitWarnings(undefined), { fix: [], notes: [] });
+  });
+
+  it('names a version conflict whether or not the server gives reason "conflict"', () => {
+    const err = (details) => new ApiError(409, "conflict", "Not current", details);
+    assert.equal(isVersionConflict(err({ current_version: 2 })), true);
+    assert.equal(isVersionConflict(err({ current_version: 2, reason: "conflict" })), true);
+    for (const reason of ["upload_used", "upload_dead", "upload_running"])
+      assert.equal(isVersionConflict(err({ reason })), false, reason);
+    assert.equal(isVersionConflict(new ApiError(400, "invalid_input", "x", {})), false);
+  });
+
+  it("suggests leaving out source maps only when the folder sends some", () => {
+    const limits = {
+      max_assets_per_version: 2,
+      max_html_bytes: 5 * 1024 * 1024,
+      max_doc_bytes: 5 * 1024 * 1024,
+      max_version_bytes: 50 * 1024 * 1024,
+      max_bundle_file_bytes: 25 * 1024 * 1024,
+    };
+    const file = (p) => ({ path: p, size: 10 });
+    const without = [file("index.html"), file("a.js"), file("b.js"), file("c.js")];
+    assert.throws(
+      () => checkLimits(without, "index.html", "html", limits),
+      (e) =>
+        !/source maps/.test(e.message) && /MAX_ASSETS_PER_VERSION \(up to 900\)/.test(e.message),
+    );
+    const withMaps = [...without, file("a.js.map")];
+    assert.throws(
+      () => checkLimits(withMaps, "index.html", "html", limits),
+      /Leave out source maps \(drop --include-maps\)/,
+    );
   });
 });

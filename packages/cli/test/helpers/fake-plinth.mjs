@@ -267,9 +267,18 @@ export async function startFakePlinth(options = {}) {
           state.artifacts.set(a.id, a);
         } else {
           a = state.artifacts.get(t.artifact_id);
+          if (state.bumpBeforeBundle) {
+            const bump = state.bumpBeforeBundle;
+            state.bumpBeforeBundle = null;
+            bump();
+          }
+          // The body the real server sends (services/uploads.ts afterFailure): a version conflict
+          // on a bundle carries reason "conflict" and a next step.
           if (a.versions.length !== t.base_version)
             return apiError(res, 409, "conflict", "Not current", {
               current_version: a.versions.length,
+              reason: "conflict",
+              next: `v${a.versions.length} is current; check what changed (get_artifact), then start_upload again with base_version ${a.versions.length}`,
             });
         }
         t.used = true;

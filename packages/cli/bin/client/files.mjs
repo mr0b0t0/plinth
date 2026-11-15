@@ -104,8 +104,12 @@ export function checkLimits(files, sourcePath, type, limits) {
   const problems = [];
   const assets = files.filter((f) => f.path !== sourcePath);
   if (assets.length > limits.max_assets_per_version) {
+    const maps = assets.some((f) => f.path.endsWith(".map"));
     problems.push(
-      `${assets.length} asset files; this instance allows ${limits.max_assets_per_version} per version. Leave out source maps (*.map). Never merge chunks to fit.`,
+      `${assets.length} asset files; this instance allows ${limits.max_assets_per_version} per version. ` +
+        (maps ? "Leave out source maps (drop --include-maps). " : "") +
+        "Leave out files the page does not load. Never merge chunks to fit. " +
+        "The instance operator can raise MAX_ASSETS_PER_VERSION (up to 900).",
     );
   }
   const source = files.find((f) => f.path === sourcePath);

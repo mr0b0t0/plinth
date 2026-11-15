@@ -319,6 +319,29 @@ await check("upload sends a folder with a start_upload ticket", async () => {
   return out.slug;
 });
 
+await check(
+  "the literal commands.curl from start_upload publishes a folder (bash, tar, gzip, curl)",
+  async () => {
+    const dir = buildFolder("curl-site", 4);
+    writeFileSync(path.join(dir, "assets", "chunk-0.js.map"), "{}");
+    const run = async (rewrite) => {
+      const ticket = await callTool(APP, accessToken, "start_upload", {});
+      const cmd = rewrite(ticket.commands.curl.replace("<folder>", `'${dir}'`));
+      return json(spawnSync("bash", ["-c", cmd], { encoding: "utf8" }));
+    };
+    // As given: the source map stays out.
+    const out = await run((c) => c);
+    assert(out.version === 1 && out.stored.files === 4, JSON.stringify(out.stored));
+    // With `tar -czf - .` in its place, which macOS tar pads with NULs past the gzip member on a
+    // pipe: the server accepts the padding.
+    const padded = await run((c) =>
+      c.replace(/COPYFILE_DISABLE=1 tar .*? \| gzip -c/, "tar -czf - ."),
+    );
+    assert(padded.version === 1 && padded.bundle?.entries === 5, JSON.stringify(padded.bundle));
+    return `${out.slug}, ${padded.slug}`;
+  },
+);
+
 await check("/mcp refuses requests without a token", async () => {
   const r = await fetch(`${APP}/mcp`, { method: "POST" });
   assert(r.status === 401, `status ${r.status}`);

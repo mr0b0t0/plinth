@@ -162,9 +162,20 @@ export async function sendBundle({ uploadUrl, uploadToken, files, ctx }) {
   return readJson(res, "POST bundle");
 }
 
+/**
+ * A version conflict: someone published past the base. The bundle route sends it with
+ * `reason: "conflict"`; the inline routes send no reason. The upload_* reasons (used, dead,
+ * running) are states of the ticket, not conflicts.
+ */
+export function isVersionConflict(e) {
+  if (!(e instanceof ApiError) || e.code !== "conflict") return false;
+  const reason = e.details?.reason;
+  return !reason || reason === "conflict";
+}
+
 /** A conflict as the CLI reports it (exit 3), or null when `e` is not one. */
 function conflict(e, message) {
-  if (!(e instanceof ApiError) || e.code !== "conflict" || e.details?.reason) return null;
+  if (!isVersionConflict(e)) return null;
   return new CliError(message(e.details?.current_version), EXIT.conflict);
 }
 
@@ -258,12 +269,25 @@ function report(result, check, opts, out) {
     );
   }
   if (check.note) out.stdout(check.note);
-  const w = result.warnings ?? [];
-  if (w.length) {
-    out.stdout(`Warnings (${w.length}); fix them, then publish again:`);
+  const { fix, notes } = splitWarnings(result.warnings);
+  if (fix.length) {
+    out.stdout(`Warnings (${fix.length}); fix them, then publish again:`);
     // Warnings echo text from the published files: print it without control characters.
-    for (const x of w) out.stdout(printable(`  ${x.code} ${x.file}: ${x.message}`));
+    for (const x of fix) out.stdout(printable(`  ${x.code} ${x.file}: ${x.message}`));
   }
+  for (const x of notes) out.stdout(printable(`Note (no action needed): ${x.message}`));
+}
+
+/**
+ * Warnings to fix, and notes that need no action: `not_scanned` only says the reference check
+ * stopped at its budget; nothing in the folder can or should change for it.
+ */
+export function splitWarnings(warnings) {
+  const all = warnings ?? [];
+  return {
+    fix: all.filter((w) => w.code !== "not_scanned"),
+    notes: all.filter((w) => w.code === "not_scanned"),
+  };
 }
 
 /** The source as text for an inline update; a leading BOM is kept, so the stored bytes match the file. */
@@ -466,7 +490,8 @@ export async function upload(dir, opts, ctx) {
   }
   ctx.stdout(JSON.stringify(result, null, 2));
   ctx.stderr(`Published v${result.version}: ${result.url}`);
-  if (result.warnings?.length)
-    ctx.stderr(`${result.warnings.length} warnings: fix them, then call start_upload again.`);
+  const { fix, notes } = splitWarnings(result.warnings);
+  if (fix.length) ctx.stderr(`${fix.length} warnings: fix them, then call start_upload again.`);
+  for (const x of notes) ctx.stderr(printable(`Note (no action needed): ${x.message}`));
   return EXIT.ok;
 }

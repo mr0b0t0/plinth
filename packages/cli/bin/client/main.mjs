@@ -6,7 +6,7 @@
 import { readFileSync } from "node:fs";
 import { ApiError, apiClient, CliError, describeApiError, EXIT, guardedFetch } from "./http.mjs";
 import { resolveOrigin } from "./origin.mjs";
-import { publish, upload } from "./publish.mjs";
+import { isVersionConflict, publish, upload } from "./publish.mjs";
 import { createOAuth } from "./vendor/plinth-oauth.mjs";
 
 export const CLIENT_COMMANDS = ["login", "logout", "whoami", "publish", "upload"];
@@ -218,7 +218,7 @@ export async function main(argv, io = {}) {
     }
     if (e instanceof ApiError) {
       stderr(`plinth: ${describeApiError(e)}`);
-      return e.code === "conflict" && !e.details?.reason ? EXIT.conflict : EXIT.error;
+      return isVersionConflict(e) ? EXIT.conflict : EXIT.error;
     }
     stderr(`plinth: ${e instanceof Error ? e.message : String(e)}`);
     return EXIT.error;
