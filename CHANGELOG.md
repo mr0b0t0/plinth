@@ -63,7 +63,8 @@ Add a line under **Unreleased** in the pull request that makes a change people w
     instance's config on start. From a checkout, deploy with
     `pnpm --filter @plinth/worker run deploy:production` (or `deploy:staging`): it runs
     `check-config` on that config and refuses one that lacks either before it runs
-    `wrangler deploy`. The documented update runs `check-config` before the migrations too.
+    `wrangler deploy`. The documented update runs `check-config` before the migrations too, in one `&&` list, so a
+    refused config stops it before the migrations.
     `pnpm build` only prints a warning line for a stale `wrangler.<env>.jsonc` and still builds.
     On Workers Free the cron counts toward the account's 5 Cron Triggers. See
     [docs/deploy-checklist.md](docs/deploy-checklist.md#6-upgrading-and-rolling-back).

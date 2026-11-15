@@ -208,13 +208,15 @@ Then do the DNS, email and verification steps in [deploy-checklist.md](deploy-ch
 To update later:
 
 ```sh
-git pull
-pnpm install
-pnpm --filter @plinth/worker check-config wrangler.production.jsonc
-pnpm build
-pnpm --filter @plinth/worker exec wrangler d1 migrations apply DB --remote --config wrangler.production.jsonc
-pnpm --filter @plinth/worker run deploy:production
+git pull && pnpm install && \
+  pnpm --filter @plinth/worker check-config wrangler.production.jsonc && \
+  pnpm build && \
+  pnpm --filter @plinth/worker exec wrangler d1 migrations apply DB --remote --config wrangler.production.jsonc && \
+  pnpm --filter @plinth/worker run deploy:production
 ```
+
+The commands are one `&&` list, so a step that fails stops the rest (a refused config never
+reaches the migrations).
 
 `deploy:production` checks `wrangler.production.jsonc` again and runs
 `wrangler deploy --config wrangler.production.jsonc`; `deploy:staging` does the same with

@@ -445,6 +445,14 @@ describe("checkout deploys refuse a per-environment config without them", () => 
       const deploy = block.indexOf("deploy:production");
       assert.ok(deploy > 0, `${doc} deploys with deploy:production`);
       assert.doesNotMatch(block, /exec wrangler deploy/, `${doc} has no bare wrangler deploy`);
+      // One command list joined with &&, so a failing check-config stops everything after it
+      // when the block is pasted into a shell (separate lines would still run the migrations).
+      const commands = block
+        .replace(/^sh\n/, "")
+        .trim()
+        .split(/(?<!\\)\n/);
+      assert.equal(commands.length, 1, `${doc}: the commands are joined with && (\\ continues)`);
+      assert.doesNotMatch(commands[0], /;|\|\|/, `${doc}: only && between the commands`);
       const migrate = block.indexOf("migrations apply");
       if (migrate >= 0) {
         const check = block.indexOf("check-config");

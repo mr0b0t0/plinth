@@ -387,13 +387,14 @@ else, and refuses to go on if the result would still lack them), or add them by 
 `compatibility_flags` must include `"nodejs_compat"` and `"enable_request_signal"`, and
 `triggers.crons` must include `"0 * * * *"`. A checkout update checks the config before the
 migrations (`check-config` exits 1 and names what is missing) and deploys through the Worker's
-deploy script, which runs the same check first:
+deploy script, which runs the same check first. The commands are one `&&` list, so a refused
+config stops before the migrations:
 
 ```sh
-git pull && pnpm install && pnpm build
-pnpm --filter @plinth/worker check-config wrangler.production.jsonc
-pnpm --filter @plinth/worker exec wrangler d1 migrations apply DB --remote --config wrangler.production.jsonc
-pnpm --filter @plinth/worker run deploy:production
+git pull && pnpm install && pnpm build && \
+  pnpm --filter @plinth/worker check-config wrangler.production.jsonc && \
+  pnpm --filter @plinth/worker exec wrangler d1 migrations apply DB --remote --config wrangler.production.jsonc && \
+  pnpm --filter @plinth/worker run deploy:production
 ```
 
 `deploy:staging` does the same with `wrangler.staging.jsonc`. `pnpm build` only prints a warning
