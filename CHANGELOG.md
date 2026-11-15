@@ -10,6 +10,8 @@ Add a line under **Unreleased** in the pull request that makes a change people w
 
 ## Unreleased
 
+## 0.4.1 (2026-11-15)
+
 - **Thumbnails and link previews.** Each version gets a screenshot, taken by Cloudflare Browser
   Rendering after it is published. Dashboard cards show it in place of the initials, and links to
   artifacts anyone with the link can open now unfurl in Slack, iMessage, X and LinkedIn with their
