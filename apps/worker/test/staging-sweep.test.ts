@@ -16,10 +16,16 @@ import { artifacts, versions } from "../src/db/schema.ts";
 import worker from "../src/index.ts";
 import { deleteArtifact, publishArtifact, updateArtifact } from "../src/services/artifacts.ts";
 import {
+  OPPORTUNISTIC_SWEEP_BATCH,
+  OPPORTUNISTIC_SWEEP_EVERY_MS,
+  resetSweepThrottle,
   STAGING_SWEEP_AFTER_MS,
   STAGING_SWEEP_BATCH,
+  STAGING_SWEEP_CLAIM_MS,
   STAGING_SWEEP_CRON,
   STAGING_SWEEP_MARGIN_MS,
+  sweepSoon,
+  sweepStagingAttempts,
 } from "../src/services/attempts.ts";
 import {
   commitStaged,
@@ -28,7 +34,10 @@ import {
   type StagedVersion,
   updateTarget,
 } from "../src/services/stage.ts";
+import { startUpload } from "../src/services/uploads.ts";
+import { tar } from "./fixtures/bundles/tar.ts";
 import {
+  APP,
   agent,
   agentPrincipal,
   call,
@@ -594,7 +603,8 @@ describe("staging attempts: a claimed row stays until its objects are gone", () 
     );
     expect(await attemptRow(stager.prefix)).not.toBeNull();
     expect(await r2Keys(stager.prefix)).toEqual(keys);
-    await runSweep(later());
+    // The next run once the claim's lease is over (an hourly cron run always is).
+    await runSweep(later() + STAGING_SWEEP_CLAIM_MS + 1000);
     expect(await r2Keys(stager.prefix)).toEqual([]);
     expect(await attemptRow(stager.prefix)).toBeNull();
   });
@@ -737,5 +747,227 @@ describe("staging attempts: a commit batch D1 applies after reporting an error",
     expect(await versionsAt(stager.prefix)).toBe(1);
     expect((await r2Keys(stager.prefix)).length).toBe(2);
     expect(await (await serveFile(p.id, "/landed.css")).text()).toBe("landed");
+  });
+});
+
+// Docker, tunnel and local instances run under `wrangler dev`, which fires no cron. Minting an
+// upload ticket and posting a bundle start a capped sweep through waitUntil (at most one per
+// isolate per minute), on every runtime: it claims rows the same way the cron does.
+describe("staging attempts: the opportunistic sweep (no cron needed)", () => {
+  const OLD = () => new Date(Date.now() - STAGING_SWEEP_AFTER_MS - 60_000).toISOString();
+
+  /** Move an attempt's start back past the threshold, as if it had been abandoned long ago. */
+  async function backdate(prefix: string) {
+    await env.DB.prepare("UPDATE staging_attempts SET started_at = ? WHERE prefix = ?")
+      .bind(OLD(), prefix)
+      .run();
+  }
+
+  /** A request through the Worker's fetch export, waiting for its waitUntil work. */
+  async function fetchAndWait(req: Request) {
+    const ctx = createExecutionContext();
+    const res = await worker.fetch(req, env as never, ctx);
+    await waitOnExecutionContext(ctx);
+    return res;
+  }
+
+  const mintRequest = (a: Agent, body: Record<string, unknown> = {}) =>
+    new Request(`${APP}/api/v1/uploads`, {
+      method: "POST",
+      headers: { ...a.auth, "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+
+  /** `n` abandoned rows (with one object each) under one made-up artifact id, past the threshold. */
+  async function oldRows(id: string, n: number) {
+    const stmts = [];
+    for (let i = 0; i < n; i++) {
+      const prefix = `artifacts/${id}/v1.${String(i).padStart(12, "0")}/`;
+      await env.FILES.put(`${prefix}index.html`, "x");
+      stmts.push(
+        env.DB.prepare(
+          "INSERT INTO staging_attempts (prefix, artifact_id, started_at) VALUES (?, ?, ?)",
+        ).bind(prefix, id, OLD()),
+      );
+    }
+    await env.DB.batch(stmts);
+  }
+
+  it("is capped at 20 attempts and runs at most once per isolate per minute", () => {
+    expect(OPPORTUNISTIC_SWEEP_BATCH).toBe(20);
+    expect(OPPORTUNISTIC_SWEEP_EVERY_MS).toBe(60_000);
+    expect(STAGING_SWEEP_CLAIM_MS).toBeGreaterThan(0);
+    expect(STAGING_SWEEP_CLAIM_MS).toBeLessThan(STAGING_SWEEP_AFTER_MS);
+  });
+
+  it("minting a ticket clears an abandoned attempt past the threshold, and a recent one stays", async () => {
+    const a = await agent();
+    const { body: p } = await publish(a.auth);
+    const old = await abandonedUpdate(a, p.id);
+    const recent = await abandonedUpdate(a, p.id);
+    await backdate(old.stager.prefix);
+    resetSweepThrottle();
+    const res = await fetchAndWait(mintRequest(a, { id: p.id, base_version: 1 }));
+    expect(res.status).toBe(201);
+    expect(await r2Keys(old.stager.prefix)).toEqual([]);
+    expect(await attemptRow(old.stager.prefix)).toBeNull();
+    // Younger than the threshold: untouched. The committed version: untouched.
+    expect((await r2Keys(recent.stager.prefix)).length).toBe(2);
+    expect(await attemptRow(recent.stager.prefix)).not.toBeNull();
+    const v1 = await versionRow(p.id, 1);
+    expect((await r2Keys(v1?.r2Prefix ?? "-")).length).toBe(1);
+    expect((await serveFile(p.id, "/")).status).toBe(200);
+  });
+
+  it("start_upload over MCP starts it too (the service, not the route)", async () => {
+    const a = await agent();
+    const { body: p } = await publish(a.auth);
+    const { stager } = await abandonedUpdate(a, p.id);
+    await backdate(stager.prefix);
+    resetSweepThrottle();
+    const started: Promise<unknown>[] = [];
+    const ctx = {
+      ...serviceCtxFor(agentPrincipal(a)),
+      waitUntil: (w: Promise<unknown>) => void started.push(w),
+    };
+    await startUpload(ctx, { id: p.id, base_version: 1 });
+    expect(started.length).toBe(1);
+    await Promise.all(started);
+    expect(await r2Keys(stager.prefix)).toEqual([]);
+    expect(await attemptRow(stager.prefix)).toBeNull();
+  });
+
+  it("posting a bundle clears one too, and the bundle's own version commits", async () => {
+    const a = await agent();
+    const { body: p } = await publish(a.auth);
+    resetSweepThrottle();
+    const minted = await fetchAndWait(mintRequest(a));
+    expect(minted.status).toBe(201);
+    const t = (await minted.json()) as { upload_url: string; upload_token: string };
+    const { stager } = await abandonedUpdate(a, p.id);
+    await backdate(stager.prefix);
+    resetSweepThrottle();
+    const res = await fetchAndWait(
+      new Request(t.upload_url, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${t.upload_token}` },
+        body: tar([{ name: "index.html", data: "<!doctype html><title>B</title><p>b</p>" }]),
+      }),
+    );
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as { id: string; version: number };
+    expect(await r2Keys(stager.prefix)).toEqual([]);
+    expect(await attemptRow(stager.prefix)).toBeNull();
+    const mine = await versionRow(body.id, 1);
+    expect((await r2Keys(mine?.r2Prefix ?? "-")).length).toBe(1);
+    expect((await serveFile(p.id, "/")).status).toBe(200);
+  });
+
+  it("claims at most 20 attempts per run", async () => {
+    const a = await agent();
+    const id = "opportunisticcap0000";
+    await oldRows(id, OPPORTUNISTIC_SWEEP_BATCH + 5);
+    resetSweepThrottle();
+    expect((await fetchAndWait(mintRequest(a))).status).toBe(201);
+    expect((await attemptRows(id)).length).toBe(5);
+    expect((await r2Keys(`artifacts/${id}/`)).length).toBe(5);
+  });
+
+  it("the throttle starts one sweep per isolate per minute", async () => {
+    resetSweepThrottle();
+    const started: Promise<unknown>[] = [];
+    const wu = (w: Promise<unknown>) => void started.push(w);
+    const t = Date.now();
+    expect(sweepSoon(env, wu, t)).toBe(true);
+    expect(sweepSoon(env, wu, t)).toBe(false);
+    expect(sweepSoon(env, wu, t + OPPORTUNISTIC_SWEEP_EVERY_MS - 1)).toBe(false);
+    // A clock that moved back does not start one either.
+    expect(sweepSoon(env, wu, t - 1000)).toBe(false);
+    expect(sweepSoon(env, wu, t + OPPORTUNISTIC_SWEEP_EVERY_MS)).toBe(true);
+    expect(started.length).toBe(2);
+    await Promise.all(started);
+
+    // Through the route: a second mint within the minute leaves a fresh abandoned attempt alone.
+    const a = await agent();
+    const { body: p } = await publish(a.auth);
+    resetSweepThrottle();
+    expect((await fetchAndWait(mintRequest(a))).status).toBe(201);
+    const { stager } = await abandonedUpdate(a, p.id);
+    await backdate(stager.prefix);
+    expect((await fetchAndWait(mintRequest(a))).status).toBe(201);
+    expect((await r2Keys(stager.prefix)).length).toBe(2);
+    expect(await attemptRow(stager.prefix)).not.toBeNull();
+  });
+
+  it("a failing sweep never fails the request that started it", async () => {
+    const a = await agent();
+    resetSweepThrottle();
+    const DB = new Proxy(env.DB, {
+      get(t, prop) {
+        const v = Reflect.get(t, prop, t);
+        if (prop === "prepare")
+          return (sql: string) => {
+            if (/UPDATE staging_attempts SET started_at = \?3/.test(sql))
+              throw new Error("injected: sweep claim failed");
+            return t.prepare(sql);
+          };
+        return typeof v === "function" ? v.bind(t) : v;
+      },
+    });
+    const ctx = createExecutionContext();
+    const res = await worker.fetch(mintRequest(a), { ...env, DB } as never, ctx);
+    await waitOnExecutionContext(ctx);
+    expect(res.status).toBe(201);
+  });
+
+  it("two opportunistic sweeps and the cron at once claim each row once and leave none", async () => {
+    const a = await agent();
+    const { body: p } = await publish(a.auth);
+    const v1 = await versionRow(p.id, 1);
+    const kept = await r2Keys(v1?.r2Prefix ?? "-");
+    const id = "concurrentsweeps0000";
+    const n = OPPORTUNISTIC_SWEEP_BATCH + 15;
+    // Only this test's rows, so the counts below are this test's.
+    await env.DB.prepare("DELETE FROM staging_attempts").run();
+    await oldRows(id, n);
+    const now = Date.now();
+    const [one, two, cron] = await Promise.all([
+      sweepStagingAttempts(env, now, OPPORTUNISTIC_SWEEP_BATCH),
+      sweepStagingAttempts(env, now, OPPORTUNISTIC_SWEEP_BATCH),
+      sweepStagingAttempts(env, now),
+    ]);
+    // Each row was claimed, and its objects deleted, by exactly one of the three.
+    expect(one.claimed + two.claimed + cron.claimed).toBe(n);
+    expect(one.deleted + two.deleted + cron.deleted).toBe(n);
+    expect(one.failed + two.failed + cron.failed).toBe(0);
+    expect(await attemptRows(id)).toEqual([]);
+    expect(await r2Keys(`artifacts/${id}/`)).toEqual([]);
+    // The committed version is untouched.
+    expect(await r2Keys(v1?.r2Prefix ?? "-")).toEqual(kept);
+    expect((await serveFile(p.id, "/")).status).toBe(200);
+  });
+
+  it("a claimed row is taken again only once its claim is old, so a run that died strands nothing", async () => {
+    const a = await agent();
+    const { body: p } = await publish(a.auth);
+    const { stager } = await abandonedUpdate(a, p.id);
+    await backdate(stager.prefix);
+    const now = Date.now();
+    // A run claims the row, then dies before deleting anything.
+    await sweepStagingAttempts({ ...env, DB: dbFailing(/FROM versions WHERE artifact_id/) }, now);
+    expect(await attemptRow(stager.prefix)).not.toBeNull();
+    // A concurrent run inside the claim's lease leaves it to the first.
+    const inside = await sweepStagingAttempts(env, now + STAGING_SWEEP_CLAIM_MS - 1000);
+    expect(inside.claimed).toBe(0);
+    expect((await r2Keys(stager.prefix)).length).toBe(2);
+    // Past it, the next run (opportunistic or cron) finishes the job.
+    const after = await sweepStagingAttempts(
+      env,
+      now + STAGING_SWEEP_CLAIM_MS + 1000,
+      OPPORTUNISTIC_SWEEP_BATCH,
+    );
+    expect(after.deleted).toBe(1);
+    expect(await r2Keys(stager.prefix)).toEqual([]);
+    expect(await attemptRow(stager.prefix)).toBeNull();
   });
 });

@@ -37,6 +37,7 @@ import { ApiError, forbidden, notFound, unauthorized } from "../lib/errors.ts";
 import { hit } from "../lib/ratelimit.ts";
 import { nowIso } from "../lib/time.ts";
 import type { Principal } from "../policy.ts";
+import { sweepSoon } from "./attempts.ts";
 import { readBundle } from "./bundle.ts";
 import type { Ctx } from "./context.ts";
 import {
@@ -229,6 +230,8 @@ export async function startUpload(
       .bind(isoAt(now - PRUNE_AFTER_MS))
       .run();
   }
+  // No cron under `wrangler dev`: clear abandoned attempts here too (capped, throttled).
+  sweepSoon(ctx.env, ctx.waitUntil);
 
   const uploadUrl = appUrl(ctx.config, `/api/v1/uploads/${id}/bundle`);
   const npx = npxCommand(PLINTH_VERSION, token, uploadUrl);
@@ -411,6 +414,7 @@ export async function redeemBundle(
   const tokenHash = await hashToken(token);
   const claim = randomString(24);
   const ticket = await takeLease(w, req.uploadId, tokenHash, claim);
+  sweepSoon(w.env, w.waitUntil);
   // The bundle must arrive within the receiving lease: past it another request may take the
   // lease, and the staging sweep's threshold assumes no attempt commits after its ticket's lifetime.
   // The commit batch also requires the lease (CommitOptions.receivingClaim).

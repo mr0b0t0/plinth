@@ -36,6 +36,9 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   instead of sending again; when the status cannot be read after a few tries, they name the
   artifact id and upload id to check. `plinth publish --id --base-version N` exits 0 without
   sending anything when the current version already matches the folder.
+- Local, tunnel and Docker instances (which run no cron) clear what interrupted uploads left:
+  minting an upload ticket or posting a bundle starts a small sweep (at most 20 attempts, once a
+  minute per Worker isolate) on every instance.
 - An update or restore that started before an admin takedown can no longer commit after it, and
   files an upload was still writing when its artifact was deleted or taken down are deleted when
   it fails instead of staying in storage.

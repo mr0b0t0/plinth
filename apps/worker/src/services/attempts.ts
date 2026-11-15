@@ -8,6 +8,12 @@
 // whatever fails in between (a D1 error, an R2 error, an evicted invocation), the next sweep run
 // still finds the prefix.
 //
+// `wrangler dev` (local, tunnel and Docker instances) fires no cron, so minting an upload ticket
+// and posting a bundle also start a smaller sweep through waitUntil (sweepSoon), at most once per
+// isolate per minute, on every runtime. A sweep takes a claimed row again only once its claim is
+// STAGING_SWEEP_CLAIM_MS old, so runs that overlap (two isolates, or one and the cron) never work
+// on the same row, and a run that died after its claim leaves the row to a later one.
+//
 // The admin command sweep-orphans (scripts/admin-lib.mjs) stays the full-bucket tool for objects
 // written before this table existed, which no row names.
 import { TTL } from "@plinth/shared";
@@ -22,6 +28,15 @@ export const STAGING_SWEEP_MARGIN_MS = 15 * 60 * 1000;
 export const STAGING_SWEEP_AFTER_MS = TTL.uploadTicketMs + STAGING_SWEEP_MARGIN_MS;
 /** Prefixes one sweep run claims at most; the rest wait for the next run. */
 export const STAGING_SWEEP_BATCH = 50;
+/**
+ * A claimed row's lease: a sweep takes it again only once the claim is this old (the run that
+ * claimed it, or an abort or takedown, is done with it or died).
+ */
+export const STAGING_SWEEP_CLAIM_MS = 10 * 60 * 1000;
+/** Prefixes an opportunistic sweep (sweepSoon, from a request) claims at most. */
+export const OPPORTUNISTIC_SWEEP_BATCH = 20;
+/** One isolate starts at most one opportunistic sweep in this long. */
+export const OPPORTUNISTIC_SWEEP_EVERY_MS = 60 * 1000;
 
 /** `artifacts/<20 id chars>/v<n>.<12 nonce chars>/`: the only prefixes the sweep deletes. */
 const ATTEMPT_PREFIX_RE = /^artifacts\/([a-z0-9]{20})\/v[1-9][0-9]{0,8}\.[a-z0-9]{12}\/$/;
@@ -56,8 +71,9 @@ export async function forgetAttempt(DB: D1Database, prefix: string): Promise<voi
 
 /**
  * started_at of a claimed row: "0" and the claim time. It sorts below every ISO time, so
- * ATTEMPT_GUARD refuses the row's commit and every sweep run past the claim picks it up again
- * until its objects are gone; among claimed rows the sweep takes the longest-claimed first.
+ * ATTEMPT_GUARD refuses the row's commit, and every sweep run once the claim is
+ * STAGING_SWEEP_CLAIM_MS old picks it up again until its objects are gone; among claimed rows the
+ * sweep takes the longest-claimed first.
  */
 export function parkedAt(now: number): string {
   return `0${new Date(now).toISOString()}`;
@@ -181,21 +197,30 @@ export interface SweepCounts {
 }
 
 /**
- * One sweep run at `now` (ms): claim up to STAGING_SWEEP_BATCH rows older than the threshold
- * (rows claimed earlier included), then delete the objects of each claimed prefix no version
- * references, and its row. Logs counts only.
+ * One sweep run at `now` (ms): claim up to `limit` rows older than the threshold, and rows
+ * claimed more than STAGING_SWEEP_CLAIM_MS earlier, then delete the objects of each claimed prefix
+ * no version references, and its row. D1 runs the claim as one statement, so two runs at once
+ * never claim the same row. Logs counts only.
  */
 export async function sweepStagingAttempts(
   env: { DB: D1Database; FILES: R2Bucket },
   now: number,
+  limit: number = STAGING_SWEEP_BATCH,
 ): Promise<SweepCounts> {
   const { results } = await env.DB.prepare(
     `UPDATE staging_attempts SET started_at = ?3
-      WHERE prefix IN (SELECT prefix FROM staging_attempts WHERE started_at < ?1
+      WHERE prefix IN (SELECT prefix FROM staging_attempts
+                        WHERE (started_at >= '1' AND started_at < ?1)
+                           OR (started_at < '1' AND substr(started_at, 2) < ?4)
                         ORDER BY ${SWEEP_ORDER} LIMIT ?2)
       RETURNING prefix, artifact_id`,
   )
-    .bind(attemptCutoff(now), STAGING_SWEEP_BATCH, parkedAt(now))
+    .bind(
+      attemptCutoff(now),
+      limit,
+      parkedAt(now),
+      new Date(now - STAGING_SWEEP_CLAIM_MS).toISOString(),
+    )
     .all<ClaimedRow>();
   const counts: SweepCounts = {
     claimed: results.length,
@@ -213,4 +238,30 @@ export async function sweepStagingAttempts(
   }
   if (counts.claimed > 0) console.log(`staging sweep: ${JSON.stringify(counts)}`);
   return counts;
+}
+
+/** When this isolate last started an opportunistic sweep (ms). */
+let lastSoon = Number.NEGATIVE_INFINITY;
+
+/**
+ * Start an opportunistic sweep of up to OPPORTUNISTIC_SWEEP_BATCH rows through `waitUntil`,
+ * unless this isolate started one within OPPORTUNISTIC_SWEEP_EVERY_MS of `now`. Called when an
+ * upload ticket is minted and when a bundle is posted, so an instance with no cron (`wrangler dev`)
+ * still clears abandoned attempts. A failure is swallowed: it never fails the request. Returns
+ * whether it started one.
+ */
+export function sweepSoon(
+  env: { DB: D1Database; FILES: R2Bucket },
+  waitUntil: (p: Promise<unknown>) => void,
+  now: number = Date.now(),
+): boolean {
+  if (Math.abs(now - lastSoon) < OPPORTUNISTIC_SWEEP_EVERY_MS) return false;
+  lastSoon = now;
+  waitUntil(sweepStagingAttempts(env, now, OPPORTUNISTIC_SWEEP_BATCH).catch(() => undefined));
+  return true;
+}
+
+/** Tests: forget the last opportunistic sweep, so the next sweepSoon starts one. */
+export function resetSweepThrottle(): void {
+  lastSoon = Number.NEGATIVE_INFINITY;
 }

@@ -449,8 +449,9 @@ file.
   release of its receiving lease to `waitUntil`, which outlives the request. Before streaming, a
   bundle checks the owner's storage quota, and while streaming its puts stop at the room left, so
   even an attempt whose cleanup never runs leaves no more than the quota allows, and only until
-  the next hourly sweep. `sweep-orphans` ([self-hosting.md](self-hosting.md#operating-notes)) is
-  for files written before 0.4.0 and for local instances, where `wrangler dev` fires no cron.
+  the next sweep: the hourly cron, or (also where `wrangler dev` fires no cron) the capped sweep
+  that minting an upload ticket or posting a bundle starts. `sweep-orphans`
+  ([self-hosting.md](self-hosting.md#operating-notes)) is for files written before 0.4.0.
 - **Immutability.** Objects are never deleted one version at a time, because later versions may
   point at them. Deleting an artifact, an admin takedown wipe and erasing a user still remove
   everything under `artifacts/<id>/`.

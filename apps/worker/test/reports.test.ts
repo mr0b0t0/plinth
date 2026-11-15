@@ -10,7 +10,7 @@ import { describe, expect, it } from "vitest";
 import { parseConfig } from "../src/config.ts";
 import { artifacts, devOutbox, reports, versions } from "../src/db/schema.ts";
 import worker from "../src/index.ts";
-import { STAGING_SWEEP_CRON } from "../src/services/attempts.ts";
+import { STAGING_SWEEP_CLAIM_MS, STAGING_SWEEP_CRON } from "../src/services/attempts.ts";
 import { commitStaged, openStager, updateTarget } from "../src/services/stage.ts";
 import { getOrCreateUser } from "../src/services/users.ts";
 import {
@@ -358,9 +358,13 @@ describe("admin takedown", () => {
     expect(art?.takenDownAt).toBeTruthy();
     // The row stays (it can no longer commit) until the files are gone.
     expect(await r2Keys(stager.prefix)).toEqual(keys);
+    // The next sweep run once the takedown's claim is STAGING_SWEEP_CLAIM_MS old.
     const ctl = createExecutionContext();
     await worker.scheduled(
-      createScheduledController({ scheduledTime: Date.now(), cron: STAGING_SWEEP_CRON }),
+      createScheduledController({
+        scheduledTime: Date.now() + STAGING_SWEEP_CLAIM_MS + 1000,
+        cron: STAGING_SWEEP_CRON,
+      }),
       env as never,
       ctl,
     );

@@ -365,8 +365,12 @@ files) and big pages without merging chunks, and an update stores only what chan
   abort parks a fresh row and deletes the objects like any other. A
   killed request can leave only unreferenced objects under its own prefix, with its row. An hourly
   cron trigger (`0 * * * *`) sweeps them: it claims at most 50 rows older than the ticket's
-  lifetime plus 15 minutes (claimed rows included, longest-claimed first) and deletes the objects
-  only of rows it claimed and no version names (by `r2_prefix` or a `stored_at`). Because the
+  lifetime plus 15 minutes (and rows claimed more than 10 minutes earlier, longest-claimed first)
+  and deletes the objects only of rows it claimed and no version names (by `r2_prefix` or a
+  `stored_at`). Minting an upload ticket and posting a bundle also start a sweep of at most 20 rows
+  after the response (at most once per Worker isolate per minute), so an instance with no cron
+  (`wrangler dev`: local, tunnel, Docker) clears them too; D1 runs each claim as one statement, so
+  sweeps that overlap never take the same row. Because the
   commit needs the row unclaimed, a commit after a claim is refused with a retryable `conflict`
   (`reason: "attempt_expired"`) whatever the committer's clock, and a claim after a commit finds
   nothing. Deleting or erasing an artifact removes its rows with its files; a takedown claims them

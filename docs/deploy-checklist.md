@@ -132,7 +132,9 @@ overhead), the largest body an upload from `start_upload` or the CLI sends.
   may still get its version (whole: commit and abort exclude each other). Clients are told to check
   with `get_artifact` after a lost answer, never that a disconnect cannot commit. They do not count
   toward any quota. The Worker's hourly cron trigger (`"triggers": { "crons": ["0 * * * *"] }`,
-  also required in the config you deploy with) removes them once the attempt is 45 minutes old.
+  also required in the config you deploy with) removes them once the attempt is 45 minutes old;
+  minting an upload ticket or posting a bundle also starts a sweep of at most 20 attempts, which
+  is what clears them on an instance with no cron.
   Run `pnpm --filter @plinth/worker admin -- sweep-orphans --remote` only for legacy orphans:
   files written before 0.4.0, which no staging row names
   ([self-hosting.md](self-hosting.md#operating-notes)).
@@ -373,7 +375,8 @@ version of the same artifact, and new versions are written under a fresh `v<n>.<
 
 Plinth 0.4.0 also needs the `enable_request_signal` compatibility flag and an hourly cron
 trigger. Without the flag a bundle whose client disconnects never notices, and its files stay
-behind until the next sweep; without the cron nothing sweeps them. `plinth deploy` takes both
+behind until the next sweep; without the cron only the small sweep that the next upload starts
+removes them, 20 at a time. `plinth deploy` takes both
 from the release (and refuses a config without them), and a local or Docker instance gets them on
 its next start (`plinth start` and `pnpm local:start` add the release's flags and cron trigger to
 the instance's `wrangler.jsonc`, and move its `compatibility_date` up to the release's when that is
