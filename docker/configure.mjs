@@ -10,7 +10,8 @@
 //   tunnel     ... + PLINTH_TUNNEL=true          a Cloudflare Tunnel run from inside the container
 //
 // `plinth init` runs on the first start and again whenever these settings change (it keeps the
-// generated secrets and the data). Otherwise the instance starts as it is.
+// generated secrets and the data). Otherwise the instance starts as it is, except that `plinth
+// start` adds the release's compatibility flags to an instance config an older image wrote.
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { accessSync, constants, existsSync, readFileSync, writeFileSync } from "node:fs";

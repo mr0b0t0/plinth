@@ -34,7 +34,8 @@ because MCP clients only allow OAuth over plain http to `localhost`, `127.0.0.1`
 lives in
 `~/.plinth/plinth/` (`--home`, `--name` and `--port` change that). `npx @mr0b0t0/plinth status`
 says whether it is running. To upgrade, run a newer version of the package: `start` applies new
-migrations.
+migrations and adds the release's compatibility flags (and later compatibility date) to the
+instance's `wrangler.jsonc`.
 
 Limits of this mode: claude.ai and ChatGPT connect from their own servers and cannot reach it,
 nobody else can open your links, and it runs only while `start` does. For any of that, use the
@@ -177,7 +178,7 @@ for development.
 ```sh
 launchctl unload ~/Library/LaunchAgents/io.plinth.local.plist   # or: systemctl --user stop plinth, or Ctrl-C
 git pull && pnpm install && pnpm build
-pnpm local:start            # applies new migrations before starting (or load/start the service again)
+pnpm local:start            # applies new migrations and the release's compatibility flags first (or load/start the service again)
 ```
 
 ## One domain instead of two

@@ -362,10 +362,14 @@ version of the same artifact, and new versions are written under a fresh `v<n>.<
 
 Plinth 0.4.0 also needs the `enable_request_signal` compatibility flag: without it a bundle whose
 client disconnects never notices, and its files stay behind until `sweep-orphans` runs. `plinth
-deploy` and the Docker image take the flags from the release. A `wrangler.<env>.jsonc` that
-`scripts/setup.mjs` wrote before 0.4.0 does not have it: re-run setup with the same arguments
-(it now adds the release's flags to an existing config and keeps everything else), or add it by
-hand so the line reads `"compatibility_flags": ["nodejs_compat", "enable_request_signal"]`.
+deploy` takes the flags from the release, and a local or Docker instance gets them on its next
+start (`plinth start` and `pnpm local:start` add the release's flags to the instance's
+`wrangler.jsonc`, and move its `compatibility_date` up to the release's when that is later). A
+`wrangler.<env>.jsonc` that `scripts/setup.mjs` wrote before 0.4.0 does not have it: re-run setup
+with the same arguments (it now adds the release's flags to an existing config, moves its
+`compatibility_date` up to the committed config's when that is later, and keeps everything else),
+or add it by hand so the line reads
+`"compatibility_flags": ["nodejs_compat", "enable_request_signal"]`.
 Check before you deploy:
 
 ```sh

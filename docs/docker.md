@@ -253,8 +253,8 @@ docker run -d --name plinth ...       # the same command as before
 ```
 
 With Compose: `docker compose pull && docker compose up -d`. The volume keeps the database, the
-files and the secrets. On start, the new version applies its database migrations before it serves
-anything. Migrations only add to the database, but older images are not tested against a database
+files and the secrets. On start, the new version applies its database migrations and adds its
+compatibility flags to the instance's `wrangler.jsonc` before it serves anything. Migrations only add to the database, but older images are not tested against a database
 a newer one has migrated: to go back, restore a backup made before the upgrade. To control when
 upgrades happen, use a release's version tag instead of `latest`.
 

@@ -25,8 +25,10 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   read, so a small compressed body cannot fill the Worker's memory.
 - **Upgrading a checkout deploy**: this release needs the `enable_request_signal` compatibility
   flag. A `wrangler.<env>.jsonc` written by `scripts/setup.mjs` before 0.4.0 lacks it: re-run setup
-  (it now adds the release's flags to an existing config) or add it by hand. `plinth deploy` and
-  Docker take it from the release. See
+  (it now adds the release's flags to an existing config and moves its `compatibility_date` up to
+  the release's when that is later) or add it by hand. `plinth deploy` takes it from the release;
+  `plinth start`, `pnpm local:start` and the Docker image add it to an existing instance's config
+  on start. See
   [docs/deploy-checklist.md](docs/deploy-checklist.md#6-upgrading-and-rolling-back).
 - **Reuse by hash**: an asset can be sent as `{path, sha256}` to reuse a file of the artifact's
   current version, so an update sends and stores only what changed. `get_artifact` and
