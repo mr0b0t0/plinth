@@ -30,8 +30,16 @@ export interface EnterPayload {
   exp: number;
   /** sealed identity claim (identified viewers only) */
   x?: string;
+  /**
+   * A thumbnail capture (services/thumbnails.ts): the cookie it becomes may load the artifact as a
+   * top-level page, which only Plinth's own capture browser does. Never with `x`.
+   */
+  c?: 1;
   [key: string]: unknown;
 }
+
+/** How long a capture's content cookie lasts: one page load and a screenshot. */
+export const CAPTURE_COOKIE_S = 120;
 
 export interface ContentPayload {
   k: "content";
@@ -40,6 +48,8 @@ export interface ContentPayload {
   exp: number;
   /** sealed identity claim, copied unchanged from the enter token */
   x?: string;
+  /** a capture pass (copied from the enter token): top-level loads allowed */
+  c?: 1;
   [key: string]: unknown;
 }
 
@@ -72,6 +82,7 @@ export async function issueEnterUrl(
   artifact: { id: string; accessEpoch: number },
   next = "/",
   identity?: ViewerIdentity,
+  opts: { capture?: boolean } = {},
 ): Promise<string> {
   const payload: EnterPayload = {
     k: "enter",
@@ -80,6 +91,10 @@ export async function issueEnterUrl(
     n: randomString(24),
     exp: Date.now() + TTL.viewerTokenMs,
   };
+  if (opts.capture) {
+    if (identity) throw new Error("A capture never carries an identity");
+    payload.c = 1;
+  }
   if (identity) {
     payload.x = await sealJson(config.tokenSigningKey, IDENTITY_CLAIM_INFO, artifact.id, {
       m: identity.email,
@@ -100,14 +115,16 @@ export function signContentCookie(
   artifactId: string,
   epoch: number,
   x?: string,
+  capture = false,
 ): Promise<string> {
   const payload: ContentPayload = {
     k: "content",
     a: artifactId,
     e: epoch,
-    exp: Date.now() + TTL.contentCookieS * 1000,
+    exp: Date.now() + (capture ? CAPTURE_COOKIE_S : TTL.contentCookieS) * 1000,
   };
   if (x !== undefined) payload.x = x;
+  if (capture) payload.c = 1;
   return signToken(config.tokenSigningKey, payload);
 }
 

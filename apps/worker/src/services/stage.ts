@@ -1048,17 +1048,23 @@ export async function commitVersion(
   // Synchronous, before any await: an attempt aborted by now (a client disconnect) never commits,
   // and one that commits can no longer be aborted.
   extra.stager.beginCommit();
+  let result: PublishResult;
   try {
-    const result = await commitOnce(ctx, target, staged, extra, opts);
-    // After the batch, never tied to the request: the version exists even if the client left.
-    scheduleThumbnail(ctx, result.id, result.version);
-    return result;
+    result = await commitOnce(ctx, target, staged, extra, opts);
   } catch (e) {
     if (!(typeof e === "object" && e !== null && keepObjects.has(e))) {
       await extra.stager.discard().catch(() => undefined);
     }
     throw e;
   }
+  // After the batch and outside its error handling, never tied to the request: the version
+  // exists even if the client left, and nothing here can make the commit look failed.
+  try {
+    scheduleThumbnail(ctx, result.id, result.version);
+  } catch {
+    // A thumbnail is optional; a reader starts the capture later.
+  }
+  return result;
 }
 
 /**

@@ -6,7 +6,10 @@ declare module "@cloudflare/puppeteer-types" {
   export interface Page {
     setViewport(v: { width: number; height: number; deviceScaleFactor?: number }): Promise<void>;
     emulateMediaFeatures(features: { name: string; value: string }[]): Promise<void>;
-    goto(url: string, opts?: { waitUntil?: string; timeout?: number }): Promise<unknown>;
+    goto(
+      url: string,
+      opts?: { waitUntil?: string; timeout?: number },
+    ): Promise<{ ok(): boolean; status(): number; url(): string } | null>;
     screenshot(opts?: { type?: "png" | "jpeg" | "webp"; quality?: number }): Promise<Uint8Array>;
   }
   export interface Browser {

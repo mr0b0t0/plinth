@@ -5,13 +5,14 @@ import { createExecutionContext, waitOnExecutionContext } from "cloudflare:test"
 import { env } from "cloudflare:workers";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { getConfig } from "../src/config.ts";
-import { verifyEnterToken } from "../src/content/tokens.ts";
+import { issueEnterUrl, verifyEnterToken } from "../src/content/tokens.ts";
 import worker from "../src/index.ts";
 import {
   claimThumbnail,
   setThumbnailShooter,
   THUMB,
   thumbnailKey,
+  withBudget,
 } from "../src/services/thumbnails.ts";
 import { APP, agent, json } from "./helpers.ts";
 
@@ -194,12 +195,16 @@ describe("the dashboard image", () => {
     const item = list.items.find((i: { id: string }) => i.id === p.id);
     expect(item.thumbnail_url).toBe(`${APP}/api/v1/artifacts/${p.id}/thumbnail?version=1`);
 
-    const img = await run(`/api/v1/artifacts/${p.id}/thumbnail`, { headers: a.auth });
+    const img = await run(`/api/v1/artifacts/${p.id}/thumbnail?version=1`, { headers: a.auth });
     expect(img.status).toBe(200);
     expect(img.headers.get("content-type")).toBe("image/jpeg");
     expect(img.headers.get("x-content-type-options")).toBe("nosniff");
+    // A version's image never changes; "current" (no version) moves, so it is revalidated.
     expect(img.headers.get("cache-control")).toBe("private, max-age=86400");
     expect(new Uint8Array(await img.arrayBuffer())).toEqual(JPEG);
+    const current = await run(`/api/v1/artifacts/${p.id}/thumbnail`, { headers: a.auth });
+    expect(current.status).toBe(200);
+    expect(current.headers.get("cache-control")).toBe("private, no-cache");
 
     const denied = await run(`/api/v1/artifacts/${p.id}/thumbnail`, { headers: stranger.auth });
     const missing = await run("/api/v1/artifacts/aaaaaaaaaaaaaaaaaaaa/thumbnail", {
@@ -318,5 +323,99 @@ describe("link previews", () => {
     const t = Object.fromEntries(tags(await (await run("/dashboard")).text()));
     expect(t["og:title"]).toBe("Plinth");
     expect(t["og:image"]).toBeUndefined();
+  });
+});
+
+/**
+ * Load a URL the way the capture browser does: a top-level page (Sec-Fetch-Dest: document) that
+ * keeps the cookies it is given and follows redirects. Returns where it ended up.
+ */
+async function loadTopLevel(url: string) {
+  let cookie = "";
+  let current = url;
+  for (let i = 0; i < 6; i++) {
+    const res = await run(current, {
+      headers: { "sec-fetch-dest": "document", ...(cookie ? { Cookie: cookie } : {}) },
+    });
+    const set = res.headers.get("set-cookie");
+    if (set) cookie = set.split(";")[0] as string;
+    const location = res.headers.get("location");
+    if (res.status >= 300 && res.status < 400 && location) {
+      current = new URL(location, current).toString();
+      continue;
+    }
+    return { status: res.status, url: current, body: await res.text() };
+  }
+  throw new Error("too many redirects");
+}
+
+describe("what the capture browser loads", () => {
+  /** A fake browser that really loads the page, and fails on anything but the artifact. */
+  const realLoad = (seen: { url: string; body: string }[]) => async (_b: Fetcher, url: string) => {
+    const page = await loadTopLevel(url);
+    seen.push(page);
+    if (page.status !== 200) throw new Error(`page answered ${page.status}`);
+    return JPEG;
+  };
+
+  it("reaches the version itself, top-level, for a private artifact too", async () => {
+    const seen: { url: string; body: string }[] = [];
+    setThumbnailShooter(realLoad(seen));
+    const a = await agent();
+    const p = await publish(a.auth, { html: "<!doctype html><h1>Private numbers</h1>" });
+    expect(seen).toHaveLength(1);
+    expect(seen[0]?.url).toBe(`http://${p.id}.content.localhost:8787/__plinth/v/1/`);
+    expect(seen[0]?.body).toContain("<h1>Private numbers</h1>");
+    expect((await state(p.id, 1))?.thumbnail).toBe("ok");
+  });
+
+  it("sends an ordinary viewer's top-level visit to the app page, as before", async () => {
+    const a = await agent();
+    const p = await publish(a.auth, {}, {});
+    const art = await env.DB.prepare("SELECT access_epoch FROM artifacts WHERE id = ?1")
+      .bind(p.id)
+      .first<{ access_epoch: number }>();
+    const enter = await issueEnterUrl(
+      getConfig(env as never),
+      { id: p.id, accessEpoch: art?.access_epoch as number },
+      "/__plinth/v/1/",
+    );
+    const page = await loadTopLevel(enter);
+    expect(new URL(page.url).host).toBe("app.localhost:8787");
+  });
+
+  it("records a failure, not a picture of the error page, when access changed before the capture", async () => {
+    const seen: { url: string; body: string }[] = [];
+    const a = await agent();
+    const p = await publish(a.auth, { visibility: "unlisted" }, {});
+    setThumbnailShooter(async (b, url) => {
+      // Visibility changes between the claim and the browser's visit: the token's epoch is old.
+      await env.DB.prepare("UPDATE artifacts SET access_epoch = access_epoch + 1 WHERE id = ?1")
+        .bind(p.id)
+        .run();
+      return realLoad(seen)(b, url);
+    });
+    const res = await run(`/api/v1/artifacts/${p.id}/thumbnail`, { headers: a.auth });
+    expect(res.status).toBe(404);
+    expect(seen[0]?.body).toContain("expired");
+    expect((await state(p.id, 1))?.thumbnail).toBe("failed");
+    expect(await env.FILES.head(thumbnailKey(p.id, 1))).toBeNull();
+  });
+
+  it("never mints a capture pass that carries an identity", async () => {
+    await expect(
+      issueEnterUrl(
+        getConfig(env as never),
+        { id: "aaaaaaaaaaaaaaaaaaaa", accessEpoch: 1 },
+        "/",
+        { email: "ada@example.org", role: "owner" },
+        { capture: true },
+      ),
+    ).rejects.toThrow();
+  });
+
+  it("gives up on a capture that outlasts its budget", async () => {
+    await expect(withBudget(new Promise(() => undefined), 20)).rejects.toThrow(/longer than/);
+    await expect(withBudget(Promise.resolve(7), 20)).resolves.toBe(7);
   });
 });

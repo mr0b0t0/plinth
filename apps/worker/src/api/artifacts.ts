@@ -122,7 +122,8 @@ artifactsApi.get("/artifacts/:ref/thumbnail", async (c) => {
   if (!v) return missing();
   if (v.thumbnail === "ok") {
     // A version's image never changes; a revoked viewer keeps only what their browser cached.
-    headers.set("Cache-Control", "private, max-age=86400");
+    // Without ?version the URL means "current", which moves, so it is revalidated every time.
+    headers.set("Cache-Control", q === undefined ? "private, no-cache" : "private, max-age=86400");
     const res = await thumbnailResponse(ctx.env.FILES, artifact.id, n, headers);
     if (res) return res;
   }

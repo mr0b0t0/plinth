@@ -464,6 +464,16 @@ file.
   loads under the usual content CSP, so it can reach nothing but its own origin and the CDN
   allowlist. The enter token carries no identity claim, so a page with shared data sees a
   signed-out viewer and can neither read nor write as anyone.
+- **The one top-level exception.** The content host sends every top-level visit to the app's page,
+  so artifacts render only in the app's sandboxed frame. The capture browser must load the
+  version top-level, so its enter token carries a capture flag (`c`), which becomes a content
+  cookie that lasts 120 seconds. Only a request with that pass, for the live artifact at its
+  current access epoch, is served top-level. Plinth mints the flag only for its own captures,
+  never with an identity claim, and the enter token is single-use.
+- **No pictures of error pages.** A capture whose page answers anything but 2xx (an expired link
+  after a visibility change, a 404) is recorded as failed, not stored. The whole capture must
+  finish within 25 seconds, under the 30 seconds `waitUntil` allows, so it records its failure
+  rather than being cut off while claimed.
 - **The image is ours, not the author's.** The stored JPEG is the browser's own screenshot, served
   as `image/jpeg` with `nosniff`, so serving it from the app host never serves author content.
 - **Who sees it.** `GET /api/v1/artifacts/:ref/thumbnail` uses the policy module's view check,

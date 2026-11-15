@@ -24,7 +24,12 @@ export const THUMB = {
   height: 630,
   quality: 80,
   /** How long the page may take to load before the capture gives up. */
-  navigationTimeoutMs: 15_000,
+  navigationTimeoutMs: 12_000,
+  /**
+   * The whole capture, browser launch included. Below waitUntil's 30 s after the response, so a
+   * slow capture records its failure instead of being cut off while still claimed.
+   */
+  budgetMs: 25_000,
   /** A pause after load for fonts, charts and animations to settle. */
   settleMs: 750,
   /** A capture claimed this long ago without finishing is taken again. */
@@ -49,7 +54,12 @@ async function browserShot(binding: Fetcher, url: string): Promise<Uint8Array> {
     const page = await browser.newPage();
     await page.setViewport({ width: THUMB.width, height: THUMB.height, deviceScaleFactor: 1 });
     await page.emulateMediaFeatures([{ name: "prefers-color-scheme", value: "light" }]);
-    await page.goto(url, { waitUntil: "networkidle0", timeout: THUMB.navigationTimeoutMs });
+    const res = await page.goto(url, {
+      waitUntil: "networkidle0",
+      timeout: THUMB.navigationTimeoutMs,
+    });
+    // Never keep a picture of an error page ("This link has expired", a 404) as the thumbnail.
+    if (!res?.ok()) throw new Error(`page answered ${res ? res.status() : "nothing"}`);
     await new Promise((r) => setTimeout(r, THUMB.settleMs));
     const shot = await page.screenshot({ type: "jpeg", quality: THUMB.quality });
     return new Uint8Array(shot);
@@ -147,13 +157,16 @@ export async function captureThumbnail(
   if (!target) return "skipped";
   if (!(await claimThumbnail(env.DB, target.versionId).catch(() => false))) return "skipped";
   try {
-    // The exact version, even if a newer one lands while the browser loads.
+    // The exact version, even if a newer one lands while the browser loads, entered with a
+    // capture pass: no identity, and the one pass the content host serves top-level.
     const url = await issueEnterUrl(
       config,
       { id: target.artifactId, accessEpoch: target.accessEpoch },
       `${CONTENT_RESERVED_PREFIX}v/${target.number}/`,
+      undefined,
+      { capture: true },
     );
-    const jpeg = await shooter(env.BROWSER, url);
+    const jpeg = await withBudget(shooter(env.BROWSER, url), THUMB.budgetMs);
     if (jpeg.byteLength === 0) throw new Error("empty screenshot");
     const key = thumbnailKey(target.artifactId, target.number);
     await env.FILES.put(key, jpeg, { httpMetadata: { contentType: "image/jpeg" } });
@@ -172,6 +185,15 @@ export async function captureThumbnail(
     await setState(env.DB, target.versionId, "failed").catch(() => undefined);
     return "failed";
   }
+}
+
+/** `p`, or a rejection once `ms` have passed. */
+export function withBudget<T>(p: Promise<T>, ms: number): Promise<T> {
+  let timer: number | null = null;
+  const late = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`capture took longer than ${ms} ms`)), ms);
+  });
+  return Promise.race([p, late]).finally(() => clearTimeout(timer));
 }
 
 /** Start a capture after the response (waitUntil). A no-op when thumbnails are off. */
