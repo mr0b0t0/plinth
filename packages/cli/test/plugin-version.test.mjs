@@ -1,6 +1,7 @@
 // The plugin version guard (scripts/plugin-sources.mjs): PLUGIN.skillHash in harnesses.ts records
-// the hash of the skill and watcher sources, `pnpm integrations --check` fails when they change
-// without it, and `pnpm integrations` records the new hash. Installed plugins update only when
+// the hash of the skill and watcher sources and PLUGIN.skillHashVersion the version it was recorded
+// under. `pnpm integrations` refuses to record a new hash under the same version, and
+// `pnpm integrations --check` fails on any mismatch. Installed plugins update only when
 // PLUGIN.version changes, so a skill edit without a bump never reaches them.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
@@ -20,9 +21,9 @@ import path from "node:path";
 import { after, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import {
+  hashProblem,
   PLUGIN_SOURCE_DIRS,
   pluginSourcesHash,
-  staleHashMessage,
   withRecordedHash,
 } from "../../../scripts/plugin-sources.mjs";
 import { PLUGIN } from "../../shared/src/harnesses.ts";
@@ -58,8 +59,23 @@ function repoCopy() {
     cpSync(path.join(root, rel), path.join(d, rel), { recursive: true });
   }
   symlinkSync(path.join(root, "node_modules"), path.join(d, "node_modules"));
+  git(d, "init", "-q");
+  git(d, "add", "-A");
   return d;
 }
+function git(cwd, ...args) {
+  const r = spawnSync("git", args, { cwd, encoding: "utf8" });
+  assert.equal(r.status, 0, r.stderr);
+}
+/** Set PLUGIN.version in the copy's harnesses.ts. */
+function setVersion(d, version) {
+  const file = path.join(d, "packages/shared/src/harnesses.ts");
+  writeFileSync(
+    file,
+    readFileSync(file, "utf8").replace(/(\n\s*version:\s*")[^"]*(")/, `$1${version}$2`),
+  );
+}
+const recorded = (d) => readFileSync(path.join(d, "packages/shared/src/harnesses.ts"), "utf8");
 const integrations = (cwd, ...args) =>
   spawnSync(process.execPath, [path.join(cwd, "scripts/integrations.mjs"), ...args], {
     cwd,
@@ -67,9 +83,10 @@ const integrations = (cwd, ...args) =>
   });
 
 describe("PLUGIN.skillHash", () => {
-  it("matches the committed skill and watcher sources", () => {
+  it("matches the committed skill and watcher sources, under the current version", () => {
     assert.match(PLUGIN.skillHash, /^[0-9a-f]{64}$/);
     assert.equal(pluginSourcesHash(root), PLUGIN.skillHash);
+    assert.equal(PLUGIN.skillHashVersion, PLUGIN.version);
     assert.deepEqual(PLUGIN_SOURCE_DIRS, ["integrations/skill", "integrations/watcher"]);
   });
 
@@ -94,34 +111,69 @@ describe("PLUGIN.skillHash", () => {
     assert.notEqual(pluginSourcesHash(d), h2);
   });
 
-  it("the stale message says to bump PLUGIN.version and run pnpm integrations", () => {
-    assert.equal(staleHashMessage({ recorded: "a", actual: "a", version: "1.0.0" }), null);
-    const m = staleHashMessage({ recorded: "a", actual: "b".repeat(64), version: "1.0.0" });
-    assert.match(m, /Bump PLUGIN\.version \(now 1\.0\.0\)/);
-    assert.match(m, /run pnpm integrations/);
-    const src =
-      'export const PLUGIN = {\n  version: "1.0.0",\n  skillHash: "' + "0".repeat(64) + '",\n};';
-    assert.match(
-      withRecordedHash(src, "f".repeat(64)),
-      new RegExp(`skillHash: "${"f".repeat(64)}"`),
-    );
-    assert.throws(() => withRecordedHash("const PLUGIN = {}", "f".repeat(64)), /skillHash/);
+  it("refuses a new hash under the same version, and says to bump PLUGIN.version", () => {
+    const base = { recorded: "a", recordedVersion: "1.0.0", actual: "a", version: "1.0.0" };
+    assert.equal(hashProblem(base), null);
+    const same = hashProblem({ ...base, actual: "b".repeat(64) });
+    assert.equal(same.refuse, true);
+    assert.match(same.message, /PLUGIN\.version is still 1\.0\.0/);
+    assert.match(same.message, /Bump PLUGIN\.version/);
+    assert.match(same.message, /--same-version/);
+    assert.equal(hashProblem({ ...base, actual: "b", sameVersion: true }).refuse, false);
+    const bumped = hashProblem({ ...base, actual: "b", version: "1.1.0" });
+    assert.equal(bumped.refuse, false);
+    assert.match(bumped.message, /run pnpm integrations/);
+    // A bump without a source change still needs the recorded version moved.
+    assert.equal(hashProblem({ ...base, version: "1.1.0" }).refuse, false);
+    const src = `export const PLUGIN = {\n  version: "1.0.0",\n  skillHash: "${"0".repeat(64)}",\n  skillHashVersion: "1.0.0",\n};`;
+    const out = withRecordedHash(src, "f".repeat(64), "1.1.0");
+    assert.match(out, new RegExp(`skillHash: "${"f".repeat(64)}"`));
+    assert.match(out, /skillHashVersion: "1\.1\.0"/);
+    assert.throws(() => withRecordedHash("const PLUGIN = {}", "f".repeat(64), "1"), /skillHash/);
   });
 
-  it("pnpm integrations --check fails on a skill edit; pnpm integrations records the new hash", () => {
+  it("a skill edit without a bump fails both --check and pnpm integrations", () => {
     const d = repoCopy();
     assert.equal(integrations(d, "--check").status, 0);
+    const before = recorded(d);
     appendFileSync(path.join(d, "integrations/skill/plinth-artifacts/SKILL.md"), "\nA new rule.\n");
     const stale = integrations(d, "--check");
     assert.equal(stale.status, 1);
-    assert.match(stale.stderr, /changed since PLUGIN\.skillHash was recorded/);
     assert.match(stale.stderr, /Bump PLUGIN\.version/);
 
+    // Regenerating does not clear it: nothing is recorded, and --check still fails.
+    const refused = integrations(d);
+    assert.equal(refused.status, 1);
+    assert.match(refused.stderr, /Bump PLUGIN\.version/);
+    assert.equal(recorded(d), before);
+    assert.equal(integrations(d, "--check").status, 1);
+
+    // With a bump, pnpm integrations records the hash under the new version.
+    setVersion(d, "9.9.0");
     const wrote = integrations(d);
     assert.equal(wrote.status, 0, wrote.stderr);
-    assert.match(wrote.stdout, /recorded the plugin sources' new hash/i);
-    const harnesses = readFileSync(path.join(d, "packages/shared/src/harnesses.ts"), "utf8");
-    assert.ok(harnesses.includes(`skillHash: "${pluginSourcesHash(d)}"`));
+    assert.match(wrote.stdout, /recorded the plugin sources' hash under PLUGIN\.version 9\.9\.0/i);
+    assert.ok(recorded(d).includes(`skillHash: "${pluginSourcesHash(d)}"`));
+    assert.ok(recorded(d).includes(`skillHashVersion: "9.9.0"`));
     assert.equal(integrations(d, "--check").status, 0);
+
+    // A second edit on the same (already bumped) branch needs --same-version on purpose.
+    appendFileSync(path.join(d, "integrations/skill/plinth-artifacts/SKILL.md"), "Another.\n");
+    assert.equal(integrations(d).status, 1);
+    const again = integrations(d, "--same-version");
+    assert.equal(again.status, 0, again.stderr);
+    assert.equal(integrations(d, "--check").status, 0);
+  });
+
+  it("files git ignores (a Finder .DS_Store) never change the hash", () => {
+    const d = repoCopy();
+    const h = pluginSourcesHash(d);
+    writeFileSync(path.join(d, "integrations/skill/.DS_Store"), "finder");
+    writeFileSync(path.join(d, "integrations/watcher/.DS_Store"), "finder");
+    assert.equal(pluginSourcesHash(d), h);
+    assert.equal(integrations(d, "--check").status, 0);
+    // An untracked file that is not ignored does count: it would be committed.
+    writeFileSync(path.join(d, "integrations/watcher/new.mjs"), "x");
+    assert.notEqual(pluginSourcesHash(d), h);
   });
 });

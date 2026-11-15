@@ -11,15 +11,20 @@
 // (the shared OAuth client, and packages/shared/src/constants.ts with its types stripped). Never
 // edit the outputs by hand.
 //
-//   pnpm integrations           write the outputs, and record the plugin sources' hash
-//   pnpm integrations --check   exit 1 if any output is missing or stale, or the skill or watcher
-//                               changed since PLUGIN.skillHash was recorded (CI)
+//   pnpm integrations           write the outputs, and record the plugin sources' hash; refuses
+//                               (exit 1, nothing written) when the skill or watcher changed and
+//                               PLUGIN.version was not bumped since the last hash
+//   pnpm integrations --same-version
+//                               record it under the same version (a second skill edit on a branch
+//                               that already bumped PLUGIN.version above main)
+//   pnpm integrations --check   exit 1 if any output is missing or stale, or PLUGIN.skillHash or
+//                               PLUGIN.skillHashVersion does not match (CI)
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { stripTypeScriptTypes } from "node:module";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { pluginSourcesHash, staleHashMessage, withRecordedHash } from "./plugin-sources.mjs";
+import { hashProblem, pluginSourcesHash, withRecordedHash } from "./plugin-sources.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const check = process.argv.includes("--check");
@@ -245,20 +250,25 @@ function biomeFormat(rel, code) {
 
 // ---------- the plugin version guard ----------
 // Installed plugins update only when PLUGIN.version changes, so a change to what the plugin ships
-// must come with a bump. The recorded hash makes forgetting it fail the check.
+// must come with a bump. A new hash is recorded only under a new version (scripts/plugin-sources.mjs).
 const HARNESSES_TS = "packages/shared/src/harnesses.ts";
 const sourcesHash = pluginSourcesHash(root);
-const staleHash = staleHashMessage({
+const hashIssue = hashProblem({
   recorded: PLUGIN.skillHash,
+  recordedVersion: PLUGIN.skillHashVersion,
   actual: sourcesHash,
   version: PLUGIN.version,
+  sameVersion: process.argv.includes("--same-version"),
 });
-if (staleHash && !check) {
+if (hashIssue && !check) {
+  if (hashIssue.refuse) {
+    console.error(hashIssue.message);
+    process.exit(1);
+  }
   const file = path.join(root, HARNESSES_TS);
-  writeFileSync(file, withRecordedHash(readFileSync(file, "utf8"), sourcesHash));
+  writeFileSync(file, withRecordedHash(readFileSync(file, "utf8"), sourcesHash, PLUGIN.version));
   console.log(
-    `Recorded the plugin sources' new hash in ${HARNESSES_TS}. PLUGIN.version is ${PLUGIN.version}: ` +
-      "if main has that version too, bump it (one minor), so installed plugins update.",
+    `Recorded the plugin sources' hash under PLUGIN.version ${PLUGIN.version} in ${HARNESSES_TS}.`,
   );
 }
 
@@ -276,10 +286,10 @@ for (const [rel, content] of outputs) {
   }
 }
 if (check) {
-  if (staleHash) console.error(staleHash);
+  if (hashIssue) console.error(hashIssue.message);
   if (stale.length) {
     console.error(`Stale integration files (run pnpm integrations):\n  ${stale.join("\n  ")}`);
   }
-  if (staleHash || stale.length) process.exit(1);
+  if (hashIssue || stale.length) process.exit(1);
   console.log(`Integrations are up to date (${outputs.size} files).`);
 }

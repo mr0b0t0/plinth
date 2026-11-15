@@ -36,11 +36,12 @@ export const PLUGIN = {
   version: "0.6.0",
   /**
    * SHA-256 of the sources the plugin ships (the skill and the mention watcher; see
-   * scripts/plugin-sources.mjs). `pnpm integrations --check` fails when they change without it:
-   * bump `version` (one minor above main, so installed plugins update), then run
-   * `pnpm integrations`, which records the new hash here.
+   * scripts/plugin-sources.mjs), and the `version` it was recorded under. When they change, bump
+   * `version` (one minor above main, so installed plugins update), then run `pnpm integrations`,
+   * which records both here; it refuses while `version` still equals `skillHashVersion`.
    */
   skillHash: "1232d2d0040c1d4e1d27eddbe1b3a697af98e3ce843509e321bd9e35eb48fde4",
+  skillHashVersion: "0.6.0",
   description:
     "Publish, update and share HTML artifacts and Markdown documents on Plinth: the Plinth MCP server plus a skill with its publishing rules",
   author: { name: "Aconite Software & Investments, Lda.", url: "https://aconite.io" },
