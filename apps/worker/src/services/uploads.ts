@@ -196,6 +196,7 @@ export async function startUpload(
   const type: ArtifactType = update ? update.artifact.type : (fresh as { type: ArtifactType }).type;
   // A publish reserves its artifact id now, so a client whose bundle response is lost can ask
   // get_artifact(id) whether it was published.
+  const targetId = update ? update.artifact.id : (fresh as { artifactId: string }).artifactId;
   await ctx.env.DB.prepare(
     `INSERT INTO upload_tickets (id, token_hash, user_id, credential, connection_id, admin_token_hash,
        scopes, mode, artifact_id, artifact_type, title, note, base_version, state, attempts,
@@ -243,13 +244,13 @@ export async function startUpload(
           base_version: input.base_version as number,
           visibility: update.artifact.visibility,
         }
-      : { mode: "publish", id: (fresh as { artifactId: string }).artifactId, type },
+      : { mode: "publish", id: targetId, type },
     limits: instanceLimits(ctx.config),
     content_isolation: ctx.config.contentIsolation,
     commands: { curl: curlCommand(token, uploadUrl), ...(npx ? { npx } : {}) },
     next: uploadNext({
       sourcePath: typeDef(type)?.sourcePath ?? "index.html",
-      id: update ? update.artifact.id : (fresh as { artifactId: string }).artifactId,
+      id: targetId,
       baseVersion: update ? (input.base_version as number) : null,
       visibility: update?.artifact.visibility ?? null,
       opaque: ctx.config.contentIsolation === "opaque",
@@ -616,7 +617,11 @@ async function takeLease(
   throw await stateError(w, cur);
 }
 
-async function readTicket(w: BundleEnv, id: string, tokenHash: string): Promise<TicketRow | null> {
+async function readTicket(
+  w: Pick<BundleEnv, "env">,
+  id: string,
+  tokenHash: string,
+): Promise<TicketRow | null> {
   return w.env.DB.prepare("SELECT * FROM upload_tickets WHERE id = ?1 AND token_hash = ?2")
     .bind(id, tokenHash)
     .first<TicketRow>();
@@ -840,9 +845,7 @@ export async function uploadStatus(
 ): Promise<UploadStatus> {
   const token = bundleToken(req.authorization);
   if (!UPLOAD_ID_RE.test(req.uploadId) || !UPLOAD_TOKEN_RE.test(token)) throw notFound("Upload");
-  const t = await w.env.DB.prepare("SELECT * FROM upload_tickets WHERE id = ?1 AND token_hash = ?2")
-    .bind(req.uploadId, await hashToken(token))
-    .first<TicketRow>();
+  const t = await readTicket(w, req.uploadId, await hashToken(token));
   if (!t) throw notFound("Upload");
   const id =
     (t.mode === "update" ? t.artifact_id : (t.result_artifact_id ?? t.reserved_artifact_id)) ?? "";
