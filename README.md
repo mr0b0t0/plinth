@@ -2,10 +2,10 @@
 
 **Publish HTML from any agent. Decide exactly who sees it.**
 
-Claude Code, Codex, Cursor or any MCP client publishes reports, dashboards and prototypes to Plinth
-with one tool call. You choose who can open each page: specific email addresses, anyone with the
-link, a password, or everyone. Every change is a version you can go back to, and a comment like
-"@codex add a table" sends the request back to the agent.
+Cursor, Codex, Claude Code, any MCP client or a plain script publishes reports, dashboards and
+prototypes to Plinth with one call. You choose who can open each page: specific email addresses,
+anyone with the link, a password, or everyone. Every change is a version you can go back to, and a
+comment like "@codex add a table" sends the request back to the agent.
 
 ![Claude Code publishes a report; a comment asks Codex for a table; Codex publishes v2 and replies; the page updates; history shows who made each version; the report is private](docs/screenshots/demo.gif)
 
@@ -22,11 +22,13 @@ staged.</sub>
 
 ## Why Plinth
 
-Artifacts made in an AI product live in that product, under the account and the plan that made
-them. Plinth is a neutral place for them:
+Many coding agents can write a page but have nowhere to put it, and the ones that can keep it inside
+their own product, under the account and the plan that made it. Plinth is a neutral place for
+pages from any of them:
 
-- **Every agent, one place.** Claude Code, Codex, Cursor, VS Code, Claude, ChatGPT and any other
-  MCP client publish to the same home, under your login, whichever agent did the work.
+- **Every agent, one place.** Claude Code, Codex, Cursor, VS Code, Gemini CLI, Claude, ChatGPT,
+  any other MCP client and plain scripts publish to the same home, under your login, whichever
+  agent did the work.
 - **Private by default, shared on purpose.** Share a page with specific people, with anyone who has
   the link, or behind a password. Viewers need no AI account.
 - **Versions, never overwrites.** Every publish is an immutable version with a permanent link.
@@ -39,14 +41,50 @@ them. Plinth is a neutral place for them:
 - **Yours to run.** Use the hosted instance, run it on your laptop, deploy it to your own
   Cloudflare account, or run the Docker image anywhere. MIT licensed.
 
-## Next to built-in artifacts
+## What people use it for
+
+- **An agent with nowhere to put a page.** Cursor, VS Code, Gemini CLI and most MCP clients can
+  write HTML but have no built-in place to share it. Ask for a dashboard in Cursor and you get a link you can
+  send, not a file in your repo.
+- **A team on different tools.** One person works in Codex, another in Claude Code, a designer in
+  Cursor. Their pages land in one place with one sharing model, and any agent can pick up a comment
+  on a page another agent made (the recording above).
+- **Scripts, cron jobs and CI.** A nightly job publishes its report with a token: any language,
+  any model or none, over MCP or the REST API. Each run is a new version at the same link, so the
+  history is the archive.
+- **The agent you are building.** An app or agent on any SDK that speaks MCP gets publishing,
+  sharing, comments and @mentions from one connection, with no hosting of its own to build.
+- **Sharing with people outside your AI tools.** Publish a prototype for a client, add their email
+  address, and they open it in any browser, comment on it and mention your agent. They need no AI
+  account; nobody else can open it.
+- **A design or data review.** Pin comments to the chart that's wrong; the agent fixes it and
+  answers in the thread. Restore the previous version if the fix is worse.
+- **Artifacts on your own domain, or on your own disk.** Deploy to your Cloudflare account and every
+  page is served from `<id>.your-content-domain.com`. Or run it locally with one `npx` command:
+  the database and files stay on your machine.
+
+### From a script
+
+Create a personal access token on the **Connections** page, then:
+
+```sh
+curl https://plinth.aconite.io/api/v1/artifacts \
+  -H "Authorization: Bearer $PLINTH_TOKEN" -H "Content-Type: application/json" \
+  -d '{"title": "Nightly build report", "html": "<!doctype html><title>Report</title><h1>All green</h1>"}'
+```
+
+The page is private until you share it; the response has its link. `PUT /api/v1/artifacts/{id}`
+publishes the next run as a new version at the same link (add `base_version` to refuse a stale
+write). Every endpoint is in [docs/openapi.json](docs/openapi.json).
+
+### If you already use Claude Code artifacts
 
 Claude Code can publish artifacts of its own, and they are the quickest way to share a page inside
-a claude.ai organization. Plinth is for the cases they leave out:
+a claude.ai organization. Plinth covers what they leave out:
 
 | | Claude Code artifacts | Plinth |
 | --- | --- | --- |
-| Agents | Claude Code (CLI or desktop app) signed in to claude.ai, and Claude Tag | Claude Code, Codex, Cursor, VS Code, Gemini CLI, Claude, ChatGPT, any MCP client |
+| Agents | Claude Code (CLI or desktop app) signed in to claude.ai, and Claude Tag | Claude Code, Codex, Cursor, VS Code, Gemini CLI, Claude, ChatGPT, any MCP client, plain HTTP |
 | Credentials | API keys, gateway tokens, Amazon Bedrock, Google Cloud's Agent Platform and Microsoft Foundry cannot publish | Any client with a Plinth sign-in or token |
 | Scripts and CI | Off by default in the Agent SDK, the GitHub Action, MCP-server contexts and `claude -p` | Scheduled and CI agents publish with a token ([docs/mcp.md](docs/mcp.md#advanced-personal-access-tokens-scripts-and-ci)) |
 | Who can open a page | Only you, your organization or a shared folder (Team and Enterprise), or anyone with a public link | Listed email addresses, anyone with the link, a password, or public |
@@ -56,19 +94,6 @@ a claude.ai organization. Plinth is for the cases they leave out:
 <sub>The Claude Code column is from [Claude Code's artifacts
 documentation](https://code.claude.com/docs/en/artifacts) as of 2026-11-14, which also lists
 organizations with Zero Data Retention, HIPAA or customer-managed keys as unable to publish.</sub>
-
-## What people use it for
-
-- **Claude and Codex on one project.** Claude Code drafts a launch report, Codex adds the table you
-  asked for in a comment, and the history shows who changed what (the recording above).
-- **Sharing work with people outside your AI tools.** Publish a prototype for a client, add their
-  email address, and they open it in any browser. Nobody else can.
-- **A design or data review.** Pin comments to the chart that's wrong; the agent fixes it and
-  answers in the thread. Restore the previous version if the fix is worse.
-- **Artifacts on your own domain.** Deploy to your Cloudflare account and every page is served
-  from `<id>.your-content-domain.com`, with the app on a domain of yours.
-- **Nothing leaves your machine.** Run it locally with one `npx` command: the database and files
-  stay on your disk, and agents on the same computer publish to it.
 
 ## Get started
 
