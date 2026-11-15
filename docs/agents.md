@@ -176,6 +176,17 @@ one upload only. The process substitution is why it needs bash or zsh: on Window
 CLI. The upload is single use, bound to its artifact and base version, and expires after 30
 minutes.
 
+**When the answer is lost.** A connection lost while the folder is still being sent never
+publishes: the tar is incomplete. Once the whole folder has been sent, a curl error or timeout says
+nothing about whether it published, and it may have. So the agent does not retry blindly: it calls
+`get_artifact` first, with the artifact's id for an update, or for a new artifact with `target.id`
+from the `start_upload` result (the id that upload creates; `not_found` means nothing was
+published). If the version is there, it uses it; if not, it calls `start_upload` again with the
+same `base_version`. Retrying never duplicates anything: against the old `base_version` it gets a
+version conflict, a used upload sent again answers `upload_used` with the url, and one upload never
+creates two artifacts. `GET /api/v1/uploads/<upload_id>` with the upload token tells a script the
+same thing ([mcp.md](mcp.md#start_upload)); the CLI checks it before it reports a failure.
+
 **The CLI** ([packages/cli/README.md](../packages/cli/README.md)). The client commands need
 `@mr0b0t0/plinth` 0.4.0 or later; if `npx` answers "Unknown command", that release is not on npm
 yet, so use `start_upload`. `npx -y @mr0b0t0/plinth login` once, then `publish <dir>` (`--id <id>`
@@ -183,6 +194,9 @@ to update). It refuses symlinks, skips dotfiles and source
 maps, checks the instance's limits before sending, stores only the files that changed (sending
 just those when they fit in one request of about 24 MB, otherwise the whole folder as one
 compressed upload), and verifies every file's hash afterwards. A conflict exits with code 3 and is never retried.
+When an answer is lost after the whole request was sent, it checks what happened (the upload's
+status, or the artifact for an inline update) and reports the version it finds instead of sending
+again.
 
 Rules that keep a build working on Plinth:
 

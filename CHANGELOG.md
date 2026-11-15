@@ -19,10 +19,18 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   `base_version` the agent read. Applies migration `0007_upload_tickets.sql`. The command works
   with macOS tar (it pipes `tar -cf -` through `gzip -c` and leaves out source maps), and the
   server also accepts the NUL padding bsdtar adds to `tar -czf -`. A bundle must arrive within 10
-  minutes (a sender that goes quiet is cut off then); one whose client disconnects deletes its own
-  files and never commits, revoking the connection that started it stops its commit, and an
-  account at its storage quota cannot start one. A gzip body is inflated only as fast as it is
-  read, so a small compressed body cannot fill the Worker's memory.
+  minutes (a sender that goes quiet is cut off then); one whose connection drops while it is still
+  being sent never commits and deletes its own files, revoking the connection that started it
+  stops its commit, and an account at its storage quota cannot start one. A gzip body is inflated
+  only as fast as it is read, so a small compressed body cannot fill the Worker's memory.
+- **Lost answers**: a bundle whose connection drops after the whole folder was sent may still have
+  published. `start_upload` now names the artifact a new publish will create (`target.id`), so an
+  agent checks with `get_artifact` before it retries; its `next` and the skill say so. A retry
+  never duplicates anything: the old `base_version` gets a conflict, a used upload answers
+  `upload_used` with the url, and one upload never makes two artifacts. The new
+  `GET /api/v1/uploads/:id`, with the upload token only, says whether an upload committed.
+  `plinth publish` and `plinth upload` check it (or read the artifact, for an inline update) after
+  a lost answer and report the version they find instead of sending again.
 - **Upgrading**:
   - Apply migrations `0006_stored_bytes.sql` and `0007_upload_tickets.sql` before deploying the
     Worker (`plinth deploy` does; by hand, `wrangler d1 migrations apply` first).

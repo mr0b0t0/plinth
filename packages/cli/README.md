@@ -121,6 +121,11 @@ npx @mr0b0t0/plinth publish dist --id my-report-k3x9   # the next version of tha
   then prints the link, how many files were written and reused, and any warnings (for example a
   file the page refers to that is not in the folder). `--json` prints `id`, `slug`, `version`,
   `url`, `content_url`, `stored`, `warnings` and `verified` for scripts and agents.
+- **A lost answer.** If the connection drops, or a proxy answers instead of Plinth, after the
+  whole folder was sent, the command does not send it again: it asks the upload (or, for an inline
+  update, reads the artifact) whether it was published, and prints that version (`--json` adds
+  `"recovered": true`), exits 3 when someone else published in between, or says nothing was
+  published. A connection lost while the folder was still being sent never publishes.
 - **Build settings.** Use relative URLs (Vite: `base: './'`).
 
 Which instance: `--url`, else the instance `--name` and `--home` pick, else `PLINTH_URL`, else

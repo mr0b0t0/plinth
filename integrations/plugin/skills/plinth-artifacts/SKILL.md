@@ -175,6 +175,15 @@ fails with a conflict, someone published in between: read the artifact again, ch
 and call `start_upload` again with the new `base_version`. For an update the new version goes live
 at once at the artifact's current visibility.
 
+If the command ends without its JSON (a curl error, a timeout, an answer that is not JSON), do not
+run it again blindly: once the whole folder was sent, the upload may have published anyway. (A
+connection lost while the folder was still being sent never publishes.) Call `get_artifact` first,
+with the artifact's `id` for an update or with `target.id` from the `start_upload` result for a new
+artifact (that is the id the upload creates; `not_found` means nothing was published). If the new
+version is there, use it. If not, call `start_upload` again with the same `base_version`. A retry
+can never publish twice: a stale `base_version` gets a conflict, and sending a used upload again
+answers `upload_used` with the url. The Plinth CLI does this check itself.
+
 Rules for builds:
 
 - **Never merge or delete chunks to fit a limit**, and never inline a build into one file to dodge

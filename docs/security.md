@@ -444,8 +444,8 @@ file.
   the hourly scheduled sweep of `staging_attempts` rows removes them, and so does deleting or
   erasing the artifact. The sweep (like an abort or a takedown) claims a row before deleting
   anything and deletes the row only after the files, and a commit needs the row unclaimed, so a
-  sweep never deletes the files of a version that commits and a failed cleanup is retried. A bundle whose client disconnects cleans up
-  after itself: the request's abort signal hands the deletion of its attempt prefix and the
+  sweep never deletes the files of a version that commits and a failed cleanup is retried. A bundle whose client disconnects before
+  the commit cleans up after itself: the request's abort signal hands the deletion of its attempt prefix and the
   release of its receiving lease to `waitUntil`, which outlives the request. Before streaming, a
   bundle checks the owner's storage quota, and while streaming its puts stop at the room left, so
   even an attempt whose cleanup never runs leaves no more than the quota allows, and only until

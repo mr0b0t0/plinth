@@ -127,7 +127,7 @@ adds one column and two tables:
 | Table or column | Key fields | Notes |
 | --- | --- | --- |
 | `versions.stored_bytes` | integer or NULL | Bytes this version wrote to R2. The storage quota sums `coalesce(stored_bytes, size_bytes)` |
-| `upload_tickets` | id, token_hash, user_id, credential (`connection` or `admin`), connection_id or admin_token_hash, scopes, mode (`publish` or `update`), artifact_id, artifact_type, title, note, base_version, state (`open`, `used`, `dead`), attempts, receiving_claim, receiving_until, result_artifact_id, result_version, created_at, expires_at, used_at | One single-use upload ticket from `start_upload`. The token is stored as its SHA-256. `open -> used` happens in the same D1 batch that commits the version. The receiving lease limits concurrency and is the bundle's deadline (10 minutes). Rows older than 7 days are deleted opportunistically (on about 2% of `start_upload` calls, so on a quiet instance they can stay longer); erasing an artifact or a user deletes its tickets |
+| `upload_tickets` | id, token_hash, user_id, credential (`connection` or `admin`), connection_id or admin_token_hash, scopes, mode (`publish` or `update`), artifact_id, artifact_type, title, note, base_version, state (`open`, `used`, `dead`), attempts, receiving_claim, receiving_until, result_artifact_id, result_version, reserved_artifact_id, created_at, expires_at, used_at | One single-use upload ticket from `start_upload`. The token is stored as its SHA-256. A publish-mode ticket reserves its artifact id at mint (`reserved_artifact_id`, returned as `target.id`), and its commit creates the artifact with exactly that id. `open -> used` happens in the same D1 batch that commits the version. The receiving lease limits concurrency and is the bundle's deadline (10 minutes). Rows older than 7 days are deleted opportunistically (on about 2% of `start_upload` calls, so on a quiet instance they can stay longer); erasing an artifact or a user deletes its tickets |
 
 ## Auth and permissions
 
@@ -163,7 +163,7 @@ One remote MCP server over streamable HTTP at `/mcp`. All tools act as the conne
 | --- | --- |
 | `publish_artifact(title, html \| type+content, assets?, visibility?)` | Create an artifact. Returns its id and URL, `warnings` and `stored`. Private by default (`allowlist` with nobody added). `type: "doc"` with Markdown in `content` makes a document |
 | `update_artifact(id, html \| content, assets?, base_version?, note?)` | Publish a new version of an existing artifact, in the source field its type takes. An asset may be `{path, sha256}` to reuse a file of the current version. Returns `warnings` and `stored` |
-| `start_upload(id?, base_version?, type?, title?, note?)` | For a build folder or a large page: mint a single-use, 30-minute upload ticket for one new artifact, or for one update of `id` (then `base_version` is required). The result has `upload_url`, `upload_token`, `commands.curl` (and `commands.npx` on release builds), the instance's `limits` and `content_isolation` |
+| `start_upload(id?, base_version?, type?, title?, note?)` | For a build folder or a large page: mint a single-use, 30-minute upload ticket for one new artifact, or for one update of `id` (then `base_version` is required). The result has `upload_url`, `upload_token`, `target` (with `id`: the artifact updated, or the one the publish will create), `commands.curl` (and `commands.npx` on release builds), the instance's `limits` and `content_isolation` |
 | `get_artifact(id, version?)` | Read metadata, `type`, the source (`html` for a page, `content` for a doc, and `source_path`) and each asset's `sha256`, so an agent can edit from the current state |
 | `list_artifacts(query?)` | List the user's artifacts |
 | `list_versions(id)` | Version history with notes and authors |
@@ -408,18 +408,35 @@ files) and big pages without merging chunks, and an update stores only what chan
   puts stop at the room left. When the client disconnects, the request's abort signal hands the
   deletion of the attempt's files and the release of the lease to `waitUntil`. Abort and commit
   exclude each other: the commit takes a point of no abort synchronously before its first await,
-  so a disconnect before it never commits and one after it never deletes. Both rest on the
-  runtime firing `request.signal`: local `wrangler dev` (so local and Docker instances) does not
-  fire it once the whole body has been read, so there a client that disconnects after sending the
-  whole bundle still gets a complete version committed (resending with the same ticket answers
-  `upload_used` with the version and url). Whether Cloudflare's runtime fires it in that case has
-  not been tested. The principal and edit
+  and an abort after it deletes nothing, so a version that commits is always whole. (Whether the
+  runtime fires the signal once the whole body has been read is an implementation detail, recorded
+  in DECISIONS.md and the deploy checklist, not a promise.) The principal and edit
   rights are checked again once every file is written (after the last puts settle, right before
   the commit), and the commit batch requires the minting connection to be unrevoked. A folder
   prefix is stripped only when every kept entry is under it. A conflict kills the ticket; other
   errors leave it open for its remaining attempts. One bundle per user streams at a time; minting
   is limited to `MAX_PUBLISHES_PER_HOUR` per hour and bundle requests to twice that. The token is
   never in a URL and `commands.curl` keeps it out of curl's arguments.
+- **Lost responses.** What is guaranteed: a client that disconnects while the bundle is still being
+  sent never commits, because the tar is incomplete (tests: "a body that ends mid-file commits
+  nothing" and "a client disconnect deletes the attempt's files" in
+  `apps/worker/test/uploads.test.ts`). What is not: a client that disconnects, or times out, after
+  the whole body has been read may find that the request committed anyway. So a client whose
+  bundle request ends without its JSON answer (a curl error, a timeout, a body that is not JSON)
+  does not retry blindly. It calls `get_artifact` first: for an update with the artifact's id, for
+  a new publish with `target.id`, which `start_upload` reserves for that ticket (the commit creates
+  the artifact with exactly that id; `not_found` means nothing was published). If the version is
+  there, it uses it; if not, it calls `start_upload` again with the same `base_version`. Retrying is
+  safe in every case: a retry against the old `base_version` after a commit gets the usual version
+  conflict (at mint, or on the bundle of a ticket minted earlier), never a second version;
+  re-running the same `commands.curl` with a used ticket answers `upload_used` with the version and
+  url and commits nothing; and in publish mode one ticket never creates a second artifact.
+  `GET /api/v1/uploads/:id` with the upload token (and nothing else) answers whether the upload
+  committed: `state` (`open`, `receiving`, `used`, `dead`, `expired`, `exhausted`), `id`,
+  `version` and `url` once used. It counts no attempt and takes no lease. The Plinth CLI uses it:
+  `plinth publish` and `plinth upload` read the upload's status after a lost bundle answer (and
+  `plinth publish --id` reads the artifact after a lost inline answer), report the version they
+  find, exit 3 when a conflict ended the upload, and never send the bundle again.
 - **Serving cost.** The content host keeps an in-isolate cache (8 MB) of immutable version rows and
   their parsed manifests; it still reads the artifact row and checks access on every request. Under
   `CONTENT_ISOLATION=origin`, a file with a sha256 gets the strong ETag `"sha256-<hex>"`, and a

@@ -126,7 +126,11 @@ overhead), the largest body an upload from `start_upload` or the CLI sends.
 - **Orphaned upload files.** A bundle whose client disconnects deletes its own files (the
   `enable_request_signal` compatibility flag is what lets it notice; it must be in the config you
   deploy with, see [§6](#6-upgrading-and-rolling-back)), but a
-  request the runtime kills outright can still leave files no version names. They do not count
+  request the runtime kills outright can still leave files no version names. Implementation note:
+  whether Cloudflare's runtime fires `request.signal` once the whole body has been read is not
+  tested, and local `wrangler dev` does not, so a client that disconnects after sending everything
+  may still get its version (whole: commit and abort exclude each other). Clients are told to check
+  with `get_artifact` after a lost answer, never that a disconnect cannot commit. They do not count
   toward any quota. The Worker's hourly cron trigger (`"triggers": { "crons": ["0 * * * *"] }`,
   also required in the config you deploy with) removes them once the attempt is 45 minutes old.
   Run `pnpm --filter @plinth/worker admin -- sweep-orphans --remote` only for legacy orphans:
