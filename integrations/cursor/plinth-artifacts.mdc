@@ -156,7 +156,8 @@ travel as JSON inside the tool call, so keep them for small pages: **20 files or
 
 1. **With a bash or zsh shell:** call `start_upload`. For a new artifact you may pass `title`
    (and `type: "doc"` for a doc); to update one, pass its `id` and `base_version` set to the
-   version you read with `get_artifact`. The result holds an `upload_url`, `limits`, `content_isolation` and
+   version you read with `get_artifact` (`list_versions` gives the current number without the
+   page's HTML and file list, which a big build makes long). The result holds an `upload_url`, `limits`, `content_isolation` and
    `commands`. Replace `<folder>` in `commands.curl` with the build folder (the one with
    `index.html`, or a doc's `content.md`, at its top) and run it with a shell timeout of at least
    10 minutes. Or run `commands.npx` instead when it is present and Node.js is available. The

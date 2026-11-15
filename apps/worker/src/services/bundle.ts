@@ -740,9 +740,12 @@ async function* entries(
             // The reader stops at the first file over the limit, so this is a lower bound.
             count: kept.size + 1,
             count_is_minimum: true,
+            // The actionable part first: commands.curl already leaves out source maps.
             next:
-              "Leave out source maps (tar --exclude='*.map', as commands.curl does) and files the page " +
-              "does not load. Never merge chunks to fit. The instance operator can raise " +
+              `Remove at least ${kept.size + 1 - (bounds.maxEntries - 1)} files the page does not load ` +
+              "(and source maps, if your tar command did not leave them out with tar --exclude='*.map' " +
+              "as commands.curl does). " +
+              "Never merge chunks to fit. The instance operator can raise " +
               `MAX_ASSETS_PER_VERSION (up to ${LIMITS.maxAssetsCeiling})`,
           },
         );

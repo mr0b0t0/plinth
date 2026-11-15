@@ -548,6 +548,8 @@ describe("sizes and bounds", () => {
     const e = await refusal(tar(files), { maxEntries: 11 });
     expect(e.code).toBe("payload_too_large");
     expect(details(e)).toMatchObject({ limit: 10, count: 12, count_is_minimum: true });
+    // What to do first: commands.curl already excludes source maps.
+    expect(details(e).next).toMatch(/^Remove at least 2 files the page does not load/);
     expect(e.message).toBe(
       "The bundle has at least 12 files; this instance allows 10 asset files per version",
     );

@@ -140,7 +140,7 @@ export async function startUpload(
     if (input.base_version === undefined) {
       throw new ApiError("invalid_input", "base_version is required with id", {
         field: "base_version",
-        next: "Pass the version you read with get_artifact as base_version",
+        next: "Pass the version you read with get_artifact as base_version (list_versions gives the current number without the page's files)",
       });
     }
     target = await deps.updateTarget(ctx, input.id, {

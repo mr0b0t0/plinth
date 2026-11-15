@@ -372,7 +372,8 @@ export function buildMcpServer(ctx: Ctx): McpServer {
         "tars the folder and sends it; the bundle request itself publishes the version and prints the " +
         "result (url, warnings, stored). Omit id for a new artifact (optional type and title; the title " +
         "defaults to the page's <title>). With id it updates that artifact: base_version, the version you " +
-        "read with get_artifact, is required, and a stale base is refused instead of overwriting. Run " +
+        "read with get_artifact, is required, and a stale base is refused instead of overwriting " +
+        "(list_versions gives the current number without the page's files). Run " +
         "commands.curl with a shell timeout of at least 10 minutes and give the user the url it prints; " +
         "commands.npx, when present, does the same with Node. The result carries this instance's limits " +
         "and content_isolation. " +

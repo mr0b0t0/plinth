@@ -308,7 +308,7 @@ describe("start_upload mints a single-use ticket", () => {
     expect(e.code).toBe("invalid_input");
     expect(details(e)).toMatchObject({
       field: "base_version",
-      next: "Pass the version you read with get_artifact as base_version",
+      next: "Pass the version you read with get_artifact as base_version (list_versions gives the current number without the page's files)",
     });
     const res = await call("/api/v1/uploads", {
       method: "POST",

@@ -72,6 +72,10 @@ describe("MCP endpoint", () => {
       /base_version, the version you read with get_artifact, is required/,
     );
     expect(desc("start_upload")).toMatch(/at least 10 minutes/);
+    // An update needs only the number, not get_artifact's HTML and asset list.
+    expect(desc("start_upload")).toContain(
+      "list_versions gives the current number without the page's files",
+    );
     for (const name of ["publish_artifact", "update_artifact"]) {
       expect(desc(name)).toContain(BUILD_NOTE);
       expect(desc(name)).not.toMatch(/25 MB/);
@@ -101,7 +105,9 @@ describe("MCP endpoint", () => {
     expect(r.isError).toBe(true);
     expect(r.data.error).toMatchObject({
       code: "invalid_input",
-      details: { next: "Pass the version you read with get_artifact as base_version" },
+      details: {
+        next: "Pass the version you read with get_artifact as base_version (list_versions gives the current number without the page's files)",
+      },
     });
     const ro = await agent({ scopes: "artifacts:read" });
     const cro = await mcpClient(ro.token);
