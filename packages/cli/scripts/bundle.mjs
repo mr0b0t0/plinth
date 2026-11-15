@@ -6,7 +6,8 @@
 //   runtime/web/                the built web app (apps/web/dist)
 //   runtime/migrations/         the D1 migrations
 //   runtime/scripts/            instance.mjs, deploy.mjs and the helpers they import
-//   runtime/wrangler.base.json  compatibility settings, assets settings and default vars
+//   runtime/wrangler.base.json  compatibility settings, the cron trigger, assets settings and
+//                               default vars (deploy-lib.mjs runtimeBase)
 //   runtime/harnesses.mjs       the harness registry (packages/shared), types stripped
 import {
   cpSync,
@@ -55,32 +56,13 @@ for (const f of [
 
 // The repo's wrangler.jsonc, minus everything instance-specific (setup writes those per instance).
 const { parseJsonc } = await import(path.join(root, "apps/worker/scripts/instance.mjs"));
+const { runtimeBase, runtimeConfigProblem } = await import(
+  path.join(root, "apps/worker/scripts/deploy-lib.mjs")
+);
 const repoCfg = parseJsonc(readFileSync(path.join(root, "apps/worker/wrangler.jsonc"), "utf8"));
-const base = {
-  compatibility_date: repoCfg.compatibility_date,
-  compatibility_flags: repoCfg.compatibility_flags,
-  observability: repoCfg.observability,
-  assets: { ...repoCfg.assets, directory: undefined },
-  vars: Object.fromEntries(
-    [
-      "MAX_ARTIFACTS_PER_USER",
-      "MAX_PUBLISHES_PER_HOUR",
-      "CDN_ALLOWLIST",
-      "ALLOW_PUBLIC_VISIBILITY",
-      "PUBLIC_MIN_ACCOUNT_AGE_HOURS",
-      "ALLOW_SHARED_DATA",
-      "SHOW_SOURCE_LINK",
-      "DATA_MAX_DOCS_PER_ARTIFACT",
-      "DATA_MAX_BYTES_PER_ARTIFACT",
-      "DATA_MAX_BYTES_PER_USER",
-      "DATA_MAX_DOC_BYTES",
-      "DATA_WRITES_PER_VIEWER_PER_HOUR",
-      "DATA_WRITES_PER_ARTIFACT_PER_HOUR",
-    ]
-      .filter((k) => k in (repoCfg.vars ?? {}))
-      .map((k) => [k, repoCfg.vars[k]]),
-  ),
-};
+const base = runtimeBase(repoCfg);
+const problem = runtimeConfigProblem(base);
+if (problem) fail(`apps/worker/wrangler.jsonc: ${problem}`);
 writeFileSync(path.join(out, "wrangler.base.json"), `${JSON.stringify(base, null, 2)}\n`);
 
 // The same registry the web app's Connect panel uses, so `plinth connect` says the same things.

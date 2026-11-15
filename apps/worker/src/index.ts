@@ -20,6 +20,7 @@ import { contentRoot, resolveHost, serveContent } from "./content/serve.ts";
 import { ApiError } from "./lib/errors.ts";
 import { handleMcp } from "./mcp/server.ts";
 import { mcpResourceMetadataUrl, oauthRoutes } from "./oauth/routes.ts";
+import { pruneUploadTickets, sweepStagingAttempts } from "./services/attempts.ts";
 
 export const app = new Hono<AppEnv>();
 
@@ -163,5 +164,19 @@ export default {
           headers: { "Content-Type": "text/plain" },
         });
     }
+  },
+
+  /**
+   * The hourly cron trigger (wrangler.jsonc `triggers`): remove what abandoned upload attempts
+   * left, and upload tickets past their status window (services/attempts.ts). Needs only the D1
+   * and R2 bindings, not the host configuration.
+   */
+  async scheduled(
+    controller: ScheduledController,
+    env: Bindings,
+    _ctx: ExecutionContext,
+  ): Promise<void> {
+    await sweepStagingAttempts(env, controller.scheduledTime);
+    await pruneUploadTickets(env.DB, controller.scheduledTime);
   },
 } satisfies ExportedHandler<Bindings>;

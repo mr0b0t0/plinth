@@ -6,6 +6,7 @@
 // runtime = {
 //   layout,        // repo root, or { main, assetsDir, migrationsDir } (tunnel-lib.resolveLayout)
 //   base,          // parsed apps/worker/wrangler.jsonc: compatibility settings and default limits
+//                  // (start carries its compatibility settings into an older instance config)
 //   wrangler,      // { command, args: [...prefix], cwd }: how to run wrangler
 //   getDomain,     // registrable domain of a host (tldts, private section included), or null
 //   startCommand,  // (name, home) => the command that starts this instance, for messages
@@ -17,6 +18,7 @@ import { randomBytes } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { refreshRuntime } from "./deploy-lib.mjs";
 import * as lib from "./tunnel-lib.mjs";
 
 export class InstanceError extends Error {}
@@ -335,6 +337,29 @@ export async function setupInstance(raw, runtime) {
 }
 
 /**
+ * Carry the release's compatibility flags and cron triggers (and its compatibility date, when
+ * later) into an instance config an older release wrote, keeping everything else and the leading comment. An
+ * upgrade that only restarts an instance (npm, or the Docker image, which re-runs `plinth init`
+ * only when its settings change) would otherwise run without flags the release needs, such as
+ * enable_request_signal or the hourly staging sweep. Returns true when the file changed.
+ */
+export function refreshInstanceRuntime(paths, base) {
+  const text = readFileSync(paths.wranglerConfig, "utf8");
+  const cfg = parseJsonc(text);
+  const next = refreshRuntime(cfg, base);
+  if (JSON.stringify(next) === JSON.stringify(cfg)) return false;
+  const lines = text.split("\n");
+  const head = [];
+  for (const line of lines) {
+    if (!/^\s*(\/\/.*)?$/.test(line)) break;
+    head.push(line);
+  }
+  const header = head.length > 0 ? `${head.join("\n")}\n` : "";
+  writeFileSync(paths.wranglerConfig, `${header}${JSON.stringify(next, null, 2)}\n`);
+  return true;
+}
+
+/**
  * Start an instance: apply migrations, then run the Worker under wrangler dev on 127.0.0.1 (or
  * `raw.listen`, else PLINTH_LISTEN) and, for a tunnel instance, cloudflared. Both stop together.
  * Resolves with the exit code: 0 after Ctrl-C or SIGTERM, 1 when either process stops on its own.
@@ -365,6 +390,8 @@ export async function startInstance(raw, runtime) {
   }
   runtime.ensureBuilt?.();
 
+  if (runtime.base && refreshInstanceRuntime(inst.paths, runtime.base))
+    console.log(`> Updated ${inst.paths.wranglerConfig} to this release's compatibility settings`);
   const logDir = ensureLogDir(inst.paths);
   console.log("> Applying database migrations");
   applyMigrations(runtime, inst.paths, logDir);

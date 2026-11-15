@@ -80,7 +80,7 @@ flowchart TB
     content["Content domain<br/>One subdomain per artifact<br/>Access check, strict CSP"]
   end
   d1[("D1 database<br/>Users, versions, permissions, comments, mention queue")]
-  r2[("R2 storage<br/>Artifact files, one folder per version")]
+  r2[("R2 storage<br/>Artifact files, one folder per version<br/>Unchanged files reused by hash")]
   agents --> mcp
   publishers --> app
   viewers --> content
@@ -94,14 +94,18 @@ Metadata goes to D1 and files to R2; nothing else needs to be provisioned.
 
 ## Data model
 
-Metadata lives in D1 (SQLite). Artifact files live in R2 under `artifacts/<artifact_id>/v<n>/`.
+Metadata lives in D1 (SQLite). Artifact files live in R2 under `artifacts/<artifact_id>/`: a
+version's new files under its own prefix (`v<n>.<nonce>/` since 0.4.0, where `<nonce>` is 12
+random characters per write attempt; `v<n>/` for versions written earlier), and files it shares
+with an earlier version of the same artifact stay where they were first stored ([Big builds and
+reuse by hash](#big-builds-and-reuse-by-hash)). The row's `r2_prefix` is authoritative.
 
 | Table | Key fields | Notes |
 | --- | --- | --- |
 | `users` | id, email, name, auth provider, created_at | One row per person who signs in |
 | `agent_connections` | id, user_id, label, client type, token hash, last_used_at | One per connected agent, e.g. "Work Claude". Revocable individually |
 | `artifacts` | id, owner_id, slug, title, type, current_version, visibility, password hash, created_at | `visibility` is public, unlisted, password or allowlist. `type` is `html` (a hand-written `index.html`) or `doc` (Markdown in `content.md`), fixed at publish |
-| `versions` | id, artifact_id, number, R2 key, size, created_by (user or agent), note, created_at | Immutable. A restore creates a new row |
+| `versions` | id, artifact_id, number, r2_prefix, size_bytes, stored_bytes, manifest, created_by (user or agent), note, created_at | Immutable, and written only once its files are in R2 (commit last). A restore creates a new row. `size_bytes` is what a viewer loads; `stored_bytes` is what this version added to R2 (NULL for versions written before 0.4.0, which count `size_bytes`). Each manifest entry has `path`, `size_bytes`, `content_type`, a server-computed `sha256` (absent on files stored before 0.4.0) and, for a reused file, a server-written `stored_at` (`v<m>[.<nonce>]/<path>`, relative to `artifacts/<artifact_id>/`, never returned by the API) |
 | `access_grants` | artifact_id, email, role | Role is viewer, commenter or editor. Used for allowlists and collaborators |
 | `comments` | id, artifact_id, version, parent_id, author, body, mentions, status | Threaded. `status` is open or resolved |
 | `mention_tasks` | id, comment_id, target agent, state, claimed_by, result_version | The queue agents read. State is pending, claimed, done or failed |
@@ -116,6 +120,14 @@ adds one column and two tables:
 | `versions.capabilities` | JSON `{ data, viewer, shared }` or NULL | What the version's `index.html` declares, parsed at publish. NULL for versions that declare nothing and for versions published before the column |
 | `artifact_docs` | artifact_id, collection, doc_id, data, size_bytes, rev, created_by_email/role/via/label, created_at, updated_by_email/role/via/label, updated_at | One JSON document. Key (artifact_id, collection, doc_id). Shared by every version of the artifact and not versioned. Stamps come from the server. `via` is page, agent or app |
 | `artifact_data_usage` | artifact_id, docs, bytes, seq | Exact totals per artifact kept by SQLite triggers on `artifact_docs`, for one-row quota checks. `seq` grows on every change and is what pages poll |
+
+**Big builds** ([below](#big-builds-and-reuse-by-hash), migrations `0006_stored_bytes.sql` and
+`0007_upload_tickets.sql`) add one column and one table:
+
+| Table or column | Key fields | Notes |
+| --- | --- | --- |
+| `versions.stored_bytes` | integer or NULL | Bytes this version wrote to R2. The storage quota sums `coalesce(stored_bytes, size_bytes)` |
+| `upload_tickets` | id, token_hash, user_id, credential (`connection` or `admin`), connection_id or admin_token_hash, scopes, mode (`publish` or `update`), artifact_id, artifact_type, title, note, base_version, state (`open`, `used`, `dead`), attempts, receiving_claim, receiving_until, result_artifact_id, result_version, reserved_artifact_id (unique), dead_reason (`conflict` or `taken_down`, on a dead ticket), created_at, expires_at, used_at | One single-use upload ticket from `start_upload`. The token is stored as its SHA-256. A publish-mode ticket reserves its artifact id at mint (`reserved_artifact_id`, returned as `target.id`), and its commit creates the artifact with exactly that id; no other ticket can hold that id, and only that ticket's bundle can create it. While the ticket is live (open, unexpired, attempts left, minting credential still valid) the reservation counts toward the owner's artifact limit for new reservations and inline publishes; once it expires unused the id is released and never becomes an artifact. Only the id is reserved, not a slug (the commit picks the slug). `open -> used` happens in the same D1 batch that commits the version. The receiving lease limits concurrency and is the bundle's deadline (10 minutes). A row is deleted once `TTL.uploadStatusMs` (24 hours) has passed since it expired, by the hourly cron and by the opportunistic sweep; erasing an artifact or a user deletes its tickets |
 
 ## Auth and permissions
 
@@ -149,9 +161,10 @@ One remote MCP server over streamable HTTP at `/mcp`. All tools act as the conne
 
 | Tool | Purpose |
 | --- | --- |
-| `publish_artifact(title, html \| type+content, assets?, visibility?)` | Create an artifact. Returns its id and URL. Private by default (`allowlist` with nobody added). `type: "doc"` with Markdown in `content` makes a document |
-| `update_artifact(id, html \| content, assets?, note?)` | Publish a new version of an existing artifact, in the source field its type takes |
-| `get_artifact(id, version?)` | Read metadata, `type` and the source (`html` for a page, `content` for a doc, and `source_path`), so an agent can edit from the current state |
+| `publish_artifact(title, html \| type+content, assets?, visibility?)` | Create an artifact. Returns its id and URL, `warnings` and `stored`. Private by default (`allowlist` with nobody added). `type: "doc"` with Markdown in `content` makes a document |
+| `update_artifact(id, html \| content, assets?, base_version?, note?)` | Publish a new version of an existing artifact, in the source field its type takes. An asset may be `{path, sha256}` to reuse a file of the current version. Returns `warnings` and `stored` |
+| `start_upload(id?, base_version?, type?, title?, note?)` | For a build folder or a large page: mint a single-use, 30-minute upload ticket for one new artifact, or for one update of `id` (then `base_version` is required). The result has `upload_url`, `upload_token`, `target` (with `id`: the artifact updated, or the one the publish will create), `commands.curl` (and `commands.npx` on release builds), the instance's `limits` and `content_isolation` |
+| `get_artifact(id, version?)` | Read metadata, `type`, the source (`html` for a page, `content` for a doc, and `source_path`) and each asset's `sha256`, so an agent can edit from the current state |
 | `list_artifacts(query?)` | List the user's artifacts |
 | `list_versions(id)` | Version history with notes and authors |
 | `restore_version(id, version)` | Make an old version current by publishing it as a new one |
@@ -202,8 +215,11 @@ other `/.well-known/` paths and missing files answer `404` instead of the SPA. G
 `docs/agents.md#agent-discovery`; design:
 `docs/superpowers/specs/2026-11-14-agent-discovery-design.md`.
 
-A plain REST API mirrors these tools for scripts and CI. Size limits for v1: 5 MB of HTML (1 MB of
-Markdown for a doc) and 25 MB in total per version.
+A plain REST API mirrors these tools for scripts and CI (`POST /api/v1/uploads` mirrors
+`start_upload` and takes a bearer token only). Size limits: 5 MB of HTML (1 MB of Markdown for a
+doc), and per version a total size and a file count set by the operator with `MAX_VERSION_BYTES`
+(default 50 MB, at most 64 MB) and `MAX_ASSETS_PER_VERSION` (default 511, at most 900). A JSON
+request body may be up to 40 MB. `GET /api/v1/config` returns the instance's limits.
 
 **Typed outputs (decided 2026-11-14).** The first type is `doc`: an agent sends Markdown in
 `content` and Plinth renders it as a finished page (reading typography, heading anchors, tables,
@@ -223,7 +239,8 @@ export yet. Design: `docs/superpowers/specs/2026-11-14-typed-outputs-doc-design.
 
 ### Version history
 
-- Every publish, edit or restore writes a new immutable version to R2 and a row in `versions`.
+- Every publish, edit or restore writes a new immutable version: its new files to R2, then a row
+  in `versions`. Files it shares with the current version are referenced, not copied.
 - The artifact page shows the list: number, author (person or agent label), note, date.
 - Any version has a permanent URL (`/a/<slug>/v/3`). The bare URL always serves the current one.
 - Two versions can be compared as a source diff or side by side as rendered pages.
@@ -311,6 +328,190 @@ Decided 2026-11-14 (issue #1). Design:
 - **Agents.** `list_artifact_data` and `write_artifact_data` (MCP) and REST mirrors under
   `/api/v1/artifacts/:ref/data` for the owner and editors. Viewer-written data is untrusted input,
   and the tool descriptions say so.
+
+### Big builds and reuse by hash
+
+Decided 2026-11-15. Agents publish built sites (a Vite or similar `dist/` folder with hundreds of
+files) and big pages without merging chunks, and an update stores only what changed. Guides:
+`docs/agents.md#large-builds`, `docs/mcp.md`, `docs/security.md`.
+
+- **Reuse by sha256, inside one artifact.** An asset may be sent as `{path, sha256}` (lowercase hex
+  SHA-256 of the bytes) instead of its content. The server reuses the bytes of the current version's
+  file with that hash, under the new path and content type, and records where the object is stored
+  (`stored_at`). A hash the current version does not have is refused with `missing_paths`; content
+  sent with a `sha256` that does not match is refused. Sent content whose hash matches a current
+  file is reused too, so a bundle stores only changed files. Hashes never match across artifacts.
+  An update without `assets` keeps every current asset, and a restore references the old
+  version's files; neither copies an asset. `stored_at` always names the object's first location,
+  never a chain, and is confined to the artifact's own prefix on every read (`STORED_AT_RE`,
+  `ASSET_PATH_RE`, a version number no higher than the reading version). R2 objects are never
+  deleted one version at a time; deleting or erasing the artifact removes all of them.
+- **Commit last.** A version's objects go to R2 first, under a prefix unique to the write attempt
+  (`v<n>.<nonce>/`). Then one guarded D1 batch inserts the artifact row (a new artifact), inserts
+  the version row, advances `current_version` and, for an upload, marks the ticket `used`. The
+  batch checks the base version, the artifact count, the storage quota and the ticket inside the
+  transaction, so all of it applies or none of it does. When the batch fails with an ambiguous
+  error (anything but a UNIQUE violation), the commit reads back whether its version row exists:
+  if it does, the publish succeeded; if that cannot be read, the attempt's objects are kept; only
+  when the row is known to be absent are they deleted. Every attempt records its prefix in
+  `staging_attempts` (prefix, artifact id, start time) before its first put; the batch requires
+  that row, unclaimed and younger than the sweep threshold, and deletes it. Whatever deletes an
+  attempt's objects claims its row first (an `UPDATE ... RETURNING` that moves `started_at` below
+  every cutoff) and deletes the row only once the objects are gone, so a failure in between leaves
+  the claimed row for the next sweep. An abort claims the row, deletes the prefix, then the row.
+  With no row to claim it looks for a version naming the prefix: one there (a commit batch D1
+  applied after reporting an error) keeps the objects; none means the row was lost (an
+  attempt from before tombstones, whose row a delete, takedown or erase removed), so the abort
+  parks a fresh row and deletes the objects like any other. A
+  killed request can leave only unreferenced objects under its own prefix, with its row. An hourly
+  cron trigger (`0 * * * *`) sweeps them: it claims at most 50 rows older than the ticket's
+  lifetime plus 15 minutes (and rows claimed more than 10 minutes earlier, longest-claimed first)
+  and deletes the objects only of rows it claimed and no version names (by `r2_prefix` or a
+  `stored_at`). Minting an upload ticket and posting a bundle also start a sweep of at most 20 rows
+  after the response (at most once per Worker isolate per minute), so an instance with no cron
+  (`wrangler dev`: local, tunnel, Docker) clears them too; D1 runs each claim as one statement, so
+  sweeps that overlap never take the same row. Because the
+  commit needs the row unclaimed, a commit after a claim is refused with a retryable `conflict`
+  (`reason: "attempt_expired"`) whatever the committer's clock, and a claim after a commit finds
+  nothing. Deleting, taking down or erasing an artifact parks its rows as tombstones in the same
+  batch (or statement list): no sweep takes one until the ticket's lifetime plus 15 minutes have
+  passed, so whatever an attempt that is still running puts afterwards stays under its row, and its
+  own abort or that later sweep deletes it. A delete's and an erase's files go with the root; a
+  takedown deletes the attempts' files after its batch and keeps the rows. The version
+  insert also requires the artifact not to be taken down, so an update or restore that passed its
+  edit check before a takedown never commits after it (`forbidden`, `reason: "taken_down"`, also
+  when the takedown came after the attempt's first put). `sweep-orphans` (an admin command) stays for
+  objects no row names, such as those written before 0.4.0. A version row left by the pre-0.4.0 order (row first) that blocks a number
+  is cleared when it is above `current_version` and more than 10 minutes old. Manifest entries
+  from older releases whose paths the current `ASSET_PATH_RE` refuses (such as `a//b.js`, which
+  the content host never served) are dropped on carry-forward and restore.
+- **Quota.** The per-account storage limit (`MAX_STORAGE_BYTES_PER_USER`) counts stored bytes, so a
+  reused file counts once.
+- **Publish warnings.** Every publish, update and bundle result lists `warnings` (advisory, never
+  blocking, at most 50): `missing_file` (a relative reference not in the version),
+  `root_absolute` (`/assets/x.js`, which loads the current version's file from an old version),
+  `blocked_host` (outside the CSP's allowlist), `insecure_url` (`http:`), `opaque_module` (module
+  scripts, `crossorigin` links and fonts, which fail under `CONTENT_ISOLATION=opaque`) and
+  `not_scanned` (a note, not something to fix: the reference check reads at most 2 MB per file and
+  8 MB per publish, so every big build gets it; an inline update also gets it for text files reused
+  by `{path, sha256}` or carried forward, whose bytes were not sent and so were not re-checked). The result's `stored` reports files, `written`,
+  `reused` and bytes. Agents verify a publish by comparing `get_artifact`'s asset hashes.
+- **Out-of-band upload.** `start_upload` (MCP) or bearer-only `POST /api/v1/uploads` mints a
+  ticket: single use, 30 minutes, at most 5 attempts, bound to its connection (or, in single-user
+  mode, to the hash of `ADMIN_TOKEN`), to one target, and for an update to the base version the
+  caller states. `POST /api/v1/uploads/:id/bundle` takes only `Authorization: Bearer plinth_up_...`
+  (no cookies, no CORS) and a tar, optionally gzip, which the request itself commits. NUL padding
+  after the gzip member (what bsdtar writes for `tar -czf -` to a pipe) is accepted;
+  `commands.curl` pipes `tar -cf -` through `gzip -c` anyway, leaves out source maps and sets
+  `COPYFILE_DISABLE=1`. The tar is
+  streamed one entry at a time through a bounded reader (checksums, a typeflag allowlist, no links
+  or devices, no duplicate or reserved paths, caps on raw and inflated bytes, per file (25 MB), per
+  version and per entry metadata), into the same stager and commit as an inline publish. The
+  reader allocates a file only once it fits the 16 MB in-flight budget beside the running puts, so
+  a bundle holds at most max(16 MB, 25 MB) of file bytes at once, plus kept scan text (8 MB) and
+  the source (5 MB). A gzip body is fed to the decompressor only as the reader reads (in 1-8 KB
+  slices sized to inflate to about 1 MB; at most about 8.4 MB, 8 KB at the deflate maximum of
+  1032:1, for the first slice after the data starts compressing better), so unread inflated bytes
+  stay bounded whatever the body inflates to. The decompressor is read BYOB, so a read that does
+  not fill its buffer shows it is drained; pacing needs a timer turn only after a full read. A
+  source candidate under the top directory that is over the source limit is not held until the
+  end: it is written like any file and refused at the end if it turns out to be the source. The
+  bundle must arrive within its 10-minute receiving lease (`upload_too_slow` otherwise, also when
+  the sender goes quiet mid-file). Before streaming it checks the owner's storage quota, and its
+  puts stop at the room left. When the client disconnects, the request's abort signal hands the
+  deletion of the attempt's files and the release of the lease to `waitUntil`. Abort and commit
+  exclude each other: the commit takes a point of no abort synchronously before its first await,
+  and an abort after it deletes nothing, so a version that commits is always whole. (Whether the
+  runtime fires the signal once the whole body has been read is an implementation detail, recorded
+  in DECISIONS.md and the deploy checklist, not a promise.) The principal and edit
+  rights are checked again once every file is written (after the last puts settle, right before
+  the commit), and the commit batch requires the minting connection to be unrevoked. A folder
+  prefix is stripped only when every kept entry is under it. A version conflict (no `reason`, or
+  `reason: "conflict"`) and a takedown of the artifact end the ticket, and it keeps which one
+  (`dead_reason`); every other error keeps its own `reason` and `next` and leaves the ticket open
+  for its remaining attempts. One bundle per user streams at a time. Minting has its own limit,
+  `MAX_PUBLISHES_PER_HOUR` tickets per user per hour (the `upload:` bucket, shared by `start_upload`
+  and `POST /api/v1/uploads`), which spends no publish; the bundle request counts toward the
+  publish limit (`MAX_PUBLISHES_PER_HOUR`), and bundle requests are limited to twice that. Each
+  live publish-mode ticket (one whose minting connection or ADMIN_TOKEN is still valid) counts
+  toward `MAX_ARTIFACTS_PER_USER` (artifacts plus live reservations), so minting, and an inline
+  publish, is refused with `quota_exceeded` (`reserved_uploads`, `reserved_until`, `next`) once
+  they reach it; a bundle is held back by the artifact count only, never by any ticket's
+  reservation, so of two tickets that raced past the mint check the first bundle commits. The token is
+  never in a URL and `commands.curl` keeps it out of curl's arguments.
+- **Lost responses.** What is guaranteed: a client that disconnects while the bundle is still being
+  sent never commits, because the tar is incomplete (tests: "a body that ends mid-file commits
+  nothing" and "a client disconnect deletes the attempt's files" in
+  `apps/worker/test/uploads.test.ts`). What is not: a client that disconnects, or times out, after
+  the whole body has been read may find that the request committed anyway. So a client whose
+  bundle request ends without its JSON answer (a curl error, a timeout, a body that is not JSON)
+  does not retry blindly. It asks the upload first (`GET /api/v1/uploads/:id`, below): `used` means
+  this upload committed, `dead` that someone else published first and the change was not saved,
+  `taken_down` that the artifact was taken down and nothing was published (nothing to resend),
+  `open`, `expired` or `exhausted` that nothing was published. Only when that cannot be read does
+  it call `get_artifact`: for an update with the artifact's id, for a new publish with `target.id`,
+  which `start_upload` reserves for that ticket (the commit creates the artifact with exactly that
+  id; `not_found` means nothing was published). A new version of an existing artifact may be a
+  collaborator's, so it compares the files with what it sent before calling it its own. When
+  nothing was published, it calls `start_upload` again with the same `base_version`. Retrying is
+  safe in every case: a retry against the old `base_version` after a commit gets the usual version
+  conflict (at mint, or on the bundle of a ticket minted earlier), never a second version;
+  re-running the same `commands.curl` with a used ticket answers `upload_used` with the version and
+  url and commits nothing; and in publish mode one ticket never creates a second artifact.
+  `GET /api/v1/uploads/:id` with the upload token (and nothing else) answers whether the upload
+  committed: `state` (`open`, `receiving`, `used`, `dead`, `taken_down`, `expired`, `exhausted`),
+  `id`, `version` and `url` once used, the ticket's `expires_at` and `receiving_until`, and
+  `next`; never a file, title or note. It counts no attempt and takes no lease. The token is read
+  from the `Authorization` header only (a `?token=` query is ignored, so it gets the 401 of no
+  token). A missing ticket, a wrong token, another ticket's token and a token whose minting
+  credential is no longer live (a revoked connection, a rotated `ADMIN_TOKEN`) all get the same 404.
+  Because this route and the bundle route run before authentication, each such miss counts against
+  the caller's address (`RATE_LIMITS.uploadMissesPerIpPerHour`, 60 an hour); an address over it gets
+  429 on both routes before any ticket is looked up. The
+  status stays readable for `TTL.uploadStatusMs` (24 hours) after the ticket expires, used or not,
+  so a commit that landed near the 30-minute deadline can still be confirmed; past that it is the
+  same 404. `taken_down` means the artifact was taken down: nothing was published and nothing is
+  to be resent. It reads the ticket and
+  D1's clock in one statement, and a bundle's commit batch requires that request's receiving lease
+  to be unexpired by the same clock, so once the status reads `open` after a lease ran out, that
+  request can no longer commit (it fails with `upload_too_slow`). The Plinth CLI uses it:
+  `plinth publish` and `plinth upload` read the upload's status after a lost bundle answer (tried
+  again a few times over about five seconds when the read itself fails; and `plinth publish --id`
+  reads the artifact after a lost inline answer), report the version they find, exit 3 when a
+  conflict ended the upload, and never send the bundle again. When the status cannot be read, the
+  message (and `--json`: `{"published": "unknown", "id", "upload_id"}`) names the artifact id to
+  check, the reserved one for a new publish.
+- **Serving cost.** The content host keeps an in-isolate cache (8 MB) of immutable version rows and
+  their parsed manifests; it still reads the artifact row and checks access on every request. Under
+  `CONTENT_ISOLATION=origin`, a file with a sha256 gets the strong ETag `"sha256-<hex>"`, and a
+  matching `If-None-Match` is answered `304` after every access check and without touching R2.
+  Non-HTML files of an explicitly versioned URL (`/__plinth/v/<n>/...`) are sent
+  `Cache-Control: private, max-age=31536000, immutable`; HTML and current-version paths stay
+  `private, no-cache`. Nothing is `public` or cached at the edge. Opaque isolation keeps the old
+  caching.
+- **Publish CLI.** The npm package `@mr0b0t0/plinth` gains client commands that need neither a
+  checkout nor wrangler: `plinth login|logout|whoami [--url O]`, `plinth publish <dir> [--id REF]
+  [--title T] [--note N] [--base-version N] [--include-maps] [--dry-run] [--json]` and `plinth
+  upload <dir> --to <upload_url>` (token from `PLINTH_UPLOAD_TOKEN` only). Exit codes: 0 ok, 1
+  error, 2 usage, 3 conflict (never retried). With `--id` and `--base-version N`, `publish` exits 0
+  without sending in exactly two cases and prints which: the current version is N+1 and its files
+  equal the folder (already published, by an earlier run whose answer was lost), or it is N and its
+  files equal the folder (nothing to publish). N with other files publishes as usual; every other
+  case (N+1 with other files, N+2 or later whatever its files, a base past the current version)
+  is a conflict, exit 3. The origin is `--url`, then `--name`/`--home` (a
+  local instance), then `PLINTH_URL`, then the single local instance, then the hosted instance,
+  and is printed. `plinth login` signs in with OAuth as the connection "Plinth CLI" (scopes
+  `artifacts:read artifacts:write`), stored in `~/.config/plinth/cli-<host>.json` (mode 0600).
+  `PLINTH_TOKEN` is used only for the origin it belongs to (`PLINTH_URL`, or the hosted instance
+  when that is unset). `publish` walks the folder (refusing symlinks, skipping dotfiles and source
+  maps), sends a small update inline with `{path, sha256}` for unchanged files and anything larger
+  as a gzip tar through an upload ticket, then re-reads the artifact and compares hashes. Every
+  request sends `User-Agent: plinth-cli/<version>` and refuses redirects.
+- **Limits are configuration.** `MAX_VERSION_BYTES` and `MAX_ASSETS_PER_VERSION` (above) are env
+  vars with hard ceilings; limit errors are `ApiError`s with `limit`, `count`, `largest` and a
+  `next` the caller can act on.
+- **Forward-only.** Migration 0006 and the new key layout cannot be rolled back past 0.4.0 without
+  breaking artifacts updated since (`docs/deploy-checklist.md#6-upgrading-and-rolling-back`).
 
 ## Security and abuse
 

@@ -10,7 +10,9 @@
 //   tunnel     ... + PLINTH_TUNNEL=true          a Cloudflare Tunnel run from inside the container
 //
 // `plinth init` runs on the first start and again whenever these settings change (it keeps the
-// generated secrets and the data). Otherwise the instance starts as it is.
+// generated secrets and the data). Otherwise the instance starts as it is, except that `plinth
+// start` adds the release's compatibility flags and cron trigger to an instance config an older
+// image wrote.
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { accessSync, constants, existsSync, readFileSync, writeFileSync } from "node:fs";
@@ -43,6 +45,9 @@ const WORKER_VARS = [
   "OPERATOR_HOSTING",
   "MAX_ARTIFACTS_PER_USER",
   "MAX_PUBLISHES_PER_HOUR",
+  "MAX_VERSION_BYTES",
+  "MAX_ASSETS_PER_VERSION",
+  "MAX_STORAGE_BYTES_PER_USER",
   "CDN_ALLOWLIST",
   "ALLOW_PUBLIC_VISIBILITY",
   "PUBLIC_MIN_ACCOUNT_AGE_HOURS",

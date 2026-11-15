@@ -48,6 +48,8 @@ export interface AssetInfo {
   path: string;
   size_bytes: number;
   content_type: string;
+  /** Lowercase hex SHA-256 of the bytes, computed by the server. null for files stored before 0006. */
+  sha256: string | null;
 }
 
 export interface ArtifactDetailBase extends ArtifactSummary {
@@ -83,6 +85,124 @@ export interface PublishResult {
   url: string;
   content_url: string;
   visibility: Visibility;
+  /** Advisory: what the published files reference but will not load. [] on a restore. */
+  warnings: PublishWarning[];
+  /** How the version's files were stored: written now, or reused from earlier versions. */
+  stored: StoredSummary;
+}
+
+export type PublishWarningCode =
+  | "missing_file"
+  | "root_absolute"
+  | "blocked_host"
+  | "insecure_url"
+  | "opaque_module"
+  | "not_scanned";
+
+/** One publish warning. Never blocks a publish. Text echoed from files is truncated and escaped. */
+export interface PublishWarning {
+  code: PublishWarningCode;
+  /** The version file the reference is in. */
+  file: string;
+  /** The reference as written (truncated). */
+  ref?: string;
+  host?: string;
+  /** For a warning reported once per file: how many references it covers. */
+  count?: number;
+  message: string;
+}
+
+export interface StoredSummary {
+  /** Files in the version, the source included. */
+  files: number;
+  /** Files written to storage by this publish. */
+  written: number;
+  /** Files reused from an earlier version of the same artifact (no new object). */
+  reused: number;
+  /** Logical bytes of the version (what a viewer loads). */
+  bytes: number;
+  /** Bytes written to storage by this publish. */
+  bytes_written: number;
+}
+
+/** This instance's publish limits (GET /api/v1/config and start_upload). */
+export interface InstanceLimits {
+  max_html_bytes: number;
+  max_doc_bytes: number;
+  /** MAX_VERSION_BYTES: source plus assets, uncompressed. */
+  max_version_bytes: number;
+  /** MAX_ASSETS_PER_VERSION */
+  max_assets_per_version: number;
+  max_asset_path_length: number;
+  /** JSON body of an inline publish or update (POST/PUT /artifacts, /mcp). */
+  max_request_bytes: number;
+  /** Bytes on the wire of one bundle (POST /uploads/:id/bundle). */
+  max_bundle_bytes: number;
+  /** One file in a bundle. */
+  max_bundle_file_bytes: number;
+}
+
+/** POST /api/v1/uploads and the start_upload MCP tool. */
+export interface StartUploadResult {
+  upload_id: string;
+  /** Single use, shown once. Send it only in the Authorization header of the bundle request. */
+  upload_token: string;
+  expires_at: string;
+  /** Absolute: <APP_ORIGIN>/api/v1/uploads/<upload_id>/bundle */
+  upload_url: string;
+  target: /**
+   * `id` is reserved at mint: the artifact the bundle creates gets exactly this id, so after a
+   * lost response get_artifact(id) says whether it was published (not_found: it was not).
+   */
+    | { mode: "publish"; id: string; type: ArtifactType }
+    | {
+        mode: "update";
+        id: string;
+        slug: string;
+        type: ArtifactType;
+        base_version: number;
+        visibility: Visibility;
+      };
+  limits: InstanceLimits;
+  content_isolation: ContentIsolation;
+  /** Shell commands with a <folder> placeholder. npx only on release builds >= MIN_UPLOAD_CLI_VERSION. */
+  commands: { curl: string; npx?: string };
+  next: string;
+}
+
+/**
+ * GET /api/v1/uploads/:id with the upload token: whether that upload committed, for a client whose
+ * bundle response was lost. `receiving` means a bundle request still holds the receiving lease.
+ */
+export interface UploadStatus {
+  upload_id: string;
+  /**
+   * taken_down: the artifact was taken down, so nothing was published and it takes no new version
+   * (the bundle is never to be sent again).
+   */
+  state: "open" | "receiving" | "used" | "dead" | "taken_down" | "expired" | "exhausted";
+  mode: "publish" | "update";
+  /** The artifact: the update's target, or the id a publish creates (reserved at mint). */
+  id: string;
+  /** The version the upload committed, once used. */
+  version: number | null;
+  /** The artifact's app URL, once used. */
+  url: string | null;
+  expires_at: string;
+  receiving_until: string | null;
+  next: string;
+}
+
+/** POST /api/v1/uploads/:id/bundle: 201 for a publish, 200 for an update. */
+export interface BundleResult extends PublishResult {
+  bundle: {
+    /** Files read from the archive. */
+    entries: number;
+    /** Entries left out (dotfiles), capped at 50 names. */
+    skipped: string[];
+    /** The one top directory removed from every path, if any. */
+    stripped_prefix: string | null;
+  };
 }
 
 export interface GrantInfo {
@@ -206,6 +326,12 @@ export interface AppConfig {
    * operator turned the link off (SHOW_SOURCE_LINK=false).
    */
   source_url: string | null;
+  /** This instance's publish limits (MAX_VERSION_BYTES, MAX_ASSETS_PER_VERSION and fixed ones). */
+  limits: InstanceLimits;
+  /** Hosts artifacts may load scripts and styles from (CDN_ALLOWLIST, the same list the CSP uses). */
+  cdn_allowlist: string[];
+  /** How long an upload ticket from start_upload stays valid, in seconds. */
+  upload_ticket_ttl_s: number;
 }
 
 export interface OperatorInfo {

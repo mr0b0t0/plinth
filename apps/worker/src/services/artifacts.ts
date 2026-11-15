@@ -9,7 +9,6 @@ import {
   type Capabilities,
   type EffectiveRole,
   type PublishResult,
-  parseCapabilities,
   type Role,
   type VersionInfo,
   type Visibility,
@@ -26,9 +25,8 @@ import {
   type VersionRow,
   versions,
 } from "../db/schema.ts";
-import { hashPassword, newArtifactId, newId, randomString } from "../lib/crypto.ts";
-import { ApiError, forbidden, isUniqueViolation, notFound, unauthorized } from "../lib/errors.ts";
-import { enforce } from "../lib/ratelimit.ts";
+import { hashPassword } from "../lib/crypto.ts";
+import { ApiError, forbidden, notFound, unauthorized } from "../lib/errors.ts";
 import { nowIso } from "../lib/time.ts";
 import {
   type AccessFacts,
@@ -41,21 +39,30 @@ import {
   principalUserId,
 } from "../policy.ts";
 import { requireTypeDef, resolveSource } from "./artifactTypes.ts";
+import { claimArtifactAttempts } from "./attempts.ts";
 import type { Ctx } from "./context.ts";
 import { wipeArtifactData } from "./data.ts";
 import {
-  checkTotal,
+  commitVersion,
+  conflictError,
+  enforcePublishRate,
+  newArtifactTarget,
+  openVersionStager,
+  type StagedVersion,
+  updateTarget,
+  type VersionStager,
+  type VersionTarget,
+} from "./stage.ts";
+import {
+  assetBytes,
   deletePrefix,
-  type FileEntry,
-  manifestOf,
+  fileKey,
   parseManifest,
-  prepareFiles,
-  readFiles,
   readText,
-  versionPrefix,
-  writeFiles,
+  sourceTooLarge,
+  tooManyAssets,
 } from "./storage.ts";
-import { artifactLimitFor, getUserById } from "./users.ts";
+import { getUserById } from "./users.ts";
 
 // ---------- loading and authorization ----------
 
@@ -191,27 +198,7 @@ export async function requireArtifact(
   return { artifact: a, role: d.role };
 }
 
-function requireActor(ctx: Ctx): { userId: string; connectionId: string | null } {
-  const p = ctx.principal;
-  if (p.kind === "user") return { userId: p.userId, connectionId: null };
-  if (p.kind === "agent") return { userId: p.userId, connectionId: p.connectionId };
-  throw unauthorized();
-}
-
 // ---------- shaping ----------
-
-function slugify(title: string): string {
-  const base = title
-    .toLowerCase()
-    .normalize("NFKD")
-    .replace(/[̀-ͯ]/g, "")
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 48)
-    .replace(/-+$/g, "");
-  const suffix = randomString(10, "abcdefghijklmnopqrstuvwxyz0123456789");
-  return base ? `${base}-${suffix}` : suffix;
-}
 
 export function toSummary(
   ctx: Ctx,
@@ -267,24 +254,7 @@ export async function summaryFor(
 
 // ---------- versions ----------
 
-interface NewVersionOptions {
-  note?: string | null;
-  /** Reject unless the current version equals this. */
-  baseVersion?: number;
-  restoredFrom?: number | null;
-}
-
 // ---------- shared data capabilities (docs/spec.md "Shared data and viewer identity") ----------
-
-const utf8Decoder = new TextDecoder();
-
-/** The capabilities index.html declares, as stored in versions.capabilities (JSON or null). */
-function capabilitiesJson(files: FileEntry[]): string | null {
-  const index = files.find((f) => f.path === "index.html");
-  if (!index) return null;
-  const caps = parseCapabilities(utf8Decoder.decode(index.bytes));
-  return caps ? JSON.stringify(caps) : null;
-}
 
 /** A version row's declared capabilities. Null when none, or when the stored value is malformed. */
 export function versionCapabilities(
@@ -304,129 +274,6 @@ export function versionCapabilities(
   if (!data) return null;
   const names = Array.isArray(shared) ? shared.filter((n) => typeof n === "string") : [];
   return { data, viewer, shared: names };
-}
-
-/**
- * Write a new immutable version. The version row is inserted first (UNIQUE(artifact_id, number)
- * picks one winner), then files go to R2 under a fresh prefix, then current_version moves forward.
- * A writer that loses the race on a stated base_version gets a conflict; one without a base retries.
- */
-export async function createVersion(
-  ctx: Ctx,
-  artifact: ArtifactRow,
-  files: FileEntry[],
-  opts: NewVersionOptions = {},
-): Promise<number> {
-  const actor = requireActor(ctx);
-  const size = checkTotal(files);
-  const manifest = JSON.stringify(manifestOf(files));
-  const capabilities = capabilitiesJson(files);
-  await enforceStorage(ctx, artifact.ownerId, size);
-  for (let attempt = 0; attempt < 5; attempt++) {
-    const fresh = await ctx.db.select().from(artifacts).where(eq(artifacts.id, artifact.id)).get();
-    if (!fresh || fresh.deletedAt) throw notFound();
-    let n: number;
-    if (opts.baseVersion !== undefined) {
-      if (opts.baseVersion !== fresh.currentVersion) {
-        throw new ApiError(
-          "conflict",
-          `Version ${opts.baseVersion} is not current; current is ${fresh.currentVersion}`,
-          {
-            current_version: fresh.currentVersion,
-          },
-        );
-      }
-      n = opts.baseVersion + 1;
-    } else {
-      const max = await ctx.db
-        .select({ n: sql<number>`coalesce(max(${versions.number}), 0)` })
-        .from(versions)
-        .where(eq(versions.artifactId, artifact.id))
-        .get();
-      n = (max?.n ?? 0) + 1;
-    }
-    const id = newId();
-    const prefix = versionPrefix(artifact.id, n);
-    try {
-      await ctx.db
-        .insert(versions)
-        .values({
-          id,
-          artifactId: artifact.id,
-          number: n,
-          r2Prefix: prefix,
-          sizeBytes: size,
-          manifest,
-          createdByUser: actor.userId,
-          createdByConnection: actor.connectionId,
-          note: opts.note?.trim() || null,
-          restoredFrom: opts.restoredFrom ?? null,
-          createdAt: nowIso(),
-          capabilities,
-        })
-        .run();
-    } catch (e) {
-      if (!isUniqueViolation(e)) throw e;
-      if (opts.baseVersion !== undefined) {
-        throw new ApiError("conflict", `Version ${opts.baseVersion} is not current`, {
-          current_version: opts.baseVersion + 1,
-        });
-      }
-      continue;
-    }
-    try {
-      await writeFiles(ctx.env.FILES, prefix, files);
-    } catch (e) {
-      await ctx.db.delete(versions).where(eq(versions.id, id)).run();
-      throw e;
-    }
-    // Advance current_version. If that keeps failing, remove the new version again so it never
-    // lingers as an orphan that blocks every later update with a false conflict.
-    let advanced = false;
-    let lastError: unknown;
-    for (let i = 0; i < 3 && !advanced; i++) {
-      try {
-        await ctx.db
-          .update(artifacts)
-          .set({ currentVersion: sql`max(${artifacts.currentVersion}, ${n})`, updatedAt: nowIso() })
-          .where(eq(artifacts.id, artifact.id))
-          .run();
-        advanced = true;
-      } catch (e) {
-        lastError = e;
-        await new Promise((r) => setTimeout(r, 50 * (i + 1)));
-      }
-    }
-    if (!advanced) {
-      // Delete the files before the row: once the row is gone another writer may take this
-      // number (and prefix), and a late delete would remove its files.
-      await deletePrefix(ctx.env.FILES, prefix).catch(() => undefined);
-      await ctx.db.delete(versions).where(eq(versions.id, id)).run();
-      throw lastError;
-    }
-    return n;
-  }
-  throw new ApiError("conflict", "Too many concurrent updates, try again");
-}
-
-/** Per-account storage cap: every version of every live artifact the owner has. */
-async function enforceStorage(ctx: Ctx, ownerId: string, adding: number): Promise<void> {
-  const limit = ctx.config.maxStorageBytesPerUser;
-  const row = await ctx.env.DB.prepare(
-    `SELECT coalesce(sum(v.size_bytes), 0) AS used FROM versions v
-       JOIN artifacts a ON a.id = v.artifact_id
-      WHERE a.owner_id = ?1 AND a.deleted_at IS NULL`,
-  )
-    .bind(ownerId)
-    .first<{ used: number }>();
-  const used = row?.used ?? 0;
-  if (used + adding > limit) {
-    throw new ApiError(
-      "quota_exceeded",
-      `Storage limit reached (${Math.round(limit / 1024 / 1024)} MB). Delete artifacts to free space.`,
-      { limit_bytes: limit, used_bytes: used },
-    );
-  }
 }
 
 export async function getVersionRow(
@@ -452,16 +299,6 @@ export async function requireVersion(ctx: Ctx, a: ArtifactRow, n: number): Promi
 }
 
 // ---------- operations ----------
-
-async function enforcePublishRate(ctx: Ctx, userId: string): Promise<void> {
-  await enforce(
-    ctx.env.DB,
-    `publish:${userId}`,
-    ctx.config.maxPublishesPerHour,
-    3600,
-    `Publish limit reached (${ctx.config.maxPublishesPerHour} per hour)`,
-  );
-}
 
 async function checkPublicAllowed(ctx: Ctx, userId: string): Promise<void> {
   const user = await getUserById(ctx.db, userId);
@@ -495,94 +332,90 @@ export interface PublishInput {
   emails?: string[];
 }
 
-export async function publishArtifact(ctx: Ctx, input: PublishInput): Promise<PublishResult> {
-  const actor = requireActor(ctx);
-  if (ctx.principal.kind === "agent" && !ctx.principal.scopes.has("artifacts:write")) {
-    throw new ApiError("forbidden", "This token lacks the artifacts:write scope");
+/**
+ * Stage a version's inline source and assets: content is hashed and put (or reused when the
+ * current version has the same bytes), `{path, sha256}` reuses the current version's file.
+ * Cheap checks run before any rate hit or R2 operation.
+ */
+function precheckAssets(ctx: Ctx, assets: AssetInput[] | undefined): void {
+  const count = assets?.length ?? 0;
+  if (count > ctx.config.maxAssetsPerVersion) {
+    throw tooManyAssets(ctx.config.maxAssetsPerVersion, count);
   }
-  const user = await getUserById(ctx.db, actor.userId);
-  if (!user) throw unauthorized();
-  if (input.visibility === "public") await checkPublicAllowed(ctx, user.id);
+  for (const a of assets ?? []) {
+    if (a.content === undefined && a.sha256 === undefined) {
+      throw new ApiError("invalid_input", `Asset ${a.path} needs content or sha256`, {
+        path: a.path,
+        next: "Send content, or sha256 alone to reuse the current version's file (get_artifact lists each asset's sha256)",
+      });
+    }
+  }
+}
+
+async function stageInline(
+  stager: VersionStager,
+  text: string,
+  assets: AssetInput[] | undefined,
+): Promise<StagedVersion> {
+  await stager.addSource(text);
+  if (assets === undefined) stager.carryCurrent();
+  for (const a of assets ?? []) {
+    if (a.content === undefined) {
+      stager.addRefTyped(a.path, a.sha256 as string, a.content_type);
+    } else {
+      await stager.addFile(a.path, assetBytes(a.path, a.content, a.encoding), {
+        contentType: a.content_type,
+        ...(a.sha256 !== undefined ? { expectedSha256: a.sha256 } : {}),
+      });
+    }
+  }
+  return stager.finish();
+}
+
+/** Stage with `run`, then commit; on any failure the attempt's objects are deleted. */
+async function writeVersion(
+  ctx: Ctx,
+  target: VersionTarget,
+  run: (stager: VersionStager) => Promise<StagedVersion>,
+  opts: Parameters<typeof commitVersion>[3] = {},
+): Promise<PublishResult> {
+  const stager = await openVersionStager(ctx, target);
+  let staged: StagedVersion;
+  try {
+    staged = await run(stager);
+  } catch (e) {
+    await stager.abort().catch(() => undefined);
+    throw e;
+  }
+  return commitVersion(ctx, target, staged, opts);
+}
+
+function checkSourceSize(def: { sourceLabel: string; maxSourceBytes: number }, text: string) {
+  const size = new TextEncoder().encode(text).byteLength;
+  if (size > def.maxSourceBytes) throw sourceTooLarge(def.sourceLabel, def.maxSourceBytes, size);
+}
+
+export async function publishArtifact(ctx: Ctx, input: PublishInput): Promise<PublishResult> {
+  const { def, text } = resolveSource(input, null);
+  const target = await newArtifactTarget(ctx, { type: def.id, title: input.title });
+  const p = ctx.principal;
+  const userId = p.kind === "user" || p.kind === "agent" ? p.userId : null;
+  if (!userId) throw unauthorized();
+  if (input.visibility === "public") await checkPublicAllowed(ctx, userId);
   if (input.visibility === "password" && !input.password) {
     throw new ApiError("invalid_input", "A password is required for password visibility");
   }
-
-  const { def, text } = resolveSource(input, null);
-  const files = prepareFiles(def, text, input.assets);
-
-  const limit = artifactLimitFor(ctx.config, user);
-  const count = await ctx.db
-    .select({ n: sql<number>`count(*)` })
-    .from(artifacts)
-    .where(and(eq(artifacts.ownerId, user.id), isNull(artifacts.deletedAt)))
-    .get();
-  if ((count?.n ?? 0) >= limit) {
-    throw new ApiError(
-      "quota_exceeded",
-      `Artifact limit reached (${limit}). Delete one or ask for a higher limit.`,
-      {
-        limit,
-      },
-    );
-  }
-  await enforcePublishRate(ctx, user.id);
-
-  const now = nowIso();
-  const row: ArtifactRow = {
-    id: newArtifactId(),
-    ownerId: user.id,
-    slug: slugify(input.title),
-    title: input.title.trim(),
-    currentVersion: 0,
+  checkSourceSize(def, text);
+  precheckAssets(ctx, input.assets);
+  await enforcePublishRate(ctx);
+  const passwordHash =
+    input.visibility === "password" && input.password ? await hashPassword(input.password) : null;
+  const result = await writeVersion(ctx, target, (s) => stageInline(s, text, input.assets ?? []), {
     visibility: input.visibility,
-    passwordHash:
-      input.visibility === "password" && input.password ? await hashPassword(input.password) : null,
-    accessEpoch: 1,
-    createdAt: now,
-    updatedAt: now,
-    deletedAt: null,
-    takenDownAt: null,
-    type: def.id,
-  };
-  // Insert only while the owner is under the limit, so parallel publishes cannot overshoot it.
-  const inserted = await ctx.env.DB.prepare(
-    `INSERT INTO artifacts (id, owner_id, slug, title, current_version, visibility, password_hash,
-       access_epoch, created_at, updated_at, type)
-     SELECT ?1, ?2, ?3, ?4, 0, ?5, ?6, 1, ?7, ?7, ?9
-      WHERE (SELECT count(*) FROM artifacts WHERE owner_id = ?2 AND deleted_at IS NULL) < ?8`,
-  )
-    .bind(
-      row.id,
-      row.ownerId,
-      row.slug,
-      row.title,
-      row.visibility,
-      row.passwordHash,
-      now,
-      limit,
-      row.type,
-    )
-    .run();
-  if ((inserted.meta.changes ?? 0) !== 1) {
-    throw new ApiError("quota_exceeded", `Artifact limit reached (${limit}).`, { limit });
-  }
-  try {
-    await createVersion(ctx, row, files, { baseVersion: 0 });
-  } catch (e) {
-    await ctx.db.delete(artifacts).where(eq(artifacts.id, row.id)).run();
-    throw e;
-  }
-  if (input.emails?.length) await replaceViewerGrants(ctx, row.id, input.emails);
-
-  return {
-    id: row.id,
-    slug: row.slug,
-    type: row.type,
-    version: 1,
-    url: appUrl(ctx.config, `/a/${row.slug}`),
-    content_url: `${contentOrigin(ctx.config, row.id)}/`,
-    visibility: row.visibility,
-  };
+    passwordHash,
+  });
+  if (input.emails?.length) await replaceViewerGrants(ctx, result.id, input.emails);
+  return result;
 }
 
 export interface UpdateInput {
@@ -596,32 +429,19 @@ export interface UpdateInput {
 }
 
 export async function updateArtifact(ctx: Ctx, input: UpdateInput): Promise<PublishResult> {
-  const { artifact } = await requireArtifact(ctx, input.id, "edit");
-  const actor = requireActor(ctx);
-  // The type is fixed at publish: the input must carry the artifact's own source field.
-  const { def, text } = resolveSource(input, requireTypeDef(artifact.type).id);
-  let files = prepareFiles(def, text, input.assets);
-  if (input.assets === undefined && artifact.currentVersion > 0) {
-    // No assets given: carry the current version's assets forward unchanged.
-    const cur = await requireVersion(ctx, artifact, artifact.currentVersion);
-    const carried = parseManifest(cur.manifest).filter((m) => !def.reservedPaths.includes(m.path));
-    if (carried.length > 0)
-      files = [...files, ...(await readFiles(ctx.env.FILES, cur.r2Prefix, carried))];
-  }
-  await enforcePublishRate(ctx, actor.userId);
-  const n = await createVersion(ctx, artifact, files, {
-    note: input.note,
+  // Edit rights and a stale base_version are checked before the rate limit and any R2 operation.
+  const target = await updateTarget(ctx, input.id, {
     baseVersion: input.base_version,
+    note: input.note,
   });
-  return {
-    id: artifact.id,
-    slug: artifact.slug,
-    type: artifact.type,
-    version: n,
-    url: appUrl(ctx.config, `/a/${artifact.slug}`),
-    content_url: `${contentOrigin(ctx.config, artifact.id)}/`,
-    visibility: artifact.visibility,
-  };
+  if (target.mode !== "update") throw new ApiError("internal", "Not an update");
+  // The type is fixed at publish: the input must carry the artifact's own source field.
+  const { def, text } = resolveSource(input, requireTypeDef(target.artifact.type).id);
+  checkSourceSize(def, text);
+  precheckAssets(ctx, input.assets);
+  await enforcePublishRate(ctx);
+  // No assets given: the current version's assets are carried forward as references.
+  return writeVersion(ctx, target, (s) => stageInline(s, text, input.assets));
 }
 
 export async function getArtifact(
@@ -638,7 +458,14 @@ export async function getArtifact(
     ...(await summaryFor(ctx, artifact, role)),
     version: v.number,
     source_path: def.sourcePath,
-    assets: parseManifest(v.manifest).filter((m) => !def.reservedPaths.includes(m.path)),
+    assets: parseManifest(v.manifest)
+      .filter((m) => !def.reservedPaths.includes(m.path))
+      .map((m) => ({
+        path: m.path,
+        size_bytes: m.size_bytes,
+        content_type: m.content_type,
+        sha256: m.sha256 ?? null,
+      })),
   };
   // html for a page, content for every typed artifact; never both.
   return def.id === "html"
@@ -749,25 +576,39 @@ export async function restoreVersion(
 ): Promise<PublishResult> {
   const { artifact } = await requireArtifact(ctx, ref, "restore");
   // Like get and update: a type this instance does not know is refused, not copied blind.
-  requireTypeDef(artifact.type);
-  const actor = requireActor(ctx);
+  const def = requireTypeDef(artifact.type);
+  if (baseVersion !== undefined && baseVersion !== artifact.currentVersion) {
+    throw conflictError(baseVersion, artifact.currentVersion);
+  }
   const old = await requireVersion(ctx, artifact, version);
-  const files = await readFiles(ctx.env.FILES, old.r2Prefix, parseManifest(old.manifest));
-  await enforcePublishRate(ctx, actor.userId);
-  const n = await createVersion(ctx, artifact, files, {
+  await enforcePublishRate(ctx);
+  const target: VersionTarget = {
+    mode: "update",
+    artifact,
+    ...(baseVersion !== undefined ? { baseVersion } : {}),
     note: `Restored from v${version}`,
-    restoredFrom: version,
-    baseVersion,
-  });
-  return {
-    id: artifact.id,
-    slug: artifact.slug,
-    type: artifact.type,
-    version: n,
-    url: appUrl(ctx.config, `/a/${artifact.slug}`),
-    content_url: `${contentOrigin(ctx.config, artifact.id)}/`,
-    visibility: artifact.visibility,
   };
+  const manifest = parseManifest(old.manifest);
+  return writeVersion(
+    ctx,
+    target,
+    async (stager) => {
+      // One get of the old source and one put under the new prefix; every asset is a reference.
+      stager.scan = false;
+      stager.capabilitiesOverride = old.capabilities ?? null;
+      const entry = manifest.find((m) => m.path === def.sourcePath) ?? {
+        path: def.sourcePath,
+        size_bytes: 0,
+        content_type: def.contentType,
+      };
+      const obj = await ctx.env.FILES.get(fileKey(artifact.id, old, entry));
+      if (!obj) throw new ApiError("internal", `Stored ${def.sourceLabel} is missing`);
+      await stager.addSource(new Uint8Array(await obj.arrayBuffer()));
+      for (const m of manifest) if (!def.reservedPaths.includes(m.path)) stager.carry(old, m);
+      return stager.finish();
+    },
+    { restoredFrom: version },
+  );
 }
 
 /** Replace the allowlist (viewer grants). Commenter and editor grants are kept. */
@@ -869,6 +710,9 @@ export async function deleteArtifact(ctx: Ctx, ref: string): Promise<void> {
       "UPDATE artifacts SET deleted_at = ?1, access_epoch = access_epoch + 1 WHERE id = ?2",
     ).bind(nowIso(), artifact.id),
     ...wipeArtifactData(ctx.env.DB, artifact.id),
+    // Its attempt rows become tombstones: their objects are under the root deleted next, and the
+    // sweep deletes what a still-running attempt puts after that.
+    claimArtifactAttempts(ctx.env.DB, artifact.id, Date.now()),
   ]);
   ctx.waitUntil(deletePrefix(ctx.env.FILES, `artifacts/${artifact.id}/`));
 }

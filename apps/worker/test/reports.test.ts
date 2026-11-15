@@ -1,15 +1,26 @@
 // Reports and the admin takedown backend.
-import { createExecutionContext, waitOnExecutionContext } from "cloudflare:test";
+import {
+  createExecutionContext,
+  createScheduledController,
+  waitOnExecutionContext,
+} from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import { parseConfig } from "../src/config.ts";
-import { artifacts, devOutbox, reports } from "../src/db/schema.ts";
+import { artifacts, devOutbox, reports, versions } from "../src/db/schema.ts";
 import worker from "../src/index.ts";
+import {
+  STAGING_SWEEP_AFTER_MS,
+  STAGING_SWEEP_CRON,
+  sweepStagingAttempts,
+} from "../src/services/attempts.ts";
+import { commitStaged, openStager, updateTarget } from "../src/services/stage.ts";
 import { getOrCreateUser } from "../src/services/users.ts";
 import {
   APP,
   agent,
+  agentPrincipal,
   browserSession,
   call,
   contentOrigin,
@@ -18,6 +29,8 @@ import {
   enterContent,
   json,
   publish,
+  r2Keys,
+  serviceCtxFor,
   uniqueEmail,
 } from "./helpers.ts";
 
@@ -62,7 +75,7 @@ async function admin() {
     user,
     vars,
     get: (path: string) => run(path, { headers: s.headers }, vars),
-    post: (path: string, body: unknown) =>
+    post: (path: string, body: unknown, bindings: Record<string, unknown> = {}) =>
       run(
         path,
         {
@@ -70,7 +83,7 @@ async function admin() {
           headers: { ...s.headers, "Content-Type": "application/json" },
           body: JSON.stringify(body),
         },
-        vars,
+        { ...vars, ...(bindings as Record<string, string>) },
       ),
   };
 }
@@ -237,6 +250,144 @@ describe("admin takedown", () => {
     // A decided report cannot be decided again.
     const twice = await adm.post(`/api/v1/admin/reports/${r1.id}`, { state: "dismissed" });
     expect(twice.status).toBe(409);
+  });
+
+  it("actioned: deletes the artifact's staging attempts' files, keeps its versions and the rows as tombstones", async () => {
+    const a = await agent();
+    const { body: p } = await publish(a.auth);
+    const ctx = serviceCtxFor(agentPrincipal(a));
+    const stager = await openStager(ctx, await updateTarget(ctx, p.id, {}));
+    await stager.add("index.html", new TextEncoder().encode("<p>in flight</p>"));
+    await stager.finish();
+    const rows = () =>
+      env.DB.prepare("SELECT prefix FROM staging_attempts WHERE artifact_id = ?").bind(p.id).all();
+    expect((await rows()).results).toHaveLength(1);
+    const v1 = await db().select().from(versions).where(eq(versions.artifactId, p.id)).get();
+    const live = await r2Keys(v1?.r2Prefix ?? "-");
+    const adm = await admin();
+    const r = await json(await report(p.id, { reason: "takedown wipe" }));
+    expect((await adm.post(`/api/v1/admin/reports/${r.id}`, { state: "actioned" })).status).toBe(
+      200,
+    );
+    // The row stays parked until no attempt can still put; the sweep after that removes it.
+    expect((await rows()).results).toHaveLength(1);
+    expect(await r2Keys(stager.prefix)).toEqual([]);
+    expect(await r2Keys(v1?.r2Prefix ?? "-")).toEqual(live);
+    await sweepStagingAttempts(env, Date.now() + STAGING_SWEEP_AFTER_MS + 1000);
+    expect((await rows()).results).toEqual([]);
+    expect(await r2Keys(v1?.r2Prefix ?? "-")).toEqual(live);
+  });
+
+  it("actioned while an attempt streams: the attempt's later files are deleted too", async () => {
+    const a = await agent();
+    const { body: p } = await publish(a.auth);
+    const ctx = serviceCtxFor(agentPrincipal(a));
+    const target = await updateTarget(ctx, p.id, {});
+    const stager = await openStager(ctx, target);
+    await stager.add("index.html", new TextEncoder().encode("<p>streaming</p>"));
+    await stager.add("first.css", new TextEncoder().encode("first"));
+    for (let i = 0; i < 200 && (await r2Keys(stager.prefix)).length === 0; i++) {
+      await new Promise((r) => setTimeout(r, 10));
+    }
+    expect(await r2Keys(stager.prefix)).toHaveLength(1);
+    const adm = await admin();
+    const r = await json(await report(p.id, { reason: "takedown mid-stream" }));
+    expect((await adm.post(`/api/v1/admin/reports/${r.id}`, { state: "actioned" })).status).toBe(
+      200,
+    );
+    await stager.add("big.css", new TextEncoder().encode("big"));
+    const staged = await stager.finish();
+    await expect(commitStaged(ctx, target, staged)).rejects.toMatchObject({
+      code: "forbidden",
+      details: { reason: "taken_down" },
+    });
+    await stager.abort();
+    expect(await r2Keys(stager.prefix)).toEqual([]);
+    expect(
+      (
+        await env.DB.prepare("SELECT prefix FROM staging_attempts WHERE artifact_id = ?")
+          .bind(p.id)
+          .all()
+      ).results,
+    ).toEqual([]);
+  });
+
+  it("actioned before an in-flight update records its row: the update never commits", async () => {
+    const a = await agent();
+    const { body: p } = await publish(a.auth);
+    const ctx = serviceCtxFor(agentPrincipal(a));
+    const target = await updateTarget(ctx, p.id, {});
+    const stager = await openStager(ctx, target);
+    // The source is held until finish(): nothing is put and no row is recorded yet.
+    await stager.add("index.html", new TextEncoder().encode("<p>late edit</p>"));
+    const adm = await admin();
+    const r = await json(await report(p.id, { reason: "takedown before the row" }));
+    expect((await adm.post(`/api/v1/admin/reports/${r.id}`, { state: "actioned" })).status).toBe(
+      200,
+    );
+    await stager.add("big.css", new TextEncoder().encode("big"));
+    const staged = await stager.finish();
+    await expect(commitStaged(ctx, target, staged)).rejects.toMatchObject({
+      code: "forbidden",
+      details: { reason: "taken_down" },
+    });
+    const nums = (await db().select().from(versions).where(eq(versions.artifactId, p.id)).all())
+      .map((v) => v.number)
+      .sort();
+    expect(nums).toEqual([1]);
+    expect(await r2Keys(stager.prefix)).toEqual([]);
+  });
+
+  it("actioned while R2 fails: the takedown completes and the sweep deletes the attempt's files", async () => {
+    const a = await agent();
+    const { body: p } = await publish(a.auth);
+    const ctx = serviceCtxFor(agentPrincipal(a));
+    const stager = await openStager(ctx, await updateTarget(ctx, p.id, {}));
+    await stager.add("index.html", new TextEncoder().encode("<p>in flight</p>"));
+    await stager.finish();
+    const keys = await r2Keys(stager.prefix);
+    expect(keys.length).toBe(1);
+    const adm = await admin();
+    const r1 = await json(await report(p.id, { reason: "one" }));
+    const r2 = await json(await report(p.id, { reason: "two" }));
+    const FILES = new Proxy(env.FILES, {
+      get(t, prop) {
+        if (prop === "delete")
+          return async () => {
+            throw new Error("injected: R2 down");
+          };
+        const v = Reflect.get(t, prop, t);
+        return typeof v === "function" ? v.bind(t) : v;
+      },
+    });
+    const res = await adm.post(`/api/v1/admin/reports/${r1.id}`, { state: "actioned" }, { FILES });
+    expect(res.status).toBe(200);
+    expect((await db().select().from(reports).where(eq(reports.id, r2.id)).get())?.state).toBe(
+      "actioned",
+    );
+    const art = await db().select().from(artifacts).where(eq(artifacts.id, p.id)).get();
+    expect(art?.takenDownAt).toBeTruthy();
+    // The row stays (it can no longer commit) until the files are gone.
+    expect(await r2Keys(stager.prefix)).toEqual(keys);
+    // The first sweep run once the takedown's tombstone is STAGING_SWEEP_AFTER_MS old.
+    const ctl = createExecutionContext();
+    await worker.scheduled(
+      createScheduledController({
+        scheduledTime: Date.now() + STAGING_SWEEP_AFTER_MS + 1000,
+        cron: STAGING_SWEEP_CRON,
+      }),
+      env as never,
+      ctl,
+    );
+    await waitOnExecutionContext(ctl);
+    expect(await r2Keys(stager.prefix)).toEqual([]);
+    expect(
+      (
+        await env.DB.prepare("SELECT prefix FROM staging_attempts WHERE artifact_id = ?")
+          .bind(p.id)
+          .all()
+      ).results,
+    ).toEqual([]);
   });
 
   it("dismissed: closes only that report, the artifact stays up", async () => {

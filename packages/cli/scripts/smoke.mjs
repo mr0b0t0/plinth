@@ -2,16 +2,26 @@
 // Smoke test for the published CLI: `pnpm pack` the package, install the tarball into a throwaway
 // prefix with npm (as `npx @mr0b0t0/plinth` would), check `deploy --dry-run` (no network), then
 // init and start a localhost-only instance and use it the way an agent does: OAuth (dynamic
-// registration, PKCE, consent), then MCP. Needs `pnpm build` first. Exit code 0 when every check
-// passes.
+// registration, PKCE, consent), then MCP. Then the client commands, with no wrangler on PATH:
+// publish a 300-file build, republish one change, a stale --id, and `upload` with a start_upload
+// ticket. Needs `pnpm build` first. Exit code 0 when every check passes.
 //
 //   pnpm --filter @mr0b0t0/plinth test:smoke
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readdirSync, realpathSync, rmSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { appClient, connectAgent, publishArtifact, signIn } from "./agent-flow.mjs";
+import { appClient, callTool, connectAgent, publishArtifact, signIn } from "./agent-flow.mjs";
 
 const pkgDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const PORT = Number(process.env.PLINTH_CLI_SMOKE_PORT ?? 8796);
@@ -70,6 +80,9 @@ await check("the tarball ships the runtime and nothing from the repo's sources",
   const ls = spawnSync("tar", ["-tzf", tarball], { encoding: "utf8" }).stdout.split("\n");
   for (const f of [
     "package/bin/plinth.mjs",
+    "package/bin/client/main.mjs",
+    "package/bin/client/vendor/plinth-oauth.mjs",
+    "package/bin/client/vendor/constants.mjs",
     "package/runtime/worker/index.js",
     "package/runtime/web/index.html",
   ])
@@ -82,6 +95,7 @@ await check("the tarball ships the runtime and nothing from the repo's sources",
     !ls.some((f) => /\.ts$|\.map$|\.dev\.vars/.test(f)),
     "TypeScript, source maps or secrets in the tarball",
   );
+  assert(!ls.some((f) => f.startsWith("package/test/")), "tests in the tarball");
   return `${ls.filter(Boolean).length} files`;
 });
 
@@ -215,6 +229,140 @@ await check("the agent publishes over /mcp with its OAuth access token", async (
   return published.slug;
 });
 
+// ---------- the client commands, with no wrangler on PATH ----------
+const clientBin = realpathSync(
+  path.join(prefix, "node_modules", "@mr0b0t0", "plinth", "bin", "plinth.mjs"),
+);
+const clientEnv = () => ({
+  PATH: path.dirname(process.execPath),
+  HOME: work,
+  XDG_CONFIG_HOME: path.join(work, "xdg"),
+  PLINTH_HOME: path.join(work, "no-instances"),
+  PLINTH_URL: APP,
+  PLINTH_TOKEN: accessToken ?? "",
+});
+const client = (args, extraEnv = {}) =>
+  spawnSync(process.execPath, [clientBin, ...args], {
+    encoding: "utf8",
+    env: { ...clientEnv(), ...extraEnv },
+  });
+/** A Vite-like build: index.html plus `n - 1` asset files. */
+function buildFolder(name, n) {
+  const dir = path.join(work, name);
+  mkdirSync(path.join(dir, "assets"), { recursive: true });
+  writeFileSync(
+    path.join(dir, "index.html"),
+    `<!doctype html><title>${name}</title><script type="module" src="./assets/chunk-0.js"></script>`,
+  );
+  for (let i = 0; i < n - 1; i++)
+    writeFileSync(path.join(dir, "assets", `chunk-${i}.js`), `export const v${i} = ${i};\n`);
+  return dir;
+}
+const json = (r) => {
+  assert(r.status === 0, `exit ${r.status}: ${r.stderr}`);
+  return JSON.parse(r.stdout);
+};
+
+await check("client commands run with no wrangler on PATH", () => {
+  const which = spawnSync("/bin/sh", ["-c", "command -v wrangler"], { env: clientEnv() });
+  assert(which.status !== 0, "wrangler is on the restricted PATH");
+  const r = client(["whoami"]);
+  assert(r.status === 0 && r.stdout.includes(EMAIL), r.stdout + r.stderr);
+  assert(r.stderr.includes(`plinth: ${APP} (PLINTH_URL)`), r.stderr);
+});
+
+const site = buildFolder("site", 300);
+let sitePublished = null;
+await check("publish sends a 300-file build as one bundle and verifies it", () => {
+  sitePublished = json(client(["publish", site, "--json"]));
+  assert(sitePublished.version === 1, `version ${sitePublished.version}`);
+  assert(sitePublished.stored.files === 300, JSON.stringify(sitePublished.stored));
+  assert(sitePublished.verified === true, "not verified");
+  return `${sitePublished.slug}, ${sitePublished.stored.written} written`;
+});
+
+await check("republishing one change writes 2 objects (the file and the source)", () => {
+  writeFileSync(path.join(site, "assets", "chunk-7.js"), "export const v7 = 'changed';\n");
+  const r = json(client(["publish", site, "--id", sitePublished.id, "--json"]));
+  assert(r.version === 2, `version ${r.version}`);
+  assert(r.stored.written === 2, JSON.stringify(r.stored));
+  assert(r.stored.reused === 298, JSON.stringify(r.stored));
+  assert(r.verified === true, "not verified");
+});
+
+await check("publish --id with a stale base exits 3 and writes nothing", () => {
+  const chunk = path.join(site, "assets", "chunk-7.js");
+  const v2 = readFileSync(chunk, "utf8");
+  writeFileSync(chunk, "export const v7 = 'changed again';\n");
+  const r = client(["publish", site, "--id", sitePublished.id, "--base-version", "1"]);
+  writeFileSync(chunk, v2);
+  assert(r.status === 3, `exit ${r.status}: ${r.stderr}`);
+  assert(/changed since v1 \(now v2\)/.test(r.stderr), r.stderr);
+});
+
+await check("a stale-base rerun whose update already landed sends nothing (exit 0)", () => {
+  const r = client(["publish", site, "--id", sitePublished.id, "--base-version", "1"]);
+  assert(r.status === 0, `exit ${r.status}: ${r.stderr}`);
+  assert(/already published as v2, which matches this folder/.test(r.stderr), r.stderr);
+});
+
+await check(
+  "a rerun on the current base with the same folder has nothing to publish (exit 0)",
+  () => {
+    const r = json(
+      client(["publish", site, "--id", sitePublished.id, "--base-version", "2", "--json"]),
+    );
+    assert(r.version === 2 && r.outcome === "nothing_to_publish", JSON.stringify(r));
+  },
+);
+
+await check("upload sends a folder with a start_upload ticket", async () => {
+  const ticket = await callTool(APP, accessToken, "start_upload", {});
+  assert(ticket.upload_url && ticket.upload_token, JSON.stringify(ticket).slice(0, 300));
+  const dir = buildFolder("uploaded", 5);
+  const r = client(["upload", dir, "--to", ticket.upload_url], {
+    PLINTH_TOKEN: "",
+    PLINTH_UPLOAD_TOKEN: ticket.upload_token,
+  });
+  const out = json(r);
+  assert(out.version === 1 && out.bundle?.entries === 5, r.stdout);
+  // The artifact is private, so read it back through the API rather than the content host.
+  const res = await fetch(`${APP}/api/v1/artifacts/${out.id}`, {
+    headers: { authorization: `Bearer ${accessToken}` },
+  });
+  const detail = await res.json();
+  const paths = (detail.assets ?? []).map((a) => a.path).sort();
+  assert(res.status === 200 && paths.length === 4, `assets ${res.status} ${paths}`);
+  assert(
+    detail.assets.every((a) => /^[0-9a-f]{64}$/.test(a.sha256 ?? "")),
+    "assets without sha256",
+  );
+  return out.slug;
+});
+
+await check(
+  "the literal commands.curl from start_upload publishes a folder (bash, tar, gzip, curl)",
+  async () => {
+    const dir = buildFolder("curl-site", 4);
+    writeFileSync(path.join(dir, "assets", "chunk-0.js.map"), "{}");
+    const run = async (rewrite) => {
+      const ticket = await callTool(APP, accessToken, "start_upload", {});
+      const cmd = rewrite(ticket.commands.curl.replace("<folder>", `'${dir}'`));
+      return json(spawnSync("bash", ["-c", cmd], { encoding: "utf8" }));
+    };
+    // As given: the source map stays out.
+    const out = await run((c) => c);
+    assert(out.version === 1 && out.stored.files === 4, JSON.stringify(out.stored));
+    // With `tar -czf - .` in its place, which macOS tar pads with NULs past the gzip member on a
+    // pipe: the server accepts the padding.
+    const padded = await run((c) =>
+      c.replace(/COPYFILE_DISABLE=1 tar .*? \| gzip -c/, "tar -czf - ."),
+    );
+    assert(padded.version === 1 && padded.bundle?.entries === 5, JSON.stringify(padded.bundle));
+    return `${out.slug}, ${padded.slug}`;
+  },
+);
+
 await check("/mcp refuses requests without a token", async () => {
   const r = await fetch(`${APP}/mcp`, { method: "POST" });
   assert(r.status === 401, `status ${r.status}`);
@@ -234,6 +382,14 @@ await check("connect prints the OAuth commands for the local endpoint", () => {
   const add = `claude mcp add --transport http --scope user plinth ${APP}/mcp`;
   assert(r.stdout.includes(add) && r.stdout.includes("codex mcp login plinth"), r.stdout);
   assert(!/token/i.test(r.stdout), "connect still mentions a token");
+  // A local instance is not the hosted one: its own server first, then the plugin with PLINTH_URL.
+  const exportLine = `export PLINTH_URL=${APP}`;
+  const plugin = "claude plugin install plinth@plinth";
+  assert(r.stdout.indexOf(add) < r.stdout.indexOf(exportLine), "bare server is not first");
+  assert(
+    r.stdout.indexOf(exportLine) < r.stdout.indexOf(plugin),
+    "PLINTH_URL is not before the plugin",
+  );
 });
 
 server.kill("SIGTERM");

@@ -35,16 +35,60 @@ export const MENTION_AGENT_NAMES: Record<string, ClientType> = {
   codex: "codex",
 };
 
-const MB = 1024 * 1024;
+const KB = 1024;
+const MB = 1024 * KB;
+
+/**
+ * Asset paths: relative, no leading "/", not under the reserved prefix, no empty segment ("a//b"),
+ * no trailing "/", and no "." or ".." segment.
+ */
+export const ASSET_PATH_RE =
+  /^(?!\/)(?!__plinth\/)(?!.*\/\/)(?!.*\/$)(?!(?:.*\/)?\.\.?(?:\/|$))[A-Za-z0-9._\-/]+$/;
+
+/**
+ * A manifest entry's server-written `stored_at`: `v<m>[.<nonce>]/<path>`, relative to
+ * `artifacts/<id>/`. Group 3 (the path) must also pass ASSET_PATH_RE on its own.
+ */
+export const STORED_AT_RE = /^v([1-9]\d{0,8})(?:\.([a-z0-9]{12}))?\/(.+)$/;
+
+/** Lowercase hex SHA-256. */
+export const SHA256_RE = /^[0-9a-f]{64}$/;
+
+/** Prefix of the single-use upload token start_upload mints. resolveBearer never accepts it. */
+export const UPLOAD_TOKEN_PREFIX = "plinth_up_";
+
+/** The first CLI release with `plinth upload`; start_upload offers commands.npx from it on. */
+export const MIN_UPLOAD_CLI_VERSION = "0.4.0";
 
 export const LIMITS = {
   /** Bytes of HTML per version. */
   maxHtmlBytes: 5 * MB,
   /** Bytes of Markdown (content.md) per version of a doc artifact. */
   maxDocBytes: 1 * MB,
-  /** Bytes of HTML plus assets per version. */
-  maxVersionBytes: 25 * MB,
-  maxAssetsPerVersion: 200,
+  /** JSON body of POST/PUT /artifacts and /mcp (inline assets travel as base64). */
+  maxInlineRequestBytes: 40 * MB,
+  /** Most asset files per version any instance may allow (zod's max; MAX_ASSETS_PER_VERSION's ceiling). */
+  maxAssetsCeiling: 900,
+  /** Highest MAX_VERSION_BYTES an instance may set (wall time and quota). */
+  maxVersionBytesCeiling: 64 * MB,
+  /** Tar headers and padding allowed on top of the version limit in one bundle. */
+  bundleOverheadBytes: 8 * MB,
+  /** One file in a bundle (the source file keeps its own limit). */
+  maxBundleFileBytes: 25 * MB,
+  /**
+   * Bytes in flight to R2 while a bundle streams. The reader allocates the next file only once it
+   * fits beside them (a bigger file waits until none is in flight).
+   */
+  bundleInFlightBytes: 16 * MB,
+  /** The pax records and GNU long names before one tar entry, in total. */
+  maxTarMetaBytes: 64 * KB,
+  /** Bundle requests one upload ticket may start. */
+  maxTicketAttempts: 5,
+  /** Text scanned for publish warnings, in total and per file. */
+  maxScanBytes: 8 * MB,
+  maxScanFileBytes: 2 * MB,
+  /** Publish warnings returned, before a final "and N more". */
+  maxWarnings: 50,
   maxAssetPathLength: 200,
   maxTitleLength: 200,
   maxNoteLength: 500,
@@ -87,6 +131,15 @@ export const TTL = {
   mentionClaimMs: 30 * 60 * 1000,
   oauthAccessTokenS: 60 * 60,
   oauthRefreshTokenS: 90 * 24 * 60 * 60,
+  /** An upload ticket from start_upload. */
+  uploadTicketMs: 30 * 60 * 1000,
+  /** The receiving lease one bundle request holds on its ticket, and its deadline to arrive. */
+  uploadReceivingMs: 10 * 60 * 1000,
+  /**
+   * How long past its expiry an upload ticket's status (GET /api/v1/uploads/:id) stays readable,
+   * so a commit that landed near the deadline can still be confirmed; the row is deleted after.
+   */
+  uploadStatusMs: 24 * 60 * 60 * 1000,
 } as const;
 
 export const RATE_LIMITS = {
@@ -101,6 +154,11 @@ export const RATE_LIMITS = {
   reportsPerIpPerHour: 10,
   /** GET /a/<slug>/source without signing in: generous, like other link-viewer reads. */
   sourceReadsPerIpPerHour: 600,
+  /**
+   * Upload bundle or status requests from one address that name no live ticket (wrong id or token,
+   * a revoked credential). Real clients miss rarely; this bounds the D1 reads guessing costs.
+   */
+  uploadMissesPerIpPerHour: 60,
 } as const;
 
 export const DEFAULTS = {
@@ -108,6 +166,10 @@ export const DEFAULTS = {
   maxPublishesPerHour: 60,
   /** Stored bytes per account across all versions of live artifacts (1 GiB). */
   maxStorageBytesPerUser: 1024 * 1024 * 1024,
+  /** Bytes of source plus assets per version (MAX_VERSION_BYTES). */
+  maxVersionBytes: 50 * MB,
+  /** Asset files per version (MAX_ASSETS_PER_VERSION). */
+  maxAssetsPerVersion: 511,
   publicMinAccountAgeHours: 72,
   cdnAllowlist: [
     "cdnjs.cloudflare.com",

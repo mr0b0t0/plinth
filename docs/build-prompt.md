@@ -54,6 +54,7 @@ One Worker, routed by hostname. All hosts come from environment variables, nothi
 | `EMAIL_PROVIDER` | `sendgrid`, `resend` or `console` | `console` (prints the link to the log) |
 | `SENDGRID_API_KEY`, `RESEND_API_KEY`, `EMAIL_FROM` | Email credentials | unset |
 | `MAX_ARTIFACTS_PER_USER` | Default artifact quota | `100` |
+| `MAX_VERSION_BYTES`, `MAX_ASSETS_PER_VERSION` | Total size and asset files per version (added in 0.4.0) | `52428800` (50 MB), `511` |
 | `CDN_ALLOWLIST` | Script hosts artifacts may load from | see Security |
 | `SINGLE_USER_MODE`, `ADMIN_TOKEN` | Self-host mode with no sign-up | off |
 | `ALLOW_PUBLIC_VISIBILITY` | Enables public listing features | off |
@@ -72,7 +73,7 @@ At startup, refuse to run in production mode if `APP_HOST` and `CONTENT_HOST` sh
 - `mention_tasks`: id, comment_id, artifact_id, target_connection or target_client_type, state (`pending`, `claimed`, `done`, `failed`), claimed_by, claimed_at, result_version.
 - `sessions`, `login_codes`, `oauth_clients`, `oauth_grants`, `reports` (artifact_id, reason, reporter_email, state).
 
-Files live in R2 at `artifacts/<artifact_id>/v<n>/index.html` plus optional assets. Limits per version: 5 MB of HTML, 25 MB in total.
+Files live in R2 at `artifacts/<artifact_id>/v<n>/index.html` plus optional assets. Limits per version: 5 MB of HTML; the total size and the number of asset files are settings (`MAX_VERSION_BYTES`, default 50 MB, and `MAX_ASSETS_PER_VERSION`, default 511, since 0.4.0; the v1 build used 25 MB and 200 files).
 
 ## Auth: three separate mechanisms
 

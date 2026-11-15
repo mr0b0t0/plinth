@@ -13,6 +13,7 @@ import { enforce } from "../lib/ratelimit.ts";
 import { nowIso } from "../lib/time.ts";
 import { isAdmin, type Principal, principalEmail } from "../policy.ts";
 import { requireArtifact } from "./artifacts.ts";
+import { claimArtifactAttempts, clearClaimedAttempts } from "./attempts.ts";
 import type { Ctx } from "./context.ts";
 import { wipeArtifactData } from "./data.ts";
 
@@ -170,19 +171,24 @@ export async function decideReport(
     });
   }
   if (state === "actioned") {
-    // The takedown and the wipe of the artifact's shared data go in one batch.
-    await ctx.env.DB.batch([
+    // One batch: the takedown, the wipe of the artifact's shared data, the claim of its staging
+    // attempts (none can commit from then on) and the close of its other open reports. The
+    // attempts' objects go after it, best effort: a row whose cleanup fails stays claimed for the
+    // hourly sweep. The versions' own files stay for review.
+    const wipe = wipeArtifactData(ctx.env.DB, report.artifact_id);
+    const results = await ctx.env.DB.batch([
       ctx.env.DB.prepare(
         `UPDATE artifacts SET taken_down_at = coalesce(taken_down_at, ?1),
            access_epoch = access_epoch + 1, updated_at = ?1 WHERE id = ?2`,
       ).bind(now, report.artifact_id),
-      ...wipeArtifactData(ctx.env.DB, report.artifact_id),
+      ...wipe,
+      claimArtifactAttempts(ctx.env.DB, report.artifact_id, Date.parse(now)),
+      ctx.env.DB.prepare(
+        `UPDATE reports SET state = 'actioned', decided_at = ?1, decided_by = ?2
+          WHERE artifact_id = ?3 AND state = 'open'`,
+      ).bind(now, admin.userId, report.artifact_id),
     ]);
-    await ctx.db
-      .update(reports)
-      .set({ state: "actioned", decidedAt: now, decidedBy: admin.userId })
-      .where(and(eq(reports.artifactId, report.artifact_id), eq(reports.state, "open")))
-      .run();
+    await clearClaimedAttempts(ctx.env, results[1 + wipe.length]);
   }
   return { ...report, state };
 }

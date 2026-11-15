@@ -8,10 +8,10 @@
 // --no-tunnel runs only the Worker (for tests, or when cloudflared runs as its own service).
 // Exit code: 0 after Ctrl-C or SIGTERM; 1 when either process stops on its own.
 import { spawnSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { InstanceError, startInstance } from "../apps/worker/scripts/instance.mjs";
+import { InstanceError, parseJsonc, startInstance } from "../apps/worker/scripts/instance.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const workerDir = path.join(root, "apps", "worker");
@@ -41,6 +41,7 @@ if (!existsSync(wranglerBin)) fail("wrangler is not installed. Run `pnpm install
 try {
   const code = await startInstance(opts, {
     label: "local:start",
+    base: parseJsonc(readFileSync(path.join(workerDir, "wrangler.jsonc"), "utf8")),
     wrangler: { command: wranglerBin, args: [], cwd: workerDir },
     setupHint: "node scripts/setup.mjs --tunnel (see docs/local-hosting.md)",
     ensureBuilt: () => {

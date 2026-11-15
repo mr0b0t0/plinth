@@ -157,20 +157,41 @@ describe("splitRows", () => {
 describe("diffAssets", () => {
   it("lists added, removed and resized files, then unchanged ones", () => {
     const a = [
-      { path: "img/a.png", size_bytes: 100, content_type: "image/png" },
-      { path: "style.css", size_bytes: 50, content_type: "text/css" },
-      { path: "old.js", size_bytes: 10, content_type: "text/javascript" },
+      { path: "img/a.png", size_bytes: 100, content_type: "image/png", sha256: null },
+      { path: "style.css", size_bytes: 50, content_type: "text/css", sha256: null },
+      { path: "old.js", size_bytes: 10, content_type: "text/javascript", sha256: null },
     ];
     const b = [
-      { path: "img/a.png", size_bytes: 100, content_type: "image/png" },
-      { path: "style.css", size_bytes: 70, content_type: "text/css" },
-      { path: "new.js", size_bytes: 5, content_type: "text/javascript" },
+      { path: "img/a.png", size_bytes: 100, content_type: "image/png", sha256: null },
+      { path: "style.css", size_bytes: 70, content_type: "text/css", sha256: null },
+      { path: "new.js", size_bytes: 5, content_type: "text/javascript", sha256: null },
     ];
     expect(diffAssets(a, b)).toEqual([
       { path: "new.js", kind: "added", after: 5 },
       { path: "old.js", kind: "removed", before: 10 },
       { path: "style.css", kind: "changed", before: 50, after: 70 },
       { path: "img/a.png", kind: "same", before: 100, after: 100 },
+    ]);
+  });
+
+  it("compares sha256 when both sides have it, and sizes otherwise", () => {
+    const h = (c: string) => c.repeat(64);
+    const a = [
+      { path: "same-size.js", size_bytes: 10, content_type: "text/javascript", sha256: h("a") },
+      { path: "same-hash.js", size_bytes: 10, content_type: "text/javascript", sha256: h("b") },
+      { path: "legacy.css", size_bytes: 10, content_type: "text/css", sha256: null },
+    ];
+    const b = [
+      // Same size, other bytes: only the hash can tell.
+      { path: "same-size.js", size_bytes: 10, content_type: "text/javascript", sha256: h("c") },
+      { path: "same-hash.js", size_bytes: 10, content_type: "text/javascript", sha256: h("b") },
+      // One side stored before hashes: sizes decide, as before.
+      { path: "legacy.css", size_bytes: 10, content_type: "text/css", sha256: h("d") },
+    ];
+    expect(diffAssets(a, b)).toEqual([
+      { path: "same-size.js", kind: "changed", before: 10, after: 10 },
+      { path: "legacy.css", kind: "same", before: 10, after: 10 },
+      { path: "same-hash.js", kind: "same", before: 10, after: 10 },
     ]);
   });
 });

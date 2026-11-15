@@ -10,6 +10,7 @@ import {
   hostPairProblem,
   mergeDeploySettings,
   pickAccount,
+  refreshRuntime,
   resourceNames,
   wildcardRecord,
 } from "../scripts/deploy-lib.mjs";
@@ -458,5 +459,35 @@ describe("deploy-lib: checkZones", () => {
     const cf = fakeCloudflare({ zones, records: [], dnsStatus: 403 });
     const r = await checkZones({ ...zoneArgs, fetch: cf.fetch, create: false });
     expect(r.wildcard).toBe("unknown");
+  });
+});
+
+describe("refreshRuntime (setup re-run on an existing per-environment config)", () => {
+  it("adds the flags this release needs to a config written before them, keeping the rest", () => {
+    // A wrangler.production.jsonc written by setup before 0.4.0: request.signal never aborts on
+    // a client disconnect without enable_request_signal, so the upload cleanup never starts.
+    const old = {
+      name: "plinth-production",
+      compatibility_date: "2026-11-01",
+      compatibility_flags: ["nodejs_compat"],
+      vars: { APP_HOST: "plinth.example.com" },
+    };
+    const repo = {
+      compatibility_date: "2026-11-01",
+      compatibility_flags: ["nodejs_compat", "enable_request_signal"],
+    };
+    expect(refreshRuntime(old, repo)).toEqual({
+      ...old,
+      compatibility_flags: ["nodejs_compat", "enable_request_signal"],
+    });
+    // An operator's own extra flag and a later date stay; an older repo date never wins.
+    const own = { ...old, compatibility_date: "2026-12-01", compatibility_flags: ["x_flag"] };
+    expect(refreshRuntime(own, repo)).toMatchObject({
+      compatibility_date: "2026-12-01",
+      compatibility_flags: ["x_flag", "nodejs_compat", "enable_request_signal"],
+    });
+    expect(
+      refreshRuntime({ ...old, compatibility_date: "2026-10-01" }, repo).compatibility_date,
+    ).toBe("2026-11-01");
   });
 });

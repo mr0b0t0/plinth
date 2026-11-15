@@ -10,14 +10,22 @@
 //                                            Workers, D1 and R2 on your Cloudflare account; rerun
 //                                            with no flags to redeploy or upgrade
 //
+//   plinth login | logout | whoami            sign in to any instance (OAuth in the browser)
+//   plinth publish <dir> [--id REF]          publish a build folder, or its next version
+//   plinth upload <dir> --to <upload_url>    send a folder with a start_upload ticket
+//
 // Every command takes --name (default plinth) and --home (default ~/.plinth, or PLINTH_HOME).
 // Hints name the command as it was run: `npx @mr0b0t0/plinth <cmd>` under npx, else `plinth <cmd>`.
+// The client commands (bin/client/) are dispatched before the runtime is loaded: they need no
+// build, no dependencies and no wrangler.
 import { readFileSync } from "node:fs";
 import http from "node:http";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { createInterface } from "node:readline/promises";
 import { fileURLToPath } from "node:url";
+import { claudeCodeConnectText } from "./client/connect.mjs";
+import { clientCommandOf, main as clientMain, clientUsage } from "./client/main.mjs";
 
 const pkgDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const runtimeDir = path.join(pkgDir, "runtime");
@@ -63,7 +71,9 @@ Cloudflare deployment.
 Common options: --name <name> (default plinth), --home <dir> (default ~/.plinth or PLINTH_HOME),
 --force (init: replace existing secrets), --dry-run (init, deploy: show the plan only).
 Upgrade: run a newer version of this package. \`${cli("start")}\` applies its migrations;
-\`${cli("deploy")}\` applies them to your Cloudflare deployment and deploys the new Worker.`;
+\`${cli("deploy")}\` applies them to your Cloudflare deployment and deploys the new Worker.
+
+${clientUsage(p)}`;
 
 const BOOLEAN = new Set([
   "tunnel",
@@ -218,6 +228,12 @@ async function printConnect(inst) {
   for (const h of reg.HARNESSES) {
     if (inst.mode === "local" && !h.reachesLocal) continue;
     console.log(`${h.label}:`);
+    if (h.id === "claude-code") {
+      // Plugin first: the server plus the plinth-artifacts skill. The bare server is tools only.
+      console.log(claudeCodeConnectText(reg, inst.appOrigin));
+      console.log("");
+      continue;
+    }
     if (commands[h.id]) console.log(indent(commands[h.id]));
     else if (h.id === "other")
       console.log(`  OAuth 2.1 with discovery at ${reg.protectedResourceUrl(endpoint)}`);
@@ -229,6 +245,14 @@ async function printConnect(inst) {
     if (own && g.ownInstance) console.log(`    ${g.ownInstance}`);
     console.log("");
   }
+}
+
+// Client commands first: they never load the runtime (or wrangler).
+if (clientCommandOf(process.argv.slice(2))) {
+  const code = await clientMain(process.argv.slice(2), { prog: p });
+  // Pipes are asynchronous on macOS: let pending output (e.g. --json) drain before exiting.
+  await new Promise((r) => process.stdout.write("", () => process.stderr.write("", r)));
+  process.exit(code);
 }
 
 const { command, opts } = parseArgs(process.argv.slice(2));

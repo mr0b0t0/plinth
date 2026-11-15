@@ -21,6 +21,18 @@ const config: AppConfig = {
   email_provider: "console",
   max_artifacts_per_user: 100,
   source_url: null,
+  limits: {
+    max_html_bytes: 5242880,
+    max_doc_bytes: 1048576,
+    max_version_bytes: 52428800,
+    max_assets_per_version: 511,
+    max_asset_path_length: 200,
+    max_request_bytes: 41943040,
+    max_bundle_bytes: 60817408,
+    max_bundle_file_bytes: 26214400,
+  },
+  cdn_allowlist: ["cdnjs.cloudflare.com", "cdn.jsdelivr.net"],
+  upload_ticket_ttl_s: 1800,
 };
 const opaqueConfig: AppConfig = { ...config, content_isolation: "opaque" };
 const ENTER = `${ORIGIN}/__plinth/enter?t=one-time&next=%2F__plinth%2Fpreview`;

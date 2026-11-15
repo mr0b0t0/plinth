@@ -2,7 +2,47 @@ import { env } from "cloudflare:workers";
 import { eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import { users } from "../src/db/schema.ts";
-import { agent, browserSession, call, db, json, publish } from "./helpers.ts";
+import {
+  APP,
+  agent,
+  browserSession,
+  call,
+  db,
+  json,
+  manifestOf,
+  publish,
+  storedFile,
+  versionRow,
+} from "./helpers.ts";
+
+const MB = 1024 * 1024;
+
+/** POST /api/v1/artifacts against the Worker with some env vars over the test env. */
+async function publishWith(
+  auth: Record<string, string>,
+  vars: Record<string, string>,
+  body: Record<string, unknown>,
+) {
+  const { createExecutionContext, waitOnExecutionContext } = await import("cloudflare:test");
+  const worker = (await import("../src/index.ts")).default;
+  const ctx = createExecutionContext();
+  const res = await worker.fetch(
+    new Request(`${APP}/api/v1/artifacts`, {
+      method: "POST",
+      headers: { ...auth, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        title: "Test artifact",
+        html: "<!doctype html><h1>Hello</h1>",
+        visibility: "unlisted",
+        ...body,
+      }),
+    }),
+    { ...env, ...vars } as never,
+    ctx,
+  );
+  await waitOnExecutionContext(ctx);
+  return { res, body: await json(res) };
+}
 
 const put = (auth: Record<string, string>, ref: string, body: Record<string, unknown>) =>
   call(`/api/v1/artifacts/${ref}`, {
@@ -12,7 +52,7 @@ const put = (auth: Record<string, string>, ref: string, body: Record<string, unk
   });
 
 describe("artifacts over REST", () => {
-  it("publishes version 1 with unlisted default and stores files in R2", async () => {
+  it("publishes version 1 and stores its files under the version's own prefix", async () => {
     const a = await agent();
     const { res, body } = await publish(a.auth, {
       assets: [
@@ -25,10 +65,15 @@ describe("artifacts over REST", () => {
     expect(body.id).toMatch(/^[a-z0-9]{20}$/);
     expect(body.url).toBe(`http://app.localhost:8787/a/${body.slug}`);
     expect(body.content_url).toBe(`http://${body.id}.content.localhost:8787/`);
-    expect(await (await env.FILES.get(`artifacts/${body.id}/v1/index.html`))?.text()).toContain(
-      "Hello",
-    );
-    expect(await env.FILES.get(`artifacts/${body.id}/v1/img/dot.png`)).not.toBeNull();
+    expect(await (await storedFile(body.id, 1, "index.html"))?.text()).toContain("Hello");
+    expect(await storedFile(body.id, 1, "img/dot.png")).not.toBeNull();
+    // New versions are written under a unique per-attempt prefix, and a first version owns every
+    // object it lists (nothing to reuse yet).
+    const v1 = await versionRow(body.id, 1);
+    expect(v1?.r2Prefix).toMatch(new RegExp(`^artifacts/${body.id}/v1\\.[a-z0-9]{12}/$`));
+    expect(await env.FILES.get(`${v1?.r2Prefix}index.html`)).not.toBeNull();
+    expect((await manifestOf(body.id, 1)).every((e) => e.stored_at === undefined)).toBe(true);
+    expect(body.stored).toMatchObject({ files: 3, written: 3, reused: 0 });
   });
 
   it("update creates a new immutable version and keeps assets when omitted", async () => {
@@ -37,13 +82,9 @@ describe("artifacts over REST", () => {
     const res = await put(a.auth, p.id, { html: "<p>v2</p>", note: "second" });
     expect(res.status).toBe(200);
     expect((await json(res)).version).toBe(2);
-    expect(await (await env.FILES.get(`artifacts/${p.id}/v1/index.html`))?.text()).toContain(
-      "Hello",
-    );
-    expect(await (await env.FILES.get(`artifacts/${p.id}/v2/index.html`))?.text()).toBe(
-      "<p>v2</p>",
-    );
-    expect(await (await env.FILES.get(`artifacts/${p.id}/v2/a.css`))?.text()).toBe("x");
+    expect(await (await storedFile(p.id, 1, "index.html"))?.text()).toContain("Hello");
+    expect(await (await storedFile(p.id, 2, "index.html"))?.text()).toBe("<p>v2</p>");
+    expect(await (await storedFile(p.id, 2, "a.css"))?.text()).toBe("x");
     const get = await json(await call(`/api/v1/artifacts/${p.slug}`, { headers: a.auth }));
     expect(get).toMatchObject({
       version: 2,
@@ -114,13 +155,36 @@ describe("artifacts over REST", () => {
     const a = await agent();
     const big = await publish(a.auth, { html: "x".repeat(5 * 1024 * 1024 + 1) });
     expect(big.res.status).toBe(413);
-    const total = await publish(a.auth, {
-      assets: Array.from({ length: 6 }, (_, i) => ({
-        path: `f${i}.txt`,
-        content: "y".repeat(4.5 * 1024 * 1024),
-      })),
-    });
+    // MAX_VERSION_BYTES set low, so the per-version total is reached well under the body limit.
+    const total = await publishWith(
+      a.auth,
+      { MAX_VERSION_BYTES: String(2 * MB) },
+      {
+        assets: Array.from({ length: 3 }, (_, i) => ({
+          path: `f${i}.txt`,
+          content: "y".repeat(0.9 * MB),
+        })),
+      },
+    );
     expect(total.res.status).toBe(413);
+    expect(total.body.error).toMatchObject({
+      code: "payload_too_large",
+      details: { limit_bytes: 2 * MB },
+    });
+  });
+
+  it("enforces MAX_ASSETS_PER_VERSION", async () => {
+    const a = await agent();
+    const assets = (n: number) =>
+      Array.from({ length: n }, (_, i) => ({ path: `f${i}.txt`, content: "x" }));
+    const vars = { MAX_ASSETS_PER_VERSION: "3" };
+    expect((await publishWith(a.auth, vars, { assets: assets(3) })).res.status).toBe(201);
+    const over = await publishWith(a.auth, vars, { assets: assets(4) });
+    expect(over.res.status).toBe(413);
+    expect(over.body.error).toMatchObject({
+      code: "payload_too_large",
+      details: { limit: 3, count: 4 },
+    });
   });
 
   it("rejects bad asset paths", async () => {

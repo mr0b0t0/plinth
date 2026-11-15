@@ -26,6 +26,7 @@ import {
   instanceName,
   mergeDeploySettings,
   pickAccount,
+  runtimeConfigProblem,
   wildcardRecord,
   zonesOf,
 } from "./deploy-lib.mjs";
@@ -257,6 +258,12 @@ export async function deployToCloudflare(raw, runtime) {
     throw e;
   }
   const { appZone, contentZone } = zonesOf(s, deps);
+  // Before anything on the account: the config this deploy will write must carry the release's
+  // runtime settings (a runtime/ bundled from a config without them would not).
+  const problem = runtimeConfigProblem(
+    buildDeployConfig(s, runtime.layout, runtime.base, { databaseId: "-", contentZone }),
+  );
+  if (problem) fail(`${problem}. Reinstall or rebuild plinth (pnpm build) and deploy again`);
   const record = wildcardRecord(s.contentHost, contentZone);
   const apiToken = process.env.CLOUDFLARE_API_TOKEN || null;
   const selector = `${s.name === "plinth" ? "" : ` --name ${s.name}`}${raw.home ? ` --home ${raw.home}` : ""}`;

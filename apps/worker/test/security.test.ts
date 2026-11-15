@@ -73,6 +73,11 @@ function fill(path: string, ref: string): string {
     .replace(/:[a-z_]+/g, "x0000000000000000000");
 }
 
+/** Bearer-only routes: they refuse cookie requests outright (401) and never read cookies. */
+const BEARER_ONLY = new Set(["POST /api/v1/uploads", "POST /api/v1/uploads/:id/bundle"]);
+const bearerOnly = (r: { method: string; path: string }) =>
+  BEARER_ONLY.has(`${r.method} ${r.path}`);
+
 /** Unique unsafe (state-changing) routes on the app, from the live Hono route table. */
 function unsafeRoutes(): { method: string; path: string }[] {
   const seen = new Set<string>();
@@ -540,7 +545,7 @@ describe("All state-changing app routes have CSRF protection", () => {
     const pat = await createToken(owner.id);
     const { body: p } = await publish({ Authorization: `Bearer ${pat.token}` });
     const session = await browserSession(owner.id);
-    const routes = unsafeRoutes().filter((r) => r.path.startsWith("/api/v1/"));
+    const routes = unsafeRoutes().filter((r) => r.path.startsWith("/api/v1/") && !bearerOnly(r));
     expect(routes.length).toBeGreaterThan(8);
     const variants: [string, Record<string, string>][] = [
       ["foreign Origin, valid token", { ...session.headers, Origin: EVIL }],
@@ -570,11 +575,12 @@ describe("All state-changing app routes have CSRF protection", () => {
     expect(row).toMatchObject({ title: "Test artifact", currentVersion: 1, deletedAt: null });
   });
 
-  it("routes outside /api/v1 that take writes do not read cookies at all", async () => {
+  it("routes outside /api/v1, and bearer-only ones, that take writes do not read cookies at all", async () => {
     const owner = await createUser();
     const session = await browserSession(owner.id);
-    const routes = unsafeRoutes().filter((r) => !r.path.startsWith("/api/v1/"));
+    const routes = unsafeRoutes().filter((r) => !r.path.startsWith("/api/v1/") || bearerOnly(r));
     expect(routes.map((r) => r.path)).toContain("/mcp");
+    expect(routes.map((r) => r.path)).toContain("/api/v1/uploads/:id/bundle");
     for (const r of routes) {
       const without = await sendBody(r.method, r.path, { Origin: EVIL }, "x");
       const withCookies = await sendBody(

@@ -1,5 +1,6 @@
 // Storage cap, atomic artifact quota, stale mention claims, and the public-visibility gate.
 import { env } from "cloudflare:workers";
+import { DEFAULTS, LIMITS } from "@plinth/shared";
 import { eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import { mentionTasks, users } from "../src/db/schema.ts";
@@ -7,7 +8,19 @@ import type { Principal } from "../src/policy.ts";
 import { publishArtifact, setVisibility } from "../src/services/artifacts.ts";
 import type { Ctx } from "../src/services/context.ts";
 import { claimMention } from "../src/services/mentions.ts";
-import { agent, call, config, createUser, db, json, publish } from "./helpers.ts";
+import {
+  agent,
+  BIG_BUNDLE_TIMEOUT_MS,
+  call,
+  config,
+  createUser,
+  db,
+  fetchWith,
+  json,
+  mcpClient,
+  publish,
+  tool,
+} from "./helpers.ts";
 
 function ctxFor(principal: Principal, overrides: Partial<ReturnType<typeof config>> = {}): Ctx {
   return {
@@ -132,6 +145,154 @@ describe("limits", () => {
     // A fresh claim is not stealable.
     await expect(claimMention(ctxFor(principal), taskId)).rejects.toMatchObject({
       code: "conflict",
+    });
+  });
+});
+
+const MB = 1024 * 1024;
+const files = (n: number, size = 1) =>
+  Array.from({ length: n }, (_, i) => ({ path: `f/${i}.txt`, content: `${i}`.padEnd(size, "x") }));
+
+describe("per-version limits (MAX_ASSETS_PER_VERSION, MAX_VERSION_BYTES)", () => {
+  it("default instance: 511 assets pass and 512 fail, over REST, as an ApiError with next", {
+    timeout: BIG_BUNDLE_TIMEOUT_MS,
+  }, async () => {
+    expect(config().maxAssetsPerVersion).toBe(DEFAULTS.maxAssetsPerVersion);
+    const a = await agent();
+    const ok = await publish(a.auth, { assets: files(511) });
+    expect(ok.res.status).toBe(201);
+    expect(ok.body.stored).toMatchObject({ files: 512, written: 512 });
+    const over = await publish(a.auth, { assets: files(512) });
+    expect(over.res.status).toBe(413);
+    expect(over.body.error).toMatchObject({
+      code: "payload_too_large",
+      message: "512 asset files; this instance allows 511 per version",
+      details: { limit: 511, count: 512 },
+    });
+    expect(over.body.error.details.next).toMatch(/start_upload/);
+    expect(over.body.error.details.next).toMatch(/source maps/);
+    // An update is held to the same limit.
+    const up = await call(`/api/v1/artifacts/${ok.body.id}`, {
+      method: "PUT",
+      headers: { ...a.auth, "Content-Type": "application/json" },
+      body: JSON.stringify({ html: "<p>2</p>", assets: files(512) }),
+    });
+    expect(up.status).toBe(413);
+  });
+
+  it("default instance: 511 pass and 512 fail over MCP, as the same error", {
+    timeout: BIG_BUNDLE_TIMEOUT_MS,
+  }, async () => {
+    const a = await agent();
+    const client = await mcpClient(a.token);
+    const ok = await tool(client, "publish_artifact", {
+      title: "many",
+      html: "<p>x</p>",
+      assets: files(511),
+    });
+    expect(ok.isError).toBe(false);
+    const over = await tool(client, "publish_artifact", {
+      title: "too many",
+      html: "<p>x</p>",
+      assets: files(512),
+    });
+    expect(over.isError).toBe(true);
+    expect(over.text).toContain("512 asset files; this instance allows 511 per version");
+    expect(over.text).toContain("start_upload");
+    await client.close();
+  });
+
+  it("zod keeps only the ceiling", async () => {
+    const a = await agent();
+    const r = await publish(a.auth, { assets: files(LIMITS.maxAssetsCeiling + 1) });
+    expect(r.res.status).toBe(400);
+  });
+
+  it("a version over MAX_VERSION_BYTES names its largest files and what to do", async () => {
+    const a = await agent();
+    const res = await fetchWith({ MAX_VERSION_BYTES: String(1 * MB) }, "/api/v1/artifacts", {
+      method: "POST",
+      headers: { ...a.auth, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        title: "big",
+        html: "<p>x</p>",
+        assets: [
+          { path: "a.bin.txt", content: "a".repeat(600 * 1024) },
+          { path: "b.txt", content: "b".repeat(500 * 1024) },
+          { path: "c.txt", content: "c" },
+        ],
+      }),
+    });
+    expect(res.status).toBe(413);
+    const { error } = await json(res);
+    expect(error.message).toMatch(/^Version is over 1 MB in total \(1\.1 MB\)$/);
+    expect(error.details.limit_bytes).toBe(MB);
+    expect(error.details.largest[0]).toEqual({ path: "a.bin.txt", size_bytes: 600 * 1024 });
+    expect(error.details.largest.length).toBeLessThanOrEqual(5);
+    expect(error.details.next).toBeTruthy();
+  });
+
+  it("reused files count toward the version size (it is what a viewer loads)", async () => {
+    const a = await agent();
+    const vars = { MAX_VERSION_BYTES: String(1 * MB) };
+    const pub = await fetchWith(vars, "/api/v1/artifacts", {
+      method: "POST",
+      headers: { ...a.auth, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        title: "near",
+        html: "<p>x</p>",
+        assets: [{ path: "a.txt", content: "a".repeat(700 * 1024) }],
+      }),
+    });
+    expect(pub.status).toBe(201);
+    const { id } = await json(pub);
+    const up = await fetchWith(vars, `/api/v1/artifacts/${id}`, {
+      method: "PUT",
+      headers: { ...a.auth, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        html: "<p>2</p>",
+        assets: [{ path: "b.txt", content: "b".repeat(400 * 1024) }],
+      }),
+    });
+    expect(up.status).toBe(200);
+    const carried = await fetchWith(vars, `/api/v1/artifacts/${id}`, {
+      method: "PUT",
+      headers: { ...a.auth, "Content-Type": "application/json" },
+      body: JSON.stringify({ html: "<p>3</p>" }),
+    });
+    expect(carried.status).toBe(200);
+    const both = await fetchWith(vars, `/api/v1/artifacts/${id}`, {
+      method: "PUT",
+      headers: { ...a.auth, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        html: "<p>4</p>",
+        assets: [
+          { path: "a.txt", content: "a".repeat(700 * 1024) },
+          { path: "b.txt", content: "b".repeat(400 * 1024) },
+        ],
+      }),
+    });
+    expect(both.status).toBe(413);
+  });
+
+  it("HTML over its limit says to move inline scripts and data into files", async () => {
+    const a = await agent();
+    const big = await publish(a.auth, { html: "x".repeat(LIMITS.maxHtmlBytes + 1) });
+    expect(big.res.status).toBe(413);
+    expect(big.body.error.details).toMatchObject({
+      limit_bytes: LIMITS.maxHtmlBytes,
+      next: "Move inline scripts and data into asset files",
+    });
+  });
+
+  it("the storage error carries adding_bytes and next", async () => {
+    const u = await createUser();
+    const ctx = ctxFor(userPrincipal(u), { maxStorageBytesPerUser: 1_000 });
+    await expect(
+      publishArtifact(ctx, { title: "b", html: "y".repeat(1_200), visibility: "unlisted" }),
+    ).rejects.toMatchObject({
+      code: "quota_exceeded",
+      details: { limit_bytes: 1_000, used_bytes: 0, adding_bytes: 1_200 },
     });
   });
 });

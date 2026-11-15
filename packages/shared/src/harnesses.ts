@@ -33,7 +33,15 @@ export const SKILL_SOURCE = `integrations/skill/${SKILL_NAME}/SKILL.md`;
 /** Plugin metadata, shared by the Claude Code and portable (Codex, ChatGPT) manifests. */
 export const PLUGIN = {
   name: "plinth",
-  version: "0.5.0",
+  version: "0.6.0",
+  /**
+   * SHA-256 of the sources the plugin ships (the skill and the mention watcher; see
+   * scripts/plugin-sources.mjs), and the `version` it was recorded under. When they change, bump
+   * `version` (one minor above main, so installed plugins update), then run `pnpm integrations`,
+   * which records both here; it refuses while `version` still equals `skillHashVersion`.
+   */
+  skillHash: "6bb85a163ed79188b15741c559640af96cb5e3b657022a79c8b9da0a9d979d56",
+  skillHashVersion: "0.6.0",
   description:
     "Publish, update and share HTML artifacts and Markdown documents on Plinth: the Plinth MCP server plus a skill with its publishing rules",
   author: { name: "Aconite Software & Investments, Lda.", url: "https://aconite.io" },
@@ -64,6 +72,35 @@ export function claudeCodeCommand(endpoint: string): string {
     `claude mcp login ${SERVER_NAME}`,
   ].join("\n");
 }
+
+/** Claude Code: install the Plinth plugin (the MCP server plus the plinth-artifacts skill). */
+export function claudeCodePluginCommands(): string[] {
+  return [
+    `claude plugin marketplace add ${MARKETPLACE_REPO}`,
+    `claude plugin install ${PLUGIN.name}@${PLUGIN.name}`,
+  ];
+}
+
+/**
+ * The same install inside a Claude Code session. The two-step form works in every Claude Code
+ * version with plugins (code.claude.com/docs/en/discover-plugins); the one-step
+ * `/plugin install <name> --marketplace <repo>` needs v2.1.275 or later.
+ */
+export function claudeCodePluginSlashCommands(): string[] {
+  return [
+    `/plugin marketplace add ${MARKETPLACE_REPO}`,
+    `/plugin install ${PLUGIN.name}@${PLUGIN.name}`,
+  ];
+}
+
+/** The MCP server name Claude Code gives the plugin's server, as `/mcp` lists it. */
+export const CLAUDE_CODE_PLUGIN_SERVER = `plugin:${PLUGIN.name}:${SERVER_NAME}`;
+
+/** What the bare `claude mcp add` gives, next to the plugin. */
+export const CLAUDE_CODE_TOOLS_ONLY = "tools only, without Plinth's rules";
+
+/** Said wherever both Claude Code options appear. */
+export const CLAUDE_CODE_ONE_OR_THE_OTHER = `Use one or the other: doing both gives Claude Code two Plinth servers (${SERVER_NAME} and ${CLAUDE_CODE_PLUGIN_SERVER}) and two connections.`;
 
 /** Codex CLI: add the server, then sign in. */
 export function codexCommand(endpoint: string): string {
@@ -196,10 +233,11 @@ export const HARNESSES: readonly Harness[] = [
     verified: true,
     guidance: {
       kind: "plugin",
-      summary: "Install the Plinth plugin: the server and the skill in one step.",
-      commands: `/plugin install ${PLUGIN.name} --marketplace ${MARKETPLACE_REPO}`,
+      summary:
+        "Install the Plinth plugin: the server and the skill in one step. A bare claude mcp add gives the tools only, without Plinth's rules.",
+      commands: claudeCodePluginSlashCommands().join("\n"),
       ownInstance:
-        "The plugin's server points at plinth.aconite.io. For this instance, set PLINTH_URL to its origin before starting Claude Code, or skip the plugin's server and keep the one added above.",
+        "The plugin's server points at plinth.aconite.io. For this instance, set PLINTH_URL to its origin every time Claude Code starts (for example in your shell profile), or skip the plugin's server and keep the one added above.",
     },
   },
   {

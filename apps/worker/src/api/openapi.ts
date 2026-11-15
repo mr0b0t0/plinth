@@ -18,6 +18,7 @@ import {
   DATA_CAPABILITIES,
   DATA_COLLECTION_RE,
   DATA_DOC_ID_RE,
+  DEFAULTS,
   ERROR_CODES,
   grantsReplaceInput,
   LIMITS,
@@ -34,8 +35,12 @@ import {
   requestLoginInput,
   restoreVersionInput,
   SCOPES,
+  SHA256_RE,
   setVisibilityInput,
+  startUploadInput,
+  TTL,
   TYPE_REGISTRY,
+  UPLOAD_TOKEN_PREFIX,
   updateArtifactInput,
   updateCommentInput,
   updateProfileInput,
@@ -59,8 +64,10 @@ type Method = "get" | "post" | "put" | "patch" | "delete";
  * - `user`: a signed-in person only (session cookie).
  * - `optional`: anyone; a session, viewer cookie or bearer token widens what is visible.
  * - `admin`: a signed-in instance admin.
+ * - `bearer`: a bearer token only (PAT, OAuth or ADMIN_TOKEN); a session cookie is refused.
+ * - `upload`: only the single-use upload token from start_upload.
  */
-type Auth = "agent" | "user" | "optional" | "admin";
+type Auth = "agent" | "user" | "optional" | "admin" | "bearer" | "upload";
 
 interface Param {
   name: string;
@@ -83,6 +90,8 @@ interface Operation {
   query?: Param[];
   /** Component name of the request body schema. */
   body?: string;
+  /** A non-JSON request body: its media types and what it holds. */
+  rawBody?: { types: string[]; description: string };
   /** Status code and component name of the success response (null for no body). */
   ok: [number, string | null];
   errors?: number[];
@@ -143,6 +152,7 @@ function requestSchemas(): Record<string, Json> {
     ReplyCommentInput: fromZod(replyCommentInput.omit({ comment_id: true })),
     ReportInput: fromZod(reportInput),
     ReportDecisionInput: fromZod(reportDecisionInput),
+    StartUploadInput: fromZod(startUploadInput),
   };
 }
 
@@ -156,6 +166,21 @@ const SOURCE_DESCRIPTIONS: Record<ArtifactTypeDef["sourceField"], string> = {
 
 function responseSchemas(): Record<string, Json> {
   const artifactType = ref("ArtifactType");
+  const publishResult = {
+    id: str(),
+    slug: str(),
+    type: artifactType,
+    version: int({ minimum: 1 }),
+    url: str({ format: "uri" }),
+    content_url: str({ format: "uri" }),
+    visibility,
+    warnings: {
+      type: "array",
+      items: ref("PublishWarning"),
+      description: "Advisory: references the published files make that will not load",
+    },
+    stored: ref("StoredSummary"),
+  };
   const artifactSummary = {
     id: str({ pattern: "^[a-z0-9]{20}$", description: "Also the artifact's content subdomain" }),
     slug: str(),
@@ -222,21 +247,124 @@ function responseSchemas(): Record<string, Json> {
             assets: {
               type: "array",
               description: "The version's other files; never index.html or content.md",
-              items: obj({ path: str(), size_bytes: int(), content_type: str() }),
+              items: obj({
+                path: str(),
+                size_bytes: int(),
+                content_type: str(),
+                sha256: nullable("string", {
+                  pattern: SHA256_RE.source,
+                  description:
+                    "Lowercase hex SHA-256, computed by the server; null for files stored before reuse by hash",
+                }),
+              }),
             },
           }),
         ];
       }),
     ),
     ArtifactList: paged("ArtifactSummary"),
-    PublishResult: obj({
-      id: str(),
-      slug: str(),
-      type: artifactType,
-      version: int({ minimum: 1 }),
-      url: str({ format: "uri" }),
-      content_url: str({ format: "uri" }),
-      visibility,
+    PublishResult: obj(publishResult),
+    PublishWarning: obj(
+      {
+        code: enumOf([
+          "missing_file",
+          "root_absolute",
+          "blocked_host",
+          "insecure_url",
+          "opaque_module",
+          "not_scanned",
+        ]),
+        file: str({ description: "The version file the reference is in" }),
+        ref: str({ description: "The reference as written (truncated)" }),
+        host: str(),
+        count: int({ minimum: 1 }),
+        message: str(),
+      },
+      ["ref", "host", "count"],
+    ),
+    StoredSummary: obj({
+      files: int({ description: "Files in the version, the source included" }),
+      written: int({ description: "Files written to storage by this publish" }),
+      reused: int({ description: "Files reused from an earlier version of the same artifact" }),
+      bytes: int({ description: "Logical bytes: what a viewer loads" }),
+      bytes_written: int({ description: "Bytes written to storage by this publish" }),
+    }),
+    InstanceLimits: obj({
+      max_html_bytes: int(),
+      max_doc_bytes: int(),
+      max_version_bytes: int({
+        description: "MAX_VERSION_BYTES: source plus assets, uncompressed",
+      }),
+      max_assets_per_version: int({ description: "MAX_ASSETS_PER_VERSION" }),
+      max_asset_path_length: int(),
+      max_request_bytes: int({ description: "JSON body of an inline publish or update" }),
+      max_bundle_bytes: int({ description: "Bytes on the wire of one bundle" }),
+      max_bundle_file_bytes: int({ description: "One file in a bundle" }),
+    }),
+    StartUploadResult: obj({
+      upload_id: str(),
+      upload_token: str({
+        pattern: `^${UPLOAD_TOKEN_PREFIX}`,
+        description:
+          "Single use, shown once, only its SHA-256 hash is stored. Send it only in the Authorization header of the bundle request",
+      }),
+      expires_at: dateTime,
+      upload_url: str({ format: "uri", description: "<APP_ORIGIN>/api/v1/uploads/<id>/bundle" }),
+      target: {
+        oneOf: [
+          obj({
+            mode: { const: "publish" },
+            id: str({
+              description:
+                "Reserved now: the artifact the bundle creates gets this id, so after a lost response get_artifact says whether it was published",
+            }),
+            type: artifactType,
+          }),
+          obj({
+            mode: { const: "update" },
+            id: str(),
+            slug: str(),
+            type: artifactType,
+            base_version: int({ minimum: 1 }),
+            visibility,
+          }),
+        ],
+      },
+      limits: ref("InstanceLimits"),
+      content_isolation: enumOf(CONTENT_ISOLATION_MODES),
+      commands: obj(
+        {
+          curl: str({ description: "Needs bash or zsh; <folder> is a placeholder" }),
+          npx: str({ description: "Only on release versions of the server" }),
+        },
+        ["npx"],
+      ),
+      next: str(),
+    }),
+    UploadStatus: obj({
+      upload_id: str(),
+      state: {
+        ...enumOf(["open", "receiving", "used", "dead", "taken_down", "expired", "exhausted"]),
+        description:
+          "receiving: a bundle request still holds the lease; used: it committed; dead: a conflict ended it; taken_down: the artifact was taken down, nothing was published and nothing is to be resent",
+      },
+      mode: enumOf(["publish", "update"]),
+      id: str({
+        description: "The artifact updated, or the one a publish creates (reserved at mint)",
+      }),
+      version: nullable("integer"),
+      url: nullable("string"),
+      expires_at: dateTime,
+      receiving_until: nullable("string"),
+      next: str(),
+    }),
+    BundleResult: obj({
+      ...publishResult,
+      bundle: obj({
+        entries: int(),
+        skipped: { type: "array", items: str(), description: "Entries left out (dotfiles)" },
+        stripped_prefix: nullable("string"),
+      }),
     }),
     VersionInfo: obj({
       number: int({ minimum: 1 }),
@@ -362,6 +490,13 @@ function responseSchemas(): Record<string, Json> {
         description:
           "Plinth's source repository, linked under every artifact; null when SHOW_SOURCE_LINK is off",
       }),
+      limits: ref("InstanceLimits"),
+      cdn_allowlist: {
+        type: "array",
+        items: str(),
+        description: "Hosts artifacts may load scripts and styles from (the CSP's CDN_ALLOWLIST)",
+      },
+      upload_ticket_ttl_s: int({ description: "How long an upload ticket stays valid" }),
     }),
     LoginResult: obj({
       ok: { const: true },
@@ -836,7 +971,7 @@ function operations(): Operation[] {
       path: API.artifacts,
       operationId: "publishArtifact",
       summary: "Publish a new artifact",
-      description: `Default visibility is unlisted. Limits: ${LIMITS.maxHtmlBytes / 1048576} MB of HTML, ${LIMITS.maxVersionBytes / 1048576} MB per version, the account's artifact quota and publishes per hour.`,
+      description: `Default visibility is allowlist (private: only the owner and people they add). Limits: ${LIMITS.maxHtmlBytes / 1048576} MB of HTML, ${DEFAULTS.maxVersionBytes / 1048576} MB per version by default (GET /config lists this instance's limits), the account's artifact quota and publishes per hour.`,
       tag: "Artifacts",
       auth: "agent",
       scope: "artifacts:write",
@@ -933,6 +1068,55 @@ function operations(): Operation[] {
       body: "RestoreVersionInput",
       ok: [201, "PublishResult"],
       errors: [400, 401, 403, 404, 409, 429],
+    },
+    // Out-of-band uploads for builds too big to send inline
+    {
+      method: "post",
+      path: API.uploads,
+      operationId: "startUpload",
+      summary: "Mint a single-use upload ticket for one publish or one update",
+      description:
+        "Bearer only: a session cookie is refused. With `id`, `base_version` (the version you " +
+        `read) is required. The ticket is valid for ${TTL.uploadTicketMs / 60000} minutes and at ` +
+        `most ${LIMITS.maxTicketAttempts} bundle requests, and commits exactly one version.`,
+      tag: "Artifacts",
+      auth: "bearer",
+      scope: "artifacts:write",
+      body: "StartUploadInput",
+      ok: [201, "StartUploadResult"],
+      errors: [400, 401, 403, 404, 409, 429],
+    },
+    {
+      method: "post",
+      path: API.uploadBundle,
+      operationId: "uploadBundle",
+      summary: "Send the build as one tar and commit it as a version",
+      description:
+        "Takes only `Authorization: Bearer plinth_up_...` from start_upload; no cookies are read. " +
+        "201 for a new artifact, 200 for an update. Sizes are limited on uncompressed bytes.",
+      tag: "Artifacts",
+      auth: "upload",
+      rawBody: {
+        types: ["application/x-tar", "application/gzip"],
+        description: "A tar of the build folder, optionally gzip (detected by magic bytes)",
+      },
+      ok: [201, "BundleResult"],
+      errors: [400, 401, 403, 404, 409, 413, 429],
+    },
+    {
+      method: "get",
+      path: API.uploadStatus,
+      operationId: "uploadStatus",
+      summary: "Whether an upload committed (after a lost bundle response)",
+      description:
+        "Takes only `Authorization: Bearer plinth_up_...`, like the bundle route (never a query " +
+        "parameter). Reads the ticket: no attempt is counted and no lease is taken. `used` names the " +
+        "version and url; no file contents are returned. A missing ticket and a wrong token get the " +
+        `same 404. Readable until ${TTL.uploadStatusMs / 3_600_000} hours after the ticket expires.`,
+      tag: "Artifacts",
+      auth: "upload",
+      ok: [200, "UploadStatus"],
+      errors: [401, 404],
     },
     {
       method: "put",
@@ -1171,6 +1355,10 @@ function security(op: Operation): Json[] {
     case "user":
     case "admin":
       return [session];
+    case "bearer":
+      return [{ bearerAuth: op.scope ? [op.scope] : [] }];
+    case "upload":
+      return [{ uploadToken: [] }];
     case "optional":
       // Anonymous browser writes (sign-in, viewer password) still need the CSRF pair.
       return unsafe
@@ -1248,6 +1436,17 @@ function operationObject(op: Operation): Json {
           },
         }
       : {}),
+    ...(op.rawBody
+      ? {
+          requestBody: {
+            required: true,
+            description: op.rawBody.description,
+            content: Object.fromEntries(
+              op.rawBody.types.map((t) => [t, { schema: { type: "string", format: "binary" } }]),
+            ),
+          },
+        }
+      : {}),
     responses,
     security: security(op),
     ...(op.mcpTool ? { "x-mcp-tool": op.mcpTool } : {}),
@@ -1320,6 +1519,11 @@ export function openApiDocument(config: Pick<Config, "appOrigin">): Json {
             "Personal access token (`plinth_pat_...`, created on the Connections page) or an " +
             "OAuth 2.1 access token (`plinth_at_...`) from /oauth/token. Scopes: " +
             `${SCOPES.join(", ")}. In single-user mode with ADMIN_TOKEN set, that token also works.`,
+        },
+        uploadToken: {
+          type: "http",
+          scheme: "bearer",
+          description: `The single-use upload token (\`${UPLOAD_TOKEN_PREFIX}...\`) from start_upload. It works only on its own bundle URL.`,
         },
         sessionCookie: {
           type: "apiKey",

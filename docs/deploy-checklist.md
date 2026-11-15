@@ -3,7 +3,8 @@
 Everything needed to take a Plinth instance live on Cloudflare: resources, DNS for both hosts,
 secrets, email authentication, and checks. The examples use the hosted instance's app host,
 `plinth.aconite.io`; `CONTENT_DOMAIN` stands for the separate content domain, which for the hosted
-instance is `plinthusercontent.com`. Cloudflare and email provider screens change; the details
+instance is `plinthusercontent.com`, and `APP_HOST` for the app host where a rule or command must
+name your own (hosted instance: `plinth.aconite.io`). Cloudflare and email provider screens change; the details
 below were checked on 2026-11-13 and 2026-11-14.
 
 ## The content domain
@@ -80,8 +81,63 @@ it is mandatory.
 | Zone for the content host | `plinthusercontent.com` for the hosted instance (registered through Cloudflare Registrar, so the zone already uses Cloudflare's nameservers); for a separate domain bought elsewhere, add it as a zone and point the registrar's nameservers at Cloudflare | Cloudflare dashboard |
 | Advanced Certificate for `*.<content subdomain>` | only for a content subdomain (second-level wildcard); not needed for the hosted instance | Cloudflare dashboard → SSL/TLS → Edge Certificates → Order Advanced Certificate (Advanced Certificate Manager, paid) |
 
-Workers Free is enough to start. The Workers Paid plan ($5/month) raises request and CPU limits
-and D1 Time Travel from 7 to 30 days.
+Workers Free is enough to start with small pages. The Workers Paid plan ($5/month) raises request
+and CPU limits and D1 Time Travel from 7 to 30 days.
+
+### Version limits and the Workers plan
+
+Two settings size what one version may hold; both are `vars` like the others
+([self-hosting.md](self-hosting.md#settings)):
+
+| Variable | Default | Allowed |
+| --- | --- | --- |
+| `MAX_VERSION_BYTES` | `52428800` (50 MB) | `1048576` to `67108864` (1 to 64 MB) |
+| `MAX_ASSETS_PER_VERSION` | `511` | `1` to `900` |
+
+A value outside the range stops the Worker with a configuration error. `GET /api/v1/config` reports
+the values in effect under `limits`, with `max_bundle_bytes` (the version limit plus 8 MB of tar
+overhead), the largest body an upload from `start_upload` or the CLI sends.
+
+- **Cron Triggers on Workers Free:** the hourly sweep is one Cron Trigger, and Cron Triggers
+  count against the account's limit: 5 per account on Workers Free (250 on Paid). An account
+  already at 5 cannot deploy Plinth's config until one is removed.
+- **Workers Free:** Workers Free cannot reliably publish multi-megabyte versions. Its 10 ms of CPU
+  per request runs out on a publish of a few megabytes: reading, inflating and hashing a 5 MB,
+  50-file version alone took 12 to 24 ms in local measurements, before routing, validation, the
+  database and the warning scan. Such a publish fails with Cloudflare error 1102. On Free, set
+  `MAX_VERSION_BYTES=1048576` (the minimum) and a small `MAX_ASSETS_PER_VERSION` (for example
+  `20`), and expect even those to fail now and then. Big pages and uploaded builds
+  (`start_upload` and `plinth publish`) need Workers Paid.
+- **Workers Paid:** the defaults fit. You may also raise the CPU limit per request with
+  `"limits": { "cpu_ms": 300000 }` in the Worker config (5 minutes, the Paid maximum).
+- A reverse proxy in front of the Worker (the Docker setup's nginx, for example) must accept bodies
+  of at least `max_bundle_bytes` ([docker.md](docker.md)).
+- **Memory was not measured on a live isolate.** A bundle holds at most max(16 MB in-flight
+  budget, 25 MB per-file cap) of file bytes at once, plus the copy WebCrypto makes of the file
+  being hashed (up to 25 MB), up to 8 MB of scan text, a 5 MB source, and what the gzip
+  decompressor has inflated but the reader has not read yet (it is fed only as the reader reads,
+  in slices sized to inflate to about 1 MB, but up to about 8.4 MB for the first slice after the
+  data turns from incompressible to maximally compressible, which a sender can arrange; count
+  8.4 MB per bundle). Tests check that bound by counting bytes; the local runtime reports no
+  heap figures.
+  Bundles of different users can share one 128 MB isolate. Before relying on the 25 MB per-file
+  default on a busy instance, try two concurrent maximum-size bundles plus a large inline publish
+  on staging.
+- **Orphaned upload files.** A bundle whose client disconnects deletes its own files (the
+  `enable_request_signal` compatibility flag is what lets it notice; it must be in the config you
+  deploy with, see [§6](#6-upgrading-and-rolling-back)), but a
+  request the runtime kills outright can still leave files no version names. Implementation note:
+  whether Cloudflare's runtime fires `request.signal` once the whole body has been read is not
+  tested, and local `wrangler dev` does not, so a client that disconnects after sending everything
+  may still get its version (whole: commit and abort exclude each other). Clients are told to check
+  with `get_artifact` after a lost answer, never that a disconnect cannot commit. They do not count
+  toward any quota. The Worker's hourly cron trigger (`"triggers": { "crons": ["0 * * * *"] }`,
+  also required in the config you deploy with) removes them once the attempt is 45 minutes old;
+  minting an upload ticket or posting a bundle also starts a sweep of at most 20 attempts, which
+  is what clears them on an instance with no cron.
+  Run `pnpm --filter @plinth/worker admin -- sweep-orphans --remote` only for legacy orphans:
+  files written before 0.4.0, which no staging row names
+  ([self-hosting.md](self-hosting.md#operating-notes)).
 
 ```sh
 pnpm --filter @plinth/worker exec wrangler login
@@ -154,7 +210,51 @@ curl -sI -X POST https://plinth.aconite.io/mcp | grep -i www-authenticate       
 curl -sI https://abcdefghijklmnopqrst.plinthusercontent.com/ | grep -i content-security-policy
 curl -s https://plinth.aconite.io/api/v1/config        # "content_host":"plinthusercontent.com","content_isolation":"origin"
 curl -sI https://plinth.aconite.io/api/v1/config | grep -i set-cookie   # __Host-plinth_csrf=...; Path=/; ...; Secure
+curl -s https://plinth.aconite.io/api/v1/config        # "limits":{..."max_version_bytes":52428800,"max_assets_per_version":511,...}
+# API clients pass the edge (next section): 200, not 403 "error code: 1010"
+curl -s -o /dev/null -w '%{http_code}\n' -A 'Python-urllib/3.12' https://APP_HOST/api/v1/config
+curl -s -o /dev/null -w '%{http_code}\n' -A 'Python-urllib/3.12' https://APP_HOST/.well-known/oauth-authorization-server
+curl -s -o /dev/null -w '%{http_code}\n' -A 'Python-urllib/3.12' https://APP_HOST/llms.txt
+curl -s -o /dev/null -w '%{http_code}\n' -A 'Python-urllib/3.12' https://APP_HOST/a/no-such-artifact/source   # 404 from Plinth, not 403
 ```
+
+### Edge security for API clients
+
+Cloudflare's Browser Integrity Check (BIC, on by default in every zone) answers some programs with
+403 and the text `error code: 1010` before the Worker runs. It targets HTTP clients with a default
+library User-Agent such as Python's `Python-urllib/*` and Perl's `libwww-perl`: exactly what an
+agent's hand-written script sends. Plinth never sees those requests.
+
+On the app zone, exempt the machine-facing paths from BIC, and nothing else. Either add a WAF
+custom rule (Security > WAF > Custom rules, action **Skip**, skip **Browser Integrity Check**, with
+logging on) or a Configuration Rule (Rules > Configuration Rules, Browser Integrity Check **Off**),
+with this expression, replacing `APP_HOST` with your app host:
+
+```
+(http.host eq "APP_HOST" and (
+  http.request.uri.path eq "/mcp" or starts_with(http.request.uri.path, "/mcp/")
+  or (starts_with(http.request.uri.path, "/api/v1/") and not starts_with(http.request.uri.path, "/api/v1/auth/"))
+  or (starts_with(http.request.uri.path, "/oauth/") and http.request.uri.path ne "/oauth/authorize")
+  or starts_with(http.request.uri.path, "/.well-known/")
+  or (starts_with(http.request.uri.path, "/a/") and ends_with(http.request.uri.path, "/source"))
+  or http.request.uri.path in {"/openapi.json" "/llms.txt" "/healthz"}))
+```
+
+- `/a/<ref>/source` is machine-facing: `/llms.txt` and the note in every artifact page tell agents
+  to fetch it as plain text, so it is exempt too.
+- The browser sign-in (`/api/v1/auth/*`), the OAuth consent page (`/oauth/authorize`), the app's
+  pages and the rest of `/a/*` keep BIC: people use them in browsers.
+- Skip only BIC. Do not skip the managed rules or lower the security level for these paths.
+- Add no rule on the content zone: agents do not call it, and browsers pass BIC.
+- The upload routes (`/api/v1/uploads` and `/api/v1/uploads/<id>/bundle`) are under `/api/v1/`, so
+  the expression covers them.
+- On `workers.dev` (staging) BIC cannot be turned off, so clients there must send a User-Agent of
+  their own. The Plinth CLI sends `plinth-cli/<version>`, the mention watcher
+  `plinth-mentions/<version>`, and the commands `start_upload` returns set one too.
+
+The four `Python-urllib` lines in "Checks after deploy" above test it. With the rule, the first
+three print `200` and the last `404` (the artifact does not exist, and Plinth says so); without it,
+each prints `403`.
 
 ## 3. Secrets
 
@@ -244,7 +344,9 @@ These need accounts, money or legal judgement, so no script does them.
    tracking. Put the API key in with `wrangler secret put`. The hosted instance sends as
    `Plinth <noreply@plinth.aconite.io>` (`plinth.aconite.io` authenticated in Aconite's SendGrid
    account on 2026-11-14).
-7. `pnpm build` and `wrangler deploy --config wrangler.production.jsonc`.
+7. `pnpm build`, then `pnpm --filter @plinth/worker run deploy:production`, which refuses a
+   `wrangler.production.jsonc` without the release's compatibility flags and cron trigger before
+   it runs `wrangler deploy --config wrangler.production.jsonc` (section 6).
 8. Confirm the route `*.plinthusercontent.com/*` (or `*.CONTENT_DOMAIN/*`) shows under the
    Worker's Domains & Routes, and that `https://<any id>.plinthusercontent.com/` answers 404 from
    Plinth with a valid certificate.
@@ -263,3 +365,51 @@ These need accounts, money or legal judgement, so no script does them.
 13. Turn on GitHub private vulnerability reporting for the repository (see
     [security.md](security.md)).
 14. Watch the first days with `wrangler tail` and the Cloudflare analytics for the Worker and D1.
+
+## 6. Upgrading and rolling back
+
+Upgrades apply the new release's D1 migrations before its Worker (`plinth deploy` does this; by
+hand, `wrangler d1 migrations apply` first). Plinth 0.4.0 adds migrations `0006_stored_bytes` and
+`0007_upload_tickets` and a new storage layout: a version may reuse files stored under an earlier
+version of the same artifact, and new versions are written under a fresh `v<n>.<nonce>/` prefix.
+
+Plinth 0.4.0 also needs the `enable_request_signal` compatibility flag and an hourly cron
+trigger. Without the flag a bundle whose client disconnects never notices, and its files stay
+behind until the next sweep; without the cron only the small sweep that the next upload starts
+removes them, 20 at a time. `plinth deploy` takes both
+from the release (and refuses a config without them), and a local or Docker instance gets them on
+its next start (`plinth start` and `pnpm local:start` add the release's flags and cron trigger to
+the instance's `wrangler.jsonc`, and move its `compatibility_date` up to the release's when that is
+later). A `wrangler.<env>.jsonc` that `scripts/setup.mjs` wrote before 0.4.0 has neither: re-run
+setup with the same arguments (it adds the release's flags and cron trigger to an existing config,
+moves its `compatibility_date` up to the committed config's when that is later, keeps everything
+else, and refuses to go on if the result would still lack them), or add them by hand:
+`compatibility_flags` must include `"nodejs_compat"` and `"enable_request_signal"`, and
+`triggers.crons` must include `"0 * * * *"`. A checkout update checks the config before the
+migrations (`check-config` exits 1 and names what is missing) and deploys through the Worker's
+deploy script, which runs the same check first. The commands are one `&&` list, so a refused
+config stops before the migrations:
+
+```sh
+git pull && pnpm install && pnpm build && \
+  pnpm --filter @plinth/worker check-config wrangler.production.jsonc && \
+  pnpm --filter @plinth/worker exec wrangler d1 migrations apply DB --remote --config wrangler.production.jsonc && \
+  pnpm --filter @plinth/worker run deploy:production
+```
+
+`deploy:staging` does the same with `wrangler.staging.jsonc`. `pnpm build` only prints a warning
+line for each `wrangler.<env>.jsonc` in `apps/worker` that lacks either, and never fails because
+of one: the refusal is in `check-config` and the deploy scripts.
+
+**Roll forward, not back.** Rolling the Worker back past 0.4.0 breaks artifacts updated since then
+(any update or restore that keeps files reuses them): an older Worker looks each file up under the
+version's own prefix only, so files a version reuses from an earlier one answer 404, and updating
+or restoring such an artifact fails with "Missing stored file". Versions written in full keep
+working, including those under a `v<n>.<nonce>/` prefix (the older Worker uses the row's
+`r2_prefix` as it is). The older Worker counts storage by logical size, so accounts may reach the
+storage limit sooner while it runs, and versions it writes are full copies that 0.4.0 reads as
+before. If a release misbehaves, deploy a fix on top of it. The migrations only add a column and
+two tables, so an older Worker still starts against the new schema; upload tickets and
+`staging_attempts` are unused by it (its interrupted publishes leave files only `sweep-orphans`
+finds). An older Worker has no scheduled handler, so while it runs under a config with the cron
+trigger each hourly run fails harmlessly in the Worker's logs.

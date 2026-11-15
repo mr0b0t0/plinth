@@ -25,28 +25,63 @@ export interface ContentCspOptions {
   scripts?: "self" | "none";
 }
 
-function scriptSrc(config: Config, scripts: ContentCspOptions["scripts"]): string {
+/**
+ * The hosts each CSP directive allows besides the artifact's own origin ('self'), always over
+ * https. contentCsp builds the CSP from these, and publish warnings (services/publishCheck.ts) check
+ * references against the same lists, so the two never disagree.
+ */
+export interface ContentSources {
+  script: string[];
+  style: string[];
+  font: string[];
+  img: string[];
+  media: string[];
+  connect: string[];
+  frame: string[];
+  worker: string[];
+  manifest: string[];
+  base: string[];
+}
+
+export function contentSources(config: Pick<Config, "cdnAllowlist">): ContentSources {
+  return {
+    script: [...config.cdnAllowlist],
+    style: ["fonts.googleapis.com"],
+    font: ["fonts.gstatic.com"],
+    img: [],
+    media: [],
+    connect: [],
+    frame: [],
+    worker: [],
+    manifest: [],
+    base: [],
+  };
+}
+
+const https = (hosts: string[]) => hosts.map((h) => ` https://${h}`).join("");
+
+function scriptSrc(sources: ContentSources, scripts: ContentCspOptions["scripts"]): string {
   if (scripts === "self") return TYPED_SHELL_SCRIPT_SRC;
   if (scripts === "none") return "script-src 'none'";
-  const cdn = config.cdnAllowlist.map((h) => `https://${h}`).join(" ");
-  return `script-src 'self' 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval' ${cdn}`;
+  return `script-src 'self' 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval'${https(sources.script)}`;
 }
 
 export function contentCsp(config: Config, opts: ContentCspOptions = {}): string {
+  const s = contentSources(config);
   const directives = [
     "default-src 'none'",
-    scriptSrc(config, opts.scripts),
-    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
-    "font-src 'self' https://fonts.gstatic.com data:",
-    "img-src 'self' data: blob:",
-    "media-src 'self' data: blob:",
-    "connect-src 'self'",
-    "worker-src 'self' blob:",
+    scriptSrc(s, opts.scripts),
+    `style-src 'self' 'unsafe-inline'${https(s.style)}`,
+    `font-src 'self'${https(s.font)} data:`,
+    `img-src 'self'${https(s.img)} data: blob:`,
+    `media-src 'self'${https(s.media)} data: blob:`,
+    `connect-src 'self'${https(s.connect)}`,
+    `worker-src 'self'${https(s.worker)} blob:`,
     "child-src 'self' blob:",
-    "frame-src 'self' blob:",
-    "manifest-src 'self'",
+    `frame-src 'self'${https(s.frame)} blob:`,
+    `manifest-src 'self'${https(s.manifest)}`,
     "object-src 'none'",
-    "base-uri 'self'",
+    `base-uri 'self'${https(s.base)}`,
     "form-action 'self'",
     `frame-ancestors 'self' ${config.appOrigin}`,
   ];

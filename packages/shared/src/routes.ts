@@ -72,6 +72,10 @@ export const API = {
   data: "/artifacts/:ref/data", // GET summary, POST ops, DELETE all (signed-in owner)
   dataCollection: "/artifacts/:ref/data/:collection", // GET a page
   dataDoc: "/artifacts/:ref/data/:collection/:doc", // GET one document
+  // out-of-band uploads (start_upload): mint a ticket (bearer only), then send one bundle
+  uploads: "/uploads", // POST start_upload
+  uploadBundle: "/uploads/:id/bundle", // POST a tar (optionally gzip), Bearer plinth_up_ only
+  uploadStatus: "/uploads/:id", // GET whether that upload committed, Bearer plinth_up_ only
 } as const;
 
 /** SPA routes on APP_HOST. */
