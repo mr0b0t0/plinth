@@ -377,7 +377,11 @@ export function buildMcpServer(ctx: Ctx): McpServer {
         "(list_versions gives the current number without the page's files). Run " +
         "commands.curl with a shell timeout of at least 10 minutes and give the user the url it prints; " +
         "commands.npx, when present, does the same with Node. The result carries this instance's limits " +
-        "and content_isolation. " +
+        "and content_isolation; target.id is the artifact it updates or, for a new one, the id it will " +
+        "create. If the command ends without its JSON (a curl error or a timeout), it may still have " +
+        "published once the whole folder was sent: call get_artifact with target.id before anything " +
+        "else, use the version if it is there, and only otherwise call start_upload again (with the " +
+        "same base_version). An upload never commits twice: sending it again answers upload_used. " +
         UPLOAD_NOTE +
         opaque +
         UNTRUSTED_NOTE,

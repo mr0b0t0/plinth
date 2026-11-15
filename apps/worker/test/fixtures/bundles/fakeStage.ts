@@ -60,7 +60,7 @@ export function fakeStage(opts: FakeOptions = {}): { deps: StageDeps; log: FakeL
       }
       const t: VersionTarget = {
         mode: "publish",
-        artifactId: newArtifactId(),
+        artifactId: input.artifactId ?? newArtifactId(),
         type: input.type,
         title: input.title,
       };

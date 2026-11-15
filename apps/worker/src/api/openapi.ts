@@ -312,7 +312,14 @@ function responseSchemas(): Record<string, Json> {
       upload_url: str({ format: "uri", description: "<APP_ORIGIN>/api/v1/uploads/<id>/bundle" }),
       target: {
         oneOf: [
-          obj({ mode: { const: "publish" }, type: artifactType }),
+          obj({
+            mode: { const: "publish" },
+            id: str({
+              description:
+                "Reserved now: the artifact the bundle creates gets this id, so after a lost response get_artifact says whether it was published",
+            }),
+            type: artifactType,
+          }),
           obj({
             mode: { const: "update" },
             id: str(),
@@ -332,6 +339,23 @@ function responseSchemas(): Record<string, Json> {
         },
         ["npx"],
       ),
+      next: str(),
+    }),
+    UploadStatus: obj({
+      upload_id: str(),
+      state: {
+        ...enumOf(["open", "receiving", "used", "dead", "expired", "exhausted"]),
+        description:
+          "receiving: a bundle request still holds the lease; used: it committed; dead: a conflict ended it",
+      },
+      mode: enumOf(["publish", "update"]),
+      id: str({
+        description: "The artifact updated, or the one a publish creates (reserved at mint)",
+      }),
+      version: nullable("integer"),
+      url: nullable("string"),
+      expires_at: dateTime,
+      receiving_until: nullable("string"),
       next: str(),
     }),
     BundleResult: obj({
@@ -1078,6 +1102,19 @@ function operations(): Operation[] {
       },
       ok: [201, "BundleResult"],
       errors: [400, 401, 403, 404, 409, 413, 429],
+    },
+    {
+      method: "get",
+      path: API.uploadStatus,
+      operationId: "uploadStatus",
+      summary: "Whether an upload committed (after a lost bundle response)",
+      description:
+        "Takes only `Authorization: Bearer plinth_up_...`, like the bundle route. Reads the ticket: " +
+        "no attempt is counted and no lease is taken. `used` names the version and url.",
+      tag: "Artifacts",
+      auth: "upload",
+      ok: [200, "UploadStatus"],
+      errors: [401, 404],
     },
     {
       method: "put",

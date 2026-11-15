@@ -19,6 +19,7 @@ import {
   TTL,
   typeDef,
   UPLOAD_TOKEN_PREFIX,
+  type UploadStatus,
 } from "@plinth/shared";
 import { cliPublishReleased, isReleaseAtLeast, PLINTH_VERSION } from "../app/version.ts";
 import { parseScopes } from "../auth/principal.ts";
@@ -88,6 +89,8 @@ export interface TicketRow {
   receiving_until: string | null;
   result_artifact_id: string | null;
   result_version: number | null;
+  /** Publish mode: the id its commit creates, reserved at mint (target.id). */
+  reserved_artifact_id: string | null;
   created_at: string;
   expires_at: string;
   used_at: string | null;
@@ -189,14 +192,15 @@ export async function startUpload(
   const now = Date.now();
   const expiresAt = isoAt(now + TTL.uploadTicketMs);
   const update = target.mode === "update" ? target : null;
-  const type: ArtifactType = update
-    ? update.artifact.type
-    : (target as { type: ArtifactType }).type;
+  const fresh = target.mode === "publish" ? target : null;
+  const type: ArtifactType = update ? update.artifact.type : (fresh as { type: ArtifactType }).type;
+  // A publish reserves its artifact id now, so a client whose bundle response is lost can ask
+  // get_artifact(id) whether it was published.
   await ctx.env.DB.prepare(
     `INSERT INTO upload_tickets (id, token_hash, user_id, credential, connection_id, admin_token_hash,
        scopes, mode, artifact_id, artifact_type, title, note, base_version, state, attempts,
-       created_at, expires_at)
-     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, 'open', 0, ?14, ?15)`,
+       created_at, expires_at, reserved_artifact_id)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, 'open', 0, ?14, ?15, ?16)`,
   )
     .bind(
       id,
@@ -214,6 +218,7 @@ export async function startUpload(
       update ? (input.base_version ?? null) : null,
       isoAt(now),
       expiresAt,
+      fresh ? fresh.artifactId : null,
     )
     .run();
   if (Math.random() < 0.02) {
@@ -238,12 +243,14 @@ export async function startUpload(
           base_version: input.base_version as number,
           visibility: update.artifact.visibility,
         }
-      : { mode: "publish", type },
+      : { mode: "publish", id: (fresh as { artifactId: string }).artifactId, type },
     limits: instanceLimits(ctx.config),
     content_isolation: ctx.config.contentIsolation,
     commands: { curl: curlCommand(token, uploadUrl), ...(npx ? { npx } : {}) },
     next: uploadNext({
       sourcePath: typeDef(type)?.sourcePath ?? "index.html",
+      id: update ? update.artifact.id : (fresh as { artifactId: string }).artifactId,
+      baseVersion: update ? (input.base_version as number) : null,
       visibility: update?.artifact.visibility ?? null,
       opaque: ctx.config.contentIsolation === "opaque",
       npx: npx !== null,
@@ -280,6 +287,10 @@ export function npxCommand(version: string, token: string, uploadUrl: string): s
 
 export function uploadNext(o: {
   sourcePath: string;
+  /** The artifact: the update's target, or the id the publish will create. */
+  id: string;
+  /** The update's base version; null for a publish. */
+  baseVersion: number | null;
   visibility: string | null;
   opaque: boolean;
   npx: boolean;
@@ -290,6 +301,7 @@ export function uploadNext(o: {
       (o.npx ? " (or commands.npx where Node is available)" : "") +
       ". It prints JSON: give the user its url.",
     "If it lists warnings, fix them and publish again with a new start_upload; not_scanned needs no action.",
+    lostResponseNext(o.id, o.baseVersion),
     "The token works once, for 30 minutes; never put it in a URL, a file or a message.",
   ];
   if (o.visibility) {
@@ -302,6 +314,22 @@ export function uploadNext(o: {
     );
   }
   return parts.join(" ");
+}
+
+/**
+ * What to do when the bundle request ends without its JSON answer (a curl error, a timeout). Once
+ * the whole body was read, the request may have committed; before that it never did.
+ */
+export function lostResponseNext(id: string, baseVersion: number | null): string {
+  return (
+    "If the command ends without JSON (a curl error or a timeout), do not run it again blindly: " +
+    (baseVersion === null
+      ? `call get_artifact with id ${id} first. If it exists, it was published: use it. If it is not found, `
+      : `call get_artifact with id ${id} first. If its version is ${baseVersion + 1}, check it is yours and use it. If it is still ${baseVersion}, `) +
+    "call start_upload again" +
+    (baseVersion === null ? "" : ` with the same base_version ${baseVersion}`) +
+    ". This upload can never commit twice: sending it again after it committed answers upload_used with the url."
+  );
 }
 
 // ---------- redeeming ----------
@@ -796,5 +824,67 @@ async function ticketTarget(
   return deps.newArtifactTarget(ctx, {
     type: t.artifact_type as ArtifactType,
     title: t.title ?? undefined,
+    ...(t.reserved_artifact_id ? { artifactId: t.reserved_artifact_id } : {}),
   });
+}
+
+// ---------- status ----------
+
+/**
+ * GET /uploads/:id with the upload token: whether the upload committed. For a client whose bundle
+ * response was lost; it reads one row, counts no attempt and takes no lease.
+ */
+export async function uploadStatus(
+  w: Pick<BundleEnv, "env" | "config">,
+  req: { uploadId: string; authorization: string | undefined },
+): Promise<UploadStatus> {
+  const token = bundleToken(req.authorization);
+  if (!UPLOAD_ID_RE.test(req.uploadId) || !UPLOAD_TOKEN_RE.test(token)) throw notFound("Upload");
+  const t = await w.env.DB.prepare("SELECT * FROM upload_tickets WHERE id = ?1 AND token_hash = ?2")
+    .bind(req.uploadId, await hashToken(token))
+    .first<TicketRow>();
+  if (!t) throw notFound("Upload");
+  const id =
+    (t.mode === "update" ? t.artifact_id : (t.result_artifact_id ?? t.reserved_artifact_id)) ?? "";
+  const now = nowIso();
+  let url: string | null = null;
+  if (t.state === "used" && t.result_artifact_id) {
+    const a = await w.env.DB.prepare("SELECT slug FROM artifacts WHERE id = ?1")
+      .bind(t.result_artifact_id)
+      .first<{ slug: string }>();
+    url = a ? appUrl(w.config, `/a/${a.slug}`) : null;
+  }
+  const receiving =
+    t.receiving_until !== null && t.receiving_until > now ? t.receiving_until : null;
+  const state: UploadStatus["state"] =
+    t.state !== "open"
+      ? t.state
+      : receiving
+        ? "receiving"
+        : t.expires_at <= now
+          ? "expired"
+          : t.attempts >= LIMITS.maxTicketAttempts
+            ? "exhausted"
+            : "open";
+  const next = {
+    used: "It was published: give the user the url. For another change, call start_upload again",
+    receiving:
+      "A bundle request for this upload is still running: check again in a few seconds" +
+      ` (its lease ends at ${receiving} at the latest)`,
+    open: "Nothing was published with this upload yet: send the bundle again (it commits at most once)",
+    dead: "Someone published in between, so this upload ended: read the artifact again (get_artifact), then start_upload with the new base_version",
+    expired: "Nothing was published with this upload, and it expired: call start_upload again",
+    exhausted: `Nothing was published with this upload, and its ${LIMITS.maxTicketAttempts} attempts are used: call start_upload again`,
+  }[state];
+  return {
+    upload_id: t.id,
+    state,
+    mode: t.mode,
+    id,
+    version: t.state === "used" ? t.result_version : null,
+    url,
+    expires_at: t.expires_at,
+    receiving_until: receiving,
+    next,
+  };
 }

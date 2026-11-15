@@ -150,8 +150,11 @@ export interface StartUploadResult {
   expires_at: string;
   /** Absolute: <APP_ORIGIN>/api/v1/uploads/<upload_id>/bundle */
   upload_url: string;
-  target:
-    | { mode: "publish"; type: ArtifactType }
+  target: /**
+   * `id` is reserved at mint: the artifact the bundle creates gets exactly this id, so after a
+   * lost response get_artifact(id) says whether it was published (not_found: it was not).
+   */
+    | { mode: "publish"; id: string; type: ArtifactType }
     | {
         mode: "update";
         id: string;
@@ -164,6 +167,25 @@ export interface StartUploadResult {
   content_isolation: ContentIsolation;
   /** Shell commands with a <folder> placeholder. npx only on release builds >= MIN_UPLOAD_CLI_VERSION. */
   commands: { curl: string; npx?: string };
+  next: string;
+}
+
+/**
+ * GET /api/v1/uploads/:id with the upload token: whether that upload committed, for a client whose
+ * bundle response was lost. `receiving` means a bundle request still holds the receiving lease.
+ */
+export interface UploadStatus {
+  upload_id: string;
+  state: "open" | "receiving" | "used" | "dead" | "expired" | "exhausted";
+  mode: "publish" | "update";
+  /** The artifact: the update's target, or the id a publish creates (reserved at mint). */
+  id: string;
+  /** The version the upload committed, once used. */
+  version: number | null;
+  /** The artifact's app URL, once used. */
+  url: string | null;
+  expires_at: string;
+  receiving_until: string | null;
   next: string;
 }
 

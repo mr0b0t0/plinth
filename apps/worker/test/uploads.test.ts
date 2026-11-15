@@ -6,6 +6,7 @@ import { createExecutionContext, waitOnExecutionContext } from "cloudflare:test"
 import { env } from "cloudflare:workers";
 import {
   API,
+  ARTIFACT_ID_RE,
   COOKIES,
   LIMITS,
   type StartUploadInput,
@@ -15,7 +16,7 @@ import {
 } from "@plinth/shared";
 import { eq } from "drizzle-orm";
 import { Hono } from "hono";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { type AppEnv, base } from "../src/api/context.ts";
 import { bundleHandler } from "../src/api/uploads.ts";
 import { PLINTH_VERSION } from "../src/app/version.ts";
@@ -213,7 +214,14 @@ describe("start_upload mints a single-use ticket", () => {
     expect(r.upload_id).toMatch(/^[a-z0-9]{20}$/);
     expect(r.upload_token).toMatch(new RegExp(`^${UPLOAD_TOKEN_PREFIX}[A-Za-z0-9_-]{43}$`));
     expect(r.upload_url).toBe(`http://app.localhost:8787/api/v1/uploads/${r.upload_id}/bundle`);
-    expect(r.target).toEqual({ mode: "publish", type: "html" });
+    expect(r.target).toEqual({
+      mode: "publish",
+      id: expect.stringMatching(ARTIFACT_ID_RE),
+      type: "html",
+    });
+    const reserved = (r.target as { id: string }).id;
+    // A lost answer is checked with get_artifact on that id, before any retry.
+    expect(r.next).toContain(`call get_artifact with id ${reserved} first`);
     expect(r.limits).toEqual(instanceLimits(config()));
     expect(r.content_isolation).toBe("origin");
     const ttl = Date.parse(r.expires_at) - before;
@@ -233,6 +241,7 @@ describe("start_upload mints a single-use ticket", () => {
       scopes: "artifacts:read artifacts:write mentions",
       mode: "publish",
       artifact_id: null,
+      reserved_artifact_id: reserved,
       artifact_type: "html",
       title: "Site",
       base_version: null,
@@ -1834,5 +1843,339 @@ describe("an abandoned, slow or over-quota bundle leaves nothing behind", () => 
     expect(details(e2).adding_bytes).toBe(200_000);
     expect(await newKeys(id)).toEqual([]);
     expect((await ticket(t2.upload_id)).state).toBe("open");
+  });
+});
+
+// ---------- a lost response, then a retry ----------
+
+describe("a lost response, then a retry", () => {
+  const SITE2 = [
+    { name: "index.html", data: "<!doctype html><title>Bundled</title><p>second</p>" },
+    { name: "assets/app.js", data: "console.log(2)" },
+  ];
+
+  /** What a retry must leave alone: the artifact row, its versions and its stored objects. */
+  async function snapshot(id: string) {
+    const art = await env.DB.prepare(
+      "SELECT current_version AS cur, updated_at AS updated FROM artifacts WHERE id = ?1",
+    )
+      .bind(id)
+      .first<{ cur: number; updated: string }>();
+    const versions = await env.DB.prepare(
+      "SELECT number, r2_prefix AS prefix FROM versions WHERE artifact_id = ?1 ORDER BY number",
+    )
+      .bind(id)
+      .all<{ number: number; prefix: string }>();
+    return { art, versions: versions.results, keys: (await keysUnder(`artifacts/${id}/`)).sort() };
+  }
+
+  /** A response the client never read: drop its body unread. */
+  async function lose(res: Response): Promise<void> {
+    await res.body?.cancel();
+  }
+
+  it("a body that ends mid-file (the client went away while sending) commits nothing", async () => {
+    // The guarantee the docs give: a disconnect before the whole tar arrived can never commit,
+    // because the tar is incomplete. No request.signal is involved here.
+    const { a, id } = await ownerWithArtifact();
+    const t = await mint(a, { id, base_version: 1 }, stageDeps);
+    const before = await snapshot(id);
+    const full = tar(SITE2);
+    const res = await postBundle(t.upload_url, {
+      token: t.upload_token,
+      body: full.slice(0, BLOCK * 2 + 100),
+    });
+    expect(res.status).toBe(400);
+    await lose(res);
+    expect(await snapshot(id)).toEqual(before);
+    expect(await ticket(t.upload_id)).toMatchObject({ state: "open", attempts: 1 });
+  });
+
+  it("commit lands, response lost: start_upload with the old base and a second ticket's bundle get the conflict; no v3", async () => {
+    const { a, id } = await ownerWithArtifact();
+    const c = await mcpClient(a.token);
+    const t1 = await tool<StartUploadResult>(c, "start_upload", { id, base_version: 1 });
+    // A second ticket for the same base, minted before the first commits (an agent that asked twice).
+    const t2 = await tool<StartUploadResult>(c, "start_upload", { id, base_version: 1 });
+    expect(t1.isError || t2.isError).toBe(false);
+    const res = await postBundle(t1.data.upload_url, {
+      token: t1.data.upload_token,
+      body: tar(SITE2),
+    });
+    expect(res.status).toBe(200);
+    await lose(res);
+    const after = await snapshot(id);
+    expect(after.art?.cur).toBe(2);
+
+    // The agent checks first: get_artifact shows the version the lost request committed.
+    const got = await tool(c, "get_artifact", { id });
+    expect(got.data.version).toBe(2);
+    // Retrying blindly against the old base is refused at mint, before anything is staged.
+    const again = await tool(c, "start_upload", { id, base_version: 1 });
+    expect(again.isError).toBe(true);
+    expect(again.data.error).toMatchObject({ code: "conflict", details: { current_version: 2 } });
+    // The ticket minted before the commit gets the usual conflict on its bundle, and dies.
+    const late = await postBundle(t2.data.upload_url, {
+      token: t2.data.upload_token,
+      body: tar(SITE2),
+    });
+    expect(late.status).toBe(409);
+    expect((await json(late)).error.details).toMatchObject({
+      reason: "conflict",
+      current_version: 2,
+    });
+    expect((await ticket(t2.data.upload_id)).state).toBe("dead");
+
+    expect(await snapshot(id)).toEqual(after);
+    expect(await versionRow(id, 3)).toBeFalsy();
+  });
+
+  it("the same ticket's bundle sent again after its commit answers upload_used and commits nothing", async () => {
+    const { a, id, slug } = await ownerWithArtifact();
+    const t = await mint(a, { id, base_version: 1 }, stageDeps);
+    const first = await postBundle(t.upload_url, { token: t.upload_token, body: tar(SITE2) });
+    expect(first.status).toBe(200);
+    await lose(first);
+    const after = await snapshot(id);
+    const used = await ticket(t.upload_id);
+    expect(used).toMatchObject({ state: "used", result_artifact_id: id, result_version: 2 });
+
+    // Re-running the same commands.curl: refused before any byte is staged.
+    const again = await postBundle(t.upload_url, { token: t.upload_token, body: tar(SITE2) });
+    expect(again.status).toBe(409);
+    expect((await json(again)).error.details).toMatchObject({
+      reason: "upload_used",
+      id,
+      version: 2,
+      url: `${config().appOrigin}/a/${slug}`,
+    });
+    expect(await snapshot(id)).toEqual(after);
+    expect(await ticket(t.upload_id)).toMatchObject({ state: "used", attempts: used.attempts });
+    expect(await versionRow(id, 3)).toBeFalsy();
+  });
+
+  it("publish mode: start_upload names the artifact it creates; a lost response then a retry with the same ticket makes no second artifact", async () => {
+    const a = await agent();
+    const c = await mcpClient(a.token);
+    const t = await tool<StartUploadResult>(c, "start_upload", { title: "Lost answer" });
+    expect(t.isError).toBe(false);
+    expect(t.data.target.mode).toBe("publish");
+    const reserved = (t.data.target as { id: string }).id;
+    expect(reserved).toMatch(ARTIFACT_ID_RE);
+    // Before the bundle, nothing has that id.
+    const none = await tool(c, "get_artifact", { id: reserved });
+    expect(none.isError).toBe(true);
+    expect(none.data.error.code).toBe("not_found");
+
+    const res = await postBundle(t.data.upload_url, {
+      token: t.data.upload_token,
+      body: tar(SITE),
+    });
+    expect(res.status).toBe(201);
+    await lose(res);
+    const got = await tool(c, "get_artifact", { id: reserved });
+    expect(got.isError).toBe(false);
+    expect(got.data).toMatchObject({ id: reserved, version: 1 });
+    const after = await snapshot(reserved);
+
+    const again = await postBundle(t.data.upload_url, {
+      token: t.data.upload_token,
+      body: tar(SITE),
+    });
+    expect(again.status).toBe(409);
+    expect((await json(again)).error.details).toMatchObject({
+      reason: "upload_used",
+      id: reserved,
+      version: 1,
+    });
+    const n = await env.DB.prepare("SELECT count(*) AS n FROM artifacts WHERE owner_id = ?1")
+      .bind(a.user.id)
+      .first<{ n: number }>();
+    expect(n?.n).toBe(1);
+    expect(await snapshot(reserved)).toEqual(after);
+    expect(await ticket(t.data.upload_id)).toMatchObject({
+      state: "used",
+      result_artifact_id: reserved,
+    });
+  });
+
+  it("GET /uploads/:id tells the token's holder whether the upload committed, and nothing more", async () => {
+    const { a, id, slug } = await ownerWithArtifact();
+    const t = await mint(a, { id, base_version: 1 }, stageDeps);
+    const statusUrl = t.upload_url.replace(/\/bundle$/, "");
+    const status = (token?: string, url = statusUrl) =>
+      call(url, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+
+    const open = await status(t.upload_token);
+    expect(open.status).toBe(200);
+    expect(await json(open)).toEqual({
+      upload_id: t.upload_id,
+      state: "open",
+      mode: "update",
+      id,
+      version: null,
+      url: null,
+      expires_at: t.expires_at,
+      receiving_until: null,
+      next: expect.any(String),
+    });
+    // Only the upload token: no token, the agent's own bearer, or another ticket's token.
+    expect((await status()).status).toBe(401);
+    expect((await status(a.token)).status).toBe(401);
+    const other = await mint(a, { id, base_version: 1 }, stageDeps);
+    expect((await status(other.upload_token)).status).toBe(404);
+    // It reads, never counts an attempt.
+    expect((await ticket(t.upload_id)).attempts).toBe(0);
+
+    const res = await postBundle(t.upload_url, { token: t.upload_token, body: tar(SITE2) });
+    expect(res.status).toBe(200);
+    await lose(res);
+    const done = await json(await status(t.upload_token));
+    expect(done).toMatchObject({
+      state: "used",
+      mode: "update",
+      id,
+      version: 2,
+      url: `${config().appOrigin}/a/${slug}`,
+    });
+    // The other ticket, minted on the old base, can no longer commit: the status says so.
+    const late = await postBundle(other.upload_url, {
+      token: other.upload_token,
+      body: tar(SITE2),
+    });
+    expect(late.status).toBe(409);
+    const otherStatus = await status(other.upload_token, other.upload_url.replace(/\/bundle$/, ""));
+    expect((await json(otherStatus)).state).toBe("dead");
+  });
+
+  it("GET /uploads/:id reports a publish-mode ticket's reserved id, then the version it made", async () => {
+    const a = await agent();
+    const t = await mint(a, { title: "Status" }, stageDeps);
+    const reserved = (t.target as { id: string }).id;
+    const statusUrl = t.upload_url.replace(/\/bundle$/, "");
+    const read = async () =>
+      json(await call(statusUrl, { headers: { Authorization: `Bearer ${t.upload_token}` } }));
+    expect(await read()).toMatchObject({ state: "open", mode: "publish", id: reserved });
+    const res = await postBundle(t.upload_url, { token: t.upload_token, body: tar(SITE) });
+    expect(res.status).toBe(201);
+    expect((await json(res)).id).toBe(reserved);
+    expect(await read()).toMatchObject({ state: "used", id: reserved, version: 1 });
+  });
+});
+
+// ---------- E.2: the upload token is never logged and never in a URL ----------
+
+describe("the upload token is never logged and never in a URL", () => {
+  const spies: ReturnType<typeof vi.spyOn>[] = [];
+  afterEach(() => {
+    for (const s of spies.splice(0)) s.mockRestore();
+  });
+
+  function brokenD1(): D1Database {
+    const fail = () => {
+      throw new Error("D1_ERROR: simulated failure");
+    };
+    return { prepare: fail, batch: fail, exec: fail, dump: fail, withSession: fail } as never;
+  }
+
+  /** Every URL inside a JSON value's strings. */
+  function urlsIn(value: unknown): string[] {
+    const out: string[] = [];
+    const walk = (v: unknown) => {
+      if (typeof v === "string") out.push(...(v.match(/https?:\/\/[^\s'"<>)]+/g) ?? []));
+      else if (Array.isArray(v)) v.forEach(walk);
+      else if (v && typeof v === "object") Object.values(v).forEach(walk);
+    };
+    walk(value);
+    return out;
+  }
+
+  it("a full MCP start_upload and bundle redeem, a status read and failures log no token", async () => {
+    const lines: string[] = [];
+    for (const m of ["log", "info", "warn", "error", "debug"] as const) {
+      const spy = vi.spyOn(console, m).mockImplementation((...args: unknown[]) => {
+        lines.push(
+          args
+            .map((x) =>
+              x instanceof Error ? `${x.message}\n${x.stack}` : (JSON.stringify(x) ?? String(x)),
+            )
+            .join(" "),
+        );
+      });
+      spies.push(spy);
+    }
+    const a = await agent();
+    const c = await mcpClient(a.token);
+    const minted = await tool<StartUploadResult>(c, "start_upload", { title: "Never logged" });
+    expect(minted.isError).toBe(false);
+    const t = minted.data;
+    const authorization = `Bearer ${t.upload_token}`;
+    const res = await postBundle(t.upload_url, {
+      token: t.upload_token,
+      body: await gzip(tar(viteBuild(12))),
+      headers: { "Content-Type": "application/gzip" },
+    });
+    expect(res.status).toBe(201);
+    const result = await json(res);
+    const statusUrl = t.upload_url.replace(/\/bundle$/, "");
+    const status = await json(await call(statusUrl, { headers: { Authorization: authorization } }));
+    expect(status.state).toBe("used");
+    const used = await json(await postBundle(t.upload_url, { token: t.upload_token }));
+    expect(used.error.details.reason).toBe("upload_used");
+    // REST mint too, and the bundle and status routes on a failing database (the Worker logs
+    // the unhandled error: the positive control that the spy sees the Worker's output).
+    const rest = await json(
+      await call("/api/v1/uploads", {
+        method: "POST",
+        headers: { ...a.auth, "Content-Type": "application/json" },
+        body: "{}",
+      }),
+    );
+    const broken = { DB: brokenD1() };
+    for (const req of [
+      new Request(rest.upload_url, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${rest.upload_token}` },
+        body: goodTar(),
+      }),
+      new Request(rest.upload_url.replace(/\/bundle$/, ""), {
+        headers: { Authorization: `Bearer ${rest.upload_token}` },
+      }),
+    ]) {
+      const ctx = createExecutionContext();
+      const r = await worker.fetch(req, { ...env, ...broken } as never, ctx);
+      await waitOnExecutionContext(ctx);
+      expect(r.status).toBe(500);
+      await r.body?.cancel();
+    }
+    expect(lines.some((l) => l.includes("simulated failure"))).toBe(true);
+
+    const log = lines.join("\n");
+    for (const tok of [t.upload_token, rest.upload_token]) {
+      const secret = tok.slice(UPLOAD_TOKEN_PREFIX.length);
+      expect(secret.length).toBe(43);
+      expect(log).not.toContain(tok);
+      expect(log).not.toContain(secret);
+      expect(log).not.toContain(`Bearer ${tok}`);
+    }
+    expect(log).not.toContain(UPLOAD_TOKEN_PREFIX);
+
+    // No URL the server returns carries the token. commands.curl has it only inside the header
+    // it writes through printf; with that taken out, the token is gone from the command.
+    for (const [tok, body] of [
+      [t.upload_token, [t, result, status, used]],
+      [rest.upload_token, [rest]],
+    ] as const) {
+      const secret = tok.slice(UPLOAD_TOKEN_PREFIX.length);
+      for (const u of urlsIn(body)) expect(u).not.toContain(secret);
+    }
+    for (const r of [t, rest]) {
+      const header = `-H @<(printf 'Authorization: Bearer %s' '${r.upload_token}')`;
+      expect(r.commands.curl).toContain(header);
+      expect(r.commands.curl.replace(header, "")).not.toContain(
+        r.upload_token.slice(UPLOAD_TOKEN_PREFIX.length),
+      );
+      expect(r.next).not.toContain(r.upload_token.slice(UPLOAD_TOKEN_PREFIX.length));
+    }
   });
 });

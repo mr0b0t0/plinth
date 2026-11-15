@@ -17,6 +17,7 @@ CREATE TABLE upload_tickets (
   attempts INTEGER NOT NULL DEFAULT 0,
   receiving_claim TEXT, receiving_until TEXT, -- concurrency lease only, never decides the commit
   result_artifact_id TEXT, result_version INTEGER,
+  reserved_artifact_id TEXT,                 -- publish: the id its commit creates (target.id); update: NULL
   created_at TEXT NOT NULL, expires_at TEXT NOT NULL, used_at TEXT,
   CHECK ((credential = 'connection') = (connection_id IS NOT NULL)),
   CHECK ((credential = 'admin') = (admin_token_hash IS NOT NULL)),

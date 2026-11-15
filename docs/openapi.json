@@ -762,6 +762,34 @@
         "security": [{ "uploadToken": [] }]
       }
     },
+    "/uploads/{id}": {
+      "get": {
+        "operationId": "uploadStatus",
+        "summary": "Whether an upload committed (after a lost bundle response)",
+        "description": "Takes only `Authorization: Bearer plinth_up_...`, like the bundle route. Reads the ticket: no attempt is counted and no lease is taken. `used` names the version and url.",
+        "tags": ["Artifacts"],
+        "parameters": [
+          {
+            "in": "path",
+            "required": true,
+            "name": "id",
+            "schema": { "type": "string", "minLength": 1, "maxLength": 200 }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/UploadStatus" } }
+            }
+          },
+          "401": { "$ref": "#/components/responses/E401" },
+          "404": { "$ref": "#/components/responses/E404" },
+          "default": { "$ref": "#/components/responses/Error" }
+        },
+        "security": [{ "uploadToken": [] }]
+      }
+    },
     "/artifacts/{ref}/visibility": {
       "put": {
         "operationId": "setVisibility",
@@ -2304,9 +2332,13 @@
                 "type": "object",
                 "properties": {
                   "mode": { "const": "publish" },
+                  "id": {
+                    "type": "string",
+                    "description": "Reserved now: the artifact the bundle creates gets this id, so after a lost response get_artifact says whether it was published"
+                  },
                   "type": { "$ref": "#/components/schemas/ArtifactType" }
                 },
-                "required": ["mode", "type"]
+                "required": ["mode", "id", "type"]
               },
               {
                 "type": "object",
@@ -2349,6 +2381,38 @@
           "limits",
           "content_isolation",
           "commands",
+          "next"
+        ]
+      },
+      "UploadStatus": {
+        "type": "object",
+        "properties": {
+          "upload_id": { "type": "string" },
+          "state": {
+            "type": "string",
+            "enum": ["open", "receiving", "used", "dead", "expired", "exhausted"],
+            "description": "receiving: a bundle request still holds the lease; used: it committed; dead: a conflict ended it"
+          },
+          "mode": { "type": "string", "enum": ["publish", "update"] },
+          "id": {
+            "type": "string",
+            "description": "The artifact updated, or the one a publish creates (reserved at mint)"
+          },
+          "version": { "type": ["integer", "null"] },
+          "url": { "type": ["string", "null"] },
+          "expires_at": { "type": "string", "format": "date-time" },
+          "receiving_until": { "type": ["string", "null"] },
+          "next": { "type": "string" }
+        },
+        "required": [
+          "upload_id",
+          "state",
+          "mode",
+          "id",
+          "version",
+          "url",
+          "expires_at",
+          "receiving_until",
           "next"
         ]
       },

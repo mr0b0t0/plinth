@@ -13,7 +13,7 @@ import { dataApi } from "./data.ts";
 import { meApi } from "./me.ts";
 import { reportsApi } from "./reports.ts";
 import { sharingApi } from "./sharing.ts";
-import { bundleHandler, requireBearerHeader, uploadsApi } from "./uploads.ts";
+import { bundleHandler, requireBearerHeader, uploadStatusHandler, uploadsApi } from "./uploads.ts";
 import { viewApi } from "./view.ts";
 
 export const api = new Hono<AppEnv>();
@@ -26,6 +26,8 @@ api.use("*", async (c, next) => {
 // and authenticates with its upload token alone, so it sits before the JSON body limit and before
 // `authenticate`: no cookie is read and no session or viewer principal can attach to it.
 api.post(API.uploadBundle, bundleHandler());
+// Its status read (whether a bundle whose answer was lost committed) takes the same token only.
+api.get(API.uploadStatus, uploadStatusHandler);
 // JSON bodies: inline sources and assets, base64-encoded, plus JSON overhead.
 api.use(
   "*",

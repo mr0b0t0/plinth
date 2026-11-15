@@ -122,10 +122,13 @@ async function liveArtifactCount(ctx: Ctx, ownerId: string): Promise<number> {
   return r?.n ?? 0;
 }
 
-/** The publish scope check and the artifact-count pre-check, then a target with a fresh id. */
+/**
+ * The publish scope check and the artifact-count pre-check, then a target with a fresh id, or with
+ * `artifactId` when one was reserved earlier (a publish-mode upload ticket names its id at mint).
+ */
 export async function newArtifactTarget(
   ctx: Ctx,
-  input: { type: ArtifactType; title?: string },
+  input: { type: ArtifactType; title?: string; artifactId?: string },
 ): Promise<VersionTarget> {
   const actor = requireActor(ctx);
   if (ctx.principal.kind === "agent" && !ctx.principal.scopes.has("artifacts:write")) {
@@ -139,7 +142,7 @@ export async function newArtifactTarget(
   const title = input.title?.trim();
   return {
     mode: "publish",
-    artifactId: newArtifactId(),
+    artifactId: input.artifactId ?? newArtifactId(),
     type: input.type,
     ...(title ? { title } : {}),
   };

@@ -5,7 +5,13 @@
 import { API, startUploadInput } from "@plinth/shared";
 import { type Handler, Hono } from "hono";
 import { unauthorized } from "../lib/errors.ts";
-import { redeemBundle, type StageDeps, stageDeps, startUpload } from "../services/uploads.ts";
+import {
+  redeemBundle,
+  type StageDeps,
+  stageDeps,
+  startUpload,
+  uploadStatus,
+} from "../services/uploads.ts";
 import { type AppEnv, clientIp, parseBody, serviceCtx } from "./context.ts";
 
 export const uploadsApi = new Hono<AppEnv>();
@@ -51,3 +57,12 @@ export function bundleHandler(deps: StageDeps = stageDeps): Handler<AppEnv> {
     return c.json(body, status);
   };
 }
+
+/** GET /uploads/:id: the upload token only, like the bundle route (no cookies, no CORS). */
+export const uploadStatusHandler: Handler<AppEnv> = async (c) =>
+  c.json(
+    await uploadStatus(
+      { env: c.env, config: c.get("config") },
+      { uploadId: c.req.param("id") ?? "", authorization: c.req.header("authorization") },
+    ),
+  );
