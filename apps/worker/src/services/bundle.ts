@@ -357,7 +357,7 @@ function gunzip(src: ReadableStream<Uint8Array>): ReadableStream<Uint8Array> {
           const n = res.value.byteLength;
           // The read transferred `buf`: copy the bytes out and read into it again.
           const chunk = res.value.slice();
-          buf = new Uint8Array(res.value.buffer);
+          buf = new Uint8Array(res.value.buffer as ArrayBuffer);
           maybeMore = n === buf.byteLength;
           inflated += n;
           outSinceFeed += n;
