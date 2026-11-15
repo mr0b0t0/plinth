@@ -30,10 +30,12 @@ export async function startFakePlinth(options = {}) {
     forgetOnce: false, // the next PUT reports every reused file as missing
     // A lost response: "after" commits (or refuses) and then drops the connection without an
     // answer; "before" reads the whole body and drops it without committing; "midway" (bundles
-    // only) drops it after the first chunk. Applies to the next
+    // only) drops it after the first chunk; "late" (PUTs only) drops it, then commits 300 ms later. Applies to the next
     // bundle POST (dropBundle) or inline PUT (dropPut), then resets.
     dropBundle: null,
     dropPut: null,
+    // GET /uploads/:id answers 503 text/plain this many more times (Infinity: always).
+    statusFail: 0,
     limits: {
       max_html_bytes: 5 * 1024 * 1024,
       max_doc_bytes: 1024 * 1024,
@@ -266,6 +268,11 @@ export async function startFakePlinth(options = {}) {
         const m = /^Bearer (plinth_up_\S+)$/.exec(req.headers.authorization ?? "");
         if (!m) return apiError(res, 401, "unauthorized", "Upload token only");
         if (!t || m[1] !== t.token) return apiError(res, 404, "not_found", "Not found");
+        if (state.statusFail > 0) {
+          state.statusFail -= 1;
+          res.writeHead(503, { "Content-Type": "text/plain" });
+          return res.end("upstream down");
+        }
         const state_ = t.used ? "used" : t.dead ? "dead" : "open";
         return send(res, 200, {
           upload_id: status[1],
@@ -431,6 +438,14 @@ export async function startFakePlinth(options = {}) {
           const dropping = state.dropPut;
           state.dropPut = null;
           if (dropping === "before") return drop(res);
+          if (dropping === "late") {
+            // The connection breaks first; the server finishes the PUT a moment later.
+            drop(res);
+            await new Promise((r) => setTimeout(r, 300));
+            commit(a, files);
+            state.putCommits = (state.putCommits ?? 0) + 1;
+            return;
+          }
           const committed = commit(a, files);
           state.putCommits = (state.putCommits ?? 0) + 1;
           if (dropping === "after") return drop(res);
@@ -454,10 +469,12 @@ export async function startFakePlinth(options = {}) {
       commit(a, new Map(Object.entries(files).map(([k, v]) => [k, Buffer.from(v)])));
       return a;
     },
-    /** A second version written by someone else. */
+    /** A second version written by someone else (it adds a file of theirs). */
     bump(a) {
       const cur = a.versions.at(-1);
-      commit(a, new Map([...cur].map(([k, f]) => [k, f.bytes])));
+      const files = new Map([...cur].map(([k, f]) => [k, f.bytes]));
+      files.set(`theirs-${a.versions.length}.txt`, Buffer.from("someone else"));
+      commit(a, files);
     },
     close: () =>
       new Promise((r) => {

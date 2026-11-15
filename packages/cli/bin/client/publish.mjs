@@ -196,21 +196,52 @@ async function uploadStatus({ uploadUrl, uploadToken, ctx }) {
   return readJson(res, "GET upload status");
 }
 
+/** Waits before each new try of a status read that failed (often the same network blip). */
+const STATUS_RETRY_MS = [500, 1500, 3000];
+
+/** uploadStatus, tried again after a lost answer or a 5xx; a 4xx from Plinth is final. */
+async function readUploadStatus(args) {
+  for (let i = 0; ; i++) {
+    try {
+      return await uploadStatus(args);
+    } catch (e) {
+      const transient = e instanceof LostResponse || (e instanceof ApiError && e.status >= 500);
+      if (!transient || i >= STATUS_RETRY_MS.length) throw e;
+      await sleep(STATUS_RETRY_MS[i]);
+    }
+  }
+}
+
+/** The upload id in an upload URL (…/uploads/<id>/bundle). */
+const uploadIdOf = (uploadUrl) => /\/uploads\/([^/]+)\/bundle$/.exec(uploadUrl)?.[1] ?? null;
+
 /**
  * The whole bundle was sent but its answer was lost, so it may have committed. Ask the upload
  * (waiting while a request still holds it) instead of sending it again. Returns `{ id, version,
- * url, recovered }` when it committed; otherwise throws: exit 3 when a conflict ended it.
+ * url, recovered }` when it committed; otherwise throws: exit 3 when a conflict ended it. When the
+ * status cannot be read, the error names the artifact to check (`targetId`: the update's artifact,
+ * or the id a publish ticket reserved) and carries `unknown` for --json.
  */
-async function afterLostBundle(lost, { uploadUrl, uploadToken, ctx, conflictMessage, retry }) {
+async function afterLostBundle(
+  lost,
+  { uploadUrl, uploadToken, ctx, conflictMessage, retry, targetId },
+) {
   const deadline = Date.now() + STATUS_WAIT_MS;
   let s;
   for (;;) {
     try {
-      s = await uploadStatus({ uploadUrl, uploadToken, ctx });
+      s = await readUploadStatus({ uploadUrl, uploadToken, ctx });
     } catch (e) {
-      throw new CliError(
-        `${lost.message}\nThe whole bundle was sent, so it may have been published, but the upload's status could not be read (${e.message}). Check the artifact before sending it again; an upload commits at most once.`,
+      const uploadId = uploadIdOf(uploadUrl);
+      const err = new CliError(
+        `${lost.message}\nThe whole bundle was sent, so it may have been published, but the status of upload ${uploadId ?? uploadUrl} could not be read (${e.message}).` +
+          (targetId
+            ? ` Check artifact ${targetId} before sending it again (GET ${ctx.origin}/api/v1/artifacts/${targetId}, or get_artifact): if it has the new version, this upload published it; if it is not found or still at the old version, nothing was published.`
+            : " Check the artifact before sending it again.") +
+          " An upload commits at most once.",
       );
+      err.unknown = { published: "unknown", id: targetId ?? null, upload_id: uploadId };
+      throw err;
     }
     if (s.state !== "receiving" || Date.now() >= deadline) break;
     await sleep(STATUS_POLL_MS);
@@ -227,23 +258,34 @@ async function afterLostBundle(lost, { uploadUrl, uploadToken, ctx, conflictMess
   );
 }
 
+/** How long a lost inline update is given to land (a PUT the server was still running) before a second read. */
+const LATE_PUT_MS = 1500;
+
 /**
- * An inline update whose answer was lost: read the artifact. Still at the base: nothing was
- * published. One version past it and matching the folder: that is this update. Anything else is a
- * conflict (exit 3).
+ * An inline update whose answer was lost: read the artifact. Still at the base, and again after a
+ * moment (the server may still have been running the PUT when the connection broke): nothing was
+ * published as far as can be told, and the rerun it suggests states the base, so a commit that
+ * lands even later stops it (exit 3) instead of publishing twice. One version past it and matching
+ * the folder: that is this update. Anything else is a conflict (exit 3).
  */
 async function afterLostPut(lost, { api, ref, detail, base, files, ctx }) {
-  let now;
-  try {
-    now = await api.get(`/artifacts/${encodeURIComponent(detail.id)}`);
-  } catch (e) {
-    throw new CliError(
-      `${lost.message}\nIt may have been published, but ${ref} could not be read to check (${e.message}). Check it before you publish again.`,
-    );
+  const read = async () => {
+    try {
+      return await api.get(`/artifacts/${encodeURIComponent(detail.id)}`);
+    } catch (e) {
+      throw new CliError(
+        `${lost.message}\nIt may have been published, but ${ref} could not be read to check (${e.message}). Check it before you publish again.`,
+      );
+    }
+  };
+  let now = await read();
+  if (now.version === base) {
+    await sleep(LATE_PUT_MS);
+    now = await read();
   }
   if (now.version === base) {
     throw new CliError(
-      `${lost.message}\nThe answer was lost, and nothing was published: ${ref} is still v${base}. Run the same command again.`,
+      `${lost.message}\nThe answer was lost, and nothing was published: ${ref} is still v${base}. Run the same command again with --base-version ${base}: if this update still lands first, that stops with a conflict (exit 3) instead of publishing it twice.`,
     );
   }
   const mine = await verify(api, { id: detail.id, version: base + 1 }, files);
@@ -406,6 +448,12 @@ function utf8Text(f, bytes) {
   }
 }
 
+/** Rethrow `err`; one whose outcome is unknown also prints the ids to check, as JSON, with --json. */
+function unknownOutcome(err, opts, ctx) {
+  if (opts.json && err?.unknown) ctx.stdout(JSON.stringify(err.unknown, null, 2));
+  throw err;
+}
+
 const RETRY_PUBLISH = { open: "Run the same command again.", ended: "Run the same command again." };
 const RETRY_UPLOAD = {
   open: "Run the same command again (the upload keeps its remaining attempts).",
@@ -476,7 +524,8 @@ export async function publish(dir, opts, ctx) {
         ctx,
         conflictMessage: () => "This upload was ended by a conflict. Run the same command again.",
         retry: RETRY_PUBLISH,
-      });
+        targetId: ticket.target?.id,
+      }).catch((err) => unknownOutcome(err, opts, ctx));
     }
   } else {
     await ctx.requireAuth();
@@ -495,11 +544,36 @@ export async function publish(dir, opts, ctx) {
       );
     }
     base ??= detail.version;
-    if (base !== detail.version) {
-      throw new CliError(staleBase(ref, base)(detail.version), EXIT.conflict);
-    }
     const { total } = checkLimits(files, sourcePath, type, limits);
     hashFiles(files);
+    if (base !== detail.version) {
+      // A rerun after a lost answer whose update landed anyway: the current version is the folder.
+      const same = base < detail.version ? await verify(api, detail, files) : { verified: false };
+      if (same.verified) {
+        ctx.stderr(
+          `${ref} is already at v${detail.version}, which matches this folder (an earlier run whose answer was lost may have published it); nothing was sent.`,
+        );
+        const url = detail.url ?? `${ctx.origin}/a/${detail.slug}`;
+        if (opts.json) {
+          ctx.stdout(
+            JSON.stringify(
+              {
+                id: detail.id,
+                slug: detail.slug,
+                version: detail.version,
+                url,
+                verified: true,
+                unchanged: true,
+              },
+              null,
+              2,
+            ),
+          );
+        } else ctx.stdout(url);
+        return EXIT.ok;
+      }
+      throw new CliError(staleBase(ref, base)(detail.version), EXIT.conflict);
+    }
     const current = new Map((detail.assets ?? []).map((a) => [a.path, a.sha256]));
     const source = files.find((f) => f.path === sourcePath);
     const assets = files.filter((f) => f.path !== sourcePath);
@@ -568,7 +642,8 @@ export async function publish(dir, opts, ctx) {
             ctx,
             conflictMessage: () => staleBase(ref, base)(undefined),
             retry: RETRY_PUBLISH,
-          });
+            targetId: detail.id,
+          }).catch((err) => unknownOutcome(err, opts, ctx));
         }
       }
     } catch (e) {
@@ -625,7 +700,7 @@ export async function upload(dir, opts, ctx) {
       ctx,
       conflictMessage: () => changed(undefined),
       retry: RETRY_UPLOAD,
-    });
+    }).catch((err) => unknownOutcome(err, { json: true }, ctx));
     ctx.stdout(JSON.stringify(found, null, 2));
     ctx.stderr(
       `Published v${found.version}: ${found.url}\nThe server's answer was lost after it published; nothing was sent twice.`,

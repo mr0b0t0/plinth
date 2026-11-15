@@ -123,9 +123,14 @@ npx @mr0b0t0/plinth publish dist --id my-report-k3x9   # the next version of tha
   `url`, `content_url`, `stored`, `warnings` and `verified` for scripts and agents.
 - **A lost answer.** If the connection drops, or a proxy answers instead of Plinth, after the
   whole folder was sent, the command does not send it again: it asks the upload (or, for an inline
-  update, reads the artifact) whether it was published, and prints that version (`--json` adds
-  `"recovered": true`), exits 3 when someone else published in between, or says nothing was
-  published. A connection lost while the folder was still being sent never publishes.
+  update, reads the artifact, and again a moment later) whether it was published, and prints that
+  version (`--json` adds `"recovered": true`), exits 3 when someone else published in between, or
+  says nothing was published. When the upload's status cannot be read after a few tries, it exits
+  1 naming the artifact id and the upload id to check (`--json` prints
+  `{"published": "unknown", "id", "upload_id"}`); for a new artifact that id is the one the upload
+  reserved, and `not_found` means nothing was published. A rerun with `--base-version N` whose
+  current version already matches the folder sends nothing and exits 0. A connection lost while
+  the folder was still being sent never publishes.
 - **Build settings.** Use relative URLs (Vite: `base: './'`).
 
 Which instance: `--url`, else the instance `--name` and `--home` pick, else `PLINTH_URL`, else

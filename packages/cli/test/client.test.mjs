@@ -452,6 +452,48 @@ describe("a lost response", () => {
       assert.ok(!q.authorization?.includes("plinth_up_"), q.path);
   });
 
+  it("publish: a status read that fails at first is tried again, so the commit is still found", async () => {
+    const before = fake.state.artifacts.size;
+    const from = fake.state.requests.length;
+    fake.state.dropBundle = "after";
+    fake.state.statusFail = 2;
+    try {
+      const r = await plinth(["publish", build(site(3)), "--json"], { extraEnv: asPat() });
+      assert.equal(r.code, 0, r.stderr);
+      assert.equal(JSON.parse(r.stdout).recovered, true);
+      assert.equal(statusReads(from).length, 3);
+      assert.equal(fake.state.artifacts.size, before + 1);
+    } finally {
+      fake.state.statusFail = 0;
+    }
+  });
+
+  it("publish: when the status never reads, it names the reserved artifact id and the upload id", async () => {
+    const before = fake.state.artifacts.size;
+    const from = fake.state.requests.length;
+    fake.state.dropBundle = "after";
+    fake.state.statusFail = Number.POSITIVE_INFINITY;
+    let r;
+    try {
+      r = await plinth(["publish", build(site(3)), "--json"], { extraEnv: asPat() });
+    } finally {
+      fake.state.statusFail = 0;
+    }
+    assert.equal(r.code, 1, r.stderr);
+    const uploadId = /\/api\/v1\/uploads\/([a-z0-9]{20})$/.exec(statusReads(from)[0].path)[1];
+    const reserved = fake.state.tickets.get(uploadId).reserved;
+    assert.match(r.stderr, new RegExp(`artifact ${reserved}`));
+    assert.match(r.stderr, new RegExp(uploadId));
+    assert.match(r.stderr, /HTTP 503/);
+    assert.deepEqual(JSON.parse(r.stdout), {
+      published: "unknown",
+      id: reserved,
+      upload_id: uploadId,
+    });
+    assert.ok(statusReads(from).length > 1, "the status read is retried");
+    assert.equal(fake.state.artifacts.size, before + 1);
+  });
+
   it("publish: dropped before the commit, it says nothing was published (exit 1) and does not resend", async () => {
     const before = fake.state.artifacts.size;
     const from = fake.state.requests.length;
@@ -507,6 +549,37 @@ describe("a lost response", () => {
     assert.equal(a.versions.length, 2);
   });
 
+  it("publish --id, inline: the PUT commits just after the connection broke; it finds that version", async () => {
+    const a = fake.seed(site(2));
+    const dir = build({ ...site(2), "assets/a1.js": "console.log('late');" });
+    const from = fake.state.requests.length;
+    fake.state.dropPut = "late";
+    const r = await plinth(["publish", dir, "--id", a.id, "--json"], { extraEnv: asPat() });
+    assert.equal(r.code, 0, r.stderr);
+    const out = JSON.parse(r.stdout);
+    assert.equal(out.version, 2);
+    assert.equal(out.recovered, true);
+    assert.equal(since(from).filter((q) => q.method === "PUT").length, 1);
+    assert.equal(a.versions.length, 2);
+  });
+
+  it("publish --id --base-version: when the current version already matches the folder, it sends nothing (exit 0)", async () => {
+    const a = fake.seed(site(2));
+    const dir = build({ ...site(2), "assets/a1.js": "console.log('landed');" });
+    const first = await plinth(["publish", dir, "--id", a.id], { extraEnv: asPat() });
+    assert.equal(first.code, 0, first.stderr);
+    assert.equal(a.versions.length, 2);
+    const from = fake.state.requests.length;
+    // The rerun a lost answer suggests, after that update landed anyway.
+    const r = await plinth(["publish", dir, "--id", a.id, "--base-version", "1"], {
+      extraEnv: asPat(),
+    });
+    assert.equal(r.code, 0, r.stderr);
+    assert.match(r.stderr, /already at v2, which matches this folder/);
+    assert.equal(since(from).filter((q) => q.method === "PUT" || q.method === "POST").length, 0);
+    assert.equal(a.versions.length, 2);
+  });
+
   it("publish --id, inline: lost before the commit, it says nothing was published (exit 1)", async () => {
     const a = fake.seed(site(2));
     const dir = build({ ...site(2), "assets/a1.js": "console.log('new');" });
@@ -514,6 +587,8 @@ describe("a lost response", () => {
     const r = await plinth(["publish", dir, "--id", a.id], { extraEnv: asPat() });
     assert.equal(r.code, 1, r.stderr);
     assert.match(r.stderr, /nothing was published/i);
+    // A rerun states the base, so a commit that still lands late stops it (exit 3), never twice.
+    assert.match(r.stderr, /--base-version 1/);
     assert.equal(a.versions.length, 1);
   });
 
