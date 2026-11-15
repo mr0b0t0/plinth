@@ -13,6 +13,7 @@ import { enforce } from "../lib/ratelimit.ts";
 import { nowIso } from "../lib/time.ts";
 import { isAdmin, type Principal, principalEmail } from "../policy.ts";
 import { requireArtifact } from "./artifacts.ts";
+import { deleteClaimedAttempts, dropArtifactAttempts } from "./attempts.ts";
 import type { Ctx } from "./context.ts";
 import { wipeArtifactData } from "./data.ts";
 
@@ -170,14 +171,18 @@ export async function decideReport(
     });
   }
   if (state === "actioned") {
-    // The takedown and the wipe of the artifact's shared data go in one batch.
-    await ctx.env.DB.batch([
+    // The takedown, the wipe of the artifact's shared data and of its staging attempts go in one
+    // batch. The attempts' objects go after it: the versions' own files stay for review.
+    const results = await ctx.env.DB.batch([
       ctx.env.DB.prepare(
         `UPDATE artifacts SET taken_down_at = coalesce(taken_down_at, ?1),
            access_epoch = access_epoch + 1, updated_at = ?1 WHERE id = ?2`,
       ).bind(now, report.artifact_id),
       ...wipeArtifactData(ctx.env.DB, report.artifact_id),
+      dropArtifactAttempts(ctx.env.DB, report.artifact_id),
     ]);
+    const dropped = results.at(-1);
+    if (dropped) await deleteClaimedAttempts(ctx.env, report.artifact_id, dropped);
     await ctx.db
       .update(reports)
       .set({ state: "actioned", decidedAt: now, decidedBy: admin.userId })

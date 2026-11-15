@@ -39,6 +39,7 @@ import {
   principalUserId,
 } from "../policy.ts";
 import { requireTypeDef, resolveSource } from "./artifactTypes.ts";
+import { dropArtifactAttempts } from "./attempts.ts";
 import type { Ctx } from "./context.ts";
 import { wipeArtifactData } from "./data.ts";
 import {
@@ -709,6 +710,8 @@ export async function deleteArtifact(ctx: Ctx, ref: string): Promise<void> {
       "UPDATE artifacts SET deleted_at = ?1, access_epoch = access_epoch + 1 WHERE id = ?2",
     ).bind(nowIso(), artifact.id),
     ...wipeArtifactData(ctx.env.DB, artifact.id),
+    // Its attempt rows too: their objects are under the root deleted next.
+    dropArtifactAttempts(ctx.env.DB, artifact.id),
   ]);
   ctx.waitUntil(deletePrefix(ctx.env.FILES, `artifacts/${artifact.id}/`));
 }

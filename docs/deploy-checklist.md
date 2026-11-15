@@ -98,6 +98,9 @@ A value outside the range stops the Worker with a configuration error. `GET /api
 the values in effect under `limits`, with `max_bundle_bytes` (the version limit plus 8 MB of tar
 overhead), the largest body an upload from `start_upload` or the CLI sends.
 
+- **Cron Triggers on Workers Free:** the hourly sweep is one Cron Trigger, and Cron Triggers
+  count against the account's limit: 5 per account on Workers Free (250 on Paid). An account
+  already at 5 cannot deploy Plinth's config until one is removed.
 - **Workers Free:** Workers Free cannot reliably publish multi-megabyte versions. Its 10 ms of CPU
   per request runs out on a publish of a few megabytes: reading, inflating and hashing a 5 MB,
   50-file version alone took 12 to 24 ms in local measurements, before routing, validation, the
@@ -124,9 +127,11 @@ overhead), the largest body an upload from `start_upload` or the CLI sends.
   `enable_request_signal` compatibility flag is what lets it notice; it must be in the config you
   deploy with, see [§6](#6-upgrading-and-rolling-back)), but a
   request the runtime kills outright can still leave files no version names. They do not count
-  toward any quota. On an instance open to sign-ups, run
-  `pnpm --filter @plinth/worker admin -- sweep-orphans --remote` regularly, for example weekly
-  ([self-hosting.md](self-hosting.md#operating-notes)); there is no scheduled sweep.
+  toward any quota. The Worker's hourly cron trigger (`"triggers": { "crons": ["0 * * * *"] }`,
+  also required in the config you deploy with) removes them once the attempt is 45 minutes old.
+  Run `pnpm --filter @plinth/worker admin -- sweep-orphans --remote` only for legacy orphans:
+  files written before 0.4.0, which no staging row names
+  ([self-hosting.md](self-hosting.md#operating-notes)).
 
 ```sh
 pnpm --filter @plinth/worker exec wrangler login
@@ -360,20 +365,21 @@ hand, `wrangler d1 migrations apply` first). Plinth 0.4.0 adds migrations `0006_
 `0007_upload_tickets` and a new storage layout: a version may reuse files stored under an earlier
 version of the same artifact, and new versions are written under a fresh `v<n>.<nonce>/` prefix.
 
-Plinth 0.4.0 also needs the `enable_request_signal` compatibility flag: without it a bundle whose
-client disconnects never notices, and its files stay behind until `sweep-orphans` runs. `plinth
-deploy` takes the flags from the release, and a local or Docker instance gets them on its next
-start (`plinth start` and `pnpm local:start` add the release's flags to the instance's
-`wrangler.jsonc`, and move its `compatibility_date` up to the release's when that is later). A
-`wrangler.<env>.jsonc` that `scripts/setup.mjs` wrote before 0.4.0 does not have it: re-run setup
-with the same arguments (it now adds the release's flags to an existing config, moves its
-`compatibility_date` up to the committed config's when that is later, and keeps everything else),
-or add it by hand so the line reads
-`"compatibility_flags": ["nodejs_compat", "enable_request_signal"]`.
-Check before you deploy:
+Plinth 0.4.0 also needs the `enable_request_signal` compatibility flag and an hourly cron
+trigger. Without the flag a bundle whose client disconnects never notices, and its files stay
+behind until the next sweep; without the cron nothing sweeps them. `plinth deploy` takes both
+from the release (and refuses a config without them), and a local or Docker instance gets them on
+its next start (`plinth start` and `pnpm local:start` add the release's flags and cron trigger to
+the instance's `wrangler.jsonc`, and move its `compatibility_date` up to the release's when that is
+later). A `wrangler.<env>.jsonc` that `scripts/setup.mjs` wrote before 0.4.0 has neither: re-run
+setup with the same arguments (it adds the release's flags and cron trigger to an existing config,
+moves its `compatibility_date` up to the committed config's when that is later, keeps everything
+else, and refuses to go on if the result would still lack them), or add them by hand so the lines
+read `"compatibility_flags": ["nodejs_compat", "enable_request_signal"]` and
+`"triggers": { "crons": ["0 * * * *"] }`. Check before you deploy:
 
 ```sh
-grep compatibility_flags apps/worker/wrangler.production.jsonc
+grep -E 'compatibility_flags|crons' apps/worker/wrangler.production.jsonc
 ```
 
 **Roll forward, not back.** Rolling the Worker back past 0.4.0 breaks artifacts updated since then
@@ -383,5 +389,8 @@ or restoring such an artifact fails with "Missing stored file". Versions written
 working, including those under a `v<n>.<nonce>/` prefix (the older Worker uses the row's
 `r2_prefix` as it is). The older Worker counts storage by logical size, so accounts may reach the
 storage limit sooner while it runs, and versions it writes are full copies that 0.4.0 reads as
-before. If a release misbehaves, deploy a fix on top of it. The migrations only add a column and a
-table, so an older Worker still starts against the new schema; upload tickets are unused by it.
+before. If a release misbehaves, deploy a fix on top of it. The migrations only add a column and
+two tables, so an older Worker still starts against the new schema; upload tickets and
+`staging_attempts` are unused by it (its interrupted publishes leave files only `sweep-orphans`
+finds). An older Worker has no scheduled handler, so while it runs under a config with the cron
+trigger each hourly run fails harmlessly in the Worker's logs.

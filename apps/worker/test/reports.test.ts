@@ -4,12 +4,14 @@ import { env } from "cloudflare:workers";
 import { eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import { parseConfig } from "../src/config.ts";
-import { artifacts, devOutbox, reports } from "../src/db/schema.ts";
+import { artifacts, devOutbox, reports, versions } from "../src/db/schema.ts";
 import worker from "../src/index.ts";
+import { openStager, updateTarget } from "../src/services/stage.ts";
 import { getOrCreateUser } from "../src/services/users.ts";
 import {
   APP,
   agent,
+  agentPrincipal,
   browserSession,
   call,
   contentOrigin,
@@ -18,6 +20,8 @@ import {
   enterContent,
   json,
   publish,
+  r2Keys,
+  serviceCtxFor,
   uniqueEmail,
 } from "./helpers.ts";
 
@@ -237,6 +241,28 @@ describe("admin takedown", () => {
     // A decided report cannot be decided again.
     const twice = await adm.post(`/api/v1/admin/reports/${r1.id}`, { state: "dismissed" });
     expect(twice.status).toBe(409);
+  });
+
+  it("actioned: removes the artifact's staging attempts and their files, keeps its versions", async () => {
+    const a = await agent();
+    const { body: p } = await publish(a.auth);
+    const ctx = serviceCtxFor(agentPrincipal(a));
+    const stager = await openStager(ctx, await updateTarget(ctx, p.id, {}));
+    await stager.add("index.html", new TextEncoder().encode("<p>in flight</p>"));
+    await stager.finish();
+    const rows = () =>
+      env.DB.prepare("SELECT prefix FROM staging_attempts WHERE artifact_id = ?").bind(p.id).all();
+    expect((await rows()).results).toHaveLength(1);
+    const v1 = await db().select().from(versions).where(eq(versions.artifactId, p.id)).get();
+    const live = await r2Keys(v1?.r2Prefix ?? "-");
+    const adm = await admin();
+    const r = await json(await report(p.id, { reason: "takedown wipe" }));
+    expect((await adm.post(`/api/v1/admin/reports/${r.id}`, { state: "actioned" })).status).toBe(
+      200,
+    );
+    expect((await rows()).results).toEqual([]);
+    expect(await r2Keys(stager.prefix)).toEqual([]);
+    expect(await r2Keys(v1?.r2Prefix ?? "-")).toEqual(live);
   });
 
   it("dismissed: closes only that report, the artifact stays up", async () => {

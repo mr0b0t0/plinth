@@ -371,7 +371,7 @@ export async function redeemBundle(
   const claim = randomString(24);
   const ticket = await takeLease(w, req.uploadId, tokenHash, claim);
   // The bundle must arrive within the receiving lease: past it another request may take the
-  // lease, and sweep-orphans' floor assumes no attempt commits after its ticket's lifetime.
+  // lease, and the staging sweep's threshold assumes no attempt commits after its ticket's lifetime.
   const deadline = Date.now() + TTL.uploadReceivingMs;
 
   let stager: Stager | null = null;

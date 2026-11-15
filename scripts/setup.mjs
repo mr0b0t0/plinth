@@ -47,7 +47,11 @@ import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { provisionRemote, wranglerRunner } from "../apps/worker/scripts/deploy.mjs";
-import { hostPairProblem, refreshRuntime } from "../apps/worker/scripts/deploy-lib.mjs";
+import {
+  hostPairProblem,
+  refreshRuntime,
+  runtimeConfigProblem,
+} from "../apps/worker/scripts/deploy-lib.mjs";
 import {
   InstanceError,
   parseJsonc,
@@ -264,6 +268,14 @@ function setupRemote() {
   }
   const contentZone =
     opts["content-zone"] ?? (contentHost ? (getDomain(contentHost) ?? contentHost) : null);
+  // The config this run writes takes the repo's flags and cron trigger; refuse before creating
+  // anything if the result would still lack them (a checkout whose wrangler.jsonc lost them).
+  {
+    const repoCfg = parseJsonc(readFileSync(path.join(workerDir, "wrangler.jsonc"), "utf8"));
+    const existing = existsSync(configFile) ? parseJsonc(readFileSync(configFile, "utf8")) : null;
+    const problem = runtimeConfigProblem(existing ? refreshRuntime(existing, repoCfg) : repoCfg);
+    if (problem) fail(problem);
+  }
 
   console.log(`Plinth remote setup for "${envName}". Plan:`);
   console.log(`  1. D1 database "${dbName}" (create if missing)`);

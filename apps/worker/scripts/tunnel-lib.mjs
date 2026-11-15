@@ -10,6 +10,14 @@ const ISOLATIONS = ["origin", "opaque"];
 
 export const DEFAULT_PORT = 8788;
 
+/**
+ * What every Worker config needs from this release when the base names nothing: the flags
+ * (enable_request_signal lets an abandoned upload clean up at once) and the hourly cron trigger
+ * that runs the staging sweep (apps/worker/src/services/attempts.ts STAGING_SWEEP_CRON).
+ */
+export const REQUIRED_FLAGS = ["nodejs_compat", "enable_request_signal"];
+export const SWEEP_CRON = "0 * * * *";
+
 export class TunnelUsageError extends Error {}
 
 const fail = (message) => {
@@ -131,7 +139,8 @@ function workerBase(o, layout, base) {
     name: `plinth-${o.name}`,
     main: l.main,
     compatibility_date: base.compatibility_date ?? "2026-11-01",
-    compatibility_flags: base.compatibility_flags ?? ["nodejs_compat"],
+    compatibility_flags: base.compatibility_flags ?? REQUIRED_FLAGS,
+    triggers: base.triggers ?? { crons: [SWEEP_CRON] },
     workers_dev: false,
     assets: {
       ...(base.assets ?? {

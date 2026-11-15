@@ -358,6 +358,30 @@ describe("after delete or erase, R2 holds nothing under artifacts/<id>/", () => 
     expect(await r2Keys(`artifacts/${p.id}/`)).toEqual([]);
   });
 
+  it("erase-artifact and erase-user remove the artifacts' staging attempt rows", async () => {
+    const owner = await agent();
+    const { body: one } = await publish(owner.auth, { title: "one" });
+    const { body: two } = await publish(owner.auth, { title: "two" });
+    const ctx = serviceCtxFor(agentPrincipal(owner));
+    for (const id of [one.id, two.id]) {
+      const stager = await openStager(ctx, await updateTarget(ctx, id, {}));
+      await stager.add("index.html", new TextEncoder().encode("<p>left</p>"));
+      await stager.add("left.css", new TextEncoder().encode("left"));
+    }
+    const count = async (id: string) =>
+      (
+        await env.DB.prepare("SELECT count(*) AS n FROM staging_attempts WHERE artifact_id = ?")
+          .bind(id)
+          .first<{ n: number }>()
+      )?.n;
+    expect(await count(one.id)).toBe(1);
+    await runStatements(eraseArtifactSql(one.id));
+    expect(await count(one.id)).toBe(0);
+    expect(await count(two.id)).toBe(1);
+    await runStatements(eraseUserSql(owner.user.email));
+    expect(await count(two.id)).toBe(0);
+  });
+
   it("erase-user: roots of artifacts with no version row are listed too", async () => {
     const owner = await agent();
     const { body: one } = await publish(owner.auth, { title: "one" });

@@ -44,8 +44,11 @@ Commands:
                                   their address, and their address on reports.
   erase-artifact <id|slug>        Erase one artifact for good: all versions, stored files,
                                   comments, sharing and reports. Works on deleted artifacts too.
-  sweep-orphans                   Delete stored files no version points to: what an interrupted
-                                  publish left under its own attempt prefix. Only prefixes whose
+  sweep-orphans                   Delete stored files no version points to, across the whole
+                                  bucket. The Worker's hourly cron already removes what an
+                                  interrupted publish left (its staging_attempts rows); this is
+                                  for files no row names, such as those written before 0.4.0.
+                                  Only prefixes whose
                                   newest file is older than --older-than-minutes (default 60,
                                   at least ${MIN_SWEEP_MINUTES}). The bucket is the FILES binding of the
                                   same wrangler config and environment as the database. Refuses
@@ -282,10 +285,13 @@ export function versionPrefixesSql(ref) {
  * and sessions. Before that: comments they wrote on other people's artifacts, grants to their
  * address, codes and viewer sessions for it, rate-limit counters naming it, their address on
  * reports, shared-data documents they created (personal ones included) and their name, role and
- * agent connection label on documents they last changed. The last statement returns the erased user, so the CLI can tell whether one matched.
+ * agent connection label on documents they last changed, and the staging attempt rows of their
+ * artifacts (no foreign key; the files go with each artifact's root). The last statement returns
+ * the erased user, so the CLI can tell whether one matched.
  */
 export function eraseUserSql(email) {
   return [
+    `DELETE FROM staging_attempts WHERE artifact_id IN (SELECT a.id FROM artifacts a JOIN users u ON u.id = a.owner_id WHERE u.email = '${email}')`,
     `DELETE FROM comments WHERE author_user_id IN (SELECT id FROM users WHERE email = '${email}')`,
     `DELETE FROM access_grants WHERE email = '${email}'`,
     `DELETE FROM login_codes WHERE email = '${email}'`,
@@ -302,10 +308,12 @@ export function eraseUserSql(email) {
 /**
  * Erase one artifact; its versions, grants, comments, tasks, reports and update tickets cascade.
  * The ticket that published it names it only in result_artifact_id (no foreign key) and holds
- * the title the agent gave, so it goes first. The last statement's rows say what was erased.
+ * the title the agent gave, so it goes first, with its staging attempt rows (no foreign key
+ * either; their files go with the artifact's root). The last statement's rows say what was erased.
  */
 export function eraseArtifactSql(ref) {
   return [
+    `DELETE FROM staging_attempts WHERE artifact_id IN (SELECT id FROM artifacts WHERE id = '${ref}' OR slug = '${ref}')`,
     `DELETE FROM upload_tickets WHERE result_artifact_id IN (SELECT id FROM artifacts WHERE id = '${ref}' OR slug = '${ref}')`,
     `DELETE FROM artifacts WHERE id = '${ref}' OR slug = '${ref}' RETURNING id`,
   ].join("; ");

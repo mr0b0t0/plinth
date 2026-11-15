@@ -2,8 +2,10 @@
 // publish, update and restore paths and the bundle upload path all write a version through these:
 // objects go to R2 first under a unique per-attempt prefix `artifacts/<id>/v<n>.<nonce>/`, then
 // one guarded D1 batch inserts the version row (and, for a publish, the artifact row), advances
-// current_version and consumes the upload ticket, or does none of it. A killed invocation can only
-// leave unreferenced objects under its own attempt prefix (the admin command sweep-orphans removes them).
+// current_version and consumes the upload ticket, or does none of it. Each attempt records its
+// prefix in staging_attempts before its first put (services/attempts.ts), and the batch needs that
+// row and deletes it, so a killed invocation can only leave unreferenced objects under its own
+// attempt prefix, which the hourly scheduled sweep removes.
 import {
   type ArtifactType,
   type ArtifactTypeDef,
@@ -23,6 +25,7 @@ import { enforce } from "../lib/ratelimit.ts";
 import { nowIso } from "../lib/time.ts";
 import { getVersionRow, requireArtifact } from "./artifacts.ts";
 import { checkAsset, requireTypeDef, resolveSource } from "./artifactTypes.ts";
+import { ATTEMPT_GUARD, attemptCutoff, forgetAttempt, recordAttempt } from "./attempts.ts";
 import type { Ctx } from "./context.ts";
 import { scanPublish } from "./publishCheck.ts";
 import {
@@ -79,7 +82,8 @@ export interface Stager {
    */
   finish(opts?: { stripPrefix?: string }): Promise<StagedVersion>;
   /**
-   * Abandon the attempt: settle every put, then delete this attempt's prefix. Once the commit has
+   * Abandon the attempt: settle every put, delete this attempt's prefix, then its staging_attempts
+   * row (a failed delete leaves the row for the scheduled sweep). Once the commit has
    * begun (commitStaged) it does nothing: the commit owns the objects from then on, deleting them
    * itself if its batch fails. So an abort and a commit never both proceed.
    */
@@ -298,6 +302,8 @@ export class VersionStager implements Stager {
   private aborted = false;
   /** Set synchronously by beginCommit: from then on abort() leaves the objects alone. */
   private committing = false;
+  /** The staging_attempts row's insert, made once, before the first put. */
+  private recorded: Promise<void> | null = null;
   /** Restore copies the old row's capabilities instead of parsing the source. */
   capabilitiesOverride: string | null | undefined;
   /** Restore returns no warnings. */
@@ -584,8 +590,17 @@ export class VersionStager implements Stager {
     this.throwIfFailed();
   }
 
+  /** Record this attempt's prefix (staging_attempts) once; every put waits for it. */
+  private record(): Promise<void> {
+    this.recorded ??= recordAttempt(this.ctx.env.DB, this.prefix, this.artifactId);
+    return this.recorded;
+  }
+
   private async put(path: string, bytes: Uint8Array, contentType: string): Promise<void> {
     const size = bytes.byteLength;
+    // An attempt abandoned by now never records a row; one recorded is waited for by discard().
+    this.throwIfFailed();
+    await this.record();
     while (
       this.running.size > 0 &&
       (this.inflightBytes + size > LIMITS.bundleInFlightBytes ||
@@ -700,6 +715,9 @@ export class VersionStager implements Stager {
       }
     }
     await this.settle();
+    // The commit needs the row; every attempt that reaches here has put its source, so this only
+    // waits for the insert.
+    await this.record();
     // An abort while the last puts settled (a client disconnect) wins: never stage a version
     // whose objects are being deleted.
     this.throwIfFailed();
@@ -785,7 +803,10 @@ export class VersionStager implements Stager {
     await this.discard();
   }
 
-  /** Delete this attempt's objects whatever the state (the commit's own failure path). */
+  /**
+   * Delete this attempt's objects whatever the state (the commit's own failure path), then its
+   * row. A failed delete throws and leaves the row, so the scheduled sweep finishes the job.
+   */
   async discard(): Promise<void> {
     this.aborted = true;
     this.committing = false;
@@ -793,6 +814,11 @@ export class VersionStager implements Stager {
     await Promise.resolve();
     while (this.running.size > 0) await Promise.allSettled([...this.running]);
     await deletePrefix(this.ctx.env.FILES, this.prefix);
+    if (this.recorded) {
+      // Delete the row only after its insert, so an insert still under way cannot outlive it.
+      await this.recorded.catch(() => undefined);
+      await forgetAttempt(this.ctx.env.DB, this.prefix);
+    }
   }
 }
 
@@ -906,7 +932,7 @@ export async function commitStaged(
 
 /**
  * Errors after which the batch may have committed: the attempt's objects are kept (a version row
- * may name them), and sweep-orphans removes them later if none does.
+ * may name them), and the scheduled staging sweep removes them later if none does.
  */
 const keepObjects = new WeakSet<object>();
 
@@ -986,6 +1012,10 @@ async function commitOnce(
     const versionId = newId();
     const ticketBinds = opts.ticketId ? [opts.ticketId, now] : [];
     const ticketClause = opts.ticketId ? ` AND ${TICKET_GUARD}` : "";
+    // The attempt's row must still be there (the scheduled sweep has not claimed it): the version
+    // and the artifact row depend on it, and the batch deletes it.
+    const cutoff = attemptCutoff(Date.now());
+    const attemptBinds = [staged.prefix, cutoff];
     const stmts: D1PreparedStatement[] = [];
     if (target.mode === "publish") {
       stmts.push(
@@ -994,7 +1024,7 @@ async function commitOnce(
              access_epoch, created_at, updated_at, type)
            SELECT ?, ?, ?, ?, 0, ?, ?, 1, ?, ?, ?
             WHERE (SELECT count(*) FROM artifacts WHERE owner_id = ? AND deleted_at IS NULL) < ?
-              AND ${QUOTA_GUARD}${ticketClause}`,
+              AND ${QUOTA_GUARD}${ticketClause} AND ${ATTEMPT_GUARD}`,
         ).bind(
           artifactId,
           ownerId,
@@ -1011,6 +1041,7 @@ async function commitOnce(
           staged.writtenBytes,
           limit,
           ...ticketBinds,
+          ...attemptBinds,
         ),
       );
     }
@@ -1021,7 +1052,7 @@ async function commitOnce(
            created_by_user, created_by_connection, note, restored_from, created_at, capabilities)
          SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
           WHERE EXISTS (SELECT 1 FROM artifacts WHERE id = ? AND deleted_at IS NULL AND current_version = ?)
-            AND ${QUOTA_GUARD}${ticketClause}`,
+            AND ${QUOTA_GUARD}${ticketClause} AND ${ATTEMPT_GUARD}`,
       ).bind(
         versionId,
         artifactId,
@@ -1042,6 +1073,7 @@ async function commitOnce(
         staged.writtenBytes,
         limit,
         ...ticketBinds,
+        ...attemptBinds,
       ),
     );
     stmts.push(
@@ -1059,6 +1091,11 @@ async function commitOnce(
         ).bind(artifactId, n, now, opts.ticketId, versionId),
       );
     }
+    stmts.push(
+      DB.prepare(
+        "DELETE FROM staging_attempts WHERE prefix = ? AND EXISTS (SELECT 1 FROM versions WHERE id = ?)",
+      ).bind(staged.prefix, versionId),
+    );
 
     const committed = (): PublishResult => ({
       id: artifactId,
@@ -1191,6 +1228,24 @@ async function commitOnce(
         });
       }
       if (t.revoked) throw unauthorized("The connection that started this upload was revoked");
+    }
+    const row = await DB.prepare(
+      "SELECT 1 AS one FROM staging_attempts WHERE prefix = ? AND started_at > ?",
+    )
+      .bind(staged.prefix, cutoff)
+      .first();
+    if (!row) {
+      // The scheduled sweep owns this attempt's objects now (or is about to): nothing was saved.
+      throw new ApiError(
+        "conflict",
+        "This attempt took too long and was cleaned up; nothing was saved",
+        {
+          reason: "attempt_expired",
+          next: opts.ticketId
+            ? "Call start_upload again and send the bundle again"
+            : "Send the same publish or update again",
+        },
+      );
     }
     if (target.mode === "publish") {
       if ((await liveArtifactCount(ctx, ownerId)) >= artifactLimit)

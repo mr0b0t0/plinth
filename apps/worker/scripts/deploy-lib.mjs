@@ -2,8 +2,9 @@
 // host checks of `scripts/setup.mjs --remote`. Kept free of Node imports so the Workers test pool
 // can test them, like tunnel-lib.mjs; deploy.mjs runs wrangler and writes the files.
 import { CloudflareError, cloudflareApi } from "./tunnel-cloudflare.mjs";
+import { REQUIRED_FLAGS, SWEEP_CRON } from "./tunnel-lib.mjs";
 
-export { CloudflareError };
+export { CloudflareError, REQUIRED_FLAGS, SWEEP_CRON };
 
 const HOST_RE = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/;
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -73,20 +74,83 @@ export function hostPairProblem(appHost, contentHost, isolation, registrable) {
 }
 
 /**
- * The runtime settings a re-run of setup carries into an existing per-environment config: every
- * compatibility flag of either file (the repo's config names the flags this release needs, such
- * as enable_request_signal), and the later compatibility date. The rest of `existing` is kept.
+ * The runtime settings a re-run of setup (or `plinth start`) carries into an existing config:
+ * every compatibility flag of either file (the repo's config names the flags this release needs,
+ * such as enable_request_signal), every cron trigger of either (the hourly staging sweep), and the
+ * later compatibility date. The rest of `existing` is kept, its own triggers included.
  */
 export function refreshRuntime(existing, repo) {
   const flags = [
     ...new Set([...(existing.compatibility_flags ?? []), ...(repo.compatibility_flags ?? [])]),
   ];
   const dates = [existing.compatibility_date, repo.compatibility_date].filter(Boolean).sort();
+  const crons = [
+    ...new Set([...(existing.triggers?.crons ?? []), ...(repo.triggers?.crons ?? [])]),
+  ];
   return {
     ...existing,
     ...(dates.length > 0 ? { compatibility_date: dates[dates.length - 1] } : {}),
     compatibility_flags: flags,
+    ...(crons.length > 0 || existing.triggers
+      ? { triggers: { ...(existing.triggers ?? {}), crons } }
+      : {}),
   };
+}
+
+/**
+ * The parts of the repo's apps/worker/wrangler.jsonc a generated config takes, minus everything
+ * instance-specific: compatibility settings, the cron trigger, observability, assets settings and
+ * default limits. packages/cli/scripts/bundle.mjs writes it as runtime/wrangler.base.json.
+ */
+export function runtimeBase(repoCfg) {
+  return {
+    compatibility_date: repoCfg.compatibility_date,
+    compatibility_flags: repoCfg.compatibility_flags,
+    triggers: repoCfg.triggers,
+    observability: repoCfg.observability,
+    assets: { ...repoCfg.assets, directory: undefined },
+    vars: Object.fromEntries(
+      [
+        "MAX_ARTIFACTS_PER_USER",
+        "MAX_PUBLISHES_PER_HOUR",
+        "MAX_VERSION_BYTES",
+        "MAX_ASSETS_PER_VERSION",
+        "CDN_ALLOWLIST",
+        "ALLOW_PUBLIC_VISIBILITY",
+        "PUBLIC_MIN_ACCOUNT_AGE_HOURS",
+        "ALLOW_SHARED_DATA",
+        "SHOW_SOURCE_LINK",
+        "DATA_MAX_DOCS_PER_ARTIFACT",
+        "DATA_MAX_BYTES_PER_ARTIFACT",
+        "DATA_MAX_BYTES_PER_USER",
+        "DATA_MAX_DOC_BYTES",
+        "DATA_WRITES_PER_VIEWER_PER_HOUR",
+        "DATA_WRITES_PER_ARTIFACT_PER_HOUR",
+      ]
+        .filter((k) => k in (repoCfg.vars ?? {}))
+        .map((k) => [k, repoCfg.vars[k]]),
+    ),
+  };
+}
+
+/**
+ * Why a Worker config must not be deployed with this release, or null: it lacks the
+ * enable_request_signal flag (an abandoned upload's cleanup would never start) or the hourly cron
+ * trigger (nothing would remove what abandoned uploads leave).
+ */
+export function runtimeConfigProblem(cfg) {
+  const missing = [];
+  if (!(cfg?.compatibility_flags ?? []).includes("enable_request_signal"))
+    missing.push('"enable_request_signal" in compatibility_flags');
+  if (!(cfg?.triggers?.crons ?? []).includes(SWEEP_CRON))
+    missing.push(`"${SWEEP_CRON}" in triggers.crons`);
+  if (missing.length === 0) return null;
+  return (
+    `the Worker config lacks ${missing.join(" and ")}. Plinth needs both from 0.4.0 on. ` +
+    'Add `"compatibility_flags": ["nodejs_compat", "enable_request_signal"]` and ' +
+    `\`"triggers": { "crons": ["${SWEEP_CRON}"] }\` (as apps/worker/wrangler.jsonc has them), or ` +
+    "rerun setup, which adds them to an existing config (docs/deploy-checklist.md)"
+  );
 }
 
 /** The --name flag, checked: lowercase letters, digits and dashes; default plinth. */
@@ -247,7 +311,8 @@ export function buildDeployConfig(s, layout, base, { databaseId, contentZone }) 
     name: s.workerName,
     main: layout.main,
     compatibility_date: base.compatibility_date ?? "2026-11-01",
-    compatibility_flags: base.compatibility_flags ?? ["nodejs_compat"],
+    compatibility_flags: base.compatibility_flags ?? REQUIRED_FLAGS,
+    triggers: base.triggers ?? { crons: [SWEEP_CRON] },
     workers_dev: false,
     // Preview URLs would serve the Worker on extra hosts that are not APP_HOST.
     preview_urls: false,

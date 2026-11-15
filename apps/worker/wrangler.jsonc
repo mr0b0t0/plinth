@@ -6,6 +6,9 @@
   "main": "src/index.ts",
   "compatibility_date": "2026-11-01",
   "compatibility_flags": ["nodejs_compat", "enable_request_signal"],
+  // Hourly: the staging sweep removes what abandoned uploads left (src/services/attempts.ts).
+  // Every config Plinth generates copies this; `wrangler dev` does not fire it on its own.
+  "triggers": { "crons": ["0 * * * *"] },
   "workers_dev": false,
   "observability": { "enabled": true },
   "assets": {

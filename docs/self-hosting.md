@@ -218,12 +218,13 @@ pnpm --filter @plinth/worker exec wrangler deploy --config wrangler.production.j
 Apply migrations before deploying code that needs them. Migrations only add; they never rewrite
 stored versions.
 
-Your `wrangler.production.jsonc` keeps the compatibility flags it was written with. When a
-release adds one (0.4.0 adds `enable_request_signal`, which lets an abandoned upload clean up
-after itself), re-run `node scripts/setup.mjs --remote` with the arguments you first used, which
-adds the release's flags, moves `compatibility_date` up to the committed config's when that is
-later (a date you pinned earlier is replaced) and keeps the rest, or copy `compatibility_flags` from
-`apps/worker/wrangler.jsonc` by hand. [deploy-checklist.md](deploy-checklist.md#6-upgrading-and-rolling-back)
+Your `wrangler.production.jsonc` keeps the compatibility flags and cron triggers it was written
+with. When a release adds one (0.4.0 adds the `enable_request_signal` flag, which lets an abandoned
+upload clean up after itself, and the hourly cron trigger `0 * * * *`, which sweeps what abandoned
+uploads leave), re-run `node scripts/setup.mjs --remote` with the arguments you first used, which
+adds the release's flags and cron triggers, moves `compatibility_date` up to the committed
+config's when that is later (a date you pinned earlier is replaced) and keeps the rest, or copy
+`compatibility_flags` and `triggers` from `apps/worker/wrangler.jsonc` by hand. [deploy-checklist.md](deploy-checklist.md#6-upgrading-and-rolling-back)
 lists what each release needs.
 
 ## Connect agents
@@ -259,7 +260,14 @@ Step-by-step instructions for each client are in [mcp.md](mcp.md).
   removes a person's documents on other people's artifacts too.
 - **Interrupted publishes.** A version's files go to R2 before its database row, so a publish
   that dies midway (a closed connection, a CPU or memory limit) leaves files no version points to,
-  under that attempt's own prefix. Deleting or erasing the artifact removes them; so does
+  under that attempt's own prefix. Each attempt records that prefix in the `staging_attempts`
+  table first, and the Worker's hourly cron trigger deletes the files of attempts older than 45
+  minutes (an upload ticket's 30 plus a 15-minute margin), at most 50 per run. Deleting, taking
+  down or erasing the artifact removes them too. `wrangler dev` does not fire cron triggers on its
+  own, so a local, tunnel or Docker instance never runs the sweep: its leftovers stay until you
+  run `sweep-orphans --local` (or test the handler with `wrangler dev --test-scheduled` and a
+  request to `/__scheduled`). The admin command is otherwise for legacy orphans, files written
+  before 0.4.0 that no row names:
   `pnpm --filter @plinth/worker admin -- sweep-orphans --local|--remote [--artifact <id|slug>] [--older-than-minutes N] [--dry-run] [--env E] [--config C] [--bucket B]`.
   It deletes only prefixes no version names that are older than `--older-than-minutes` (default
   60, minimum 45: an upload ticket can still commit for 30 minutes after it is minted). The R2 bucket is always the `FILES` binding of the same wrangler config and

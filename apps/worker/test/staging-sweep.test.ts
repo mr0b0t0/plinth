@@ -1,0 +1,531 @@
+// Bounded orphans (docs/spec.md, commit last): every attempt at writing a version records its
+// prefix in staging_attempts before its first R2 put; the commit batch removes the row, an abort
+// removes the prefix and then the row, and the hourly scheduled sweep claims rows past the
+// threshold and deletes their objects. A commit needs its row, so a sweep and a commit never
+// both proceed on one prefix.
+import {
+  createExecutionContext,
+  createScheduledController,
+  waitOnExecutionContext,
+} from "cloudflare:test";
+import { env, exports } from "cloudflare:workers";
+import { TTL } from "@plinth/shared";
+import { eq } from "drizzle-orm";
+import { describe, expect, it } from "vitest";
+import { artifacts, versions } from "../src/db/schema.ts";
+import worker from "../src/index.ts";
+import { deleteArtifact, publishArtifact, updateArtifact } from "../src/services/artifacts.ts";
+import {
+  STAGING_SWEEP_AFTER_MS,
+  STAGING_SWEEP_BATCH,
+  STAGING_SWEEP_CRON,
+  STAGING_SWEEP_MARGIN_MS,
+} from "../src/services/attempts.ts";
+import {
+  commitStaged,
+  newArtifactTarget,
+  openStager,
+  type StagedVersion,
+  updateTarget,
+} from "../src/services/stage.ts";
+import {
+  agent,
+  agentPrincipal,
+  call,
+  contentOrigin,
+  db,
+  enterContent,
+  publish,
+  r2Keys,
+  serviceCtxFor,
+  versionRow,
+} from "./helpers.ts";
+
+const enc = new TextEncoder();
+const HOUR = 60 * 60 * 1000;
+
+type Agent = Awaited<ReturnType<typeof agent>>;
+
+async function attemptRows(artifactId: string) {
+  return (
+    await env.DB.prepare(
+      "SELECT prefix, artifact_id, started_at FROM staging_attempts WHERE artifact_id = ?",
+    )
+      .bind(artifactId)
+      .all<{ prefix: string; artifact_id: string; started_at: string }>()
+  ).results;
+}
+
+async function attemptRow(prefix: string) {
+  return env.DB.prepare("SELECT prefix, started_at FROM staging_attempts WHERE prefix = ?")
+    .bind(prefix)
+    .first<{ prefix: string; started_at: string }>();
+}
+
+/** Run the Worker's scheduled handler as Cloudflare would at `at` (ms), waiting for its work. */
+async function runSweep(at: number, overrides: Record<string, unknown> = {}) {
+  const ctx = createExecutionContext();
+  await worker.scheduled(
+    createScheduledController({ scheduledTime: at, cron: STAGING_SWEEP_CRON }),
+    { ...env, ...overrides } as never,
+    ctx,
+  );
+  await waitOnExecutionContext(ctx);
+}
+
+/** A time past the threshold for an attempt that started now. */
+const later = () => Date.now() + STAGING_SWEEP_AFTER_MS + 60_000;
+
+/** An update attempt that put files and finished staging, then was never committed or aborted. */
+async function abandonedUpdate(a: Agent, id: string, files: Record<string, string> = {}) {
+  const ctx = serviceCtxFor(agentPrincipal(a));
+  const target = await updateTarget(ctx, id, {});
+  const stager = await openStager(ctx, target);
+  await stager.add("index.html", enc.encode("<p>abandoned</p>"));
+  for (const [path, text] of Object.entries({ "left.css": "left", ...files }))
+    await stager.add(path, enc.encode(text));
+  const staged = await stager.finish();
+  return { ctx, target, stager, staged };
+}
+
+async function serveFile(id: string, path: string) {
+  const { cookie } = await enterContent(id);
+  return call(`${contentOrigin(id)}${path}`, { headers: { Cookie: cookie ?? "" } });
+}
+
+async function versionsAt(prefix: string) {
+  return (await db().select().from(versions).where(eq(versions.r2Prefix, prefix)).all()).length;
+}
+
+describe("staging attempts: constants", () => {
+  it("sweeps hourly, past the ticket's lifetime plus a margin of at least 15 minutes", () => {
+    expect(STAGING_SWEEP_CRON).toBe("0 * * * *");
+    expect(STAGING_SWEEP_MARGIN_MS).toBeGreaterThanOrEqual(15 * 60 * 1000);
+    expect(STAGING_SWEEP_AFTER_MS).toBe(TTL.uploadTicketMs + STAGING_SWEEP_MARGIN_MS);
+    expect(STAGING_SWEEP_BATCH).toBeGreaterThan(0);
+    expect(STAGING_SWEEP_BATCH).toBeLessThanOrEqual(50);
+  });
+});
+
+describe("staging attempts: every attempt is recorded before its first put", () => {
+  it("an inline update records its row before any put, and its commit batch removes it", async () => {
+    const a = await agent();
+    const { body: p } = await publish(a.auth);
+    const log: string[] = [];
+    const DB = new Proxy(env.DB, {
+      get(t, prop) {
+        const v = Reflect.get(t, prop, t);
+        if (prop === "prepare")
+          return (sql: string) => {
+            if (/^\s*INSERT INTO staging_attempts/.test(sql)) log.push("row");
+            return t.prepare(sql);
+          };
+        if (prop === "batch")
+          return (s: D1PreparedStatement[]) => {
+            log.push("batch");
+            return t.batch(s);
+          };
+        return typeof v === "function" ? v.bind(t) : v;
+      },
+    });
+    const FILES = new Proxy(env.FILES, {
+      get(t, prop) {
+        const v = Reflect.get(t, prop, t);
+        if (prop === "put")
+          return (...args: Parameters<R2Bucket["put"]>) => {
+            log.push("put");
+            return (v as R2Bucket["put"]).apply(t, args);
+          };
+        return typeof v === "function" ? v.bind(t) : v;
+      },
+    });
+    const ctx = serviceCtxFor(agentPrincipal(a), { env: { DB, FILES } });
+    const r = await updateArtifact(ctx, {
+      id: p.id,
+      html: "<p>2</p>",
+      assets: [{ path: "a.css", content: "a" }],
+    });
+    expect(r.version).toBe(2);
+    expect(log[0]).toBe("row");
+    expect(log.filter((l) => l === "row")).toHaveLength(1);
+    expect(log.at(-1)).toBe("batch");
+    expect(await attemptRows(p.id)).toEqual([]);
+  });
+
+  it("an inline publish (REST and MCP go through it) gets a row that its commit removes", async () => {
+    const a = await agent();
+    let seen: string[] = [];
+    const FILES = new Proxy(env.FILES, {
+      get(t, prop) {
+        const v = Reflect.get(t, prop, t);
+        if (prop === "put")
+          return async (...args: Parameters<R2Bucket["put"]>) => {
+            // At the first put the row already exists.
+            seen = (
+              await env.DB.prepare("SELECT prefix FROM staging_attempts WHERE prefix = ?")
+                .bind(`${String(args[0]).split("/").slice(0, 3).join("/")}/`)
+                .all<{ prefix: string }>()
+            ).results.map((r) => r.prefix);
+            return (v as R2Bucket["put"]).apply(t, args);
+          };
+        return typeof v === "function" ? v.bind(t) : v;
+      },
+    });
+    const ctx = serviceCtxFor(agentPrincipal(a), { env: { FILES } });
+    const r = await publishArtifact(ctx, {
+      title: "Rowed",
+      html: "<p>1</p>",
+      visibility: "allowlist",
+    });
+    const v1 = await versionRow(r.id, 1);
+    expect(seen).toEqual([v1?.r2Prefix]);
+    expect(await attemptRows(r.id)).toEqual([]);
+    // The REST path leaves no row either.
+    const { body: q } = await publish(a.auth);
+    expect(await attemptRows(q.id)).toEqual([]);
+  });
+
+  it("an abort deletes the prefix, then the row", async () => {
+    const a = await agent();
+    const { body: p } = await publish(a.auth);
+    const ctx = serviceCtxFor(agentPrincipal(a));
+    const stager = await openStager(ctx, await updateTarget(ctx, p.id, {}));
+    await stager.add("index.html", enc.encode("<p>x</p>"));
+    await stager.add("x.css", enc.encode("x"));
+    expect(await attemptRow(stager.prefix)).not.toBeNull();
+    await stager.abort();
+    expect(await r2Keys(stager.prefix)).toEqual([]);
+    expect(await attemptRow(stager.prefix)).toBeNull();
+  });
+
+  it("a failed abort leaves the row for the sweep", async () => {
+    const a = await agent();
+    const { body: p } = await publish(a.auth);
+    const FILES = new Proxy(env.FILES, {
+      get(t, prop) {
+        if (prop === "delete")
+          return async () => {
+            throw new Error("injected: delete failed");
+          };
+        const v = Reflect.get(t, prop, t);
+        return typeof v === "function" ? v.bind(t) : v;
+      },
+    });
+    const ctx = serviceCtxFor(agentPrincipal(a), { env: { FILES } });
+    const stager = await openStager(ctx, await updateTarget(ctx, p.id, {}));
+    await stager.add("index.html", enc.encode("<p>x</p>"));
+    await stager.add("x.css", enc.encode("x"));
+    await expect(stager.abort()).rejects.toThrow(/delete failed/);
+    expect(await attemptRow(stager.prefix)).not.toBeNull();
+    await runSweep(later());
+    expect(await r2Keys(stager.prefix)).toEqual([]);
+    expect(await attemptRow(stager.prefix)).toBeNull();
+  });
+});
+
+describe("staging attempts: the scheduled sweep", () => {
+  it("deletes an abandoned attempt once it is past the threshold, and not before", async () => {
+    const a = await agent();
+    const { body: p } = await publish(a.auth);
+    const { stager } = await abandonedUpdate(a, p.id);
+    expect((await r2Keys(stager.prefix)).length).toBe(2);
+    expect(await attemptRow(stager.prefix)).not.toBeNull();
+
+    // Before the threshold: left alone.
+    await runSweep(Date.now());
+    await runSweep(Date.now() + STAGING_SWEEP_AFTER_MS - 60_000);
+    expect((await r2Keys(stager.prefix)).length).toBe(2);
+    expect(await attemptRow(stager.prefix)).not.toBeNull();
+
+    // Past it: objects and row are gone, the live version is untouched.
+    await runSweep(later());
+    expect(await r2Keys(stager.prefix)).toEqual([]);
+    expect(await attemptRow(stager.prefix)).toBeNull();
+    const v1 = await versionRow(p.id, 1);
+    expect((await r2Keys(v1?.r2Prefix ?? "-")).length).toBe(1);
+    expect((await serveFile(p.id, "/")).status).toBe(200);
+  });
+
+  it("runs through the Worker's own scheduled export", async () => {
+    const a = await agent();
+    const { body: p } = await publish(a.auth);
+    const { stager } = await abandonedUpdate(a, p.id);
+    // The Worker's own export, as a scheduled event reaches it (not typed on the exports stub).
+    const self = exports.default as unknown as {
+      scheduled(o: { scheduledTime: number; cron: string }): Promise<unknown>;
+    };
+    await self.scheduled({ scheduledTime: later(), cron: STAGING_SWEEP_CRON });
+    expect(await r2Keys(stager.prefix)).toEqual([]);
+    expect(await attemptRow(stager.prefix)).toBeNull();
+  });
+
+  it("bounds the work per run", async () => {
+    const old = new Date(Date.now() - 2 * HOUR).toISOString();
+    const id = "boundedsweep00000000";
+    const stmts = [];
+    for (let i = 0; i < STAGING_SWEEP_BATCH + 7; i++) {
+      const prefix = `artifacts/${id}/v1.${String(i).padStart(12, "0")}/`;
+      await env.FILES.put(`${prefix}index.html`, "x");
+      stmts.push(
+        env.DB.prepare(
+          "INSERT INTO staging_attempts (prefix, artifact_id, started_at) VALUES (?, ?, ?)",
+        ).bind(prefix, id, old),
+      );
+    }
+    await env.DB.batch(stmts);
+    await runSweep(Date.now());
+    const left = await attemptRows(id);
+    expect(left.length).toBe(7);
+    expect((await r2Keys(`artifacts/${id}/`)).length).toBe(7);
+    await runSweep(Date.now());
+    expect(await attemptRows(id)).toEqual([]);
+    expect(await r2Keys(`artifacts/${id}/`)).toEqual([]);
+  });
+
+  it("logs counts only, never object keys", async () => {
+    const a = await agent();
+    const { body: p } = await publish(a.auth);
+    const { stager } = await abandonedUpdate(a, p.id, { "secret-name.css": "s" });
+    const lines: string[] = [];
+    const orig = { log: console.log, warn: console.warn, error: console.error };
+    console.log =
+      console.warn =
+      console.error =
+        (...args: unknown[]) => {
+          lines.push(args.map(String).join(" "));
+        };
+    try {
+      await runSweep(later());
+    } finally {
+      Object.assign(console, orig);
+    }
+    expect(await attemptRow(stager.prefix)).toBeNull();
+    expect(lines.join("\n")).not.toContain("secret-name");
+    expect(lines.join("\n")).not.toContain("left.css");
+  });
+});
+
+describe("staging attempts: committed files are never touched", () => {
+  it("sweep claims first: the commit is refused (retryable), no version row, objects gone", async () => {
+    const a = await agent();
+    const { body: p } = await publish(a.auth);
+    const { ctx, target, stager, staged } = await abandonedUpdate(a, p.id);
+    await runSweep(later());
+    expect(await r2Keys(stager.prefix)).toEqual([]);
+    const err = await commitStaged(ctx, target, staged).catch((e) => e);
+    expect(err).toMatchObject({ code: "conflict" });
+    expect(String(err.details?.next ?? "")).toMatch(/again/i);
+    expect(await versionsAt(stager.prefix)).toBe(0);
+    const art = await db().select().from(artifacts).where(eq(artifacts.id, p.id)).get();
+    expect(art?.currentVersion).toBe(1);
+    expect(await r2Keys(stager.prefix)).toEqual([]);
+    // The artifact is still updatable.
+    const r = await updateArtifact(serviceCtxFor(agentPrincipal(a)), {
+      id: p.id,
+      html: "<p>again</p>",
+      base_version: 1,
+    });
+    expect(r.version).toBe(2);
+  });
+
+  it("commit lands first: the sweep's claim removes nothing and no object is deleted", async () => {
+    const a = await agent();
+    const { body: p } = await publish(a.auth);
+    const { ctx, target, stager, staged } = await abandonedUpdate(a, p.id);
+    const r = await commitStaged(ctx, target, staged);
+    expect(r.version).toBe(2);
+    expect(await attemptRow(stager.prefix)).toBeNull();
+    const keys = await r2Keys(stager.prefix);
+    expect(keys.length).toBe(2);
+    await runSweep(later());
+    expect(await r2Keys(stager.prefix)).toEqual(keys);
+    expect(await (await serveFile(p.id, "/left.css")).text()).toBe("left");
+  });
+
+  it("a commit while the sweep runs: whichever claims the row first wins, never both", async () => {
+    // Interleaving 1: the commit batch runs right after the sweep has listed nothing yet, i.e.
+    // just before the sweep's claim; the claim then removes nothing.
+    {
+      const a = await agent();
+      const { body: p } = await publish(a.auth);
+      const { ctx, target, stager, staged } = await abandonedUpdate(a, p.id);
+      let committed: Promise<unknown> | null = null;
+      const DB = new Proxy(env.DB, {
+        get(t, prop) {
+          const v = Reflect.get(t, prop, t);
+          if (prop === "prepare")
+            return (sql: string) => {
+              const stmt = t.prepare(sql);
+              if (!/^\s*DELETE FROM staging_attempts/.test(sql) || committed) return stmt;
+              // The commit lands before the claim statement executes.
+              committed = commitStaged(ctx, target, staged);
+              return new Proxy(stmt, {
+                get(s, sp) {
+                  const sv = Reflect.get(s, sp, s);
+                  if (sp === "bind")
+                    return (...args: unknown[]) => {
+                      const bound = s.bind(...args);
+                      return new Proxy(bound, {
+                        get(b, bp) {
+                          const bv = Reflect.get(b, bp, b);
+                          if (bp === "all" || bp === "run")
+                            return async () => {
+                              await committed;
+                              return (bv as () => Promise<unknown>).call(b);
+                            };
+                          return typeof bv === "function" ? bv.bind(b) : bv;
+                        },
+                      });
+                    };
+                  return typeof sv === "function" ? sv.bind(s) : sv;
+                },
+              });
+            };
+          return typeof v === "function" ? v.bind(t) : v;
+        },
+      });
+      await runSweep(later(), { DB });
+      expect(committed).not.toBeNull();
+      expect(await committed).toMatchObject({ version: 2 });
+      expect((await r2Keys(stager.prefix)).length).toBe(2);
+      expect(await versionsAt(stager.prefix)).toBe(1);
+      expect(await (await serveFile(p.id, "/left.css")).text()).toBe("left");
+    }
+    // Interleaving 2: the commit runs right after the sweep's claim and before its deletes.
+    {
+      const a = await agent();
+      const { body: p } = await publish(a.auth);
+      const { ctx, target, stager, staged } = await abandonedUpdate(a, p.id);
+      let result: unknown = null;
+      const FILES = new Proxy(env.FILES, {
+        get(t, prop) {
+          const v = Reflect.get(t, prop, t);
+          if (prop === "list")
+            return async (...args: Parameters<R2Bucket["list"]>) => {
+              if (result === null) result = await commitStaged(ctx, target, staged).catch((e) => e);
+              return (v as R2Bucket["list"]).apply(t, args);
+            };
+          return typeof v === "function" ? v.bind(t) : v;
+        },
+      });
+      await runSweep(later(), { FILES });
+      expect(result).toMatchObject({ code: "conflict" });
+      expect(await versionsAt(stager.prefix)).toBe(0);
+      expect(await r2Keys(stager.prefix)).toEqual([]);
+      const art = await db().select().from(artifacts).where(eq(artifacts.id, p.id)).get();
+      expect(art?.currentVersion).toBe(1);
+    }
+  });
+
+  it("a row whose prefix a version names (an anomaly) loses only its row", async () => {
+    const a = await agent();
+    const { body: p } = await publish(a.auth, { assets: [{ path: "keep.css", content: "k" }] });
+    const v1 = await versionRow(p.id, 1);
+    const prefix = v1?.r2Prefix ?? "-";
+    const keys = await r2Keys(prefix);
+    await env.DB.prepare(
+      "INSERT INTO staging_attempts (prefix, artifact_id, started_at) VALUES (?, ?, ?)",
+    )
+      .bind(prefix, p.id, new Date(Date.now() - 2 * HOUR).toISOString())
+      .run();
+    await runSweep(Date.now());
+    expect(await attemptRow(prefix)).toBeNull();
+    expect(await r2Keys(prefix)).toEqual(keys);
+  });
+
+  it("files reused by stored_at from an older prefix stay, even when only a stored_at names it", async () => {
+    const a = await agent();
+    const { body: p } = await publish(a.auth, { assets: [{ path: "keep.css", content: "k" }] });
+    const v1 = await versionRow(p.id, 1);
+    const prefix = v1?.r2Prefix ?? "-";
+    // v2 reuses keep.css: its manifest points into v1's prefix.
+    const ctx = serviceCtxFor(agentPrincipal(a));
+    const sha = [...new Uint8Array(await crypto.subtle.digest("SHA-256", enc.encode("k")))]
+      .map((b) => b.toString(16).padStart(2, "0"))
+      .join("");
+    await updateArtifact(ctx, {
+      id: p.id,
+      html: "<p>2</p>",
+      assets: [{ path: "keep.css", sha256: sha }],
+    });
+    const v2 = await versionRow(p.id, 2);
+    expect(v2?.manifest).toContain(`"stored_at":"${prefix.split("/")[2]}/keep.css"`);
+    // Only the stored_at names v1's prefix now.
+    await env.DB.prepare("DELETE FROM versions WHERE id = ?").bind(v1?.id).run();
+    await env.DB.prepare(
+      "INSERT INTO staging_attempts (prefix, artifact_id, started_at) VALUES (?, ?, ?)",
+    )
+      .bind(prefix, p.id, new Date(Date.now() - 2 * HOUR).toISOString())
+      .run();
+    await runSweep(Date.now());
+    expect(await attemptRow(prefix)).toBeNull();
+    expect(await r2Keys(`${prefix}keep.css`)).toHaveLength(1);
+    expect(await (await serveFile(p.id, "/keep.css")).text()).toBe("k");
+  });
+
+  it("legacy v<n>/ versions are untouched", async () => {
+    const a = await agent();
+    const { body: p } = await publish(a.auth, { assets: [{ path: "old.css", content: "o" }] });
+    const v1 = await versionRow(p.id, 1);
+    const legacy = `artifacts/${p.id}/v1/`;
+    for (const path of ["index.html", "old.css"]) {
+      const obj = await env.FILES.get(`${v1?.r2Prefix}${path}`);
+      await env.FILES.put(`${legacy}${path}`, (await obj?.arrayBuffer()) ?? "");
+    }
+    await env.FILES.delete(await r2Keys(v1?.r2Prefix ?? "-"));
+    await env.DB.prepare("UPDATE versions SET r2_prefix = ?, manifest = ? WHERE id = ?")
+      .bind(
+        legacy,
+        JSON.stringify([
+          { path: "index.html", size_bytes: 1, content_type: "text/html; charset=utf-8" },
+          { path: "old.css", size_bytes: 1, content_type: "text/css; charset=utf-8" },
+        ]),
+        v1?.id,
+      )
+      .run();
+    // An abandoned attempt beside it, and a stray row naming the legacy prefix.
+    const { stager } = await abandonedUpdate(a, p.id);
+    await env.DB.prepare(
+      "INSERT INTO staging_attempts (prefix, artifact_id, started_at) VALUES (?, ?, ?)",
+    )
+      .bind(legacy, p.id, new Date(Date.now() - 2 * HOUR).toISOString())
+      .run();
+    await runSweep(later());
+    expect(await r2Keys(stager.prefix)).toEqual([]);
+    expect((await r2Keys(legacy)).sort()).toEqual([`${legacy}index.html`, `${legacy}old.css`]);
+    expect(await attemptRows(p.id)).toEqual([]);
+    expect(await (await serveFile(p.id, "/old.css")).text()).toBe("o");
+  });
+
+  it("a first publish abandoned before its commit leaves nothing past the threshold", async () => {
+    const a = await agent();
+    const ctx = serviceCtxFor(agentPrincipal(a));
+    const target = await newArtifactTarget(ctx, { type: "html" });
+    const stager = await openStager(ctx, target);
+    await stager.add("index.html", enc.encode("<p>never</p>"));
+    const staged: StagedVersion = await stager.finish();
+    expect(staged.prefix).toBe(stager.prefix);
+    expect(await attemptRow(stager.prefix)).not.toBeNull();
+    await runSweep(later());
+    expect(await r2Keys(stager.prefix)).toEqual([]);
+    expect(await attemptRow(stager.prefix)).toBeNull();
+  });
+});
+
+describe("staging attempts: deleting an artifact", () => {
+  it("delete removes the artifact's attempt rows with its files", async () => {
+    const a = await agent();
+    const { body: p } = await publish(a.auth);
+    const { stager } = await abandonedUpdate(a, p.id);
+    expect(await attemptRows(p.id)).toHaveLength(1);
+    const waits: Promise<unknown>[] = [];
+    const ctx = {
+      ...serviceCtxFor(agentPrincipal(a)),
+      waitUntil: (w: Promise<unknown>) => waits.push(w),
+    };
+    await deleteArtifact(ctx, p.id);
+    await Promise.all(waits);
+    expect(await attemptRows(p.id)).toEqual([]);
+    expect(await r2Keys(stager.prefix)).toEqual([]);
+  });
+});

@@ -24,3 +24,15 @@ CREATE TABLE upload_tickets (
 );
 CREATE INDEX upload_tickets_user ON upload_tickets(user_id, created_at);
 CREATE INDEX upload_tickets_receiving ON upload_tickets(user_id, receiving_until);
+
+-- One row per attempt at writing a version (services/stage.ts, services/attempts.ts): its R2
+-- prefix artifacts/<id>/v<n>.<nonce>/, inserted before the attempt's first put. The commit batch
+-- deletes it (and needs it: no row, no commit), an abort deletes the prefix and then the row, and
+-- the hourly scheduled sweep claims rows older than the ticket lifetime plus a margin and deletes
+-- their objects. No foreign key: a first publish's artifact row arrives with its commit.
+CREATE TABLE staging_attempts (
+  prefix TEXT PRIMARY KEY,
+  artifact_id TEXT NOT NULL,
+  started_at TEXT NOT NULL
+);
+CREATE INDEX staging_attempts_started ON staging_attempts(started_at);

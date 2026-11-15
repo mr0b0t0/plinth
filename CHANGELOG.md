@@ -23,28 +23,34 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   files and never commits, revoking the connection that started it stops its commit, and an
   account at its storage quota cannot start one. A gzip body is inflated only as fast as it is
   read, so a small compressed body cannot fill the Worker's memory.
-- **Upgrading a checkout deploy**: this release needs the `enable_request_signal` compatibility
-  flag. A `wrangler.<env>.jsonc` written by `scripts/setup.mjs` before 0.4.0 lacks it: re-run setup
-  (it now adds the release's flags to an existing config and moves its `compatibility_date` up to
-  the release's when that is later) or add it by hand. `plinth deploy` takes it from the release;
-  `plinth start`, `pnpm local:start` and the Docker image add it to an existing instance's config
-  on start. See
-  [docs/deploy-checklist.md](docs/deploy-checklist.md#6-upgrading-and-rolling-back).
+- **Upgrading**:
+  - Apply migrations `0006_stored_bytes.sql` and `0007_upload_tickets.sql` before deploying the
+    Worker (`plinth deploy` does; by hand, `wrangler d1 migrations apply` first).
+  - Storage is forward-only. A Worker older than this release still starts against the new schema
+    and serves versions written in full, but answers 404 for files a version reuses, fails to
+    update or restore those artifacts ("Missing stored file"), counts storage by logical size, and
+    ignores `staging_attempts` (its own interrupted publishes leave files only `sweep-orphans`
+    finds). Roll forward, never back.
+  - Your own wrangler config needs the `enable_request_signal` compatibility flag and the hourly
+    cron trigger `"triggers": { "crons": ["0 * * * *"] }`, which deletes what interrupted
+    publishes leave. A `wrangler.<env>.jsonc` written by `scripts/setup.mjs` before 0.4.0 has
+    neither: re-run setup (it adds both to an existing config and moves its `compatibility_date`
+    up to the release's when that is later) or add them by hand. `plinth deploy` takes both from
+    the release; `plinth start`, `pnpm local:start` and the Docker image add them to an existing
+    instance's config on start. On Workers Free the cron counts toward the account's 5 Cron
+    Triggers. See
+    [docs/deploy-checklist.md](docs/deploy-checklist.md#6-upgrading-and-rolling-back).
 - **Reuse by hash**: an asset can be sent as `{path, sha256}` to reuse a file of the artifact's
   current version, so an update sends and stores only what changed. `get_artifact` and
   `GET /api/v1/artifacts/:ref` list each asset's `sha256`. Restores and updates that keep the
   assets no longer copy them. The storage quota counts stored bytes, so a reused file counts once.
   Applies migration `0006_stored_bytes.sql`.
 - **Forward-only storage change**: from this release a version's new files are written under a
-  `v<n>.<nonce>/` prefix and reused files stay where they were first stored. Roll forward, never
-  back: a Worker older than this release still starts against the new schema and serves versions
-  written in full, but answers 404 for files a version reuses, fails to update or restore those
-  artifacts ("Missing stored file"), and counts storage by logical size. See
-  [docs/deploy-checklist.md](docs/deploy-checklist.md#6-upgrading-and-rolling-back).
+  `v<n>.<nonce>/` prefix and reused files stay where they were first stored (see **Upgrading**).
 - Publishes commit last: files go to storage before the version row, in one database transaction
   with the base-version, artifact-count and storage checks, so an interrupted publish no longer
-  leaves a broken version or a false conflict. `admin sweep-orphans` removes files an interrupted
-  publish left behind.
+  leaves a broken version or a false conflict. An hourly scheduled sweep removes the files an
+  interrupted publish left behind; `admin sweep-orphans` remains for older leftovers.
 - Publish results list `warnings` (missing files, root-absolute URLs, hosts outside the CDN
   allowlist, `http:` URLs, module builds on opaque-isolation instances) and `stored` (files
   written and reused). `not_scanned` is only a note that the reference check stopped at its 8 MB

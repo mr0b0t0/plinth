@@ -35,11 +35,19 @@ export declare function hostPairProblem(
   isolation: string,
   registrable: (host: string) => string,
 ): string | null;
-type Runtime = { compatibility_date?: string; compatibility_flags?: string[] };
+type Runtime = {
+  compatibility_date?: string;
+  compatibility_flags?: string[];
+  triggers?: { crons?: string[] };
+};
+export declare const REQUIRED_FLAGS: string[];
+export declare const SWEEP_CRON: string;
 export declare function refreshRuntime<T extends Runtime>(
   existing: T,
   repo: Runtime,
-): T & { compatibility_flags: string[] };
+): T & { compatibility_flags: string[]; triggers?: { crons: string[] } };
+export declare function runtimeBase(repoCfg: Record<string, unknown>): Record<string, unknown>;
+export declare function runtimeConfigProblem(cfg: unknown): string | null;
 export declare function instanceName(raw: Raw): string;
 export declare function deployPaths(
   home: string,
