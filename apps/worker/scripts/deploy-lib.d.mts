@@ -35,6 +35,11 @@ export declare function hostPairProblem(
   isolation: string,
   registrable: (host: string) => string,
 ): string | null;
+type Runtime = { compatibility_date?: string; compatibility_flags?: string[] };
+export declare function refreshRuntime<T extends Runtime>(
+  existing: T,
+  repo: Runtime,
+): T & { compatibility_flags: string[] };
 export declare function instanceName(raw: Raw): string;
 export declare function deployPaths(
   home: string,
