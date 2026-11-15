@@ -14,7 +14,7 @@ import {
   type Visibility,
 } from "@plinth/shared";
 import { and, desc, eq, inArray, isNull, like, or, sql } from "drizzle-orm";
-import { appUrl, contentOrigin } from "../config.ts";
+import { appUrl, contentOrigin, thumbnailsActive } from "../config.ts";
 import {
   type ArtifactRow,
   accessGrants,
@@ -226,6 +226,10 @@ export function toSummary(
     // Callers only build summaries for artifacts the principal may view; viewers get "viewer".
     role: role ?? "viewer",
     taken_down: !!a.takenDownAt,
+    thumbnail_url:
+      thumbnailsActive(ctx.config, ctx.env) && !a.takenDownAt
+        ? appUrl(ctx.config, `/api/v1/artifacts/${a.id}/thumbnail?version=${a.currentVersion}`)
+        : null,
   };
 }
 

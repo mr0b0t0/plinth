@@ -284,13 +284,21 @@
   border-bottom: var(--border-width) solid var(--color-border);
   background: var(--color-sidebar);
 }
+/* The version's screenshot. Hidden until it has loaded, so a missing one (404 until its capture
+   lands) never shows a broken image; the placeholder stays underneath until then. */
 .pl-dash__thumb-img {
+  position: absolute;
+  inset: 0;
   width: 100%;
   height: 100%;
   object-fit: cover;
   object-position: top center;
+  opacity: 0;
 }
-/* Placeholder: a quiet sheet with the title's initials, until real thumbnails exist. */
+.pl-dash__thumb-img[data-loaded] {
+  opacity: 1;
+}
+/* Placeholder: a quiet sheet with the title's initials, until the thumbnail has loaded. */
 .pl-dash__paper {
   position: absolute;
   inset: 14px 18px auto;

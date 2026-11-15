@@ -1,0 +1,9 @@
+{
+  "//": "Typecheck only (pnpm typecheck). Maps @cloudflare/puppeteer to a local declaration, because the package's own types reference Node's globals. Wrangler and Vitest use tsconfig.json, without this mapping, and bundle the real package.",
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "paths": {
+      "@cloudflare/puppeteer": ["./src/types/puppeteer-shim.ts"]
+    }
+  }
+}

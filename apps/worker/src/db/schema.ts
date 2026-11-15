@@ -66,6 +66,10 @@ export const versions = sqliteTable("versions", {
   createdAt: text("created_at").notNull(),
   /** JSON Capabilities parsed from index.html (migrations/0005_shared_state.sql), or null. */
   capabilities: text("capabilities"),
+  /** Thumbnail capture state (migrations/0008_thumbnails.sql): null, pending, ok or failed. */
+  thumbnail: text("thumbnail", { enum: ["pending", "ok", "failed"] }),
+  /** When the thumbnail state last changed (ISO 8601). */
+  thumbnailAt: text("thumbnail_at"),
 });
 
 export const accessGrants = sqliteTable(

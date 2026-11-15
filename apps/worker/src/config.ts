@@ -18,7 +18,16 @@ export interface Secrets {
   RESEND_API_KEY?: string;
 }
 
-export type Bindings = Env & Secrets;
+/**
+ * Bindings an operator adds by hand in their own wrangler config, never in the shipped one:
+ * BROWSER is Cloudflare Browser Rendering (`"browser": { "binding": "BROWSER" }`), used for
+ * thumbnails. Local, tunnel and Docker instances run without it.
+ */
+export interface OptionalBindings {
+  BROWSER?: Fetcher;
+}
+
+export type Bindings = Env & Secrets & OptionalBindings;
 
 export type Environment = "development" | "staging" | "production";
 export type EmailProvider = "sendgrid" | "resend" | "console";
@@ -95,6 +104,11 @@ export interface Config {
    * repository. Lives in the app's page around the frame, never in the artifact document.
    */
   showSourceLink: boolean;
+  /**
+   * THUMBNAILS (default on): screenshot each version for dashboard cards and link previews. Only
+   * in effect with a BROWSER binding; see thumbnailsActive.
+   */
+  thumbnails: boolean;
   /** OPERATOR_*: who runs this instance, for its legal pages. null when none is published. */
   operator: {
     name: string;
@@ -292,6 +306,7 @@ export function parseConfig(env: Record<string, unknown>): Config {
       ),
     },
     showSourceLink: boolDefaultOn(env.SHOW_SOURCE_LINK),
+    thumbnails: boolDefaultOn(env.THUMBNAILS),
     operator: parseOperator(env),
   };
   validate(config);
@@ -383,6 +398,15 @@ function validateSharedData(d: SharedDataLimits): void {
  */
 export function sharedDataActive(c: Pick<Config, "allowSharedData" | "contentIsolation">): boolean {
   return c.allowSharedData && c.contentIsolation === "origin";
+}
+
+/**
+ * Whether versions get thumbnails: THUMBNAILS is on and the operator added a Browser Rendering
+ * binding (BROWSER). Without the binding, cards keep their placeholder and link previews have no
+ * image.
+ */
+export function thumbnailsActive(c: Pick<Config, "thumbnails">, env: OptionalBindings): boolean {
+  return c.thumbnails && env.BROWSER !== undefined;
 }
 
 /** Bytes on the wire one bundle may have: the version limit plus tar headers and padding. */

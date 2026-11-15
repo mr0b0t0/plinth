@@ -457,6 +457,39 @@ file.
   point at them. Deleting an artifact, an admin takedown wipe and erasing a user still remove
   everything under `artifacts/<id>/`.
 
+## Thumbnails and link previews
+
+- **Untrusted HTML runs in Cloudflare's browser, never in the Worker.** The capture hands Browser
+  Rendering a one-time enter URL for one version on the artifact's own content origin. The page
+  loads under the usual content CSP, so it can reach nothing but its own origin and the CDN
+  allowlist. The enter token carries no identity claim, so a page with shared data sees a
+  signed-out viewer and can neither read nor write as anyone.
+- **The one top-level exception.** The content host sends every top-level visit to the app's page,
+  so artifacts render only in the app's sandboxed frame. The capture browser must load the
+  version top-level, so its enter token carries a capture flag (`c`), which becomes a content
+  cookie that lasts 120 seconds. Only a request with that pass, for the live artifact at its
+  current access epoch, is served top-level. Plinth mints the flag only for its own captures,
+  never with an identity claim, and the enter token is single-use.
+- **No pictures of error pages.** A capture whose page answers anything but 2xx (an expired link
+  after a visibility change, a 404) is recorded as failed, not stored. The whole capture must
+  finish within 25 seconds, under the 30 seconds `waitUntil` allows, so it records its failure
+  rather than being cut off while claimed.
+- **The image is ours, not the author's.** The stored JPEG is the browser's own screenshot, served
+  as `image/jpeg` with `nosniff`, so serving it from the app host never serves author content.
+- **Who sees it.** `GET /api/v1/artifacts/:ref/thumbnail` uses the policy module's view check,
+  like reading the artifact, and answers the same 404 to a stranger as for a missing artifact.
+  `/a/<slug>/og.jpg` and the Open Graph tags use the anonymous-viewer check from agent discovery
+  on every request: only an artifact a signed-out visitor could open gets a title or an image in
+  a link preview. Every other case gets one identical generic card, so a forwarded private link
+  reveals neither its title nor its content to an unfurler, whose cache would outlive any later
+  change.
+- **Lifecycle.** Thumbnails live under the artifact's root (`artifacts/<id>/thumbs/`), so a
+  delete removes them, and a capture that finishes after a delete removes what it stored. Neither
+  route serves a taken-down artifact.
+- **Cost.** A capture is claimed once per version, at most two run at once, and a failure is
+  retried after a day, so neither a burst of dashboard loads nor repeated preview fetches can
+  launch a browser per request.
+
 ## Rate limits and quotas
 
 | Limit | Default |

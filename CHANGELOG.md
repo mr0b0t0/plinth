@@ -10,6 +10,14 @@ Add a line under **Unreleased** in the pull request that makes a change people w
 
 ## Unreleased
 
+- **Thumbnails and link previews.** Each version gets a screenshot, taken by Cloudflare Browser
+  Rendering after it is published. Dashboard cards show it in place of the initials, and links to
+  artifacts anyone with the link can open now unfurl in Slack, iMessage, X and LinkedIn with their
+  title and the screenshot. Private and password artifacts unfurl as a generic "Plinth artifact"
+  card with no title or image. Older versions get their thumbnail the first time someone asks.
+  Turn it on by adding `"browser": { "binding": "BROWSER" }` to your wrangler config; set
+  `THUMBNAILS=false` to turn it off. Applies migration `0008_thumbnails.sql`.
+
 ## 0.4.0 (2026-11-15)
 
 - **Big builds.** Agents can publish a built site, such as a Vite `dist/` folder with hundreds of

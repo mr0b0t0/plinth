@@ -246,6 +246,28 @@ export yet. Design: `docs/superpowers/specs/2026-11-14-typed-outputs-doc-design.
 - Two versions can be compared as a source diff or side by side as rendered pages.
 - Restoring v2 publishes its content as the next version, so history is never rewritten.
 
+### Thumbnails and link previews
+
+- After a version commits, the Worker asks Cloudflare Browser Rendering (a `BROWSER` binding the
+  operator adds) to open that exact version on its content origin with a one-time enter token
+  that carries no identity, so the page sees a signed-out viewer. It stores a 1200x630 JPEG at
+  `artifacts/<id>/thumbs/v<n>.jpg`. The capture runs after the response (`waitUntil`) and never
+  delays a publish; at most two run at once, a failed one is retried after a day, and a reader
+  that finds none starts one, which backfills older versions. Migration `0008_thumbnails.sql`
+  adds `versions.thumbnail` and `thumbnail_at` to coordinate this.
+- Dashboard cards show the current version's thumbnail from
+  `GET /api/v1/artifacts/:ref/thumbnail`, which uses the same access check as reading the
+  artifact (`thumbnail_url` on summaries; null when the instance takes none). The initials
+  placeholder stays until the image loads.
+- Link previews: `/a/...` pages carry Open Graph and Twitter tags. Unfurlers fetch without
+  credentials, so they get what a signed-out visitor may see: an artifact anyone with the link
+  can open (unlisted, or public) gets its title and, once captured, `og:image` from
+  `/a/<slug>/og.jpg`, which runs the same anonymous check. Private, password, deleted, taken-down
+  and missing artifacts all get one generic card ("Plinth artifact") with no image.
+- Thumbnails live under the artifact's root, so a delete removes them; a taken-down artifact's
+  thumbnails are never served. `THUMBNAILS=false`, or no `BROWSER` binding, turns the feature off:
+  cards keep the placeholder and previews have no image.
+
 ### Editing
 
 - v1: a code editor (Monaco) with live preview in a sandboxed frame. Saving creates a new version

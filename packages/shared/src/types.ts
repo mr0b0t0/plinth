@@ -42,6 +42,11 @@ export interface ArtifactSummary {
   /** The caller's role on this artifact. */
   role: EffectiveRole;
   taken_down: boolean;
+  /**
+   * The current version's thumbnail (an image on the app host, same access as the artifact), or
+   * null when this instance takes no thumbnails. It may answer 404 until the first capture lands.
+   */
+  thumbnail_url: string | null;
 }
 
 export interface AssetInfo {

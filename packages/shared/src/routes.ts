@@ -49,6 +49,7 @@ export const API = {
   artifacts: "/artifacts", // GET list_artifacts, POST publish_artifact
   artifact: "/artifacts/:ref", // GET get_artifact, PUT update_artifact, PATCH rename, DELETE delete
   versions: "/artifacts/:ref/versions", // GET list_versions
+  thumbnail: "/artifacts/:ref/thumbnail", // GET a version's thumbnail image (JPEG)
   version: "/artifacts/:ref/versions/:n", // GET get_artifact with version
   restore: "/artifacts/:ref/versions/:n/restore", // POST restore_version
   visibility: "/artifacts/:ref/visibility", // PUT set_visibility

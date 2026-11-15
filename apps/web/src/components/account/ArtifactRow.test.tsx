@@ -1,5 +1,5 @@
 import type { ArtifactSummary } from "@plinth/shared";
-import { cleanup, render, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, within } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import { ArtifactCard, ArtifactRow } from "./ArtifactRow.tsx";
 
@@ -22,6 +22,7 @@ const summary = (over: Partial<ArtifactSummary> = {}): ArtifactSummary => ({
   owner: { id: "u1", email: "ada@example.org", name: null },
   role: "owner",
   taken_down: false,
+  thumbnail_url: null,
   ...over,
 });
 
@@ -56,4 +57,46 @@ describe("ArtifactRow and ArtifactCard", () => {
       expect(within(item).queryByText("Doc")).toBeNull();
     });
   }
+});
+
+describe("ArtifactCard thumbnail", () => {
+  const URL_V2 = "http://app.localhost:8787/api/v1/artifacts/art1/thumbnail?version=2";
+  const card = (over: Partial<ArtifactSummary> = {}) => {
+    const { container } = render(
+      <ul>
+        <ArtifactCard artifact={summary(over)} now={NOW} />
+      </ul>,
+    );
+    const thumb = container.querySelector(".pl-dash__thumb") as HTMLElement;
+    return {
+      thumb,
+      img: () => thumb.querySelector("img"),
+      placeholder: () => thumb.querySelector(".pl-dash__paper"),
+    };
+  };
+
+  it("shows only the placeholder when the instance takes no thumbnails", () => {
+    const c = card({ thumbnail_url: null });
+    expect(c.img()).toBeNull();
+    expect(c.placeholder()?.textContent).toContain("RP");
+  });
+
+  it("keeps the placeholder until the image loads, then shows the image", () => {
+    const c = card({ thumbnail_url: URL_V2 });
+    const img = c.img() as HTMLImageElement;
+    expect(img.getAttribute("src")).toBe(URL_V2);
+    expect(img.getAttribute("alt")).toBe("");
+    expect(img.hasAttribute("data-loaded")).toBe(false);
+    expect(c.placeholder()).not.toBeNull();
+    fireEvent.load(img);
+    expect(c.img()?.hasAttribute("data-loaded")).toBe(true);
+    expect(c.placeholder()).toBeNull();
+  });
+
+  it("falls back to the placeholder when the image fails (no capture yet)", () => {
+    const c = card({ thumbnail_url: URL_V2 });
+    fireEvent.error(c.img() as HTMLImageElement);
+    expect(c.img()).toBeNull();
+    expect(c.placeholder()).not.toBeNull();
+  });
 });

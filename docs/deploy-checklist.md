@@ -79,6 +79,7 @@ it is mandatory.
 | R2 bucket | `plinth-files` | `node scripts/setup.mjs --remote` |
 | Zone for the app host | `aconite.io` | Cloudflare dashboard (already exists for the hosted instance) |
 | Zone for the content host | `plinthusercontent.com` for the hosted instance (registered through Cloudflare Registrar, so the zone already uses Cloudflare's nameservers); for a separate domain bought elsewhere, add it as a zone and point the registrar's nameservers at Cloudflare | Cloudflare dashboard |
+| Browser Rendering binding (optional, for thumbnails) | `"browser": { "binding": "BROWSER" }` in your wrangler config | Your own `wrangler.<env>.jsonc`; Browser Rendering is billed per browser hour (Workers Free includes a small daily allowance) |
 | Advanced Certificate for `*.<content subdomain>` | only for a content subdomain (second-level wildcard); not needed for the hosted instance | Cloudflare dashboard → SSL/TLS → Edge Certificates → Order Advanced Certificate (Advanced Certificate Manager, paid) |
 
 Workers Free is enough to start with small pages. The Workers Paid plan ($5/month) raises request
@@ -372,6 +373,12 @@ Upgrades apply the new release's D1 migrations before its Worker (`plinth deploy
 hand, `wrangler d1 migrations apply` first). Plinth 0.4.0 adds migrations `0006_stored_bytes` and
 `0007_upload_tickets` and a new storage layout: a version may reuse files stored under an earlier
 version of the same artifact, and new versions are written under a fresh `v<n>.<nonce>/` prefix.
+
+Plinth 0.4.1 adds migration `0008_thumbnails` (two nullable columns on `versions`). It needs no
+config change; to turn thumbnails on, add a Browser Rendering binding to your wrangler config
+(`"browser": { "binding": "BROWSER" }`, see section 1). Rolling 0.4.1 back to 0.4.0 is safe: the
+older Worker ignores the new columns and the `thumbs/` objects, which a later delete removes with
+the artifact.
 
 Plinth 0.4.0 also needs the `enable_request_signal` compatibility flag and an hourly cron
 trigger. Without the flag a bundle whose client disconnects never notices, and its files stay

@@ -26,6 +26,7 @@ import { DATA_API_PREFIX, serveDataApi } from "./data-api.ts";
 import { servePreviewLoader } from "./preview.ts";
 import { serveRuntimeScript } from "./runtime.ts";
 import {
+  CAPTURE_COOKIE_S,
   consumeNonce,
   IDENTITY_CLAIM_INFO,
   safeNext,
@@ -153,7 +154,7 @@ const CLAIM_ROLES: ReadonlySet<string> = new Set<EffectiveRole>([
   "viewer",
 ]);
 
-type ContentPass = { claim: PageClaim | null };
+type ContentPass = { claim: PageClaim | null; capture: boolean };
 
 /** One cookie value as a pass for this artifact at its epoch, or null when it is not one. */
 async function openPass(
@@ -163,7 +164,10 @@ async function openPass(
 ): Promise<ContentPass | null> {
   const pass = await verifyContentCookie(config, value);
   if (!pass || pass.a !== artifact.id || pass.e !== artifact.accessEpoch) return null;
-  if (pass.x === undefined) return { claim: null };
+  const capture = pass.c === 1;
+  if (pass.x === undefined) return { claim: null, capture };
+  // A capture pass never carries an identity (issueEnterUrl refuses both).
+  if (capture) return null;
   if (typeof pass.x !== "string") return null;
   const opened = await openJson(config.tokenSigningKey, IDENTITY_CLAIM_INFO, artifact.id, pass.x);
   if (!opened || typeof opened !== "object") return null;
@@ -175,6 +179,7 @@ async function openPass(
       role: r as EffectiveRole,
       viewerId: await viewerIdFor(config.tokenSigningKey, artifact.id, m),
     },
+    capture: false,
   };
 }
 
@@ -204,6 +209,19 @@ export async function readContentPass(
     found ??= pass;
   }
   return found;
+}
+
+/** Whether this request carries a valid capture pass for the live artifact (top-level loads). */
+async function hasCapturePass(
+  request: Request,
+  env: Bindings,
+  config: Config,
+  artifactId: string,
+): Promise<boolean> {
+  if (!request.headers.get("cookie")) return false;
+  const artifact = await loadArtifact(env, artifactId);
+  if (!artifact || artifact.takenDownAt) return false;
+  return (await readContentPass(request, config, artifact))?.capture === true;
 }
 
 /**
@@ -280,10 +298,13 @@ async function serve(
   // Artifacts render only inside the app's frame, where the sandbox and the app's frame-src keep
   // them from navigating away with what a viewer typed. A top-level visit (direct link, popup)
   // goes to the app's artifact page instead. Browsers send Sec-Fetch-Dest; tools that do not
-  // (curl, scripts) are served as before.
+  // (curl, scripts) are served as before. The one exception is Plinth's own thumbnail capture
+  // (services/thumbnails.ts): its browser loads the version top-level with a short-lived capture
+  // pass that carries no identity and that only an enter token Plinth minted for it can set.
   if (
     request.headers.get("sec-fetch-dest") === "document" &&
-    path !== `${CONTENT_RESERVED_PREFIX}enter`
+    path !== `${CONTENT_RESERVED_PREFIX}enter` &&
+    !(await hasCapturePass(request, env, config, artifactId))
   ) {
     return redirect(config, 302, appPageFor(config, artifactId, path, url));
   }
@@ -309,7 +330,9 @@ async function serve(
     // The sealed identity claim, if any, moves into the cookie unchanged. Every enter writes a
     // fresh cookie, so an anonymous enter replaces an identified one.
     const x = typeof payload.x === "string" ? payload.x : undefined;
-    const value = await signContentCookie(config, artifactId, payload.e, x);
+    const capture = payload.c === 1;
+    if (capture && x !== undefined) return expired();
+    const value = await signContentCookie(config, artifactId, payload.e, x, capture);
     const next = safeNext(url.searchParams.get("next"));
     const res = redirect(config, 302, `${base}${next}`);
     res.headers.append(
@@ -322,7 +345,7 @@ async function serve(
         sameSite: "None",
         partitioned: true,
         path: cookiePath,
-        maxAge: TTL.contentCookieS,
+        maxAge: capture ? CAPTURE_COOKIE_S : TTL.contentCookieS,
       }),
     );
     return res;

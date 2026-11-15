@@ -9,17 +9,22 @@ import {
   updateArtifactInput,
 } from "@plinth/shared";
 import { Hono } from "hono";
+import { applyAppHeaders } from "../app/headers.ts";
+import { thumbnailsActive } from "../config.ts";
 import { getArtifactWithData } from "../services/artifactData.ts";
 import {
   deleteArtifact,
+  getVersionRow,
   listArtifacts,
   listVersions,
   publishArtifact,
   renameArtifact,
+  requireArtifact,
   restoreVersion,
   setVisibility,
   updateArtifact,
 } from "../services/artifacts.ts";
+import { scheduleThumbnail, thumbnailResponse } from "../services/thumbnails.ts";
 import { type AppEnv, parseBody, parseInput, serviceCtx } from "./context.ts";
 
 export const artifactsApi = new Hono<AppEnv>();
@@ -90,4 +95,38 @@ artifactsApi.put("/artifacts/:ref/visibility", async (c) => {
   const body = (await c.req.json().catch(() => null)) as Record<string, unknown> | null;
   const input = parseInput(setVisibilityInput, { ...(body ?? {}), id: c.req.param("ref") });
   return c.json(await setVisibility(serviceCtx(c), input));
+});
+
+/**
+ * A version's thumbnail (the current version without ?version), for anyone who may view the
+ * artifact: the same access check as reading it. 404 until the capture lands; a missing one starts
+ * a capture, which is how versions published before thumbnails existed get theirs.
+ */
+artifactsApi.get("/artifacts/:ref/thumbnail", async (c) => {
+  const ctx = serviceCtx(c);
+  const { artifact } = await requireArtifact(ctx, c.req.param("ref"), "view");
+  const q = c.req.query("version");
+  const n = q === undefined ? artifact.currentVersion : Number(q);
+  const headers = new Headers();
+  applyAppHeaders(ctx.config, headers);
+  headers.set("Cross-Origin-Resource-Policy", "same-origin");
+  const missing = () => {
+    headers.set("Cache-Control", "no-store");
+    return c.json({ error: { code: "not_found", message: "No thumbnail yet", details: {} } }, 404, {
+      ...Object.fromEntries(headers),
+    });
+  };
+  if (!Number.isInteger(n) || n < 1 || n > artifact.currentVersion) return missing();
+  if (!thumbnailsActive(ctx.config, ctx.env)) return missing();
+  const v = await getVersionRow(ctx, artifact.id, n);
+  if (!v) return missing();
+  if (v.thumbnail === "ok") {
+    // A version's image never changes; a revoked viewer keeps only what their browser cached.
+    // Without ?version the URL means "current", which moves, so it is revalidated every time.
+    headers.set("Cache-Control", q === undefined ? "private, no-cache" : "private, max-age=86400");
+    const res = await thumbnailResponse(ctx.env.FILES, artifact.id, n, headers);
+    if (res) return res;
+  }
+  scheduleThumbnail(ctx, artifact.id, n);
+  return missing();
 });

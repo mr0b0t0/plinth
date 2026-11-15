@@ -99,6 +99,7 @@ const artifact = (role: string, extra: Record<string, unknown> = {}) => ({
   owner: { id: "u0", email: "owner@example.com", name: null },
   role,
   taken_down: false,
+  thumbnail_url: null,
   version: 3,
   source_path: "index.html",
   html: "<p>v3</p>",
