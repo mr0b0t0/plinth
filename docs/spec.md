@@ -127,7 +127,7 @@ adds one column and two tables:
 | Table or column | Key fields | Notes |
 | --- | --- | --- |
 | `versions.stored_bytes` | integer or NULL | Bytes this version wrote to R2. The storage quota sums `coalesce(stored_bytes, size_bytes)` |
-| `upload_tickets` | id, token_hash, user_id, credential (`connection` or `admin`), connection_id or admin_token_hash, scopes, mode (`publish` or `update`), artifact_id, artifact_type, title, note, base_version, state (`open`, `used`, `dead`), attempts, receiving_claim, receiving_until, result_artifact_id, result_version, created_at, expires_at, used_at | One single-use upload ticket from `start_upload`. The token is stored as its SHA-256. `open -> used` happens in the same D1 batch that commits the version. The receiving lease only limits concurrency. Rows older than 7 days are deleted opportunistically |
+| `upload_tickets` | id, token_hash, user_id, credential (`connection` or `admin`), connection_id or admin_token_hash, scopes, mode (`publish` or `update`), artifact_id, artifact_type, title, note, base_version, state (`open`, `used`, `dead`), attempts, receiving_claim, receiving_until, result_artifact_id, result_version, created_at, expires_at, used_at | One single-use upload ticket from `start_upload`. The token is stored as its SHA-256. `open -> used` happens in the same D1 batch that commits the version. The receiving lease limits concurrency and is the bundle's deadline (10 minutes). Rows older than 7 days are deleted opportunistically (on about 2% of `start_upload` calls, so on a quiet instance they can stay longer); erasing an artifact or a user deletes its tickets |
 
 ## Auth and permissions
 
@@ -332,7 +332,7 @@ Decided 2026-11-14 (issue #1). Design:
 ### Big builds and reuse by hash
 
 Decided 2026-11-15. Agents publish built sites (a Vite or similar `dist/` folder with hundreds of
-files) and big pages without merging chunks, and an update sends only what changed. Guides:
+files) and big pages without merging chunks, and an update stores only what changed. Guides:
 `docs/agents.md#large-builds`, `docs/mcp.md`, `docs/security.md`.
 
 - **Reuse by sha256, inside one artifact.** An asset may be sent as `{path, sha256}` (lowercase hex
@@ -366,16 +366,26 @@ files) and big pages without merging chunks, and an update sends only what chang
   `root_absolute` (`/assets/x.js`, which loads the current version's file from an old version),
   `blocked_host` (outside the CSP's allowlist), `insecure_url` (`http:`), `opaque_module` (module
   scripts, `crossorigin` links and fonts, which fail under `CONTENT_ISOLATION=opaque`) and
-  `not_scanned` (past the 8 MB scan budget). The result's `stored` reports files, `written`,
+  `not_scanned` (a note, not something to fix: the reference check reads at most 2 MB per file and
+  8 MB per publish, so every big build gets it). The result's `stored` reports files, `written`,
   `reused` and bytes. Agents verify a publish by comparing `get_artifact`'s asset hashes.
 - **Out-of-band upload.** `start_upload` (MCP) or bearer-only `POST /api/v1/uploads` mints a
   ticket: single use, 30 minutes, at most 5 attempts, bound to its connection (or, in single-user
   mode, to the hash of `ADMIN_TOKEN`), to one target, and for an update to the base version the
   caller states. `POST /api/v1/uploads/:id/bundle` takes only `Authorization: Bearer plinth_up_...`
-  (no cookies, no CORS) and a tar, optionally gzip, which the request itself commits. The tar is
+  (no cookies, no CORS) and a tar, optionally gzip, which the request itself commits. NUL padding
+  after the gzip member (what bsdtar writes for `tar -czf -` to a pipe) is accepted;
+  `commands.curl` pipes `tar -cf -` through `gzip -c` anyway, leaves out source maps and sets
+  `COPYFILE_DISABLE=1`. The tar is
   streamed one entry at a time through a bounded reader (checksums, a typeflag allowlist, no links
   or devices, no duplicate or reserved paths, caps on raw and inflated bytes, per file (25 MB), per
-  version and per entry metadata), into the same stager and commit as an inline publish. A folder
+  version and per entry metadata), into the same stager and commit as an inline publish. The
+  reader allocates a file only once it fits the 16 MB in-flight budget beside the running puts, so
+  a bundle holds at most max(16 MB, 25 MB) of file bytes at once, plus kept scan text (8 MB) and
+  the source (5 MB). The bundle must arrive within its 10-minute receiving lease
+  (`upload_too_slow` otherwise). Before streaming it checks the owner's storage quota, and its puts
+  stop at the room left. When the client disconnects, the request's abort signal hands the
+  deletion of the attempt's files and the release of the lease to `waitUntil`. A folder
   prefix is stripped only when every kept entry is under it. A conflict kills the ticket; other
   errors leave it open for its remaining attempts. One bundle per user streams at a time; minting
   is limited to `MAX_PUBLISHES_PER_HOUR` per hour and bundle requests to twice that. The token is

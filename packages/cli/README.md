@@ -112,8 +112,10 @@ npx @mr0b0t0/plinth publish dist --id my-report-k3x9   # the next version of tha
   `-` and `/`; the command suggests a new name for any other.
 - **Limits.** It checks the instance's limits (from `/api/v1/config`) before sending anything:
   files per version, the size of one file and of the whole version.
-- **Updates.** With `--id`, only the files that changed are sent; the others are reused from the
-  current version. If someone else published a version since the one you read, the command stops
+- **Updates.** With `--id`, only the files that changed are stored; the others are reused from
+  the current version. When the changed files fit in one request (about 24 MB) only they are
+  sent; otherwise the whole folder goes as one compressed upload and the server reuses the
+  unchanged files by hash. If someone else published a version since the one you read, the command stops
   with exit code 3 and changes nothing; `--base-version N` states the version you started from.
 - **Checks.** It reads the new version back and compares every file's SHA-256 with the folder,
   then prints the link, how many files were written and reused, and any warnings (for example a

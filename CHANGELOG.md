@@ -16,7 +16,11 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   without merging chunks. The new MCP tool `start_upload` (and bearer-only `POST /api/v1/uploads`)
   mints a single-use, 30-minute upload ticket; one `curl` of a gzip tar to its `upload_url`
   publishes the folder or updates the artifact. Updates of an existing artifact require the
-  `base_version` the agent read. Applies migration `0007_upload_tickets.sql`.
+  `base_version` the agent read. Applies migration `0007_upload_tickets.sql`. The command works
+  with macOS tar (it pipes `tar -cf -` through `gzip -c` and leaves out source maps), and the
+  server also accepts the NUL padding bsdtar adds to `tar -czf -`. A bundle must arrive within 10
+  minutes; one whose client disconnects deletes its own files, and an account at its storage
+  quota cannot start one.
 - **Reuse by hash**: an asset can be sent as `{path, sha256}` to reuse a file of the artifact's
   current version, so an update sends and stores only what changed. `get_artifact` and
   `GET /api/v1/artifacts/:ref` list each asset's `sha256`. Restores and updates that keep the
@@ -34,7 +38,8 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   publish left behind.
 - Publish results list `warnings` (missing files, root-absolute URLs, hosts outside the CDN
   allowlist, `http:` URLs, module builds on opaque-isolation instances) and `stored` (files
-  written and reused).
+  written and reused). `not_scanned` is only a note that the reference check stopped at its 8 MB
+  budget; the CLI prints it as a note, and agents are told it needs no action.
 - The per-version limits are settings: `MAX_VERSION_BYTES` (default raised from 25 MB to 50 MB,
   at most 64 MB) and `MAX_ASSETS_PER_VERSION` (default raised from 200 to 511, at most 900), with
   `PLINTH_` equivalents in Docker. `GET /api/v1/config` returns the instance's limits and CDN
@@ -43,10 +48,15 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   storage read, and immutable caching for the files of versioned URLs (always `private`, never at
   the edge).
 - **CLI**: `plinth login`, `logout`, `whoami`, `publish <dir>` and `upload <dir>` publish a build
-  folder from any machine, with no checkout and no wrangler. `publish` sends only changed files,
-  verifies the result by hash and exits 3 on a conflict. Every request sends a
+  folder from any machine, with no checkout and no wrangler. `publish --id` stores only the files
+  that changed (it sends just those when they fit in one request of about 24 MB, otherwise the
+  whole folder as one compressed upload), verifies the result by hash and exits 3 on a conflict. Every request sends a
   `User-Agent: plinth-cli/<version>`, and a Cloudflare edge block (`error code: 1010`) gets a
   message pointing at the deploy checklist.
+- Admin: `sweep-orphans` now requires `--older-than-minutes` of at least 45 (an upload ticket can
+  commit for 30 minutes), and `erase-artifact` also deletes the upload ticket that published the
+  artifact. Workers Free guidance is lowered to `MAX_VERSION_BYTES=1048576`: Free cannot
+  reliably publish multi-megabyte versions.
 - Claude Code install guidance puts the Plinth plugin first on the hosted instance and labels the
   bare `claude mcp add` "tools only"; on a self-hosted or local instance its own server comes
   first, and the plugin needs `PLINTH_URL`. Agent plugin 0.6.0: the skill explains built sites and

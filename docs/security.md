@@ -393,8 +393,14 @@ powerful, so these risks are accepted.
 ### Archive refusals
 
 The bundle is streamed through a bounded tar reader (`apps/worker/src/services/bundle.ts`), one
-file at a time, so memory is bounded by the 25 MB per-file cap and a 16 MB in-flight budget, not
-by the version's size. It refuses, naming the entry:
+file at a time, so memory does not grow with the version's size. Before the reader allocates a
+file it waits until that file fits the 16 MB in-flight budget beside the puts still running (a
+file larger than the budget waits until none is running). So the file bytes alive at once are at
+most max(16 MB, the 25 MB per-file cap), plus up to 8 MB of text kept for publish warnings and
+up to 5 MB of a held source file: about 38 MB per bundle at the defaults. One bundle per user
+streams at a time, but bundles of different users can share an isolate (128 MB). This bound is
+checked structurally by a test that counts live file bytes against slow R2 puts; heap use itself
+was not measured, because the local runtime reports none. It refuses, naming the entry:
 
 - hard links, symbolic links, devices, FIFOs, GNU sparse and volume entries, and any unknown entry
   type (the agent is never told to follow links with `tar -h`);
@@ -407,7 +413,10 @@ by the version's size. It refuses, naming the entry:
 - declared sizes that are negative, not numbers, or over the per-file or remaining version budget,
   before allocating.
 
-gzip is detected by its magic bytes. The bytes on the wire are capped at `max_bundle_bytes`, and
+gzip is detected by its magic bytes. NUL padding after the gzip member (bsdtar pads
+`tar -czf -` to a 10240-byte record when it writes to a pipe) is accepted: the trailing zero run
+is held back from the decompressor, and only the bytes that complete the trailer (matched by its
+length field, with the CRC still checked) are fed to it. The bytes on the wire are capped at `max_bundle_bytes`, and
 the inflated bytes, each file, the version total and the entry count are capped while streaming,
 so a gzip bomb stops at the version limit. Dotfiles (`.DS_Store`, `.git`) are skipped and listed.
 A single top directory is stripped only when every kept entry is inside it and it holds the entry
@@ -432,7 +441,13 @@ file.
   inserts the artifact row (for a publish), inserts the version row, advances `current_version`
   and consumes the upload, with the quota and artifact-count checks inside it. A crash or a lost
   race leaves only unreferenced objects under that attempt's own prefix, never a half-made version;
-  `plinth-admin sweep-orphans` removes them, and so does deleting or erasing the artifact.
+  the admin command `sweep-orphans` ([self-hosting.md](self-hosting.md#operating-notes)) removes
+  them, and so does deleting or erasing the artifact. A bundle whose client disconnects cleans up
+  after itself: the request's abort signal hands the deletion of its attempt prefix and the
+  release of its receiving lease to `waitUntil`, which outlives the request. Before streaming, a
+  bundle checks the owner's storage quota, and while streaming its puts stop at the room left, so
+  even an attempt whose cleanup never runs leaves no more than the quota allows. Instances open
+  to sign-ups should still run `sweep-orphans` regularly (there is no scheduled sweep).
 - **Immutability.** Objects are never deleted one version at a time, because later versions may
   point at them. Deleting an artifact, an admin takedown wipe and erasing a user still remove
   everything under `artifacts/<id>/`.

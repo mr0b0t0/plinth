@@ -178,8 +178,9 @@ minutes.
 
 **The CLI** ([packages/cli/README.md](../packages/cli/README.md)). `npx -y @mr0b0t0/plinth login`
 once, then `publish <dir>` (`--id <id>` to update). It refuses symlinks, skips dotfiles and source
-maps, checks the instance's limits before sending, sends only the files that changed, and verifies
-every file's hash afterwards. A conflict exits with code 3 and is never retried.
+maps, checks the instance's limits before sending, stores only the files that changed (sending
+just those when they fit in one request of about 24 MB, otherwise the whole folder as one
+compressed upload), and verifies every file's hash afterwards. A conflict exits with code 3 and is never retried.
 
 Rules that keep a build working on Plinth:
 
@@ -227,6 +228,8 @@ There is no rendered preview for agents yet. To check that a publish arrived int
 1. **Read the warnings.** Every publish result lists `warnings`: references to files the version
    does not have, root-absolute URLs, hosts outside the allowlist, `http:` URLs, and module scripts
    on opaque-isolation instances ([mcp.md](mcp.md#publish-warnings)). Fix them and publish again.
+   `not_scanned` is only a note that the reference check stopped at its budget (8 MB of HTML, CSS
+   and JS per publish); it needs no action.
 2. **Compare hashes.** `get_artifact` and `GET /api/v1/artifacts/<id>` list every asset with the
    `sha256` the server computed from the stored bytes. Compare them with the local files
    (`shasum -a 256 <file>`, or `sha256sum`). The CLI does this after every publish and prints
@@ -244,13 +247,20 @@ There is no rendered preview for agents yet. To check that a publish arrived int
    ```sh
    tmp=$(mktemp -d)
    page=$(curl -sS -A my-agent/1.0 -c "$tmp/jar" -b "$tmp/jar" -L -o "$tmp/index.html" -w '%{url_effective}' "$ENTER_URL")
+   # Stop unless the redirect stayed on the artifact's content host (see the note below).
+   case "$page" in "${ENTER_URL%%/__plinth/*}"/*) ;; *) echo "not on the content host: $page" >&2; rm -rf "$tmp"; exit 1 ;; esac
    curl -sS -A my-agent/1.0 -b "$tmp/jar" -o "$tmp/app.js" "${page%/*}/assets/app.js"
    # compare "$tmp/index.html" and "$tmp/app.js" with the build, then:
    rm -rf "$tmp"
    ```
 
    `page` is where the redirect landed: the artifact's content origin, or its versioned path for
-   an older version, so relative paths resolve against it as they do in the page.
+   an older version, so relative paths resolve against it as they do in the page. If it is not on
+   the content host, the cookie was not kept and the download is the app's page, not the
+   artifact. That happens on a local instance served over `http://` (`*.localhost`, as the npx
+   CLI runs one): the content cookie is `Secure` and `__Host-` prefixed, and curl does not store
+   it over plain HTTP. There, rely on the hash comparison in step 2, or send the cookie from the
+   enter response's `Set-Cookie` header yourself with `-H 'Cookie: ...'`.
 
    A browser that opens `enter_url` at the top level is sent on to the artifact's page in the app,
    because artifacts render only inside the app's frame. Treat `enter_url` and the cookie jar as

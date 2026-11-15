@@ -98,14 +98,29 @@ A value outside the range stops the Worker with a configuration error. `GET /api
 the values in effect under `limits`, with `max_bundle_bytes` (the version limit plus 8 MB of tar
 overhead), the largest body an upload from `start_upload` or the CLI sends.
 
-- **Workers Free:** a big inline publish or an uploaded build cannot finish within Free's 10 ms of
-  CPU per request and fails with Cloudflare error 1102. Set `MAX_VERSION_BYTES=5242880` and
-  `MAX_ASSETS_PER_VERSION=50`. Uploaded builds (`start_upload` and `plinth publish`) effectively
-  need Workers Paid.
+- **Workers Free:** Workers Free cannot reliably publish multi-megabyte versions. Its 10 ms of CPU
+  per request runs out on a publish of a few megabytes: reading, inflating and hashing a 5 MB,
+  50-file version alone took 12 to 24 ms in local measurements, before routing, validation, the
+  database and the warning scan. Such a publish fails with Cloudflare error 1102. On Free, set
+  `MAX_VERSION_BYTES=1048576` (the minimum) and a small `MAX_ASSETS_PER_VERSION` (for example
+  `20`), and expect even those to fail now and then. Big pages and uploaded builds
+  (`start_upload` and `plinth publish`) need Workers Paid.
 - **Workers Paid:** the defaults fit. You may also raise the CPU limit per request with
   `"limits": { "cpu_ms": 300000 }` in the Worker config (5 minutes, the Paid maximum).
 - A reverse proxy in front of the Worker (the Docker setup's nginx, for example) must accept bodies
   of at least `max_bundle_bytes` ([docker.md](docker.md)).
+- **Memory was not measured on a live isolate.** A bundle holds at most max(16 MB in-flight
+  budget, 25 MB per-file cap) of file bytes at once, plus up to 8 MB of scan text and a 5 MB
+  source, and tests check that bound by counting bytes; the local runtime reports no heap figures.
+  Bundles of different users can share one 128 MB isolate. Before relying on the 25 MB per-file
+  default on a busy instance, try two concurrent maximum-size bundles plus a large inline publish
+  on staging.
+- **Orphaned upload files.** A bundle whose client disconnects deletes its own files (the
+  `enable_request_signal` compatibility flag in `wrangler.jsonc` is what lets it notice), but a
+  request the runtime kills outright can still leave files no version names. They do not count
+  toward any quota. On an instance open to sign-ups, run
+  `pnpm --filter @plinth/worker admin -- sweep-orphans --remote` regularly, for example weekly
+  ([self-hosting.md](self-hosting.md#operating-notes)); there is no scheduled sweep.
 
 ```sh
 pnpm --filter @plinth/worker exec wrangler login

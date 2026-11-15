@@ -107,8 +107,8 @@ Booleans accept `true`, `1`, `yes` or `on`.
 | `EMAIL_FROM` | `Plinth <noreply@<APP_HOST>>` | Sender address. Must be on a domain verified with your provider |
 | `MAX_ARTIFACTS_PER_USER` | `100` | Artifact quota per account. A per-user override lives in `users.artifact_limit` |
 | `MAX_PUBLISHES_PER_HOUR` | `60` | Publishes and new versions per user per hour. Uploads (`start_upload`) are limited to the same number per hour, and upload requests to twice it |
-| `MAX_VERSION_BYTES` | `52428800` (50 MB) | Source plus assets of one version, uncompressed, reused files included: what a viewer loads. `1048576` to `67108864` (64 MB). An upload's body may be this plus 8 MB of tar overhead. On Workers Free set `5242880` ([deploy-checklist.md](deploy-checklist.md#version-limits-and-the-workers-plan)) |
-| `MAX_ASSETS_PER_VERSION` | `511` | Asset files in one version, besides the main document. `1` to `900`. On Workers Free set `50` |
+| `MAX_VERSION_BYTES` | `52428800` (50 MB) | Source plus assets of one version, uncompressed, reused files included: what a viewer loads. `1048576` to `67108864` (64 MB). An upload's body may be this plus 8 MB of tar overhead. On Workers Free set `1048576`: Free cannot reliably publish multi-megabyte versions ([deploy-checklist.md](deploy-checklist.md#version-limits-and-the-workers-plan)) |
+| `MAX_ASSETS_PER_VERSION` | `511` | Asset files in one version, besides the main document. `1` to `900`. On Workers Free set a small value, for example `20` |
 | `MAX_STORAGE_BYTES_PER_USER` | `1073741824` (1 GiB) | Bytes stored per account across all versions of its artifacts. A file a version reuses from an earlier version of the same artifact is stored, and counted, once |
 | `CDN_ALLOWLIST` | cdnjs.cloudflare.com, cdn.jsdelivr.net, unpkg.com, cdn.tailwindcss.com, code.jquery.com, cdn.plot.ly | Script hosts artifacts may load from, comma or space separated. Empty means the default list |
 | `SINGLE_USER_MODE` | `false` | One-person instance; needs exactly one `ADMIN_EMAIL` |
@@ -254,7 +254,7 @@ Step-by-step instructions for each client are in [mcp.md](mcp.md).
   under that attempt's own prefix. Deleting or erasing the artifact removes them; so does
   `pnpm --filter @plinth/worker admin -- sweep-orphans --local|--remote [--artifact <id|slug>] [--older-than-minutes N] [--dry-run] [--env E] [--config C] [--bucket B]`.
   It deletes only prefixes no version names that are older than `--older-than-minutes` (default
-  60, minimum 15). The R2 bucket is always the `FILES` binding of the same wrangler config and
+  60, minimum 45: an upload ticket can still commit for 30 minutes after it is minted). The R2 bucket is always the `FILES` binding of the same wrangler config and
   environment as the database; `--bucket` only checks that name and is refused if it differs (the
   erase commands do the same). The sweep deletes nothing, and says why, when the database answer
   cannot be read, names no version, or names none of the prefixes in the bucket. Run it with

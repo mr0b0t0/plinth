@@ -325,7 +325,9 @@ commands, next }`:
   7.55 or later: the token reaches curl through `-H @<(printf ...)`, so it is not in curl's
   arguments. It is still in the command text the agent's shell runs, and so in that shell's
   arguments while the upload runs and in the agent's transcript. It sends the folder gzipped
-  (`tar -czf - .`).
+  (`COPYFILE_DISABLE=1 tar --exclude='*.map' -cf - . | gzip -c`). It pipes through `gzip` rather
+  than `tar -z` because bsdtar (macOS) pads `tar -czf -` with NUL bytes when it writes to a pipe;
+  the server accepts that padding too.
 - `commands.npx` (only on release builds) does the same with the Plinth CLI:
   `PLINTH_UPLOAD_TOKEN=... npx -y @mr0b0t0/plinth@<version> upload <folder> --to '<upload_url>'`.
 - `target` says whether this is a publish or an update, and for an update the artifact's
@@ -347,11 +349,13 @@ the upload token works on no other route. Errors carry a `reason`:
 
 | `reason` | Meaning |
 | --- | --- |
+| `conflict` | Someone published after `base_version`; `current_version` names the version now current. The upload is ended: read the artifact again and start a new upload |
 | `upload_expired` | Older than 30 minutes: call `start_upload` again |
 | `upload_used` | Already published; the error names the `version` and `url` |
 | `upload_dead` | A conflict ended it: read the artifact again and start a new upload |
 | `upload_exhausted` | 5 attempts used |
-| `upload_running` | Another upload of yours is in progress; wait for it |
+| `upload_running` | Another upload of yours is in progress; wait for it. `receiving_until` and `retry_after` say when its lease ends at the latest |
+| `upload_too_slow` | The bundle took longer than its 10-minute receiving lease to arrive; send it again (the upload keeps its remaining attempts) |
 | `no_entry_file` | No `index.html` (or `content.md`) at the top: point `<folder>` at the build folder that has it at its top |
 
 A conflict (someone published after `base_version`) ends the upload; `details.next` says which
@@ -370,7 +374,7 @@ For a signed-in person, `npx -y @mr0b0t0/plinth publish <dir>` does all of this 
 ### Publish warnings
 
 Every publish and update result (inline or uploaded) lists `warnings`. They never block a publish;
-fix them and publish again. Each has `code`, `file`, `message`, and where it fits `ref`, `host` and
+fix them and publish again (all but `not_scanned`, which needs no action). Each has `code`, `file`, `message`, and where it fits `ref`, `host` and
 `count`. Text quoted from your files is cut at 200 characters.
 
 | `code` | What it means |
@@ -380,7 +384,7 @@ fix them and publish again. Each has `code`, `file`, `message`, and where it fit
 | `blocked_host` | A script, style, image or font from a host outside the CSP's allowlist |
 | `insecure_url` | An `http:` reference |
 | `opaque_module` | Only on opaque-isolation instances: module scripts, `crossorigin` links and web fonts fail there |
-| `not_scanned` | Past the scan budget (2 MB per file, 8 MB in total); the rest was not checked |
+| `not_scanned` | A note, not something to fix: the reference check reads at most 2 MB per file and 8 MB per publish, and this many files were past that. Big builds always get it |
 
 At most 50 are listed, then one "and N more".
 
