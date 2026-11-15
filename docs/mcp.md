@@ -351,7 +351,9 @@ limit beside the publish limit, which the bundle request counts toward (`rate_li
 `retry_after`). A new-artifact upload counts toward your artifact limit while it is live, so
 `start_upload` answers `quota_exceeded` with `reserved_uploads`, `reserved_until` and `next` when
 your artifacts plus your open new-artifact uploads reach it: send those bundles, or let them
-expire.
+expire. An upload whose connection was revoked stops counting at once. A bundle is held back by
+the artifact count only, never by other uploads, so of two uploads started for one free slot the
+first bundle sent publishes.
 The bundle request is `POST /api/v1/uploads/<upload_id>/bundle` with
 `Authorization: Bearer plinth_up_...` and a tar or gzipped tar body; it accepts nothing else, and
 the upload token works on no other route. Errors carry a `reason`:

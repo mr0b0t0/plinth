@@ -20,7 +20,7 @@ import {
 import { appUrl, contentOrigin } from "../config.ts";
 import { contentSources } from "../content/csp.ts";
 import type { ArtifactRow, VersionRow } from "../db/schema.ts";
-import { newArtifactId, newId, randomString } from "../lib/crypto.ts";
+import { hashToken, newArtifactId, newId, randomString } from "../lib/crypto.ts";
 import { ApiError, isUniqueViolation, notFound, unauthorized } from "../lib/errors.ts";
 import { enforce } from "../lib/ratelimit.ts";
 import { nowIso } from "../lib/time.ts";
@@ -115,21 +115,26 @@ function artifactLimitError(limit: number): ApiError {
 }
 
 /**
- * The artifact ids live publish-mode upload tickets hold for `ownerId` (open, unexpired, attempts
- * left), leaving out `except` (the ticket being redeemed holds that one), and when the first of
- * them expires.
+ * The artifact ids live publish-mode upload tickets hold for `ownerId`, and when the first of them
+ * expires. Live means a ticket that could still commit: open, unexpired, attempts left, and its
+ * credential still valid (the connection unrevoked, or the ADMIN_TOKEN it was minted with still
+ * the single-user token), as the commit's TICKET_GUARD and ticketCtx require.
  */
 async function liveReservations(
   ctx: Ctx,
   ownerId: string,
-  except: string | null,
 ): Promise<{ n: number; until: string | null }> {
+  const c = ctx.config;
+  const adminHash = c.singleUserMode && c.adminToken ? await hashToken(c.adminToken) : null;
   const r = await ctx.env.DB.prepare(
-    `SELECT count(*) AS n, min(expires_at) AS until FROM upload_tickets
-      WHERE user_id = ?1 AND mode = 'publish' AND state = 'open' AND expires_at > ?2
-        AND attempts < ?3 AND (?4 IS NULL OR reserved_artifact_id IS NOT ?4)`,
+    `SELECT count(*) AS n, min(expires_at) AS until FROM upload_tickets t
+      WHERE t.user_id = ?1 AND t.mode = 'publish' AND t.state = 'open' AND t.expires_at > ?2
+        AND t.attempts < ?3
+        AND ((t.credential = 'connection' AND EXISTS (SELECT 1 FROM agent_connections c
+               WHERE c.id = t.connection_id AND c.user_id = t.user_id AND c.revoked_at IS NULL))
+          OR (t.credential = 'admin' AND t.admin_token_hash = ?4))`,
   )
-    .bind(ownerId, nowIso(), LIMITS.maxTicketAttempts, except)
+    .bind(ownerId, nowIso(), LIMITS.maxTicketAttempts, adminHash)
     .first<{ n: number; until: string | null }>();
   return { n: r?.n ?? 0, until: r?.until ?? null };
 }
@@ -168,8 +173,10 @@ async function liveArtifactCount(ctx: Ctx, ownerId: string): Promise<number> {
 /**
  * The publish scope check and the artifact-count pre-check, then a target with a fresh id, or with
  * `artifactId` when one was reserved earlier (a publish-mode upload ticket names its id at mint).
- * The count includes the ids live publish-mode upload tickets hold (all but `artifactId`'s own), so
- * reservations cannot pile up past the limit. The commit batch's guard counts artifacts only.
+ * A new reservation or inline publish also counts the ids live publish-mode upload tickets hold, so
+ * reservations cannot pile up past the limit. Redeeming a ticket (`artifactId` given) counts
+ * artifacts only, like the commit batch's guard: its slot was checked at mint, and counting the
+ * other tickets there would let two tickets that raced past the mint check refuse each other.
  */
 export async function newArtifactTarget(
   ctx: Ctx,
@@ -185,8 +192,10 @@ export async function newArtifactTarget(
   const limit = artifactLimitFor(ctx.config, user);
   const artifacts = await liveArtifactCount(ctx, user.id);
   if (artifacts >= limit) throw artifactLimitError(limit);
-  const held = await liveReservations(ctx, user.id, input.artifactId ?? null);
-  if (artifacts + held.n >= limit) throw reservedLimitError(limit, artifacts, held);
+  if (input.artifactId === undefined) {
+    const held = await liveReservations(ctx, user.id);
+    if (artifacts + held.n >= limit) throw reservedLimitError(limit, artifacts, held);
+  }
   const title = input.title?.trim();
   return {
     mode: "publish",

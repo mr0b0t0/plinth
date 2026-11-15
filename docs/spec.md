@@ -127,7 +127,7 @@ adds one column and two tables:
 | Table or column | Key fields | Notes |
 | --- | --- | --- |
 | `versions.stored_bytes` | integer or NULL | Bytes this version wrote to R2. The storage quota sums `coalesce(stored_bytes, size_bytes)` |
-| `upload_tickets` | id, token_hash, user_id, credential (`connection` or `admin`), connection_id or admin_token_hash, scopes, mode (`publish` or `update`), artifact_id, artifact_type, title, note, base_version, state (`open`, `used`, `dead`), attempts, receiving_claim, receiving_until, result_artifact_id, result_version, reserved_artifact_id (unique), dead_reason (`conflict` or `taken_down`, on a dead ticket), created_at, expires_at, used_at | One single-use upload ticket from `start_upload`. The token is stored as its SHA-256. A publish-mode ticket reserves its artifact id at mint (`reserved_artifact_id`, returned as `target.id`), and its commit creates the artifact with exactly that id; no other ticket can hold that id, and only that ticket's bundle can create it. While the ticket is live (open, unexpired, attempts left) the reservation counts toward the owner's artifact limit; once it expires unused the id is released and never becomes an artifact. Only the id is reserved, not a slug (the commit picks the slug). `open -> used` happens in the same D1 batch that commits the version. The receiving lease limits concurrency and is the bundle's deadline (10 minutes). A row is deleted once `TTL.uploadStatusMs` (24 hours) has passed since it expired, by the hourly cron and by the opportunistic sweep; erasing an artifact or a user deletes its tickets |
+| `upload_tickets` | id, token_hash, user_id, credential (`connection` or `admin`), connection_id or admin_token_hash, scopes, mode (`publish` or `update`), artifact_id, artifact_type, title, note, base_version, state (`open`, `used`, `dead`), attempts, receiving_claim, receiving_until, result_artifact_id, result_version, reserved_artifact_id (unique), dead_reason (`conflict` or `taken_down`, on a dead ticket), created_at, expires_at, used_at | One single-use upload ticket from `start_upload`. The token is stored as its SHA-256. A publish-mode ticket reserves its artifact id at mint (`reserved_artifact_id`, returned as `target.id`), and its commit creates the artifact with exactly that id; no other ticket can hold that id, and only that ticket's bundle can create it. While the ticket is live (open, unexpired, attempts left, minting credential still valid) the reservation counts toward the owner's artifact limit for new reservations and inline publishes; once it expires unused the id is released and never becomes an artifact. Only the id is reserved, not a slug (the commit picks the slug). `open -> used` happens in the same D1 batch that commits the version. The receiving lease limits concurrency and is the bundle's deadline (10 minutes). A row is deleted once `TTL.uploadStatusMs` (24 hours) has passed since it expired, by the hourly cron and by the opportunistic sweep; erasing an artifact or a user deletes its tickets |
 
 ## Auth and permissions
 
@@ -433,10 +433,11 @@ files) and big pages without merging chunks, and an update stores only what chan
   `MAX_PUBLISHES_PER_HOUR` tickets per user per hour (the `upload:` bucket, shared by `start_upload`
   and `POST /api/v1/uploads`), which spends no publish; the bundle request counts toward the
   publish limit (`MAX_PUBLISHES_PER_HOUR`), and bundle requests are limited to twice that. Each
-  live publish-mode ticket counts toward `MAX_ARTIFACTS_PER_USER` (artifacts plus live
-  reservations), so minting, and an inline publish, is refused with `quota_exceeded`
-  (`reserved_uploads`, `reserved_until`, `next`) once they reach it; a ticket's own bundle is never
-  held back by its own reservation. The token is
+  live publish-mode ticket (one whose minting connection or ADMIN_TOKEN is still valid) counts
+  toward `MAX_ARTIFACTS_PER_USER` (artifacts plus live reservations), so minting, and an inline
+  publish, is refused with `quota_exceeded` (`reserved_uploads`, `reserved_until`, `next`) once
+  they reach it; a bundle is held back by the artifact count only, never by any ticket's
+  reservation, so of two tickets that raced past the mint check the first bundle commits. The token is
   never in a URL and `commands.curl` keeps it out of curl's arguments.
 - **Lost responses.** What is guaranteed: a client that disconnects while the bundle is still being
   sent never commits, because the tar is incomplete (tests: "a body that ends mid-file commits

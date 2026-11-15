@@ -2224,6 +2224,75 @@ describe("reserved artifact ids", () => {
     expect(details(full).reserved_uploads).toBeUndefined();
   });
 
+  it("two live reservations for one free slot do not lock each other out: the first bundle commits", async () => {
+    // Two mints racing at limit - 1 can both pass the pre-check; set that state up directly.
+    const a = await limitedAgent(2);
+    expect((await publish(a.auth)).res.status).toBe(201);
+    const t1 = await mint(a, { title: "A" }, stageDeps);
+    await env.DB.prepare("UPDATE users SET artifact_limit = 3 WHERE id = ?1").bind(a.user.id).run();
+    const t2 = await mint(a, { title: "B" }, stageDeps);
+    await env.DB.prepare("UPDATE users SET artifact_limit = 2 WHERE id = ?1").bind(a.user.id).run();
+    // A bundle is held back by the artifact count only, never by another ticket's reservation.
+    const first = await postBundle(t1.upload_url, { token: t1.upload_token, body: tar(SITE) });
+    expect(first.status).toBe(201);
+    expect((await json(first)).id).toBe((t1.target as { id: string }).id);
+    // The account is now full: the other bundle gets the plain artifact-limit error.
+    const second = await postBundle(t2.upload_url, { token: t2.upload_token, body: tar(SITE) });
+    expect(second.status).toBe(403);
+    const err = (await json(second)).error;
+    expect(err.code).toBe("quota_exceeded");
+    expect(err.details.reserved_uploads).toBeUndefined();
+  });
+
+  it("concurrent mints for one free slot: one of the two bundles commits", async () => {
+    const a = await limitedAgent(2);
+    expect((await publish(a.auth)).res.status).toBe(201);
+    const minted = await Promise.allSettled([
+      mint(a, { title: "A" }, stageDeps),
+      mint(a, { title: "B" }, stageDeps),
+    ]);
+    const tickets = minted.flatMap((r) => (r.status === "fulfilled" ? [r.value] : []));
+    expect(tickets.length).toBeGreaterThan(0);
+    const statuses: number[] = [];
+    for (const t of tickets) {
+      statuses.push(
+        (await postBundle(t.upload_url, { token: t.upload_token, body: tar(SITE) })).status,
+      );
+    }
+    expect(statuses.filter((s) => s === 201)).toHaveLength(1);
+  });
+
+  it("a ticket whose connection was revoked holds no slot", async () => {
+    const a = await limitedAgent(3);
+    expect((await publish(a.auth)).res.status).toBe(201);
+    const other = await createToken(a.user.id, { label: "Leaked" });
+    await mint(other, {}, stageDeps);
+    await mint(other, {}, stageDeps);
+    expect((await mintError(a, {}, stageDeps)).code).toBe("quota_exceeded");
+    await revokeConnection(db(), a.user.id, other.connectionId);
+    // The revoked connection's tickets can never commit, so they no longer count.
+    await mint(a, {}, stageDeps);
+    expect((await publish(a.auth)).res.status).toBe(201);
+  });
+
+  it("an admin ticket stops counting once ADMIN_TOKEN is rotated", async () => {
+    const admin = await createUser();
+    await env.DB.prepare("UPDATE users SET artifact_limit = 1 WHERE id = ?1").bind(admin.id).run();
+    const vars = {
+      SINGLE_USER_MODE: "true",
+      ADMIN_EMAIL: admin.email,
+      ADMIN_TOKEN: "admin-token-for-upload-tests-0123456789abcdef",
+    };
+    const cfg = parseConfig({ ...env, ...vars } as never);
+    await mint({ token: vars.ADMIN_TOKEN }, {}, stageDeps, cfg);
+    expect((await mintError({ token: vars.ADMIN_TOKEN }, {}, stageDeps, cfg)).code).toBe(
+      "quota_exceeded",
+    );
+    const rotated = "a-rotated-admin-token-0123456789abcdefghijkl";
+    const cfg2 = parseConfig({ ...env, ...vars, ADMIN_TOKEN: rotated } as never);
+    await mint({ token: rotated }, {}, stageDeps, cfg2);
+  });
+
   it("an update ticket reserves nothing", async () => {
     const a = await limitedAgent(2);
     const pub = await publish(a.auth);

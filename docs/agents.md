@@ -176,7 +176,7 @@ one upload only. The process substitution is why it needs bash or zsh: on Window
 CLI. The upload is single use, bound to its artifact and base version, and expires after 30
 minutes. Minting has its own limit, `MAX_PUBLISHES_PER_HOUR` uploads per user per hour, and the
 bundle counts toward the publish limit. A new-artifact upload reserves its id (`target.id`) and
-counts toward the artifact limit until it is used or expires.
+counts toward the artifact limit until it is used, expires, or its connection is revoked.
 
 **When the answer is lost.** A connection lost while the folder is still being sent never
 publishes: the tar is incomplete. Once the whole folder has been sent, a curl error or timeout says
