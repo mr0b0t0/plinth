@@ -463,7 +463,11 @@ files) and big pages without merging chunks, and an update stores only what chan
   `id`, `version` and `url` once used, the ticket's `expires_at` and `receiving_until`, and
   `next`; never a file, title or note. It counts no attempt and takes no lease. The token is read
   from the `Authorization` header only (a `?token=` query is ignored, so it gets the 401 of no
-  token). A missing ticket, a wrong token and another ticket's token all get the same 404. The
+  token). A missing ticket, a wrong token, another ticket's token and a token whose minting
+  credential is no longer live (a revoked connection, a rotated `ADMIN_TOKEN`) all get the same 404.
+  Because this route and the bundle route run before authentication, each such miss counts against
+  the caller's address (`RATE_LIMITS.uploadMissesPerIpPerHour`, 60 an hour); an address over it gets
+  429 on both routes before any ticket is looked up. The
   status stays readable for `TTL.uploadStatusMs` (24 hours) after the ticket expires, used or not,
   so a commit that landed near the 30-minute deadline can still be confirmed; past that it is the
   same 404. `taken_down` means the artifact was taken down: nothing was published and nothing is

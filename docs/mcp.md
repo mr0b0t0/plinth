@@ -383,7 +383,8 @@ published yet), `receiving` (a bundle request is still running), `used` (this up
 `version` at `url`), `dead` (someone else published first, and this change was not saved),
 `taken_down` (the artifact was taken down; nothing was published, do not resend), `expired` or
 `exhausted`. It counts no attempt. The token goes in the header only, never in the URL; a missing
-upload and a wrong token get the same 404. The status stays readable for 24 hours after the upload
+upload, a wrong token and a token whose connection was revoked get the same 404, and an address
+that keeps naming unknown uploads is refused with 429 for the hour. The status stays readable for 24 hours after the upload
 expires (`TTL.uploadStatusMs`), so a commit that landed just before the 30-minute deadline can still
 be confirmed; after that it answers 404. Once it reads `open` after a lease ran out, that request can no longer commit. Only
 when it cannot be read, call `get_artifact` with `target.id`: a new artifact that exists was

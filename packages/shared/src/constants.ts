@@ -154,6 +154,11 @@ export const RATE_LIMITS = {
   reportsPerIpPerHour: 10,
   /** GET /a/<slug>/source without signing in: generous, like other link-viewer reads. */
   sourceReadsPerIpPerHour: 600,
+  /**
+   * Upload bundle or status requests from one address that name no live ticket (wrong id or token,
+   * a revoked credential). Real clients miss rarely; this bounds the D1 reads guessing costs.
+   */
+  uploadMissesPerIpPerHour: 60,
 } as const;
 
 export const DEFAULTS = {

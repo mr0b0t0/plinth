@@ -62,7 +62,7 @@ export function bundleHandler(deps: StageDeps = stageDeps): Handler<AppEnv> {
 export const uploadStatusHandler: Handler<AppEnv> = async (c) =>
   c.json(
     await uploadStatus(
-      { env: c.env, config: c.get("config") },
+      { env: c.env, config: c.get("config"), ip: clientIp(c) },
       { uploadId: c.req.param("id") ?? "", authorization: c.req.header("authorization") },
     ),
   );

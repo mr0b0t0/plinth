@@ -48,7 +48,9 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   `reserved_uploads`, `reserved_until` and `next` once artifacts plus open uploads reach the limit;
   an upload that expires unused releases its id, which never becomes an artifact. Minting keeps its
   own limit (`MAX_PUBLISHES_PER_HOUR` per user per hour). `GET /api/v1/uploads/:id` stays readable
-  for 24 hours after the upload expires, then answers the same 404 as a missing upload; the hourly
+  for 24 hours after the upload expires, then answers the same 404 as a missing upload. It also
+  answers 404 once the connection that started the upload is revoked (or the `ADMIN_TOKEN` rotates),
+  and both upload routes refuse an address with 429 after 60 misses in an hour; the hourly
   cron and the opportunistic sweep delete tickets after that window (instead of after 7 days, on
   about 2% of mints). An upload ended by a takedown reports `state: "taken_down"` and is never
   to be resent; an upload whose commit failed for any reason other than a version conflict (for

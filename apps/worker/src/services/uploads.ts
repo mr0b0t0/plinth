@@ -12,6 +12,7 @@ import {
   type BundleResult,
   LIMITS,
   type PublishResult,
+  RATE_LIMITS,
   SCOPES,
   type Scope,
   type StartUploadInput,
@@ -34,7 +35,7 @@ import {
 import type { Db } from "../db/client.ts";
 import { base64url, hashToken, newId, randomString, timingSafeEqual } from "../lib/crypto.ts";
 import { ApiError, forbidden, notFound, unauthorized } from "../lib/errors.ts";
-import { hit } from "../lib/ratelimit.ts";
+import { hit, peek } from "../lib/ratelimit.ts";
 import { nowIso } from "../lib/time.ts";
 import type { Principal } from "../policy.ts";
 import { sweepSoon } from "./attempts.ts";
@@ -408,7 +409,8 @@ export async function redeemBundle(
       );
     }
   }
-  if (!UPLOAD_ID_RE.test(req.uploadId) || !UPLOAD_TOKEN_RE.test(token)) throw notFound("Upload");
+  await refuseGuessers(w);
+  if (!UPLOAD_ID_RE.test(req.uploadId) || !UPLOAD_TOKEN_RE.test(token)) throw await uploadMiss(w);
   const tokenHash = await hashToken(token);
   const claim = randomString(24);
   const ticket = await takeLease(w, req.uploadId, tokenHash, claim);
@@ -594,6 +596,55 @@ function withDeadline(
   return { stream, stop };
 }
 
+const MISS_WINDOW_S = 3600;
+const missKey = (ip: string) => `upload-miss:ip:${ip}`;
+
+/**
+ * Refuses an address that has named too many dead tickets this hour, before any ticket lookup:
+ * the bundle and status routes run before authentication, so the per-user limits cannot apply.
+ */
+async function refuseGuessers(w: Pick<BundleEnv, "env" | "ip">): Promise<void> {
+  if (!w.ip) return;
+  if (
+    (await peek(w.env.DB, missKey(w.ip), MISS_WINDOW_S)) >= RATE_LIMITS.uploadMissesPerIpPerHour
+  ) {
+    throw new ApiError("rate_limited", "Too many requests for unknown uploads, try again later");
+  }
+}
+
+/** A request that named no live ticket: count it against its address, then answer not found. */
+async function uploadMiss(w: Pick<BundleEnv, "env" | "ip">): Promise<ApiError> {
+  if (w.ip) await hit(w.env.DB, missKey(w.ip), RATE_LIMITS.uploadMissesPerIpPerHour, MISS_WINDOW_S);
+  return notFound("Upload");
+}
+
+/**
+ * Whether the credential that minted the ticket is still live: its connection unrevoked, or (for
+ * an ADMIN_TOKEN ticket) the same token in single-user mode for the admin user. The same test as
+ * ticketCtx, which the bundle route runs before staging; the status route answers 404 otherwise,
+ * so the token dies with its connection there too.
+ */
+async function credentialLive(
+  w: Pick<BundleEnv, "env" | "config">,
+  t: TicketRow,
+): Promise<boolean> {
+  if (t.credential === "connection") {
+    const row = await w.env.DB.prepare(
+      "SELECT 1 AS one FROM agent_connections WHERE id = ?1 AND user_id = ?2 AND revoked_at IS NULL",
+    )
+      .bind(t.connection_id, t.user_id)
+      .first();
+    return row !== null;
+  }
+  const c = w.config;
+  if (!c.singleUserMode || !c.adminToken || !t.admin_token_hash) return false;
+  if (!timingSafeEqual(await hashToken(c.adminToken), t.admin_token_hash)) return false;
+  const user = await w.env.DB.prepare("SELECT email FROM users WHERE id = ?1")
+    .bind(t.user_id)
+    .first<{ email: string }>();
+  return !!user && user.email === c.adminEmails[0];
+}
+
 /**
  * The receiving lease: one statement that counts the attempt and takes the lease only while the
  * ticket is open, unexpired, has attempts left, is not already receiving, and no other ticket of
@@ -620,7 +671,7 @@ async function takeLease(
     .first<TicketRow>();
   if (row) return row;
   const cur = await readTicket(w, id, tokenHash);
-  if (!cur) throw notFound("Upload");
+  if (!cur) throw await uploadMiss(w);
   throw await stateError(w, cur);
 }
 
@@ -864,18 +915,24 @@ async function ticketTarget(
  * response was lost; it reads one row, counts no attempt and takes no lease.
  */
 export async function uploadStatus(
-  w: Pick<BundleEnv, "env" | "config">,
+  w: Pick<BundleEnv, "env" | "config" | "ip">,
   req: { uploadId: string; authorization: string | undefined },
 ): Promise<UploadStatus> {
   const token = bundleToken(req.authorization);
-  if (!UPLOAD_ID_RE.test(req.uploadId) || !UPLOAD_TOKEN_RE.test(token)) throw notFound("Upload");
+  await refuseGuessers(w);
+  if (!UPLOAD_ID_RE.test(req.uploadId) || !UPLOAD_TOKEN_RE.test(token)) throw await uploadMiss(w);
   // The row and D1's clock in one read: a bundle request's commit requires its lease by the same
   // clock, so a lease reported over here can no longer commit.
   const t = await readTicket(w, req.uploadId, await hashToken(token));
   // Past the status window the ticket answers like one that never existed (its row is deleted
   // by the next cleanup anyway).
-  if (!t || Date.parse(t.expires_at) + TTL.uploadStatusMs < Date.parse(t.db_now)) {
-    throw notFound("Upload");
+  // A revoked connection or a rotated ADMIN_TOKEN ends the token here as on the bundle route.
+  if (
+    !t ||
+    Date.parse(t.expires_at) + TTL.uploadStatusMs < Date.parse(t.db_now) ||
+    !(await credentialLive(w, t))
+  ) {
+    throw await uploadMiss(w);
   }
   const id =
     (t.mode === "update" ? t.artifact_id : (t.result_artifact_id ?? t.reserved_artifact_id)) ?? "";

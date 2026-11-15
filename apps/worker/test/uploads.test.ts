@@ -9,6 +9,7 @@ import {
   ARTIFACT_ID_RE,
   COOKIES,
   LIMITS,
+  RATE_LIMITS,
   type StartUploadInput,
   type StartUploadResult,
   TTL,
@@ -26,7 +27,7 @@ import { accessGrants, agentConnections, oauthGrants, sessions } from "../src/db
 import worker from "../src/index.ts";
 import { hashToken, newId, newToken } from "../src/lib/crypto.ts";
 import { ApiError } from "../src/lib/errors.ts";
-import { hit } from "../src/lib/ratelimit.ts";
+import { hit, peek } from "../src/lib/ratelimit.ts";
 import { isoIn, nowIso } from "../src/lib/time.ts";
 import { revokeToken } from "../src/oauth/service.ts";
 import type { Principal } from "../src/policy.ts";
@@ -2200,6 +2201,19 @@ const statusUrlOf = (t: Pick<StartUploadResult, "upload_url">) =>
 const readStatus = (url: string, token?: string) =>
   call(url, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
 const agoIso = (ms: number) => new Date(Date.now() - ms).toISOString();
+/** GET /uploads/:id through the Worker with extra vars and headers (like postBundle). */
+async function statusWith(
+  url: string,
+  token: string,
+  vars: Record<string, string> = {},
+  headers: Record<string, string> = {},
+): Promise<Response> {
+  const req = new Request(url, { headers: { ...headers, Authorization: `Bearer ${token}` } });
+  const ctx = createExecutionContext();
+  const res = await worker.fetch(req, { ...env, ...vars } as never, ctx);
+  await waitOnExecutionContext(ctx);
+  return res;
+}
 
 describe("reserved artifact ids", () => {
   it("a live publish ticket counts toward the artifact limit: minting past it is refused, with next", async () => {
@@ -2511,6 +2525,96 @@ describe("GET /uploads/:id", () => {
     const neverText = await never.text();
     expect(await gone.text()).toBe(neverText);
     expect(await gone2.text()).toBe(neverText);
+  });
+
+  it("a revoked connection's upload token reads nothing: the same 404 as a wrong token", async () => {
+    const a = await agent();
+    const t = await mint(a, {}, stageDeps);
+    const res = await postBundle(t.upload_url, { token: t.upload_token, body: tar(SITE) });
+    expect(res.status).toBe(201);
+    expect((await readStatus(statusUrlOf(t), t.upload_token)).status).toBe(200);
+    await revokeConnection(db(), a.user.id, a.connectionId);
+    const revoked = await readStatus(statusUrlOf(t), t.upload_token);
+    const wrong = await readStatus(statusUrlOf(t), `${UPLOAD_TOKEN_PREFIX}${"w".repeat(43)}`);
+    expect([revoked.status, wrong.status]).toEqual([404, 404]);
+    expect(await revoked.text()).toBe(await wrong.text());
+  });
+
+  it("an ADMIN_TOKEN ticket's status ends when the token rotates or single-user mode is off", async () => {
+    const admin = await createUser();
+    const adminToken = "admin-token-for-upload-tests-0123456789abcdef";
+    const vars = { SINGLE_USER_MODE: "true", ADMIN_EMAIL: admin.email, ADMIN_TOKEN: adminToken };
+    const cfg = parseConfig({ ...env, ...vars } as never);
+    const t = await mint({ token: adminToken }, {}, undefined, cfg);
+    expect((await statusWith(statusUrlOf(t), t.upload_token, vars)).status).toBe(200);
+    for (const changed of [
+      { ...vars, ADMIN_TOKEN: "a-rotated-admin-token-0123456789abcdefghijkl" },
+      { ...vars, SINGLE_USER_MODE: "false" },
+      { ...vars, ADMIN_EMAIL: "someone-else@example.com" },
+    ]) {
+      expect((await statusWith(statusUrlOf(t), t.upload_token, changed)).status).toBe(404);
+    }
+  });
+});
+
+describe("guessing upload ids or tokens before authentication", () => {
+  const limit = RATE_LIMITS.uploadMissesPerIpPerHour;
+  // Each test uses its own address: the rate_limits rows outlive a test.
+  const at = (ip: string) => ({
+    missKey: `upload-miss:ip:${ip}`,
+    fromIp: { "cf-connecting-ip": ip },
+  });
+  const wrongToken = `${UPLOAD_TOKEN_PREFIX}${"w".repeat(43)}`;
+
+  it("counts each miss on the status and bundle routes against the address", async () => {
+    const { missKey, fromIp } = at("203.0.113.9");
+    const t = await mint(await agent(), {}, stageDeps);
+    expect((await statusWith(statusUrlOf(t), wrongToken, {}, fromIp)).status).toBe(404);
+    expect((await statusWith(`${APP}/api/v1/uploads/bad`, wrongToken, {}, fromIp)).status).toBe(
+      404,
+    );
+    const res = await postBundle(t.upload_url, { token: wrongToken, headers: fromIp });
+    expect(res.status).toBe(404);
+    expect(await peek(env.DB, missKey, 3600)).toBe(3);
+  });
+
+  it(`refuses an address with ${limit} misses this hour before looking up any ticket, on both routes`, async () => {
+    const { missKey, fromIp } = at("203.0.113.10");
+    const a = await agent();
+    const t = await mint(a, {}, stageDeps);
+    await fillBucket(missKey, limit);
+    // Even the right token is refused from that address: no lookup runs at all.
+    const status = await statusWith(statusUrlOf(t), t.upload_token, {}, fromIp);
+    expect(status.status).toBe(429);
+    const bundle = await postBundle(t.upload_url, {
+      token: t.upload_token,
+      body: tar(SITE),
+      headers: fromIp,
+    });
+    expect(bundle.status).toBe(429);
+    expect((await ticket(t.upload_id)).attempts).toBe(0);
+    // Another address is unaffected.
+    const other = await statusWith(
+      statusUrlOf(t),
+      t.upload_token,
+      {},
+      { "cf-connecting-ip": "198.51.100.4" },
+    );
+    expect(other.status).toBe(200);
+  });
+
+  it("a real client's hits do not count: reading status and sending the bundle add nothing", async () => {
+    const { missKey, fromIp } = at("203.0.113.11");
+    const t = await mint(await agent(), {}, stageDeps);
+    expect((await statusWith(statusUrlOf(t), t.upload_token, {}, fromIp)).status).toBe(200);
+    const res = await postBundle(t.upload_url, {
+      token: t.upload_token,
+      body: tar(SITE),
+      headers: fromIp,
+    });
+    expect(res.status).toBe(201);
+    expect((await statusWith(statusUrlOf(t), t.upload_token, {}, fromIp)).status).toBe(200);
+    expect(await peek(env.DB, missKey, 3600)).toBe(0);
   });
 });
 
