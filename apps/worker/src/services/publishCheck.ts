@@ -21,6 +21,11 @@ export interface ScanInput {
   isolation: "origin" | "opaque";
   /** Files left out of the scan by the stager's budget. */
   unscanned?: string[];
+  /**
+   * Text files reused from the version before without their bytes in this request ({path,
+   * sha256} or a carry-forward): not re-checked, so a file they import that is gone goes unseen.
+   */
+  reused?: string[];
 }
 
 type Directive = keyof ContentSources | "navigate" | "any";
@@ -79,14 +84,26 @@ export function scanPublish(input: ScanInput): PublishWarning[] {
       out.push({ code: "opaque_module", file: f.path, message: OPAQUE });
     }
   }
-  if (unscanned.length > 0) {
+  const reused = input.reused ?? [];
+  if (unscanned.length + reused.length > 0) {
+    const parts: string[] = [];
+    if (unscanned.length > 0) {
+      parts.push(
+        `${unscanned.length} file(s) were not checked for references: the check reads at most ${LIMITS.maxScanFileBytes / 1024 / 1024} MB per file and ${LIMITS.maxScanBytes / 1024 / 1024} MB per publish`,
+      );
+    }
+    if (reused.length > 0) {
+      parts.push(
+        `${reused.length} file(s) reused unchanged from the version before were not re-checked (their bytes were not sent), so a file they load that this version left out goes unnoticed; a bundle (start_upload) checks every file`,
+      );
+    }
     out.push({
       code: "not_scanned",
-      file: echo(unscanned[0] ?? ""),
-      count: unscanned.length,
+      file: echo(unscanned[0] ?? reused[0] ?? ""),
+      count: unscanned.length + reused.length,
       // Information, not something to fix: the files are published; only the reference check
-      // stopped at its budget (big builds always pass it).
-      message: `${unscanned.length} file(s) were not checked for references: the check reads at most ${LIMITS.maxScanFileBytes / 1024 / 1024} MB per file and ${LIMITS.maxScanBytes / 1024 / 1024} MB per publish. No action needed`,
+      // did not read them.
+      message: `${parts.join(". ")}. No action needed`,
     });
   }
   return cap(out);

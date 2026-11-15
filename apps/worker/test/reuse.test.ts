@@ -339,6 +339,47 @@ describe("versions written before 0006 (legacy layout)", () => {
   });
 });
 
+describe("the reference check on reused files", () => {
+  it("names reused text files it did not re-check, so a file they load that is gone is not hidden", async () => {
+    const a = await agent();
+    const appJs = 'import "./chunk.js"; console.log(1)';
+    const { body: p } = await publish(a.auth, {
+      html: '<!doctype html><title>t</title><script type="module" src="app.js"></script>',
+      assets: [
+        { path: "app.js", content: appJs },
+        { path: "chunk.js", content: "export const x = 1" },
+      ],
+    });
+    expect(p.warnings).toEqual([]);
+    // chunk.js is left out; app.js, which imports it, is reused by sha256 and not re-read.
+    const res = await put(a.auth, p.id, {
+      base_version: 1,
+      html: '<!doctype html><title>t2</title><script type="module" src="app.js"></script>',
+      assets: [{ path: "app.js", sha256: await sha256Of(appJs) }],
+    });
+    expect(res.status).toBe(200);
+    const body = await json(res);
+    expect(body.warnings).toHaveLength(1);
+    expect(body.warnings[0]).toMatchObject({ code: "not_scanned", file: "app.js", count: 1 });
+    expect(body.warnings[0].message).toMatch(/reused unchanged .* were not re-checked/);
+    expect(body.warnings[0].message).toMatch(/No action needed$/);
+
+    // A carry-forward (no assets sent) says the same; sending the bytes checks them instead.
+    const carried = await json(
+      await put(a.auth, p.id, { base_version: 2, html: "<!doctype html><title>t3</title>" }),
+    );
+    expect(carried.warnings).toMatchObject([{ code: "not_scanned", count: 1 }]);
+    const sent = await json(
+      await put(a.auth, p.id, {
+        base_version: 3,
+        html: '<!doctype html><title>t4</title><script type="module" src="app.js"></script>',
+        assets: [{ path: "app.js", content: appJs }],
+      }),
+    );
+    expect(sent.warnings.map((w: { code: string }) => w.code)).toEqual(["missing_file"]);
+  });
+});
+
 describe("the stager (as the bundle path uses it)", () => {
   it("dedupes identical files within one upload and strips a top directory", async () => {
     const { a, p } = await seed();

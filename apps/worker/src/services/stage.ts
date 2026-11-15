@@ -706,6 +706,17 @@ export class VersionStager implements Stager {
     let warnings: PublishWarning[] = [];
     if (this.scan) {
       const byRaw = new Map(list.map((e) => [e.rawPath, e.path]));
+      const left = new Set(this.unscanned);
+      // Text files whose bytes this request did not carry: reused by {path, sha256} or carried.
+      const reused = list
+        .filter(
+          (e) =>
+            e !== source &&
+            SCAN_TYPES.test(e.content_type) &&
+            !this.scanText.has(e.rawPath) &&
+            !left.has(e.rawPath),
+        )
+        .map((e) => e.path);
       const files: FileEntry[] = [];
       for (const [raw, bytes] of this.scanText) {
         const e = this.entries.get(raw);
@@ -718,6 +729,7 @@ export class VersionStager implements Stager {
         sources: contentSources(this.ctx.config),
         isolation: this.ctx.config.contentIsolation,
         unscanned: this.unscanned.map((p) => byRaw.get(p) ?? p),
+        reused,
       });
       this.scanText.clear();
     }
