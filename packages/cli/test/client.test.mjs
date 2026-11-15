@@ -592,6 +592,92 @@ describe("a lost response", () => {
     assert.equal(a.versions.length, 1);
   });
 
+  it("publish --id, big update: when the status never reads, it names the base and the rerun that cannot publish twice", async () => {
+    const a = fake.seed({ "index.html": "<title>big</title>", "small.js": "1" });
+    const dir = build(bigFolder());
+    const from = fake.state.requests.length;
+    fake.state.dropBundle = "after";
+    fake.state.statusFail = Number.POSITIVE_INFINITY;
+    let r;
+    try {
+      r = await plinth(["publish", dir, "--id", a.id, "--json"], { extraEnv: asPat() });
+    } finally {
+      fake.state.statusFail = 0;
+    }
+    assert.equal(r.code, 1, r.stderr);
+    const uploadId = /\/api\/v1\/uploads\/([a-z0-9]{20})$/.exec(statusReads(from)[0].path)[1];
+    assert.deepEqual(JSON.parse(r.stdout), {
+      published: "unknown",
+      id: a.id,
+      upload_id: uploadId,
+      base_version: 1,
+    });
+    assert.match(r.stderr, /--base-version 1/);
+    assert.equal(a.versions.length, 2);
+    // The rerun it names, once the lost commit is visible: exit 0, nothing sent.
+    const at = fake.state.requests.length;
+    const again = await plinth(["publish", dir, "--id", a.id, "--base-version", "1"], {
+      extraEnv: asPat(),
+    });
+    assert.equal(again.code, 0, again.stderr);
+    assert.equal(since(at).filter((q) => q.method === "PUT" || q.method === "POST").length, 0);
+    assert.equal(a.versions.length, 2);
+  });
+
+  it("publish --id, inline: when the artifact cannot be read after a lost PUT, --json still says unknown", async () => {
+    const a = fake.seed(site(2));
+    const dir = build({ ...site(2), "assets/a1.js": "console.log('unread');" });
+    fake.state.dropPut = "after";
+    fake.state.armReadFail = true;
+    let r;
+    try {
+      r = await plinth(["publish", dir, "--id", a.id, "--json"], { extraEnv: asPat() });
+    } finally {
+      fake.state.armReadFail = false;
+      fake.state.artifactReadFail = 0;
+    }
+    assert.equal(r.code, 1, r.stderr);
+    assert.deepEqual(JSON.parse(r.stdout), { published: "unknown", id: a.id, base_version: 1 });
+    assert.match(r.stderr, /--base-version 1/);
+    assert.equal(a.versions.length, 2);
+  });
+
+  it("still receiving after the wait: publish --id and upload print unknown with the ids (and the base) to check", async () => {
+    const a = fake.seed({ "index.html": "<title>big</title>", "small.js": "1" });
+    const t = await ticket({ type: "html" });
+    fake.state.dropBundle = "after";
+    fake.state.dropBundleSticky = true;
+    fake.state.statusReceiving = true;
+    let pub;
+    let up;
+    try {
+      // Both wait out the 30 s status window, so they run side by side.
+      [pub, up] = await Promise.all([
+        plinth(["publish", build(bigFolder()), "--id", a.id, "--json"], { extraEnv: asPat() }),
+        plinth(["upload", build(site(2)), "--to", t.upload_url], {
+          extraEnv: { PLINTH_UPLOAD_TOKEN: t.upload_token },
+        }),
+      ]);
+    } finally {
+      fake.state.dropBundle = null;
+      fake.state.dropBundleSticky = false;
+      fake.state.statusReceiving = false;
+    }
+    assert.equal(pub.code, 1, pub.stderr);
+    const out = JSON.parse(pub.stdout);
+    assert.deepEqual(Object.keys(out).sort(), ["base_version", "id", "published", "upload_id"]);
+    assert.equal(out.published, "unknown");
+    assert.equal(out.id, a.id);
+    assert.equal(out.base_version, 1);
+    assert.match(pub.stderr, /still working on the bundle.*--base-version 1/s);
+    assert.equal(up.code, 1, up.stderr);
+    assert.deepEqual(JSON.parse(up.stdout), {
+      published: "unknown",
+      id: t.target.id,
+      upload_id: t.upload_id,
+    });
+  });
+
   it("upload: the server commits, then drops the connection; it prints the existing version and does not publish twice", async () => {
     const t = await ticket({ type: "html" });
     const before = fake.state.artifacts.size;

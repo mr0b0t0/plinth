@@ -216,32 +216,53 @@ async function readUploadStatus(args) {
 const uploadIdOf = (uploadUrl) => /\/uploads\/([^/]+)\/bundle$/.exec(uploadUrl)?.[1] ?? null;
 
 /**
+ * The safe rerun of an update whose outcome is unknown: with the base stated, it exits 0 without
+ * sending when the update landed after all, and 3 when someone else published first.
+ */
+const rerunWithBase = (base) =>
+  `Run the same command again with --base-version ${base}: it sends nothing and exits 0 if this update landed after all, and exits 3 if someone else published first.`;
+
+/** A CliError for an outcome the command could not learn; --json prints `unknown` on stdout. */
+function unknownError(message, { id, uploadId, base }) {
+  const err = new CliError(message);
+  err.unknown = {
+    published: "unknown",
+    id: id ?? null,
+    ...(uploadId !== undefined ? { upload_id: uploadId } : {}),
+    ...(base !== undefined ? { base_version: base } : {}),
+  };
+  return err;
+}
+
+/**
  * The whole bundle was sent but its answer was lost, so it may have committed. Ask the upload
  * (waiting while a request still holds it) instead of sending it again. Returns `{ id, version,
  * url, recovered }` when it committed; otherwise throws: exit 3 when a conflict ended it. When the
- * status cannot be read, the error names the artifact to check (`targetId`: the update's artifact,
- * or the id a publish ticket reserved) and carries `unknown` for --json.
+ * status cannot be read, or still says a request is working on it, the error names the artifact
+ * to check (`targetId`: the update's artifact, or the id a publish ticket reserved), and for an
+ * update (`base`) the rerun that cannot publish twice, and carries `unknown` for --json.
  */
 async function afterLostBundle(
   lost,
-  { uploadUrl, uploadToken, ctx, conflictMessage, retry, targetId },
+  { uploadUrl, uploadToken, ctx, conflictMessage, retry, targetId, base },
 ) {
+  const uploadId = uploadIdOf(uploadUrl);
   const deadline = Date.now() + STATUS_WAIT_MS;
   let s;
   for (;;) {
     try {
       s = await readUploadStatus({ uploadUrl, uploadToken, ctx });
     } catch (e) {
-      const uploadId = uploadIdOf(uploadUrl);
-      const err = new CliError(
+      throw unknownError(
         `${lost.message}\nThe whole bundle was sent, so it may have been published, but the status of upload ${uploadId ?? uploadUrl} could not be read (${e.message}).` +
-          (targetId
-            ? ` Check artifact ${targetId} before sending it again (GET ${ctx.origin}/api/v1/artifacts/${targetId}, or get_artifact): if it has the new version, this upload published it; if it is not found or still at the old version, nothing was published.`
-            : " Check the artifact before sending it again.") +
+          (base !== undefined
+            ? ` ${rerunWithBase(base)}`
+            : targetId
+              ? ` Check artifact ${targetId} before sending it again (GET ${ctx.origin}/api/v1/artifacts/${targetId}, or get_artifact): if it has the new version, this upload published it; if it is not found or still at the old version, nothing was published.`
+              : " Check the artifact before sending it again.") +
           " An upload commits at most once.",
+        { id: targetId, uploadId, base },
       );
-      err.unknown = { published: "unknown", id: targetId ?? null, upload_id: uploadId };
-      throw err;
     }
     if (s.state !== "receiving" || Date.now() >= deadline) break;
     await sleep(STATUS_POLL_MS);
@@ -249,8 +270,12 @@ async function afterLostBundle(
   if (s.state === "used") return { id: s.id, version: s.version, url: s.url, recovered: true };
   if (s.state === "dead") throw new CliError(conflictMessage(), EXIT.conflict);
   if (s.state === "receiving") {
-    throw new CliError(
-      `${lost.message}\nThe server is still working on the bundle. Check ${s.id} in a minute before sending it again; an upload commits at most once.`,
+    throw unknownError(
+      `${lost.message}\nThe server is still working on the bundle. ` +
+        (base !== undefined
+          ? `Wait a minute, then: ${rerunWithBase(base)}`
+          : `Check ${s.id} in a minute before sending it again; an upload commits at most once.`),
+      { id: s.id ?? targetId, uploadId, base },
     );
   }
   throw new CliError(
@@ -273,8 +298,9 @@ async function afterLostPut(lost, { api, ref, detail, base, files, ctx }) {
     try {
       return await api.get(`/artifacts/${encodeURIComponent(detail.id)}`);
     } catch (e) {
-      throw new CliError(
-        `${lost.message}\nIt may have been published, but ${ref} could not be read to check (${e.message}). Check it before you publish again.`,
+      throw unknownError(
+        `${lost.message}\nIt may have been published, but ${ref} could not be read to check (${e.message}). ${rerunWithBase(base)}`,
+        { id: detail.id, base },
       );
     }
   };
@@ -299,8 +325,9 @@ async function afterLostPut(lost, { api, ref, detail, base, files, ctx }) {
     };
   }
   if (mine.failed) throw new CliError(staleBase(ref, base)(now.version), EXIT.conflict);
-  throw new CliError(
-    `${lost.message}\n${ref} is now v${now.version}, but it could not be compared with the folder (${mine.note}). Check it before you publish again.`,
+  throw unknownError(
+    `${lost.message}\n${ref} is now v${now.version}, but it could not be compared with the folder (${mine.note}). ${rerunWithBase(base)}`,
+    { id: detail.id, base },
   );
 }
 
@@ -619,7 +646,9 @@ export async function publish(dir, opts, ctx) {
           }
         } catch (e) {
           if (!(e instanceof LostResponse)) throw e;
-          result = await afterLostPut(e, { api, ref, detail, base, files, ctx });
+          result = await afterLostPut(e, { api, ref, detail, base, files, ctx }).catch((err) =>
+            unknownOutcome(err, opts, ctx),
+          );
         }
       } else {
         const ticket = await api.post("/uploads", { id: detail.id, base_version: base, ...note });
@@ -641,8 +670,9 @@ export async function publish(dir, opts, ctx) {
             uploadToken: ticket.upload_token,
             ctx,
             conflictMessage: () => staleBase(ref, base)(undefined),
-            retry: RETRY_PUBLISH,
+            retry: { open: rerunWithBase(base), ended: rerunWithBase(base) },
             targetId: detail.id,
+            base,
           }).catch((err) => unknownOutcome(err, opts, ctx));
         }
       }

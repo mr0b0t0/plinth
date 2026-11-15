@@ -34,8 +34,14 @@ export async function startFakePlinth(options = {}) {
     // bundle POST (dropBundle) or inline PUT (dropPut), then resets.
     dropBundle: null,
     dropPut: null,
+    // dropBundle applies to every bundle POST until it is reset.
+    dropBundleSticky: false,
     // GET /uploads/:id answers 503 text/plain this many more times (Infinity: always).
     statusFail: 0,
+    // GET /uploads/:id says a request still holds the upload (state receiving).
+    statusReceiving: false,
+    // GET /artifacts/:ref answers 503 text/plain this many more times (Infinity: always).
+    artifactReadFail: 0,
     limits: {
       max_html_bytes: 5 * 1024 * 1024,
       max_doc_bytes: 1024 * 1024,
@@ -273,7 +279,13 @@ export async function startFakePlinth(options = {}) {
           res.writeHead(503, { "Content-Type": "text/plain" });
           return res.end("upstream down");
         }
-        const state_ = t.used ? "used" : t.dead ? "dead" : "open";
+        const state_ = state.statusReceiving
+          ? "receiving"
+          : t.used
+            ? "used"
+            : t.dead
+              ? "dead"
+              : "open";
         return send(res, 200, {
           upload_id: status[1],
           state: state_,
@@ -282,7 +294,9 @@ export async function startFakePlinth(options = {}) {
           version: t.used ? t.version : null,
           url: t.used ? t.url : null,
           expires_at: new Date(Date.now() + 1800_000).toISOString(),
-          receiving_until: null,
+          receiving_until: state.statusReceiving
+            ? new Date(Date.now() + 600_000).toISOString()
+            : null,
           next: "...",
         });
       }
@@ -300,7 +314,7 @@ export async function startFakePlinth(options = {}) {
           });
         if (t.dead) return apiError(res, 409, "conflict", "Dead", { reason: "upload_dead" });
         const dropping = state.dropBundle;
-        state.dropBundle = null;
+        if (!state.dropBundleSticky) state.dropBundle = null;
         if (dropping === "midway") {
           // The connection breaks while the bundle is still arriving.
           await new Promise((r) => req.once("data", r));
@@ -398,6 +412,11 @@ export async function startFakePlinth(options = {}) {
         const a = [...state.artifacts.values()].find((x) => x.id === ref || x.slug === ref);
         if (!a) return apiError(res, 404, "not_found", "Not found");
         if (req.method === "GET") {
+          if (state.artifactReadFail > 0) {
+            state.artifactReadFail -= 1;
+            res.writeHead(503, { "Content-Type": "text/plain" });
+            return res.end("upstream down");
+          }
           const n = Number(url.searchParams.get("version") ?? a.versions.length);
           return send(res, 200, detail(a, n));
         }
@@ -448,7 +467,11 @@ export async function startFakePlinth(options = {}) {
           }
           const committed = commit(a, files);
           state.putCommits = (state.putCommits ?? 0) + 1;
-          if (dropping === "after") return drop(res);
+          if (dropping === "after") {
+            // armReadFail: the network stays down, so every later GET of an artifact fails too.
+            if (state.armReadFail) state.artifactReadFail = Number.POSITIVE_INFINITY;
+            return drop(res);
+          }
           return send(res, 200, committed);
         }
       }

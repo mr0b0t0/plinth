@@ -125,11 +125,14 @@ npx @mr0b0t0/plinth publish dist --id my-report-k3x9   # the next version of tha
   whole folder was sent, the command does not send it again: it asks the upload (or, for an inline
   update, reads the artifact, and again a moment later) whether it was published, and prints that
   version (`--json` adds `"recovered": true`), exits 3 when someone else published in between, or
-  says nothing was published. When the upload's status cannot be read after a few tries, it exits
-  1 naming the artifact id and the upload id to check (`--json` prints
-  `{"published": "unknown", "id", "upload_id"}`); for a new artifact that id is the one the upload
-  reserved, and `not_found` means nothing was published. A rerun with `--base-version N` whose
-  current version already matches the folder sends nothing and exits 0. A connection lost while
+  says nothing was published. When it cannot tell (the upload's status or the artifact cannot be
+  read after a few tries, or the server is still working on the upload after 30 seconds), it
+  exits 1 naming the artifact id and the upload id to check (`--json` prints
+  `{"published": "unknown", "id", "upload_id"}`, with `base_version` added for an update and no
+  `upload_id` for an inline one); for a new artifact that id is the one the upload reserved, and
+  `not_found` means nothing was published. For an update it names the rerun to use: the same
+  command with `--base-version N`, which sends nothing and exits 0 when the current version
+  already matches the folder, and exits 3 when someone else published first. A connection lost while
   the folder was still being sent never publishes.
 - **Build settings.** Use relative URLs (Vite: `base: './'`).
 

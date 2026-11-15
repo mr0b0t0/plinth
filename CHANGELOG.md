@@ -33,8 +33,10 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   `base_version` gets a conflict, a used upload answers `upload_used` with the url, and one upload
   never makes two artifacts. `plinth publish` and `plinth upload` check the upload (or read the
   artifact twice, for an inline update) after a lost answer and report the version they find
-  instead of sending again; when the status cannot be read after a few tries, they name the
-  artifact id and upload id to check. `plinth publish --id --base-version N` exits 0 without
+  instead of sending again; when they cannot tell (the status or the artifact cannot be read
+  after a few tries, or the upload is still being processed after 30 seconds), they name the
+  artifact id and upload id to check, `--json` prints `{"published": "unknown", ...}` with the
+  update's `base_version`, and an update names the safe rerun with `--base-version`. `plinth publish --id --base-version N` exits 0 without
   sending anything when the current version already matches the folder.
 - Local, tunnel and Docker instances (which run no cron) clear what interrupted uploads left:
   minting an upload ticket or posting a bundle starts a small sweep (at most 20 attempts, once a
