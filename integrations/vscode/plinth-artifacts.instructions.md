@@ -182,9 +182,11 @@ connection lost while the folder was still being sent never publishes.) Ask the 
 GET to the `upload_url` without its `/bundle`, with the same `Authorization` header as
 `commands.curl`. Its `state` says what happened to this upload: `used` means it published
 `version` (give the user its `url`); `dead` means someone else published first and this change was
-not saved (read the artifact again, then `start_upload` with the new `base_version`); `receiving`
-means it is still running (ask again in a few seconds); `open`, `expired` or `exhausted` mean
-nothing was published (call `start_upload` again with the same `base_version`). Only if the upload
+not saved (read the artifact again, then `start_upload` with the new `base_version`);
+`taken_down` means the artifact was taken down and nothing was published (tell the user; do not
+send it again or start a new upload); `receiving` means it is still running (ask again in a few
+seconds); `open`, `expired` or `exhausted` mean nothing was published (call `start_upload` again
+with the same `base_version`). The status stays readable for 24 hours after the upload expires. Only if the upload
 cannot be read, call `get_artifact` with the artifact's `id` for an update, or with `target.id`
 from the `start_upload` result for a new artifact (the id the upload creates; `not_found` means
 nothing was published). A new version there does not prove it is yours: a collaborator may have

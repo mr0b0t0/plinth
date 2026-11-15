@@ -176,7 +176,11 @@ export interface StartUploadResult {
  */
 export interface UploadStatus {
   upload_id: string;
-  state: "open" | "receiving" | "used" | "dead" | "expired" | "exhausted";
+  /**
+   * taken_down: the artifact was taken down, so nothing was published and it takes no new version
+   * (the bundle is never to be sent again).
+   */
+  state: "open" | "receiving" | "used" | "dead" | "taken_down" | "expired" | "exhausted";
   mode: "publish" | "update";
   /** The artifact: the update's target, or the id a publish creates (reserved at mint). */
   id: string;

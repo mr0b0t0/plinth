@@ -129,6 +129,11 @@ export const TTL = {
   uploadTicketMs: 30 * 60 * 1000,
   /** The receiving lease one bundle request holds on its ticket, and its deadline to arrive. */
   uploadReceivingMs: 10 * 60 * 1000,
+  /**
+   * How long past its expiry an upload ticket's status (GET /api/v1/uploads/:id) stays readable,
+   * so a commit that landed near the deadline can still be confirmed; the row is deleted after.
+   */
+  uploadStatusMs: 24 * 60 * 60 * 1000,
 };
 
 export const RATE_LIMITS = {

@@ -563,21 +563,92 @@ describe("a lost response", () => {
     assert.equal(a.versions.length, 2);
   });
 
-  it("publish --id --base-version: when the current version already matches the folder, it sends nothing (exit 0)", async () => {
-    const a = fake.seed(site(2));
-    const dir = build({ ...site(2), "assets/a1.js": "console.log('landed');" });
-    const first = await plinth(["publish", dir, "--id", a.id], { extraEnv: asPat() });
-    assert.equal(first.code, 0, first.stderr);
-    assert.equal(a.versions.length, 2);
-    const from = fake.state.requests.length;
-    // The rerun a lost answer suggests, after that update landed anyway.
-    const r = await plinth(["publish", dir, "--id", a.id, "--base-version", "1"], {
-      extraEnv: asPat(),
+  describe("publish --id --base-version N exits 0 in exactly two cases", () => {
+    const writes = (from) => since(from).filter((q) => q.method === "PUT" || q.method === "POST");
+    const rerun = (dir, a, extra = []) =>
+      plinth(["publish", dir, "--id", a.id, "--base-version", "1", ...extra], {
+        extraEnv: asPat(),
+      });
+
+    it("(a) current is N+1 and equals the folder: already published as N+1, nothing sent", async () => {
+      const a = fake.seed(site(2));
+      const dir = build({ ...site(2), "assets/a1.js": "console.log('landed');" });
+      const first = await plinth(["publish", dir, "--id", a.id], { extraEnv: asPat() });
+      assert.equal(first.code, 0, first.stderr);
+      assert.equal(a.versions.length, 2);
+      const from = fake.state.requests.length;
+      // The rerun a lost answer suggests, after that update landed anyway.
+      const r = await rerun(dir, a);
+      assert.equal(r.code, 0, r.stderr);
+      assert.match(r.stderr, /already published as v2/);
+      assert.match(r.stderr, /nothing was sent/i);
+      assert.equal(writes(from).length, 0);
+      assert.equal(a.versions.length, 2);
+      const json = await rerun(dir, a, ["--json"]);
+      assert.equal(json.code, 0, json.stderr);
+      assert.deepEqual(
+        { ...JSON.parse(json.stdout), url: undefined },
+        {
+          id: a.id,
+          slug: a.slug,
+          version: 2,
+          url: undefined,
+          verified: true,
+          unchanged: true,
+          outcome: "already_published",
+        },
+      );
     });
-    assert.equal(r.code, 0, r.stderr);
-    assert.match(r.stderr, /already at v2, which matches this folder/);
-    assert.equal(since(from).filter((q) => q.method === "PUT" || q.method === "POST").length, 0);
-    assert.equal(a.versions.length, 2);
+
+    it("(b) current is N and equals the folder: nothing to publish, nothing sent", async () => {
+      const a = fake.seed(site(2));
+      const dir = build(site(2));
+      const from = fake.state.requests.length;
+      const r = await rerun(dir, a);
+      assert.equal(r.code, 0, r.stderr);
+      assert.match(r.stderr, /v1 already matches this folder: nothing to publish/);
+      assert.equal(writes(from).length, 0);
+      assert.equal(a.versions.length, 1);
+      const json = await rerun(dir, a, ["--json"]);
+      assert.equal(JSON.parse(json.stdout).outcome, "nothing_to_publish");
+      assert.equal(JSON.parse(json.stdout).version, 1);
+    });
+
+    it("current is N+1 with different files: a conflict (exit 3), nothing sent", async () => {
+      const a = fake.seed(site(2));
+      fake.bump(a);
+      const from = fake.state.requests.length;
+      const r = await rerun(build(site(2)), a);
+      assert.equal(r.code, 3, r.stderr);
+      assert.match(r.stderr, new RegExp(`${a.id} changed since v1 \\(now v2\\)`));
+      assert.equal(writes(from).length, 0);
+    });
+
+    it("current is N+2 with the folder's files: a conflict (exit 3), since N+1 was someone else's", async () => {
+      const a = fake.seed(site(2));
+      const files = { ...site(2), "assets/a1.js": "console.log('mine');" };
+      fake.bump(a);
+      fake.commitFiles(a, files);
+      assert.equal(a.versions.length, 3);
+      const from = fake.state.requests.length;
+      const r = await rerun(build(files), a);
+      assert.equal(r.code, 3, r.stderr);
+      assert.match(r.stderr, /changed since v1 \(now v3\)/);
+      assert.equal(writes(from).length, 0);
+      assert.equal(a.versions.length, 3);
+    });
+
+    it("current is N with different files: it publishes N+1 as usual", async () => {
+      const a = fake.seed(site(2));
+      const dir = build({ ...site(2), "assets/a1.js": "console.log('new');" });
+      const r = await rerun(dir, a, ["--json"]);
+      assert.equal(r.code, 0, r.stderr);
+      const out = JSON.parse(r.stdout);
+      assert.equal(out.version, 2);
+      assert.equal(out.verified, true);
+      assert.equal(out.outcome, undefined);
+      assert.equal(a.versions.length, 2);
+    });
   });
 
   it("publish --id, inline: lost before the commit, it says nothing was published (exit 1)", async () => {
@@ -676,6 +747,24 @@ describe("a lost response", () => {
       id: t.target.id,
       upload_id: t.upload_id,
     });
+  });
+
+  it("a takedown that ended the upload is reported as one: nothing published, no conflict, no resend", async () => {
+    const a = fake.seed({ "index.html": "<title>big</title>", "small.js": "1" });
+    const from = fake.state.requests.length;
+    fake.state.dropBundle = "before";
+    fake.state.statusState = "taken_down";
+    try {
+      const r = await plinth(["publish", build(bigFolder()), "--id", a.id], { extraEnv: asPat() });
+      assert.equal(r.code, 1, r.stderr);
+      assert.match(r.stderr, /taken down/);
+      assert.match(r.stderr, /nothing was published/i);
+      assert.doesNotMatch(r.stderr, /changed since|Run the same command again/);
+      assert.equal(bundles(from).length, 1);
+    } finally {
+      fake.state.statusState = null;
+      fake.state.dropBundle = null;
+    }
   });
 
   it("upload: the server commits, then drops the connection; it prints the existing version and does not publish twice", async () => {

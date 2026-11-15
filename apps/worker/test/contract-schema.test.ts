@@ -70,6 +70,8 @@ describe("migration 0007_upload_tickets", () => {
       "table:upload_tickets",
       "index:upload_tickets_user",
       "index:upload_tickets_receiving",
+      "index:upload_tickets_reserved",
+      "index:upload_tickets_expires",
     ]) {
       expect(names).toContain(want);
     }
@@ -119,5 +121,26 @@ describe("migration 0007_upload_tickets", () => {
     ]) {
       await expect(insertTicket(a.user.id, bad), JSON.stringify(bad)).rejects.toThrow();
     }
+  });
+
+  it("keeps why a ticket ended (dead_reason: conflict or taken_down, only on a dead ticket)", async () => {
+    const cols = await D1().prepare("PRAGMA table_info(upload_tickets)").all<{ name: string }>();
+    expect(cols.results.map((c) => c.name)).toContain("dead_reason");
+    const a = await agent();
+    const { body } = await publish(a.auth);
+    const insert = (state: string, reason: string | null) =>
+      D1()
+        .prepare(
+          `INSERT INTO upload_tickets (id, token_hash, user_id, credential, connection_id, scopes,
+             mode, artifact_id, artifact_type, base_version, state, dead_reason, created_at, expires_at)
+           VALUES (?, ?, ?, 'connection', ?, 'artifacts:write', 'update', ?, 'html', 1, ?, ?, ?, ?)`,
+        )
+        .bind(newId(), newId(), a.user.id, a.connectionId, body.id, state, reason, NOW, LATER)
+        .run();
+    await insert("dead", "conflict");
+    await insert("dead", "taken_down");
+    await insert("dead", null);
+    await expect(insert("dead", "other")).rejects.toThrow();
+    await expect(insert("open", "conflict")).rejects.toThrow();
   });
 });

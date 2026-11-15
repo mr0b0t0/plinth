@@ -30,7 +30,11 @@ import { hit } from "../src/lib/ratelimit.ts";
 import { isoIn, nowIso } from "../src/lib/time.ts";
 import { revokeToken } from "../src/oauth/service.ts";
 import type { Principal } from "../src/policy.ts";
-import { claimArtifactAttempts, clearClaimedAttempts } from "../src/services/attempts.ts";
+import {
+  claimArtifactAttempts,
+  clearClaimedAttempts,
+  pruneUploadTickets,
+} from "../src/services/attempts.ts";
 import { revokeConnection } from "../src/services/connections.ts";
 import type { Ctx } from "../src/services/context.ts";
 import {
@@ -63,11 +67,13 @@ import {
   viteBuild,
 } from "./fixtures/bundles/tar.ts";
 import {
+  APP,
   agent,
   browserSession,
   call,
   config,
   contentOrigin,
+  createToken,
   createUser,
   db,
   enterContent,
@@ -1649,13 +1655,14 @@ describe("an abandoned, slow or over-quota bundle leaves nothing behind", () => 
     );
     expect(e).toMatchObject({ code: "forbidden", details: { reason: "taken_down" } });
     expect((await versionRow(id, 2)) ?? null).toBeNull();
-    expect((await ticket(t.upload_id)).state).not.toBe("dead");
+    // The ticket ends with the takedown as its reason, never as someone else's version.
+    expect(await ticket(t.upload_id)).toMatchObject({ state: "dead", dead_reason: "taken_down" });
     const status = await uploadStatus(bundleEnv(), {
       uploadId: t.upload_id,
       authorization: `Bearer ${t.upload_token}`,
     });
-    expect(status.state).not.toBe("dead");
-    expect(status.next).not.toMatch(/Someone published/);
+    expect(status.state).toBe("taken_down");
+    expect(status.next).not.toMatch(/Someone published|send the bundle again/i);
   });
 
   it("an editor removed while the bundle streams is refused before the commit", async () => {
@@ -2156,6 +2163,388 @@ describe("a lost response, then a retry", () => {
     expect(res.status).toBe(201);
     expect((await json(res)).id).toBe(reserved);
     expect(await read()).toMatchObject({ state: "used", id: reserved, version: 1 });
+  });
+});
+
+// ---------- reserved ids, minting limits, the status window, failure reasons ----------
+
+/** An agent whose account may hold `limit` artifacts. */
+async function limitedAgent(limit: number) {
+  const a = await agent();
+  await env.DB.prepare("UPDATE users SET artifact_limit = ?1 WHERE id = ?2")
+    .bind(limit, a.user.id)
+    .run();
+  return a;
+}
+
+/** Fill a rate-limit bucket for the current hour window. */
+async function fillBucket(key: string, count: number): Promise<void> {
+  const nowS = Math.floor(Date.now() / 1000);
+  await env.DB.prepare(
+    `INSERT INTO rate_limits (key, window_start, count) VALUES (?1, ?2, ?3)
+     ON CONFLICT (key, window_start) DO UPDATE SET count = ?3`,
+  )
+    .bind(key, nowS - (nowS % 3600), count)
+    .run();
+}
+
+const statusUrlOf = (t: Pick<StartUploadResult, "upload_url">) =>
+  t.upload_url.replace(/\/bundle$/, "");
+const readStatus = (url: string, token?: string) =>
+  call(url, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+const agoIso = (ms: number) => new Date(Date.now() - ms).toISOString();
+
+describe("reserved artifact ids", () => {
+  it("a live publish ticket counts toward the artifact limit: minting past it is refused, with next", async () => {
+    const a = await limitedAgent(2);
+    expect((await publish(a.auth)).res.status).toBe(201);
+    const t = await mint(a, { title: "One" }, stageDeps);
+    const e = await mintError(a, { title: "Two" }, stageDeps);
+    expect(e.code).toBe("quota_exceeded");
+    expect(e.message).toMatch(/Artifact limit reached \(2\)/);
+    expect(e.message).toMatch(/1 upload/);
+    expect(details(e)).toMatchObject({
+      limit: 2,
+      artifacts: 1,
+      reserved_uploads: 1,
+      reserved_until: t.expires_at,
+    });
+    expect(details(e).next).toMatch(/expire/);
+    // An inline publish is held to the same count while the reservation lasts.
+    const inline = await publish(a.auth);
+    expect(inline.res.status).toBe(403);
+    expect(inline.body.error.details).toMatchObject({ reserved_uploads: 1 });
+    // The ticket's own bundle still commits: its reservation never counts against itself.
+    const res = await postBundle(t.upload_url, { token: t.upload_token, body: tar(SITE) });
+    expect(res.status).toBe(201);
+    expect((await json(res)).id).toBe((t.target as { id: string }).id);
+    // At the limit, with no reservation left: the plain artifact-limit error.
+    const full = await mintError(a, {}, stageDeps);
+    expect(full.code).toBe("quota_exceeded");
+    expect(details(full).reserved_uploads).toBeUndefined();
+  });
+
+  it("an update ticket reserves nothing", async () => {
+    const a = await limitedAgent(2);
+    const pub = await publish(a.auth);
+    await mint(a, { id: pub.body.id, base_version: 1 }, stageDeps);
+    await mint(a, { id: pub.body.id, base_version: 1 }, stageDeps);
+    expect((await publish(a.auth)).res.status).toBe(201);
+  });
+
+  it("an expired ticket releases its id: it no longer counts and never becomes an artifact", async () => {
+    const a = await limitedAgent(1);
+    const t = await mint(a, {}, stageDeps);
+    const reserved = (t.target as { id: string }).id;
+    expect((await mintError(a, {}, stageDeps)).code).toBe("quota_exceeded");
+    await setTicket(t.upload_id, "expires_at = ?2", agoIso(1000));
+    // Released: a new ticket fits.
+    const t2 = await mint(a, {}, stageDeps);
+    // The expired ticket's bundle is refused, and the id it held is no artifact.
+    const late = await postBundle(t.upload_url, { token: t.upload_token, body: tar(SITE) });
+    expect(late.status).toBe(400);
+    expect((await json(late)).error.details.reason).toBe("upload_expired");
+    expect((await call(`/api/v1/artifacts/${reserved}`, { headers: a.auth })).status).toBe(404);
+    // Exhausted and dead tickets hold nothing either.
+    await setTicket(t2.upload_id, "attempts = ?2", LIMITS.maxTicketAttempts);
+    const t3 = await mint(a, {}, stageDeps);
+    await setTicket(t3.upload_id, "state = 'dead', dead_reason = 'conflict'");
+    await mint(a, {}, stageDeps);
+  });
+
+  it("nobody else can publish to a reserved id: no other user, connection, ticket or inline publish", async () => {
+    const a = await agent();
+    const t = await mint(a, { title: "Mine" }, stageDeps);
+    const reserved = (t.target as { id: string }).id;
+    expect(reserved).toMatch(ARTIFACT_ID_RE);
+    const put = (auth: Record<string, string>) =>
+      call(`/api/v1/artifacts/${reserved}`, {
+        method: "PUT",
+        headers: { ...auth, "Content-Type": "application/json" },
+        body: JSON.stringify({ html: "<!doctype html><title>x</title>", base_version: 1 }),
+      });
+    // Another user: an update by that id, inline or with a ticket, finds nothing.
+    const b = await agent();
+    expect((await put(b.auth)).status).toBe(404);
+    expect((await mintError(b, { id: reserved, base_version: 1 }, stageDeps)).code).toBe(
+      "not_found",
+    );
+    // The same user from another connection: there is no artifact to update before the commit.
+    const other = await createToken(a.user.id);
+    expect((await put({ Authorization: `Bearer ${other.token}` })).status).toBe(404);
+    expect(
+      (await mintError({ token: other.token }, { id: reserved, base_version: 1 }, stageDeps)).code,
+    ).toBe("not_found");
+    // A client cannot choose a new artifact's id: an id in a publish body is ignored.
+    const pub = await publish(a.auth, { id: reserved });
+    expect(pub.res.status).toBe(201);
+    expect(pub.body.id).not.toBe(reserved);
+    // Two tickets never hold the same id.
+    const row = await ticket(t.upload_id);
+    await expect(
+      env.DB.prepare(
+        `INSERT INTO upload_tickets (id, token_hash, user_id, credential, connection_id, scopes, mode,
+           artifact_type, state, created_at, expires_at, reserved_artifact_id)
+         VALUES (?1, ?2, ?3, 'connection', ?4, 'artifacts:write', 'publish', 'html', 'open', ?5, ?6, ?7)`,
+      )
+        .bind(newId(), newId(), row.user_id, row.connection_id, nowIso(), isoIn(60_000), reserved)
+        .run(),
+    ).rejects.toThrow(/UNIQUE/);
+    // Only the ticket's own bundle creates it.
+    const res = await postBundle(t.upload_url, { token: t.upload_token, body: tar(SITE) });
+    expect(res.status).toBe(201);
+    expect((await json(res)).id).toBe(reserved);
+    // Still not another user's: it is a's artifact now.
+    expect((await put(b.auth)).status).toBe(404);
+  });
+});
+
+describe("minting limits", () => {
+  it("start_upload and POST /uploads share the mint limit, and minting spends no publish", async () => {
+    const a = await agent();
+    const limit = config().maxPublishesPerHour;
+    await fillBucket(`upload:${a.user.id}`, limit);
+    const e = await mintError(a, {}, stageDeps);
+    expect(e.code).toBe("rate_limited");
+    expect(e.message).toBe(`Upload limit reached (${limit} per hour)`);
+    const rest = await call(`/api/v1${API.uploads}`, {
+      method: "POST",
+      headers: { ...a.auth, "Content-Type": "application/json" },
+      body: "{}",
+    });
+    expect(rest.status).toBe(429);
+    expect((await json(rest)).error.message).toBe(`Upload limit reached (${limit} per hour)`);
+    // The publish limit is separate: an inline publish still goes through.
+    expect((await publish(a.auth)).res.status).toBe(201);
+  });
+
+  it("a bundle counts toward the publish limit: a full publish bucket refuses it, the ticket stays open", async () => {
+    const a = await agent();
+    const t = await mint(a, {}, stageDeps);
+    await fillBucket(`publish:${a.user.id}`, config().maxPublishesPerHour);
+    const res = await postBundle(t.upload_url, { token: t.upload_token, body: tar(SITE) });
+    expect(res.status).toBe(429);
+    expect((await ticket(t.upload_id)).state).toBe("open");
+  });
+});
+
+describe("GET /uploads/:id", () => {
+  it("reads the token only from the Authorization header: ?token= gets the same 401 as no token", async () => {
+    const a = await agent();
+    const t = await mint(a, {}, stageDeps);
+    const url = statusUrlOf(t);
+    const none = await readStatus(url);
+    const query = await readStatus(`${url}?token=${encodeURIComponent(t.upload_token)}`);
+    const missing = await readStatus(
+      `${APP}/api/v1/uploads/${"z".repeat(20)}?token=${encodeURIComponent(t.upload_token)}`,
+    );
+    expect(none.status).toBe(401);
+    expect(query.status).toBe(401);
+    expect(missing.status).toBe(401);
+    const body = await none.text();
+    expect(await query.text()).toBe(body);
+    expect(await missing.text()).toBe(body);
+    // A wrong header with the right token in the query: the 404 of any wrong token.
+    const wrong = await readStatus(
+      `${url}?token=${encodeURIComponent(t.upload_token)}`,
+      `${UPLOAD_TOKEN_PREFIX}${"w".repeat(43)}`,
+    );
+    expect(wrong.status).toBe(404);
+    expect((await ticket(t.upload_id)).attempts).toBe(0);
+  });
+
+  it("a missing ticket, a wrong token and another ticket's token get the same 404", async () => {
+    const a = await agent();
+    const t = await mint(a, {}, stageDeps);
+    const other = await mint(await agent(), {}, stageDeps);
+    const url = statusUrlOf(t);
+    const answers = [
+      await readStatus(url, `${UPLOAD_TOKEN_PREFIX}${"w".repeat(43)}`),
+      await readStatus(url, other.upload_token),
+      await readStatus(`${APP}/api/v1/uploads/${"z".repeat(20)}`, t.upload_token),
+      await readStatus(`${APP}/api/v1/uploads/${other.upload_id}`, t.upload_token),
+    ];
+    const bodies = await Promise.all(answers.map((r) => r.text()));
+    expect(answers.map((r) => r.status)).toEqual([404, 404, 404, 404]);
+    expect(new Set(bodies).size).toBe(1);
+    expect(bodies[0]).not.toContain(t.upload_id);
+    expect(bodies[0]).not.toContain(other.upload_id);
+  });
+
+  it("answers state, the artifact id, version, url and the ticket's times, never content", async () => {
+    const { a, id } = await ownerWithArtifact();
+    const t = await mint(a, { id, base_version: 1, note: "a private note" }, stageDeps);
+    const page = "<!doctype html><title>Secret page title</title><p>secret body text</p>";
+    const res = await postBundle(t.upload_url, {
+      token: t.upload_token,
+      body: tar([{ name: "index.html", data: page }]),
+    });
+    expect(res.status).toBe(200);
+    const text = await (await readStatus(statusUrlOf(t), t.upload_token)).text();
+    const body = JSON.parse(text);
+    expect(Object.keys(body).sort()).toEqual(
+      [
+        "expires_at",
+        "id",
+        "mode",
+        "next",
+        "receiving_until",
+        "state",
+        "upload_id",
+        "url",
+        "version",
+      ].sort(),
+    );
+    for (const secret of [
+      "Secret page title",
+      "secret body text",
+      "a private note",
+      "index.html",
+    ]) {
+      expect(text).not.toContain(secret);
+    }
+  });
+
+  it(`stays readable for TTL.uploadStatusMs (${TTL.uploadStatusMs / 3_600_000} h) after expiry, then answers 404 like a missing one`, async () => {
+    const a = await agent();
+    const used = await mint(a, {}, stageDeps);
+    const res = await postBundle(used.upload_url, { token: used.upload_token, body: tar(SITE) });
+    expect(res.status).toBe(201);
+    const unused = await mint(a, {}, stageDeps);
+    // A commit near the deadline: the TTL has passed by a few minutes when the client asks.
+    await setTicket(used.upload_id, "expires_at = ?2", agoIso(5 * 60_000));
+    await setTicket(unused.upload_id, "expires_at = ?2", agoIso(5 * 60_000));
+    expect(await json(await readStatus(statusUrlOf(used), used.upload_token))).toMatchObject({
+      state: "used",
+      version: 1,
+      url: expect.stringContaining("/a/"),
+    });
+    expect((await json(await readStatus(statusUrlOf(unused), unused.upload_token))).state).toBe(
+      "expired",
+    );
+    // Just inside the window, still readable.
+    await setTicket(used.upload_id, "expires_at = ?2", agoIso(TTL.uploadStatusMs - 60_000));
+    expect((await readStatus(statusUrlOf(used), used.upload_token)).status).toBe(200);
+    // Past it, the same 404 as a ticket that never existed, row or no row.
+    await setTicket(used.upload_id, "expires_at = ?2", agoIso(TTL.uploadStatusMs + 60_000));
+    await setTicket(unused.upload_id, "expires_at = ?2", agoIso(TTL.uploadStatusMs + 60_000));
+    const gone = await readStatus(statusUrlOf(used), used.upload_token);
+    const gone2 = await readStatus(statusUrlOf(unused), unused.upload_token);
+    const never = await readStatus(`${APP}/api/v1/uploads/${"z".repeat(20)}`, used.upload_token);
+    expect([gone.status, gone2.status]).toEqual([404, 404]);
+    const neverText = await never.text();
+    expect(await gone.text()).toBe(neverText);
+    expect(await gone2.text()).toBe(neverText);
+  });
+});
+
+describe("cleaning up upload tickets", () => {
+  it("pruneUploadTickets deletes a ticket only once the status window after its expiry has passed", async () => {
+    const a = await agent();
+    const fresh = await mint(a, {}, stageDeps);
+    const recent = await mint(a, {}, stageDeps);
+    const old = await mint(a, {}, stageDeps);
+    const oldUsed = await mint(a, {}, stageDeps);
+    await setTicket(recent.upload_id, "expires_at = ?2", agoIso(5 * 60_000));
+    await setTicket(old.upload_id, "expires_at = ?2", agoIso(TTL.uploadStatusMs + 60_000));
+    await setTicket(
+      oldUsed.upload_id,
+      "state = 'used', used_at = ?2, expires_at = ?2",
+      agoIso(TTL.uploadStatusMs + 60_000),
+    );
+    expect(await pruneUploadTickets(env.DB, Date.now())).toBeGreaterThanOrEqual(2);
+    const left = async (id: string) =>
+      (await env.DB.prepare("SELECT 1 AS one FROM upload_tickets WHERE id = ?1")
+        .bind(id)
+        .first()) !== null;
+    expect(await left(fresh.upload_id)).toBe(true);
+    expect(await left(recent.upload_id)).toBe(true);
+    expect(await left(old.upload_id)).toBe(false);
+    expect(await left(oldUsed.upload_id)).toBe(false);
+  });
+
+  it("the hourly scheduled run prunes them too", async () => {
+    const a = await agent();
+    const old = await mint(a, {}, stageDeps);
+    await setTicket(old.upload_id, "expires_at = ?2", agoIso(TTL.uploadStatusMs + 60_000));
+    const ctx = createExecutionContext();
+    await worker.scheduled(
+      { scheduledTime: Date.now(), cron: "0 * * * *", noRetry() {} } as ScheduledController,
+      env as never,
+      ctx,
+    );
+    await waitOnExecutionContext(ctx);
+    const row = await env.DB.prepare("SELECT 1 AS one FROM upload_tickets WHERE id = ?1")
+      .bind(old.upload_id)
+      .first();
+    expect(row).toBeNull();
+  });
+});
+
+describe("why a bundle failed, as the ticket and its status keep it", () => {
+  it("only a version conflict ends the ticket: attempt_expired and other reasons keep their own reason and next", async () => {
+    const a = await agent();
+    for (const reason of ["attempt_expired", "something_else"]) {
+      const deps: StageDeps = {
+        ...stageDeps,
+        commitStaged: async () => {
+          throw new ApiError("conflict", "Not this time", {
+            reason,
+            next: `own next for ${reason}`,
+          });
+        },
+      };
+      const t = await mint(a, {}, deps);
+      const e = await redeemError(t, tar(SITE), deps);
+      expect(e.code).toBe("conflict");
+      expect(details(e)).toMatchObject({ reason, next: `own next for ${reason}` });
+      const row = await ticket(t.upload_id);
+      expect(row.state).toBe("open");
+      expect(row.dead_reason).toBeNull();
+    }
+    // A conflict without a reason (or with reason "conflict") is a version conflict: the ticket dies.
+    for (const reason of [undefined, "conflict"]) {
+      const deps: StageDeps = {
+        ...stageDeps,
+        commitStaged: async () => {
+          throw new ApiError("conflict", "Version 1 is not current; current is 2", {
+            current_version: 2,
+            ...(reason ? { reason } : {}),
+          });
+        },
+      };
+      const t = await mint(a, {}, deps);
+      const e = await redeemError(t, tar(SITE), deps);
+      expect(details(e)).toMatchObject({ reason: "conflict", current_version: 2 });
+      expect(await ticket(t.upload_id)).toMatchObject({ state: "dead", dead_reason: "conflict" });
+    }
+  });
+
+  it("after a takedown the status says taken_down and never to send the bundle again", async () => {
+    const { a, id } = await ownerWithArtifact();
+    const t = await mint(a, { id, base_version: 1 }, stageDeps);
+    await env.DB.prepare("UPDATE artifacts SET taken_down_at = ?1 WHERE id = ?2")
+      .bind(nowIso(), id)
+      .run();
+    // Before any attempt: the status already reads the artifact's takedown.
+    const before = await json(await readStatus(statusUrlOf(t), t.upload_token));
+    expect(before.state).toBe("taken_down");
+    const res = await postBundle(t.upload_url, { token: t.upload_token, body: tar(SITE) });
+    expect(res.status).toBe(403);
+    expect((await json(res)).error.details.reason).toBe("taken_down");
+    expect(await ticket(t.upload_id)).toMatchObject({ state: "dead", dead_reason: "taken_down" });
+    // Restored or not, the ticket stays ended by the takedown, and says so.
+    await env.DB.prepare("UPDATE artifacts SET taken_down_at = NULL WHERE id = ?1").bind(id).run();
+    const after = await json(await readStatus(statusUrlOf(t), t.upload_token));
+    expect(after.state).toBe("taken_down");
+    expect(after.version).toBeNull();
+    expect(after.next).toMatch(/taken down/);
+    expect(after.next).not.toMatch(/send the bundle again|Someone published/i);
+    const again = await postBundle(t.upload_url, { token: t.upload_token, body: tar(SITE) });
+    expect(again.status).toBe(403);
+    const err = (await json(again)).error;
+    expect(err.details.reason).toBe("taken_down");
+    expect(err.details.next).not.toMatch(/send the bundle again/i);
   });
 });
 

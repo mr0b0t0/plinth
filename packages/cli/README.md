@@ -117,6 +117,13 @@ npx @mr0b0t0/plinth publish dist --id my-report-k3x9   # the next version of tha
   sent; otherwise the whole folder goes as one compressed upload and the server reuses the
   unchanged files by hash. If someone else published a version since the one you read, the command stops
   with exit code 3 and changes nothing; `--base-version N` states the version you started from.
+  With `--base-version N` the command exits 0 without sending anything in exactly two cases, and
+  says which: the current version is N+1 and its files equal the folder (an earlier run whose
+  answer was lost published it: "already published as vN+1"; `--json` has
+  `"outcome": "already_published"`), or the current version is N and its files equal the folder
+  (nothing to publish; `"outcome": "nothing_to_publish"`). The current version N with other files
+  publishes as usual. Anything else is a conflict and exits 3: N+1 with other files, or N+2 or
+  later even when its files equal the folder, since then someone else published too.
 - **Checks.** It reads the new version back and compares every file's SHA-256 with the folder,
   then prints the link, how many files were written and reused, and any warnings (for example a
   file the page refers to that is not in the folder). `--json` prints `id`, `slug`, `version`,
@@ -131,9 +138,10 @@ npx @mr0b0t0/plinth publish dist --id my-report-k3x9   # the next version of tha
   `{"published": "unknown", "id", "upload_id"}`, with `base_version` added for an update and no
   `upload_id` for an inline one); for a new artifact that id is the one the upload reserved, and
   `not_found` means nothing was published. For an update it names the rerun to use: the same
-  command with `--base-version N`, which sends nothing and exits 0 when the current version
-  already matches the folder, and exits 3 when someone else published first. A connection lost while
-  the folder was still being sent never publishes.
+  command with `--base-version N`, which sends nothing and exits 0 when version N+1 matches the
+  folder, publishes when nothing landed, and exits 3 when someone else published first. An upload
+  ended by a takedown of the artifact exits 1 and says so; nothing was published. A connection lost
+  while the folder was still being sent never publishes.
 - **Build settings.** Use relative URLs (Vite: `base: './'`).
 
 Which instance: `--url`, else the instance `--name` and `--home` pick, else `PLINTH_URL`, else

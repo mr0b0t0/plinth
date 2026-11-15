@@ -36,8 +36,23 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   instead of sending again; when they cannot tell (the status or the artifact cannot be read
   after a few tries, or the upload is still being processed after 30 seconds), they name the
   artifact id and upload id to check, `--json` prints `{"published": "unknown", ...}` with the
-  update's `base_version`, and an update names the safe rerun with `--base-version`. `plinth publish --id --base-version N` exits 0 without
-  sending anything when the current version already matches the folder.
+  update's `base_version`, and an update names the safe rerun with `--base-version`.
+- `plinth publish --id --base-version N` exits 0 without sending anything in exactly two cases, and
+  prints which: the current version is N+1 and equals the folder ("already published as vN+1",
+  `--json` `"outcome": "already_published"`), or it is N and equals the folder ("nothing to
+  publish", `"outcome": "nothing_to_publish"`). The current version N with other files publishes as
+  usual. Everything else exits 3 as a conflict, including N+2 or later whose files equal the folder
+  (before, any later version that matched the folder exited 0).
+- Upload tickets: a new-artifact upload's reserved id counts toward `MAX_ARTIFACTS_PER_USER` while
+  the upload is live, so `start_upload` (and an inline publish) answers `quota_exceeded` with
+  `reserved_uploads`, `reserved_until` and `next` once artifacts plus open uploads reach the limit;
+  an upload that expires unused releases its id, which never becomes an artifact. Minting keeps its
+  own limit (`MAX_PUBLISHES_PER_HOUR` per user per hour). `GET /api/v1/uploads/:id` stays readable
+  for 24 hours after the upload expires, then answers the same 404 as a missing upload; the hourly
+  cron and the opportunistic sweep delete tickets after that window (instead of after 7 days, on
+  about 2% of mints). An upload ended by a takedown reports `state: "taken_down"` and is never
+  to be resent; an upload whose commit failed for any reason other than a version conflict (for
+  example `attempt_expired`) keeps that reason and its `next`.
 - Local, tunnel and Docker instances (which run no cron) clear what interrupted uploads left:
   minting an upload ticket or posting a bundle starts a small sweep (at most 20 attempts, once a
   minute per Worker isolate) on every instance.

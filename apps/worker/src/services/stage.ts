@@ -114,6 +114,48 @@ function artifactLimitError(limit: number): ApiError {
   );
 }
 
+/**
+ * The artifact ids live publish-mode upload tickets hold for `ownerId` (open, unexpired, attempts
+ * left), leaving out `except` (the ticket being redeemed holds that one), and when the first of
+ * them expires.
+ */
+async function liveReservations(
+  ctx: Ctx,
+  ownerId: string,
+  except: string | null,
+): Promise<{ n: number; until: string | null }> {
+  const r = await ctx.env.DB.prepare(
+    `SELECT count(*) AS n, min(expires_at) AS until FROM upload_tickets
+      WHERE user_id = ?1 AND mode = 'publish' AND state = 'open' AND expires_at > ?2
+        AND attempts < ?3 AND (?4 IS NULL OR reserved_artifact_id IS NOT ?4)`,
+  )
+    .bind(ownerId, nowIso(), LIMITS.maxTicketAttempts, except)
+    .first<{ n: number; until: string | null }>();
+  return { n: r?.n ?? 0, until: r?.until ?? null };
+}
+
+function reservedLimitError(
+  limit: number,
+  artifacts: number,
+  held: { n: number; until: string | null },
+): ApiError {
+  const uploads = held.n === 1 ? "1 upload" : `${held.n} uploads`;
+  return new ApiError(
+    "quota_exceeded",
+    `Artifact limit reached (${limit}): ${artifacts} artifacts so far, and ${uploads} in progress that will add ${held.n === 1 ? "one" : "theirs"}.`,
+    {
+      limit,
+      artifacts,
+      reserved_uploads: held.n,
+      reserved_until: held.until,
+      next:
+        "Send the bundle of an upload you started (start_upload), or wait until it expires" +
+        (held.until ? ` (by ${held.until})` : "") +
+        "; or delete an artifact you no longer need, or update an existing one",
+    },
+  );
+}
+
 async function liveArtifactCount(ctx: Ctx, ownerId: string): Promise<number> {
   const r = await ctx.env.DB.prepare(
     "SELECT count(*) AS n FROM artifacts WHERE owner_id = ?1 AND deleted_at IS NULL",
@@ -126,6 +168,8 @@ async function liveArtifactCount(ctx: Ctx, ownerId: string): Promise<number> {
 /**
  * The publish scope check and the artifact-count pre-check, then a target with a fresh id, or with
  * `artifactId` when one was reserved earlier (a publish-mode upload ticket names its id at mint).
+ * The count includes the ids live publish-mode upload tickets hold (all but `artifactId`'s own), so
+ * reservations cannot pile up past the limit. The commit batch's guard counts artifacts only.
  */
 export async function newArtifactTarget(
   ctx: Ctx,
@@ -139,7 +183,10 @@ export async function newArtifactTarget(
   if (!user) throw unauthorized();
   requireTypeDef(input.type);
   const limit = artifactLimitFor(ctx.config, user);
-  if ((await liveArtifactCount(ctx, user.id)) >= limit) throw artifactLimitError(limit);
+  const artifacts = await liveArtifactCount(ctx, user.id);
+  if (artifacts >= limit) throw artifactLimitError(limit);
+  const held = await liveReservations(ctx, user.id, input.artifactId ?? null);
+  if (artifacts + held.n >= limit) throw reservedLimitError(limit, artifacts, held);
   const title = input.title?.trim();
   return {
     mode: "publish",

@@ -331,8 +331,10 @@ commands, next }`:
 - `commands.npx` (only on release builds) does the same with the Plinth CLI:
   `PLINTH_UPLOAD_TOKEN=... npx -y @mr0b0t0/plinth@<version> upload <folder> --to '<upload_url>'`.
 - `target` says whether this is a publish or an update, and `id`: the artifact updated, or for a
-  publish the id the new artifact will get (reserved for this upload). For an update it also has
-  the artifact's `visibility`: the new version goes live at once at that visibility.
+  publish the id the new artifact will get (reserved for this upload: no other upload, user or
+  publish can take it, and if the upload expires unused the id is released and never used). For an
+  update it also has the artifact's `visibility`: the new version goes live at once at that
+  visibility.
 - `content_isolation` is `opaque` on instances that serve artifacts with an opaque origin, where
   module scripts fail ([below](#opaque-sandbox-instances)).
 
@@ -344,6 +346,12 @@ holds the entry file, that directory is removed from the paths. Dotfiles are ski
 
 The upload is single use and bound to one artifact (or one new one), the connection that asked for
 it and the stated base version. It expires after 30 minutes and allows at most 5 attempts.
+Minting is limited to `MAX_PUBLISHES_PER_HOUR` uploads per user per hour (60 by default), its own
+limit beside the publish limit, which the bundle request counts toward (`rate_limited` with
+`retry_after`). A new-artifact upload counts toward your artifact limit while it is live, so
+`start_upload` answers `quota_exceeded` with `reserved_uploads`, `reserved_until` and `next` when
+your artifacts plus your open new-artifact uploads reach it: send those bundles, or let them
+expire.
 The bundle request is `POST /api/v1/uploads/<upload_id>/bundle` with
 `Authorization: Bearer plinth_up_...` and a tar or gzipped tar body; it accepts nothing else, and
 the upload token works on no other route. Errors carry a `reason`:
@@ -354,6 +362,7 @@ the upload token works on no other route. Errors carry a `reason`:
 | `upload_expired` | Older than 30 minutes: call `start_upload` again |
 | `upload_used` | Already published; the error names the `version` and `url` |
 | `upload_dead` | A conflict ended it: read the artifact again and start a new upload |
+| `taken_down` | The artifact was taken down: nothing was published, and it takes no new versions. Tell the user; do not resend or start a new upload |
 | `upload_exhausted` | 5 attempts used |
 | `upload_running` | Another upload of yours is in progress; wait for it. `receiving_until` and `retry_after` say when its lease ends at the latest |
 | `upload_too_slow` | The bundle took longer than its 10-minute receiving lease to arrive; send it again (the upload keeps its remaining attempts) |
@@ -367,10 +376,14 @@ not JSON), it may still have published, as long as the whole folder was sent; a 
 while sending never publishes. Do not run it again blindly. Ask the upload first:
 `GET /api/v1/uploads/<upload_id>` (the `upload_url` without `/bundle`) with the same
 `Authorization: Bearer plinth_up_...` header returns `{ upload_id, state, mode, id, version, url,
-expires_at, receiving_until, next }`, where `state` is `open` (nothing published yet), `receiving`
-(a bundle request is still running), `used` (this upload published `version` at `url`), `dead`
-(someone else published first, and this change was not saved), `expired` or `exhausted`. It counts
-no attempt. Once it reads `open` after a lease ran out, that request can no longer commit. Only
+expires_at, receiving_until, next }`, never file contents, where `state` is `open` (nothing
+published yet), `receiving` (a bundle request is still running), `used` (this upload published
+`version` at `url`), `dead` (someone else published first, and this change was not saved),
+`taken_down` (the artifact was taken down; nothing was published, do not resend), `expired` or
+`exhausted`. It counts no attempt. The token goes in the header only, never in the URL; a missing
+upload and a wrong token get the same 404. The status stays readable for 24 hours after the upload
+expires (`TTL.uploadStatusMs`), so a commit that landed just before the 30-minute deadline can still
+be confirmed; after that it answers 404. Once it reads `open` after a lease ran out, that request can no longer commit. Only
 when it cannot be read, call `get_artifact` with `target.id`: a new artifact that exists was
 published by this upload, but a new version of an existing one may be a collaborator's, so compare
 its files with what you sent before you call it yours. When nothing was published, call

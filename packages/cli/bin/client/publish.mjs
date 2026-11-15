@@ -220,7 +220,7 @@ const uploadIdOf = (uploadUrl) => /\/uploads\/([^/]+)\/bundle$/.exec(uploadUrl)?
  * sending when the update landed after all, and 3 when someone else published first.
  */
 const rerunWithBase = (base) =>
-  `Run the same command again with --base-version ${base}: it sends nothing and exits 0 if this update landed after all, and exits 3 if someone else published first.`;
+  `Run the same command again with --base-version ${base}: it sends nothing and exits 0 if this update landed after all (v${base + 1} matches the folder), publishes it if nothing landed, and exits 3 if someone else published first.`;
 
 /** A CliError for an outcome the command could not learn; --json prints `unknown` on stdout. */
 function unknownError(message, { id, uploadId, base }) {
@@ -269,6 +269,11 @@ async function afterLostBundle(
   }
   if (s.state === "used") return { id: s.id, version: s.version, url: s.url, recovered: true };
   if (s.state === "dead") throw new CliError(conflictMessage(), EXIT.conflict);
+  if (s.state === "taken_down") {
+    throw new CliError(
+      `${lost.message}\nThe artifact${s.id ? ` ${s.id}` : ""} was taken down, so nothing was published, and it takes no new versions.`,
+    );
+  }
   if (s.state === "receiving") {
     throw unknownError(
       `${lost.message}\nThe server is still working on the bundle. ` +
@@ -570,15 +575,27 @@ export async function publish(dir, opts, ctx) {
         `${ref} is a ${type === "doc" ? "document" : "page"}; the folder needs ${sourcePath} at its top`,
       );
     }
+    const stated = base !== undefined;
     base ??= detail.version;
     const { total } = checkLimits(files, sourcePath, type, limits);
     hashFiles(files);
-    if (base !== detail.version) {
-      // A rerun after a lost answer whose update landed anyway: the current version is the folder.
-      const same = base < detail.version ? await verify(api, detail, files) : { verified: false };
+    if (stated) {
+      // With --base-version N it exits 0 without sending in exactly two cases: the current
+      // version is N+1 and equals the folder (an earlier run whose answer was lost committed it),
+      // or it is N and equals the folder (nothing to publish). N+1 with other files, N+2 or later
+      // (not ours, whatever its files), or a base past the current version is a conflict (exit 3);
+      // N with other files publishes as usual.
+      const current = detail.version;
+      if (current !== base && current !== base + 1) {
+        throw new CliError(staleBase(ref, base)(current), EXIT.conflict);
+      }
+      const same = await verify(api, detail, files);
       if (same.verified) {
+        const landed = current === base + 1;
         ctx.stderr(
-          `${ref} is already at v${detail.version}, which matches this folder (an earlier run whose answer was lost may have published it); nothing was sent.`,
+          landed
+            ? `${ref} is already published as v${current}, which matches this folder: an earlier run whose answer was lost published it. Nothing was sent.`
+            : `${ref} v${current} already matches this folder: nothing to publish. Nothing was sent.`,
         );
         const url = detail.url ?? `${ctx.origin}/a/${detail.slug}`;
         if (opts.json) {
@@ -587,10 +604,11 @@ export async function publish(dir, opts, ctx) {
               {
                 id: detail.id,
                 slug: detail.slug,
-                version: detail.version,
+                version: current,
                 url,
                 verified: true,
                 unchanged: true,
+                outcome: landed ? "already_published" : "nothing_to_publish",
               },
               null,
               2,
@@ -599,7 +617,7 @@ export async function publish(dir, opts, ctx) {
         } else ctx.stdout(url);
         return EXIT.ok;
       }
-      throw new CliError(staleBase(ref, base)(detail.version), EXIT.conflict);
+      if (current !== base) throw new CliError(staleBase(ref, base)(current), EXIT.conflict);
     }
     const current = new Map((detail.assets ?? []).map((a) => [a.path, a.sha256]));
     const source = files.find((f) => f.path === sourcePath);

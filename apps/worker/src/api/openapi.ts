@@ -344,9 +344,9 @@ function responseSchemas(): Record<string, Json> {
     UploadStatus: obj({
       upload_id: str(),
       state: {
-        ...enumOf(["open", "receiving", "used", "dead", "expired", "exhausted"]),
+        ...enumOf(["open", "receiving", "used", "dead", "taken_down", "expired", "exhausted"]),
         description:
-          "receiving: a bundle request still holds the lease; used: it committed; dead: a conflict ended it",
+          "receiving: a bundle request still holds the lease; used: it committed; dead: a conflict ended it; taken_down: the artifact was taken down, nothing was published and nothing is to be resent",
       },
       mode: enumOf(["publish", "update"]),
       id: str({
@@ -1109,8 +1109,10 @@ function operations(): Operation[] {
       operationId: "uploadStatus",
       summary: "Whether an upload committed (after a lost bundle response)",
       description:
-        "Takes only `Authorization: Bearer plinth_up_...`, like the bundle route. Reads the ticket: " +
-        "no attempt is counted and no lease is taken. `used` names the version and url.",
+        "Takes only `Authorization: Bearer plinth_up_...`, like the bundle route (never a query " +
+        "parameter). Reads the ticket: no attempt is counted and no lease is taken. `used` names the " +
+        "version and url; no file contents are returned. A missing ticket and a wrong token get the " +
+        `same 404. Readable until ${TTL.uploadStatusMs / 3_600_000} hours after the ticket expires.`,
       tag: "Artifacts",
       auth: "upload",
       ok: [200, "UploadStatus"],

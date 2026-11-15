@@ -20,6 +20,10 @@
 // STAGING_SWEEP_CLAIM_MS old, so runs that overlap (two isolates, or one and the cron) never work
 // on the same row, and a run that died after its claim leaves the row to a later one.
 //
+// The same runs delete upload tickets once TTL.uploadStatusMs has passed since they expired
+// (pruneUploadTickets): by then no ticket can commit, and its status has been readable for that
+// whole window.
+//
 // The admin command sweep-orphans (scripts/admin-lib.mjs) stays the full-bucket tool for objects
 // written before this table existed, which no row names.
 import { TTL } from "@plinth/shared";
@@ -252,11 +256,24 @@ export async function sweepStagingAttempts(
   return counts;
 }
 
+/**
+ * Delete the upload tickets that expired more than TTL.uploadStatusMs before `now` (ms), used or
+ * not: none can commit any more (the commit requires an unexpired ticket), and the status route
+ * already answers 404 for them. Returns how many went.
+ */
+export async function pruneUploadTickets(DB: D1Database, now: number): Promise<number> {
+  const r = await DB.prepare("DELETE FROM upload_tickets WHERE expires_at < ?1")
+    .bind(new Date(now - TTL.uploadStatusMs).toISOString())
+    .run();
+  return r.meta.changes ?? 0;
+}
+
 /** When this isolate last started an opportunistic sweep (ms). */
 let lastSoon = Number.NEGATIVE_INFINITY;
 
 /**
- * Start an opportunistic sweep of up to OPPORTUNISTIC_SWEEP_BATCH rows through `waitUntil`,
+ * Start an opportunistic sweep of up to OPPORTUNISTIC_SWEEP_BATCH rows (and a ticket prune)
+ * through `waitUntil`,
  * unless this isolate started one within OPPORTUNISTIC_SWEEP_EVERY_MS of `now`. Called when an
  * upload ticket is minted and when a bundle is posted, so an instance with no cron (`wrangler dev`)
  * still clears abandoned attempts. A failure is swallowed: it never fails the request. Returns
@@ -269,7 +286,12 @@ export function sweepSoon(
 ): boolean {
   if (Math.abs(now - lastSoon) < OPPORTUNISTIC_SWEEP_EVERY_MS) return false;
   lastSoon = now;
-  waitUntil(sweepStagingAttempts(env, now, OPPORTUNISTIC_SWEEP_BATCH).catch(() => undefined));
+  waitUntil(
+    Promise.all([
+      sweepStagingAttempts(env, now, OPPORTUNISTIC_SWEEP_BATCH).catch(() => undefined),
+      pruneUploadTickets(env.DB, now).catch(() => undefined),
+    ]),
+  );
   return true;
 }
 

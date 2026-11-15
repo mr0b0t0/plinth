@@ -303,8 +303,18 @@ await check("publish --id with a stale base exits 3 and writes nothing", () => {
 await check("a stale-base rerun whose update already landed sends nothing (exit 0)", () => {
   const r = client(["publish", site, "--id", sitePublished.id, "--base-version", "1"]);
   assert(r.status === 0, `exit ${r.status}: ${r.stderr}`);
-  assert(/already at v2, which matches this folder/.test(r.stderr), r.stderr);
+  assert(/already published as v2, which matches this folder/.test(r.stderr), r.stderr);
 });
+
+await check(
+  "a rerun on the current base with the same folder has nothing to publish (exit 0)",
+  () => {
+    const r = json(
+      client(["publish", site, "--id", sitePublished.id, "--base-version", "2", "--json"]),
+    );
+    assert(r.version === 2 && r.outcome === "nothing_to_publish", JSON.stringify(r));
+  },
+);
 
 await check("upload sends a folder with a start_upload ticket", async () => {
   const ticket = await callTool(APP, accessToken, "start_upload", {});

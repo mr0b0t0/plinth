@@ -174,15 +174,21 @@ The token is still in the command text the agent's shell runs (that shell's argu
 other users of the machine while the upload runs, and the agent's transcript); it is good for this
 one upload only. The process substitution is why it needs bash or zsh: on Windows, use Git Bash or WSL, or have the person run the
 CLI. The upload is single use, bound to its artifact and base version, and expires after 30
-minutes.
+minutes. Minting has its own limit, `MAX_PUBLISHES_PER_HOUR` uploads per user per hour, and the
+bundle counts toward the publish limit. A new-artifact upload reserves its id (`target.id`) and
+counts toward the artifact limit until it is used or expires.
 
 **When the answer is lost.** A connection lost while the folder is still being sent never
 publishes: the tar is incomplete. Once the whole folder has been sent, a curl error or timeout says
 nothing about whether it published, and it may have. So the agent does not retry blindly: it asks
 the upload first, with a GET to `/api/v1/uploads/<upload_id>` (the `upload_url` without `/bundle`)
-and the upload token ([mcp.md](mcp.md#start_upload)). `used` means this upload published that
-version; `dead` means someone else published first and the change was not saved; `open`, `expired`
-or `exhausted` mean nothing was published. Only when that cannot be read does it call
+and the upload token in the `Authorization` header, never in the URL
+([mcp.md](mcp.md#start_upload)). `used` means this upload published that version; `dead` means
+someone else published first and the change was not saved; `taken_down` means the artifact was
+taken down and nothing was published (tell the user, do not resend); `open`, `expired` or
+`exhausted` mean nothing was published. The status stays readable for 24 hours after the upload
+expires (`TTL.uploadStatusMs`), so a late check still finds a commit that landed just before the
+deadline. Only when that cannot be read does it call
 `get_artifact`, with the artifact's id for an update, or for a new artifact with `target.id` from
 the `start_upload` result (the id that upload creates; `not_found` means nothing was published). A
 new version there may be a collaborator's, so it compares the files with what it sent before

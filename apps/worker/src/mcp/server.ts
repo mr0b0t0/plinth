@@ -381,7 +381,9 @@ export function buildMcpServer(ctx: Ctx): McpServer {
         "create. If the command ends without its JSON (a curl error or a timeout), it may still have " +
         "published once the whole folder was sent: before anything else, GET the upload_url without " +
         "/bundle with the same Authorization header (state used: this upload published it; dead: " +
-        "someone else published first and this change was not saved; open: nothing was published). " +
+        "someone else published first and this change was not saved; taken_down: the artifact was " +
+        "taken down, nothing was published, tell the user and do not resend; open: nothing was " +
+        "published). " +
         "Only if that cannot be read, call get_artifact with target.id, and compare a new version's " +
         "files with what you sent before you call it yours (a collaborator may have published it). " +
         "Call start_upload again (with the same base_version) only when nothing was published. An " +

@@ -127,7 +127,7 @@ adds one column and two tables:
 | Table or column | Key fields | Notes |
 | --- | --- | --- |
 | `versions.stored_bytes` | integer or NULL | Bytes this version wrote to R2. The storage quota sums `coalesce(stored_bytes, size_bytes)` |
-| `upload_tickets` | id, token_hash, user_id, credential (`connection` or `admin`), connection_id or admin_token_hash, scopes, mode (`publish` or `update`), artifact_id, artifact_type, title, note, base_version, state (`open`, `used`, `dead`), attempts, receiving_claim, receiving_until, result_artifact_id, result_version, reserved_artifact_id, created_at, expires_at, used_at | One single-use upload ticket from `start_upload`. The token is stored as its SHA-256. A publish-mode ticket reserves its artifact id at mint (`reserved_artifact_id`, returned as `target.id`), and its commit creates the artifact with exactly that id. `open -> used` happens in the same D1 batch that commits the version. The receiving lease limits concurrency and is the bundle's deadline (10 minutes). Rows older than 7 days are deleted opportunistically (on about 2% of `start_upload` calls, so on a quiet instance they can stay longer); erasing an artifact or a user deletes its tickets |
+| `upload_tickets` | id, token_hash, user_id, credential (`connection` or `admin`), connection_id or admin_token_hash, scopes, mode (`publish` or `update`), artifact_id, artifact_type, title, note, base_version, state (`open`, `used`, `dead`), attempts, receiving_claim, receiving_until, result_artifact_id, result_version, reserved_artifact_id (unique), dead_reason (`conflict` or `taken_down`, on a dead ticket), created_at, expires_at, used_at | One single-use upload ticket from `start_upload`. The token is stored as its SHA-256. A publish-mode ticket reserves its artifact id at mint (`reserved_artifact_id`, returned as `target.id`), and its commit creates the artifact with exactly that id; no other ticket can hold that id, and only that ticket's bundle can create it. While the ticket is live (open, unexpired, attempts left) the reservation counts toward the owner's artifact limit; once it expires unused the id is released and never becomes an artifact. Only the id is reserved, not a slug (the commit picks the slug). `open -> used` happens in the same D1 batch that commits the version. The receiving lease limits concurrency and is the bundle's deadline (10 minutes). A row is deleted once `TTL.uploadStatusMs` (24 hours) has passed since it expired, by the hourly cron and by the opportunistic sweep; erasing an artifact or a user deletes its tickets |
 
 ## Auth and permissions
 
@@ -426,9 +426,17 @@ files) and big pages without merging chunks, and an update stores only what chan
   in DECISIONS.md and the deploy checklist, not a promise.) The principal and edit
   rights are checked again once every file is written (after the last puts settle, right before
   the commit), and the commit batch requires the minting connection to be unrevoked. A folder
-  prefix is stripped only when every kept entry is under it. A conflict kills the ticket; other
-  errors leave it open for its remaining attempts. One bundle per user streams at a time; minting
-  is limited to `MAX_PUBLISHES_PER_HOUR` per hour and bundle requests to twice that. The token is
+  prefix is stripped only when every kept entry is under it. A version conflict (no `reason`, or
+  `reason: "conflict"`) and a takedown of the artifact end the ticket, and it keeps which one
+  (`dead_reason`); every other error keeps its own `reason` and `next` and leaves the ticket open
+  for its remaining attempts. One bundle per user streams at a time. Minting has its own limit,
+  `MAX_PUBLISHES_PER_HOUR` tickets per user per hour (the `upload:` bucket, shared by `start_upload`
+  and `POST /api/v1/uploads`), which spends no publish; the bundle request counts toward the
+  publish limit (`MAX_PUBLISHES_PER_HOUR`), and bundle requests are limited to twice that. Each
+  live publish-mode ticket counts toward `MAX_ARTIFACTS_PER_USER` (artifacts plus live
+  reservations), so minting, and an inline publish, is refused with `quota_exceeded`
+  (`reserved_uploads`, `reserved_until`, `next`) once they reach it; a ticket's own bundle is never
+  held back by its own reservation. The token is
   never in a URL and `commands.curl` keeps it out of curl's arguments.
 - **Lost responses.** What is guaranteed: a client that disconnects while the bundle is still being
   sent never commits, because the tar is incomplete (tests: "a body that ends mid-file commits
@@ -438,6 +446,7 @@ files) and big pages without merging chunks, and an update stores only what chan
   bundle request ends without its JSON answer (a curl error, a timeout, a body that is not JSON)
   does not retry blindly. It asks the upload first (`GET /api/v1/uploads/:id`, below): `used` means
   this upload committed, `dead` that someone else published first and the change was not saved,
+  `taken_down` that the artifact was taken down and nothing was published (nothing to resend),
   `open`, `expired` or `exhausted` that nothing was published. Only when that cannot be read does
   it call `get_artifact`: for an update with the artifact's id, for a new publish with `target.id`,
   which `start_upload` reserves for that ticket (the commit creates the artifact with exactly that
@@ -449,8 +458,15 @@ files) and big pages without merging chunks, and an update stores only what chan
   re-running the same `commands.curl` with a used ticket answers `upload_used` with the version and
   url and commits nothing; and in publish mode one ticket never creates a second artifact.
   `GET /api/v1/uploads/:id` with the upload token (and nothing else) answers whether the upload
-  committed: `state` (`open`, `receiving`, `used`, `dead`, `expired`, `exhausted`), `id`,
-  `version` and `url` once used. It counts no attempt and takes no lease. It reads the ticket and
+  committed: `state` (`open`, `receiving`, `used`, `dead`, `taken_down`, `expired`, `exhausted`),
+  `id`, `version` and `url` once used, the ticket's `expires_at` and `receiving_until`, and
+  `next`; never a file, title or note. It counts no attempt and takes no lease. The token is read
+  from the `Authorization` header only (a `?token=` query is ignored, so it gets the 401 of no
+  token). A missing ticket, a wrong token and another ticket's token all get the same 404. The
+  status stays readable for `TTL.uploadStatusMs` (24 hours) after the ticket expires, used or not,
+  so a commit that landed near the 30-minute deadline can still be confirmed; past that it is the
+  same 404. `taken_down` means the artifact was taken down: nothing was published and nothing is
+  to be resent. It reads the ticket and
   D1's clock in one statement, and a bundle's commit batch requires that request's receiving lease
   to be unexpired by the same clock, so once the status reads `open` after a lease ran out, that
   request can no longer commit (it fails with `upload_too_slow`). The Plinth CLI uses it:
@@ -472,7 +488,12 @@ files) and big pages without merging chunks, and an update stores only what chan
   checkout nor wrangler: `plinth login|logout|whoami [--url O]`, `plinth publish <dir> [--id REF]
   [--title T] [--note N] [--base-version N] [--include-maps] [--dry-run] [--json]` and `plinth
   upload <dir> --to <upload_url>` (token from `PLINTH_UPLOAD_TOKEN` only). Exit codes: 0 ok, 1
-  error, 2 usage, 3 conflict (never retried). The origin is `--url`, then `--name`/`--home` (a
+  error, 2 usage, 3 conflict (never retried). With `--id` and `--base-version N`, `publish` exits 0
+  without sending in exactly two cases and prints which: the current version is N+1 and its files
+  equal the folder (already published, by an earlier run whose answer was lost), or it is N and its
+  files equal the folder (nothing to publish). N with other files publishes as usual; every other
+  case (N+1 with other files, N+2 or later whatever its files, a base past the current version)
+  is a conflict, exit 3. The origin is `--url`, then `--name`/`--home` (a
   local instance), then `PLINTH_URL`, then the single local instance, then the hosted instance,
   and is printed. `plinth login` signs in with OAuth as the connection "Plinth CLI" (scopes
   `artifacts:read artifacts:write`), stored in `~/.config/plinth/cli-<host>.json` (mode 0600).

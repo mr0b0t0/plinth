@@ -87,6 +87,8 @@ export interface TicketRow {
   note: string | null;
   base_version: number | null;
   state: "open" | "used" | "dead";
+  /** Why a dead ticket ended: a version conflict, or a takedown of its artifact. */
+  dead_reason: "conflict" | "taken_down" | null;
   attempts: number;
   receiving_claim: string | null;
   receiving_until: string | null;
@@ -105,7 +107,6 @@ export const UPLOAD_ID_RE = /^[a-z0-9]{20}$/;
 export const UPLOAD_TOKEN_RE = new RegExp(`^${UPLOAD_TOKEN_PREFIX}[A-Za-z0-9_-]{43}$`);
 
 const isoAt = (ms: number) => new Date(ms).toISOString();
-const PRUNE_AFTER_MS = 7 * 24 * 60 * 60 * 1000;
 
 function hasWriteScope(p: Principal): boolean {
   return p.kind === "agent" && p.scopes.has("artifacts:write");
@@ -225,12 +226,8 @@ export async function startUpload(
       fresh ? fresh.artifactId : null,
     )
     .run();
-  if (Math.random() < 0.02) {
-    await ctx.env.DB.prepare("DELETE FROM upload_tickets WHERE created_at < ?1")
-      .bind(isoAt(now - PRUNE_AFTER_MS))
-      .run();
-  }
-  // No cron under `wrangler dev`: clear abandoned attempts here too (capped, throttled).
+  // No cron under `wrangler dev`: clear abandoned attempts and old tickets here too (capped,
+  // throttled).
   sweepSoon(ctx.env, ctx.waitUntil);
 
   const uploadUrl = appUrl(ctx.config, `/api/v1/uploads/${id}/bundle`);
@@ -336,7 +333,8 @@ export function lostResponseNext(id: string, baseVersion: number | null): string
     "Ask the upload first: GET the upload_url without /bundle, with the same Authorization header " +
     "(state used: this upload published that version, give the user its url; dead: someone else " +
     "published first and this change was not saved, so read the artifact again; receiving: still " +
-    `running, ask again in a few seconds; open, expired or exhausted: nothing was published, ${again}). ` +
+    "running, ask again in a few seconds; taken_down: the artifact was taken down and nothing was " +
+    `published, tell the user; open, expired or exhausted: nothing was published, ${again}). ` +
     `If the upload cannot be read, call get_artifact with id ${id}: ` +
     (baseVersion === null
       ? `if it exists, this upload created it; if it is not_found, nothing was published, so ${again}. `
@@ -655,6 +653,7 @@ async function stateError(w: BundleEnv, t: TicketRow): Promise<ApiError> {
       next: "The bundle is published; give the user this url. For another change, call start_upload again",
     });
   }
+  if (t.state === "dead" && t.dead_reason === "taken_down") return takenDownError();
   if (t.state === "dead") {
     return new ApiError("conflict", "This upload can no longer be used", {
       reason: "upload_dead",
@@ -706,10 +705,20 @@ async function releaseLease(w: BundleEnv, id: string, claim: string): Promise<vo
     .catch(() => undefined);
 }
 
+/** A ticket whose artifact was taken down: nothing was published, and nothing more can be. */
+function takenDownError(): ApiError {
+  return new ApiError("forbidden", "This artifact was taken down", {
+    reason: "taken_down",
+    next: "Nothing was published, and this artifact takes no new versions: tell the user. Do not resend it or start a new upload for it",
+  });
+}
+
 /**
- * The error a failed bundle request returns. A version conflict kills the ticket (guarded on
+ * The error a failed bundle request returns. A version conflict (no reason, or reason
+ * "conflict") and a takedown end the ticket, with that reason kept in dead_reason (guarded on
  * state 'open', so it can never overwrite 'used'); a ticket another request used in the meantime
- * is reported as upload_used. Every other failure leaves the ticket open for its remaining attempts.
+ * is reported as upload_used. Every other failure, attempt_expired included, keeps its own reason
+ * and next and leaves the ticket open for its remaining attempts.
  */
 async function afterFailure(
   w: BundleEnv,
@@ -720,18 +729,21 @@ async function afterFailure(
   if (!(e instanceof ApiError)) return e;
   const details = (e.details ?? {}) as Record<string, unknown>;
   const reason = typeof details.reason === "string" ? details.reason : null;
-  if (e.code === "conflict" && (reason === null || !reason.startsWith("upload_"))) {
+  const versionConflict = e.code === "conflict" && (reason === null || reason === "conflict");
+  const takenDown = reason === "taken_down";
+  if (versionConflict || takenDown) {
     await w.env.DB.prepare(
-      "UPDATE upload_tickets SET state = 'dead' WHERE id = ?1 AND state = 'open'",
+      "UPDATE upload_tickets SET state = 'dead', dead_reason = ?2 WHERE id = ?1 AND state = 'open'",
     )
-      .bind(ticket.id)
+      .bind(ticket.id, takenDown ? "taken_down" : "conflict")
       .run();
   }
-  if (e.code === "conflict" || reason?.startsWith("upload_")) {
+  if (e.code === "conflict" || takenDown || reason?.startsWith("upload_")) {
     const cur = await readTicket(w, ticket.id, tokenHash);
     if (cur?.state === "used") return stateError(w, cur);
   }
-  if (e.code === "conflict" && (reason === null || !reason.startsWith("upload_"))) {
+  if (takenDown) return takenDownError();
+  if (versionConflict) {
     const current = typeof details.current_version === "number" ? details.current_version : null;
     return new ApiError("conflict", e.message, {
       ...details,
@@ -860,7 +872,11 @@ export async function uploadStatus(
   // The row and D1's clock in one read: a bundle request's commit requires its lease by the same
   // clock, so a lease reported over here can no longer commit.
   const t = await readTicket(w, req.uploadId, await hashToken(token));
-  if (!t) throw notFound("Upload");
+  // Past the status window the ticket answers like one that never existed (its row is deleted
+  // by the next cleanup anyway).
+  if (!t || Date.parse(t.expires_at) + TTL.uploadStatusMs < Date.parse(t.db_now)) {
+    throw notFound("Upload");
+  }
   const id =
     (t.mode === "update" ? t.artifact_id : (t.result_artifact_id ?? t.reserved_artifact_id)) ?? "";
   const now = t.db_now;
@@ -873,8 +889,21 @@ export async function uploadStatus(
   }
   const receiving =
     t.receiving_until !== null && t.receiving_until > now ? t.receiving_until : null;
-  const state: UploadStatus["state"] =
-    t.state !== "open"
+  // A takedown ends the upload for good: one that already failed on it keeps the reason, and an
+  // update whose artifact is down now can no longer commit (the version insert requires it up).
+  const takenDown =
+    t.state !== "used" &&
+    (t.dead_reason === "taken_down" ||
+      (t.state === "open" &&
+        t.mode === "update" &&
+        (await w.env.DB.prepare(
+          "SELECT 1 AS one FROM artifacts WHERE id = ?1 AND taken_down_at IS NOT NULL",
+        )
+          .bind(t.artifact_id)
+          .first()) !== null));
+  const state: UploadStatus["state"] = takenDown
+    ? "taken_down"
+    : t.state !== "open"
       ? t.state
       : receiving
         ? "receiving"
@@ -890,6 +919,8 @@ export async function uploadStatus(
       ` (its lease ends at ${receiving} at the latest)`,
     open: "Nothing was published with this upload yet: send the bundle again (it commits at most once)",
     dead: "Someone published in between, so this upload ended: read the artifact again (get_artifact), then start_upload with the new base_version",
+    taken_down:
+      "The artifact was taken down, so nothing was published with this upload and it takes no new versions: tell the user. Do not resend it or start a new upload for it",
     expired: "Nothing was published with this upload, and it expired: call start_upload again",
     exhausted: `Nothing was published with this upload, and its ${LIMITS.maxTicketAttempts} attempts are used: call start_upload again`,
   }[state];
@@ -901,7 +932,7 @@ export async function uploadStatus(
     version: t.state === "used" ? t.result_version : null,
     url,
     expires_at: t.expires_at,
-    receiving_until: receiving,
+    receiving_until: takenDown ? null : receiving,
     next,
   };
 }

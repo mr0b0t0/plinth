@@ -40,6 +40,8 @@ export async function startFakePlinth(options = {}) {
     statusFail: 0,
     // GET /uploads/:id says a request still holds the upload (state receiving).
     statusReceiving: false,
+    // GET /uploads/:id answers this state (for example "taken_down") when set.
+    statusState: null,
     // GET /artifacts/:ref answers 503 text/plain this many more times (Infinity: always).
     artifactReadFail: 0,
     limits: {
@@ -279,13 +281,15 @@ export async function startFakePlinth(options = {}) {
           res.writeHead(503, { "Content-Type": "text/plain" });
           return res.end("upstream down");
         }
-        const state_ = state.statusReceiving
-          ? "receiving"
-          : t.used
-            ? "used"
-            : t.dead
-              ? "dead"
-              : "open";
+        const state_ = state.statusState
+          ? state.statusState
+          : state.statusReceiving
+            ? "receiving"
+            : t.used
+              ? "used"
+              : t.dead
+                ? "dead"
+                : "open";
         return send(res, 200, {
           upload_id: status[1],
           state: state_,
@@ -491,6 +495,10 @@ export async function startFakePlinth(options = {}) {
       state.artifacts.set(a.id, a);
       commit(a, new Map(Object.entries(files).map(([k, v]) => [k, Buffer.from(v)])));
       return a;
+    },
+    /** The next version with exactly `files` ({path: content}), as anyone could publish it. */
+    commitFiles(a, files) {
+      commit(a, new Map(Object.entries(files).map(([k, v]) => [k, Buffer.from(v)])));
     },
     /** A second version written by someone else (it adds a file of theirs). */
     bump(a) {
