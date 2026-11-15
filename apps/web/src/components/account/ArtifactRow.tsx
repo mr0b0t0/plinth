@@ -9,6 +9,7 @@ import {
   PencilSimpleIcon,
 } from "@phosphor-icons/react";
 import { APP_ROUTES, type ArtifactSummary, route, typeDef, type Visibility } from "@plinth/shared";
+import { useState } from "react";
 import { Link } from "../../lib/router.tsx";
 import {
   Badge,
@@ -218,20 +219,33 @@ function thumbLetters(title: string): string {
   return (first + second).toUpperCase();
 }
 
-export interface ArtifactCardProps extends ArtifactRowProps {
-  /** A real thumbnail image, when the platform has one. Until then a quiet placeholder. */
-  thumbnail?: string;
-}
+export type ArtifactCardProps = ArtifactRowProps;
 
-export function ArtifactCard({ artifact: a, now, you, thumbnail }: ArtifactCardProps) {
+export function ArtifactCard({ artifact: a, now, you }: ArtifactCardProps) {
   const href = route(APP_ROUTES.artifact, { slug: a.slug });
   const AccessIcon = VISIBILITY_META[a.visibility].icon;
+  // The thumbnail answers 404 until its capture lands: show the placeholder until it loads, and
+  // keep it if the image fails.
+  const [failed, setFailed] = useState<string | null>(null);
+  const [loaded, setLoaded] = useState<string | null>(null);
+  const thumb = a.thumbnail_url && failed !== a.thumbnail_url ? a.thumbnail_url : null;
+  const showImage = thumb !== null && loaded === thumb;
   return (
     <li className="pl-dash__card" data-role={a.role}>
       <div className="pl-dash__thumb">
-        {thumbnail ? (
-          <img src={thumbnail} alt="" loading="lazy" className="pl-dash__thumb-img" />
-        ) : (
+        {thumb && (
+          <img
+            src={thumb}
+            alt=""
+            loading="lazy"
+            decoding="async"
+            className="pl-dash__thumb-img"
+            data-loaded={showImage ? "" : undefined}
+            onLoad={() => setLoaded(thumb)}
+            onError={() => setFailed(thumb)}
+          />
+        )}
+        {!showImage && (
           <span className="pl-dash__paper" aria-hidden="true">
             <span className="pl-dash__paper-letters">{thumbLetters(a.title)}</span>
             <i />

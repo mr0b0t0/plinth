@@ -10,6 +10,7 @@ import {
   llmsTxt,
   publicHeaders,
   robotsTxt,
+  serveOgImage,
   serverCard,
   serveSource,
 } from "./app/discovery.ts";
@@ -111,6 +112,7 @@ for (const path of [
 }
 // An artifact's main HTML as plain text, for link viewers' artifacts only. Never HTML here.
 app.get("/a/:ref/source", (c) => serveSource(c));
+app.get("/a/:ref/og.jpg", (c) => serveOgImage(c));
 
 app.all("/mcp", bearerOnly, authenticate, async (c) => {
   const p = c.get("principal");

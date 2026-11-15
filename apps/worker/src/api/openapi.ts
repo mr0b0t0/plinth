@@ -94,6 +94,8 @@ interface Operation {
   rawBody?: { types: string[]; description: string };
   /** Status code and component name of the success response (null for no body). */
   ok: [number, string | null];
+  /** A non-JSON success response: its media type (the body is binary). Replaces ok's schema. */
+  okMedia?: string;
   errors?: number[];
 }
 
@@ -199,6 +201,13 @@ function responseSchemas(): Record<string, Json> {
     owner: obj({ id: str(), email: str({ format: "email" }), name: nullable("string") }),
     role: effectiveRole,
     taken_down: { type: "boolean" },
+    thumbnail_url: {
+      ...nullable("string", {
+        format: "uri",
+        description:
+          "The current version's thumbnail (JPEG, same access as the artifact); null when the instance takes none. May answer 404 until the first capture lands",
+      }),
+    },
   };
   return {
     Error: obj({
@@ -1034,6 +1043,21 @@ function operations(): Operation[] {
     },
     {
       method: "get",
+      path: API.thumbnail,
+      operationId: "getArtifactThumbnail",
+      summary: "Thumbnail image",
+      description:
+        "A 1200x630 JPEG screenshot of a version (the current one without `version`), for anyone who may view the artifact. 404 until its capture lands; a missing one starts a capture. Only on instances with a Browser Rendering binding.",
+      tag: "Artifacts",
+      auth: "agent",
+      scope: "artifacts:read",
+      query: [{ name: "version", schema: int({ minimum: 1 }) }],
+      ok: [200, null],
+      okMedia: "image/jpeg",
+      errors: [401, 404],
+    },
+    {
+      method: "get",
       path: API.versions,
       operationId: "listVersions",
       summary: "Version history",
@@ -1403,8 +1427,12 @@ function operationObject(op: Operation): Json {
 
   const [status, schema] = op.ok;
   const responses: Json = {
-    [String(status)]:
-      schema === null
+    [String(status)]: op.okMedia
+      ? {
+          description: "Success",
+          content: { [op.okMedia]: { schema: { type: "string", format: "binary" } } },
+        }
+      : schema === null
         ? { description: "Done, no body" }
         : {
             description: "Success",

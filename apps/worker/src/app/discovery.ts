@@ -21,7 +21,7 @@ import {
   typeDef,
 } from "@plinth/shared";
 import { type AppContext, clientIp } from "../api/context.ts";
-import type { Config } from "../config.ts";
+import { type Config, thumbnailsActive } from "../config.ts";
 import type { ArtifactRow } from "../db/schema.ts";
 import { escapeHtml } from "../email/templates.ts";
 import { hit } from "../lib/ratelimit.ts";
@@ -29,6 +29,12 @@ import { MCP_TOOL_SUMMARIES } from "../mcp/server.ts";
 import { decideFor, findArtifact, getVersionRow } from "../services/artifacts.ts";
 import type { Ctx } from "../services/context.ts";
 import { readText } from "../services/storage.ts";
+import {
+  scheduleThumbnail,
+  THUMB,
+  thumbnailResponse,
+  thumbnailState,
+} from "../services/thumbnails.ts";
 import { applyAppHeaders } from "./headers.ts";
 import { cliPublishReleased, PLINTH_VERSION } from "./version.ts";
 
@@ -267,6 +273,7 @@ export async function renderShell(c: AppContext, indexHtml: string, path: string
       `<link rel="alternate" type="text/plain" href="/a/${route.ref}/source" title="${escapeHtml(view.sourceLabel)} source" />`,
     );
   }
+  head.push(...(await previewTags(c, route, view, artifact)));
   const title = view ? `${escapeHtml(view.title)} · ${PRODUCT_NAME}` : PRODUCT_NAME;
   const note = agentNote(config, route, view);
   // Replacer functions, so "$&" and friends in an author's title stay literal text.
@@ -275,6 +282,121 @@ export async function renderShell(c: AppContext, indexHtml: string, path: string
     .replace("</head>", () => `  ${head.join("\n    ")}\n  </head>`)
     .replace('<div id="root"></div>', () => `<div id="root">${note}</div>`);
   return { html, noindex };
+}
+
+// ---------- link previews (Open Graph) ----------
+
+/** What a link preview says for any artifact a signed-out visitor cannot open, or that is missing. */
+const PRIVATE_PREVIEW = {
+  title: `${PRODUCT_NAME} artifact`,
+  description: "Open the link to view it, if it has been shared with you.",
+};
+
+const meta = (property: string, content: string) =>
+  `<meta property="${property}" content="${escapeHtml(content)}" />`;
+const metaName = (name: string, content: string) =>
+  `<meta name="${name}" content="${escapeHtml(content)}" />`;
+
+/**
+ * Open Graph and Twitter tags for link previews (Slack, iMessage, X, LinkedIn). Unfurlers fetch
+ * without credentials, so they get exactly what a signed-out visitor may see: an artifact anyone
+ * with the link can open gets its title and, once captured, its thumbnail; every other artifact
+ * path gets one generic card, the same for private, password, deleted and missing ones.
+ */
+async function previewTags(
+  c: AppContext,
+  route: ShellRoute,
+  view: NoteView | null,
+  artifact: ArtifactRow | null,
+): Promise<string[]> {
+  const config = c.get("config");
+  const tags = [meta("og:site_name", PRODUCT_NAME), meta("og:type", "website")];
+  if (route.kind === "site") {
+    tags.push(meta("og:title", PRODUCT_NAME), meta("og:description", ONE_LINE));
+    tags.push(metaName("twitter:card", "summary"));
+    return tags;
+  }
+  if (!view || !artifact || !route.ref) {
+    tags.push(
+      meta("og:title", PRIVATE_PREVIEW.title),
+      meta("og:description", PRIVATE_PREVIEW.description),
+      metaName("twitter:card", "summary"),
+    );
+    return tags;
+  }
+  const n = view.version ?? view.currentVersion;
+  const page = `${config.appOrigin}/a/${route.ref}${view.version ? `/v/${n}` : ""}`;
+  tags.push(
+    meta("og:title", view.title),
+    meta("og:description", `Version ${n}, published on ${PRODUCT_NAME}.`),
+    meta("og:url", page),
+  );
+  let image = false;
+  if (thumbnailsActive(config, c.env)) {
+    const state = await thumbnailState(c.env.DB, artifact.id, n).catch(() => null);
+    if (state === "ok") image = true;
+    else if (state !== null)
+      scheduleThumbnail(
+        { env: c.env, config, waitUntil: (p) => c.executionCtx.waitUntil(p) },
+        artifact.id,
+        n,
+      );
+  }
+  if (image) {
+    const src = `${config.appOrigin}/a/${route.ref}/og.jpg?version=${n}`;
+    tags.push(
+      meta("og:image", src),
+      meta("og:image:type", "image/jpeg"),
+      meta("og:image:width", String(THUMB.width)),
+      meta("og:image:height", String(THUMB.height)),
+      meta("og:image:alt", `Preview of ${view.title}`),
+      metaName("twitter:card", "summary_large_image"),
+      metaName("twitter:image", src),
+    );
+  } else {
+    tags.push(metaName("twitter:card", "summary"));
+  }
+  return tags;
+}
+
+// ---------- GET /a/<slug>/og.jpg ----------
+
+/**
+ * The link-preview image: a version's thumbnail, only for an artifact a signed-out visitor could
+ * open (the same anonymous check as the page's tags and /source). 404, identical for every other
+ * case, until a capture lands; a missing one starts it.
+ */
+export async function serveOgImage(c: AppContext): Promise<Response> {
+  const config = c.get("config");
+  const headers = new Headers();
+  applyAppHeaders(config, headers);
+  headers.set("X-Robots-Tag", "noindex, nofollow");
+  const notFound = () => {
+    const h = new Headers(headers);
+    h.set("Content-Type", "text/plain; charset=utf-8");
+    h.set("Cache-Control", "no-store");
+    return new Response("Not found\n", { status: 404, headers: h });
+  };
+  if (!thumbnailsActive(config, c.env)) return notFound();
+  const route = shellRoute(`/a/${c.req.param("ref") ?? ""}`);
+  if (route.kind !== "artifact" || !route.ref) return notFound();
+  const found = await anonymousArtifact(c, route.ref);
+  if (!found) return notFound();
+  const a = found.artifact;
+  const q = c.req.query("version");
+  if (q !== undefined && !/^\d{1,9}$/.test(q)) return notFound();
+  const n = q === undefined ? a.currentVersion : Number(q);
+  if (n < 1 || n > a.currentVersion) return notFound();
+  const state = await thumbnailState(c.env.DB, a.id, n);
+  if (state === "ok") {
+    // Unfurlers fetch it from their own servers; a visibility change applies on the next fetch.
+    headers.set("Cache-Control", "no-cache");
+    headers.set("Cross-Origin-Resource-Policy", "cross-origin");
+    const res = await thumbnailResponse(c.env.FILES, a.id, n, headers);
+    if (res) return res;
+  }
+  if (state !== null) scheduleThumbnail(found.ctx, a.id, n);
+  return notFound();
 }
 
 // ---------- GET /a/<slug>/source ----------

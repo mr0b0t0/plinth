@@ -9,13 +9,14 @@
     "check-config": "node scripts/check-config.mjs",
     "deploy:production": "node scripts/check-config.mjs wrangler.production.jsonc && wrangler deploy --config wrangler.production.jsonc",
     "deploy:staging": "node scripts/check-config.mjs wrangler.staging.jsonc && wrangler deploy --config wrangler.staging.jsonc",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit -p tsconfig.check.json",
     "types": "wrangler types --strict-vars=false",
     "test": "vitest run",
     "db:migrate:local": "wrangler d1 migrations apply DB --local",
     "admin": "node scripts/admin.mjs"
   },
   "dependencies": {
+    "@cloudflare/puppeteer": "1.4.0",
     "@modelcontextprotocol/server": "2.4.0",
     "@plinth/shared": "workspace:*",
     "drizzle-orm": "0.45.4",
@@ -25,10 +26,10 @@
   },
   "devDependencies": {
     "@cloudflare/vitest-plugin": "1.6.0",
+    "@modelcontextprotocol/client": "2.4.0",
     "drizzle-kit": "0.31.11",
     "typescript": "7.0.2",
     "vitest": "5.1.0",
-    "wrangler": "4.158.0",
-    "@modelcontextprotocol/client": "2.4.0"
+    "wrangler": "4.158.0"
   }
 }

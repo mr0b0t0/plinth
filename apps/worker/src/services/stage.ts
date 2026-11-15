@@ -49,6 +49,7 @@ import {
   validStoredAt,
   versionTooLarge,
 } from "./storage.ts";
+import { scheduleThumbnail } from "./thumbnails.ts";
 import { artifactLimitFor, getUserById } from "./users.ts";
 
 /** What a staged version will become. */
@@ -1048,7 +1049,10 @@ export async function commitVersion(
   // and one that commits can no longer be aborted.
   extra.stager.beginCommit();
   try {
-    return await commitOnce(ctx, target, staged, extra, opts);
+    const result = await commitOnce(ctx, target, staged, extra, opts);
+    // After the batch, never tied to the request: the version exists even if the client left.
+    scheduleThumbnail(ctx, result.id, result.version);
+    return result;
   } catch (e) {
     if (!(typeof e === "object" && e !== null && keepObjects.has(e))) {
       await extra.stager.discard().catch(() => undefined);
