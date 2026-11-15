@@ -395,7 +395,12 @@ files) and big pages without merging chunks, and an update stores only what chan
   puts stop at the room left. When the client disconnects, the request's abort signal hands the
   deletion of the attempt's files and the release of the lease to `waitUntil`. Abort and commit
   exclude each other: the commit takes a point of no abort synchronously before its first await,
-  so a disconnect before it never commits and one after it never deletes. The principal and edit
+  so a disconnect before it never commits and one after it never deletes. Both rest on the
+  runtime firing `request.signal`: local `wrangler dev` (so local and Docker instances) does not
+  fire it once the whole body has been read, so there a client that disconnects after sending the
+  whole bundle still gets a complete version committed (resending with the same ticket answers
+  `upload_used` with the version and url). Whether Cloudflare's runtime fires it in that case has
+  not been tested. The principal and edit
   rights are checked again once every file is written (after the last puts settle, right before
   the commit), and the commit batch requires the minting connection to be unrevoked. A folder
   prefix is stripped only when every kept entry is under it. A conflict kills the ticket; other
