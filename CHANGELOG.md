@@ -19,8 +19,15 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   `base_version` the agent read. Applies migration `0007_upload_tickets.sql`. The command works
   with macOS tar (it pipes `tar -cf -` through `gzip -c` and leaves out source maps), and the
   server also accepts the NUL padding bsdtar adds to `tar -czf -`. A bundle must arrive within 10
-  minutes; one whose client disconnects deletes its own files, and an account at its storage
-  quota cannot start one.
+  minutes (a sender that goes quiet is cut off then); one whose client disconnects deletes its own
+  files and never commits, revoking the connection that started it stops its commit, and an
+  account at its storage quota cannot start one. A gzip body is inflated only as fast as it is
+  read, so a small compressed body cannot fill the Worker's memory.
+- **Upgrading a checkout deploy**: this release needs the `enable_request_signal` compatibility
+  flag. A `wrangler.<env>.jsonc` written by `scripts/setup.mjs` before 0.4.0 lacks it: re-run setup
+  (it now adds the release's flags to an existing config) or add it by hand. `plinth deploy` and
+  Docker take it from the release. See
+  [docs/deploy-checklist.md](docs/deploy-checklist.md#6-upgrading-and-rolling-back).
 - **Reuse by hash**: an asset can be sent as `{path, sha256}` to reuse a file of the artifact's
   current version, so an update sends and stores only what changed. `get_artifact` and
   `GET /api/v1/artifacts/:ref` list each asset's `sha256`. Restores and updates that keep the
@@ -39,7 +46,8 @@ Add a line under **Unreleased** in the pull request that makes a change people w
 - Publish results list `warnings` (missing files, root-absolute URLs, hosts outside the CDN
   allowlist, `http:` URLs, module builds on opaque-isolation instances) and `stored` (files
   written and reused). `not_scanned` is only a note that the reference check stopped at its 8 MB
-  budget; the CLI prints it as a note, and agents are told it needs no action.
+  budget or did not re-read files reused unchanged by `{path, sha256}`; the CLI prints it as a
+  note, and agents are told it needs no action.
 - The per-version limits are settings: `MAX_VERSION_BYTES` (default raised from 25 MB to 50 MB,
   at most 64 MB) and `MAX_ASSETS_PER_VERSION` (default raised from 200 to 511, at most 900), with
   `PLINTH_` equivalents in Docker. `GET /api/v1/config` returns the instance's limits and CDN

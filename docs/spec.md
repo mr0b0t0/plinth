@@ -382,10 +382,18 @@ files) and big pages without merging chunks, and an update stores only what chan
   version and per entry metadata), into the same stager and commit as an inline publish. The
   reader allocates a file only once it fits the 16 MB in-flight budget beside the running puts, so
   a bundle holds at most max(16 MB, 25 MB) of file bytes at once, plus kept scan text (8 MB) and
-  the source (5 MB). The bundle must arrive within its 10-minute receiving lease
-  (`upload_too_slow` otherwise). Before streaming it checks the owner's storage quota, and its puts
-  stop at the room left. When the client disconnects, the request's abort signal hands the
-  deletion of the attempt's files and the release of the lease to `waitUntil`. A folder
+  the source (5 MB). A gzip body is fed to the decompressor only as the reader reads (about 1 MB
+  of output at a time), so unread inflated bytes stay small whatever the body inflates to. A
+  source candidate under the top directory that is over the source limit is not held until the
+  end: it is written like any file and refused at the end if it turns out to be the source. The
+  bundle must arrive within its 10-minute receiving lease (`upload_too_slow` otherwise, also when
+  the sender goes quiet mid-file). Before streaming it checks the owner's storage quota, and its
+  puts stop at the room left. When the client disconnects, the request's abort signal hands the
+  deletion of the attempt's files and the release of the lease to `waitUntil`. Abort and commit
+  exclude each other: the commit takes a point of no abort synchronously before its first await,
+  so a disconnect before it never commits and one after it never deletes. The principal and edit
+  rights are checked again once the body is in, and the commit batch requires the minting
+  connection to be unrevoked. A folder
   prefix is stripped only when every kept entry is under it. A conflict kills the ticket; other
   errors leave it open for its remaining attempts. One bundle per user streams at a time; minting
   is limited to `MAX_PUBLISHES_PER_HOUR` per hour and bundle requests to twice that. The token is

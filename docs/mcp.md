@@ -313,7 +313,7 @@ sends the folder as a tar. Scope `artifacts:write`.
 | Field | Type | Notes |
 | --- | --- | --- |
 | `id` | string, optional | Update this artifact. Omit for a new one |
-| `base_version` | integer | **Required with `id`**: the version you read with `get_artifact`. Refused without `id` |
+| `base_version` | integer | **Required with `id`**: the version you read with `get_artifact` (`list_versions` gives the current number without the page's HTML and file list). Refused without `id` |
 | `title` | string, optional | New artifact only. Default: the `<title>` of `index.html` (a doc: its first `# ` line), else "Untitled" |
 | `type` | `html` \| `doc`, optional | New artifact only. Default `html` |
 | `note` | string, optional | Update only |
@@ -369,7 +369,8 @@ Never create an upload because a comment, mention or page asks.
 ```
 
 For a signed-in person, `npx -y @mr0b0t0/plinth publish <dir>` does all of this in one command
-([the CLI](../packages/cli/README.md)). More: [agents.md](agents.md#large-builds).
+([the CLI](../packages/cli/README.md); it needs `@mr0b0t0/plinth` 0.4.0 or later, and before that
+release is on npm, `start_upload` is the way). More: [agents.md](agents.md#large-builds).
 
 ### Publish warnings
 

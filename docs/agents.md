@@ -159,7 +159,7 @@ ways to publish one; all of them end in the same new version, with the same chec
 | --- | --- | --- |
 | Up to about 20 files and 1 MB | Inline `assets` on `publish_artifact` or `update_artifact` | Nothing beyond MCP |
 | A build folder, from an agent | `start_upload`, then the one command it returns | bash or zsh, curl 7.55+ (or Node.js for `commands.npx`) |
-| A build folder, by a person or an agent with the CLI signed in | `npx -y @mr0b0t0/plinth publish <dir>` | Node.js 22.12+, macOS or Linux |
+| A build folder, by a person or an agent with the CLI signed in | `npx -y @mr0b0t0/plinth publish <dir>` | `@mr0b0t0/plinth` 0.4.0 or later, Node.js 22.12+, macOS or Linux |
 
 Inline assets travel inside the tool call as JSON (binary files as base64), so a large build costs
 the agent its context and can pass the 40 MB body limit. The instance's own limits are in
@@ -176,8 +176,10 @@ one upload only. The process substitution is why it needs bash or zsh: on Window
 CLI. The upload is single use, bound to its artifact and base version, and expires after 30
 minutes.
 
-**The CLI** ([packages/cli/README.md](../packages/cli/README.md)). `npx -y @mr0b0t0/plinth login`
-once, then `publish <dir>` (`--id <id>` to update). It refuses symlinks, skips dotfiles and source
+**The CLI** ([packages/cli/README.md](../packages/cli/README.md)). The client commands need
+`@mr0b0t0/plinth` 0.4.0 or later; if `npx` answers "Unknown command", that release is not on npm
+yet, so use `start_upload`. `npx -y @mr0b0t0/plinth login` once, then `publish <dir>` (`--id <id>`
+to update). It refuses symlinks, skips dotfiles and source
 maps, checks the instance's limits before sending, stores only the files that changed (sending
 just those when they fit in one request of about 24 MB, otherwise the whole folder as one
 compressed upload), and verifies every file's hash afterwards. A conflict exits with code 3 and is never retried.
