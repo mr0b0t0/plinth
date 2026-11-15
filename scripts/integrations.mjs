@@ -11,13 +11,15 @@
 // (the shared OAuth client, and packages/shared/src/constants.ts with its types stripped). Never
 // edit the outputs by hand.
 //
-//   pnpm integrations           write the outputs
-//   pnpm integrations --check   exit 1 if any output is missing or stale (CI)
+//   pnpm integrations           write the outputs, and record the plugin sources' hash
+//   pnpm integrations --check   exit 1 if any output is missing or stale, or the skill or watcher
+//                               changed since PLUGIN.skillHash was recorded (CI)
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { stripTypeScriptTypes } from "node:module";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { pluginSourcesHash, staleHashMessage, withRecordedHash } from "./plugin-sources.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const check = process.argv.includes("--check");
@@ -241,6 +243,25 @@ function biomeFormat(rel, code) {
   return r.stdout;
 }
 
+// ---------- the plugin version guard ----------
+// Installed plugins update only when PLUGIN.version changes, so a change to what the plugin ships
+// must come with a bump. The recorded hash makes forgetting it fail the check.
+const HARNESSES_TS = "packages/shared/src/harnesses.ts";
+const sourcesHash = pluginSourcesHash(root);
+const staleHash = staleHashMessage({
+  recorded: PLUGIN.skillHash,
+  actual: sourcesHash,
+  version: PLUGIN.version,
+});
+if (staleHash && !check) {
+  const file = path.join(root, HARNESSES_TS);
+  writeFileSync(file, withRecordedHash(readFileSync(file, "utf8"), sourcesHash));
+  console.log(
+    `Recorded the plugin sources' new hash in ${HARNESSES_TS}. PLUGIN.version is ${PLUGIN.version}: ` +
+      "if main has that version too, bump it (one minor), so installed plugins update.",
+  );
+}
+
 // ---------- write or check ----------
 const stale = [];
 for (const [rel, content] of outputs) {
@@ -255,9 +276,10 @@ for (const [rel, content] of outputs) {
   }
 }
 if (check) {
+  if (staleHash) console.error(staleHash);
   if (stale.length) {
     console.error(`Stale integration files (run pnpm integrations):\n  ${stale.join("\n  ")}`);
-    process.exit(1);
   }
+  if (staleHash || stale.length) process.exit(1);
   console.log(`Integrations are up to date (${outputs.size} files).`);
 }
