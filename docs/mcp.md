@@ -639,7 +639,13 @@ A preview is read-only and anonymous: the page shows as a signed-out viewer woul
 shared data is unavailable in it (`reason: "preview"`). Inside a host's sandbox the page usually
 runs with an opaque origin, so storage and `fetch()` of its own files may not work there; the
 artifact's page on Plinth is unaffected. Clients without MCP Apps see the same text results as
-before. How the preview is isolated: [security.md](security.md#in-chat-previews).
+before.
+
+Some hosts decide which sites a connector's app may frame. claude.ai, for one, keeps that list
+per connector, and a custom connector cannot add `*.plinthusercontent.com` to it, so there the
+preview shows its title, version and **Open on Plinth**, and says the page cannot be shown in the
+app. In T3 Code the agent that published must be running for a preview to load a page; an older
+thread's preview loads again after a new message in it. How the preview is isolated: [security.md](security.md#in-chat-previews).
 
 ## The mention workflow
 

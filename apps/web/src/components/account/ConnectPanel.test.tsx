@@ -203,6 +203,15 @@ describe("ConnectPanel", () => {
       codexCommand(ENDPOINT),
       "codex plugin marketplace add mr0b0t0/plinth\ncodex plugin add plinth@plinth",
     ]);
+    // On another instance, the desktop app needs PLINTH_URL in its own settings.
+    expect(panel.textContent).toContain("does not read your shell profile");
+  });
+
+  it("on the hosted instance, the T3 Code tab has no PLINTH_URL note", async () => {
+    const user = userEvent.setup();
+    renderPanel({ endpoint: "https://plinth.aconite.io/mcp" });
+    await user.click(screen.getByRole("tab", { name: "T3 Code" }));
+    expect(screen.getByRole("tabpanel").textContent).not.toContain("shell profile");
   });
 
   it("remembers the chosen client", async () => {

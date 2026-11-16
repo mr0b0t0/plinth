@@ -194,7 +194,12 @@ iframe { display: block; width: 100%; height: 560px; border: 0; background: #fff
         pageUrl = published.url;
         $("open").hidden = false;
       }
-      note("The preview could not load here. Open the page on Plinth instead.");
+      // Hosts relay the tool call through the agent: T3 Code, for one, needs the thread's agent
+      // running, so an old thread's preview loads again after a new message there.
+      note(
+        "Plinth could not get a preview link. Some apps need the agent that published this " +
+          "running: send a message in this conversation, then look again, or open the page on Plinth.",
+      );
     }
   }
 
@@ -228,6 +233,15 @@ iframe { display: block; width: 100%; height: 560px; border: 0; background: #fff
         if (m.id !== undefined) post({ id: m.id, result: {} });
         break;
     }
+  });
+
+  // Some hosts keep their own list of sites a connector's app may frame (claude.ai does) and drop
+  // the rest from its frame-src. The blocked frame would show an error page; say why instead.
+  document.addEventListener("securitypolicyviolation", (e) => {
+    const directive = e.effectiveDirective || e.violatedDirective || "";
+    if (!directive.startsWith("frame-src") && !directive.startsWith("child-src")) return;
+    $("open").hidden = !pageUrl;
+    note("This app does not let Plinth show the page here. Open it on Plinth instead.");
   });
 
   $("open").addEventListener("click", () => {
