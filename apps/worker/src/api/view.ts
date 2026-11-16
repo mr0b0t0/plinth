@@ -21,9 +21,10 @@ import { appCookieName, secureFlag, serializeCookie } from "../lib/cookies.ts";
 import { signToken, verifyPassword, viewerIdFor } from "../lib/crypto.ts";
 import { ApiError } from "../lib/errors.ts";
 import { hit } from "../lib/ratelimit.ts";
-import { type Decision, pageDataAccess } from "../policy.ts";
+import { type Decision, type Principal, pageDataAccess } from "../policy.ts";
 import { decideFor, findArtifact, grantFor, versionCapabilities } from "../services/artifacts.ts";
 import type { Ctx } from "../services/context.ts";
+import { sessionCookie } from "../services/sessions.ts";
 import { requestViewerCode, verifyViewerCode } from "../services/viewers.ts";
 import {
   type AppContext,
@@ -205,25 +206,40 @@ viewApi.post("/view/:ref/email", async (c) => {
   return c.json({ ok: true });
 });
 
-/** Allowlist: confirm the code, start a viewer session, and return the gate for that email. */
+/**
+ * Allowlist: confirm the code and return the gate for that email. A listed email starts a viewer
+ * session; the owner's own email signs the owner in to the app.
+ */
 viewApi.post("/view/:ref/code", async (c) => {
   const { email, code } = await parseBody(c, viewerCodeInput);
   const ctx = serviceCtx(c);
   const ref = c.req.param("ref");
-  const value = await verifyViewerCode(ctx, ref, email, code);
+  const result = await verifyViewerCode(ctx, ref, email, code);
   const config = c.get("config");
-  c.header(
-    "Set-Cookie",
-    serializeCookie(appCookieName(config, "viewer"), value, {
-      httpOnly: true,
-      secure: secureFlag(config.scheme, config.appHost),
-      sameSite: "Lax",
-      maxAge: TTL.viewerSessionS,
-    }),
-    { append: true },
-  );
+  let principal: Principal;
+  if (result.kind === "user") {
+    c.header("Set-Cookie", sessionCookie(config, result.value), { append: true });
+    principal = {
+      kind: "user",
+      userId: result.user.id,
+      email: result.user.email,
+      isAdmin: config.adminEmails.includes(result.user.email),
+    };
+  } else {
+    c.header(
+      "Set-Cookie",
+      serializeCookie(appCookieName(config, "viewer"), result.value, {
+        httpOnly: true,
+        secure: secureFlag(config.scheme, config.appHost),
+        sameSite: "Lax",
+        maxAge: TTL.viewerSessionS,
+      }),
+      { append: true },
+    );
+    principal = { kind: "viewer", email };
+  }
   const gate = await computeGate(
-    { ...ctx, principal: { kind: "viewer", email } },
+    { ...ctx, principal },
     ref,
     gateOptions((k) => c.req.query(k)),
   );

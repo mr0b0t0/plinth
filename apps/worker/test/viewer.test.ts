@@ -343,3 +343,59 @@ describe("allowlist viewers", () => {
     expect([401, 403, 404]).toContain(edit.status);
   });
 });
+
+describe("the owner at their own allowlist gate", () => {
+  it("gets a code by email, like a listed address, with the same answer as anyone else", async () => {
+    const listed = uniqueEmail("listed");
+    const stranger = uniqueEmail("stranger");
+    const { owner, artifact } = await allowlisted([listed]);
+
+    const a = await post(`/api/v1/view/${artifact.id}/email`, browser(), {
+      email: owner.user.email,
+    });
+    const b = await post(`/api/v1/view/${artifact.id}/email`, browser(), { email: listed });
+    const c = await post(`/api/v1/view/${artifact.id}/email`, browser(), { email: stranger });
+    const bodies = [await a.text(), await b.text(), await c.text()];
+    expect([a.status, b.status, c.status]).toEqual([200, 200, 200]);
+    expect(new Set(bodies).size).toBe(1);
+    expect(await outboxFor(owner.user.email)).toHaveLength(1);
+    expect(await outboxFor(stranger)).toHaveLength(0);
+  });
+
+  it("confirming the code signs the owner in to the app and opens the artifact as owner", async () => {
+    const { owner, artifact } = await allowlisted([uniqueEmail("listed")]);
+    const ok = await confirm(artifact.id, owner.user.email);
+    expect(ok.status).toBe(200);
+    const gate = await json(ok);
+    expect(gate.status).toBe("ok");
+    expect(gate.role).toBe("owner");
+
+    const setCookie = ok.headers.get("set-cookie") ?? "";
+    expect(setCookie).toMatch(/^__Host-plinth_session=[^;]+;/);
+    expect(setCookie).not.toMatch(/plinth_viewer/);
+    expect(setCookie).toMatch(/; HttpOnly/);
+    expect(setCookie).not.toMatch(/Domain=/i);
+
+    const cookie = (setCookie.split(";")[0] ?? "").trim();
+    const value = cookie.split("=")[1] ?? "";
+    const s = await db()
+      .select()
+      .from(sessions)
+      .where(eq(sessions.id, await hashToken(value)))
+      .get();
+    expect(s).toMatchObject({ kind: "user", userId: owner.user.id, viewerEmail: null });
+
+    const me = await call("/api/v1/me", { headers: { Cookie: cookie } });
+    expect(me.status).toBe(200);
+    expect((await json(me)).email).toBe(owner.user.email);
+  });
+
+  it("a code for one artifact's owner does not sign in through another owner's artifact", async () => {
+    const { owner } = await allowlisted([uniqueEmail()]);
+    const { artifact: other } = await allowlisted([uniqueEmail()]);
+    expect(
+      (await post(`/api/v1/view/${other.id}/email`, browser(), { email: owner.user.email })).status,
+    ).toBe(200);
+    expect(await outboxFor(owner.user.email)).toHaveLength(0);
+  });
+});

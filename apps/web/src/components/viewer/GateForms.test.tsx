@@ -83,10 +83,11 @@ describe("EmailForm", () => {
     expect((screen.getByLabelText("Six-digit code") as HTMLInputElement).value).toBe("123456");
     await user.click(screen.getByRole("button", { name: "Confirm code" }));
     await vi.waitFor(() => expect(onGate).toHaveBeenCalledWith(OK));
-    expect(calls.at(-1)).toMatchObject({
-      path: "/view/s1/code",
+    expect(calls.filter((c) => c.path === "/view/s1/code").at(-1)).toMatchObject({
       body: { email: "guest@example.org", code: "123456" },
     });
+    // A confirmed code may have signed the owner in, so the session is reloaded.
+    expect(calls.at(-1)).toMatchObject({ method: "GET", path: "/me" });
   });
 
   it("tells a signed-in person their address is not on the list", () => {
