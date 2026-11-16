@@ -8,7 +8,6 @@ import {
   type EffectiveRole,
   HOST_COOKIE_PREFIX,
   REVIEW_MODE_PARAM,
-  TTL,
   typeDef,
 } from "@plinth/shared";
 import { and, eq, isNull } from "drizzle-orm";
@@ -21,14 +20,15 @@ import { ApiError } from "../lib/errors.ts";
 import type { PageClaim } from "../policy.ts";
 import { fileKey, type ManifestEntry } from "../services/storage.ts";
 import { injectBridge, serveBridgeScript } from "./bridge.ts";
-import { applyContentHeaders } from "./csp.ts";
+import { applyContentHeaders, type ContentCspOptions } from "./csp.ts";
 import { DATA_API_PREFIX, serveDataApi } from "./data-api.ts";
 import { servePreviewLoader } from "./preview.ts";
 import { serveRuntimeScript } from "./runtime.ts";
 import {
-  CAPTURE_COOKIE_S,
   consumeNonce,
   IDENTITY_CLAIM_INFO,
+  type PassKind,
+  passMaxAgeS,
   safeNext,
   signContentCookie,
   verifyContentCookie,
@@ -100,15 +100,21 @@ function text(
   status: number,
   body: string,
   extra?: Record<string, string>,
+  opts: ContentCspOptions = {},
 ): Response {
   const headers = new Headers({ "Content-Type": "text/plain; charset=utf-8", ...extra });
-  applyContentHeaders(config, headers);
+  applyContentHeaders(config, headers, opts);
   return new Response(body, { status, headers });
 }
 
-function redirect(config: Config, status: 301 | 302, location: string): Response {
+function redirect(
+  config: Config,
+  status: 301 | 302,
+  location: string,
+  opts: ContentCspOptions = {},
+): Response {
   const headers = new Headers({ Location: location });
-  applyContentHeaders(config, headers);
+  applyContentHeaders(config, headers, opts);
   return new Response(null, { status, headers });
 }
 
@@ -154,7 +160,11 @@ const CLAIM_ROLES: ReadonlySet<string> = new Set<EffectiveRole>([
   "viewer",
 ]);
 
-type ContentPass = { claim: PageClaim | null; capture: boolean };
+/**
+ * A valid content pass. `capture`: Plinth's thumbnail browser (top-level loads allowed). `preview`:
+ * an MCP host's in-chat preview (any framer, read-only); neither ever carries an identity.
+ */
+type ContentPass = { claim: PageClaim | null; capture: boolean; preview: boolean };
 
 /** One cookie value as a pass for this artifact at its epoch, or null when it is not one. */
 async function openPass(
@@ -165,9 +175,11 @@ async function openPass(
   const pass = await verifyContentCookie(config, value);
   if (!pass || pass.a !== artifact.id || pass.e !== artifact.accessEpoch) return null;
   const capture = pass.c === 1;
-  if (pass.x === undefined) return { claim: null, capture };
-  // A capture pass never carries an identity (issueEnterUrl refuses both).
-  if (capture) return null;
+  const preview = pass.p === 1;
+  if (capture && preview) return null;
+  if (pass.x === undefined) return { claim: null, capture, preview };
+  // Capture and preview passes never carry an identity (issueEnterUrl refuses both).
+  if (capture || preview) return null;
   if (typeof pass.x !== "string") return null;
   const opened = await openJson(config.tokenSigningKey, IDENTITY_CLAIM_INFO, artifact.id, pass.x);
   if (!opened || typeof opened !== "object") return null;
@@ -180,6 +192,7 @@ async function openPass(
       viewerId: await viewerIdFor(config.tokenSigningKey, artifact.id, m),
     },
     capture: false,
+    preview: false,
   };
 }
 
@@ -191,7 +204,8 @@ const sameClaim = (a: PageClaim | null, b: PageClaim | null) =>
  * artifact at its current access epoch. `claim` is the viewer's identity when the gate sealed one
  * in (identified viewers only), else null. A value whose claim does not open, or opens to the wrong
  * shape, is rejected outright, never downgraded to anonymous. Passes differ by the identity they
- * carry, so a request with two valid passes that disagree is ambiguous and has none: the page
+ * carry (and a preview pass may be framed by anyone), so a request with two valid passes that
+ * disagree on either is ambiguous and has none: the page
  * reloads through the gate rather than act as whoever's pass came first. Null when there is no
  * valid pass.
  */
@@ -205,7 +219,9 @@ export async function readContentPass(
   for (const value of cookieValues(request.headers.get("cookie"), name)) {
     const pass = await openPass(config, artifact, value);
     if (!pass) continue;
-    if (found && !sameClaim(found.claim, pass.claim)) return null;
+    // A preview pass may be framed by anyone, so it never mixes with another kind.
+    if (found && (!sameClaim(found.claim, pass.claim) || found.preview !== pass.preview))
+      return null;
     found ??= pass;
   }
   return found;
@@ -317,24 +333,38 @@ async function serve(
   if (renderer) return serveRendererFile(request, env, config, renderer.id, renderer.file);
 
   if (path === `${CONTENT_RESERVED_PREFIX}enter`) {
-    const expired = () => text(config, 403, "This link has expired. Open the artifact again.");
     const token = url.searchParams.get("t") ?? "";
     const payload = await verifyEnterToken(config, token);
+    // A preview's own answers may show inside the MCP host's frame (no frame-ancestors).
+    const enterOpts: ContentCspOptions = payload?.p === 1 ? { framing: "any" } : {};
+    const expired = () =>
+      text(config, 403, "This link has expired. Open the artifact again.", undefined, enterOpts);
     if (!payload || payload.a !== artifactId) return expired();
     // Access changed (visibility, password, grants, takedown, deletion) since the token was issued.
     const current = await loadArtifact(env, artifactId);
     if (!current || current.takenDownAt || current.accessEpoch !== payload.e) return expired();
     if (!(await consumeNonce(env.DB, payload.n, payload.exp))) {
-      return text(config, 403, "This link was already used. Open the artifact again.");
+      return text(
+        config,
+        403,
+        "This link was already used. Open the artifact again.",
+        undefined,
+        enterOpts,
+      );
     }
     // The sealed identity claim, if any, moves into the cookie unchanged. Every enter writes a
     // fresh cookie, so an anonymous enter replaces an identified one.
     const x = typeof payload.x === "string" ? payload.x : undefined;
     const capture = payload.c === 1;
-    if (capture && x !== undefined) return expired();
-    const value = await signContentCookie(config, artifactId, payload.e, x, capture);
+    const preview = payload.p === 1;
+    if ((capture || preview) && x !== undefined) return expired();
+    if (capture && preview) return expired();
+    // A preview is for an artifact's own subdomain only: never the path fallback on the app host.
+    if (preview && base) return expired();
+    const kind: PassKind = capture ? "capture" : preview ? "preview" : "view";
+    const value = await signContentCookie(config, artifactId, payload.e, x, kind);
     const next = safeNext(url.searchParams.get("next"));
-    const res = redirect(config, 302, `${base}${next}`);
+    const res = redirect(config, 302, `${base}${next}`, enterOpts);
     res.headers.append(
       "Set-Cookie",
       serializeCookie(cookieName, value, {
@@ -345,7 +375,7 @@ async function serve(
         sameSite: "None",
         partitioned: true,
         path: cookiePath,
-        maxAge: capture ? CAPTURE_COOKIE_S : TTL.contentCookieS,
+        maxAge: passMaxAgeS(kind),
       }),
     );
     return res;
@@ -358,7 +388,8 @@ async function serve(
     return text(config, 404, "Not found", base ? undefined : { "Clear-Site-Data": '"storage"' });
   }
 
-  if (!(await readContentPass(request, config, artifact))) {
+  const pass = await readContentPass(request, config, artifact);
+  if (!pass) {
     // Inside the app's frame the app cannot be framed back (frame-ancestors 'none'): ask for a
     // reload, which fetches a fresh gate and token.
     if (request.headers.get("sec-fetch-dest") === "iframe") {
@@ -377,6 +408,10 @@ async function serve(
     );
   }
 
+  // An in-chat preview may be framed by the MCP host; every other pass only by the app.
+  const framing = pass.preview ? "any" : "app";
+  const fail = (status: number, body: string) => text(config, status, body, undefined, { framing });
+
   // Resolve version and file path.
   let versionNumber = artifact.currentVersion;
   let filePath = path;
@@ -384,18 +419,18 @@ async function serve(
   if (vm) {
     versionNumber = Number(vm[1]);
     filePath = vm[2] ?? "/";
-    if (!vm[2]) return redirect(config, 301, `${base}${path}/${url.search}`);
+    if (!vm[2]) return redirect(config, 301, `${base}${path}/${url.search}`, { framing });
   } else if (path.startsWith(CONTENT_RESERVED_PREFIX)) {
-    return text(config, 404, "Not found");
+    return fail(404, "Not found");
   }
   if (versionNumber < 1 || versionNumber > artifact.currentVersion)
-    return text(config, 404, "No such version");
+    return fail(404, "No such version");
 
   const rel = resolveFilePath(filePath);
-  if (rel === null) return text(config, 400, "Bad path");
+  if (rel === null) return fail(400, "Bad path");
 
   const v = await loadVersion(env.DB, artifactId, versionNumber);
-  if (!v) return text(config, 404, "No such version");
+  if (!v) return fail(404, "No such version");
   // A typed artifact (a doc): its page is Plinth's shell around the content file; every other
   // path (the content file itself, images) is the version's own file, as for any artifact.
   const def = typeDef(artifact.type);
@@ -403,15 +438,15 @@ async function serve(
   if (def.renderer && rel === "index.html") {
     // serveTypedEntry reads only the version's prefix (its source file is always under it).
     const version = { r2Prefix: v.r2Prefix } as Pick<VersionRow, "r2Prefix"> as VersionRow;
-    return serveTypedEntry(request, env, config, { artifact, version, def, base, url });
+    return serveTypedEntry(request, env, config, { artifact, version, def, base, url, framing });
   }
   const entry = v.entries.get(rel);
-  if (!entry) return text(config, 404, "Not found");
+  if (!entry) return fail(404, "Not found");
   let key: string;
   try {
     key = fileKey(artifactId, v, entry);
   } catch (e) {
-    if (e instanceof ApiError && e.code === "not_found") return text(config, 404, "Not found");
+    if (e instanceof ApiError && e.code === "not_found") return fail(404, "Not found");
     throw e;
   }
 
@@ -422,7 +457,7 @@ async function serve(
   const headers = new Headers({ "Content-Type": entry.content_type });
   // A typed artifact's other files (content.md, images) run no script, not even an SVG opened as
   // a document: only the shell runs Plinth's renderer.
-  applyContentHeaders(config, headers, def.renderer ? { scripts: "none" } : {});
+  applyContentHeaders(config, headers, def.renderer ? { scripts: "none", framing } : { framing });
   // Public artifacts (only when the instance allows public visibility) may be indexed.
   if (artifact.visibility === "public" && config.allowPublicVisibility)
     headers.delete("X-Robots-Tag");
@@ -439,14 +474,14 @@ async function serve(
   }
   if (caching && !strong && ifNoneMatch) {
     const head = await env.FILES.head(key);
-    if (!head) return text(config, 404, "Not found");
+    if (!head) return fail(404, "Not found");
     if (etagMatches(ifNoneMatch, head.httpEtag)) {
       headers.set("ETag", head.httpEtag);
       return new Response(null, { status: 304, headers });
     }
   }
   const obj = request.method === "HEAD" ? await env.FILES.head(key) : await env.FILES.get(key);
-  if (!obj) return text(config, 404, "Not found");
+  if (!obj) return fail(404, "Not found");
   if (!strong) headers.set("ETag", obj.httpEtag);
   const body = request.method !== "HEAD" && "body" in obj ? (obj as R2ObjectBody).body : null;
   let res = new Response(body, { status: 200, headers });

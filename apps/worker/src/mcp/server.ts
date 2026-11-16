@@ -13,6 +13,7 @@ import {
   listMentionsInput,
   listVersionsInput,
   PRODUCT_NAME,
+  previewArtifactInput,
   publishArtifactInput,
   replyCommentInput,
   resolveCommentInput,
@@ -41,6 +42,16 @@ import { listComments, setCommentStatus } from "../services/comments.ts";
 import type { Ctx } from "../services/context.ts";
 import { claimMention, listMentions, replyComment } from "../services/mentions.ts";
 import { startUpload } from "../services/uploads.ts";
+import {
+  MCP_APP_MIME_TYPE,
+  PREVIEW_APP_HTML,
+  PREVIEW_APP_ONLY_META,
+  PREVIEW_RESOURCE_URI,
+  PREVIEW_TOOL_META,
+  previewArtifact,
+  previewResourceMeta,
+  previewSupported,
+} from "./preview.ts";
 
 /** Appended to every tool that returns text written by people. */
 export const UNTRUSTED_NOTE =
@@ -74,6 +85,8 @@ export const MCP_TOOL_SUMMARIES = {
   write_artifact_data: "Create, replace or delete a page's shared data documents, with if_rev.",
   start_upload:
     "For a build folder or a big page: a single-use ticket and a curl command that publishes it as one tar.",
+  preview_artifact:
+    "Used by Plinth's in-chat preview (MCP Apps hosts) for a short-lived link to show a version; agents never need it.",
 } as const;
 
 export type McpToolName = keyof typeof MCP_TOOL_SUMMARIES;
@@ -167,6 +180,8 @@ export function contentNote(config: Pick<Ctx["config"], "contentIsolation">): st
 
 export function buildMcpServer(ctx: Ctx): McpServer {
   const opaque = contentNote(ctx.config);
+  // Hosts that support MCP Apps show the published version under the tool call (mcp/preview.ts).
+  const preview = previewSupported(ctx.config) ? { _meta: PREVIEW_TOOL_META } : {};
   const server = new McpServer(
     { name: PRODUCT_NAME.toLowerCase(), version: PLINTH_VERSION },
     {
@@ -207,6 +222,7 @@ export function buildMcpServer(ctx: Ctx): McpServer {
         DATA_PAGE_NOTE +
         UNTRUSTED_NOTE,
       inputSchema: publishArtifactInput,
+      ...preview,
     },
     (args) => run(() => publishArtifact(ctx, args)),
   );
@@ -226,6 +242,7 @@ export function buildMcpServer(ctx: Ctx): McpServer {
         DATA_PAGE_NOTE +
         UNTRUSTED_NOTE,
       inputSchema: updateArtifactInput,
+      ...preview,
     },
     (args) => run(() => updateArtifact(ctx, args)),
   );
@@ -277,6 +294,7 @@ export function buildMcpServer(ctx: Ctx): McpServer {
         "Make an old version current by publishing its content as the next version. History is never rewritten. " +
         UNTRUSTED_NOTE,
       inputSchema: restoreVersionInput,
+      ...preview,
     },
     (args) => run(() => restoreVersion(ctx, args.id, args.version, args.base_version)),
   );
@@ -430,6 +448,45 @@ export function buildMcpServer(ctx: Ctx): McpServer {
       inputSchema: writeArtifactDataInput,
     },
     (args) => run(() => writeArtifactData(ctx, args)),
+  );
+
+  // ---------- in-chat previews (MCP Apps) ----------
+
+  server.registerTool(
+    toolName("preview_artifact"),
+    {
+      title: "Preview artifact",
+      description:
+        "Used by Plinth's in-chat preview, not by agents: returns a single-use link, valid for 60 " +
+        "seconds, that shows one version of an artifact you can view in a read-only frame. Give the " +
+        "user the artifact's url instead; never put this link in a message. " +
+        UNTRUSTED_NOTE,
+      inputSchema: previewArtifactInput,
+      annotations: { readOnlyHint: true },
+      _meta: PREVIEW_APP_ONLY_META,
+    },
+    (args) => run(() => previewArtifact(ctx, args.id, args.version)),
+  );
+
+  server.registerResource(
+    "plinth-preview",
+    PREVIEW_RESOURCE_URI,
+    {
+      title: "Plinth preview",
+      description: "Shows a version just published to Plinth in the conversation.",
+      mimeType: MCP_APP_MIME_TYPE,
+      _meta: previewResourceMeta(ctx.config),
+    },
+    (uri) => ({
+      contents: [
+        {
+          uri: uri.href,
+          mimeType: MCP_APP_MIME_TYPE,
+          text: PREVIEW_APP_HTML,
+          _meta: previewResourceMeta(ctx.config),
+        },
+      ],
+    }),
   );
 
   return server;

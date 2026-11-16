@@ -279,7 +279,8 @@ support it.
 
 - `plinth.ready` is a promise that never rejects. It gives `{ available, reason, viewer, canWrite,
   capabilities, shared, limits, usage }`. `reason` is set when `available` is false:
-  `opaque_isolation`, `disabled`, `not_declared`, `expired` or `network`.
+  `opaque_isolation`, `disabled`, `not_declared`, `preview` (the page is shown in an agent's
+  thread, read-only), `expired` or `network`.
 - `plinth.viewer` is `{ id, email, role }`, or `null` for anonymous link viewers. `email` is set
   only with `viewer` declared. `id` is stable for one person on this artifact.
 - `const c = plinth.db.collection("votes")` (names: a lowercase letter, then up to 39 of `a-z`,

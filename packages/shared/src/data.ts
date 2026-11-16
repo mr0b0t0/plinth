@@ -229,8 +229,11 @@ export const writeArtifactDataInput = z.object({
 /** How a document was written: from the page (content cookie), by an agent, or from the app. */
 export type DataVia = "page" | "agent" | "app";
 
-/** Why shared data is unavailable to a page. */
-export type DataUnavailableReason = "opaque_isolation" | "disabled" | "not_declared";
+/**
+ * Why shared data is unavailable to a page. `preview`: the page is shown in an agent's thread
+ * (an MCP App), through a read-only pass that carries no identity.
+ */
+export type DataUnavailableReason = "opaque_isolation" | "disabled" | "not_declared" | "preview";
 
 /** Server-derived author of a write, as a page sees it (only with `viewer` and when identified). */
 export interface PageDocAuthor {

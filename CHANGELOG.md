@@ -10,6 +10,12 @@ Add a line under **Unreleased** in the pull request that makes a change people w
 
 ## Unreleased
 
+- **Previews in the agent's thread.** In clients that support MCP Apps (T3 Code with Claude or
+  Codex, and others), the page an agent just published shows right under its publish, update or
+  restore call, with **Open on Plinth** next to it. The preview is read-only and shows the page
+  as a signed-out viewer would, without shared data (pages see `reason: "preview"`; plugin
+  0.10.0 tells agents). Nothing to set up; other clients are unchanged.
+
 - **T3 Code.** T3 Code gets its own tab in **Connect an agent** and in `plinth connect`. It runs
   your Claude Code and Codex with their own settings, so installing the Plinth plugin there covers
   T3 Code threads too. The `plinth-artifacts` skill (plugin 0.7.0) tells agents to use T3 Code's

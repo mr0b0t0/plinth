@@ -23,6 +23,21 @@ export const OPAQUE_SANDBOX =
  */
 export interface ContentCspOptions {
   scripts?: "self" | "none";
+  /**
+   * Who may frame the response. "app" (the default): only the app, `frame-ancestors 'self'
+   * <app>`. "any": no frame-ancestors at all, only for a request carrying an in-chat preview pass
+   * (docs/security.md#in-chat-previews). An MCP host frames the preview from inside its own
+   * sandboxed, opaque-origin frame, which no frame-ancestors source can name, and the pass behind
+   * it is read-only, short-lived and carries no identity.
+   */
+  framing?: "app" | "any";
+  /**
+   * A public static file Plinth wrote (a renderer's script or style, runtime.js): no artifact
+   * data, the same for every artifact, served without a cookie. It gets
+   * `Cross-Origin-Resource-Policy: cross-origin`, so a page shown with an opaque origin (an MCP
+   * host's sandbox, opaque isolation) can still load it from its own subdomain.
+   */
+  publicFile?: boolean;
 }
 
 /**
@@ -83,8 +98,8 @@ export function contentCsp(config: Config, opts: ContentCspOptions = {}): string
     "object-src 'none'",
     `base-uri 'self'${https(s.base)}`,
     "form-action 'self'",
-    `frame-ancestors 'self' ${config.appOrigin}`,
   ];
+  if (opts.framing !== "any") directives.push(`frame-ancestors 'self' ${config.appOrigin}`);
   if (config.contentIsolation === "opaque") directives.push(OPAQUE_SANDBOX);
   return directives.join("; ");
 }
@@ -127,8 +142,14 @@ export const PERMISSIONS_POLICY = [
  * every file needs the content cookie, which is host-only and partitioned by the top-level site
  * (the app's), and every artifact's CSP limits its own loads to 'self' and the CDN allowlist.
  */
-export function contentResourcePolicy(config: Config): "same-origin" | "cross-origin" {
-  return config.contentIsolation === "opaque" ? "cross-origin" : "same-origin";
+export function contentResourcePolicy(
+  config: Config,
+  opts: ContentCspOptions = {},
+): "same-origin" | "cross-origin" {
+  // An MCP host's sandbox gives the previewed document an opaque origin too.
+  return config.contentIsolation === "opaque" || opts.framing === "any" || opts.publicFile
+    ? "cross-origin"
+    : "same-origin";
 }
 
 /**
@@ -144,7 +165,7 @@ export function applyContentHeaders(
   headers.set("X-Content-Type-Options", "nosniff");
   headers.set("Permissions-Policy", PERMISSIONS_POLICY);
   headers.set("Referrer-Policy", "no-referrer");
-  headers.set("Cross-Origin-Resource-Policy", contentResourcePolicy(config));
+  headers.set("Cross-Origin-Resource-Policy", contentResourcePolicy(config, opts));
   headers.set("X-Robots-Tag", "noindex, nofollow");
   headers.set("Cache-Control", "private, no-cache");
 }

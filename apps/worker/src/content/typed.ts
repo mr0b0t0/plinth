@@ -75,7 +75,7 @@ export async function serveRendererFile(
     return notFound(config);
   }
   const headers = new Headers({ "Content-Type": `${expected}; charset=utf-8` });
-  applyContentHeaders(config, headers);
+  applyContentHeaders(config, headers, { publicFile: true });
   const etag = res.headers.get("ETag");
   if (etag) headers.set("ETag", etag);
   if (etag && etagMatches(request.headers.get("If-None-Match"), etag)) {
@@ -103,9 +103,16 @@ export async function serveTypedEntry(
   request: Request,
   env: Bindings,
   config: Config,
-  o: { artifact: ArtifactRow; version: VersionRow; def: ArtifactTypeDef; base: string; url: URL },
+  o: {
+    artifact: ArtifactRow;
+    version: VersionRow;
+    def: ArtifactTypeDef;
+    base: string;
+    url: URL;
+    framing?: "app" | "any";
+  },
 ): Promise<Response> {
-  const { artifact, version, def, base, url } = o;
+  const { artifact, version, def, base, url, framing } = o;
   const obj = await env.FILES.get(version.r2Prefix + def.sourcePath);
   if (!obj) return notFound(config);
   const html = typedShellHtml(def, {
@@ -115,7 +122,7 @@ export async function serveTypedEntry(
     appOrigin: config.appOrigin,
   });
   const headers = new Headers({ "Content-Type": "text/html; charset=utf-8" });
-  applyContentHeaders(config, headers, { scripts: "self" });
+  applyContentHeaders(config, headers, { scripts: "self", framing });
   // Public artifacts (only when the instance allows public visibility) may be indexed.
   if (artifact.visibility === "public" && config.allowPublicVisibility)
     headers.delete("X-Robots-Tag");

@@ -273,7 +273,8 @@ describe("renderer files on the content host", () => {
     expect(js.headers.get("content-type")).toMatch(/^text\/javascript/);
     expect(js.headers.get("content-security-policy")).toBe(contentCsp(config()));
     expect(js.headers.get("x-content-type-options")).toBe("nosniff");
-    expect(js.headers.get("cross-origin-resource-policy")).toBe("same-origin");
+    // Public static code: a page shown with an opaque origin (an in-chat preview) loads it too.
+    expect(js.headers.get("cross-origin-resource-policy")).toBe("cross-origin");
     // The built bundle, not the SPA's index.html: fails loudly if the web build did not emit it.
     const src = await js.text();
     expect(src.length).toBeGreaterThan(1000);
@@ -282,6 +283,7 @@ describe("renderer files on the content host", () => {
     expect(css.status).toBe(200);
     expect(css.headers.get("content-type")).toMatch(/^text\/css/);
     expect(css.headers.get("content-security-policy")).toBe(contentCsp(config()));
+    expect(css.headers.get("cross-origin-resource-policy")).toBe("cross-origin");
     expect(await css.text()).toContain(".plinth-doc");
     const head = await call(`${contentOrigin(p.id)}/__plinth/types/doc/doc.js`, {
       method: "HEAD",

@@ -626,6 +626,21 @@ and `data_usage` (`{ docs, bytes }`, or null when there is none or you are below
 it before changing a page that keeps data. Data survives `update_artifact` and restores. How a page
 uses shared data is in the `plinth-artifacts` skill.
 
+## In-chat previews
+
+Clients that support [MCP Apps](https://github.com/modelcontextprotocol/ext-apps) show the version
+an agent just published right under the `publish_artifact`, `update_artifact` or `restore_version`
+call: T3 Code with Claude or Codex, and other hosts that render MCP Apps. Nothing to set up: the
+tools point at Plinth's preview page (`ui://plinth/preview.html`), which asks the app-only
+`preview_artifact` tool for a short-lived link and frames the page from its own content subdomain.
+**Open on Plinth** opens the artifact's page, where sharing and comments live.
+
+A preview is read-only and anonymous: the page shows as a signed-out viewer would see it, and
+shared data is unavailable in it (`reason: "preview"`). Inside a host's sandbox the page usually
+runs with an opaque origin, so storage and `fetch()` of its own files may not work there; the
+artifact's page on Plinth is unaffected. Clients without MCP Apps see the same text results as
+before. How the preview is isolated: [security.md](security.md#in-chat-previews).
+
 ## The mention workflow
 
 A collaborator with the commenter or editor role writes on the artifact page:
