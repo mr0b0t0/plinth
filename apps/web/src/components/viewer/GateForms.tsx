@@ -3,6 +3,7 @@
 import type { ViewGate } from "@plinth/shared";
 import { type FormEvent, useId, useRef, useState } from "react";
 import { api } from "../../lib/api.ts";
+import { refreshSession } from "../../lib/session.ts";
 import { Button, Input, Stack } from "../ui/index.ts";
 import { type GateQuery, gateErrorMessage, gatePath } from "./gate.ts";
 
@@ -130,6 +131,8 @@ export function EmailForm({ artifactRef, query, onGate, signedInEmail }: EmailFo
         setError("That code did not work. Check it, or ask for a new one.");
         return;
       }
+      // The owner's own email signs them in to the app; pick that up so the header shows it.
+      await refreshSession().catch(() => {});
       onGate(gate);
     } catch (err) {
       setError(gateErrorMessage(err, "code"));

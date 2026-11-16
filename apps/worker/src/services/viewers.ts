@@ -2,9 +2,20 @@
 // that creates an app-host viewer session (cookie plinth_viewer) naming the email. The session
 // carries no artifact: policy.ts checks the email's grant on every artifact, so one confirmation
 // opens every artifact the email is listed on, and an email that is not listed opens nothing.
+// The artifact's owner has no grant row but may always open it: the owner's own email gets a code
+// too, and confirming it signs the owner in to the app (a normal user session), since the code is
+// the same proof of the mailbox as the sign-in code.
 import { RATE_LIMITS, TTL } from "@plinth/shared";
 import { and, desc, eq, gt, isNull } from "drizzle-orm";
-import { type ArtifactRow, accessGrants, loginCodes, sessions } from "../db/schema.ts";
+import { maySignIn } from "../auth/login.ts";
+import {
+  type ArtifactRow,
+  accessGrants,
+  loginCodes,
+  sessions,
+  type UserRow,
+  users,
+} from "../db/schema.ts";
 import { createEmailAdapter } from "../email/index.ts";
 import {
   hashToken,
@@ -19,6 +30,7 @@ import { enforce } from "../lib/ratelimit.ts";
 import { isoIn, nowIso } from "../lib/time.ts";
 import { findArtifact } from "./artifacts.ts";
 import type { Ctx } from "./context.ts";
+import { createUserSession } from "./sessions.ts";
 
 /** Wrong guesses allowed on one code before it stops working. */
 export const MAX_VIEWER_CODE_ATTEMPTS = 5;
@@ -54,7 +66,31 @@ export async function isListed(ctx: Ctx, artifactId: string, email: string): Pro
 }
 
 /**
- * Send a code if the email is on the artifact's allowlist. The caller always gets the same answer,
+ * Who an email is on this artifact for the code flow: the owner (who has no grant row), a listed
+ * person, or nobody. Both lookups run on every call so the answer takes the same time either way.
+ */
+async function codeHolder(
+  ctx: Ctx,
+  a: ArtifactRow,
+  email: string,
+): Promise<{ kind: "owner"; user: UserRow } | { kind: "listed" } | null> {
+  const [owner, listed] = await Promise.all([
+    ctx.db.select().from(users).where(eq(users.id, a.ownerId)).get(),
+    isListed(ctx, a.id, email),
+  ]);
+  if (owner && owner.email === email && maySignIn(ctx.config, email)) {
+    return { kind: "owner", user: owner };
+  }
+  return listed ? { kind: "listed" } : null;
+}
+
+/** What a confirmed code yields: an app session for the owner, a viewer session for anyone else. */
+export type ViewerCodeResult =
+  | { kind: "user"; value: string; user: UserRow }
+  | { kind: "viewer"; value: string };
+
+/**
+ * Send a code if the email is on the artifact's allowlist or is the owner's. The caller always gets the same answer,
  * listed or not, and the rate limits count both cases alike, so the allowlist cannot be probed.
  * The code is stored and mailed after the response (waitUntil) so timing does not tell either.
  */
@@ -75,7 +111,7 @@ export async function requestViewerCode(ctx: Ctx, ref: string, email: string): P
     HOUR,
     tooMany,
   );
-  if (!(await isListed(ctx, a.id, email))) return;
+  if (!(await codeHolder(ctx, a, email))) return;
   ctx.waitUntil(
     sendViewerCode(ctx, a, email).catch((e: unknown) => {
       console.error("viewer code email failed:", e instanceof Error ? e.message : "unknown");
@@ -129,16 +165,17 @@ async function sendViewerCode(ctx: Ctx, a: ArtifactRow, email: string): Promise<
 }
 
 /**
- * Check a code and, on success, create a viewer session. Returns the cookie value (shown once;
- * only its hash is stored). Every failure looks the same: wrong code, expired code, used code,
- * too many attempts, or an email that is not (or no longer) listed.
+ * Check a code and, on success, create a session: an app session for the owner, a viewer session
+ * for a listed email. Returns the cookie value (shown once; only its hash is stored). Every failure
+ * looks the same: wrong code, expired code, used code, too many attempts, or an email that is not
+ * (or no longer) listed.
  */
 export async function verifyViewerCode(
   ctx: Ctx,
   ref: string,
   email: string,
   code: string,
-): Promise<string> {
+): Promise<ViewerCodeResult> {
   const a = await allowlistArtifact(ctx, ref);
   const tooMany = "Too many attempts. Try again later.";
   await enforce(
@@ -197,7 +234,15 @@ export async function verifyViewerCode(
   if ((consumed.meta.changes ?? 0) === 0) throw invalid;
 
   // The owner may have removed the email since the code was sent.
-  if (!(await isListed(ctx, a.id, email))) throw invalid;
+  const holder = await codeHolder(ctx, a, email);
+  if (!holder) throw invalid;
+  if (holder.kind === "owner") {
+    return {
+      kind: "user",
+      value: await createUserSession(ctx.db, holder.user.id),
+      user: holder.user,
+    };
+  }
 
   const value = newToken(VIEWER_SESSION_PREFIX);
   await ctx.db
@@ -211,5 +256,5 @@ export async function verifyViewerCode(
       createdAt: nowIso(),
     })
     .run();
-  return value;
+  return { kind: "viewer", value };
 }

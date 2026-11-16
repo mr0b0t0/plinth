@@ -149,7 +149,7 @@ CI.
 | Public | Anyone. May be listed on the owner's profile |
 | Unlisted | Anyone with the link |
 | Password | Anyone with the link and the password |
-| Allowlist | Only listed emails, confirmed by a one-time code or magic link |
+| Allowlist | Only listed emails (and the owner), confirmed by a one-time code or magic link |
 
 Owners can also grant a listed email the commenter or editor role. Access to the artifact itself is
 enforced by the Worker on the content domain using a short-lived signed token, so the app's login
