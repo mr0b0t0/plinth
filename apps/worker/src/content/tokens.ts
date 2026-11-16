@@ -35,8 +35,18 @@ export interface EnterPayload {
    * top-level page, which only Plinth's own capture browser does. Never with `x`.
    */
   c?: 1;
+  /**
+   * An in-chat preview (mcp/preview.ts): the cookie it becomes lets an MCP host's frame show the
+   * page (no frame-ancestors) and is read-only. Never with `x` or `c`; always with `v`.
+   */
+  p?: 1;
+  /** The one version a preview may show. */
+  v?: number;
   [key: string]: unknown;
 }
+
+/** What a content pass is for: a normal view, a thumbnail capture, or an in-chat preview. */
+export type PassKind = "view" | "capture" | "preview";
 
 /** How long a capture's content cookie lasts: one page load and a screenshot. */
 export const CAPTURE_COOKIE_S = 120;
@@ -50,6 +60,10 @@ export interface ContentPayload {
   x?: string;
   /** a capture pass (copied from the enter token): top-level loads allowed */
   c?: 1;
+  /** a preview pass (copied from the enter token): any framer, read-only, no identity */
+  p?: 1;
+  /** the one version a preview pass opens (copied from the enter token) */
+  v?: number;
   [key: string]: unknown;
 }
 
@@ -82,7 +96,7 @@ export async function issueEnterUrl(
   artifact: { id: string; accessEpoch: number },
   next = "/",
   identity?: ViewerIdentity,
-  opts: { capture?: boolean } = {},
+  opts: { capture?: boolean; previewVersion?: number } = {},
 ): Promise<string> {
   const payload: EnterPayload = {
     k: "enter",
@@ -94,6 +108,12 @@ export async function issueEnterUrl(
   if (opts.capture) {
     if (identity) throw new Error("A capture never carries an identity");
     payload.c = 1;
+  }
+  if (opts.previewVersion !== undefined) {
+    if (identity || opts.capture) throw new Error("A preview is never identified or a capture");
+    if (!isVersion(opts.previewVersion)) throw new Error("A preview names one version");
+    payload.p = 1;
+    payload.v = opts.previewVersion;
   }
   if (identity) {
     payload.x = await sealJson(config.tokenSigningKey, IDENTITY_CLAIM_INFO, artifact.id, {
@@ -110,22 +130,43 @@ export function verifyEnterToken(config: Config, token: string) {
   return verifyToken<EnterPayload>(config.tokenSigningKey, token, "enter");
 }
 
-export function signContentCookie(
+export async function signContentCookie(
   config: Config,
   artifactId: string,
   epoch: number,
   x?: string,
-  capture = false,
+  kind: PassKind = "view",
+  previewVersion?: number,
 ): Promise<string> {
+  if (kind !== "view" && x !== undefined)
+    throw new Error(`A ${kind} pass never carries an identity`);
+  if ((kind === "preview") !== (previewVersion !== undefined && isVersion(previewVersion)))
+    throw new Error("A preview pass, and only a preview pass, names one version");
   const payload: ContentPayload = {
     k: "content",
     a: artifactId,
     e: epoch,
-    exp: Date.now() + (capture ? CAPTURE_COOKIE_S : TTL.contentCookieS) * 1000,
+    exp: Date.now() + passMaxAgeS(kind) * 1000,
   };
   if (x !== undefined) payload.x = x;
-  if (capture) payload.c = 1;
+  if (kind === "capture") payload.c = 1;
+  if (kind === "preview") {
+    payload.p = 1;
+    payload.v = previewVersion;
+  }
   return signToken(config.tokenSigningKey, payload);
+}
+
+/** A version number as tokens carry it. */
+export function isVersion(n: unknown): n is number {
+  return typeof n === "number" && Number.isInteger(n) && n >= 1;
+}
+
+/** The content cookie's lifetime for each kind of pass. */
+export function passMaxAgeS(kind: PassKind): number {
+  if (kind === "capture") return CAPTURE_COOKIE_S;
+  if (kind === "preview") return TTL.previewCookieS;
+  return TTL.contentCookieS;
 }
 
 export function verifyContentCookie(config: Config, value: string) {

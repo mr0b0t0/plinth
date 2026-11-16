@@ -120,6 +120,11 @@ export const TTL = {
   viewerTokenMs: 60 * 1000,
   /** Host-only viewer cookie on one artifact's content subdomain. */
   contentCookieS: 12 * 60 * 60,
+  /**
+   * An in-chat preview's content cookie (MCP Apps, docs/spec.md "In-chat previews"): one look at
+   * one version in an agent's thread. Each render mints a fresh one, so it is kept short.
+   */
+  previewCookieS: 10 * 60,
   /** App session cookie. */
   sessionS: 30 * 24 * 60 * 60,
   /** App-host cookie proving a viewer confirmed an allowlisted email. */

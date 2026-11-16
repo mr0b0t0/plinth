@@ -6,7 +6,7 @@
 // window.plinth:
 //   ready      Promise<Session>, never rejects: { available, reason, viewer, canWrite,
 //              capabilities, shared, limits, usage }; reason null | "opaque_isolation" | "disabled"
-//              | "not_declared" | "expired" | "network"
+//              | "not_declared" | "preview" | "expired" | "network"
 //   available, viewer ({ id, email | null, role } | null), canWrite: set once ready resolves
 //   db.collection(name): list({ limit, cursor }) -> { docs, nextCursor }, all(), get(id) -> Doc |
 //              null, add(data), set(id, data, { ifRev }), update(id, fn), delete(id, { ifRev }),
@@ -370,6 +370,6 @@ export const RUNTIME_SCRIPT = `/* Plinth shared-data runtime v1. */
 
 export function serveRuntimeScript(config: Config): Response {
   const headers = new Headers({ "Content-Type": "text/javascript; charset=utf-8" });
-  applyContentHeaders(config, headers);
+  applyContentHeaders(config, headers, { publicFile: true });
   return new Response(RUNTIME_SCRIPT, { status: 200, headers });
 }

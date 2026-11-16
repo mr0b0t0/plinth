@@ -146,6 +146,12 @@ export const getArtifactInput = z.object({
   version: versionNumberSchema.optional(),
 });
 
+/** preview_artifact: the in-chat preview asks for a fresh preview link (MCP Apps, app-only). */
+export const previewArtifactInput = z.object({
+  id: artifactRefSchema,
+  version: versionNumberSchema.optional(),
+});
+
 export const listArtifactsInput = z.object({
   query: z.string().trim().max(200).optional(),
 });

@@ -176,6 +176,16 @@ One remote MCP server over streamable HTTP at `/mcp`. All tools act as the conne
 | `resolve_comment(comment_id, resolved?)` | Resolve or reopen a thread |
 | `list_artifact_data(id, collection?, doc_id?, limit?, cursor?)` | Read an artifact's shared data (owner or editor): a summary, one page of a collection, or one document. Every result is marked untrusted |
 | `write_artifact_data(id, ops)` | Change shared data (owner or editor): 1 to 50 `set`/`delete` ops, each with a required `if_rev`, each succeeding or failing on its own |
+| `preview_artifact(id, version?)` | App-only (MCP Apps `visibility: ["app"]`, read-only): a single-use, 60-second link that shows one version the caller can view in an MCP host's frame. Called by Plinth's preview page, not by agents |
+
+**In-chat previews (decided 2026-11-16).** `publish_artifact`, `update_artifact` and
+`restore_version` carry `_meta.ui.resourceUri: "ui://plinth/preview.html"` (MCP Apps, SEP-1865), so
+hosts that support it show the published version under the tool call. The resource is a fixed page
+Plinth wrote; it may frame `<scheme>://*.<CONTENT_HOST>` only. Each render asks `preview_artifact`
+for a fresh link, so no link appears in a result the model reads. The link becomes a preview pass
+on the content host: no identity, no shared data, one version, 10 minutes, and the only pass whose responses
+omit `frame-ancestors` (see `docs/security.md#in-chat-previews`). Not offered under the staging path
+fallback.
 
 **Agent experience (decided 2026-11-14).** Plinth should feel the same in every harness (Claude,
 Claude Code, Codex, ChatGPT, Gemini CLI, Cursor, VS Code, and T3 Code through the Claude Code and

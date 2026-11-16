@@ -263,11 +263,16 @@ async function handle(
     });
   }
 
-  // 9. Declaration.
-  const reason = unavailableReason(config, target.caps);
+  // 9. Declaration. An in-chat preview (an MCP host's frame, any framer) never reads or writes
+  // shared data: its pass carries no identity and is meant for one look at the page.
+  const reason = pass.preview ? "preview" : unavailableReason(config, target.caps);
   if (reason) {
     if (route.kind === "session") return respond(config, 200, { available: false, reason });
-    throw new ApiError("feature_disabled", "This page does not use shared data", { reason });
+    const message =
+      reason === "preview"
+        ? "Shared data is not available in a preview"
+        : "This page does not use shared data";
+    throw new ApiError("feature_disabled", message, { reason });
   }
 
   // 10. Policy, then the service (rate limits, quotas, guarded writes).
