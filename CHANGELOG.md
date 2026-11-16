@@ -10,6 +10,8 @@ Add a line under **Unreleased** in the pull request that makes a change people w
 
 ## Unreleased
 
+## 0.5.0 (2026-11-16)
+
 - **Previews in the agent's thread.** In apps that support MCP Apps (T3 Code with Claude or
   Codex, and others), the page an agent just published, updated or restored shows right under
   the call, with **Open on Plinth** next to it. The preview is read-only: it shows that one
