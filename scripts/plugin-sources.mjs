@@ -1,6 +1,7 @@
 // The plugin's hand-written sources and their content hash. The Claude Code and portable plugins
-// ship the skill (integrations/skill/) and the mention watcher (integrations/watcher/); clients
-// update an installed plugin only when PLUGIN.version changes. So PLUGIN.skillHash in
+// ship the skill (integrations/skill/), the mention watcher (integrations/watcher/) and the
+// session note (integrations/hooks/); clients update an installed plugin only when PLUGIN.version
+// changes. So PLUGIN.skillHash in
 // packages/shared/src/harnesses.ts records the hash of these sources, and PLUGIN.skillHashVersion
 // the PLUGIN.version it was recorded under. A changed hash is recorded only under a new version:
 // `pnpm integrations` refuses while PLUGIN.version still equals skillHashVersion (a skill edit
@@ -11,7 +12,11 @@ import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "n
 import path from "node:path";
 
 /** Folders whose files the plugin ships, relative to the repository root. */
-export const PLUGIN_SOURCE_DIRS = ["integrations/skill", "integrations/watcher"];
+export const PLUGIN_SOURCE_DIRS = [
+  "integrations/skill",
+  "integrations/watcher",
+  "integrations/hooks",
+];
 
 /**
  * The files git would commit under `dirs`: tracked and untracked ones, never ignored ones (a
@@ -44,7 +49,8 @@ function walkFiles(root, dir) {
       else if (e.isFile()) out.push(child);
     }
   };
-  walk(dir);
+  // A folder that does not exist ships nothing (a fresh checkout with no hooks yet).
+  if (existsSync(path.join(root, dir))) walk(dir);
   return out;
 }
 

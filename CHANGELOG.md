@@ -14,6 +14,11 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   your Claude Code and Codex with their own settings, so installing the Plinth plugin there covers
   T3 Code threads too. The `plinth-artifacts` skill (plugin 0.7.0) tells agents to use T3 Code's
   in-thread visual replies for a quick chart and Plinth for a page to keep or send.
+- **Plinth is where pages go.** With the Claude Code plugin installed, a page or document you
+  want to keep, send or show someone now goes to Plinth even when you don't say "Plinth"; before,
+  Claude Code's own artifacts won almost every time. The plugin (0.9.0) adds a short note at
+  session start and the skill's description says the same; a chart or mockup to look at in the
+  conversation still stays in the built-in viewer. `PLINTH_SESSION_NOTE=0` turns the note off.
 
 ## 0.4.2 (2026-11-16)
 

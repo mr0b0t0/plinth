@@ -101,15 +101,28 @@ outputs.set(
     },
   ]),
 );
+// The session note (Claude Code only, like the watcher): integrations/hooks/session-note.md.
+const SESSION_NOTE = "hooks/session-note.md";
+outputs.set(
+  `integrations/plugin/${SESSION_NOTE}`,
+  readFileSync(path.join(root, "integrations/hooks/session-note.md"), "utf8"),
+);
 outputs.set(
   "integrations/plugin/hooks/hooks.json",
   json({
-    description: "List Plinth @mention requests waiting when a session starts",
+    description:
+      "Say where pages go (Plinth) and list Plinth @mention requests waiting when a session starts",
     hooks: {
       SessionStart: [
         {
           matcher: "startup|resume|clear",
           hooks: [
+            {
+              // Where pages go: the person installed Plinth for them. PLINTH_SESSION_NOTE=0 skips it.
+              type: "command",
+              command: `[ "\${PLINTH_SESSION_NOTE:-1}" = 0 ] || cat "\${CLAUDE_PLUGIN_ROOT}/${SESSION_NOTE}"; exit 0`,
+              timeout: 5,
+            },
             {
               type: "command",
               command: `command -v node >/dev/null 2>&1 && ${watcherCmd("pending")} 2>/dev/null; exit 0`,
