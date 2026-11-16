@@ -378,6 +378,7 @@ describe("Discovery documents", () => {
       "https://github.com/mr0b0t0/plinth/blob/main/docs/agents.md#large-builds",
       "Send a User-Agent of your own",
       "codex mcp add plinth",
+      "- T3 Code: T3 Code runs the Claude Code and Codex on your computer",
       "gemini mcp add",
     ]) {
       expect(text).toContain(s);

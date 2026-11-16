@@ -235,6 +235,7 @@ async function printConnect(inst) {
       continue;
     }
     if (commands[h.id]) console.log(indent(commands[h.id]));
+    else if (h.id === "t3code") console.log(indent(reg.T3_CODE_USES_AGENTS));
     else if (h.id === "other")
       console.log(`  OAuth 2.1 with discovery at ${reg.protectedResourceUrl(endpoint)}`);
     else console.log(`  Sign in at ${inst.appOrigin} and open Connections > Connect an agent.`);

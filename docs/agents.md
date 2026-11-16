@@ -43,6 +43,7 @@ Two channels carry these rules, so every harness gets them whatever it supports:
 | ChatGPT | ChatGPT Sites | no | Server instructions: The connection carries the core rules. The Plinth plugin (integrations/plugin) uses the portable format ChatGPT reads, for when it is listed. | not yet |
 | Claude Code | Claude artifacts | yes | Plugin: Install the Plinth plugin: the server and the skill in one step. A bare claude mcp add gives the tools only, without Plinth's rules. | yes |
 | Codex | Codex Sites | yes | Plugin: Install the Plinth plugin for the skill. | yes |
+| T3 Code | T3 Code visual replies | yes | Plugin: Install the Plinth plugin in the Claude Code and Codex that T3 Code runs; their threads in T3 Code then load it. | yes |
 | Gemini CLI | none | yes | Extension: Install the Plinth extension (server and skill) from a checkout of the repository. | not yet |
 | Cursor | none | yes | Rule file: Save the Plinth rule into your project's .cursor/rules/ folder. | not yet |
 | VS Code | none | yes | Rule file: Save the Plinth instructions into your project's .github/instructions/ folder. | not yet |
@@ -124,6 +125,26 @@ codex plugin add plinth@plinth
 Codex reads `.agents/plugins/marketplace.json` and the plugin's portable `plugin.json`, `mcp.json`
 and `skills/`. For a self-hosted instance, add its server with `codex mcp add plinth --url <origin>/mcp`
 and `codex mcp login plinth`; the plugin still provides the skill.
+
+### T3 Code
+
+[T3 Code](https://t3.codes) has no MCP settings of its own for its agents: it runs the Claude Code
+and Codex on your computer with their own configuration, plugins and sign-ins. Set Plinth up in
+each one you pick in T3 Code, as above, and sign in once there (`/mcp` in Claude Code, or
+`codex mcp login plinth`). Its threads then publish to Plinth with the skill loaded.
+
+- **Which Claude Code profile.** T3 Code's Claude uses the configuration directory in its
+  environment: the default `~/.claude`, or `CLAUDE_CONFIG_DIR` if T3 Code was started with it or
+  it is set under **Variables** in the Claude provider's settings (**Settings > Providers**).
+  Install the plugin in that profile. On your own instance, the same goes for `PLINTH_URL`: the
+  desktop app does not read your shell profile, so set it under **Variables** too, or use the
+  instance's own server (`claude mcp add`) instead of the plugin's.
+- **Visual replies.** T3 Code has its own in-thread pages (`html_render`), deleted with the
+  thread. The skill tells agents to use those for a chart or mockup to look at now, and Plinth for
+  a page to keep or send to someone.
+
+Checked with the `t3` 0.1.9 server on 2026-11-16: Claude (plugin) and Codex (server) published to
+Plinth when asked, and chart requests went to visual replies.
 
 ### Gemini CLI (not yet checked against the real CLI)
 

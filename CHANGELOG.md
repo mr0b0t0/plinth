@@ -10,6 +10,11 @@ Add a line under **Unreleased** in the pull request that makes a change people w
 
 ## Unreleased
 
+- **T3 Code.** T3 Code gets its own tab in **Connect an agent** and in `plinth connect`. It runs
+  your Claude Code and Codex with their own settings, so installing the Plinth plugin there covers
+  T3 Code threads too. The `plinth-artifacts` skill (plugin 0.7.0) tells agents to use T3 Code's
+  in-thread visual replies for a quick chart and Plinth for a page to keep or send.
+
 ## 0.4.2 (2026-11-16)
 
 - **Owners at their own email gate.** On a private (allowlist) artifact, the owner's own address

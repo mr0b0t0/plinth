@@ -19,7 +19,9 @@ nothing says so, answer in the chat and offer the page in one line.
 
 If your environment has its own artifact or page feature, use Plinth when the person asks for it,
 when the page has to reach people outside this AI product, or when they want to keep it next to work
-from their other agents and accounts. Otherwise follow what they ask for.
+from their other agents and accounts. Otherwise follow what they ask for. In T3 Code, a visual reply
+(`html_render`) shows a page in the thread and is deleted with it: use it for a chart or a mockup to
+look at now, and Plinth for a page to keep or send to someone.
 
 ## Tools
 

@@ -1,4 +1,4 @@
-import type { ConnectionInfo } from "@plinth/shared";
+import { type ConnectionInfo, T3_CODE_USES_AGENTS } from "@plinth/shared";
 import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -186,6 +186,23 @@ describe("ConnectPanel", () => {
     expect(
       screen.getByRole("link", { name: /plinth-artifacts\.mdc/ }).getAttribute("href"),
     ).toMatch(/integrations\/cursor\/plinth-artifacts\.mdc$/);
+  });
+
+  it("sets T3 Code up through the Claude Code and Codex it runs", async () => {
+    const user = userEvent.setup();
+    renderPanel();
+    await user.click(screen.getByRole("tab", { name: "T3 Code" }));
+    const panel = screen.getByRole("tabpanel");
+    expect(panel.textContent).toContain(T3_CODE_USES_AGENTS);
+    const headings = [...panel.querySelectorAll("h3")].map((h) => h.textContent);
+    expect(headings).toEqual(["Claude in T3 Code", "Codex in T3 Code", "Teach it Plinth's rules"]);
+    const blocks = [...panel.querySelectorAll("pre code")].map((c) => c.textContent);
+    expect(blocks).toEqual([
+      claudeCodeCommand(ENDPOINT),
+      "export PLINTH_URL=https://plinth.example\nclaude plugin marketplace add mr0b0t0/plinth\nclaude plugin install plinth@plinth",
+      codexCommand(ENDPOINT),
+      "codex plugin marketplace add mr0b0t0/plinth\ncodex plugin add plinth@plinth",
+    ]);
   });
 
   it("remembers the chosen client", async () => {

@@ -33,15 +33,15 @@ export const SKILL_SOURCE = `integrations/skill/${SKILL_NAME}/SKILL.md`;
 /** Plugin metadata, shared by the Claude Code and portable (Codex, ChatGPT) manifests. */
 export const PLUGIN = {
   name: "plinth",
-  version: "0.6.0",
+  version: "0.7.0",
   /**
    * SHA-256 of the sources the plugin ships (the skill and the mention watcher; see
    * scripts/plugin-sources.mjs), and the `version` it was recorded under. When they change, bump
    * `version` (one minor above main, so installed plugins update), then run `pnpm integrations`,
    * which records both here; it refuses while `version` still equals `skillHashVersion`.
    */
-  skillHash: "6bb85a163ed79188b15741c559640af96cb5e3b657022a79c8b9da0a9d979d56",
-  skillHashVersion: "0.6.0",
+  skillHash: "2568187db54359f79cbc0925855604cca0447a279b354e6c3d59db959b764316",
+  skillHashVersion: "0.7.0",
   description:
     "Publish, update and share HTML artifacts and Markdown documents on Plinth: the Plinth MCP server plus a skill with its publishing rules",
   author: { name: "Aconite Software & Investments, Lda.", url: "https://aconite.io" },
@@ -57,6 +57,7 @@ export type ConnectClient =
   | "chatgpt"
   | "claude-code"
   | "codex"
+  | "t3code"
   | "gemini-cli"
   | "cursor"
   | "vscode"
@@ -107,6 +108,22 @@ export function codexCommand(endpoint: string): string {
   return [`codex mcp add ${SERVER_NAME} --url ${endpoint}`, `codex mcp login ${SERVER_NAME}`].join(
     "\n",
   );
+}
+
+/**
+ * T3 Code (t3.codes) has no MCP configuration of its own for its agents: it runs the Claude Code
+ * and Codex installed on the computer with their own settings, plugins and sign-ins. Said wherever
+ * T3 Code appears; checked with t3 0.1.9 on 2026-11-16.
+ */
+export const T3_CODE_USES_AGENTS =
+  "T3 Code runs the Claude Code and Codex on your computer with their own settings, so it uses Plinth wherever they do: set Plinth up in each one you pick in T3 Code and sign in there once.";
+
+/** Codex: install the Plinth plugin (the skill, plus a server for the hosted instance). */
+export function codexPluginCommands(): string[] {
+  return [
+    `codex plugin marketplace add ${MARKETPLACE_REPO}`,
+    `codex plugin add ${PLUGIN.name}@${PLUGIN.name}`,
+  ];
 }
 
 /** Gemini CLI: add the server; it signs in the first time it is used (or with /mcp auth). */
@@ -249,9 +266,24 @@ export const HARNESSES: readonly Harness[] = [
     guidance: {
       kind: "plugin",
       summary: "Install the Plinth plugin for the skill.",
-      commands: `codex plugin marketplace add ${MARKETPLACE_REPO}\ncodex plugin add ${PLUGIN.name}@${PLUGIN.name}`,
+      commands: codexPluginCommands().join("\n"),
       ownInstance:
         "The plugin also adds the hosted server; for this instance keep the server added above.",
+    },
+  },
+  {
+    id: "t3code",
+    label: "T3 Code",
+    reachesLocal: true,
+    nativeArtifacts: "T3 Code visual replies",
+    verified: true,
+    guidance: {
+      kind: "plugin",
+      summary:
+        "Install the Plinth plugin in the Claude Code and Codex that T3 Code runs; their threads in T3 Code then load it.",
+      commands: [...claudeCodePluginCommands(), ...codexPluginCommands()].join("\n"),
+      ownInstance:
+        "The plugins' servers point at plinth.aconite.io; for this instance keep the servers added above.",
     },
   },
   {

@@ -27,8 +27,8 @@ Many coding agents can write a page but have nowhere to put it, and the ones tha
 their own product, under the account and the plan that made it. Plinth is a neutral place for
 pages from any of them:
 
-- **Every agent, one place.** Claude Code, Codex, Cursor, VS Code, Gemini CLI, Claude, ChatGPT,
-  any other MCP client and plain scripts publish to the same home, under your login, whichever
+- **Every agent, one place.** Claude Code, Codex, T3 Code, Cursor, VS Code, Gemini CLI, Claude,
+  ChatGPT, any other MCP client and plain scripts publish to the same home, under your login, whichever
   agent did the work.
 - **Private by default, shared on purpose.** Share a page with specific people, with anyone who has
   the link, or behind a password. Viewers need no AI account.
@@ -85,7 +85,7 @@ a claude.ai organization. Plinth covers what they leave out:
 
 | | Claude Code artifacts | Plinth |
 | --- | --- | --- |
-| Agents | Claude Code (CLI or desktop app) signed in to claude.ai, and Claude Tag | Claude Code, Codex, Cursor, VS Code, Gemini CLI, Claude, ChatGPT, any MCP client, plain HTTP |
+| Agents | Claude Code (CLI or desktop app) signed in to claude.ai, and Claude Tag | Claude Code, Codex, T3 Code, Cursor, VS Code, Gemini CLI, Claude, ChatGPT, any MCP client, plain HTTP |
 | Credentials | API keys, gateway tokens, Amazon Bedrock, Google Cloud's Agent Platform and Microsoft Foundry cannot publish | Any client with a Plinth sign-in or token |
 | Scripts and CI | Off by default in the Agent SDK, the GitHub Action, MCP-server contexts and `claude -p` | Scheduled and CI agents publish with a token ([docs/mcp.md](docs/mcp.md#advanced-personal-access-tokens-scripts-and-ci)) |
 | Who can open a page | Only you, your organization or a shared folder (Team and Enterprise), or anyone with a public link | Listed email addresses, anyone with the link, a password, or public |
@@ -178,6 +178,9 @@ shows how to point it at your own.
 /plugin install plinth --marketplace mr0b0t0/plinth                              # in Claude Code
 codex plugin marketplace add mr0b0t0/plinth && codex plugin add plinth@plinth   # Codex
 ```
+
+[T3 Code](https://t3.codes) runs your Claude Code and Codex with their own settings, so the same
+installs cover its threads.
 
 Gemini CLI, Cursor and VS Code get the same rules as an extension, a rule file and an instructions
 file ([docs/agents.md](docs/agents.md)). Those three have not been tried in each tool yet
