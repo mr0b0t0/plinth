@@ -37,9 +37,11 @@ export interface EnterPayload {
   c?: 1;
   /**
    * An in-chat preview (mcp/preview.ts): the cookie it becomes lets an MCP host's frame show the
-   * page (no frame-ancestors) and is read-only. Never with `x` or `c`.
+   * page (no frame-ancestors) and is read-only. Never with `x` or `c`; always with `v`.
    */
   p?: 1;
+  /** The one version a preview may show. */
+  v?: number;
   [key: string]: unknown;
 }
 
@@ -60,6 +62,8 @@ export interface ContentPayload {
   c?: 1;
   /** a preview pass (copied from the enter token): any framer, read-only, no identity */
   p?: 1;
+  /** the one version a preview pass opens (copied from the enter token) */
+  v?: number;
   [key: string]: unknown;
 }
 
@@ -92,7 +96,7 @@ export async function issueEnterUrl(
   artifact: { id: string; accessEpoch: number },
   next = "/",
   identity?: ViewerIdentity,
-  opts: { capture?: boolean; preview?: boolean } = {},
+  opts: { capture?: boolean; previewVersion?: number } = {},
 ): Promise<string> {
   const payload: EnterPayload = {
     k: "enter",
@@ -105,9 +109,11 @@ export async function issueEnterUrl(
     if (identity) throw new Error("A capture never carries an identity");
     payload.c = 1;
   }
-  if (opts.preview) {
+  if (opts.previewVersion !== undefined) {
     if (identity || opts.capture) throw new Error("A preview is never identified or a capture");
+    if (!isVersion(opts.previewVersion)) throw new Error("A preview names one version");
     payload.p = 1;
+    payload.v = opts.previewVersion;
   }
   if (identity) {
     payload.x = await sealJson(config.tokenSigningKey, IDENTITY_CLAIM_INFO, artifact.id, {
@@ -130,9 +136,12 @@ export async function signContentCookie(
   epoch: number,
   x?: string,
   kind: PassKind = "view",
+  previewVersion?: number,
 ): Promise<string> {
   if (kind !== "view" && x !== undefined)
     throw new Error(`A ${kind} pass never carries an identity`);
+  if ((kind === "preview") !== (previewVersion !== undefined && isVersion(previewVersion)))
+    throw new Error("A preview pass, and only a preview pass, names one version");
   const payload: ContentPayload = {
     k: "content",
     a: artifactId,
@@ -141,8 +150,16 @@ export async function signContentCookie(
   };
   if (x !== undefined) payload.x = x;
   if (kind === "capture") payload.c = 1;
-  if (kind === "preview") payload.p = 1;
+  if (kind === "preview") {
+    payload.p = 1;
+    payload.v = previewVersion;
+  }
   return signToken(config.tokenSigningKey, payload);
+}
+
+/** A version number as tokens carry it. */
+export function isVersion(n: unknown): n is number {
+  return typeof n === "number" && Number.isInteger(n) && n >= 1;
 }
 
 /** The content cookie's lifetime for each kind of pass. */

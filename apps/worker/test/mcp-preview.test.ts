@@ -3,6 +3,7 @@
 // (docs/security.md#in-chat-previews).
 import { createExecutionContext, waitOnExecutionContext } from "cloudflare:test";
 import { env } from "cloudflare:workers";
+import { ARTIFACT_IFRAME_SANDBOX, ARTIFACT_IFRAME_SANDBOX_OPAQUE } from "@plinth/shared";
 import { describe, expect, it } from "vitest";
 import { issueEnterUrl, signContentCookie } from "../src/content/tokens.ts";
 import worker from "../src/index.ts";
@@ -100,6 +101,21 @@ describe("MCP Apps metadata", () => {
   });
 });
 
+describe("the preview frame", () => {
+  it("takes the instance's sandbox flags: no allow-same-origin under opaque isolation", async () => {
+    const a = await agent();
+    const read = async (vars?: Record<string, string>) => {
+      const client = await mcpClient(a.token, vars);
+      const r = await client.readResource({ uri: PREVIEW_RESOURCE_URI });
+      return (r.contents[0] as unknown as { text: string }).text;
+    };
+    expect(await read()).toContain(JSON.stringify(ARTIFACT_IFRAME_SANDBOX));
+    const opaque = await read({ CONTENT_ISOLATION: "opaque" });
+    expect(opaque).toContain(JSON.stringify(ARTIFACT_IFRAME_SANDBOX_OPAQUE));
+    expect(opaque).not.toContain("allow-same-origin");
+  });
+});
+
 describe("preview_artifact", () => {
   it("gives the owner's agent a single-use link to the version, carrying no identity", async () => {
     const { published, link } = await publishAndPreview();
@@ -115,7 +131,7 @@ describe("preview_artifact", () => {
     const { res, setCookie, cookie } = await enterPreview(link.preview_url);
     expect(res.status).toBe(302);
     expect(res.headers.get("location")).toBe("/__plinth/v/1/");
-    expect(setCookie).toMatch(/Max-Age=1800/);
+    expect(setCookie).toMatch(/Max-Age=600/);
     expect(setCookie).toMatch(/HttpOnly/);
     expect(setCookie).toMatch(/Partitioned/);
     expect(directives(res).has("frame-ancestors")).toBe(false);
@@ -198,6 +214,13 @@ describe("preview_artifact", () => {
       headers: { cookie, "sec-fetch-dest": "iframe" },
     });
     expect(await page.text()).toContain("Private numbers");
+    // The pass opens version 1 only: not version 2, and not the current path.
+    for (const path of ["/__plinth/v/2/", "/", "/index.html"]) {
+      const other = await run(`${contentOrigin(published.id)}${path}`, {
+        headers: { cookie, "sec-fetch-dest": "iframe" },
+      });
+      expect(other.status).toBe(404);
+    }
     const missing = await tool(client, "preview_artifact", { id: published.id, version: 9 });
     expect(missing.isError).toBe(true);
   });
@@ -237,13 +260,19 @@ describe("the preview pass", () => {
         artifact,
         "/",
         { email: "ada@example.org", role: "owner" },
-        { preview: true },
+        { previewVersion: 1 },
       ),
     ).rejects.toThrow();
     await expect(
-      issueEnterUrl(c, artifact, "/", undefined, { preview: true, capture: true }),
+      issueEnterUrl(c, artifact, "/", undefined, { previewVersion: 1, capture: true }),
     ).rejects.toThrow();
-    await expect(signContentCookie(c, artifact.id, 1, "sealed", "preview")).rejects.toThrow();
+    await expect(signContentCookie(c, artifact.id, 1, "sealed", "preview", 1)).rejects.toThrow();
+    // A preview always names its one version, and nothing else does.
+    await expect(signContentCookie(c, artifact.id, 1, undefined, "preview")).rejects.toThrow();
+    await expect(signContentCookie(c, artifact.id, 1, undefined, "view", 1)).rejects.toThrow();
+    await expect(
+      issueEnterUrl(c, artifact, "/", undefined, { previewVersion: 0 }),
+    ).rejects.toThrow();
   });
 
   it("cannot read or write shared data", async () => {

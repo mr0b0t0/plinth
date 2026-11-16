@@ -44,10 +44,10 @@ import { claimMention, listMentions, replyComment } from "../services/mentions.t
 import { startUpload } from "../services/uploads.ts";
 import {
   MCP_APP_MIME_TYPE,
-  PREVIEW_APP_HTML,
   PREVIEW_APP_ONLY_META,
   PREVIEW_RESOURCE_URI,
   PREVIEW_TOOL_META,
+  previewAppHtml,
   previewArtifact,
   previewResourceMeta,
   previewSupported,
@@ -482,7 +482,7 @@ export function buildMcpServer(ctx: Ctx): McpServer {
         {
           uri: uri.href,
           mimeType: MCP_APP_MIME_TYPE,
-          text: PREVIEW_APP_HTML,
+          text: previewAppHtml(ctx.config),
           _meta: previewResourceMeta(ctx.config),
         },
       ],

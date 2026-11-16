@@ -183,7 +183,7 @@ One remote MCP server over streamable HTTP at `/mcp`. All tools act as the conne
 hosts that support it show the published version under the tool call. The resource is a fixed page
 Plinth wrote; it may frame `<scheme>://*.<CONTENT_HOST>` only. Each render asks `preview_artifact`
 for a fresh link, so no link appears in a result the model reads. The link becomes a preview pass
-on the content host: no identity, no shared data, 30 minutes, and the only pass whose responses
+on the content host: no identity, no shared data, one version, 10 minutes, and the only pass whose responses
 omit `frame-ancestors` (see `docs/security.md#in-chat-previews`). Not offered under the staging path
 fallback.
 

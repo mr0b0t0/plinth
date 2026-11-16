@@ -27,6 +27,7 @@ import { serveRuntimeScript } from "./runtime.ts";
 import {
   consumeNonce,
   IDENTITY_CLAIM_INFO,
+  isVersion,
   type PassKind,
   passMaxAgeS,
   safeNext,
@@ -164,7 +165,13 @@ const CLAIM_ROLES: ReadonlySet<string> = new Set<EffectiveRole>([
  * A valid content pass. `capture`: Plinth's thumbnail browser (top-level loads allowed). `preview`:
  * an MCP host's in-chat preview (any framer, read-only); neither ever carries an identity.
  */
-type ContentPass = { claim: PageClaim | null; capture: boolean; preview: boolean };
+type ContentPass = {
+  claim: PageClaim | null;
+  capture: boolean;
+  preview: boolean;
+  /** The one version a preview pass opens; null for every other pass. */
+  version: number | null;
+};
 
 /** One cookie value as a pass for this artifact at its epoch, or null when it is not one. */
 async function openPass(
@@ -177,7 +184,9 @@ async function openPass(
   const capture = pass.c === 1;
   const preview = pass.p === 1;
   if (capture && preview) return null;
-  if (pass.x === undefined) return { claim: null, capture, preview };
+  if (preview !== isVersion(pass.v)) return null;
+  const version = preview ? (pass.v as number) : null;
+  if (pass.x === undefined) return { claim: null, capture, preview, version };
   // Capture and preview passes never carry an identity (issueEnterUrl refuses both).
   if (capture || preview) return null;
   if (typeof pass.x !== "string") return null;
@@ -193,6 +202,7 @@ async function openPass(
     },
     capture: false,
     preview: false,
+    version: null,
   };
 }
 
@@ -220,7 +230,12 @@ export async function readContentPass(
     const pass = await openPass(config, artifact, value);
     if (!pass) continue;
     // A preview pass may be framed by anyone, so it never mixes with another kind.
-    if (found && (!sameClaim(found.claim, pass.claim) || found.preview !== pass.preview))
+    if (
+      found &&
+      (!sameClaim(found.claim, pass.claim) ||
+        found.preview !== pass.preview ||
+        found.version !== pass.version)
+    )
       return null;
     found ??= pass;
   }
@@ -359,10 +374,18 @@ async function serve(
     const preview = payload.p === 1;
     if ((capture || preview) && x !== undefined) return expired();
     if (capture && preview) return expired();
+    if (preview !== isVersion(payload.v)) return expired();
     // A preview is for an artifact's own subdomain only: never the path fallback on the app host.
     if (preview && base) return expired();
     const kind: PassKind = capture ? "capture" : preview ? "preview" : "view";
-    const value = await signContentCookie(config, artifactId, payload.e, x, kind);
+    const value = await signContentCookie(
+      config,
+      artifactId,
+      payload.e,
+      x,
+      kind,
+      preview ? (payload.v as number) : undefined,
+    );
     const next = safeNext(url.searchParams.get("next"));
     const res = redirect(config, 302, `${base}${next}`, enterOpts);
     res.headers.append(
@@ -423,6 +446,8 @@ async function serve(
   } else if (path.startsWith(CONTENT_RESERVED_PREFIX)) {
     return fail(404, "Not found");
   }
+  // A preview pass opens its one version's URLs and nothing else, not even the current path.
+  if (pass.preview && (!vm || versionNumber !== pass.version)) return fail(404, "Not found");
   if (versionNumber < 1 || versionNumber > artifact.currentVersion)
     return fail(404, "No such version");
 

@@ -4,7 +4,7 @@
 // name PREVIEW_RESOURCE_URI: a small page Plinth wrote (never user HTML) that asks the app-only
 // preview_artifact tool for a fresh single-use link each time it renders, and frames the published
 // version from its own content subdomain. The link never appears in a tool result the model sees.
-import { ARTIFACT_IFRAME_SANDBOX } from "@plinth/shared";
+import { artifactIframeSandbox } from "@plinth/shared";
 import { appUrl, type Config } from "../config.ts";
 import { issueEnterUrl } from "../content/tokens.ts";
 import { ApiError } from "../lib/errors.ts";
@@ -76,7 +76,9 @@ export async function previewArtifact(
   const v = await requireVersion(ctx, artifact, version ?? artifact.currentVersion);
   const next = `/__plinth/v/${v.number}/`;
   return {
-    preview_url: await issueEnterUrl(ctx.config, artifact, next, undefined, { preview: true }),
+    preview_url: await issueEnterUrl(ctx.config, artifact, next, undefined, {
+      previewVersion: v.number,
+    }),
     id: artifact.id,
     title: artifact.title,
     version: v.number,
@@ -88,9 +90,11 @@ export async function previewArtifact(
  * The preview page. Self-contained (hosts give it a strict CSP), and it trusts messages only from
  * its parent. It speaks the MCP Apps postMessage protocol directly: ui/initialize, then waits for
  * the tool result, asks preview_artifact for a link, and frames it. "Open on Plinth" asks the host
- * to open the artifact's page (ui/open-link).
+ * to open the artifact's page (ui/open-link). The artifact frame gets the instance's sandbox flags
+ * (no allow-same-origin under opaque isolation), as in the app.
  */
-export const PREVIEW_APP_HTML = `<!doctype html>
+export function previewAppHtml(config: Pick<Config, "contentIsolation">): string {
+  return `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -123,7 +127,7 @@ iframe { display: block; width: 100%; height: 560px; border: 0; background: #fff
 <script>
 (() => {
   "use strict";
-  const SANDBOX = ${JSON.stringify(ARTIFACT_IFRAME_SANDBOX)};
+  const SANDBOX = ${JSON.stringify(artifactIframeSandbox(config.contentIsolation))};
   const TOOL = ${JSON.stringify(PREVIEW_TOOL)};
   const $ = (id) => document.getElementById(id);
   const pending = new Map();
@@ -246,3 +250,4 @@ iframe { display: block; width: 100%; height: 560px; border: 0; background: #fff
 </body>
 </html>
 `;
+}
