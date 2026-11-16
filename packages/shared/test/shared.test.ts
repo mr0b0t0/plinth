@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   assetInputSchema,
+  claudeCodePluginCommands,
+  codexPluginCommands,
   HARNESSES,
   HOSTED_ORIGIN,
   harness,
@@ -62,6 +64,14 @@ describe("harness registry", () => {
     expect(harness("claude").reachesLocal).toBe(false);
     expect(harness("chatgpt").reachesLocal).toBe(false);
     expect(harness("claude-code").reachesLocal).toBe(true);
+  });
+  it("sets T3 Code up with the Claude Code and Codex plugins it runs", () => {
+    const t3 = harness("t3code");
+    expect(t3.reachesLocal).toBe(true);
+    expect(t3.guidance.commands).toBe(
+      [...claudeCodePluginCommands(), ...codexPluginCommands()].join("\n"),
+    );
+    expect(harness("codex").guidance.commands).toBe(codexPluginCommands().join("\n"));
   });
   it("keeps the product name and plugin name free of Claude and Codex", () => {
     expect(PLUGIN.name).not.toMatch(/claude|codex/i);

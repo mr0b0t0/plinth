@@ -178,7 +178,8 @@ One remote MCP server over streamable HTTP at `/mcp`. All tools act as the conne
 | `write_artifact_data(id, ops)` | Change shared data (owner or editor): 1 to 50 `set`/`delete` ops, each with a required `if_rev`, each succeeding or failing on its own |
 
 **Agent experience (decided 2026-11-14).** Plinth should feel the same in every harness (Claude,
-Claude Code, Codex, ChatGPT, Gemini CLI, Cursor, VS Code), with Claude's artifact experience as the
+Claude Code, Codex, ChatGPT, Gemini CLI, Cursor, VS Code, and T3 Code through the Claude Code and
+Codex it runs), with Claude's artifact experience as the
 reference: finished pages (real title, light and dark themes, phone width, pinned allowlisted
 scripts), private by default so agents publish without asking and hand over the link, new versions
 at the same link, and a feedback loop through comments. The MCP server's instructions and tool

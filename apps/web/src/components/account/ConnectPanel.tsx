@@ -11,6 +11,7 @@ import {
   claudeCodePluginSlashCommands,
   HOSTED_ORIGIN,
   harness,
+  T3_CODE_USES_AGENTS,
 } from "@plinth/shared";
 import { type ReactNode, type Ref, useState } from "react";
 import { Button, buttonClassName, ICON_SIZE, Tabs } from "../ui/index.ts";
@@ -42,6 +43,7 @@ const CLIENT_LOOK: Record<ConnectClient, { mark: string; hint: string }> = {
   chatgpt: { mark: "G", hint: "web" },
   "claude-code": { mark: "CC", hint: "terminal" },
   codex: { mark: "Cx", hint: "terminal" },
+  t3code: { mark: "T3", hint: "desktop, web" },
   "gemini-cli": { mark: "Ge", hint: "terminal" },
   cursor: { mark: "Cu", hint: "1 click" },
   vscode: { mark: "VS", hint: "1 click" },
@@ -195,6 +197,42 @@ function ClaudeCodeSteps({ endpoint }: { endpoint: string }) {
   );
 }
 
+function CodexSteps({ endpoint }: { endpoint: string }) {
+  return (
+    <div className="pl-acct-howto__item">
+      <CopyBlock
+        label="Run in a terminal"
+        value={codexCommand(endpoint)}
+        copyLabel="Copy Codex commands"
+        copiedMessage="Commands copied"
+      />
+      <p>
+        <code>codex mcp login</code> opens Plinth in your browser; click <strong>Allow</strong>.
+      </p>
+    </div>
+  );
+}
+
+/**
+ * T3 Code has no MCP settings of its own for its agents: it runs Claude Code and Codex with their
+ * own configuration, so its tab is theirs, with Codex's plugin step (Claude Code's steps already
+ * carry the plugin).
+ */
+function T3CodeSteps({ endpoint }: { endpoint: string }) {
+  return (
+    <>
+      <div className="pl-acct-howto__item">
+        <p>{T3_CODE_USES_AGENTS}</p>
+      </div>
+      <h3 className="type-small">Claude in T3 Code</h3>
+      <ClaudeCodeSteps endpoint={endpoint} />
+      <h3 className="type-small">Codex in T3 Code</h3>
+      <CodexSteps endpoint={endpoint} />
+      <Guidance client="codex" endpoint={endpoint} />
+    </>
+  );
+}
+
 function ClientSteps({ client, endpoint }: { client: ConnectClient; endpoint: string }) {
   switch (client) {
     case "claude":
@@ -255,19 +293,9 @@ function ClientSteps({ client, endpoint }: { client: ConnectClient; endpoint: st
     case "claude-code":
       return <ClaudeCodeSteps endpoint={endpoint} />;
     case "codex":
-      return (
-        <div className="pl-acct-howto__item">
-          <CopyBlock
-            label="Run in a terminal"
-            value={codexCommand(endpoint)}
-            copyLabel="Copy Codex commands"
-            copiedMessage="Commands copied"
-          />
-          <p>
-            <code>codex mcp login</code> opens Plinth in your browser; click <strong>Allow</strong>.
-          </p>
-        </div>
-      );
+      return <CodexSteps endpoint={endpoint} />;
+    case "t3code":
+      return <T3CodeSteps endpoint={endpoint} />;
     case "gemini-cli":
       return (
         <div className="pl-acct-howto__item">
@@ -357,8 +385,9 @@ function ClientSteps({ client, endpoint }: { client: ConnectClient; endpoint: st
  * instructions say: a plugin, an extension, a rule file or an uploaded skill.
  */
 function Guidance({ client, endpoint }: { client: ConnectClient; endpoint: string }) {
-  // Claude Code's steps already install the plugin, which carries the rules.
-  if (client === "claude-code") return null;
+  // Claude Code's steps already install the plugin, which carries the rules; T3 Code's steps hold
+  // Claude Code's and Codex's.
+  if (client === "claude-code" || client === "t3code") return null;
   const g = harness(client).guidance;
   const ownInstance = originOf(endpoint) !== HOSTED_ORIGIN;
   return (

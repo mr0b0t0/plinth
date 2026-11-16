@@ -18,6 +18,7 @@ import {
   protectedResourceUrl,
   RATE_LIMITS,
   REPO_URL,
+  T3_CODE_USES_AGENTS,
   typeDef,
 } from "@plinth/shared";
 import { type AppContext, clientIp } from "../api/context.ts";
@@ -157,6 +158,7 @@ function connectSection(config: Config): string {
     "<ul>",
     `<li>${claudeCode}</li>`,
     `<li>Codex: ${commands(codexCommand(endpoint))}. The plugin adds the skill: ${commands(codexPlugin)}.</li>`,
+    `<li>T3 Code: ${escapeHtml(T3_CODE_USES_AGENTS)}</li>`,
     `<li>Gemini CLI: ${commands(geminiCommand(endpoint))}.</li>`,
     `<li>Cursor, VS Code, Claude and ChatGPT: add ${code(endpoint)} as a remote MCP server and sign in with OAuth (${link(DOCS.mcp, "setup for each client")}).</li>`,
     "</ul>",
@@ -486,6 +488,7 @@ ${about} The source code is MIT-licensed: ${REPO_URL}
 - MCP server card: ${serverCardUrl(config)}
 - ${claudeCode}
 - Codex: \`${codexCommand(endpoint).split("\n").join("` then `")}\`. The plugin adds the skill: \`${codexPlugin.split("\n").join("` then `")}\`.
+- T3 Code: ${T3_CODE_USES_AGENTS}
 - Gemini CLI: \`${geminiCommand(endpoint)}\`
 - Cursor and VS Code: add ${endpoint} as a remote MCP server; rule files with the publishing guidance are in ${REPO_URL}/tree/main/integrations
 - Claude and ChatGPT (web and desktop): add ${endpoint} as a custom connector; they need an instance reachable from the internet.
