@@ -10,6 +10,11 @@ Add a line under **Unreleased** in the pull request that makes a change people w
 
 ## Unreleased
 
+- **Owners at their own email gate.** On a private (allowlist) artifact, the owner's own address
+  now gets a code too, and confirming it signs the owner in and opens the artifact. Before, the
+  gate said a code was sent and sent nothing, because the owner is not on the artifact's list.
+  The answer is still the same for every address, so the list cannot be probed.
+
 ## 0.4.1 (2026-11-15)
 
 - **Thumbnails and link previews.** Each version gets a screenshot, taken by Cloudflare Browser
