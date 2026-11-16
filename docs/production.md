@@ -27,7 +27,7 @@ All in the operator's Cloudflare account:
 | --- | --- | --- |
 | D1 database | `plinth` (`7dd95d0b-dd98-469f-8eac-8c6a06c35b52`), migrations 0001, 0002 and 0004 to 0008 applied (there is no 0003) | `scripts/setup.mjs --remote --env production` |
 | R2 bucket | `plinth-files` | `scripts/setup.mjs` |
-| Worker | `plinth` (version `91d8961c-f7c5-47d4-b26e-d41e98721192`, commit `7239be3`: v0.4.2 plus the T3 Code harness entry (#28), the plugin's session note (#29, no Worker change) and in-chat previews (#30), no new migrations; v0.4.1 brought big builds and uploads (0.4.0) and thumbnails, migrations `0006_stored_bytes.sql`, `0007_upload_tickets.sql` and `0008_thumbnails.sql` applied first) | `wrangler deploy --config wrangler.production.jsonc` |
+| Worker | `plinth` (version `b4b2c0df-7651-4a9c-8725-4824af4bfe89`, commit `1b094e6`: the code released as v0.5.0 (T3 Code harness entry, in-chat previews and the fixes from testing them, #28 to #32), no new migrations; v0.4.1 brought big builds and uploads (0.4.0) and thumbnails, migrations `0006_stored_bytes.sql`, `0007_upload_tickets.sql` and `0008_thumbnails.sql` applied first) | `wrangler deploy --config wrangler.production.jsonc` |
 | Worker secrets | `SESSION_SECRET`, `TOKEN_SIGNING_KEY` (generated), `SENDGRID_API_KEY` | `scripts/setup.mjs` |
 | Workers Custom Domain | `plinth.aconite.io`, plus the read-only `AAAA 100::` record and certificate Cloudflare creates for it | `wrangler deploy` |
 | Domain and zone | `plinthusercontent.com`, registered through Cloudflare Registrar (Free plan zone). SSL/TLS "Full (strict)", "Always Use HTTPS" on, Universal SSL for `plinthusercontent.com` and `*.plinthusercontent.com` | Cloudflare dashboard |
@@ -108,6 +108,16 @@ After the in-chat previews deploy (2026-11-16, `7239be3`):
 - **Normal viewing unchanged**: a link viewer's pass for "Welcome to Plinth" still gets a 12-hour
   cookie, `frame-ancestors 'self' https://plinth.aconite.io` and
   `Cross-Origin-Resource-Policy: same-origin`.
+
+After the v0.5.0 deploy (2026-11-16, `1b094e6`):
+
+- **T3 Code** on production: Codex's publish and Claude's update (v2) and doc publish each
+  rendered as an in-chat preview; an older thread kept showing its pinned v1; **Open on Plinth**
+  opened `/a/<slug>/v/<n>`.
+- **claude.ai** (custom connector): the preview shows its title, version and **Open on Plinth**,
+  and says the page cannot be shown there. claude.ai leaves `https://*.plinthusercontent.com` out
+  of a custom connector's `frame-src`; a listing in the Claude directory can ask for the site.
+- **Connect an agent** shows the T3 Code tab with its Claude and Codex sections.
 
 ## Waiting on a human
 
