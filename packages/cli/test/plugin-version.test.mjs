@@ -83,11 +83,15 @@ const integrations = (cwd, ...args) =>
   });
 
 describe("PLUGIN.skillHash", () => {
-  it("matches the committed skill and watcher sources, under the current version", () => {
+  it("matches the committed skill, watcher and hook sources, under the current version", () => {
     assert.match(PLUGIN.skillHash, /^[0-9a-f]{64}$/);
     assert.equal(pluginSourcesHash(root), PLUGIN.skillHash);
     assert.equal(PLUGIN.skillHashVersion, PLUGIN.version);
-    assert.deepEqual(PLUGIN_SOURCE_DIRS, ["integrations/skill", "integrations/watcher"]);
+    assert.deepEqual(PLUGIN_SOURCE_DIRS, [
+      "integrations/skill",
+      "integrations/watcher",
+      "integrations/hooks",
+    ]);
   });
 
   it("is deterministic, and changes with an edit, an added file or a rename", () => {
@@ -108,7 +112,11 @@ describe("PLUGIN.skillHash", () => {
       path.join(d, "integrations/watcher/extra.mjs"),
       path.join(d, "integrations/watcher/x.mjs"),
     );
-    assert.notEqual(pluginSourcesHash(d), h2);
+    const h3 = pluginSourcesHash(d);
+    assert.notEqual(h3, h2);
+    mkdirSync(path.join(d, "integrations/hooks"), { recursive: true });
+    writeFileSync(path.join(d, "integrations/hooks/session-note.md"), "note\n");
+    assert.notEqual(pluginSourcesHash(d), h3);
   });
 
   it("refuses a new hash under the same version, and says to bump PLUGIN.version", () => {

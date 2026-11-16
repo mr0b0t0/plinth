@@ -105,6 +105,17 @@ configuration directory has its own plugins and MCP servers:
 - The sign-ins that Plinth's own programs keep (the mention watcher and the CLI) live in
   `~/.config/plinth/` and are shared by every profile on the computer.
 
+**Where pages go.** Claude Code has its own artifacts and document tools, and its instructions for
+them are strong, so a skill alone rarely wins when the person does not name Plinth. The plugin's
+session-start hook therefore adds a short note (`integrations/hooks/session-note.md`): the person
+installed Plinth to keep and share what their agents make, so a page or document to keep, send or
+show someone goes to Plinth unless they name another place, and a chart or mockup to look at in the
+conversation can stay in a built-in viewer. Set `PLINTH_SESSION_NOTE=0` in Claude Code's
+environment to turn it off. Measured on 2026-11-16 in T3 Code (Claude Code 2.1.325, six prompts for
+a page to send or keep, five where Plinth should stay out): without the note and with the old
+description, 0 of 6 went to Plinth; with the new skill description alone, 2 of 6; with the note,
+6 of 6, and none of the five others did.
+
 **Mentions without asking.** Run `/plinth:watch-mentions` once to connect the mention watcher. A
 background monitor in every session then checks Plinth every 30 seconds and wakes Claude when a new
 `@claude` request arrives, and a session-start hook lists the requests still waiting. Claude Code
