@@ -27,7 +27,7 @@ All in the operator's Cloudflare account:
 | --- | --- | --- |
 | D1 database | `plinth` (`7dd95d0b-dd98-469f-8eac-8c6a06c35b52`), migrations 0001, 0002 and 0004 to 0008 applied (there is no 0003) | `scripts/setup.mjs --remote --env production` |
 | R2 bucket | `plinth-files` | `scripts/setup.mjs` |
-| Worker | `plinth` (version `a2ef6a7c-7ecd-4a45-b5e2-0a1e901a99d5`, commit `6155b64` (v0.4.1): big builds and uploads (0.4.0) and thumbnails, migrations `0006_stored_bytes.sql`, `0007_upload_tickets.sql` and `0008_thumbnails.sql` applied first) | `wrangler deploy --config wrangler.production.jsonc` |
+| Worker | `plinth` (version `4b5ce987-e5fa-49b1-a6a2-4cd81bcb6577`, commit `21cbf39`: v0.4.1 plus the allowlist gate's owner sign-in (#25), no new migrations; v0.4.1 brought big builds and uploads (0.4.0) and thumbnails, migrations `0006_stored_bytes.sql`, `0007_upload_tickets.sql` and `0008_thumbnails.sql` applied first) | `wrangler deploy --config wrangler.production.jsonc` |
 | Worker secrets | `SESSION_SECRET`, `TOKEN_SIGNING_KEY` (generated), `SENDGRID_API_KEY` | `scripts/setup.mjs` |
 | Workers Custom Domain | `plinth.aconite.io`, plus the read-only `AAAA 100::` record and certificate Cloudflare creates for it | `wrangler deploy` |
 | Domain and zone | `plinthusercontent.com`, registered through Cloudflare Registrar (Free plan zone). SSL/TLS "Full (strict)", "Always Use HTTPS" on, Universal SSL for `plinthusercontent.com` and `*.plinthusercontent.com` | Cloudflare dashboard |
