@@ -97,6 +97,9 @@ describe("MCP Apps metadata", () => {
     expect(c.text).toContain('"ui/initialize"');
     expect(c.text).toContain("event.source !== window.parent");
     expect(c.text).toContain('"preview_artifact"');
+    // A host that leaves the content host out of the app's frame-src gets a message, not an
+    // error page.
+    expect(c.text).toContain('"securitypolicyviolation"');
     expect(c.text).not.toMatch(/https?:\/\/(?!\*)/);
   });
 });

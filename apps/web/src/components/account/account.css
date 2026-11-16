@@ -394,6 +394,27 @@
   gap: var(--space-3);
   max-width: var(--reading-max);
 }
+/* One agent's steps: blocks stacked with room between them (steps, then how it learns the rules). */
+.pl-acct-howto {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+  min-width: 0;
+}
+/* A titled group inside one tab (T3 Code: Claude's steps, then Codex's). */
+.pl-acct-howto__section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  max-width: 45rem;
+  min-width: 0;
+  padding-top: var(--space-5);
+  border-top: var(--border-width) solid var(--color-border);
+}
+.pl-acct-howto__heading {
+  margin: 0;
+  font-weight: var(--weight-semibold);
+}
 .pl-acct-howto__item {
   display: flex;
   flex-direction: column;

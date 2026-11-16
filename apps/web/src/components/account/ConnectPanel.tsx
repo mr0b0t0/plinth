@@ -224,11 +224,26 @@ function T3CodeSteps({ endpoint }: { endpoint: string }) {
       <div className="pl-acct-howto__item">
         <p>{T3_CODE_USES_AGENTS}</p>
       </div>
-      <h3 className="type-small">Claude in T3 Code</h3>
-      <ClaudeCodeSteps endpoint={endpoint} />
-      <h3 className="type-small">Codex in T3 Code</h3>
-      <CodexSteps endpoint={endpoint} />
-      <Guidance client="codex" endpoint={endpoint} />
+      <section className="pl-acct-howto__section" aria-labelledby="t3-claude">
+        <h3 id="t3-claude" className="pl-acct-howto__heading">
+          Claude in T3 Code
+        </h3>
+        <ClaudeCodeSteps endpoint={endpoint} />
+        {originOf(endpoint) !== HOSTED_ORIGIN && (
+          <p className="type-small text-muted">
+            The T3 Code desktop app does not read your shell profile: for the plugin, set{" "}
+            <code>PLINTH_URL</code> under <strong>Variables</strong> in its Claude provider settings
+            (<strong>Settings &gt; Providers</strong>), or use this instance's server instead.
+          </p>
+        )}
+      </section>
+      <section className="pl-acct-howto__section" aria-labelledby="t3-codex">
+        <h3 id="t3-codex" className="pl-acct-howto__heading">
+          Codex in T3 Code
+        </h3>
+        <CodexSteps endpoint={endpoint} />
+        <Guidance client="codex" endpoint={endpoint} />
+      </section>
     </>
   );
 }
@@ -499,10 +514,10 @@ export function ConnectPanel({
           lead: CLIENT_LOOK[c.id].mark,
           hint: CLIENT_LOOK[c.id].hint,
           content: (
-            <>
+            <div className="pl-acct-howto">
               <ClientSteps client={c.id} endpoint={endpoint} />
               <Guidance client={c.id} endpoint={endpoint} />
-            </>
+            </div>
           ),
         }))}
       />
