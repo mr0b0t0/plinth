@@ -13,10 +13,7 @@ import {
   LIMITS,
   type PublishResult,
   type PublishWarning,
-  parseCapabilities,
-  serializeCapabilities,
   TTL,
-  TYPE_REGISTRY,
   type Visibility,
 } from "@plinth/shared";
 import { appUrl, contentOrigin } from "../config.ts";
@@ -26,9 +23,8 @@ import { hashToken, newArtifactId, newId, randomString } from "../lib/crypto.ts"
 import { ApiError, isUniqueViolation, notFound, unauthorized } from "../lib/errors.ts";
 import { enforce } from "../lib/ratelimit.ts";
 import { nowIso } from "../lib/time.ts";
-import { notifyDocVersion, notifyVersion } from "../rooms/notify.ts";
 import { getVersionRow, requireArtifact } from "./artifacts.ts";
-import { checkAsset, requireTypeDef, resolveSource } from "./artifactTypes.ts";
+import { checkAsset, requireTypeDef, resolveSource, typeHooks } from "./artifactTypes.ts";
 import {
   ATTEMPT_GUARD,
   attemptCutoff,
@@ -332,31 +328,7 @@ function noEntryFile(def: ArtifactTypeDef): ApiError {
 
 /** The title a page or doc names for itself: <title> of HTML, the first "# " line of Markdown. */
 export function titleFromSource(def: ArtifactTypeDef, text: string): string | null {
-  if (def.sourceField === "html") {
-    const lower = text.slice(0, 64 * 1024).toLowerCase();
-    const open = lower.indexOf("<title");
-    if (open < 0) return null;
-    const start = lower.indexOf(">", open);
-    const end = lower.indexOf("</title", start + 1);
-    if (start < 0 || end < 0) return null;
-    const t = text
-      .slice(start + 1, end)
-      .replace(/\s+/g, " ")
-      .replace(/&amp;/g, "&")
-      .replace(/&lt;/g, "<")
-      .replace(/&gt;/g, ">")
-      .replace(/&quot;/g, '"')
-      .replace(/&#39;/g, "'")
-      .trim();
-    return t ? t.slice(0, LIMITS.maxTitleLength) : null;
-  }
-  for (const line of text.split("\n", 200)) {
-    if (line.startsWith("# ")) {
-      const t = line.slice(2).trim();
-      if (t) return t.slice(0, LIMITS.maxTitleLength);
-    }
-  }
-  return null;
+  return typeHooks(def).title(text);
 }
 
 /**
@@ -816,12 +788,10 @@ export class VersionStager implements Stager {
     // Source first, then the files in the order they arrived.
     entries.sort((a, b) => (a.path === def.sourcePath ? -1 : b.path === def.sourcePath ? 1 : 0));
 
-    let capabilities: string | null;
-    if (this.capabilitiesOverride !== undefined) capabilities = this.capabilitiesOverride;
-    else if (def.id === "html") {
-      const caps = parseCapabilities(sourceText);
-      capabilities = caps ? serializeCapabilities(caps) : null;
-    } else capabilities = null;
+    const capabilities =
+      this.capabilitiesOverride !== undefined
+        ? this.capabilitiesOverride
+        : typeHooks(def).capabilities(sourceText);
 
     let warnings: PublishWarning[] = [];
     if (this.scan) {
@@ -1086,53 +1056,22 @@ export async function commitVersion(
   } catch {
     // A thumbnail is optional; a reader starts the capture later.
   }
-  // A page whose room declaration changed: its room's sockets reconnect through the gate.
-  if (!extra.stager.def.renderer) {
-    try {
-      notifyVersion(ctx, result.id, result.version, extra.capabilities);
-    } catch {
-      // Best effort; the room's alarm re-reads the declaration.
-    }
-  }
-  if (extra.stager.def.liveEdit && target.mode === "update") {
-    // A doc's live draft is merged onto the new version, or frozen for review (rooms/doc.ts).
-    const source = staged.entries.find((e) => e.path === extra.stager.def.sourcePath);
-    try {
-      notifyDocVersion(ctx, result.id, result.version, source?.sha256 ?? null);
-    } catch {
-      // Best effort; loading the draft rebases it onto the current version.
-    }
-    if (!opts.liveCheckpoint && opts.restoredFrom == null) {
-      result = await withLiveDraftWarning(ctx, result);
-    }
+  // Room notifications and per-type publish warnings (services/artifactTypes/<type>.ts).
+  const def = extra.stager.def;
+  const afterCommit = typeHooks(def).afterCommit;
+  if (afterCommit) {
+    const source = staged.entries.find((e) => e.path === def.sourcePath);
+    result = await afterCommit(ctx, {
+      def,
+      result,
+      capabilities: extra.capabilities,
+      update: target.mode === "update",
+      sourceSha256: source?.sha256 ?? null,
+      liveCheckpoint: opts.liveCheckpoint === true,
+      restored: opts.restoredFrom != null,
+    });
   }
   return result;
-}
-
-/** People are editing the doc on its page: say so, once, with nothing for the agent to do. */
-async function withLiveDraftWarning(ctx: Ctx, result: PublishResult): Promise<PublishResult> {
-  let row: unknown = null;
-  try {
-    row = await ctx.env.DB.prepare("SELECT 1 AS one FROM live_drafts WHERE artifact_id = ?1")
-      .bind(result.id)
-      .first();
-  } catch {
-    return result;
-  }
-  if (!row) return result;
-  return {
-    ...result,
-    warnings: [
-      ...result.warnings,
-      {
-        code: "live_draft",
-        file: TYPE_REGISTRY.doc.sourcePath,
-        message:
-          "People are editing this doc on its page. Your version is published; their unsaved " +
-          "edits are merged onto it or reviewed by them. Nothing was overwritten. No action needed.",
-      },
-    ],
-  };
 }
 
 /**

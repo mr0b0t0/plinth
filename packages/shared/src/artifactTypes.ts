@@ -2,13 +2,26 @@
 // type stores a content file (a doc stores content.md) instead of hand-written HTML, and the
 // content host serves a fixed shell page that loads the renderer from the artifact's own origin
 // under /__plinth/types/<id>/. This one table drives validation, storage paths, wire fields,
-// serving, the shell, the editor, the diff label and the dashboard badge. Adding a type (deck,
-// sheet) is an ARTIFACT_TYPES entry, a registry row and a renderer directory; no wire change.
-import { LIMITS } from "./constants.ts";
+// serving, the shell, the editor, the diff label and the dashboard badge.
+//
+// Each type is its own module, artifactTypes/<id>.ts. Adding a type (deck, sheet) is that module,
+// one line in ARTIFACT_TYPES, one line in TYPE_REGISTRY, its Worker hooks
+// (apps/worker/src/services/artifactTypes/<id>.ts) and, for a type with a renderer, a renderer
+// directory (apps/web/src/renderers/<id>/main.ts); no wire change.
+import { doc } from "./artifactTypes/doc.ts";
+import { html } from "./artifactTypes/html.ts";
 import { escapeHtml } from "./markdown.ts";
 
-export const ARTIFACT_TYPES = ["html", "doc"] as const;
+/** Every type, in registry order. */
+// biome-ignore format: one type per line, so each type adds its own line
+export const ARTIFACT_TYPES = [
+  "html",
+  "doc",
+] as const;
 export type ArtifactType = (typeof ARTIFACT_TYPES)[number];
+
+/** The languages the source editor holds. The web app has a Monaco setup for each one. */
+export type EditorLanguage = "html" | "markdown";
 
 export interface ArtifactTypeDef {
   id: ArtifactType;
@@ -31,7 +44,7 @@ export interface ArtifactTypeDef {
   assetTypes: RegExp | null;
   /** Renderer files under /__plinth/types/<id>/, or null for a type served as-is. */
   renderer: { script: string; style: string } | null;
-  editor: { language: "html" | "markdown"; wordWrap: "on" | "off" };
+  editor: { language: EditorLanguage; wordWrap: "on" | "off" };
   /**
    * Owners and editors may edit it on its rendered page, live with each other (#36). Only types
    * whose page is Plinth's own renderer: page scripts in an HTML artifact could forge edits.
@@ -39,38 +52,32 @@ export interface ArtifactTypeDef {
   liveEdit: boolean;
 }
 
-export const TYPE_REGISTRY: Record<ArtifactType, ArtifactTypeDef> = {
-  html: {
-    id: "html",
-    label: "HTML page",
-    badge: null,
-    sourcePath: "index.html",
-    sourceField: "html",
-    sourceLabel: "HTML",
-    contentType: "text/html; charset=utf-8",
-    maxSourceBytes: LIMITS.maxHtmlBytes,
-    reservedPaths: ["index.html"],
-    assetTypes: null,
-    renderer: null,
-    editor: { language: "html", wordWrap: "on" },
-    liveEdit: false,
-  },
-  doc: {
-    id: "doc",
-    label: "Document",
-    badge: "Doc",
-    sourcePath: "content.md",
-    sourceField: "content",
-    sourceLabel: "Markdown",
-    contentType: "text/markdown; charset=utf-8",
-    maxSourceBytes: LIMITS.maxDocBytes,
-    reservedPaths: ["index.html", "content.md"],
-    assetTypes: /^image\/(png|jpeg|gif|webp|avif|svg\+xml)$/,
-    renderer: { script: "doc.js", style: "doc.css" },
-    editor: { language: "markdown", wordWrap: "on" },
-    liveEdit: true,
-  },
+/** A type module's row: an ArtifactTypeDef whose id is that module's own type. */
+export type TypeModule<K extends ArtifactType> = ArtifactTypeDef & { readonly id: K };
+
+/** Every type's row, keyed by its id, in ARTIFACT_TYPES order. One type per line. */
+export const TYPE_REGISTRY: { readonly [K in ArtifactType]: TypeModule<K> } = {
+  html,
+  doc,
 };
+
+/**
+ * The files a type's renderer is made of, each with the only Content-Type it may be served as.
+ * The web build emits exactly these (apps/web/build/renderers.ts) and the content host serves
+ * only these (content/typed.ts serveRendererFile). Empty for a type without a renderer.
+ */
+export function rendererFiles(
+  def: ArtifactTypeDef,
+): readonly { name: string; contentType: "text/javascript" | "text/css" }[] {
+  if (!def.renderer) return [];
+  return [
+    { name: def.renderer.script, contentType: "text/javascript" },
+    { name: def.renderer.style, contentType: "text/css" },
+  ];
+}
+
+/** Where the web build puts renderer files, and where the Worker reads them from ASSETS. */
+export const RENDERERS_DIR = "__plinth-renderers";
 
 /** The registry row for a type id, or null for an unknown value (prototype keys included). */
 export function typeDef(t: string): ArtifactTypeDef | null {

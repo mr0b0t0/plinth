@@ -1,0 +1,258 @@
+no data block
+  null
+caps=[] available=true identified=true email=false room_email=false
+  null
+caps=[] available=true identified=true email=false room_email=true
+  This page can see that you are ada@example.org and shows it to the other people who have it open.
+caps=[] available=true identified=true email=true room_email=false
+  null
+caps=[] available=true identified=true email=true room_email=true
+  This page can see that you are ada@example.org and shows it to the other people who have it open.
+caps=[] available=true identified=false email=false room_email=false
+  null
+caps=[] available=true identified=false email=false room_email=true
+  This page can see that you are ada@example.org and shows it to the other people who have it open.
+caps=[] available=true identified=false email=true room_email=false
+  null
+caps=[] available=true identified=false email=true room_email=true
+  This page can see that you are ada@example.org and shows it to the other people who have it open.
+caps=[] available=false identified=true email=false room_email=false
+  null
+caps=[] available=false identified=true email=false room_email=true
+  This page can see that you are ada@example.org and shows it to the other people who have it open.
+caps=[] available=false identified=true email=true room_email=false
+  null
+caps=[] available=false identified=true email=true room_email=true
+  This page can see that you are ada@example.org and shows it to the other people who have it open.
+caps=[] available=false identified=false email=false room_email=false
+  null
+caps=[] available=false identified=false email=false room_email=true
+  This page can see that you are ada@example.org and shows it to the other people who have it open.
+caps=[] available=false identified=false email=true room_email=false
+  null
+caps=[] available=false identified=false email=true room_email=true
+  This page can see that you are ada@example.org and shows it to the other people who have it open.
+caps=[data] available=true identified=true email=false room_email=false
+  This page saves what you enter. People with access can see the entries; the owner and editors can see who wrote them.
+caps=[data] available=true identified=true email=false room_email=true
+  This page can see that you are ada@example.org and shows it to the other people who have it open. This page saves what you enter. People with access can see the entries; the owner and editors can see who wrote them.
+caps=[data] available=true identified=true email=true room_email=false
+  This page saves what you enter. People with access can see the entries; the owner and editors can see who wrote them.
+caps=[data] available=true identified=true email=true room_email=true
+  This page can see that you are ada@example.org and shows it to the other people who have it open. This page saves what you enter. People with access can see the entries; the owner and editors can see who wrote them.
+caps=[data] available=true identified=false email=false room_email=false
+  This page shows entries saved by people it is shared with. You can view them but not add your own.
+caps=[data] available=true identified=false email=false room_email=true
+  This page can see that you are ada@example.org and shows it to the other people who have it open. This page shows entries saved by people it is shared with. You can view them but not add your own.
+caps=[data] available=true identified=false email=true room_email=false
+  This page shows entries saved by people it is shared with. You can view them but not add your own.
+caps=[data] available=true identified=false email=true room_email=true
+  This page can see that you are ada@example.org and shows it to the other people who have it open. This page shows entries saved by people it is shared with. You can view them but not add your own.
+caps=[data] available=false identified=true email=false room_email=false
+  Shared data is not available on this server.
+caps=[data] available=false identified=true email=false room_email=true
+  This page can see that you are ada@example.org and shows it to the other people who have it open. Shared data is not available on this server.
+caps=[data] available=false identified=true email=true room_email=false
+  Shared data is not available on this server.
+caps=[data] available=false identified=true email=true room_email=true
+  This page can see that you are ada@example.org and shows it to the other people who have it open. Shared data is not available on this server.
+caps=[data] available=false identified=false email=false room_email=false
+  Shared data is not available on this server.
+caps=[data] available=false identified=false email=false room_email=true
+  This page can see that you are ada@example.org and shows it to the other people who have it open. Shared data is not available on this server.
+caps=[data] available=false identified=false email=true room_email=false
+  Shared data is not available on this server.
+caps=[data] available=false identified=false email=true room_email=true
+  This page can see that you are ada@example.org and shows it to the other people who have it open. Shared data is not available on this server.
+caps=[viewer] available=true identified=true email=false room_email=false
+  null
+caps=[viewer] available=true identified=true email=false room_email=true
+  This page can see that you are ada@example.org and shows it to the other people who have it open.
+caps=[viewer] available=true identified=true email=true room_email=false
+  null
+caps=[viewer] available=true identified=true email=true room_email=true
+  This page can see that you are ada@example.org and shows it to the other people who have it open.
+caps=[viewer] available=true identified=false email=false room_email=false
+  null
+caps=[viewer] available=true identified=false email=false room_email=true
+  This page can see that you are ada@example.org and shows it to the other people who have it open.
+caps=[viewer] available=true identified=false email=true room_email=false
+  null
+caps=[viewer] available=true identified=false email=true room_email=true
+  This page can see that you are ada@example.org and shows it to the other people who have it open.
+caps=[viewer] available=false identified=true email=false room_email=false
+  null
+caps=[viewer] available=false identified=true email=false room_email=true
+  This page can see that you are ada@example.org and shows it to the other people who have it open.
+caps=[viewer] available=false identified=true email=true room_email=false
+  null
+caps=[viewer] available=false identified=true email=true room_email=true
+  This page can see that you are ada@example.org and shows it to the other people who have it open.
+caps=[viewer] available=false identified=false email=false room_email=false
+  null
+caps=[viewer] available=false identified=false email=false room_email=true
+  This page can see that you are ada@example.org and shows it to the other people who have it open.
+caps=[viewer] available=false identified=false email=true room_email=false
+  null
+caps=[viewer] available=false identified=false email=true room_email=true
+  This page can see that you are ada@example.org and shows it to the other people who have it open.
+caps=[data,viewer] available=true identified=true email=false room_email=false
+  This page saves what you enter. People with access can see the entries; the owner and editors can see who wrote them.
+caps=[data,viewer] available=true identified=true email=false room_email=true
+  This page can see that you are ada@example.org and shows it to the other people who have it open. This page saves what you enter. People with access can see the entries; the owner and editors can see who wrote them.
+caps=[data,viewer] available=true identified=true email=true room_email=false
+  This page can see that you are ada@example.org and saves what you enter. People with access can see the entries and who wrote them.
+caps=[data,viewer] available=true identified=true email=true room_email=true
+  This page can see that you are ada@example.org, shows it to the other people who have it open, and saves what you enter. People with access can see the entries and who wrote them.
+caps=[data,viewer] available=true identified=false email=false room_email=false
+  This page shows entries saved by people it is shared with. You can view them but not add your own.
+caps=[data,viewer] available=true identified=false email=false room_email=true
+  This page can see that you are ada@example.org and shows it to the other people who have it open. This page shows entries saved by people it is shared with. You can view them but not add your own.
+caps=[data,viewer] available=true identified=false email=true room_email=false
+  This page shows entries saved by people it is shared with. You can view them but not add your own.
+caps=[data,viewer] available=true identified=false email=true room_email=true
+  This page can see that you are ada@example.org and shows it to the other people who have it open. This page shows entries saved by people it is shared with. You can view them but not add your own.
+caps=[data,viewer] available=false identified=true email=false room_email=false
+  Shared data is not available on this server.
+caps=[data,viewer] available=false identified=true email=false room_email=true
+  This page can see that you are ada@example.org and shows it to the other people who have it open. Shared data is not available on this server.
+caps=[data,viewer] available=false identified=true email=true room_email=false
+  Shared data is not available on this server.
+caps=[data,viewer] available=false identified=true email=true room_email=true
+  This page can see that you are ada@example.org and shows it to the other people who have it open. Shared data is not available on this server.
+caps=[data,viewer] available=false identified=false email=false room_email=false
+  Shared data is not available on this server.
+caps=[data,viewer] available=false identified=false email=false room_email=true
+  This page can see that you are ada@example.org and shows it to the other people who have it open. Shared data is not available on this server.
+caps=[data,viewer] available=false identified=false email=true room_email=false
+  Shared data is not available on this server.
+caps=[data,viewer] available=false identified=false email=true room_email=true
+  This page can see that you are ada@example.org and shows it to the other people who have it open. Shared data is not available on this server.
+caps=[room] available=true identified=true email=false room_email=false
+  null
+caps=[room] available=true identified=true email=false room_email=true
+  This page can see that you are ada@example.org and shows it to the other people who have it open.
+caps=[room] available=true identified=true email=true room_email=false
+  null
+caps=[room] available=true identified=true email=true room_email=true
+  This page can see that you are ada@example.org and shows it to the other people who have it open.
+caps=[room] available=true identified=false email=false room_email=false
+  null
+caps=[room] available=true identified=false email=false room_email=true
+  This page can see that you are ada@example.org and shows it to the other people who have it open.
+caps=[room] available=true identified=false email=true room_email=false
+  null
+caps=[room] available=true identified=false email=true room_email=true
+  This page can see that you are ada@example.org and shows it to the other people who have it open.
+caps=[room] available=false identified=true email=false room_email=false
+  null
+caps=[room] available=false identified=true email=false room_email=true
+  This page can see that you are ada@example.org and shows it to the other people who have it open.
+caps=[room] available=false identified=true email=true room_email=false
+  null
+caps=[room] available=false identified=true email=true room_email=true
+  This page can see that you are ada@example.org and shows it to the other people who have it open.
+caps=[room] available=false identified=false email=false room_email=false
+  null
+caps=[room] available=false identified=false email=false room_email=true
+  This page can see that you are ada@example.org and shows it to the other people who have it open.
+caps=[room] available=false identified=false email=true room_email=false
+  null
+caps=[room] available=false identified=false email=true room_email=true
+  This page can see that you are ada@example.org and shows it to the other people who have it open.
+caps=[data,room] available=true identified=true email=false room_email=false
+  This page saves what you enter. People with access can see the entries; the owner and editors can see who wrote them.
+caps=[data,room] available=true identified=true email=false room_email=true
+  This page can see that you are ada@example.org and shows it to the other people who have it open. This page saves what you enter. People with access can see the entries; the owner and editors can see who wrote them.
+caps=[data,room] available=true identified=true email=true room_email=false
+  This page saves what you enter. People with access can see the entries; the owner and editors can see who wrote them.
+caps=[data,room] available=true identified=true email=true room_email=true
+  This page can see that you are ada@example.org and shows it to the other people who have it open. This page saves what you enter. People with access can see the entries; the owner and editors can see who wrote them.
+caps=[data,room] available=true identified=false email=false room_email=false
+  This page shows entries saved by people it is shared with. You can view them but not add your own.
+caps=[data,room] available=true identified=false email=false room_email=true
+  This page can see that you are ada@example.org and shows it to the other people who have it open. This page shows entries saved by people it is shared with. You can view them but not add your own.
+caps=[data,room] available=true identified=false email=true room_email=false
+  This page shows entries saved by people it is shared with. You can view them but not add your own.
+caps=[data,room] available=true identified=false email=true room_email=true
+  This page can see that you are ada@example.org and shows it to the other people who have it open. This page shows entries saved by people it is shared with. You can view them but not add your own.
+caps=[data,room] available=false identified=true email=false room_email=false
+  Shared data is not available on this server.
+caps=[data,room] available=false identified=true email=false room_email=true
+  This page can see that you are ada@example.org and shows it to the other people who have it open. Shared data is not available on this server.
+caps=[data,room] available=false identified=true email=true room_email=false
+  Shared data is not available on this server.
+caps=[data,room] available=false identified=true email=true room_email=true
+  This page can see that you are ada@example.org and shows it to the other people who have it open. Shared data is not available on this server.
+caps=[data,room] available=false identified=false email=false room_email=false
+  Shared data is not available on this server.
+caps=[data,room] available=false identified=false email=false room_email=true
+  This page can see that you are ada@example.org and shows it to the other people who have it open. Shared data is not available on this server.
+caps=[data,room] available=false identified=false email=true room_email=false
+  Shared data is not available on this server.
+caps=[data,room] available=false identified=false email=true room_email=true
+  This page can see that you are ada@example.org and shows it to the other people who have it open. Shared data is not available on this server.
+caps=[viewer,room] available=true identified=true email=false room_email=false
+  null
+caps=[viewer,room] available=true identified=true email=false room_email=true
+  This page can see that you are ada@example.org and shows it to the other people who have it open.
+caps=[viewer,room] available=true identified=true email=true room_email=false
+  null
+caps=[viewer,room] available=true identified=true email=true room_email=true
+  This page can see that you are ada@example.org and shows it to the other people who have it open.
+caps=[viewer,room] available=true identified=false email=false room_email=false
+  null
+caps=[viewer,room] available=true identified=false email=false room_email=true
+  This page can see that you are ada@example.org and shows it to the other people who have it open.
+caps=[viewer,room] available=true identified=false email=true room_email=false
+  null
+caps=[viewer,room] available=true identified=false email=true room_email=true
+  This page can see that you are ada@example.org and shows it to the other people who have it open.
+caps=[viewer,room] available=false identified=true email=false room_email=false
+  null
+caps=[viewer,room] available=false identified=true email=false room_email=true
+  This page can see that you are ada@example.org and shows it to the other people who have it open.
+caps=[viewer,room] available=false identified=true email=true room_email=false
+  null
+caps=[viewer,room] available=false identified=true email=true room_email=true
+  This page can see that you are ada@example.org and shows it to the other people who have it open.
+caps=[viewer,room] available=false identified=false email=false room_email=false
+  null
+caps=[viewer,room] available=false identified=false email=false room_email=true
+  This page can see that you are ada@example.org and shows it to the other people who have it open.
+caps=[viewer,room] available=false identified=false email=true room_email=false
+  null
+caps=[viewer,room] available=false identified=false email=true room_email=true
+  This page can see that you are ada@example.org and shows it to the other people who have it open.
+caps=[data,viewer,room] available=true identified=true email=false room_email=false
+  This page saves what you enter. People with access can see the entries; the owner and editors can see who wrote them.
+caps=[data,viewer,room] available=true identified=true email=false room_email=true
+  This page can see that you are ada@example.org and shows it to the other people who have it open. This page saves what you enter. People with access can see the entries; the owner and editors can see who wrote them.
+caps=[data,viewer,room] available=true identified=true email=true room_email=false
+  This page can see that you are ada@example.org and saves what you enter. People with access can see the entries and who wrote them.
+caps=[data,viewer,room] available=true identified=true email=true room_email=true
+  This page can see that you are ada@example.org, shows it to the other people who have it open, and saves what you enter. People with access can see the entries and who wrote them.
+caps=[data,viewer,room] available=true identified=false email=false room_email=false
+  This page shows entries saved by people it is shared with. You can view them but not add your own.
+caps=[data,viewer,room] available=true identified=false email=false room_email=true
+  This page can see that you are ada@example.org and shows it to the other people who have it open. This page shows entries saved by people it is shared with. You can view them but not add your own.
+caps=[data,viewer,room] available=true identified=false email=true room_email=false
+  This page shows entries saved by people it is shared with. You can view them but not add your own.
+caps=[data,viewer,room] available=true identified=false email=true room_email=true
+  This page can see that you are ada@example.org and shows it to the other people who have it open. This page shows entries saved by people it is shared with. You can view them but not add your own.
+caps=[data,viewer,room] available=false identified=true email=false room_email=false
+  Shared data is not available on this server.
+caps=[data,viewer,room] available=false identified=true email=false room_email=true
+  This page can see that you are ada@example.org and shows it to the other people who have it open. Shared data is not available on this server.
+caps=[data,viewer,room] available=false identified=true email=true room_email=false
+  Shared data is not available on this server.
+caps=[data,viewer,room] available=false identified=true email=true room_email=true
+  This page can see that you are ada@example.org and shows it to the other people who have it open. Shared data is not available on this server.
+caps=[data,viewer,room] available=false identified=false email=false room_email=false
+  Shared data is not available on this server.
+caps=[data,viewer,room] available=false identified=false email=false room_email=true
+  This page can see that you are ada@example.org and shows it to the other people who have it open. Shared data is not available on this server.
+caps=[data,viewer,room] available=false identified=false email=true room_email=false
+  Shared data is not available on this server.
+caps=[data,viewer,room] available=false identified=false email=true room_email=true
+  This page can see that you are ada@example.org and shows it to the other people who have it open. Shared data is not available on this server.

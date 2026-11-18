@@ -3,8 +3,22 @@
 // 2026-11-14-typed-outputs-doc-design.md, "Service rules"). The type comes from the publish call
 // (default html) or, on update, from the artifact, whose type never changes. Byte limits and
 // asset rules are checked where the bytes are made (storage.ts prepareFiles, via checkAsset).
-import { type ArtifactType, type ArtifactTypeDef, typeDef } from "@plinth/shared";
+//
+// Everything a type does differently on the Worker is one of its hooks (TypeHooks), in its own
+// module under artifactTypes/<id>.ts: validating its source, the title and capabilities a version
+// takes, the message for an asset it does not take, and what happens after a version commits
+// (room notifications, per-type publish warnings). stage.ts and artifacts.ts call the hooks and
+// never branch on a type id.
+import {
+  type ArtifactType,
+  type ArtifactTypeDef,
+  type PublishResult,
+  typeDef,
+} from "@plinth/shared";
 import { ApiError } from "../lib/errors.ts";
+import { docHooks } from "./artifactTypes/doc.ts";
+import { htmlHooks } from "./artifactTypes/html.ts";
+import type { Ctx } from "./context.ts";
 
 export interface SourceInput {
   type?: string;
@@ -12,8 +26,52 @@ export interface SourceInput {
   content?: string;
 }
 
-/** A whole HTML document sent where Markdown (or another typed format) belongs. */
-const HTML_DOCUMENT_RE = /^\s*(<!doctype html|<html[\s>])/i;
+/** A version that has just committed, as a type's afterCommit hook sees it. */
+export interface CommittedVersion {
+  def: ArtifactTypeDef;
+  result: PublishResult;
+  /** versions.capabilities as stored for this version. */
+  capabilities: string | null;
+  /** An update of an existing artifact (publish otherwise). */
+  update: boolean;
+  /** The stored source file's sha256, or null. */
+  sourceSha256: string | null;
+  /** A checkpoint of a live draft (services/live.ts). */
+  liveCheckpoint: boolean;
+  /** A restore of an older version. */
+  restored: boolean;
+}
+
+/** What one type does differently on the Worker. Every type has an entry in TYPE_HOOKS. */
+export interface TypeHooks {
+  /** The title the source names for itself, or null (the version is then "Untitled"). */
+  title(text: string): string | null;
+  /** What the source declares, as versions.capabilities stores it, or null. */
+  capabilities(text: string): string | null;
+  /**
+   * Refuse a source the type cannot hold, after the wire-field checks (throws invalid_input).
+   * Runs for inline publishes and updates and for bundle uploads.
+   */
+  validate?(def: ArtifactTypeDef, text: string): void;
+  /** Said to the agent when an asset is of a content type the type does not take. */
+  assetRule?: string;
+  /**
+   * After the commit, outside its error handling: never makes the commit look failed. Returns
+   * the result, with any per-type publish warnings added.
+   */
+  afterCommit?(ctx: Ctx, v: CommittedVersion): Promise<PublishResult>;
+}
+
+/** Every type's hooks, keyed by its id. One type per line, in ARTIFACT_TYPES order. */
+const TYPE_HOOKS: { readonly [K in ArtifactType]: TypeHooks } = {
+  html: htmlHooks,
+  doc: docHooks,
+};
+
+/** The Worker hooks of a registry row. */
+export function typeHooks(def: ArtifactTypeDef): TypeHooks {
+  return TYPE_HOOKS[def.id];
+}
 
 function refuse(def: ArtifactTypeDef, field: string, message: string): ApiError {
   return new ApiError("invalid_input", message, { type: def.id, field });
@@ -66,6 +124,7 @@ export function resolveSource(
     if (input.html === undefined) {
       throw refuse(def, "html", 'html is required (or pass type "doc" with content)');
     }
+    typeHooks(def).validate?.(def, input.html);
     return { def, text: input.html };
   }
 
@@ -82,20 +141,9 @@ export function resolveSource(
     );
   }
   if (input.content === undefined) throw refuse(def, "content", wantsContent);
-  if (HTML_DOCUMENT_RE.test(input.content)) {
-    throw refuse(
-      def,
-      "content",
-      `content for type ${def.id} is ${def.sourceLabel}. To publish HTML, use type "html" and the html field.`,
-    );
-  }
+  typeHooks(def).validate?.(def, input.content);
   return { def, text: input.content };
 }
-
-/** What a type allows as assets, said to the agent when it sends something else. */
-const ASSET_RULE: Partial<Record<ArtifactType, string>> = {
-  doc: "A doc's assets are images (png, jpg, gif, webp, avif, svg)",
-};
 
 /** Refuse an asset at one of the type's reserved paths or of a content type it does not take. */
 export function checkAsset(def: ArtifactTypeDef, path: string, contentType: string): void {
@@ -112,7 +160,7 @@ export function checkAsset(def: ArtifactTypeDef, path: string, contentType: stri
   if (def.assetTypes && !def.assetTypes.test(contentType)) {
     throw new ApiError(
       "invalid_input",
-      ASSET_RULE[def.id] ?? `Asset ${path} is not a file type a ${def.id} takes`,
+      typeHooks(def).assetRule ?? `Asset ${path} is not a file type a ${def.id} takes`,
       { type: def.id, field: "assets", path, content_type: contentType },
     );
   }

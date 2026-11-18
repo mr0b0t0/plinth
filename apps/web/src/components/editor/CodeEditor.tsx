@@ -1,6 +1,7 @@
 // Monaco editors (single and diff), themed from the design tokens. This module pulls in Monaco, so
 // it is only ever reached through a lazy import.
 import { DiffEditor, Editor, type MonacoDiffEditor } from "@monaco-editor/react";
+import type { EditorLanguage as RegistryLanguage } from "@plinth/shared";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTheme } from "../../lib/theme.ts";
 import { Spinner } from "../ui/index.ts";
@@ -38,7 +39,7 @@ function useTypeSettings(): { fontFamily: string; fontSize: number; lineHeight: 
 const loading = <Spinner label="Loading the editor" />;
 
 /** The languages the editor holds, from the type registry's editor settings. */
-export type EditorLanguage = "html" | "markdown";
+export type EditorLanguage = RegistryLanguage;
 export type EditorWordWrap = "on" | "off";
 
 const BASE_OPTIONS = {
@@ -58,19 +59,25 @@ const BASE_OPTIONS = {
   acceptSuggestionOnCommitCharacter: false,
 };
 
+/** Prose: no suggestions pop up while typing, and no quick suggestions inside words. */
+const PROSE_OPTIONS = {
+  quickSuggestions: false,
+  suggestOnTriggerCharacters: false,
+  autoClosingBrackets: "never" as const,
+  autoClosingQuotes: "never" as const,
+};
+
 /**
- * Options for one language. HTML keeps the HTML language service's completion. Markdown is prose:
- * no suggestions pop up while typing, and no quick suggestions inside words.
+ * Options for each language a type's editor settings name. HTML keeps the HTML language service's
+ * completion; Markdown is prose. A type with a new language adds its row here.
  */
+const LANGUAGE_OPTIONS: { readonly [L in EditorLanguage]: Partial<typeof PROSE_OPTIONS> } = {
+  html: {},
+  markdown: PROSE_OPTIONS,
+};
+
 function languageOptions(language: EditorLanguage, wordWrap: EditorWordWrap) {
-  if (language === "html") return { wordWrap };
-  return {
-    wordWrap,
-    quickSuggestions: false,
-    suggestOnTriggerCharacters: false,
-    autoClosingBrackets: "never" as const,
-    autoClosingQuotes: "never" as const,
-  };
+  return { wordWrap, ...LANGUAGE_OPTIONS[language] };
 }
 
 export interface CodeEditorProps {
