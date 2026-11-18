@@ -50,6 +50,10 @@ export const PLUGIN = {
   license: "MIT",
   keywords: ["artifacts", "html", "publishing", "sharing", "mcp"],
   privacyPolicyUrl: `${HOSTED_ORIGIN}/legal/privacy`,
+  /** Listing links the Claude plugin directory reads from plugin.json (it guesses them from the README otherwise). */
+  termsOfServiceUrl: `${HOSTED_ORIGIN}/legal/terms`,
+  supportUrl: `${REPO_URL}/issues`,
+  documentationUrl: `${REPO_URL}/blob/main/docs/agents.md`,
 } as const;
 
 export type ConnectClient =

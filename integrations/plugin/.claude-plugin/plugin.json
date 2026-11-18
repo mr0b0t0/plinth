@@ -16,5 +16,8 @@
     "sharing",
     "mcp"
   ],
-  "privacyPolicyUrl": "https://plinth.aconite.io/legal/privacy"
+  "privacyPolicyUrl": "https://plinth.aconite.io/legal/privacy",
+  "termsOfServiceUrl": "https://plinth.aconite.io/legal/terms",
+  "supportUrl": "https://github.com/mr0b0t0/plinth/issues",
+  "documentationUrl": "https://github.com/mr0b0t0/plinth/blob/main/docs/agents.md"
 }

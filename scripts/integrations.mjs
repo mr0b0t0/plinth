@@ -57,7 +57,13 @@ const outputs = new Map();
 outputs.set(`integrations/plugin/skills/${SKILL_NAME}/SKILL.md`, skill);
 outputs.set(
   "integrations/plugin/.claude-plugin/plugin.json",
-  json({ ...meta, privacyPolicyUrl: PLUGIN.privacyPolicyUrl }),
+  json({
+    ...meta,
+    privacyPolicyUrl: PLUGIN.privacyPolicyUrl,
+    termsOfServiceUrl: PLUGIN.termsOfServiceUrl,
+    supportUrl: PLUGIN.supportUrl,
+    documentationUrl: PLUGIN.documentationUrl,
+  }),
 );
 outputs.set(
   "integrations/plugin/.mcp.json",
@@ -210,7 +216,13 @@ for (const [from, to] of directorySkillEdits) {
 outputs.set(`${DIRECTORY}/skills/${SKILL_NAME}/SKILL.md`, directorySkill);
 outputs.set(
   `${DIRECTORY}/.claude-plugin/plugin.json`,
-  json({ ...meta, privacyPolicyUrl: PLUGIN.privacyPolicyUrl }),
+  json({
+    ...meta,
+    privacyPolicyUrl: PLUGIN.privacyPolicyUrl,
+    termsOfServiceUrl: PLUGIN.termsOfServiceUrl,
+    supportUrl: PLUGIN.supportUrl,
+    documentationUrl: PLUGIN.documentationUrl,
+  }),
 );
 outputs.set(
   `${DIRECTORY}/.mcp.json`,
