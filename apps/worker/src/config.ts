@@ -12,6 +12,7 @@ import {
   ROOM_DEFAULTS,
 } from "@plinth/shared";
 import { getDomain } from "tldts";
+import type { ArtifactRoom } from "./rooms/ArtifactRoom.ts";
 
 /** Secrets are set with `wrangler secret put` (or .dev.vars locally); not in wrangler.jsonc. */
 export interface Secrets {
@@ -23,12 +24,14 @@ export interface Secrets {
 }
 
 /**
- * Bindings an operator adds by hand in their own wrangler config, never in the shipped one:
- * BROWSER is Cloudflare Browser Rendering (`"browser": { "binding": "BROWSER" }`), used for
- * thumbnails. Local, tunnel and Docker instances run without it.
+ * Bindings a deploy may lack. BROWSER is Cloudflare Browser Rendering (`"browser": { "binding":
+ * "BROWSER" }`), used for thumbnails, which an operator adds by hand; local, tunnel and Docker
+ * instances run without it. ROOMS is the live-room Durable Object namespace (class ArtifactRoom),
+ * which every config Plinth generates carries; an older config without it simply has rooms off.
  */
 export interface OptionalBindings {
   BROWSER?: Fetcher;
+  ROOMS?: DurableObjectNamespace<ArtifactRoom>;
 }
 
 /** Vars an operator may set that the shipped wrangler.jsonc leaves out (their defaults apply). */
@@ -36,7 +39,7 @@ export interface OptionalVars {
   VIEW_COUNTS?: string;
 }
 
-export type Bindings = Env & Secrets & OptionalBindings & OptionalVars;
+export type Bindings = Omit<Env, "ROOMS"> & Secrets & OptionalBindings & OptionalVars;
 
 export type Environment = "development" | "staging" | "production";
 export type EmailProvider = "sendgrid" | "resend" | "console";
@@ -511,6 +514,42 @@ function validateSharedData(d: SharedDataLimits): void {
  */
 export function sharedDataActive(c: Pick<Config, "allowSharedData" | "contentIsolation">): boolean {
   return c.allowSharedData && c.contentIsolation === "origin";
+}
+
+/**
+ * Live rooms are in effect: ALLOW_ROOMS is on, the deploy has the ROOMS binding, and each artifact
+ * is its own origin. Under opaque isolation (the path fallback included, which config forces to
+ * opaque) a page has no cookies and its origin is "null", so rooms are off; not a config error.
+ */
+export function roomsActive(
+  c: Pick<Config, "allowRooms" | "contentIsolation">,
+  env: OptionalBindings,
+): boolean {
+  return c.allowRooms && env.ROOMS !== undefined && c.contentIsolation === "origin";
+}
+
+/**
+ * How owners and editors may edit a doc on its page: "room" (live with other editors, through the
+ * artifact's room), "solo" (on the page alone, Save makes a version), or null (the source editor
+ * only: ALLOW_LIVE_EDITING off, or opaque isolation, where the app cannot trust the frame).
+ */
+export function liveEditMode(
+  c: Pick<Config, "allowLiveEditing" | "allowRooms" | "contentIsolation">,
+  env: OptionalBindings,
+): "room" | "solo" | null {
+  if (!c.allowLiveEditing || c.contentIsolation !== "origin") return null;
+  return roomsActive(c, env) ? "room" : "solo";
+}
+
+/**
+ * Whether the gate seals an identity claim into identified viewers' content passes: only with
+ * origin isolation, and only while something on the page reads it (shared data or rooms).
+ */
+export function identityClaimsActive(
+  c: Pick<Config, "allowSharedData" | "allowRooms" | "contentIsolation">,
+  env: OptionalBindings,
+): boolean {
+  return c.contentIsolation === "origin" && (c.allowSharedData || roomsActive(c, env));
 }
 
 /**

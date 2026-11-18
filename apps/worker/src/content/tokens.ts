@@ -4,8 +4,9 @@
 // on artifact B; any visibility, password or grant change bumps the epoch and ends old cookies.
 //
 // For identified viewers (owner and grant holders) both tokens may carry `x`, a sealed identity
-// claim {m: email, r: role} bound to the artifact id (shared data, docs/spec.md "Shared data and
-// viewer identity"). It is sealed because the enter token travels in a URL, and URLs get logged.
+// claim {m: email, r: role} bound to the artifact id (shared data and live rooms, docs/spec.md
+// "Shared data and viewer identity" and "Live rooms"). It is sealed because the enter token
+// travels in a URL, and URLs get logged.
 import { CONTENT_RESERVED_PREFIX, type EffectiveRole, TTL } from "@plinth/shared";
 import { type Config, contentOrigin } from "../config.ts";
 import { randomString, sealJson, signToken, verifyToken } from "../lib/crypto.ts";

@@ -14,7 +14,7 @@ import {
 import { and, eq } from "drizzle-orm";
 import { Hono } from "hono";
 import { resolveViewerSession } from "../auth/principal.ts";
-import { contentOrigin, sharedDataActive } from "../config.ts";
+import { contentOrigin, identityClaimsActive, sharedDataActive } from "../config.ts";
 import { issueEnterUrl, safeNext, type ViewerIdentity } from "../content/tokens.ts";
 import { type ArtifactRow, users, versions } from "../db/schema.ts";
 import { appCookieName, secureFlag, serializeCookie } from "../lib/cookies.ts";
@@ -116,9 +116,9 @@ export async function computeGate(
 }
 
 /**
- * The identity sealed into the enter token for shared data: only for identified viewers (the
- * owner, or a person with a grant, signed in or confirmed by code), never agents, never link
- * viewers or admins without a role, and only while shared data is active (on, origin isolation).
+ * The identity sealed into the enter token for shared data and rooms: only for identified viewers
+ * (the owner, or a person with a grant, signed in or confirmed by code), never agents, never link
+ * viewers or admins without a role, and only while either is active (on, origin isolation).
  * The email is the owner's own, or the one that holds the strongest grant.
  */
 async function identityFor(
@@ -128,7 +128,7 @@ async function identityFor(
 ): Promise<ViewerIdentity | undefined> {
   const p = ctx.principal;
   if (d.role === null || (p.kind !== "user" && p.kind !== "viewer")) return undefined;
-  if (!sharedDataActive(ctx.config)) return undefined;
+  if (!identityClaimsActive(ctx.config, ctx.env)) return undefined;
   if (d.role === "owner") return { email: p.email, role: "owner" };
   const g = await grantFor(ctx, a.id);
   return g ? { email: g.email, role: g.role } : undefined;
@@ -151,9 +151,14 @@ async function gateData(
   if (caps?.data !== true) return undefined;
   const capabilities = capabilityList(caps);
   const available = sharedDataActive(ctx.config);
-  const claim = identity
-    ? { ...identity, viewerId: await viewerIdFor(ctx.config.tokenSigningKey, a.id, identity.email) }
-    : null;
+  // The identity may be sealed for rooms alone; the data notice counts it only with shared data.
+  const claim =
+    identity && available
+      ? {
+          ...identity,
+          viewerId: await viewerIdFor(ctx.config.tokenSigningKey, a.id, identity.email),
+        }
+      : null;
   return {
     available,
     capabilities,

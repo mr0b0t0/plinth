@@ -87,7 +87,7 @@ function fakeServer(session: Json = SESSION) {
 }
 
 /** Evaluate the runtime against fakes. `handler` answers every fetch it makes. */
-function boot(handler: Handler, opts: { origin?: string } = {}) {
+function boot(handler: Handler, opts: { origin?: string; win?: Json } = {}) {
   let now = 0;
   let nextId = 1;
   const timers = new Map<number, { at: number; fn: () => unknown }>();
@@ -101,6 +101,7 @@ function boot(handler: Handler, opts: { origin?: string } = {}) {
       events.push(e.type);
       return true;
     },
+    ...opts.win,
   };
   const doc = {
     visibilityState: "visible",
@@ -176,7 +177,7 @@ function boot(handler: Handler, opts: { origin?: string } = {}) {
     await settle();
   };
   const count = (path: string) => calls.filter((c) => c.path === path).length;
-  return { plinth: win.plinth, calls, events, advance, settle, setVisible, count };
+  return { plinth: win.plinth, calls, events, advance, settle, setVisible, count, timers };
 }
 
 /** A promise with its resolver, for holding a request open. */
@@ -631,5 +632,360 @@ describe("runtime: onSnapshot", () => {
     // The poll that was in flight saw the old seq; the queued one sees the write at once.
     expect(rt.count("/changes")).toBe(2);
     expect(got.at(-1)?.map((d) => d.id)).toEqual(["x"]);
+  });
+});
+
+// ---------- plinth.room ----------
+
+const ROOM_INFO = {
+  available: true,
+  reason: null,
+  you: { viewer: "u_0123456789abcdef01234567", role: "commenter", email: "ann@example.com" },
+  can_emit: "open",
+  open_topics: ["cursor"],
+  limits: {
+    max_message_bytes: 8192,
+    messages_per_second: 20,
+    presence_bytes: 400,
+    rooms_per_connection: 3,
+  },
+};
+const YOU = {
+  id: "s_me",
+  viewer: ROOM_INFO.you.viewer,
+  role: "commenter",
+  email: "ann@example.com",
+};
+
+/** A stand-in for the browser WebSocket: the test plays the server. */
+function sockets() {
+  const all: FakeSocket[] = [];
+  class FakeSocket {
+    url: string;
+    protocol: string;
+    readyState = 0;
+    sent: (Json | string)[] = [];
+    closedWith: { code: number; reason: string } | null = null;
+    onmessage: ((e: { data: string }) => void) | null = null;
+    onclose: ((e: { code: number }) => void) | null = null;
+    onerror: (() => void) | null = null;
+    constructor(url: string, protocol: string) {
+      this.url = url;
+      this.protocol = protocol;
+      all.push(this);
+    }
+    send(s: string) {
+      this.sent.push(s === "ping" ? s : JSON.parse(s));
+    }
+    close(code: number, reason: string) {
+      this.readyState = 3;
+      this.closedWith = { code, reason };
+    }
+    /** The handshake succeeds and the room says welcome. */
+    welcome(you = YOU) {
+      this.readyState = 1;
+      this.push({ t: "welcome", v: 1, you, limits: ROOM_INFO.limits });
+    }
+    push(frame: Json | string) {
+      this.onmessage?.({ data: typeof frame === "string" ? frame : JSON.stringify(frame) });
+    }
+    /** The server (or the network) closes the socket. */
+    drop(code: number) {
+      this.readyState = 3;
+      this.onclose?.({ code });
+    }
+  }
+  return { all, FakeSocket, last: () => all[all.length - 1] as FakeSocket };
+}
+
+function roomBoot(info: Reply | (() => Reply) = { status: 200, body: ROOM_INFO }, origin?: string) {
+  const ws = sockets();
+  const data = fakeServer().handler;
+  const handler: Handler = (method, path, body) =>
+    path === "/room" ? (typeof info === "function" ? info() : info) : data(method, path, body);
+  const b = boot(handler, {
+    origin,
+    win: {
+      WebSocket: ws.FakeSocket,
+      location: { protocol: "https:", host: "abcdefghij0123456789.content.example" },
+    },
+  });
+  return { ...b, ws, room: b.plinth.room };
+}
+
+describe("runtime: plinth.room", () => {
+  it("nothing connects until first use; then /room, then one socket to its own origin", async () => {
+    const { room, calls, ws, settle } = roomBoot();
+    await settle();
+    // (The shared-data half reads /session on load; the room asks nothing yet.)
+    expect(calls.map((c) => c.path)).toEqual(["/session"]);
+    expect(ws.all).toEqual([]);
+    const ready = room.ready;
+    await settle();
+    expect(calls.map((c) => c.path)).toEqual(["/session", "/room"]);
+    expect(calls[1]?.headers["x-plinth-data"]).toBe("1");
+    expect(ws.all.length).toBe(1);
+    expect(ws.last().url).toBe("wss://abcdefghij0123456789.content.example/__plinth/room/v1/page");
+    expect(ws.last().protocol).toBe("plinth.room.v1");
+    ws.last().welcome();
+    const r = await ready;
+    expect(r).toMatchObject({ available: true, reason: null, you: YOU });
+    expect(r.canEmit("cursor")).toBe(true);
+    expect(r.canEmit("note.move")).toBe(false);
+    // The main room is joined on first use.
+    expect(ws.last().sent).toEqual([{ t: "join", room: "main" }]);
+  });
+
+  it("under opaque isolation resolves unavailable without any request or socket", async () => {
+    const { room, calls, ws } = roomBoot(undefined, "null");
+    expect(await room.ready).toMatchObject({
+      available: false,
+      reason: "opaque_isolation",
+      you: null,
+    });
+    expect(calls).toEqual([]);
+    expect(ws.all).toEqual([]);
+  });
+
+  it("unavailable reasons pass through; an expired pass fires plinth:expired; never rejects", async () => {
+    const off = roomBoot({ status: 200, body: { available: false, reason: "not_declared" } });
+    const r = await off.room.ready;
+    expect(r).toMatchObject({ available: false, reason: "not_declared" });
+    expect(r.canEmit("cursor")).toBe(false);
+    expect(off.ws.all).toEqual([]);
+    const statuses: string[] = [];
+    off.room.onStatus((s: string) => statuses.push(s));
+    expect(statuses).toEqual(["unavailable"]);
+    // Calls on an unavailable room are quiet no-ops.
+    expect(off.room.emit("cursor", { x: 1 })).toBe(false);
+
+    const expired = roomBoot({ status: 401, body: { error: { code: "unauthorized" } } });
+    expect(await expired.room.ready).toMatchObject({ available: false, reason: "expired" });
+    expect(expired.events).toEqual(["plinth:expired"]);
+  });
+
+  it("presence is merged locally, coalesced to one frame per 100 ms and capped at 400 bytes", async () => {
+    const { room, ws, advance, settle } = roomBoot();
+    room.ready;
+    await settle();
+    ws.last().welcome();
+    await settle();
+    const s = ws.last();
+    s.sent = [];
+    expect(room.presence({ x: 1, name: "a" })).toBe(true);
+    expect(room.presence({ x: 2 })).toBe(true);
+    expect(room.presence({ name: null })).toBe(true);
+    expect(s.sent).toEqual([]);
+    await advance(100);
+    expect(s.sent).toEqual([{ t: "presence", room: "main", state: { x: 2, name: null } }]);
+    expect(room.presence({ big: "x".repeat(500) })).toBe(false);
+    room.presence(null);
+    room.presence({ y: 1 });
+    await advance(100);
+    expect(s.sent.slice(1)).toEqual([
+      { t: "presence", room: "main", state: null },
+      { t: "presence", room: "main", state: { y: 1 } },
+    ]);
+    expect(() => room.presence("x")).toThrow(/object or null/);
+  });
+
+  it("onPeers gets the list now and on every change, with you marked; untrusted fields stay data", async () => {
+    const { room, ws, settle } = roomBoot();
+    const seen: Json[][] = [];
+    room.onPeers((p: Json[]) => seen.push(p));
+    expect(seen).toEqual([[]]);
+    await settle();
+    const s = ws.last();
+    s.welcome();
+    s.push({
+      t: "peers",
+      room: "main",
+      peers: [
+        { id: "s_me", viewer: YOU.viewer, role: "commenter", email: YOU.email, presence: {} },
+        { id: "s_bo", viewer: "u_bo", presence: { x: 1 }, extra: "<img onerror=x>" },
+      ],
+    });
+    expect(seen.at(-1)).toEqual([
+      {
+        id: "s_me",
+        viewer: YOU.viewer,
+        you: true,
+        role: "commenter",
+        email: YOU.email,
+        presence: {},
+      },
+      { id: "s_bo", viewer: "u_bo", you: false, presence: { x: 1 } },
+    ]);
+    room.presence({ x: 9 });
+    expect(seen.at(-1)?.[0]?.presence).toEqual({ x: 9 });
+    s.push({ t: "peer", room: "main", peer: { id: "s_bo", viewer: "u_bo", presence: { x: 2 } } });
+    expect(seen.at(-1)?.[1]?.presence).toEqual({ x: 2 });
+    s.push({ t: "gone", room: "main", id: "s_bo" });
+    expect(seen.at(-1)?.map((p) => p.id)).toEqual(["s_me"]);
+  });
+
+  it("emit sends only allowed topics while open; on() gets events with the server's from", async () => {
+    const { room, ws, settle } = roomBoot();
+    const got: unknown[] = [];
+    const any: unknown[] = [];
+    const off = room.on("cursor", (data: unknown, from: Json) => got.push([data, from]));
+    room.on("*", (_d: unknown, _f: unknown, topic: string) => any.push(topic));
+    expect(room.emit("cursor", { x: 1 })).toBe(false);
+    await settle();
+    const s = ws.last();
+    s.welcome();
+    s.sent = [];
+    expect(room.emit("cursor", { x: 1 })).toBe(true);
+    expect(room.emit("note.move", { x: 1 })).toBe(false);
+    expect(() => room.emit("Bad Topic", 1)).toThrow(/Topic/);
+    expect(s.sent).toEqual([{ t: "emit", room: "main", topic: "cursor", data: { x: 1 } }]);
+    s.push({
+      t: "event",
+      room: "main",
+      topic: "cursor",
+      data: { x: 5 },
+      from: { id: "s_bo", viewer: "u_bo" },
+    });
+    s.push({
+      t: "event",
+      room: "main",
+      topic: "note.saved",
+      data: 1,
+      from: { id: "s_bo", viewer: "u_bo" },
+    });
+    expect(got).toEqual([[{ x: 5 }, { id: "s_bo", viewer: "u_bo", you: false }]]);
+    expect(any).toEqual(["cursor", "note.saved"]);
+    off();
+    s.push({
+      t: "event",
+      room: "main",
+      topic: "cursor",
+      data: 6,
+      from: { id: "s_bo", viewer: "u_bo" },
+    });
+    expect(got.length).toBe(1);
+    // An oversized frame is dropped here, not sent.
+    expect(room.emit("cursor", "x".repeat(9000))).toBe(false);
+  });
+
+  it("reconnects with backoff after a drop, and rejoins with its presence", async () => {
+    const { room, ws, advance, settle, count } = roomBoot();
+    const statuses: string[] = [];
+    room.onStatus((s: string) => statuses.push(s));
+    room.ready;
+    await settle();
+    ws.last().welcome();
+    room.presence({ x: 3 });
+    await advance(100);
+    ws.last().drop(1006);
+    expect(statuses).toEqual(["closed", "connecting", "open", "reconnecting"]);
+    await advance(700);
+    expect(ws.all.length).toBe(1);
+    await advance(600);
+    expect(ws.all.length).toBe(2);
+    // A socket that had opened reconnects without asking /room again.
+    expect(count("/room")).toBe(1);
+    ws.last().welcome();
+    expect(ws.last().sent).toEqual([
+      { t: "join", room: "main" },
+      { t: "presence", room: "main", state: { x: 3 } },
+    ]);
+    expect(statuses.at(-1)).toBe("open");
+  });
+
+  it("a first socket that never opens resolves ready as network, then keeps trying via /room", async () => {
+    const { room, ws, advance, settle, count } = roomBoot();
+    const ready = room.ready;
+    await settle();
+    ws.last().drop(1006);
+    expect(await ready).toMatchObject({ available: false, reason: "network" });
+    await advance(1300);
+    expect(count("/room")).toBe(2);
+    expect(ws.all.length).toBe(2);
+  });
+
+  it("4401 re-checks /room: still allowed reconnects, expired fires plinth:expired and stops", async () => {
+    let answer: Reply = { status: 200, body: ROOM_INFO };
+    const { room, ws, settle, events, count } = roomBoot(() => answer);
+    room.ready;
+    await settle();
+    ws.last().welcome();
+    ws.last().drop(4401);
+    await settle();
+    expect(count("/room")).toBe(2);
+    expect(ws.all.length).toBe(2);
+    ws.last().welcome();
+    answer = { status: 401, body: { error: { code: "unauthorized" } } };
+    const statuses: string[] = [];
+    room.onStatus((s: string) => statuses.push(s));
+    ws.last().drop(4401);
+    await settle();
+    expect(events).toEqual(["plinth:expired"]);
+    expect(statuses.at(-1)).toBe("closed");
+    expect(ws.all.length).toBe(2);
+  });
+
+  it("4409 and 4429 stop; 4410 re-checks the declaration", async () => {
+    const full = roomBoot();
+    const ready = full.room.ready;
+    await full.settle();
+    full.ws.last().drop(4409);
+    expect(await ready).toMatchObject({ available: false, reason: "full" });
+    await full.advance(60_000);
+    expect(full.ws.all.length).toBe(1);
+
+    let answer: Reply = { status: 200, body: ROOM_INFO };
+    const re = roomBoot(() => answer);
+    re.room.ready;
+    await re.settle();
+    re.ws.last().welcome();
+    answer = { status: 200, body: { available: false, reason: "not_declared" } };
+    re.ws.last().drop(4410);
+    await re.settle();
+    expect(re.count("/room")).toBe(2);
+    expect(re.ws.all.length).toBe(1);
+  });
+
+  it("pings every 30 s; a tab hidden for 60 s closes its socket and reconnects when shown", async () => {
+    const { room, ws, advance, settle, setVisible } = roomBoot();
+    room.ready;
+    await settle();
+    ws.last().welcome();
+    const first = ws.last();
+    first.sent = [];
+    await advance(30_000);
+    expect(first.sent).toEqual(["ping"]);
+    await setVisible(false);
+    await advance(59_000);
+    expect(first.closedWith).toBeNull();
+    await advance(1_000);
+    expect(first.closedWith).toEqual({ code: 1000, reason: "hidden" });
+    await advance(120_000);
+    expect(ws.all.length).toBe(1);
+    await setVisible(true);
+    expect(ws.all.length).toBe(2);
+  });
+
+  it("join(name) opens sub-rooms on the same socket, three at most; leave() leaves", async () => {
+    const { room, ws, settle } = roomBoot();
+    room.ready;
+    const b2 = room.join("board-2");
+    expect(room.join("board-2")).toBe(b2);
+    room.join("board-3");
+    expect(() => room.join("board-4")).toThrow(/at most 3/);
+    expect(() => room.join("Board 4")).toThrow(/Room/);
+    await settle();
+    expect(ws.all.length).toBe(1);
+    ws.last().welcome();
+    expect(ws.last().sent).toEqual([
+      { t: "join", room: "main" },
+      { t: "join", room: "board-2" },
+      { t: "join", room: "board-3" },
+    ]);
+    b2.leave();
+    expect(ws.last().sent.at(-1)).toEqual({ t: "leave", room: "board-2" });
+    // A room left frees its place.
+    room.join("board-4");
+    expect(ws.last().sent.at(-1)).toEqual({ t: "join", room: "board-4" });
   });
 });

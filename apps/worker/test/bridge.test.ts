@@ -19,14 +19,17 @@ describe("review-mode bridge injection", () => {
   it("adds the bridge script before </head> only in review mode", async () => {
     const html =
       "<!doctype html><html><head><title>T</title></head><body><h1>Hi</h1></body></html>";
-    const { get } = await openArtifact({ html });
+    const { get, p } = await openArtifact({ html });
     const plain = await get("/");
     expect(await plain.text()).toBe(html);
     const review = await get("/?plinth-review=1");
     expect(review.status).toBe(200);
     const text = await review.text();
     expect(text).toBe(html.replace("</head>", `${TAG}</head>`));
-    expect(review.headers.get("content-security-policy")).toBe(contentCsp(config()));
+    // A document names its own live-room origin in connect-src (rooms are on in tests).
+    expect(review.headers.get("content-security-policy")).toBe(
+      contentCsp(config(), { socket: `ws://${new URL(contentOrigin(p.id)).host}` }),
+    );
     expect(review.headers.get("etag")).toBeNull();
     // Permanent version links get it too.
     expect(await (await get("/__plinth/v/1/?plinth-review=1")).text()).toContain(TAG);

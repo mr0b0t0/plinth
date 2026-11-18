@@ -37,7 +37,8 @@ account.
 
 - Per-artifact server code. Artifacts are static HTML plus assets; the only server behaviour a
   page can reach is Plinth's fixed shared-data service (see
-  [Shared data and viewer identity](#shared-data-and-viewer-identity)).
+  [Shared data and viewer identity](#shared-data-and-viewer-identity)) and its live room at
+  `/__plinth/room/` (see [Live rooms](#live-rooms)).
 - Real-time multiplayer editing.
 - Visual (click on the page) editing. Code editing only at first.
 - Importing artifacts automatically from Claude or ChatGPT accounts. Agents push; the platform does
@@ -79,18 +80,23 @@ flowchart TB
     app["App domain<br/>Sign-in, dashboard, editor<br/>Comments and sharing"]
     content["Content domain<br/>One subdomain per artifact<br/>Access check, strict CSP"]
   end
+  rooms["Live rooms (optional)<br/>One Durable Object per artifact<br/>Presence and broadcast"]
   d1[("D1 database<br/>Users, versions, permissions, comments, mention queue")]
   r2[("R2 storage<br/>Artifact files, one folder per version<br/>Unchanged files reused by hash")]
   agents --> mcp
   publishers --> app
   viewers --> content
+  content --> rooms
   worker --> d1
   worker --> r2
 ```
 
 The content domain is the security boundary. User HTML never runs on the domain that holds login
 sessions, and each artifact gets its own subdomain so artifacts cannot read each other's data.
-Metadata goes to D1 and files to R2; nothing else needs to be provisioned.
+Metadata goes to D1 and files to R2; nothing else needs to be provisioned. The same Worker also
+defines one SQLite-backed Durable Object class, `ArtifactRoom` (binding `ROOMS`), for
+[live rooms](#live-rooms): an object per artifact, created only when someone opens that artifact's
+room, keeping no tables. A deploy without the binding runs with rooms off.
 
 ## Data model
 
@@ -473,7 +479,8 @@ Decided 2026-11-14 (issue #1). Design:
   `TOKEN_SIGNING_KEY`) into the enter token, and the content host copies it into the per-artifact
   content cookie (`__Host-` prefixed, so a sibling artifact cannot toss in someone else's; a
   request whose valid passes disagree on who is viewing has none). Only identified viewers get a
-  claim; everyone else is anonymous to the page.
+  claim, and only while shared data or [live rooms](#live-rooms) are active; everyone else is
+  anonymous to the page.
   `window.plinth.viewer` is `{ id, email, role }` or null; `email` is set only when the page
   declares `viewer`, and `id` is opaque and different on every artifact. The app tells the viewer
   in one line under the bar what the page saves and whether it can see who they are.
@@ -481,8 +488,11 @@ Decided 2026-11-14 (issue #1). Design:
   applies and retries on conflict. Every agent op needs `if_rev`. A document's `rev` is one past
   the artifact's change counter, so revs grow across the artifact and a document deleted and
   created again never repeats one. Data is not versioned and is not part of diffs or restores.
-- **Live updates.** No push: `onSnapshot` polls a one-row change counter every 15 s while the tab
-  is visible (at least 10 s), and refetches when it moves, at once after the page's own write.
+- **Live updates.** No push for data: `onSnapshot` polls a one-row change counter every 15 s while
+  the tab is visible (at least 10 s), and refetches when it moves, at once after the page's own
+  write. A page that also declares `room` can push its own moments (a note being dragged, "note 3
+  saved, refetch it") to the people who have it open; see [Live rooms](#live-rooms). The poll is
+  unchanged.
 - **Limits** (env vars): `ALLOW_SHARED_DATA` (on), `DATA_MAX_DOCS_PER_ARTIFACT` (1000),
   `DATA_MAX_BYTES_PER_ARTIFACT` (1 MiB), `DATA_MAX_BYTES_PER_USER` (16 MiB across an owner's
   artifacts), `DATA_MAX_DOC_BYTES` (16 KiB), `DATA_WRITES_PER_VIEWER_PER_HOUR` (300) and
@@ -501,6 +511,52 @@ Decided 2026-11-14 (issue #1). Design:
 - **Agents.** `list_artifact_data` and `write_artifact_data` (MCP) and REST mirrors under
   `/api/v1/artifacts/:ref/data` for the owner and editors. Viewer-written data is untrusted input,
   and the tool descriptions say so.
+
+### Live rooms
+
+Decided 2026-11-18 (issue #36). Presence and broadcast among the people who have one artifact
+open: live cursors, who is here, a note moving while it is dragged. Nothing in a room persists;
+durable state belongs in [shared data](#shared-data-and-viewer-identity), which is also where a
+late joiner reads it. Plinth's own on-page doc editing is the room's first use.
+
+- **Declaration.** A page opts in with `room` in `<meta name="plinth-capabilities">` (for example
+  `content="data viewer room"`), and may list topics anyone in the room may emit with
+  `<meta name="plinth-room-open" content="cursor note.move">` (`*` opens all; at most 16, each
+  `^[a-z][a-z0-9_.:-]{0,39}$`). `room` is not shared data: a page that declares only `room` has no
+  store. The current version's declaration governs, as for data.
+- **Page API.** `window.plinth.room` in `/__plinth/runtime.js`: `ready` (resolves `{ available,
+  reason, you, canEmit(topic) }`, never rejects), `presence(patch)` (a shallow merge of the
+  sender's state, `null` values delete, `presence(null)` clears; coalesced to 10 per second, 400
+  bytes), `onPeers(fn)`, `emit(topic, data)` (never echoed to the sender), `on(topic | "*", fn)`,
+  `onStatus(fn)`, `join(name)` for a sub-room on the same socket (3 at most, `main` by default)
+  and `leave()`. Nothing connects until first use. Messages may drop, and order holds only per
+  sender. Every peer is stamped by the server: `id` is random per socket, `viewer` the per-artifact
+  `u_` id, and `role` and `email` appear only when the page also declares `viewer`. Room traffic
+  is untrusted input and presence is never authority.
+- **Who joins.** Identified viewers only (the owner and people with a grant, signed in or confirmed
+  by code). Anonymous link viewers, in-chat previews and thumbnail captures never join in v1.
+  Owners and editors emit any topic; everyone else emits only the open topics. Agents never join a
+  room.
+- **Transport.** One WebSocket per page to its own origin, `wss://<id>.<CONTENT_HOST>/__plinth/room/v1/page`,
+  served by the artifact's Durable Object with the Hibernation API. The handshake is checked in
+  order: method, exact `Origin`, fetch metadata, the `plinth.room.v1` subprotocol, rooms active,
+  the artifact, the content pass with its identity claim at the current epoch, and policy
+  (`roomAccess` in `policy.ts`); see [docs/security.md](security.md#live-rooms).
+  `GET /__plinth/api/v1/room` (behind the data API's caller checks) tells the runtime first
+  whether it may join and why not (`disabled`, `not_configured`, `opaque_isolation`,
+  `not_declared`, `preview`, `not_identified`, `expired`). The CSP's `connect-src` names the
+  artifact's own `wss:` origin while rooms are active, and nothing else.
+- **Lifecycle.** A sharing change (grant, visibility, password) ends the socket (close code 4401),
+  as it ends the content cookie; a takedown or delete closes everything (4404); a version that
+  changes what the page declares about rooms makes its sockets reconnect (4410). The Worker tells
+  the room after each change, and while sockets are open the room re-checks D1 every 60 s and
+  closes sockets whose pass expired. A tab hidden for 60 s closes its socket and reconnects when
+  shown; reconnects back off from 1 to 30 s.
+- **Limits.** The `ROOM_*` env vars under [Data model](#data-model) settings, behind
+  `ALLOW_ROOMS` (on); a socket over the message rate gets errors, then is closed.
+- **Availability.** Only with origin isolation and the `ROOMS` binding. Under opaque isolation (and
+  the path fallback) `room.ready` resolves `{ available: false, reason: "opaque_isolation" }`
+  without a request. A page should work alone when the room is unavailable.
 
 ### Big builds and reuse by hash
 
@@ -813,6 +869,24 @@ Open counts run on the same allowances:
 
 At the free tier's 100k rows written a day, an instance can take about 50k counted opens a day,
 with their nonce writes, before any other writes. `VIEW_COUNTS=off` removes the extra write.
+
+Live rooms run on Durable Objects (SQLite-backed classes only on the Workers Free plan). Free:
+100k requests and 13,000 GB-s of duration per day. Workers Paid includes 1M requests and 400k GB-s
+a month, then $0.15 per million requests and $12.50 per million GB-s. Each WebSocket connect is one
+request and incoming messages bill at 20 to 1; outgoing messages and the auto-answered keep-alive
+are free, and a hibernating room accrues no duration. A room stores nothing.
+
+| Operation | Durable Object requests | D1 rows read | D1 rows written |
+| --- | --- | --- | --- |
+| Room check and connect | 1 (plus 2 Worker requests) | 2 | 0 |
+| Page message sent | 1/20 | 0 | 0 |
+| Re-check while sockets are open | 60 per hour per room | 1 each | 0 |
+| Sharing change, takedown, delete or a changed declaration | 1 notify call (only for artifacts that can have a room) | 1 | 0 |
+
+For example, four people moving cursors at 10 updates a second send about 40 messages a second:
+about 7,200 billed requests and 450 GB-s an hour, so the free allowance carries about 13 such hours
+a day by requests and 28 by duration. Past the allowance, sockets fail and pages work alone;
+`ALLOW_ROOMS=false` turns rooms off.
 
 Not included: push-mode agent calls, which bill to the user's API key or a paid plan. Vercel was
 considered and set aside: its free plan is non-commercial only, so the floor is about $20 per month

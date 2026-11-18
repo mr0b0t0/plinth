@@ -24,6 +24,9 @@ import { mcpResourceMetadataUrl, oauthRoutes } from "./oauth/routes.ts";
 import { pruneUploadTickets, sweepStagingAttempts } from "./services/attempts.ts";
 import { foldViewDays } from "./services/views.ts";
 
+// The live-room Durable Object class (binding ROOMS, wrangler.jsonc); see src/rooms/.
+export { ArtifactRoom } from "./rooms/ArtifactRoom.ts";
+
 export const app = new Hono<AppEnv>();
 
 /** /mcp takes bearer tokens only (no cookies, so no CSRF surface). */

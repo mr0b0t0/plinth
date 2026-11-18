@@ -110,9 +110,11 @@ export async function serveTypedEntry(
     base: string;
     url: URL;
     framing?: "app" | "any";
+    /** The artifact's own WebSocket origin, while rooms are active (csp.ts `socket`). */
+    socket?: string;
   },
 ): Promise<Response> {
-  const { artifact, version, def, base, url, framing } = o;
+  const { artifact, version, def, base, url, framing, socket } = o;
   const obj = await env.FILES.get(version.r2Prefix + def.sourcePath);
   if (!obj) return notFound(config);
   const html = typedShellHtml(def, {
@@ -122,7 +124,7 @@ export async function serveTypedEntry(
     appOrigin: config.appOrigin,
   });
   const headers = new Headers({ "Content-Type": "text/html; charset=utf-8" });
-  applyContentHeaders(config, headers, { scripts: "self", framing });
+  applyContentHeaders(config, headers, { scripts: "self", framing, ...(socket ? { socket } : {}) });
   // Public artifacts (only when the instance allows public visibility) may be indexed.
   if (artifact.visibility === "public" && config.allowPublicVisibility)
     headers.delete("X-Robots-Tag");

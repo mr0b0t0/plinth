@@ -20,6 +20,10 @@
 //   9. the declaration (`data`);
 //  10. policy (policy.ts, through services/data.ts), rate limits, quotas, the guarded write.
 // Bodies and document contents are never logged.
+//
+// GET /__plinth/api/v1/room (live rooms, #36) shares checks 1 to 4, then branches to roomInfo()
+// in content/room.ts, which has its own availability, artifact, pass and policy steps: a page
+// that declares only `room` has no shared data, and rooms may be on where shared data is off.
 import { CONTENT_DATA_HEADER, CONTENT_RESERVED_PREFIX, dataObjectSchema } from "@plinth/shared";
 import { z } from "zod";
 import { type Bindings, type Config, contentOrigin, sharedDataActive } from "../config.ts";
@@ -41,6 +45,7 @@ import {
   unavailableReason,
 } from "../services/data.ts";
 import { applyContentHeaders } from "./csp.ts";
+import { roomInfo } from "./room.ts";
 import type { HostRoute } from "./serve.ts";
 import { readContentPass } from "./serve.ts";
 
@@ -73,12 +78,14 @@ const refuse = (message: string) => new ApiError("forbidden", message);
 
 type Route =
   | { kind: "session" }
+  | { kind: "room" }
   | { kind: "changes" }
   | { kind: "collection"; collection: string }
   | { kind: "doc"; collection: string; docId: string };
 
 const ROUTE_METHODS: Record<Route["kind"], ReadonlySet<string>> = {
   session: new Set(["GET"]),
+  room: new Set(["GET"]),
   changes: new Set(["GET"]),
   collection: new Set(["GET", "POST"]),
   doc: new Set(["GET", "PUT", "DELETE"]),
@@ -96,6 +103,7 @@ function parseRoute(path: string): Route | null {
     }
   }
   if (seg.length === 1 && seg[0] === "session") return { kind: "session" };
+  if (seg.length === 1 && seg[0] === "room") return { kind: "room" };
   if (seg.length === 1 && seg[0] === "changes") return { kind: "changes" };
   if (seg[0] === "data" && seg.length === 2 && seg[1])
     return { kind: "collection", collection: seg[1] };
@@ -236,6 +244,11 @@ async function handle(
   const route = parseRoute(path);
   if (!route) throw new ApiError("not_found", "Not found");
   if (!ROUTE_METHODS[route.kind].has(method)) return notAllowed();
+
+  // The live room's availability: its own steps after the caller checks (content/room.ts).
+  if (route.kind === "room") {
+    return respond(config, 200, await roomInfo(request, env, config, artifactId));
+  }
 
   // 5. Availability, before any cookie: under opaque isolation there are none.
   const off = unavailableReason(config, null, { assumeDeclared: true });

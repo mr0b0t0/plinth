@@ -25,6 +25,7 @@ import { hashToken, newArtifactId, newId, randomString } from "../lib/crypto.ts"
 import { ApiError, isUniqueViolation, notFound, unauthorized } from "../lib/errors.ts";
 import { enforce } from "../lib/ratelimit.ts";
 import { nowIso } from "../lib/time.ts";
+import { notifyVersion } from "../rooms/notify.ts";
 import { getVersionRow, requireArtifact } from "./artifacts.ts";
 import { checkAsset, requireTypeDef, resolveSource } from "./artifactTypes.ts";
 import {
@@ -1078,6 +1079,14 @@ export async function commitVersion(
     scheduleThumbnail(ctx, result.id, result.version);
   } catch {
     // A thumbnail is optional; a reader starts the capture later.
+  }
+  // A page whose room declaration changed: its room's sockets reconnect through the gate.
+  if (!extra.stager.def.renderer) {
+    try {
+      notifyVersion(ctx, result.id, result.version, extra.capabilities);
+    } catch {
+      // Best effort; the room's alarm re-reads the declaration.
+    }
   }
   return result;
 }

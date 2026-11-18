@@ -71,7 +71,10 @@ make a test pass.
 - **The content host never sends CORS headers or answers preflights.** Every framed artifact shares
   one partitioned `SameSite=None` cookie jar, so CORS there would reopen cross-artifact writes. The
   shared-data API at `/__plinth/api/` requires the `x-plinth-data` header, same-origin fetch
-  metadata, an exact `Origin` on writes and JSON bodies; keep all four.
+  metadata, an exact `Origin` on writes and JSON bodies; keep all four. The room upgrade at
+  `/__plinth/room/` requires an exact `Origin` (absent or `null` refused), same-origin fetch
+  metadata when sent, the `plinth.room.v1` subprotocol and the content cookie at the current epoch
+  with an identity claim; keep all four.
 - **Every artifact response carries a CSP**, built from the configurable CDN allowlist. Network
   calls to other hosts are blocked.
 - **Artifacts render in sandboxed iframes**, never with `allow-same-origin` toward the app.
@@ -95,9 +98,9 @@ make a test pass.
   every write is stamped with who made it, and the owner and editors can change or delete it.
 - Agents push; the platform never pulls from Claude or ChatGPT accounts.
 - Artifacts are static HTML plus assets, with no per-artifact server code. The only server
-  behaviour a page can reach is Plinth's fixed shared-data service at `/__plinth/api/`, which a page
-  opts into. Only the owner and people the artifact is shared with can write from the page, and
-  only the owner's and editors' agents over MCP or REST.
+  behaviour a page can reach is Plinth's fixed shared-data service at `/__plinth/api/` and its live
+  room at `/__plinth/room/`, which a page opts into. Only the owner and people the artifact is
+  shared with can write from the page, and only the owner's and editors' agents over MCP or REST.
 - Anything a self-hoster may change (hosts, quota, email provider, CDN allowlist) is an env var.
 - The product name must not contain "Claude" or "Codex".
 

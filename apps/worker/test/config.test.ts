@@ -3,10 +3,14 @@ import { DEFAULTS, LIMITS, LIVE_DEFAULTS, ROOM_DEFAULTS, TTL } from "@plinth/sha
 import { describe, expect, it } from "vitest";
 import {
   ConfigError,
+  identityClaimsActive,
+  liveEditMode,
   MIN_VERSION_BYTES,
   maxBundleBytes,
+  type OptionalBindings,
   parseConfig,
   registrableDomain,
+  roomsActive,
   sharedDataActive,
   uploadTicketsPerHour,
 } from "../src/config.ts";
@@ -559,5 +563,54 @@ describe("room and live editing settings", () => {
       "LIVE_DRAFT_RETENTION_DAYS",
     ])
       expect(typeof (env as unknown as Record<string, unknown>)[k], k).toBe("string");
+  });
+
+  it("rooms are active with the switch, the ROOMS binding and origin isolation only", () => {
+    const binding = { ROOMS: {} as NonNullable<OptionalBindings["ROOMS"]> };
+    const on = parseConfig(base);
+    expect(roomsActive(on, binding)).toBe(true);
+    // An older config without the binding: rooms are simply off, never a config error.
+    expect(roomsActive(on, {})).toBe(false);
+    expect(roomsActive(parseConfig({ ...base, ALLOW_ROOMS: "false" }), binding)).toBe(false);
+    const opaque = parseConfig({
+      ...base,
+      CONTENT_HOST: "content.aconite.io",
+      CONTENT_ISOLATION: "opaque",
+    });
+    expect(roomsActive(opaque, binding)).toBe(false);
+    const fallback = parseConfig({
+      ...base,
+      ENVIRONMENT: "staging",
+      APP_HOST: "plinth.example.workers.dev",
+      STAGING_CONTENT_FALLBACK: "true",
+    });
+    expect(fallback.contentIsolation).toBe("opaque");
+    expect(roomsActive(fallback, binding)).toBe(false);
+  });
+
+  it("live editing: room with rooms, solo without, none when off or opaque", () => {
+    const binding = { ROOMS: {} as NonNullable<OptionalBindings["ROOMS"]> };
+    expect(liveEditMode(parseConfig(base), binding)).toBe("room");
+    expect(liveEditMode(parseConfig(base), {})).toBe("solo");
+    expect(liveEditMode(parseConfig({ ...base, ALLOW_ROOMS: "false" }), binding)).toBe("solo");
+    expect(liveEditMode(parseConfig({ ...base, ALLOW_LIVE_EDITING: "false" }), binding)).toBe(null);
+    const opaque = parseConfig({ ...base, CONTENT_ISOLATION: "opaque" });
+    expect(liveEditMode(opaque, binding)).toBe(null);
+  });
+
+  it("the identity claim is sealed under origin isolation while shared data or rooms are on", () => {
+    const binding = { ROOMS: {} as NonNullable<OptionalBindings["ROOMS"]> };
+    expect(identityClaimsActive(parseConfig(base), {})).toBe(true);
+    const noData = parseConfig({ ...base, ALLOW_SHARED_DATA: "false" });
+    expect(identityClaimsActive(noData, binding)).toBe(true);
+    expect(identityClaimsActive(noData, {})).toBe(false);
+    expect(
+      identityClaimsActive(
+        parseConfig({ ...base, ALLOW_SHARED_DATA: "false", ALLOW_ROOMS: "false" }),
+        binding,
+      ),
+    ).toBe(false);
+    const opaque = parseConfig({ ...base, CONTENT_ISOLATION: "opaque" });
+    expect(identityClaimsActive(opaque, binding)).toBe(false);
   });
 });

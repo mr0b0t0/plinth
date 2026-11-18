@@ -42,6 +42,7 @@ import {
   principalUserId,
   seesOwnerMetadata,
 } from "../policy.ts";
+import { notifyRoom } from "../rooms/notify.ts";
 import { requireTypeDef, resolveSource } from "./artifactTypes.ts";
 import { claimArtifactAttempts } from "./attempts.ts";
 import {
@@ -727,6 +728,8 @@ export async function bumpAccessEpoch(ctx: Ctx, artifactId: string): Promise<voi
     .set({ accessEpoch: sql`${artifacts.accessEpoch} + 1`, updatedAt: nowIso() })
     .where(eq(artifacts.id, artifactId))
     .run();
+  // Live room sockets opened with an older pass close (rooms/notify.ts; the alarm backs it up).
+  notifyRoom(ctx, artifactId, "revoke");
 }
 
 export interface SetVisibilityInput {
@@ -784,6 +787,7 @@ export async function deleteArtifact(ctx: Ctx, ref: string): Promise<void> {
     claimArtifactAttempts(ctx.env.DB, artifact.id, Date.now()),
   ]);
   ctx.waitUntil(deletePrefix(ctx.env.FILES, `artifacts/${artifact.id}/`));
+  notifyRoom(ctx, artifact.id, "gone");
 }
 
 export { forbidden };

@@ -234,6 +234,7 @@ describe("identity claim: issued for identified viewers", () => {
       preview: false,
       version: null,
       counted: false,
+      exp: expect.any(Number),
     });
   });
 
@@ -327,6 +328,7 @@ describe("identity claim: nobody else gets one", () => {
       preview: false,
       version: null,
       counted: false,
+      exp: expect.any(Number),
     });
 
     await db()
@@ -385,12 +387,18 @@ describe("identity claim: nobody else gets one", () => {
     expect(await claimIn(direct)).toBeNull();
   });
 
-  it("ALLOW_SHARED_DATA=false and opaque isolation", async () => {
+  it("ALLOW_SHARED_DATA=false with rooms off, and opaque isolation", async () => {
     const { owner, artifact } = await pub("allowlist", { emails: [uniqueEmail()] });
     const p = userP(owner.user);
     expect(await claimIn(await computeGate(ctxFor(p), artifact.id))).not.toBeNull();
+    // Live rooms read the claim too: it is sealed while either feature is active.
     expect(
       await claimIn(await computeGate(ctxFor(p, { allowSharedData: false }), artifact.id)),
+    ).not.toBeNull();
+    expect(
+      await claimIn(
+        await computeGate(ctxFor(p, { allowSharedData: false, allowRooms: false }), artifact.id),
+      ),
     ).toBeNull();
     const opaque = await computeGate(ctxFor(p, { contentIsolation: "opaque" }), artifact.id);
     expect(opaque.status).toBe("ok");
@@ -457,6 +465,7 @@ describe("identity claim: tokens and cookies", () => {
       preview: false,
       version: null,
       counted: false,
+      exp: expect.any(Number),
     });
   });
 
@@ -493,6 +502,7 @@ describe("identity claim: tokens and cookies", () => {
       preview: false,
       version: null,
       counted: false,
+      exp: expect.any(Number),
     });
     // Same name, path and host: the browser replaces the first cookie with the second.
     const attrs = (sc: string) =>

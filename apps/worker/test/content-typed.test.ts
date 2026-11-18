@@ -95,8 +95,10 @@ describe("doc shell on the content host", () => {
     expect(d.get("script-src")).toBe("script-src 'self'");
     expect(d.get("script-src")).not.toContain("unsafe-inline");
     expect(csp).not.toContain("unsafe-eval");
-    // Every other directive is the artifact default.
-    const base = directives(contentCsp(config()));
+    // Every other directive is the artifact default, with the doc's own live-room origin.
+    const base = directives(
+      contentCsp(config(), { socket: `ws://${p.id}.content.localhost:8787` }),
+    );
     for (const [k, v] of base) if (k !== "script-src") expect(d.get(k), k).toBe(v);
     expect([...d.keys()]).toEqual([...base.keys()]);
 
@@ -259,7 +261,9 @@ describe("doc shell on the content host", () => {
     const { cookie } = await enterContent(p.id);
     const res = await get(p.id, "/", cookie ?? "");
     expect(await res.text()).toBe("<!doctype html><h1>Page</h1>");
-    expect(res.headers.get("content-security-policy")).toBe(contentCsp(config()));
+    expect(res.headers.get("content-security-policy")).toBe(
+      contentCsp(config(), { socket: `ws://${p.id}.content.localhost:8787` }),
+    );
     expect(res.headers.get("etag")).not.toBeNull();
   });
 });
