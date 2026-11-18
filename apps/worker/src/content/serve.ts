@@ -22,9 +22,9 @@ import { fileKey, type ManifestEntry } from "../services/storage.ts";
 import { isCountableRequest, recordView } from "../services/views.ts";
 import { injectBridge, serveBridgeScript } from "./bridge.ts";
 import { applyContentHeaders, type ContentCspOptions } from "./csp.ts";
-import { DATA_API_PREFIX, serveDataApi } from "./data-api.ts";
+import { serveDataApi } from "./data-api.ts";
 import { servePreviewLoader } from "./preview.ts";
-import { ROOM_PREFIX, roomSocketSource, serveRoomUpgrade } from "./room.ts";
+import { roomSocketSource, serveRoomUpgrade } from "./room.ts";
 import { serveRuntimeScript } from "./runtime.ts";
 import {
   consumeNonce,
@@ -325,6 +325,72 @@ async function loadArtifact(env: Bindings, artifactId: string): Promise<Artifact
   return row ?? null;
 }
 
+type ContentRoute = Extract<HostRoute, { kind: "content" }>;
+
+/** One of Plinth's own paths under /__plinth/ on a content host. */
+export interface ReservedPath {
+  /** The full path; one ending in "/" is a prefix. */
+  path: string;
+  /**
+   * `own`: answered first, before the content host's method, service-worker and navigation
+   * checks, because it runs its own ordered checks and never redirects (an API, an upgrade).
+   * `static`: answered after them, a file that holds no artifact data.
+   */
+  stage: "own" | "static";
+  serve: (
+    request: Request,
+    env: Bindings,
+    config: Config,
+    route: ContentRoute,
+  ) => Response | Promise<Response>;
+}
+
+/**
+ * Plinth's own paths on a content host, one row each. A feature adds its row. A path no row
+ * matches goes on to the enter step, versioned paths and the artifact's own files (which never
+ * include anything under /__plinth/: bundles refuse those paths).
+ */
+export const RESERVED_PATHS: readonly ReservedPath[] = [
+  // Shared data (content/data-api.ts): its own method, caller and JSON checks, never a redirect.
+  { path: `${CONTENT_RESERVED_PREFIX}api/`, stage: "own", serve: serveDataApi },
+  // Live rooms (content/room.ts): a WebSocket upgrade with its own ordered checks.
+  { path: `${CONTENT_RESERVED_PREFIX}room/`, stage: "own", serve: serveRoomUpgrade },
+  { path: `${CONTENT_RESERVED_PREFIX}bridge.js`, stage: "static", serve: serveBridge },
+  { path: `${CONTENT_RESERVED_PREFIX}runtime.js`, stage: "static", serve: serveRuntime },
+  { path: `${CONTENT_RESERVED_PREFIX}preview`, stage: "static", serve: servePreview },
+  // A typed artifact's renderer files (content/typed.ts).
+  { path: `${CONTENT_RESERVED_PREFIX}types/`, stage: "static", serve: serveRenderer },
+];
+
+function serveBridge(_r: Request, _e: Bindings, config: Config): Response {
+  return serveBridgeScript(config);
+}
+
+function serveRuntime(_r: Request, _e: Bindings, config: Config): Response {
+  return serveRuntimeScript(config);
+}
+
+function servePreview(_r: Request, _e: Bindings, config: Config): Response {
+  return servePreviewLoader(config);
+}
+
+function serveRenderer(
+  request: Request,
+  env: Bindings,
+  config: Config,
+  route: ContentRoute,
+): Promise<Response> {
+  const r = rendererRequest(route.path) ?? { id: "", file: "" };
+  return serveRendererFile(request, env, config, r.id, r.file);
+}
+
+/** The reserved path row for `path` at this stage, if any. */
+export function reservedPath(path: string, stage: ReservedPath["stage"]): ReservedPath | undefined {
+  return RESERVED_PATHS.find(
+    (r) => r.stage === stage && (r.path.endsWith("/") ? path.startsWith(r.path) : path === r.path),
+  );
+}
+
 async function serve(
   request: Request,
   env: Bindings,
@@ -332,10 +398,9 @@ async function serve(
   route: Extract<HostRoute, { kind: "content" }>,
   defer?: (p: Promise<unknown>) => void,
 ): Promise<Response> {
-  // Shared data (content/data-api.ts): its own method, caller and JSON checks, never a redirect.
-  if (route.path.startsWith(DATA_API_PREFIX)) return serveDataApi(request, env, config, route);
-  // Live rooms (content/room.ts): a WebSocket upgrade with its own ordered checks.
-  if (route.path.startsWith(ROOM_PREFIX)) return serveRoomUpgrade(request, env, config, route);
+  // Reserved paths with their own checks (the shared-data API, the room upgrade), first.
+  const own = reservedPath(route.path, "own");
+  if (own) return own.serve(request, env, config, route);
 
   if (request.method !== "GET" && request.method !== "HEAD") {
     return text(config, 405, "Method not allowed", { Allow: "GET, HEAD" });
@@ -367,11 +432,8 @@ async function serve(
   }
 
   // Static helpers that hold no artifact data.
-  if (path === `${CONTENT_RESERVED_PREFIX}bridge.js`) return serveBridgeScript(config);
-  if (path === `${CONTENT_RESERVED_PREFIX}runtime.js`) return serveRuntimeScript(config);
-  if (path === `${CONTENT_RESERVED_PREFIX}preview`) return servePreviewLoader(config);
-  const renderer = rendererRequest(path);
-  if (renderer) return serveRendererFile(request, env, config, renderer.id, renderer.file);
+  const helper = reservedPath(path, "static");
+  if (helper) return helper.serve(request, env, config, route);
 
   if (path === `${CONTENT_RESERVED_PREFIX}enter`) {
     const token = url.searchParams.get("t") ?? "";
