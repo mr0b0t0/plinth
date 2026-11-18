@@ -46,7 +46,7 @@ One Worker serves two kinds of host, routed by hostname:
 Suffix List, which browsers treat the same way, so an artifact is cross-site to the app: browsers
 do not send the app's cookies to it, and the app's `SameSite` cookies are not sent on requests it
 starts. Production refuses to start otherwise, with one exception: `CONTENT_ISOLATION=opaque`
-(next section), the hosted instance's mode until its PSL entry ships. A content host equal to the
+(next section), a stopgap for a content subdomain whose PSL entry has not shipped. A content host equal to the
 app host, inside it or above it is refused in every mode. Each artifact gets its own subdomain, so
 each has its own origin with its own storage, cookies and service workers (none at all under
 opaque isolation). Artifact ids are 20 random lowercase letters and digits (about 103 bits), so
@@ -133,7 +133,8 @@ What changes for the app and for artifacts:
   side keeps checking the app's exact origin, which is a real origin in every mode.
 
 Residual risks of running the content host on the app's registrable domain, even with opaque
-isolation. They are why the hosted instance switches back to `origin` once its PSL entry ships:
+isolation. They are why the hosted instance serves artifacts from a domain of its own,
+`plinthusercontent.com`, with `origin` isolation:
 
 - **Same-site with the app and with the rest of `aconite.io`.** The browser decides "same-site"
   for some things by URL, not by the document's origin: the app's own navigations of the artifact
