@@ -27,7 +27,12 @@ export interface OptionalBindings {
   BROWSER?: Fetcher;
 }
 
-export type Bindings = Env & Secrets & OptionalBindings;
+/** Vars an operator may set that the shipped wrangler.jsonc leaves out (their defaults apply). */
+export interface OptionalVars {
+  VIEW_COUNTS?: string;
+}
+
+export type Bindings = Env & Secrets & OptionalBindings & OptionalVars;
 
 export type Environment = "development" | "staging" | "production";
 export type EmailProvider = "sendgrid" | "resend" | "console";
@@ -109,6 +114,10 @@ export interface Config {
    * in effect with a BROWSER binding; see thumbnailsActive.
    */
   thumbnails: boolean;
+  /**
+   * VIEW_COUNTS (default on): count artifact opens per UTC day, aggregate only (docs/spec.md).
+   */
+  viewCounts: boolean;
   /** OPERATOR_*: who runs this instance, for its legal pages. null when none is published. */
   operator: {
     name: string;
@@ -307,6 +316,7 @@ export function parseConfig(env: Record<string, unknown>): Config {
     },
     showSourceLink: boolDefaultOn(env.SHOW_SOURCE_LINK),
     thumbnails: boolDefaultOn(env.THUMBNAILS),
+    viewCounts: boolDefaultOn(env.VIEW_COUNTS),
     operator: parseOperator(env),
   };
   validate(config);

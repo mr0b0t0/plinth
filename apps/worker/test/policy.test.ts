@@ -66,6 +66,7 @@ const ACTIONS: ArtifactAction[] = [
   "manage",
   "delete",
   "report",
+  "views",
 ];
 
 describe("policy: owner", () => {
@@ -228,6 +229,62 @@ describe("policy: public visibility gate", () => {
 // ---------- shared data (docs/superpowers/specs/2026-11-14-shared-state-design.md section 5) ----------
 
 const DATA_ACTIONS = ["data_read", "data_write", "data_clear"] as const;
+
+describe("policy: views (open counts)", () => {
+  const admin: Principal = { kind: "user", userId: "adm", email: "a@x.com", isAdmin: true };
+  it("only the owner may read an artifact's counts, on every visibility", () => {
+    for (const v of VISIBILITIES) {
+      expect(decide(owner, "views", art(v), access())).toMatchObject({
+        allow: true,
+        role: "owner",
+      });
+      for (const role of ROLES) {
+        expect(decide(stranger, "views", art(v), access({ grantRole: role })), role).toMatchObject({
+          allow: false,
+          reason: "forbidden",
+          role,
+        });
+      }
+      expect(decide(stranger, "views", art(v), access())).toMatchObject({ reason: "forbidden" });
+      expect(decide(viewerEmail, "views", art(v), access({ grantRole: "viewer" }))).toMatchObject({
+        reason: "forbidden",
+      });
+    }
+  });
+  it("asks anonymous visitors to sign in, even on a public artifact", () => {
+    expect(decide(anon, "views", art("public"), access())).toMatchObject({
+      allow: false,
+      reason: "login_required",
+    });
+  });
+  it("an admin without a role is denied", () => {
+    expect(decide(admin, "views", art("public"), access({ isAdmin: true }))).toMatchObject({
+      allow: false,
+      reason: "forbidden",
+    });
+  });
+  it("a takedown denies it, a deletion hides the artifact", () => {
+    expect(decide(owner, "views", art("unlisted", { takenDown: true }), access())).toMatchObject({
+      allow: false,
+      reason: "taken_down",
+    });
+    expect(
+      decide(admin, "views", art("unlisted", { takenDown: true }), access({ isAdmin: true })),
+    ).toMatchObject({ allow: false, reason: "taken_down" });
+    expect(decide(owner, "views", art("unlisted", { deleted: true }), access())).toMatchObject({
+      allow: false,
+      reason: "not_found",
+    });
+  });
+  it("is a read action: the owner's agent needs only artifacts:read", () => {
+    const readOnly = ownerAgent(["artifacts:read"] as never);
+    expect(decide(readOnly, "views", art("allowlist"), access()).allow).toBe(true);
+    const writeOnly = ownerAgent(["artifacts:write"] as never);
+    expect(decide(writeOnly, "views", art("allowlist"), access())).toMatchObject({
+      reason: "scope",
+    });
+  });
+});
 
 describe("policy: shared data actions", () => {
   it("data_read is a read action; data_write and data_clear need the write scope", () => {

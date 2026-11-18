@@ -144,3 +144,54 @@ describe("migration 0007_upload_tickets", () => {
     await expect(insert("open", "conflict")).rejects.toThrow();
   });
 });
+
+describe("migration 0010_view_counts", () => {
+  const day = (artifactId: string, d: string, views: number) =>
+    D1()
+      .prepare("INSERT INTO artifact_view_days (artifact_id, day, views) VALUES (?, ?, ?)")
+      .bind(artifactId, d, views)
+      .run();
+  const total = (artifactId: string, views: number, firstDay: string) =>
+    D1()
+      .prepare("INSERT INTO artifact_view_totals (artifact_id, views, first_day) VALUES (?, ?, ?)")
+      .bind(artifactId, views, firstDay)
+      .run();
+
+  it("creates both tables WITHOUT ROWID and with no secondary index", async () => {
+    const objects = await D1()
+      .prepare(
+        "SELECT type, name, sql FROM sqlite_master WHERE tbl_name LIKE 'artifact_view_%' ORDER BY name",
+      )
+      .all<{ type: string; name: string; sql: string | null }>();
+    const tables = objects.results.filter((o) => o.type === "table");
+    expect(tables.map((t) => t.name)).toEqual(["artifact_view_days", "artifact_view_totals"]);
+    for (const t of tables) expect(t.sql).toMatch(/WITHOUT ROWID\s*$/);
+    // Only the primary keys' automatic indexes (none for WITHOUT ROWID): one write per open.
+    expect(objects.results.filter((o) => o.type === "index" && o.sql !== null)).toEqual([]);
+  });
+
+  it("accepts real counts and refuses a malformed day or a negative count", async () => {
+    const a = await agent();
+    const { body } = await publish(a.auth);
+    await day(body.id, "2026-11-18", 3);
+    await total(body.id, 10, "2026-08-01");
+    for (const bad of ["2026-1-18", "18-11-2026", "2026-11-18T00:00:00Z", "", "abcd-ef-gh"]) {
+      await expect(day(body.id, bad, 1), bad).rejects.toThrow();
+    }
+    await expect(day(body.id, "2026-11-17", -1)).rejects.toThrow();
+    const b = await publish(a.auth);
+    for (const bad of ["2026/08/01", "2026-08-1", ""]) {
+      await expect(total(b.body.id, 1, bad), bad).rejects.toThrow();
+    }
+    await expect(total(b.body.id, -1, "2026-08-01")).rejects.toThrow();
+  });
+
+  it("one row per artifact per day, and only for an artifact that exists", async () => {
+    const a = await agent();
+    const { body } = await publish(a.auth);
+    await day(body.id, "2026-11-18", 1);
+    await expect(day(body.id, "2026-11-18", 1)).rejects.toThrow();
+    await expect(day("no-such-artifact", "2026-11-18", 1)).rejects.toThrow();
+    await expect(total("no-such-artifact", 1, "2026-11-18")).rejects.toThrow();
+  });
+});

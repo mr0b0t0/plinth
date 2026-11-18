@@ -253,6 +253,26 @@ export const artifactDataUsage = sqliteTable("artifact_data_usage", {
   seq: integer("seq").notNull().default(0),
 });
 
+// Open counts (migrations/0010_view_counts.sql): one number per artifact per UTC day, and the
+// folded total of days older than the daily window. No viewer data of any kind.
+export const artifactViewDays = sqliteTable(
+  "artifact_view_days",
+  {
+    artifactId: text("artifact_id").notNull(),
+    /** UTC day, YYYY-MM-DD. */
+    day: text("day").notNull(),
+    views: integer("views").notNull().default(0),
+  },
+  (t) => [primaryKey({ columns: [t.artifactId, t.day] })],
+);
+
+export const artifactViewTotals = sqliteTable("artifact_view_totals", {
+  artifactId: text("artifact_id").primaryKey(),
+  views: integer("views").notNull().default(0),
+  /** The earliest UTC day folded into this total, YYYY-MM-DD. */
+  firstDay: text("first_day").notNull(),
+});
+
 export type ArtifactDocRow = typeof artifactDocs.$inferSelect;
 export type ArtifactDataUsageRow = typeof artifactDataUsage.$inferSelect;
 

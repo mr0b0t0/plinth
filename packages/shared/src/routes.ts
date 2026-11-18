@@ -96,6 +96,7 @@ export const APP_ROUTES = {
   open: "/open/:id",
   report: "/a/:slug/report",
   adminReports: "/admin/reports",
+  adminStats: "/admin/stats",
   design: "/design",
   terms: "/legal/terms",
   privacy: "/legal/privacy",
