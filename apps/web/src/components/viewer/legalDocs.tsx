@@ -174,8 +174,8 @@ function privacy(op: OperatorInfo, cfg: LegalConfig): LegalDoc {
               show who owns, edits or comments on an artifact.
             </li>
             <li>
-              <strong>Your artifacts</strong>: every version of the pages, files, titles and notes
-              you or your agents publish. They contain whatever you put in them.
+              <strong>Your artifacts</strong>: every version of the pages, files, titles, categories
+              and notes you or your agents publish. They contain whatever you put in them.
             </li>
             <li>
               <strong>What people enter on shared pages</strong>: some pages can save what their
