@@ -25,9 +25,9 @@ All in the operator's Cloudflare account:
 
 | Resource | Name / ID | Created by |
 | --- | --- | --- |
-| D1 database | `plinth` (`7dd95d0b-dd98-469f-8eac-8c6a06c35b52`), migrations 0001, 0002 and 0004 to 0008 applied (there is no 0003) | `scripts/setup.mjs --remote --env production` |
+| D1 database | `plinth` (`7dd95d0b-dd98-469f-8eac-8c6a06c35b52`), migrations 0001, 0002 and 0004 to 0010 applied (there is no 0003) | `scripts/setup.mjs --remote --env production` |
 | R2 bucket | `plinth-files` | `scripts/setup.mjs` |
-| Worker | `plinth` (version `b4b2c0df-7651-4a9c-8725-4824af4bfe89`, commit `1b094e6`: the code released as v0.5.0 (T3 Code harness entry, in-chat previews and the fixes from testing them, #28 to #32), no new migrations; v0.4.1 brought big builds and uploads (0.4.0) and thumbnails, migrations `0006_stored_bytes.sql`, `0007_upload_tickets.sql` and `0008_thumbnails.sql` applied first) | `wrangler deploy --config wrangler.production.jsonc` |
+| Worker | `plinth` (version `ffc12bab-83bf-4f86-bd8f-c723e0455714`, commit `bb25eb8`: v0.5.0 plus MCP tool annotations (#40), artifact categories (#44, migration `0009_categories.sql`) and admin stats with view counts (#43, migration `0010_view_counts.sql`, `VIEW_COUNTS` on by default), both applied first; v0.5.0 (`1b094e6`) brought the T3 Code harness entry and in-chat previews (#28 to #32); v0.4.1 brought big builds and uploads (0.4.0) and thumbnails, migrations `0006_stored_bytes.sql`, `0007_upload_tickets.sql` and `0008_thumbnails.sql` applied first) | `wrangler deploy --config wrangler.production.jsonc` |
 | Worker secrets | `SESSION_SECRET`, `TOKEN_SIGNING_KEY` (generated), `SENDGRID_API_KEY` | `scripts/setup.mjs` |
 | Workers Custom Domain | `plinth.aconite.io`, plus the read-only `AAAA 100::` record and certificate Cloudflare creates for it | `wrangler deploy` |
 | Domain and zone | `plinthusercontent.com`, registered through Cloudflare Registrar (Free plan zone). SSL/TLS "Full (strict)", "Always Use HTTPS" on, Universal SSL for `plinthusercontent.com` and `*.plinthusercontent.com` | Cloudflare dashboard |
@@ -118,6 +118,15 @@ After the v0.5.0 deploy (2026-11-16, `1b094e6`):
   and says the page cannot be shown there. claude.ai leaves `https://*.plinthusercontent.com` out
   of a custom connector's `frame-src`; a listing in the Claude directory can ask for the site.
 - **Connect an agent** shows the T3 Code tab with its Claude and Codex sections.
+
+After the 2026-11-18 deploy (`bb25eb8`, migrations `0009` and `0010` applied first):
+
+- `GET /healthz`: `{"ok":true,"environment":"production"}`; `/mcp/server-card` reports `0.5.0`
+  (it reported `0.4.2` before, from the build ahead of the version bump).
+- **Tool annotations**: `tools/list` from an OAuth-connected Codex 0.169.0 client has all 16 tools
+  with a title and explicit hints; only `set_visibility` and `write_artifact_data` are destructive.
+- **Categories**: `publish_artifact`'s input schema has `category`.
+- **Connect an agent**: the Cursor row reads "Cursor shared canvases (your Cursor team only)".
 
 ## Waiting on a human
 
