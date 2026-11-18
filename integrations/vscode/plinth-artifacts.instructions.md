@@ -404,8 +404,10 @@ planning board, a live retro), never for chat with strangers.
 <script src="/__plinth/runtime.js"></script>
 ```
 
-- `room` turns it on. Owners and editors may send any topic; everyone else only the topics in
-  `plinth-room-open` (space separated, at most 16, `*` for all). Add `viewer` only if the page
+- `room` turns it on. Owners and editors may send any topic; commenters only the topics in
+  `plinth-room-open` (space separated, at most 16, `*` for all); viewers never send, even an open
+  topic: they join, set presence and receive, so show them a read-only view when
+  `canEmit(topic)` is false. Add `viewer` only if the page
   shows people's emails. Only people the page is shared with join; anonymous link viewers, in-chat
   previews and opaque-isolation instances never do.
 - `const r = await plinth.room.ready` never rejects: `{ available, reason, you, canEmit(topic) }`.

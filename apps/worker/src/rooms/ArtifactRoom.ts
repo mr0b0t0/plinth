@@ -27,6 +27,7 @@ import {
   ROOM_TOPIC_RE,
   type RoomClientFrame,
   type RoomDocRight,
+  type RoomEmitRight,
   type RoomErrorCode,
   type RoomIdentity,
   type RoomKind,
@@ -60,7 +61,9 @@ export interface RoomConnect {
   email: string;
   /** Peers see this socket's email and role (the page declares `viewer`, or a doc socket). */
   seeIdentity: boolean;
-  emitAll: boolean;
+  /** all (owners, editors), open (commenters: openTopics), none (viewers, doc sockets). */
+  emit: RoomEmitRight;
+  /** The page's declared open topics (re-checked against each new declaration). */
   openTopics: string[];
   doc: RoomDocRight;
   /** The instance's ROOM_* limits, as the Worker parsed them. */
@@ -79,6 +82,7 @@ interface SocketState extends RoomConnect {
 
 const ROLES: ReadonlySet<string> = new Set(["owner", "editor", "commenter", "viewer"]);
 const DOC_RIGHTS: ReadonlySet<string> = new Set(["none", "watch", "write"]);
+const EMIT_RIGHTS: ReadonlySet<string> = new Set(["all", "open", "none"]);
 
 /** The header, checked for shape (it is the Worker's own, but a room never trusts a bad one). */
 export function parseConnect(raw: string | null): RoomConnect | null {
@@ -104,7 +108,8 @@ export function parseConnect(raw: string | null): RoomConnect | null {
     ROLES.has(c.role) &&
     typeof c.email === "string" &&
     typeof c.seeIdentity === "boolean" &&
-    typeof c.emitAll === "boolean" &&
+    typeof c.emit === "string" &&
+    EMIT_RIGHTS.has(c.emit) &&
     Array.isArray(c.openTopics) &&
     c.openTopics.length <= ROOM_LIMITS.maxOpenTopics &&
     c.openTopics.every(
@@ -453,7 +458,7 @@ export class ArtifactRoom extends DurableObject<Bindings> {
 
   private emit(ws: WebSocket, s: SocketState, room: string, topic: string, data: unknown) {
     if (s.rooms[room] === undefined) return this.error(ws, "not_joined");
-    if (!canEmitTopic(s.emitAll, s.openTopics, topic)) return this.error(ws, "forbidden_topic");
+    if (!canEmitTopic(s.emit, s.openTopics, topic)) return this.error(ws, "forbidden_topic");
     for (const m of this.members(room)) {
       if (m.ws === ws) continue;
       this.send(m.ws, { t: "event", room, topic, data, from: this.identity(s, m.s) });

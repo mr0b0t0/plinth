@@ -572,7 +572,7 @@ durable state belongs in [shared data](#shared-data-and-viewer-identity), which 
 late joiner reads it. Plinth's own on-page doc editing is the room's first use.
 
 - **Declaration.** A page opts in with `room` in `<meta name="plinth-capabilities">` (for example
-  `content="data viewer room"`), and may list topics anyone in the room may emit with
+  `content="data viewer room"`), and may list topics commenters may emit too with
   `<meta name="plinth-room-open" content="cursor note.move">` (`*` opens all; at most 16, each
   `^[a-z][a-z0-9_.:-]{0,39}$`). `room` is not shared data: a page that declares only `room` has no
   store. The current version's declaration governs, as for data.
@@ -589,8 +589,10 @@ late joiner reads it. Plinth's own on-page doc editing is the room's first use.
   input and presence is never authority.
 - **Who joins.** Identified viewers only (the owner and people with a grant, signed in or confirmed
   by code). Anonymous link viewers, in-chat previews and thumbnail captures never join in v1.
-  Owners and editors emit any topic; everyone else emits only the open topics. Agents never join a
-  room.
+  Owners and editors emit any topic, commenters only the open topics, and viewers never emit, even
+  an open topic (as Claude's artifact `room` capability, which never lets a plain viewer emit).
+  Viewers still join, set presence and receive; `canEmit(topic)` and the availability check's
+  `can_emit` (`all`, `open` or `none`) say which applies. Agents never join a room.
 - **Transport.** One WebSocket per page to its own origin, `wss://<id>.<CONTENT_HOST>/__plinth/room/v1/page`,
   served by the artifact's Durable Object with the Hibernation API. The handshake is checked in
   order: method, exact `Origin`, fetch metadata, the `plinth.room.v1` subprotocol, rooms active,

@@ -868,6 +868,35 @@ describe("runtime: plinth.room", () => {
     expect(room.emit("cursor", "x".repeat(9000))).toBe(false);
   });
 
+  it("canEmit follows the room's answer: all for editors, open for commenters, none for viewers", async () => {
+    const as = async (role: string, canEmit: string, open: string[]) => {
+      const body = { ...ROOM_INFO, you: { ...ROOM_INFO.you, role }, can_emit: canEmit };
+      const b = roomBoot({ status: 200, body: { ...body, open_topics: open } });
+      const ready = b.room.ready;
+      await b.settle();
+      b.ws.last().welcome({ ...YOU, role });
+      return { ...b, r: await ready };
+    };
+    const owner = await as("owner", "all", []);
+    expect(owner.r.canEmit("note.move")).toBe(true);
+    expect(owner.r.canEmit("Bad Topic")).toBe(false);
+    const editor = await as("editor", "all", ["cursor"]);
+    expect(editor.r.canEmit("note.move")).toBe(true);
+    const commenter = await as("commenter", "open", ["*"]);
+    expect(commenter.r.canEmit("note.move")).toBe(true);
+    // A viewer never emits, even when the page opens every topic; presence still goes out.
+    const viewer = await as("viewer", "none", ["*"]);
+    expect(viewer.r).toMatchObject({ available: true, you: { role: "viewer" } });
+    expect(viewer.r.canEmit("cursor")).toBe(false);
+    expect(viewer.r.canEmit("note.move")).toBe(false);
+    const s = viewer.ws.last();
+    s.sent = [];
+    expect(viewer.room.emit("cursor", { x: 1 })).toBe(false);
+    expect(viewer.room.presence({ x: 1 })).toBe(true);
+    await viewer.advance(100);
+    expect(s.sent).toEqual([{ t: "presence", room: "main", state: { x: 1 } }]);
+  });
+
   it("reconnects with backoff after a drop, and rejoins with its presence", async () => {
     const { room, ws, advance, settle, count } = roomBoot();
     const statuses: string[] = [];

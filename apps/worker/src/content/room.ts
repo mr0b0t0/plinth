@@ -134,7 +134,7 @@ export async function roomInfo(
       role: pass.claim.role,
       email: access.seeIdentity ? pass.claim.email : null,
     },
-    can_emit: access.emitAll ? "all" : "open",
+    can_emit: access.emit,
     open_topics: access.openTopics,
     limits: {
       max_message_bytes: config.rooms.maxMessageBytes,
@@ -239,7 +239,7 @@ async function upgrade(
     role: pass.claim.role,
     email: pass.claim.email,
     seeIdentity: access.seeIdentity,
-    emitAll: access.emitAll,
+    emit: access.emit,
     openTopics: access.openTopics,
     doc: access.doc,
     limits: {

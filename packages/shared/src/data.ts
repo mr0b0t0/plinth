@@ -18,7 +18,7 @@ export interface Capabilities {
   shared: string[];
   /** The live room (presence and broadcast, `plinth.room`). Not shared data. */
   room: boolean;
-  /** Topics any identified participant may emit (plinth-room-open); `*` opens all. */
+  /** Topics commenters may emit too (plinth-room-open); `*` opens all. Viewers never emit. */
   roomOpen: string[];
 }
 

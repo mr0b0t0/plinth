@@ -8,7 +8,9 @@
   A shared whiteboard for Plinth (docs/agents.md "Multiplayer pages with plinth.room").
   Notes and arrows are shared data, so they persist and a late joiner reads them. Cursors and a
   note moving while it is dragged go through the live room, which keeps nothing. Everything a peer
-  sends is untrusted: positions are checked, and names are drawn as text.
+  sends is untrusted: positions are checked, and names are drawn as text. Commenters, editors and
+  the owner change the board; people with view access join the room and show their cursor (presence
+  is not an event) but never emit, so their board is read-only and follows the others live.
 -->
 <meta name="plinth-capabilities" content="data viewer room">
 <meta name="plinth-data-shared" content="notes links">
@@ -792,8 +794,11 @@ async function start() {
   }
   const s = await P.ready;
   document.body.dataset.dataReason = String(s.reason);
+  // Editing waits for the room's answer below: a viewer may not emit, so their board is read-only.
+  canWrite = false;
+  let dataWrite = true;
   if (s.available) {
-    canWrite = s.canWrite;
+    dataWrite = s.canWrite;
     notesC = P.db.collection("notes");
     linksC = P.db.collection("links");
     const onErr = (e) => {
@@ -802,23 +807,31 @@ async function start() {
     };
     notesC.onSnapshot(applyNotes, onErr);
     linksC.onSnapshot(applyLinks, onErr);
-    if (!canWrite) notices.data = "You can view this board. Only people it is shared with can change it.";
+    if (!dataWrite) notices.data = "You can view this board. Only people it is shared with can change it.";
   } else {
-    canWrite = true;
     notices.data = `Saving is off here (${DATA_WHY[s.reason] || "it is unavailable"}). Notes you add stay in this tab.`;
   }
-  setEditable();
   showNotices();
 
   const r = await P.room.ready;
   document.body.dataset.roomReason = String(r.reason);
+  if (document.body.dataset.expired) return;
+  // Moves and saves reach the others as room events. Someone who may not emit them (a viewer:
+  // only commenters, editors and the owner emit) gets a read-only board that still follows the
+  // others live, with their own cursor shown as presence.
+  const mayEmit = !r.available || r.canEmit("note.move");
+  canWrite = dataWrite && mayEmit;
   if (r.available) {
     startRoom(P.room);
-  } else if (!document.body.dataset.expired) {
+    if (dataWrite && !mayEmit) {
+      notices.data = "You can view this board and see who is here. Only people who can comment or edit can change it.";
+    }
+  } else {
     const saves = s.available && canWrite ? " Changes still save." : "";
     notices.room = `Live cursors are off here (${ROOM_WHY[r.reason] || "the room is unavailable"}).${saves}`;
-    showNotices();
   }
+  setEditable();
+  showNotices();
 }
 start();
 </script>

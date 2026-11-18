@@ -1,8 +1,9 @@
 // A multiplayer page with plinth.room (#36): the example whiteboard (docs/examples/whiteboard.html)
-// open in two contexts. One person's cursor shows in the other's board, a note dragged in one moves
-// in the other before it is dropped, the dropped position is saved in shared data and survives a
-// reload, removing the second person's grant closes their socket and ends in plinth:expired, and an
-// anonymous link viewer gets the board read-only without the room.
+// open in three contexts. One person's cursor shows in the other's board, a note a commenter drags
+// moves in the owner's board before it is dropped, the dropped position is saved in shared data and
+// survives a reload, a person with view access joins the room read-only (they never emit, but their
+// cursor shows and the board follows the others live), removing the grants closes their sockets and
+// ends in plinth:expired, and an anonymous link viewer gets the board read-only without the room.
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { type Browser, expect, type FrameLocator, type Page, test } from "@playwright/test";
@@ -43,6 +44,7 @@ test("a shared whiteboard: live cursors, a note moving as it is dragged, saved o
   test.setTimeout(120_000);
   const owner = uniqueEmail("board-owner");
   const guest = uniqueEmail("board-guest");
+  const watcher = uniqueEmail("board-watcher");
   const { token } = await seedToken(owner, { label: "Board agent", clientType: "claude" });
   const art = await publishArtifact(page.request, token, {
     title: "Team whiteboard",
@@ -52,18 +54,31 @@ test("a shared whiteboard: live cursors, a note moving as it is dragged, saved o
   const shared = await apiPut(
     page.request,
     `/artifacts/${art.id}/sharing`,
-    { grants: [{ email: guest, role: "viewer" }] },
+    {
+      grants: [
+        { email: guest, role: "commenter" },
+        { email: watcher, role: "viewer" },
+      ],
+    },
     { token },
   );
   expect(shared.status, JSON.stringify(shared.body)).toBe(200);
 
   await signedIn(browser, owner, art.slug, page);
   const other = await signedIn(browser, guest, art.slug);
+  const viewer = await signedIn(browser, watcher, art.slug);
   try {
     // Both see each other in the people list (emails, because the page declares viewer).
     await expect(board(page).locator("#peers")).toContainText(guest);
     await expect(board(other).locator("#peers")).toContainText(owner);
     await expect(board(page).locator("#banner")).toHaveText("");
+    await expect(board(other).locator("#banner")).toHaveText("");
+    // A viewer joins the room but may not emit, so their board is read-only.
+    await expect(board(viewer).locator("#peers")).toContainText(owner);
+    await expect(board(viewer).locator("#banner")).toHaveText(
+      "You can view this board and see who is here. Only people who can comment or edit can change it.",
+    );
+    await expect(board(viewer).getByRole("button", { name: "Add note" })).toBeDisabled();
 
     // The owner adds a note; the guest's board picks it up from the note.saved event.
     await board(page).getByRole("button", { name: "Add note" }).click();
@@ -78,9 +93,25 @@ test("a shared whiteboard: live cursors, a note moving as it is dragged, saved o
     if (!area) throw new Error("no board area");
     await page.mouse.move(area.x + 20, area.y + 20);
     await page.mouse.move(area.x + 30, area.y + 26, { steps: 3 });
-    await expect(board(other).locator(".cursor span")).toHaveText(owner, { timeout: 10_000 });
+    await expect(board(other).locator(".cursor span").filter({ hasText: owner })).toHaveCount(1, {
+      timeout: 10_000,
+    });
+    await expect(board(viewer).getByLabel("Note text")).toHaveValue("Ship the beta", {
+      timeout: 10_000,
+    });
+    await expect(board(viewer).getByLabel("Note text")).toHaveJSProperty("readOnly", true);
+    await expect(board(viewer).locator(".note .grip")).toBeDisabled();
 
-    // The guest drags the note; the owner sees it move before the drop.
+    // The viewer's cursor is presence, which they may set: the owner sees it.
+    const seen = await board(viewer).locator("#viewport").boundingBox();
+    if (!seen) throw new Error("no board area");
+    await viewer.mouse.move(seen.x + 40, seen.y + 40);
+    await viewer.mouse.move(seen.x + 50, seen.y + 46, { steps: 3 });
+    await expect(board(page).locator(".cursor span").filter({ hasText: watcher })).toHaveCount(1, {
+      timeout: 10_000,
+    });
+
+    // The guest (a commenter) drags the note; the owner and the viewer see it move before the drop.
     const start = await left(other);
     const grip = await board(other).locator(".note .grip").first().boundingBox();
     if (!grip) throw new Error("no grip");
@@ -91,6 +122,7 @@ test("a shared whiteboard: live cursors, a note moving as it is dragged, saved o
     await other.mouse.move(gx + 30, gy + 20, { steps: 4 });
     await other.mouse.move(gx + 60, gy + 40, { steps: 4 });
     await expect.poll(() => left(page), { timeout: 10_000 }).not.toBe(start);
+    await expect.poll(() => left(viewer), { timeout: 10_000 }).not.toBe(start);
     await other.mouse.up();
     const dropped = await left(other);
     expect(dropped).toBeGreaterThan(start);
@@ -108,7 +140,7 @@ test("a shared whiteboard: live cursors, a note moving as it is dragged, saved o
       )
       .toBe(dropped);
 
-    // Removing the guest's grant closes their socket; the page hears plinth:expired.
+    // Removing the grants closes their sockets; the pages hear plinth:expired.
     const removed = await apiPut(
       page.request,
       `/artifacts/${art.id}/sharing`,
@@ -123,6 +155,9 @@ test("a shared whiteboard: live cursors, a note moving as it is dragged, saved o
       "Your access changed. Reload the page.",
     );
     await expect(board(other).getByRole("button", { name: "Add note" })).toBeDisabled();
+    await expect(board(viewer).locator("body")).toHaveAttribute("data-expired", "true", {
+      timeout: 20_000,
+    });
 
     // An anonymous link viewer sees the board read-only, without the room.
     const unlisted = await apiPut(
@@ -154,5 +189,6 @@ test("a shared whiteboard: live cursors, a note moving as it is dragged, saved o
     }
   } finally {
     await other.context().close();
+    await viewer.context().close();
   }
 });

@@ -349,7 +349,9 @@ dragged), a page also declares `room` and uses `window.plinth.room` from the sam
   writes the result to `plinth.db` (with `ifRev`), then emits a small event so the others fetch
   that one document; someone who opens the page later reads the store.
 - **Who is in it.** The owner and the people it is shared with, signed in or confirmed by code.
-  Owners and editors may emit any topic; others only those in `plinth-room-open` (`*` opens all).
+  Owners and editors may emit any topic, commenters only those in `plinth-room-open` (`*` opens
+  all), and viewers never emit: they join, show their presence and receive, so give them a
+  read-only view (check `canEmit(topic)` from `plinth.room.ready`).
   Emails appear only when the page also declares `viewer`. Anonymous link viewers, in-chat
   previews and thumbnails never join, and neither do agents: an agent never sees room traffic.
 - **Always a fallback.** `await plinth.room.ready` resolves `{ available: false, reason }` under
@@ -360,7 +362,8 @@ dragged), a page also declares `room` and uses `window.plinth.room` from the sam
 
 [`docs/examples/whiteboard.html`](examples/whiteboard.html) is a complete page: sticky notes and
 arrows in shared data, live cursors through `presence`, `note.move` while dragging and
-`note.saved` after the write, a read-only view for link viewers, light and dark themes, and phone
+`note.saved` after the write, a read-only view for viewers (who never emit) and link viewers,
+light and dark themes, and phone
 width. Publish it as is (`publish_artifact` with its HTML) to try it with someone. The skill's
 "Multiplayer pages (rooms)" section has the full API and limits.
 

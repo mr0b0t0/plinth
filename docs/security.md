@@ -736,7 +736,12 @@ The upgrade (`apps/worker/src/content/room.ts`) therefore checks, in this order:
    tells them, that the artifact exists, and never its type or whether it declares `room`.
 8. **Kind.** The path names it: `page` for an HTML artifact whose current version declares
    `room`, `doc` for a doc.
-9. **Policy.** `roomAccess` in `policy.ts` decides joining and what the socket may do.
+9. **Policy.** `roomAccess` in `policy.ts` decides joining and what the socket may do. Everyone
+   identified joins a page room and may set presence, which is never authority. Emitting is a
+   right: owners and editors emit any topic, commenters only the page's `plinth-room-open` topics,
+   and viewers nothing, not even an open topic, so a grant to view cannot push events at the
+   people editing. The room checks it on every `emit` frame (`forbidden_topic`), from the rights
+   the gate stamped, never from anything the client sends.
 
 **No ticket.** An earlier design had the app mint a short-lived room ticket. It is not needed: a
 browser cannot forge `Origin`, and a non-browser client that forges it still needs the content
@@ -775,7 +780,8 @@ host's REST API.
 alarm.
 
 **Availability check.** `GET /__plinth/api/v1/room` runs the data API's caller checks 1 to 4, then
-reports `{ available, reason, you, can_emit, open_topics, limits }`. It needs a content pass (401
+reports `{ available, reason, you, can_emit, open_topics, limits }`, where `can_emit` is `all`,
+`open` or `none` (a viewer). It needs a content pass (401
 otherwise) and works where shared data is off: the gate seals the identity claim whenever shared
 data or rooms are active with origin isolation.
 

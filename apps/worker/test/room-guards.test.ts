@@ -275,7 +275,7 @@ describe("room upgrade: the checks, in order", () => {
   it("success: 101 with the subprotocol and the content headers; client headers never reach the room", async () => {
     const { id } = await setup(roomPage({ viewer: true }));
     const commenter = await person(id, "commenter");
-    const forged = JSON.stringify({ role: "owner", email: "boss@example.com", emitAll: true });
+    const forged = JSON.stringify({ role: "owner", email: "boss@example.com", emit: "all" });
     const res = await upgrade(id, commenter.cookie, { headers: { "x-plinth-room": forged } });
     expect(res.status).toBe(101);
     expect(res.headers.get("sec-websocket-protocol")).toBe("plinth.room.v1");
@@ -388,6 +388,21 @@ describe("GET /__plinth/api/v1/room", () => {
       available: true,
       you: { role: "commenter", email: commenter.email },
       can_emit: "open",
+      open_topics: ["cursor", "note.move"],
+    });
+    const editor = await person(id, "editor");
+    expect(await json(await info(id, editor.cookie))).toMatchObject({
+      available: true,
+      you: { role: "editor" },
+      can_emit: "all",
+    });
+    // A viewer joins and receives, but never emits, even the page's open topics.
+    const viewer = await person(id, "viewer");
+    expect(await json(await info(id, viewer.cookie))).toMatchObject({
+      available: true,
+      you: { role: "viewer", email: viewer.email },
+      can_emit: "none",
+      open_topics: ["cursor", "note.move"],
     });
     // Without `viewer`, the page never learns an email.
     const { id: anonPage, ownerP: o2 } = await setup(roomPage({ viewer: false }));

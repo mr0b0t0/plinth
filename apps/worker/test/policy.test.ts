@@ -700,7 +700,7 @@ describe("policy: roomAccess", () => {
     roomOpen: [],
     ...extra,
   });
-  const NONE = { join: false, emitAll: false, openTopics: [], seeIdentity: false, doc: "none" };
+  const NONE = { join: false, emit: "none", openTopics: [], seeIdentity: false, doc: "none" };
   const html = { active: true, type: "html" as const };
   const doc = { active: true, type: "doc" as const };
 
@@ -723,12 +723,13 @@ describe("policy: roomAccess", () => {
     ).toEqual(NONE);
     // A doc never has a page room, whatever is stored.
     expect(roomAccess(claimOf("owner", true), capsOf(), "page", doc)).toEqual(NONE);
+    // Owners and editors emit any topic, commenters the open ones, viewers never.
+    const emit = { owner: "all", editor: "all", commenter: "open", viewer: "none" } as const;
     for (const role of ["owner", "editor", "commenter", "viewer"] as const) {
       const a = roomAccess(claimOf(role), capsOf({ roomOpen: ["cursor"] }), "page", html);
-      const editor = role === "owner" || role === "editor";
       expect(a, role).toEqual({
         join: true,
-        emitAll: editor,
+        emit: emit[role],
         openTopics: ["cursor"],
         seeIdentity: false,
         doc: "none",
@@ -739,9 +740,15 @@ describe("policy: roomAccess", () => {
   it("page: identities only with viewer; open topics are a copy", () => {
     const caps = capsOf({ viewer: true, roomOpen: ["*"] });
     const a = roomAccess(claimOf("commenter"), caps, "page", html);
-    expect(a).toMatchObject({ seeIdentity: true, emitAll: false, openTopics: ["*"] });
+    expect(a).toMatchObject({ seeIdentity: true, emit: "open", openTopics: ["*"] });
     a.openTopics.push("x");
     expect(caps.roomOpen).toEqual(["*"]);
+    // `*` opens every topic to commenters, never to viewers.
+    expect(roomAccess(claimOf("viewer"), caps, "page", html)).toMatchObject({
+      join: true,
+      seeIdentity: true,
+      emit: "none",
+    });
   });
 
   it("doc: owners and editors on a liveEdit type; signed in writes, by code watches", () => {
@@ -749,7 +756,7 @@ describe("policy: roomAccess", () => {
       expect(roomAccess(claimOf(role, true), null, "doc", doc), role).toEqual(NONE);
     expect(roomAccess(claimOf("owner", true), null, "doc", html)).toEqual(NONE);
     for (const role of ["owner", "editor"] as const) {
-      const base = { join: true, emitAll: false, openTopics: [], seeIdentity: true };
+      const base = { join: true, emit: "none", openTopics: [], seeIdentity: true };
       expect(roomAccess(claimOf(role, true), null, "doc", doc), role).toEqual({
         ...base,
         doc: "write",
@@ -765,7 +772,7 @@ describe("policy: roomAccess", () => {
     expect(
       roomAccess(claimOf("editor", true), capsOf({ roomOpen: ["*"] }), "doc", doc),
     ).toMatchObject({
-      emitAll: false,
+      emit: "none",
       openTopics: [],
     });
   });

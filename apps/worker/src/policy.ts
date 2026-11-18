@@ -9,6 +9,7 @@ import {
   isPersonalDocId,
   type Role,
   type RoomDocRight,
+  type RoomEmitRight,
   type RoomKind,
   type Scope,
   TYPE_REGISTRY,
@@ -276,9 +277,12 @@ export function canModifyDoc(
 /** What a socket on an artifact's room may do. */
 export interface RoomAccess {
   join: boolean;
-  /** Emit any topic (owners and editors on a page room). */
-  emitAll: boolean;
-  /** Topics anyone in the room may emit (the page's plinth-room-open). */
+  /**
+   * Which topics this socket may emit: `all` (owners and editors on a page room), `open`
+   * (commenters: the page's open topics), `none` (viewers, and every doc socket).
+   */
+  emit: RoomEmitRight;
+  /** The page's plinth-room-open topics, as declared (what `open` allows). */
   openTopics: string[];
   /** Peers carry email and role. */
   seeIdentity: boolean;
@@ -288,7 +292,7 @@ export interface RoomAccess {
 
 const NO_ROOM: RoomAccess = {
   join: false,
-  emitAll: false,
+  emit: "none",
   openTopics: [],
   seeIdentity: false,
   doc: "none",
@@ -298,11 +302,12 @@ const NO_ROOM: RoomAccess = {
  * May this viewer join the artifact's room, and what may they do there? `active` is
  * roomsActive(config, env); `caps` the current version's declaration; `type` the artifact's type.
  * Only identified viewers join (no anonymous link viewers in v1). A page room needs an HTML
- * artifact that declares `room`: everyone identified joins, owners and editors emit any topic,
- * others only the page's open topics, and identities show only with `viewer`. A doc socket is
- * Plinth's own editing channel for types with liveEdit: owners and editors only, who see each
- * other's emails; signed-in ones write, ones confirmed by code watch. Checked at the upgrade, and
- * through the room's stamped header on every message.
+ * artifact that declares `room`: everyone identified joins and sets presence; owners and editors
+ * emit any topic, commenters only the page's open topics, and viewers never emit (as Claude's
+ * artifact `room` capability, which never lets a plain viewer emit). Identities show only with
+ * `viewer`. A doc socket is Plinth's own editing channel for types with liveEdit: owners and
+ * editors only, who see each other's emails; signed-in ones write, ones confirmed by code watch.
+ * Checked at the upgrade, and through the room's stamped header on every message.
  */
 export function roomAccess(
   claim: PageClaim | null,
@@ -316,7 +321,7 @@ export function roomAccess(
     if (!TYPE_REGISTRY[ctx.type]?.liveEdit || !editor) return NO_ROOM;
     return {
       join: true,
-      emitAll: false,
+      emit: "none",
       openTopics: [],
       seeIdentity: true,
       doc: claim.account === true ? "write" : "watch",
@@ -325,7 +330,7 @@ export function roomAccess(
   if (ctx.type !== "html" || caps?.room !== true) return NO_ROOM;
   return {
     join: true,
-    emitAll: editor,
+    emit: editor ? "all" : claim.role === "commenter" ? "open" : "none",
     openTopics: [...caps.roomOpen],
     seeIdentity: caps.viewer === true,
     doc: "none",

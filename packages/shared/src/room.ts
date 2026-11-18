@@ -11,8 +11,8 @@ import type { EffectiveRole } from "./constants.ts";
 export * from "./roomCodes.ts";
 
 /**
- * <meta name="plinth-room-open" content="cursor note.move">: topics any identified participant
- * may emit (owners and editors may emit any topic). `*` opens every topic.
+ * <meta name="plinth-room-open" content="cursor note.move">: topics commenters may emit too
+ * (owners and editors emit any topic; viewers never emit). `*` opens every topic.
  */
 export const ROOM_OPEN_META = "plinth-room-open";
 export const ROOM_OPEN_ALL = "*";
@@ -69,6 +69,12 @@ export const ROOM_BOUNDS = {
   messagesPerSecond: [1, 100],
 } as const;
 
+/**
+ * Which topics a participant may emit: `all` for owners and editors, `open` (the page's
+ * plinth-room-open topics) for commenters, `none` for viewers, who join, set presence and receive.
+ */
+export type RoomEmitRight = "all" | "open" | "none";
+
 /** Why `plinth.room` is unavailable to a page (`room.ready` resolves with one of these). */
 export type RoomUnavailableReason =
   | "opaque_isolation"
@@ -103,7 +109,7 @@ export type RoomInfo =
       available: true;
       reason: null;
       you: { viewer: string; role: EffectiveRole; email: string | null };
-      can_emit: "all" | "open";
+      can_emit: RoomEmitRight;
       open_topics: string[];
       limits: {
         max_message_bytes: number;
@@ -167,8 +173,15 @@ export function mergePresence(
   return next;
 }
 
-/** May a participant emit this topic? Owners and editors (`emitAll`) any; others only open ones. */
-export function canEmitTopic(emitAll: boolean, openTopics: readonly string[], t: string): boolean {
-  if (!ROOM_TOPIC_RE.test(t)) return false;
-  return emitAll || openTopics.includes(ROOM_OPEN_ALL) || openTopics.includes(t);
+/**
+ * May a participant emit this topic? `all` (owners and editors) any; `open` (commenters) only the
+ * page's open topics; `none` (viewers) never.
+ */
+export function canEmitTopic(
+  emit: RoomEmitRight,
+  openTopics: readonly string[],
+  t: string,
+): boolean {
+  if (!ROOM_TOPIC_RE.test(t) || emit === "none") return false;
+  return emit === "all" || openTopics.includes(ROOM_OPEN_ALL) || openTopics.includes(t);
 }

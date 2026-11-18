@@ -429,8 +429,11 @@ export const RUNTIME_SCRIPT = `/* Plinth page runtime v1: shared data and live r
   function canEmit(topic) {
     var i = rm.info;
     if (!i || typeof topic !== "string" || !TOPIC_RE.test(topic)) return false;
+    // all: owners and editors; open: commenters, the page's open topics; none: viewers.
+    if (i.can_emit === "all") return true;
+    if (i.can_emit !== "open") return false;
     var open = i.open_topics || [];
-    return i.can_emit === "all" || open.indexOf("*") >= 0 || open.indexOf(topic) >= 0;
+    return open.indexOf("*") >= 0 || open.indexOf(topic) >= 0;
   }
   function finishReady(reason) {
     if (rm.readyDone) return;

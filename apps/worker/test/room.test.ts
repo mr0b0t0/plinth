@@ -181,9 +181,10 @@ describe("room: joining and peers", () => {
 });
 
 describe("room: emitting", () => {
-  it("owners and editors emit any topic; others only open topics; never echoed", async () => {
+  it("owners and editors emit any topic; commenters only open topics; never echoed", async () => {
     const { id, ownerP } = await setup(roomPage({ open: "cursor" }));
     const commenter = await person(id, "commenter");
+    const editor = await person(id, "editor");
     const o = await connect(id, ownerP.cookie);
     const c = await connect(id, commenter.cookie);
     await joined(o);
@@ -211,23 +212,59 @@ describe("room: emitting", () => {
     expect(c.pending()).toEqual([]);
     c.send({ t: "emit", room: "elsewhere", topic: "cursor", data: 1 });
     expect(await c.next()).toEqual({ t: "error", code: "not_joined" });
+    // An editor emits a topic the page does not open, as the owner does.
+    const e = await connect(id, editor.cookie);
+    await joined(e);
+    await o.nextOf("peer");
+    await c.nextOf("peer");
+    e.send({ t: "emit", room: "main", topic: "note.move", data: { id: "n2" } });
+    expect(await o.next()).toMatchObject({ t: "event", topic: "note.move", data: { id: "n2" } });
+    expect(await c.next()).toMatchObject({
+      t: "event",
+      topic: "note.move",
+      from: { role: "editor" },
+    });
     o.ws.close(1000);
     c.ws.close(1000);
+    e.ws.close(1000);
   });
 
-  it("`*` opens every topic", async () => {
+  it("`*` opens every topic to commenters; viewers never emit, but set presence and receive", async () => {
     const { id } = await setup(roomPage({ open: "*" }));
+    const c1 = await person(id, "commenter");
+    const c2 = await person(id, "commenter");
     const v = await person(id, "viewer");
-    const w = await person(id, "viewer");
-    const a = await connect(id, v.cookie);
-    const b = await connect(id, w.cookie);
+    const a = await connect(id, c1.cookie);
+    const b = await connect(id, c2.cookie);
+    const w = await connect(id, v.cookie);
     await joined(a);
     await joined(b);
     await a.nextOf("peer");
+    await joined(w);
+    await a.nextOf("peer");
+    await b.nextOf("peer");
     a.send({ t: "emit", room: "main", topic: "anything.at:all", data: null });
     expect(await b.next()).toMatchObject({ t: "event", topic: "anything.at:all" });
+    // The viewer receives what others emit...
+    expect(await w.next()).toMatchObject({ t: "event", topic: "anything.at:all" });
+    // ...never emits, even a topic the page opens to everyone...
+    w.send({ t: "emit", room: "main", topic: "anything.at:all", data: 1 });
+    expect(await w.next()).toEqual({ t: "error", code: "forbidden_topic" });
+    w.send({ t: "emit", room: "main", topic: "cursor", data: { x: 1 } });
+    expect(await w.next()).toEqual({ t: "error", code: "forbidden_topic" });
+    // ...and still sets presence, which is never authority.
+    w.send({ t: "presence", room: "main", state: { x: 4, y: 2 } });
+    expect(await a.next()).toMatchObject({
+      t: "peer",
+      peer: { id: w.welcome.you.id, presence: { x: 4, y: 2 } },
+    });
+    expect(a.pending()).toEqual([]);
+    // The access re-check keeps the viewer: its declaration is the page's, not its rights.
+    expect(await runDurableObjectAlarm(stubFor(id))).toBe(true);
+    expect(await within(w.closed, 300)).toBe("timeout");
     a.ws.close(1000);
     b.ws.close(1000);
+    w.ws.close(1000);
   });
 
   it("email and role reach peers only when the page declares `viewer`", async () => {

@@ -61,14 +61,17 @@ describe("room helpers", () => {
     expect(prev).toEqual({ x: 1 });
   });
 
-  it("emit: owners and editors any topic, others only open ones", () => {
-    expect(canEmitTopic(true, [], "note.move")).toBe(true);
-    expect(canEmitTopic(false, [], "note.move")).toBe(false);
-    expect(canEmitTopic(false, ["cursor"], "cursor")).toBe(true);
-    expect(canEmitTopic(false, ["cursor"], "note.move")).toBe(false);
-    expect(canEmitTopic(false, ["*"], "note.move")).toBe(true);
+  it("emit: owners and editors any topic, commenters only open ones, viewers none", () => {
+    expect(canEmitTopic("all", [], "note.move")).toBe(true);
+    expect(canEmitTopic("open", [], "note.move")).toBe(false);
+    expect(canEmitTopic("open", ["cursor"], "cursor")).toBe(true);
+    expect(canEmitTopic("open", ["cursor"], "note.move")).toBe(false);
+    expect(canEmitTopic("open", ["*"], "note.move")).toBe(true);
+    // A viewer never emits, even a topic the page opens to everyone.
+    expect(canEmitTopic("none", ["*"], "note.move")).toBe(false);
+    expect(canEmitTopic("none", ["cursor"], "cursor")).toBe(false);
     // An invalid topic is refused whoever sends it.
-    expect(canEmitTopic(true, ["*"], "Bad Topic")).toBe(false);
+    expect(canEmitTopic("all", ["*"], "Bad Topic")).toBe(false);
   });
 
   it("client frames", () => {
