@@ -2,12 +2,16 @@
 // sharing settings and mention tasks goes through these functions, on every request (REST, MCP
 // and the content host). The UI only mirrors these decisions; it never makes them.
 import {
+  type ArtifactType,
   type Capabilities,
   type ClientType,
   type EffectiveRole,
   isPersonalDocId,
   type Role,
+  type RoomDocRight,
+  type RoomKind,
   type Scope,
+  TYPE_REGISTRY,
   type Visibility,
 } from "@plinth/shared";
 
@@ -52,7 +56,12 @@ export type ArtifactAction =
   /** Delete all of an artifact's shared data: the owner, signed in, never an agent. */
   | "data_clear"
   /** Read the artifact's open counts: the owner only. */
-  | "views";
+  | "views"
+  /**
+   * Read, save or discard a doc's live page draft (#36): an owner or editor who is signed in.
+   * Agents never (they push versions), and a viewer confirmed by code must sign in first.
+   */
+  | "live_edit";
 
 export interface ArtifactFacts {
   ownerId: string;
@@ -80,7 +89,9 @@ export type DenyReason =
   | "email_required"
   | "forbidden"
   | "taken_down"
-  | "scope";
+  | "scope"
+  /** The principal has the role but no account session (a viewer confirmed by code). */
+  | "account_required";
 
 export type Decision =
   | { allow: true; role: EffectiveRole | null }
@@ -173,6 +184,11 @@ export function decide(
       return role === "owner"
         ? { allow: true, role }
         : deny(p.kind === "anonymous" ? "login_required" : "forbidden", role);
+    case "live_edit":
+      if (role !== "owner" && role !== "editor")
+        return deny(p.kind === "anonymous" ? "login_required" : "forbidden", role);
+      if (p.kind === "user") return { allow: true, role };
+      return deny(p.kind === "viewer" ? "account_required" : "forbidden", role);
   }
 }
 
@@ -207,6 +223,11 @@ export interface PageClaim {
   role: EffectiveRole;
   /** u_ + 24 hex, per artifact and email (crypto.ts viewerIdFor). */
   viewerId: string;
+  /**
+   * The gate's principal was signed in (not a viewer confirmed by code). Only then may a doc
+   * editor write the live draft; passes issued without the flag watch.
+   */
+  account?: boolean;
 }
 
 /**
@@ -248,6 +269,67 @@ export function canModifyDoc(
   if (writer.role === "owner" || writer.role === "editor") return { allow: true };
   if (personal) return doc.docId === writer.viewerId ? { allow: true } : no;
   return collectionShared || doc.creatorEmail === writer.email ? { allow: true } : no;
+}
+
+// ---------- live rooms on the page (content host, content cookie) ----------
+
+/** What a socket on an artifact's room may do. */
+export interface RoomAccess {
+  join: boolean;
+  /** Emit any topic (owners and editors on a page room). */
+  emitAll: boolean;
+  /** Topics anyone in the room may emit (the page's plinth-room-open). */
+  openTopics: string[];
+  /** Peers carry email and role. */
+  seeIdentity: boolean;
+  /** On a doc socket: follow the live draft, or edit it. */
+  doc: RoomDocRight;
+}
+
+const NO_ROOM: RoomAccess = {
+  join: false,
+  emitAll: false,
+  openTopics: [],
+  seeIdentity: false,
+  doc: "none",
+};
+
+/**
+ * May this viewer join the artifact's room, and what may they do there? `active` is
+ * roomsActive(config, env); `caps` the current version's declaration; `type` the artifact's type.
+ * Only identified viewers join (no anonymous link viewers in v1). A page room needs an HTML
+ * artifact that declares `room`: everyone identified joins, owners and editors emit any topic,
+ * others only the page's open topics, and identities show only with `viewer`. A doc socket is
+ * Plinth's own editing channel for types with liveEdit: owners and editors only, who see each
+ * other's emails; signed-in ones write, ones confirmed by code watch. Checked at the upgrade, and
+ * through the room's stamped header on every message.
+ */
+export function roomAccess(
+  claim: PageClaim | null,
+  caps: Capabilities | null,
+  kind: RoomKind,
+  ctx: { active: boolean; type: ArtifactType },
+): RoomAccess {
+  if (!ctx.active || !claim) return NO_ROOM;
+  const editor = claim.role === "owner" || claim.role === "editor";
+  if (kind === "doc") {
+    if (!TYPE_REGISTRY[ctx.type]?.liveEdit || !editor) return NO_ROOM;
+    return {
+      join: true,
+      emitAll: false,
+      openTopics: [],
+      seeIdentity: true,
+      doc: claim.account === true ? "write" : "watch",
+    };
+  }
+  if (ctx.type !== "html" || caps?.room !== true) return NO_ROOM;
+  return {
+    join: true,
+    emitAll: editor,
+    openTopics: [...caps.roomOpen],
+    seeIdentity: caps.viewer === true,
+    doc: "none",
+  };
 }
 
 /** Can this agent see and act on a mention task? Only the owner's agents, matching the target. */

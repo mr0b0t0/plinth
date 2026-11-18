@@ -14,6 +14,7 @@ import {
   type PublishResult,
   type PublishWarning,
   parseCapabilities,
+  serializeCapabilities,
   TTL,
   type Visibility,
 } from "@plinth/shared";
@@ -817,7 +818,7 @@ export class VersionStager implements Stager {
     if (this.capabilitiesOverride !== undefined) capabilities = this.capabilitiesOverride;
     else if (def.id === "html") {
       const caps = parseCapabilities(sourceText);
-      capabilities = caps ? JSON.stringify(caps) : null;
+      capabilities = caps ? serializeCapabilities(caps) : null;
     } else capabilities = null;
 
     let warnings: PublishWarning[] = [];

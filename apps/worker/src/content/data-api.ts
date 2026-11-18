@@ -238,7 +238,7 @@ async function handle(
   if (!ROUTE_METHODS[route.kind].has(method)) return notAllowed();
 
   // 5. Availability, before any cookie: under opaque isolation there are none.
-  const off = unavailableReason(config, { data: true, viewer: false, shared: [] });
+  const off = unavailableReason(config, null, { assumeDeclared: true });
   if (off) {
     if (route.kind === "session") return respond(config, 200, { available: false, reason: off });
     throw new ApiError("feature_disabled", "Shared data is not available here", { reason: off });

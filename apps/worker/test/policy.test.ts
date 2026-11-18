@@ -1,4 +1,4 @@
-import { ROLES, VISIBILITIES } from "@plinth/shared";
+import { type Capabilities, ROLES, VISIBILITIES } from "@plinth/shared";
 import { describe, expect, it } from "vitest";
 import {
   type AccessFacts,
@@ -12,6 +12,8 @@ import {
   type PageClaim,
   type Principal,
   pageDataAccess,
+  roomAccess,
+  scopeFor,
   seesOwnerMetadata,
 } from "../src/policy.ts";
 
@@ -394,7 +396,13 @@ describe("policy: pageDataAccess", () => {
     role: "viewer",
     viewerId: "u_0123456789abcdef01234567",
   };
-  const caps = (data: boolean, viewer: boolean) => ({ data, viewer, shared: [] });
+  const caps = (data: boolean, viewer: boolean): Capabilities => ({
+    data,
+    viewer,
+    shared: [],
+    room: false,
+    roomOpen: [],
+  });
   it("full truth table, written out", () => {
     const T = true;
     const F = false;
@@ -582,5 +590,183 @@ describe("policy: categories (owner-only metadata)", () => {
     expect(
       decide(ownerAgent(["artifacts:read"] as never), "manage", art("public"), access()).allow,
     ).toBe(false);
+  });
+});
+describe("policy: live_edit (on-page doc drafts)", () => {
+  const editorUser: Principal = {
+    kind: "user",
+    userId: "ed",
+    email: "ed@example.com",
+    isAdmin: false,
+  };
+  const editorViewer: Principal = { kind: "viewer", email: "ed@example.com" };
+  const editorAgent: Principal = {
+    ...(ownerAgent() as Extract<Principal, { kind: "agent" }>),
+    userId: "ed",
+    email: "ed@example.com",
+  };
+
+  it("signed-in owners and editors only, on every visibility", () => {
+    for (const v of VISIBILITIES) {
+      expect(decide(owner, "live_edit", art(v), access())).toEqual({ allow: true, role: "owner" });
+      expect(decide(editorUser, "live_edit", art(v), access({ grantRole: "editor" }))).toEqual({
+        allow: true,
+        role: "editor",
+      });
+      for (const role of ["viewer", "commenter"] as const)
+        expect(decide(editorUser, "live_edit", art(v), access({ grantRole: role }))).toEqual({
+          allow: false,
+          reason: "forbidden",
+          role,
+        });
+    }
+  });
+
+  it("an editor confirmed by code must sign in; a commenter by code is forbidden", () => {
+    expect(
+      decide(editorViewer, "live_edit", art("allowlist"), access({ grantRole: "editor" })),
+    ).toEqual({ allow: false, reason: "account_required", role: "editor" });
+    expect(
+      decide(editorViewer, "live_edit", art("allowlist"), access({ grantRole: "commenter" })),
+    ).toEqual({ allow: false, reason: "forbidden", role: "commenter" });
+  });
+
+  it("agents never, even the owner's with artifacts:write", () => {
+    expect(scopeFor("live_edit")).toBe("artifacts:write");
+    expect(decide(ownerAgent(), "live_edit", art("unlisted"), access())).toEqual({
+      allow: false,
+      reason: "forbidden",
+      role: "owner",
+    });
+    expect(
+      decide(editorAgent, "live_edit", art("allowlist"), access({ grantRole: "editor" })),
+    ).toEqual({ allow: false, reason: "forbidden", role: "editor" });
+    expect(
+      decide(ownerAgent(["artifacts:read"] as never), "live_edit", art("unlisted"), access()),
+    ).toMatchObject({ allow: false, reason: "scope" });
+  });
+
+  it("strangers and link viewers are refused without a role (404 through denialError)", () => {
+    for (const v of VISIBILITIES) {
+      expect(decide(stranger, "live_edit", art(v), access({ passwordPassed: true }))).toEqual({
+        allow: false,
+        reason: "forbidden",
+        role: null,
+      });
+      expect(decide(viewerEmail, "live_edit", art(v), access())).toEqual({
+        allow: false,
+        reason: "forbidden",
+        role: null,
+      });
+      expect(decide(anon, "live_edit", art(v), access({ passwordPassed: true }))).toEqual({
+        allow: false,
+        reason: "login_required",
+        role: null,
+      });
+    }
+  });
+
+  it("taken down and deleted deny everyone, owner included", () => {
+    expect(
+      decide(owner, "live_edit", art("unlisted", { takenDown: true }), access()),
+    ).toMatchObject({
+      allow: false,
+      reason: "taken_down",
+    });
+    expect(decide(owner, "live_edit", art("unlisted", { deleted: true }), access())).toMatchObject({
+      allow: false,
+      reason: "not_found",
+    });
+    const admin: Principal = { kind: "user", userId: "adm", email: "a@x.com", isAdmin: true };
+    expect(
+      decide(admin, "live_edit", art("unlisted", { takenDown: true }), access({ isAdmin: true }))
+        .allow,
+    ).toBe(false);
+  });
+});
+
+describe("policy: roomAccess", () => {
+  const claimOf = (role: PageClaim["role"], account?: boolean): PageClaim => ({
+    email: `${role}@example.com`,
+    role,
+    viewerId: "u_0123456789abcdef01234567",
+    ...(account === undefined ? {} : { account }),
+  });
+  const capsOf = (extra: Partial<Capabilities> = {}): Capabilities => ({
+    data: false,
+    viewer: false,
+    shared: [],
+    room: true,
+    roomOpen: [],
+    ...extra,
+  });
+  const NONE = { join: false, emitAll: false, openTopics: [], seeIdentity: false, doc: "none" };
+  const html = { active: true, type: "html" as const };
+  const doc = { active: true, type: "doc" as const };
+
+  it("nothing while rooms are inactive, or without an identity claim", () => {
+    for (const kind of ["page", "doc"] as const)
+      for (const type of ["html", "doc"] as const) {
+        expect(roomAccess(claimOf("owner", true), capsOf(), kind, { active: false, type })).toEqual(
+          NONE,
+        );
+        expect(roomAccess(null, capsOf({ viewer: true }), kind, { active: true, type })).toEqual(
+          NONE,
+        );
+      }
+  });
+
+  it("page: an HTML artifact that declares room; everyone identified joins", () => {
+    expect(roomAccess(claimOf("viewer"), null, "page", html)).toEqual(NONE);
+    expect(
+      roomAccess(claimOf("viewer"), capsOf({ room: false, data: true }), "page", html),
+    ).toEqual(NONE);
+    // A doc never has a page room, whatever is stored.
+    expect(roomAccess(claimOf("owner", true), capsOf(), "page", doc)).toEqual(NONE);
+    for (const role of ["owner", "editor", "commenter", "viewer"] as const) {
+      const a = roomAccess(claimOf(role), capsOf({ roomOpen: ["cursor"] }), "page", html);
+      const editor = role === "owner" || role === "editor";
+      expect(a, role).toEqual({
+        join: true,
+        emitAll: editor,
+        openTopics: ["cursor"],
+        seeIdentity: false,
+        doc: "none",
+      });
+    }
+  });
+
+  it("page: identities only with viewer; open topics are a copy", () => {
+    const caps = capsOf({ viewer: true, roomOpen: ["*"] });
+    const a = roomAccess(claimOf("commenter"), caps, "page", html);
+    expect(a).toMatchObject({ seeIdentity: true, emitAll: false, openTopics: ["*"] });
+    a.openTopics.push("x");
+    expect(caps.roomOpen).toEqual(["*"]);
+  });
+
+  it("doc: owners and editors on a liveEdit type; signed in writes, by code watches", () => {
+    for (const role of ["commenter", "viewer"] as const)
+      expect(roomAccess(claimOf(role, true), null, "doc", doc), role).toEqual(NONE);
+    expect(roomAccess(claimOf("owner", true), null, "doc", html)).toEqual(NONE);
+    for (const role of ["owner", "editor"] as const) {
+      const base = { join: true, emitAll: false, openTopics: [], seeIdentity: true };
+      expect(roomAccess(claimOf(role, true), null, "doc", doc), role).toEqual({
+        ...base,
+        doc: "write",
+      });
+      expect(roomAccess(claimOf(role, false), null, "doc", doc), role).toEqual({
+        ...base,
+        doc: "watch",
+      });
+      // A pass issued before the account flag existed watches until a reload.
+      expect(roomAccess(claimOf(role), null, "doc", doc).doc, role).toBe("watch");
+    }
+    // A doc's room ignores what a version declares.
+    expect(
+      roomAccess(claimOf("editor", true), capsOf({ roomOpen: ["*"] }), "doc", doc),
+    ).toMatchObject({
+      emitAll: false,
+      openTopics: [],
+    });
   });
 });

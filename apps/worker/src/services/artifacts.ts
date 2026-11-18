@@ -10,6 +10,8 @@ import {
   type Capabilities,
   type EffectiveRole,
   type PublishResult,
+  ROOM_OPEN_ALL,
+  ROOM_TOPIC_RE,
   type Role,
   type VersionInfo,
   type Visibility,
@@ -180,6 +182,8 @@ export function denialError(
       });
     case "login_required":
       return ctx.principal.kind === "anonymous" ? unauthorized() : forbidden();
+    case "account_required":
+      return unauthorized("Sign in to do this");
     case "forbidden":
       // Someone with a role gets "forbidden"; a stranger should not learn the artifact exists.
       return d.role ? forbidden() : notFound();
@@ -283,12 +287,21 @@ export function versionCapabilities(
     return null;
   }
   if (typeof v !== "object" || v === null) return null;
-  const { data, viewer, shared } = v as Record<string, unknown>;
+  const { data, viewer, shared, room, roomOpen } = v as Record<string, unknown>;
   if (typeof data !== "boolean" || typeof viewer !== "boolean") return null;
+  // Rows stored before rooms, and declarations without `room`, have no room fields.
+  const hasRoom = room === true;
   // `viewer` alone declares nothing (shared parseCapabilities).
-  if (!data) return null;
+  if (!data && !hasRoom) return null;
   const names = Array.isArray(shared) ? shared.filter((n) => typeof n === "string") : [];
-  return { data, viewer, shared: names };
+  const topics =
+    hasRoom && Array.isArray(roomOpen)
+      ? roomOpen.filter(
+          (t): t is string =>
+            typeof t === "string" && (t === ROOM_OPEN_ALL || ROOM_TOPIC_RE.test(t)),
+        )
+      : [];
+  return { data, viewer, shared: names, room: hasRoom, roomOpen: topics };
 }
 
 export async function getVersionRow(

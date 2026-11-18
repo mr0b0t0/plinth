@@ -6,6 +6,10 @@ import {
   DEFAULTS,
   type InstanceLimits,
   LIMITS,
+  LIVE_BOUNDS,
+  LIVE_DEFAULTS,
+  ROOM_BOUNDS,
+  ROOM_DEFAULTS,
 } from "@plinth/shared";
 import { getDomain } from "tldts";
 
@@ -118,6 +122,21 @@ export interface Config {
    * VIEW_COUNTS (default on): count artifact opens per UTC day, aggregate only (docs/spec.md).
    */
   viewCounts: boolean;
+  /**
+   * ALLOW_ROOMS (default on): pages that declare `room` get live presence and broadcast, and doc
+   * editors see each other's page edits live. Only in effect with origin isolation and a ROOMS
+   * binding.
+   */
+  allowRooms: boolean;
+  /** Room limits (ROOM_* env vars). */
+  rooms: RoomLimits;
+  /**
+   * ALLOW_LIVE_EDITING (default on): owners and editors may edit a doc on its page. Off means the
+   * source editor only.
+   */
+  allowLiveEditing: boolean;
+  /** Live editing timings (LIVE_* env vars). */
+  live: LiveEditSettings;
   /** OPERATOR_*: who runs this instance, for its legal pages. null when none is published. */
   operator: {
     name: string;
@@ -141,6 +160,26 @@ export interface SharedDataLimits {
   writesPerViewerPerHour: number;
   /** DATA_WRITES_PER_ARTIFACT_PER_HOUR: all writers of one artifact. */
   writesPerArtifactPerHour: number;
+}
+
+export interface RoomLimits {
+  /** ROOM_MAX_CONNECTIONS_PER_ARTIFACT: sockets on one artifact's room. */
+  maxConnectionsPerArtifact: number;
+  /** ROOM_MAX_MESSAGE_BYTES: one page-room frame. */
+  maxMessageBytes: number;
+  /** ROOM_MESSAGES_PER_SECOND: per connection, with a burst of twice this. */
+  messagesPerSecond: number;
+}
+
+export interface LiveEditSettings {
+  /** LIVE_CHECKPOINT_IDLE_S: quiet seconds before an autosave; 0 means explicit saves only. */
+  checkpointIdleS: number;
+  /** LIVE_AUTO_CHECKPOINT_MIN_S: least seconds between autosaves, at least the idle time. */
+  autoCheckpointMinS: number;
+  /** LIVE_DRAFT_FLUSH_S: the room writes the draft to D1 at most this often. */
+  draftFlushS: number;
+  /** LIVE_DRAFT_RETENTION_DAYS: an untouched unsaved draft is deleted after this. */
+  draftRetentionDays: number;
 }
 
 export class ConfigError extends Error {}
@@ -317,6 +356,10 @@ export function parseConfig(env: Record<string, unknown>): Config {
     showSourceLink: boolDefaultOn(env.SHOW_SOURCE_LINK),
     thumbnails: boolDefaultOn(env.THUMBNAILS),
     viewCounts: boolDefaultOn(env.VIEW_COUNTS),
+    allowRooms: boolDefaultOn(env.ALLOW_ROOMS),
+    rooms: parseRoomLimits(env),
+    allowLiveEditing: boolDefaultOn(env.ALLOW_LIVE_EDITING),
+    live: parseLiveEditSettings(env),
     operator: parseOperator(env),
   };
   validate(config);
@@ -378,6 +421,66 @@ function validate(c: Config): void {
       );
     }
   }
+}
+
+function parseRoomLimits(env: Record<string, unknown>): RoomLimits {
+  const b = ROOM_BOUNDS;
+  return {
+    maxConnectionsPerArtifact: boundedInt(
+      env,
+      "ROOM_MAX_CONNECTIONS_PER_ARTIFACT",
+      ROOM_DEFAULTS.maxConnectionsPerArtifact,
+      ...b.maxConnectionsPerArtifact,
+    ),
+    maxMessageBytes: boundedInt(
+      env,
+      "ROOM_MAX_MESSAGE_BYTES",
+      ROOM_DEFAULTS.maxMessageBytes,
+      ...b.maxMessageBytes,
+    ),
+    messagesPerSecond: boundedInt(
+      env,
+      "ROOM_MESSAGES_PER_SECOND",
+      ROOM_DEFAULTS.messagesPerSecond,
+      ...b.messagesPerSecond,
+    ),
+  };
+}
+
+function parseLiveEditSettings(env: Record<string, unknown>): LiveEditSettings {
+  const b = LIVE_BOUNDS;
+  const idle = boundedInt(
+    env,
+    "LIVE_CHECKPOINT_IDLE_S",
+    LIVE_DEFAULTS.checkpointIdleS,
+    0,
+    b.checkpointIdleS[1],
+  );
+  if (idle !== 0 && idle < b.checkpointIdleS[0]) {
+    throw new ConfigError(
+      `LIVE_CHECKPOINT_IDLE_S must be 0 (explicit saves only) or from ${b.checkpointIdleS[0]} to ${b.checkpointIdleS[1]}`,
+    );
+  }
+  const autoMin = boundedInt(
+    env,
+    "LIVE_AUTO_CHECKPOINT_MIN_S",
+    Math.max(LIVE_DEFAULTS.autoCheckpointMinS, idle),
+    ...b.autoCheckpointMinS,
+  );
+  if (autoMin < idle) {
+    throw new ConfigError("LIVE_AUTO_CHECKPOINT_MIN_S must be at least LIVE_CHECKPOINT_IDLE_S");
+  }
+  return {
+    checkpointIdleS: idle,
+    autoCheckpointMinS: autoMin,
+    draftFlushS: boundedInt(env, "LIVE_DRAFT_FLUSH_S", LIVE_DEFAULTS.draftFlushS, ...b.draftFlushS),
+    draftRetentionDays: boundedInt(
+      env,
+      "LIVE_DRAFT_RETENTION_DAYS",
+      LIVE_DEFAULTS.draftRetentionDays,
+      ...b.draftRetentionDays,
+    ),
+  };
 }
 
 function validateSharedData(d: SharedDataLimits): void {

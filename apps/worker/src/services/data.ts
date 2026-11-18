@@ -95,14 +95,19 @@ const denied = (reason: "read_only" | "forbidden") =>
 
 // ---------- availability and reads ----------
 
-/** Why the page API is unavailable for this artifact, or null when it is available. */
+/**
+ * Why the page API is unavailable for this artifact, or null when it is available. Only `data`
+ * counts as a declaration: a page that declares `room` alone has no shared data. With
+ * `assumeDeclared`, only the instance-wide reasons are checked (before the artifact is loaded).
+ */
 export function unavailableReason(
   config: Pick<Config, "allowSharedData" | "contentIsolation">,
   caps: Capabilities | null,
+  opts: { assumeDeclared?: boolean } = {},
 ): DataUnavailableReason | null {
   if (config.contentIsolation === "opaque") return "opaque_isolation";
   if (!config.allowSharedData) return "disabled";
-  if (!caps?.data) return "not_declared";
+  if (opts.assumeDeclared !== true && caps?.data !== true) return "not_declared";
   return null;
 }
 

@@ -32,6 +32,11 @@ export interface ArtifactTypeDef {
   /** Renderer files under /__plinth/types/<id>/, or null for a type served as-is. */
   renderer: { script: string; style: string } | null;
   editor: { language: "html" | "markdown"; wordWrap: "on" | "off" };
+  /**
+   * Owners and editors may edit it on its rendered page, live with each other (#36). Only types
+   * whose page is Plinth's own renderer: page scripts in an HTML artifact could forge edits.
+   */
+  liveEdit: boolean;
 }
 
 export const TYPE_REGISTRY: Record<ArtifactType, ArtifactTypeDef> = {
@@ -48,6 +53,7 @@ export const TYPE_REGISTRY: Record<ArtifactType, ArtifactTypeDef> = {
     assetTypes: null,
     renderer: null,
     editor: { language: "html", wordWrap: "on" },
+    liveEdit: false,
   },
   doc: {
     id: "doc",
@@ -62,6 +68,7 @@ export const TYPE_REGISTRY: Record<ArtifactType, ArtifactTypeDef> = {
     assetTypes: /^image\/(png|jpeg|gif|webp|avif|svg\+xml)$/,
     renderer: { script: "doc.js", style: "doc.css" },
     editor: { language: "markdown", wordWrap: "on" },
+    liveEdit: true,
   },
 };
 

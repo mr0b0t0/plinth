@@ -59,6 +59,15 @@ export const LIMITS = {
   maxHtmlBytes: 5 * MB,
   /** Bytes of Markdown (content.md) per version of a doc artifact. */
   maxDocBytes: 1 * MB,
+  // On-page doc editing (#36, packages/shared/src/liveDoc.ts). A live draft keeps maxDocBytes.
+  /** Lines in a live doc draft. */
+  maxLiveDocLines: 50_000,
+  /** One doc-socket frame, either way (a page room uses ROOM_MAX_MESSAGE_BYTES). */
+  liveDocFrameBytes: 64 * KB,
+  /** A lease whose holder sent no edit for this long may be taken over. */
+  liveLeaseIdleS: 60,
+  /** Unsaved live drafts across one owner's artifacts. */
+  maxLiveDraftsPerOwner: 20,
   /** JSON body of POST/PUT /artifacts and /mcp (inline assets travel as base64). */
   maxInlineRequestBytes: 40 * MB,
   /** Most asset files per version any instance may allow (zod's max; MAX_ASSETS_PER_VERSION's ceiling). */
@@ -232,8 +241,11 @@ export const CONTENT_RESERVED_PREFIX = "/__plinth/";
  */
 export const CONTENT_DATA_HEADER = "x-plinth-data";
 
-/** Capabilities a page may declare with <meta name="plinth-capabilities" content="data viewer">. */
-export const DATA_CAPABILITIES = ["data", "viewer"];
+/**
+ * Capabilities a page may declare with <meta name="plinth-capabilities" content="data viewer">.
+ * `room` is the live room (presence and broadcast, packages/shared/src/room.ts), not shared data.
+ */
+export const DATA_CAPABILITIES = ["data", "viewer", "room"];
 
 /** Query parameter that turns on review mode (comment anchoring bridge) on a content host. */
 export const REVIEW_MODE_PARAM = "plinth-review";

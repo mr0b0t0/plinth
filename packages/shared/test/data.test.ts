@@ -12,9 +12,12 @@ import {
   LIMITS,
   listArtifactDataInput,
   parseCapabilities,
+  ROOM_LIMITS,
+  serializeCapabilities,
   writeArtifactDataInput,
 } from "../src/index.ts";
 
+const NO_ROOM = { room: false, roomOpen: [] };
 const caps = (content: string) => `<meta name="plinth-capabilities" content="${content}">`;
 
 describe("parseCapabilities", () => {
@@ -29,8 +32,14 @@ describe("parseCapabilities", () => {
       data: true,
       viewer: true,
       shared: [],
+      ...NO_ROOM,
     });
-    expect(parseCapabilities(caps("data"))).toEqual({ data: true, viewer: false, shared: [] });
+    expect(parseCapabilities(caps("data"))).toEqual({
+      data: true,
+      viewer: false,
+      shared: [],
+      ...NO_ROOM,
+    });
   });
 
   it("viewer without data declares nothing: the viewer is learned through the data API", () => {
@@ -45,13 +54,14 @@ describe("parseCapabilities", () => {
       data: true,
       viewer: false,
       shared: [],
+      ...NO_ROOM,
     });
     expect(parseCapabilities(caps("camera files"))).toBeNull();
     expect(parseCapabilities(caps(""))).toBeNull();
   });
 
   it("accepts any attribute order, either quote style, unquoted values and any case", () => {
-    const expected = { data: true, viewer: true, shared: [] };
+    const expected = { data: true, viewer: true, shared: [], ...NO_ROOM };
     expect(parseCapabilities(`<meta content="data viewer" name="plinth-capabilities">`)).toEqual(
       expected,
     );
@@ -63,7 +73,7 @@ describe("parseCapabilities", () => {
     );
     expect(
       parseCapabilities(`<meta\n  charset-x="1"\n  name=plinth-capabilities\n  content=data>`),
-    ).toEqual({ data: true, viewer: false, shared: [] });
+    ).toEqual({ data: true, viewer: false, shared: [], ...NO_ROOM });
     expect(parseCapabilities(`<meta name="plinth-capabilities" content="data,viewer">`)).toEqual(
       expected,
     );
@@ -73,7 +83,7 @@ describe("parseCapabilities", () => {
     expect(parseCapabilities(`<meta data-name="plinth-capabilities" content="data">`)).toBeNull();
     expect(
       parseCapabilities(`<meta title="a > b" name="plinth-capabilities" content="data viewer">`),
-    ).toEqual({ data: true, viewer: true, shared: [] });
+    ).toEqual({ data: true, viewer: true, shared: [], ...NO_ROOM });
   });
 
   it("counts only the first tag of each name", () => {
@@ -81,6 +91,7 @@ describe("parseCapabilities", () => {
       data: true,
       viewer: false,
       shared: [],
+      ...NO_ROOM,
     });
     // A first tag that declares nothing known still wins.
     expect(parseCapabilities(caps("camera") + caps("data"))).toBeNull();
@@ -94,6 +105,7 @@ describe("parseCapabilities", () => {
       data: true,
       viewer: false,
       shared: [],
+      ...NO_ROOM,
     });
   });
 
@@ -118,10 +130,76 @@ describe("parseCapabilities", () => {
   });
 });
 
+describe("parseCapabilities: rooms", () => {
+  const open = (content: string) => `<meta name="plinth-room-open" content="${content}">`;
+
+  it("room alone is a declaration, and never counts as data", () => {
+    expect(parseCapabilities(caps("room"))).toEqual({
+      data: false,
+      viewer: false,
+      shared: [],
+      room: true,
+      roomOpen: [],
+    });
+    expect(parseCapabilities(caps("viewer room"))).toMatchObject({ data: false, viewer: true });
+    expect(parseCapabilities(caps("data viewer room"))).toMatchObject({
+      data: true,
+      viewer: true,
+      room: true,
+    });
+  });
+
+  it("reads open topics: valid, lowercased, deduplicated, * kept, at most 16", () => {
+    const topics = Array.from({ length: 20 }, (_, i) => `t${i}`);
+    const parsed = parseCapabilities(
+      `${caps("room")}${open(`Cursor cursor note.move * bad! .x ${topics.join(" ")}`)}`,
+    );
+    expect(parsed?.roomOpen).toHaveLength(ROOM_LIMITS.maxOpenTopics);
+    expect(parsed?.roomOpen.slice(0, 4)).toEqual(["cursor", "note.move", "*", "t0"]);
+    expect(parsed?.roomOpen).not.toContain("bad!");
+    expect(parsed?.roomOpen).not.toContain(".x");
+    // Only the first tag counts, and comments are ignored.
+    expect(
+      parseCapabilities(`<!-- ${open("hidden")} -->${caps("room")}${open("a")}${open("b")}`)
+        ?.roomOpen,
+    ).toEqual(["a"]);
+  });
+
+  it("keeps each list only with its own capability", () => {
+    const shared = `<meta name="plinth-data-shared" content="tasks">`;
+    expect(parseCapabilities(`${caps("room")}${shared}`)?.shared).toEqual([]);
+    expect(parseCapabilities(`${caps("data")}${open("cursor")}`)?.roomOpen).toEqual([]);
+    expect(parseCapabilities(open("cursor"))).toBeNull();
+    expect(parseCapabilities(`${caps("viewer")}${open("cursor")}`)).toBeNull();
+  });
+
+  it("stores every declaration without room exactly as before rooms existed", () => {
+    const cases: [string, string][] = [
+      [caps("data"), '{"data":true,"viewer":false,"shared":[]}'],
+      [caps("data viewer"), '{"data":true,"viewer":true,"shared":[]}'],
+      [
+        `${caps("data")}<meta name="plinth-data-shared" content="tasks notes">`,
+        '{"data":true,"viewer":false,"shared":["tasks","notes"]}',
+      ],
+      // An open list without room is dropped, so the stored row is unchanged too.
+      [`${caps("data viewer")}${open("cursor")}`, '{"data":true,"viewer":true,"shared":[]}'],
+    ];
+    for (const [html, stored] of cases) {
+      const c = parseCapabilities(html);
+      expect(c).not.toBeNull();
+      expect(serializeCapabilities(c as NonNullable<typeof c>)).toBe(stored);
+    }
+    const room = parseCapabilities(`${caps("data room")}${open("cursor")}`);
+    expect(serializeCapabilities(room as NonNullable<typeof room>)).toBe(
+      '{"data":true,"viewer":false,"shared":[],"room":true,"roomOpen":["cursor"]}',
+    );
+  });
+});
+
 describe("data constants", () => {
   it("names the header, capabilities, defaults and fixed limits", () => {
     expect(CONTENT_DATA_HEADER).toBe("x-plinth-data");
-    expect(DATA_CAPABILITIES).toEqual(["data", "viewer"]);
+    expect(DATA_CAPABILITIES).toEqual(["data", "viewer", "room"]);
     expect(DEFAULTS.data).toEqual({
       maxDocsPerArtifact: 1000,
       maxBytesPerArtifact: 1024 * 1024,

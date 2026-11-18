@@ -147,8 +147,9 @@ async function gateData(
     .where(and(eq(versions.artifactId, a.id), eq(versions.number, a.currentVersion)))
     .get();
   const caps = versionCapabilities(row);
+  // A page that declares only `room` keeps no shared data: nothing to tell the viewer here.
+  if (caps?.data !== true) return undefined;
   const capabilities = capabilityList(caps);
-  if (capabilities.length === 0) return undefined;
   const available = sharedDataActive(ctx.config);
   const claim = identity
     ? { ...identity, viewerId: await viewerIdFor(ctx.config.tokenSigningKey, a.id, identity.email) }

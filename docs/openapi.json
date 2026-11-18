@@ -2274,7 +2274,7 @@
           },
           "capabilities": {
             "type": "array",
-            "items": { "type": "string", "enum": ["data", "viewer"] },
+            "items": { "type": "string", "enum": ["data", "viewer", "room"] },
             "description": "What the returned version declares (shared data, viewer identity)"
           },
           "data_usage": {
@@ -2394,7 +2394,7 @@
           },
           "capabilities": {
             "type": "array",
-            "items": { "type": "string", "enum": ["data", "viewer"] },
+            "items": { "type": "string", "enum": ["data", "viewer", "room"] },
             "description": "What the returned version declares (shared data, viewer identity)"
           },
           "data_usage": {
@@ -3478,7 +3478,7 @@
           },
           "capabilities": {
             "type": "array",
-            "items": { "type": "string", "enum": ["data", "viewer"] }
+            "items": { "type": "string", "enum": ["data", "viewer", "room"] }
           },
           "identified": {
             "type": "boolean",
@@ -3557,7 +3557,7 @@
         "properties": {
           "capabilities": {
             "type": "array",
-            "items": { "type": "string", "enum": ["data", "viewer"] }
+            "items": { "type": "string", "enum": ["data", "viewer", "room"] }
           },
           "available": {
             "type": "boolean",
