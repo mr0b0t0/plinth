@@ -47,13 +47,16 @@ export const API = {
   oauthConsent: "/oauth/consent",
   // artifacts (mirror the MCP tools)
   artifacts: "/artifacts", // GET list_artifacts, POST publish_artifact
-  artifact: "/artifacts/:ref", // GET get_artifact, PUT update_artifact, PATCH rename, DELETE delete
+  artifact: "/artifacts/:ref", // GET get_artifact, PUT update_artifact, PATCH title or category, DELETE delete
   versions: "/artifacts/:ref/versions", // GET list_versions
   thumbnail: "/artifacts/:ref/thumbnail", // GET a version's thumbnail image (JPEG)
   version: "/artifacts/:ref/versions/:n", // GET get_artifact with version
   restore: "/artifacts/:ref/versions/:n/restore", // POST restore_version
   visibility: "/artifacts/:ref/visibility", // PUT set_visibility
   sharing: "/artifacts/:ref/sharing", // GET settings, PUT grants
+  // categories (the caller's own names; rename and merge for the signed-in owner only)
+  categories: "/categories", // GET names with counts
+  categoryRename: "/categories/rename", // POST rename, merge or clear (session only)
   // viewing (gate, then a one-time token for the content host)
   view: "/view/:ref", // GET ViewGate, ?version=n&review=1&preview=1
   viewPassword: "/view/:ref/password",

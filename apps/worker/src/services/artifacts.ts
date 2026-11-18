@@ -45,6 +45,7 @@ import { claimArtifactAttempts } from "./attempts.ts";
 import {
   matchingSpellings,
   ownerCategories,
+  patchArtifact,
   requireCategoryRight,
   resolveCategory,
 } from "./categories.ts";
@@ -742,18 +743,13 @@ export async function setVisibility(ctx: Ctx, input: SetVisibilityInput): Promis
   return summaryFor(ctx, fresh, role);
 }
 
+/** Rename an artifact (owner only). A title-only patchArtifact. */
 export async function renameArtifact(
   ctx: Ctx,
   ref: string,
   title: string,
 ): Promise<ArtifactSummary> {
-  const { artifact, role } = await requireArtifact(ctx, ref, "manage");
-  await ctx.db
-    .update(artifacts)
-    .set({ title: title.trim(), updatedAt: nowIso() })
-    .where(eq(artifacts.id, artifact.id))
-    .run();
-  return summaryFor(ctx, { ...artifact, title: title.trim() }, role);
+  return patchArtifact(ctx, ref, { title });
 }
 
 /**

@@ -463,3 +463,88 @@ describe("categories on publish, update and list", () => {
     expect(await versionRow(p.id, 2)).toBeFalsy();
   });
 });
+
+// PATCH /artifacts/:ref (owner only): a title, a category, or both. A category is metadata: no
+// version, no updated_at bump, so filing artifacts never reorders the dashboard.
+describe("PATCH sets the title or the category", () => {
+  const patch = (auth: Record<string, string>, ref: string, body: unknown) =>
+    call(`/api/v1/artifacts/${ref}`, {
+      method: "PATCH",
+      headers: { ...auth, "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  const row = async (id: string) =>
+    await env.DB.prepare(
+      `SELECT category, title, updated_at, current_version,
+              (SELECT count(*) FROM versions WHERE artifact_id = ?1) AS versions
+         FROM artifacts WHERE id = ?1`,
+    )
+      .bind(id)
+      .first<{
+        category: string | null;
+        title: string;
+        updated_at: string;
+        current_version: number;
+        versions: number;
+      }>();
+
+  it("sets the category and null clears it, with no version and no updated_at bump", async () => {
+    const a = await agent();
+    const { body: p } = await publish(a.auth);
+    const before = await row(p.id);
+    const set = await patch(a.auth, p.id, { category: "  Client   Work " });
+    expect(set.status).toBe(200);
+    const summary = await json(set);
+    expect(summary).toMatchObject({ id: p.id, category: "Client Work", version_count: 1 });
+    expect(summary.updated_at).toBe(before?.updated_at);
+    expect(await row(p.id)).toEqual({ ...before, category: "Client Work" });
+    const cleared = await json(await patch(a.auth, p.id, { category: null }));
+    expect(cleared.category).toBeNull();
+    expect(await row(p.id)).toEqual({ ...before, category: null });
+  });
+
+  it("a title PATCH still bumps updated_at, and both fields go in one request", async () => {
+    const a = await agent();
+    const { body: p } = await publish(a.auth);
+    const before = await row(p.id);
+    await new Promise((r) => setTimeout(r, 5));
+    const r = await json(await patch(a.auth, p.id, { title: "Renamed", category: "Both" }));
+    expect(r).toMatchObject({ title: "Renamed", category: "Both", version_count: 1 });
+    const after = await row(p.id);
+    expect(after).toMatchObject({ title: "Renamed", category: "Both", versions: 1 });
+    expect(after?.updated_at).not.toBe(before?.updated_at);
+  });
+
+  it("snaps onto an existing spelling, but respelling a one-artifact category keeps the new one", async () => {
+    const a = await agent();
+    const { body: p } = await publish(a.auth, { category: "acme" });
+    expect((await json(await patch(a.auth, p.id, { category: "Acme" }))).category).toBe("Acme");
+    const { body: q } = await publish(a.auth);
+    expect((await json(await patch(a.auth, q.id, { category: "ACME" }))).category).toBe("Acme");
+  });
+
+  it("works from the signed-in owner's session too", async () => {
+    const a = await agent();
+    const { body: p } = await publish(a.auth);
+    const s = await browserSession(a.user.id);
+    const r = await patch(s.headers, p.id, { category: "From the app" });
+    expect(r.status).toBe(200);
+    expect((await row(p.id))?.category).toBe("From the app");
+  });
+
+  it("a body with neither field is 400; a bad category is 400 with field category", async () => {
+    const a = await agent();
+    const { body: p } = await publish(a.auth, { category: "Kept" });
+    const empty = await patch(a.auth, p.id, {});
+    expect(empty.status).toBe(400);
+    expect((await json(empty)).error.code).toBe("invalid_input");
+    const bad = await patch(a.auth, p.id, { category: "a‮b" });
+    expect(bad.status).toBe(400);
+    expect((await json(bad)).error).toMatchObject({
+      code: "invalid_input",
+      details: { field: "category" },
+    });
+    expect((await patch(a.auth, p.id, { category: "" })).status).toBe(400);
+    expect((await row(p.id))?.category).toBe("Kept");
+  });
+});

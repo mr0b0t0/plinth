@@ -302,4 +302,47 @@ describe("collaborators and categories", () => {
     expect(listed.data.items).toEqual([]);
     expect(listed.text).not.toContain(CATEGORY);
   });
+
+  const patch = (headers: Record<string, string>, ref: string, body: unknown) =>
+    call(`/api/v1/artifacts/${ref}`, {
+      method: "PATCH",
+      headers: { ...headers, "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+
+  it("an editor's PATCH with a category is 403, by token or by session, and never echoes the name", async () => {
+    const { editor, p } = await withEditor();
+    const s = await browserSession(editor.user.id);
+    for (const headers of [editor.auth, s.headers]) {
+      for (const body of [{ category: "Mine" }, { category: null }]) {
+        const r = await patch(headers, p.id, body);
+        expect(r.status).toBe(403);
+        const text = await r.text();
+        expect(JSON.parse(text).error.code).toBe("forbidden");
+        expect(text).not.toContain(CATEGORY);
+      }
+    }
+    expect(await stored(p.id)).toEqual({ category: CATEGORY, v: 1 });
+  });
+
+  it("a stranger's PATCH is 404", async () => {
+    const { p } = await withEditor();
+    const stranger = await agent();
+    const r = await patch(stranger.auth, p.id, { category: "Mine" });
+    expect(r.status).toBe(404);
+    expect(await r.text()).not.toContain(CATEGORY);
+    expect(await stored(p.id)).toEqual({ category: CATEGORY, v: 1 });
+  });
+
+  it("the owner of a taken-down artifact can still change its category", async () => {
+    const { owner, p } = await withEditor();
+    await env.DB.prepare("UPDATE artifacts SET taken_down_at = ? WHERE id = ?")
+      .bind(new Date().toISOString(), p.id)
+      .run();
+    const r = await patch(owner.auth, p.id, { category: "Archive" });
+    expect(r.status).toBe(200);
+    expect(await json(r)).toMatchObject({ taken_down: true, category: "Archive" });
+    expect((await patch(owner.auth, p.id, { category: null })).status).toBe(200);
+    expect((await stored(p.id))?.category).toBeNull();
+  });
 });

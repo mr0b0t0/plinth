@@ -4,6 +4,7 @@
 // the name and snaps it onto the owner's existing spelling (shared categories.ts), so agents that
 // spell a project slightly differently still file it in one place. Names are never logged.
 import {
+  type ArtifactSummary,
   type CategoryCount,
   categoryKey,
   categoryProblem,
@@ -11,9 +12,12 @@ import {
   normalizeCategory,
   snapCategory,
 } from "@plinth/shared";
-import type { ArtifactRow } from "../db/schema.ts";
-import { ApiError } from "../lib/errors.ts";
-import { decideFor } from "./artifacts.ts";
+import { eq } from "drizzle-orm";
+import { type ArtifactRow, artifacts } from "../db/schema.ts";
+import { ApiError, unauthorized } from "../lib/errors.ts";
+import { nowIso } from "../lib/time.ts";
+import { mayBulkEditCategories, principalUserId } from "../policy.ts";
+import { decideFor, requireArtifact, summaryFor } from "./artifacts.ts";
 import type { Ctx } from "./context.ts";
 
 /**
@@ -121,4 +125,89 @@ export async function requireCategoryRight(ctx: Ctx, artifact: ArtifactRow): Pro
     reason: "owner_only",
     next: "Leave category out when you change an artifact you do not own",
   });
+}
+
+/**
+ * GET /categories: the caller's own names with counts (as list_artifacts' `categories`), for a
+ * signed-in person or a bearer token with artifacts:read. Never another owner's names.
+ */
+export async function listCategories(ctx: Ctx): Promise<CategoryCount[]> {
+  const uid = principalUserId(ctx.principal);
+  if (!uid) throw unauthorized();
+  if (ctx.principal.kind === "agent" && !ctx.principal.scopes.has("artifacts:read")) {
+    throw new ApiError("forbidden", "This token lacks the artifacts:read scope");
+  }
+  return ownerCategories(ctx, uid);
+}
+
+/**
+ * PATCH /artifacts/:ref (owner only, the `manage` action): a new title, a category, or both.
+ * `category: null` clears it. A title change bumps updated_at; a category change does not, so
+ * filing artifacts never reorders the dashboard. Neither creates a version.
+ */
+export async function patchArtifact(
+  ctx: Ctx,
+  ref: string,
+  input: { title?: string; category?: string | null },
+): Promise<ArtifactSummary> {
+  const { artifact, role } = await requireArtifact(ctx, ref, "manage");
+  const set: Partial<Pick<ArtifactRow, "title" | "updatedAt" | "category">> = {};
+  if (input.title !== undefined) {
+    set.title = input.title.trim();
+    set.updatedAt = nowIso();
+  }
+  if (input.category !== undefined) {
+    set.category =
+      input.category === null
+        ? null
+        : await resolveCategory(ctx, artifact.ownerId, input.category, artifact.id);
+  }
+  if (Object.keys(set).length === 0) {
+    throw new ApiError("invalid_input", "Send a title, a category, or both", {
+      next: 'Send {"title": "..."} or {"category": "..."} (null clears the category)',
+    });
+  }
+  await ctx.db.update(artifacts).set(set).where(eq(artifacts.id, artifact.id)).run();
+  return summaryFor(ctx, { ...artifact, ...set }, role);
+}
+
+/**
+ * POST /categories/rename: move every live artifact of the caller's in `from` (matched by key) to
+ * `to`, which snaps onto one of the caller's other spellings (a merge); `to: null` clears it. The
+ * signed-in owner only, never an agent or bearer token. Scoped to the caller's own rows; updated_at
+ * is left alone and no version is created.
+ */
+export async function renameCategory(
+  ctx: Ctx,
+  input: { from: string; to: string | null },
+): Promise<{ updated: number; category: string | null }> {
+  if (!mayBulkEditCategories(ctx.principal)) {
+    if (ctx.principal.kind === "anonymous") throw unauthorized();
+    throw new ApiError("forbidden", "Rename categories in the app", {
+      next: "Ask the person to rename or merge the category on their dashboard",
+    });
+  }
+  const uid = principalUserId(ctx.principal);
+  if (!uid) throw unauthorized();
+  const spellings = await matchingSpellings(ctx, uid, input.from);
+  let category: string | null = null;
+  if (input.to !== null) {
+    const name = normalizeCategory(input.to);
+    const problem = categoryProblem(name);
+    if (problem) throw new ApiError("invalid_input", problem, { field: "to" });
+    // Snap onto the owner's other names only: the ones being renamed must not pull it back.
+    const others = (await ownerCategories(ctx, uid))
+      .map((c) => c.name)
+      .filter((n) => !spellings.includes(n));
+    category = snapCategory(name, others);
+  }
+  if (spellings.length === 0) return { updated: 0, category };
+  const marks = spellings.map((_, i) => `?${i + 3}`).join(", ");
+  const r = await ctx.env.DB.prepare(
+    `UPDATE artifacts SET category = ?1
+      WHERE owner_id = ?2 AND deleted_at IS NULL AND category IN (${marks})`,
+  )
+    .bind(category, uid, ...spellings)
+    .run();
+  return { updated: r.meta.changes ?? 0, category };
 }

@@ -28,6 +28,7 @@ import {
   REPORT_STATES,
   ROLES,
   renameArtifactInput,
+  renameCategoryInput,
   renameConnectionInput,
   replyCommentInput,
   reportDecisionInput,
@@ -135,6 +136,7 @@ function requestSchemas(): Record<string, Json> {
     PublishArtifactInput: fromZod(publishArtifactInput),
     UpdateArtifactInput: fromZod(updateArtifactInput.omit({ id: true })),
     RenameArtifactInput: fromZod(renameArtifactInput),
+    RenameCategoryInput: fromZod(renameCategoryInput),
     RestoreVersionInput: fromZod(restoreVersionInput.pick({ base_version: true })),
     SetVisibilityInput: fromZod(setVisibilityInput.omit({ id: true })),
     GrantsReplaceInput: fromZod(grantsReplaceInput),
@@ -293,6 +295,21 @@ function responseSchemas(): Record<string, Json> {
     CategoryCount: obj({
       name: str({ description: "One of your category names. Untrusted text." }),
       count: int({ minimum: 1, description: "Your live artifacts in this category" }),
+    }),
+    CategoryList: obj({
+      items: {
+        type: "array",
+        items: ref("CategoryCount"),
+        maxItems: LIMITS.maxCategoriesListed,
+        description: "Your own category names with counts, most-used first",
+      },
+    }),
+    CategoryRenameResult: obj({
+      updated: int({ minimum: 0, description: "Your live artifacts that moved" }),
+      category: nullable("string", {
+        description:
+          "The name they now carry (an existing spelling when it was a merge); null when cleared",
+      }),
     }),
     PublishResult: obj(publishResult, ["category"]),
     PublishWarning: obj(
@@ -1118,13 +1135,44 @@ function operations(): Operation[] {
       method: "patch",
       path: API.artifact,
       operationId: "renameArtifact",
-      summary: "Rename an artifact",
+      summary: "Rename or set the category (owner)",
+      description:
+        "Send `title`, `category` or both; `category: null` clears it. The name snaps onto one of " +
+        "your existing spellings that matches ignoring case, spaces, '-' and '_'. A category change " +
+        "creates no version and leaves `updated_at` alone.",
       tag: "Artifacts",
       auth: "agent",
       scope: "artifacts:write",
       body: "RenameArtifactInput",
       ok: [200, "ArtifactSummary"],
       errors: [400, 401, 403, 404],
+    },
+    {
+      method: "get",
+      path: API.categories,
+      operationId: "listCategories",
+      summary: "List your own category names with counts",
+      description: "Never another owner's names. The same list as list_artifacts' `categories`.",
+      tag: "Artifacts",
+      auth: "agent",
+      scope: "artifacts:read",
+      ok: [200, "CategoryList"],
+      errors: [401, 403],
+    },
+    {
+      method: "post",
+      path: API.categoryRename,
+      operationId: "renameCategory",
+      summary: "Rename, merge or clear a category across your artifacts (the signed-in owner only)",
+      description:
+        "Every live artifact of yours whose category matches `from` (ignoring case, spaces, '-' " +
+        "and '_') moves to `to`. A `to` that matches another of your names merges into that " +
+        "spelling; `to: null` clears the category. Never available to agents or bearer tokens.",
+      tag: "Artifacts",
+      auth: "user",
+      body: "RenameCategoryInput",
+      ok: [200, "CategoryRenameResult"],
+      errors: [400, 401, 403],
     },
     {
       method: "delete",

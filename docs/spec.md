@@ -246,7 +246,9 @@ other `/.well-known/` paths and missing files answer `404` instead of the SPA. G
 
 A plain REST API mirrors these tools for scripts and CI (`POST /api/v1/uploads` mirrors
 `start_upload` and takes a bearer token only; `GET /api/v1/artifacts?query=&category=` mirrors
-`list_artifacts` and returns `{ items, categories }`). Size limits: 5 MB of HTML (1 MB of Markdown for a
+`list_artifacts` and returns `{ items, categories }`). Beyond the tools, `PATCH /api/v1/artifacts/:ref`
+sets the title or the category (owner), `GET /api/v1/categories` lists the caller's own category
+names, and `POST /api/v1/categories/rename` renames, merges or clears one (signed-in session only). Size limits: 5 MB of HTML (1 MB of Markdown for a
 doc), and per version a total size and a file count set by the operator with `MAX_VERSION_BYTES`
 (default 50 MB, at most 64 MB) and `MAX_ASSETS_PER_VERSION` (default 511, at most 900). A JSON
 request body may be up to 40 MB. `GET /api/v1/config` returns the instance's limits.
@@ -385,7 +387,18 @@ or log carries it.
   are kept). The result echoes the stored name. The `category` filter matches the same way and
   covers the caller's own artifacts only.
 - **Not a version.** On an update the category commits in the version's batch, behind the same
-  `base_version` guard; a stale or failed commit changes neither.
+  `base_version` guard; a stale or failed commit changes neither. A category-only change creates
+  no version and leaves `updated_at` alone, so filing artifacts never reorders the dashboard; a
+  title change still bumps it.
+- **The owner changes it.** `PATCH /api/v1/artifacts/:ref` with `{ title?, category? }` (the
+  `manage` action, owner only, taken-down artifacts included) sets one artifact's category, and
+  `category: null` clears it; a body with neither is 400. `GET /api/v1/categories` returns the
+  caller's own names with counts, for a session or a token with `artifacts:read`.
+  `POST /api/v1/categories/rename` with `{ from, to }` moves every live artifact of the caller's
+  whose category matches `from` (by key) to `to`, which snaps onto another of their names (a
+  merge); `to: null` clears it. It answers `{ updated, category }`, changes only the caller's own
+  rows, leaves `updated_at` alone, and takes a signed-in session only (CSRF and exact `Origin`):
+  agents and bearer tokens get 403, and there is no MCP tool for it.
 
 ### Comments and agent mentions
 

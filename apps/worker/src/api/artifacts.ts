@@ -18,12 +18,12 @@ import {
   listArtifacts,
   listVersions,
   publishArtifact,
-  renameArtifact,
   requireArtifact,
   restoreVersion,
   setVisibility,
   updateArtifact,
 } from "../services/artifacts.ts";
+import { patchArtifact } from "../services/categories.ts";
 import { scheduleThumbnail, thumbnailResponse } from "../services/thumbnails.ts";
 import { type AppEnv, parseBody, parseInput, serviceCtx } from "./context.ts";
 
@@ -58,8 +58,8 @@ artifactsApi.put("/artifacts/:ref", async (c) => {
 });
 
 artifactsApi.patch("/artifacts/:ref", async (c) => {
-  const { title } = await parseBody(c, renameArtifactInput);
-  return c.json(await renameArtifact(serviceCtx(c), c.req.param("ref"), title));
+  const input = await parseBody(c, renameArtifactInput);
+  return c.json(await patchArtifact(serviceCtx(c), c.req.param("ref"), input));
 });
 
 artifactsApi.delete("/artifacts/:ref", async (c) => {

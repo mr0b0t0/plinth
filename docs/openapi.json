@@ -521,7 +521,8 @@
       },
       "patch": {
         "operationId": "renameArtifact",
-        "summary": "Rename an artifact",
+        "summary": "Rename or set the category (owner)",
+        "description": "Send `title`, `category` or both; `category: null` clears it. The name snaps onto one of your existing spellings that matches ignoring case, spaces, '-' and '_'. A category change creates no version and leaves `updated_at` alone.",
         "tags": ["Artifacts"],
         "parameters": [
           {
@@ -580,6 +581,55 @@
           { "bearerAuth": ["artifacts:write"] },
           { "sessionCookie": [], "csrfHeader": [] }
         ]
+      }
+    },
+    "/categories": {
+      "get": {
+        "operationId": "listCategories",
+        "summary": "List your own category names with counts",
+        "description": "Never another owner's names. The same list as list_artifacts' `categories`.",
+        "tags": ["Artifacts"],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/CategoryList" } }
+            }
+          },
+          "401": { "$ref": "#/components/responses/E401" },
+          "403": { "$ref": "#/components/responses/E403" },
+          "default": { "$ref": "#/components/responses/Error" }
+        },
+        "security": [{ "bearerAuth": ["artifacts:read"] }, { "sessionCookie": [] }]
+      }
+    },
+    "/categories/rename": {
+      "post": {
+        "operationId": "renameCategory",
+        "summary": "Rename, merge or clear a category across your artifacts (the signed-in owner only)",
+        "description": "Every live artifact of yours whose category matches `from` (ignoring case, spaces, '-' and '_') moves to `to`. A `to` that matches another of your names merges into that spelling; `to: null` clears the category. Never available to agents or bearer tokens.",
+        "tags": ["Artifacts"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": { "schema": { "$ref": "#/components/schemas/RenameCategoryInput" } }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/CategoryRenameResult" }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/E400" },
+          "401": { "$ref": "#/components/responses/E401" },
+          "403": { "$ref": "#/components/responses/E403" },
+          "default": { "$ref": "#/components/responses/Error" }
+        },
+        "security": [{ "sessionCookie": [], "csrfHeader": [] }]
       }
     },
     "/artifacts/{ref}/thumbnail": {
@@ -1776,8 +1826,36 @@
       },
       "RenameArtifactInput": {
         "type": "object",
-        "properties": { "title": { "type": "string", "minLength": 1, "maxLength": 200 } },
-        "required": ["title"]
+        "properties": {
+          "title": { "type": "string", "minLength": 1, "maxLength": 200 },
+          "category": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 60,
+                "description": "The project or client this artifact belongs to, usually the repo you are working in. Reuse a name from list_artifacts' categories. Only the owner sees or sets it."
+              },
+              { "type": "null" }
+            ]
+          }
+        }
+      },
+      "RenameCategoryInput": {
+        "type": "object",
+        "properties": {
+          "from": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 60,
+            "description": "The category to rename, matched ignoring case, spaces, '-' and '_'"
+          },
+          "to": {
+            "anyOf": [{ "type": "string", "minLength": 1, "maxLength": 60 }, { "type": "null" }],
+            "description": "The new name (an existing one merges into it), or null to clear the category"
+          }
+        },
+        "required": ["from", "to"]
       },
       "RestoreVersionInput": {
         "type": "object",
@@ -2376,6 +2454,33 @@
           }
         },
         "required": ["name", "count"]
+      },
+      "CategoryList": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/CategoryCount" },
+            "maxItems": 500,
+            "description": "Your own category names with counts, most-used first"
+          }
+        },
+        "required": ["items"]
+      },
+      "CategoryRenameResult": {
+        "type": "object",
+        "properties": {
+          "updated": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Your live artifacts that moved"
+          },
+          "category": {
+            "type": ["string", "null"],
+            "description": "The name they now carry (an existing spelling when it was a merge); null when cleared"
+          }
+        },
+        "required": ["updated", "category"]
       },
       "PublishResult": {
         "type": "object",

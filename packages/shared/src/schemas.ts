@@ -264,7 +264,34 @@ export const grantsReplaceInput = z.object({
   grants: z.array(grantInput).max(LIMITS.maxAllowlistEmails),
 });
 
-export const renameArtifactInput = z.object({ title: titleSchema });
+/**
+ * PATCH /artifacts/:ref (owner only): a new title, a category, or both. `category: null` clears it.
+ * A body with neither is refused by the route, so the JSON Schema stays a plain object.
+ */
+export const renameArtifactInput = z.object({
+  title: titleSchema.optional(),
+  category: categorySchema.nullable().optional(),
+});
+
+/**
+ * POST /categories/rename (the signed-in owner only): every live artifact whose category matches
+ * `from` (by key) moves to `to`, which snaps onto an existing spelling (a merge); `to: null` clears.
+ */
+export const renameCategoryInput = z.object({
+  from: z
+    .string()
+    .trim()
+    .min(1)
+    .max(LIMITS.maxCategoryLength)
+    .describe("The category to rename, matched ignoring case, spaces, '-' and '_'"),
+  to: z
+    .string()
+    .trim()
+    .min(1)
+    .max(LIMITS.maxCategoryLength)
+    .nullable()
+    .describe("The new name (an existing one merges into it), or null to clear the category"),
+});
 
 export const viewerPasswordInput = z.object({
   password: z.string().min(1).max(LIMITS.maxPasswordLength),
