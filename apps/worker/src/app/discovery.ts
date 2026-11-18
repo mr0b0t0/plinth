@@ -456,7 +456,7 @@ export function llmsTxt(config: Config): string {
   const origin = config.appOrigin;
   const about = [
     `This instance: ${origin}.`,
-    config.operator ? `It is operated by ${config.operator.name}.` : null,
+    config.operator ? `It is operated by ${config.operator.name.replace(/\.$/, "")}.` : null,
     config.singleUserMode
       ? "It is a single-user instance: one person publishes here, and others can view what they share."
       : null,

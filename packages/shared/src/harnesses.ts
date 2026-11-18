@@ -33,7 +33,7 @@ export const SKILL_SOURCE = `integrations/skill/${SKILL_NAME}/SKILL.md`;
 /** Plugin metadata, shared by the Claude Code and portable (Codex, ChatGPT) manifests. */
 export const PLUGIN = {
   name: "plinth",
-  version: "0.12.0",
+  version: "0.13.0",
   /**
    * SHA-256 of the sources the plugin ships (the skill and the mention watcher; see
    * scripts/plugin-sources.mjs), and the `version` it was recorded under. When they change, bump
@@ -41,7 +41,7 @@ export const PLUGIN = {
    * which records both here; it refuses while `version` still equals `skillHashVersion`.
    */
   skillHash: "5566c2f4bf981078b51fb16b0ed634a11e68324d5242f5a22e49a9f564063da5",
-  skillHashVersion: "0.12.0",
+  skillHashVersion: "0.13.0",
   description:
     "Publish, update and share HTML artifacts and Markdown documents on Plinth: the Plinth MCP server plus a skill with its publishing rules",
   author: { name: "Aconite Software & Investments, Lda.", url: "https://aconite.io" },
@@ -54,6 +54,46 @@ export const PLUGIN = {
   termsOfServiceUrl: `${HOSTED_ORIGIN}/legal/terms`,
   supportUrl: `${REPO_URL}/issues`,
   documentationUrl: `${REPO_URL}/blob/main/docs/agents.md`,
+} as const;
+
+/**
+ * How Codex (and Codex plugin directories such as HOL's awesome-codex-plugins) shows the plugin:
+ * written to `extensions["com.openai"].interface` of the portable plugin.json, so the Agent Plugins
+ * manifest itself keeps only its own fields. Icons are paths inside the plugin folder.
+ */
+export const CODEX_INTERFACE = {
+  displayName: "Plinth",
+  shortDescription: "Publish and share HTML pages",
+  longDescription:
+    "Plinth gives the pages and documents your agent makes a lasting home. Ask for a report, dashboard, " +
+    "prototype or memo, and the agent publishes it to your Plinth account as an artifact with its own " +
+    "link. New artifacts are private: only you and the people you add can open them. Every change is a " +
+    "new version at the same link, so nothing is overwritten and any earlier version can be restored. " +
+    "People you share an artifact with can leave comments; the agent reads them, makes the change, " +
+    "replies and resolves the thread. Plinth is open source (MIT): use the hosted instance at " +
+    "plinth.aconite.io, or run your own.",
+  developerName: "Aconite Software & Investments, Lda.",
+  category: "Productivity",
+  capabilities: [
+    "Publish HTML pages and Markdown documents",
+    "Update artifacts as new versions",
+    "Control who can view each artifact",
+    "Read and answer comments",
+    "Read and write a page's shared data",
+  ],
+  websiteURL: HOSTED_ORIGIN,
+  supportURL: `${REPO_URL}/issues`,
+  privacyPolicyURL: `${HOSTED_ORIGIN}/legal/privacy`,
+  termsOfServiceURL: `${HOSTED_ORIGIN}/legal/terms`,
+  defaultPrompt: [
+    "Make a one-page HTML summary of this project's status and publish it on Plinth.",
+    "Turn these meeting notes into a Plinth document and give me the link.",
+    "Read the comments on my latest Plinth artifact and make the requested changes.",
+  ],
+  brandColor: "#8F5A2A",
+  brandColorDark: "#D39A62",
+  composerIcon: "./assets/icon.svg",
+  logo: "./assets/icon.svg",
 } as const;
 
 export type ConnectClient =
