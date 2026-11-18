@@ -43,7 +43,6 @@ import {
 } from "../policy.ts";
 import { notifyRoom } from "../rooms/notify.ts";
 import { requireTypeDef, resolveSource } from "./artifactTypes.ts";
-import { claimArtifactAttempts } from "./attempts.ts";
 import {
   matchingSpellings,
   ownerCategories,
@@ -51,8 +50,8 @@ import {
   requireCategoryRight,
   resolveCategory,
 } from "./categories.ts";
+import { artifactWipe } from "./cleanup.ts";
 import type { Ctx } from "./context.ts";
-import { wipeArtifactData } from "./data.ts";
 import { readLiveDraftMeta } from "./live.ts";
 import {
   commitVersion,
@@ -772,16 +771,12 @@ export async function renameArtifact(
  */
 export async function deleteArtifact(ctx: Ctx, ref: string): Promise<void> {
   const { artifact } = await requireArtifact(ctx, ref, "delete");
+  // The row stays, soft-deleted; what must not outlive it goes in the same batch (cleanup.ts).
   await ctx.env.DB.batch([
     ctx.env.DB.prepare(
       "UPDATE artifacts SET deleted_at = ?1, access_epoch = access_epoch + 1 WHERE id = ?2",
     ).bind(nowIso(), artifact.id),
-    ...wipeArtifactData(ctx.env.DB, artifact.id),
-    // Unsaved page edits go with it; the room's guarded flush can never bring them back.
-    ctx.env.DB.prepare("DELETE FROM live_drafts WHERE artifact_id = ?1").bind(artifact.id),
-    // Its attempt rows become tombstones: their objects are under the root deleted next, and the
-    // sweep deletes what a still-running attempt puts after that.
-    claimArtifactAttempts(ctx.env.DB, artifact.id, Date.now()),
+    ...artifactWipe(ctx.env.DB, artifact.id, Date.now()).statements,
   ]);
   ctx.waitUntil(deletePrefix(ctx.env.FILES, `artifacts/${artifact.id}/`));
   notifyRoom(ctx, artifact.id, "gone");
