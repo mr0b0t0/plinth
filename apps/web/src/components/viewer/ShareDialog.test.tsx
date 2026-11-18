@@ -102,6 +102,17 @@ describe("ShareDialog shared data", () => {
     expect(screen.queryByText(/Shared data/)).toBeNull();
   });
 
+  it("hides the row for a page that declares only a live room", async () => {
+    const { calls } = stubApi({
+      handle: (c) =>
+        c.path === "/artifacts/s1/data" ? json(summary(0, 0, ["viewer", "room"])) : undefined,
+    });
+    renderDialog();
+    await waitFor(() => expect(calls.some((c) => c.path === "/artifacts/s1/data")).toBe(true));
+    await new Promise((r) => setTimeout(r, 20));
+    expect(screen.queryByText(/Shared data/)).toBeNull();
+  });
+
   it("does not load shared data for people who are not the owner", async () => {
     const { calls } = stubApi({
       handle: (c) => (c.path === "/artifacts/s1/data" ? json(summary(3, 2400)) : undefined),

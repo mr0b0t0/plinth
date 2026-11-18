@@ -278,6 +278,22 @@ export const artifactViewTotals = sqliteTable("artifact_view_totals", {
   firstDay: text("first_day").notNull(),
 });
 
+// Live page edits of a doc (migrations/0011_live_drafts.sql, #36): one unsaved draft per artifact,
+// written by the artifact's room in a guarded flush. Never a version.
+export const liveDrafts = sqliteTable("live_drafts", {
+  artifactId: text("artifact_id").primaryKey(),
+  baseVersion: integer("base_version").notNull(),
+  content: text("content").notNull(),
+  sizeBytes: integer("size_bytes").notNull(),
+  rev: integer("rev").notNull(),
+  /** Set while a merge onto this version needs review. */
+  conflictVersion: integer("conflict_version"),
+  updatedByUser: text("updated_by_user"),
+  createdAt: text("created_at").notNull(),
+  updatedAt: text("updated_at").notNull(),
+});
+
+export type LiveDraftRow = typeof liveDrafts.$inferSelect;
 export type ArtifactDocRow = typeof artifactDocs.$inferSelect;
 export type ArtifactDataUsageRow = typeof artifactDataUsage.$inferSelect;
 

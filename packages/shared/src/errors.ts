@@ -11,6 +11,7 @@ export const ERROR_CODES = [
   "csrf",
   "feature_disabled",
   "internal",
+  "unavailable",
 ] as const;
 export type ErrorCode = (typeof ERROR_CODES)[number];
 
@@ -26,6 +27,7 @@ export const ERROR_STATUS: Record<ErrorCode, number> = {
   csrf: 403,
   feature_disabled: 403,
   internal: 500,
+  unavailable: 503,
 };
 
 export interface ErrorBody {

@@ -2,7 +2,14 @@
 // kept, then the workspace (Monaco and the live preview), which is a separate lazy chunk so nothing
 // of Monaco loads for people who cannot edit or whose screen is too narrow.
 import { ArrowLeftIcon, ClockCounterClockwiseIcon, EyeIcon } from "@phosphor-icons/react";
-import { API, APP_ROUTES, type ArtifactDetail, route, sourceOf } from "@plinth/shared";
+import {
+  API,
+  APP_ROUTES,
+  type ArtifactDetail,
+  type LiveDraftInfo,
+  route,
+  sourceOf,
+} from "@plinth/shared";
 import { lazy, Suspense, useEffect, useState } from "react";
 import { type EditorInitial, initialState } from "../components/editor/initial.ts";
 import {
@@ -12,7 +19,7 @@ import {
 } from "../components/editor/useMediaQuery.ts";
 import { AppShell } from "../components/layout/AppShell.tsx";
 import { ButtonLink, EmptyState, Row, SkeletonText, Spinner } from "../components/ui/index.ts";
-import { ApiRequestError, api } from "../lib/api.ts";
+import { ApiRequestError, api, liveInfo } from "../lib/api.ts";
 import { Link } from "../lib/router.tsx";
 import { useSession } from "../lib/session.ts";
 import "../components/editor/editor-page.css";
@@ -25,7 +32,13 @@ type Load =
   | { kind: "not_found" }
   | { kind: "forbidden"; artifact: ArtifactDetail | null }
   | { kind: "error"; message: string }
-  | { kind: "ready"; artifact: ArtifactDetail; initial: EditorInitial };
+  | {
+      kind: "ready";
+      artifact: ArtifactDetail;
+      initial: EditorInitial;
+      /** A doc's unsaved page edits (#36), when people left some. */
+      pageEdits: LiveDraftInfo | null;
+    };
 
 const canEdit = (a: ArtifactDetail) => (a.role === "owner" || a.role === "editor") && !a.taken_down;
 
@@ -37,7 +50,7 @@ async function load(slug: string): Promise<Load> {
       const old = await api<ArtifactDetail>(route(API.version, { ref: artifact.id, n }));
       return sourceOf(old).text;
     });
-    return { kind: "ready", artifact, initial };
+    return { kind: "ready", artifact, initial, pageEdits: await pageEdits(artifact) };
   } catch (e) {
     if (e instanceof ApiRequestError) {
       if (e.status === 401) return { kind: "signed_out" };
@@ -45,6 +58,17 @@ async function load(slug: string): Promise<Load> {
       if (e.status === 403) return { kind: "forbidden", artifact: null };
     }
     return { kind: "error", message: e instanceof Error ? e.message : "Something went wrong." };
+  }
+}
+
+/** A doc's unsaved page edits, or null (none, not a doc, or on-page editing is off here). */
+async function pageEdits(artifact: ArtifactDetail): Promise<LiveDraftInfo | null> {
+  if (artifact.type !== "doc") return null;
+  try {
+    const info = await liveInfo(artifact.id);
+    return info.draft?.dirty ? info.draft : null;
+  } catch {
+    return null;
   }
 }
 
@@ -109,6 +133,12 @@ export default function Editor({ params }: { params: Record<string, string> }) {
         title={wide ? <Link to={viewPath}>{state.artifact.title}</Link> : undefined}
         trail={wide ? "Edit" : undefined}
       >
+        {state.pageEdits && (
+          <p className="pl-editor-page__live" role="note">
+            There are unsaved page edits based on v{state.pageEdits.base_version}. Saving here
+            publishes a new version; their edits are merged onto it, or reviewed if they overlap.
+          </p>
+        )}
         {!wide && (
           <NarrowMessage
             title={state.artifact.title}

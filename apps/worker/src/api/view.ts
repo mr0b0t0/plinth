@@ -5,8 +5,10 @@ import {
   RATE_LIMITS,
   REVIEW_MODE_PARAM,
   TTL,
+  typeDef,
   type ViewGate,
   type ViewGateData,
+  type ViewGateLive,
   viewerCodeInput,
   viewerEmailInput,
   viewerPasswordInput,
@@ -14,7 +16,13 @@ import {
 import { and, eq } from "drizzle-orm";
 import { Hono } from "hono";
 import { resolveViewerSession } from "../auth/principal.ts";
-import { contentOrigin, sharedDataActive } from "../config.ts";
+import {
+  contentOrigin,
+  identityClaimsActive,
+  liveEditMode,
+  roomsActive,
+  sharedDataActive,
+} from "../config.ts";
 import { issueEnterUrl, safeNext, type ViewerIdentity } from "../content/tokens.ts";
 import { type ArtifactRow, users, versions } from "../db/schema.ts";
 import { appCookieName, secureFlag, serializeCookie } from "../lib/cookies.ts";
@@ -24,6 +32,7 @@ import { hit } from "../lib/ratelimit.ts";
 import { type Decision, type Principal, pageDataAccess } from "../policy.ts";
 import { decideFor, findArtifact, grantFor, versionCapabilities } from "../services/artifacts.ts";
 import type { Ctx } from "../services/context.ts";
+import { readLiveDraftInfo } from "../services/live.ts";
 import { sessionCookie } from "../services/sessions.ts";
 import { requestViewerCode, verifyViewerCode } from "../services/viewers.ts";
 import { countsAsView } from "../services/views.ts";
@@ -99,6 +108,7 @@ export async function computeGate(
     .get();
   const identity = await identityFor(ctx, a, d);
   const data = await gateData(ctx, a, identity);
+  const live = await gateLive(ctx, a, d, opts);
   return {
     status: "ok",
     artifact: {
@@ -112,13 +122,14 @@ export async function computeGate(
     enter_url: await issueEnterUrl(ctx.config, a, next, identity, { countView }),
     role: d.role,
     ...(data ? { data } : {}),
+    ...(live ? { live } : {}),
   };
 }
 
 /**
- * The identity sealed into the enter token for shared data: only for identified viewers (the
- * owner, or a person with a grant, signed in or confirmed by code), never agents, never link
- * viewers or admins without a role, and only while shared data is active (on, origin isolation).
+ * The identity sealed into the enter token for shared data and rooms: only for identified viewers
+ * (the owner, or a person with a grant, signed in or confirmed by code), never agents, never link
+ * viewers or admins without a role, and only while either is active (on, origin isolation).
  * The email is the owner's own, or the one that holds the strongest grant.
  */
 async function identityFor(
@@ -128,13 +139,44 @@ async function identityFor(
 ): Promise<ViewerIdentity | undefined> {
   const p = ctx.principal;
   if (d.role === null || (p.kind !== "user" && p.kind !== "viewer")) return undefined;
-  if (!sharedDataActive(ctx.config)) return undefined;
-  if (d.role === "owner") return { email: p.email, role: "owner" };
+  if (!identityClaimsActive(ctx.config, ctx.env)) return undefined;
+  // `account`: signed in, not confirmed by code. Only then may a doc editor edit on the page.
+  const account = p.kind === "user" ? { account: true } : {};
+  if (d.role === "owner") return { email: p.email, role: "owner", ...account };
   const g = await grantFor(ctx, a.id);
-  return g ? { email: g.email, role: g.role } : undefined;
+  return g ? { email: g.email, role: g.role, ...account } : undefined;
 }
 
-/** What the live viewer tells the person about the page's shared data; only when declared. */
+/**
+ * On-page editing of a doc (#36): owners and editors on the current version, while live editing is
+ * on under origin isolation; one D1 read for the unsaved draft. Undefined in every other case.
+ */
+async function gateLive(
+  ctx: Ctx,
+  a: ArtifactRow,
+  d: Extract<Decision, { allow: true }>,
+  opts: GateOptions,
+): Promise<ViewGateLive | undefined> {
+  if (!typeDef(a.type)?.liveEdit || a.takenDownAt) return undefined;
+  if (d.role !== "owner" && d.role !== "editor") return undefined;
+  if (opts.version !== undefined) return undefined;
+  const p = ctx.principal;
+  if (p.kind !== "user" && p.kind !== "viewer") return undefined;
+  const mode = liveEditMode(ctx.config, ctx.env);
+  if (!mode) return undefined;
+  return {
+    mode,
+    ...(p.kind === "viewer" ? { sign_in: true as const } : {}),
+    draft: await readLiveDraftInfo(ctx.env.DB, a.id),
+  };
+}
+
+/**
+ * What the live viewer tells the person about the page's shared data, and about who its live room
+ * shows them as: only when declared. A page that declares `room viewer` shows each identified
+ * viewer's email to the page and to everyone else in the room, so the viewer is told, with or
+ * without shared data (docs/security.md, "Page code harvests viewer emails").
+ */
 async function gateData(
   ctx: Ctx,
   a: ArtifactRow,
@@ -147,19 +189,35 @@ async function gateData(
     .where(and(eq(versions.artifactId, a.id), eq(versions.number, a.currentVersion)))
     .get();
   const caps = versionCapabilities(row);
+  const roomEmail =
+    identity &&
+    caps?.room === true &&
+    caps.viewer &&
+    a.type === "html" &&
+    roomsActive(ctx.config, ctx.env)
+      ? identity.email
+      : undefined;
+  // A page that declares only `room` (without `viewer`) keeps no shared data and shows nobody's
+  // email: nothing to tell the viewer here.
+  if (caps?.data !== true && !roomEmail) return undefined;
   const capabilities = capabilityList(caps);
-  if (capabilities.length === 0) return undefined;
   const available = sharedDataActive(ctx.config);
-  const claim = identity
-    ? { ...identity, viewerId: await viewerIdFor(ctx.config.tokenSigningKey, a.id, identity.email) }
-    : null;
+  // The identity may be sealed for rooms alone; the data notice counts it only with shared data.
+  const claim =
+    identity && available
+      ? {
+          ...identity,
+          viewerId: await viewerIdFor(ctx.config.tokenSigningKey, a.id, identity.email),
+        }
+      : null;
   return {
     available,
     capabilities,
     identified: claim !== null,
     can_write: pageDataAccess(claim, caps, available).write,
     // The viewer is told which email the page sees (their own, or the one holding the grant).
-    ...(claim && caps?.viewer ? { email: claim.email } : {}),
+    ...(claim && caps?.viewer && caps.data ? { email: claim.email } : {}),
+    ...(roomEmail ? { room_email: roomEmail } : {}),
   };
 }
 

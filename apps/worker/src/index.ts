@@ -22,7 +22,11 @@ import { ApiError } from "./lib/errors.ts";
 import { handleMcp } from "./mcp/server.ts";
 import { mcpResourceMetadataUrl, oauthRoutes } from "./oauth/routes.ts";
 import { pruneUploadTickets, sweepStagingAttempts } from "./services/attempts.ts";
+import { liveRetentionDays, pruneLiveDrafts } from "./services/live.ts";
 import { foldViewDays } from "./services/views.ts";
+
+// The live-room Durable Object class (binding ROOMS, wrangler.jsonc); see src/rooms/.
+export { ArtifactRoom } from "./rooms/ArtifactRoom.ts";
 
 export const app = new Hono<AppEnv>();
 
@@ -171,9 +175,10 @@ export default {
 
   /**
    * The hourly cron trigger (wrangler.jsonc `triggers`): remove what abandoned upload attempts
-   * left, and upload tickets past their status window (services/attempts.ts). At 03 UTC, also fold
-   * daily open counts older than the window into per-artifact totals (services/views.ts), whether
-   * or not counting is on. Needs only the D1 and R2 bindings, not the host configuration.
+   * left, upload tickets past their status window (services/attempts.ts), and live doc drafts
+   * nobody touched for LIVE_DRAFT_RETENTION_DAYS (services/live.ts). At 03 UTC, also fold daily
+   * open counts older than the window into per-artifact totals (services/views.ts), whether or not
+   * counting is on. Needs only the D1 and R2 bindings, not the host configuration.
    */
   async scheduled(
     controller: ScheduledController,
@@ -184,5 +189,6 @@ export default {
     await pruneUploadTickets(env.DB, controller.scheduledTime);
     if (new Date(controller.scheduledTime).getUTCHours() === 3)
       await foldViewDays(env.DB, controller.scheduledTime);
+    await pruneLiveDrafts(env.DB, liveRetentionDays(env), controller.scheduledTime);
   },
 } satisfies ExportedHandler<Bindings>;

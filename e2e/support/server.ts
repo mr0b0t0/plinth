@@ -1,9 +1,10 @@
 // Starts the Worker for Playwright (webServer.command). Run with Node 22.18+ (type stripping).
 //  1. Builds the web app if apps/web/dist/index.html is missing.
 //  2. Wipes this server's state directory (e2e/.wrangler-state) and applies the D1 migrations.
-//  3. Runs `wrangler dev` on PLINTH_E2E_PORT (default 8787) with the development vars and
-//     throwaway secrets, passed with --var so a developer's own apps/worker/.dev.vars cannot change
-//     the test setup.
+//  3. Runs `wrangler dev` on PLINTH_E2E_PORT (default 8787) with apps/worker/wrangler.jsonc (its
+//     bindings, the live-rooms Durable Object included), the development vars and throwaway
+//     secrets, passed with --var so a developer's own apps/worker/.dev.vars cannot change the test
+//     setup.
 // With PLINTH_E2E_CONTENT_ISOLATION=opaque it is the second Worker, the one the "opaque" Playwright
 // project uses: CONTENT_ISOLATION=opaque, with its own state directory.
 import { type ChildProcess, spawn, spawnSync } from "node:child_process";
@@ -35,6 +36,12 @@ export const DEV_VARS: Record<string, string> = {
   OPERATOR_EMAIL: "hello@operator.example",
   OPERATOR_ADDRESS: "Rua Exemplo 1, 1000-001 Lisboa, Portugal",
   OPERATOR_REGISTRATION: "VAT PT000000000",
+  // Live rooms and on-page doc editing (#36), on whatever a developer's .dev.vars says. The ROOMS
+  // Durable Object binding and its rooms-v1 migration come from apps/worker/wrangler.jsonc, which
+  // `wrangler dev` reads in WORKER_DIR. On the opaque server they have no effect: rooms need
+  // origin isolation.
+  ALLOW_ROOMS: "true",
+  ALLOW_LIVE_EDITING: "true",
   // Fresh for every run; never committed, never reused.
   SESSION_SECRET: randomBytes(48).toString("base64url"),
   TOKEN_SIGNING_KEY: randomBytes(48).toString("base64url"),

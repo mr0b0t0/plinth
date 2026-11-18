@@ -516,6 +516,45 @@ describe("session", () => {
     expect(gate.data).toBeUndefined();
   });
 
+  it("`room` without `data` is not shared data: not_declared, no reads, no writes, only the room's identity notice", async () => {
+    const { owner, id, ownerP } = await setup(
+      '<!doctype html><meta name="plinth-capabilities" content="viewer room"><meta name="plinth-room-open" content="*"><p>x</p>',
+    );
+    const s = await api(id, "/session", { cookie: ownerP.cookie });
+    expect(s.status).toBe(200);
+    expect(await json(s)).toEqual({ available: false, reason: "not_declared" });
+    const list = await api(id, "/data/votes", { cookie: ownerP.cookie });
+    expect(list.status).toBe(403);
+    expect((await json(list)).error.details).toEqual({ reason: "not_declared" });
+    const write = await api(id, "/data/votes/a1", {
+      cookie: ownerP.cookie,
+      body: { data: { v: 1 } },
+    });
+    expect(write.status).toBe(403);
+    const bs = await browserSession(owner.user.id);
+    const gate = await json(await call(`/api/v1/view/${id}`, { headers: bs.headers }));
+    expect(gate.status).toBe("ok");
+    // No shared data to describe, but its room shows the viewer's email (`viewer`): they are told.
+    expect(gate.data).toMatchObject({
+      capabilities: ["viewer", "room"],
+      room_email: owner.user.email,
+    });
+    expect(gate.data.email).toBeUndefined();
+    // It is stored as a room declaration all the same.
+    const row = await env.DB.prepare(
+      "SELECT capabilities FROM versions WHERE artifact_id = ?1 AND number = 1",
+    )
+      .bind(id)
+      .first<{ capabilities: string }>();
+    expect(JSON.parse(row?.capabilities ?? "null")).toEqual({
+      data: false,
+      viewer: true,
+      shared: [],
+      room: true,
+      roomOpen: ["*"],
+    });
+  });
+
   it("usage and seq follow writes; /changes returns seq", async () => {
     const { id, ownerP } = await setup();
     expect(await json(await api(id, "/changes", { cookie: ownerP.cookie }))).toEqual({ seq: 0 });

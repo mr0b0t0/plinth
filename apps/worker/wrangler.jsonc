@@ -26,6 +26,10 @@
     }
   ],
   "r2_buckets": [{ "binding": "FILES", "bucket_name": "plinth-files" }],
+  // Live rooms (#36): one SQLite-backed Durable Object per artifact, used only while people have a
+  // room open (src/rooms/ArtifactRoom.ts). It keeps no tables. The migration tag never changes.
+  "durable_objects": { "bindings": [{ "name": "ROOMS", "class_name": "ArtifactRoom" }] },
+  "migrations": [{ "tag": "rooms-v1", "new_sqlite_classes": ["ArtifactRoom"] }],
   "vars": {
     "ENVIRONMENT": "development",
     "APP_HOST": "app.localhost:8787",
@@ -53,6 +57,15 @@
     "DATA_MAX_DOC_BYTES": "16384",
     "DATA_WRITES_PER_VIEWER_PER_HOUR": "300",
     "DATA_WRITES_PER_ARTIFACT_PER_HOUR": "2000",
+    "ALLOW_ROOMS": "true",
+    "ROOM_MAX_CONNECTIONS_PER_ARTIFACT": "50",
+    "ROOM_MAX_MESSAGE_BYTES": "8192",
+    "ROOM_MESSAGES_PER_SECOND": "20",
+    "ALLOW_LIVE_EDITING": "true",
+    "LIVE_CHECKPOINT_IDLE_S": "120",
+    "LIVE_AUTO_CHECKPOINT_MIN_S": "600",
+    "LIVE_DRAFT_FLUSH_S": "5",
+    "LIVE_DRAFT_RETENTION_DAYS": "30",
     "DEV_OUTBOX": "true",
     "DEV_IGNORE_CLIENT_IP": "false",
     "DEV_SEED": "false",

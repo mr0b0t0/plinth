@@ -10,6 +10,8 @@ import {
   type Capabilities,
   type EffectiveRole,
   type PublishResult,
+  ROOM_OPEN_ALL,
+  ROOM_TOPIC_RE,
   type Role,
   type VersionInfo,
   type Visibility,
@@ -40,6 +42,7 @@ import {
   principalUserId,
   seesOwnerMetadata,
 } from "../policy.ts";
+import { notifyRoom } from "../rooms/notify.ts";
 import { requireTypeDef, resolveSource } from "./artifactTypes.ts";
 import { claimArtifactAttempts } from "./attempts.ts";
 import {
@@ -51,6 +54,7 @@ import {
 } from "./categories.ts";
 import type { Ctx } from "./context.ts";
 import { wipeArtifactData } from "./data.ts";
+import { readLiveDraftMeta } from "./live.ts";
 import {
   commitVersion,
   conflictError,
@@ -180,6 +184,8 @@ export function denialError(
       });
     case "login_required":
       return ctx.principal.kind === "anonymous" ? unauthorized() : forbidden();
+    case "account_required":
+      return unauthorized("Sign in to do this");
     case "forbidden":
       // Someone with a role gets "forbidden"; a stranger should not learn the artifact exists.
       return d.role ? forbidden() : notFound();
@@ -283,12 +289,21 @@ export function versionCapabilities(
     return null;
   }
   if (typeof v !== "object" || v === null) return null;
-  const { data, viewer, shared } = v as Record<string, unknown>;
+  const { data, viewer, shared, room, roomOpen } = v as Record<string, unknown>;
   if (typeof data !== "boolean" || typeof viewer !== "boolean") return null;
+  // Rows stored before rooms, and declarations without `room`, have no room fields.
+  const hasRoom = room === true;
   // `viewer` alone declares nothing (shared parseCapabilities).
-  if (!data) return null;
+  if (!data && !hasRoom) return null;
   const names = Array.isArray(shared) ? shared.filter((n) => typeof n === "string") : [];
-  return { data, viewer, shared: names };
+  const topics =
+    hasRoom && Array.isArray(roomOpen)
+      ? roomOpen.filter(
+          (t): t is string =>
+            typeof t === "string" && (t === ROOM_OPEN_ALL || ROOM_TOPIC_RE.test(t)),
+        )
+      : [];
+  return { data, viewer, shared: names, room: hasRoom, roomOpen: topics };
 }
 
 export async function getVersionRow(
@@ -454,6 +469,8 @@ export interface UpdateInput {
   base_version?: number;
   /** Owner only; omitted keeps the current category. */
   category?: string;
+  /** Internal: a checkpoint of the doc's live draft (services/live.ts); never from the wire. */
+  checkpoint?: boolean;
 }
 
 export async function updateArtifact(ctx: Ctx, input: UpdateInput): Promise<PublishResult> {
@@ -480,7 +497,12 @@ export async function updateArtifact(ctx: Ctx, input: UpdateInput): Promise<Publ
   }
   await enforcePublishRate(ctx);
   // No assets given: the current version's assets are carried forward as references.
-  const result = await writeVersion(ctx, target, (s) => stageInline(s, text, input.assets));
+  const result = await writeVersion(
+    ctx,
+    target,
+    (s) => stageInline(s, text, input.assets),
+    input.checkpoint ? { liveCheckpoint: true } : {},
+  );
   return withCategory(result, target);
 }
 
@@ -507,10 +529,15 @@ export async function getArtifact(
         sha256: m.sha256 ?? null,
       })),
   };
+  // A doc's unsaved page edits, as metadata, for owners and editors (and their agents) only.
+  const live =
+    def.liveEdit && (role === "owner" || role === "editor")
+      ? { live_draft: await readLiveDraftMeta(ctx.env.DB, artifact.id) }
+      : {};
   // html for a page, content for every typed artifact; never both.
   return def.id === "html"
-    ? { ...base, type: "html", html: text }
-    : { ...base, type: def.id, content: text };
+    ? { ...base, ...live, type: "html", html: text }
+    : { ...base, ...live, type: def.id, content: text };
 }
 
 /**
@@ -714,6 +741,8 @@ export async function bumpAccessEpoch(ctx: Ctx, artifactId: string): Promise<voi
     .set({ accessEpoch: sql`${artifacts.accessEpoch} + 1`, updatedAt: nowIso() })
     .where(eq(artifacts.id, artifactId))
     .run();
+  // Live room sockets opened with an older pass close (rooms/notify.ts; the alarm backs it up).
+  notifyRoom(ctx, artifactId, "revoke");
 }
 
 export interface SetVisibilityInput {
@@ -766,11 +795,14 @@ export async function deleteArtifact(ctx: Ctx, ref: string): Promise<void> {
       "UPDATE artifacts SET deleted_at = ?1, access_epoch = access_epoch + 1 WHERE id = ?2",
     ).bind(nowIso(), artifact.id),
     ...wipeArtifactData(ctx.env.DB, artifact.id),
+    // Unsaved page edits go with it; the room's guarded flush can never bring them back.
+    ctx.env.DB.prepare("DELETE FROM live_drafts WHERE artifact_id = ?1").bind(artifact.id),
     // Its attempt rows become tombstones: their objects are under the root deleted next, and the
     // sweep deletes what a still-running attempt puts after that.
     claimArtifactAttempts(ctx.env.DB, artifact.id, Date.now()),
   ]);
   ctx.waitUntil(deletePrefix(ctx.env.FILES, `artifacts/${artifact.id}/`));
+  notifyRoom(ctx, artifact.id, "gone");
 }
 
 export { forbidden };

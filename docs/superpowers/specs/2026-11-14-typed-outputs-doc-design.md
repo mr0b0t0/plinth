@@ -291,6 +291,12 @@ today, and the CSP `sandbox` applies to the shell.
   `__plinth-renderers/<id>/<id>.js` and `.css` into the main bundle's output. It runs on every build
   including watch, and renderer code never shares chunks with the SPA. Turbo already makes worker
   tests and e2e depend on `@plinth/web#build`, and the CLI copies `apps/web/dist` wholesale.
+- **Edit mode (added later, #36).** Owners and editors can now edit a doc on its rendered page.
+  View mode is unchanged; the renderer adds `blocks.ts` (the same Markdown rendered block by block,
+  each block through the same sanitizer, line ranges in a `WeakMap`), `live.ts` (the doc socket to
+  the artifact's room) and `edit.ts` (a `<textarea>` per opened block), and the protocol above gains
+  `edit`, `collect`, `live`, `save` and `draft` messages, still version 1. See `docs/spec.md`
+  ("Editing") and the 2026-11-18 rows in `DECISIONS.md`.
 
 ### Web app
 

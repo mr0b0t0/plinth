@@ -222,18 +222,20 @@ describe("identity claim: issued for identified viewers", () => {
     const { owner, artifact } = await pub("allowlist", { emails: [uniqueEmail()] });
     const s = await browserSession(owner.user.id);
     const gate = await gateHttp(artifact.id, s.headers);
-    expect(await claimIn(gate)).toEqual({ m: owner.user.email, r: "owner" });
+    expect(await claimIn(gate)).toEqual({ m: owner.user.email, r: "owner", a: 1 });
     const { pass } = await passFrom(gate);
     expect(pass).toEqual({
       claim: {
         email: owner.user.email,
         role: "owner",
         viewerId: await viewerIdFor(SECRET, artifact.id, owner.user.email),
+        account: true,
       },
       capture: false,
       preview: false,
       version: null,
       counted: false,
+      exp: expect.any(Number),
     });
   });
 
@@ -245,7 +247,7 @@ describe("identity claim: issued for identified viewers", () => {
       const s = await browserSession(user.id);
       const gate = await gateHttp(artifact.id, s.headers);
       expect(asOk(gate).role).toBe(role);
-      expect(await claimIn(gate)).toEqual({ m: user.email, r: role });
+      expect(await claimIn(gate)).toEqual({ m: user.email, r: role, a: 1 });
       const { pass } = await passFrom(gate);
       expect(pass?.claim).toMatchObject({ email: user.email, role });
     });
@@ -273,6 +275,7 @@ describe("identity claim: issued for identified viewers", () => {
     expect(await claimIn(await gateHttp(artifact.id, s.headers))).toEqual({
       m: user.email,
       r: "commenter",
+      a: 1,
     });
   });
 
@@ -289,11 +292,11 @@ describe("identity claim: issued for identified viewers", () => {
     expect((await json<ViewGate>(ok)).status).toBe("ok");
     const both = `${s.headers.Cookie}; ${viewerCookieOf(ok)}`;
     const gate = await gateHttp(artifact.id, { Cookie: both });
-    expect(await claimIn(gate)).toEqual({ m: listed, r: "viewer" });
+    expect(await claimIn(gate)).toEqual({ m: listed, r: "viewer", a: 1 });
 
     // Directly: a user principal whose own email is not listed, with the confirmed viewer email.
     const direct = await computeGate(ctxFor(userP(user), {}, listed), artifact.id);
-    expect(await claimIn(direct)).toEqual({ m: listed, r: "viewer" });
+    expect(await claimIn(direct)).toEqual({ m: listed, r: "viewer", a: 1 });
   });
 
   it("with grants on both emails, the stronger one's email is used", async () => {
@@ -304,10 +307,10 @@ describe("identity claim: issued for identified viewers", () => {
     await grant(artifact.id, other, "editor");
     const gate = await computeGate(ctxFor(userP(user), {}, other), artifact.id);
     expect(asOk(gate).role).toBe("editor");
-    expect(await claimIn(gate)).toEqual({ m: other, r: "editor" });
+    expect(await claimIn(gate)).toEqual({ m: other, r: "editor", a: 1 });
     await grant(artifact.id, user.email, "editor");
     const tie = await computeGate(ctxFor(userP(user), {}, other), artifact.id);
-    expect(await claimIn(tie)).toEqual({ m: user.email, r: "editor" });
+    expect(await claimIn(tie)).toEqual({ m: user.email, r: "editor", a: 1 });
   });
 });
 
@@ -327,6 +330,7 @@ describe("identity claim: nobody else gets one", () => {
       preview: false,
       version: null,
       counted: false,
+      exp: expect.any(Number),
     });
 
     await db()
@@ -385,12 +389,18 @@ describe("identity claim: nobody else gets one", () => {
     expect(await claimIn(direct)).toBeNull();
   });
 
-  it("ALLOW_SHARED_DATA=false and opaque isolation", async () => {
+  it("ALLOW_SHARED_DATA=false with rooms off, and opaque isolation", async () => {
     const { owner, artifact } = await pub("allowlist", { emails: [uniqueEmail()] });
     const p = userP(owner.user);
     expect(await claimIn(await computeGate(ctxFor(p), artifact.id))).not.toBeNull();
+    // Live rooms read the claim too: it is sealed while either feature is active.
     expect(
       await claimIn(await computeGate(ctxFor(p, { allowSharedData: false }), artifact.id)),
+    ).not.toBeNull();
+    expect(
+      await claimIn(
+        await computeGate(ctxFor(p, { allowSharedData: false, allowRooms: false }), artifact.id),
+      ),
     ).toBeNull();
     const opaque = await computeGate(ctxFor(p, { contentIsolation: "opaque" }), artifact.id);
     expect(opaque.status).toBe("ok");
@@ -457,6 +467,7 @@ describe("identity claim: tokens and cookies", () => {
       preview: false,
       version: null,
       counted: false,
+      exp: expect.any(Number),
     });
   });
 
@@ -493,6 +504,7 @@ describe("identity claim: tokens and cookies", () => {
       preview: false,
       version: null,
       counted: false,
+      exp: expect.any(Number),
     });
     // Same name, path and host: the browser replaces the first cookie with the second.
     const attrs = (sc: string) =>

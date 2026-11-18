@@ -79,6 +79,7 @@ it is mandatory.
 | R2 bucket | `plinth-files` | `node scripts/setup.mjs --remote` |
 | Zone for the app host | `aconite.io` | Cloudflare dashboard (already exists for the hosted instance) |
 | Zone for the content host | `plinthusercontent.com` for the hosted instance (registered through Cloudflare Registrar, so the zone already uses Cloudflare's nameservers); for a separate domain bought elsewhere, add it as a zone and point the registrar's nameservers at Cloudflare | Cloudflare dashboard |
+| Durable Object class (live rooms) | `ArtifactRoom`, bound as `ROOMS`, migration tag `rooms-v1` | `wrangler deploy`, from the `durable_objects` and `migrations` keys every generated config carries ([Live rooms](#live-rooms)) |
 | Browser Rendering binding (optional, for thumbnails) | `"browser": { "binding": "BROWSER" }` in your wrangler config | Your own `wrangler.<env>.jsonc`; Browser Rendering is billed per browser hour (Workers Free includes a small daily allowance) |
 | Advanced Certificate for `*.<content subdomain>` | only for a content subdomain (second-level wildcard); not needed for the hosted instance | Cloudflare dashboard → SSL/TLS → Edge Certificates → Order Advanced Certificate (Advanced Certificate Manager, paid) |
 
@@ -139,6 +140,54 @@ overhead), the largest body an upload from `start_upload` or the CLI sends.
   Run `pnpm --filter @plinth/worker admin -- sweep-orphans --remote` only for legacy orphans:
   files written before 0.4.0, which no staging row names
   ([self-hosting.md](self-hosting.md#operating-notes)).
+
+### Live rooms
+
+Live rooms (`plinth.room` on pages that declare `room`, and doc editors seeing each other's page
+edits) run in one Durable Object class inside the same Worker: `ArtifactRoom`, one object per
+artifact that has a room open, SQLite-backed and storing nothing but an alarm. `apps/worker/wrangler.jsonc`,
+the setup script, `plinth deploy`, local, tunnel and Docker instances all write the same two keys:
+
+```jsonc
+"durable_objects": { "bindings": [{ "name": "ROOMS", "class_name": "ArtifactRoom" }] },
+"migrations": [{ "tag": "rooms-v1", "new_sqlite_classes": ["ArtifactRoom"] }]
+```
+
+- **The migration applies on the next deploy** that has the binding, once and for good: Cloudflare
+  records the tag `rooms-v1` against the Worker. Never rename or drop it, and keep the
+  `migrations` list in every later config (an operator's own migrations go after it, under new
+  tags).
+- **Workers Free** allows only SQLite-backed Durable Object classes, which is what
+  `new_sqlite_classes` declares. Its daily allowance is 100,000 Durable Object requests, 13,000 GB-s
+  of duration and 5 GB stored. Workers Paid ($5/month) includes 1 million requests and 400,000 GB-s
+  a month, then $0.15 per million requests and $12.50 per million GB-s.
+- **Cost.** An object exists only while someone has a room open: a page that declares `room`, or a
+  doc that an owner or editor has open. Each connection is one request, incoming messages bill at
+  20 to 1, outgoing messages and the automatic ping replies are free, and an object with only idle
+  sockets hibernates and accrues no duration. Four people moving cursors on a whiteboard (40
+  messages a second) cost about 7,200 billed requests and 450 GB-s an hour; two people typing in a
+  doc about 1,440 requests and at most 720 D1 writes an hour (the operations are in
+  [spec.md](spec.md#costs)). When the
+  allowance runs out, sockets fail: pages work alone and docs are edited without seeing others.
+- **Off switch.** `ALLOW_ROOMS=false` turns rooms off and `ALLOW_LIVE_EDITING=false` turns on-page
+  doc editing off ([self-hosting.md](self-hosting.md#settings)). Keep the binding: turning them back
+  on then needs no deploy-time change. A config without the binding also deploys and runs, with
+  rooms off; `check-config` (and so `deploy:<env>`) prints a note naming it.
+- **Isolation.** Rooms need `CONTENT_ISOLATION=origin`. Under `opaque` and the staging path
+  fallback they are off, whatever the settings say.
+- **Proxies.** Rooms are WebSockets on `wss://<id>.<CONTENT_HOST>/__plinth/room/`. Cloudflare's
+  edge, Workers routes and Tunnel pass them unchanged; a reverse proxy in front of a container must
+  forward the upgrade ([docker.md](docker.md#what-the-proxy-must-do)).
+- **Rolling back past live rooms.** A Worker that does not export `ArtifactRoom` cannot be deployed
+  over one whose migration created it unless a further migration deletes the class
+  (`{ "tag": "rooms-v1-removed", "deleted_classes": ["ArtifactRoom"] }`; the class stores nothing,
+  so nothing is lost, but turning rooms on again then needs yet another tag). Prefer
+  `ALLOW_ROOMS=false` on the current release.
+
+### Creating the resources
+
+The setup script creates the D1 database and the R2 bucket and writes the Worker config with every
+binding above. Read its plan first:
 
 ```sh
 pnpm --filter @plinth/worker exec wrangler login
@@ -363,9 +412,18 @@ These need accounts, money or legal judgement, so no script does them.
     instance's privacy notice covers it (what viewers enter, the email and role stamped on each
     write, and the identity in the viewing cookie). An operator with a privacy notice of their own
     should cover the same, or set `ALLOW_SHARED_DATA` to `"false"`.
-13. Turn on GitHub private vulnerability reporting for the repository (see
+13. Live rooms and on-page doc editing are on unless `ALLOW_ROOMS` and `ALLOW_LIVE_EDITING` are set
+    to a false value, once the config has the `ROOMS` binding (a setup re-run adds it). The hosted
+    instance's privacy notice covers them, so it may run with both on: unsaved page edits (the
+    draft and who last changed it, kept in D1 until someone saves or discards it, and for at most
+    `LIVE_DRAFT_RETENTION_DAYS`, 30 by default) and presence (who has a page open, where their
+    cursor is, and live messages between them, passed along and never stored). An operator with a
+    privacy notice of their own should cover the same, or set both to `"false"`; one who raises
+    `LIVE_DRAFT_RETENTION_DAYS` should say so in their notice.
+14. Turn on GitHub private vulnerability reporting for the repository (see
     [security.md](security.md)).
-14. Watch the first days with `wrangler tail` and the Cloudflare analytics for the Worker and D1.
+15. Watch the first days with `wrangler tail` and the Cloudflare analytics for the Worker, D1 and
+    Durable Objects.
 
 ## 6. Upgrading and rolling back
 
@@ -413,6 +471,15 @@ git pull && pnpm install && pnpm build && \
 `deploy:staging` does the same with `wrangler.staging.jsonc`. `pnpm build` only prints a warning
 line for each `wrangler.<env>.jsonc` in `apps/worker` that lacks either, and never fails because
 of one: the refusal is in `check-config` and the deploy scripts.
+
+Live rooms (#36) add migration `0011_live_drafts` (one table for unsaved page edits of docs) and
+the Durable Object migration `rooms-v1` ([Live rooms](#live-rooms)). `plinth deploy` writes the
+binding into its config on every run, and a local or Docker instance gets it on its next start
+(`plinth start` adds the release's Durable Object bindings and migrations it lacks, by name and by
+tag, and keeps the instance's own). A `wrangler.<env>.jsonc` that `scripts/setup.mjs` wrote gets it
+when you re-run setup with the same arguments. Without it the Worker runs with rooms off, and
+`check-config` prints a note. The D1 migration only adds a table, so an older Worker still starts
+against it; the Durable Object migration is what limits a rollback ([Live rooms](#live-rooms)).
 
 **Roll forward, not back.** Rolling the Worker back past 0.4.0 breaks artifacts updated since then
 (any update or restore that keeps files reuses them): an older Worker looks each file up under the

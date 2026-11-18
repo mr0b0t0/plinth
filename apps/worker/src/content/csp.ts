@@ -38,6 +38,13 @@ export interface ContentCspOptions {
    * host's sandbox, opaque isolation) can still load it from its own subdomain.
    */
   publicFile?: boolean;
+  /**
+   * The artifact's own WebSocket origin (`wss://<id>.<CONTENT_HOST>`, `ws://` under
+   * PUBLIC_SCHEME=http), added to connect-src for its live room. Set only while rooms are active
+   * and only on documents (HTML entries and the typed shell). CSP3 lets 'self' match a same-host
+   * wss: URL, but older WebKit did not; naming the artifact's own origin reaches nothing new.
+   */
+  socket?: string;
 }
 
 /**
@@ -90,7 +97,7 @@ export function contentCsp(config: Config, opts: ContentCspOptions = {}): string
     `font-src 'self'${https(s.font)} data:`,
     `img-src 'self'${https(s.img)} data: blob:`,
     `media-src 'self'${https(s.media)} data: blob:`,
-    `connect-src 'self'${https(s.connect)}`,
+    `connect-src 'self'${https(s.connect)}${opts.socket ? ` ${opts.socket}` : ""}`,
     `worker-src 'self'${https(s.worker)} blob:`,
     "child-src 'self' blob:",
     `frame-src 'self'${https(s.frame)} blob:`,

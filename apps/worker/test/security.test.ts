@@ -202,8 +202,12 @@ describe("Artifact responses on content hosts carry a Content Security Policy (C
       ["unknown artifact", await call(`${contentOrigin("a".repeat(20))}/`)],
     ];
     const expected = contentCsp(config());
+    // A document also names its own live-room origin in connect-src (rooms are on in tests).
+    const page = contentCsp(config(), { socket: `ws://${p.id}.${CONTENT_HOST}` });
     for (const [name, res] of responses) {
-      expect(res.headers.get("content-security-policy"), name).toBe(expected);
+      expect(res.headers.get("content-security-policy"), name).toBe(
+        name === "html" || name === "HEAD" ? page : expected,
+      );
       expect(res.headers.get("x-content-type-options"), name).toBe("nosniff");
       const pp = res.headers.get("permissions-policy") ?? "";
       for (const f of [
@@ -431,7 +435,11 @@ describe("No route on a content host serves app pages or accepts app cookies; no
           const body = await res.text();
           const where = `${host}${path} (${c.name})`;
           expect(isAppResponse(res, body), where).toBe(false);
-          expect(res.headers.get("content-security-policy"), where).toBe(contentCsp(config()));
+          expect(res.headers.get("content-security-policy"), where).toBe(
+            res.status === 200
+              ? contentCsp(config(), { socket: `ws://${p.id}.${CONTENT_HOST}` })
+              : contentCsp(config()),
+          );
           // The only 200 on a content host is the artifact's own file, with its content cookie.
           if (res.status === 200) {
             expect([

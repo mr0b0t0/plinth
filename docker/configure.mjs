@@ -51,6 +51,10 @@ const WORKER_VARS = [
   "CDN_ALLOWLIST",
   "ALLOW_PUBLIC_VISIBILITY",
   "PUBLIC_MIN_ACCOUNT_AGE_HOURS",
+  // Live rooms and on-page doc editing (#36): the instance config carries the ROOMS binding, so
+  // these are the switches (docs/docker.md#settings). A reverse proxy must pass WebSocket upgrades.
+  "ALLOW_ROOMS",
+  "ALLOW_LIVE_EDITING",
 ];
 
 // `plinth init` flags and the variables that set them, to name the variable in its errors.

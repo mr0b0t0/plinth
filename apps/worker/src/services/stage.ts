@@ -14,7 +14,9 @@ import {
   type PublishResult,
   type PublishWarning,
   parseCapabilities,
+  serializeCapabilities,
   TTL,
+  TYPE_REGISTRY,
   type Visibility,
 } from "@plinth/shared";
 import { appUrl, contentOrigin } from "../config.ts";
@@ -24,6 +26,7 @@ import { hashToken, newArtifactId, newId, randomString } from "../lib/crypto.ts"
 import { ApiError, isUniqueViolation, notFound, unauthorized } from "../lib/errors.ts";
 import { enforce } from "../lib/ratelimit.ts";
 import { nowIso } from "../lib/time.ts";
+import { notifyDocVersion, notifyVersion } from "../rooms/notify.ts";
 import { getVersionRow, requireArtifact } from "./artifacts.ts";
 import { checkAsset, requireTypeDef, resolveSource } from "./artifactTypes.ts";
 import {
@@ -817,7 +820,7 @@ export class VersionStager implements Stager {
     if (this.capabilitiesOverride !== undefined) capabilities = this.capabilitiesOverride;
     else if (def.id === "html") {
       const caps = parseCapabilities(sourceText);
-      capabilities = caps ? JSON.stringify(caps) : null;
+      capabilities = caps ? serializeCapabilities(caps) : null;
     } else capabilities = null;
 
     let warnings: PublishWarning[] = [];
@@ -952,6 +955,11 @@ export interface CommitOptions {
   visibility?: Visibility;
   passwordHash?: string | null;
   restoredFrom?: number | null;
+  /**
+   * A checkpoint of a doc's live draft (services/live.ts): it is the draft, so it carries no
+   * live_draft warning.
+   */
+  liveCheckpoint?: boolean;
 }
 
 const QUOTA_GUARD = `(SELECT coalesce(sum(coalesce(v.stored_bytes, v.size_bytes)), 0) FROM versions v
@@ -1078,7 +1086,53 @@ export async function commitVersion(
   } catch {
     // A thumbnail is optional; a reader starts the capture later.
   }
+  // A page whose room declaration changed: its room's sockets reconnect through the gate.
+  if (!extra.stager.def.renderer) {
+    try {
+      notifyVersion(ctx, result.id, result.version, extra.capabilities);
+    } catch {
+      // Best effort; the room's alarm re-reads the declaration.
+    }
+  }
+  if (extra.stager.def.liveEdit && target.mode === "update") {
+    // A doc's live draft is merged onto the new version, or frozen for review (rooms/doc.ts).
+    const source = staged.entries.find((e) => e.path === extra.stager.def.sourcePath);
+    try {
+      notifyDocVersion(ctx, result.id, result.version, source?.sha256 ?? null);
+    } catch {
+      // Best effort; loading the draft rebases it onto the current version.
+    }
+    if (!opts.liveCheckpoint && opts.restoredFrom == null) {
+      result = await withLiveDraftWarning(ctx, result);
+    }
+  }
   return result;
+}
+
+/** People are editing the doc on its page: say so, once, with nothing for the agent to do. */
+async function withLiveDraftWarning(ctx: Ctx, result: PublishResult): Promise<PublishResult> {
+  let row: unknown = null;
+  try {
+    row = await ctx.env.DB.prepare("SELECT 1 AS one FROM live_drafts WHERE artifact_id = ?1")
+      .bind(result.id)
+      .first();
+  } catch {
+    return result;
+  }
+  if (!row) return result;
+  return {
+    ...result,
+    warnings: [
+      ...result.warnings,
+      {
+        code: "live_draft",
+        file: TYPE_REGISTRY.doc.sourcePath,
+        message:
+          "People are editing this doc on its page. Your version is published; their unsaved " +
+          "edits are merged onto it or reviewed by them. Nothing was overwritten. No action needed.",
+      },
+    ],
+  };
 }
 
 /**

@@ -1,0 +1,150 @@
+// Telling an artifact's live room that access or the declaration changed (#36). Best effort, after
+// the response (waitUntil), with one retry: the room's 60 s alarm re-checks D1 and closes what a
+// lost call left open. Only artifacts that can have a room are notified (a doc, or an HTML artifact
+// whose current or previous version declares `room`), so ordinary artifacts never instantiate one.
+// Failures are logged with the operation only, never content.
+import { type Capabilities, TYPE_REGISTRY } from "@plinth/shared";
+import { type Bindings, type Config, liveEditMode, roomsActive } from "../config.ts";
+import { versionCapabilities } from "../services/artifacts.ts";
+
+export type RoomOp = "revoke" | "gone" | "redeclare";
+
+interface NotifyCtx {
+  env: Bindings;
+  config: Config;
+  waitUntil: (p: Promise<unknown>) => void;
+}
+
+/**
+ * What a version declares about rooms, as one comparable value: null when it declares no room.
+ * Two versions with the same value admit the same sockets with the same rights, so a new version
+ * alone causes no reconnects.
+ */
+export function roomDeclaration(
+  caps: Pick<Capabilities, "room" | "viewer" | "roomOpen"> | null,
+): string | null {
+  if (caps?.room !== true) return null;
+  return JSON.stringify({ viewer: caps.viewer, open: [...new Set(caps.roomOpen)].sort() });
+}
+
+/** The artifact's type, epoch and the declarations of its current and previous versions. */
+async function loadRoomFacts(env: Bindings, artifactId: string) {
+  const row = await env.DB.prepare(
+    `SELECT a.type, a.access_epoch,
+            (SELECT capabilities FROM versions WHERE artifact_id = a.id AND number = a.current_version) AS cur,
+            (SELECT capabilities FROM versions WHERE artifact_id = a.id AND number = a.current_version - 1) AS prev
+       FROM artifacts a WHERE a.id = ?1`,
+  )
+    .bind(artifactId)
+    .first<{ type: string; access_epoch: number; cur: string | null; prev: string | null }>();
+  if (!row) return null;
+  return {
+    type: row.type,
+    epoch: row.access_epoch,
+    cur: versionCapabilities({ capabilities: row.cur }),
+    prev: versionCapabilities({ capabilities: row.prev }),
+  };
+}
+
+function hasRoom(facts: NonNullable<Awaited<ReturnType<typeof loadRoomFacts>>>): boolean {
+  const live = Object.hasOwn(TYPE_REGISTRY, facts.type)
+    ? TYPE_REGISTRY[facts.type as keyof typeof TYPE_REGISTRY].liveEdit
+    : false;
+  return live || facts.cur?.room === true || facts.prev?.room === true;
+}
+
+async function call(env: Bindings, artifactId: string, op: RoomOp, epoch: number): Promise<void> {
+  const ns = env.ROOMS;
+  if (!ns) return;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const stub = ns.get(ns.idFromName(artifactId));
+      if (op === "revoke") await stub.revoke(epoch);
+      else if (op === "gone") await stub.gone();
+      else await stub.redeclare();
+      return;
+    } catch {
+      // Retried once; the alarm is the backstop.
+    }
+  }
+  console.error(`room notify failed: ${op}`);
+}
+
+/**
+ * After a sharing change (revoke, with the artifact's new epoch), a delete or takedown (gone), or
+ * a version that changed the room declaration (redeclare). A no-op while rooms are not active.
+ */
+export function notifyRoom(ctx: NotifyCtx, artifactId: string, op: RoomOp): void {
+  if (!roomsActive(ctx.config, ctx.env)) return;
+  ctx.waitUntil(
+    (async () => {
+      try {
+        const facts = await loadRoomFacts(ctx.env, artifactId);
+        if (!facts || !hasRoom(facts)) return;
+        await call(ctx.env, artifactId, op, facts.epoch);
+      } catch {
+        console.error(`room notify failed: ${op}`);
+      }
+    })(),
+  );
+}
+
+/**
+ * After version `n` of an HTML artifact committed: page sockets reconnect only when what the
+ * version declares about rooms differs from version n - 1.
+ */
+export function notifyVersion(
+  ctx: NotifyCtx,
+  artifactId: string,
+  n: number,
+  capabilities: string | null,
+): void {
+  if (n < 2 || !roomsActive(ctx.config, ctx.env)) return;
+  ctx.waitUntil(
+    (async () => {
+      try {
+        const prev = await ctx.env.DB.prepare(
+          "SELECT capabilities FROM versions WHERE artifact_id = ?1 AND number = ?2",
+        )
+          .bind(artifactId, n - 1)
+          .first<{ capabilities: string | null }>();
+        const before = roomDeclaration(versionCapabilities(prev));
+        const after = roomDeclaration(versionCapabilities({ capabilities }));
+        if (before === after) return;
+        await call(ctx.env, artifactId, "redeclare", 0);
+      } catch {
+        console.error("room notify failed: redeclare");
+      }
+    })(),
+  );
+}
+
+/**
+ * After version `n` of a doc committed (an agent, the source editor, a restore or a checkpoint):
+ * its room merges the live draft onto it, or freezes the draft for review, and open pages follow.
+ * `hash` is the version's content.md sha256, which lets the room recognize its own checkpoint.
+ * Only while on-page editing runs with rooms; a draft left from before is rebased when it loads.
+ */
+export function notifyDocVersion(
+  ctx: NotifyCtx,
+  artifactId: string,
+  n: number,
+  hash: string | null,
+): void {
+  if (liveEditMode(ctx.config, ctx.env) !== "room") return;
+  const ns = ctx.env.ROOMS;
+  if (!ns) return;
+  ctx.waitUntil(
+    (async () => {
+      for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+          await ns.get(ns.idFromName(artifactId)).docVersion(artifactId, n, hash);
+          return;
+        } catch {
+          // Retried once.
+        }
+      }
+      console.error("room notify failed: version");
+    })(),
+  );
+}

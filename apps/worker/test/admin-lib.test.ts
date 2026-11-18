@@ -419,3 +419,39 @@ describe("after delete or erase, R2 holds nothing under artifacts/<id>/", () => 
     expect(await r2Keys(`artifacts/${two.id}/`)).toEqual([]);
   });
 });
+
+describe("erase-user and live doc drafts (#36)", () => {
+  it("keeps the text of a draft on someone else's doc but not who wrote it; drafts on the user's own docs go", async () => {
+    const owner = await agent();
+    const editor = await agent();
+    const { body: theirs } = await publish(owner.auth, {
+      html: undefined,
+      type: "doc",
+      content: "# Theirs\n",
+    });
+    const { body: own } = await publish(editor.auth, {
+      html: undefined,
+      type: "doc",
+      content: "# Own\n",
+    });
+    const now = new Date().toISOString();
+    for (const id of [theirs.id, own.id]) {
+      await env.DB.prepare(
+        `INSERT INTO live_drafts (artifact_id, base_version, content, size_bytes, rev, updated_by_user, created_at, updated_at)
+         VALUES (?1, 1, 'edited', 6, 2, ?2, ?3, ?3)`,
+      )
+        .bind(id, editor.user.id, now)
+        .run();
+    }
+    expect(eraseUserSql(editor.user.email)).toContain(
+      "UPDATE live_drafts SET updated_by_user = NULL",
+    );
+    await runStatements(eraseUserSql(editor.user.email));
+    const row = (id: string) =>
+      env.DB.prepare("SELECT content, updated_by_user FROM live_drafts WHERE artifact_id = ?1")
+        .bind(id)
+        .first();
+    expect(await row(theirs.id)).toEqual({ content: "edited", updated_by_user: null });
+    expect(await row(own.id)).toBeNull();
+  });
+});

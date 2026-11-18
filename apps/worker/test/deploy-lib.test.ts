@@ -10,8 +10,13 @@ import {
   hostPairProblem,
   mergeDeploySettings,
   pickAccount,
+  ROOMS_DO,
+  ROOMS_MIGRATIONS,
   refreshRuntime,
   resourceNames,
+  runtimeBase,
+  runtimeConfigMissing,
+  runtimeConfigNotes,
   wildcardRecord,
 } from "../scripts/deploy-lib.mjs";
 
@@ -283,6 +288,31 @@ describe("deploy-lib: buildDeployConfig", () => {
     expect(cfg.vars.ENVIRONMENT).toBe("production");
   });
 
+  it("binds the live-rooms Durable Object with its migration, from the base or the constants", () => {
+    const s = mergeDeploySettings(first, null, deps);
+    const cfg = buildDeployConfig(s, layout, base, { databaseId: "d", contentZone: "z" });
+    expect(cfg.durable_objects).toEqual({
+      bindings: [{ name: "ROOMS", class_name: "ArtifactRoom" }],
+    });
+    expect(cfg.migrations).toEqual([{ tag: "rooms-v1", new_sqlite_classes: ["ArtifactRoom"] }]);
+    const own = {
+      ...base,
+      durable_objects: { bindings: [...ROOMS_DO.bindings, { name: "X", class_name: "X" }] },
+      migrations: [...ROOMS_MIGRATIONS, { tag: "x-v1", new_sqlite_classes: ["X"] }],
+    };
+    const withOwn = buildDeployConfig(s, layout, own, { databaseId: "d", contentZone: "z" });
+    expect(withOwn.durable_objects).toEqual(own.durable_objects);
+    expect(withOwn.migrations).toEqual(own.migrations);
+    // An operator's ALLOW_ROOMS=false under deploy.json "vars" turns rooms off, binding or not.
+    const off = buildDeployConfig(
+      { ...s, vars: { ALLOW_ROOMS: "false", ALLOW_LIVE_EDITING: "false" } },
+      layout,
+      base,
+      { databaseId: "d", contentZone: "z" },
+    );
+    expect(off.vars).toMatchObject({ ALLOW_ROOMS: "false", ALLOW_LIVE_EDITING: "false" });
+  });
+
   it("keeps the explicit sender address", () => {
     const s = mergeDeploySettings({ ...first, "email-from": "Me <me@example.com>" }, null, deps);
     const cfg = buildDeployConfig(s, layout, base, { databaseId: "d", contentZone: "z" });
@@ -462,6 +492,52 @@ describe("deploy-lib: checkZones", () => {
   });
 });
 
+describe("runtimeBase (packages/cli runtime/wrangler.base.json)", () => {
+  const repo = {
+    compatibility_date: "2026-11-01",
+    compatibility_flags: ["nodejs_compat", "enable_request_signal"],
+    triggers: { crons: ["0 * * * *"] },
+    assets: { directory: "../web/dist", binding: "ASSETS" },
+    d1_databases: [{ binding: "DB" }],
+    durable_objects: ROOMS_DO,
+    migrations: ROOMS_MIGRATIONS,
+    vars: {
+      APP_HOST: "app.localhost:8787",
+      ALLOW_ROOMS: "true",
+      ROOM_MAX_CONNECTIONS_PER_ARTIFACT: "50",
+      ROOM_MAX_MESSAGE_BYTES: "8192",
+      ROOM_MESSAGES_PER_SECOND: "20",
+      ALLOW_LIVE_EDITING: "true",
+      LIVE_CHECKPOINT_IDLE_S: "120",
+      LIVE_AUTO_CHECKPOINT_MIN_S: "600",
+      LIVE_DRAFT_FLUSH_S: "5",
+      LIVE_DRAFT_RETENTION_DAYS: "30",
+    },
+  };
+
+  it("copies the Durable Object binding, its migration and the room vars, not the hosts", () => {
+    const b = runtimeBase(repo) as {
+      durable_objects: unknown;
+      migrations: unknown;
+      vars: Record<string, string>;
+    };
+    expect(b.durable_objects).toEqual(ROOMS_DO);
+    expect(b.migrations).toEqual(ROOMS_MIGRATIONS);
+    expect("d1_databases" in b).toBe(false);
+    const { APP_HOST: _host, ...roomVars } = repo.vars;
+    expect(b.vars).toEqual(roomVars);
+  });
+
+  it("does not require the binding: a config without it runs with rooms off", () => {
+    const { durable_objects: _d, migrations: _m, ...noRooms } = runtimeBase(repo);
+    expect(runtimeConfigMissing(noRooms)).toEqual([]);
+    expect(runtimeConfigNotes(noRooms)).toEqual([
+      expect.stringMatching(/no ROOMS Durable Object binding.*rooms-v1/),
+    ]);
+    expect(runtimeConfigNotes(runtimeBase(repo))).toEqual([]);
+  });
+});
+
 describe("refreshRuntime (setup re-run on an existing per-environment config)", () => {
   it("adds the flags this release needs to a config written before them, keeping the rest", () => {
     // A wrangler.production.jsonc written by setup before 0.4.0: request.signal never aborts on
@@ -489,5 +565,34 @@ describe("refreshRuntime (setup re-run on an existing per-environment config)", 
     expect(
       refreshRuntime({ ...old, compatibility_date: "2026-10-01" }, repo).compatibility_date,
     ).toBe("2026-11-01");
+  });
+
+  it("adds the repo's Durable Object binding and migration, matched by name and tag", () => {
+    const old = {
+      name: "plinth-production",
+      compatibility_flags: ["nodejs_compat", "enable_request_signal"],
+      vars: { ALLOW_ROOMS: "false" },
+    };
+    const repo = {
+      compatibility_flags: ["nodejs_compat", "enable_request_signal"],
+      durable_objects: ROOMS_DO,
+      migrations: ROOMS_MIGRATIONS,
+    };
+    const next = refreshRuntime(old, repo);
+    expect(next.durable_objects).toEqual(ROOMS_DO);
+    expect(next.migrations).toEqual(ROOMS_MIGRATIONS);
+    expect(next.vars).toEqual({ ALLOW_ROOMS: "false" });
+    expect(refreshRuntime(next, repo)).toEqual(next);
+    // An operator's binding of the same name (say, pointed elsewhere) is kept as it is.
+    const mine = {
+      ...old,
+      durable_objects: {
+        bindings: [{ name: "ROOMS", class_name: "ArtifactRoom", script_name: "x" }],
+      },
+    };
+    expect(refreshRuntime(mine, repo).durable_objects).toEqual(mine.durable_objects);
+    // Neither file has any: no keys appear.
+    const plain = refreshRuntime(old, { compatibility_flags: repo.compatibility_flags });
+    expect("durable_objects" in plain || "migrations" in plain).toBe(false);
   });
 });

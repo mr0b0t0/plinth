@@ -130,6 +130,15 @@ Booleans accept `true`, `1`, `yes` or `on`.
 | `DATA_MAX_DOC_BYTES` | `16384` (16 KiB) | Size of one shared-data document, `1024` to `65536` |
 | `DATA_WRITES_PER_VIEWER_PER_HOUR` | `300` | Shared-data writes per writer per artifact (page, agent and app writes, deletes included). At least 1 |
 | `DATA_WRITES_PER_ARTIFACT_PER_HOUR` | `2000` | Shared-data writes per artifact by all writers together. At least 1 |
+| `ALLOW_ROOMS` | `true` | Live rooms: pages that declare `room` show who is here and share moments live among invited people (`plinth.room`), and doc editors see each other's page edits as they type. Needs the `ROOMS` Durable Object binding, which every config Plinth generates carries ([deploy-checklist.md](deploy-checklist.md#live-rooms)), and `CONTENT_ISOLATION=origin`. Empty keeps it on; any other value than `true`, `1`, `yes` or `on` turns it off: pages then get `room.ready` with `available: false` and work alone, and doc editors edit on their own and save from the page |
+| `ROOM_MAX_CONNECTIONS_PER_ARTIFACT` | `50` | Open sockets on one artifact's room, `2` to `1000` |
+| `ROOM_MAX_MESSAGE_BYTES` | `8192` | One message a page sends to its room, `512` to `65536` |
+| `ROOM_MESSAGES_PER_SECOND` | `20` | Messages per connection per second, with bursts of twice that, `1` to `100`. A socket that keeps going over is closed |
+| `ALLOW_LIVE_EDITING` | `true` | Owners and editors with an account edit a doc right on its page; edits become versions when saved. Empty keeps it on; any other value turns it off, leaving the source editor. Never under `CONTENT_ISOLATION=opaque` |
+| `LIVE_CHECKPOINT_IDLE_S` | `120` | Seconds without page edits before the unsaved edits are saved as a version on their own. `0` saves only when someone saves; otherwise `30` to `3600` |
+| `LIVE_AUTO_CHECKPOINT_MIN_S` | `600` (or the idle time, when longer) | Least seconds between the current version (saved, autosaved, or published by an agent) and an automatic one, at least `LIVE_CHECKPOINT_IDLE_S`. An autosave asked for sooner waits and is tried again then, while someone is still editing the page. Saved versions count toward `MAX_PUBLISHES_PER_HOUR` |
+| `LIVE_DRAFT_FLUSH_S` | `5` | How often, at most, the room writes unsaved page edits to D1, `2` to `60`. A Worker restart can lose up to this much typing, which editors' pages send again |
+| `LIVE_DRAFT_RETENTION_DAYS` | `30` | Unsaved page edits nobody touched for this long are deleted, `1` to `365` |
 | `STAGING_CONTENT_FALLBACK` | `false` | Serves content at `APP_HOST/__content/<id>/` instead of subdomains, for a staging deploy on `workers.dev` without a content domain. All artifacts then share the app's origin, so never use it with real users. Refused in production |
 | `DEV_OUTBOX` | `false` (`true` in the committed local config) | Keeps console emails in D1 and exposes `GET /api/v1/__dev/outbox` for tests. Only honoured when `ENVIRONMENT=development` |
 
@@ -276,6 +285,15 @@ Step-by-step instructions for each client are in [mcp.md](mcp.md).
   in `artifact_data_usage`). `SELECT sum(bytes), sum(docs), count(*) FROM artifact_data_usage`
   shows how much there is. Data is deleted with its artifact and on takedown, and `erase-user`
   removes a person's documents on other people's artifacts too.
+- **Live rooms.** Pages and docs reach their room over a WebSocket on the artifact's own content
+  host (`/__plinth/room/`), served by one Durable Object per artifact (`ArtifactRoom`, binding
+  `ROOMS`) that stores nothing; unsaved page edits of a doc live in D1 (`live_drafts`) until
+  someone saves or discards them. To turn rooms off, set `ALLOW_ROOMS` (and, for on-page doc
+  editing, `ALLOW_LIVE_EDITING`) to `"false"` and keep the binding. A config without the binding
+  also runs, with rooms off, and `check-config` prints a note. Usage is billed as Durable Objects:
+  see [deploy-checklist.md](deploy-checklist.md#live-rooms) for the Free plan, costs and rollback.
+  A reverse proxy in front of a container must pass WebSocket upgrades
+  ([docker.md](docker.md#what-the-proxy-must-do)).
 - **Interrupted publishes.** A version's files go to R2 before its database row, so a publish
   that dies midway (a closed connection, a CPU or memory limit) leaves files no version points to,
   under that attempt's own prefix. Each attempt records that prefix in the `staging_attempts`

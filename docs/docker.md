@@ -107,14 +107,23 @@ edge certificate covers the apex and every first-level subdomain; the
 - **Set `CF-Connecting-IP` to the client's address**, replacing any value the client sent. Plinth
   keys its sign-in and password rate limits on that header. Without it, every visitor shares the
   proxy's own address and one visitor's failed attempts count against everyone.
+- **Pass WebSocket upgrades** on the content names. Live rooms (`plinth.room`, and doc editors
+  seeing each other's page edits) connect to `wss://<id>.<content host>/__plinth/room/`; a proxy
+  that drops the `Upgrade` header leaves pages working alone. Keep the idle timeout above 30
+  seconds, the interval at which pages ping their room.
 - **Be the only way in.** Publish the container's port only to the proxy, e.g.
   `-p 127.0.0.1:8788:8788` with the proxy on the same machine, or a private network. A client that
   reached the container directly could skip TLS and choose its own `CF-Connecting-IP`.
 
 An nginx server block for the three names (repeat the `ssl_certificate` lines with the app host's
-certificate in a second block for `plinth.example.com`):
+certificate in a second block for `plinth.example.com`). The `map` goes once in the `http` block:
 
 ```nginx
+map $http_upgrade $connection_upgrade {
+    default upgrade;
+    ''      close;
+}
+
 server {
     listen 443 ssl;
     http2 on;
@@ -128,6 +137,8 @@ server {
         proxy_http_version 1.1;
         proxy_set_header Host $host;
         proxy_set_header CF-Connecting-IP $remote_addr;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;
     }
 }
 ```
@@ -217,10 +228,11 @@ it starts the instance as it is.
 | `CLOUDFLARE_API_TOKEN` | none | Tunnel setup only; never stored |
 | `PLINTH_OPERATOR_NAME`, `PLINTH_OPERATOR_EMAIL`, `PLINTH_OPERATOR_ADDRESS`, `PLINTH_OPERATOR_REGISTRATION`, `PLINTH_OPERATOR_HOSTING` | empty | Who runs the instance, for its legal pages |
 | `PLINTH_MAX_ARTIFACTS_PER_USER`, `PLINTH_MAX_PUBLISHES_PER_HOUR`, `PLINTH_MAX_VERSION_BYTES`, `PLINTH_MAX_ASSETS_PER_VERSION`, `PLINTH_MAX_STORAGE_BYTES_PER_USER`, `PLINTH_CDN_ALLOWLIST`, `PLINTH_ALLOW_PUBLIC_VISIBILITY`, `PLINTH_PUBLIC_MIN_ACCOUNT_AGE_HOURS` | as in self-hosting.md | Limits and the script allowlist. `PLINTH_MAX_VERSION_BYTES` (default 50 MB) and `PLINTH_MAX_ASSETS_PER_VERSION` (default 511) size one version |
+| `PLINTH_ALLOW_ROOMS`, `PLINTH_ALLOW_LIVE_EDITING` | `true` | Live rooms and on-page doc editing. The instance's config always carries the `ROOMS` binding they need; `"false"` turns them off |
 | `PLINTH_LISTEN` | `0.0.0.0`; `127.0.0.1` with the tunnel | The address the Worker listens on inside the container |
 
-Each `PLINTH_OPERATOR_*` and limit variable sets the Worker setting of the same name without the
-`PLINTH_` prefix; [self-hosting.md](self-hosting.md#settings) explains them.
+Each `PLINTH_OPERATOR_*`, limit and `PLINTH_ALLOW_*` variable sets the Worker setting of the same
+name without the `PLINTH_` prefix; [self-hosting.md](self-hosting.md#settings) explains them.
 
 The secrets the Worker needs, `SESSION_SECRET` and `TOKEN_SIGNING_KEY` (and `ADMIN_TOKEN` for a
 single-user instance with domains), are generated on the first start into `/data/plinth/.dev.vars`
@@ -254,7 +266,8 @@ docker run -d --name plinth ...       # the same command as before
 
 With Compose: `docker compose pull && docker compose up -d`. The volume keeps the database, the
 files and the secrets. On start, the new version applies its database migrations and adds its
-compatibility flags to the instance's `wrangler.jsonc` before it serves anything. Migrations only add to the database, but older images are not tested against a database
+compatibility flags, and any Durable Object binding it needs (the `ROOMS` binding of live rooms),
+to the instance's `wrangler.jsonc` before it serves anything. Migrations only add to the database, but older images are not tested against a database
 a newer one has migrated: to go back, restore a backup made before the upgrade. To control when
 upgrades happen, use a release's version tag instead of `latest`.
 

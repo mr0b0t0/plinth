@@ -22,6 +22,7 @@ import {
   ERROR_CODES,
   grantsReplaceInput,
   LIMITS,
+  liveCheckpointInput,
   MENTION_STATES,
   oauthConsentInput,
   publishArtifactInput,
@@ -321,6 +322,7 @@ function responseSchemas(): Record<string, Json> {
           "insecure_url",
           "opaque_module",
           "not_scanned",
+          "live_draft",
         ]),
         file: str({ description: "The version file the reference is in" }),
         ref: str({ description: "The reference as written (truncated)" }),
@@ -584,8 +586,9 @@ function responseSchemas(): Record<string, Json> {
             enter_url: str({ format: "uri" }),
             role: { oneOf: [effectiveRole, { type: "null" }] },
             data: ref("ViewGateData"),
+            live: ref("ViewGateLive"),
           },
-          ["data"],
+          ["data", "live"],
         ),
         obj({ status: { const: "password_required" }, artifact: obj(viewStub) }),
         obj({ status: { const: "email_required" }, artifact: obj(viewStub) }),
@@ -705,12 +708,19 @@ function dataSchemas(): Record<string, Json> {
             description:
               "The email the page sees: only when identified and the page declares `viewer`",
           }),
+          room_email: str({
+            format: "email",
+            description:
+              "The email the page's live room shows the others in it: when the page declares " +
+              "`room` and `viewer`, rooms are active and the viewer is identified",
+          }),
         },
-        ["email"],
+        ["email", "room_email"],
       ),
       description:
-        "Present on `ok` only when the artifact's current version declares `data`: what the " +
-        "viewer is told about the page's shared data",
+        "Present on `ok` only when the artifact's current version declares `data`, or `room` " +
+        "and `viewer` with rooms active: what the viewer is told about the page's shared data " +
+        "and who its live room shows them as",
     },
     AgentDocAuthor: {
       ...obj({
@@ -794,6 +804,14 @@ function withArtifactDataInfo(schemas: Record<string, Json>): Record<string, Jso
       | { properties: Json; required: string[] }
       | undefined;
     if (!detail) continue;
+    if (TYPE_REGISTRY[t].liveEdit) {
+      detail.properties.live_draft = {
+        oneOf: [ref("LiveDraftMeta"), { type: "null" }],
+        description:
+          "Owners and editors only: people have unsaved page edits (metadata; the draft text is " +
+          "never returned). Null when there are none",
+      };
+    }
     detail.properties.capabilities = {
       type: "array",
       items: enumOf(DATA_CAPABILITIES),
@@ -886,6 +904,127 @@ function dataOperations(): Operation[] {
       mcpTool: "list_artifact_data",
       ok: [200, "DataDoc"],
       errors: [400, 401, 403, 404],
+    },
+  ];
+}
+
+// ---------- Live editing (docs/spec.md "Editing") ----------
+
+function liveSchemas(): Record<string, Json> {
+  const meta = {
+    base_version: int({ minimum: 1, description: "The version the draft is based on" }),
+    dirty: { type: "boolean" },
+    conflict_version: nullable("integer", {
+      description: "A version published meanwhile that changed the same lines; needs review",
+    }),
+    updated_at: dateTime,
+  };
+  const draftInfo = obj({
+    ...meta,
+    updated_by_email: nullable("string", { description: "Whose edit was flushed last" }),
+  });
+  const mode = enumOf(["room", "solo"]);
+  return {
+    LiveCheckpointInput: fromZod(liveCheckpointInput),
+    LiveDraftMeta: obj(meta),
+    ViewGateLive: {
+      ...obj({ mode, sign_in: { const: true }, draft: { oneOf: [draftInfo, { type: "null" }] } }, [
+        "sign_in",
+      ]),
+      description:
+        "On-page editing of a doc: owners and editors on the current version, while live editing " +
+        "is on with origin isolation. sign_in: confirmed by code without an account (watch only)",
+    },
+    LiveInfo: obj({
+      mode: { oneOf: [mode, { type: "null" }] },
+      draft: { oneOf: [draftInfo, { type: "null" }] },
+      editors_online: nullable("integer"),
+      idle_checkpoint_s: int({ minimum: 0 }),
+      auto_checkpoint_min_s: int({ minimum: 0 }),
+    }),
+    LiveDraftText: {
+      ...obj({
+        text: str(),
+        base_version: int({ minimum: 1 }),
+        rev: int({ minimum: 0 }),
+        conflict_version: nullable("integer"),
+      }),
+      description: "The unsaved draft's Markdown, to review a conflict. Untrusted text",
+    },
+    LiveCheckpointResult: {
+      oneOf: [
+        obj({
+          saved: { const: true },
+          version: ref("PublishResult"),
+          live: obj({ rev: int({ minimum: 0 }), dirty: { type: "boolean" } }),
+        }),
+        obj(
+          {
+            saved: { const: false },
+            reason: enumOf(["clean", "unchanged", "too_soon", "busy"]),
+            retry_in_s: int({ minimum: 1 }),
+          },
+          ["retry_in_s"],
+        ),
+      ],
+    },
+  };
+}
+
+function liveOperations(): Operation[] {
+  const who =
+    "Signed-in owners and editors of a doc only (live_edit); agents are refused and publish " +
+    "versions instead.";
+  return [
+    {
+      method: "get",
+      path: API.live,
+      operationId: "getLiveInfo",
+      summary: "On-page editing of a doc: mode, unsaved draft, editors online",
+      description: who,
+      tag: "Live editing",
+      auth: "user",
+      ok: [200, "LiveInfo"],
+      errors: [400, 401, 403, 404],
+    },
+    {
+      method: "get",
+      path: API.liveDraft,
+      operationId: "getLiveDraft",
+      summary: "The unsaved draft's text, to review a conflict",
+      description: `${who} Needs live editing with rooms on the instance.`,
+      tag: "Live editing",
+      auth: "user",
+      ok: [200, "LiveDraftText"],
+      errors: [400, 401, 403, 404, 503],
+    },
+    {
+      method: "post",
+      path: API.liveCheckpoint,
+      operationId: "liveCheckpoint",
+      summary: "Save the unsaved draft as the next version",
+      description:
+        `${who} The version is published with the draft's base_version, so a stale draft is ` +
+        "refused (409) and nothing is overwritten. A draft equal to its base writes nothing. " +
+        "resolved_text is accepted only while the draft is in conflict, with the conflict_version " +
+        "the editor reviewed (409 when the draft now conflicts with a newer version).",
+      tag: "Live editing",
+      auth: "user",
+      body: "LiveCheckpointInput",
+      ok: [200, "LiveCheckpointResult"],
+      errors: [400, 401, 403, 404, 409, 413, 429, 503],
+    },
+    {
+      method: "delete",
+      path: API.liveDraft,
+      operationId: "discardLiveDraft",
+      summary: "Discard the unsaved draft (409 when it changed past rev)",
+      description: who,
+      tag: "Live editing",
+      auth: "user",
+      query: [{ name: "rev", schema: int({ minimum: 0 }), description: "The draft revision seen" }],
+      ok: [204, null],
+      errors: [400, 401, 403, 404, 409, 503],
     },
   ];
 }
@@ -1550,6 +1689,7 @@ const ERROR_RESPONSES: Record<number, string> = {
   409: "Stale `base_version` or already claimed (`conflict`)",
   413: "Over the per-version size limit (`payload_too_large`)",
   429: "Rate limited (`rate_limited`); see `Retry-After`",
+  503: "Temporarily unavailable (`unavailable`)",
 };
 
 const UNSAFE: ReadonlySet<Method> = new Set(["post", "put", "patch", "delete"]);
@@ -1667,7 +1807,7 @@ function operationObject(op: Operation): Json {
 
 export function openApiDocument(config: Pick<Config, "appOrigin">): Json {
   const paths: Record<string, Json> = {};
-  for (const op of [...operations(), ...dataOperations()]) {
+  for (const op of [...operations(), ...dataOperations(), ...liveOperations()]) {
     const key = toOpenApiPath(op.path);
     paths[key] ??= {};
     (paths[key] as Json)[op.method] = operationObject(op);
@@ -1715,6 +1855,10 @@ export function openApiDocument(config: Pick<Config, "appOrigin">): Json {
       { name: "Reports", description: "Abuse reports and takedown" },
       { name: "Admin", description: "Instance stats for admins: aggregates only" },
       { name: "Shared data", description: "Documents pages keep. Mirrors the MCP data tools" },
+      {
+        name: "Live editing",
+        description: "Editing a doc on its page: the unsaved draft and checkpoints. Not for agents",
+      },
     ],
     paths,
     components: {
@@ -1722,6 +1866,7 @@ export function openApiDocument(config: Pick<Config, "appOrigin">): Json {
         ...requestSchemas(),
         ...responseSchemas(),
         ...dataSchemas(),
+        ...liveSchemas(),
       }),
       responses: errorResponses,
       securitySchemes: {

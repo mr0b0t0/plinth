@@ -43,3 +43,26 @@ describe("nextGate", () => {
     expect(next?.artifact.current_version).toBe(4);
   });
 });
+
+describe("nextGate while a doc is edited on its page", () => {
+  it("follow: keeps the frame and moves the bar to the new version", () => {
+    const shown = gate(3, 3, "live");
+    const next = nextGate(shown, gate(4, 4, "new"), false, "follow");
+    expect(next?.enter_url).toBe("live");
+    expect(next?.artifact.version).toBe(4);
+    expect(next?.artifact.current_version).toBe(4);
+  });
+
+  it("hold: keeps the frame and the shown version, so the page can say a newer one exists", () => {
+    const shown = gate(3, 3, "solo");
+    const next = nextGate(shown, gate(4, 4, "new"), false, "hold");
+    expect(next?.enter_url).toBe("solo");
+    expect(next?.artifact.version).toBe(3);
+    expect(next?.artifact.current_version).toBe(4);
+  });
+
+  it("changes nothing when no newer version exists", () => {
+    expect(nextGate(gate(3, 3), gate(3, 3, "x"), false, "follow")).toBeNull();
+    expect(nextGate(gate(3, 3), gate(3, 3, "x"), false, "hold")).toBeNull();
+  });
+});

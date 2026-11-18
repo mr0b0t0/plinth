@@ -43,7 +43,8 @@ describe("/__plinth/runtime.js", () => {
     ].filter((v): v is string => typeof v === "string" && v.length > 0);
     for (const v of values) expect(RUNTIME_SCRIPT, v).not.toContain(v);
     expect(RUNTIME_SCRIPT).not.toMatch(/https?:\/\//);
-    expect(RUNTIME_SCRIPT.length).toBeLessThan(16 * 1024);
+    // Shared data and the live room together; still one small static file.
+    expect(RUNTIME_SCRIPT.length).toBeLessThan(32 * 1024);
   });
 
   it("speaks the API it is served next to", () => {
@@ -55,6 +56,9 @@ describe("/__plinth/runtime.js", () => {
       "no-store",
       "visibilitychange",
       "~me",
+      '"/room"',
+      "/__plinth/room/v1/page",
+      "plinth.room.v1",
     ]) {
       expect(RUNTIME_SCRIPT, s).toContain(s);
     }

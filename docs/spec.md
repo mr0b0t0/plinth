@@ -31,15 +31,19 @@ account.
 - Viewers need no AI account. At most they confirm an email address.
 - Every publish is a version. Old versions stay readable and restorable.
 - People can edit an artifact in the browser and ask an agent for changes by commenting on it.
+- Invited people can work on a page together live, and owners and editors can edit a doc on its
+  page together.
 - Open source, and cheap enough to self-host on Cloudflare's free tier.
 
 **Non-goals for v1**
 
 - Per-artifact server code. Artifacts are static HTML plus assets; the only server behaviour a
   page can reach is Plinth's fixed shared-data service (see
-  [Shared data and viewer identity](#shared-data-and-viewer-identity)).
-- Real-time multiplayer editing.
-- Visual (click on the page) editing. Code editing only at first.
+  [Shared data and viewer identity](#shared-data-and-viewer-identity)) and its live room at
+  `/__plinth/room/` (see [Live rooms](#live-rooms)).
+- Character-level co-editing (OT or CRDT), and live editing of HTML artifacts' text (pages build
+  their own multiplayer with [live rooms](#live-rooms)).
+- On-page editing of HTML artifacts (docs are edited on the page; HTML in the source editor).
 - Importing artifacts automatically from Claude or ChatGPT accounts. Agents push; the platform does
   not pull.
 - Team workspaces and billing. Planned, but after the core works.
@@ -79,18 +83,23 @@ flowchart TB
     app["App domain<br/>Sign-in, dashboard, editor<br/>Comments and sharing"]
     content["Content domain<br/>One subdomain per artifact<br/>Access check, strict CSP"]
   end
+  rooms["Live rooms (optional)<br/>One Durable Object per artifact<br/>Presence and broadcast"]
   d1[("D1 database<br/>Users, versions, permissions, comments, mention queue")]
   r2[("R2 storage<br/>Artifact files, one folder per version<br/>Unchanged files reused by hash")]
   agents --> mcp
   publishers --> app
   viewers --> content
+  content --> rooms
   worker --> d1
   worker --> r2
 ```
 
 The content domain is the security boundary. User HTML never runs on the domain that holds login
 sessions, and each artifact gets its own subdomain so artifacts cannot read each other's data.
-Metadata goes to D1 and files to R2; nothing else needs to be provisioned.
+Metadata goes to D1 and files to R2; nothing else needs to be provisioned. The same Worker also
+defines one SQLite-backed Durable Object class, `ArtifactRoom` (binding `ROOMS`), for
+[live rooms](#live-rooms): an object per artifact, created only when someone opens that artifact's
+room, keeping no tables. A deploy without the binding runs with rooms off.
 
 ## Data model
 
@@ -146,6 +155,23 @@ erasing an artifact or its owner removes them (see
 | --- | --- | --- |
 | `artifact_view_days` | artifact_id, day (UTC, `YYYY-MM-DD`), views | One row per artifact per UTC day it was opened. Key (artifact_id, day), `WITHOUT ROWID`, no secondary index, so a counted open writes one row |
 | `artifact_view_totals` | artifact_id, views, first_day | Opens on days older than the daily window, folded into one row per artifact; `first_day` is the earliest day folded in |
+
+**Live rooms and on-page doc editing** (issue #36, migration `0011_live_drafts.sql`) add one table
+and two fields to the stored declaration:
+
+| Table or column | Key fields | Notes |
+| --- | --- | --- |
+| `versions.capabilities` | adds `room`, `roomOpen` | Written only when the page declares `room` (`<meta name="plinth-capabilities" content="room">`, open topics from `<meta name="plinth-room-open">`), so every other declaration is stored exactly as before. A row without them reads as no room. `room` is not shared data: a page that declares only `room` has none |
+| `live_drafts` | artifact_id (key), base_version, content, size_bytes, rev, conflict_version, updated_by_user, created_at, updated_at | At most one unsaved page draft per doc, apart from its immutable versions, and never a version itself. Written by the artifact's room in a guarded flush that cannot bring back a deleted or taken-down artifact, never moves `rev` backwards and keeps at most 20 drafts per owner. A row exists only while the draft differs from `base_version`, or while `conflict_version` (a version published meanwhile that changed the same lines) waits for review. Content follows the doc limits (1 MB, 50,000 lines). Deleted with the artifact and on takedown; `updated_by_user` is cleared on `erase-user`; untouched rows are deleted after `LIVE_DRAFT_RETENTION_DAYS` |
+
+Settings (env vars): `ALLOW_ROOMS` (on), `ROOM_MAX_CONNECTIONS_PER_ARTIFACT` (50, from 2 to 1000),
+`ROOM_MAX_MESSAGE_BYTES` (8192, from 512 to 65536), `ROOM_MESSAGES_PER_SECOND` (20 per connection,
+from 1 to 100, burst twice that), `ALLOW_LIVE_EDITING` (on), `LIVE_CHECKPOINT_IDLE_S` (120; 0 for
+explicit saves only, otherwise from 30 to 3600), `LIVE_AUTO_CHECKPOINT_MIN_S` (600, at least the
+idle time), `LIVE_DRAFT_FLUSH_S` (5, from 2 to 60) and `LIVE_DRAFT_RETENTION_DAYS` (30, from 1 to
+365). Fixed: presence of 400 bytes per room, 3 rooms per connection, 8 sockets per viewer and 20
+connects per viewer per minute; a doc-socket frame of 64 KiB; a lease idle for 60 s may be taken
+over.
 
 ## Auth and permissions
 
@@ -263,7 +289,10 @@ allowlist is unchanged. Raw HTML in the Markdown shows as text, links pass an al
 a new tab, and the shell's CSP (header and a meta copy, so the editor preview gets it too) allows
 only `script-src 'self'`; a doc's other files run no script. The type is fixed at publish
 (`artifacts.type`, default `html`); versions, `base_version` conflicts and restore work as for HTML.
-The editor edits the Markdown with a live preview and history diffs `content.md`. Decks and sheets
+The editor edits the Markdown with a live preview and history diffs `content.md`. Owners and
+editors can also edit a doc on its rendered page ([Editing](#editing)): for them, on the current
+version while rooms and live editing are on, the shell's payload carries `live: "room"` and the
+renderer connects the doc socket; every other shell is byte for byte as before. Decks and sheets
 join the same type registry (`packages/shared/src/artifactTypes.ts`) later; no .docx or .pptx
 export yet. Design: `docs/superpowers/specs/2026-11-14-typed-outputs-doc-design.md`.
 
@@ -364,7 +393,53 @@ records who opened it.
 - Editors are the owner plus anyone granted the editor role.
 - If the current version changed while someone was editing, the save is rejected and they see a
   diff to merge. No silent overwrites.
-- Later: visual editing of text directly on the rendered page.
+
+**On-page doc editing** (decided 2026-11-18, issue #36). Owners and editors edit a doc right on its
+rendered page, and the other editors with the page open see the changes as they are typed. HTML
+artifacts are edited in the source editor only: page scripts share the frame's origin and could
+forge edits that the editor's session would then save.
+
+- **Who.** Owners and editors signed in to an account (policy action `live_edit`). An editor
+  confirmed by code without an account watches the edits and is asked to sign in. Commenters and
+  viewers see versions only. Agents never edit live: they publish versions.
+- **Concurrency.** The doc's room (its Durable Object, see [Live rooms](#live-rooms)) is the only
+  place edits are ordered. Clicking a block takes a **lease**: an exclusive line range the room
+  enforces, so two people never edit the same lines. Each edit replaces the leased range whole, so
+  no transform is needed. Every edit bumps the draft's `rev` and goes to every editor; a client
+  that misses one (or sees a new `gen` after the room reloaded) asks for the draft again. A lease
+  idle for 60 s can be taken over.
+- **Drafts are not versions.** The draft is one `live_drafts` row per doc, written by the room at
+  most every `LIVE_DRAFT_FLUSH_S` (and on release, when the last editor leaves, and before a save).
+  It never moves backwards, never comes back after a delete or takedown, and an owner keeps at most
+  20. A draft back at its base is deleted.
+- **Checkpoints.** Save (Cmd/Ctrl+S), Done, or an autosave after `LIVE_CHECKPOINT_IDLE_S` of quiet
+  (from the client that made the last edit, while it is editing; no sooner than
+  `LIVE_AUTO_CHECKPOINT_MIN_S` after the current version, whoever made it, and an autosave asked
+  for sooner is tried again once that time has passed) turn the
+  draft into the next version, through the ordinary publish path with the draft's `base_version`
+  and the note "Edited on the page". A draft equal to its base writes nothing. Checkpoints count
+  toward `MAX_PUBLISHES_PER_HOUR`; at the limit the draft stays. Edits made while a save runs are
+  kept on top of the new version.
+- **Versions from elsewhere.** When an agent, the source editor or a restore publishes a version
+  while a draft exists, the draft is merged onto it line by line when the two changed different
+  lines (the editors see "v5 was published; your edits were kept"). When they changed the same or
+  adjacent lines, the draft is frozen and an editor reviews the two side by side; nothing is
+  overwritten either way. `get_artifact` tells agents a draft exists (metadata only) and
+  `update_artifact` warns `live_draft`.
+- **Modes.** "room" with live rooms on; "solo" under origin isolation without rooms (edit on the
+  page alone, Save makes a version; the tab keeps a copy, and after a reload offers to save it as
+  a version or discard it); under opaque isolation and the path fallback, docs are edited in the
+  source editor only. `ALLOW_LIVE_EDITING=false` turns it off.
+- **On the page.** An Edit toggle in the artifact bar (the menu's source editor item becomes "Edit
+  source") turns edit mode on; a strip under the bar says what is happening and who else is
+  editing, with Save version, Discard and Done. A block opens as a plain text field holding its
+  Markdown; blocks other people hold show their email and their text as it arrives. Owners and
+  editors who are not editing see one line when unsaved page edits exist, when someone is editing,
+  or when a version needs review. Edit mode and comment review mode exclude each other. Draft text
+  never reaches the app page in room mode; in solo mode the frame hands it over only to be saved.
+- **REST.** `GET /api/v1/artifacts/:ref/live`, `GET .../live/draft` (the draft text, to review a
+  conflict), `POST .../live/checkpoint` and `DELETE .../live/draft?rev=n` (discard), for the
+  signed-in app only; not mirrored to MCP.
 
 ### Categories (decided 2026-11-18)
 
@@ -456,7 +531,8 @@ Decided 2026-11-14 (issue #1). Design:
   `TOKEN_SIGNING_KEY`) into the enter token, and the content host copies it into the per-artifact
   content cookie (`__Host-` prefixed, so a sibling artifact cannot toss in someone else's; a
   request whose valid passes disagree on who is viewing has none). Only identified viewers get a
-  claim; everyone else is anonymous to the page.
+  claim, and only while shared data or [live rooms](#live-rooms) are active; everyone else is
+  anonymous to the page.
   `window.plinth.viewer` is `{ id, email, role }` or null; `email` is set only when the page
   declares `viewer`, and `id` is opaque and different on every artifact. The app tells the viewer
   in one line under the bar what the page saves and whether it can see who they are.
@@ -464,8 +540,11 @@ Decided 2026-11-14 (issue #1). Design:
   applies and retries on conflict. Every agent op needs `if_rev`. A document's `rev` is one past
   the artifact's change counter, so revs grow across the artifact and a document deleted and
   created again never repeats one. Data is not versioned and is not part of diffs or restores.
-- **Live updates.** No push: `onSnapshot` polls a one-row change counter every 15 s while the tab
-  is visible (at least 10 s), and refetches when it moves, at once after the page's own write.
+- **Live updates.** No push for data: `onSnapshot` polls a one-row change counter every 15 s while
+  the tab is visible (at least 10 s), and refetches when it moves, at once after the page's own
+  write. A page that also declares `room` can push its own moments (a note being dragged, "note 3
+  saved, refetch it") to the people who have it open; see [Live rooms](#live-rooms). The poll is
+  unchanged.
 - **Limits** (env vars): `ALLOW_SHARED_DATA` (on), `DATA_MAX_DOCS_PER_ARTIFACT` (1000),
   `DATA_MAX_BYTES_PER_ARTIFACT` (1 MiB), `DATA_MAX_BYTES_PER_USER` (16 MiB across an owner's
   artifacts), `DATA_MAX_DOC_BYTES` (16 KiB), `DATA_WRITES_PER_VIEWER_PER_HOUR` (300) and
@@ -484,6 +563,57 @@ Decided 2026-11-14 (issue #1). Design:
 - **Agents.** `list_artifact_data` and `write_artifact_data` (MCP) and REST mirrors under
   `/api/v1/artifacts/:ref/data` for the owner and editors. Viewer-written data is untrusted input,
   and the tool descriptions say so.
+
+### Live rooms
+
+Decided 2026-11-18 (issue #36). Presence and broadcast among the people who have one artifact
+open: live cursors, who is here, a note moving while it is dragged. Nothing in a room persists;
+durable state belongs in [shared data](#shared-data-and-viewer-identity), which is also where a
+late joiner reads it. Plinth's own on-page doc editing is the room's first use.
+
+- **Declaration.** A page opts in with `room` in `<meta name="plinth-capabilities">` (for example
+  `content="data viewer room"`), and may list topics commenters may emit too with
+  `<meta name="plinth-room-open" content="cursor note.move">` (`*` opens all; at most 16, each
+  `^[a-z][a-z0-9_.:-]{0,39}$`). `room` is not shared data: a page that declares only `room` has no
+  store. The current version's declaration governs, as for data.
+- **Page API.** `window.plinth.room` in `/__plinth/runtime.js`: `ready` (resolves `{ available,
+  reason, you, canEmit(topic) }`, never rejects), `presence(patch)` (a shallow merge of the
+  sender's state, `null` values delete, `presence(null)` clears; coalesced to 10 per second, 400
+  bytes), `onPeers(fn)`, `emit(topic, data)` (never echoed to the sender), `on(topic | "*", fn)`,
+  `onStatus(fn)`, `join(name)` for a sub-room on the same socket (3 at most, `main` by default)
+  and `leave()`. Nothing connects until first use. Messages may drop, and order holds only per
+  sender. Every peer is stamped by the server: `id` is random per socket, `viewer` the per-artifact
+  `u_` id, and `role` and `email` appear only when the page also declares `viewer`. Such a page
+  shows each identified viewer's email to the page and to the others in the room, so the viewer
+  gets one line under the bar saying so, with or without shared data. Room traffic is untrusted
+  input and presence is never authority.
+- **Who joins.** Identified viewers only (the owner and people with a grant, signed in or confirmed
+  by code). Anonymous link viewers, in-chat previews and thumbnail captures never join in v1.
+  Owners and editors emit any topic, commenters only the open topics, and viewers never emit, even
+  an open topic (as Claude's artifact `room` capability, which never lets a plain viewer emit).
+  Viewers still join, set presence and receive; `canEmit(topic)` and the availability check's
+  `can_emit` (`all`, `open` or `none`) say which applies. Agents never join a room.
+- **Transport.** One WebSocket per page to its own origin, `wss://<id>.<CONTENT_HOST>/__plinth/room/v1/page`,
+  served by the artifact's Durable Object with the Hibernation API. The handshake is checked in
+  order: method, exact `Origin`, fetch metadata, the `plinth.room.v1` subprotocol, rooms active,
+  the artifact, the content pass with its identity claim at the current epoch, the kind the path
+  names (after the pass, so a caller without one learns nothing about the declaration), and policy
+  (`roomAccess` in `policy.ts`); see [docs/security.md](security.md#live-rooms).
+  `GET /__plinth/api/v1/room` (behind the data API's caller checks) tells the runtime first
+  whether it may join and why not (`disabled`, `not_configured`, `opaque_isolation`,
+  `not_declared`, `preview`, `not_identified`, `expired`). The CSP's `connect-src` names the
+  artifact's own `wss:` origin while rooms are active, and nothing else.
+- **Lifecycle.** A sharing change (grant, visibility, password) ends the socket (close code 4401),
+  as it ends the content cookie; a takedown or delete closes everything (4404); a version that
+  changes what the page declares about rooms makes its sockets reconnect (4410). The Worker tells
+  the room after each change, and while sockets are open the room re-checks D1 every 60 s and
+  closes sockets whose pass expired. A tab hidden for 60 s closes its socket and reconnects when
+  shown; reconnects back off from 1 to 30 s.
+- **Limits.** The `ROOM_*` env vars under [Data model](#data-model) settings, behind
+  `ALLOW_ROOMS` (on); a socket over the message rate gets errors, then is closed.
+- **Availability.** Only with origin isolation and the `ROOMS` binding. Under opaque isolation (and
+  the path fallback) `room.ready` resolves `{ available: false, reason: "opaque_isolation" }`
+  without a request. A page should work alone when the room is unavailable.
 
 ### Big builds and reuse by hash
 
@@ -797,6 +927,30 @@ Open counts run on the same allowances:
 At the free tier's 100k rows written a day, an instance can take about 50k counted opens a day,
 with their nonce writes, before any other writes. `VIEW_COUNTS=off` removes the extra write.
 
+Live rooms run on Durable Objects (SQLite-backed classes only on the Workers Free plan). Free:
+100k requests and 13,000 GB-s of duration per day. Workers Paid includes 1M requests and 400k GB-s
+a month, then $0.15 per million requests and $12.50 per million GB-s. Each WebSocket connect is one
+request and incoming messages bill at 20 to 1; outgoing messages and the auto-answered keep-alive
+are free, and a hibernating room accrues no duration. A room stores nothing.
+
+| Operation | Durable Object requests | D1 rows read | D1 rows written |
+| --- | --- | --- | --- |
+| Room check and connect | 1 (plus 2 Worker requests) | 2 | 0 |
+| Page message sent | 1/20 | 0 | 0 |
+| Re-check while sockets are open | 60 per hour per room | 1 each | 0 |
+| Sharing change, takedown, delete or a changed declaration | 1 notify call (only for artifacts that can have a room) | 1 | 0 |
+| Doc page edit (sent at most 4 times a second per typist) | 1/20 | 0 | 0 |
+| Doc draft flush | 0 | 0 | at most 1 per `LIVE_DRAFT_FLUSH_S` per doc (720 an hour at the default 5 s) |
+| Doc checkpoint (a saved version) | 2 calls | as an update | as an update |
+| Doc version published from outside | 1 notify call | 0 | 0 |
+
+For example, four people moving cursors at 10 updates a second send about 40 messages a second:
+about 7,200 billed requests and 450 GB-s an hour, so the free allowance carries about 13 such hours
+a day by requests and 28 by duration. Two people typing in a doc send at most 8 edits a second:
+about 1,440 billed requests and at most 720 D1 rows written an hour, against 100k D1 rows written a
+day on the free plan. Past the allowance, sockets fail and pages work alone;
+`ALLOW_ROOMS=false` turns rooms off.
+
 Not included: push-mode agent calls, which bill to the user's API key or a paid plan. Vercel was
 considered and set aside: its free plan is non-commercial only, so the floor is about $20 per month
 ([overview](https://costbench.com/software/developer-tools/vercel/)).
@@ -819,8 +973,8 @@ for a single user.
 8. **Hosted public instance.** Public visibility, report and takedown flow, terms and privacy
    pages.
 9. **Later.** Typed outputs: docs done (2026-11-14); sheets and decks later. Push agents with
-   bring-your-own key, team workspaces, paid plans, visual editing, custom domains. Tags beside the
-   category, a group-by-category view, and personal categories for artifacts shared with you.
+   bring-your-own key, team workspaces, paid plans, custom domains. Tags beside the category, a
+   group-by-category view, and personal categories for artifacts shared with you.
 
 ## Decisions
 

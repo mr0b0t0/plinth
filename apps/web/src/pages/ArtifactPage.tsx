@@ -2,13 +2,17 @@
 // The gate runs first (password, email, takedown); then the artifact fills the page in a sandboxed
 // iframe on its own content subdomain, under a slim bar that stays out of the way.
 import { APP_ROUTES, route, type ViewGate } from "@plinth/shared";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { PublicShell } from "../components/layout/PublicShell.tsx";
 import { Button, EmptyState, showToast } from "../components/ui/index.ts";
 import { GateScreen } from "../components/viewer/GateScreen.tsx";
 import { parseVersion } from "../components/viewer/gate.ts";
 import { useGate } from "../components/viewer/useGate.ts";
-import { useVersionWatch } from "../components/viewer/useVersionWatch.ts";
+import {
+  useVersionWatch,
+  VERSION_POLL_MS,
+  type WatchPause,
+} from "../components/viewer/useVersionWatch.ts";
 import { ViewerSkeleton, ViewerStage } from "../components/viewer/ViewerStage.tsx";
 import { useLocation } from "../lib/router.tsx";
 
@@ -29,12 +33,28 @@ export default function ArtifactPage({ params }: { params: Record<string, string
   const { state, path, reload, setGate } = useGate(slug, query);
 
   // A newer version published while this page is open (by an agent, or in the editor) replaces
-  // the one on view, unless this is a permanent link to one version.
+  // the one on view, unless this is a permanent link to one version. While a doc is edited on its
+  // page the frame stays (#36): it follows the room itself, or holds unsaved solo edits.
   const shown = state.kind === "gate" && state.gate.status === "ok" ? state.gate : null;
-  useVersionWatch(path, shown, pinned, (gate) => {
-    setGate(gate);
-    if (!pinned) showToast({ title: `Updated to v${gate.artifact.version}` });
-  });
+  const [pause, setPause] = useState<WatchPause>(null);
+  useVersionWatch(
+    path,
+    shown,
+    pinned,
+    (gate) => {
+      const moved = gate.artifact.version !== shown?.artifact.version;
+      setGate(gate);
+      if (!pinned && moved) showToast({ title: `Updated to v${gate.artifact.version}` });
+    },
+    VERSION_POLL_MS,
+    pause,
+  );
+  // Editing on the page and review mode (the comment-anchoring frame) exclude each other.
+  const onEditModeChange = useCallback((on: boolean) => {
+    if (!on) return;
+    setCommentsOpen(false);
+    setReview(false);
+  }, []);
 
   // Direct links arrive by artifact id; show the readable slug address once the gate knows it.
   useEffect(() => {
@@ -90,6 +110,9 @@ export default function ArtifactPage({ params }: { params: Record<string, string
         setReview(true);
       }}
       currentHref={route(APP_ROUTES.artifact, { slug })}
+      onReload={reload}
+      onEditModeChange={onEditModeChange}
+      onPauseChange={setPause}
     />
   );
 }

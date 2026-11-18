@@ -12,6 +12,7 @@ import { ApiError, notFound } from "../lib/errors.ts";
 import { enforce } from "../lib/ratelimit.ts";
 import { nowIso } from "../lib/time.ts";
 import { isAdmin, type Principal, principalEmail } from "../policy.ts";
+import { notifyRoom } from "../rooms/notify.ts";
 import { requireArtifact } from "./artifacts.ts";
 import { claimArtifactAttempts, clearClaimedAttempts } from "./attempts.ts";
 import type { Ctx } from "./context.ts";
@@ -183,12 +184,15 @@ export async function decideReport(
       ).bind(now, report.artifact_id),
       ...wipe,
       claimArtifactAttempts(ctx.env.DB, report.artifact_id, Date.parse(now)),
+      // Unsaved page edits go too; the room's guarded flush can never bring them back.
+      ctx.env.DB.prepare("DELETE FROM live_drafts WHERE artifact_id = ?1").bind(report.artifact_id),
       ctx.env.DB.prepare(
         `UPDATE reports SET state = 'actioned', decided_at = ?1, decided_by = ?2
           WHERE artifact_id = ?3 AND state = 'open'`,
       ).bind(now, admin.userId, report.artifact_id),
     ]);
     await clearClaimedAttempts(ctx.env, results[1 + wipe.length]);
+    notifyRoom(ctx, report.artifact_id, "gone");
   }
   return { ...report, state };
 }

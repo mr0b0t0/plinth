@@ -3,6 +3,7 @@
 // agent tool inputs, and the wire types. Pure code, used by the Worker and the web app.
 import { z } from "zod";
 import { DATA_CAPABILITIES, type DataCapability, type EffectiveRole, LIMITS } from "./constants.ts";
+import { ROOM_LIMITS, ROOM_OPEN_ALL, ROOM_OPEN_META, ROOM_TOPIC_RE } from "./room.ts";
 import { artifactRefSchema } from "./schemas.ts";
 
 // ---------- capabilities ----------
@@ -15,6 +16,10 @@ export interface Capabilities {
   viewer: boolean;
   /** Collections any writer may edit, not only each document's creator. */
   shared: string[];
+  /** The live room (presence and broadcast, `plinth.room`). Not shared data. */
+  room: boolean;
+  /** Topics commenters may emit too (plinth-room-open); `*` opens all. Viewers never emit. */
+  roomOpen: string[];
 }
 
 export const CAPABILITIES_META = "plinth-capabilities";
@@ -43,18 +48,21 @@ function tokens(content: string): string[] {
 }
 
 /**
- * Read a page's declaration from its HTML: the first <meta name="plinth-capabilities"> and the
- * first <meta name="plinth-data-shared">, in any attribute order and quote style, names compared
- * case-insensitively, tags inside HTML comments ignored. Unknown tokens are ignored, and so are
- * shared names that break the collection rule; at most LIMITS.maxDataShared are kept. Returns null
- * unless `data` is declared: the viewer is learned through the data API, so `viewer` alone declares
- * nothing, and neither does a shared list alone.
+ * Read a page's declaration from its HTML: the first <meta name="plinth-capabilities">, the first
+ * <meta name="plinth-data-shared"> and the first <meta name="plinth-room-open">, in any attribute
+ * order and quote style, names compared case-insensitively, tags inside HTML comments ignored.
+ * Unknown tokens are ignored, and so are shared names that break the collection rule and open
+ * topics that break the topic rule; at most LIMITS.maxDataShared and ROOM_LIMITS.maxOpenTopics are
+ * kept. Returns null unless `data` or `room` is declared: the viewer is learned through the data
+ * API or the room, so `viewer` alone declares nothing, and neither does a list alone. Shared names
+ * count only with `data`, open topics only with `room`.
  */
 export function parseCapabilities(html: string): Capabilities | null {
   if (!/plinth-/i.test(html)) return null;
   const text = html.replace(COMMENT_RE, "");
   let declared: string[] | null = null;
   let sharedNames: string[] | null = null;
+  let openTopics: string[] | null = null;
   for (const m of text.matchAll(META_TAG_RE)) {
     const attrs = metaAttributes(m[1] ?? "");
     const name = attrs.get("name")?.trim().toLowerCase();
@@ -62,21 +70,40 @@ export function parseCapabilities(html: string): Capabilities | null {
       declared = tokens(attrs.get("content") ?? "");
     } else if (name === DATA_SHARED_META && sharedNames === null) {
       sharedNames = tokens(attrs.get("content") ?? "");
+    } else if (name === ROOM_OPEN_META && openTopics === null) {
+      openTopics = tokens(attrs.get("content") ?? "");
     }
-    if (declared !== null && sharedNames !== null) break;
+    if (declared !== null && sharedNames !== null && openTopics !== null) break;
   }
   const known = new Set<DataCapability>(
     (declared ?? []).filter((t): t is DataCapability =>
       (DATA_CAPABILITIES as readonly string[]).includes(t),
     ),
   );
-  if (!known.has("data")) return null;
+  const data = known.has("data");
+  const room = known.has("room");
+  if (!data && !room) return null;
   const shared: string[] = [];
-  for (const n of sharedNames ?? []) {
+  for (const n of data ? (sharedNames ?? []) : []) {
     if (shared.length >= LIMITS.maxDataShared) break;
     if (DATA_COLLECTION_RE.test(n) && !shared.includes(n)) shared.push(n);
   }
-  return { data: true, viewer: known.has("viewer"), shared };
+  const roomOpen: string[] = [];
+  for (const t of room ? (openTopics ?? []) : []) {
+    if (roomOpen.length >= ROOM_LIMITS.maxOpenTopics) break;
+    if ((t === ROOM_OPEN_ALL || ROOM_TOPIC_RE.test(t)) && !roomOpen.includes(t)) roomOpen.push(t);
+  }
+  return { data, viewer: known.has("viewer"), shared, room, roomOpen };
+}
+
+/**
+ * The JSON stored in versions.capabilities. The room fields are written only when `room` is
+ * declared, so a declaration without it is stored exactly as before rooms existed (and a stored
+ * row without them reads as room: false, roomOpen: []).
+ */
+export function serializeCapabilities(c: Capabilities): string {
+  const { data, viewer, shared, room, roomOpen } = c;
+  return JSON.stringify(room ? { data, viewer, shared, room, roomOpen } : { data, viewer, shared });
 }
 
 /** The declared capabilities as a list, in a fixed order. */

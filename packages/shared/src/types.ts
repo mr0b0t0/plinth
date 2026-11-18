@@ -12,6 +12,7 @@ import type {
   Role,
   Visibility,
 } from "./constants.ts";
+import type { LiveMode } from "./liveDoc.ts";
 import type { Anchor } from "./schemas.ts";
 
 export interface Author {
@@ -69,6 +70,22 @@ export interface ArtifactDetailBase extends ArtifactSummary {
   source_path: string;
   /** The version's other files. Never lists a reserved path (index.html, content.md). */
   assets: AssetInfo[];
+  /**
+   * Docs, for owners and editors: people have unsaved page edits (metadata only; the draft text is
+   * never returned to agents). Null when there are none. Absent for other types and roles.
+   */
+  live_draft?: LiveDraftMeta | null;
+}
+
+/** Unsaved page edits of a doc (#36), as metadata. */
+export interface LiveDraftMeta {
+  /** The version the draft is based on. */
+  base_version: number;
+  /** Always true while a draft exists (a draft equal to its base is deleted). */
+  dirty: boolean;
+  /** Set while a version published meanwhile changed the same lines and needs review. */
+  conflict_version: number | null;
+  updated_at: string;
 }
 
 /**
@@ -109,7 +126,8 @@ export type PublishWarningCode =
   | "blocked_host"
   | "insecure_url"
   | "opaque_module"
-  | "not_scanned";
+  | "not_scanned"
+  | "live_draft";
 
 /** One publish warning. Never blocks a publish. Text echoed from files is truncated and escaped. */
 export interface PublishWarning {
@@ -367,11 +385,60 @@ export type ViewGate =
       role: EffectiveRole | null;
       /** Shared data, present only when the current version declares a capability. */
       data?: ViewGateData;
+      /**
+       * On-page editing of a doc: only for owners and editors on the current version, while live
+       * editing is on under origin isolation. Absent otherwise.
+       */
+      live?: ViewGateLive;
     }
   | { status: "password_required"; artifact: ViewArtifactStub }
   | { status: "email_required"; artifact: ViewArtifactStub }
   | { status: "not_found" }
   | { status: "taken_down"; artifact: ViewArtifactStub };
+
+/** How an owner or editor may edit this doc on its page (GET /view/:ref). */
+export interface ViewGateLive {
+  /** "room": live with the other editors; "solo": alone, Save makes a version. */
+  mode: LiveMode;
+  /** Confirmed by code without an account: they can watch, and must sign in to edit. */
+  sign_in?: true;
+  draft: LiveDraftInfo | null;
+}
+
+/** Unsaved page edits, as an editor is told about them. */
+export interface LiveDraftInfo extends LiveDraftMeta {
+  /** Whose edit was the last one flushed (an account's email), when known. */
+  updated_by_email: string | null;
+}
+
+/** GET /api/v1/artifacts/:ref/live */
+export interface LiveInfo {
+  /** null: on-page editing is off here (ALLOW_LIVE_EDITING, or opaque isolation). */
+  mode: LiveMode | null;
+  draft: LiveDraftInfo | null;
+  /** Doc sockets open now (room mode), or null when that cannot be read. */
+  editors_online: number | null;
+  idle_checkpoint_s: number;
+  auto_checkpoint_min_s: number;
+}
+
+/** GET /api/v1/artifacts/:ref/live/draft: the draft text, to review a conflict. */
+export interface LiveDraftText {
+  text: string;
+  base_version: number;
+  rev: number;
+  conflict_version: number | null;
+}
+
+/** POST /api/v1/artifacts/:ref/live/checkpoint */
+export type LiveCheckpointResult =
+  | { saved: true; version: PublishResult; live: { rev: number; dirty: boolean } }
+  | {
+      saved: false;
+      reason: "clean" | "unchanged" | "too_soon" | "busy";
+      /** too_soon: an idle autosave can be tried again after this many seconds. */
+      retry_in_s?: number;
+    };
 
 /** What the viewer is told about a page's shared data (the notice in the live viewer). */
 export interface ViewGateData {
@@ -383,6 +450,11 @@ export interface ViewGateData {
   can_write: boolean;
   /** The email the page sees: only when identified and the page declares `viewer`. */
   email?: string;
+  /**
+   * The email the page's live room shows the other people in it (and the page): when the page
+   * declares `room` and `viewer`, rooms are active and the viewer is identified.
+   */
+  room_email?: string;
 }
 
 export interface ViewArtifactStub {

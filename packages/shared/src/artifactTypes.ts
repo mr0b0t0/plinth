@@ -32,6 +32,11 @@ export interface ArtifactTypeDef {
   /** Renderer files under /__plinth/types/<id>/, or null for a type served as-is. */
   renderer: { script: string; style: string } | null;
   editor: { language: "html" | "markdown"; wordWrap: "on" | "off" };
+  /**
+   * Owners and editors may edit it on its rendered page, live with each other (#36). Only types
+   * whose page is Plinth's own renderer: page scripts in an HTML artifact could forge edits.
+   */
+  liveEdit: boolean;
 }
 
 export const TYPE_REGISTRY: Record<ArtifactType, ArtifactTypeDef> = {
@@ -48,6 +53,7 @@ export const TYPE_REGISTRY: Record<ArtifactType, ArtifactTypeDef> = {
     assetTypes: null,
     renderer: null,
     editor: { language: "html", wordWrap: "on" },
+    liveEdit: false,
   },
   doc: {
     id: "doc",
@@ -62,6 +68,7 @@ export const TYPE_REGISTRY: Record<ArtifactType, ArtifactTypeDef> = {
     assetTypes: /^image\/(png|jpeg|gif|webp|avif|svg\+xml)$/,
     renderer: { script: "doc.js", style: "doc.css" },
     editor: { language: "markdown", wordWrap: "on" },
+    liveEdit: true,
   },
 };
 
@@ -92,6 +99,11 @@ export interface TypedPayload {
   path: string;
   app_origin: string;
   text: string;
+  /**
+   * Set only for an owner or editor on the current version while rooms are active: the renderer
+   * connects the doc socket (#36). Absent otherwise, so every other shell is unchanged.
+   */
+  live?: "room";
 }
 
 const SCRIPT_UNSAFE: Record<string, string> = {
@@ -128,7 +140,7 @@ export const TYPED_SHELL_SCRIPT_SRC = "script-src 'self'";
  */
 export function typedShellHtml(
   def: ArtifactTypeDef,
-  o: { title: string; text: string; base: string; appOrigin: string },
+  o: { title: string; text: string; base: string; appOrigin: string; live?: "room" },
 ): string {
   if (!def.renderer) throw new Error(`Type ${def.id} has no renderer`);
   const dir = `${o.base}/__plinth/types/${def.id}`;
@@ -138,6 +150,7 @@ export function typedShellHtml(
     path: def.sourcePath,
     app_origin: o.appOrigin,
     text: o.text,
+    ...(o.live ? { live: o.live } : {}),
   };
   return (
     '<!doctype html><html lang="en"><head>' +

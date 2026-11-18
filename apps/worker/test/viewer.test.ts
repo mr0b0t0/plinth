@@ -13,6 +13,7 @@ import {
   agent,
   browserSession,
   call,
+  config,
   contentOrigin,
   createUser,
   db,
@@ -397,5 +398,127 @@ describe("the owner at their own allowlist gate", () => {
       (await post(`/api/v1/view/${other.id}/email`, browser(), { email: owner.user.email })).status,
     ).toBe(200);
     expect(await outboxFor(owner.user.email)).toHaveLength(0);
+  });
+});
+
+describe("the gate's live field: on-page editing of a doc (#36)", () => {
+  const gateOf = async (
+    id: string,
+    headers: Record<string, string> = {},
+    vars: Record<string, unknown> = {},
+    query = "",
+  ) => {
+    const ctx = createExecutionContext();
+    const res = await worker.fetch(
+      new Request(`http://app.localhost:8787/api/v1/view/${id}${query}`, { headers }),
+      { ...env, ...vars } as never,
+      ctx,
+    );
+    await waitOnExecutionContext(ctx);
+    return res.json() as Promise<Record<string, any>>;
+  };
+
+  it("owners and editors on the current version get it; commenters, viewers, HTML and pinned versions do not", async () => {
+    const { docSetup, person, setup } = await import("./room-helpers.ts");
+    const { id, ownerP } = await docSetup();
+    const ed = await person(id, "editor");
+    const commenter = await person(id, "commenter");
+    expect((await gateOf(id, ownerP.session.headers)).live).toEqual({ mode: "room", draft: null });
+    expect((await gateOf(id, ed.session.headers)).live).toEqual({ mode: "room", draft: null });
+    expect((await gateOf(id, commenter.session.headers)).live).toBeUndefined();
+    expect((await gateOf(id, ownerP.session.headers, {}, "?version=1")).live).toBeUndefined();
+    const html = await setup();
+    expect((await gateOf(html.id, html.ownerP.session.headers)).live).toBeUndefined();
+  });
+
+  it("names the mode: solo without rooms, none without live editing or under opaque isolation", async () => {
+    const { docSetup } = await import("./room-helpers.ts");
+    const { id, ownerP } = await docSetup();
+    const h = ownerP.session.headers;
+    expect((await gateOf(id, h, { ALLOW_ROOMS: "false" })).live).toEqual({
+      mode: "solo",
+      draft: null,
+    });
+    expect((await gateOf(id, h, { ALLOW_LIVE_EDITING: "false" })).live).toBeUndefined();
+    expect((await gateOf(id, h, { CONTENT_ISOLATION: "opaque" })).live).toBeUndefined();
+  });
+
+  it("tells editors about an unsaved draft, with whose edit it was", async () => {
+    const { docSetup } = await import("./room-helpers.ts");
+    const { id, ownerP } = await docSetup();
+    const at = new Date().toISOString();
+    await env.DB.prepare(
+      `INSERT INTO live_drafts (artifact_id, base_version, content, size_bytes, rev, updated_by_user, created_at, updated_at)
+       VALUES (?1, 1, 'x', 1, 3, ?2, ?3, ?3)`,
+    )
+      .bind(id, ownerP.userId, at)
+      .run();
+    expect((await gateOf(id, ownerP.session.headers)).live).toEqual({
+      mode: "room",
+      draft: {
+        base_version: 1,
+        dirty: true,
+        conflict_version: null,
+        updated_at: at,
+        updated_by_email: ownerP.email,
+      },
+    });
+  });
+
+  it("an editor confirmed by code (no account) must sign in to edit, and the claim has no account flag", async () => {
+    const { docSetup, grant } = await import("./room-helpers.ts");
+    const { verifyEnterToken } = await import("../src/content/tokens.ts");
+    const { openJson } = await import("../src/lib/crypto.ts");
+    const { id } = await docSetup();
+    const email = uniqueEmail("coded-editor");
+    await grant(id, email, "editor");
+    const value = `v_${Math.random().toString(36).slice(2)}${Date.now()}`;
+    await db()
+      .insert(sessions)
+      .values({
+        id: await hashToken(value),
+        kind: "viewer",
+        viewerEmail: email,
+        expiresAt: new Date(Date.now() + 3600_000).toISOString(),
+        createdAt: new Date().toISOString(),
+      })
+      .run();
+    const { appCookieName } = await import("../src/lib/cookies.ts");
+    const gate = await gateOf(id, { Cookie: `${appCookieName(config(), "viewer")}=${value}` });
+    expect(gate.status).toBe("ok");
+    expect(gate.role).toBe("editor");
+    expect(gate.live).toEqual({ mode: "room", sign_in: true, draft: null });
+    const token = new URL(gate.enter_url).searchParams.get("t") ?? "";
+    const payload = await verifyEnterToken(config(), token);
+    const claim = await openJson(
+      config().tokenSigningKey,
+      "plinth identity claim v1",
+      id,
+      String(payload?.x),
+    );
+    expect(claim).toEqual({ m: email, r: "editor" });
+  });
+
+  it("a page whose room shows viewers' emails tells them so, with or without shared data", async () => {
+    const { person, roomPage, setup } = await import("./room-helpers.ts");
+    // room viewer, no data: the room stamps each peer's email.
+    const { id: roomOnly } = await setup(roomPage({ viewer: true }));
+    const ed = await person(roomOnly, "viewer");
+    const data = (await gateOf(roomOnly, ed.session.headers)).data;
+    expect(data).toMatchObject({ capabilities: ["viewer", "room"], room_email: ed.email });
+    expect(data.email).toBeUndefined();
+    // Rooms off: the room shows nothing, so there is nothing to say.
+    expect(
+      (await gateOf(roomOnly, ed.session.headers, { ALLOW_ROOMS: "false" })).data,
+    ).toBeUndefined();
+    // room without viewer: nobody's email, no notice.
+    const { id: anonymous } = await setup(roomPage({ viewer: false }));
+    const v = await person(anonymous, "viewer");
+    expect((await gateOf(anonymous, v.session.headers)).data).toBeUndefined();
+    // data viewer room with shared data off: still told about the room.
+    const { id: board } = await setup(roomPage({ viewer: true, data: true }));
+    const b = await person(board, "editor");
+    const off = (await gateOf(board, b.session.headers, { ALLOW_SHARED_DATA: "false" })).data;
+    expect(off).toMatchObject({ available: false, room_email: b.email });
   });
 });

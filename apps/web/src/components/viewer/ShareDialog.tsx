@@ -203,7 +203,8 @@ function SharedDataRow({
     );
   }
   const s = state.summary;
-  if (!s || (s.usage.docs === 0 && s.capabilities.length === 0)) return null;
+  // `room` alone is not shared data; a page keeps data only when it declares `data`.
+  if (!s || (s.usage.docs === 0 && !s.capabilities.includes("data"))) return null;
   return (
     <div className="pl-share-data">
       <div className="pl-share-data__row">

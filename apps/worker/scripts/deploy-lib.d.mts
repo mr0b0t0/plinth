@@ -39,16 +39,27 @@ type Runtime = {
   compatibility_date?: string;
   compatibility_flags?: string[];
   triggers?: { crons?: string[] };
+  durable_objects?: { bindings?: Record<string, unknown>[] };
+  migrations?: Record<string, unknown>[];
 };
 export declare const REQUIRED_FLAGS: string[];
 export declare const SWEEP_CRON: string;
+export declare const ROOMS_DO: { bindings: { name: string; class_name: string }[] };
+export declare const ROOMS_MIGRATIONS: { tag: string; new_sqlite_classes: string[] }[];
 export declare function refreshRuntime<T extends Runtime>(
   existing: T,
   repo: Runtime,
-): T & { compatibility_flags: string[]; triggers?: { crons: string[] } };
+): T & {
+  compatibility_flags: string[];
+  triggers?: { crons: string[] };
+  durable_objects?: { bindings: Record<string, unknown>[] };
+  migrations?: Record<string, unknown>[];
+};
 export declare function runtimeBase(repoCfg: Record<string, unknown>): Record<string, unknown>;
 export declare function runtimeConfigMissing(cfg: unknown): string[];
 export declare function runtimeConfigProblem(cfg: unknown): string | null;
+export declare function hasRoomsBinding(cfg: unknown): boolean;
+export declare function runtimeConfigNotes(cfg: unknown): string[];
 export declare function instanceName(raw: Raw): string;
 export declare function deployPaths(
   home: string,

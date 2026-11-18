@@ -1,11 +1,16 @@
-import { DEFAULTS, LIMITS, TTL } from "@plinth/shared";
+import { env } from "cloudflare:workers";
+import { DEFAULTS, LIMITS, LIVE_DEFAULTS, ROOM_DEFAULTS, TTL } from "@plinth/shared";
 import { describe, expect, it } from "vitest";
 import {
   ConfigError,
+  identityClaimsActive,
+  liveEditMode,
   MIN_VERSION_BYTES,
   maxBundleBytes,
+  type OptionalBindings,
   parseConfig,
   registrableDomain,
+  roomsActive,
   sharedDataActive,
   uploadTicketsPerHour,
 } from "../src/config.ts";
@@ -439,5 +444,173 @@ describe("shared data settings", () => {
     });
     expect(fallback.configuredContentIsolation).toBe("origin");
     expect(sharedDataActive(fallback)).toBe(false);
+  });
+});
+
+describe("room and live editing settings", () => {
+  it("default to on, with the limits from ROOM_DEFAULTS and LIVE_DEFAULTS", () => {
+    const c = parseConfig(base);
+    expect(c.allowRooms).toBe(true);
+    expect(c.allowLiveEditing).toBe(true);
+    expect(c.rooms).toEqual(ROOM_DEFAULTS);
+    expect(c.rooms).toEqual({
+      maxConnectionsPerArtifact: 50,
+      maxMessageBytes: 8192,
+      messagesPerSecond: 20,
+    });
+    expect(c.live).toEqual(LIVE_DEFAULTS);
+    expect(c.live).toEqual({
+      checkpointIdleS: 120,
+      autoCheckpointMinS: 600,
+      draftFlushS: 5,
+      draftRetentionDays: 30,
+    });
+    // An empty value (as wrangler.jsonc may list it) keeps the default.
+    expect(parseConfig({ ...base, ALLOW_ROOMS: "", ALLOW_LIVE_EDITING: "" })).toMatchObject({
+      allowRooms: true,
+      allowLiveEditing: true,
+    });
+  });
+
+  it("read the ROOM_* and LIVE_* env vars and the switches", () => {
+    const c = parseConfig({
+      ...base,
+      ALLOW_ROOMS: "false",
+      ALLOW_LIVE_EDITING: "0",
+      ROOM_MAX_CONNECTIONS_PER_ARTIFACT: "2",
+      ROOM_MAX_MESSAGE_BYTES: "512",
+      ROOM_MESSAGES_PER_SECOND: "100",
+      LIVE_CHECKPOINT_IDLE_S: "30",
+      LIVE_AUTO_CHECKPOINT_MIN_S: "30",
+      LIVE_DRAFT_FLUSH_S: "60",
+      LIVE_DRAFT_RETENTION_DAYS: "365",
+    });
+    expect(c.allowRooms).toBe(false);
+    expect(c.allowLiveEditing).toBe(false);
+    expect(c.rooms).toEqual({
+      maxConnectionsPerArtifact: 2,
+      maxMessageBytes: 512,
+      messagesPerSecond: 100,
+    });
+    expect(c.live).toEqual({
+      checkpointIdleS: 30,
+      autoCheckpointMinS: 30,
+      draftFlushS: 60,
+      draftRetentionDays: 365,
+    });
+  });
+
+  it("refuse values out of bounds", () => {
+    const bad: [string, string][] = [
+      ["ROOM_MAX_CONNECTIONS_PER_ARTIFACT", "1"],
+      ["ROOM_MAX_CONNECTIONS_PER_ARTIFACT", "1001"],
+      ["ROOM_MAX_MESSAGE_BYTES", "511"],
+      ["ROOM_MAX_MESSAGE_BYTES", "65537"],
+      ["ROOM_MESSAGES_PER_SECOND", "0"],
+      ["ROOM_MESSAGES_PER_SECOND", "101"],
+      ["LIVE_DRAFT_FLUSH_S", "1"],
+      ["LIVE_DRAFT_FLUSH_S", "61"],
+      ["LIVE_DRAFT_RETENTION_DAYS", "0"],
+      ["LIVE_DRAFT_RETENTION_DAYS", "366"],
+      ["LIVE_CHECKPOINT_IDLE_S", "3601"],
+      ["LIVE_CHECKPOINT_IDLE_S", "-1"],
+      ["LIVE_CHECKPOINT_IDLE_S", "1.5"],
+    ];
+    for (const [k, v] of bad)
+      expect(() => parseConfig({ ...base, [k]: v }), `${k}=${v}`).toThrow(new RegExp(k));
+    for (const [k, v] of [
+      ["ROOM_MAX_MESSAGE_BYTES", "65536"],
+      ["LIVE_DRAFT_FLUSH_S", "2"],
+      ["LIVE_DRAFT_RETENTION_DAYS", "1"],
+    ])
+      expect(() => parseConfig({ ...base, [k as string]: v })).not.toThrow();
+  });
+
+  it("the idle time is 0 (explicit saves only) or 30 to 3600, and autosaves are spaced past it", () => {
+    expect(parseConfig({ ...base, LIVE_CHECKPOINT_IDLE_S: "0" }).live.checkpointIdleS).toBe(0);
+    for (const v of ["1", "29"])
+      expect(() => parseConfig({ ...base, LIVE_CHECKPOINT_IDLE_S: v })).toThrow(
+        /LIVE_CHECKPOINT_IDLE_S must be 0/,
+      );
+    expect(parseConfig({ ...base, LIVE_CHECKPOINT_IDLE_S: "3600" }).live).toMatchObject({
+      checkpointIdleS: 3600,
+      // Unset, the spacing follows a longer idle time instead of failing.
+      autoCheckpointMinS: 3600,
+    });
+    expect(() =>
+      parseConfig({ ...base, LIVE_CHECKPOINT_IDLE_S: "300", LIVE_AUTO_CHECKPOINT_MIN_S: "299" }),
+    ).toThrow(/LIVE_AUTO_CHECKPOINT_MIN_S must be at least LIVE_CHECKPOINT_IDLE_S/);
+    expect(
+      parseConfig({ ...base, LIVE_CHECKPOINT_IDLE_S: "0", LIVE_AUTO_CHECKPOINT_MIN_S: "0" }).live,
+    ).toMatchObject({ checkpointIdleS: 0, autoCheckpointMinS: 0 });
+  });
+
+  it("the shipped wrangler.jsonc lists them with the documented defaults", () => {
+    const c = parseConfig(env as unknown as Record<string, unknown>);
+    expect(c.allowRooms).toBe(true);
+    expect(c.allowLiveEditing).toBe(true);
+    expect(c.rooms).toEqual(ROOM_DEFAULTS);
+    expect(c.live).toEqual(LIVE_DEFAULTS);
+    for (const k of [
+      "ALLOW_ROOMS",
+      "ROOM_MAX_CONNECTIONS_PER_ARTIFACT",
+      "ROOM_MAX_MESSAGE_BYTES",
+      "ROOM_MESSAGES_PER_SECOND",
+      "ALLOW_LIVE_EDITING",
+      "LIVE_CHECKPOINT_IDLE_S",
+      "LIVE_AUTO_CHECKPOINT_MIN_S",
+      "LIVE_DRAFT_FLUSH_S",
+      "LIVE_DRAFT_RETENTION_DAYS",
+    ])
+      expect(typeof (env as unknown as Record<string, unknown>)[k], k).toBe("string");
+  });
+
+  it("rooms are active with the switch, the ROOMS binding and origin isolation only", () => {
+    const binding = { ROOMS: {} as NonNullable<OptionalBindings["ROOMS"]> };
+    const on = parseConfig(base);
+    expect(roomsActive(on, binding)).toBe(true);
+    // An older config without the binding: rooms are simply off, never a config error.
+    expect(roomsActive(on, {})).toBe(false);
+    expect(roomsActive(parseConfig({ ...base, ALLOW_ROOMS: "false" }), binding)).toBe(false);
+    const opaque = parseConfig({
+      ...base,
+      CONTENT_HOST: "content.aconite.io",
+      CONTENT_ISOLATION: "opaque",
+    });
+    expect(roomsActive(opaque, binding)).toBe(false);
+    const fallback = parseConfig({
+      ...base,
+      ENVIRONMENT: "staging",
+      APP_HOST: "plinth.example.workers.dev",
+      STAGING_CONTENT_FALLBACK: "true",
+    });
+    expect(fallback.contentIsolation).toBe("opaque");
+    expect(roomsActive(fallback, binding)).toBe(false);
+  });
+
+  it("live editing: room with rooms, solo without, none when off or opaque", () => {
+    const binding = { ROOMS: {} as NonNullable<OptionalBindings["ROOMS"]> };
+    expect(liveEditMode(parseConfig(base), binding)).toBe("room");
+    expect(liveEditMode(parseConfig(base), {})).toBe("solo");
+    expect(liveEditMode(parseConfig({ ...base, ALLOW_ROOMS: "false" }), binding)).toBe("solo");
+    expect(liveEditMode(parseConfig({ ...base, ALLOW_LIVE_EDITING: "false" }), binding)).toBe(null);
+    const opaque = parseConfig({ ...base, CONTENT_ISOLATION: "opaque" });
+    expect(liveEditMode(opaque, binding)).toBe(null);
+  });
+
+  it("the identity claim is sealed under origin isolation while shared data or rooms are on", () => {
+    const binding = { ROOMS: {} as NonNullable<OptionalBindings["ROOMS"]> };
+    expect(identityClaimsActive(parseConfig(base), {})).toBe(true);
+    const noData = parseConfig({ ...base, ALLOW_SHARED_DATA: "false" });
+    expect(identityClaimsActive(noData, binding)).toBe(true);
+    expect(identityClaimsActive(noData, {})).toBe(false);
+    expect(
+      identityClaimsActive(
+        parseConfig({ ...base, ALLOW_SHARED_DATA: "false", ALLOW_ROOMS: "false" }),
+        binding,
+      ),
+    ).toBe(false);
+    const opaque = parseConfig({ ...base, CONTENT_ISOLATION: "opaque" });
+    expect(identityClaimsActive(opaque, binding)).toBe(false);
   });
 });

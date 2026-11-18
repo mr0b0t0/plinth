@@ -2,9 +2,9 @@
 // host checks of `scripts/setup.mjs --remote`. Kept free of Node imports so the Workers test pool
 // can test them, like tunnel-lib.mjs; deploy.mjs runs wrangler and writes the files.
 import { CloudflareError, cloudflareApi } from "./tunnel-cloudflare.mjs";
-import { REQUIRED_FLAGS, SWEEP_CRON } from "./tunnel-lib.mjs";
+import { REQUIRED_FLAGS, ROOMS_DO, ROOMS_MIGRATIONS, SWEEP_CRON } from "./tunnel-lib.mjs";
 
-export { CloudflareError, REQUIRED_FLAGS, SWEEP_CRON };
+export { CloudflareError, REQUIRED_FLAGS, ROOMS_DO, ROOMS_MIGRATIONS, SWEEP_CRON };
 
 const HOST_RE = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/;
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -73,11 +73,19 @@ export function hostPairProblem(appHost, contentHost, isolation, registrable) {
   return null;
 }
 
+/** `own` followed by each entry of `add` whose `key` no entry of `own` has. */
+function unionBy(own, add, key) {
+  const seen = new Set(own.map((e) => e?.[key]));
+  return [...own, ...add.filter((e) => !seen.has(e?.[key]))];
+}
+
 /**
  * The runtime settings a re-run of setup (or `plinth start`) carries into an existing config:
  * every compatibility flag of either file (the repo's config names the flags this release needs,
- * such as enable_request_signal), every cron trigger of either (the hourly staging sweep), and the
- * later compatibility date. The rest of `existing` is kept, its own triggers included.
+ * such as enable_request_signal), every cron trigger of either (the hourly staging sweep), the
+ * later compatibility date, and the repo's Durable Object bindings and migrations that `existing`
+ * lacks (live rooms: binding `ROOMS`, tag `rooms-v1`), matched by binding name and by tag. The
+ * rest of `existing` is kept, its own triggers, bindings and migrations included.
  */
 export function refreshRuntime(existing, repo) {
   const flags = [
@@ -87,6 +95,8 @@ export function refreshRuntime(existing, repo) {
   const crons = [
     ...new Set([...(existing.triggers?.crons ?? []), ...(repo.triggers?.crons ?? [])]),
   ];
+  const repoBindings = repo.durable_objects?.bindings ?? [];
+  const repoMigrations = repo.migrations ?? [];
   return {
     ...existing,
     ...(dates.length > 0 ? { compatibility_date: dates[dates.length - 1] } : {}),
@@ -94,13 +104,25 @@ export function refreshRuntime(existing, repo) {
     ...(crons.length > 0 || existing.triggers
       ? { triggers: { ...(existing.triggers ?? {}), crons } }
       : {}),
+    ...(repoBindings.length > 0 || existing.durable_objects
+      ? {
+          durable_objects: {
+            ...(existing.durable_objects ?? {}),
+            bindings: unionBy(existing.durable_objects?.bindings ?? [], repoBindings, "name"),
+          },
+        }
+      : {}),
+    ...(repoMigrations.length > 0 || existing.migrations
+      ? { migrations: unionBy(existing.migrations ?? [], repoMigrations, "tag") }
+      : {}),
   };
 }
 
 /**
  * The parts of the repo's apps/worker/wrangler.jsonc a generated config takes, minus everything
- * instance-specific: compatibility settings, the cron trigger, observability, assets settings and
- * default limits. packages/cli/scripts/bundle.mjs writes it as runtime/wrangler.base.json.
+ * instance-specific: compatibility settings, the cron trigger, observability, assets settings, the
+ * live-rooms Durable Object binding and its migration, and default limits.
+ * packages/cli/scripts/bundle.mjs writes it as runtime/wrangler.base.json.
  */
 export function runtimeBase(repoCfg) {
   return {
@@ -109,6 +131,8 @@ export function runtimeBase(repoCfg) {
     triggers: repoCfg.triggers,
     observability: repoCfg.observability,
     assets: { ...repoCfg.assets, directory: undefined },
+    durable_objects: repoCfg.durable_objects,
+    migrations: repoCfg.migrations,
     vars: Object.fromEntries(
       [
         "MAX_ARTIFACTS_PER_USER",
@@ -126,6 +150,15 @@ export function runtimeBase(repoCfg) {
         "DATA_MAX_DOC_BYTES",
         "DATA_WRITES_PER_VIEWER_PER_HOUR",
         "DATA_WRITES_PER_ARTIFACT_PER_HOUR",
+        "ALLOW_ROOMS",
+        "ROOM_MAX_CONNECTIONS_PER_ARTIFACT",
+        "ROOM_MAX_MESSAGE_BYTES",
+        "ROOM_MESSAGES_PER_SECOND",
+        "ALLOW_LIVE_EDITING",
+        "LIVE_CHECKPOINT_IDLE_S",
+        "LIVE_AUTO_CHECKPOINT_MIN_S",
+        "LIVE_DRAFT_FLUSH_S",
+        "LIVE_DRAFT_RETENTION_DAYS",
       ]
         .filter((k) => k in (repoCfg.vars ?? {}))
         .map((k) => [k, repoCfg.vars[k]]),
@@ -133,7 +166,11 @@ export function runtimeBase(repoCfg) {
   };
 }
 
-/** The runtime settings this release needs that a Worker config lacks (empty when it has both). */
+/**
+ * The runtime settings this release needs that a Worker config lacks (empty when it has both).
+ * The live-rooms binding is not one of them: a config without `ROOMS` runs with rooms off
+ * (runtimeConfigNotes says so).
+ */
 export function runtimeConfigMissing(cfg) {
   const missing = [];
   if (!(cfg?.compatibility_flags ?? []).includes("enable_request_signal"))
@@ -157,6 +194,28 @@ export function runtimeConfigProblem(cfg) {
     `\`"triggers": { "crons": ["${SWEEP_CRON}"] }\` (as apps/worker/wrangler.jsonc has them), or ` +
     "rerun setup, which adds them to an existing config (docs/deploy-checklist.md)"
   );
+}
+
+/** True when `cfg` binds the live-rooms Durable Object (`ROOMS`, class `ArtifactRoom`). */
+export function hasRoomsBinding(cfg) {
+  return (cfg?.durable_objects?.bindings ?? []).some(
+    (b) => b?.name === "ROOMS" && b?.class_name === "ArtifactRoom" && !b?.script_name,
+  );
+}
+
+/**
+ * What a deployable Worker config leaves off that the operator may want on, as notes that never
+ * stop a deploy: today only live rooms, which need the `ROOMS` binding and its migration.
+ */
+export function runtimeConfigNotes(cfg) {
+  if (hasRoomsBinding(cfg)) return [];
+  return [
+    "it has no ROOMS Durable Object binding, so live rooms are off (doc editors edit on the page " +
+      "alone, without seeing each other). To turn them on, rerun setup (it adds the binding and the rooms-v1 migration) or add " +
+      `\`"durable_objects": ${JSON.stringify(ROOMS_DO)}\` and \`"migrations": ` +
+      `${JSON.stringify(ROOMS_MIGRATIONS)}\` as apps/worker/wrangler.jsonc has them ` +
+      "(docs/deploy-checklist.md#live-rooms)",
+  ];
 }
 
 /** The --name flag, checked: lowercase letters, digits and dashes; default plinth. */
@@ -340,6 +399,8 @@ export function buildDeployConfig(s, layout, base, { databaseId, contentZone }) 
       },
     ],
     r2_buckets: [{ binding: "FILES", bucket_name: s.bucket }],
+    durable_objects: base.durable_objects ?? ROOMS_DO,
+    migrations: base.migrations ?? ROOMS_MIGRATIONS,
     routes: [
       { pattern: s.appHost, custom_domain: true },
       { pattern: `*.${s.contentHost}/*`, zone_name: contentZone },

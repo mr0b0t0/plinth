@@ -95,3 +95,60 @@ export function clearDraft(artifactId: string, base: number): void {
 export function clearAllDrafts(artifactId: string): void {
   for (const d of listDrafts(artifactId)) clearDraft(artifactId, d.base);
 }
+
+// ---------- page edits (#36, solo mode: a doc edited on its page without a room) ----------
+// One per artifact, in its own namespace so the source editor's drafts never see it. It holds the
+// text the doc frame last reported, for "Restore unsaved page edits" after a reload.
+
+const PAGE_PREFIX = "plinth-draft:page-edit:";
+
+export interface PageDraft {
+  text: string;
+  /** The version the page edits started from. */
+  base: number;
+  saved_at: string;
+}
+
+export function pageDraftKey(artifactId: string): string {
+  return `${PAGE_PREFIX}${artifactId}`;
+}
+
+export function savePageDraft(artifactId: string, base: number, text: string): boolean {
+  const s = storage();
+  if (!s) return false;
+  try {
+    const d: PageDraft = { text, base, saved_at: new Date().toISOString() };
+    s.setItem(pageDraftKey(artifactId), JSON.stringify(d));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function loadPageDraft(artifactId: string): PageDraft | null {
+  const s = storage();
+  if (!s) return null;
+  try {
+    const raw = s.getItem(pageDraftKey(artifactId));
+    if (!raw) return null;
+    const d = JSON.parse(raw) as Partial<PageDraft>;
+    if (typeof d.text !== "string" || !Number.isInteger(d.base) || (d.base as number) < 1) {
+      return null;
+    }
+    return {
+      text: d.text,
+      base: d.base as number,
+      saved_at: typeof d.saved_at === "string" ? d.saved_at : "",
+    };
+  } catch {
+    return null;
+  }
+}
+
+export function clearPageDraft(artifactId: string): void {
+  try {
+    storage()?.removeItem(pageDraftKey(artifactId));
+  } catch {
+    // storage blocked: nothing was kept
+  }
+}

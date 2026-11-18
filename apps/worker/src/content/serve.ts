@@ -11,7 +11,7 @@ import {
   typeDef,
 } from "@plinth/shared";
 import { and, eq, isNull } from "drizzle-orm";
-import type { Bindings, Config } from "../config.ts";
+import { type Bindings, type Config, liveEditMode, roomsActive } from "../config.ts";
 import { getDb } from "../db/client.ts";
 import { type ArtifactRow, artifacts, type VersionRow } from "../db/schema.ts";
 import { secureFlag, serializeCookie } from "../lib/cookies.ts";
@@ -24,6 +24,7 @@ import { injectBridge, serveBridgeScript } from "./bridge.ts";
 import { applyContentHeaders, type ContentCspOptions } from "./csp.ts";
 import { DATA_API_PREFIX, serveDataApi } from "./data-api.ts";
 import { servePreviewLoader } from "./preview.ts";
+import { ROOM_PREFIX, roomSocketSource, serveRoomUpgrade } from "./room.ts";
 import { serveRuntimeScript } from "./runtime.ts";
 import {
   consumeNonce,
@@ -174,6 +175,8 @@ type ContentPass = {
   version: number | null;
   /** This browser's open was already counted at this epoch (a view pass carrying `w`). */
   counted: boolean;
+  /** When the pass expires (ms since the epoch); a live room closes the socket then. */
+  exp: number;
 };
 
 /** One cookie value as a pass for this artifact at its epoch, or null when it is not one. */
@@ -192,29 +195,36 @@ async function openPass(
   if (pass.w !== undefined && (pass.w !== 1 || capture || preview)) return null;
   const counted = pass.w === 1;
   const version = preview ? (pass.v as number) : null;
-  if (pass.x === undefined) return { claim: null, capture, preview, version, counted };
+  const exp = pass.exp;
+  if (pass.x === undefined) return { claim: null, capture, preview, version, counted, exp };
   // Capture and preview passes never carry an identity (issueEnterUrl refuses both).
   if (capture || preview) return null;
   if (typeof pass.x !== "string") return null;
   const opened = await openJson(config.tokenSigningKey, IDENTITY_CLAIM_INFO, artifact.id, pass.x);
   if (!opened || typeof opened !== "object") return null;
-  const { m, r } = opened as Record<string, unknown>;
+  const { m, r, a } = opened as Record<string, unknown>;
   if (typeof m !== "string" || !m || typeof r !== "string" || !CLAIM_ROLES.has(r)) return null;
+  if (a !== undefined && a !== 1) return null;
   return {
     claim: {
       email: m,
       role: r as EffectiveRole,
       viewerId: await viewerIdFor(config.tokenSigningKey, artifact.id, m),
+      // Passes sealed before the flag existed have none: their doc editors watch until a reload.
+      ...(a === 1 ? { account: true } : {}),
     },
     capture: false,
     preview: false,
     version: null,
     counted,
+    exp,
   };
 }
 
 const sameClaim = (a: PageClaim | null, b: PageClaim | null) =>
-  a === null || b === null ? a === b : a.email === b.email && a.role === b.role;
+  a === null || b === null
+    ? a === b
+    : a.email === b.email && a.role === b.role && a.account === b.account;
 
 /**
  * The content pass this request carries for this artifact: a content cookie signed for this
@@ -324,6 +334,8 @@ async function serve(
 ): Promise<Response> {
   // Shared data (content/data-api.ts): its own method, caller and JSON checks, never a redirect.
   if (route.path.startsWith(DATA_API_PREFIX)) return serveDataApi(request, env, config, route);
+  // Live rooms (content/room.ts): a WebSocket upgrade with its own ordered checks.
+  if (route.path.startsWith(ROOM_PREFIX)) return serveRoomUpgrade(request, env, config, route);
 
   if (request.method !== "GET" && request.method !== "HEAD") {
     return text(config, 405, "Method not allowed", { Allow: "GET, HEAD" });
@@ -488,6 +500,13 @@ async function serve(
 
   const v = await loadVersion(env.DB, artifactId, versionNumber);
   if (!v) return fail(404, "No such version");
+  // A document may reach its own live room: connect-src names the artifact's wss: origin, only
+  // while rooms are active (on an artifact subdomain; never the path fallback), and never for an
+  // in-chat preview, which cannot join one.
+  const socket =
+    roomsActive(config, env) && base === "" && !pass.preview
+      ? roomSocketSource(config, artifactId)
+      : undefined;
   // A typed artifact (a doc): its page is Plinth's shell around the content file; every other
   // path (the content file itself, images) is the version's own file, as for any artifact.
   const def = typeDef(artifact.type);
@@ -495,7 +514,29 @@ async function serve(
   if (def.renderer && rel === "index.html") {
     // serveTypedEntry reads only the version's prefix (its source file is always under it).
     const version = { r2Prefix: v.r2Prefix } as Pick<VersionRow, "r2Prefix"> as VersionRow;
-    return serveTypedEntry(request, env, config, { artifact, version, def, base, url, framing });
+    // On-page editing (#36): only an owner's or editor's view pass, on the current version's own
+    // path (not a pinned /__plinth/v/<n>/ one), outside review mode, with rooms and live editing on.
+    const editor = pass.claim?.role === "owner" || pass.claim?.role === "editor";
+    const live =
+      def.liveEdit &&
+      socket !== undefined &&
+      liveEditMode(config, env) === "room" &&
+      editor &&
+      !pass.capture &&
+      !vm &&
+      !url.searchParams.has(REVIEW_MODE_PARAM)
+        ? ("room" as const)
+        : undefined;
+    return serveTypedEntry(request, env, config, {
+      artifact,
+      version,
+      def,
+      base,
+      url,
+      framing,
+      socket,
+      ...(live ? { live } : {}),
+    });
   }
   const entry = v.entries.get(rel);
   if (!entry) return fail(404, "Not found");
@@ -514,7 +555,13 @@ async function serve(
   const headers = new Headers({ "Content-Type": entry.content_type });
   // A typed artifact's other files (content.md, images) run no script, not even an SVG opened as
   // a document: only the shell runs Plinth's renderer.
-  applyContentHeaders(config, headers, def.renderer ? { scripts: "none", framing } : { framing });
+  applyContentHeaders(
+    config,
+    headers,
+    def.renderer
+      ? { scripts: "none", framing }
+      : { framing, ...(isHtml && socket ? { socket } : {}) },
+  );
   // Public artifacts (only when the instance allows public visibility) may be indexed.
   if (artifact.visibility === "public" && config.allowPublicVisibility)
     headers.delete("X-Robots-Tag");

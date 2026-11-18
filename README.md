@@ -36,6 +36,10 @@ pages from any of them:
   Compare any two, restore an old one, and see which agent or person made each.
 - **A review loop with your agents.** Pin a comment to an element, mention `@claude` or `@codex`,
   and the agent publishes a new version and replies in the thread. Open pages update live.
+- **Work on a page together, live.** On instances with live rooms on, owners and editors edit a doc
+  right on its page and see each other's changes as they type, saved as versions, and pages can
+  show who else is there and share cursors and moves with `plinth.room`
+  ([a whiteboard](docs/examples/whiteboard.html)).
 - **Built to host untrusted HTML.** Each artifact runs on its own subdomain of a separate content
   domain, sandboxed, under a strict Content Security Policy. Agent-written pages never run next to
   your login.

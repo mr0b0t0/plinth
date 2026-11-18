@@ -110,9 +110,16 @@ export async function serveTypedEntry(
     base: string;
     url: URL;
     framing?: "app" | "any";
+    /** The artifact's own WebSocket origin, while rooms are active (csp.ts `socket`). */
+    socket?: string;
+    /**
+     * An owner or editor on the current version, with rooms and live editing on: the renderer
+     * connects the doc socket (payload `live`). Every other shell has today's bytes.
+     */
+    live?: "room";
   },
 ): Promise<Response> {
-  const { artifact, version, def, base, url, framing } = o;
+  const { artifact, version, def, base, url, framing, socket, live } = o;
   const obj = await env.FILES.get(version.r2Prefix + def.sourcePath);
   if (!obj) return notFound(config);
   const html = typedShellHtml(def, {
@@ -120,9 +127,10 @@ export async function serveTypedEntry(
     text: await obj.text(),
     base,
     appOrigin: config.appOrigin,
+    ...(live ? { live } : {}),
   });
   const headers = new Headers({ "Content-Type": "text/html; charset=utf-8" });
-  applyContentHeaders(config, headers, { scripts: "self", framing });
+  applyContentHeaders(config, headers, { scripts: "self", framing, ...(socket ? { socket } : {}) });
   // Public artifacts (only when the instance allows public visibility) may be indexed.
   if (artifact.visibility === "public" && config.allowPublicVisibility)
     headers.delete("X-Robots-Tag");

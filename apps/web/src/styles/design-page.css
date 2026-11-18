@@ -688,3 +688,11 @@
 .ds-lead-row + .ds-lead {
   padding-top: 0;
 }
+
+/* A column of full-width samples (the edit bar and unsaved-edits states). */
+.ds-stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  width: 100%;
+}

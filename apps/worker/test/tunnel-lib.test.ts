@@ -7,6 +7,8 @@ import {
   dnsRecordNames,
   instancePaths,
   localHosts,
+  ROOMS_DO,
+  ROOMS_MIGRATIONS,
   renderCloudflaredConfig,
   startCommands,
   TunnelUsageError,
@@ -283,6 +285,24 @@ describe("tunnel-lib: localhost-only instances", () => {
       DEV_IGNORE_CLIENT_IP: "false",
       MAX_ARTIFACTS_PER_USER: "100",
     });
+  });
+
+  it("binds the live-rooms Durable Object in tunnel and local configs", () => {
+    const tunnel = validateTunnelOptions(base, deps);
+    const local = validateLocalOptions({ email: "me@example.com", port: "9000" });
+    const expected = {
+      durable_objects: { bindings: [{ name: "ROOMS", class_name: "ArtifactRoom" }] },
+      migrations: [{ tag: "rooms-v1", new_sqlite_classes: ["ArtifactRoom"] }],
+    };
+    expect(buildWorkerConfig(tunnel, "/repo")).toMatchObject(expected);
+    expect(buildLocalWorkerConfig(local, "/repo")).toMatchObject(expected);
+    // The base's own (the repo's wrangler.jsonc, or the CLI's wrangler.base.json) wins.
+    const own = {
+      durable_objects: { bindings: [...ROOMS_DO.bindings, { name: "X", class_name: "X" }] },
+      migrations: [...ROOMS_MIGRATIONS, { tag: "x-v1", new_sqlite_classes: ["X"] }],
+    };
+    expect(buildWorkerConfig(tunnel, "/repo", own)).toMatchObject(own);
+    expect(buildLocalWorkerConfig(local, "/repo", own)).toMatchObject(own);
   });
 
   it("keeps a repo-root layout working for tunnel configs", () => {

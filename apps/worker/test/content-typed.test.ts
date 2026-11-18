@@ -95,8 +95,10 @@ describe("doc shell on the content host", () => {
     expect(d.get("script-src")).toBe("script-src 'self'");
     expect(d.get("script-src")).not.toContain("unsafe-inline");
     expect(csp).not.toContain("unsafe-eval");
-    // Every other directive is the artifact default.
-    const base = directives(contentCsp(config()));
+    // Every other directive is the artifact default, with the doc's own live-room origin.
+    const base = directives(
+      contentCsp(config(), { socket: `ws://${p.id}.content.localhost:8787` }),
+    );
     for (const [k, v] of base) if (k !== "script-src") expect(d.get(k), k).toBe(v);
     expect([...d.keys()]).toEqual([...base.keys()]);
 
@@ -259,7 +261,9 @@ describe("doc shell on the content host", () => {
     const { cookie } = await enterContent(p.id);
     const res = await get(p.id, "/", cookie ?? "");
     expect(await res.text()).toBe("<!doctype html><h1>Page</h1>");
-    expect(res.headers.get("content-security-policy")).toBe(contentCsp(config()));
+    expect(res.headers.get("content-security-policy")).toBe(
+      contentCsp(config(), { socket: `ws://${p.id}.content.localhost:8787` }),
+    );
     expect(res.headers.get("etag")).not.toBeNull();
   });
 });
@@ -511,5 +515,55 @@ describe("contentCsp", () => {
     const opaqueStrict = contentCsp(o, { scripts: "self" });
     expect(opaqueStrict.endsWith(`; ${OPAQUE_SANDBOX}`)).toBe(true);
     expect(opaqueStrict).toBe(contentCsp(o).replace(/script-src [^;]*/, "script-src 'self'"));
+  });
+});
+
+describe("doc shell: the live payload for on-page editing (#36)", () => {
+  const shellPayload = async (id: string, path: string, cookie: string, vars = {}) => {
+    const res = await run(`${contentOrigin(id)}${path}`, { headers: { Cookie: cookie } }, vars);
+    expect(res.status).toBe(200);
+    return payloadOf(await res.text());
+  };
+
+  it("only an owner's or editor's view pass on the current path, outside review mode, gets live", async () => {
+    const { docSetup, person } = await import("./room-helpers.ts");
+    const { id, ownerP } = await docSetup(MD);
+    const ed = await person(id, "editor");
+    const commenter = await person(id, "commenter");
+    const viewer = await person(id, "viewer");
+    expect((await shellPayload(id, "/", ownerP.cookie)).live).toBe("room");
+    expect((await shellPayload(id, "/index.html", ed.cookie)).live).toBe("room");
+    for (const c of [commenter.cookie, viewer.cookie]) {
+      expect(await shellPayload(id, "/", c)).toEqual({
+        v: 1,
+        type: "doc",
+        path: "content.md",
+        app_origin: config().appOrigin,
+        text: MD,
+      });
+    }
+    // A pinned version, review mode, and live editing off: today's shell.
+    expect(await shellPayload(id, "/__plinth/v/1/", ownerP.cookie)).not.toHaveProperty("live");
+    expect(await shellPayload(id, "/?plinth-review=1", ownerP.cookie)).not.toHaveProperty("live");
+    expect(
+      await shellPayload(id, "/", ownerP.cookie, { ALLOW_LIVE_EDITING: "false" }),
+    ).not.toHaveProperty("live");
+    expect(await shellPayload(id, "/", ownerP.cookie, { ALLOW_ROOMS: "false" })).not.toHaveProperty(
+      "live",
+    );
+  });
+
+  it("an anonymous link viewer's shell is byte-identical with rooms on or off", async () => {
+    const { p, cookie } = await openedDoc();
+    const on = await (await get(p.id, "/", cookie)).text();
+    const off = await (
+      await run(
+        `${contentOrigin(p.id)}/`,
+        { headers: { Cookie: cookie } },
+        { ALLOW_ROOMS: "false" },
+      )
+    ).text();
+    expect(on).toBe(off);
+    expect(payloadOf(on)).not.toHaveProperty("live");
   });
 });

@@ -13,6 +13,9 @@ Add a line under **Unreleased** in the pull request that makes a change people w
 - **Plinth shows up properly in Codex.** The plugin now carries Codex's listing block (name,
   short description, icon, starter prompts, links), so Codex and Codex plugin directories show it
   with its own icon and description. Plugin 0.13.0.
+- **Live rooms.** Pages can show who is here and share moments live with `plinth.room`, and
+  owners and editors can edit a doc together right on its page, saved as versions on Save or after
+  a pause (#36).
 - **MCP tool annotations.** Every tool now says whether it only reads, whether it can remove
   data, and whether repeating it is safe, so clients can ask before the right calls and directories
   (Anthropic's connector directory requires them) can list Plinth.

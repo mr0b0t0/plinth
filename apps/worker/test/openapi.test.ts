@@ -217,12 +217,42 @@ describe("OpenAPI document", () => {
     expect(d.properties.source_path.enum).toEqual(["content.md"]);
     expect(d.properties.html).toBeUndefined();
     expect(d.properties.content.description).toMatch(/UNTRUSTED Markdown/);
-    // Apart from the source field, both carry the same properties.
-    const rest = (o: Json, f: string) => Object.keys(o.properties).filter((k) => k !== f);
+    // Apart from the source field (and a doc's optional live_draft), both carry the same properties.
+    const rest = (o: Json, f: string) =>
+      Object.keys(o.properties).filter((k) => k !== f && k !== "live_draft");
     expect(rest(page, "html")).toEqual(rest(d, "content"));
+    expect(page.properties.live_draft).toBeUndefined();
+    expect(d.properties.live_draft.oneOf).toEqual([
+      { $ref: "#/components/schemas/LiveDraftMeta" },
+      { type: "null" },
+    ]);
+    expect(d.required).not.toContain("live_draft");
     expect([...page.required].filter((k: string) => k !== "html")).toEqual(
       [...d.required].filter((k: string) => k !== "content"),
     );
+  });
+
+  it("documents the four live editing operations as session-only (never bearer, never MCP)", () => {
+    const live = [
+      ["/artifacts/{ref}/live", "get"],
+      ["/artifacts/{ref}/live/draft", "get"],
+      ["/artifacts/{ref}/live/checkpoint", "post"],
+      ["/artifacts/{ref}/live/draft", "delete"],
+    ] as const;
+    for (const [path, method] of live) {
+      const op = doc.paths[path]?.[method];
+      expect(op, `${method} ${path}`).toBeDefined();
+      expect(op.tags).toEqual(["Live editing"]);
+      expect(JSON.stringify(op.security)).not.toContain("bearerAuth");
+      expect(op["x-mcp-tool"]).toBeUndefined();
+    }
+    expect(
+      doc.paths["/artifacts/{ref}/live/checkpoint"].post.requestBody.content["application/json"]
+        .schema,
+    ).toEqual({
+      $ref: "#/components/schemas/LiveCheckpointInput",
+    });
+    expect(doc.components.schemas.PublishWarning.properties.code.enum).toContain("live_draft");
   });
 
   it("resolves every $ref", () => {
@@ -272,7 +302,7 @@ describe("OpenAPI document", () => {
     expect(ok.required).not.toContain("data");
     const data = doc.components.schemas.ViewGateData;
     expect(Object.keys(data.properties).sort()).toEqual(
-      ["available", "can_write", "capabilities", "email", "identified"].sort(),
+      ["available", "can_write", "capabilities", "email", "identified", "room_email"].sort(),
     );
     expect(data.required.sort()).toEqual(
       ["available", "can_write", "capabilities", "identified"].sort(),

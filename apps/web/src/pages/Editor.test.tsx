@@ -318,6 +318,39 @@ describe("Editor page", () => {
       expect(puts[0]?.body).not.toHaveProperty("html");
     });
 
+    it("says when people left unsaved page edits, and stays quiet otherwise (#36)", async () => {
+      docApi(() => json({ id: "art1", version: 4, type: "doc" }), {
+        "/api/v1/artifacts/art1/live": () =>
+          json({
+            mode: "room",
+            draft: {
+              base_version: 3,
+              dirty: true,
+              conflict_version: null,
+              updated_at: "2026-11-18T10:00:00Z",
+              updated_by_email: "bo@example.org",
+            },
+            editors_online: 1,
+            idle_checkpoint_s: 120,
+            auto_checkpoint_min_s: 600,
+          }),
+      });
+      let Editor = await loadPage();
+      render(<Editor params={{ slug: "demo" }} />);
+      await editorBox();
+      const note = screen.getByRole("note");
+      expect(note.textContent).toContain("There are unsaved page edits based on v3.");
+      expect(note.textContent).toContain("merged onto it, or reviewed if they overlap");
+      cleanup();
+
+      // No live route (on-page editing off, or an older server): no notice, the editor works.
+      docApi(() => json({ id: "art1", version: 4, type: "doc" }));
+      Editor = await loadPage();
+      render(<Editor params={{ slug: "demo" }} />);
+      await editorBox();
+      expect(screen.queryByText(/unsaved page edits/)).toBeNull();
+    });
+
     it("uses the path fallback base for the preview's renderer URLs", async () => {
       docApi(() => json({}));
       vi.stubGlobal(
