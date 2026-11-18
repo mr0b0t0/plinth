@@ -127,7 +127,8 @@ npx @mr0b0t0/plinth publish dist --id my-report-k3x9   # the next version of tha
 - **Checks.** It reads the new version back and compares every file's SHA-256 with the folder,
   then prints the link, how many files were written and reused, and any warnings (for example a
   file the page refers to that is not in the folder). `--json` prints `id`, `slug`, `version`,
-  `url`, `content_url`, `stored`, `warnings` and `verified` for scripts and agents.
+  `url`, `content_url`, `stored`, `warnings` and `verified` for scripts and agents (and
+  `category` when you passed `--category`).
 - **A lost answer.** If the connection drops, or a proxy answers instead of Plinth, after the
   whole folder was sent, the command does not send it again: it asks the upload (or, for an inline
   update, reads the artifact, and again a moment later) whether it was published, and prints that
@@ -142,6 +143,11 @@ npx @mr0b0t0/plinth publish dist --id my-report-k3x9   # the next version of tha
   folder, publishes when nothing landed, and exits 3 when someone else published first. An upload
   ended by a takedown of the artifact exits 1 and says so; nothing was published. A connection lost
   while the folder was still being sent never publishes.
+- **Category.** `--category C` files the artifact under a project on your dashboard, usually the
+  repo's name; reuse a name you already have. The server matches case, spaces, `-` and `_` onto
+  your existing spelling and prints the name it stored (`--json` adds `category`). Up to 60
+  characters. With `--id` it changes the category too, and only the artifact's owner may pass it.
+  The command never guesses it (from git or anything else); only you or your agent set it.
 - **Build settings.** Use relative URLs (Vite: `base: './'`).
 
 Which instance: `--url`, else the instance `--name` and `--home` pick, else `PLINTH_URL`, else
@@ -172,7 +178,7 @@ Client commands (they work with any instance, need no Cloudflare account and no 
 | `plinth login` | Sign in to an instance in the browser (`--no-browser` prints the address) |
 | `plinth logout` | Revoke and forget that sign-in |
 | `plinth whoami` | The account you are signed in as, and on which instance |
-| `plinth publish <dir>` | Publish a build folder; `--id`, `--title`, `--note`, `--base-version`, `--include-maps`, `--dry-run`, `--json` |
+| `plinth publish <dir>` | Publish a build folder; `--id`, `--title`, `--category`, `--note`, `--base-version`, `--include-maps`, `--dry-run`, `--json` |
 | `plinth upload <dir> --to <upload_url>` | Send a folder with a `start_upload` ticket (token in `PLINTH_UPLOAD_TOKEN`) |
 
 Exit codes: 0 done, 1 error, 2 wrong usage, 3 the artifact changed since the version you read.

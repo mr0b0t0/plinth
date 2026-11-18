@@ -403,6 +403,10 @@ or log carries it.
   `?category=`, an empty value meaning no category; hidden under Shared), a category badge on the
   owner's rows and cards, a Rename category dialog (rename, merge or remove) and "Move to
   category…" in the row menu, which opens the Category section of the artifact's Settings.
+- **CLI and skill.** `plinth publish --category C` sets it on a new publish or, for the owner, on
+  an update (`--id`); the CLI never infers it. The agent skill (plugin 0.12.0) tells agents to set
+  it from the repo or project on a new publish, reuse a name from `categories`, and leave it out on
+  updates.
 
 ### Comments and agent mentions
 
@@ -640,7 +644,8 @@ files) and big pages without merging chunks, and an update stores only what chan
   caching.
 - **Publish CLI.** The npm package `@mr0b0t0/plinth` gains client commands that need neither a
   checkout nor wrangler: `plinth login|logout|whoami [--url O]`, `plinth publish <dir> [--id REF]
-  [--title T] [--note N] [--base-version N] [--include-maps] [--dry-run] [--json]` and `plinth
+  [--title T] [--category C] [--note N] [--base-version N] [--include-maps] [--dry-run] [--json]`
+  and `plinth
   upload <dir> --to <upload_url>` (token from `PLINTH_UPLOAD_TOKEN` only). Exit codes: 0 ok, 1
   error, 2 usage, 3 conflict (never retried). With `--id` and `--base-version N`, `publish` exits 0
   without sending in exactly two cases and prints which: the current version is N+1 and its files
@@ -811,7 +816,9 @@ for a single user.
 8. **Hosted public instance.** Public visibility, report and takedown flow, terms and privacy
    pages.
 9. **Later.** Typed outputs: docs done (2026-11-14); sheets and decks later. Push agents with
-   bring-your-own key, team workspaces, paid plans, visual editing, custom domains.
+   bring-your-own key, team workspaces, paid plans, visual editing, custom domains. Tags beside the
+   category, a group-by-category view, personal categories for artifacts shared with you, and the
+   CLI defaulting to the git repo name.
 
 ## Decisions
 

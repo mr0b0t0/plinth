@@ -18,6 +18,15 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   trends), and owners see how often other people opened a page in its Share dialog. Opens are
   kept as a daily number per page, never who opened it; `VIEW_COUNTS=off` turns counting off.
   Apply migration `0010_view_counts.sql` before deploying.
+- **Artifact categories: agents file artifacts under the project they work in; owners filter,
+  move and rename them.** Each artifact can carry one category, usually the repo or client it
+  belongs to. Agents set it when they publish (`category` on `publish_artifact` and
+  `start_upload`, `plinth publish --category`) and reuse the names `list_artifacts` returns; the
+  server matches case, spaces, `-` and `_` onto your existing spelling. The dashboard filters by
+  category, Settings moves an artifact, and the dashboard renames or merges a category. Only you
+  see your categories, never the people you share with. Update the plugin (0.12.0) for the agent
+  rules. Self-hosters: apply migration `0009_categories` before deploying
+  ([deploy checklist](docs/deploy-checklist.md#6-upgrading-and-rolling-back)).
 - **The plugin's Plinth server loads in Codex and GitHub Copilot CLI.** Plugin 0.10.0 put a field
   in its `mcp.json` server entry that the Agent Plugins schema doesn't allow, so Codex and Copilot
   CLI installed the skill but skipped the server (Copilot logs `field "extensions" is not

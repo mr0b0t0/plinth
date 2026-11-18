@@ -380,6 +380,12 @@ config change; to turn thumbnails on, add a Browser Rendering binding to your wr
 older Worker ignores the new columns and the `thumbs/` objects, which a later delete removes with
 the artifact.
 
+Categories add migration `0009_categories`: two nullable columns (`artifacts.category`,
+`upload_tickets.category`) and a partial index. It is additive and needs no backfill or config
+change; apply it before deploying the Worker, as every migration. Rolling the Worker back leaves
+the columns unused: an older Worker ignores them, and the categories reappear when the newer one
+returns.
+
 Plinth 0.4.0 also needs the `enable_request_signal` compatibility flag and an hourly cron
 trigger. Without the flag a bundle whose client disconnects never notices, and its files stay
 behind until the next sweep; without the cron only the small sweep that the next upload starts

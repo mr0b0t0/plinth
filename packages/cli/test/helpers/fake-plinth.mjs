@@ -2,7 +2,8 @@
 // token with refresh rotation, revocation), GET /config, GET /me, artifacts (GET, PUT with reuse by
 // sha256 and base_version conflicts), POST /uploads and the bundle route, which reads the tar with
 // the tests' own reader. It records every request (method, path, User-Agent, Authorization) so the
-// tests can check what the client sent and where.
+// tests can check what the client sent and where. A category given to POST /uploads or PUT is
+// echoed in the result, as the real server echoes the name it stored.
 import { createHash, randomBytes } from "node:crypto";
 import { createServer } from "node:http";
 import { readTar } from "./tar-reader.mjs";
@@ -23,7 +24,7 @@ export async function startFakePlinth(options = {}) {
     tokens: new Map(), // access -> { grant }
     grants: new Map(), // id -> { refresh, previous, revoked, client_id, scope }
     artifacts: new Map(), // id -> { id, slug, type, versions: [Map(path -> {bytes, sha256})] }
-    tickets: new Map(), // id -> { token, mode, artifact_id, base_version, type, title, used }
+    tickets: new Map(), // id -> { token, mode, artifact_id, base_version, type, title, category, used }
     edgeBlock: false,
     redirectApi: false,
     refreshDelayMs: options.refreshDelayMs ?? 0,
@@ -44,6 +45,9 @@ export async function startFakePlinth(options = {}) {
     statusState: null,
     // GET /artifacts/:ref answers 503 text/plain this many more times (Infinity: always).
     artifactReadFail: 0,
+    // The caller is not the owner: an update (PUT or POST /uploads with an id) that carries a
+    // category is refused 403 owner_only, as the real server does, before anything is written.
+    notOwner: false,
     limits: {
       max_html_bytes: 5 * 1024 * 1024,
       max_doc_bytes: 1024 * 1024,
@@ -64,6 +68,13 @@ export async function startFakePlinth(options = {}) {
   };
   const apiError = (res, status, code, message, details) =>
     send(res, status, { error: { code, message, ...(details ? { details } : {}) } });
+  /** The real server's refusal of a category from someone who is not the owner (no stored name). */
+  const ownerOnly = (res) =>
+    apiError(res, 403, "forbidden", "Only the owner sets an artifact's category", {
+      field: "category",
+      reason: "owner_only",
+      next: "Leave category out when you change an artifact you do not own",
+    });
 
   function issue(grantId) {
     const g = state.grants.get(grantId);
@@ -111,7 +122,7 @@ export async function startFakePlinth(options = {}) {
   }
 
   /** Commit `files` (Map path -> bytes) as the next version; returns a PublishResult. */
-  function commit(a, files) {
+  function commit(a, files, category) {
     const prev = a.versions.at(-1);
     const prevHashes = new Set(prev ? [...prev.values()].map((f) => f.sha256) : []);
     const sourcePath = a.type === "doc" ? "content.md" : "index.html";
@@ -145,6 +156,7 @@ export async function startFakePlinth(options = {}) {
         bytes,
         bytes_written: bytesWritten,
       },
+      ...(category !== undefined ? { category } : {}),
     };
   }
 
@@ -353,7 +365,7 @@ export async function startFakePlinth(options = {}) {
           }
         }
         t.used = true;
-        const result = commit(a, files);
+        const result = commit(a, files, t.category);
         t.url = result.url;
         t.result_id = result.id;
         t.version = result.version;
@@ -377,6 +389,10 @@ export async function startFakePlinth(options = {}) {
           if (!a) return apiError(res, 404, "not_found", "Not found");
           if (input.base_version === undefined)
             return apiError(res, 400, "invalid_input", "base_version is required");
+          if (input.category !== undefined && state.notOwner) {
+            state.lastUploadInput = input;
+            return ownerOnly(res);
+          }
           if (input.base_version !== a.versions.length)
             return apiError(res, 409, "conflict", "stale", { current_version: a.versions.length });
           state.tickets.set(id, {
@@ -385,6 +401,7 @@ export async function startFakePlinth(options = {}) {
             artifact_id: a.id,
             base_version: input.base_version,
             type: a.type,
+            category: input.category,
           });
         } else {
           state.tickets.set(id, {
@@ -392,6 +409,7 @@ export async function startFakePlinth(options = {}) {
             mode: "publish",
             type: input.type ?? "html",
             title: input.title,
+            category: input.category,
             reserved: rid(20),
           });
         }
@@ -427,6 +445,7 @@ export async function startFakePlinth(options = {}) {
         if (req.method === "PUT") {
           const input = JSON.parse((await body(req)).toString());
           state.lastPut = input;
+          if (input.category !== undefined && state.notOwner) return ownerOnly(res);
           if (state.bumpBeforePut) {
             const bump = state.bumpBeforePut;
             state.bumpBeforePut = null;
@@ -465,11 +484,11 @@ export async function startFakePlinth(options = {}) {
             // The connection breaks first; the server finishes the PUT a moment later.
             drop(res);
             await new Promise((r) => setTimeout(r, 300));
-            commit(a, files);
+            commit(a, files, input.category);
             state.putCommits = (state.putCommits ?? 0) + 1;
             return;
           }
-          const committed = commit(a, files);
+          const committed = commit(a, files, input.category);
           state.putCommits = (state.putCommits ?? 0) + 1;
           if (dropping === "after") {
             // armReadFail: the network stays down, so every later GET of an artifact fails too.

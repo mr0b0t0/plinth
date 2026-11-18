@@ -22,7 +22,7 @@ const SPEC = {
   logout: { values: COMMON, flags: [], positionals: 0 },
   whoami: { values: COMMON, flags: [], positionals: 0 },
   publish: {
-    values: [...COMMON, "id", "title", "note", "base-version"],
+    values: [...COMMON, "id", "title", "category", "note", "base-version"],
     flags: ["include-maps", "dry-run", "json"],
     positionals: 1,
   },
@@ -36,10 +36,11 @@ export const clientUsage = (
   ${p} login  [--url O] [--no-browser]     sign in (opens the browser once)
   ${p} logout [--url O]                    revoke and forget the sign-in
   ${p} whoami [--url O]                    who you are signed in as
-  ${p} publish <dir> [--id REF] [--title T] [--note N] [--base-version N]
+  ${p} publish <dir> [--id REF] [--title T] [--category C] [--note N] [--base-version N]
                  [--include-maps] [--dry-run] [--json] [--url O]
       Publish a build folder (the one with index.html at its top) as a new artifact, or as the
-      next version of --id. Unchanged files are reused, not sent again.
+      next version of --id. Unchanged files are reused, not sent again. --category files it
+      under a project on your dashboard (reuse a name you already have; owner only on --id).
   ${p} upload <dir> --to <upload_url>      send a folder with a start_upload ticket; the token
                                              comes from PLINTH_UPLOAD_TOKEN only
 Instance: --url, else --name/--home, else PLINTH_URL, else the single local instance, else hosted.
