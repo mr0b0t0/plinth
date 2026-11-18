@@ -1,7 +1,9 @@
 // Fetch wrapper for /api/v1: JSON in and out, CSRF header on writes, typed errors.
 import {
+  type AdminStats,
   API,
   API_PREFIX,
+  type ArtifactViews,
   COOKIES,
   CSRF_HEADER,
   type DataSummary,
@@ -100,4 +102,16 @@ export function getDataSummary(ref: string, signal?: AbortSignal): Promise<DataS
 /** Delete every shared data document of an artifact (signed-in owner; CSRF header). */
 export function deleteAllData(ref: string): Promise<{ deleted: number }> {
   return api<{ deleted: number }>(route(API.data, { ref }), { method: "DELETE" });
+}
+
+// ---------- open counts and admin stats ----------
+
+/** How often other people opened an artifact (the owner only). */
+export function getArtifactViews(ref: string, signal?: AbortSignal): Promise<ArtifactViews> {
+  return api<ArtifactViews>(route(API.artifactViews, { ref }), { signal });
+}
+
+/** Instance-wide aggregates over the last `days` UTC days (instance admins only; 404 otherwise). */
+export function getAdminStats(days: 7 | 30 | 90, signal?: AbortSignal): Promise<AdminStats> {
+  return api<AdminStats>(`${API.adminStats}?days=${days}`, { signal });
 }

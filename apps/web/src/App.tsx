@@ -22,6 +22,7 @@ const Settings = page(() => import("./pages/Settings.tsx"));
 const Open = page(() => import("./pages/Open.tsx"));
 const Report = page(() => import("./pages/Report.tsx"));
 const AdminReports = page(() => import("./pages/AdminReports.tsx"));
+const AdminStats = page(() => import("./pages/AdminStats.tsx"));
 const Design = page(() => import("./pages/Design.tsx"));
 const Legal = page(() => import("./pages/Legal.tsx"));
 const NotFound = page(() => import("./pages/NotFound.tsx"));
@@ -42,6 +43,7 @@ export const ROUTES: [string, Page][] = [
   [APP_ROUTES.open, Open],
   [APP_ROUTES.report, Report],
   [APP_ROUTES.adminReports, AdminReports],
+  [APP_ROUTES.adminStats, AdminStats],
   [APP_ROUTES.design, Design],
   ["/legal/:doc", Legal],
 ];

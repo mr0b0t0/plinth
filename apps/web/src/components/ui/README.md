@@ -49,7 +49,7 @@ import { PublicShell } from "../components/layout/PublicShell.tsx";
 
 | Component | Use | Key props |
 | --- | --- | --- |
-| `AppShell` | Signed-in pages. 224px sidebar (logo, Artifacts, Connections, Reports for admins, the person's agents, account menu with theme and sign-out; a slide-over below 48rem), a 44px top bar per page (breadcrumb title, page actions), skip link, `<main id="main">`, toaster. Reads the user only through `useSession()`. | `crumbs?`, `title?` (the h1), `trail?`, `actions?`, `onSignOut?`, `userMenuItems?`, `extraNav?`, `width?: "content" \| "full"` |
+| `AppShell` | Signed-in pages. 224px sidebar (logo, Artifacts, Connections, Stats and Reports for admins, the person's agents, account menu with theme and sign-out; a slide-over below 48rem), a 44px top bar per page (breadcrumb title, page actions), skip link, `<main id="main">`, toaster. Reads the user only through `useSession()`. | `crumbs?`, `title?` (the h1), `trail?`, `actions?`, `onSignOut?`, `userMenuItems?`, `extraNav?`, `width?: "content" \| "full"` |
 | `PublicShell` | Signed-out pages: sign-in, consent, viewer gates, legal, home. | `width?: "narrow" \| "reading" \| "content"`, `centered?`, `headerEnd?` |
 
 Do not add your own `<main>`; the shells render it. In AppShell pages pass `title` (it renders the

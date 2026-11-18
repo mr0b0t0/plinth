@@ -1,9 +1,16 @@
 // Share: the artifact's app link to copy, what the link opens for whoever gets it, and (for the
-// owner) the way to the sharing settings and the page's shared data (how much, and delete all).
+// owner) the way to the sharing settings, the page's shared data (how much, and delete all) and how
+// often other people opened it.
 import { CopyIcon, GearSixIcon, TrashIcon, WarningCircleIcon } from "@phosphor-icons/react";
-import { APP_ROUTES, type DataSummary, route, type Visibility } from "@plinth/shared";
+import {
+  APP_ROUTES,
+  type ArtifactViews,
+  type DataSummary,
+  route,
+  type Visibility,
+} from "@plinth/shared";
 import { useEffect, useRef, useState } from "react";
-import { deleteAllData, getDataSummary } from "../../lib/api.ts";
+import { deleteAllData, getArtifactViews, getDataSummary } from "../../lib/api.ts";
 import { formatBytes } from "../history/format.ts";
 import {
   Button,
@@ -41,6 +48,7 @@ export function ShareDialog({ open, onClose, link, slug, visibility, isOwner }: 
   const inputRef = useRef<HTMLInputElement>(null);
   const meta = VISIBILITY_META[visibility];
   const data = useSharedData(open && isOwner, slug);
+  const views = useArtifactViews(open && isOwner, slug);
   const [confirming, setConfirming] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
@@ -113,6 +121,7 @@ export function ShareDialog({ open, onClose, link, slug, visibility, isOwner }: 
             mono
             onFocus={(e) => e.currentTarget.select()}
           />
+          {isOwner && <ViewsRow state={views} />}
           {isOwner && (
             <SharedDataRow
               state={data}
@@ -214,5 +223,94 @@ function SharedDataRow({
         </p>
       )}
     </div>
+  );
+}
+
+// ---------- open counts (owner only) ----------
+
+interface ViewsState {
+  status: "idle" | "loading" | "ok" | "error";
+  views: ArtifactViews | null;
+}
+
+/** The artifact's open counts, read while `active` (the owner's open dialog). */
+export function useArtifactViews(active: boolean, ref: string): ViewsState {
+  const [state, setState] = useState<ViewsState>({ status: "idle", views: null });
+  useEffect(() => {
+    if (!active) return;
+    const ctrl = new AbortController();
+    setState((s) => ({ ...s, status: "loading" }));
+    getArtifactViews(ref, ctrl.signal)
+      .then((views) => setState({ status: "ok", views }))
+      .catch(() => {
+        if (!ctrl.signal.aborted) setState({ status: "error", views: null });
+      });
+    return () => ctrl.abort();
+  }, [active, ref]);
+  return state;
+}
+
+const times = (n: number) => `${n.toLocaleString("en")} ${n === 1 ? "time" : "times"}`;
+
+/** "Opened 24 times in the last 30 days · 310 in all" (or "No one else has opened it yet."). */
+export function viewsSentence(v: ArtifactViews): string {
+  if (v.total === 0) return "No one else has opened it yet.";
+  return `Opened ${times(v.last_30)} in the last 30 days · ${v.total.toLocaleString("en")} in all`;
+}
+
+/**
+ * How often other people opened the page, with a 30-day sparkline. Nothing while loading or when
+ * the instance does not count opens.
+ */
+function ViewsRow({ state }: { state: ViewsState }) {
+  if (state.status === "error") {
+    return <p className="pl-share-views__error">Could not load how often this page was opened.</p>;
+  }
+  const v = state.views;
+  if (state.status !== "ok" || !v || !v.enabled) return null;
+  return (
+    <div className="pl-share-data">
+      <div className="pl-share-data__row">
+        <p className="pl-share-data__usage" role="status">
+          {viewsSentence(v)}
+        </p>
+        {v.total > 0 && <Sparkline values={v.days.map((d) => d.views)} />}
+      </div>
+      <p className="pl-share-views__help">
+        Counts opens by people other than you, at most once per browser every 12 hours. Days are
+        UTC. Plinth keeps no record of who opened it.
+      </p>
+    </div>
+  );
+}
+
+function Sparkline({ values }: { values: number[] }) {
+  const W = 96;
+  const H = 24;
+  const slot = W / Math.max(1, values.length);
+  const max = Math.max(1, ...values);
+  return (
+    <svg
+      className="pl-sparkline"
+      viewBox={`0 0 ${W} ${H + 1}`}
+      aria-hidden="true"
+      focusable="false"
+    >
+      {values.map((n, i) => {
+        const h = (n / max) * H;
+        return (
+          <rect
+            // biome-ignore lint/suspicious/noArrayIndexKey: one bar per day, positional
+            key={i}
+            className="pl-sparkline__bar"
+            x={i * slot + 0.5}
+            y={H - h}
+            width={Math.max(1, slot - 1)}
+            height={h}
+          />
+        );
+      })}
+      <line className="pl-sparkline__baseline" x1="0" x2={W} y1={H + 0.5} y2={H + 0.5} />
+    </svg>
   );
 }
