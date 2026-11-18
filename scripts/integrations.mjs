@@ -80,7 +80,7 @@ outputs.set(
     ...meta,
     // Codex would otherwise pick up hooks/hooks.json, which is for Claude Code only (the mention
     // watcher answers @claude). An explicit hooks value replaces Codex's default discovery.
-    extensions: { "com.openai": { hooks: [] } },
+    extensions: { "com.openai": { hooks: [], interface: reg.CODEX_INTERFACE } },
   }),
 );
 
@@ -186,6 +186,12 @@ outputs.set(
       },
     ],
   }),
+);
+
+// Codex's plugin icon (CODEX_INTERFACE.composerIcon and .logo). Source: integrations/assets/.
+outputs.set(
+  "integrations/plugin/assets/icon.svg",
+  readFileSync(path.join(root, "integrations/assets/icon.svg"), "utf8"),
 );
 
 // ---------- Claude Code plugin directory build ----------
