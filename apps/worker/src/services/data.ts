@@ -9,6 +9,7 @@
 import {
   type AgentDoc,
   type AgentDocAuthor,
+  type AgentPerson,
   type Capabilities,
   capabilityList,
   DATA_COLLECTION_RE,
@@ -32,7 +33,9 @@ import { base64url, fromBase64url, newId, viewerIdFor } from "../lib/crypto.ts";
 import { ApiError } from "../lib/errors.ts";
 import { hit } from "../lib/ratelimit.ts";
 import { nowIso } from "../lib/time.ts";
-import { canModifyDoc, type PageClaim, pageDataAccess } from "../policy.ts";
+import { canModifyDoc, type PageClaim, pageDataAccess, pagePeopleAccess } from "../policy.ts";
+import { type Person, peopleWithAccess } from "./people.ts";
+import { namesByEmail } from "./users.ts";
 
 /** Who is writing, as the server knows it. Stamps come only from here, never from the request. */
 export interface DataWriter {
@@ -139,14 +142,26 @@ export async function session(
 ): Promise<DataSession> {
   const reason = unavailableReason(config, target.caps);
   if (reason) return { available: false, reason };
-  const access = pageDataAccess(claim, target.caps, sharedDataActive(config));
+  const active = sharedDataActive(config);
+  const access = pageDataAccess(claim, target.caps, active);
   const usage = await usageOf(d1, target.id);
+  // The name is read only when the page may see who this is (a link viewer triggers no read).
+  const name =
+    claim && access.seeIdentity
+      ? ((await namesByEmail(d1, [claim.email])).get(claim.email) ?? null)
+      : null;
   return {
     available: true,
     viewer: claim
-      ? { id: claim.viewerId, email: access.seeIdentity ? claim.email : null, role: claim.role }
+      ? {
+          id: claim.viewerId,
+          email: access.seeIdentity ? claim.email : null,
+          name,
+          role: claim.role,
+        }
       : null,
     can_write: access.write,
+    can_list_people: pagePeopleAccess(claim, target.caps, active).list,
     capabilities: capabilityList(target.caps),
     shared: target.caps?.shared ?? [],
     limits: limitsOf(config),
@@ -170,13 +185,20 @@ export async function summary(d1: D1Database, config: Config, target: DataTarget
     )
     .bind(target.id)
     .all<{ name: string; docs: number; bytes: number; updated_at: string }>();
+  const people = await peopleWithAccess(d1, config.tokenSigningKey, target.id);
   return {
     capabilities: capabilityList(target.caps),
     available: unavailableReason(config, target.caps) === null,
     usage: { docs: usage.docs, bytes: usage.bytes },
     limits: limitsOf(config),
     collections: results,
+    people: people.map(toAgentPerson),
   };
+}
+
+/** A person with access as owners' and editors' agents see them. */
+export function toAgentPerson(p: Person): AgentPerson {
+  return { viewer_id: p.id, email: p.email, name: p.name, role: p.role };
 }
 
 function checkCollection(collection: string): void {
@@ -276,14 +298,53 @@ function parseData(row: StoredDoc): Record<string, unknown> {
   return JSON.parse(row.data) as Record<string, unknown>;
 }
 
-const pageAuthor = (email: string | null, role: EffectiveRole | null, via: DataVia) =>
-  ({ email, role, via }) satisfies PageDocAuthor;
+/** Display names by email, from namesByEmail. A missing email reads as no name. */
+export type NameMap = ReadonlyMap<string, string | null>;
+
+const nameIn = (names: NameMap, email: string | null) =>
+  email ? (names.get(email) ?? null) : null;
+
+const pageAuthor = (
+  email: string | null,
+  role: EffectiveRole | null,
+  via: DataVia,
+  names: NameMap,
+) => ({ email, name: nameIn(names, email), role, via }) satisfies PageDocAuthor;
+
+/** The distinct writer emails of these documents (created and updated). */
+export function authorEmails(rows: readonly StoredDoc[]): Set<string> {
+  const out = new Set<string>();
+  for (const r of rows) {
+    if (r.created_by_email) out.add(r.created_by_email);
+    if (r.updated_by_email) out.add(r.updated_by_email);
+  }
+  return out;
+}
+
+/**
+ * The names a page reader may see on these documents: read only when it sees authors at all
+ * (`seeIdentity`), so anonymous readers and pages without `viewer` never cause a users read.
+ */
+export async function pageNames(
+  d1: D1Database,
+  rows: readonly StoredDoc[],
+  seeIdentity: boolean,
+): Promise<NameMap> {
+  if (!seeIdentity || rows.length === 0) return new Map();
+  return namesByEmail(d1, authorEmails(rows));
+}
 
 /**
  * A document as the page sees it. `mine` is the reader's own (false for anonymous readers);
- * authors only when `seeIdentity` (pageDataAccess: identified reader, page declares `viewer`).
+ * authors only when `seeIdentity` (pageDataAccess: identified reader, page declares `viewer`),
+ * with their display names from `names` (pageNames).
  */
-export function toPageDoc(row: StoredDoc, reader: PageClaim | null, seeIdentity: boolean): PageDoc {
+export function toPageDoc(
+  row: StoredDoc,
+  reader: PageClaim | null,
+  seeIdentity: boolean,
+  names: NameMap = new Map(),
+): PageDoc {
   const doc: PageDoc = {
     id: row.doc_id,
     data: parseData(row),
@@ -294,20 +355,22 @@ export function toPageDoc(row: StoredDoc, reader: PageClaim | null, seeIdentity:
     updated_at: row.updated_at,
   };
   if (seeIdentity && reader) {
-    doc.created_by = pageAuthor(row.created_by_email, row.created_by_role, row.created_via);
-    doc.updated_by = pageAuthor(row.updated_by_email, row.updated_by_role, row.updated_via);
+    doc.created_by = pageAuthor(row.created_by_email, row.created_by_role, row.created_via, names);
+    doc.updated_by = pageAuthor(row.updated_by_email, row.updated_by_role, row.updated_via, names);
   }
   return doc;
 }
 
 /**
  * A document as owners' and editors' agents see it, with authors' emails and per-artifact viewer
- * ids. Untrusted input for agents. `cache` memoizes viewer ids across a page of documents.
+ * ids and display names (`names`, from namesByEmail). Untrusted input for agents. `cache` memoizes
+ * viewer ids across a page of documents.
  */
 export async function toAgentDoc(
   secret: string,
   row: StoredDoc,
   cache: Map<string, string> = new Map(),
+  names: NameMap = new Map(),
 ): Promise<AgentDoc> {
   const idOf = async (email: string | null) => {
     if (!email) return null;
@@ -325,6 +388,7 @@ export async function toAgentDoc(
     label: string | null,
   ): Promise<AgentDocAuthor> => ({
     email,
+    name: nameIn(names, email),
     role,
     via,
     connection_label: label,

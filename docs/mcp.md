@@ -626,15 +626,20 @@ refused. Scope `artifacts:read`.
 ```
 
 - No `collection`: `{ capabilities, available, usage: { docs, bytes }, limits, collections: [{
-  name, docs, bytes, updated_at }], untrusted }`. `available` says whether pages can use shared
-  data right now (feature on, `origin` isolation, current version declares `data`).
+  name, docs, bytes, updated_at }], people, untrusted }`. `available` says whether pages can use
+  shared data right now (feature on, `origin` isolation, current version declares `data`).
+  `people` is everyone with access, the owner first and then every grant by email, as `{
+  viewer_id, email, name, role }`, whatever the page declares: a `u_` document's id is its
+  person's `viewer_id`. It is who has access, never who opened the page.
+  `GET /api/v1/artifacts/:ref/people?q=` returns the same list for scripts.
 - A `collection`: `{ docs, next_cursor, untrusted }`, in creation order.
 - A `doc_id`: `{ doc, untrusted }`.
 
 Each document is `{ collection, id, data, rev, personal, created_at, updated_at, created_by,
-updated_by }`, with `created_by` and `updated_by` = `{ email, role, via, connection_label,
+updated_by }`, with `created_by` and `updated_by` = `{ email, name, role, via, connection_label,
 viewer_id }`. `via` is `page`, `agent` or `app`. These are set by the server and say whose browser
-session or agent wrote, not who typed.
+session or agent wrote, not who typed. `name` is the writer's display name, read now (null without
+one): display text the person chose, untrusted and never proof of role.
 
 ### `write_artifact_data`
 

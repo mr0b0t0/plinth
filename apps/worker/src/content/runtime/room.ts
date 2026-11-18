@@ -75,7 +75,13 @@ export const ROOM_FRAGMENT: RuntimeFragment = {
         : {
             available: true,
             reason: null,
-            you: { id: y.id, viewer: y.viewer, role: y.role, email: y.email || null },
+            you: {
+              id: y.id,
+              viewer: y.viewer,
+              role: y.role,
+              email: y.email || null,
+              name: typeof y.name === "string" ? y.name : null,
+            },
             canEmit: canEmit,
           },
     );
@@ -284,7 +290,10 @@ export const ROOM_FRAGMENT: RuntimeFragment = {
   function peerOut(p) {
     var out = { id: String(p.id), viewer: String(p.viewer), you: !!rm.you && p.id === rm.you.id };
     if (typeof p.role === "string") out.role = p.role;
-    if (typeof p.email === "string") out.email = p.email;
+    if (typeof p.email === "string") {
+      out.email = p.email;
+      out.name = typeof p.name === "string" ? p.name : null;
+    }
     return out;
   }
   function notifyPeers(r) {

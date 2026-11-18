@@ -231,6 +231,8 @@ export interface GrantInfo {
   email: string;
   role: Role;
   created_at: string;
+  /** The display name of the account with this email, if it has one (shown to the owner). */
+  name: string | null;
 }
 
 export interface SharingSettings {
@@ -382,6 +384,11 @@ export type ViewGate =
        * editing is on under origin isolation. Absent otherwise.
        */
       live?: ViewGateLive;
+      /**
+       * Who the page shows this viewer as, beyond the email `data` names, and whether it lists
+       * the people it is shared with. Absent when there is nothing to tell.
+       */
+      people?: ViewGatePeople;
     }
   | { status: "password_required"; artifact: ViewArtifactStub }
   | { status: "email_required"; artifact: ViewArtifactStub }
@@ -447,6 +454,17 @@ export interface ViewGateData {
    * declares `room` and `viewer`, rooms are active and the viewer is identified.
    */
   room_email?: string;
+}
+
+/** What the viewer is told about names and the people list (docs/spec.md "Who is viewing"). */
+export interface ViewGatePeople {
+  /**
+   * The viewer's display name, which the page sees and shows wherever it sees their email (the
+   * `email` or `room_email` of the data block). Absent without a name.
+   */
+  name?: string;
+  /** The page declares `people`: its owner and editors can list everyone it is shared with. */
+  list?: true;
 }
 
 export interface ViewArtifactStub {

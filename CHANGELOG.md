@@ -10,6 +10,14 @@ Add a line under **Unreleased** in the pull request that makes a change people w
 
 ## Unreleased
 
+- **Who is viewing: names and the people list.** Set your name from the account menu ("Your
+  name…"); pages that show who is viewing now show it beside your email, on `plinth.viewer`, on
+  the entries you write and in live rooms. A page that declares `data viewer people` lets its
+  owner and editors list everyone it is shared with (`plinth.people.list()`, with search), and the
+  line under the bar tells every invited viewer. Agents see the same list and authors' names in
+  `list_artifact_data`, `GET /api/v1/artifacts/:ref/people` mirrors it, and the owner's sharing
+  settings show the name behind each address. Names are display text: no `@`, no invisible
+  characters, never a role.
 - **The Claude Code plugin remembers your instance.** It asks which Plinth instance to use when you
   enable it (the hosted one by default), keeps the answer, and its mention watcher follows it, so a
   self-hosted or local instance no longer needs `PLINTH_URL` exported every time Claude Code starts.

@@ -14,6 +14,7 @@ import {
   SHA256_RE,
   VISIBILITIES,
 } from "./constants.ts";
+import { displayNameProblem, normalizeDisplayName } from "./displayName.ts";
 
 /** Artifact ids are DNS labels: lowercase letters and digits, 20 characters. */
 export const ARTIFACT_ID_RE = /^[a-z0-9]{20}$/;
@@ -246,12 +247,16 @@ export const verifyLoginCodeInput = z.object({
 export const verifyMagicLinkInput = z.object({ token: z.string().min(10).max(200) });
 export const updateProfileInput = z.object({
   // No "@": a display name must not look like an email address (or an agent mention) to agents
-  // reading comment authors.
+  // reading comment authors. No control, bidi or zero-width characters either (displayName.ts);
+  // the check is a refinement, so the JSON Schema stays a plain length-limited string.
   name: z
     .string()
     .trim()
-    .max(100)
-    .refine((n) => !n.includes("@"), "A name cannot contain @"),
+    .max(LIMITS.maxDisplayNameLength)
+    .superRefine((n, ctx) => {
+      const problem = displayNameProblem(normalizeDisplayName(n));
+      if (problem) ctx.addIssue({ code: "custom", message: problem });
+    }),
 });
 
 export const createTokenInput = z.object({

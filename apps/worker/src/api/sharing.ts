@@ -8,7 +8,7 @@ import { nowIso } from "../lib/time.ts";
 import { canMakePublic } from "../policy.ts";
 import { bumpAccessEpoch, requireArtifact } from "../services/artifacts.ts";
 import type { Ctx } from "../services/context.ts";
-import { getUserById } from "../services/users.ts";
+import { getUserById, namesByEmail } from "../services/users.ts";
 import { type AppEnv, parseBody, serviceCtx } from "./context.ts";
 
 export const sharingApi = new Hono<AppEnv>();
@@ -21,10 +21,20 @@ async function settings(ctx: Ctx, a: ArtifactRow): Promise<SharingSettings> {
     .orderBy(asc(accessGrants.email))
     .all();
   const owner = await getUserById(ctx.db, a.ownerId);
+  // The owner sees who is behind each address, read live as pages see it.
+  const names = await namesByEmail(
+    ctx.env.DB,
+    grants.map((g) => g.email),
+  );
   return {
     visibility: a.visibility,
     has_password: !!a.passwordHash,
-    grants: grants.map((g) => ({ email: g.email, role: g.role, created_at: g.createdAt })),
+    grants: grants.map((g) => ({
+      email: g.email,
+      role: g.role,
+      created_at: g.createdAt,
+      name: names.get(g.email) ?? null,
+    })),
     public_allowed:
       !!owner &&
       canMakePublic({

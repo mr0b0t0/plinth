@@ -294,6 +294,7 @@ describe("room upgrade: the checks, in order", () => {
         viewer: await viewerIdFor(SECRET, id, commenter.email),
         role: "commenter",
         email: commenter.email,
+        name: null,
       },
       limits: { max_message_bytes: 8192, messages_per_second: 20, presence_bytes: 400 },
     });
@@ -373,6 +374,7 @@ describe("GET /__plinth/api/v1/room", () => {
         viewer: await viewerIdFor(SECRET, id, ownerP.email),
         role: "owner",
         email: ownerP.email,
+        name: null,
       },
       can_emit: "all",
       open_topics: ["cursor", "note.move"],

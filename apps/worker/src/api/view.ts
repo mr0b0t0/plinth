@@ -9,6 +9,7 @@ import {
   type ViewGate,
   type ViewGateData,
   type ViewGateLive,
+  type ViewGatePeople,
   viewerCodeInput,
   viewerEmailInput,
   viewerPasswordInput,
@@ -34,6 +35,7 @@ import { decideFor, findArtifact, grantFor, versionCapabilities } from "../servi
 import type { Ctx } from "../services/context.ts";
 import { readLiveDraftInfo } from "../services/live.ts";
 import { sessionCookie } from "../services/sessions.ts";
+import { namesByEmail } from "../services/users.ts";
 import { requestViewerCode, verifyViewerCode } from "../services/viewers.ts";
 import { countsAsView } from "../services/views.ts";
 import {
@@ -157,6 +159,10 @@ export const GATE_PARTS: readonly GatePart[] = [
     const live = await gateLive(ctx, a, d, opts);
     return live ? { live } : undefined;
   },
+  async ({ ctx, a, identity }) => {
+    const people = await gatePeople(ctx, a, identity);
+    return people ? { people } : undefined;
+  },
 ];
 
 /**
@@ -252,6 +258,37 @@ async function gateData(
     ...(claim && caps?.viewer && caps.data ? { email: claim.email } : {}),
     ...(roomEmail ? { room_email: roomEmail } : {}),
   };
+}
+
+/**
+ * What the live viewer tells an identified viewer about names and the people list (docs/spec.md
+ * "Who is viewing"): the display name the page sees beside their email (exactly where the data
+ * block names that email: `email` with shared data, `room_email` in a live room), and whether the
+ * page lets its owner and editors list everyone it is shared with, the viewer's own address
+ * included. Link viewers get nothing, and cause no read.
+ */
+async function gatePeople(
+  ctx: Ctx,
+  a: ArtifactRow,
+  identity: ViewerIdentity | undefined,
+): Promise<ViewGatePeople | undefined> {
+  if (!identity) return undefined;
+  const row = await ctx.db
+    .select({ capabilities: versions.capabilities })
+    .from(versions)
+    .where(and(eq(versions.artifactId, a.id), eq(versions.number, a.currentVersion)))
+    .get();
+  const caps = versionCapabilities(row);
+  if (caps?.viewer !== true) return undefined;
+  const data = sharedDataActive(ctx.config) && caps.data;
+  const room = caps.room && a.type === "html" && roomsActive(ctx.config, ctx.env);
+  if (!data && !room) return undefined;
+  const name = (await namesByEmail(ctx.env.DB, [identity.email])).get(identity.email) ?? null;
+  const out: ViewGatePeople = {
+    ...(name ? { name } : {}),
+    ...(data && caps.people ? { list: true as const } : {}),
+  };
+  return out.name || out.list ? out : undefined;
 }
 
 function gateOptions(q: (k: string) => string | undefined): GateOptions {

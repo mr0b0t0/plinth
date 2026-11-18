@@ -62,7 +62,9 @@ export type ArtifactAction =
    * Read, save or discard a doc's live page draft (#36): an owner or editor who is signed in.
    * Agents never (they push versions), and a viewer confirmed by code must sign in first.
    */
-  | "live_edit";
+  | "live_edit"
+  /** List everyone with access (owner and grants, with names): owners and editors. */
+  | "people";
 
 export interface ArtifactFacts {
   ownerId: string;
@@ -113,6 +115,7 @@ const ACTION_SCOPES: Record<ArtifactAction, Scope> = {
   data_clear: "artifacts:write",
   views: "artifacts:read",
   live_edit: "artifacts:write",
+  people: "artifacts:read",
 };
 
 export function principalEmail(p: Principal): string | null {
@@ -205,6 +208,10 @@ export function decide(
         return deny(p.kind === "anonymous" ? "login_required" : "forbidden", role);
       if (p.kind === "user") return { allow: true, role };
       return deny(p.kind === "viewer" ? "account_required" : "forbidden", role);
+    case "people":
+      return role === "owner" || role === "editor"
+        ? { allow: true, role }
+        : deny(p.kind === "anonymous" ? "login_required" : "forbidden", role);
   }
 }
 
@@ -401,4 +408,24 @@ export function canMakePublic(opts: {
 /** Admin pages (reports, takedown). */
 export function isAdmin(p: Principal): boolean {
   return p.kind === "user" && p.isAdmin;
+}
+
+// ---------- who is viewing: the people list on the page ----------
+
+/**
+ * May this page reader list the artifact's people (/__plinth/api/v1/people)? Owners and editors
+ * with an identity claim, on a page whose current version declares `data viewer people`, while
+ * shared data is active (`active`: sharedDataActive(config)). Commenters, viewers and anonymous
+ * link viewers never: the list holds every grant holder's email. The role comes from the claim,
+ * sealed at the current access epoch, so a demoted editor's pass stops working at once.
+ */
+export function pagePeopleAccess(
+  claim: PageClaim | null,
+  caps: Capabilities | null,
+  active: boolean,
+): { list: boolean } {
+  const editor = claim?.role === "owner" || claim?.role === "editor";
+  return {
+    list: active && editor && caps?.data === true && caps.viewer && caps.people,
+  };
 }

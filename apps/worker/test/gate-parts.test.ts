@@ -27,8 +27,8 @@ const ARTIFACT_KEYS = [
 ];
 
 describe("gate parts", () => {
-  it("runs the data part, then the live part", () => {
-    expect(GATE_PARTS.length).toBe(2);
+  it("runs the data part, the live part, then the people part", () => {
+    expect(GATE_PARTS.length).toBe(3);
   });
 
   it("a page that declares nothing: only the fields every gate has", async () => {
