@@ -4,7 +4,7 @@
 // whose current or previous version declares `room`), so ordinary artifacts never instantiate one.
 // Failures are logged with the operation only, never content.
 import { type Capabilities, TYPE_REGISTRY } from "@plinth/shared";
-import { type Bindings, type Config, roomsActive } from "../config.ts";
+import { type Bindings, type Config, liveEditMode, roomsActive } from "../config.ts";
 import { versionCapabilities } from "../services/artifacts.ts";
 
 export type RoomOp = "revoke" | "gone" | "redeclare";
@@ -115,6 +115,36 @@ export function notifyVersion(
       } catch {
         console.error("room notify failed: redeclare");
       }
+    })(),
+  );
+}
+
+/**
+ * After version `n` of a doc committed (an agent, the source editor, a restore or a checkpoint):
+ * its room merges the live draft onto it, or freezes the draft for review, and open pages follow.
+ * `hash` is the version's content.md sha256, which lets the room recognize its own checkpoint.
+ * Only while on-page editing runs with rooms; a draft left from before is rebased when it loads.
+ */
+export function notifyDocVersion(
+  ctx: NotifyCtx,
+  artifactId: string,
+  n: number,
+  hash: string | null,
+): void {
+  if (liveEditMode(ctx.config, ctx.env) !== "room") return;
+  const ns = ctx.env.ROOMS;
+  if (!ns) return;
+  ctx.waitUntil(
+    (async () => {
+      for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+          await ns.get(ns.idFromName(artifactId)).docVersion(artifactId, n, hash);
+          return;
+        } catch {
+          // Retried once.
+        }
+      }
+      console.error("room notify failed: version");
     })(),
   );
 }

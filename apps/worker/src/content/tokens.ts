@@ -4,7 +4,8 @@
 // on artifact B; any visibility, password or grant change bumps the epoch and ends old cookies.
 //
 // For identified viewers (owner and grant holders) both tokens may carry `x`, a sealed identity
-// claim {m: email, r: role} bound to the artifact id (shared data and live rooms, docs/spec.md
+// claim {m: email, r: role, a?: 1} bound to the artifact id (`a` when the gate's principal was
+// signed in to an account, not a viewer confirmed by code) (shared data and live rooms, docs/spec.md
 // "Shared data and viewer identity" and "Live rooms"). It is sealed because the enter token
 // travels in a URL, and URLs get logged.
 import { CONTENT_RESERVED_PREFIX, type EffectiveRole, TTL } from "@plinth/shared";
@@ -18,6 +19,8 @@ export const IDENTITY_CLAIM_INFO = "plinth identity claim v1";
 export interface ViewerIdentity {
   email: string;
   role: EffectiveRole;
+  /** Signed in to an account (sealed as `a: 1`); only then may a doc editor edit on the page. */
+  account?: boolean;
 }
 
 export interface EnterPayload {
@@ -137,6 +140,7 @@ export async function issueEnterUrl(
     payload.x = await sealJson(config.tokenSigningKey, IDENTITY_CLAIM_INFO, artifact.id, {
       m: identity.email,
       r: identity.role,
+      ...(identity.account ? { a: 1 } : {}),
     });
   }
   const token = await signToken(config.tokenSigningKey, payload);

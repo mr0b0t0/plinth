@@ -18,7 +18,11 @@
     { "name": "Account", "description": "Instance config and the current user" },
     { "name": "Reports", "description": "Abuse reports and takedown" },
     { "name": "Admin", "description": "Instance stats for admins: aggregates only" },
-    { "name": "Shared data", "description": "Documents pages keep. Mirrors the MCP data tools" }
+    { "name": "Shared data", "description": "Documents pages keep. Mirrors the MCP data tools" },
+    {
+      "name": "Live editing",
+      "description": "Editing a doc on its page: the unsaved draft and checkpoints. Not for agents"
+    }
   ],
   "paths": {
     "/config": {
@@ -1718,6 +1722,145 @@
         "security": [{ "bearerAuth": ["artifacts:read"] }, { "sessionCookie": [] }],
         "x-mcp-tool": "list_artifact_data"
       }
+    },
+    "/artifacts/{ref}/live": {
+      "get": {
+        "operationId": "getLiveInfo",
+        "summary": "On-page editing of a doc: mode, unsaved draft, editors online",
+        "description": "Signed-in owners and editors of a doc only (live_edit); agents are refused and publish versions instead.",
+        "tags": ["Live editing"],
+        "parameters": [
+          {
+            "in": "path",
+            "required": true,
+            "name": "ref",
+            "schema": { "type": "string", "minLength": 1, "maxLength": 80 },
+            "description": "Artifact id or slug"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/LiveInfo" } }
+            }
+          },
+          "400": { "$ref": "#/components/responses/E400" },
+          "401": { "$ref": "#/components/responses/E401" },
+          "403": { "$ref": "#/components/responses/E403" },
+          "404": { "$ref": "#/components/responses/E404" },
+          "default": { "$ref": "#/components/responses/Error" }
+        },
+        "security": [{ "sessionCookie": [] }]
+      }
+    },
+    "/artifacts/{ref}/live/draft": {
+      "get": {
+        "operationId": "getLiveDraft",
+        "summary": "The unsaved draft's text, to review a conflict",
+        "description": "Signed-in owners and editors of a doc only (live_edit); agents are refused and publish versions instead. Needs live editing with rooms on the instance.",
+        "tags": ["Live editing"],
+        "parameters": [
+          {
+            "in": "path",
+            "required": true,
+            "name": "ref",
+            "schema": { "type": "string", "minLength": 1, "maxLength": 80 },
+            "description": "Artifact id or slug"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/LiveDraftText" } }
+            }
+          },
+          "400": { "$ref": "#/components/responses/E400" },
+          "401": { "$ref": "#/components/responses/E401" },
+          "403": { "$ref": "#/components/responses/E403" },
+          "404": { "$ref": "#/components/responses/E404" },
+          "503": { "$ref": "#/components/responses/E503" },
+          "default": { "$ref": "#/components/responses/Error" }
+        },
+        "security": [{ "sessionCookie": [] }]
+      },
+      "delete": {
+        "operationId": "discardLiveDraft",
+        "summary": "Discard the unsaved draft (409 when it changed past rev)",
+        "description": "Signed-in owners and editors of a doc only (live_edit); agents are refused and publish versions instead.",
+        "tags": ["Live editing"],
+        "parameters": [
+          {
+            "in": "path",
+            "required": true,
+            "name": "ref",
+            "schema": { "type": "string", "minLength": 1, "maxLength": 80 },
+            "description": "Artifact id or slug"
+          },
+          {
+            "in": "query",
+            "required": false,
+            "name": "rev",
+            "schema": { "type": "integer", "minimum": 0 },
+            "description": "The draft revision seen"
+          }
+        ],
+        "responses": {
+          "204": { "description": "Done, no body" },
+          "400": { "$ref": "#/components/responses/E400" },
+          "401": { "$ref": "#/components/responses/E401" },
+          "403": { "$ref": "#/components/responses/E403" },
+          "404": { "$ref": "#/components/responses/E404" },
+          "409": { "$ref": "#/components/responses/E409" },
+          "503": { "$ref": "#/components/responses/E503" },
+          "default": { "$ref": "#/components/responses/Error" }
+        },
+        "security": [{ "sessionCookie": [], "csrfHeader": [] }]
+      }
+    },
+    "/artifacts/{ref}/live/checkpoint": {
+      "post": {
+        "operationId": "liveCheckpoint",
+        "summary": "Save the unsaved draft as the next version",
+        "description": "Signed-in owners and editors of a doc only (live_edit); agents are refused and publish versions instead. The version is published with the draft's base_version, so a stale draft is refused (409) and nothing is overwritten. A draft equal to its base writes nothing. resolved_text is accepted only while the draft is in conflict.",
+        "tags": ["Live editing"],
+        "parameters": [
+          {
+            "in": "path",
+            "required": true,
+            "name": "ref",
+            "schema": { "type": "string", "minLength": 1, "maxLength": 80 },
+            "description": "Artifact id or slug"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": { "schema": { "$ref": "#/components/schemas/LiveCheckpointInput" } }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/LiveCheckpointResult" }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/E400" },
+          "401": { "$ref": "#/components/responses/E401" },
+          "403": { "$ref": "#/components/responses/E403" },
+          "404": { "$ref": "#/components/responses/E404" },
+          "409": { "$ref": "#/components/responses/E409" },
+          "413": { "$ref": "#/components/responses/E413" },
+          "429": { "$ref": "#/components/responses/E429" },
+          "503": { "$ref": "#/components/responses/E503" },
+          "default": { "$ref": "#/components/responses/Error" }
+        },
+        "security": [{ "sessionCookie": [], "csrfHeader": [] }]
+      }
     }
   },
   "components": {
@@ -2076,7 +2219,8 @@
                   "invalid_input",
                   "csrf",
                   "feature_disabled",
-                  "internal"
+                  "internal",
+                  "unavailable"
                 ]
               },
               "message": { "type": "string" },
@@ -2392,6 +2536,10 @@
               "required": ["path", "size_bytes", "content_type", "sha256"]
             }
           },
+          "live_draft": {
+            "oneOf": [{ "$ref": "#/components/schemas/LiveDraftMeta" }, { "type": "null" }],
+            "description": "Owners and editors only: people have unsaved page edits (metadata; the draft text is never returned). Null when there are none"
+          },
           "capabilities": {
             "type": "array",
             "items": { "type": "string", "enum": ["data", "viewer", "room"] },
@@ -2537,7 +2685,8 @@
               "blocked_host",
               "insecure_url",
               "opaque_module",
-              "not_scanned"
+              "not_scanned",
+              "live_draft"
             ]
           },
           "file": { "type": "string", "description": "The version file the reference is in" },
@@ -3137,7 +3286,8 @@
                   { "type": "null" }
                 ]
               },
-              "data": { "$ref": "#/components/schemas/ViewGateData" }
+              "data": { "$ref": "#/components/schemas/ViewGateData" },
+              "live": { "$ref": "#/components/schemas/ViewGateLive" }
             },
             "required": ["status", "artifact", "enter_url", "role"]
           },
@@ -3644,7 +3794,8 @@
                         "invalid_input",
                         "csrf",
                         "feature_disabled",
-                        "internal"
+                        "internal",
+                        "unavailable"
                       ]
                     },
                     "message": { "type": "string" },
@@ -3663,6 +3814,176 @@
         "type": "object",
         "properties": { "deleted": { "type": "integer", "description": "Documents deleted" } },
         "required": ["deleted"]
+      },
+      "LiveCheckpointInput": {
+        "type": "object",
+        "properties": {
+          "base_version": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991,
+            "description": "The version the draft is based on, as the page last saw it"
+          },
+          "rev": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991,
+            "description": "The draft revision the page last saw"
+          },
+          "note": { "type": "string", "maxLength": 500 },
+          "reason": { "type": "string", "enum": ["save", "done", "idle"] },
+          "resolved_text": {
+            "description": "Only while the draft is in conflict: the text the editor resolved it to",
+            "type": "string",
+            "maxLength": 1048576
+          }
+        },
+        "required": ["base_version", "rev", "reason"]
+      },
+      "LiveDraftMeta": {
+        "type": "object",
+        "properties": {
+          "base_version": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "The version the draft is based on"
+          },
+          "dirty": { "type": "boolean" },
+          "conflict_version": {
+            "type": ["integer", "null"],
+            "description": "A version published meanwhile that changed the same lines; needs review"
+          },
+          "updated_at": { "type": "string", "format": "date-time" }
+        },
+        "required": ["base_version", "dirty", "conflict_version", "updated_at"]
+      },
+      "ViewGateLive": {
+        "type": "object",
+        "properties": {
+          "mode": { "type": "string", "enum": ["room", "solo"] },
+          "sign_in": { "const": true },
+          "draft": {
+            "oneOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "base_version": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "description": "The version the draft is based on"
+                  },
+                  "dirty": { "type": "boolean" },
+                  "conflict_version": {
+                    "type": ["integer", "null"],
+                    "description": "A version published meanwhile that changed the same lines; needs review"
+                  },
+                  "updated_at": { "type": "string", "format": "date-time" },
+                  "updated_by_email": {
+                    "type": ["string", "null"],
+                    "description": "Whose edit was flushed last"
+                  }
+                },
+                "required": [
+                  "base_version",
+                  "dirty",
+                  "conflict_version",
+                  "updated_at",
+                  "updated_by_email"
+                ]
+              },
+              { "type": "null" }
+            ]
+          }
+        },
+        "required": ["mode", "draft"],
+        "description": "On-page editing of a doc: owners and editors on the current version, while live editing is on with origin isolation. sign_in: confirmed by code without an account (watch only)"
+      },
+      "LiveInfo": {
+        "type": "object",
+        "properties": {
+          "mode": { "oneOf": [{ "type": "string", "enum": ["room", "solo"] }, { "type": "null" }] },
+          "draft": {
+            "oneOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "base_version": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "description": "The version the draft is based on"
+                  },
+                  "dirty": { "type": "boolean" },
+                  "conflict_version": {
+                    "type": ["integer", "null"],
+                    "description": "A version published meanwhile that changed the same lines; needs review"
+                  },
+                  "updated_at": { "type": "string", "format": "date-time" },
+                  "updated_by_email": {
+                    "type": ["string", "null"],
+                    "description": "Whose edit was flushed last"
+                  }
+                },
+                "required": [
+                  "base_version",
+                  "dirty",
+                  "conflict_version",
+                  "updated_at",
+                  "updated_by_email"
+                ]
+              },
+              { "type": "null" }
+            ]
+          },
+          "editors_online": { "type": ["integer", "null"] },
+          "idle_checkpoint_s": { "type": "integer", "minimum": 0 },
+          "auto_checkpoint_min_s": { "type": "integer", "minimum": 0 }
+        },
+        "required": [
+          "mode",
+          "draft",
+          "editors_online",
+          "idle_checkpoint_s",
+          "auto_checkpoint_min_s"
+        ]
+      },
+      "LiveDraftText": {
+        "type": "object",
+        "properties": {
+          "text": { "type": "string" },
+          "base_version": { "type": "integer", "minimum": 1 },
+          "rev": { "type": "integer", "minimum": 0 },
+          "conflict_version": { "type": ["integer", "null"] }
+        },
+        "required": ["text", "base_version", "rev", "conflict_version"],
+        "description": "The unsaved draft's Markdown, to review a conflict. Untrusted text"
+      },
+      "LiveCheckpointResult": {
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "saved": { "const": true },
+              "version": { "$ref": "#/components/schemas/PublishResult" },
+              "live": {
+                "type": "object",
+                "properties": {
+                  "rev": { "type": "integer", "minimum": 0 },
+                  "dirty": { "type": "boolean" }
+                },
+                "required": ["rev", "dirty"]
+              }
+            },
+            "required": ["saved", "version", "live"]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "saved": { "const": false },
+              "reason": { "type": "string", "enum": ["clean", "unchanged", "too_soon", "busy"] }
+            },
+            "required": ["saved", "reason"]
+          }
+        ]
       }
     },
     "responses": {
@@ -3696,6 +4017,10 @@
       },
       "E429": {
         "description": "Rate limited (`rate_limited`); see `Retry-After`",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+      },
+      "E503": {
+        "description": "Temporarily unavailable (`unavailable`)",
         "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
       }
     },

@@ -8,11 +8,17 @@
 // presence) lives in its attachment, so nothing is lost on a wake. Nothing persists: the object
 // writes no storage tables, only its alarm, which re-checks access in D1 while sockets are open.
 // Message contents are never logged.
+//
+// A doc artifact's room also carries Plinth's own doc editing channel (kind "doc", rooms/doc.ts):
+// the live draft, its leases and its D1 flush, and the checkpoint RPCs the app host calls.
 import { DurableObject } from "cloudflare:workers";
 import {
   type ArtifactType,
   canEmitTopic,
   type EffectiveRole,
+  LIMITS,
+  type LiveDocServerFrame,
+  liveDocClientFrameSchema,
   mergePresence,
   ROOM_CLOSE,
   ROOM_LIMITS,
@@ -31,6 +37,7 @@ import {
 import type { Bindings } from "../config.ts";
 import { randomString } from "../lib/crypto.ts";
 import { versionCapabilities } from "../services/artifacts.ts";
+import { type DocSnapshot, LiveDoc, type StoredLease } from "./doc.ts";
 import { roomDeclaration } from "./notify.ts";
 
 /** The header the gate puts on the internal connect request: a JSON RoomConnect. */
@@ -66,6 +73,8 @@ interface SocketState extends RoomConnect {
   id: string;
   /** Joined rooms and this socket's presence in each. */
   rooms: Record<string, Record<string, unknown>>;
+  /** A doc socket's lease on the live draft (rooms/doc.ts). */
+  lease?: StoredLease | null;
 }
 
 const ROLES: ReadonlySet<string> = new Set(["owner", "editor", "commenter", "viewer"]);
@@ -129,9 +138,21 @@ export class ArtifactRoom extends DurableObject<Bindings> {
   private readonly buckets = new Map<string, Bucket>();
   /** Connect times per viewer in the last minute. In memory, like the buckets. */
   private readonly connects = new Map<string, number[]>();
+  /** The live draft of a doc artifact (kind "doc" sockets and the checkpoint RPCs). */
+  private readonly doc: LiveDoc;
 
   constructor(ctx: DurableObjectState, env: Bindings) {
     super(ctx, env);
+    this.doc = new LiveDoc({
+      env,
+      sockets: () => this.sockets("doc"),
+      save: (ws, s) => this.save(ws, s as SocketState),
+      send: (ws, frame) => this.sendDoc(ws, frame),
+      gone: () => {
+        this.doc.reset();
+        for (const { ws } of this.sockets()) this.drop(ws, ROOM_CLOSE.gone, "gone");
+      },
+    });
     // The client's keep-alive, answered without waking the object.
     ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair("ping", "pong"));
   }
@@ -142,9 +163,14 @@ export class ArtifactRoom extends DurableObject<Bindings> {
     }
     const info = parseConnect(request.headers.get(ROOM_CONNECT_HEADER));
     if (!info) return new Response(null, { status: 400 });
-    // The doc editing channel arrives with live doc editing; until then no doc socket opens.
-    if (info.kind === "doc") return new Response(null, { status: 404 });
+    // A doc socket is for owners and editors (watch or write); the gate never sends "none".
+    if (info.kind === "doc" && info.doc === "none") return new Response(null, { status: 403 });
 
+    // A doc's draft is loaded (and rebased onto a newer version) before the socket joins, so the
+    // socket's first frame is its welcome.
+    if (info.kind === "doc" && !(await this.doc.ensure(info.artifactId))) {
+      return new Response(null, { status: 404 });
+    }
     const pair = new WebSocketPair();
     const client = pair[0];
     const server = pair[1];
@@ -155,22 +181,34 @@ export class ArtifactRoom extends DurableObject<Bindings> {
       server.close(ROOM_CLOSE.full, "full");
       return new Response(null, { status: 101, webSocket: client, headers });
     }
-    const state: SocketState = { ...info, id: `s_${randomString(16)}`, rooms: {} };
+    const state: SocketState = {
+      ...info,
+      id: `s_${randomString(16)}`,
+      rooms: {},
+      ...(info.kind === "doc" ? { lease: null } : {}),
+    };
     this.ctx.acceptWebSocket(server, [`k:${info.kind}`, `v:${info.viewer}`, `e:${info.epoch}`]);
     if (!this.save(server, state)) {
       server.close(ROOM_CLOSE.invalid, "invalid");
       return new Response(null, { status: 101, webSocket: client, headers });
     }
-    this.send(server, {
-      t: "welcome",
-      v: 1,
-      you: this.you(state),
-      limits: {
-        max_message_bytes: info.limits.maxMessageBytes,
-        messages_per_second: info.limits.messagesPerSecond,
-        presence_bytes: ROOM_LIMITS.presenceBytes,
-      },
-    });
+    if (info.kind === "doc") {
+      if (!(await this.doc.connected(server, state, info.artifactId))) {
+        this.drop(server, ROOM_CLOSE.gone, "gone");
+        return new Response(null, { status: 101, webSocket: client, headers });
+      }
+    } else {
+      this.send(server, {
+        t: "welcome",
+        v: 1,
+        you: this.you(state),
+        limits: {
+          max_message_bytes: info.limits.maxMessageBytes,
+          messages_per_second: info.limits.messagesPerSecond,
+          presence_bytes: ROOM_LIMITS.presenceBytes,
+        },
+      });
+    }
     if ((await this.ctx.storage.getAlarm()) === null) {
       await this.ctx.storage.setAlarm(Date.now() + ROOM_LIMITS.recheckIntervalS * 1000);
     }
@@ -236,6 +274,15 @@ export class ArtifactRoom extends DurableObject<Bindings> {
     }
   }
 
+  private sendDoc(ws: WebSocket, frame: LiveDocServerFrame): void {
+    if (this.closed.has(ws)) return;
+    try {
+      ws.send(JSON.stringify(frame));
+    } catch {
+      // Closing.
+    }
+  }
+
   /** Who `p` is to `to`: email and role only when both may see identities. */
   private identity(p: SocketState, to: SocketState): RoomIdentity {
     const out: RoomIdentity = { id: p.id, viewer: p.viewer };
@@ -266,6 +313,7 @@ export class ArtifactRoom extends DurableObject<Bindings> {
     if (this.closed.has(ws)) return;
     this.leaveAll(ws);
     this.closed.add(ws);
+    this.docGone(ws);
     try {
       ws.close(code, reason);
     } catch {
@@ -311,12 +359,11 @@ export class ArtifactRoom extends DurableObject<Bindings> {
     if (this.closed.has(ws)) return;
     const s = this.state(ws);
     if (!s) return this.drop(ws, ROOM_CLOSE.invalid, "invalid");
-    // Sizes and kinds are checked on the raw frame, before anything is parsed.
+    // Sizes and kinds are checked on the raw frame, before anything is parsed. A doc frame may
+    // carry a block's text, so it gets the fixed doc limit instead of the page one.
     if (typeof message !== "string") return this.drop(ws, 1003, "binary");
-    if (
-      message.length > s.limits.maxMessageBytes ||
-      utf8Bytes(message) > s.limits.maxMessageBytes
-    ) {
+    const max = s.kind === "doc" ? LIMITS.liveDocFrameBytes : s.limits.maxMessageBytes;
+    if (message.length > max || utf8Bytes(message) > max) {
       return this.drop(ws, 1009, "too_large");
     }
     if (message === "ping") {
@@ -330,7 +377,11 @@ export class ArtifactRoom extends DurableObject<Bindings> {
     }
     const rate = this.allow(s);
     if (rate === "close") return this.drop(ws, ROOM_CLOSE.rate, "rate");
-    if (rate === "drop") return this.error(ws, "rate_limited");
+    if (rate === "drop") {
+      if (s.kind === "doc") return this.sendDoc(ws, { t: "error", code: "rate_limited" });
+      return this.error(ws, "rate_limited");
+    }
+    if (s.kind === "doc") return this.docMessage(ws, s, message);
     let frame: RoomClientFrame;
     try {
       const parsed = roomClientFrameSchema.safeParse(JSON.parse(message));
@@ -409,9 +460,40 @@ export class ArtifactRoom extends DurableObject<Bindings> {
     }
   }
 
+  private async docMessage(ws: WebSocket, s: SocketState, message: string): Promise<void> {
+    let parsed: ReturnType<typeof liveDocClientFrameSchema.safeParse>;
+    try {
+      parsed = liveDocClientFrameSchema.safeParse(JSON.parse(message));
+    } catch {
+      return this.sendDoc(ws, { t: "error", code: "invalid" });
+    }
+    if (!parsed.success) return this.sendDoc(ws, { t: "error", code: "invalid" });
+    try {
+      await this.doc.message(ws, s, parsed.data, s.artifactId);
+    } catch {
+      console.error("live doc message failed");
+      this.sendDoc(ws, { t: "error", code: "unavailable" });
+    }
+  }
+
+  /** A doc socket is gone (closed by us or by the client): its lease ends. */
+  private docGone(ws: WebSocket): void {
+    const s = this.state(ws);
+    if (s?.kind !== "doc") return;
+    this.ctx.waitUntil(
+      this.doc.closed(ws, s).catch(() => {
+        console.error("live doc close failed");
+      }),
+    );
+  }
+
   override async webSocketClose(ws: WebSocket, code: number): Promise<void> {
     const ours = this.closed.has(ws);
-    if (!ours) this.leaveAll(ws);
+    if (!ours) {
+      this.leaveAll(ws);
+      this.closed.add(ws);
+      this.docGone(ws);
+    }
     this.closed.add(ws);
     try {
       // Complete the closing handshake (a no-op where the runtime already replied).
@@ -422,8 +504,11 @@ export class ArtifactRoom extends DurableObject<Bindings> {
   }
 
   override async webSocketError(ws: WebSocket): Promise<void> {
-    if (!this.closed.has(ws)) this.leaveAll(ws);
-    this.closed.add(ws);
+    if (!this.closed.has(ws)) {
+      this.leaveAll(ws);
+      this.closed.add(ws);
+      this.docGone(ws);
+    }
   }
 
   // ---------- revocation (Worker RPC, and the alarm as its backstop) ----------
@@ -440,8 +525,9 @@ export class ArtifactRoom extends DurableObject<Bindings> {
     return n;
   }
 
-  /** The artifact was deleted or taken down: close everything. */
+  /** The artifact was deleted or taken down: close everything, and forget the live draft. */
   async gone(): Promise<number> {
+    this.doc.reset();
     let n = 0;
     for (const { ws } of this.sockets()) {
       this.drop(ws, ROOM_CLOSE.gone, "gone");
@@ -463,6 +549,48 @@ export class ArtifactRoom extends DurableObject<Bindings> {
   /** How many sockets are open (tests and diagnostics; never who). */
   async size(): Promise<number> {
     return this.sockets().length;
+  }
+
+  // ---------- the live doc draft (Worker RPC from services/live.ts and rooms/notify.ts) ----------
+
+  /** Version `n` of the doc was committed; `hash` is its content.md sha256 when known. */
+  async docVersion(artifactId: string, n: number, hash: string | null): Promise<void> {
+    await this.doc.version(artifactId, n, hash);
+  }
+
+  /** Flush and return the draft for a checkpoint, under a 30 s lock. */
+  async docSnapshot(artifactId: string): Promise<DocSnapshot> {
+    return this.doc.snapshot(artifactId);
+  }
+
+  /** The pending checkpoint saves an editor's resolution of a conflict instead. */
+  async docResolve(text: string): Promise<boolean> {
+    return this.doc.resolveWith(text);
+  }
+
+  async docFinish(
+    artifactId: string,
+    n: number,
+    text: string,
+  ): Promise<{ rev: number; dirty: boolean }> {
+    return this.doc.finishCheckpoint(artifactId, n, text);
+  }
+
+  async docAbort(): Promise<void> {
+    await this.doc.abortCheckpoint();
+  }
+
+  async docDiscard(artifactId: string, rev: number): Promise<{ ok: boolean; rev: number }> {
+    return this.doc.discard(artifactId, rev);
+  }
+
+  async docPeek(artifactId: string) {
+    return this.doc.peek(artifactId);
+  }
+
+  /** Doc sockets open now, and their emails (never draft text). */
+  async docInfo(): Promise<{ editors_online: number }> {
+    return { editors_online: this.sockets("doc").length };
   }
 
   /**

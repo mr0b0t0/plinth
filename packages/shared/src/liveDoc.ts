@@ -217,7 +217,15 @@ export const liveDocServerFrameSchema = z.discriminatedUnion("t", [
     of: z.number().int().min(1),
     chunk: z.string(),
   }),
-  z.object({ t: z.literal("leased"), lease: leaseId, start: line, end: line }),
+  /** Sent to every doc socket: `holder` is the socket that holds it, `by` its email. */
+  z.object({
+    t: z.literal("leased"),
+    lease: leaseId,
+    start: line,
+    end: line,
+    holder: z.string().max(64),
+    by: email,
+  }),
   z.object({
     t: z.literal("lease_denied"),
     reason: z.enum(["held", "stale", "frozen", "watch"]),

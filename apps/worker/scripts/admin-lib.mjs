@@ -310,6 +310,8 @@ export function eraseUserSql(email) {
     // Shared data on other people's artifacts (their own artifacts' data cascades with them).
     `DELETE FROM artifact_docs WHERE created_by_email = '${email}'`,
     `UPDATE artifact_docs SET updated_by_email = NULL, updated_by_role = NULL, updated_by_label = NULL WHERE updated_by_email = '${email}'`,
+    // Unsaved page edits on other people's docs keep their text, not who made them.
+    `UPDATE live_drafts SET updated_by_user = NULL WHERE updated_by_user IN (SELECT id FROM users WHERE email = '${email}')`,
     `DELETE FROM users WHERE email = '${email}' RETURNING id`,
   ].join("; ");
 }

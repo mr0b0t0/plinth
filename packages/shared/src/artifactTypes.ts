@@ -99,6 +99,11 @@ export interface TypedPayload {
   path: string;
   app_origin: string;
   text: string;
+  /**
+   * Set only for an owner or editor on the current version while rooms are active: the renderer
+   * connects the doc socket (#36). Absent otherwise, so every other shell is unchanged.
+   */
+  live?: "room";
 }
 
 const SCRIPT_UNSAFE: Record<string, string> = {
@@ -135,7 +140,7 @@ export const TYPED_SHELL_SCRIPT_SRC = "script-src 'self'";
  */
 export function typedShellHtml(
   def: ArtifactTypeDef,
-  o: { title: string; text: string; base: string; appOrigin: string },
+  o: { title: string; text: string; base: string; appOrigin: string; live?: "room" },
 ): string {
   if (!def.renderer) throw new Error(`Type ${def.id} has no renderer`);
   const dir = `${o.base}/__plinth/types/${def.id}`;
@@ -145,6 +150,7 @@ export function typedShellHtml(
     path: def.sourcePath,
     app_origin: o.appOrigin,
     text: o.text,
+    ...(o.live ? { live: o.live } : {}),
   };
   return (
     '<!doctype html><html lang="en"><head>' +

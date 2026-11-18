@@ -249,7 +249,7 @@ describe("doc socket schemas", () => {
         peers: [{ id: "s2", email: "b@example.com", lease: "L1" }],
       },
       { t: "text", gen: "g1", part: 0, of: 1, chunk: "# Hi" },
-      { t: "leased", lease: "L2", start: 3, end: 3 },
+      { t: "leased", lease: "L2", start: 3, end: 3, holder: "s_1", by: "a@example.com" },
       { t: "lease_denied", reason: "held", by: "b@example.com" },
       { t: "lease_denied", reason: "frozen" },
       { t: "op", gen: "g1", rev: 1, lease: "L2", start: 3, del: 0, ins: "New", by: "s1", seq: 1 },

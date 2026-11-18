@@ -11,6 +11,7 @@ import { commentsApi } from "./comments.ts";
 import { connectionsApi } from "./connections.ts";
 import { type AppEnv, authenticate } from "./context.ts";
 import { dataApi } from "./data.ts";
+import { liveApi } from "./live.ts";
 import { meApi } from "./me.ts";
 import { reportsApi } from "./reports.ts";
 import { sharingApi } from "./sharing.ts";
@@ -62,6 +63,7 @@ api.route("/", commentsApi);
 api.route("/", reportsApi);
 api.route("/", statsApi);
 api.route("/", dataApi);
+api.route("/", liveApi);
 api.route("/", uploadsApi);
 
 api.all("*", () => {

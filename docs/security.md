@@ -336,6 +336,22 @@ the artifact's own content origin, never on the app host. Design:
 - **Printing.** The app's "Print or save as PDF" posts `{ source: "plinth-renderer", v: 1, type:
   "print" }` to the frame it shows. The renderer acts on it only when `event.source` is its parent
   and `event.origin` is the exact app origin; the message carries no data.
+- **On-page editing (#36).** For an owner's or editor's view pass on the current version's own
+  path, outside review mode, with rooms and live editing on, the shell's payload carries
+  `live: "room"` and the renderer opens the doc socket (`/__plinth/room/v1/doc`, see
+  [Live rooms](#live-rooms)). Every other shell (commenters, viewers, link viewers, previews,
+  captures, pinned versions, review mode) has the same bytes as before. Edit mode starts only when
+  the app posts `{ type: "edit" }` to the frame it holds, at the exact content origin; the frame
+  answers only its parent at the exact app origin, and sends draft text to the app only in solo
+  mode. The doc frame can be trusted with this because only Plinth's renderer runs on a doc origin
+  (`script-src 'self'`, and a doc's files run no script); HTML artifacts get no on-page editing,
+  because their own scripts share the frame's origin and could forge edit messages. The renderer
+  never loads `/__plinth/runtime.js`, so a heading `id="plinth"` cannot clobber anything it uses.
+  The draft lives in D1 (`live_drafts`), is written only by the room in a guarded statement that
+  refuses deleted and taken-down artifacts, and becomes a version only through the ordinary
+  publish path on the app host (session, CSRF, exact Origin, policy action `live_edit`), always
+  with the draft's `base_version`. Agents see that a draft exists (`get_artifact.live_draft`, a
+  `live_draft` warning), never its text.
 - **Opaque mode.** Nothing extra is needed: the content is already in the shell, so the doc never
   has to `fetch()` its own files, and the renderer and stylesheet are cookie-less subresources with
   `Cross-Origin-Resource-Policy: cross-origin` like every opaque content response. Images carry the
@@ -741,6 +757,14 @@ artifacts that can have a room (a doc, or a page whose current or previous versi
 closes sockets whose epoch is old, whose pass expired, or whose artifact is gone; that catches a
 lost call and changes made with SQL, so a decision can be stale for at most a minute. 4401 makes the
 runtime re-check `/__plinth/api/v1/room` and fire `plinth:expired` when access is over.
+
+**The doc channel.** `/__plinth/room/v1/doc` is for owners and editors of a doc only, and only
+with `ALLOW_LIVE_EDITING`. The account flag in the sealed claim (`a: 1`, set when the gate's
+principal was signed in) decides the right: signed-in editors may lease and edit, editors confirmed
+by code only watch, and passes sealed before the flag existed watch until a reload. The room
+enforces leases (exclusive line ranges), refuses edits past the doc limits (1 MB, 50,000 lines;
+doc frames up to 64 KiB) and never creates a version; checkpoints and discards go through the app
+host's REST API.
 
 **Caps.** Per artifact, per viewer and per connection, with a connect throttle (see
 [Rate limits and quotas](#rate-limits-and-quotas)); a socket's hibernation attachment stays under

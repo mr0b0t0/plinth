@@ -240,10 +240,17 @@ describe("room upgrade: the checks, in order", () => {
     const viewer = await person(doc, "viewer");
     await refused(await upgrade(doc, commenter.cookie, { kind: "doc" }), 403, "commenter");
     await refused(await upgrade(doc, viewer.cookie, { kind: "doc" }), 403, "viewer");
-    // An owner passes every gate check; the doc channel itself opens with live doc editing.
+    // An owner passes every gate check and gets the doc channel.
     const owner = await upgrade(doc, ownerP.cookie, { kind: "doc" });
-    expect(owner.webSocket).toBeFalsy();
-    expect(owner.status).toBe(404);
+    expect(owner.status).toBe(101);
+    owner.webSocket?.accept();
+    owner.webSocket?.close(1000);
+    // With on-page editing off, the doc channel is not there at all.
+    const off = await upgrade(doc, ownerP.cookie, {
+      kind: "doc",
+      vars: { ALLOW_LIVE_EDITING: "false" },
+    });
+    await refused(off, 404, "not_declared");
   });
 
   it("success: 101 with the subprotocol and the content headers; client headers never reach the room", async () => {

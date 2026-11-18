@@ -31,6 +31,8 @@ account.
 - Viewers need no AI account. At most they confirm an email address.
 - Every publish is a version. Old versions stay readable and restorable.
 - People can edit an artifact in the browser and ask an agent for changes by commenting on it.
+- Invited people can work on a page together live, and owners and editors can edit a doc on its
+  page together.
 - Open source, and cheap enough to self-host on Cloudflare's free tier.
 
 **Non-goals for v1**
@@ -39,8 +41,9 @@ account.
   page can reach is Plinth's fixed shared-data service (see
   [Shared data and viewer identity](#shared-data-and-viewer-identity)) and its live room at
   `/__plinth/room/` (see [Live rooms](#live-rooms)).
-- Real-time multiplayer editing.
-- Visual (click on the page) editing. Code editing only at first.
+- Character-level co-editing (OT or CRDT), and live editing of HTML artifacts' text (pages build
+  their own multiplayer with [live rooms](#live-rooms)).
+- On-page editing of HTML artifacts (docs are edited on the page; HTML in the source editor).
 - Importing artifacts automatically from Claude or ChatGPT accounts. Agents push; the platform does
   not pull.
 - Team workspaces and billing. Planned, but after the core works.
@@ -286,7 +289,10 @@ allowlist is unchanged. Raw HTML in the Markdown shows as text, links pass an al
 a new tab, and the shell's CSP (header and a meta copy, so the editor preview gets it too) allows
 only `script-src 'self'`; a doc's other files run no script. The type is fixed at publish
 (`artifacts.type`, default `html`); versions, `base_version` conflicts and restore work as for HTML.
-The editor edits the Markdown with a live preview and history diffs `content.md`. Decks and sheets
+The editor edits the Markdown with a live preview and history diffs `content.md`. Owners and
+editors can also edit a doc on its rendered page ([Editing](#editing)): for them, on the current
+version while rooms and live editing are on, the shell's payload carries `live: "room"` and the
+renderer connects the doc socket; every other shell is byte for byte as before. Decks and sheets
 join the same type registry (`packages/shared/src/artifactTypes.ts`) later; no .docx or .pptx
 export yet. Design: `docs/superpowers/specs/2026-11-14-typed-outputs-doc-design.md`.
 
@@ -387,7 +393,43 @@ records who opened it.
 - Editors are the owner plus anyone granted the editor role.
 - If the current version changed while someone was editing, the save is rejected and they see a
   diff to merge. No silent overwrites.
-- Later: visual editing of text directly on the rendered page.
+
+**On-page doc editing** (decided 2026-11-18, issue #36). Owners and editors edit a doc right on its
+rendered page, and the other editors with the page open see the changes as they are typed. HTML
+artifacts are edited in the source editor only: page scripts share the frame's origin and could
+forge edits that the editor's session would then save.
+
+- **Who.** Owners and editors signed in to an account (policy action `live_edit`). An editor
+  confirmed by code without an account watches the edits and is asked to sign in. Commenters and
+  viewers see versions only. Agents never edit live: they publish versions.
+- **Concurrency.** The doc's room (its Durable Object, see [Live rooms](#live-rooms)) is the only
+  place edits are ordered. Clicking a block takes a **lease**: an exclusive line range the room
+  enforces, so two people never edit the same lines. Each edit replaces the leased range whole, so
+  no transform is needed. Every edit bumps the draft's `rev` and goes to every editor; a client
+  that misses one (or sees a new `gen` after the room reloaded) asks for the draft again. A lease
+  idle for 60 s can be taken over.
+- **Drafts are not versions.** The draft is one `live_drafts` row per doc, written by the room at
+  most every `LIVE_DRAFT_FLUSH_S` (and on release, when the last editor leaves, and before a save).
+  It never moves backwards, never comes back after a delete or takedown, and an owner keeps at most
+  20. A draft back at its base is deleted.
+- **Checkpoints.** Save (Cmd/Ctrl+S), Done, or an autosave after `LIVE_CHECKPOINT_IDLE_S` of quiet
+  (at most every `LIVE_AUTO_CHECKPOINT_MIN_S`, from the client that made the last edit) turn the
+  draft into the next version, through the ordinary publish path with the draft's `base_version`
+  and the note "Edited on the page". A draft equal to its base writes nothing. Checkpoints count
+  toward `MAX_PUBLISHES_PER_HOUR`; at the limit the draft stays. Edits made while a save runs are
+  kept on top of the new version.
+- **Versions from elsewhere.** When an agent, the source editor or a restore publishes a version
+  while a draft exists, the draft is merged onto it line by line when the two changed different
+  lines (the editors see "v5 was published; your edits were kept"). When they changed the same or
+  adjacent lines, the draft is frozen and an editor reviews the two side by side; nothing is
+  overwritten either way. `get_artifact` tells agents a draft exists (metadata only) and
+  `update_artifact` warns `live_draft`.
+- **Modes.** "room" with live rooms on; "solo" under origin isolation without rooms (edit on the
+  page alone, Save makes a version); under opaque isolation and the path fallback, docs are edited
+  in the source editor only. `ALLOW_LIVE_EDITING=false` turns it off.
+- **REST.** `GET /api/v1/artifacts/:ref/live`, `GET .../live/draft` (the draft text, to review a
+  conflict), `POST .../live/checkpoint` and `DELETE .../live/draft?rev=n` (discard), for the
+  signed-in app only; not mirrored to MCP.
 
 ### Categories (decided 2026-11-18)
 
@@ -910,8 +952,8 @@ for a single user.
 8. **Hosted public instance.** Public visibility, report and takedown flow, terms and privacy
    pages.
 9. **Later.** Typed outputs: docs done (2026-11-14); sheets and decks later. Push agents with
-   bring-your-own key, team workspaces, paid plans, visual editing, custom domains. Tags beside the
-   category, a group-by-category view, and personal categories for artifacts shared with you.
+   bring-your-own key, team workspaces, paid plans, custom domains. Tags beside the category, a
+   group-by-category view, and personal categories for artifacts shared with you.
 
 ## Decisions
 

@@ -419,7 +419,7 @@ release is on npm, `start_upload` is the way). More: [agents.md](agents.md#large
 ### Publish warnings
 
 Every publish and update result (inline or uploaded) lists `warnings`. They never block a publish;
-fix them and publish again (all but `not_scanned`, which needs no action). Each has `code`, `file`, `message`, and where it fits `ref`, `host` and
+fix them and publish again (all but `not_scanned` and `live_draft`, which need no action). Each has `code`, `file`, `message`, and where it fits `ref`, `host` and
 `count`. Text quoted from your files is cut at 200 characters.
 
 | `code` | What it means |
@@ -430,6 +430,7 @@ fix them and publish again (all but `not_scanned`, which needs no action). Each 
 | `insecure_url` | An `http:` reference |
 | `opaque_module` | Only on opaque-isolation instances: module scripts, `crossorigin` links and web fonts fail there |
 | `not_scanned` | A note, not something to fix: this many files were not checked for references. Either they were past the check's budget (at most 2 MB per file and 8 MB per publish; big builds always get it), or, in an inline update, they are HTML, CSS or JS files reused by `{path, sha256}` or carried forward, whose bytes were not sent. A bundle checks every file it carries |
+| `live_draft` | A note, not something to fix: people are editing this doc on its page. Your version is published; their unsaved edits are merged onto it, or they review the two when both changed the same lines. Nothing was overwritten. Do not wait or retry for them |
 
 At most 50 are listed, then one "and N more".
 
@@ -440,6 +441,12 @@ and `source_path`, then `html` for an HTML page (`source_path: "index.html"`) or
 Markdown, for a doc (`source_path: "content.md"`), never both. `assets` never lists those paths;
 each asset has `path`, `size_bytes`, `content_type` and `sha256` (`null` for files stored before
 the release that added hashes). Markdown is untrusted text like HTML.
+
+For a doc, owners' and editors' agents also get `live_draft`: `null`, or
+`{ base_version, dirty, conflict_version, updated_at }` when people have unsaved edits on the doc's
+page. It is metadata only; the draft text is never returned. Publish with `update_artifact` and
+`base_version` as usual: the edits are merged onto your version, and the result warns
+`live_draft`.
 
 | Field | Type | Notes |
 | --- | --- | --- |

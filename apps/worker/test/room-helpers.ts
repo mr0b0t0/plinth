@@ -4,12 +4,17 @@
 import { createExecutionContext, waitOnExecutionContext } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import type { Role } from "@plinth/shared";
-import { accessGrants } from "../src/db/schema.ts";
+import { eq } from "drizzle-orm";
+import { contentCookieName } from "../src/content/serve.ts";
+import { IDENTITY_CLAIM_INFO } from "../src/content/tokens.ts";
+import { accessGrants, artifacts } from "../src/db/schema.ts";
 import worker from "../src/index.ts";
+import { sealJson, signToken } from "../src/lib/crypto.ts";
 import { nowIso } from "../src/lib/time.ts";
 import {
   agent,
   browserSession,
+  config,
   contentOrigin,
   createUser,
   db,
@@ -221,4 +226,61 @@ export async function connect(
 /** A promise that settles within `ms`, or "timeout". */
 export function within<T>(p: Promise<T>, ms = 3000): Promise<T | "timeout"> {
   return Promise.race([p, new Promise<"timeout">((r) => setTimeout(() => r("timeout"), ms))]);
+}
+
+// ---------- live doc editing (live-doc.test.ts, live-api.test.ts) ----------
+
+export const docBody = (content: string) => ({ html: undefined, type: "doc", content });
+
+/** A doc artifact and its signed-in owner with a content cookie. */
+export function docSetup(content = "# Plan\n\nFirst.\n\nSecond.\n") {
+  return setup(undefined, docBody(content));
+}
+
+/**
+ * A content cookie for an identity sealed by hand: `account: false` is an editor confirmed by
+ * code (no account), as the gate seals it for a viewer principal.
+ */
+export async function sealedCookie(
+  id: string,
+  email: string,
+  role: Role,
+  account: boolean,
+): Promise<string> {
+  const cfg = config();
+  const row = await db().select().from(artifacts).where(eq(artifacts.id, id)).get();
+  const x = await sealJson(cfg.tokenSigningKey, IDENTITY_CLAIM_INFO, id, {
+    m: email,
+    r: role,
+    ...(account ? { a: 1 } : {}),
+  });
+  const value = await signToken(cfg.tokenSigningKey, {
+    k: "content",
+    a: id,
+    e: row?.accessEpoch ?? 1,
+    exp: Date.now() + 3600_000,
+    x,
+  });
+  return `${contentCookieName(cfg, new URL(contentOrigin(id)))}=${value}`;
+}
+
+/** Open a doc socket and take its welcome and text frames; `text` is the draft it was sent. */
+export async function connectDoc(
+  id: string,
+  cookie: string,
+): Promise<Client & { welcome: Frame; text: string }> {
+  const c = await connect(id, cookie, { kind: "doc" });
+  const text = await readText(c, c.welcome.gen);
+  return { ...c, text };
+}
+
+/** The `text` frames that follow a welcome, reset or rebased, joined. */
+export async function readText(c: Client, gen: string): Promise<string> {
+  const parts: string[] = [];
+  for (;;) {
+    const f = await c.nextOf("text");
+    if (f.gen !== gen) throw new Error("text frame of another gen");
+    parts[f.part] = f.chunk;
+    if (parts.filter((p) => p !== undefined).length === f.of) return parts.join("");
+  }
 }

@@ -319,7 +319,7 @@ export function uploadNext(o: {
       "commands.curl in bash or zsh with a shell timeout of at least 10 minutes" +
       (o.npx ? " (or commands.npx where Node is available)" : "") +
       ". It prints JSON: give the user its url.",
-    "If it lists warnings, fix them and publish again with a new start_upload; not_scanned needs no action.",
+    "If it lists warnings, fix them and publish again with a new start_upload; not_scanned and live_draft need no action.",
     lostResponseNext(o.id, o.baseVersion),
     "The token works once, for 30 minutes; never put it in a URL, a file or a message.",
   ];

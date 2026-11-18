@@ -54,6 +54,7 @@ import {
 } from "./categories.ts";
 import type { Ctx } from "./context.ts";
 import { wipeArtifactData } from "./data.ts";
+import { readLiveDraftMeta } from "./live.ts";
 import {
   commitVersion,
   conflictError,
@@ -468,6 +469,8 @@ export interface UpdateInput {
   base_version?: number;
   /** Owner only; omitted keeps the current category. */
   category?: string;
+  /** Internal: a checkpoint of the doc's live draft (services/live.ts); never from the wire. */
+  checkpoint?: boolean;
 }
 
 export async function updateArtifact(ctx: Ctx, input: UpdateInput): Promise<PublishResult> {
@@ -494,7 +497,12 @@ export async function updateArtifact(ctx: Ctx, input: UpdateInput): Promise<Publ
   }
   await enforcePublishRate(ctx);
   // No assets given: the current version's assets are carried forward as references.
-  const result = await writeVersion(ctx, target, (s) => stageInline(s, text, input.assets));
+  const result = await writeVersion(
+    ctx,
+    target,
+    (s) => stageInline(s, text, input.assets),
+    input.checkpoint ? { liveCheckpoint: true } : {},
+  );
   return withCategory(result, target);
 }
 
@@ -521,10 +529,15 @@ export async function getArtifact(
         sha256: m.sha256 ?? null,
       })),
   };
+  // A doc's unsaved page edits, as metadata, for owners and editors (and their agents) only.
+  const live =
+    def.liveEdit && (role === "owner" || role === "editor")
+      ? { live_draft: await readLiveDraftMeta(ctx.env.DB, artifact.id) }
+      : {};
   // html for a page, content for every typed artifact; never both.
   return def.id === "html"
-    ? { ...base, type: "html", html: text }
-    : { ...base, type: def.id, content: text };
+    ? { ...base, ...live, type: "html", html: text }
+    : { ...base, ...live, type: def.id, content: text };
 }
 
 /**
@@ -782,6 +795,8 @@ export async function deleteArtifact(ctx: Ctx, ref: string): Promise<void> {
       "UPDATE artifacts SET deleted_at = ?1, access_epoch = access_epoch + 1 WHERE id = ?2",
     ).bind(nowIso(), artifact.id),
     ...wipeArtifactData(ctx.env.DB, artifact.id),
+    // Unsaved page edits go with it; the room's guarded flush can never bring them back.
+    ctx.env.DB.prepare("DELETE FROM live_drafts WHERE artifact_id = ?1").bind(artifact.id),
     // Its attempt rows become tombstones: their objects are under the root deleted next, and the
     // sweep deletes what a still-running attempt puts after that.
     claimArtifactAttempts(ctx.env.DB, artifact.id, Date.now()),

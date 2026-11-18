@@ -15,7 +15,8 @@
 //   4. the plinth.room.v1 subprotocol (Sec-WebSocket-Protocol), the non-safelisted marker in place
 //      of the data API's custom header, which the browser WebSocket API cannot send;
 //   5. rooms active (ALLOW_ROOMS, the ROOMS binding, origin isolation) on an artifact subdomain;
-//   6. the artifact: not deleted, not taken down, and of the kind the path names;
+//   6. the artifact: not deleted, not taken down, and of the kind the path names (a doc socket
+//      also needs ALLOW_LIVE_EDITING);
 //   7. the content pass at the current epoch, with an identity claim; preview and capture passes
 //      never join;
 //   8. policy (policy.ts roomAccess).
@@ -34,7 +35,7 @@ import {
   type RoomUnavailableReason,
   typeDef,
 } from "@plinth/shared";
-import { type Bindings, type Config, contentOrigin, roomsActive } from "../config.ts";
+import { type Bindings, type Config, contentOrigin, liveEditMode, roomsActive } from "../config.ts";
 import { ApiError } from "../lib/errors.ts";
 import { roomAccess } from "../policy.ts";
 import { ROOM_CONNECT_HEADER, ROOM_CONNECT_URL, type RoomConnect } from "../rooms/ArtifactRoom.ts";
@@ -209,10 +210,11 @@ async function upgrade(
   // 6. The artifact, and the path matching its type.
   const target = await loadRoomTarget(env, artifactId);
   if (!target) return refuse(config, 404, "gone");
+  // A doc socket also needs on-page editing on (ALLOW_LIVE_EDITING).
   const fits =
     kind === "page"
       ? target.type === "html" && target.caps?.room === true
-      : typeDef(target.type)?.liveEdit === true;
+      : typeDef(target.type)?.liveEdit === true && liveEditMode(config, env) === "room";
   if (!fits) return refuse(config, 404, "not_declared");
   // 7. The content pass, identified, at the current epoch.
   const pass = await readContentPass(request, config, target);

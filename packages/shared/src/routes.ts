@@ -78,6 +78,10 @@ export const API = {
   data: "/artifacts/:ref/data", // GET summary, POST ops, DELETE all (signed-in owner)
   dataCollection: "/artifacts/:ref/data/:collection", // GET a page
   dataDoc: "/artifacts/:ref/data/:collection/:doc", // GET one document
+  // on-page doc editing (signed-in owners and editors only; never agents, never MCP)
+  live: "/artifacts/:ref/live", // GET LiveInfo
+  liveDraft: "/artifacts/:ref/live/draft", // GET the draft text (review), DELETE ?rev=n discards
+  liveCheckpoint: "/artifacts/:ref/live/checkpoint", // POST save the draft as a version
   // out-of-band uploads (start_upload): mint a ticket (bearer only), then send one bundle
   uploads: "/uploads", // POST start_upload
   uploadBundle: "/uploads/:id/bundle", // POST a tar (optionally gzip), Bearer plinth_up_ only

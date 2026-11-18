@@ -584,3 +584,81 @@ describe("doc artifacts over MCP", () => {
     await mcp.close();
   });
 });
+
+describe("doc artifacts with unsaved page edits (#36)", () => {
+  const putDraft = (id: string, base = 1) =>
+    env.DB.prepare(
+      `INSERT INTO live_drafts (artifact_id, base_version, content, size_bytes, rev, created_at, updated_at)
+       VALUES (?1, ?2, 'secret draft words', 18, 4, ?3, ?3)`,
+    )
+      .bind(id, base, new Date().toISOString())
+      .run();
+
+  it("get_artifact says so with metadata only, to owners and editors; never the draft text", async () => {
+    const a = await agent();
+    const mcp = await mcpClient(a.token);
+    const pub = await tool(mcp, "publish_artifact", { title: "Notes", type: "doc", content: MD });
+    const id = pub.data.id as string;
+    expect((await tool(mcp, "get_artifact", { id })).data.live_draft).toBeNull();
+    await putDraft(id);
+    const got = await tool(mcp, "get_artifact", { id });
+    expect(got.data.live_draft).toEqual({
+      base_version: 1,
+      dirty: true,
+      conflict_version: null,
+      updated_at: expect.any(String),
+    });
+    expect(got.text).not.toContain("secret draft words");
+    // An HTML artifact never has the field; a link viewer of a doc does not see it.
+    const html = await tool(mcp, "publish_artifact", { title: "Page", html: "<p>x</p>" });
+    expect("live_draft" in (await tool(mcp, "get_artifact", { id: html.data.id })).data).toBe(
+      false,
+    );
+    await tool(mcp, "set_visibility", { id, visibility: "unlisted" });
+    const other = await agent();
+    const seen = await getDetail(other.auth, id);
+    expect("live_draft" in seen).toBe(false);
+  });
+
+  it("update_artifact and REST updates warn live_draft (no action needed); without a draft they do not", async () => {
+    const a = await agent();
+    const mcp = await mcpClient(a.token);
+    const pub = await tool(mcp, "publish_artifact", { title: "Notes", type: "doc", content: MD });
+    const id = pub.data.id as string;
+    const quiet = await tool(mcp, "update_artifact", { id, content: "# v2\n", base_version: 1 });
+    expect(quiet.data.warnings).toEqual([]);
+    await putDraft(id, 2);
+    const up = await tool(mcp, "update_artifact", { id, content: "# v3\n", base_version: 2 });
+    expect(up.isError).toBe(false);
+    expect(up.data.version).toBe(3);
+    expect(up.data.warnings).toEqual([
+      {
+        code: "live_draft",
+        file: "content.md",
+        message: expect.stringMatching(/editing this doc on its page.*Nothing was overwritten/),
+      },
+    ]);
+    const rest = await json(await put(a.auth, id, { content: "# v4\n", base_version: 3 }));
+    expect(rest.warnings.map((w: { code: string }) => w.code)).toEqual(["live_draft"]);
+    // A restore is not warned about (it returns no warnings).
+    const restored = await json(
+      await call(`/api/v1/artifacts/${id}/versions/1/restore`, {
+        method: "POST",
+        headers: { ...a.auth, "Content-Type": "application/json" },
+        body: "{}",
+      }),
+    );
+    expect(restored.warnings).toEqual([]);
+  });
+
+  it("the tool descriptions tell agents the draft is metadata and the warning needs no action", async () => {
+    const a = await agent();
+    const mcp = await mcpClient(a.token);
+    const { tools } = await mcp.listTools();
+    const desc = (n: string) => tools.find((t) => t.name === n)?.description ?? "";
+    expect(desc("get_artifact")).toMatch(/live_draft.*metadata.*never returned/);
+    expect(desc("update_artifact")).toMatch(/live_draft says people are editing a doc/);
+    expect(desc("publish_artifact")).toMatch(/declare room for live presence/);
+    expect(mcp.getInstructions()).toContain("not_scanned and live_draft need no action");
+  });
+});

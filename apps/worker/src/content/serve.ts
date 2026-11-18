@@ -11,7 +11,7 @@ import {
   typeDef,
 } from "@plinth/shared";
 import { and, eq, isNull } from "drizzle-orm";
-import { type Bindings, type Config, roomsActive } from "../config.ts";
+import { type Bindings, type Config, liveEditMode, roomsActive } from "../config.ts";
 import { getDb } from "../db/client.ts";
 import { type ArtifactRow, artifacts, type VersionRow } from "../db/schema.ts";
 import { secureFlag, serializeCookie } from "../lib/cookies.ts";
@@ -202,13 +202,16 @@ async function openPass(
   if (typeof pass.x !== "string") return null;
   const opened = await openJson(config.tokenSigningKey, IDENTITY_CLAIM_INFO, artifact.id, pass.x);
   if (!opened || typeof opened !== "object") return null;
-  const { m, r } = opened as Record<string, unknown>;
+  const { m, r, a } = opened as Record<string, unknown>;
   if (typeof m !== "string" || !m || typeof r !== "string" || !CLAIM_ROLES.has(r)) return null;
+  if (a !== undefined && a !== 1) return null;
   return {
     claim: {
       email: m,
       role: r as EffectiveRole,
       viewerId: await viewerIdFor(config.tokenSigningKey, artifact.id, m),
+      // Passes sealed before the flag existed have none: their doc editors watch until a reload.
+      ...(a === 1 ? { account: true } : {}),
     },
     capture: false,
     preview: false,
@@ -219,7 +222,9 @@ async function openPass(
 }
 
 const sameClaim = (a: PageClaim | null, b: PageClaim | null) =>
-  a === null || b === null ? a === b : a.email === b.email && a.role === b.role;
+  a === null || b === null
+    ? a === b
+    : a.email === b.email && a.role === b.role && a.account === b.account;
 
 /**
  * The content pass this request carries for this artifact: a content cookie signed for this
@@ -509,6 +514,19 @@ async function serve(
   if (def.renderer && rel === "index.html") {
     // serveTypedEntry reads only the version's prefix (its source file is always under it).
     const version = { r2Prefix: v.r2Prefix } as Pick<VersionRow, "r2Prefix"> as VersionRow;
+    // On-page editing (#36): only an owner's or editor's view pass, on the current version's own
+    // path (not a pinned /__plinth/v/<n>/ one), outside review mode, with rooms and live editing on.
+    const editor = pass.claim?.role === "owner" || pass.claim?.role === "editor";
+    const live =
+      def.liveEdit &&
+      socket !== undefined &&
+      liveEditMode(config, env) === "room" &&
+      editor &&
+      !pass.capture &&
+      !vm &&
+      !url.searchParams.has(REVIEW_MODE_PARAM)
+        ? ("room" as const)
+        : undefined;
     return serveTypedEntry(request, env, config, {
       artifact,
       version,
@@ -517,6 +535,7 @@ async function serve(
       url,
       framing,
       socket,
+      ...(live ? { live } : {}),
     });
   }
   const entry = v.entries.get(rel);
