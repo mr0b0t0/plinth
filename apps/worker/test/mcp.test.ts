@@ -67,7 +67,9 @@ describe("MCP endpoint", () => {
     expect(Object.keys(MCP_TOOL_ANNOTATIONS).sort()).toEqual(tools.map((t) => t.name).sort());
     for (const t of tools) {
       const ann = t.annotations;
-      expect(ann, t.name).toEqual(MCP_TOOL_ANNOTATIONS[t.name as keyof typeof MCP_TOOL_ANNOTATIONS]);
+      expect(ann, t.name).toEqual(
+        MCP_TOOL_ANNOTATIONS[t.name as keyof typeof MCP_TOOL_ANNOTATIONS],
+      );
       expect(ann?.title, t.name).toBe(t.title);
       expect(typeof ann?.readOnlyHint, t.name).toBe("boolean");
       expect(typeof ann?.destructiveHint, t.name).toBe("boolean");
