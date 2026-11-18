@@ -47,6 +47,7 @@ export async function resolveBearer(
       connectionLabel: "Admin token",
       clientType: "other",
       scopes: new Set(SCOPES),
+      boundArtifactId: null,
     };
   }
 
@@ -82,6 +83,7 @@ export async function resolveBearer(
       connectionLabel: row.conn.label,
       clientType: row.conn.clientType,
       scopes: parseScopes(row.conn.scopes),
+      boundArtifactId: row.conn.artifactId,
     };
   }
 
@@ -122,6 +124,8 @@ export async function resolveBearer(
       connectionLabel: row.conn.label,
       clientType: row.conn.clientType,
       scopes: new Set([...granted].filter((s) => connScopes.has(s))),
+      // OAuth connections are never bound (0012_bound_tokens' CHECK).
+      boundArtifactId: null,
     };
   }
 

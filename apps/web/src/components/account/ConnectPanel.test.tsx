@@ -22,6 +22,7 @@ const CONN: ConnectionInfo = {
   created_at: "2026-11-14T10:00:00Z",
   last_used_at: null,
   revoked_at: null,
+  artifact: null,
 };
 
 function renderPanel(props: Partial<Parameters<typeof ConnectPanel>[0]> = {}) {

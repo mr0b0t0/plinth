@@ -19,6 +19,7 @@ const conn = (over: Partial<ConnectionInfo>): ConnectionInfo => ({
   created_at: "2026-11-14T09:00:00Z",
   last_used_at: null,
   revoked_at: null,
+  artifact: null,
   ...over,
 });
 
@@ -174,5 +175,32 @@ describe("Connections", () => {
     const Connections = await loadPage();
     render(<Connections />);
     expect(await screen.findByRole("heading", { name: "Connect an agent" })).toBeTruthy();
+  });
+});
+
+describe("Connections: tokens limited to one artifact", () => {
+  it('shows "Only <title>" with a link, or that the artifact can no longer be opened', async () => {
+    backend([
+      conn({
+        id: "c2",
+        label: "CI: Coverage",
+        kind: "token",
+        scopes: ["artifacts:read", "artifacts:write"],
+        artifact: { id: "k3x9mq2v7d8p4t6w1n5r", slug: "coverage", title: "Coverage <b>report</b>" },
+      }),
+      conn({
+        id: "c3",
+        label: "CI: Old",
+        kind: "token",
+        scopes: ["artifacts:read"],
+        artifact: { id: "k3x9mq2v7d8p4t6w1n5s", slug: null, title: null },
+      }),
+    ]);
+    const Connections = await loadPage();
+    render(<Connections />);
+    const link = await screen.findByRole("link", { name: "Coverage <b>report</b>" });
+    expect(link.getAttribute("href")).toBe("/a/coverage");
+    expect(link.closest("p")?.textContent).toBe("Only Coverage <b>report</b>");
+    expect(screen.getByText("Only an artifact you can no longer open")).toBeTruthy();
   });
 });

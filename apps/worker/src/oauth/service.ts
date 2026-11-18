@@ -358,6 +358,8 @@ export async function decideConsent(
       createdAt: now,
       lastUsedAt: null,
       revokedAt: null,
+      // Only personal access tokens are ever limited to one artifact (0012_bound_tokens).
+      artifactId: null,
     }),
     db.insert(oauthGrants).values({
       id: newId(),

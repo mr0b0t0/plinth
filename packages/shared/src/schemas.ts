@@ -258,6 +258,8 @@ export const createTokenInput = z.object({
   label: z.string().trim().min(1).max(LIMITS.maxLabelLength),
   client_type: clientTypeSchema.default("other"),
   scopes: z.array(scopeSchema).min(1).optional(),
+  /** Limit the token to one artifact (id or slug) that the person owns or edits. */
+  artifact: z.string().trim().min(1).max(200).optional(),
 });
 export const renameConnectionInput = z.object({
   label: z.string().trim().min(1).max(LIMITS.maxLabelLength),

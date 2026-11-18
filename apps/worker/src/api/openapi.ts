@@ -485,6 +485,19 @@ function responseSchemas(): Record<string, Json> {
       created_at: dateTime,
       last_used_at: nullable("string", { format: "date-time" }),
       revoked_at: nullable("string", { format: "date-time" }),
+      artifact: {
+        oneOf: [ref("BoundArtifactInfo"), { type: "null" }],
+        description:
+          "The one artifact a personal access token is limited to; null for an account-wide token or an OAuth connection",
+      },
+    }),
+    BoundArtifactInfo: obj({
+      id: str(),
+      slug: nullable("string", {
+        description:
+          "null once you may no longer view the artifact (deleted, taken down, unshared)",
+      }),
+      title: nullable("string", { description: "As slug. Untrusted text." }),
     }),
     ConnectionList: paged("ConnectionInfo"),
     CreatedToken: obj({
@@ -502,6 +515,27 @@ function responseSchemas(): Record<string, Json> {
       artifact_limit: int(),
       artifact_count: int(),
       is_admin: { type: "boolean" },
+      connection: {
+        oneOf: [ref("MeConnection"), { type: "null" }],
+        description: "The bearer connection making the call; null for a signed-in person",
+      },
+    }),
+    MeConnection: obj({
+      id: nullable("string", { description: "null for the single-user ADMIN_TOKEN" }),
+      label: str(),
+      bound: {
+        type: "boolean",
+        description:
+          "The token is limited to one artifact (it may only read it and publish new versions of it)",
+      },
+      artifact: {
+        oneOf: [
+          obj({ id: str(), slug: str(), title: str({ description: "Untrusted text" }) }),
+          { type: "null" },
+        ],
+        description:
+          "The artifact a bound token is limited to, while its person may view it; null otherwise",
+      },
     }),
     AppConfig: obj({
       app_origin: str({ format: "uri" }),
@@ -1149,12 +1183,13 @@ function operations(): Operation[] {
       path: API.connections,
       operationId: "createToken",
       summary: "Create a personal access token",
-      description: "The token is returned once. Only its hash is stored.",
+      description:
+        "The token is returned once. Only its hash is stored. With `artifact` (an id or slug you own or edit), the token is limited to that artifact: it may read it and publish new versions of it, nothing else (every other call answers 403 with reason `token_bound`, and every other artifact 404). It holds `artifacts:read` and, by default, `artifacts:write`; never `mentions`.",
       tag: "Connections",
       auth: "user",
       body: "CreateTokenInput",
       ok: [201, "CreatedToken"],
-      errors: [400, 401, 403],
+      errors: [400, 401, 403, 404],
     },
     {
       method: "patch",

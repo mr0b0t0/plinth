@@ -1,11 +1,26 @@
-import { type AppConfig, type Me, REPO_URL, TTL, updateProfileInput } from "@plinth/shared";
+import {
+  type AppConfig,
+  type Me,
+  type MeConnection,
+  REPO_URL,
+  TTL,
+  updateProfileInput,
+} from "@plinth/shared";
 import { and, eq, isNull, sql } from "drizzle-orm";
 import { Hono } from "hono";
 import { instanceLimits } from "../config.ts";
 import { artifacts, users } from "../db/schema.ts";
 import { ApiError, unauthorized } from "../lib/errors.ts";
+import { boundArtifactOf } from "../policy.ts";
+import { decideFor, findArtifact } from "../services/artifacts.ts";
 import { artifactLimitFor, getUserById } from "../services/users.ts";
-import { type AppContext, type AppEnv, ensureCsrfCookie, parseBody } from "./context.ts";
+import {
+  type AppContext,
+  type AppEnv,
+  ensureCsrfCookie,
+  parseBody,
+  serviceCtx,
+} from "./context.ts";
 
 export const meApi = new Hono<AppEnv>();
 
@@ -70,6 +85,25 @@ async function meResponse(c: AppContext) {
     artifact_count: count?.n ?? 0,
     // Admin follows the current ADMIN_EMAIL, like every policy check.
     is_admin: c.get("config").adminEmails.includes(user.email),
+    connection: await meConnection(c),
   };
   return c.json(me);
+}
+
+/**
+ * The bearer connection making the call, and the artifact it is limited to while the policy lets
+ * its person view it (a deleted, taken-down or no-longer-shared one reads `artifact: null`).
+ */
+async function meConnection(c: AppContext): Promise<MeConnection | null> {
+  const p = c.get("principal");
+  if (p.kind !== "agent") return null;
+  const bound = boundArtifactOf(p);
+  let artifact: MeConnection["artifact"] = null;
+  if (bound !== null) {
+    const ctx = serviceCtx(c);
+    const a = await findArtifact(ctx, bound);
+    const d = a ? await decideFor(ctx, a, "view") : null;
+    if (a && d?.allow) artifact = { id: a.id, slug: a.slug, title: a.title };
+  }
+  return { id: p.connectionId, label: p.connectionLabel, bound: bound !== null, artifact };
 }

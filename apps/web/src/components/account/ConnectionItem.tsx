@@ -1,9 +1,10 @@
 // One agent connection: label, client, kind, permissions, dates; rename and revoke.
 import { KeyIcon, PlugsConnectedIcon } from "@phosphor-icons/react";
-import { API, type ConnectionInfo, LIMITS, route } from "@plinth/shared";
+import { API, APP_ROUTES, type ConnectionInfo, LIMITS, route } from "@plinth/shared";
 import { type FormEvent, useState } from "react";
 import { agentInitials } from "../../lib/agents.ts";
 import { ApiRequestError, api } from "../../lib/api.ts";
+import { Link } from "../../lib/router.tsx";
 import { Badge, Button, ConfirmDialog, Dialog, Input, useToast } from "../ui/index.ts";
 import {
   CLIENT_TYPE_LABEL,
@@ -67,6 +68,20 @@ export function ConnectionItem({ connection: c, now, onChanged }: ConnectionItem
             </span>
           ))}
         </p>
+        {c.artifact && (
+          <p className="pl-acct-conn__scopes">
+            {c.artifact.slug !== null && c.artifact.title !== null ? (
+              <>
+                Only{" "}
+                <Link to={route(APP_ROUTES.artifact, { slug: c.artifact.slug })}>
+                  {c.artifact.title}
+                </Link>
+              </>
+            ) : (
+              "Only an artifact you can no longer open"
+            )}
+          </p>
+        )}
         <p className="pl-acct-conn__meta">
           <span title={formatDateTime(c.created_at)}>Created {formatDate(c.created_at)}</span>
           <span aria-hidden="true">·</span>

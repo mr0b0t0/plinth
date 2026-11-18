@@ -42,12 +42,14 @@ const ownerAgent = (
   connectionLabel: "Work Claude",
   clientType: "claude",
   scopes: new Set(scopes),
+  boundArtifactId: null,
 });
 
 const art = (
   visibility: ArtifactFacts["visibility"],
   extra: Partial<ArtifactFacts> = {},
 ): ArtifactFacts => ({
+  id: "art-1",
   ownerId: OWNER,
   visibility,
   hasPassword: visibility === "password",
@@ -561,8 +563,9 @@ describe("policy: canModifyDoc", () => {
 
 describe("policy: categories (owner-only metadata)", () => {
   it("seesOwnerMetadata is true for the owner only", () => {
-    expect(seesOwnerMetadata("owner")).toBe(true);
-    for (const r of [...ROLES, null] as const) expect(seesOwnerMetadata(r), String(r)).toBe(false);
+    expect(seesOwnerMetadata(owner, "owner")).toBe(true);
+    for (const r of [...ROLES, null] as const)
+      expect(seesOwnerMetadata(owner, r), String(r)).toBe(false);
   });
 
   it("mayBulkEditCategories: a signed-in person only, never an agent, viewer or anonymous", () => {

@@ -48,7 +48,7 @@ const NAMES = [
 ];
 
 const RESOURCES = "8c9a70350ae4c13067ef489e651d5f5eafe12471c2c63f7c925f9d3bf5bf5e78";
-const INSTRUCTIONS = "f02ea19d7e256cc954a9fbe5f208dddbfb36ca4445da04825a5a032db46132b8";
+const INSTRUCTIONS = "2b45e964aea3df15d1118d9436d44e591da855030f16d6e27dbddc61c91cfff4";
 
 describe("MCP surface (golden)", () => {
   it("origin isolation", async () => {

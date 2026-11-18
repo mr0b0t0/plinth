@@ -10,6 +10,9 @@ Add a line under **Unreleased** in the pull request that makes a change people w
 
 ## Unreleased
 
+- **Tokens limited to one artifact.** A personal access token can be limited to one artifact you
+  own or edit: it reads that artifact and publishes new versions of it, nothing else, and deleting
+  the artifact revokes it. `GET /api/v1/me` says which artifact a token is limited to (#51).
 - **The Claude Code plugin remembers your instance.** It asks which Plinth instance to use when you
   enable it (the hosted one by default), keeps the answer, and its mention watcher follows it, so a
   self-hosted or local instance no longer needs `PLINTH_URL` exported every time Claude Code starts.

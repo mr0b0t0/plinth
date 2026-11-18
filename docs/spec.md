@@ -112,7 +112,7 @@ reuse by hash](#big-builds-and-reuse-by-hash)). The row's `r2_prefix` is authori
 | Table | Key fields | Notes |
 | --- | --- | --- |
 | `users` | id, email, name, auth provider, created_at | One row per person who signs in |
-| `agent_connections` | id, user_id, label, client type, token hash, last_used_at | One per connected agent, e.g. "Work Claude". Revocable individually |
+| `agent_connections` | id, user_id, label, client type, token hash, last_used_at, artifact_id | One per connected agent, e.g. "Work Claude". Revocable individually. `artifact_id` is NULL, or the one artifact a personal access token is limited to |
 | `artifacts` | id, owner_id, slug, title, type, current_version, visibility, password hash, category, created_at | `visibility` is public, unlisted, password or allowlist. `type` is `html` (a hand-written `index.html`) or `doc` (Markdown in `content.md`), fixed at publish. `category` is the owner's own grouping (NULL = none), shown only to the owner |
 | `versions` | id, artifact_id, number, r2_prefix, size_bytes, stored_bytes, manifest, created_by (user or agent), note, created_at | Immutable, and written only once its files are in R2 (commit last). A restore creates a new row. `size_bytes` is what a viewer loads; `stored_bytes` is what this version added to R2 (NULL for versions written before 0.4.0, which count `size_bytes`). Each manifest entry has `path`, `size_bytes`, `content_type`, a server-computed `sha256` (absent on files stored before 0.4.0) and, for a reused file, a server-written `stored_at` (`v<m>[.<nonce>]/<path>`, relative to `artifacts/<artifact_id>/`, never returned by the API) |
 | `access_grants` | artifact_id, email, role | Role is viewer, commenter or editor. Used for allowlists and collaborators |
@@ -173,6 +173,12 @@ idle time), `LIVE_DRAFT_FLUSH_S` (5, from 2 to 60) and `LIVE_DRAFT_RETENTION_DAY
 connects per viewer per minute; a doc-socket frame of 64 KiB; a lease idle for 60 s may be taken
 over.
 
+**Bound tokens** (issue #51, migration `0012_bound_tokens.sql`) add one column:
+
+| Table or column | Key fields | Notes |
+| --- | --- | --- |
+| `agent_connections.artifact_id` | artifact id or NULL | The one artifact a personal access token is limited to ([Publishing from CI](#publishing-from-ci-decided-2026-11-19)). NULL is an account-wide token or an OAuth connection; a CHECK refuses it on an OAuth row. Set at creation and never changed: to change the limit, revoke the token and make another. Deleting or taking down the artifact revokes its bound tokens in the same batch; erasing the artifact (or its owner) removes them (`ON DELETE CASCADE`, never `SET NULL`, so a bound token can never become an account-wide one). A partial index covers bound rows |
+
 ## Auth and permissions
 
 There are three separate kinds of auth, and each has its own mechanism.
@@ -185,6 +191,17 @@ scoped to the app domain only.
 from Claude or Codex is a "connect" click followed by a consent screen. Each connection gets its own
 token and label. Personal access tokens are the fallback for clients without OAuth support and for
 CI.
+
+A personal access token can be limited to one artifact (for CI: [Publishing from
+CI](#publishing-from-ci-decided-2026-11-19)). It always holds `artifacts:read` and may hold
+`artifacts:write`, never `mentions`. It may view that artifact (as its person may, with the
+person's current rights) and publish new versions of it, and nothing else: no new artifacts, no
+other artifact (404 for every action, whatever its scopes), no sharing, title, category, restore,
+delete, comments, shared data, view counts or mentions (403 `token_bound` on its own artifact).
+It does not see the artifact's category, its shared-data usage or the owner's category names; it
+does see the version list and `live_draft` metadata, as an editor's agent does. Only the artifact's
+owner or an editor can make one. The limit never widens; deleting or taking down the artifact
+revokes it, and removing the person's grant stops it.
 
 **Viewers.** Set per artifact:
 
@@ -274,7 +291,12 @@ A plain REST API mirrors these tools for scripts and CI (`POST /api/v1/uploads` 
 `start_upload` and takes a bearer token only; `GET /api/v1/artifacts?query=&category=` mirrors
 `list_artifacts` and returns `{ items, categories }`). Beyond the tools, `PATCH /api/v1/artifacts/:ref`
 sets the title or the category (owner), `GET /api/v1/categories` lists the caller's own category
-names, and `POST /api/v1/categories/rename` renames, merges or clears one (signed-in session only). Size limits: 5 MB of HTML (1 MB of Markdown for a
+names, and `POST /api/v1/categories/rename` renames, merges or clears one (signed-in session only).
+`POST /api/v1/connections` (people only) takes an optional `artifact` (id or slug) to limit the new
+token to it; every `ConnectionInfo` carries `artifact` (`{ id, slug, title }` for a bound token,
+with slug and title null once the person may no longer view it; null otherwise), and
+`GET /api/v1/me` returns `connection` for a bearer caller (`{ id, label, bound, artifact }`; the
+artifact only while the person may view it) and null for a session. Size limits: 5 MB of HTML (1 MB of Markdown for a
 doc), and per version a total size and a file count set by the operator with `MAX_VERSION_BYTES`
 (default 50 MB, at most 64 MB) and `MAX_ASSETS_PER_VERSION` (default 511, at most 900). A JSON
 request body may be up to 40 MB. `GET /api/v1/config` returns the instance's limits.
@@ -974,7 +996,10 @@ for a single user.
    pages.
 9. **Later.** Typed outputs: docs done (2026-11-14); sheets and decks later. Push agents with
    bring-your-own key, team workspaces, paid plans, custom domains. Tags beside the category, a
-   group-by-category view, and personal categories for artifacts shared with you.
+   group-by-category view, and personal categories for artifacts shared with you. Tokens limited
+   to a category (declined for now: a category is owner text that is renamed and merged, so the
+   limit would move under the token, and such a token could still create artifacts; tokens limited
+   to one artifact cover CI).
 
 ## Decisions
 
