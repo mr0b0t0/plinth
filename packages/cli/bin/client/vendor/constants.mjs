@@ -18,6 +18,17 @@ export const COMMENT_STATUSES = ["open", "resolved"];
 
 export const REPORT_STATES = ["open", "actioned", "dismissed"];
 
+/** Publish warning codes (PublishWarning.code), one per line. Advisory: never blocks a publish. */
+export const PUBLISH_WARNING_CODES = [
+  "missing_file",
+  "root_absolute",
+  "blocked_host",
+  "insecure_url",
+  "opaque_module",
+  "not_scanned",
+  "live_draft",
+];
+
 /** Token scopes. A personal access token or OAuth grant carries a space-separated subset. */
 export const SCOPES = ["artifacts:read", "artifacts:write", "mentions"];
 
