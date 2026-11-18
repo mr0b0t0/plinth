@@ -113,6 +113,12 @@
 .pl-dash__row:focus-within {
   background: var(--color-hover);
 }
+/* A neutral badge's fill over the hovered row's fill takes muted text just under 4.5:1 in the
+   light theme, so the badge text turns to ink there. */
+.pl-dash__row:hover .pl-badge--neutral,
+.pl-dash__row:focus-within .pl-badge--neutral {
+  color: var(--color-ink);
+}
 
 /* The tiny page glyph: a white sheet with three grey lines, whatever the theme. */
 .pl-dash__glyph {
@@ -428,9 +434,22 @@
     height: auto;
     min-height: var(--topbar-height);
     padding-block: var(--space-1);
+    position: relative;
   }
   .pl-dash-bar__category > .pl-button {
     max-width: 10rem;
+  }
+  /* The category list opens from the bar's left edge, under the bar, so a long name cannot push
+     it past the right edge of a phone screen. */
+  .pl-dash-bar__category.pl-menu {
+    position: static;
+  }
+  .pl-dash-bar__category .pl-menu__list {
+    left: 0;
+  }
+  /* Leave the title most of a phone row; the full category name is the badge's tooltip. */
+  .pl-dash__category {
+    max-width: 6.5rem;
   }
   .pl-dash__head {
     display: none;

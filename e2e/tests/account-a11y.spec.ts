@@ -59,6 +59,53 @@ test("signed-out pages: home, sign-in steps, magic link", async ({ page }, info)
   await check(page, info, "magic");
 });
 
+test("categories: the dashboard menu, the rename dialog and the Settings section", async ({
+  page,
+}, info) => {
+  test.setTimeout(60_000);
+  await seedContextSession(page.context(), uniqueEmail("a11y-cat"));
+  const { token } = await createToken(page.request, {
+    label: "Work Claude",
+    client_type: "claude",
+  });
+  // A long name, so the badge and the menu trigger have to cut it on a phone.
+  const long = "Acme site for the client with a long name, cut on phones";
+  const a = await publishArtifact(page.request, token, { title: "Landing page", category: long });
+  await publishArtifact(page.request, token, { title: "Pricing page", category: long });
+  await publishArtifact(page.request, token, { title: "Release notes", category: "Docs" });
+  await publishArtifact(page.request, token, { title: "Scratch notes" });
+
+  await page.goto("/dashboard");
+  await expect(page.getByRole("link", { name: "Landing page" })).toBeVisible();
+  await check(page, info, "dashboard-categories");
+  await page.getByRole("button", { name: "Category: All" }).click();
+  await expect(page.getByRole("menu")).toBeVisible();
+  await check(page, info, "dashboard-category-menu");
+  await page.getByRole("menuitemradio", { name: /^Acme site/ }).click();
+  await expect(page.getByRole("link", { name: "Release notes" })).toHaveCount(0);
+  await check(page, info, "dashboard-category-filtered");
+
+  await page.getByRole("button", { name: "Rename category" }).click();
+  const dialog = page.getByRole("dialog", { name: "Rename category" });
+  await expect(dialog).toBeVisible();
+  await check(page, info, "dashboard-category-rename");
+  // A name that matches another category: the merge hint and the Merge button.
+  await dialog.getByRole("combobox", { name: "New name" }).fill("docs");
+  await expect(dialog.getByRole("button", { name: "Merge" })).toBeVisible();
+  await check(page, info, "dashboard-category-merge");
+  await page.keyboard.press("Escape");
+  await expect(dialog).toHaveCount(0);
+
+  await page.goto(`/a/${a.slug}/settings#settings-category`);
+  const field = page.getByRole("combobox", { name: "Category", exact: true });
+  await expect(field).toHaveValue(long);
+  await expect(page.getByRole("button", { name: "Remove category" })).toBeVisible();
+  await check(page, info, "settings-category");
+  await field.fill("DOCS");
+  await expect(page.getByText("Will be filed under “Docs”.")).toBeVisible();
+  await check(page, info, "settings-category-hint");
+});
+
 test("signed-in pages: dashboard, connections, consent, settings", async ({ page }, info) => {
   test.setTimeout(90_000);
   const email = uniqueEmail("a11y");
