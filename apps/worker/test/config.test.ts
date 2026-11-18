@@ -3,6 +3,7 @@ import { DEFAULTS, LIMITS, LIVE_DEFAULTS, ROOM_DEFAULTS, TTL } from "@plinth/sha
 import { describe, expect, it } from "vitest";
 import {
   ConfigError,
+  IDENTITY_READERS,
   identityClaimsActive,
   liveEditMode,
   MIN_VERSION_BYTES,
@@ -14,6 +15,7 @@ import {
   sharedDataActive,
   uploadTicketsPerHour,
 } from "../src/config.ts";
+import { everyIdentityReaderOff } from "./identity-readers.ts";
 
 const base = {
   ENVIRONMENT: "production",
@@ -605,12 +607,22 @@ describe("room and live editing settings", () => {
     expect(identityClaimsActive(noData, binding)).toBe(true);
     expect(identityClaimsActive(noData, {})).toBe(false);
     expect(
-      identityClaimsActive(
-        parseConfig({ ...base, ALLOW_SHARED_DATA: "false", ALLOW_ROOMS: "false" }),
-        binding,
-      ),
+      identityClaimsActive(parseConfig({ ...base, ...everyIdentityReaderOff().vars }), binding),
     ).toBe(false);
     const opaque = parseConfig({ ...base, CONTENT_ISOLATION: "opaque" });
     expect(identityClaimsActive(opaque, binding)).toBe(false);
+  });
+
+  it("everyIdentityReaderOff turns off every identity reader, and each one alone seals the claim", () => {
+    const binding = { ROOMS: {} as NonNullable<OptionalBindings["ROOMS"]> };
+    const off = everyIdentityReaderOff();
+    const viaVars = parseConfig({ ...base, ...off.vars });
+    const viaConfig = { ...parseConfig(base), ...off.config };
+    for (const r of IDENTITY_READERS) {
+      expect(r.active(viaVars, binding), r.name).toBe(false);
+      expect(r.active(viaConfig, binding), r.name).toBe(false);
+      expect(r.active(parseConfig(base), binding), r.name).toBe(true);
+    }
+    expect(new Set(IDENTITY_READERS.map((r) => r.name)).size).toBe(IDENTITY_READERS.length);
   });
 });

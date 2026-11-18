@@ -541,15 +541,28 @@ export function liveEditMode(
   return roomsActive(c, env) ? "room" : "solo";
 }
 
+/** Something on the page that reads the identity claim, and whether it is switched on. */
+export interface IdentityReader {
+  name: string;
+  active: (c: Config, env: OptionalBindings) => boolean;
+}
+
+/**
+ * Everything that reads the identity claim, one per line. A feature that reads it adds its line
+ * here, and its switch to everyIdentityReaderOff() in the tests (test/identity-readers.ts).
+ */
+export const IDENTITY_READERS: readonly IdentityReader[] = [
+  { name: "shared data", active: (c) => c.allowSharedData },
+  { name: "live rooms", active: roomsActive },
+];
+
 /**
  * Whether the gate seals an identity claim into identified viewers' content passes: only with
- * origin isolation, and only while something on the page reads it (shared data or rooms).
+ * origin isolation, and only while something on the page reads it (IDENTITY_READERS: shared data
+ * or rooms).
  */
-export function identityClaimsActive(
-  c: Pick<Config, "allowSharedData" | "allowRooms" | "contentIsolation">,
-  env: OptionalBindings,
-): boolean {
-  return c.contentIsolation === "origin" && (c.allowSharedData || roomsActive(c, env));
+export function identityClaimsActive(c: Config, env: OptionalBindings): boolean {
+  return c.contentIsolation === "origin" && IDENTITY_READERS.some((r) => r.active(c, env));
 }
 
 /**
