@@ -45,6 +45,23 @@
 .pl-dash-bar__sort .pl-button {
   padding-inline: var(--space-2);
 }
+.pl-dash-bar__category {
+  min-width: 0;
+}
+.pl-dash-bar__category > .pl-button {
+  max-width: 14rem;
+  padding-inline: var(--space-2);
+}
+.pl-dash-bar__category .pl-button__content {
+  min-width: 0;
+  max-width: 100%;
+}
+.pl-dash-bar__category-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .pl-dash-bar__views {
   display: flex;
   gap: var(--space-0-5);
@@ -161,6 +178,19 @@
   flex-shrink: 0;
   align-items: center;
   gap: var(--space-1-5);
+}
+/* The owner's category: a neutral badge, cut with an ellipsis (the full name is its tooltip). */
+.pl-dash__category {
+  max-width: 12rem;
+  min-width: 0;
+}
+.pl-dash__category svg {
+  flex-shrink: 0;
+}
+.pl-dash__category-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .pl-dash__role {
   padding: 0 var(--space-1-5);
@@ -349,6 +379,10 @@
 .pl-dash__card-access {
   display: inline-flex;
 }
+.pl-dash__card-sub .pl-dash__category {
+  flex-shrink: 1;
+  max-width: 8rem;
+}
 .pl-dash__card-access svg {
   color: var(--color-ink-muted);
 }
@@ -387,6 +421,16 @@
 @media (max-width: 40rem) {
   .pl-dash-search .pl-dash-search__input {
     width: 9.5rem;
+  }
+  /* The filter row wraps rather than scroll sideways once the category menu joins it. */
+  .pl-dash-bar {
+    flex-wrap: wrap;
+    height: auto;
+    min-height: var(--topbar-height);
+    padding-block: var(--space-1);
+  }
+  .pl-dash-bar__category > .pl-button {
+    max-width: 10rem;
   }
   .pl-dash__head {
     display: none;

@@ -1,7 +1,7 @@
 import type { ArtifactSummary } from "@plinth/shared";
 import { cleanup, fireEvent, render, within } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
-import { ArtifactCard, ArtifactRow } from "./ArtifactRow.tsx";
+import { ArtifactCard, ArtifactRow, artifactMenu } from "./ArtifactRow.tsx";
 
 afterEach(cleanup);
 
@@ -58,6 +58,61 @@ describe("ArtifactRow and ArtifactCard", () => {
       expect(within(item).queryByText("Doc")).toBeNull();
     });
   }
+});
+
+describe("categories", () => {
+  for (const [name, View] of [
+    ["row", ArtifactRow],
+    ["card", ArtifactCard],
+  ] as const) {
+    it(`shows the owner's category on their ${name}, with a screen-reader prefix`, () => {
+      const { container } = render(
+        <ul>
+          <View artifact={summary({ category: "Acme site", type: "doc" })} now={NOW} />
+        </ul>,
+      );
+      const item = container.querySelector("li") as HTMLElement;
+      const badge = item.querySelector(".pl-dash__category") as HTMLElement;
+      expect(badge.textContent).toBe("Category: Acme site");
+      expect(badge.querySelector(".visually-hidden")?.textContent).toBe("Category: ");
+      expect(badge.getAttribute("title")).toBe("Acme site");
+      expect(badge.querySelector("svg")?.getAttribute("aria-hidden")).toBe("true");
+      expect(item.querySelectorAll(".pl-dash__category")).toHaveLength(1);
+      // The category comes before the type badge.
+      expect(badges(item)).toEqual(
+        name === "row" ? ["Category: Acme site", "Doc"] : ["Doc", "Category: Acme site"],
+      );
+    });
+
+    it(`shows no category on a shared ${name}`, () => {
+      const { container } = render(
+        <ul>
+          <View
+            artifact={summary({
+              role: "editor",
+              category: null,
+              owner: { id: "u2", email: "bo@example.org", name: "Bo" },
+            })}
+            now={NOW}
+          />
+        </ul>,
+      );
+      expect(container.querySelector(".pl-dash__category")).toBeNull();
+      expect(container.textContent).not.toContain("Category");
+    });
+  }
+
+  it("offers Move to category to owners only, linking to the Category section", () => {
+    const labels = (role: ArtifactSummary["role"]) =>
+      artifactMenu(summary({ role }), () => undefined).flatMap((e) =>
+        e.type === "separator" ? [] : [e],
+      );
+    const move = labels("owner").find((e) => e.label === "Move to category…");
+    expect(move?.href).toBe("/a/plan/settings#settings-category");
+    for (const role of ["editor", "commenter", "viewer"] as const) {
+      expect(labels(role).some((e) => e.label === "Move to category…")).toBe(false);
+    }
+  });
 });
 
 describe("ArtifactCard thumbnail", () => {

@@ -4,6 +4,7 @@ import {
   ArrowSquareOutIcon,
   ClockCounterClockwiseIcon,
   DotsThreeIcon,
+  FolderSimpleIcon,
   GearIcon,
   LinkSimpleIcon,
   PencilSimpleIcon,
@@ -23,6 +24,9 @@ import {
 import { copyText } from "./clipboard.ts";
 import { formatDateTime, formatRelativeShort, versionsText } from "./format.ts";
 
+/** The Category section's heading id on the Settings page ("Move to category…" links to it). */
+export const CATEGORY_SECTION_ID = "settings-category";
+
 export function artifactMenu(a: ArtifactSummary, onCopy: (url: string) => void): MenuEntry[] {
   const slug = { slug: a.slug };
   const items: MenuEntry[] = [
@@ -38,6 +42,11 @@ export function artifactMenu(a: ArtifactSummary, onCopy: (url: string) => void):
   });
   if (a.role === "owner") {
     items.push({ label: "Settings", icon: GearIcon, href: route(APP_ROUTES.settings, slug) });
+    items.push({
+      label: "Move to category…",
+      icon: FolderSimpleIcon,
+      href: `${route(APP_ROUTES.settings, slug)}#${CATEGORY_SECTION_ID}`,
+    });
   }
   items.push({ type: "separator" });
   items.push({ label: "Copy link", icon: LinkSimpleIcon, onSelect: () => onCopy(a.url) });
@@ -108,13 +117,32 @@ function Owner({ artifact: a, you }: { artifact: ArtifactSummary; you?: string }
   );
 }
 
-function Tags({ artifact: a }: { artifact: ArtifactSummary }) {
-  // The type badge ("Doc"); plain HTML pages have none.
+/** The owner's category. Long names are cut with an ellipsis; the full name is the tooltip. */
+function CategoryBadge({ name }: { name: string }) {
+  return (
+    <Badge icon={FolderSimpleIcon} srPrefix="Category:" title={name} className="pl-dash__category">
+      <span className="pl-dash__category-name">{name}</span>
+    </Badge>
+  );
+}
+
+function Tags({
+  artifact: a,
+  withCategory = true,
+}: {
+  artifact: ArtifactSummary;
+  /** The card shows the category on its sub line instead. */
+  withCategory?: boolean;
+}) {
+  // The category (only ever set for the owner) and the type badge ("Doc"); plain HTML pages have
+  // no type badge.
   const def = typeDef(a.type);
   const badge = def?.badge ?? null;
-  if (!badge && !a.taken_down && a.role === "owner") return null;
+  const category = withCategory ? a.category : null;
+  if (!category && !badge && !a.taken_down && a.role === "owner") return null;
   return (
     <span className="pl-dash__tags">
+      {category && <CategoryBadge name={category} />}
       {badge && <Badge title={def?.label}>{badge}</Badge>}
       {a.taken_down && <Badge tone="danger">Taken down</Badge>}
       {a.role !== "owner" && (
@@ -259,7 +287,7 @@ export function ArtifactCard({ artifact: a, now, you }: ArtifactCardProps) {
           <Link to={href} className="pl-dash__link">
             {a.title}
           </Link>
-          <Tags artifact={a} />
+          <Tags artifact={a} withCategory={false} />
         </span>
         <span className="pl-dash__card-sub">
           <span title={VISIBILITY_META[a.visibility].description} className="pl-dash__card-access">
@@ -269,6 +297,7 @@ export function ArtifactCard({ artifact: a, now, you }: ArtifactCardProps) {
           <span className="pl-dash__version" title={versionsText(a.version_count)}>
             <span className="visually-hidden">Version </span>v{a.current_version}
           </span>
+          {a.category && <CategoryBadge name={a.category} />}
           <span className="pl-dash__dot" aria-hidden="true">
             ·
           </span>

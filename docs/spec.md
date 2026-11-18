@@ -399,6 +399,10 @@ or log carries it.
   merge); `to: null` clears it. It answers `{ updated, category }`, changes only the caller's own
   rows, leaves `updated_at` alone, and takes a signed-in session only (CSRF and exact `Origin`):
   agents and bearer tokens get 403, and there is no MCP tool for it.
+- **In the app.** The dashboard has a Category menu beside All / Mine / Shared (kept in
+  `?category=`, an empty value meaning no category; hidden under Shared), a category badge on the
+  owner's rows and cards, a Rename category dialog (rename, merge or remove) and "Move to
+  category…" in the row menu, which opens the Category section of the artifact's Settings.
 
 ### Comments and agent mentions
 
