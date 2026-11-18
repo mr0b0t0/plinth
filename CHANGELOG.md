@@ -10,6 +10,12 @@ Add a line under **Unreleased** in the pull request that makes a change people w
 
 ## Unreleased
 
+- **The plugin's Plinth server loads in Codex and GitHub Copilot CLI.** Plugin 0.10.0 put a field
+  in its `mcp.json` server entry that the Agent Plugins schema doesn't allow, so Codex and Copilot
+  CLI installed the skill but skipped the server (Copilot logs `field "extensions" is not
+  permitted`). Plugin 0.11.0 drops it; both find Plinth's OAuth sign-in on their own. Update the
+  plugin to get it. The mention watcher skill now says it works only in Claude Code.
+
 ## 0.5.0 (2026-11-16)
 
 - **Previews in the agent's thread.** In apps that support MCP Apps (T3 Code with Claude or

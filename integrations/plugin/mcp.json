@@ -3,14 +3,7 @@
   "mcpServers": {
     "plinth": {
       "type": "streamable-http",
-      "url": "https://plinth.aconite.io/mcp",
-      "extensions": {
-        "com.openai": {
-          "auth": {
-            "type": "oauth"
-          }
-        }
-      }
+      "url": "https://plinth.aconite.io/mcp"
     }
   }
 }
