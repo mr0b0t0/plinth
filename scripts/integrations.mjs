@@ -182,6 +182,41 @@ outputs.set(
   }),
 );
 
+// ---------- Claude Code plugin directory build ----------
+// Anthropic's plugin directory accepts hooks, monitors and scripts only from verified
+// organizations, and needs a fixed public URL for each MCP server. So the directory gets the skill
+// and the hosted server only. The full plugin (watcher, session note, PLINTH_URL) stays the one in
+// integrations/plugin, installed from this repository's marketplace.
+const DIRECTORY = "integrations/plugin-directory";
+const directorySkillEdits = [
+  [
+    "- In Claude Code with the Plinth plugin, `/plinth:watch-mentions` connects a watcher that tells the\n  session when new requests arrive, so the user does not have to ask you to check.",
+    "- In Claude Code, the full Plinth plugin (`claude plugin marketplace add mr0b0t0/plinth`) adds\n  `/plinth:watch-mentions`, a watcher that tells the session when new requests arrive. Without it,\n  check `list_mentions` when the user asks.",
+  ],
+  [
+    "URL (Claude Code: set `PLINTH_URL` to the instance's origin every time Claude Code starts, for\nexample `http://127.0.0.1:8788` for `npx @mr0b0t0/plinth`; without it the plugin's server is the\nhosted one).",
+    "URL (Claude Code: add it with `claude mcp add --transport http plinth <origin>/mcp`; this plugin's\nserver is always the hosted one).",
+  ],
+];
+let directorySkill = skill;
+for (const [from, to] of directorySkillEdits) {
+  if (!directorySkill.includes(from)) {
+    throw new Error(
+      `${DIRECTORY}: the skill no longer contains a passage this build rewrites:\n${from}`,
+    );
+  }
+  directorySkill = directorySkill.replace(from, to);
+}
+outputs.set(`${DIRECTORY}/skills/${SKILL_NAME}/SKILL.md`, directorySkill);
+outputs.set(
+  `${DIRECTORY}/.claude-plugin/plugin.json`,
+  json({ ...meta, privacyPolicyUrl: PLUGIN.privacyPolicyUrl }),
+);
+outputs.set(
+  `${DIRECTORY}/.mcp.json`,
+  json({ mcpServers: { [SERVER_NAME]: { type: "http", url: hostedMcp } } }),
+);
+
 // ---------- Gemini CLI extension ----------
 outputs.set(
   "integrations/gemini/gemini-extension.json",
