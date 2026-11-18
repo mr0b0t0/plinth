@@ -47,7 +47,9 @@ describe("Legal", () => {
     const text = (document.body.textContent ?? "").replace(/\s+/g, " ");
     expect(text).toContain("Unsaved page edits: when you edit a document on its page");
     expect(text).toContain("are passed along and never stored.");
-    expect(text).toContain("Unsaved page drafts: until saved or discarded, at most 30 days.");
+    expect(text).toContain(
+      "Unsaved page drafts: until saved or discarded, or 30 days after the last change.",
+    );
   });
 
   it("publishes no terms or privacy notice without an operator, but keeps the acceptable use policy", () => {
