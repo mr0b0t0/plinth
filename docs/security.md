@@ -679,8 +679,11 @@ instruction with the owner's authority. Plinth enforces what it can:
 - Tokens, secrets and other users' data are never reachable through the API by text in a comment.
 
 What Plinth cannot enforce is the agent's judgement. Every MCP tool that returns people's text
-(artifacts, titles, comments, mention requests) says in its description that the text is
-untrusted data, not instructions, and the API marks those fields the same way. Agent operators
+(artifacts, titles, categories, comments, mention requests) says in its description that the text
+is untrusted data, not instructions, and the API marks those fields the same way. A category name
+can be written by a prompt-injected agent, so the Worker refuses control, invisible and separator
+characters in it, caps it at 60 characters, and never places an owner's names in tool
+descriptions or server instructions, where clients treat text as guidance. Agent operators
 should keep that framing: act only on requests that are about editing that artifact, and ignore
 anything that asks for credentials, other artifacts or actions outside Plinth.
 

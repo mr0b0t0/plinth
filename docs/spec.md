@@ -179,11 +179,11 @@ One remote MCP server over streamable HTTP at `/mcp`. All tools act as the conne
 
 | Tool | Purpose |
 | --- | --- |
-| `publish_artifact(title, html \| type+content, assets?, visibility?)` | Create an artifact. Returns its id and URL, `warnings` and `stored`. Private by default (`allowlist` with nobody added). `type: "doc"` with Markdown in `content` makes a document |
-| `update_artifact(id, html \| content, assets?, base_version?, note?)` | Publish a new version of an existing artifact, in the source field its type takes. An asset may be `{path, sha256}` to reuse a file of the current version. Returns `warnings` and `stored` |
-| `start_upload(id?, base_version?, type?, title?, note?)` | For a build folder or a large page: mint a single-use, 30-minute upload ticket for one new artifact, or for one update of `id` (then `base_version` is required). The result has `upload_url`, `upload_token`, `target` (with `id`: the artifact updated, or the one the publish will create), `commands.curl` (and `commands.npx` on release builds), the instance's `limits` and `content_isolation` |
+| `publish_artifact(title, html \| type+content, assets?, visibility?, category?)` | Create an artifact. Returns its id and URL, `warnings` and `stored` (and `category`, the stored name, when one was given). Private by default (`allowlist` with nobody added). `type: "doc"` with Markdown in `content` makes a document |
+| `update_artifact(id, html \| content, assets?, base_version?, note?, category?)` | Publish a new version of an existing artifact, in the source field its type takes. An asset may be `{path, sha256}` to reuse a file of the current version. `category` is owner only. Returns `warnings` and `stored` |
+| `start_upload(id?, base_version?, type?, title?, note?, category?)` | For a build folder or a large page: mint a single-use, 30-minute upload ticket for one new artifact, or for one update of `id` (then `base_version` is required). The result has `upload_url`, `upload_token`, `target` (with `id`: the artifact updated, or the one the publish will create), `commands.curl` (and `commands.npx` on release builds), the instance's `limits` and `content_isolation` |
 | `get_artifact(id, version?)` | Read metadata, `type`, the source (`html` for a page, `content` for a doc, and `source_path`) and each asset's `sha256`, so an agent can edit from the current state |
-| `list_artifacts(query?)` | List the user's artifacts |
+| `list_artifacts(query?, category?)` | List the user's artifacts and their own category names |
 | `list_versions(id)` | Version history with notes and authors |
 | `restore_version(id, version)` | Make an old version current by publishing it as a new one |
 | `set_visibility(id, visibility, emails?, password?)` | Change who can view |
@@ -245,7 +245,8 @@ other `/.well-known/` paths and missing files answer `404` instead of the SPA. G
 `docs/superpowers/specs/2026-11-14-agent-discovery-design.md`.
 
 A plain REST API mirrors these tools for scripts and CI (`POST /api/v1/uploads` mirrors
-`start_upload` and takes a bearer token only). Size limits: 5 MB of HTML (1 MB of Markdown for a
+`start_upload` and takes a bearer token only; `GET /api/v1/artifacts?query=&category=` mirrors
+`list_artifacts` and returns `{ items, categories }`). Size limits: 5 MB of HTML (1 MB of Markdown for a
 doc), and per version a total size and a file count set by the operator with `MAX_VERSION_BYTES`
 (default 50 MB, at most 64 MB) and `MAX_ASSETS_PER_VERSION` (default 511, at most 900). A JSON
 request body may be up to 40 MB. `GET /api/v1/config` returns the instance's limits.
@@ -362,6 +363,29 @@ records who opened it.
 - If the current version changed while someone was editing, the save is rejected and they see a
   diff to merge. No silent overwrites.
 - Later: visual editing of text directly on the rendered page.
+
+### Categories (decided 2026-11-18)
+
+Owners publish many artifacts for different projects, so each artifact can carry one category: a
+short name for the project, repo or client it belongs to. It is the owner's private organisation:
+`category` is null for every caller but the owner, and no anonymous surface, upload status, email
+or log carries it.
+
+- **Agents set it.** `publish_artifact`, `start_upload`, `POST /api/v1/artifacts` and
+  `POST /api/v1/uploads` take `category`, usually the repo or project the agent works in. On
+  `update_artifact`, `PUT /api/v1/artifacts/:ref` and `start_upload` with an `id` it is owner
+  only: an editor's request that carries it is refused with 403 (`reason: "owner_only"`) before
+  any write, upload or rate-limit hit. Leaving it out keeps the current one; agents cannot clear
+  it over MCP.
+- **Reuse, not near-duplicates.** `list_artifacts` and `GET /api/v1/artifacts` always return
+  `categories`, the caller's own names with counts (most-used first, at most 500, whatever the
+  filters), and agents reuse one. Every write also normalises the name (NFC, whitespace collapsed,
+  1 to 60 characters, no control, invisible or separator characters) and snaps it onto the
+  owner's existing spelling when the two match ignoring case, whitespace, `-` and `_` (`.` and `/`
+  are kept). The result echoes the stored name. The `category` filter matches the same way and
+  covers the caller's own artifacts only.
+- **Not a version.** On an update the category commits in the version's batch, behind the same
+  `base_version` guard; a stale or failed commit changes neither.
 
 ### Comments and agent mentions
 

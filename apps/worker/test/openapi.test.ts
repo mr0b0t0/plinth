@@ -140,6 +140,27 @@ describe("OpenAPI document", () => {
     expect(update.properties.content.type).toBe("string");
   });
 
+  it("describes categories: on the inputs, the list result and the list filter", () => {
+    const schemas = doc.components.schemas;
+    for (const name of ["PublishArtifactInput", "UpdateArtifactInput", "StartUploadInput"]) {
+      const c = schemas[name].properties.category;
+      expect(c, name).toMatchObject({ type: "string", minLength: 1, maxLength: 60 });
+      expect(c, name).not.toHaveProperty("pattern");
+      expect(schemas[name].required ?? [], name).not.toContain("category");
+    }
+    expect(schemas.ArtifactList.required.sort()).toEqual(["categories", "items"]);
+    expect(schemas.ArtifactList.properties.categories.items).toEqual({
+      $ref: "#/components/schemas/CategoryCount",
+    });
+    // Echoed only when the call set one.
+    expect(schemas.PublishResult.properties.category.type).toBe("string");
+    expect(schemas.PublishResult.required).not.toContain("category");
+    expect(schemas.BundleResult.required).not.toContain("category");
+    const list = doc.paths["/artifacts"].get;
+    expect(list.parameters.map((p: Json) => p.name)).toEqual(["query", "category"]);
+    expect(doc.info.description).toContain("titles, categories, comments");
+  });
+
   it("describes ArtifactDetail per type, with html required for an HTML page", () => {
     const schemas = doc.components.schemas;
     const detail = schemas.ArtifactDetail;

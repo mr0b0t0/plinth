@@ -12,7 +12,10 @@ import {
   db,
   fetchWith,
   json,
+  mcpClient,
   publish,
+  r2Keys,
+  tool,
   uniqueEmail,
 } from "./helpers.ts";
 
@@ -205,5 +208,98 @@ describe("category is owner-only metadata", () => {
     const r = await call(`/api/v1/artifacts/${p.id}/sharing`, { headers: owner.auth });
     expect(r.status).toBe(200);
     expect(await r.text()).not.toContain(CATEGORY);
+  });
+});
+
+// Only the owner sets a category: an editor's write that carries one is refused before any write,
+// upload or rate-limit hit, and a collaborator's list never holds the owner's names.
+describe("collaborators and categories", () => {
+  const CATEGORY = "Secret Client";
+
+  async function withEditor() {
+    const owner = await agent();
+    const { body: p } = await publish(owner.auth, { visibility: "allowlist", category: CATEGORY });
+    expect(p.category).toBe(CATEGORY);
+    const editor = await agent();
+    expect(
+      (await putSharing(owner.auth, p.id, [{ email: editor.user.email, role: "editor" }])).status,
+    ).toBe(200);
+    return { owner, editor, p };
+  }
+
+  const publishRate = async (userId: string) =>
+    (
+      await env.DB.prepare("SELECT coalesce(sum(count), 0) AS n FROM rate_limits WHERE key = ?")
+        .bind(`publish:${userId}`)
+        .first<{ n: number }>()
+    )?.n ?? 0;
+  const stored = async (id: string) =>
+    await env.DB.prepare("SELECT category, current_version AS v FROM artifacts WHERE id = ?")
+      .bind(id)
+      .first<{ category: string | null; v: number }>();
+
+  it("an editor's PUT with a category is 403 owner_only: no version, no rate hit, no R2 write", async () => {
+    const { editor, p } = await withEditor();
+    const keys = await r2Keys(`artifacts/${p.id}/`);
+    const rate = await publishRate(editor.user.id);
+    const r = await call(`/api/v1/artifacts/${p.id}`, {
+      method: "PUT",
+      headers: { ...editor.auth, "Content-Type": "application/json" },
+      body: JSON.stringify({ html: "<p>by editor</p>", base_version: 1, category: "Mine" }),
+    });
+    expect(r.status).toBe(403);
+    const text = await r.text();
+    expect(JSON.parse(text).error).toMatchObject({
+      code: "forbidden",
+      details: { field: "category", reason: "owner_only" },
+    });
+    expect(text).not.toContain(CATEGORY);
+    expect(await stored(p.id)).toEqual({ category: CATEGORY, v: 1 });
+    expect(await publishRate(editor.user.id)).toBe(rate);
+    expect(await r2Keys(`artifacts/${p.id}/`)).toEqual(keys);
+    // Without the category, the same editor's update goes through and keeps the owner's name.
+    const ok = await call(`/api/v1/artifacts/${p.id}`, {
+      method: "PUT",
+      headers: { ...editor.auth, "Content-Type": "application/json" },
+      body: JSON.stringify({ html: "<p>by editor</p>", base_version: 1 }),
+    });
+    expect(ok.status).toBe(200);
+    const okBody = await ok.text();
+    expect(okBody).not.toContain(CATEGORY);
+    expect(await stored(p.id)).toEqual({ category: CATEGORY, v: 2 });
+  });
+
+  it("an editor's update_artifact over MCP with a category is refused the same way", async () => {
+    const { editor, p } = await withEditor();
+    const c = await mcpClient(editor.token);
+    const r = await tool(c, "update_artifact", {
+      id: p.id,
+      html: "<p>x</p>",
+      base_version: 1,
+      category: "Mine",
+    });
+    expect(r.isError).toBe(true);
+    expect(r.data.error).toMatchObject({ code: "forbidden", details: { reason: "owner_only" } });
+    expect(r.text).not.toContain(CATEGORY);
+    expect(await stored(p.id)).toEqual({ category: CATEGORY, v: 1 });
+  });
+
+  it("a collaborator's categories hold only their own names, and the owner's name filters nothing", async () => {
+    const { editor, p } = await withEditor();
+    await publish(editor.auth, { category: "Editor Stuff" });
+    const r = await json(await call("/api/v1/artifacts", { headers: editor.auth }));
+    expect(r.categories).toEqual([{ name: "Editor Stuff", count: 1 }]);
+    expect(r.items.find((i: { id: string }) => i.id === p.id)).toMatchObject({ category: null });
+    const filtered = await call(`/api/v1/artifacts?category=${encodeURIComponent(CATEGORY)}`, {
+      headers: editor.auth,
+    });
+    const text = await filtered.text();
+    expect(JSON.parse(text).items).toEqual([]);
+    expect(text).not.toContain(CATEGORY);
+    // Over MCP too.
+    const c = await mcpClient(editor.token);
+    const listed = await tool(c, "list_artifacts", { category: CATEGORY });
+    expect(listed.data.items).toEqual([]);
+    expect(listed.text).not.toContain(CATEGORY);
   });
 });

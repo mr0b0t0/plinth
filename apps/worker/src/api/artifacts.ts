@@ -30,10 +30,11 @@ import { type AppEnv, parseBody, parseInput, serviceCtx } from "./context.ts";
 export const artifactsApi = new Hono<AppEnv>();
 
 artifactsApi.get("/artifacts", async (c) => {
-  const { query } = parseInput(listArtifactsInput, {
+  const { query, category } = parseInput(listArtifactsInput, {
     query: c.req.query("query") ?? c.req.query("q"),
+    category: c.req.query("category"),
   });
-  return c.json({ items: await listArtifacts(serviceCtx(c), query) });
+  return c.json(await listArtifacts(serviceCtx(c), { query, category }));
 });
 
 artifactsApi.post("/artifacts", async (c) => {
