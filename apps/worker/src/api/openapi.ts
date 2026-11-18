@@ -562,6 +562,69 @@ function responseSchemas(): Record<string, Json> {
       created_at: dateTime,
     }),
     ReportList: paged("ReportInfo"),
+    StatsDay: obj({
+      day: str({ format: "date", description: "UTC day" }),
+      users: int({ description: "People who signed up" }),
+      artifacts: int({ description: "Artifacts created, including any deleted since" }),
+      publishes: int({ description: "Versions published, including restores" }),
+      agent_publishes: int({ description: "Versions published by an agent connection" }),
+      views: int({ description: "Opens (see ArtifactViews)" }),
+      artifacts_viewed: int({ description: "Artifacts opened at least once" }),
+    }),
+    AdminStats: obj({
+      generated_at: dateTime,
+      days: int({ enum: [7, 30, 90] }),
+      view_counts: { type: "boolean", description: "Whether VIEW_COUNTS is on" },
+      totals: obj({
+        users: int(),
+        artifacts: int({ description: "Live artifacts (not deleted)" }),
+        artifacts_by_visibility: obj(Object.fromEntries(VISIBILITIES.map((v) => [v, int()]))),
+        artifacts_taken_down: int(),
+        versions: int({ description: "Versions of live artifacts" }),
+        agent_versions: int(),
+        storage_bytes: int({ description: "Bytes stored for live artifacts (the quota measure)" }),
+        data_docs: int({ description: "Shared-data documents on live artifacts" }),
+        data_bytes: int(),
+        data_artifacts: int({ description: "Live artifacts holding shared data" }),
+        connections: int({ description: "Agent connections not revoked" }),
+        connections_by_client: obj(Object.fromEntries(CLIENT_TYPES.map((t) => [t, int()]))),
+        views: int({ description: "Opens ever counted" }),
+        open_reports: int(),
+      }),
+      window: obj({
+        new_users: int(),
+        new_artifacts: int(),
+        publishes: int(),
+        agent_publishes: int(),
+        connections_used: int({
+          description: "Connections used during the window, including any revoked since",
+        }),
+        views: int(),
+        artifacts_viewed: int(),
+      }),
+      series: {
+        type: "array",
+        items: ref("StatsDay"),
+        description: "One entry per UTC day of the window, oldest first",
+      },
+    }),
+    ArtifactViews: obj({
+      enabled: { type: "boolean", description: "Whether this instance counts opens (VIEW_COUNTS)" },
+      total: int({ description: "Opens counted since `since`" }),
+      since: nullable("string", {
+        format: "date",
+        description:
+          "The first UTC day with a counted open, or null. Opens before this instance began " +
+          "counting are not known.",
+      }),
+      last_7: int(),
+      last_30: int(),
+      days: {
+        type: "array",
+        items: obj({ day: str({ format: "date" }), views: int() }),
+        description: "The last 30 UTC days, oldest first",
+      },
+    }),
     DevOutbox: obj({
       items: {
         type: "array",
@@ -1353,6 +1416,40 @@ function operations(): Operation[] {
       ok: [200, "ReportInfo"],
       errors: [400, 401, 403, 404, 409],
     },
+    // Admin stats and open counts
+    {
+      method: "get",
+      path: API.adminStats,
+      operationId: "getAdminStats",
+      summary: "Instance stats and daily trends (instance admins)",
+      description: "Aggregates only: no artifact, owner or viewer is named.",
+      tag: "Admin",
+      auth: "admin",
+      query: [
+        {
+          name: "days",
+          schema: { type: "string", enum: ["7", "30", "90"], default: "30" },
+          description: "Trend window in UTC days",
+        },
+      ],
+      ok: [200, "AdminStats"],
+      errors: [400, 404],
+    },
+    {
+      method: "get",
+      path: API.artifactViews,
+      operationId: "getArtifactViews",
+      summary: "How often other people opened an artifact (owner only)",
+      description:
+        "Owner only. Daily open counts; no viewer data. An open is one browser opening the live " +
+        "page it had not opened in the last 12 hours, or since its sharing last changed; the " +
+        "owner, agents, previews and history never count.",
+      tag: "Artifacts",
+      auth: "agent",
+      scope: "artifacts:read",
+      ok: [200, "ArtifactViews"],
+      errors: [401, 403, 404],
+    },
   ];
 }
 
@@ -1529,6 +1626,7 @@ export function openApiDocument(config: Pick<Config, "appOrigin">): Json {
       { name: "Auth", description: "Sign-in for people (magic link and code)" },
       { name: "Account", description: "Instance config and the current user" },
       { name: "Reports", description: "Abuse reports and takedown" },
+      { name: "Admin", description: "Instance stats for admins: aggregates only" },
       { name: "Shared data", description: "Documents pages keep. Mirrors the MCP data tools" },
     ],
     paths,

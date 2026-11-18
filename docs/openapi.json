@@ -17,6 +17,7 @@
     { "name": "Auth", "description": "Sign-in for people (magic link and code)" },
     { "name": "Account", "description": "Instance config and the current user" },
     { "name": "Reports", "description": "Abuse reports and takedown" },
+    { "name": "Admin", "description": "Instance stats for admins: aggregates only" },
     { "name": "Shared data", "description": "Documents pages keep. Mirrors the MCP data tools" }
   ],
   "paths": {
@@ -1395,6 +1396,65 @@
           "default": { "$ref": "#/components/responses/Error" }
         },
         "security": [{ "sessionCookie": [], "csrfHeader": [] }]
+      }
+    },
+    "/admin/stats": {
+      "get": {
+        "operationId": "getAdminStats",
+        "summary": "Instance stats and daily trends (instance admins)",
+        "description": "Aggregates only: no artifact, owner or viewer is named.\n\nInstance admins only (emails in ADMIN_EMAIL).",
+        "tags": ["Admin"],
+        "parameters": [
+          {
+            "in": "query",
+            "required": false,
+            "name": "days",
+            "schema": { "type": "string", "enum": ["7", "30", "90"], "default": "30" },
+            "description": "Trend window in UTC days"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/AdminStats" } }
+            }
+          },
+          "400": { "$ref": "#/components/responses/E400" },
+          "404": { "$ref": "#/components/responses/E404" },
+          "default": { "$ref": "#/components/responses/Error" }
+        },
+        "security": [{ "sessionCookie": [] }]
+      }
+    },
+    "/artifacts/{ref}/views": {
+      "get": {
+        "operationId": "getArtifactViews",
+        "summary": "How often other people opened an artifact (owner only)",
+        "description": "Owner only. Daily open counts; no viewer data. An open is one browser opening the live page it had not opened in the last 12 hours, or since its sharing last changed; the owner, agents, previews and history never count.",
+        "tags": ["Artifacts"],
+        "parameters": [
+          {
+            "in": "path",
+            "required": true,
+            "name": "ref",
+            "schema": { "type": "string", "minLength": 1, "maxLength": 80 },
+            "description": "Artifact id or slug"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ArtifactViews" } }
+            }
+          },
+          "401": { "$ref": "#/components/responses/E401" },
+          "403": { "$ref": "#/components/responses/E403" },
+          "404": { "$ref": "#/components/responses/E404" },
+          "default": { "$ref": "#/components/responses/Error" }
+        },
+        "security": [{ "bearerAuth": ["artifacts:read"] }, { "sessionCookie": [] }]
       }
     },
     "/artifacts/{ref}/data": {
@@ -2979,6 +3039,165 @@
           "items": { "type": "array", "items": { "$ref": "#/components/schemas/ReportInfo" } }
         },
         "required": ["items"]
+      },
+      "StatsDay": {
+        "type": "object",
+        "properties": {
+          "day": { "type": "string", "format": "date", "description": "UTC day" },
+          "users": { "type": "integer", "description": "People who signed up" },
+          "artifacts": {
+            "type": "integer",
+            "description": "Artifacts created, including any deleted since"
+          },
+          "publishes": {
+            "type": "integer",
+            "description": "Versions published, including restores"
+          },
+          "agent_publishes": {
+            "type": "integer",
+            "description": "Versions published by an agent connection"
+          },
+          "views": { "type": "integer", "description": "Opens (see ArtifactViews)" },
+          "artifacts_viewed": { "type": "integer", "description": "Artifacts opened at least once" }
+        },
+        "required": [
+          "day",
+          "users",
+          "artifacts",
+          "publishes",
+          "agent_publishes",
+          "views",
+          "artifacts_viewed"
+        ]
+      },
+      "AdminStats": {
+        "type": "object",
+        "properties": {
+          "generated_at": { "type": "string", "format": "date-time" },
+          "days": { "type": "integer", "enum": [7, 30, 90] },
+          "view_counts": { "type": "boolean", "description": "Whether VIEW_COUNTS is on" },
+          "totals": {
+            "type": "object",
+            "properties": {
+              "users": { "type": "integer" },
+              "artifacts": { "type": "integer", "description": "Live artifacts (not deleted)" },
+              "artifacts_by_visibility": {
+                "type": "object",
+                "properties": {
+                  "public": { "type": "integer" },
+                  "unlisted": { "type": "integer" },
+                  "password": { "type": "integer" },
+                  "allowlist": { "type": "integer" }
+                },
+                "required": ["public", "unlisted", "password", "allowlist"]
+              },
+              "artifacts_taken_down": { "type": "integer" },
+              "versions": { "type": "integer", "description": "Versions of live artifacts" },
+              "agent_versions": { "type": "integer" },
+              "storage_bytes": {
+                "type": "integer",
+                "description": "Bytes stored for live artifacts (the quota measure)"
+              },
+              "data_docs": {
+                "type": "integer",
+                "description": "Shared-data documents on live artifacts"
+              },
+              "data_bytes": { "type": "integer" },
+              "data_artifacts": {
+                "type": "integer",
+                "description": "Live artifacts holding shared data"
+              },
+              "connections": { "type": "integer", "description": "Agent connections not revoked" },
+              "connections_by_client": {
+                "type": "object",
+                "properties": {
+                  "claude": { "type": "integer" },
+                  "codex": { "type": "integer" },
+                  "other": { "type": "integer" }
+                },
+                "required": ["claude", "codex", "other"]
+              },
+              "views": { "type": "integer", "description": "Opens ever counted" },
+              "open_reports": { "type": "integer" }
+            },
+            "required": [
+              "users",
+              "artifacts",
+              "artifacts_by_visibility",
+              "artifacts_taken_down",
+              "versions",
+              "agent_versions",
+              "storage_bytes",
+              "data_docs",
+              "data_bytes",
+              "data_artifacts",
+              "connections",
+              "connections_by_client",
+              "views",
+              "open_reports"
+            ]
+          },
+          "window": {
+            "type": "object",
+            "properties": {
+              "new_users": { "type": "integer" },
+              "new_artifacts": { "type": "integer" },
+              "publishes": { "type": "integer" },
+              "agent_publishes": { "type": "integer" },
+              "connections_used": {
+                "type": "integer",
+                "description": "Connections used during the window, including any revoked since"
+              },
+              "views": { "type": "integer" },
+              "artifacts_viewed": { "type": "integer" }
+            },
+            "required": [
+              "new_users",
+              "new_artifacts",
+              "publishes",
+              "agent_publishes",
+              "connections_used",
+              "views",
+              "artifacts_viewed"
+            ]
+          },
+          "series": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/StatsDay" },
+            "description": "One entry per UTC day of the window, oldest first"
+          }
+        },
+        "required": ["generated_at", "days", "view_counts", "totals", "window", "series"]
+      },
+      "ArtifactViews": {
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "description": "Whether this instance counts opens (VIEW_COUNTS)"
+          },
+          "total": { "type": "integer", "description": "Opens counted since `since`" },
+          "since": {
+            "type": ["string", "null"],
+            "format": "date",
+            "description": "The first UTC day with a counted open, or null. Opens before this instance began counting are not known."
+          },
+          "last_7": { "type": "integer" },
+          "last_30": { "type": "integer" },
+          "days": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "day": { "type": "string", "format": "date" },
+                "views": { "type": "integer" }
+              },
+              "required": ["day", "views"]
+            },
+            "description": "The last 30 UTC days, oldest first"
+          }
+        },
+        "required": ["enabled", "total", "since", "last_7", "last_30", "days"]
       },
       "DevOutbox": {
         "type": "object",

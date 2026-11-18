@@ -22,6 +22,7 @@ import { ApiError } from "./lib/errors.ts";
 import { handleMcp } from "./mcp/server.ts";
 import { mcpResourceMetadataUrl, oauthRoutes } from "./oauth/routes.ts";
 import { pruneUploadTickets, sweepStagingAttempts } from "./services/attempts.ts";
+import { foldViewDays } from "./services/views.ts";
 
 export const app = new Hono<AppEnv>();
 
@@ -157,7 +158,7 @@ export default {
         return res;
       }
       case "content":
-        return serveContent(request, env, config, route);
+        return serveContent(request, env, config, route, (p) => ctx.waitUntil(p));
       case "content-root":
         return contentRoot(config);
       default:
@@ -170,8 +171,9 @@ export default {
 
   /**
    * The hourly cron trigger (wrangler.jsonc `triggers`): remove what abandoned upload attempts
-   * left, and upload tickets past their status window (services/attempts.ts). Needs only the D1
-   * and R2 bindings, not the host configuration.
+   * left, and upload tickets past their status window (services/attempts.ts). At 03 UTC, also fold
+   * daily open counts older than the window into per-artifact totals (services/views.ts), whether
+   * or not counting is on. Needs only the D1 and R2 bindings, not the host configuration.
    */
   async scheduled(
     controller: ScheduledController,
@@ -180,5 +182,7 @@ export default {
   ): Promise<void> {
     await sweepStagingAttempts(env, controller.scheduledTime);
     await pruneUploadTickets(env.DB, controller.scheduledTime);
+    if (new Date(controller.scheduledTime).getUTCHours() === 3)
+      await foldViewDays(env.DB, controller.scheduledTime);
   },
 } satisfies ExportedHandler<Bindings>;

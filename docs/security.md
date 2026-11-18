@@ -80,6 +80,7 @@ Agents fetch artifact links as text, so the app host answers them without runnin
   `/.well-known/mcp.json` and `/.well-known/mcp/server-card.json`) and `/.well-known/ai-catalog.json`
   carry only configuration. Unknown `/.well-known/` paths and missing files answer `404`, never
   the SPA.
+- None of these ever include open counts.
 
 ## Opaque content isolation
 
@@ -180,6 +181,18 @@ A token or cookie for artifact A is rejected on artifact B: both carry the artif
 content host checks it against its own subdomain. Any change to visibility, the password or the
 grants bumps the artifact's access epoch, which invalidates every outstanding token, cookie and
 password pass at once.
+
+**Open counts** ([spec](spec.md#admin-stats-and-view-counts)). The gate may add one signed bit,
+`w`, to the viewer token, for a normal open of the live page by someone other than the owner, an
+agent or an admin without a role. The issuer refuses `w` on capture and preview tokens, and a
+viewer cannot add it without breaking the signature. The enter exchange counts the open only after
+every check above (signature, artifact, epoch, takedown, nonce) and only for a view pass; it reads
+the request's existing content cookie to count each browser once, and stores nothing about the
+viewer. The content cookie it sets carries the same signed bit, `w`, once the browser's open was
+counted (carried forward by later view enters at that epoch), so dedupe needs no state of its own;
+capture and preview passes never carry it, and a pass that does is rejected. The response is the
+same, byte for byte apart from the cookie's signed value, whether or not the open counted: same
+status, `Location`, cookie attributes and Content Security Policy, and no CORS headers. The write runs after the response, and a failure is logged as a fixed string.
 
 ## Cookies
 
@@ -333,6 +346,17 @@ REST, MCP and the content host alike. Roles: owner; editor (view, comment, menti
 commenter (view, comment, mention); viewer (view). Strangers get 404, not 403, so private artifacts
 do not reveal that they exist. Agents act as their user, further limited by token scopes
 (`artifacts:read`, `artifacts:write`, `mentions`).
+
+An artifact's open counts ([spec](spec.md#admin-stats-and-view-counts)) are behind their own
+policy action, `views`: the owner only, a read action for agents (`artifacts:read`). Anyone who
+may view the page but is not its owner gets 403 (`forbidden`): editors, viewers, and signed-in
+strangers on a public or unlisted page. Strangers who cannot view it (a private, allowlist or
+password page) get 404, anonymous callers 401, and an admin without a role is denied like anyone
+else. The
+admin Stats page (`GET /api/v1/admin/stats`) checks the current `ADMIN_EMAIL` at the route and
+again in the service, and answers everyone else, agents included, with the same 404 as an unknown
+endpoint. It returns instance-wide aggregates only: no statement selects an artifact's id, slug
+or title, an owner or an email, so it reveals nothing about any artifact an admin may not view.
 
 ## Tokens and secrets
 

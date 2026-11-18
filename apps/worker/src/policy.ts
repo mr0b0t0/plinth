@@ -50,7 +50,9 @@ export type ArtifactAction =
   /** Write an artifact's shared data. */
   | "data_write"
   /** Delete all of an artifact's shared data: the owner, signed in, never an agent. */
-  | "data_clear";
+  | "data_clear"
+  /** Read the artifact's open counts: the owner only. */
+  | "views";
 
 export interface ArtifactFacts {
   ownerId: string;
@@ -84,7 +86,7 @@ export type Decision =
   | { allow: true; role: EffectiveRole | null }
   | { allow: false; reason: DenyReason; role: EffectiveRole | null };
 
-const READ_ACTIONS: ReadonlySet<ArtifactAction> = new Set(["view", "report", "data_read"]);
+const READ_ACTIONS: ReadonlySet<ArtifactAction> = new Set(["view", "report", "data_read", "views"]);
 
 export function principalEmail(p: Principal): string | null {
   return p.kind === "anonymous" ? null : p.email;
@@ -165,6 +167,10 @@ export function decide(
         : deny(p.kind === "anonymous" ? "login_required" : "forbidden", role);
     case "data_clear":
       return role === "owner" && p.kind === "user"
+        ? { allow: true, role }
+        : deny(p.kind === "anonymous" ? "login_required" : "forbidden", role);
+    case "views":
+      return role === "owner"
         ? { allow: true, role }
         : deny(p.kind === "anonymous" ? "login_required" : "forbidden", role);
   }

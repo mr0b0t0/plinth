@@ -436,6 +436,8 @@ describe("admin takedown", () => {
     for (const caller of callers) {
       const list = await run("/api/v1/admin/reports", { headers: caller.headers }, caller.vars);
       expect(list.status, caller.name).toBe(404);
+      const stats = await run("/api/v1/admin/stats", { headers: caller.headers }, caller.vars);
+      expect(stats.status, caller.name).toBe(404);
       const decide = await run(
         `/api/v1/admin/reports/${id}`,
         {

@@ -72,4 +72,43 @@ describe("AppShell", () => {
     await user.click(screen.getByRole("menuitem", { name: "Sign out" }));
     expect(onSignOut).toHaveBeenCalledTimes(1);
   });
+
+  it("gives admins Stats and Reports, once each, and nobody else either", async () => {
+    const stub = (isAdmin: boolean) =>
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (input: RequestInfo | URL) => {
+          const url = String(input);
+          if (url.endsWith("/config")) return json({ single_user_mode: false });
+          if (url.endsWith("/me"))
+            return json({ id: "u1", email: "ada@example.org", is_admin: isAdmin });
+          return json({}, 404);
+        }),
+      );
+
+    stub(true);
+    let { AppShell } = await loadShell();
+    render(
+      // AdminReports passes Reports as extraNav; the shell must not list it twice.
+      <AppShell extraNav={[{ label: "Reports", to: "/admin/reports" }]}>
+        <p>Page body</p>
+      </AppShell>,
+    );
+    const nav = await screen.findByRole("navigation", { name: "Primary" });
+    expect(nav.querySelector('a[href="/admin/stats"]')?.textContent).toBe("Stats");
+    expect(nav.querySelectorAll('a[href="/admin/reports"]').length).toBe(1);
+    cleanup();
+    vi.unstubAllGlobals();
+
+    stub(false);
+    ({ AppShell } = await loadShell());
+    render(
+      <AppShell>
+        <p>Page body</p>
+      </AppShell>,
+    );
+    const plain = await screen.findByRole("navigation", { name: "Primary" });
+    expect(plain.querySelector('a[href="/admin/stats"]')).toBeNull();
+    expect(plain.querySelector('a[href="/admin/reports"]')).toBeNull();
+  });
 });

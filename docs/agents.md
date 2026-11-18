@@ -300,7 +300,8 @@ There is no rendered preview for agents yet. To check that a publish arrived int
    the artifact. `enter_url` works once, within 60 seconds. Fetched by a client that keeps cookies,
    it sets a cookie for that one artifact's content host (valid for 12 hours) and redirects to the
    page, so the same cookie jar then fetches the HTML and every asset exactly as viewers get them,
-   with their headers and Content Security Policy. Do it in a new temporary directory, never in
+   with their headers and Content Security Policy. An agent's gate never counts as an open of the
+   page ([spec](spec.md#admin-stats-and-view-counts)). Do it in a new temporary directory, never in
    the build folder: a cookie jar or a downloaded copy left there would go out with the next
    upload, and the jar is a live credential.
 

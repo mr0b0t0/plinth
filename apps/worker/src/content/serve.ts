@@ -19,6 +19,7 @@ import { openJson, viewerIdFor } from "../lib/crypto.ts";
 import { ApiError } from "../lib/errors.ts";
 import type { PageClaim } from "../policy.ts";
 import { fileKey, type ManifestEntry } from "../services/storage.ts";
+import { isCountableRequest, recordView } from "../services/views.ts";
 import { injectBridge, serveBridgeScript } from "./bridge.ts";
 import { applyContentHeaders, type ContentCspOptions } from "./csp.ts";
 import { DATA_API_PREFIX, serveDataApi } from "./data-api.ts";
@@ -171,6 +172,8 @@ type ContentPass = {
   preview: boolean;
   /** The one version a preview pass opens; null for every other pass. */
   version: number | null;
+  /** This browser's open was already counted at this epoch (a view pass carrying `w`). */
+  counted: boolean;
 };
 
 /** One cookie value as a pass for this artifact at its epoch, or null when it is not one. */
@@ -185,8 +188,11 @@ async function openPass(
   const preview = pass.p === 1;
   if (capture && preview) return null;
   if (preview !== isVersion(pass.v)) return null;
+  // Only a view pass is ever marked counted (signContentCookie refuses the others).
+  if (pass.w !== undefined && (pass.w !== 1 || capture || preview)) return null;
+  const counted = pass.w === 1;
   const version = preview ? (pass.v as number) : null;
-  if (pass.x === undefined) return { claim: null, capture, preview, version };
+  if (pass.x === undefined) return { claim: null, capture, preview, version, counted };
   // Capture and preview passes never carry an identity (issueEnterUrl refuses both).
   if (capture || preview) return null;
   if (typeof pass.x !== "string") return null;
@@ -203,6 +209,7 @@ async function openPass(
     capture: false,
     preview: false,
     version: null,
+    counted,
   };
 }
 
@@ -237,6 +244,7 @@ export async function readContentPass(
         found.version !== pass.version)
     )
       return null;
+    if (found) found.counted ||= pass.counted;
     found ??= pass;
   }
   return found;
@@ -278,14 +286,19 @@ export function resolveFilePath(filePath: string): string | null {
   return rel;
 }
 
+/**
+ * Serve a content-host request. `defer` keeps work alive after the response (the Worker's
+ * waitUntil); without it (direct calls in tests) that work is awaited before answering.
+ */
 export async function serveContent(
   request: Request,
   env: Bindings,
   config: Config,
   route: Extract<HostRoute, { kind: "content" }>,
+  defer?: (p: Promise<unknown>) => void,
 ): Promise<Response> {
   try {
-    return await serve(request, env, config, route);
+    return await serve(request, env, config, route, defer);
   } catch (e) {
     // Never show internals (stack traces, SQL) on a content host.
     console.error("content host error:", e instanceof Error ? e.message : "unknown");
@@ -307,6 +320,7 @@ async function serve(
   env: Bindings,
   config: Config,
   route: Extract<HostRoute, { kind: "content" }>,
+  defer?: (p: Promise<unknown>) => void,
 ): Promise<Response> {
   // Shared data (content/data-api.ts): its own method, caller and JSON checks, never a redirect.
   if (route.path.startsWith(DATA_API_PREFIX)) return serveDataApi(request, env, config, route);
@@ -378,6 +392,18 @@ async function serve(
     // A preview is for an artifact's own subdomain only: never the path fallback on the app host.
     if (preview && base) return expired();
     const kind: PassKind = capture ? "capture" : preview ? "preview" : "view";
+    // An open counts (services/views.ts) only for a view pass the gate flagged, from a browser in
+    // the app's frame whose view pass for this artifact was not counted yet. The cookie remembers
+    // a counted open (`w`), and every later view enter at this epoch carries it forward, flagged or
+    // not, so reloads, second tabs and the editor's preview count nothing more while the pass
+    // lives. It reads the incoming cookies, before the new one, and changes nothing else about
+    // the response below.
+    let seen = false;
+    let countNow = false;
+    if (kind === "view" && config.viewCounts) {
+      seen = (await readContentPass(request, config, current))?.counted === true;
+      countNow = !seen && payload.w === 1 && isCountableRequest(request);
+    }
     const value = await signContentCookie(
       config,
       artifactId,
@@ -385,6 +411,7 @@ async function serve(
       x,
       kind,
       preview ? (payload.v as number) : undefined,
+      seen || countNow,
     );
     const next = safeNext(url.searchParams.get("next"));
     const res = redirect(config, 302, `${base}${next}`, enterOpts);
@@ -401,6 +428,11 @@ async function serve(
         maxAge: passMaxAgeS(kind),
       }),
     );
+    if (countNow) {
+      const write = recordView(env.DB, artifactId, Date.now());
+      if (defer) defer(write);
+      else await write;
+    }
     return res;
   }
 

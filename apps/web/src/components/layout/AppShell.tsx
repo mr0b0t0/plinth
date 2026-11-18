@@ -3,6 +3,7 @@
 // right), a skip link, and the <main id="main"> landmark. It reads the session through
 // useSession() only. Below 48rem the sidebar becomes a slide-over opened from the top bar.
 import {
+  ChartBarIcon,
   FileIcon,
   FlagIcon,
   ListIcon,
@@ -61,7 +62,10 @@ const PRIMARY_NAV: NavItem[] = [
   { label: "Artifacts", to: APP_ROUTES.dashboard, icon: FileIcon },
   { label: "Connections", to: APP_ROUTES.connections, icon: PlugIcon },
 ];
-const ADMIN_NAV: NavItem = { label: "Reports", to: APP_ROUTES.adminReports, icon: FlagIcon };
+const ADMIN_NAV: NavItem[] = [
+  { label: "Stats", to: APP_ROUTES.adminStats, icon: ChartBarIcon },
+  { label: "Reports", to: APP_ROUTES.adminReports, icon: FlagIcon },
+];
 
 /** Below this width the sidebar is a slide-over. Keep in step with shell.css. */
 export const SIDEBAR_COMPACT_QUERY = "(max-width: 47.99rem)";
@@ -72,7 +76,7 @@ export interface AppShellProps {
   onSignOut?: () => void;
   /** Extra user-menu entries, shown above the theme choices. */
   userMenuItems?: MenuEntry[];
-  /** Extra sidebar links after the primary ones (admins get Reports automatically). */
+  /** Extra sidebar links after the primary ones (admins get Stats and Reports automatically). */
   extraNav?: NavItem[];
   /**
    * content (default): children sit in the page column with the page padding.
@@ -141,7 +145,7 @@ export function AppShell({
   const mainColumnRef = useRef<HTMLDivElement>(null);
 
   const nav: NavItem[] = me ? [...PRIMARY_NAV] : [];
-  if (me?.is_admin) nav.push(ADMIN_NAV);
+  if (me?.is_admin) nav.push(...ADMIN_NAV);
   for (const item of extraNav) {
     if (me && !nav.some((n) => n.to === item.to)) nav.push(item);
   }

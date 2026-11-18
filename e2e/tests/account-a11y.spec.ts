@@ -1,4 +1,4 @@
-// Accessibility and layout of the account pages in every project (light, dark, mobile 360px):
+// Accessibility and layout of the account pages (and the admin Stats page) in every project (light, dark, mobile 360px):
 // axe finds no violations, nothing scrolls sideways. With PLINTH_E2E_SHOTS=<dir> set, each page
 // is also saved as a screenshot there (for looking at the work; never written into the repo).
 import { createHash, randomBytes } from "node:crypto";
@@ -162,4 +162,15 @@ test("signed-in pages: dashboard, connections, consent, settings", async ({ page
   await page.goto("/oauth/consent?request=unknown");
   await expect(page.getByRole("heading", { name: "This request has expired" })).toBeVisible();
   await check(page, info, "consent-expired");
+});
+
+test("admin pages: stats", async ({ page }, info) => {
+  await seedContextSession(page.context(), "admin@plinth.local");
+  await page.goto("/admin/stats");
+  await expect(page.getByRole("heading", { level: 1, name: "Stats" })).toBeVisible();
+  await expect(page.getByRole("figure", { name: /Opens per day/ })).toBeVisible();
+  await check(page, info, "admin-stats");
+  // Every trend's numbers table open, as a keyboard or screen reader user would read them.
+  for (const summary of await page.getByText("Show numbers").all()) await summary.click();
+  await check(page, info, "admin-stats-numbers");
 });

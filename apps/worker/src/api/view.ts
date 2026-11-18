@@ -26,6 +26,7 @@ import { decideFor, findArtifact, grantFor, versionCapabilities } from "../servi
 import type { Ctx } from "../services/context.ts";
 import { sessionCookie } from "../services/sessions.ts";
 import { requestViewerCode, verifyViewerCode } from "../services/viewers.ts";
+import { countsAsView } from "../services/views.ts";
 import {
   type AppContext,
   type AppEnv,
@@ -83,6 +84,8 @@ export async function computeGate(
     : version === a.currentVersion && !opts.version
       ? "/"
       : `/__plinth/v/${version}/`;
+  // Decided here, recorded by the content host when the token is redeemed (services/views.ts).
+  const countView = countsAsView(ctx, d, opts, next);
   if (opts.review) {
     // The flag goes in the query, before any fragment.
     const hashAt = next.indexOf("#");
@@ -106,7 +109,7 @@ export async function computeGate(
       visibility: a.visibility,
       owner_name: owner?.name ?? null,
     },
-    enter_url: await issueEnterUrl(ctx.config, a, next, identity),
+    enter_url: await issueEnterUrl(ctx.config, a, next, identity, { countView }),
     role: d.role,
     ...(data ? { data } : {}),
   };

@@ -404,6 +404,61 @@ export interface ReportInfo {
   created_at: string;
 }
 
+/** One UTC day of instance activity (GET /api/v1/admin/stats). */
+export interface StatsDay {
+  day: string;
+  users: number;
+  artifacts: number;
+  publishes: number;
+  agent_publishes: number;
+  views: number;
+  artifacts_viewed: number;
+}
+
+/** GET /api/v1/admin/stats: instance-wide aggregates. Never names an artifact, owner or viewer. */
+export interface AdminStats {
+  generated_at: string;
+  days: number;
+  view_counts: boolean;
+  totals: {
+    users: number;
+    artifacts: number;
+    artifacts_by_visibility: Record<Visibility, number>;
+    artifacts_taken_down: number;
+    versions: number;
+    agent_versions: number;
+    storage_bytes: number;
+    data_docs: number;
+    data_bytes: number;
+    data_artifacts: number;
+    connections: number;
+    connections_by_client: Record<ClientType, number>;
+    views: number;
+    open_reports: number;
+  };
+  window: {
+    new_users: number;
+    new_artifacts: number;
+    publishes: number;
+    agent_publishes: number;
+    connections_used: number;
+    views: number;
+    artifacts_viewed: number;
+  };
+  series: StatsDay[];
+}
+
+/** GET /api/v1/artifacts/:ref/views: the owner's open counts. No viewer data. */
+export interface ArtifactViews {
+  enabled: boolean;
+  total: number;
+  /** The first UTC day with a counted open (`total` counts from it), or null when there is none. */
+  since: string | null;
+  last_7: number;
+  last_30: number;
+  days: { day: string; views: number }[];
+}
+
 export interface Paged<T> {
   items: T[];
 }

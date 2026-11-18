@@ -145,7 +145,8 @@ applying them before the Worker is safe.
 
 Pages that declare shared data keep their documents in D1, which has a hard size limit per database
 (10 GB on Workers Paid, 500 MB on Free). The defaults cap one owner at 16 MiB
-(`DATA_MAX_BYTES_PER_USER`). Watch the total:
+(`DATA_MAX_BYTES_PER_USER`). Watch the total on the admin Stats page (`/admin/stats`, the Shared
+data tile, for the emails in `ADMIN_EMAIL`), or from a terminal:
 
 ```sh
 pnpm --filter @plinth/worker exec wrangler d1 execute DB --remote --config wrangler.production.jsonc \

@@ -129,6 +129,16 @@ adds one column and two tables:
 | `versions.stored_bytes` | integer or NULL | Bytes this version wrote to R2. The storage quota sums `coalesce(stored_bytes, size_bytes)` |
 | `upload_tickets` | id, token_hash, user_id, credential (`connection` or `admin`), connection_id or admin_token_hash, scopes, mode (`publish` or `update`), artifact_id, artifact_type, title, note, base_version, state (`open`, `used`, `dead`), attempts, receiving_claim, receiving_until, result_artifact_id, result_version, reserved_artifact_id (unique), dead_reason (`conflict` or `taken_down`, on a dead ticket), created_at, expires_at, used_at | One single-use upload ticket from `start_upload`. The token is stored as its SHA-256. A publish-mode ticket reserves its artifact id at mint (`reserved_artifact_id`, returned as `target.id`), and its commit creates the artifact with exactly that id; no other ticket can hold that id, and only that ticket's bundle can create it. While the ticket is live (open, unexpired, attempts left, minting credential still valid) the reservation counts toward the owner's artifact limit for new reservations and inline publishes; once it expires unused the id is released and never becomes an artifact. Only the id is reserved, not a slug (the commit picks the slug). `open -> used` happens in the same D1 batch that commits the version. The receiving lease limits concurrency and is the bundle's deadline (10 minutes). A row is deleted once `TTL.uploadStatusMs` (24 hours) has passed since it expired, by the hourly cron and by the opportunistic sweep; erasing an artifact or a user deletes its tickets |
 
+**View counts** (migration `0010_view_counts.sql`) adds two tables. They hold aggregate numbers
+only: no IP address, email, user, session or user agent. Both cascade from `artifacts`, so
+erasing an artifact or its owner removes them (see
+[Admin stats and view counts](#admin-stats-and-view-counts)):
+
+| Table | Key fields | Notes |
+| --- | --- | --- |
+| `artifact_view_days` | artifact_id, day (UTC, `YYYY-MM-DD`), views | One row per artifact per UTC day it was opened. Key (artifact_id, day), `WITHOUT ROWID`, no secondary index, so a counted open writes one row |
+| `artifact_view_totals` | artifact_id, views, first_day | Opens on days older than the daily window, folded into one row per artifact; `first_day` is the earliest day folded in |
+
 ## Auth and permissions
 
 There are three separate kinds of auth, and each has its own mechanism.
@@ -278,6 +288,63 @@ export yet. Design: `docs/superpowers/specs/2026-11-14-typed-outputs-doc-design.
 - Thumbnails live under the artifact's root, so a delete removes them; a taken-down artifact's
   thumbnails are never served. `THUMBNAILS=false`, or no `BROWSER` binding, turns the feature off:
   cards keep the placeholder and previews have no image.
+
+### Admin stats and view counts
+
+Plinth counts how often each artifact is opened, as one number per artifact per UTC day. It never
+records who opened it.
+
+- **Where an open is counted.** At the content host's one-time `/__plinth/enter` exchange, never
+  at the gate: the app polls the gate, and previews, history and agents call it too. When the gate
+  answers `ok` for a normal open of the live page, it seals a signed one-bit `w` flag into the enter
+  token. Enter records an open only after every existing check passed (signature, artifact,
+  access epoch, takedown, nonce), and only when all of these hold: the pass is a view pass, the
+  token carries `w`, `VIEW_COUNTS` is on, the request has `Sec-Fetch-Dest: iframe`, the user agent
+  does not look like a bot, and the browser's view pass for that artifact (if any) is not already
+  marked counted. The response (status, `Location`, cookie attributes, CSP) is the same whether or
+  not it counted.
+- **Not counted.** The owner's own opens, agents (verifying a publish), an admin without a role
+  (even on a public page), review mode, explicit versions (history, compare, `/a/:slug/v/:n`),
+  Plinth's own paths (`/__plinth/`, such as the editor preview), thumbnail captures and in-chat
+  previews (their tokens refuse `w`), replayed or expired tokens, requests without
+  `Sec-Fetch-Dest: iframe` (curl, scripts) and self-declared bots and headless browsers (a bot
+  token such as `Googlebot/` or `Slackbot`, or a `+https://` contact URL; a bare "bot" in a phone
+  model does not count as one). Link
+  unfurlers never run the app, so they never reach the gate or enter. Editors, commenters,
+  allowlist and password viewers, link visitors and deep links to normal paths count.
+- **Dedupe.** At most once per browser per artifact per content pass: a sliding 12 hours, reset by
+  an access-epoch change (any grant, visibility or password change), so the same browser can count
+  again sooner after one. A counted enter marks the content cookie it sets with one signed bit
+  (`w`), and every later view enter at that epoch carries the mark forward, counted or not, so an
+  editor who moves between the editor preview, history and the live page counts once, and an
+  uncounted pass (the preview, history, review mode) never stops a later live open from counting.
+  There is no new cookie, storage or identifier. Browsers that drop partitioned cookies count
+  every open, so counts are "opens", indicative, never unique people.
+- **Storage.** One D1 upsert per counted open into `artifact_view_days`, written after the
+  response (`waitUntil`). A failed write never fails the open. The hourly cron, at 03 UTC, folds
+  days older than 90 into `artifact_view_totals` in one transaction, so the daily table stays
+  bounded and all-time totals survive. Instances without a cron (local, tunnel, Docker) keep their
+  daily rows, and every total stays correct.
+- **`VIEW_COUNTS`** (default on) turns recording off. Stored counts are kept, and the fold still
+  runs.
+- **Owners see their own counts.** The Share dialog shows "Opened N times in the last 30 days · N
+  since <first counted day>" ("No opens counted yet." before the first one: opens from before the
+  instance began counting are not known), and `GET /api/v1/artifacts/:ref/views` returns the last
+  7 and 30 days, a 30-day daily series, the total and `since`, the first day with a counted open. It goes through the policy action `views`: the owner only (an
+  agent needs `artifacts:read`); editors, viewers and an admin without a role are denied, and a
+  taken-down artifact answers `taken_down`. Counts are not in `ArtifactSummary`, MCP or anything
+  the app host answers without signing in.
+- **Admins see instance aggregates.** `/admin/stats` (`GET /api/v1/admin/stats?days=7|30|90`,
+  default 30) is for the signed-in people whose email is in `ADMIN_EMAIL`; everyone else, agents
+  included, gets the same 404. It shows people, live artifacts by visibility and taken down,
+  versions and agent versions, storage, shared data, agent connections by client (and how many
+  were used in the window, including any revoked since), open reports and opens, with daily series
+  over the window (UTC days, zero-filled). Tiles whose figure covers the window say so in their
+  label. It names no artifact,
+  owner or viewer and has no top-N list, so it is no way around "admins view only reported
+  artifacts". Storage, artifact, version and shared-data totals count live artifacts only (as
+  the quota does); opens of deleted and taken-down artifacts stay in the view totals until a hard
+  erase, and the daily series count activity, including artifacts deleted since.
 
 ### Editing
 
@@ -572,6 +639,8 @@ options.
   Only identified viewers write, stamps come from the server, quotas and write rate limits apply,
   and agents treat every document as untrusted input. Details in `docs/security.md`.
 - **Tokens.** Stored hashed, shown once, revocable per connection, with last-used timestamps.
+- **Open counts are aggregates.** One number per artifact per UTC day, never who opened it, shown
+  only to the artifact's owner and, summed over the instance, to admins.
 - **Quotas and rate limits.** Each account is limited to 100 artifacts by default, set by an
   environment variable with a per-account override. Storage and publishes per hour are capped too.
   Rate limits on password attempts and email codes.
@@ -657,6 +726,19 @@ Shared data runs on the same Worker and D1 allowances (D1 rows are estimates fro
 | `onSnapshot` poll | 1 per 15 s per visible tab (about 5,760 a day) | 1 | 0 |
 | Write | 1 | about 4 + the owner's artifacts with data | about 4 (2 rate-limit rows, the document, usage by trigger) |
 | Gate with an identity claim | 0 | +1 | 0 |
+
+Open counts run on the same allowances:
+
+| Operation | Worker requests | D1 rows read | D1 rows written |
+| --- | --- | --- | --- |
+| Counted open (enter) | 0 extra | about 1 | 1, on top of the existing `used_nonces` row |
+| Uncounted enter | 0 | 0 | 0 |
+| Daily fold (cron, 03 UTC) | 0 | the rows older than 90 days, plus the totals rows they touch | about 1 per folded row, plus deletes |
+| Owner opens the Share dialog | 1 | ≤ 92 | 0 |
+| Admin stats page load | 1 | the users, artifacts, versions, connections, data-usage and reports rows, plus view rows in the window | 0 |
+
+At the free tier's 100k rows written a day, an instance can take about 50k counted opens a day,
+with their nonce writes, before any other writes. `VIEW_COUNTS=off` removes the extra write.
 
 Not included: push-mode agent calls, which bill to the user's API key or a paid plan. Vercel was
 considered and set aside: its free plan is non-commercial only, so the floor is about $20 per month

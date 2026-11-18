@@ -256,6 +256,14 @@ describe("operator settings (legal pages)", () => {
     expect(parseConfig({ ...base, SHOW_SOURCE_LINK: "false" }).showSourceLink).toBe(false);
     expect(parseConfig({ ...base, SHOW_SOURCE_LINK: "0" }).showSourceLink).toBe(false);
   });
+  it("count artifact opens unless VIEW_COUNTS is off", () => {
+    expect(parseConfig(base).viewCounts).toBe(true);
+    expect(parseConfig({ ...base, VIEW_COUNTS: "" }).viewCounts).toBe(true);
+    for (const on of ["true", "1", "yes", "on", " ON "])
+      expect(parseConfig({ ...base, VIEW_COUNTS: on }).viewCounts, on).toBe(true);
+    for (const off of ["false", "0", "no", "off", "nope"])
+      expect(parseConfig({ ...base, VIEW_COUNTS: off }).viewCounts, off).toBe(false);
+  });
 });
 
 describe("development-only switches", () => {

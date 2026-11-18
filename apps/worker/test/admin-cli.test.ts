@@ -366,3 +366,51 @@ describe("admin CLI: shared data", () => {
     expect(usage?.n).toBe(0);
   });
 });
+
+// Open counts (migrations/0010_view_counts.sql) go with the artifact, by cascade.
+describe("admin CLI: view counts", () => {
+  async function seedCounts(artifactId: string) {
+    await env.DB.batch([
+      env.DB.prepare(
+        "INSERT INTO artifact_view_days (artifact_id, day, views) VALUES (?1, '2026-11-18', 4)",
+      ).bind(artifactId),
+      env.DB.prepare(
+        "INSERT INTO artifact_view_totals (artifact_id, views, first_day) VALUES (?1, 9, '2026-07-01')",
+      ).bind(artifactId),
+    ]);
+  }
+  async function countRows(artifactId: string) {
+    const r = await env.DB.prepare(
+      `SELECT (SELECT count(*) FROM artifact_view_days WHERE artifact_id = ?1) AS days,
+              (SELECT count(*) FROM artifact_view_totals WHERE artifact_id = ?1) AS totals`,
+    )
+      .bind(artifactId)
+      .first<{ days: number; totals: number }>();
+    return r;
+  }
+
+  it("erase-artifact leaves no view rows", async () => {
+    const owner = await agent();
+    const { body: a } = await publish(owner.auth);
+    const { body: kept } = await publish(owner.auth);
+    await seedCounts(a.id);
+    await seedCounts(kept.id);
+    expect(await countRows(a.id)).toEqual({ days: 1, totals: 1 });
+    expect((await runStatements(eraseArtifactSql(a.slug))).at(-1)).toHaveLength(1);
+    expect(await countRows(a.id)).toEqual({ days: 0, totals: 0 });
+    expect(await countRows(kept.id)).toEqual({ days: 1, totals: 1 });
+  });
+
+  it("erase-user leaves no view rows for any of the person's artifacts", async () => {
+    const owner = await agent();
+    const other = await agent();
+    const { body: a } = await publish(owner.auth);
+    const { body: b } = await publish(owner.auth);
+    const { body: theirs } = await publish(other.auth);
+    for (const id of [a.id, b.id, theirs.id]) await seedCounts(id);
+    await runStatements(eraseUserSql(owner.user.email));
+    expect(await countRows(a.id)).toEqual({ days: 0, totals: 0 });
+    expect(await countRows(b.id)).toEqual({ days: 0, totals: 0 });
+    expect(await countRows(theirs.id)).toEqual({ days: 1, totals: 1 });
+  });
+});

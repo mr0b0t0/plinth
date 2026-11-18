@@ -271,3 +271,7 @@ export const reportInput = z.object({
 export const reportDecisionInput = z.object({
   state: z.enum(["actioned", "dismissed"]),
 });
+/** GET /api/v1/admin/stats?days=: the trend window in UTC days. */
+export const adminStatsQuerySchema = z.object({
+  days: z.enum(["7", "30", "90"]).default("30"),
+});

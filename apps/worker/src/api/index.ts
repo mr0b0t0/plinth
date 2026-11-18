@@ -13,6 +13,7 @@ import { dataApi } from "./data.ts";
 import { meApi } from "./me.ts";
 import { reportsApi } from "./reports.ts";
 import { sharingApi } from "./sharing.ts";
+import { statsApi } from "./stats.ts";
 import { bundleHandler, requireBearerHeader, uploadStatusHandler, uploadsApi } from "./uploads.ts";
 import { viewApi } from "./view.ts";
 
@@ -57,6 +58,7 @@ api.route("/", viewApi);
 api.route("/", sharingApi);
 api.route("/", commentsApi);
 api.route("/", reportsApi);
+api.route("/", statsApi);
 api.route("/", dataApi);
 api.route("/", uploadsApi);
 

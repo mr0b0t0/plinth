@@ -4,7 +4,8 @@
 // cannot set cookies on the shared parent domain. Checked here: the artifact and its own
 // subresources still load (the host-only, partitioned content cookie reaches them), cookies and
 // storage throw inside it, and the editor preview and comment pins work over the opaque-origin
-// postMessage protocol (origin "null", identified by window and nonce).
+// postMessage protocol (origin "null", identified by window and nonce). Opens are counted at the
+// enter exchange, once per browser.
 import { expect, type Page, type Request, test } from "@playwright/test";
 import { OPAQUE_APP_ORIGIN, OPAQUE_CONTENT_HOST, uniqueEmail } from "../support/api.ts";
 import { seedSession, seedToken } from "../support/db.ts";
@@ -358,4 +359,77 @@ test("a doc renders from its embedded content, with its image, and previews in t
     "Typed under opaque isolation",
   );
   expect(problems).toEqual([]);
+});
+
+/** The artifact's open total, as its owner's agent reads it. */
+async function opens(token: string, slug: string): Promise<number> {
+  const res = await fetch(`${OPAQUE_APP_ORIGIN}/api/v1/artifacts/${slug}/views`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  const body = (await res.json()) as { total: number };
+  expect(res.status, JSON.stringify(body)).toBe(200);
+  return body.total;
+}
+
+test("an open is counted once per browser, and a reload is not", async ({ browser }) => {
+  test.setTimeout(60_000);
+  const { token } = await seedToken(uniqueEmail("opaque-views"), {
+    label: "Opaque agent",
+    clientType: "claude",
+    origin: OPAQUE_APP_ORIGIN,
+  });
+  const res = await fetch(`${OPAQUE_APP_ORIGIN}/api/v1/artifacts`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+    body: JSON.stringify({
+      title: "Opaque opens",
+      html: HTML,
+      assets: ASSETS,
+      visibility: "unlisted",
+    }),
+  });
+  const art = (await res.json()) as Published;
+  expect(res.status, JSON.stringify(art)).toBe(201);
+  expect(await opens(token, art.slug)).toBe(0);
+
+  // Anonymous visitors with the project's user agent (the bare headless one reads as a bot).
+  const visit = async () => {
+    const ctx = await browser.newContext({
+      baseURL: OPAQUE_APP_ORIGIN,
+      userAgent: test.info().project.use.userAgent,
+    });
+    const page = await ctx.newPage();
+    await page.goto(`/a/${art.slug}`);
+    await expect(page.frameLocator(CURRENT_FRAME).locator("h1")).toHaveText("Opaque artifact", {
+      timeout: 15_000,
+    });
+    return { ctx, page };
+  };
+
+  const first = await visit();
+  try {
+    await expect.poll(() => opens(token, art.slug)).toBe(1);
+
+    // A reload goes through a fresh enter exchange, but the browser already holds a view pass
+    // (the partitioned content cookie, which an opaque-origin document cannot see or drop).
+    const entered = first.page.waitForResponse(
+      (r) => new URL(r.url()).pathname === "/__plinth/enter" && r.status() === 302,
+    );
+    await first.page.reload();
+    await entered;
+    await expect(first.page.frameLocator(CURRENT_FRAME).locator("h1")).toHaveText(
+      "Opaque artifact",
+      { timeout: 15_000 },
+    );
+
+    // A second browser counts. The reload's enter came first, so once this one is in, a counted
+    // reload would show as 3.
+    const second = await visit();
+    await second.ctx.close();
+    await expect.poll(() => opens(token, art.slug)).toBeGreaterThanOrEqual(2);
+    await first.page.waitForTimeout(500);
+    expect(await opens(token, art.slug)).toBe(2);
+  } finally {
+    await first.ctx.close();
+  }
 });

@@ -404,3 +404,22 @@
   font-size: var(--text-sm);
   font-variant-numeric: tabular-nums;
 }
+.pl-share-views__help {
+  margin: 0;
+  color: var(--color-ink-muted);
+  font-size: var(--text-xs);
+}
+/* The owner's 30-day opens sparkline. */
+.pl-sparkline {
+  display: block;
+  flex: none;
+  width: 6rem;
+  height: 1.5rem;
+}
+.pl-sparkline__bar {
+  fill: var(--color-accent);
+}
+.pl-sparkline__baseline {
+  stroke: var(--color-border-control);
+  stroke-width: 1;
+}

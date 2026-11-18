@@ -160,15 +160,25 @@ export async function tool<T = any>(client: Client, name: string, args: Record<s
   return { isError: !!r.isError, data: data as T, text };
 }
 
-/** Open an artifact as a browser would: gate on the app, exchange the token, return the cookie. */
+/**
+ * Open an artifact as a browser would: gate on the app, exchange the token, return the cookie.
+ * `enterHeaders` go on the exchange only (Sec-Fetch-Dest, User-Agent, an earlier content cookie).
+ * With `vars`, both requests run with those env vars and wait for the Worker's waitUntil work.
+ */
 export async function enterContent(
   slugOrId: string,
-  init: { headers?: Record<string, string> } = {},
+  init: {
+    headers?: Record<string, string>;
+    enterHeaders?: Record<string, string>;
+    vars?: Record<string, unknown>;
+  } = {},
 ) {
-  const gate = await json(await call(`/api/v1/view/${slugOrId}`, { headers: init.headers }));
+  const send = (input: string, reqInit?: RequestInit) =>
+    init.vars ? fetchWith(init.vars, input, reqInit) : call(input, reqInit);
+  const gate = await json(await send(`/api/v1/view/${slugOrId}`, { headers: init.headers }));
   if (gate.status !== "ok")
     return { gate, cookie: null as string | null, location: null as string | null };
-  const enter = await call(gate.enter_url);
+  const enter = await send(gate.enter_url, { headers: init.enterHeaders });
   const setCookie = enter.headers.get("set-cookie") ?? "";
   const cookie = setCookie.split(";")[0] ?? null;
   return { gate, cookie, location: enter.headers.get("location"), enter };
