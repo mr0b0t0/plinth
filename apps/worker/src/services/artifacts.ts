@@ -10,9 +10,8 @@ import {
   type Capabilities,
   type EffectiveRole,
   type PublishResult,
-  ROOM_OPEN_ALL,
-  ROOM_TOPIC_RE,
   type Role,
+  readStoredCapabilities,
   type VersionInfo,
   type Visibility,
 } from "@plinth/shared";
@@ -277,33 +276,16 @@ export async function summaryFor(
 
 // ---------- shared data capabilities (docs/spec.md "Shared data and viewer identity") ----------
 
-/** A version row's declared capabilities. Null when none, or when the stored value is malformed. */
+/**
+ * A version row's declared capabilities, with the registry's defaults for fields the row does not
+ * hold (rows stored before rooms, and declarations without `room`, have no room fields). Null when
+ * none, or when the stored value is malformed (shared readStoredCapabilities).
+ */
 export function versionCapabilities(
   row: Pick<VersionRow, "capabilities"> | null | undefined,
 ): Capabilities | null {
   if (!row?.capabilities) return null;
-  let v: unknown;
-  try {
-    v = JSON.parse(row.capabilities);
-  } catch {
-    return null;
-  }
-  if (typeof v !== "object" || v === null) return null;
-  const { data, viewer, shared, room, roomOpen } = v as Record<string, unknown>;
-  if (typeof data !== "boolean" || typeof viewer !== "boolean") return null;
-  // Rows stored before rooms, and declarations without `room`, have no room fields.
-  const hasRoom = room === true;
-  // `viewer` alone declares nothing (shared parseCapabilities).
-  if (!data && !hasRoom) return null;
-  const names = Array.isArray(shared) ? shared.filter((n) => typeof n === "string") : [];
-  const topics =
-    hasRoom && Array.isArray(roomOpen)
-      ? roomOpen.filter(
-          (t): t is string =>
-            typeof t === "string" && (t === ROOM_OPEN_ALL || ROOM_TOPIC_RE.test(t)),
-        )
-      : [];
-  return { data, viewer, shared: names, room: hasRoom, roomOpen: topics };
+  return readStoredCapabilities(row.capabilities);
 }
 
 export async function getVersionRow(

@@ -248,11 +248,28 @@ export const CONTENT_RESERVED_PREFIX = "/__plinth/";
 export const CONTENT_DATA_HEADER = "x-plinth-data";
 
 /**
- * Capabilities a page may declare with <meta name="plinth-capabilities" content="data viewer">.
+ * Capabilities a page may declare with <meta name="plinth-capabilities" content="data viewer">,
+ * one token per line, in the order lists and the stored JSON use (the declaration registry; the
+ * auxiliary metas are in data.ts):
+ * - `declares`: the token alone makes a declaration. `viewer` does not: the viewer is learned
+ *   through the data API or the room, so `viewer` alone declares nothing.
+ * - `needs`: tokens it counts only with, all of them (none: it counts on its own).
+ * - `stored`: `always` keys are in every stored declaration; `declared` keys only when the token
+ *   is declared, so a declaration without it is stored byte for byte as before the token existed.
  * `room` is the live room (presence and broadcast, packages/shared/src/room.ts), not shared data.
  */
-export const DATA_CAPABILITIES = ["data", "viewer", "room"] as const;
-export type DataCapability = (typeof DATA_CAPABILITIES)[number];
+export const CAPABILITY_TOKENS = [
+  { token: "data", declares: true, needs: [], stored: "always" },
+  { token: "viewer", declares: false, needs: [], stored: "always" },
+  { token: "room", declares: true, needs: [], stored: "declared" },
+] as const satisfies readonly {
+  token: string;
+  declares: boolean;
+  needs: readonly string[];
+  stored: "always" | "declared";
+}[];
+export type DataCapability = (typeof CAPABILITY_TOKENS)[number]["token"];
+export const DATA_CAPABILITIES: readonly DataCapability[] = CAPABILITY_TOKENS.map((t) => t.token);
 
 /** Query parameter that turns on review mode (comment anchoring bridge) on a content host. */
 export const REVIEW_MODE_PARAM = "plinth-review";

@@ -2,7 +2,13 @@
 // declaration a page makes, the validation rules for collections, document ids and documents, the
 // agent tool inputs, and the wire types. Pure code, used by the Worker and the web app.
 import { z } from "zod";
-import { DATA_CAPABILITIES, type DataCapability, type EffectiveRole, LIMITS } from "./constants.ts";
+import {
+  CAPABILITY_TOKENS,
+  DATA_CAPABILITIES,
+  type DataCapability,
+  type EffectiveRole,
+  LIMITS,
+} from "./constants.ts";
 import { ROOM_LIMITS, ROOM_OPEN_ALL, ROOM_OPEN_META, ROOM_TOPIC_RE } from "./room.ts";
 import { artifactRefSchema } from "./schemas.ts";
 
@@ -25,7 +31,102 @@ export interface Capabilities {
 export const CAPABILITIES_META = "plinth-capabilities";
 export const DATA_SHARED_META = "plinth-data-shared";
 
-/** A <meta> tag, attribute values may hold ">" when quoted. Linear: the alternatives are disjoint. */
+type TokenKey = {
+  [K in keyof Capabilities]: Capabilities[K] extends boolean ? K : never;
+}[keyof Capabilities];
+type ListKey = {
+  [K in keyof Capabilities]: Capabilities[K] extends string[] ? K : never;
+}[keyof Capabilities];
+
+/** A capability token (constants.ts CAPABILITY_TOKENS) at its place in the stored JSON. */
+interface TokenField {
+  kind: "token";
+  key: TokenKey & DataCapability;
+}
+
+/**
+ * An auxiliary meta: a list that refines one token's declaration. It counts only when `needs` is
+ * declared. `stored`: `always`, or only when that token is declared. `checkOnRead`: entries of a
+ * stored row are checked against `accept` again when read.
+ */
+interface ListField {
+  kind: "list";
+  key: ListKey;
+  meta: string;
+  needs: DataCapability;
+  stored: "always" | DataCapability;
+  max: number;
+  accept: (entry: string) => boolean;
+  checkOnRead: boolean;
+}
+
+export type DeclarationField = TokenField | ListField;
+
+/**
+ * The declaration registry: every field of Capabilities, one per line, in the order the stored
+ * JSON (versions.capabilities) writes them. Tokens come from CAPABILITY_TOKENS; lists are read from
+ * their own <meta>. A feature adds its token there and its line here; parseCapabilities,
+ * serializeCapabilities and readStoredCapabilities follow.
+ */
+export const DECLARATION_FIELDS: readonly DeclarationField[] = [
+  { kind: "token", key: "data" },
+  { kind: "token", key: "viewer" },
+  {
+    kind: "list",
+    key: "shared",
+    meta: DATA_SHARED_META,
+    needs: "data",
+    stored: "always",
+    max: LIMITS.maxDataShared,
+    accept: (n) => DATA_COLLECTION_RE.test(n),
+    checkOnRead: false,
+  },
+  { kind: "token", key: "room" },
+  {
+    kind: "list",
+    key: "roomOpen",
+    meta: ROOM_OPEN_META,
+    needs: "room",
+    stored: "room",
+    max: ROOM_LIMITS.maxOpenTopics,
+    accept: (t) => t === ROOM_OPEN_ALL || ROOM_TOPIC_RE.test(t),
+    checkOnRead: true,
+  },
+];
+
+const TOKEN_INFO = new Map<string, (typeof CAPABILITY_TOKENS)[number]>(
+  CAPABILITY_TOKENS.map((t) => [t.token, t]),
+);
+
+function tokenInfo(token: DataCapability): (typeof CAPABILITY_TOKENS)[number] {
+  return TOKEN_INFO.get(token) as (typeof CAPABILITY_TOKENS)[number];
+}
+
+/** Whether a field is in the stored JSON of this declaration. */
+function isStored(f: DeclarationField, c: Capabilities): boolean {
+  if (f.kind === "token") return tokenInfo(f.key).stored === "always" || c[f.key] === true;
+  return f.stored === "always" || c[f.stored] === true;
+}
+
+/** The tokens that count: declared, with every token they need counting too. */
+function countedTokens(declared: ReadonlySet<string>): Set<DataCapability> {
+  const out = new Set<DataCapability>();
+  const counts = (t: DataCapability, seen: ReadonlySet<string>): boolean =>
+    declared.has(t) &&
+    !seen.has(t) &&
+    (tokenInfo(t).needs as readonly DataCapability[]).every((n) =>
+      counts(n, new Set([...seen, t])),
+    );
+  for (const t of DATA_CAPABILITIES) if (counts(t, new Set())) out.add(t);
+  return out;
+}
+
+/** A declaration counts only when a token that declares on its own is there. */
+function declaresSomething(counted: ReadonlySet<DataCapability>): boolean {
+  return CAPABILITY_TOKENS.some((t) => t.declares && counted.has(t.token));
+}
+
+/** A meta tag, attribute values may hold ">" when quoted. Linear: the alternatives are disjoint. */
 const META_TAG_RE = /<meta\b((?:[^>"']|"[^"]*"|'[^']*')*)>/gi;
 /** One attribute: name, then an optional double-quoted, single-quoted or unquoted value. */
 const ATTR_RE = /([^\s"'=<>/]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?/g;
@@ -48,62 +149,96 @@ function tokens(content: string): string[] {
 }
 
 /**
- * Read a page's declaration from its HTML: the first <meta name="plinth-capabilities">, the first
- * <meta name="plinth-data-shared"> and the first <meta name="plinth-room-open">, in any attribute
+ * Read a page's declaration from its HTML: the first <meta name="plinth-capabilities"> and the
+ * first of each registered list meta (plinth-data-shared, plinth-room-open), in any attribute
  * order and quote style, names compared case-insensitively, tags inside HTML comments ignored.
- * Unknown tokens are ignored, and so are shared names that break the collection rule and open
- * topics that break the topic rule; at most LIMITS.maxDataShared and ROOM_LIMITS.maxOpenTopics are
- * kept. Returns null unless `data` or `room` is declared: the viewer is learned through the data
- * API or the room, so `viewer` alone declares nothing, and neither does a list alone. Shared names
- * count only with `data`, open topics only with `room`.
+ * Every meta tag is read, so a registered meta after the others is never missed. Unknown tokens
+ * are ignored, and so are list entries that break their rule; at most each list's `max` are kept
+ * (LIMITS.maxDataShared, ROOM_LIMITS.maxOpenTopics). Returns null unless `data` or `room` is
+ * declared: the viewer is learned through the data API or the room, so `viewer` alone declares
+ * nothing, and neither does a list alone. Shared names count only with `data`, open topics only
+ * with `room`.
  */
 export function parseCapabilities(html: string): Capabilities | null {
   if (!/plinth-/i.test(html)) return null;
   const text = html.replace(COMMENT_RE, "");
-  let declared: string[] | null = null;
-  let sharedNames: string[] | null = null;
-  let openTopics: string[] | null = null;
+  const wanted = new Set<string>([CAPABILITIES_META]);
+  for (const f of DECLARATION_FIELDS) if (f.kind === "list") wanted.add(f.meta);
+  const found = new Map<string, string[]>();
   for (const m of text.matchAll(META_TAG_RE)) {
     const attrs = metaAttributes(m[1] ?? "");
     const name = attrs.get("name")?.trim().toLowerCase();
-    if (name === CAPABILITIES_META && declared === null) {
-      declared = tokens(attrs.get("content") ?? "");
-    } else if (name === DATA_SHARED_META && sharedNames === null) {
-      sharedNames = tokens(attrs.get("content") ?? "");
-    } else if (name === ROOM_OPEN_META && openTopics === null) {
-      openTopics = tokens(attrs.get("content") ?? "");
+    if (name !== undefined && wanted.has(name) && !found.has(name)) {
+      found.set(name, tokens(attrs.get("content") ?? ""));
     }
-    if (declared !== null && sharedNames !== null && openTopics !== null) break;
   }
-  const known = new Set<DataCapability>(
-    (declared ?? []).filter((t): t is DataCapability =>
-      (DATA_CAPABILITIES as readonly string[]).includes(t),
-    ),
-  );
-  const data = known.has("data");
-  const room = known.has("room");
-  if (!data && !room) return null;
-  const shared: string[] = [];
-  for (const n of data ? (sharedNames ?? []) : []) {
-    if (shared.length >= LIMITS.maxDataShared) break;
-    if (DATA_COLLECTION_RE.test(n) && !shared.includes(n)) shared.push(n);
+  const counted = countedTokens(new Set(found.get(CAPABILITIES_META) ?? []));
+  if (!declaresSomething(counted)) return null;
+  const out: Record<string, boolean | string[]> = {};
+  for (const f of DECLARATION_FIELDS) {
+    if (f.kind === "token") {
+      out[f.key] = counted.has(f.key);
+      continue;
+    }
+    const list: string[] = [];
+    for (const e of counted.has(f.needs) ? (found.get(f.meta) ?? []) : []) {
+      if (list.length >= f.max) break;
+      if (f.accept(e) && !list.includes(e)) list.push(e);
+    }
+    out[f.key] = list;
   }
-  const roomOpen: string[] = [];
-  for (const t of room ? (openTopics ?? []) : []) {
-    if (roomOpen.length >= ROOM_LIMITS.maxOpenTopics) break;
-    if ((t === ROOM_OPEN_ALL || ROOM_TOPIC_RE.test(t)) && !roomOpen.includes(t)) roomOpen.push(t);
-  }
-  return { data, viewer: known.has("viewer"), shared, room, roomOpen };
+  return out as unknown as Capabilities;
 }
 
 /**
- * The JSON stored in versions.capabilities. The room fields are written only when `room` is
- * declared, so a declaration without it is stored exactly as before rooms existed (and a stored
- * row without them reads as room: false, roomOpen: []).
+ * The JSON stored in versions.capabilities, keys in registry order. A key whose field is stored
+ * only with its token is written only when that token is declared, so a declaration without it is
+ * stored exactly as before the token existed (the room fields: a stored row without them reads as
+ * room: false, roomOpen: []).
  */
 export function serializeCapabilities(c: Capabilities): string {
-  const { data, viewer, shared, room, roomOpen } = c;
-  return JSON.stringify(room ? { data, viewer, shared, room, roomOpen } : { data, viewer, shared });
+  const out: Record<string, unknown> = {};
+  for (const f of DECLARATION_FIELDS) if (isStored(f, c)) out[f.key] = c[f.key];
+  return JSON.stringify(out);
+}
+
+/**
+ * A stored declaration (versions.capabilities) read back, with the registry's defaults for the
+ * fields it does not hold (false, or an empty list). Null when nothing is declared, or when the
+ * value is malformed: an `always` token that is not a boolean. A token stored only when declared
+ * counts only when it is `true`; a list stored with a token is read only when that token counts.
+ */
+export function readStoredCapabilities(json: string): Capabilities | null {
+  let v: unknown;
+  try {
+    v = JSON.parse(json);
+  } catch {
+    return null;
+  }
+  if (typeof v !== "object" || v === null) return null;
+  const row = v as Record<string, unknown>;
+  const declared = new Set<string>();
+  for (const t of CAPABILITY_TOKENS) {
+    const value = row[t.token];
+    if (t.stored === "always" && typeof value !== "boolean") return null;
+    if (value === true) declared.add(t.token);
+  }
+  const counted = countedTokens(declared);
+  if (!declaresSomething(counted)) return null;
+  const out: Record<string, boolean | string[]> = {};
+  for (const f of DECLARATION_FIELDS) {
+    if (f.kind === "token") {
+      out[f.key] = counted.has(f.key);
+      continue;
+    }
+    const value = row[f.key];
+    const readable = f.stored === "always" || counted.has(f.stored);
+    out[f.key] =
+      readable && Array.isArray(value)
+        ? value.filter((e): e is string => typeof e === "string" && (!f.checkOnRead || f.accept(e)))
+        : [];
+  }
+  return out as unknown as Capabilities;
 }
 
 /** The declared capabilities as a list, in a fixed order. */
