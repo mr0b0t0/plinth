@@ -63,6 +63,10 @@ import {
   pairColors,
 } from "../styles/contrast.ts";
 import "../styles/design-page.css";
+import { EditBar, type EditBarProps } from "../components/viewer/EditBar.tsx";
+import { LiveDraftNotice } from "../components/viewer/LiveDraftNotice.tsx";
+import type { LiveFrameStatus } from "../components/viewer/rendererProtocol.ts";
+import "../components/viewer/viewer.css";
 import { THEME_NAMES, type Theme, useTheme } from "../lib/theme.ts";
 
 const MODES: Theme[] = ["light", "dark"];
@@ -731,6 +735,7 @@ export default function Design() {
             intro="Token-driven and keyboard accessible. Import them from components/ui; usage notes live in its README."
           >
             <ComponentSpecimens />
+            <LiveEditSpecimens />
           </Section>
         </div>
       </div>
@@ -1243,5 +1248,133 @@ function ComponentSpecimens() {
         </Card>
       </Specimen>
     </Stack>
+  );
+}
+
+const noop = () => undefined;
+
+const EDIT_STATES: [string, Partial<EditBarProps>][] = [
+  ["Editing", {}],
+  ["Connecting", { connecting: true, connected: false }],
+  [
+    "Unsaved changes, with co-editors",
+    {
+      dirty: true,
+      phase: "dirty",
+      editors: [
+        { email: "bo@example.org", block: true },
+        { email: "cy@example.org", block: false },
+      ],
+    },
+  ],
+  ["Saving", { dirty: true, saving: true, phase: "saving" }],
+  ["Saved", { savedVersion: 5 }],
+  ["A version merged under the edits", { dirty: true, rebasedVersion: 5 }],
+  ["Not connected", { dirty: true, connected: false }],
+  ["Conflict", { dirty: true, phase: "conflict" }],
+  [
+    "Solo, a newer version published",
+    { mode: "solo", dirty: true, phase: "solo", newerVersion: 5 },
+  ],
+];
+
+const LIVE_STATUS: LiveFrameStatus = {
+  connected: true,
+  failed: false,
+  editing: false,
+  holding: false,
+  dirty: false,
+  unflushed: false,
+  rev: 1,
+  base_version: 4,
+  conflict_version: null,
+  last_by_you: false,
+  last_edit_at: null,
+  editors: [],
+};
+
+/** On-page doc editing (#36): the edit strip and the unsaved-edits line in every state. */
+function LiveEditSpecimens() {
+  const bar: EditBarProps = {
+    phase: "editing",
+    mode: "room",
+    version: 4,
+    connected: true,
+    dirty: false,
+    saving: false,
+    savedVersion: null,
+    rebasedVersion: null,
+    editors: [],
+    onSave: noop,
+    onDiscard: noop,
+    onDone: noop,
+    onReview: noop,
+  };
+  const notice = { onSave: noop, onContinue: noop, onDiscard: noop, onReview: noop };
+  const hoursAgo = new Date(Date.now() - 3 * 3600_000).toISOString();
+  return (
+    <>
+      <Specimen
+        title="Edit bar"
+        note="Under the artifact bar while a doc is edited on its page. Save version is the one ink primary; bronze marks the live state."
+      >
+        <div className="ds-stack">
+          {EDIT_STATES.map(([label, over]) => (
+            <div key={label}>
+              <p className="ds-specimen__note">{label}</p>
+              <EditBar {...bar} {...over} label={`Edit bar sample: ${label}`} />
+            </div>
+          ))}
+        </div>
+      </Specimen>
+      <Specimen
+        title="Unsaved page edits"
+        note="One line for owners and editors who are not editing. Viewers and commenters never see it."
+      >
+        <div className="ds-stack">
+          <LiveDraftNotice
+            draft={{
+              base_version: 4,
+              dirty: true,
+              conflict_version: null,
+              updated_at: hoursAgo,
+              updated_by_email: "bo@example.org",
+            }}
+            status={null}
+            {...notice}
+          />
+          <LiveDraftNotice
+            draft={null}
+            status={{ ...LIVE_STATUS, editors: [{ email: "bo@example.org", block: true }] }}
+            {...notice}
+          />
+          <LiveDraftNotice
+            draft={null}
+            status={{ ...LIVE_STATUS, dirty: true, conflict_version: 5 }}
+            {...notice}
+          />
+          <LiveDraftNotice
+            draft={null}
+            status={null}
+            restore={{ text: "", base: 4, saved_at: hoursAgo }}
+            onSaveRestore={noop}
+            onDropRestore={noop}
+            {...notice}
+          />
+          <LiveDraftNotice
+            draft={{
+              base_version: 4,
+              dirty: true,
+              conflict_version: null,
+              updated_at: hoursAgo,
+              updated_by_email: "bo@example.org",
+            }}
+            status={null}
+            signIn
+            {...notice}
+          />
+        </div>
+      </Specimen>
+    </>
   );
 }

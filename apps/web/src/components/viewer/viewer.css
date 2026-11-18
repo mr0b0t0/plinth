@@ -113,6 +113,92 @@
   color: var(--color-ink-muted);
   font-size: var(--text-sm);
 }
+/* ---------- Editing a doc on its page (#36) ---------- */
+/* The bronze rule marks the live state: an edit strip under the bar, never a second primary. */
+.pl-viewer__edit[aria-pressed="true"] {
+  background: var(--color-accent-soft);
+  color: var(--color-accent-ink);
+}
+.pl-editbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+  min-height: var(--control-md);
+  padding: var(--space-1) var(--space-3) var(--space-1) var(--page-pad);
+  border-bottom: var(--border-width) solid var(--color-border);
+  border-left: 2px solid var(--color-accent);
+  background: var(--color-surface);
+  font-size: var(--text-sm);
+}
+.pl-editbar__state {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1-5);
+  min-width: 0;
+  color: var(--color-accent-ink);
+  font-weight: var(--weight-medium);
+}
+.pl-editbar__status {
+  overflow-wrap: anywhere;
+}
+.pl-editbar__editors {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1-5);
+  min-width: 0;
+  color: var(--color-ink-muted);
+  overflow-wrap: anywhere;
+}
+.pl-editbar__editor + .pl-editbar__editor::before {
+  content: "· ";
+  color: var(--color-ink-ghost);
+}
+.pl-editbar__typing {
+  color: var(--color-accent-ink);
+}
+.pl-editbar__actions {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1-5);
+  margin-left: auto;
+}
+.pl-livenotice {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1-5) var(--space-3);
+  padding: var(--space-1) var(--space-3) var(--space-1) var(--page-pad);
+  border-bottom: var(--border-width) solid var(--color-border);
+  background: var(--color-surface);
+  color: var(--color-ink-muted);
+  font-size: var(--text-sm);
+}
+.pl-livenotice--conflict,
+.pl-livenotice--editing {
+  border-left: 2px solid var(--color-accent);
+  color: var(--color-ink);
+}
+.pl-livenotice__text {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.pl-livenotice__hint {
+  color: var(--color-ink-faint);
+}
+.pl-livenotice__actions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  margin-left: auto;
+}
+@media (max-width: 52rem) {
+  .pl-editbar,
+  .pl-livenotice {
+    padding-inline: var(--space-4);
+  }
+}
 /* Shared data: what the page sees and saves. Long emails wrap rather than widen the page. */
 .pl-viewer__data {
   display: flex;
@@ -422,4 +508,9 @@
 .pl-sparkline__baseline {
   stroke: var(--color-border-control);
   stroke-width: 1;
+}
+
+/* Editing a doc on its page (#36): a bronze line along the top of the frame. */
+.pl-viewer--editing .pl-viewer__frame-wrap {
+  box-shadow: inset 0 2px 0 var(--color-accent);
 }

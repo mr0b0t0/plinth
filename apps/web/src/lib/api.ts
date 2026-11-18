@@ -10,6 +10,10 @@ import {
   type ErrorBody,
   type ErrorCode,
   HOST_COOKIE_PREFIX,
+  type LiveCheckpointInput,
+  type LiveCheckpointResult,
+  type LiveDraftText,
+  type LiveInfo,
   route,
 } from "@plinth/shared";
 
@@ -114,4 +118,29 @@ export function getArtifactViews(ref: string, signal?: AbortSignal): Promise<Art
 /** Instance-wide aggregates over the last `days` UTC days (instance admins only; 404 otherwise). */
 export function getAdminStats(days: 7 | 30 | 90, signal?: AbortSignal): Promise<AdminStats> {
   return api<AdminStats>(`${API.adminStats}?days=${days}`, { signal });
+}
+
+// ---------- on-page doc editing (#36; owners and editors, signed in) ----------
+
+/** Whether a doc has unsaved page edits, and the autosave settings. */
+export function liveInfo(ref: string, signal?: AbortSignal): Promise<LiveInfo> {
+  return api<LiveInfo>(route(API.live, { ref }), { signal });
+}
+
+/** The live draft's text, to review a conflict. */
+export function liveDraft(ref: string, signal?: AbortSignal): Promise<LiveDraftText> {
+  return api<LiveDraftText>(route(API.liveDraft, { ref }), { signal });
+}
+
+/** Save the live draft as a version (Save, Done, or an idle autosave). */
+export function liveCheckpoint(
+  ref: string,
+  body: LiveCheckpointInput,
+): Promise<LiveCheckpointResult> {
+  return api<LiveCheckpointResult>(route(API.liveCheckpoint, { ref }), { method: "POST", body });
+}
+
+/** Drop the unsaved page edits at draft revision `rev`. */
+export function liveDiscard(ref: string, rev: number): Promise<void> {
+  return api<void>(`${route(API.liveDraft, { ref })}?rev=${rev}`, { method: "DELETE" });
 }

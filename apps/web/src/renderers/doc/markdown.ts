@@ -218,8 +218,13 @@ function createMarkdown(): MarkdownIt {
 
 let instance: MarkdownIt | null = null;
 
+/** The one configured parser (blocks.ts renders a doc block by block with it). */
+export function markdown(): MarkdownIt {
+  instance ??= createMarkdown();
+  return instance;
+}
+
 /** The doc's HTML. Safe by construction; sanitize.ts still checks it before insertion. */
 export function renderMarkdown(src: string): string {
-  instance ??= createMarkdown();
-  return instance.render(src);
+  return markdown().render(src);
 }

@@ -425,8 +425,16 @@ forge edits that the editor's session would then save.
   overwritten either way. `get_artifact` tells agents a draft exists (metadata only) and
   `update_artifact` warns `live_draft`.
 - **Modes.** "room" with live rooms on; "solo" under origin isolation without rooms (edit on the
-  page alone, Save makes a version); under opaque isolation and the path fallback, docs are edited
-  in the source editor only. `ALLOW_LIVE_EDITING=false` turns it off.
+  page alone, Save makes a version; the tab keeps a copy, and after a reload offers to save it as
+  a version or discard it); under opaque isolation and the path fallback, docs are edited in the
+  source editor only. `ALLOW_LIVE_EDITING=false` turns it off.
+- **On the page.** An Edit toggle in the artifact bar (the menu's source editor item becomes "Edit
+  source") turns edit mode on; a strip under the bar says what is happening and who else is
+  editing, with Save version, Discard and Done. A block opens as a plain text field holding its
+  Markdown; blocks other people hold show their email and their text as it arrives. Owners and
+  editors who are not editing see one line when unsaved page edits exist, when someone is editing,
+  or when a version needs review. Edit mode and comment review mode exclude each other. Draft text
+  never reaches the app page in room mode; in solo mode the frame hands it over only to be saved.
 - **REST.** `GET /api/v1/artifacts/:ref/live`, `GET .../live/draft` (the draft text, to review a
   conflict), `POST .../live/checkpoint` and `DELETE .../live/draft?rev=n` (discard), for the
   signed-in app only; not mirrored to MCP.

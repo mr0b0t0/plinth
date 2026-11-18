@@ -7,6 +7,7 @@
 import {
   ChatCircleIcon,
   ClockCounterClockwiseIcon,
+  CodeIcon,
   DotsThreeIcon,
   FileIcon,
   FlagIcon,
@@ -18,7 +19,7 @@ import {
   SunIcon,
 } from "@phosphor-icons/react";
 import { API, APP_ROUTES, type CommentInfo, route, type ViewGate } from "@plinth/shared";
-import { useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { api } from "../../lib/api.ts";
 import { Link } from "../../lib/router.tsx";
 import { useSession } from "../../lib/session.ts";
@@ -41,11 +42,18 @@ import {
   VISIBILITY_META,
 } from "../ui/index.ts";
 import { DataNotice } from "./DataNotice.tsx";
+import { EditBar } from "./EditBar.tsx";
 import { contentOriginOf, shareLink } from "./gate.ts";
+import { LiveDraftNotice } from "./LiveDraftNotice.tsx";
 import { postPrint, rendererTargetOrigin } from "./rendererProtocol.ts";
 import { ShareDialog } from "./ShareDialog.tsx";
 import { StageFrame } from "./StageFrame.tsx";
+import { useLiveEdit } from "./useLiveEdit.ts";
+import type { WatchPause } from "./useVersionWatch.ts";
 import "./viewer.css";
+
+// The review of overlapping page edits uses Monaco's diff: a chunk of its own, loaded on demand.
+const LiveConflictDialog = lazy(() => import("./LiveConflictDialog.tsx"));
 
 type OkGate = Extract<ViewGate, { status: "ok" }>;
 
@@ -61,6 +69,15 @@ export interface ViewerStageProps {
   onToggleComments: () => void;
   /** Link to the current version. */
   currentHref: string;
+  /** Fetch a fresh gate (on-page editing: after a solo save or discard, a lost session). */
+  onReload?: () => void;
+  /**
+   * On-page editing turned on or off (#36). Editing and review mode (the comment-anchoring frame)
+   * exclude each other, so the page turns review mode off when editing starts.
+   */
+  onEditModeChange?: (on: boolean) => void;
+  /** How the version watch must treat the frame while the doc is edited on its page. */
+  onPauseChange?: (pause: WatchPause) => void;
 }
 
 /** Who may open the editor. The editor page and the API check again. */
@@ -86,6 +103,9 @@ export function ViewerStage({
   commentsOpen,
   onToggleComments,
   currentHref,
+  onReload,
+  onEditModeChange,
+  onPauseChange,
 }: ViewerStageProps) {
   const { me, config } = useSession();
   const [theme, setTheme] = useTheme();
@@ -123,12 +143,44 @@ export function ViewerStage({
 
   const counted = openCount !== null && openCount > 0;
 
+  // On-page editing of a doc (#36): owners and editors on the current version only.
+  const live = useLiveEdit({
+    gate,
+    frame,
+    contentOrigin,
+    config,
+    onReload: onReload ?? (() => undefined),
+  });
+  const editing = live.editing;
+  useEffect(() => {
+    onPauseChange?.(live.pause);
+  }, [live.pause, onPauseChange]);
+  useEffect(() => {
+    onEditModeChange?.(editing);
+  }, [editing, onEditModeChange]);
+
   // The toggle gets focus back when the panel closes.
   const toggleRef = useRef<HTMLButtonElement>(null);
   const closeComments = () => {
     onToggleComments();
     requestAnimationFrame(() => toggleRef.current?.focus());
   };
+  // Opening comments while editing finishes editing first.
+  const toggleComments = async () => {
+    if (editing) await live.done();
+    onToggleComments();
+  };
+
+  const editRef = useRef<HTMLButtonElement>(null);
+  const finishEditing = async () => {
+    await live.done();
+    requestAnimationFrame(() => editRef.current?.focus());
+  };
+  const toggleEditing = () => {
+    if (editing) void finishEditing();
+    else live.start();
+  };
+  const signInHref = `${APP_ROUTES.login}?next=${encodeURIComponent(currentHref)}`;
 
   const menuItems: MenuEntry[] = [
     ...(compact
@@ -137,7 +189,27 @@ export function ViewerStage({
           { label: "History", icon: ClockCounterClockwiseIcon, href: historyHref },
         ]
       : []),
-    ...(canEdit(role) ? [{ label: "Edit", icon: PencilSimpleIcon, href: editHref }] : []),
+    ...(compact && live.available && !live.signIn
+      ? [
+          {
+            label: editing ? "Done editing" : "Edit on the page",
+            icon: PencilSimpleIcon,
+            onSelect: toggleEditing,
+          },
+        ]
+      : []),
+    ...(compact && live.available && live.signIn
+      ? [{ label: "Sign in to edit", icon: PencilSimpleIcon, href: signInHref }]
+      : []),
+    ...(canEdit(role)
+      ? [
+          {
+            label: live.available ? "Edit source" : "Edit",
+            icon: live.available ? CodeIcon : PencilSimpleIcon,
+            href: editHref,
+          },
+        ]
+      : []),
     ...(isOwner ? [{ label: "Settings", icon: GearSixIcon, href: settingsHref }] : []),
     // A doc prints itself: the renderer in the frame calls its own print(), so the browser prints
     // the document (or saves it as PDF), not this page around it.
@@ -163,7 +235,9 @@ export function ViewerStage({
   return (
     <IconProvider>
       <SkipLink />
-      <div className={`pl-viewer${commentsOpen ? " pl-viewer--panel" : ""}`}>
+      <div
+        className={`pl-viewer${commentsOpen ? " pl-viewer--panel" : ""}${editing ? " pl-viewer--editing" : ""}`}
+      >
         <header className="pl-viewer__bar">
           <div className="pl-viewer__crumbs">
             {isOwner ? (
@@ -217,6 +291,32 @@ export function ViewerStage({
                 </Link>
               </Tooltip>
             )}
+            {live.available && !compact && !live.signIn && (
+              <Tooltip content={editing ? "Done editing" : "Edit on the page"} placement="bottom">
+                <Button
+                  ref={editRef}
+                  variant="ghost"
+                  icon={PencilSimpleIcon}
+                  aria-label="Edit"
+                  aria-pressed={editing}
+                  className="pl-viewer__edit"
+                  onClick={toggleEditing}
+                />
+              </Tooltip>
+            )}
+            {live.available && !compact && live.signIn && (
+              <Tooltip content="Sign in to edit" placement="bottom">
+                <Link
+                  to={signInHref}
+                  aria-label="Sign in to edit"
+                  className={buttonClassName({ variant: "ghost", iconOnly: true })}
+                >
+                  <span className="pl-button__content">
+                    <PencilSimpleIcon size={16} aria-hidden="true" />
+                  </span>
+                </Link>
+              </Tooltip>
+            )}
             {/* The count sits beside the button, not in it, so the button's name stays exactly its
                 visible label (WCAG 2.5.3); the panel announces the numbers. */}
             <span className="pl-viewer__comments-wrap">
@@ -227,7 +327,7 @@ export function ViewerStage({
                 aria-label="Comments"
                 aria-pressed={commentsOpen}
                 className={`pl-viewer__comments${counted ? " pl-viewer__comments--counted" : ""}`}
-                onClick={commentsOpen ? closeComments : onToggleComments}
+                onClick={commentsOpen ? closeComments : () => void toggleComments()}
               />
               {counted && (
                 <span className="pl-viewer__count" aria-hidden="true">
@@ -260,6 +360,39 @@ export function ViewerStage({
             </p>
           )}
           <DataNotice data={gate.data} />
+          {editing && live.mode && (
+            <EditBar
+              phase={live.phase}
+              mode={live.mode}
+              version={live.status?.base_version || artifact.version}
+              connected={live.status?.connected ?? false}
+              connecting={live.status === null}
+              dirty={live.status?.dirty ?? false}
+              saving={live.saving}
+              savedVersion={live.savedVersion}
+              rebasedVersion={live.rebasedVersion}
+              newerVersion={live.newerVersion}
+              editors={live.status?.editors ?? []}
+              onSave={(note) => void live.save(note)}
+              onDiscard={() => void live.discard()}
+              onDone={() => void finishEditing()}
+              onReview={() => void live.review()}
+            />
+          )}
+          {live.available && !editing && (
+            <LiveDraftNotice
+              draft={gate.live?.draft ?? null}
+              status={live.status}
+              restore={live.restore}
+              signIn={live.signIn}
+              onSave={() => void live.save()}
+              onContinue={live.start}
+              onDiscard={() => void live.discard()}
+              onReview={() => void live.review()}
+              onSaveRestore={() => void live.saveRestore()}
+              onDropRestore={live.dropRestore}
+            />
+          )}
           <div className="pl-viewer__room">
             <div className="pl-viewer__frame-wrap">
               <StageFrame
@@ -308,6 +441,18 @@ export function ViewerStage({
           </nav>
         </footer>
       </div>
+      {live.reviewing && live.conflict && (
+        <Suspense fallback={null}>
+          <LiveConflictDialog
+            conflict={live.conflict}
+            artifactId={artifact.id}
+            saving={live.saving}
+            onClose={live.closeReview}
+            onKeepMine={() => void live.keepMine()}
+            onTakeLatest={() => void live.takeLatest()}
+          />
+        </Suspense>
+      )}
       <ShareDialog
         open={shareOpen}
         onClose={() => setShareOpen(false)}

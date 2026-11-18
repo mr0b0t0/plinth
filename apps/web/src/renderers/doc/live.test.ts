@@ -1,0 +1,404 @@
+// The doc socket client: the gen and rev rules, resync, unflushed text and its re-take after a
+// reconnect, backoff, the hidden-tab rule and the solo fallback when the room never answers.
+import { liveDocServerFrameSchema } from "@plinth/shared";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  type ClientLease,
+  docSocketUrl,
+  HIDDEN_CLOSE_MS,
+  LiveDocClient,
+  type LiveDocListener,
+  locateBlock,
+  readServerFrame,
+} from "./live.ts";
+
+class FakeSocket {
+  static all: FakeSocket[] = [];
+  readyState = 1 as const;
+  sent: unknown[] = [];
+  closed: number | null = null;
+  onopen: ((ev: Event) => void) | null = null;
+  onclose: ((ev: CloseEvent) => void) | null = null;
+  onmessage: ((ev: MessageEvent) => void) | null = null;
+  onerror: ((ev: Event) => void) | null = null;
+  constructor(
+    readonly url: string,
+    readonly protocols: string[],
+  ) {
+    FakeSocket.all.push(this);
+  }
+  send(raw: string) {
+    this.sent.push(raw === "ping" ? raw : JSON.parse(raw));
+  }
+  close(code = 1000) {
+    this.closed = code;
+  }
+  /** The server sends a frame. */
+  frame(f: Record<string, unknown>) {
+    this.onmessage?.({ data: JSON.stringify(f) } as MessageEvent);
+  }
+  /** The server (or the network) closes it. */
+  drop(code = 1006) {
+    this.onclose?.({ code } as CloseEvent);
+  }
+  last() {
+    return this.sent.at(-1) as Record<string, unknown>;
+  }
+}
+
+function listener(): LiveDocListener & { calls: string[] } {
+  const calls: string[] = [];
+  const rec =
+    (name: string) =>
+    (...a: unknown[]) =>
+      calls.push(a.length ? `${name}:${a.join(",")}` : name);
+  return {
+    calls,
+    changed: rec("changed"),
+    status: () => undefined,
+    granted: (l: ClientLease) => calls.push(`granted:${l.start}-${l.end}`),
+    denied: rec("denied"),
+    lost: rec("lost"),
+    version: rec("version"),
+    error: rec("error"),
+  };
+}
+
+const YOU = { id: "s1", email: "ada@example.org", right: "write" as const };
+
+function welcome(ws: FakeSocket, text: string, over: Record<string, unknown> = {}) {
+  ws.frame({
+    t: "welcome",
+    v: 1,
+    you: YOU,
+    gen: "g1",
+    rev: 3,
+    base_version: 2,
+    flushed_rev: 3,
+    conflict_version: null,
+    last_by_you: false,
+    leases: [],
+    peers: [],
+    ...over,
+  });
+  const gen = (over.gen as string) ?? "g1";
+  const parts = text.length > 4 ? [text.slice(0, 4), text.slice(4)] : [text];
+  parts.forEach((chunk, part) => {
+    ws.frame({ t: "text", gen, part, of: parts.length, chunk });
+  });
+}
+
+let L: ReturnType<typeof listener>;
+let client: LiveDocClient;
+
+beforeEach(() => {
+  vi.useFakeTimers();
+  FakeSocket.all = [];
+  L = listener();
+  client = new LiveDocClient({
+    win: window,
+    listener: L,
+    connect: (u, p) => new FakeSocket(u, p),
+    random: () => 0,
+  });
+});
+
+afterEach(() => {
+  client.stop();
+  vi.useRealTimers();
+});
+
+const sock = () => FakeSocket.all.at(-1) as FakeSocket;
+
+describe("LiveDocClient", () => {
+  it("connects to the doc path with the room subprotocol and loads the chunked draft", () => {
+    expect(docSocketUrl({ protocol: "https:", host: "a1.usercontent.example" })).toBe(
+      "wss://a1.usercontent.example/__plinth/room/v1/doc",
+    );
+    client.start();
+    expect(sock().protocols).toEqual(["plinth.room.v1"]);
+    expect(sock().url).toMatch(/^ws:\/\/.*\/__plinth\/room\/v1\/doc$/);
+    welcome(sock(), "# Title\n\nPara");
+    expect(client.connected).toBe(true);
+    expect(client.text).toBe("# Title\n\nPara");
+    expect(client.rev).toBe(3);
+    expect(client.baseVersion).toBe(2);
+  });
+
+  it("applies the next op only, and asks for a sync on a gap or another gen", () => {
+    client.start();
+    welcome(sock(), "a\n\nb");
+    sock().frame({
+      t: "leased",
+      lease: "l1",
+      start: 2,
+      end: 3,
+      holder: "s2",
+      by: "bo@example.org",
+    });
+    sock().frame({
+      t: "op",
+      gen: "g1",
+      rev: 4,
+      lease: "l1",
+      start: 2,
+      del: 1,
+      ins: "b2\nb3",
+      by: "s2",
+    });
+    expect(client.lines).toEqual(["a", "", "b2", "b3"]);
+    expect(client.leases.get("l1")).toMatchObject({ start: 2, end: 4 });
+    expect(client.lastByYou).toBe(false);
+    // A gap: not applied, a sync goes out once.
+    sock().frame({ t: "op", gen: "g1", rev: 6, lease: "l1", start: 2, del: 2, ins: "x", by: "s2" });
+    expect(client.lines).toEqual(["a", "", "b2", "b3"]);
+    expect(sock().last()).toEqual({ t: "sync" });
+    // Another gen is never taken for a continuation.
+    const before = sock().sent.length;
+    sock().frame({ t: "op", gen: "g9", rev: 5, lease: "l1", start: 0, del: 1, ins: "z", by: "s2" });
+    expect(client.lines[0]).toBe("a");
+    expect(sock().sent.length).toBe(before);
+  });
+
+  it("shifts other leases and recognizes its own ack", () => {
+    client.start();
+    welcome(sock(), "a\n\nb\n\nc");
+    sock().frame({ t: "leased", lease: "mine", start: 0, end: 1, holder: "s1", by: YOU.email });
+    sock().frame({
+      t: "leased",
+      lease: "l2",
+      start: 4,
+      end: 5,
+      holder: "s2",
+      by: "bo@example.org",
+    });
+    expect(L.calls).toContain("granted:0-1");
+    expect(client.edit("a1\na2\na3")).toBe(true);
+    expect(client.unflushed).toBe(true);
+    sock().frame({
+      t: "op",
+      gen: "g1",
+      rev: 4,
+      lease: "mine",
+      start: 0,
+      del: 1,
+      ins: "a1\na2\na3",
+      by: "s1",
+      seq: 1,
+    });
+    expect(client.mine).toMatchObject({ start: 0, end: 3 });
+    expect(client.leases.get("l2")).toMatchObject({ start: 6, end: 7 });
+    expect(client.lastByYou).toBe(true);
+    expect(client.ackedText).toBe("a1\na2\na3");
+    // Acked but not yet in D1: still unflushed until the room says it wrote rev 4.
+    expect(client.unflushed).toBe(true);
+    sock().frame({ t: "flushed", rev: 4 });
+    expect(client.unflushed).toBe(false);
+    expect(client.durableText).toBe("a1\na2\na3");
+  });
+
+  it("loses its lease on a new gen after a reconnect, keeping the durable text to re-take", () => {
+    client.start();
+    welcome(sock(), "a\n\nb");
+    sock().frame({ t: "leased", lease: "mine", start: 2, end: 3, holder: "s1", by: YOU.email });
+    client.edit("b!");
+    sock().frame({
+      t: "op",
+      gen: "g1",
+      rev: 4,
+      lease: "mine",
+      start: 2,
+      del: 1,
+      ins: "b!",
+      by: "s1",
+      seq: 1,
+    });
+    // Evicted before the flush: the room comes back from D1 with the older text.
+    sock().drop(1006);
+    expect(L.calls).toContain("lost:reconnect");
+    expect(client.connected).toBe(false);
+    vi.advanceTimersByTime(600);
+    expect(FakeSocket.all.length).toBe(2);
+    welcome(sock(), "a\n\nb", { gen: "g2", rev: 3 });
+    expect(client.gen).toBe("g2");
+    expect(client.text).toBe("a\n\nb");
+    // The durable text is the block as it was leased: the editor finds it and resends "b!".
+    expect(client.durableText).toBe("b");
+    expect(locateBlock(client.lines, client.durableText ?? "", 2)).toBe(2);
+  });
+
+  it("backs off 1, 2, 5, 10 then 30 s between reconnects", () => {
+    client.start();
+    welcome(sock(), "a");
+    const waits: number[] = [];
+    for (let i = 0; i < 6; i++) {
+      const n = FakeSocket.all.length;
+      sock().drop(1006);
+      let ms = 0;
+      while (FakeSocket.all.length === n) {
+        vi.advanceTimersByTime(100);
+        ms += 100;
+      }
+      waits.push(ms);
+    }
+    // random() = 0 gives half of each step.
+    expect(waits).toEqual([500, 1000, 2500, 5000, 15000, 15000]);
+  });
+
+  it("reports failed and stops when the first connection never gets through", () => {
+    client.start();
+    sock().drop(1006);
+    expect(client.failed).toBe(true);
+    vi.advanceTimersByTime(60_000);
+    expect(FakeSocket.all.length).toBe(1);
+  });
+
+  it("stops for good when access changed or the artifact is gone", () => {
+    client.start();
+    welcome(sock(), "a");
+    sock().drop(4401);
+    expect(client.ended).toBe("unauthorized");
+    vi.advanceTimersByTime(60_000);
+    expect(FakeSocket.all.length).toBe(1);
+  });
+
+  it("closes a socket hidden for 60 s unless it holds unflushed text, and reopens when visible", () => {
+    let state: DocumentVisibilityState = "visible";
+    vi.spyOn(document, "visibilityState", "get").mockImplementation(() => state);
+    client.start();
+    welcome(sock(), "a");
+    sock().frame({ t: "leased", lease: "mine", start: 0, end: 1, holder: "s1", by: YOU.email });
+    client.edit("a!");
+    state = "hidden";
+    document.dispatchEvent(new Event("visibilitychange"));
+    vi.advanceTimersByTime(HIDDEN_CLOSE_MS + 10);
+    // Unacked text: the socket stays.
+    expect(sock().closed).toBeNull();
+    sock().frame({
+      t: "op",
+      gen: "g1",
+      rev: 4,
+      lease: "mine",
+      start: 0,
+      del: 1,
+      ins: "a!",
+      by: "s1",
+      seq: 1,
+    });
+    sock().frame({ t: "flushed", rev: 4 });
+    state = "visible";
+    document.dispatchEvent(new Event("visibilitychange"));
+    state = "hidden";
+    document.dispatchEvent(new Event("visibilitychange"));
+    vi.advanceTimersByTime(HIDDEN_CLOSE_MS + 10);
+    expect(sock().closed).toBe(1000);
+    vi.advanceTimersByTime(60_000);
+    expect(FakeSocket.all.length).toBe(1);
+    state = "visible";
+    document.dispatchEvent(new Event("visibilitychange"));
+    expect(FakeSocket.all.length).toBe(2);
+  });
+
+  it("follows reset, rebased, saved and conflict", () => {
+    client.start();
+    welcome(sock(), "a\nb");
+    sock().frame({ t: "saved", version: 3, rev: 3 });
+    expect(client.baseVersion).toBe(3);
+    sock().frame({ t: "rebased", version: 4, gen: "g1", rev: 5 });
+    sock().frame({ t: "text", gen: "g1", part: 0, of: 1, chunk: "merged" });
+    expect(client.text).toBe("merged");
+    expect(client.rev).toBe(5);
+    expect(client.baseVersion).toBe(4);
+    expect(L.calls).toContain("version:rebased,4");
+    sock().frame({ t: "conflict", version: 5 });
+    expect(client.conflictVersion).toBe(5);
+    expect(client.lease({ start: 0, end: 1 })).toBe(false);
+  });
+
+  it("ignores frames that fail validation and denials it did not ask for", () => {
+    client.start();
+    welcome(sock(), "a");
+    sock().frame({ t: "op", gen: "g1", rev: "4", lease: "x", start: 0, del: 0, ins: "", by: "s" });
+    sock().onmessage?.({ data: "not json" } as MessageEvent);
+    sock().frame({ t: "lease_denied", reason: "held", by: "bo@example.org" });
+    expect(client.text).toBe("a");
+    expect(L.calls.filter((c) => c.startsWith("denied"))).toEqual([]);
+    client.lease({ start: 0, end: 1 });
+    sock().frame({ t: "lease_denied", reason: "stale" });
+    expect(L.calls).toContain("denied:stale,");
+  });
+
+  it("watch sockets never ask for a lease", () => {
+    client.start();
+    welcome(sock(), "a", { you: { ...YOU, right: "watch" } });
+    expect(client.lease({ start: 0, end: 1 })).toBe(false);
+  });
+});
+
+describe("locateBlock", () => {
+  it("finds the nearest copy of a block, and keeps an empty one as an insert point", () => {
+    const lines = ["x", "b", "", "b", "", "c"];
+    expect(locateBlock(lines, "b", 4)).toBe(3);
+    expect(locateBlock(lines, "b", 0)).toBe(1);
+    expect(locateBlock(lines, "nope", 2)).toBe(-1);
+    expect(locateBlock(lines, "", 99)).toBe(6);
+  });
+});
+
+describe("readServerFrame", () => {
+  const FRAMES: Record<string, unknown>[] = [
+    {
+      t: "welcome",
+      v: 1,
+      you: { id: "s", email: "a@b.c", right: "write" },
+      gen: "g",
+      rev: 0,
+      base_version: 1,
+      flushed_rev: 0,
+      conflict_version: null,
+      last_by_you: false,
+      leases: [{ id: "l", start: 0, end: 1, by: "a@b.c" }],
+      peers: [{ id: "p", email: "a@b.c", lease: null }],
+    },
+    { t: "text", gen: "g", part: 0, of: 1, chunk: "x" },
+    { t: "leased", lease: "l", start: 0, end: 2, holder: "s", by: "a@b.c" },
+    { t: "lease_denied", reason: "held", by: "a@b.c" },
+    { t: "lease_denied", reason: "stale" },
+    { t: "op", gen: "g", rev: 1, lease: "l", start: 0, del: 1, ins: "x", by: "s", seq: 3 },
+    { t: "released", lease: "l" },
+    { t: "lease_lost", lease: "l", reason: "takeover" },
+    { t: "flushed", rev: 2 },
+    { t: "saved", version: 2, rev: 3 },
+    { t: "reset", version: 2, gen: "g", rev: 3 },
+    { t: "rebased", version: 2, gen: "g", rev: 3 },
+    { t: "conflict", version: 4 },
+    { t: "status", dirty: true, editors: ["a@b.c"], last_edit_at: null, last_by_you: false },
+    { t: "error", code: "draft_limit" },
+  ];
+
+  it("accepts every well-formed frame, as the shared schema does", () => {
+    for (const f of FRAMES) {
+      expect(readServerFrame(f), JSON.stringify(f)).not.toBeNull();
+      expect(liveDocServerFrameSchema.safeParse(f).success).toBe(true);
+    }
+  });
+
+  it("never accepts a frame the shared schema refuses (field-by-field mutations)", () => {
+    const bad: unknown[] = [-1, 1.5, "1", null, true, {}, [], "x".repeat(300), "bad id!"];
+    for (const f of FRAMES) {
+      for (const key of Object.keys(f)) {
+        for (const value of bad) {
+          const m = { ...f, [key]: value };
+          if (readServerFrame(m)) {
+            expect(
+              liveDocServerFrameSchema.safeParse(m).success,
+              `${f.t}.${key}=${JSON.stringify(value)}`,
+            ).toBe(true);
+          }
+        }
+      }
+    }
+    expect(readServerFrame({ t: "nope" })).toBeNull();
+    expect(readServerFrame("op")).toBeNull();
+  });
+});

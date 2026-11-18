@@ -17,6 +17,9 @@
   --doc-stripe: #fafbfc;
   --doc-quote: #8a949e;
   --doc-focus: #0a58ca;
+  /* On-page editing (#36): bronze marks blocks being edited, as the app's live state does. */
+  --doc-live: #8f5a2a;
+  --doc-live-soft: #f0e8e0;
   --doc-font:
     system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif,
     "Apple Color Emoji", "Segoe UI Emoji";
@@ -39,6 +42,8 @@
     --doc-stripe: #16191d;
     --doc-quote: #6b7580;
     --doc-focus: #6cb2ff;
+    --doc-live: #d39a62;
+    --doc-live-soft: #27211c;
   }
 }
 
@@ -439,5 +444,157 @@ body {
   .plinth-doc li {
     orphans: 3;
     widows: 3;
+  }
+}
+
+/* ---------- On-page editing (#36). Only present while the app turned edit mode on. ---------- */
+
+.plinth-doc--editing {
+  position: relative;
+}
+.plinth-doc--editing > :not(.plinth-doc__insert):not(.plinth-doc__holder):not(.plinth-doc__field) {
+  cursor: text;
+  border-radius: 4px;
+}
+.plinth-doc--editing
+  > :not(.plinth-doc__insert):not(.plinth-doc__holder):not(.plinth-doc__field):not(
+    .plinth-doc__held
+  ):hover {
+  outline: 1px dashed var(--doc-border);
+  outline-offset: 4px;
+}
+.plinth-doc--editing > :focus-visible {
+  outline: 2px solid var(--doc-focus);
+  outline-offset: 4px;
+}
+.plinth-doc__field {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 2.5em;
+  margin: 0.75em 0;
+  padding: 0.5em 0.75em;
+  overflow: hidden;
+  resize: none;
+  border: 1px solid var(--doc-live);
+  border-left-width: 3px;
+  border-radius: 4px;
+  background: var(--doc-bg);
+  color: var(--doc-fg);
+  font: 0.9375rem / 1.6 var(--doc-mono);
+  tab-size: 2;
+}
+.plinth-doc__field:focus {
+  outline: 2px solid var(--doc-focus);
+  outline-offset: 1px;
+}
+@media (pointer: coarse) {
+  .plinth-doc__field {
+    font-size: 16px;
+  }
+}
+/* Blocks someone else holds: a bronze rule and their email; their text arrives as they type. */
+.plinth-doc__held {
+  box-shadow: -10px 0 0 -7px var(--doc-live);
+  background: var(--doc-live-soft);
+  cursor: not-allowed;
+}
+.plinth-doc__holder {
+  position: absolute;
+  right: 0;
+  margin-top: 0.25em;
+  padding: 0 0.4em;
+  border-radius: 3px;
+  background: var(--doc-live);
+  color: var(--doc-bg);
+  font: 600 0.6875rem / 1.5 var(--doc-font);
+  overflow-wrap: anywhere;
+  max-width: 60%;
+  pointer-events: none;
+  z-index: 1;
+}
+/* "+" between blocks: out of the flow, so the page keeps its spacing. */
+.plinth-doc__insert {
+  position: absolute;
+  left: -1.75rem;
+  width: 1.5rem;
+  height: 1.5rem;
+  margin-top: -0.75rem;
+  padding: 0;
+  border: 1px solid var(--doc-border);
+  border-radius: 50%;
+  background: var(--doc-bg);
+  color: var(--doc-muted);
+  font: 600 0.875rem / 1 var(--doc-font);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 120ms;
+}
+.plinth-doc__insert:hover,
+.plinth-doc__insert:focus-visible,
+.plinth-doc--editing:hover > .plinth-doc__insert:hover {
+  opacity: 1;
+  color: var(--doc-live);
+  border-color: var(--doc-live);
+}
+.plinth-doc--editing:hover > .plinth-doc__insert {
+  opacity: 0.45;
+}
+@media (max-width: 40rem) {
+  .plinth-doc__insert {
+    left: auto;
+    right: 0;
+  }
+}
+@media (pointer: coarse) {
+  .plinth-doc__insert {
+    opacity: 0.6;
+  }
+}
+/* The frame's own status line, for lease messages. */
+.plinth-doc__notice {
+  position: fixed;
+  right: 1rem;
+  bottom: 1rem;
+  left: 1rem;
+  z-index: 2;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.75rem;
+  max-width: 32rem;
+  margin-left: auto;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--doc-border);
+  border-left: 3px solid var(--doc-live);
+  border-radius: 6px;
+  background: var(--doc-bg);
+  color: var(--doc-fg);
+  font: 0.8125rem / 1.4 var(--doc-font);
+  box-shadow: 0 4px 16px rgb(0 0 0 / 0.12);
+}
+.plinth-doc__notice span {
+  overflow-wrap: anywhere;
+}
+.plinth-doc__notice button {
+  padding: 0.2rem 0.6rem;
+  border: 1px solid var(--doc-border);
+  border-radius: 4px;
+  background: var(--doc-code-bg);
+  color: var(--doc-fg);
+  font: inherit;
+  cursor: pointer;
+}
+.plinth-doc__notice .plinth-doc__notice-close {
+  margin-left: auto;
+  border: 0;
+  background: none;
+  color: var(--doc-muted);
+}
+@media print {
+  .plinth-doc__insert,
+  .plinth-doc__holder,
+  .plinth-doc__notice {
+    display: none;
   }
 }

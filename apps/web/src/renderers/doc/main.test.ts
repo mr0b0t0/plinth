@@ -8,6 +8,8 @@ import {
 } from "@plinth/shared";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { boot } from "./boot.ts";
+import { renderMarkdown } from "./markdown.ts";
+import { sanitizeHtml } from "./sanitize.ts";
 
 // The Markdown layer is real unless a test sets `md.output`: then renderMarkdown returns that
 // HTML, standing in for a Markdown pass that let something through, so the tests can prove boot()
@@ -231,6 +233,142 @@ describe("doc renderer print", () => {
     stop = boot(window);
     post(msg);
     expect(print).not.toHaveBeenCalled();
+  });
+});
+
+describe("doc renderer on-page editing (#36)", () => {
+  const base = { source: RENDERER_MESSAGE_SOURCE, v: 1 };
+  const NONCE = "nonce-0123456789abcdef";
+  let sockets: {
+    url: string;
+    protocols: string[];
+    sent: string[];
+    onmessage?: (e: MessageEvent) => void;
+  }[];
+  let toApp: { mock: { calls: unknown[][] }; mockRestore: () => void };
+
+  function post(data: unknown, origin = APP): void {
+    window.dispatchEvent(new MessageEvent("message", { data, origin, source: window.parent }));
+  }
+
+  /** Messages the frame posted to the app, by type. */
+  function posted(type: string): Record<string, unknown>[] {
+    return toApp.mock.calls
+      .filter((c: unknown[]) => (c[0] as Record<string, unknown>)?.type === type)
+      .map((c: unknown[]) => {
+        expect(c[1]).toBe(APP);
+        return c[0] as Record<string, unknown>;
+      });
+  }
+
+  beforeEach(() => {
+    sockets = [];
+    vi.stubGlobal(
+      "WebSocket",
+      class {
+        sent: string[] = [];
+        onmessage?: (e: MessageEvent) => void;
+        constructor(
+          readonly url: string,
+          readonly protocols: string[],
+        ) {
+          sockets.push(this);
+        }
+        send(s: string) {
+          this.sent.push(s);
+        }
+        close() {}
+      },
+    );
+    toApp = vi.spyOn(window.parent, "postMessage").mockImplementation(() => undefined);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    toApp.mockRestore();
+  });
+
+  it("leaves view mode exactly as it was without `live`: same DOM, no socket, no message", async () => {
+    const text = "# Plinth\n\nA [ref][r].\n\n## Plinth\n\n[r]: https://example.com";
+    mountShell(text);
+    stop = boot(window);
+    const div = document.createElement("div");
+    div.append(sanitizeHtml(renderMarkdown(text), document));
+    expect(root().innerHTML).toBe(div.innerHTML);
+    await Promise.resolve();
+    expect(sockets).toHaveLength(0);
+    expect(toApp).not.toHaveBeenCalled();
+  });
+
+  it("edits alone after edit on, and answers collect with the text only in solo mode", async () => {
+    mountShell("one\n\ntwo");
+    stop = boot(window);
+    post({ ...base, type: "collect", nonce: NONCE });
+    expect(posted("draft")).toHaveLength(0);
+    post({ ...base, type: "edit", on: true });
+    await Promise.resolve();
+    expect(sockets).toHaveLength(0);
+    expect(root().classList.contains("plinth-doc--editing")).toBe(true);
+    const live = posted("live").at(-1);
+    expect(live).toMatchObject({ editing: true, connected: false, dirty: false });
+    expect(JSON.stringify(live)).not.toContain("one");
+    (root().querySelector("p") as HTMLElement).click();
+    const field = root().querySelector("textarea") as HTMLTextAreaElement;
+    field.value = "uno";
+    field.dispatchEvent(new Event("input"));
+    // A collect from another origin, or with a malformed nonce, is ignored.
+    post({ ...base, type: "collect", nonce: NONCE }, "https://evil.example");
+    post({ ...base, type: "collect", nonce: "short" });
+    expect(posted("draft")).toHaveLength(0);
+    post({ ...base, type: "collect", nonce: NONCE });
+    expect(posted("draft")).toEqual([{ ...base, type: "draft", nonce: NONCE, text: "uno\n\ntwo" }]);
+    post({ ...base, type: "edit", on: false });
+    expect(root().querySelector("textarea")).toBeNull();
+  });
+
+  it("with live: room, follows the live draft over the doc socket, never sending text to the app", async () => {
+    const html = typedShellHtml(TYPE_REGISTRY.doc, {
+      title: "T",
+      text: "# Saved",
+      base: "",
+      appOrigin: APP,
+      live: "room",
+    });
+    const main = /<main [^>]*><\/main>/.exec(html)?.[0] ?? "";
+    const data = /<script type="application\/json"[^>]*>[^<]*<\/script>/.exec(html)?.[0] ?? "";
+    document.body.innerHTML = main + data;
+    stop = boot(window);
+    expect(root().querySelector("h1")?.textContent).toContain("Saved");
+    expect(sockets).toHaveLength(1);
+    expect(sockets[0]?.url).toMatch(/\/__plinth\/room\/v1\/doc$/);
+    expect(sockets[0]?.protocols).toEqual(["plinth.room.v1"]);
+    const frame = (f: unknown) =>
+      sockets[0]?.onmessage?.(new MessageEvent("message", { data: JSON.stringify(f) }));
+    frame({
+      t: "welcome",
+      v: 1,
+      you: { id: "s1", email: "ada@example.org", right: "write" },
+      gen: "g",
+      rev: 2,
+      base_version: 1,
+      flushed_rev: 2,
+      conflict_version: null,
+      last_by_you: false,
+      leases: [],
+      peers: [],
+    });
+    frame({ t: "text", gen: "g", part: 0, of: 1, chunk: "# Draft\n\nsecret words" });
+    expect(root().querySelector("h1")?.textContent).toContain("Draft");
+    expect(root().classList.contains("plinth-doc--editing")).toBe(false);
+    await Promise.resolve();
+    const live = posted("live").at(-1);
+    expect(live).toMatchObject({ connected: true, editing: false, rev: 2, base_version: 1 });
+    expect(JSON.stringify(toApp.mock.calls)).not.toContain("secret");
+    // In room mode collect gets no answer: draft text never leaves the frame.
+    post({ ...base, type: "edit", on: true });
+    post({ ...base, type: "collect", nonce: NONCE });
+    expect(posted("draft")).toHaveLength(0);
+    expect(root().classList.contains("plinth-doc--editing")).toBe(true);
   });
 });
 

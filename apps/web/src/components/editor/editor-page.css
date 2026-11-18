@@ -13,3 +13,14 @@
 .pl-editor-narrow {
   padding-inline: var(--gutter);
 }
+
+/* A doc's unsaved page edits (#36): saving here publishes over them, so the editor says so. */
+.pl-editor-page__live {
+  margin: 0;
+  padding: var(--space-1-5) var(--page-pad);
+  border-bottom: var(--border-width) solid var(--color-border);
+  border-left: 2px solid var(--color-accent);
+  background: var(--color-surface);
+  color: var(--color-ink-muted);
+  font-size: var(--text-sm);
+}
