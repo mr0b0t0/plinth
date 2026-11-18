@@ -317,8 +317,8 @@ function noteEl(id) {
 }
 
 function place(n, x, y) {
-  n.el.style.left = x + "px";
-  n.el.style.top = y + "px";
+  n.el.style.left = `${x}px`;
+  n.el.style.top = `${y}px`;
   drawLinks();
 }
 
@@ -443,7 +443,7 @@ async function addNote() {
       return;
     }
   } else {
-    id = "local-" + ++localSeq;
+    id = `local-${++localSeq}`;
     upsertNote(id, data, 0);
   }
   pick(id);
@@ -579,7 +579,7 @@ function applyLinks(docs) {
 }
 async function addLink(from, to) {
   for (const l of links.values()) if (l.data.from === from && l.data.to === to) return;
-  if (!linksC) return upsertLink("local-" + ++localSeq, { from, to }, 0);
+  if (!linksC) return upsertLink(`local-${++localSeq}`, { from, to }, 0);
   try {
     const doc = await linksC.add({ from, to });
     upsertLink(doc.id, doc.data, doc.rev);
