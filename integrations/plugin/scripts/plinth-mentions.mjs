@@ -16,6 +16,12 @@
 //   node plinth-mentions.mjs status   say whether it is connected
 //   node plinth-mentions.mjs logout   revoke and forget the connection
 //
+// Which instance: PLINTH_URL, else the plugin's Plinth instance option, else the hosted one. Claude
+// Code gives the option to hooks only (CLAUDE_PLUGIN_OPTION_INSTANCE_URL), so `pending`, which the
+// SessionStart hook runs, saves it in the plugin's data folder (CLAUDE_PLUGIN_DATA), where `watch`
+// (the monitor) and the commands of the watch-mentions skill read it. `watch` reads it again on
+// every poll, so a monitor that started before the hook saved it catches up.
+//
 // State lives in $XDG_CONFIG_HOME/plinth (default ~/.config/plinth), one file per instance, mode
 // 0600. Several Claude Code sessions share it, so:
 // - refresh happens under a lock and re-reads the file first: Plinth rotates refresh tokens and
@@ -28,7 +34,7 @@
 // untrusted. Plain Node (18+), no dependencies. Source: integrations/watcher/; the plugin gets a
 // copy of both files from scripts/integrations.mjs.
 import { mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { createOAuth, hostKey, normalizeOrigin } from "./plinth-oauth.mjs";
 
 export const CLIENT_NAME = "Claude Code mention watcher";
@@ -50,8 +56,75 @@ function pluginVersion() {
 }
 export const USER_AGENT = `plinth-mentions/${pluginVersion()}`;
 
+export const HOSTED_ORIGIN = "https://plinth.aconite.io";
+const OPTION_LABEL = "The Plinth plugin's instance option";
+
+/** Where `pending` saves the plugin's instance option, or null outside a Claude Code plugin. */
+export function instanceFile(env = process.env) {
+  return env.CLAUDE_PLUGIN_DATA ? join(env.CLAUDE_PLUGIN_DATA, "instance.json") : null;
+}
+
+function savedOption(env) {
+  const file = instanceFile(env);
+  if (!file) return null;
+  try {
+    const v = JSON.parse(readFileSync(file, "utf8")).instance_url;
+    return typeof v === "string" && v.trim() ? v : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The instance's origin: PLINTH_URL, else the plugin's instance option, else the hosted one. */
 export function origin(env = process.env) {
-  return normalizeOrigin(env.PLINTH_URL || "https://plinth.aconite.io");
+  if (env.PLINTH_URL) return normalizeOrigin(env.PLINTH_URL);
+  const option = env.CLAUDE_PLUGIN_OPTION_INSTANCE_URL?.trim() || savedOption(env);
+  if (option) return normalizeOrigin(option, OPTION_LABEL);
+  return HOSTED_ORIGIN;
+}
+
+/**
+ * Why the option cannot work as the plugin's server origin (Claude Code appends /mcp to it), or
+ * null. An empty option is the default, the hosted instance.
+ */
+export function instanceProblem(raw) {
+  const text = String(raw ?? "").trim();
+  if (!text) return null;
+  let why = null;
+  try {
+    normalizeOrigin(text, OPTION_LABEL);
+    const u = new URL(text);
+    if (u.pathname !== "/" || u.search || u.hash || text.endsWith("/")) {
+      why = "has a path or a trailing slash (Claude Code adds /mcp to it)";
+    }
+  } catch {
+    why = "is not an https origin (http only on localhost)";
+  }
+  if (!why) return null;
+  return (
+    `Plinth: the Plinth plugin's instance option is ${JSON.stringify(text.slice(0, 200))}, which ${why}, ` +
+    "so the plugin's Plinth server cannot connect. Ask the user to set it to the instance's origin " +
+    "only, such as https://plinth.example.com, with /plugin configure plinth@plinth, then restart " +
+    "Claude Code."
+  );
+}
+
+/**
+ * In the SessionStart hook: save the plugin's instance option for the monitor and the skill's
+ * commands, or remove a saved one once the option is back to its default. Returns instanceProblem.
+ */
+export function rememberInstance(env = process.env) {
+  const raw = env.CLAUDE_PLUGIN_OPTION_INSTANCE_URL?.trim() ?? "";
+  const file = instanceFile(env);
+  if (file) {
+    try {
+      if (raw) {
+        mkdirSync(dirname(file), { recursive: true });
+        writeFileSync(file, `${JSON.stringify({ instance_url: raw })}\n`, { mode: 0o600 });
+      } else rmSync(file, { force: true });
+    } catch {}
+  }
+  return instanceProblem(raw);
 }
 
 export function oauthClient(env = process.env) {
@@ -150,10 +223,14 @@ async function pendingIds(oauth, base) {
  * without handling it). Marks them announced so this session's monitor does not repeat them.
  * Prints nothing when nothing waits or the watcher is not connected; never fails the hook.
  */
-async function pending(oauth, base, p) {
+async function pending(oauth) {
   // Codex runs Claude-compatible plugin hooks too; this connection answers @claude, so stay quiet.
   if (process.env.PLUGIN_ROOT && !process.env.CLAUDECODE) return;
+  const problem = rememberInstance();
+  if (problem) console.log(problem);
   try {
+    const base = origin();
+    const p = paths(base);
     const { ids } = await pendingIds(oauth, base);
     if (!ids || ids.length === 0) return;
     claimAnnouncements(p, ids);
@@ -161,11 +238,14 @@ async function pending(oauth, base, p) {
   } catch {}
 }
 
-async function watch(oauth, base, p) {
+async function watch(oauth) {
   let delay = POLL_MS;
   let warnedSignedOut = false;
   for (;;) {
     try {
+      // Again on every poll: the SessionStart hook may save the instance after this started.
+      const base = origin();
+      const p = paths(base);
       const { ids, signedOut } = await pendingIds(oauth, base);
       if (!ids) {
         if (signedOut && !warnedSignedOut) {
@@ -212,11 +292,10 @@ function status(oauth, base) {
 
 async function main() {
   const cmd = process.argv[2] ?? "watch";
-  const base = origin();
   const oauth = oauthClient();
-  const p = paths(base);
-  if (cmd === "watch") return watch(oauth, base, p);
-  if (cmd === "pending") return pending(oauth, base, p);
+  if (cmd === "watch") return watch(oauth);
+  if (cmd === "pending") return pending(oauth);
+  const base = origin();
   if (cmd === "login") return login(oauth, base);
   if (cmd === "logout") return logout(oauth, base);
   if (cmd === "status") return status(oauth, base);

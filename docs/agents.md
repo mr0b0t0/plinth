@@ -88,13 +88,28 @@ Connections page. If you added the bare server before, run `claude mcp logout pl
 `claude mcp remove plinth --scope user` (the scope you added it with), and revoke its connection on
 the Connections page.
 
-Your own instance: the plugin's server URL is `${PLINTH_URL:-https://plinth.aconite.io}/mcp`, so
-without `PLINTH_URL` the plugin signs in to the hosted instance, a different operator. Set
-`PLINTH_URL` to the instance's origin (`https://plinth.example.com`, or `http://127.0.0.1:8788` for
-`npx @mr0b0t0/plinth`) every time Claude Code starts, for example with an `export` line in your
-shell profile. If you would rather not depend on that, add the bare server with your instance's URL
-instead (tools only); the Connect panel and `/llms.txt` of an instance other than the hosted one
-list it first.
+**Your own instance.** The plugin has one option, **Plinth instance** (`instance_url`): the origin
+its server and mention watcher use, `https://plinth.aconite.io` by default. Claude Code asks for it
+when you enable the plugin in a session. From a terminal, set it as you install:
+
+```sh
+claude plugin marketplace add mr0b0t0/plinth
+claude plugin install plinth@plinth --config instance_url=https://plinth.example.com
+```
+
+Run on a plugin that is already installed, the same `install` command only saves the option. Inside
+a session, `/plugin configure plinth@plinth` changes it, and `/config` lists it too. Restart Claude
+Code after a change. Enter the origin only (`https://plinth.example.com`, or `http://127.0.0.1:8788`
+for `npx @mr0b0t0/plinth`): Claude Code adds `/mcp` to it, so a path or a trailing slash breaks the
+server, and the plugin's session-start hook says so when it sees one. The value is kept under
+`pluginConfigs` in that configuration directory's `settings.json`, so it lasts across sessions and
+every program that runs this Claude Code profile (T3 Code included) uses it. It needs Claude Code
+2.1.83 or later. `PLINTH_URL`, the earlier way, still works and wins over the option when set. The
+Connect panel, `/llms.txt` and `npx @mr0b0t0/plinth connect` of an instance other than the hosted
+one print the install with `--config` already filled in.
+
+The directory build (`integrations/plugin-directory`, for Anthropic's plugin directory) has the same
+option, without `PLINTH_URL`: change it in `/config`.
 
 #### Several Claude Code configuration directories
 
@@ -138,7 +153,11 @@ codex plugin add plinth@plinth
 
 Codex reads `.agents/plugins/marketplace.json` and the plugin's portable `plugin.json`, `mcp.json`
 and `skills/`. For a self-hosted instance, add its server with `codex mcp add plinth --url <origin>/mcp`
-and `codex mcp login plinth`; the plugin still provides the skill.
+and `codex mcp login plinth`; the plugin still provides the skill. Keep the name `plinth`: a server
+in your Codex configuration replaces a plugin's server of the same name, so the plugin's hosted
+server goes away, while a server under any other name runs next to it. Codex does not expand
+environment variables in a plugin's `mcp.json` URL, so there is no `PLINTH_URL` for Codex (both
+checked with Codex 0.169 on 2026-11-18).
 
 ### T3 Code
 
@@ -150,9 +169,9 @@ each one you pick in T3 Code, as above, and sign in once there (`/mcp` in Claude
 - **Which Claude Code profile.** T3 Code's Claude uses the configuration directory in its
   environment: the default `~/.claude`, or `CLAUDE_CONFIG_DIR` if T3 Code was started with it or
   it is set under **Variables** in the Claude provider's settings (**Settings > Providers**).
-  Install the plugin in that profile. On your own instance, the same goes for `PLINTH_URL`: the
-  desktop app does not read your shell profile, so set it under **Variables** too, or use the
-  instance's own server (`claude mcp add`) instead of the plugin's.
+  Install the plugin in that profile. On your own instance, set the plugin's Plinth instance option
+  in that profile too; it is kept in the profile's settings, so T3 Code's Claude uses it. (The
+  desktop app does not read your shell profile, so `PLINTH_URL` from there does not reach it.)
 - **Visual replies.** T3 Code has its own in-thread pages (`html_render`), deleted with the
   thread. The skill tells agents to use those for a chart or mockup to look at now, and Plinth for
   a page to keep or send to someone.

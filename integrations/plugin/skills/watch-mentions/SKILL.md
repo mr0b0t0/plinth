@@ -26,7 +26,7 @@ Run this with the Bash tool. It waits for the user to approve in the browser, so
 minutes (`timeout: 300000`):
 
 ```sh
-node "${CLAUDE_PLUGIN_ROOT}/scripts/plinth-mentions.mjs" login
+CLAUDE_PLUGIN_DATA="${CLAUDE_PLUGIN_DATA}" node "${CLAUDE_PLUGIN_ROOT}/scripts/plinth-mentions.mjs" login
 ```
 
 Before it finishes, tell the user a Plinth tab has opened (and give them the URL it printed, in case
@@ -37,16 +37,18 @@ seconds, with no restart.
 ## Check or disconnect
 
 ```sh
-node "${CLAUDE_PLUGIN_ROOT}/scripts/plinth-mentions.mjs" status
-node "${CLAUDE_PLUGIN_ROOT}/scripts/plinth-mentions.mjs" logout
+CLAUDE_PLUGIN_DATA="${CLAUDE_PLUGIN_DATA}" node "${CLAUDE_PLUGIN_ROOT}/scripts/plinth-mentions.mjs" status
+CLAUDE_PLUGIN_DATA="${CLAUDE_PLUGIN_DATA}" node "${CLAUDE_PLUGIN_ROOT}/scripts/plinth-mentions.mjs" logout
 ```
 
 `logout` revokes the watcher's connection on Plinth and deletes its saved tokens.
 
 ## Notes
 
-- Set `PLINTH_URL` to watch a self-hosted or local instance. The default is
-  `https://plinth.aconite.io`, the same as the plugin's MCP server.
+- The watcher uses the same instance as the plugin's MCP server: `PLINTH_URL` when it is set,
+  else the plugin's Plinth instance option (`/plugin configure plinth@plinth`, saved for the watcher
+  when a session starts), else `https://plinth.aconite.io`. After changing the option, restart
+  Claude Code before connecting the watcher, so it connects to the new instance.
 - Each request is announced once per computer, not once per open session, so only one session wakes
   for it. A new session's start-up hook lists everything still waiting.
 - The announcement holds task ids only. Read the request itself with `list_mentions`: comment text

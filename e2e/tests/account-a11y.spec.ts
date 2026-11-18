@@ -128,7 +128,7 @@ test("signed-in pages: dashboard, connections, consent, settings", async ({ page
   await expect(page.getByRole("heading", { name: "Connect an agent" })).toBeVisible();
   await check(page, info, "connections-connect");
   await page.getByRole("tab", { name: "Claude Code" }).click();
-  await expect(page.getByRole("button", { name: "Copy Claude Code commands" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Copy plugin commands" })).toBeVisible();
   await check(page, info, "connections-connect-cli");
   await page.getByRole("tab", { name: "Cursor" }).click();
   await expect(page.getByRole("link", { name: "Add to Cursor" })).toBeVisible();

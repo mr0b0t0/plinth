@@ -382,14 +382,13 @@ await check("connect prints the OAuth commands for the local endpoint", () => {
   const add = `claude mcp add --transport http --scope user plinth ${APP}/mcp`;
   assert(r.stdout.includes(add) && r.stdout.includes("codex mcp login plinth"), r.stdout);
   assert(!/token/i.test(r.stdout), "connect still mentions a token");
-  // A local instance is not the hosted one: its own server first, then the plugin with PLINTH_URL.
-  const exportLine = `export PLINTH_URL=${APP}`;
-  const plugin = "claude plugin install plinth@plinth";
-  assert(r.stdout.indexOf(add) < r.stdout.indexOf(exportLine), "bare server is not first");
-  assert(
-    r.stdout.indexOf(exportLine) < r.stdout.indexOf(plugin),
-    "PLINTH_URL is not before the plugin",
-  );
+  // A local instance is not the hosted one: the plugin first, set to this instance through its
+  // Plinth instance option, then this instance's server as the tools-only alternative.
+  const plugin = `claude plugin install plinth@plinth --config instance_url=${APP}`;
+  const pluginAt = r.stdout.indexOf(plugin);
+  assert(pluginAt >= 0, "the plugin install does not set this instance");
+  assert(pluginAt < r.stdout.indexOf(add), "the plugin is not before the bare server");
+  assert(!r.stdout.includes("PLINTH_URL"), "connect still asks for PLINTH_URL");
 });
 
 server.kill("SIGTERM");

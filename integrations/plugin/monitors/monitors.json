@@ -1,7 +1,7 @@
 [
   {
     "name": "plinth-mentions",
-    "command": "command -v node >/dev/null 2>&1 && exec node \"${CLAUDE_PLUGIN_ROOT}/scripts/plinth-mentions.mjs\" watch; exit 0",
+    "command": "command -v node >/dev/null 2>&1 && CLAUDE_PLUGIN_DATA=\"${CLAUDE_PLUGIN_DATA}\" exec node \"${CLAUDE_PLUGIN_ROOT}/scripts/plinth-mentions.mjs\" watch; exit 0",
     "description": "New @mention requests on your Plinth artifacts"
   }
 ]

@@ -30,6 +30,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const check = process.argv.includes("--check");
 const reg = await import(path.join(root, "packages/shared/src/harnesses.ts"));
 const { PLUGIN, HOSTED_ORIGIN, SERVER_NAME, SKILL_NAME, SKILL_SOURCE, HARNESSES } = reg;
+const { PLUGIN_INSTANCE_OPTION, PLUGIN_USER_CONFIG } = reg;
 
 const skill = readFileSync(path.join(root, SKILL_SOURCE), "utf8");
 const fm = /^---\n([\s\S]*?)\n---\n/.exec(skill);
@@ -50,26 +51,33 @@ const meta = {
   keywords: [...PLUGIN.keywords],
 };
 
+// The Claude Code plugins' server follows their Plinth instance option (PLUGIN_USER_CONFIG), whose
+// default is the hosted instance. The full plugin lets PLINTH_URL override it, as before the option
+// existed; the directory build reads no environment variables.
+const optionMcp = `\${user_config.${PLUGIN_INSTANCE_OPTION}}/mcp`;
+const claudeManifest = json({
+  ...meta,
+  privacyPolicyUrl: PLUGIN.privacyPolicyUrl,
+  termsOfServiceUrl: PLUGIN.termsOfServiceUrl,
+  supportUrl: PLUGIN.supportUrl,
+  documentationUrl: PLUGIN.documentationUrl,
+  userConfig: PLUGIN_USER_CONFIG,
+});
+
 /** path (from the repo root) -> content */
 const outputs = new Map();
 
 // ---------- Claude Code plugin + portable plugin (Codex, ChatGPT) ----------
 outputs.set(`integrations/plugin/skills/${SKILL_NAME}/SKILL.md`, skill);
-outputs.set(
-  "integrations/plugin/.claude-plugin/plugin.json",
-  json({
-    ...meta,
-    privacyPolicyUrl: PLUGIN.privacyPolicyUrl,
-    termsOfServiceUrl: PLUGIN.termsOfServiceUrl,
-    supportUrl: PLUGIN.supportUrl,
-    documentationUrl: PLUGIN.documentationUrl,
-  }),
-);
+outputs.set("integrations/plugin/.claude-plugin/plugin.json", claudeManifest);
 outputs.set(
   "integrations/plugin/.mcp.json",
   json({
     mcpServers: {
-      [SERVER_NAME]: { type: "http", url: `\${PLINTH_URL:-${HOSTED_ORIGIN}}/mcp` },
+      [SERVER_NAME]: {
+        type: "http",
+        url: `\${PLINTH_URL:-\${user_config.${PLUGIN_INSTANCE_OPTION}}}/mcp`,
+      },
     },
   }),
 );
@@ -102,7 +110,9 @@ outputs.set(
     {
       name: "plinth-mentions",
       // Silent when Node is missing or the watcher is not connected (see /plinth:watch-mentions).
-      command: `command -v node >/dev/null 2>&1 && exec ${watcherCmd("watch")}; exit 0`,
+      // Monitors get no plugin variables in their environment, only in the command, so the watcher
+      // is told where the SessionStart hook saves the instance option.
+      command: `command -v node >/dev/null 2>&1 && CLAUDE_PLUGIN_DATA="\${CLAUDE_PLUGIN_DATA}" exec ${watcherCmd("watch")}; exit 0`,
       description: "New @mention requests on your Plinth artifacts",
     },
   ]),
@@ -196,9 +206,10 @@ outputs.set(
 
 // ---------- Claude Code plugin directory build ----------
 // Anthropic's plugin directory accepts hooks, monitors and scripts only from verified
-// organizations, and needs a fixed public URL for each MCP server. So the directory gets the skill
-// and the hosted server only. The full plugin (watcher, session note, PLINTH_URL) stays the one in
-// integrations/plugin, installed from this repository's marketplace.
+// organizations, and each MCP server URL must be an absolute https URL or a `${user_config.KEY}`
+// reference (claude.com/docs/plugins/pre-submission-checklist). So the directory gets the skill and
+// a server that follows the instance option. The full plugin (watcher, session note, PLINTH_URL)
+// stays the one in integrations/plugin, installed from this repository's marketplace.
 const DIRECTORY = "integrations/plugin-directory";
 const directorySkillEdits = [
   [
@@ -206,8 +217,8 @@ const directorySkillEdits = [
     "- In Claude Code, the full Plinth plugin (`claude plugin marketplace add mr0b0t0/plinth`) adds\n  `/plinth:watch-mentions`, a watcher that tells the session when new requests arrive. Without it,\n  check `list_mentions` when the user asks.",
   ],
   [
-    "URL (Claude Code: set `PLINTH_URL` to the instance's origin every time Claude Code starts, for\nexample `http://127.0.0.1:8788` for `npx @mr0b0t0/plinth`; without it the plugin's server is the\nhosted one).",
-    "URL (Claude Code: add it with `claude mcp add --transport http plinth <origin>/mcp`; this plugin's\nserver is always the hosted one).",
+    "- Claude Code: the plugin asks for its Plinth instance when it is enabled (the default is the\n  hosted one). Install it with `claude plugin install plinth@plinth --config instance_url=<origin>`,\n  or change it later with `/plugin configure plinth@plinth`, then restart Claude Code. `PLINTH_URL`,\n  when set, overrides it.",
+    "- Claude Code: the plugin asks for its Plinth instance when it is enabled (the default is the\n  hosted one). Change it later in `/config` (the Plinth plugin's Plinth instance), then restart\n  Claude Code.",
   ],
 ];
 let directorySkill = skill;
@@ -220,19 +231,10 @@ for (const [from, to] of directorySkillEdits) {
   directorySkill = directorySkill.replace(from, to);
 }
 outputs.set(`${DIRECTORY}/skills/${SKILL_NAME}/SKILL.md`, directorySkill);
-outputs.set(
-  `${DIRECTORY}/.claude-plugin/plugin.json`,
-  json({
-    ...meta,
-    privacyPolicyUrl: PLUGIN.privacyPolicyUrl,
-    termsOfServiceUrl: PLUGIN.termsOfServiceUrl,
-    supportUrl: PLUGIN.supportUrl,
-    documentationUrl: PLUGIN.documentationUrl,
-  }),
-);
+outputs.set(`${DIRECTORY}/.claude-plugin/plugin.json`, claudeManifest);
 outputs.set(
   `${DIRECTORY}/.mcp.json`,
-  json({ mcpServers: { [SERVER_NAME]: { type: "http", url: hostedMcp } } }),
+  json({ mcpServers: { [SERVER_NAME]: { type: "http", url: optionMcp } } }),
 );
 
 // ---------- Gemini CLI extension ----------
