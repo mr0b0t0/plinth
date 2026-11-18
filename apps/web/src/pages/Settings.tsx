@@ -1,13 +1,14 @@
-// Page: /a/:slug/settings. Owner only: title, who can open it (visibility and password), people
+// Page: /a/:slug/settings. Owner only: title, category, who can open it (visibility and password), people
 // and their roles, the share link, and deletion.
 import { ArrowSquareOutIcon } from "@phosphor-icons/react";
 import { API, APP_ROUTES, type ArtifactSummary, route, type SharingSettings } from "@plinth/shared";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import "../components/account/account.css";
 import { useDocumentTitle, useSignInRedirect, useSignOut } from "../components/account/hooks.tsx";
 import { Note } from "../components/account/Note.tsx";
 import {
   AccessSection,
+  CategorySection,
   DeleteSection,
   PeopleSection,
   TitleSection,
@@ -75,6 +76,23 @@ export default function Settings({ params }: { params: Record<string, string> })
     });
     return () => ctrl.abort();
   }, [pending, slug, reload]);
+
+  // A link to a section (the dashboard's "Move to category…" opens #settings-category): once the
+  // settings have loaded, scroll to its heading (scroll-margin-top clears the sticky top bar) and
+  // put the focus in its first field, so the shortcut lands where the person types.
+  const scrolled = useRef(false);
+  useEffect(() => {
+    if (state.status !== "ready" || scrolled.current) return;
+    scrolled.current = true;
+    const id = window.location.hash.slice(1);
+    const heading = id ? document.getElementById(id) : null;
+    if (!heading) return;
+    heading.scrollIntoView?.({ block: "start" });
+    heading
+      .closest("section")
+      ?.querySelector<HTMLElement>("input, textarea, select")
+      ?.focus({ preventScroll: true });
+  }, [state.status]);
 
   const refreshSharing = useCallback(async () => {
     if (state.status !== "ready") return;
@@ -166,6 +184,15 @@ export default function Settings({ params }: { params: Record<string, string> })
             onRenamed={(title) =>
               setState((s) =>
                 s.status === "ready" ? { ...s, artifact: { ...s.artifact, title } } : s,
+              )
+            }
+          />
+          {/* Not keyed on the category: a remount after Save would drop the focus. */}
+          <CategorySection
+            artifact={state.artifact}
+            onSaved={(category) =>
+              setState((s) =>
+                s.status === "ready" ? { ...s, artifact: { ...s.artifact, category } } : s,
               )
             }
           />

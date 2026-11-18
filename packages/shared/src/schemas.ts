@@ -41,6 +41,20 @@ export const artifactRefSchema = z.string().trim().min(1).max(80).describe("Arti
 export const versionNumberSchema = z.number().int().min(1);
 
 export const titleSchema = z.string().trim().min(1).max(LIMITS.maxTitleLength);
+/**
+ * An artifact's category (docs/spec.md "Categories"). A plain length-limited string, like
+ * titleSchema, so the JSON Schema stays plain: the Worker normalises it and refuses control,
+ * format and separator characters (shared categories.ts).
+ */
+export const categorySchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(LIMITS.maxCategoryLength)
+  .describe(
+    "The project or client this artifact belongs to, usually the repo you are working in. Reuse a name " +
+      "from list_artifacts' categories. Only the owner sees or sets it.",
+  );
 export const htmlSchema = z.string().min(1).describe("Complete HTML document");
 /** The source of a typed artifact (Markdown for a doc). */
 export const contentSchema = z
@@ -107,6 +121,7 @@ export const publishArtifactInput = z.object({
   password: passwordSchema.optional(),
   /** Allowlisted viewer emails when visibility is "allowlist". */
   emails: z.array(emailSchema).max(LIMITS.maxAllowlistEmails).optional(),
+  category: categorySchema.optional(),
 });
 export type PublishArtifactInput = z.input<typeof publishArtifactInput>;
 
@@ -119,13 +134,15 @@ export const updateArtifactInput = z.object({
   note: noteSchema.optional(),
   /** If given and not the current version, the update is rejected with a conflict. */
   base_version: versionNumberSchema.optional(),
+  /** Owner only (an editor's call that carries it is refused); omitted keeps the current one. */
+  category: categorySchema.optional(),
 });
 export type UpdateArtifactInput = z.input<typeof updateArtifactInput>;
 
 /**
  * start_upload and POST /uploads. Flat, like the other inputs; the service enforces the cross-field
  * rules: title and type only without id, base_version required with id (and refused without it),
- * note only with id.
+ * note only with id; category in either mode, owner only with id.
  */
 export const startUploadInput = z.object({
   /** Update this artifact; omit for a new one. */
@@ -138,6 +155,8 @@ export const startUploadInput = z.object({
   base_version: versionNumberSchema.optional(),
   /** Update only. */
   note: noteSchema.optional(),
+  /** Either mode; with id, owner only. Applied when the ticket commits. */
+  category: categorySchema.optional(),
 });
 export type StartUploadInput = z.input<typeof startUploadInput>;
 
@@ -154,6 +173,26 @@ export const previewArtifactInput = z.object({
 
 export const listArtifactsInput = z.object({
   query: z.string().trim().max(200).optional(),
+  /** Filters the caller's own artifacts by category (matched ignoring case, spaces, "-" and "_"). */
+  category: z
+    .string()
+    .trim()
+    .max(LIMITS.maxCategoryLength)
+    .optional()
+    .describe(
+      "Only your own artifacts in this category (matched ignoring case, spaces, '-' and '_').",
+    ),
+  /** How many items to return (most recent first); 0 returns only `categories`. */
+  limit: z
+    .number()
+    .int()
+    .min(0)
+    .max(500)
+    .optional()
+    .describe(
+      "At most this many items, most recent first (default and maximum 500). 0 returns no items, only " +
+        "categories: the cheap way to read your category names before you publish.",
+    ),
 });
 
 export const listVersionsInput = z.object({ id: artifactRefSchema });
@@ -236,7 +275,34 @@ export const grantsReplaceInput = z.object({
   grants: z.array(grantInput).max(LIMITS.maxAllowlistEmails),
 });
 
-export const renameArtifactInput = z.object({ title: titleSchema });
+/**
+ * PATCH /artifacts/:ref (owner only): a new title, a category, or both. `category: null` clears it.
+ * A body with neither is refused by the route, so the JSON Schema stays a plain object.
+ */
+export const renameArtifactInput = z.object({
+  title: titleSchema.optional(),
+  category: categorySchema.nullable().optional(),
+});
+
+/**
+ * POST /categories/rename (the signed-in owner only): every live artifact whose category matches
+ * `from` (by key) moves to `to`, which snaps onto an existing spelling (a merge); `to: null` clears.
+ */
+export const renameCategoryInput = z.object({
+  from: z
+    .string()
+    .trim()
+    .min(1)
+    .max(LIMITS.maxCategoryLength)
+    .describe("The category to rename, matched ignoring case, spaces, '-' and '_'"),
+  to: z
+    .string()
+    .trim()
+    .min(1)
+    .max(LIMITS.maxCategoryLength)
+    .nullable()
+    .describe("The new name (an existing one merges into it), or null to clear the category"),
+});
 
 export const viewerPasswordInput = z.object({
   password: z.string().min(1).max(LIMITS.maxPasswordLength),

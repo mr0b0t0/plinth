@@ -41,7 +41,7 @@ export type ArtifactAction =
   | "edit"
   /** Publish an old version as the next one. */
   | "restore"
-  /** Visibility, password, allowlist, roles, title. */
+  /** Visibility, password, allowlist, roles, title, category. */
   | "manage"
   | "delete"
   | "report"
@@ -260,6 +260,22 @@ export function canActOnMention(
   if (p.userId !== artifactOwnerId) return false;
   if (task.targetConnection) return p.connectionId === task.targetConnection;
   return task.targetClientType === p.clientType;
+}
+
+/**
+ * Owner-only metadata (the category) is the owner's own organisation: hidden from every other role,
+ * including editors and an admin reviewing a report.
+ */
+export function seesOwnerMetadata(role: EffectiveRole | null): boolean {
+  return role === "owner";
+}
+
+/**
+ * Renaming or merging a category across the owner's artifacts: the signed-in owner only, never an
+ * agent or bearer token (as data_clear). The service scopes the rows to the caller's own.
+ */
+export function mayBulkEditCategories(p: Principal): boolean {
+  return p.kind === "user";
 }
 
 /** Can this principal manage its own connections and tokens? People only, never agents. */

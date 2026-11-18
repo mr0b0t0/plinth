@@ -354,6 +354,170 @@ describe("plinth publish", () => {
   });
 });
 
+describe("plinth publish --category", () => {
+  it("sends the category with a new publish, normalised, and prints the stored name", async () => {
+    const dir = build(site(1));
+    const r = await plinth(["publish", dir, "--json", "--category", "  acme   site "], {
+      extraEnv: asPat(),
+    });
+    assert.equal(r.code, 0, r.stderr);
+    assert.deepEqual(fake.state.lastUploadInput, { type: "html", category: "acme site" });
+    assert.equal(JSON.parse(r.stdout).category, "acme site");
+
+    const text = await plinth(["publish", build(site(1)), "--category", "Acme site"], {
+      extraEnv: asPat(),
+    });
+    assert.equal(text.code, 0, text.stderr);
+    assert.match(text.stdout, /^Published v1 under Acme site: http/m);
+  });
+
+  it("carries it on an inline update (PUT) and on a bundled update (POST /uploads)", async () => {
+    const a = fake.seed(site(1));
+    const r = await plinth(
+      ["publish", build(site(1)), "--id", a.id, "--json", "--category", "Acme site"],
+      { extraEnv: asPat() },
+    );
+    assert.equal(r.code, 0, r.stderr);
+    assert.equal(fake.state.lastPut.category, "Acme site");
+    assert.equal(fake.state.lastPut.base_version, 1);
+    assert.equal(JSON.parse(r.stdout).category, "Acme site");
+
+    const big = fake.seed({ "index.html": "<title>big</title>" });
+    const dir = build({
+      "index.html": "<title>big</title>",
+      "one.bin": randomBytes(13 * 1024 * 1024),
+      "two.bin": randomBytes(13 * 1024 * 1024),
+    });
+    const b = await plinth(
+      ["publish", dir, "--id", big.id, "--json", "--note", "n", "--category", "Acme site"],
+      { extraEnv: asPat() },
+    );
+    assert.equal(b.code, 0, b.stderr);
+    assert.deepEqual(fake.state.lastUploadInput, {
+      id: big.id,
+      base_version: 1,
+      note: "n",
+      category: "Acme site",
+    });
+    assert.equal(JSON.parse(b.stdout).category, "Acme site");
+  });
+
+  it("refuses a name that is too long, empty or has control characters before any request", async () => {
+    const dir = build(site(1));
+    for (const bad of ["x".repeat(61), "   ", "a\u202Eb", "a\u200Bb", "-", " _ - "]) {
+      const from = fake.state.requests.length;
+      const r = await plinth(["publish", dir, "--category", bad], { extraEnv: asPat() });
+      assert.equal(r.code, 2, `${JSON.stringify(bad)}: ${r.stderr}`);
+      assert.match(r.stderr, /--category/);
+      assert.equal(since(from).length, 0, JSON.stringify(bad));
+    }
+    const ok = await plinth(["publish", dir, "--dry-run", "--category", "x".repeat(60)], {
+      extraEnv: asPat(),
+    });
+    assert.equal(ok.code, 0, ok.stderr);
+  });
+
+  it("reports the owner-only refusal on an artifact you do not own, and publishes nothing", async () => {
+    const a = fake.seed(site(1));
+    fake.state.notOwner = true;
+    try {
+      const r = await plinth(["publish", build(site(1)), "--id", a.id, "--category", "Mine"], {
+        extraEnv: asPat(),
+      });
+      assert.equal(r.code, 1, r.stderr);
+      assert.match(r.stderr, /plinth: Only the owner sets an artifact's category/);
+      assert.match(r.stderr, /without --category/);
+      assert.equal(a.versions.length, 1);
+    } finally {
+      fake.state.notOwner = false;
+    }
+  });
+
+  it("turns line breaks and separators into a space, as the server stores them", async () => {
+    const r = await plinth(
+      ["publish", build(site(1)), "--json", "--category", "acme\u2028site\nweb"],
+      {
+        extraEnv: asPat(),
+      },
+    );
+    assert.equal(r.code, 0, r.stderr);
+    assert.equal(fake.state.lastUploadInput.category, "acme site web");
+  });
+
+  it("says the category was not applied when the folder already matches and nothing is sent", async () => {
+    const a = fake.seed(site(1));
+    const from = fake.state.requests.length;
+    const r = await plinth(
+      ["publish", build(site(1)), "--id", a.id, "--base-version", "1", "--category", "Acme site"],
+      { extraEnv: asPat() },
+    );
+    assert.equal(r.code, 0, r.stderr);
+    assert.match(r.stderr, /nothing to publish/);
+    assert.match(r.stderr, /--category was not applied, since nothing was sent/);
+    assert.equal(since(from).filter((q) => q.method === "PUT" || q.method === "POST").length, 0);
+    assert.equal(a.category, undefined);
+    const json = await plinth(
+      [
+        "publish",
+        build(site(1)),
+        "--id",
+        a.id,
+        "--base-version",
+        "1",
+        "--json",
+        "--category",
+        "Acme site",
+      ],
+      { extraEnv: asPat() },
+    );
+    assert.equal(json.code, 0, json.stderr);
+    assert.match(json.stderr, /--category was not applied/);
+    assert.ok(!("category" in JSON.parse(json.stdout)));
+  });
+
+  it("reads the stored category back when a publish's answer was lost", async () => {
+    fake.state.dropBundle = "after";
+    const r = await plinth(["publish", build(site(3)), "--json", "--category", "Acme site"], {
+      extraEnv: asPat(),
+    });
+    assert.equal(r.code, 0, r.stderr);
+    const out = JSON.parse(r.stdout);
+    assert.equal(out.recovered, true);
+    assert.equal(out.category, "Acme site");
+  });
+
+  it("reads the stored category back when an inline update's answer was lost", async () => {
+    const a = fake.seed(site(2));
+    fake.state.dropPut = "after";
+    const r = await plinth(
+      [
+        "publish",
+        build({ ...site(2), "assets/a1.js": "console.log('cat');" }),
+        "--id",
+        a.id,
+        "--json",
+        "--category",
+        "Acme site",
+      ],
+      { extraEnv: asPat() },
+    );
+    assert.equal(r.code, 0, r.stderr);
+    const out = JSON.parse(r.stdout);
+    assert.equal(out.recovered, true);
+    assert.equal(out.category, "Acme site");
+  });
+
+  it("leaves category out of every body when the flag is absent", async () => {
+    const a = fake.seed(site(1));
+    const r = await plinth(["publish", build(site(1)), "--id", a.id, "--json"], {
+      extraEnv: asPat(),
+    });
+    assert.equal(r.code, 0, r.stderr);
+    assert.ok(!("category" in fake.state.lastPut));
+    assert.ok(!("category" in JSON.parse(r.stdout)));
+  });
+});
+
 describe("plinth upload", () => {
   async function ticket(input = {}) {
     const res = await fetch(`${fake.origin}/api/v1/uploads`, {

@@ -381,6 +381,203 @@ test("settings are for the owner only", async ({ page }) => {
   }
 });
 
+test("categories: agents file artifacts, the owner filters, moves and renames, collaborators see none", async ({
+  page,
+  browser,
+}) => {
+  test.setTimeout(120_000);
+  const owner = uniqueEmail("cat-owner");
+  const collaborator = uniqueEmail("cat-collab");
+  const { token } = await seedToken(owner, { label: "Owner agent" });
+  const { token: collabToken } = await seedToken(collaborator, { label: "Collaborator agent" });
+
+  // An agent publishes over MCP. "Acme Site" snaps onto the owner's existing "acme-site".
+  const client = await mcpClient(token);
+  let home: { id: string; slug: string; category?: string };
+  let blog: { id: string; slug: string; category?: string };
+  try {
+    const a = await tool<{ id: string; slug: string; category?: string }>(
+      client,
+      "publish_artifact",
+      { title: "Site home", html: HTML("Home"), category: "acme-site" },
+    );
+    expect(a.isError).toBe(false);
+    expect(a.data.category).toBe("acme-site");
+    home = a.data;
+    const b = await tool<{ category?: string }>(client, "publish_artifact", {
+      title: "Site pricing",
+      html: HTML("Pricing"),
+      category: "Acme Site",
+    });
+    expect(b.isError).toBe(false);
+    expect(b.data.category).toBe("acme-site");
+    const c = await tool<{ id: string; slug: string; category?: string }>(
+      client,
+      "publish_artifact",
+      { title: "Blog draft", html: HTML("Blog"), category: "Other blog" },
+    );
+    expect(c.isError).toBe(false);
+    blog = c.data;
+    const d = await tool(client, "publish_artifact", {
+      title: "Blog archive",
+      html: HTML("Archive"),
+      category: "other blog",
+    });
+    expect(d.isError).toBe(false);
+    const e = await tool(client, "publish_artifact", { title: "Loose notes", html: HTML("Notes") });
+    expect(e.isError).toBe(false);
+
+    const list = await tool<{ items: unknown[]; categories: { name: string; count: number }[] }>(
+      client,
+      "list_artifacts",
+      {},
+    );
+    // Most-used first, then by name; each project once, under the spelling first used.
+    expect(list.data.categories).toEqual([
+      { name: "Other blog", count: 2 },
+      { name: "acme-site", count: 2 },
+    ]);
+  } finally {
+    await client.close();
+  }
+
+  // The collaborator has a category of their own, and edits "Site home".
+  const collabApi = await newApiContext();
+  try {
+    await publishArtifact(collabApi, collabToken, {
+      title: "Collaborator page",
+      category: "Their own work",
+    });
+    const put = await apiPut(
+      collabApi,
+      `/artifacts/${home.id}/sharing`,
+      { grants: [{ email: collaborator, role: "editor" }] },
+      { token },
+    );
+    expect(put.status).toBe(200);
+  } finally {
+    await collabApi.dispose();
+  }
+
+  // The dashboard has one "acme-site" category with both pages; filtering keeps ?category=.
+  await seedContextSession(page.context(), owner);
+  await page.goto("/dashboard");
+  await expect(page.getByRole("link", { name: "Loose notes" })).toBeVisible();
+  const homeRow = page.getByRole("listitem").filter({ hasText: "Site home" });
+  await expect(homeRow).toContainText("acme-site");
+  await expect(page.getByRole("listitem").filter({ hasText: "Loose notes" })).not.toContainText(
+    "Category:",
+  );
+  await page.getByRole("button", { name: "Category: All" }).click();
+  await expect(page.getByRole("menuitemradio", { name: /^acme-site/ })).toHaveCount(1);
+  await expect(page.getByRole("menuitemradio", { name: "Acme Site (2)" })).toHaveCount(0);
+  await page.getByRole("menuitemradio", { name: "acme-site (2)" }).click();
+  await expect(page).toHaveURL(/\/dashboard\?category=acme-site$/);
+  await expect(page.getByRole("link", { name: "Site home" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Site pricing" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Blog draft" })).toHaveCount(0);
+  await expect(page.getByRole("link", { name: "Loose notes" })).toHaveCount(0);
+  await page.reload();
+  await expect(page.getByRole("button", { name: "Category: acme-site" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Site pricing" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Blog draft" })).toHaveCount(0);
+
+  // "No category" keeps the owner's artifacts that have none.
+  await page.getByRole("button", { name: "Category: acme-site" }).click();
+  await page.getByRole("menuitemradio", { name: "No category" }).click();
+  await expect(page).toHaveURL(/\/dashboard\?category=$/);
+  await expect(page.getByRole("link", { name: "Loose notes" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Site home" })).toHaveCount(0);
+  await page.getByRole("button", { name: "Category: No category" }).click();
+  await page.getByRole("menuitemradio", { name: "All categories" }).click();
+  await expect(page).toHaveURL(/\/dashboard$/);
+
+  // Move "Blog draft" into acme-site from Settings; "ACME_site" is filed under the existing name.
+  await page.getByRole("button", { name: "Actions for Blog draft" }).click();
+  await page.getByRole("menuitem", { name: "Move to category…" }).click();
+  await expect(page).toHaveURL(new RegExp(`/a/${blog.slug}/settings#settings-category$`));
+  const field = page.getByRole("combobox", { name: "Category", exact: true });
+  await expect(field).toHaveValue("Other blog");
+  // The shortcut lands in the field, with its heading clear of the sticky top bar.
+  await expect(field).toBeFocused();
+  const heading = await page.getByRole("heading", { name: "Category", exact: true }).boundingBox();
+  const bar = await page.locator(".pl-topbar").first().boundingBox();
+  expect(heading && bar && heading.y >= bar.y + bar.height).toBe(true);
+  await field.fill("ACME_site");
+  await expect(page.getByText("Will be filed under “acme-site”.")).toBeVisible();
+  await page.getByRole("button", { name: "Save category" }).click();
+  await expect(page.getByRole("status").getByText("Category saved")).toBeVisible();
+  await expect(field).toHaveValue("acme-site");
+  await expect
+    .poll(async () => (await apiGet(page.request, `/artifacts/${blog.id}`)).body.category)
+    .toBe("acme-site");
+
+  // Rename acme-site from the dashboard: a name that matches another category offers Merge.
+  await page.goto("/dashboard?category=acme-site");
+  await expect(page.getByRole("link", { name: "Blog draft" })).toBeVisible();
+  await page.getByRole("button", { name: "Rename category" }).click();
+  const dialog = page.getByRole("dialog", { name: "Rename category" });
+  const newName = dialog.getByRole("combobox", { name: "New name" });
+  await expect(newName).toHaveValue("acme-site");
+  await expect(dialog.getByRole("button", { name: "Rename" })).toBeDisabled();
+  expect((await apiGet(page.request, "/categories")).body.items).toEqual([
+    { name: "acme-site", count: 3 },
+    { name: "Other blog", count: 1 },
+  ]);
+  await newName.fill("other-blog");
+  await expect(
+    dialog.getByText("Other blog already has 1 artifact. These 3 will join it."),
+  ).toBeVisible();
+  await expect(dialog.getByRole("button", { name: "Merge" })).toBeEnabled();
+  // Not this time: a plain rename instead.
+  await newName.fill("Acme Corp");
+  await expect(dialog.getByRole("button", { name: "Merge" })).toHaveCount(0);
+  await dialog.getByRole("button", { name: "Rename" }).click();
+  await expect(dialog).toHaveCount(0);
+  await expect(page.getByRole("status").getByText("Category renamed")).toBeVisible();
+  await expect(page).toHaveURL(/\/dashboard\?category=Acme%20Corp$/);
+  await expect(page.getByRole("button", { name: "Rename category" })).toBeFocused();
+  await expect(page.getByRole("button", { name: "Category: Acme Corp" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Site home" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Blog draft" })).toBeVisible();
+  await expect(page.getByRole("listitem").filter({ hasText: "Site pricing" })).toContainText(
+    "Acme Corp",
+  );
+  await expect(page.getByRole("link", { name: "Blog archive" })).toHaveCount(0);
+  expect((await apiGet(page.request, "/categories")).body.items).toEqual([
+    { name: "Acme Corp", count: 3 },
+    { name: "Other blog", count: 1 },
+  ]);
+
+  // The collaborator: their own category on All, no category menu under Shared, and no badge or
+  // owner's name on the shared row.
+  const other = await browser.newContext();
+  try {
+    const cpage = await other.newPage();
+    await seedContextSession(other, collaborator);
+    await cpage.goto("/dashboard");
+    await expect(cpage.getByRole("link", { name: "Site home" })).toBeVisible();
+    await expect(cpage.getByRole("button", { name: "Category: All" })).toBeVisible();
+    await cpage.getByRole("button", { name: "Category: All" }).click();
+    await expect(cpage.getByRole("menuitemradio", { name: "Their own work (1)" })).toBeVisible();
+    await expect(cpage.getByRole("menuitemradio", { name: /Acme/ })).toHaveCount(0);
+    await cpage.keyboard.press("Escape");
+    await cpage.getByRole("radio", { name: "Shared" }).check();
+    const shared = cpage.getByRole("listitem").filter({ hasText: "Site home" });
+    await expect(shared).toBeVisible();
+    await expect(shared).toContainText("Editor");
+    await expect(shared).not.toContainText("Acme Corp");
+    await expect(shared).not.toContainText("Category:");
+    await expect(cpage.getByRole("button", { name: /^Category:/ })).toHaveCount(0);
+    await expect(cpage.getByText("Acme Corp")).toHaveCount(0);
+    const seen = await apiGet(cpage.request, `/artifacts/${home.id}`);
+    expect(seen.status).toBe(200);
+    expect(seen.body.category).toBeNull();
+  } finally {
+    await other.close();
+  }
+});
+
 test.describe("OAuth consent", () => {
   test("signed out: sign in, see client and redirect host, Allow returns a working code", async ({
     page,

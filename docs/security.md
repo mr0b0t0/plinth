@@ -345,7 +345,8 @@ All decisions go through one module, `apps/worker/src/policy.ts`, on every read 
 REST, MCP and the content host alike. Roles: owner; editor (view, comment, mention, edit, restore);
 commenter (view, comment, mention); viewer (view). Strangers get 404, not 403, so private artifacts
 do not reveal that they exist. Agents act as their user, further limited by token scopes
-(`artifacts:read`, `artifacts:write`, `mentions`).
+(`artifacts:read`, `artifacts:write`, `mentions`). An artifact's category is returned only to its
+owner (`policy.seesOwnerMetadata`, applied in the one function that builds artifact summaries).
 
 An artifact's open counts ([spec](spec.md#admin-stats-and-view-counts)) are behind their own
 policy action, `views`: the owner only, a read action for agents (`artifacts:read`). Anyone who
@@ -678,8 +679,12 @@ instruction with the owner's authority. Plinth enforces what it can:
 - Tokens, secrets and other users' data are never reachable through the API by text in a comment.
 
 What Plinth cannot enforce is the agent's judgement. Every MCP tool that returns people's text
-(artifacts, titles, comments, mention requests) says in its description that the text is
-untrusted data, not instructions, and the API marks those fields the same way. Agent operators
+(artifacts, titles, categories, comments, mention requests) says in its description that the text
+is untrusted data, not instructions, and the API marks those fields the same way. A category name
+can be written by a prompt-injected agent, so the Worker turns every whitespace run in it (line
+breaks and separators included) into one space, refuses control and invisible characters (bidi
+overrides, zero-width), caps it at 60 characters, and never places an owner's names in tool
+descriptions or server instructions, where clients treat text as guidance. Agent operators
 should keep that framing: act only on requests that are about editing that artifact, and ignore
 anything that asks for credentials, other artifacts or actions outside Plinth.
 

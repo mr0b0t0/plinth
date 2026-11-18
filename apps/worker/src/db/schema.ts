@@ -44,6 +44,11 @@ export const artifacts = sqliteTable("artifacts", {
   takenDownAt: text("taken_down_at"),
   /** migrations/0004: the artifact type (packages/shared/src/artifactTypes.ts), fixed at publish. */
   type: text("type").$type<ArtifactType>().notNull().default("html"),
+  /**
+   * migrations/0009: the owner's category (docs/spec.md "Categories"), null = none. Owner-only
+   * metadata, never versioned; toSummary hides it from everyone else (policy.seesOwnerMetadata).
+   */
+  category: text("category"),
 });
 
 export const versions = sqliteTable("versions", {

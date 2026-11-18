@@ -93,6 +93,8 @@
 .pl-menu__label {
   flex: 1;
   min-width: 0;
+  /* A long label with no break point (a repo_name_with_underscores) wraps inside the list. */
+  overflow-wrap: anywhere;
 }
 .pl-menu__item .pl-menu__check {
   margin-left: var(--space-3);

@@ -2844,3 +2844,193 @@ describe("the upload token is never logged and never in a URL", () => {
     }
   });
 });
+
+// Categories (docs/spec.md "Categories"): start_upload takes one in either mode; with id it is the
+// owner's. The ticket carries it and the commit applies it, snapped again at that point.
+describe("start_upload with a category", () => {
+  const storedCategory = async (id: string) =>
+    (
+      await env.DB.prepare("SELECT category FROM artifacts WHERE id = ?1")
+        .bind(id)
+        .first<{ category: string | null }>()
+    )?.category;
+  const mintRate = async (userId: string) =>
+    (
+      await env.DB.prepare("SELECT coalesce(sum(count), 0) AS n FROM rate_limits WHERE key = ?1")
+        .bind(`upload:${userId}`)
+        .first<{ n: number }>()
+    )?.n ?? 0;
+
+  it("a publish ticket carries the category and its bundle commits it, echoed in the result", async () => {
+    const a = await agent();
+    const c = await mcpClient(a.token);
+    const r = await tool<StartUploadResult>(c, "start_upload", { category: "  Docs   site " });
+    expect(r.isError).toBe(false);
+    expect((await ticket(r.data.upload_id)).category).toBe("Docs site");
+    const res = await postBundle(r.data.upload_url, { token: r.data.upload_token });
+    expect(res.status).toBe(201);
+    const out = await json(res);
+    expect(out.category).toBe("Docs site");
+    expect(await storedCategory(out.id)).toBe("Docs site");
+  });
+
+  it("a ticket without one commits none and echoes none", async () => {
+    const a = await agent();
+    const t = await mint(a, {}, stageDeps);
+    expect((await ticket(t.upload_id)).category).toBeNull();
+    const out = await json(await postBundle(t.upload_url, { token: t.upload_token }));
+    expect(out).not.toHaveProperty("category");
+    expect(await storedCategory(out.id)).toBeNull();
+  });
+
+  it("the owner's update ticket applies it in the commit batch", async () => {
+    const { a, id } = await ownerWithArtifact();
+    const t = await mint(a, { id, base_version: 1, category: "Moved" }, stageDeps);
+    expect(await storedCategory(id)).toBeNull();
+    const res = await postBundle(t.upload_url, { token: t.upload_token });
+    expect(res.status).toBe(200);
+    expect((await json(res)).category).toBe("Moved");
+    expect(await storedCategory(id)).toBe("Moved");
+  });
+
+  it("an update ticket that loses the race to another version changes no category", async () => {
+    const { a, id } = await ownerWithArtifact();
+    const t = await mint(a, { id, base_version: 1, category: "Moved" }, stageDeps);
+    const other = await call(`/api/v1/artifacts/${id}`, {
+      method: "PUT",
+      headers: { ...a.auth, "Content-Type": "application/json" },
+      body: JSON.stringify({ html: "<p>first</p>", base_version: 1 }),
+    });
+    expect(other.status).toBe(200);
+    expect((await postBundle(t.upload_url, { token: t.upload_token })).status).toBe(409);
+    expect(await storedCategory(id)).toBeNull();
+  });
+
+  it("an editor's start_upload with id and a category is 403 at mint: no ticket, no rate hit", async () => {
+    const { id } = await ownerWithArtifact();
+    const editor = await agent();
+    await db()
+      .insert(accessGrants)
+      .values({ artifactId: id, email: editor.user.email, role: "editor", createdAt: nowIso() })
+      .run();
+    const before = await mintRate(editor.user.id);
+    const e = await mintError(editor, { id, base_version: 1, category: "Mine" }, stageDeps);
+    expect(e.code).toBe("forbidden");
+    expect(details(e)).toMatchObject({ field: "category", reason: "owner_only" });
+    expect(await mintRate(editor.user.id)).toBe(before);
+    const tickets = await env.DB.prepare(
+      "SELECT count(*) AS n FROM upload_tickets WHERE user_id = ?1",
+    )
+      .bind(editor.user.id)
+      .first<{ n: number }>();
+    expect(tickets?.n).toBe(0);
+    // Without a category the editor may still upload a new version.
+    await mint(editor, { id, base_version: 1 }, stageDeps);
+  });
+
+  it("an editor's request is also refused at commit when a ticket carries a category", async () => {
+    // Defence in depth: the commit re-checks the right with the current principal, so a ticket row
+    // that carries a category for someone who is not the owner commits nothing.
+    const { id } = await ownerWithArtifact();
+    const editor = await agent();
+    await db()
+      .insert(accessGrants)
+      .values({ artifactId: id, email: editor.user.email, role: "editor", createdAt: nowIso() })
+      .run();
+    const t = await mint(editor, { id, base_version: 1 }, stageDeps);
+    await setTicket(t.upload_id, "category = ?2", "Mine");
+    const res = await postBundle(t.upload_url, { token: t.upload_token });
+    expect(res.status).toBe(403);
+    expect((await json(res)).error.details).toMatchObject({ reason: "owner_only" });
+    expect(await storedCategory(id)).toBeNull();
+    expect((await versionRow(id, 2)) ?? null).toBeNull();
+  });
+
+  it("a ticket snaps again at commit, onto a spelling created after it was minted", async () => {
+    const a = await agent();
+    const t = await mint(a, { category: "acme site" }, stageDeps);
+    expect((await ticket(t.upload_id)).category).toBe("acme site");
+    const inline = await publish(a.auth, { category: "Acme-Site" });
+    expect(inline.body.category).toBe("Acme-Site");
+    const out = await json(await postBundle(t.upload_url, { token: t.upload_token }));
+    expect(out.category).toBe("Acme-Site");
+    expect(await storedCategory(out.id)).toBe("Acme-Site");
+  });
+
+  it("a rename made while a ticket is open moves the ticket's name, so its commit does not bring the old one back", async () => {
+    const a = await agent();
+    const session = await browserSession(a.user.id);
+    const existing = await publish(a.auth, { category: "Acme" });
+    // A publish ticket and the owner's update ticket, both snapped onto "Acme" at mint.
+    const pub = await mint(a, { category: "acme" }, stageDeps);
+    const id = (await publish(a.auth)).body.id as string;
+    const upd = await mint(a, { id, base_version: 1, category: "ACME" }, stageDeps);
+    const other = await mint(a, { category: "Elsewhere" }, stageDeps);
+    expect((await ticket(pub.upload_id)).category).toBe("Acme");
+    expect((await ticket(upd.upload_id)).category).toBe("Acme");
+    const renamed = await call("/api/v1/categories/rename", {
+      method: "POST",
+      headers: { ...session.headers, "Content-Type": "application/json" },
+      body: JSON.stringify({ from: "Acme", to: "Client X" }),
+    });
+    expect(await json(renamed)).toEqual({ updated: 1, category: "Client X" });
+    expect((await ticket(pub.upload_id)).category).toBe("Client X");
+    expect((await ticket(upd.upload_id)).category).toBe("Client X");
+    expect((await ticket(other.upload_id)).category).toBe("Elsewhere");
+    const out = await json(await postBundle(pub.upload_url, { token: pub.upload_token }));
+    expect(out.category).toBe("Client X");
+    expect(await storedCategory(out.id)).toBe("Client X");
+    expect(
+      (await json(await postBundle(upd.upload_url, { token: upd.upload_token }))).category,
+    ).toBe("Client X");
+    expect(await storedCategory(id)).toBe("Client X");
+    expect(await storedCategory(existing.body.id)).toBe("Client X");
+    // A clear empties an open ticket's name too: its commit files nothing.
+    const later = await mint(a, { category: "Client X" }, stageDeps);
+    await call("/api/v1/categories/rename", {
+      method: "POST",
+      headers: { ...session.headers, "Content-Type": "application/json" },
+      body: JSON.stringify({ from: "client x", to: null }),
+    });
+    expect((await ticket(later.upload_id)).category).toBeNull();
+    const cleared = await json(await postBundle(later.upload_url, { token: later.upload_token }));
+    expect(cleared).not.toHaveProperty("category");
+    expect(await storedCategory(cleared.id)).toBeNull();
+  });
+
+  it("a bad name is refused at mint with field category, before the rate hit", async () => {
+    const a = await agent();
+    const e = await mintError(a, { category: "a‮b" }, stageDeps);
+    expect(e.code).toBe("invalid_input");
+    expect(details(e).field).toBe("category");
+    expect(await mintRate(a.user.id)).toBe(0);
+  });
+
+  it("GET /uploads/:id never returns the category", async () => {
+    const a = await agent();
+    const t = await mint(a, { category: "Secret Client" }, stageDeps);
+    const statusUrl = t.upload_url.replace(/\/bundle$/, "");
+    const read = async () => {
+      const r = await call(statusUrl, { headers: { Authorization: `Bearer ${t.upload_token}` } });
+      expect(r.status).toBe(200);
+      const text = await r.text();
+      expect(JSON.parse(text)).not.toHaveProperty("category");
+      expect(text).not.toContain("Secret Client");
+    };
+    await read();
+    expect((await postBundle(t.upload_url, { token: t.upload_token })).status).toBe(201);
+    await read();
+  });
+
+  it("POST /uploads takes it over REST too", async () => {
+    const a = await agent();
+    const res = await call("/api/v1/uploads", {
+      method: "POST",
+      headers: { ...a.auth, "Content-Type": "application/json" },
+      body: JSON.stringify({ category: "From REST" }),
+    });
+    expect(res.status).toBe(201);
+    const t = (await json(res)) as StartUploadResult;
+    expect((await ticket(t.upload_id)).category).toBe("From REST");
+  });
+});

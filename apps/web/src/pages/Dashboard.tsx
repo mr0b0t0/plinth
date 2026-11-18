@@ -1,14 +1,24 @@
 // Page: /dashboard. The signed-in person's artifacts and the ones shared with them: a filter row
-// (All / Mine / Shared, sort, list or grid), search (kept in ?q=), and the artifact quota.
+// (All / Mine / Shared, the owner's category, sort, list or grid), search (kept in ?q=, the category
+// in ?category=), and the artifact quota.
 import {
   ArrowsDownUpIcon,
+  FolderSimpleIcon,
   ListBulletsIcon,
   MagnifyingGlassIcon,
+  PencilSimpleIcon,
   PlugIcon,
   SquaresFourIcon,
 } from "@phosphor-icons/react";
-import { API, APP_ROUTES, type ArtifactSummary, type Paged } from "@plinth/shared";
-import { useEffect, useId, useMemo, useState } from "react";
+import {
+  API,
+  APP_ROUTES,
+  type ArtifactList,
+  type ArtifactSummary,
+  type CategoryCount,
+  categoryKey,
+} from "@plinth/shared";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import "../components/account/account.css";
 import "../components/account/dashboard.css";
 import {
@@ -28,6 +38,7 @@ import {
   useSignOut,
 } from "../components/account/hooks.tsx";
 import { CONNECT_AGENT_HREF } from "../components/account/nav.ts";
+import { RenameCategoryDialog } from "../components/account/RenameCategoryDialog.tsx";
 import { AppShell } from "../components/layout/AppShell.tsx";
 import {
   Button,
@@ -46,10 +57,12 @@ import { useSession } from "../lib/session.ts";
 type ListState =
   | { status: "loading" }
   | { status: "error"; message: string }
-  | { status: "ready"; items: ArtifactSummary[]; query: string };
+  | { status: "ready"; items: ArtifactSummary[]; categories: CategoryCount[]; query: string };
 
 type Filter = "all" | "mine" | "shared";
 type Sort = "updated" | "created" | "title";
+/** The category filter: null shows every category, "" the owner's artifacts with none. */
+export type CategoryFilter = string | null;
 export type DashboardView = "list" | "grid";
 
 export const VIEW_STORAGE_KEY = "plinth-dashboard-view";
@@ -76,6 +89,60 @@ function saveView(v: DashboardView): void {
   }
 }
 
+/** The dashboard's address for a search and a category filter (`?category=` alone: no category). */
+export function dashboardHref(query: string, category: CategoryFilter): string {
+  const params: string[] = [];
+  if (query) params.push(`q=${encodeURIComponent(query)}`);
+  if (category !== null) params.push(`category=${encodeURIComponent(category)}`);
+  return params.length ? `${APP_ROUTES.dashboard}?${params.join("&")}` : APP_ROUTES.dashboard;
+}
+
+/**
+ * The artifacts a category filter keeps: the person's own, in that category (matched as the Worker
+ * matches names: ignoring case, spaces, "-" and "_") or, for "", with none. Shared artifacts never
+ * carry a category, so a filter leaves them out.
+ */
+export function filterByCategory(
+  items: ArtifactSummary[],
+  category: CategoryFilter,
+): ArtifactSummary[] {
+  if (category === null) return items;
+  const key = categoryKey(category);
+  return items.filter(
+    (a) =>
+      a.role === "owner" &&
+      (category === ""
+        ? a.category === null
+        : a.category !== null && categoryKey(a.category) === key),
+  );
+}
+
+/**
+ * The list after the owner renamed, merged or removed `from` (stored: the Worker's name, or null),
+ * applied at once so the page shows the result (and keeps its controls) before the reload lands.
+ */
+export function applyCategoryRename(
+  list: { items: ArtifactSummary[]; categories: CategoryCount[] },
+  from: CategoryCount,
+  stored: string | null,
+): { items: ArtifactSummary[]; categories: CategoryCount[] } {
+  const key = categoryKey(from.name);
+  const items = list.items.map((a) =>
+    a.role === "owner" && a.category !== null && categoryKey(a.category) === key
+      ? { ...a, category: stored }
+      : a,
+  );
+  const rest = list.categories.filter((c) => categoryKey(c.name) !== key);
+  if (stored === null) return { items, categories: rest };
+  const into = rest.find((c) => c.name === stored);
+  const categories = into
+    ? rest.map((c) => (c === into ? { ...c, count: c.count + from.count } : c))
+    : [...rest, { name: stored, count: from.count }];
+  // Most-used first, as the Worker lists them.
+  categories.sort((a, b) => b.count - a.count || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+  return { items, categories };
+}
+
 export function sortArtifacts(items: ArtifactSummary[], sort: Sort): ArtifactSummary[] {
   const out = [...items];
   if (sort === "title") out.sort((a, b) => a.title.localeCompare(b.title));
@@ -98,6 +165,11 @@ export default function Dashboard() {
   const [reload, setReload] = useState(0);
   const [now, setNow] = useState(() => Date.now());
   const [filter, setFilter] = useState<Filter>("all");
+  const [category, setCategory] = useState<CategoryFilter>(() => search.get("category"));
+  const [renaming, setRenaming] = useState(false);
+  const barRef = useRef<HTMLDivElement>(null);
+  /** A removed category takes its Rename button with it: focus goes to the category menu. */
+  const [focusCategoryMenu, setFocusCategoryMenu] = useState(false);
   const [sort, setSort] = useState<Sort>("updated");
   const [view, setView] = useState<DashboardView>(readView);
 
@@ -117,9 +189,14 @@ export default function Dashboard() {
     const ctrl = new AbortController();
     setBusy(true);
     const path = settled ? `${API.artifacts}?query=${encodeURIComponent(settled)}` : API.artifacts;
-    api<Paged<ArtifactSummary>>(path, { signal: ctrl.signal })
+    api<ArtifactList>(path, { signal: ctrl.signal })
       .then((res) => {
-        setList({ status: "ready", items: res.items, query: settled });
+        setList({
+          status: "ready",
+          items: res.items,
+          categories: res.categories ?? [],
+          query: settled,
+        });
         setNow(Date.now());
       })
       .catch((e: unknown) => {
@@ -135,18 +212,30 @@ export default function Dashboard() {
       .finally(() => {
         if (!ctrl.signal.aborted) setBusy(false);
       });
-    // Keep the search in the address bar (replace, so typing does not fill the history).
-    const want = settled
-      ? `${APP_ROUTES.dashboard}?q=${encodeURIComponent(settled)}`
-      : APP_ROUTES.dashboard;
-    if (window.location.pathname + window.location.search !== want) {
-      window.history.replaceState(null, "", want);
-    }
     return () => ctrl.abort();
   }, [settled, pending, reload]);
 
+  useEffect(() => {
+    if (!focusCategoryMenu) return;
+    setFocusCategoryMenu(false);
+    barRef.current?.querySelector<HTMLButtonElement>(".pl-dash-bar__category > button")?.focus();
+  }, [focusCategoryMenu]);
+
+  // Keep the search and the category in the address bar (replace, so typing does not fill the
+  // history).
+  useEffect(() => {
+    if (pending) return;
+    const want = dashboardHref(settled, category);
+    if (window.location.pathname + window.location.search !== want) {
+      window.history.replaceState(null, "", want);
+    }
+  }, [settled, category, pending]);
+
   const items = list.status === "ready" ? list.items : [];
+  const categories = list.status === "ready" ? list.categories : [];
   const hasShared = items.some((a) => a.role !== "owner");
+  // Shared artifacts carry no category, so the category filter is off (and its menu hidden) there.
+  const byCategory = filter !== "shared" && category !== null;
   const shown = useMemo(() => {
     const picked =
       filter === "mine"
@@ -154,8 +243,13 @@ export default function Dashboard() {
         : filter === "shared"
           ? items.filter((a) => a.role !== "owner")
           : items;
-    return sortArtifacts(picked, sort);
-  }, [items, filter, sort]);
+    return sortArtifacts(filterByCategory(picked, byCategory ? category : null), sort);
+  }, [items, filter, sort, category, byCategory]);
+  // The listed category a name filter points at (none for an unknown ?category=).
+  const selected =
+    category && byCategory
+      ? (categories.find((c) => categoryKey(c.name) === categoryKey(category)) ?? null)
+      : null;
 
   if (redirect) return redirect;
 
@@ -199,17 +293,72 @@ export default function Dashboard() {
 
   const emptyFilter =
     list.status === "ready" && items.length > 0 && shown.length === 0
-      ? filter === "mine"
-        ? searching
-          ? "None of your artifacts match."
-          : "You have not published anything yet."
-        : "Nothing has been shared with you."
+      ? byCategory
+        ? category === ""
+          ? searching
+            ? "None of your artifacts without a category match."
+            : "Every artifact you own has a category."
+          : searching
+            ? `Nothing in ${selected?.name ?? category} matches.`
+            : `Nothing in ${selected?.name ?? category} yet.`
+        : filter === "mine"
+          ? searching
+            ? "None of your artifacts match."
+            : "You have not published anything yet."
+          : "Nothing has been shared with you."
       : null;
+
+  const categoryLabel =
+    category === null || !byCategory
+      ? "All"
+      : category === ""
+        ? "No category"
+        : (selected?.name ?? category);
+  const showCategoryMenu = filter !== "shared" && (categories.length > 0 || category !== null);
+  const byName = [...categories].sort((a, b) =>
+    a.name.localeCompare(b.name, undefined, { sensitivity: "base" }),
+  );
+  const categoryMenu = showCategoryMenu && (
+    <>
+      <Menu
+        label={`Category: ${categoryLabel}`}
+        variant="ghost"
+        icon={FolderSimpleIcon}
+        className="pl-dash-bar__category"
+        triggerContent={
+          <span className="pl-dash-bar__category-label">{`Category: ${categoryLabel}`}</span>
+        }
+        items={[
+          {
+            label: "All categories",
+            checked: category === null,
+            onSelect: () => setCategory(null),
+          },
+          ...byName.map((c) => ({
+            label: `${c.name} (${c.count})`,
+            checked: selected?.name === c.name,
+            onSelect: () => setCategory(c.name),
+          })),
+          { type: "separator" as const },
+          { label: "No category", checked: category === "", onSelect: () => setCategory("") },
+        ]}
+      />
+      {selected && (
+        <Tooltip content="Rename category">
+          <IconButton
+            icon={PencilSimpleIcon}
+            label="Rename category"
+            onClick={() => setRenaming(true)}
+          />
+        </Tooltip>
+      )}
+    </>
+  );
 
   return (
     <AppShell onSignOut={signOut} title="Artifacts" actions={nothingYet ? undefined : searchField}>
       {!nothingYet && list.status !== "error" && (
-        <div className="pl-dash-bar">
+        <div className="pl-dash-bar" ref={barRef}>
           <SegmentedControl<Filter>
             label="Show"
             options={filters}
@@ -217,6 +366,7 @@ export default function Dashboard() {
             onChange={setFilter}
             className="pl-dash-bar__filters"
           />
+          {categoryMenu}
           <span className="pl-dash-bar__spacer" />
           <Menu
             label={`Sort by ${SORT_LABEL[sort].toLowerCase()}`}
@@ -341,6 +491,31 @@ export default function Dashboard() {
 
       {me && list.status === "ready" && (
         <p className="pl-dash__quota">{quotaText(me.artifact_count, me.artifact_limit)}</p>
+      )}
+
+      {renaming && selected && (
+        <RenameCategoryDialog
+          category={selected}
+          categories={categories}
+          onClose={() => setRenaming(false)}
+          onDone={(stored) => {
+            const from = selected;
+            setRenaming(false);
+            setList((l) =>
+              l.status === "ready" ? { ...l, ...applyCategoryRename(l, from, stored) } : l,
+            );
+            if (stored === null) {
+              // Show where those artifacts went; the menu stays, and takes the focus.
+              setCategory("");
+              setFocusCategoryMenu(true);
+            } else {
+              // The Rename button stays (the category still exists under its new name), so the
+              // dialog hands the focus back to it.
+              setCategory(stored);
+            }
+            setReload((n) => n + 1);
+          }}
+        />
       )}
     </AppShell>
   );

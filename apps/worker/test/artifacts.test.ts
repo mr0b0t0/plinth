@@ -2,15 +2,18 @@ import { env } from "cloudflare:workers";
 import { eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import { users } from "../src/db/schema.ts";
+import { updateArtifact } from "../src/services/artifacts.ts";
 import {
   APP,
   agent,
+  agentPrincipal,
   browserSession,
   call,
   db,
   json,
   manifestOf,
   publish,
+  serviceCtxFor,
   storedFile,
   versionRow,
 } from "./helpers.ts";
@@ -303,5 +306,245 @@ describe("artifacts over REST", () => {
       await call(`/api/v1/artifacts/${(await json(ok)).id}/versions`, { headers: s.headers }),
     );
     expect(versions.items[0].author.kind).toBe("user");
+  });
+});
+
+// Categories (docs/spec.md "Categories"): agents set one when they publish, and every write snaps
+// the name onto the owner's existing spelling.
+describe("categories on publish, update and list", () => {
+  type ListBody = {
+    items: { id: string; category: string | null }[];
+    categories: { name: string; count: number }[];
+  };
+  const list = async (auth: Record<string, string>, params = "") => {
+    const r = await call(`/api/v1/artifacts${params}`, { headers: auth });
+    expect(r.status).toBe(200);
+    return json<ListBody>(r);
+  };
+  const storedCategory = async (id: string) =>
+    (
+      await env.DB.prepare("SELECT category FROM artifacts WHERE id = ?")
+        .bind(id)
+        .first<{ category: string | null }>()
+    )?.category;
+
+  it("publish stores the name, echoes it, and snaps a near-duplicate onto the first spelling", async () => {
+    const a = await agent();
+    const first = await publish(a.auth, { category: "  acme-site " });
+    expect(first.res.status).toBe(201);
+    expect(first.body.category).toBe("acme-site");
+    expect(await storedCategory(first.body.id)).toBe("acme-site");
+    for (const spelling of ["Acme Site", "ACME_site", "acme   site"]) {
+      const next = await publish(a.auth, { category: spelling });
+      expect(next.body.category, spelling).toBe("acme-site");
+    }
+    // "." is not folded: a different name.
+    const other = await publish(a.auth, { category: "acme.site" });
+    expect(other.body.category).toBe("acme.site");
+    const { categories } = await list(a.auth);
+    expect(categories).toEqual([
+      { name: "acme-site", count: 4 },
+      { name: "acme.site", count: 1 },
+    ]);
+  });
+
+  it("an omitted category is null and not echoed; a bad name is 400 with field category", async () => {
+    const a = await agent();
+    const plain = await publish(a.auth);
+    expect(plain.body).not.toHaveProperty("category");
+    expect(await storedCategory(plain.body.id)).toBeNull();
+    for (const bad of ["a\u202Eb", "zero\u200Bwidth", "bell\u0007"]) {
+      const r = await publish(a.auth, { category: bad });
+      expect(r.res.status, JSON.stringify(bad)).toBe(400);
+      expect(r.body.error).toMatchObject({ code: "invalid_input", details: { field: "category" } });
+      expect(JSON.stringify(r.body)).not.toContain(bad);
+    }
+    // Line breaks and line or paragraph separators are whitespace: they fold into one space.
+    const folded = await publish(a.auth, { category: "line\u2028sep\nnext" });
+    expect(folded.body.category).toBe("line sep next");
+    // Empty and too long are refused by the schema, on the category field.
+    for (const bad of ["   ", "x".repeat(61)]) {
+      const r = await publish(a.auth, { category: bad });
+      expect(r.res.status).toBe(400);
+      expect(r.body.error.details.issues[0].path).toEqual(["category"]);
+    }
+    expect((await list(a.auth)).items).toHaveLength(2);
+  });
+
+  it("categories counts live artifacts, most-used first, whatever the query; deleted ones drop out", async () => {
+    const a = await agent();
+    const b1 = await publish(a.auth, { title: "Beta one", category: "Beta" });
+    await publish(a.auth, { title: "Beta two", category: "Beta" });
+    await publish(a.auth, { title: "Alpha one", category: "Alpha" });
+    await publish(a.auth, { title: "Loose" });
+    const expected = [
+      { name: "Beta", count: 2 },
+      { name: "Alpha", count: 1 },
+    ];
+    expect((await list(a.auth)).categories).toEqual(expected);
+    const none = await list(a.auth, "?query=no-such-title");
+    expect(none.items).toEqual([]);
+    expect(none.categories).toEqual(expected);
+    expect(
+      (await call(`/api/v1/artifacts/${b1.body.id}`, { method: "DELETE", headers: a.auth })).status,
+    ).toBe(204);
+    expect((await list(a.auth)).categories).toEqual([
+      { name: "Alpha", count: 1 },
+      { name: "Beta", count: 1 },
+    ]);
+  });
+
+  it("the category filter matches by key and keeps the categories list whole", async () => {
+    const a = await agent();
+    const one = await publish(a.auth, { category: "Client Work" });
+    const two = await publish(a.auth, { category: "client-work" });
+    await publish(a.auth, { category: "Other" });
+    await publish(a.auth);
+    const r = await list(a.auth, `?category=${encodeURIComponent("CLIENT_WORK")}`);
+    expect(r.items.map((i) => i.id).sort()).toEqual([one.body.id, two.body.id].sort());
+    expect(r.items.every((i) => i.category === "Client Work")).toBe(true);
+    expect(r.categories).toHaveLength(2);
+    const nothing = await list(a.auth, "?category=Nope");
+    expect(nothing.items).toEqual([]);
+    expect(nothing.categories).toHaveLength(2);
+    // Filters compose with the title query.
+    expect((await list(a.auth, "?category=Other&query=no-such")).items).toEqual([]);
+    // An empty filter is no filter.
+    expect((await list(a.auth, "?category=")).items).toHaveLength(4);
+  });
+
+  it("the owner sets it with update_artifact (PUT), and respelling a one-artifact category works", async () => {
+    const a = await agent();
+    const { body: p } = await publish(a.auth, { category: "acme" });
+    const up = await put(a.auth, p.id, { html: "<p>v2</p>", base_version: 1, category: "Acme" });
+    expect(up.status).toBe(200);
+    const out = await json(up);
+    expect(out).toMatchObject({ version: 2, category: "Acme" });
+    expect(await storedCategory(p.id)).toBe("Acme");
+    // Leaving it out keeps it, and the result does not echo it.
+    const keep = await json(await put(a.auth, p.id, { html: "<p>v3</p>", base_version: 2 }));
+    expect(keep).not.toHaveProperty("category");
+    expect(await storedCategory(p.id)).toBe("Acme");
+    // With another artifact in "Acme", a new spelling snaps onto it.
+    const { body: q } = await publish(a.auth);
+    const snapped = await json(await put(a.auth, q.id, { html: "<p>q2</p>", category: "ACME" }));
+    expect(snapped.category).toBe("Acme");
+  });
+
+  it("a stale base_version is 409 and leaves the category unchanged", async () => {
+    const a = await agent();
+    const { body: p } = await publish(a.auth, { category: "Before" });
+    expect((await put(a.auth, p.id, { html: "<p>v2</p>", base_version: 1 })).status).toBe(200);
+    const stale = await put(a.auth, p.id, { html: "<p>x</p>", base_version: 1, category: "After" });
+    expect(stale.status).toBe(409);
+    expect(await storedCategory(p.id)).toBe("Before");
+    expect((await list(a.auth)).categories).toEqual([{ name: "Before", count: 1 }]);
+  });
+
+  it("a failed commit leaves the category unchanged", async () => {
+    const a = await agent();
+    const { body: p } = await publish(a.auth, { category: "Before" });
+    const DB = new Proxy(env.DB, {
+      get(t, prop) {
+        if (prop === "batch") {
+          return async () => {
+            throw new Error("injected: batch failed");
+          };
+        }
+        const v = Reflect.get(t, prop, t);
+        return typeof v === "function" ? v.bind(t) : v;
+      },
+    });
+    const ctx = serviceCtxFor(agentPrincipal(a), { env: { DB } });
+    await expect(
+      updateArtifact(ctx, { id: p.id, html: "<p>lost</p>", category: "After" }),
+    ).rejects.toThrow(/injected/);
+    expect(await storedCategory(p.id)).toBe("Before");
+    expect(await versionRow(p.id, 2)).toBeFalsy();
+  });
+});
+
+// PATCH /artifacts/:ref (owner only): a title, a category, or both. A category is metadata: no
+// version, no updated_at bump, so filing artifacts never reorders the dashboard.
+describe("PATCH sets the title or the category", () => {
+  const patch = (auth: Record<string, string>, ref: string, body: unknown) =>
+    call(`/api/v1/artifacts/${ref}`, {
+      method: "PATCH",
+      headers: { ...auth, "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  const row = async (id: string) =>
+    await env.DB.prepare(
+      `SELECT category, title, updated_at, current_version,
+              (SELECT count(*) FROM versions WHERE artifact_id = ?1) AS versions
+         FROM artifacts WHERE id = ?1`,
+    )
+      .bind(id)
+      .first<{
+        category: string | null;
+        title: string;
+        updated_at: string;
+        current_version: number;
+        versions: number;
+      }>();
+
+  it("sets the category and null clears it, with no version and no updated_at bump", async () => {
+    const a = await agent();
+    const { body: p } = await publish(a.auth);
+    const before = await row(p.id);
+    const set = await patch(a.auth, p.id, { category: "  Client   Work " });
+    expect(set.status).toBe(200);
+    const summary = await json(set);
+    expect(summary).toMatchObject({ id: p.id, category: "Client Work", version_count: 1 });
+    expect(summary.updated_at).toBe(before?.updated_at);
+    expect(await row(p.id)).toEqual({ ...before, category: "Client Work" });
+    const cleared = await json(await patch(a.auth, p.id, { category: null }));
+    expect(cleared.category).toBeNull();
+    expect(await row(p.id)).toEqual({ ...before, category: null });
+  });
+
+  it("a title PATCH still bumps updated_at, and both fields go in one request", async () => {
+    const a = await agent();
+    const { body: p } = await publish(a.auth);
+    const before = await row(p.id);
+    await new Promise((r) => setTimeout(r, 5));
+    const r = await json(await patch(a.auth, p.id, { title: "Renamed", category: "Both" }));
+    expect(r).toMatchObject({ title: "Renamed", category: "Both", version_count: 1 });
+    const after = await row(p.id);
+    expect(after).toMatchObject({ title: "Renamed", category: "Both", versions: 1 });
+    expect(after?.updated_at).not.toBe(before?.updated_at);
+  });
+
+  it("snaps onto an existing spelling, but respelling a one-artifact category keeps the new one", async () => {
+    const a = await agent();
+    const { body: p } = await publish(a.auth, { category: "acme" });
+    expect((await json(await patch(a.auth, p.id, { category: "Acme" }))).category).toBe("Acme");
+    const { body: q } = await publish(a.auth);
+    expect((await json(await patch(a.auth, q.id, { category: "ACME" }))).category).toBe("Acme");
+  });
+
+  it("works from the signed-in owner's session too", async () => {
+    const a = await agent();
+    const { body: p } = await publish(a.auth);
+    const s = await browserSession(a.user.id);
+    const r = await patch(s.headers, p.id, { category: "From the app" });
+    expect(r.status).toBe(200);
+    expect((await row(p.id))?.category).toBe("From the app");
+  });
+
+  it("a body with neither field is 400; a bad category is 400 with field category", async () => {
+    const a = await agent();
+    const { body: p } = await publish(a.auth, { category: "Kept" });
+    const empty = await patch(a.auth, p.id, {});
+    expect(empty.status).toBe(400);
+    expect((await json(empty)).error.code).toBe("invalid_input");
+    const bad = await patch(a.auth, p.id, { category: "a‮b" });
+    expect(bad.status).toBe(400);
+    expect((await json(bad)).error).toMatchObject({
+      code: "invalid_input",
+      details: { field: "category" },
+    });
+    expect((await patch(a.auth, p.id, { category: "" })).status).toBe(400);
+    expect((await row(p.id))?.category).toBe("Kept");
   });
 });

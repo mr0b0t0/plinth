@@ -40,6 +40,7 @@ import { nowIso } from "../lib/time.ts";
 import type { Principal } from "../policy.ts";
 import { sweepSoon } from "./attempts.ts";
 import { readBundle } from "./bundle.ts";
+import { requireCategoryRight, resolveCategory } from "./categories.ts";
 import type { Ctx } from "./context.ts";
 import {
   commitStaged,
@@ -86,6 +87,8 @@ export interface TicketRow {
   artifact_type: string;
   title: string | null;
   note: string | null;
+  /** The category start_upload was given (migrations/0009_categories.sql); NULL = none given. */
+  category: string | null;
   base_version: number | null;
   state: "open" | "used" | "dead";
   /** Why a dead ticket ended: a version conflict, or a takedown of its artifact. */
@@ -155,6 +158,16 @@ export async function startUpload(
       baseVersion: input.base_version,
       note: input.note,
     });
+    // The category is the owner's: refused for an editor before the mint rate hit.
+    if (input.category !== undefined && target.mode === "update") {
+      await requireCategoryRight(ctx, target.artifact);
+      target.category = await resolveCategory(
+        ctx,
+        target.artifact.ownerId,
+        input.category,
+        target.artifact.id,
+      );
+    }
   } else {
     if (input.base_version !== undefined || input.note !== undefined) {
       throw new ApiError(
@@ -169,6 +182,7 @@ export async function startUpload(
     target = await deps.newArtifactTarget(ctx, {
       type: input.type ?? "html",
       title: input.title,
+      ...(input.category !== undefined ? { category: input.category } : {}),
     });
   }
 
@@ -205,8 +219,8 @@ export async function startUpload(
   await ctx.env.DB.prepare(
     `INSERT INTO upload_tickets (id, token_hash, user_id, credential, connection_id, admin_token_hash,
        scopes, mode, artifact_id, artifact_type, title, note, base_version, state, attempts,
-       created_at, expires_at, reserved_artifact_id)
-     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, 'open', 0, ?14, ?15, ?16)`,
+       created_at, expires_at, reserved_artifact_id, category)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, 'open', 0, ?14, ?15, ?16, ?17)`,
   )
     .bind(
       id,
@@ -225,6 +239,7 @@ export async function startUpload(
       isoAt(now),
       expiresAt,
       fresh ? fresh.artifactId : null,
+      target.category ?? null,
     )
     .run();
   // No cron under `wrangler dev`: clear abandoned attempts and old tickets here too (capped,
@@ -522,6 +537,8 @@ export async function redeemBundle(
       status: ticket.mode === "publish" ? 201 : 200,
       body: {
         ...result,
+        // Only the uploader that minted the ticket reads this, and only an owner can set it.
+        ...(target.category !== undefined ? { category: target.category } : {}),
         bundle: {
           entries: reader.summary.entries,
           skipped: reader.summary.skipped,
@@ -898,12 +915,24 @@ async function ticketTarget(
       note: t.note ?? undefined,
     });
     if (target.mode !== "update" || target.artifact.id !== t.artifact_id) throw notFound();
+    if (t.category !== null) {
+      // Re-checked with the current principal: an owner's ticket keeps the right only while
+      // they own the artifact. Snapped again, so the owner's current spelling wins.
+      await requireCategoryRight(ctx, target.artifact);
+      target.category = await resolveCategory(
+        ctx,
+        target.artifact.ownerId,
+        t.category,
+        target.artifact.id,
+      );
+    }
     return target;
   }
   if (!hasWriteScope(ctx.principal)) throw forbidden("This token lacks the artifacts:write scope");
   return deps.newArtifactTarget(ctx, {
     type: t.artifact_type as ArtifactType,
     title: t.title ?? undefined,
+    ...(t.category !== null ? { category: t.category } : {}),
     ...(t.reserved_artifact_id ? { artifactId: t.reserved_artifact_id } : {}),
   });
 }

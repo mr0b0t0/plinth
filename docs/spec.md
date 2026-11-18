@@ -104,7 +104,7 @@ reuse by hash](#big-builds-and-reuse-by-hash)). The row's `r2_prefix` is authori
 | --- | --- | --- |
 | `users` | id, email, name, auth provider, created_at | One row per person who signs in |
 | `agent_connections` | id, user_id, label, client type, token hash, last_used_at | One per connected agent, e.g. "Work Claude". Revocable individually |
-| `artifacts` | id, owner_id, slug, title, type, current_version, visibility, password hash, created_at | `visibility` is public, unlisted, password or allowlist. `type` is `html` (a hand-written `index.html`) or `doc` (Markdown in `content.md`), fixed at publish |
+| `artifacts` | id, owner_id, slug, title, type, current_version, visibility, password hash, category, created_at | `visibility` is public, unlisted, password or allowlist. `type` is `html` (a hand-written `index.html`) or `doc` (Markdown in `content.md`), fixed at publish. `category` is the owner's own grouping (NULL = none), shown only to the owner |
 | `versions` | id, artifact_id, number, r2_prefix, size_bytes, stored_bytes, manifest, created_by (user or agent), note, created_at | Immutable, and written only once its files are in R2 (commit last). A restore creates a new row. `size_bytes` is what a viewer loads; `stored_bytes` is what this version added to R2 (NULL for versions written before 0.4.0, which count `size_bytes`). Each manifest entry has `path`, `size_bytes`, `content_type`, a server-computed `sha256` (absent on files stored before 0.4.0) and, for a reused file, a server-written `stored_at` (`v<m>[.<nonce>]/<path>`, relative to `artifacts/<artifact_id>/`, never returned by the API) |
 | `access_grants` | artifact_id, email, role | Role is viewer, commenter or editor. Used for allowlists and collaborators |
 | `comments` | id, artifact_id, version, parent_id, author, body, mentions, status | Threaded. `status` is open or resolved |
@@ -127,7 +127,15 @@ adds one column and two tables:
 | Table or column | Key fields | Notes |
 | --- | --- | --- |
 | `versions.stored_bytes` | integer or NULL | Bytes this version wrote to R2. The storage quota sums `coalesce(stored_bytes, size_bytes)` |
-| `upload_tickets` | id, token_hash, user_id, credential (`connection` or `admin`), connection_id or admin_token_hash, scopes, mode (`publish` or `update`), artifact_id, artifact_type, title, note, base_version, state (`open`, `used`, `dead`), attempts, receiving_claim, receiving_until, result_artifact_id, result_version, reserved_artifact_id (unique), dead_reason (`conflict` or `taken_down`, on a dead ticket), created_at, expires_at, used_at | One single-use upload ticket from `start_upload`. The token is stored as its SHA-256. A publish-mode ticket reserves its artifact id at mint (`reserved_artifact_id`, returned as `target.id`), and its commit creates the artifact with exactly that id; no other ticket can hold that id, and only that ticket's bundle can create it. While the ticket is live (open, unexpired, attempts left, minting credential still valid) the reservation counts toward the owner's artifact limit for new reservations and inline publishes; once it expires unused the id is released and never becomes an artifact. Only the id is reserved, not a slug (the commit picks the slug). `open -> used` happens in the same D1 batch that commits the version. The receiving lease limits concurrency and is the bundle's deadline (10 minutes). A row is deleted once `TTL.uploadStatusMs` (24 hours) has passed since it expired, by the hourly cron and by the opportunistic sweep; erasing an artifact or a user deletes its tickets |
+| `upload_tickets` | id, token_hash, user_id, credential (`connection` or `admin`), connection_id or admin_token_hash, scopes, mode (`publish` or `update`), artifact_id, artifact_type, title, category, note, base_version, state (`open`, `used`, `dead`), attempts, receiving_claim, receiving_until, result_artifact_id, result_version, reserved_artifact_id (unique), dead_reason (`conflict` or `taken_down`, on a dead ticket), created_at, expires_at, used_at | One single-use upload ticket from `start_upload`. The token is stored as its SHA-256. A publish-mode ticket reserves its artifact id at mint (`reserved_artifact_id`, returned as `target.id`), and its commit creates the artifact with exactly that id; no other ticket can hold that id, and only that ticket's bundle can create it. While the ticket is live (open, unexpired, attempts left, minting credential still valid) the reservation counts toward the owner's artifact limit for new reservations and inline publishes; once it expires unused the id is released and never becomes an artifact. Only the id is reserved, not a slug (the commit picks the slug). `open -> used` happens in the same D1 batch that commits the version. The receiving lease limits concurrency and is the bundle's deadline (10 minutes). A row is deleted once `TTL.uploadStatusMs` (24 hours) has passed since it expired, by the hourly cron and by the opportunistic sweep; erasing an artifact or a user deletes its tickets |
+
+**Categories** (migration `0009_categories.sql`) add one nullable column to `artifacts` and one
+to `upload_tickets`, plus a partial index `artifacts_owner_category` on (owner_id, category) over
+live, categorised rows. A category is a free-text name for the project, repo or client an artifact
+belongs to: at most one per artifact, no tags and no categories table, so a category exists while at
+least one live artifact uses it. It is artifact metadata, never versioned, and returned only to the
+owner (`category` is null for everyone else). The Worker validates and normalises the text
+(`packages/shared/src/categories.ts`); the columns have no CHECK constraint.
 
 **View counts** (migration `0010_view_counts.sql`) adds two tables. They hold aggregate numbers
 only: no IP address, email, user, session or user agent. Both cascade from `artifacts`, so
@@ -171,11 +179,11 @@ One remote MCP server over streamable HTTP at `/mcp`. All tools act as the conne
 
 | Tool | Purpose |
 | --- | --- |
-| `publish_artifact(title, html \| type+content, assets?, visibility?)` | Create an artifact. Returns its id and URL, `warnings` and `stored`. Private by default (`allowlist` with nobody added). `type: "doc"` with Markdown in `content` makes a document |
-| `update_artifact(id, html \| content, assets?, base_version?, note?)` | Publish a new version of an existing artifact, in the source field its type takes. An asset may be `{path, sha256}` to reuse a file of the current version. Returns `warnings` and `stored` |
-| `start_upload(id?, base_version?, type?, title?, note?)` | For a build folder or a large page: mint a single-use, 30-minute upload ticket for one new artifact, or for one update of `id` (then `base_version` is required). The result has `upload_url`, `upload_token`, `target` (with `id`: the artifact updated, or the one the publish will create), `commands.curl` (and `commands.npx` on release builds), the instance's `limits` and `content_isolation` |
+| `publish_artifact(title, html \| type+content, assets?, visibility?, category?)` | Create an artifact. Returns its id and URL, `warnings` and `stored` (and `category`, the stored name, when one was given). Private by default (`allowlist` with nobody added). `type: "doc"` with Markdown in `content` makes a document |
+| `update_artifact(id, html \| content, assets?, base_version?, note?, category?)` | Publish a new version of an existing artifact, in the source field its type takes. An asset may be `{path, sha256}` to reuse a file of the current version. `category` is owner only. Returns `warnings` and `stored` |
+| `start_upload(id?, base_version?, type?, title?, note?, category?)` | For a build folder or a large page: mint a single-use, 30-minute upload ticket for one new artifact, or for one update of `id` (then `base_version` is required). The result has `upload_url`, `upload_token`, `target` (with `id`: the artifact updated, or the one the publish will create), `commands.curl` (and `commands.npx` on release builds), the instance's `limits` and `content_isolation` |
 | `get_artifact(id, version?)` | Read metadata, `type`, the source (`html` for a page, `content` for a doc, and `source_path`) and each asset's `sha256`, so an agent can edit from the current state |
-| `list_artifacts(query?)` | List the user's artifacts |
+| `list_artifacts(query?, category?, limit?)` | List the user's artifacts and their own category names (`limit: 0` returns only the names) |
 | `list_versions(id)` | Version history with notes and authors |
 | `restore_version(id, version)` | Make an old version current by publishing it as a new one |
 | `set_visibility(id, visibility, emails?, password?)` | Change who can view |
@@ -237,7 +245,10 @@ other `/.well-known/` paths and missing files answer `404` instead of the SPA. G
 `docs/superpowers/specs/2026-11-14-agent-discovery-design.md`.
 
 A plain REST API mirrors these tools for scripts and CI (`POST /api/v1/uploads` mirrors
-`start_upload` and takes a bearer token only). Size limits: 5 MB of HTML (1 MB of Markdown for a
+`start_upload` and takes a bearer token only; `GET /api/v1/artifacts?query=&category=` mirrors
+`list_artifacts` and returns `{ items, categories }`). Beyond the tools, `PATCH /api/v1/artifacts/:ref`
+sets the title or the category (owner), `GET /api/v1/categories` lists the caller's own category
+names, and `POST /api/v1/categories/rename` renames, merges or clears one (signed-in session only). Size limits: 5 MB of HTML (1 MB of Markdown for a
 doc), and per version a total size and a file count set by the operator with `MAX_VERSION_BYTES`
 (default 50 MB, at most 64 MB) and `MAX_ASSETS_PER_VERSION` (default 511, at most 900). A JSON
 request body may be up to 40 MB. `GET /api/v1/config` returns the instance's limits.
@@ -354,6 +365,51 @@ records who opened it.
 - If the current version changed while someone was editing, the save is rejected and they see a
   diff to merge. No silent overwrites.
 - Later: visual editing of text directly on the rendered page.
+
+### Categories (decided 2026-11-18)
+
+Owners publish many artifacts for different projects, so each artifact can carry one category: a
+short name for the project, repo or client it belongs to. It is the owner's private organisation:
+`category` is null for every caller but the owner, and no anonymous surface, upload status, email
+or log carries it.
+
+- **Agents set it.** `publish_artifact`, `start_upload`, `POST /api/v1/artifacts` and
+  `POST /api/v1/uploads` take `category`, usually the repo or project the agent works in. On
+  `update_artifact`, `PUT /api/v1/artifacts/:ref` and `start_upload` with an `id` it is owner
+  only: an editor's request that carries it is refused with 403 (`reason: "owner_only"`) before
+  any write, upload or rate-limit hit. Leaving it out keeps the current one; agents cannot clear
+  it over MCP.
+- **Reuse, not near-duplicates.** `list_artifacts` and `GET /api/v1/artifacts` always return
+  `categories`, the caller's own names with counts (most-used first, at most 500, whatever the
+  filters; `limit: 0` returns only them), and agents reuse one. Every write also normalises the
+  name (NFC, every whitespace run, line breaks included, collapsed to one space, trimmed) and
+  refuses it when it is empty, over 60 characters, holds control or invisible characters, or is
+  made only of spaces, `-` and `_`. It then snaps it onto the
+  owner's existing spelling when the two match ignoring case, whitespace, `-` and `_` (`.` and `/`
+  are kept). The result echoes the stored name. The `category` filter matches the same way and
+  covers the caller's own artifacts only.
+- **Not a version.** On an update the category commits in the version's batch, behind the same
+  `base_version` guard; a stale or failed commit changes neither. A category-only change creates
+  no version and leaves `updated_at` alone, so filing artifacts never reorders the dashboard; a
+  title change still bumps it.
+- **The owner changes it.** `PATCH /api/v1/artifacts/:ref` with `{ title?, category? }` (the
+  `manage` action, owner only, taken-down artifacts included) sets one artifact's category, and
+  `category: null` clears it; a body with neither is 400. `GET /api/v1/categories` returns the
+  caller's own names with counts, for a session or a token with `artifacts:read`.
+  `POST /api/v1/categories/rename` with `{ from, to }` moves every live artifact of the caller's
+  whose category matches `from` (by key) to `to`, which snaps onto another of their names (a
+  merge); `to: null` clears it. It answers `{ updated, category }`, changes only the caller's own
+  rows (and the caller's open upload tickets carrying that name), leaves `updated_at` alone, and
+  takes a signed-in session only (CSRF and exact `Origin`): agents and bearer tokens get 403, and
+  there is no MCP tool for it.
+- **In the app.** The dashboard has a Category menu beside All / Mine / Shared (kept in
+  `?category=`, an empty value meaning no category; hidden under Shared), a category badge on the
+  owner's rows and cards, a Rename category dialog (rename, merge or remove) and "Move to
+  category…" in the row menu, which opens the Category section of the artifact's Settings.
+- **CLI and skill.** `plinth publish --category C` sets it on a new publish or, for the owner, on
+  an update (`--id`); the CLI never infers it. The agent skill (plugin 0.12.0) tells agents to set
+  it from the repo or project on a new publish, reuse a name from `categories`, and leave it out on
+  updates.
 
 ### Comments and agent mentions
 
@@ -591,7 +647,8 @@ files) and big pages without merging chunks, and an update stores only what chan
   caching.
 - **Publish CLI.** The npm package `@mr0b0t0/plinth` gains client commands that need neither a
   checkout nor wrangler: `plinth login|logout|whoami [--url O]`, `plinth publish <dir> [--id REF]
-  [--title T] [--note N] [--base-version N] [--include-maps] [--dry-run] [--json]` and `plinth
+  [--title T] [--category C] [--note N] [--base-version N] [--include-maps] [--dry-run] [--json]`
+  and `plinth
   upload <dir> --to <upload_url>` (token from `PLINTH_UPLOAD_TOKEN` only). Exit codes: 0 ok, 1
   error, 2 usage, 3 conflict (never retried). With `--id` and `--base-version N`, `publish` exits 0
   without sending in exactly two cases and prints which: the current version is N+1 and its files
@@ -762,7 +819,8 @@ for a single user.
 8. **Hosted public instance.** Public visibility, report and takedown flow, terms and privacy
    pages.
 9. **Later.** Typed outputs: docs done (2026-11-14); sheets and decks later. Push agents with
-   bring-your-own key, team workspaces, paid plans, visual editing, custom domains.
+   bring-your-own key, team workspaces, paid plans, visual editing, custom domains. Tags beside the
+   category, a group-by-category view, and personal categories for artifacts shared with you.
 
 ## Decisions
 

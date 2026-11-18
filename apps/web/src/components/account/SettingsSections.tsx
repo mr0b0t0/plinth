@@ -1,19 +1,24 @@
-// The sections of /a/:slug/settings: title, who can open it, people, delete. Owner only (the
+// The sections of /a/:slug/settings: title, category, who can open it, people, delete. Owner only (the
 // Worker checks that on every call; the page only hides what would fail).
 import { TrashIcon, UserPlusIcon } from "@phosphor-icons/react";
 import {
   API,
   APP_ROUTES,
   type ArtifactSummary,
+  type CategoryCount,
+  categoryKey,
+  categoryProblem,
   LIMITS,
+  normalizeCategory,
   ROLES,
   type Role,
   route,
   type SharingSettings,
+  snapCategory,
   VISIBILITIES,
   type Visibility,
 } from "@plinth/shared";
-import { type FormEvent, type ReactNode, useRef, useState } from "react";
+import { type FormEvent, type ReactNode, useEffect, useId, useRef, useState } from "react";
 import { ApiRequestError, api } from "../../lib/api.ts";
 import { navigate } from "../../lib/router.tsx";
 import {
@@ -27,6 +32,7 @@ import {
   useToast,
   VISIBILITY_META,
 } from "../ui/index.ts";
+import { CATEGORY_SECTION_ID } from "./ArtifactRow.tsx";
 import { ChoiceList } from "./ChoiceList.tsx";
 import { CopyField } from "./CopyField.tsx";
 import { versionsText } from "./format.ts";
@@ -129,6 +135,146 @@ export function TitleSection({
         <Button type="submit" disabled={!dirty} loading={busy}>
           Save title
         </Button>
+      </form>
+    </Section>
+  );
+}
+
+// ---------- Category ----------
+
+/**
+ * The names a new category for `artifact` snaps onto, as the Worker does it: every one of the
+ * owner's categories except one that only this artifact uses (so "acme" can become "Acme").
+ */
+export function snapTargets(
+  artifact: Pick<ArtifactSummary, "category">,
+  categories: readonly CategoryCount[],
+): string[] {
+  const own = artifact.category === null ? null : categoryKey(artifact.category);
+  return categories
+    .filter((c) => !(own !== null && categoryKey(c.name) === own && c.count <= 1))
+    .map((c) => c.name);
+}
+
+export function CategorySection({
+  artifact,
+  onSaved,
+}: {
+  artifact: ArtifactSummary;
+  /** The stored category after a save (the Worker's spelling), or null once removed. */
+  onSaved: (category: string | null) => void;
+}) {
+  const toast = useToast();
+  const listId = useId();
+  const [value, setValue] = useState(artifact.category ?? "");
+  const [names, setNames] = useState<CategoryCount[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState<"save" | "remove" | null>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  // The owner's names, for the datalist and the snap hint. Without them the Worker still snaps.
+  useEffect(() => {
+    const ctrl = new AbortController();
+    api<{ items: CategoryCount[] }>(API.categories, { signal: ctrl.signal })
+      .then((res) => setNames(res.items))
+      .catch(() => {
+        if (!ctrl.signal.aborted) setNames([]);
+      });
+    return () => ctrl.abort();
+  }, []);
+
+  const typed = normalizeCategory(value);
+  const target = typed ? snapCategory(typed, snapTargets(artifact, names ?? [])) : "";
+  const dirty = target !== "" && target !== artifact.category;
+  // A respelling that snaps back onto the current name, which other artifacts share: Save stays
+  // off, so say why and where a respelling for all of them happens.
+  const sameAsCurrent = typed !== "" && typed !== artifact.category && target === artifact.category;
+  const hint = dirty
+    ? `Will be filed under “${target}”.`
+    : sameAsCurrent
+      ? `Matches “${target}”, its current category. To respell it on every artifact, use Rename category on your dashboard.`
+      : undefined;
+
+  const patch = async (category: string | null) => {
+    setBusy(category === null ? "remove" : "save");
+    try {
+      const res = await api<ArtifactSummary>(route(API.artifact, { ref: artifact.id }), {
+        method: "PATCH",
+        body: { category },
+      });
+      setValue(res.category ?? "");
+      if (category === null) toast.success("Category removed");
+      else toast.success("Category saved", res.category ?? undefined);
+      onSaved(res.category);
+      // Save turns off and Remove may go away, so the focus would fall to the page: keep it here.
+      inputRef.current?.focus();
+    } catch (err) {
+      setError(errMsg(err));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const submit = (e: FormEvent) => {
+    e.preventDefault();
+    if (!dirty || busy) return;
+    const problem = categoryProblem(typed);
+    if (problem) {
+      setError(`${problem}.`);
+      return;
+    }
+    void patch(typed);
+  };
+
+  return (
+    <Section
+      id={CATEGORY_SECTION_ID}
+      title="Category"
+      description="Group this artifact with others on your dashboard. Only you see it; people you share it with do not."
+    >
+      <form
+        className="pl-acct-form"
+        onSubmit={submit}
+        noValidate
+        aria-busy={busy !== null || undefined}
+      >
+        <Input
+          label="Category"
+          hideLabel
+          value={value}
+          list={listId}
+          maxLength={LIMITS.maxCategoryLength}
+          placeholder="No category"
+          ref={inputRef}
+          hint={hint}
+          error={error ?? undefined}
+          onChange={(e) => {
+            setValue(e.target.value);
+            setError(null);
+          }}
+          autoComplete="off"
+          spellCheck={false}
+        />
+        <datalist id={listId}>
+          {(names ?? []).map((c) => (
+            <option key={c.name} value={c.name} />
+          ))}
+        </datalist>
+        <div className="pl-acct-save">
+          <Button type="submit" disabled={!dirty || busy === "remove"} loading={busy === "save"}>
+            Save category
+          </Button>
+          {artifact.category !== null && (
+            <Button
+              variant="ghost"
+              onClick={() => void patch(null)}
+              disabled={busy === "save"}
+              loading={busy === "remove"}
+            >
+              Remove category
+            </Button>
+          )}
+        </div>
       </form>
     </Section>
   );

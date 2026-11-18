@@ -45,6 +45,23 @@
 .pl-dash-bar__sort .pl-button {
   padding-inline: var(--space-2);
 }
+.pl-dash-bar__category {
+  min-width: 0;
+}
+.pl-dash-bar__category > .pl-button {
+  max-width: 14rem;
+  padding-inline: var(--space-2);
+}
+.pl-dash-bar__category .pl-button__content {
+  min-width: 0;
+  max-width: 100%;
+}
+.pl-dash-bar__category-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .pl-dash-bar__views {
   display: flex;
   gap: var(--space-0-5);
@@ -95,6 +112,12 @@
 .pl-dash__row:hover,
 .pl-dash__row:focus-within {
   background: var(--color-hover);
+}
+/* A neutral badge's fill over the hovered row's fill takes muted text just under 4.5:1 in the
+   light theme, so the badge text turns to ink there. */
+.pl-dash__row:hover .pl-badge--neutral,
+.pl-dash__row:focus-within .pl-badge--neutral {
+  color: var(--color-ink);
 }
 
 /* The tiny page glyph: a white sheet with three grey lines, whatever the theme. */
@@ -161,6 +184,23 @@
   flex-shrink: 0;
   align-items: center;
   gap: var(--space-1-5);
+}
+/* The owner's category: a neutral badge that wraps onto more lines rather than cut the name, so
+   the full name stays readable on touch screens and by keyboard (a tooltip reaches neither). */
+.pl-dash__category {
+  max-width: 12rem;
+  min-width: 0;
+  white-space: normal;
+  padding-block: 0.125rem;
+}
+.pl-dash__category svg {
+  flex-shrink: 0;
+  align-self: flex-start;
+  margin-top: 0.125rem;
+}
+.pl-dash__category-name {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 .pl-dash__role {
   padding: 0 var(--space-1-5);
@@ -349,6 +389,10 @@
 .pl-dash__card-access {
   display: inline-flex;
 }
+.pl-dash__card-sub .pl-dash__category {
+  flex-shrink: 1;
+  max-width: 8rem;
+}
 .pl-dash__card-access svg {
   color: var(--color-ink-muted);
 }
@@ -387,6 +431,29 @@
 @media (max-width: 40rem) {
   .pl-dash-search .pl-dash-search__input {
     width: 9.5rem;
+  }
+  /* The filter row wraps rather than scroll sideways once the category menu joins it. */
+  .pl-dash-bar {
+    flex-wrap: wrap;
+    height: auto;
+    min-height: var(--topbar-height);
+    padding-block: var(--space-1);
+    position: relative;
+  }
+  .pl-dash-bar__category > .pl-button {
+    max-width: 10rem;
+  }
+  /* The category list opens from the bar's left edge, under the bar, so a long name cannot push
+     it past the right edge of a phone screen. */
+  .pl-dash-bar__category.pl-menu {
+    position: static;
+  }
+  .pl-dash-bar__category .pl-menu__list {
+    left: 0;
+  }
+  /* Leave the title most of a phone row; a longer category name wraps inside its badge. */
+  .pl-dash__category {
+    max-width: 6.5rem;
   }
   .pl-dash__head {
     display: none;

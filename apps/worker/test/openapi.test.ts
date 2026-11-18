@@ -140,6 +140,54 @@ describe("OpenAPI document", () => {
     expect(update.properties.content.type).toBe("string");
   });
 
+  it("describes categories: on the inputs, the list result and the list filter", () => {
+    const schemas = doc.components.schemas;
+    for (const name of ["PublishArtifactInput", "UpdateArtifactInput", "StartUploadInput"]) {
+      const c = schemas[name].properties.category;
+      expect(c, name).toMatchObject({ type: "string", minLength: 1, maxLength: 60 });
+      expect(c, name).not.toHaveProperty("pattern");
+      expect(schemas[name].required ?? [], name).not.toContain("category");
+    }
+    expect(schemas.ArtifactList.required.sort()).toEqual(["categories", "items"]);
+    expect(schemas.ArtifactList.properties.categories.items).toEqual({
+      $ref: "#/components/schemas/CategoryCount",
+    });
+    // Echoed only when the call set one.
+    expect(schemas.PublishResult.properties.category.type).toBe("string");
+    expect(schemas.PublishResult.required).not.toContain("category");
+    expect(schemas.BundleResult.required).not.toContain("category");
+    const list = doc.paths["/artifacts"].get;
+    expect(list.parameters.map((p: Json) => p.name)).toEqual(["query", "category", "limit"]);
+    expect(doc.info.description).toContain("titles, categories, comments");
+  });
+
+  it("documents the owner's category edits: PATCH, the list and the session-only rename", () => {
+    const schemas = doc.components.schemas;
+    const patch = doc.paths["/artifacts/{ref}"].patch;
+    expect(patch.operationId).toBe("renameArtifact");
+    expect(patch.summary).toBe("Rename or set the category (owner)");
+    const body = schemas.RenameArtifactInput;
+    expect(body.required ?? []).toEqual([]);
+    expect(body.properties.title.type).toBe("string");
+    expect(body.properties.category.anyOf).toEqual([
+      expect.objectContaining({ type: "string", minLength: 1, maxLength: 60 }),
+      { type: "null" },
+    ]);
+    const list = doc.paths["/categories"].get;
+    expect(list.operationId).toBe("listCategories");
+    expect(list.security).toEqual([{ bearerAuth: ["artifacts:read"] }, { sessionCookie: [] }]);
+    expect(list.responses["200"].content["application/json"].schema).toEqual({
+      $ref: "#/components/schemas/CategoryList",
+    });
+    const rename = doc.paths["/categories/rename"].post;
+    expect(rename.operationId).toBe("renameCategory");
+    // The signed-in owner only: no bearer scheme, so no agent or token can call it.
+    expect(rename.security).toEqual([{ sessionCookie: [], csrfHeader: [] }]);
+    expect(schemas.RenameCategoryInput.required.sort()).toEqual(["from", "to"]);
+    expect(schemas.CategoryRenameResult.required.sort()).toEqual(["category", "updated"]);
+    for (const op of [patch, list, rename]) expect(op["x-mcp-tool"]).toBeUndefined();
+  });
+
   it("describes ArtifactDetail per type, with html required for an HTML page", () => {
     const schemas = doc.components.schemas;
     const detail = schemas.ArtifactDetail;

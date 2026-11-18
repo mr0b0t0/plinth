@@ -33,6 +33,7 @@ import {
   forgetAttempt,
   recordAttempt,
 } from "./attempts.ts";
+import { resolveCategory } from "./categories.ts";
 import type { Ctx } from "./context.ts";
 import { scanPublish } from "./publishCheck.ts";
 import {
@@ -55,8 +56,15 @@ import { artifactLimitFor, getUserById } from "./users.ts";
 /** What a staged version will become. */
 export type VersionTarget =
   /** A new artifact: `artifactId` is fresh and has no row yet (commitStaged inserts it). */
-  | { mode: "publish"; artifactId: string; type: ArtifactType; title?: string }
-  | { mode: "update"; artifact: ArtifactRow; baseVersion?: number; note?: string };
+  | { mode: "publish"; artifactId: string; type: ArtifactType; title?: string; category?: string }
+  | {
+      mode: "update";
+      artifact: ArtifactRow;
+      baseVersion?: number;
+      note?: string;
+      /** The resolved category to set with this version (owner only, checked by the caller). */
+      category?: string;
+    };
 
 /** A version's files after staging: every object it needs is in R2, nothing is committed. */
 export interface StagedVersion {
@@ -181,7 +189,7 @@ async function liveArtifactCount(ctx: Ctx, ownerId: string): Promise<number> {
  */
 export async function newArtifactTarget(
   ctx: Ctx,
-  input: { type: ArtifactType; title?: string; artifactId?: string },
+  input: { type: ArtifactType; title?: string; category?: string; artifactId?: string },
 ): Promise<VersionTarget> {
   const actor = requireActor(ctx);
   if (ctx.principal.kind === "agent" && !ctx.principal.scopes.has("artifacts:write")) {
@@ -198,11 +206,17 @@ export async function newArtifactTarget(
     if (artifacts + held.n >= limit) throw reservedLimitError(limit, artifacts, held);
   }
   const title = input.title?.trim();
+  // Resolved here for an inline publish, a ticket mint and a ticket redeem alike: a redeem snaps
+  // again, so a respelling the owner made in the meantime (same key) wins. A rename or merge to a
+  // name with another key reaches open tickets through renameCategory, which moves their name too.
+  const category =
+    input.category !== undefined ? await resolveCategory(ctx, user.id, input.category) : undefined;
   return {
     mode: "publish",
     artifactId: input.artifactId ?? newArtifactId(),
     type: input.type,
     ...(title ? { title } : {}),
+    ...(category !== undefined ? { category } : {}),
   };
 }
 
@@ -1136,8 +1150,8 @@ async function commitOnce(
       stmts.push(
         DB.prepare(
           `INSERT INTO artifacts (id, owner_id, slug, title, current_version, visibility, password_hash,
-             access_epoch, created_at, updated_at, type)
-           SELECT ?, ?, ?, ?, 0, ?, ?, 1, ?, ?, ?
+             access_epoch, created_at, updated_at, type, category)
+           SELECT ?, ?, ?, ?, 0, ?, ?, 1, ?, ?, ?, ?
             WHERE (SELECT count(*) FROM artifacts WHERE owner_id = ? AND deleted_at IS NULL) < ?
               AND ${QUOTA_GUARD}${ticketClause} AND ${ATTEMPT_GUARD}`,
         ).bind(
@@ -1150,6 +1164,7 @@ async function commitOnce(
           now,
           now,
           def.id,
+          target.category ?? null,
           ownerId,
           artifactLimit,
           ownerId,
@@ -1198,6 +1213,15 @@ async function commitOnce(
           WHERE id = ? AND current_version = ? AND EXISTS (SELECT 1 FROM versions WHERE id = ?)`,
       ).bind(n, now, artifactId, base, versionId),
     );
+    if (target.mode === "update" && target.category !== undefined) {
+      // The category commits with the version, behind the same guards: a stale or failed commit
+      // changes neither. Scoped to the actor's own row as well as the policy check before it.
+      stmts.push(
+        DB.prepare(
+          "UPDATE artifacts SET category = ? WHERE id = ? AND owner_id = ? AND EXISTS (SELECT 1 FROM versions WHERE id = ?)",
+        ).bind(target.category, artifactId, actor.userId, versionId),
+      );
+    }
     if (opts.ticketId) {
       stmts.push(
         DB.prepare(

@@ -3,10 +3,13 @@ import { describe, expect, it } from "vitest";
 import { users } from "../src/db/schema.ts";
 import {
   BUILD_NOTE,
+  CATEGORY_INSTRUCTION,
+  CATEGORY_NOTE,
   contentNote,
   MCP_TOOL_ANNOTATIONS,
   MCP_TOOL_SUMMARIES,
   OPAQUE_NOTE,
+  UNTRUSTED_NOTE,
   UPLOAD_NOTE,
 } from "../src/mcp/server.ts";
 import { agent, call, db, mcpClient, tool } from "./helpers.ts";
@@ -106,7 +109,7 @@ describe("MCP endpoint", () => {
       properties: Record<string, unknown>;
     };
     expect(Object.keys(schema.properties).sort()).toEqual(
-      ["base_version", "id", "note", "title", "type"].sort(),
+      ["base_version", "category", "id", "note", "title", "type"].sort(),
     );
     const instructions = client.getInstructions() ?? "";
     expect(instructions).toContain(
@@ -156,6 +159,7 @@ describe("MCP endpoint", () => {
     expect(got1.data.html).toBe("<h1>v1</h1>");
     const list = await tool(c, "list_artifacts", {});
     expect(list.data.items).toHaveLength(1);
+    expect(list.data.categories).toEqual([]);
     const versions = await tool(c, "list_versions", { id });
     expect(versions.data.items.map((v: { number: number }) => v.number)).toEqual([2, 1]);
     const restored = await tool(c, "restore_version", { id, version: 1 });
@@ -253,5 +257,85 @@ describe("MCP tool descriptions and content isolation", () => {
     expect(OPAQUE_NOTE).toMatch(/localStorage/);
     expect(OPAQUE_NOTE).toMatch(/fetch\(\)/);
     expect(contentNote({ contentIsolation: "origin" })).toBe("");
+  });
+});
+
+describe("categories over MCP", () => {
+  it("publish and start_upload describe category; update and list say who sees it", async () => {
+    const a = await agent();
+    const client = await mcpClient(a.token);
+    const { tools } = await client.listTools();
+    const desc = (name: string) => tools.find((t) => t.name === name)?.description ?? "";
+    expect(UNTRUSTED_NOTE).toContain("titles, categories, comments");
+    for (const name of ["publish_artifact", "start_upload"]) {
+      expect(desc(name)).toContain(CATEGORY_NOTE);
+    }
+    expect(desc("update_artifact")).toContain("category: owner only (refused for editors)");
+    expect(desc("start_upload")).toContain("with id, category is owner only");
+    expect(desc("list_artifacts")).toContain("plus categories");
+    expect(desc("list_artifacts")).toContain("limit 0 returns only the categories");
+    expect(desc("get_artifact")).toContain("category");
+    expect(client.getInstructions() ?? "").toContain(CATEGORY_INSTRUCTION);
+    // The JSON Schema stays a plain length-limited string: no pattern, no transform.
+    for (const name of ["publish_artifact", "update_artifact", "start_upload"]) {
+      const schema = tools.find((t) => t.name === name)?.inputSchema as {
+        properties: Record<string, Record<string, unknown>>;
+      };
+      expect(schema.properties.category, name).toMatchObject({
+        type: "string",
+        minLength: 1,
+        maxLength: 60,
+      });
+      expect(schema.properties.category, name).not.toHaveProperty("pattern");
+    }
+  });
+
+  it("list_artifacts returns items and the owner's categories, and filters by category", async () => {
+    const a = await agent();
+    const c = await mcpClient(a.token);
+    const one = await tool(c, "publish_artifact", {
+      title: "One",
+      html: "<p>1</p>",
+      category: "Plinth Docs",
+    });
+    expect(one.data.category).toBe("Plinth Docs");
+    const two = await tool(c, "publish_artifact", {
+      title: "Two",
+      html: "<p>2</p>",
+      category: "plinth-docs",
+    });
+    expect(two.data.category).toBe("Plinth Docs");
+    await tool(c, "publish_artifact", { title: "Three", html: "<p>3</p>" });
+    const all = await tool(c, "list_artifacts", {});
+    expect(all.data.items).toHaveLength(3);
+    expect(all.data.categories).toEqual([{ name: "Plinth Docs", count: 2 }]);
+    // limit 0: the names only, the cheap read before a publish.
+    const names = await tool(c, "list_artifacts", { limit: 0 });
+    expect(names.data).toEqual({ items: [], categories: [{ name: "Plinth Docs", count: 2 }] });
+    const filtered = await tool(c, "list_artifacts", { category: "PLINTH_DOCS" });
+    expect(filtered.data.items.map((i: { title: string }) => i.title).sort()).toEqual([
+      "One",
+      "Two",
+    ]);
+    // The owner's update may move it; the result names the stored spelling.
+    const moved = await tool(c, "update_artifact", {
+      id: two.data.id,
+      html: "<p>2b</p>",
+      base_version: 1,
+      category: "Other",
+    });
+    expect(moved.data).toMatchObject({ version: 2, category: "Other" });
+    const got = await tool(c, "get_artifact", { id: two.data.id });
+    expect(got.data.category).toBe("Other");
+  });
+
+  it("the owner's names never appear in tool descriptions or the server instructions", async () => {
+    const a = await agent();
+    const c = await mcpClient(a.token);
+    await tool(c, "publish_artifact", { title: "x", html: "<p>x</p>", category: "Zebra Unique" });
+    const fresh = await mcpClient(a.token);
+    const { tools } = await fresh.listTools();
+    expect(JSON.stringify(tools)).not.toContain("Zebra Unique");
+    expect(fresh.getInstructions() ?? "").not.toContain("Zebra Unique");
   });
 });

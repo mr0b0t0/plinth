@@ -8,9 +8,11 @@ import {
   canMakePublic,
   canModifyDoc,
   decide,
+  mayBulkEditCategories,
   type PageClaim,
   type Principal,
   pageDataAccess,
+  seesOwnerMetadata,
 } from "../src/policy.ts";
 
 const OWNER = "owner-id";
@@ -546,5 +548,39 @@ describe("policy: canModifyDoc", () => {
           allow: false,
           reason: "read_only",
         });
+  });
+});
+
+describe("policy: categories (owner-only metadata)", () => {
+  it("seesOwnerMetadata is true for the owner only", () => {
+    expect(seesOwnerMetadata("owner")).toBe(true);
+    for (const r of [...ROLES, null] as const) expect(seesOwnerMetadata(r), String(r)).toBe(false);
+  });
+
+  it("mayBulkEditCategories: a signed-in person only, never an agent, viewer or anonymous", () => {
+    expect(mayBulkEditCategories(owner)).toBe(true);
+    expect(mayBulkEditCategories({ ...owner, isAdmin: true })).toBe(true);
+    expect(mayBulkEditCategories(ownerAgent())).toBe(false);
+    expect(mayBulkEditCategories(viewerEmail)).toBe(false);
+    expect(mayBulkEditCategories(anon)).toBe(false);
+  });
+
+  it("manage covers category, owner only", () => {
+    // Setting one artifact's category is `manage`: the owner (taken down included) and the
+    // owner's agent with artifacts:write; never a grant role, a stranger or an admin.
+    for (const v of VISIBILITIES) {
+      expect(decide(owner, "manage", art(v), access()).allow).toBe(true);
+      expect(decide(ownerAgent(), "manage", art(v), access()).allow).toBe(true);
+      for (const role of ROLES) {
+        expect(decide(stranger, "manage", art(v), access({ grantRole: role })).allow).toBe(false);
+      }
+      expect(decide(stranger, "manage", art(v), access()).allow).toBe(false);
+      const admin: Principal = { ...stranger, isAdmin: true };
+      expect(decide(admin, "manage", art(v), access({ isAdmin: true })).allow).toBe(false);
+    }
+    expect(decide(owner, "manage", art("public", { takenDown: true }), access()).allow).toBe(true);
+    expect(
+      decide(ownerAgent(["artifacts:read"] as never), "manage", art("public"), access()).allow,
+    ).toBe(false);
   });
 });

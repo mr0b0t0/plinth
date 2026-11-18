@@ -263,6 +263,30 @@ describe("admin CLI: erase-user and erase-artifact", () => {
       .first<{ n: number }>();
     expect(after?.n).toBe(0);
   });
+  it("erase-artifact removes its upload tickets, and the category they carry", async () => {
+    const owner = await agent();
+    const { body: a } = await publish(owner.auth, {
+      title: "Gone soon",
+      category: "Secret Client",
+    });
+    const mint = await call("/api/v1/uploads", {
+      method: "POST",
+      headers: { ...owner.auth, "Content-Type": "application/json" },
+      body: JSON.stringify({ id: a.id, base_version: 1, category: "Secret Client" }),
+    });
+    expect(mint.status).toBe(201);
+    const count = async () =>
+      (
+        await env.DB.prepare(
+          "SELECT count(*) AS n FROM upload_tickets WHERE category IS NOT NULL AND (artifact_id = ?1 OR result_artifact_id = ?1)",
+        )
+          .bind(a.id)
+          .first<{ n: number }>()
+      )?.n;
+    expect(await count()).toBe(1);
+    expect((await runStatements(eraseArtifactSql(a.id))).at(-1)).toHaveLength(1);
+    expect(await count()).toBe(0);
+  });
 });
 
 // Shared data (docs/superpowers/specs/2026-11-14-shared-state-design.md section 11).

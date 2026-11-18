@@ -570,3 +570,37 @@ describe("CLI hints follow the npm release", () => {
     expect(orRunCliPublish("0.4.1")).toBe(", or run npx @mr0b0t0/plinth publish <dir>");
   });
 });
+
+// Categories (docs/spec.md "Categories") are the owner's private organisation: no anonymous
+// surface names them, public artifacts included.
+describe("anonymous surfaces never carry the category", () => {
+  it("the agent note, og tags, /source and /llms.txt leave it out", async () => {
+    const SECRET = "Secret Client";
+    const a = await agent();
+    const { body: p } = await publish(a.auth, { title: "Open plan", category: SECRET });
+    expect(p.category).toBe(SECRET);
+    await setRow(p.id, { visibility: "public" });
+    for (const path of [
+      `/a/${p.slug}`,
+      `/a/${p.slug}/v/1`,
+      `/open/${p.id}`,
+      `/a/${p.slug}/source`,
+      "/llms.txt",
+    ]) {
+      const res = await run(path, {}, PUBLIC_ON);
+      expect(res.status, path).toBe(200);
+      const body = await res.text();
+      expect(body, path).not.toContain(SECRET);
+      if (path === `/a/${p.slug}`) {
+        expect(body).toContain('property="og:title" content="Open plan"');
+        expect(note(body)).toContain("<q>Open plan</q>");
+      }
+    }
+    // An anonymous read of the artifact itself gets category: null.
+    const api = await run(`/api/v1/artifacts/${p.id}`, {}, PUBLIC_ON);
+    expect(api.status).toBe(200);
+    const text = await api.text();
+    expect(JSON.parse(text).category).toBeNull();
+    expect(text).not.toContain(SECRET);
+  });
+});

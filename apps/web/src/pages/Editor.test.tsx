@@ -100,6 +100,7 @@ const artifact = (role: string, extra: Record<string, unknown> = {}) => ({
   role,
   taken_down: false,
   thumbnail_url: null,
+  category: null,
   version: 3,
   source_path: "index.html",
   html: "<p>v3</p>",

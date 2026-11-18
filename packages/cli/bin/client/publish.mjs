@@ -34,7 +34,7 @@ import {
   readJson,
 } from "./http.mjs";
 import { gzipTarStream } from "./tar.mjs";
-import { UPLOAD_TOKEN_PREFIX } from "./vendor/constants.mjs";
+import { LIMITS, UPLOAD_TOKEN_PREFIX } from "./vendor/constants.mjs";
 import { isLoopbackHost } from "./vendor/plinth-oauth.mjs";
 
 /** Updates whose source plus changed files stay under this go inline (base64 in one JSON body). */
@@ -65,6 +65,29 @@ export function checkUploadUrl(raw, { expectedOrigin, exitCode = EXIT.usage } = 
             : null;
   if (why) throw new CliError(`Refusing the upload URL ${u.origin}${u.pathname}: ${why}`, exitCode);
   return u.toString();
+}
+
+/** Control and format (bidi, zero-width) characters: the server refuses them. Line breaks are whitespace. */
+const REFUSED_CATEGORY_CHARS = /[\p{Cc}\p{Cf}]/u;
+
+/**
+ * --category as the server stores it (NFC, whitespace runs collapsed, trimmed), or a usage error
+ * for a name it would refuse. The server stays the authority: it also snaps the name onto the
+ * owner's existing spelling and echoes the one it stored.
+ */
+export function checkCategory(raw) {
+  const name = String(raw).normalize("NFC").replace(/\s+/gu, " ").trim();
+  const why = !name
+    ? "needs at least one character"
+    : name.length > LIMITS.maxCategoryLength
+      ? `is at most ${LIMITS.maxCategoryLength} characters`
+      : REFUSED_CATEGORY_CHARS.test(name)
+        ? "cannot contain control or invisible characters"
+        : !/[^\s\-_]/u.test(name.normalize("NFKC"))
+          ? "needs a character other than spaces, '-' and '_'"
+          : null;
+  if (why) throw new CliError(`--category ${why} (a short project or repo name)`, EXIT.usage);
+  return name;
 }
 
 function checkDir(dir) {
@@ -362,6 +385,11 @@ const staleBase = (ref, base) => (now) =>
 function apiFailure(e) {
   if (!(e instanceof ApiError)) return e;
   const d = e.details ?? {};
+  if (e.code === "forbidden" && d.reason === "owner_only") {
+    return new CliError(
+      "Only the owner sets an artifact's category. Nothing was published; run it again without --category.",
+    );
+  }
   let msg = describeApiError(e);
   if (d.reason === "upload_used" && d.url) msg += `\nIt was already published: ${d.url}`;
   return new CliError(msg);
@@ -418,7 +446,7 @@ async function verify(api, result, files) {
 
 function report(result, check, opts, out) {
   if (opts.json) {
-    const { id, slug, version, url, content_url, stored, warnings, recovered } = result;
+    const { id, slug, version, url, content_url, stored, warnings, recovered, category } = result;
     out.stdout(
       JSON.stringify(
         {
@@ -430,6 +458,7 @@ function report(result, check, opts, out) {
           stored,
           warnings: warnings ?? [],
           verified: check.verified,
+          ...(typeof category === "string" ? { category } : {}),
           ...(recovered ? { recovered: true } : {}),
         },
         null,
@@ -440,7 +469,9 @@ function report(result, check, opts, out) {
     if (check.note && !check.verified) out.stderr(check.note);
     return;
   }
-  out.stdout(`Published v${result.version}: ${result.url}`);
+  // The category is the name the server stored (it may have snapped onto an existing spelling).
+  const under = typeof result.category === "string" ? ` under ${result.category}` : "";
+  out.stdout(printable(`Published v${result.version}${under}: ${result.url}`));
   if (result.recovered) out.stdout(LOST_NOTE);
   const s = result.stored;
   if (s) {
@@ -503,6 +534,7 @@ export async function publish(dir, opts, ctx) {
   } else if (opts.title !== undefined) {
     throw new CliError("--title applies to a new artifact only", EXIT.usage);
   }
+  const category = opts.category !== undefined ? { category: checkCategory(opts.category) } : {};
   let base;
   if (opts["base-version"] !== undefined) {
     base = Number(opts["base-version"]);
@@ -526,14 +558,20 @@ export async function publish(dir, opts, ctx) {
     hashFiles(files);
     if (opts["dry-run"]) {
       ctx.stdout(
-        `Would publish ${files.length} files (${formatBytes(total)}) to ${ctx.origin} as a new ${type === "doc" ? "document" : "page"}, in one bundle.`,
+        printable(
+          `Would publish ${files.length} files (${formatBytes(total)}) to ${ctx.origin} as a new ${type === "doc" ? "document" : "page"}${category.category !== undefined ? ` under ${category.category}` : ""}, in one bundle.`,
+        ),
       );
       return EXIT.ok;
     }
     await ctx.requireAuth();
     let ticket;
     try {
-      ticket = await api.post("/uploads", { type, ...(opts.title ? { title: opts.title } : {}) });
+      ticket = await api.post("/uploads", {
+        type,
+        ...(opts.title ? { title: opts.title } : {}),
+        ...category,
+      });
     } catch (e) {
       throw apiFailure(e);
     }
@@ -597,6 +635,10 @@ export async function publish(dir, opts, ctx) {
             ? `${ref} is already published as v${current}, which matches this folder: an earlier run whose answer was lost published it. Nothing was sent.`
             : `${ref} v${current} already matches this folder: nothing to publish. Nothing was sent.`,
         );
+        if (category.category !== undefined)
+          ctx.stderr(
+            "--category was not applied, since nothing was sent; set it on the artifact's Settings page.",
+          );
         const url = detail.url ?? `${ctx.origin}/a/${detail.slug}`;
         if (opts.json) {
           ctx.stdout(
@@ -650,6 +692,7 @@ export async function publish(dir, opts, ctx) {
           ),
           base_version: base,
           ...note,
+          ...category,
         });
         try {
           try {
@@ -669,7 +712,12 @@ export async function publish(dir, opts, ctx) {
           );
         }
       } else {
-        const ticket = await api.post("/uploads", { id: detail.id, base_version: base, ...note });
+        const ticket = await api.post("/uploads", {
+          id: detail.id,
+          base_version: base,
+          ...note,
+          ...category,
+        });
         const uploadUrl = checkUploadUrl(ticket.upload_url, {
           expectedOrigin: ctx.origin,
           exitCode: EXIT.error,
@@ -699,9 +747,24 @@ export async function publish(dir, opts, ctx) {
     }
   }
 
+  // A recovered answer (upload status, or the artifact read after a lost PUT) has no category: read
+  // the name the server stored back from the artifact, so --json still carries it.
+  if (result.recovered && category.category !== undefined && typeof result.category !== "string") {
+    result = { ...result, ...(await storedCategory(api, result.id)) };
+  }
   const check = await verify(api, result, files);
   report(result, check, opts, ctx);
   return check.failed ? EXIT.error : EXIT.ok;
+}
+
+/** `{ category }` as the artifact holds it now (the owner's read), or `{}` when it cannot be read. */
+async function storedCategory(api, id) {
+  try {
+    const a = await api.get(`/artifacts/${encodeURIComponent(id)}`);
+    return typeof a.category === "string" ? { category: a.category } : {};
+  } catch {
+    return {};
+  }
 }
 
 /** plinth upload <dir> --to <upload_url> */

@@ -18,22 +18,26 @@ import {
   listArtifacts,
   listVersions,
   publishArtifact,
-  renameArtifact,
   requireArtifact,
   restoreVersion,
   setVisibility,
   updateArtifact,
 } from "../services/artifacts.ts";
+import { patchArtifact } from "../services/categories.ts";
 import { scheduleThumbnail, thumbnailResponse } from "../services/thumbnails.ts";
 import { type AppEnv, parseBody, parseInput, serviceCtx } from "./context.ts";
 
 export const artifactsApi = new Hono<AppEnv>();
 
 artifactsApi.get("/artifacts", async (c) => {
-  const { query } = parseInput(listArtifactsInput, {
+  const limit = c.req.query("limit");
+  const input = parseInput(listArtifactsInput, {
     query: c.req.query("query") ?? c.req.query("q"),
+    category: c.req.query("category"),
+    // A query string is text: a non-number fails the schema's integer check (400).
+    limit: limit === undefined || limit === "" ? undefined : Number(limit),
   });
-  return c.json({ items: await listArtifacts(serviceCtx(c), query) });
+  return c.json(await listArtifacts(serviceCtx(c), input));
 });
 
 artifactsApi.post("/artifacts", async (c) => {
@@ -57,8 +61,8 @@ artifactsApi.put("/artifacts/:ref", async (c) => {
 });
 
 artifactsApi.patch("/artifacts/:ref", async (c) => {
-  const { title } = await parseBody(c, renameArtifactInput);
-  return c.json(await renameArtifact(serviceCtx(c), c.req.param("ref"), title));
+  const input = await parseBody(c, renameArtifactInput);
+  return c.json(await patchArtifact(serviceCtx(c), c.req.param("ref"), input));
 });
 
 artifactsApi.delete("/artifacts/:ref", async (c) => {

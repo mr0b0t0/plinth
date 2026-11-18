@@ -85,6 +85,10 @@ export const LIMITS = {
   maxWarnings: 50,
   maxAssetPathLength: 200,
   maxTitleLength: 200,
+  /** An artifact's category name (docs/spec.md "Categories"). */
+  maxCategoryLength: 60,
+  /** Category names list_artifacts and GET /categories return, most-used first. */
+  maxCategoriesListed: 500,
   maxNoteLength: 500,
   maxCommentLength: 10_000,
   maxLabelLength: 80,

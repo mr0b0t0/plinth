@@ -3,6 +3,7 @@
 import {
   ARTIFACT_ID_RE,
   type ArtifactDetail,
+  type ArtifactList,
   type ArtifactSummary,
   type AssetInput,
   type Author,
@@ -37,9 +38,17 @@ import {
   decide,
   principalEmail,
   principalUserId,
+  seesOwnerMetadata,
 } from "../policy.ts";
 import { requireTypeDef, resolveSource } from "./artifactTypes.ts";
 import { claimArtifactAttempts } from "./attempts.ts";
+import {
+  matchingSpellings,
+  ownerCategories,
+  patchArtifact,
+  requireCategoryRight,
+  resolveCategory,
+} from "./categories.ts";
 import type { Ctx } from "./context.ts";
 import { wipeArtifactData } from "./data.ts";
 import {
@@ -230,6 +239,8 @@ export function toSummary(
       thumbnailsActive(ctx.config, ctx.env) && !a.takenDownAt
         ? appUrl(ctx.config, `/api/v1/artifacts/${a.id}/thumbnail?version=${a.currentVersion}`)
         : null,
+    // The read gate for owner-only metadata: every summary path goes through here.
+    category: seesOwnerMetadata(role) ? (a.category ?? null) : null,
   };
 }
 
@@ -334,6 +345,13 @@ export interface PublishInput {
   visibility: Visibility;
   password?: string;
   emails?: string[];
+  /** The owner's category for it (docs/spec.md "Categories"). */
+  category?: string;
+}
+
+/** The stored category, echoed only when the call set one (the caller is then the owner). */
+function withCategory(result: PublishResult, target: VersionTarget): PublishResult {
+  return target.category !== undefined ? { ...result, category: target.category } : result;
 }
 
 /**
@@ -401,7 +419,11 @@ function checkSourceSize(def: { sourceLabel: string; maxSourceBytes: number }, t
 
 export async function publishArtifact(ctx: Ctx, input: PublishInput): Promise<PublishResult> {
   const { def, text } = resolveSource(input, null);
-  const target = await newArtifactTarget(ctx, { type: def.id, title: input.title });
+  const target = await newArtifactTarget(ctx, {
+    type: def.id,
+    title: input.title,
+    ...(input.category !== undefined ? { category: input.category } : {}),
+  });
   const p = ctx.principal;
   const userId = p.kind === "user" || p.kind === "agent" ? p.userId : null;
   if (!userId) throw unauthorized();
@@ -419,7 +441,7 @@ export async function publishArtifact(ctx: Ctx, input: PublishInput): Promise<Pu
     passwordHash,
   });
   if (input.emails?.length) await replaceViewerGrants(ctx, result.id, input.emails);
-  return result;
+  return withCategory(result, target);
 }
 
 export interface UpdateInput {
@@ -430,6 +452,8 @@ export interface UpdateInput {
   assets?: AssetInput[];
   note?: string;
   base_version?: number;
+  /** Owner only; omitted keeps the current category. */
+  category?: string;
 }
 
 export async function updateArtifact(ctx: Ctx, input: UpdateInput): Promise<PublishResult> {
@@ -443,9 +467,21 @@ export async function updateArtifact(ctx: Ctx, input: UpdateInput): Promise<Publ
   const { def, text } = resolveSource(input, requireTypeDef(target.artifact.type).id);
   checkSourceSize(def, text);
   precheckAssets(ctx, input.assets);
+  // The category is the owner's: an editor's call that carries one is refused here, before the
+  // rate limit and any R2 operation, never silently dropped.
+  if (input.category !== undefined) {
+    await requireCategoryRight(ctx, target.artifact);
+    target.category = await resolveCategory(
+      ctx,
+      target.artifact.ownerId,
+      input.category,
+      target.artifact.id,
+    );
+  }
   await enforcePublishRate(ctx);
   // No assets given: the current version's assets are carried forward as references.
-  return writeVersion(ctx, target, (s) => stageInline(s, text, input.assets));
+  const result = await writeVersion(ctx, target, (s) => stageInline(s, text, input.assets));
+  return withCategory(result, target);
 }
 
 export async function getArtifact(
@@ -477,7 +513,16 @@ export async function getArtifact(
     : { ...base, type: def.id, content: text };
 }
 
-export async function listArtifacts(ctx: Ctx, query?: string): Promise<ArtifactSummary[]> {
+/**
+ * The caller's artifacts and those shared with them (optionally by title, and by category among the
+ * caller's own; at most `limit`, 500 by default), plus the caller's own category names.
+ * `categories` never depends on the filters and never holds another owner's names, so a
+ * collaborator cannot probe them.
+ */
+export async function listArtifacts(
+  ctx: Ctx,
+  filter: { query?: string; category?: string; limit?: number } = {},
+): Promise<ArtifactList> {
   const uid = principalUserId(ctx.principal);
   const email = principalEmail(ctx.principal);
   if (!uid || !email) throw unauthorized();
@@ -488,7 +533,17 @@ export async function listArtifacts(ctx: Ctx, query?: string): Promise<ArtifactS
     .select({ id: accessGrants.artifactId })
     .from(accessGrants)
     .where(eq(accessGrants.email, email));
-  const q = query?.trim().toLowerCase();
+  const categories = await ownerCategories(ctx, uid);
+  // limit 0: the names only, the cheap read agents make before they publish.
+  if (filter.limit === 0) return { items: [], categories };
+  let inCategory: ReturnType<typeof and> | undefined;
+  // An empty filter is no filter.
+  if (filter.category?.trim()) {
+    const spellings = await matchingSpellings(ctx, uid, filter.category);
+    if (spellings.length === 0) return { items: [], categories };
+    inCategory = and(eq(artifacts.ownerId, uid), inArray(artifacts.category, spellings));
+  }
+  const q = filter.query?.trim().toLowerCase();
   const rows = await ctx.db
     .select({ a: artifacts, owner: users })
     .from(artifacts)
@@ -500,12 +555,13 @@ export async function listArtifacts(ctx: Ctx, query?: string): Promise<ArtifactS
         q
           ? or(like(sql`lower(${artifacts.title})`, `%${q}%`), like(artifacts.slug, `%${q}%`))
           : undefined,
+        inCategory,
       ),
     )
     .orderBy(desc(artifacts.updatedAt))
-    .limit(500)
+    .limit(filter.limit ?? 500)
     .all();
-  if (rows.length === 0) return [];
+  if (rows.length === 0) return { items: [], categories };
   const ids = rows.map((r) => r.a.id);
   const counts = await ctx.db
     .select({ id: versions.artifactId, n: sql<number>`count(*)` })
@@ -520,7 +576,7 @@ export async function listArtifacts(ctx: Ctx, query?: string): Promise<ArtifactS
     .all();
   const countBy = new Map(counts.map((c) => [c.id, c.n]));
   const grantBy = new Map(grants.map((g) => [g.artifactId, g.role]));
-  return rows.map((r) =>
+  const items = rows.map((r) =>
     toSummary(
       ctx,
       r.a,
@@ -529,6 +585,7 @@ export async function listArtifacts(ctx: Ctx, query?: string): Promise<ArtifactS
       r.a.ownerId === uid ? "owner" : (grantBy.get(r.a.id) ?? "viewer"),
     ),
   );
+  return { items, categories };
 }
 
 export async function listVersions(ctx: Ctx, ref: string): Promise<VersionInfo[]> {
@@ -689,18 +746,13 @@ export async function setVisibility(ctx: Ctx, input: SetVisibilityInput): Promis
   return summaryFor(ctx, fresh, role);
 }
 
+/** Rename an artifact (owner only). A title-only patchArtifact. */
 export async function renameArtifact(
   ctx: Ctx,
   ref: string,
   title: string,
 ): Promise<ArtifactSummary> {
-  const { artifact, role } = await requireArtifact(ctx, ref, "manage");
-  await ctx.db
-    .update(artifacts)
-    .set({ title: title.trim(), updatedAt: nowIso() })
-    .where(eq(artifacts.id, artifact.id))
-    .run();
-  return summaryFor(ctx, { ...artifact, title: title.trim() }, role);
+  return patchArtifact(ctx, ref, { title });
 }
 
 /**

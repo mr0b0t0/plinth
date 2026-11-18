@@ -1,5 +1,6 @@
 // Types, schemas and constants shared by the Worker and the web app.
 export * from "./artifactTypes.ts";
+export * from "./categories.ts";
 export * from "./constants.ts";
 export * from "./data.ts";
 export * from "./errors.ts";
