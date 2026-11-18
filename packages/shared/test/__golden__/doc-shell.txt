@@ -1,0 +1,32 @@
+<!doctype html><html lang="en"><head><meta http-equiv="Content-Security-Policy" content="script-src 'self'"><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Notes</title>
+<link rel="stylesheet" href="/__plinth/types/doc/doc.css">
+</head><body>
+<main id="__plinth-doc" class="plinth-doc" tabindex="-1"></main>
+<script type="application/json" id="__plinth-content">{"v":1,"type":"doc","path":"content.md","app_origin":"https://plinth.example","text":"# Hi\n\nBody"}</script>
+<script src="/__plinth/types/doc/doc.js"></script>
+</body></html>
+----
+<!doctype html><html lang="en"><head><meta http-equiv="Content-Security-Policy" content="script-src 'self'"><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>&lt;/title&gt;&lt;script&gt;alert(&quot;x&quot;)&lt;/script&gt;&amp;&#39;</title>
+<link rel="stylesheet" href="/__content/abcdefghij0123456789/__plinth/types/doc/doc.css">
+</head><body>
+<main id="__plinth-doc" class="plinth-doc" tabindex="-1"></main>
+<script type="application/json" id="__plinth-content">{"v":1,"type":"doc","path":"content.md","app_origin":"https://plinth.example","text":"# T\n\n\u003c/script\u003e\u003cscript\u003ealert(1)\u003c/script\u003e\n\u003c!-- x --\u003e\u2028\u2029"}</script>
+<script src="/__content/abcdefghij0123456789/__plinth/types/doc/doc.js"></script>
+</body></html>
+----
+<!doctype html><html lang="en"><head><meta http-equiv="Content-Security-Policy" content="script-src 'self'"><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title></title>
+<link rel="stylesheet" href="/__plinth/types/doc/doc.css">
+</head><body>
+<main id="__plinth-doc" class="plinth-doc" tabindex="-1"></main>
+<script type="application/json" id="__plinth-content">{"v":1,"type":"doc","path":"content.md","app_origin":"","text":"","live":"room"}</script>
+<script src="/__plinth/types/doc/doc.js"></script>
+</body></html>

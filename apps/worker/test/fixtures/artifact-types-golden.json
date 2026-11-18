@@ -1,0 +1,288 @@
+{
+  "resolveSource": {
+    "publish default html": {
+      "ok": {
+        "type": "html",
+        "text": "<p>x</p>"
+      }
+    },
+    "publish html with content": {
+      "error": {
+        "code": "invalid_input",
+        "message": "content is for typed artifacts: pass type \"doc\", or send html",
+        "details": {
+          "type": "html",
+          "field": "content"
+        }
+      }
+    },
+    "publish html without html": {
+      "error": {
+        "code": "invalid_input",
+        "message": "html is required (or pass type \"doc\" with content)",
+        "details": {
+          "type": "html",
+          "field": "html"
+        }
+      }
+    },
+    "publish explicit html": {
+      "ok": {
+        "type": "html",
+        "text": "<!doctype html><html><body>x</body></html>"
+      }
+    },
+    "publish doc": {
+      "ok": {
+        "type": "doc",
+        "text": "# Plan\n\nText"
+      }
+    },
+    "publish doc with html": {
+      "error": {
+        "code": "invalid_input",
+        "message": "type doc takes Markdown in content, not html",
+        "details": {
+          "type": "doc",
+          "field": "html"
+        }
+      }
+    },
+    "publish doc without content": {
+      "error": {
+        "code": "invalid_input",
+        "message": "type doc needs its Markdown in content",
+        "details": {
+          "type": "doc",
+          "field": "content"
+        }
+      }
+    },
+    "publish doc with a whole document": {
+      "error": {
+        "code": "invalid_input",
+        "message": "content for type doc is Markdown. To publish HTML, use type \"html\" and the html field.",
+        "details": {
+          "type": "doc",
+          "field": "content"
+        }
+      }
+    },
+    "publish doc with <html>": {
+      "error": {
+        "code": "invalid_input",
+        "message": "content for type doc is Markdown. To publish HTML, use type \"html\" and the html field.",
+        "details": {
+          "type": "doc",
+          "field": "content"
+        }
+      }
+    },
+    "publish doc mentioning html": {
+      "ok": {
+        "type": "doc",
+        "text": "Use <html> tags"
+      }
+    },
+    "publish unknown type": {
+      "error": {
+        "code": "invalid_input",
+        "message": "Unknown artifact type: deck",
+        "details": {
+          "type": "deck",
+          "field": "type"
+        }
+      }
+    },
+    "publish prototype key": {
+      "error": {
+        "code": "invalid_input",
+        "message": "Unknown artifact type: toString",
+        "details": {
+          "type": "toString",
+          "field": "type"
+        }
+      }
+    },
+    "update html": {
+      "ok": {
+        "type": "html",
+        "text": "<p>y</p>"
+      }
+    },
+    "update html with content": {
+      "error": {
+        "code": "invalid_input",
+        "message": "This artifact is an HTML page: send html. The type cannot change.",
+        "details": {
+          "type": "html",
+          "field": "content"
+        }
+      }
+    },
+    "update html without html": {
+      "error": {
+        "code": "invalid_input",
+        "message": "html is required (or pass type \"doc\" with content)",
+        "details": {
+          "type": "html",
+          "field": "html"
+        }
+      }
+    },
+    "update doc": {
+      "ok": {
+        "type": "doc",
+        "text": "# y"
+      }
+    },
+    "update doc with html": {
+      "error": {
+        "code": "invalid_input",
+        "message": "This artifact is a doc: send its Markdown as content. The type cannot change.",
+        "details": {
+          "type": "doc",
+          "field": "html"
+        }
+      }
+    },
+    "update doc without content": {
+      "error": {
+        "code": "invalid_input",
+        "message": "This artifact is a doc: send its Markdown as content.",
+        "details": {
+          "type": "doc",
+          "field": "content"
+        }
+      }
+    },
+    "update doc with a whole document": {
+      "error": {
+        "code": "invalid_input",
+        "message": "content for type doc is Markdown. To publish HTML, use type \"html\" and the html field.",
+        "details": {
+          "type": "doc",
+          "field": "content"
+        }
+      }
+    },
+    "update doc ignores type": {
+      "ok": {
+        "type": "doc",
+        "text": "# y"
+      }
+    }
+  },
+  "checkAsset": {
+    "html index.html": {
+      "error": {
+        "code": "invalid_input",
+        "message": "index.html is the html field, not an asset",
+        "details": {
+          "type": "html",
+          "field": "assets",
+          "path": "index.html"
+        }
+      }
+    },
+    "html script": {
+      "ok": null
+    },
+    "html image": {
+      "ok": null
+    },
+    "doc index.html": {
+      "error": {
+        "code": "invalid_input",
+        "message": "content.md and index.html belong to the doc, not its assets",
+        "details": {
+          "type": "doc",
+          "field": "assets",
+          "path": "index.html"
+        }
+      }
+    },
+    "doc content.md": {
+      "error": {
+        "code": "invalid_input",
+        "message": "content.md and index.html belong to the doc, not its assets",
+        "details": {
+          "type": "doc",
+          "field": "assets",
+          "path": "content.md"
+        }
+      }
+    },
+    "doc image": {
+      "ok": null
+    },
+    "doc svg": {
+      "ok": null
+    },
+    "doc script": {
+      "error": {
+        "code": "invalid_input",
+        "message": "A doc's assets are images (png, jpg, gif, webp, avif, svg)",
+        "details": {
+          "type": "doc",
+          "field": "assets",
+          "path": "app.js",
+          "content_type": "text/javascript"
+        }
+      }
+    },
+    "doc css": {
+      "error": {
+        "code": "invalid_input",
+        "message": "A doc's assets are images (png, jpg, gif, webp, avif, svg)",
+        "details": {
+          "type": "doc",
+          "field": "assets",
+          "path": "a.css",
+          "content_type": "text/css"
+        }
+      }
+    }
+  },
+  "titleFromSource": {
+    "html title": {
+      "ok": "My & page"
+    },
+    "html entities": {
+      "ok": "<a> \"b\" 'c'"
+    },
+    "html empty title": {
+      "ok": null
+    },
+    "html no title": {
+      "ok": null
+    },
+    "html unclosed": {
+      "ok": null
+    },
+    "html long": {
+      "ok": "tttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttt"
+    },
+    "html late title": {
+      "ok": null
+    },
+    "doc heading": {
+      "ok": "Plan"
+    },
+    "doc empty heading": {
+      "ok": "Real"
+    },
+    "doc no heading": {
+      "ok": null
+    },
+    "doc hash without space": {
+      "ok": null
+    },
+    "doc long": {
+      "ok": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+    },
+    "doc late heading": {
+      "ok": null
+    }
+  }
+}
