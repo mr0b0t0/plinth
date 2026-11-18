@@ -117,7 +117,7 @@ function Owner({ artifact: a, you }: { artifact: ArtifactSummary; you?: string }
   );
 }
 
-/** The owner's category. Long names are cut with an ellipsis; the full name is the tooltip. */
+/** The owner's category. A long name wraps inside the badge (dashboard.css), never cut. */
 function CategoryBadge({ name }: { name: string }) {
   return (
     <Badge icon={FolderSimpleIcon} srPrefix="Category:" title={name} className="pl-dash__category">

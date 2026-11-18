@@ -142,8 +142,9 @@ repos or clients do not pile up together.
    project you are working in: the repo's name (from the git remote or the top folder, without the
    org prefix), or the client or project the person named. Never the kind of page ("report",
    "dashboard").
-2. Call `list_artifacts` once first. If a name in its `categories` means the same project, reuse
-   it exactly as listed. Make a new name only for a project that is not in the list.
+2. Call `list_artifacts` once first, with `limit: 0` to get only the names. If a name in its
+   `categories` means the same project, reuse it exactly as listed. Make a new name only for a
+   project that is not in the list.
 3. Keep it short, up to 60 characters. Never put paths, URLs, emails, tokens or secrets in it.
 4. On updates, leave it out. Pass it only when `get_artifact` shows `role: "owner"` and
    `category: null`, or when the person asks to move the artifact. Never send it on an artifact you

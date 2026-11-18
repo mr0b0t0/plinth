@@ -303,6 +303,26 @@ describe("collaborators and categories", () => {
     expect(listed.text).not.toContain(CATEGORY);
   });
 
+  it("a collaborator who holds the owner's name too, filtering by it, gets only their own artifact", async () => {
+    // matchingSpellings finds the editor's own spelling here, so the query runs: only the owner_id
+    // clause keeps the owner's shared artifact (same name) out of the result.
+    const { editor, p } = await withEditor();
+    const mine = await publish(editor.auth, { category: CATEGORY });
+    expect(mine.body.category).toBe(CATEGORY);
+    const all = await json(await call("/api/v1/artifacts", { headers: editor.auth }));
+    expect(all.items.map((i: { id: string }) => i.id)).toContain(p.id);
+    const filtered = await json(
+      await call(`/api/v1/artifacts?category=${encodeURIComponent(CATEGORY)}`, {
+        headers: editor.auth,
+      }),
+    );
+    expect(filtered.items.map((i: { id: string }) => i.id)).toEqual([mine.body.id]);
+    expect(filtered.categories).toEqual([{ name: CATEGORY, count: 1 }]);
+    const c = await mcpClient(editor.token);
+    const listed = await tool(c, "list_artifacts", { category: CATEGORY.toLowerCase() });
+    expect(listed.data.items.map((i: { id: string }) => i.id)).toEqual([mine.body.id]);
+  });
+
   const patch = (headers: Record<string, string>, ref: string, body: unknown) =>
     call(`/api/v1/artifacts/${ref}`, {
       method: "PATCH",

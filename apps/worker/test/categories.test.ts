@@ -18,6 +18,11 @@ describe("normalizeCategory", () => {
     expect(normalizeCategory(decomposed)).toBe("Café");
   });
 
+  it("turns line breaks, tabs and the line and paragraph separators into one space", () => {
+    expect(normalizeCategory("acme\u2028site\u2029web\n\tapp")).toBe("acme site web app");
+    expect(categoryProblem(normalizeCategory("acme\u2028site"))).toBeNull();
+  });
+
   it("keeps case, separators and punctuation", () => {
     expect(normalizeCategory("ACME_site-web.app/v2")).toBe("ACME_site-web.app/v2");
   });
@@ -51,6 +56,17 @@ describe("categoryProblem", () => {
     ]) {
       expect(categoryProblem(bad), JSON.stringify(bad)).not.toBeNull();
     }
+  });
+});
+
+describe("categoryProblem on names with an empty key", () => {
+  it("refuses a name made only of spaces, '-' and '_' (it could never be filtered or renamed)", () => {
+    for (const bad of ["-", "_", "- _", "--__--", "－"]) {
+      expect(categoryKey(bad), JSON.stringify(bad)).toBe("");
+      expect(categoryProblem(normalizeCategory(bad)), JSON.stringify(bad)).not.toBeNull();
+    }
+    expect(categoryProblem("-a-")).toBeNull();
+    expect(categoryProblem(".")).toBeNull();
   });
 });
 

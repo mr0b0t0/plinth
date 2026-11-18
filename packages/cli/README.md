@@ -128,7 +128,8 @@ npx @mr0b0t0/plinth publish dist --id my-report-k3x9   # the next version of tha
   then prints the link, how many files were written and reused, and any warnings (for example a
   file the page refers to that is not in the folder). `--json` prints `id`, `slug`, `version`,
   `url`, `content_url`, `stored`, `warnings` and `verified` for scripts and agents (and
-  `category` when you passed `--category`).
+  `category` when you passed `--category`; after a lost answer it is read back from the artifact,
+  and left out only when that read fails too).
 - **A lost answer.** If the connection drops, or a proxy answers instead of Plinth, after the
   whole folder was sent, the command does not send it again: it asks the upload (or, for an inline
   update, reads the artifact, and again a moment later) whether it was published, and prints that
@@ -146,7 +147,9 @@ npx @mr0b0t0/plinth publish dist --id my-report-k3x9   # the next version of tha
 - **Category.** `--category C` files the artifact under a project on your dashboard, usually the
   repo's name; reuse a name you already have. The server matches case, spaces, `-` and `_` onto
   your existing spelling and prints the name it stored (`--json` adds `category`). Up to 60
-  characters. With `--id` it changes the category too, and only the artifact's owner may pass it.
+  characters, not only spaces, `-` and `_`. With `--id` it changes the category too, and only the
+  artifact's owner may pass it; when the folder already matches and nothing is sent, the category is
+  not applied either, and the command says so.
   The command never guesses it (from git or anything else); only you or your agent set it.
 - **Build settings.** Use relative URLs (Vite: `base: './'`).
 

@@ -170,6 +170,7 @@ export function CategorySection({
   const [names, setNames] = useState<CategoryCount[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<"save" | "remove" | null>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
 
   // The owner's names, for the datalist and the snap hint. Without them the Worker still snaps.
   useEffect(() => {
@@ -185,6 +186,14 @@ export function CategorySection({
   const typed = normalizeCategory(value);
   const target = typed ? snapCategory(typed, snapTargets(artifact, names ?? [])) : "";
   const dirty = target !== "" && target !== artifact.category;
+  // A respelling that snaps back onto the current name, which other artifacts share: Save stays
+  // off, so say why and where a respelling for all of them happens.
+  const sameAsCurrent = typed !== "" && typed !== artifact.category && target === artifact.category;
+  const hint = dirty
+    ? `Will be filed under “${target}”.`
+    : sameAsCurrent
+      ? `Matches “${target}”, its current category. To respell it on every artifact, use Rename category on your dashboard.`
+      : undefined;
 
   const patch = async (category: string | null) => {
     setBusy(category === null ? "remove" : "save");
@@ -197,6 +206,8 @@ export function CategorySection({
       if (category === null) toast.success("Category removed");
       else toast.success("Category saved", res.category ?? undefined);
       onSaved(res.category);
+      // Save turns off and Remove may go away, so the focus would fall to the page: keep it here.
+      inputRef.current?.focus();
     } catch (err) {
       setError(errMsg(err));
     } finally {
@@ -234,7 +245,8 @@ export function CategorySection({
           list={listId}
           maxLength={LIMITS.maxCategoryLength}
           placeholder="No category"
-          hint={dirty ? `Will be filed under “${target}”.` : undefined}
+          ref={inputRef}
+          hint={hint}
           error={error ?? undefined}
           onChange={(e) => {
             setValue(e.target.value);

@@ -679,6 +679,10 @@ ul.pl-acct-steps > li::before {
   padding-block: var(--space-5);
   border-top: var(--border-width) solid var(--color-border);
 }
+/* A section opened by its #id (Settings' "Move to category…") stops below the sticky top bar. */
+.pl-acct-setting__head h2[id] {
+  scroll-margin-top: calc(var(--topbar-height) + var(--space-4));
+}
 .pl-acct-setting__head {
   display: flex;
   flex-direction: column;

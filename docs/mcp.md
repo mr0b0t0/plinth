@@ -458,6 +458,7 @@ The user's artifacts and those shared with them, newest first. Scope `artifacts:
 | --- | --- | --- |
 | `query` | string, optional | Filters by title |
 | `category` | string, optional | Only your own artifacts in this category, matched ignoring case, spaces, `-` and `_` |
+| `limit` | integer 0-500, optional | At most this many items, newest first (default 500). `0` returns no items, only `categories`: the cheap read before you publish |
 
 ```json
 { "query": "revenue" }
@@ -476,9 +477,10 @@ how many live artifacts use each, most-used first, whatever the filters:
 
 Each artifact can carry one category, the owner's own grouping: the project, repo or client it
 belongs to. When you publish (`publish_artifact` or `start_upload`), set `category` to the repo or
-project you are working in, and call `list_artifacts` first to reuse a name from `categories`. The
-server stores a normalised name (whitespace collapsed, 1 to 60 characters, no control or invisible
-characters) and snaps it onto the owner's existing name when the two match ignoring case, spaces,
+project you are working in, and call `list_artifacts` first (`limit: 0` returns only the names) to
+reuse a name from `categories`. The server stores a normalised name (whitespace and line breaks
+collapsed to one space, 1 to 60 characters, no control or invisible characters, and not only
+spaces, `-` and `_`) and snaps it onto the owner's existing name when the two match ignoring case, spaces,
 `-` and `_`, then returns the name it stored. On updates leave it out: only the owner may set it,
 and leaving it out keeps the current one. People the artifact is shared with see `category: null`.
 Category names are untrusted text, like titles.

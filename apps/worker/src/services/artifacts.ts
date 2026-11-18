@@ -515,12 +515,13 @@ export async function getArtifact(
 
 /**
  * The caller's artifacts and those shared with them (optionally by title, and by category among the
- * caller's own), plus the caller's own category names. `categories` never depends on the filters
- * and never holds another owner's names, so a collaborator cannot probe them.
+ * caller's own; at most `limit`, 500 by default), plus the caller's own category names.
+ * `categories` never depends on the filters and never holds another owner's names, so a
+ * collaborator cannot probe them.
  */
 export async function listArtifacts(
   ctx: Ctx,
-  filter: { query?: string; category?: string } = {},
+  filter: { query?: string; category?: string; limit?: number } = {},
 ): Promise<ArtifactList> {
   const uid = principalUserId(ctx.principal);
   const email = principalEmail(ctx.principal);
@@ -533,6 +534,8 @@ export async function listArtifacts(
     .from(accessGrants)
     .where(eq(accessGrants.email, email));
   const categories = await ownerCategories(ctx, uid);
+  // limit 0: the names only, the cheap read agents make before they publish.
+  if (filter.limit === 0) return { items: [], categories };
   let inCategory: ReturnType<typeof and> | undefined;
   // An empty filter is no filter.
   if (filter.category?.trim()) {
@@ -556,7 +559,7 @@ export async function listArtifacts(
       ),
     )
     .orderBy(desc(artifacts.updatedAt))
-    .limit(500)
+    .limit(filter.limit ?? 500)
     .all();
   if (rows.length === 0) return { items: [], categories };
   const ids = rows.map((r) => r.a.id);

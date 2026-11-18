@@ -273,6 +273,7 @@ describe("categories over MCP", () => {
     expect(desc("update_artifact")).toContain("category: owner only (refused for editors)");
     expect(desc("start_upload")).toContain("with id, category is owner only");
     expect(desc("list_artifacts")).toContain("plus categories");
+    expect(desc("list_artifacts")).toContain("limit 0 returns only the categories");
     expect(desc("get_artifact")).toContain("category");
     expect(client.getInstructions() ?? "").toContain(CATEGORY_INSTRUCTION);
     // The JSON Schema stays a plain length-limited string: no pattern, no transform.
@@ -308,6 +309,9 @@ describe("categories over MCP", () => {
     const all = await tool(c, "list_artifacts", {});
     expect(all.data.items).toHaveLength(3);
     expect(all.data.categories).toEqual([{ name: "Plinth Docs", count: 2 }]);
+    // limit 0: the names only, the cheap read before a publish.
+    const names = await tool(c, "list_artifacts", { limit: 0 });
+    expect(names.data).toEqual({ items: [], categories: [{ name: "Plinth Docs", count: 2 }] });
     const filtered = await tool(c, "list_artifacts", { category: "PLINTH_DOCS" });
     expect(filtered.data.items.map((i: { title: string }) => i.title).sort()).toEqual([
       "One",

@@ -1,6 +1,7 @@
 // The dashboard's "Rename category" dialog: renames one of the owner's categories on every artifact
 // that has it, merges it into another when the new name matches one (the same snapping the Worker
-// applies), or removes it. Session only on the Worker (POST /api/v1/categories/rename).
+// applies), or removes it after a confirmation that names how many artifacts lose it (nothing
+// undoes that). Session only on the Worker (POST /api/v1/categories/rename).
 import {
   API,
   type CategoryCount,
@@ -12,7 +13,7 @@ import {
 } from "@plinth/shared";
 import { type FormEvent, useId, useState } from "react";
 import { ApiRequestError, api } from "../../lib/api.ts";
-import { Button, Dialog, Input, useToast } from "../ui/index.ts";
+import { Button, ConfirmDialog, Dialog, Input, useToast } from "../ui/index.ts";
 
 export function artifactsText(n: number): string {
   return `${n} ${n === 1 ? "artifact" : "artifacts"}`;
@@ -55,6 +56,9 @@ export function RenameCategoryDialog({
   const [typed, setTyped] = useState(category.name);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<"save" | "remove" | null>(null);
+  /** Remove category was pressed: the confirmation replaces the rename dialog until answered. */
+  const [confirming, setConfirming] = useState(false);
+  const [removeError, setRemoveError] = useState<string | null>(null);
   const plan = renamePlan(category, typed, categories);
   const unchanged = plan.name === category.name;
   const others = categories.filter((c) => categoryKey(c.name) !== categoryKey(category.name));
@@ -71,7 +75,10 @@ export function RenameCategoryDialog({
       onDone(res.category);
     } catch (err) {
       setBusy(null);
-      setError(err instanceof ApiRequestError ? err.message : "Could not reach Plinth. Try again.");
+      const message =
+        err instanceof ApiRequestError ? err.message : "Could not reach Plinth. Try again.";
+      if (to === null) setRemoveError(message);
+      else setError(message);
     }
   };
 
@@ -92,6 +99,36 @@ export function RenameCategoryDialog({
       } will join it.`
     : undefined;
 
+  if (confirming) {
+    return (
+      <ConfirmDialog
+        open
+        danger
+        onClose={() => {
+          if (busy) return;
+          setConfirming(false);
+          setRemoveError(null);
+        }}
+        onConfirm={() => void send(null)}
+        loading={busy === "remove"}
+        title={`Remove “${category.name}” from ${artifactsText(category.count)}?`}
+        description={`${
+          category.count === 1 ? "It will have" : "They will have"
+        } no category. This cannot be undone: you would file ${
+          category.count === 1 ? "it" : "them"
+        } again one at a time.`}
+        confirmLabel={`Remove from ${artifactsText(category.count)}`}
+        cancelLabel="Back"
+      >
+        {removeError && (
+          <p className="pl-field__error" role="alert">
+            {removeError}
+          </p>
+        )}
+      </ConfirmDialog>
+    );
+  }
+
   return (
     <Dialog
       open
@@ -100,12 +137,7 @@ export function RenameCategoryDialog({
       description={`“${category.name}” is on ${artifactsText(category.count)}. Type a new name, or an existing category's name to merge them.`}
       footer={
         <>
-          <Button
-            variant="secondary"
-            onClick={() => void send(null)}
-            loading={busy === "remove"}
-            disabled={busy === "save"}
-          >
+          <Button variant="danger" onClick={() => setConfirming(true)} disabled={busy === "save"}>
             Remove category
           </Button>
           <Button variant="ghost" onClick={onClose}>

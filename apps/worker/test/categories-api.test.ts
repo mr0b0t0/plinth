@@ -2,7 +2,7 @@
 // "Categories"): the caller's own names only, and renaming, merging or clearing in bulk is the
 // signed-in owner's alone, never a bearer token's.
 import { env } from "cloudflare:workers";
-import { COOKIES, CSRF_HEADER } from "@plinth/shared";
+import { COOKIES, CSRF_HEADER, LIMITS } from "@plinth/shared";
 import { describe, expect, it } from "vitest";
 import { APP, agent, browserSession, call, createToken, json, publish } from "./helpers.ts";
 
@@ -206,5 +206,129 @@ describe("GET /api/v1/categories", () => {
     });
     expect(r.status).toBe(403);
     expect((await call("/api/v1/categories")).status).toBe(401);
+  });
+});
+
+describe("several stored spellings of one name", () => {
+  // Writes always snap, but two publishes that resolve before either commits can still store two
+  // spellings with one key. Written here with SQL, as such a race leaves them.
+  async function legacy() {
+    const o = await owner();
+    const a = await publish(o.auth, { category: "acme" });
+    const b = await publish(o.auth, { category: "acme" });
+    const c = await publish(o.auth, { category: "Other" });
+    await env.DB.prepare("UPDATE artifacts SET category = 'Acme' WHERE id = ?1")
+      .bind(c.body.id)
+      .run();
+    return { o, ids: [a.body.id, b.body.id, c.body.id] as string[] };
+  }
+
+  it("are listed as one category with the counts summed, under the most-used spelling", async () => {
+    const { o } = await legacy();
+    expect(await categories(o.auth)).toEqual([{ name: "acme", count: 3 }]);
+    const list = await json(await call("/api/v1/artifacts", { headers: o.auth }));
+    expect(list.categories).toEqual([{ name: "acme", count: 3 }]);
+  });
+
+  it("are all found by the category filter", async () => {
+    const { o, ids } = await legacy();
+    const r = await json(await call("/api/v1/artifacts?category=ACME", { headers: o.auth }));
+    expect(r.items.map((i: { id: string }) => i.id).sort()).toEqual([...ids].sort());
+  });
+
+  it("a new publish snaps onto the most-used spelling", async () => {
+    const { o } = await legacy();
+    const p = await publish(o.auth, { category: "ACME" });
+    expect(p.body.category).toBe("acme");
+  });
+
+  it("a rename moves every spelling", async () => {
+    const { o, ids } = await legacy();
+    expect(await json(await rename(o.session, { from: "Acme", to: "Client" }))).toEqual({
+      updated: 3,
+      category: "Client",
+    });
+    for (const id of ids) expect((await stored(id))?.category).toBe("Client");
+    expect(await categories(o.auth)).toEqual([{ name: "Client", count: 3 }]);
+  });
+});
+
+describe("the categories list cap", () => {
+  it("keeps the most-used names when there are more than LIMITS.maxCategoriesListed", async () => {
+    const o = await owner();
+    // The busiest project, published normally, and then more single-use names than the cap,
+    // inserted in one statement. The busy name sorts last by name, so only the count keeps it.
+    await publish(o.auth, { category: "zzz busiest" });
+    await publish(o.auth, { category: "zzz busiest" });
+    const now = new Date().toISOString();
+    await env.DB.prepare(
+      `WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < ?3)
+       INSERT INTO artifacts (id, owner_id, slug, title, current_version, visibility, access_epoch,
+         created_at, updated_at, category)
+       SELECT 'cf' || lower(hex(randomblob(6))) || printf('%04d', i), ?1, 'capfill-' || i || '-' || ?1, 'Filler', 0,
+         'allowlist', 1, ?2, ?2, 'name ' || printf('%04d', i) FROM n`,
+    )
+      .bind(o.user.id, now, LIMITS.maxCategoriesListed + 5)
+      .run();
+    const listed = await categories(o.auth);
+    expect(listed).toHaveLength(LIMITS.maxCategoriesListed);
+    expect(listed[0]).toEqual({ name: "zzz busiest", count: 2 });
+    // Ties after it are kept by name.
+    expect(listed[1]).toEqual({ name: "name 0001", count: 1 });
+    expect(listed.at(-1)).toEqual({
+      name: `name ${String(LIMITS.maxCategoriesListed - 1).padStart(4, "0")}`,
+      count: 1,
+    });
+    const list = await json(await call("/api/v1/artifacts?limit=0", { headers: o.auth }));
+    expect(list.categories).toEqual(listed);
+  });
+});
+
+describe("list_artifacts limit", () => {
+  it("limit 0 returns only the categories; a limit caps the items; a bad one is 400", async () => {
+    const o = await owner();
+    await publish(o.auth, { category: "One" });
+    await publish(o.auth, { category: "One" });
+    await publish(o.auth);
+    const none = await json(await call("/api/v1/artifacts?limit=0", { headers: o.auth }));
+    expect(none).toEqual({ items: [], categories: [{ name: "One", count: 2 }] });
+    const two = await json(await call("/api/v1/artifacts?limit=2", { headers: o.auth }));
+    expect(two.items).toHaveLength(2);
+    expect((await json(await call("/api/v1/artifacts", { headers: o.auth }))).items).toHaveLength(
+      3,
+    );
+    for (const bad of ["-1", "501", "x", "1.5"]) {
+      const r = await call(`/api/v1/artifacts?limit=${bad}`, { headers: o.auth });
+      expect(r.status, bad).toBe(400);
+    }
+  });
+});
+
+describe("names with no letters", () => {
+  it("a name made only of spaces, '-' and '_' is refused on publish and on PATCH", async () => {
+    const o = await owner();
+    for (const bad of ["-", "_", "- _", "－"]) {
+      const r = await publish(o.auth, { category: bad });
+      expect(r.res.status, bad).toBe(400);
+      expect(r.body.error).toMatchObject({ code: "invalid_input", details: { field: "category" } });
+    }
+    const p = await publish(o.auth, { category: "Real" });
+    const r = await call(`/api/v1/artifacts/${p.body.id}`, {
+      method: "PATCH",
+      headers: { ...o.session, "Content-Type": "application/json" },
+      body: JSON.stringify({ category: "__" }),
+    });
+    expect(r.status).toBe(400);
+    expect((await stored(p.body.id))?.category).toBe("Real");
+    expect((await json(await rename(o.session, { from: "Real", to: "-" }))).error.code).toBe(
+      "invalid_input",
+    );
+  });
+
+  it("line breaks and separators are stored as one space, not refused", async () => {
+    const o = await owner();
+    const p = await publish(o.auth, { category: "acme site\nweb" });
+    expect(p.res.status).toBe(201);
+    expect(p.body.category).toBe("acme site web");
   });
 });

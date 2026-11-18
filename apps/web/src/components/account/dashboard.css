@@ -185,18 +185,22 @@
   align-items: center;
   gap: var(--space-1-5);
 }
-/* The owner's category: a neutral badge, cut with an ellipsis (the full name is its tooltip). */
+/* The owner's category: a neutral badge that wraps onto more lines rather than cut the name, so
+   the full name stays readable on touch screens and by keyboard (a tooltip reaches neither). */
 .pl-dash__category {
   max-width: 12rem;
   min-width: 0;
+  white-space: normal;
+  padding-block: 0.125rem;
 }
 .pl-dash__category svg {
   flex-shrink: 0;
+  align-self: flex-start;
+  margin-top: 0.125rem;
 }
 .pl-dash__category-name {
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  overflow-wrap: anywhere;
 }
 .pl-dash__role {
   padding: 0 var(--space-1-5);
@@ -447,7 +451,7 @@
   .pl-dash-bar__category .pl-menu__list {
     left: 0;
   }
-  /* Leave the title most of a phone row; the full category name is the badge's tooltip. */
+  /* Leave the title most of a phone row; a longer category name wraps inside its badge. */
   .pl-dash__category {
     max-width: 6.5rem;
   }

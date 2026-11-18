@@ -498,6 +498,11 @@ test("categories: agents file artifacts, the owner filters, moves and renames, c
   await expect(page).toHaveURL(new RegExp(`/a/${blog.slug}/settings#settings-category$`));
   const field = page.getByRole("combobox", { name: "Category", exact: true });
   await expect(field).toHaveValue("Other blog");
+  // The shortcut lands in the field, with its heading clear of the sticky top bar.
+  await expect(field).toBeFocused();
+  const heading = await page.getByRole("heading", { name: "Category", exact: true }).boundingBox();
+  const bar = await page.locator(".pl-topbar").first().boundingBox();
+  expect(heading && bar && heading.y >= bar.y + bar.height).toBe(true);
   await field.fill("ACME_site");
   await expect(page.getByText("Will be filed under “acme-site”.")).toBeVisible();
   await page.getByRole("button", { name: "Save category" }).click();
@@ -531,6 +536,7 @@ test("categories: agents file artifacts, the owner filters, moves and renames, c
   await expect(dialog).toHaveCount(0);
   await expect(page.getByRole("status").getByText("Category renamed")).toBeVisible();
   await expect(page).toHaveURL(/\/dashboard\?category=Acme%20Corp$/);
+  await expect(page.getByRole("button", { name: "Rename category" })).toBeFocused();
   await expect(page.getByRole("button", { name: "Category: Acme Corp" })).toBeVisible();
   await expect(page.getByRole("link", { name: "Site home" })).toBeVisible();
   await expect(page.getByRole("link", { name: "Blog draft" })).toBeVisible();

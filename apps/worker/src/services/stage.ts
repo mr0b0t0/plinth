@@ -207,7 +207,8 @@ export async function newArtifactTarget(
   }
   const title = input.title?.trim();
   // Resolved here for an inline publish, a ticket mint and a ticket redeem alike: a redeem snaps
-  // again, so a spelling the owner settled on in the meantime wins.
+  // again, so a respelling the owner made in the meantime (same key) wins. A rename or merge to a
+  // name with another key reaches open tickets through renameCategory, which moves their name too.
   const category =
     input.category !== undefined ? await resolveCategory(ctx, user.id, input.category) : undefined;
   return {

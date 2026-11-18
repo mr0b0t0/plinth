@@ -175,7 +175,9 @@ export async function patchArtifact(
  * POST /categories/rename: move every live artifact of the caller's in `from` (matched by key) to
  * `to`, which snaps onto one of the caller's other spellings (a merge); `to: null` clears it. The
  * signed-in owner only, never an agent or bearer token. Scoped to the caller's own rows; updated_at
- * is left alone and no version is created.
+ * is left alone and no version is created. The caller's open upload tickets with that name move
+ * too. An inline update_artifact or PUT that resolved its name just before the rename and commits
+ * just after it can still store the old name (a window of one request); the owner renames again.
  */
 export async function renameCategory(
   ctx: Ctx,
@@ -201,13 +203,39 @@ export async function renameCategory(
       .filter((n) => !spellings.includes(n));
     category = snapCategory(name, others);
   }
-  if (spellings.length === 0) return { updated: 0, category };
-  const marks = spellings.map((_, i) => `?${i + 3}`).join(", ");
-  const r = await ctx.env.DB.prepare(
-    `UPDATE artifacts SET category = ?1
-      WHERE owner_id = ?2 AND deleted_at IS NULL AND category IN (${marks})`,
+  // The caller's open start_upload tickets that carry this name follow it: a ticket stores the
+  // spelling it snapped to at mint, and a bundle that commits after the rename would otherwise
+  // bring the old name back (its key no longer matches anything to snap onto).
+  const key = categoryKey(input.from);
+  const { results: open } = await ctx.env.DB.prepare(
+    "SELECT id, category FROM upload_tickets WHERE user_id = ?1 AND state = 'open' AND category IS NOT NULL",
   )
-    .bind(category, uid, ...spellings)
-    .run();
-  return { updated: r.meta.changes ?? 0, category };
+    .bind(uid)
+    .all<{ id: string; category: string }>();
+  const tickets = open
+    .filter((t) => key !== "" && categoryKey(t.category) === key)
+    .map((t) => t.id);
+  const stmts: D1PreparedStatement[] = [];
+  if (spellings.length > 0) {
+    const marks = spellings.map((_, i) => `?${i + 3}`).join(", ");
+    stmts.push(
+      ctx.env.DB.prepare(
+        `UPDATE artifacts SET category = ?1
+          WHERE owner_id = ?2 AND deleted_at IS NULL AND category IN (${marks})`,
+      ).bind(category, uid, ...spellings),
+    );
+  }
+  if (tickets.length > 0) {
+    const marks = tickets.map((_, i) => `?${i + 3}`).join(", ");
+    stmts.push(
+      ctx.env.DB.prepare(
+        `UPDATE upload_tickets SET category = ?1
+          WHERE user_id = ?2 AND state = 'open' AND id IN (${marks})`,
+      ).bind(category, uid, ...tickets),
+    );
+  }
+  if (stmts.length === 0) return { updated: 0, category };
+  const results = await ctx.env.DB.batch(stmts);
+  const updated = spellings.length > 0 ? (results[0]?.meta.changes ?? 0) : 0;
+  return { updated, category };
 }

@@ -4,17 +4,22 @@
 // MCP clients and OpenAPI consumers see stays a plain length-limited string.
 import { LIMITS } from "./constants.ts";
 
-/** Control (Cc), format (Cf: bidi overrides, zero-width), line (Zl) and paragraph (Zp) separators. */
+/**
+ * Control (Cc) and format (Cf: bidi overrides, zero-width) characters. Line breaks, tabs and the
+ * line (Zl) and paragraph (Zp) separators are whitespace, so normalizeCategory has already turned
+ * them into a space; Zl and Zp stay here only for a caller that skips normalising.
+ */
 const REFUSED_CHARS = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u;
 
-/** Stored form: NFC, every whitespace run -> one space, trimmed. */
+/** Stored form: NFC, every whitespace run (line breaks and separators included) -> one space, trimmed. */
 export function normalizeCategory(s: string): string {
   return s.normalize("NFC").replace(/\s+/gu, " ").trim();
 }
 
 /**
- * Why a (normalised) name is refused, or null: empty, longer than LIMITS.maxCategoryLength, or
- * containing control, format, line or paragraph separator characters.
+ * Why a (normalised) name is refused, or null: empty, longer than LIMITS.maxCategoryLength,
+ * containing control or format (invisible) characters, or made only of spaces, "-" and "_" (its
+ * key would be empty, so it could never be filtered, renamed or merged).
  */
 export function categoryProblem(s: string): string | null {
   if (s.length === 0) return "A category needs at least one character";
@@ -22,7 +27,10 @@ export function categoryProblem(s: string): string | null {
     return `A category is at most ${LIMITS.maxCategoryLength} characters`;
   }
   if (REFUSED_CHARS.test(s)) {
-    return "A category cannot contain control, invisible or line-break characters";
+    return "A category cannot contain control or invisible characters";
+  }
+  if (categoryKey(s) === "") {
+    return "A category needs a character other than spaces, '-' and '_'";
   }
   return null;
 }

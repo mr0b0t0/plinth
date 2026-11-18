@@ -157,7 +157,7 @@ describe("OpenAPI document", () => {
     expect(schemas.PublishResult.required).not.toContain("category");
     expect(schemas.BundleResult.required).not.toContain("category");
     const list = doc.paths["/artifacts"].get;
-    expect(list.parameters.map((p: Json) => p.name)).toEqual(["query", "category"]);
+    expect(list.parameters.map((p: Json) => p.name)).toEqual(["query", "category", "limit"]);
     expect(doc.info.description).toContain("titles, categories, comments");
   });
 

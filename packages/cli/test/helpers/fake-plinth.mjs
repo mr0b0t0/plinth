@@ -3,7 +3,8 @@
 // sha256 and base_version conflicts), POST /uploads and the bundle route, which reads the tar with
 // the tests' own reader. It records every request (method, path, User-Agent, Authorization) so the
 // tests can check what the client sent and where. A category given to POST /uploads or PUT is
-// echoed in the result, as the real server echoes the name it stored.
+// echoed in the result, as the real server echoes the name it stored, and kept on the artifact,
+// which GET /artifacts/:ref returns.
 import { createHash, randomBytes } from "node:crypto";
 import { createServer } from "node:http";
 import { readTar } from "./tar-reader.mjs";
@@ -116,6 +117,7 @@ export async function startFakePlinth(options = {}) {
       title: "t",
       version: n,
       source_path: sourcePath,
+      category: a.category ?? null,
       assets,
       ...(a.type === "doc" ? { content: src } : { html: src }),
     };
@@ -140,6 +142,7 @@ export async function startFakePlinth(options = {}) {
       }
     }
     a.versions.push(next);
+    if (category !== undefined) a.category = category;
     return {
       id: a.id,
       slug: a.slug,

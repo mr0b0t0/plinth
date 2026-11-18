@@ -2957,6 +2957,47 @@ describe("start_upload with a category", () => {
     expect(await storedCategory(out.id)).toBe("Acme-Site");
   });
 
+  it("a rename made while a ticket is open moves the ticket's name, so its commit does not bring the old one back", async () => {
+    const a = await agent();
+    const session = await browserSession(a.user.id);
+    const existing = await publish(a.auth, { category: "Acme" });
+    // A publish ticket and the owner's update ticket, both snapped onto "Acme" at mint.
+    const pub = await mint(a, { category: "acme" }, stageDeps);
+    const id = (await publish(a.auth)).body.id as string;
+    const upd = await mint(a, { id, base_version: 1, category: "ACME" }, stageDeps);
+    const other = await mint(a, { category: "Elsewhere" }, stageDeps);
+    expect((await ticket(pub.upload_id)).category).toBe("Acme");
+    expect((await ticket(upd.upload_id)).category).toBe("Acme");
+    const renamed = await call("/api/v1/categories/rename", {
+      method: "POST",
+      headers: { ...session.headers, "Content-Type": "application/json" },
+      body: JSON.stringify({ from: "Acme", to: "Client X" }),
+    });
+    expect(await json(renamed)).toEqual({ updated: 1, category: "Client X" });
+    expect((await ticket(pub.upload_id)).category).toBe("Client X");
+    expect((await ticket(upd.upload_id)).category).toBe("Client X");
+    expect((await ticket(other.upload_id)).category).toBe("Elsewhere");
+    const out = await json(await postBundle(pub.upload_url, { token: pub.upload_token }));
+    expect(out.category).toBe("Client X");
+    expect(await storedCategory(out.id)).toBe("Client X");
+    expect(
+      (await json(await postBundle(upd.upload_url, { token: upd.upload_token }))).category,
+    ).toBe("Client X");
+    expect(await storedCategory(id)).toBe("Client X");
+    expect(await storedCategory(existing.body.id)).toBe("Client X");
+    // A clear empties an open ticket's name too: its commit files nothing.
+    const later = await mint(a, { category: "Client X" }, stageDeps);
+    await call("/api/v1/categories/rename", {
+      method: "POST",
+      headers: { ...session.headers, "Content-Type": "application/json" },
+      body: JSON.stringify({ from: "client x", to: null }),
+    });
+    expect((await ticket(later.upload_id)).category).toBeNull();
+    const cleared = await json(await postBundle(later.upload_url, { token: later.upload_token }));
+    expect(cleared).not.toHaveProperty("category");
+    expect(await storedCategory(cleared.id)).toBeNull();
+  });
+
   it("a bad name is refused at mint with field category, before the rate hit", async () => {
     const a = await agent();
     const e = await mintError(a, { category: "a‮b" }, stageDeps);

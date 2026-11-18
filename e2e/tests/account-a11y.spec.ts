@@ -68,7 +68,7 @@ test("categories: the dashboard menu, the rename dialog and the Settings section
     label: "Work Claude",
     client_type: "claude",
   });
-  // A long name, so the badge and the menu trigger have to cut it on a phone.
+  // A long name, so the badge wraps it and the menu trigger cuts it on a phone.
   const long = "Acme site for the client with a long name, cut on phones";
   const a = await publishArtifact(page.request, token, { title: "Landing page", category: long });
   await publishArtifact(page.request, token, { title: "Pricing page", category: long });
@@ -93,6 +93,13 @@ test("categories: the dashboard menu, the rename dialog and the Settings section
   await dialog.getByRole("combobox", { name: "New name" }).fill("docs");
   await expect(dialog.getByRole("button", { name: "Merge" })).toBeVisible();
   await check(page, info, "dashboard-category-merge");
+  // Remove category asks first, naming how many artifacts lose it.
+  await dialog.getByRole("button", { name: "Remove category" }).click();
+  const confirm = page.getByRole("alertdialog");
+  await expect(confirm.getByRole("button", { name: "Remove from 2 artifacts" })).toBeVisible();
+  await check(page, info, "dashboard-category-remove");
+  await confirm.getByRole("button", { name: "Back" }).click();
+  await expect(dialog).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(dialog).toHaveCount(0);
 

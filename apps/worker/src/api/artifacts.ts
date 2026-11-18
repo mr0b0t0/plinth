@@ -30,11 +30,14 @@ import { type AppEnv, parseBody, parseInput, serviceCtx } from "./context.ts";
 export const artifactsApi = new Hono<AppEnv>();
 
 artifactsApi.get("/artifacts", async (c) => {
-  const { query, category } = parseInput(listArtifactsInput, {
+  const limit = c.req.query("limit");
+  const input = parseInput(listArtifactsInput, {
     query: c.req.query("query") ?? c.req.query("q"),
     category: c.req.query("category"),
+    // A query string is text: a non-number fails the schema's integer check (400).
+    limit: limit === undefined || limit === "" ? undefined : Number(limit),
   });
-  return c.json(await listArtifacts(serviceCtx(c), { query, category }));
+  return c.json(await listArtifacts(serviceCtx(c), input));
 });
 
 artifactsApi.post("/artifacts", async (c) => {

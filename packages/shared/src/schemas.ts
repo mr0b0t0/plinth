@@ -182,6 +182,17 @@ export const listArtifactsInput = z.object({
     .describe(
       "Only your own artifacts in this category (matched ignoring case, spaces, '-' and '_').",
     ),
+  /** How many items to return (most recent first); 0 returns only `categories`. */
+  limit: z
+    .number()
+    .int()
+    .min(0)
+    .max(500)
+    .optional()
+    .describe(
+      "At most this many items, most recent first (default and maximum 500). 0 returns no items, only " +
+        "categories: the cheap way to read your category names before you publish.",
+    ),
 });
 
 export const listVersionsInput = z.object({ id: artifactRefSchema });

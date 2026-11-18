@@ -18,7 +18,7 @@ import {
   type CategoryCount,
   categoryKey,
 } from "@plinth/shared";
-import { useEffect, useId, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import "../components/account/account.css";
 import "../components/account/dashboard.css";
 import {
@@ -117,6 +117,32 @@ export function filterByCategory(
   );
 }
 
+/**
+ * The list after the owner renamed, merged or removed `from` (stored: the Worker's name, or null),
+ * applied at once so the page shows the result (and keeps its controls) before the reload lands.
+ */
+export function applyCategoryRename(
+  list: { items: ArtifactSummary[]; categories: CategoryCount[] },
+  from: CategoryCount,
+  stored: string | null,
+): { items: ArtifactSummary[]; categories: CategoryCount[] } {
+  const key = categoryKey(from.name);
+  const items = list.items.map((a) =>
+    a.role === "owner" && a.category !== null && categoryKey(a.category) === key
+      ? { ...a, category: stored }
+      : a,
+  );
+  const rest = list.categories.filter((c) => categoryKey(c.name) !== key);
+  if (stored === null) return { items, categories: rest };
+  const into = rest.find((c) => c.name === stored);
+  const categories = into
+    ? rest.map((c) => (c === into ? { ...c, count: c.count + from.count } : c))
+    : [...rest, { name: stored, count: from.count }];
+  // Most-used first, as the Worker lists them.
+  categories.sort((a, b) => b.count - a.count || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+  return { items, categories };
+}
+
 export function sortArtifacts(items: ArtifactSummary[], sort: Sort): ArtifactSummary[] {
   const out = [...items];
   if (sort === "title") out.sort((a, b) => a.title.localeCompare(b.title));
@@ -141,6 +167,9 @@ export default function Dashboard() {
   const [filter, setFilter] = useState<Filter>("all");
   const [category, setCategory] = useState<CategoryFilter>(() => search.get("category"));
   const [renaming, setRenaming] = useState(false);
+  const barRef = useRef<HTMLDivElement>(null);
+  /** A removed category takes its Rename button with it: focus goes to the category menu. */
+  const [focusCategoryMenu, setFocusCategoryMenu] = useState(false);
   const [sort, setSort] = useState<Sort>("updated");
   const [view, setView] = useState<DashboardView>(readView);
 
@@ -185,6 +214,12 @@ export default function Dashboard() {
       });
     return () => ctrl.abort();
   }, [settled, pending, reload]);
+
+  useEffect(() => {
+    if (!focusCategoryMenu) return;
+    setFocusCategoryMenu(false);
+    barRef.current?.querySelector<HTMLButtonElement>(".pl-dash-bar__category > button")?.focus();
+  }, [focusCategoryMenu]);
 
   // Keep the search and the category in the address bar (replace, so typing does not fill the
   // history).
@@ -323,7 +358,7 @@ export default function Dashboard() {
   return (
     <AppShell onSignOut={signOut} title="Artifacts" actions={nothingYet ? undefined : searchField}>
       {!nothingYet && list.status !== "error" && (
-        <div className="pl-dash-bar">
+        <div className="pl-dash-bar" ref={barRef}>
           <SegmentedControl<Filter>
             label="Show"
             options={filters}
@@ -464,8 +499,20 @@ export default function Dashboard() {
           categories={categories}
           onClose={() => setRenaming(false)}
           onDone={(stored) => {
+            const from = selected;
             setRenaming(false);
-            setCategory(stored);
+            setList((l) =>
+              l.status === "ready" ? { ...l, ...applyCategoryRename(l, from, stored) } : l,
+            );
+            if (stored === null) {
+              // Show where those artifacts went; the menu stays, and takes the focus.
+              setCategory("");
+              setFocusCategoryMenu(true);
+            } else {
+              // The Rename button stays (the category still exists under its new name), so the
+              // dialog hands the focus back to it.
+              setCategory(stored);
+            }
             setReload((n) => n + 1);
           }}
         />

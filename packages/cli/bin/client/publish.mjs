@@ -67,8 +67,8 @@ export function checkUploadUrl(raw, { expectedOrigin, exitCode = EXIT.usage } = 
   return u.toString();
 }
 
-/** Control, format (bidi, zero-width), line and paragraph separator characters: the server refuses them. */
-const REFUSED_CATEGORY_CHARS = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u;
+/** Control and format (bidi, zero-width) characters: the server refuses them. Line breaks are whitespace. */
+const REFUSED_CATEGORY_CHARS = /[\p{Cc}\p{Cf}]/u;
 
 /**
  * --category as the server stores it (NFC, whitespace runs collapsed, trimmed), or a usage error
@@ -82,8 +82,10 @@ export function checkCategory(raw) {
     : name.length > LIMITS.maxCategoryLength
       ? `is at most ${LIMITS.maxCategoryLength} characters`
       : REFUSED_CATEGORY_CHARS.test(name)
-        ? "cannot contain control, invisible or line-break characters"
-        : null;
+        ? "cannot contain control or invisible characters"
+        : !/[^\s\-_]/u.test(name.normalize("NFKC"))
+          ? "needs a character other than spaces, '-' and '_'"
+          : null;
   if (why) throw new CliError(`--category ${why} (a short project or repo name)`, EXIT.usage);
   return name;
 }
@@ -745,9 +747,24 @@ export async function publish(dir, opts, ctx) {
     }
   }
 
+  // A recovered answer (upload status, or the artifact read after a lost PUT) has no category: read
+  // the name the server stored back from the artifact, so --json still carries it.
+  if (result.recovered && category.category !== undefined && typeof result.category !== "string") {
+    result = { ...result, ...(await storedCategory(api, result.id)) };
+  }
   const check = await verify(api, result, files);
   report(result, check, opts, ctx);
   return check.failed ? EXIT.error : EXIT.ok;
+}
+
+/** `{ category }` as the artifact holds it now (the owner's read), or `{}` when it cannot be read. */
+async function storedCategory(api, id) {
+  try {
+    const a = await api.get(`/artifacts/${encodeURIComponent(id)}`);
+    return typeof a.category === "string" ? { category: a.category } : {};
+  } catch {
+    return {};
+  }
 }
 
 /** plinth upload <dir> --to <upload_url> */

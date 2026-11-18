@@ -1084,6 +1084,12 @@ function operations(): Operation[] {
           description:
             "Only your own artifacts in this category (matched ignoring case, spaces, '-' and '_')",
         },
+        {
+          name: "limit",
+          schema: int({ minimum: 0, maximum: 500 }),
+          description:
+            "At most this many items, most recent first (default and maximum 500); 0 returns only `categories`",
+        },
       ],
       ok: [200, "ArtifactList"],
       errors: [401],

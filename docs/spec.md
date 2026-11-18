@@ -183,7 +183,7 @@ One remote MCP server over streamable HTTP at `/mcp`. All tools act as the conne
 | `update_artifact(id, html \| content, assets?, base_version?, note?, category?)` | Publish a new version of an existing artifact, in the source field its type takes. An asset may be `{path, sha256}` to reuse a file of the current version. `category` is owner only. Returns `warnings` and `stored` |
 | `start_upload(id?, base_version?, type?, title?, note?, category?)` | For a build folder or a large page: mint a single-use, 30-minute upload ticket for one new artifact, or for one update of `id` (then `base_version` is required). The result has `upload_url`, `upload_token`, `target` (with `id`: the artifact updated, or the one the publish will create), `commands.curl` (and `commands.npx` on release builds), the instance's `limits` and `content_isolation` |
 | `get_artifact(id, version?)` | Read metadata, `type`, the source (`html` for a page, `content` for a doc, and `source_path`) and each asset's `sha256`, so an agent can edit from the current state |
-| `list_artifacts(query?, category?)` | List the user's artifacts and their own category names |
+| `list_artifacts(query?, category?, limit?)` | List the user's artifacts and their own category names (`limit: 0` returns only the names) |
 | `list_versions(id)` | Version history with notes and authors |
 | `restore_version(id, version)` | Make an old version current by publishing it as a new one |
 | `set_visibility(id, visibility, emails?, password?)` | Change who can view |
@@ -381,8 +381,10 @@ or log carries it.
   it over MCP.
 - **Reuse, not near-duplicates.** `list_artifacts` and `GET /api/v1/artifacts` always return
   `categories`, the caller's own names with counts (most-used first, at most 500, whatever the
-  filters), and agents reuse one. Every write also normalises the name (NFC, whitespace collapsed,
-  1 to 60 characters, no control, invisible or separator characters) and snaps it onto the
+  filters; `limit: 0` returns only them), and agents reuse one. Every write also normalises the
+  name (NFC, every whitespace run, line breaks included, collapsed to one space, trimmed) and
+  refuses it when it is empty, over 60 characters, holds control or invisible characters, or is
+  made only of spaces, `-` and `_`. It then snaps it onto the
   owner's existing spelling when the two match ignoring case, whitespace, `-` and `_` (`.` and `/`
   are kept). The result echoes the stored name. The `category` filter matches the same way and
   covers the caller's own artifacts only.
@@ -397,8 +399,9 @@ or log carries it.
   `POST /api/v1/categories/rename` with `{ from, to }` moves every live artifact of the caller's
   whose category matches `from` (by key) to `to`, which snaps onto another of their names (a
   merge); `to: null` clears it. It answers `{ updated, category }`, changes only the caller's own
-  rows, leaves `updated_at` alone, and takes a signed-in session only (CSRF and exact `Origin`):
-  agents and bearer tokens get 403, and there is no MCP tool for it.
+  rows (and the caller's open upload tickets carrying that name), leaves `updated_at` alone, and
+  takes a signed-in session only (CSRF and exact `Origin`): agents and bearer tokens get 403, and
+  there is no MCP tool for it.
 - **In the app.** The dashboard has a Category menu beside All / Mine / Shared (kept in
   `?category=`, an empty value meaning no category; hidden under Shared), a category badge on the
   owner's rows and cards, a Rename category dialog (rename, merge or remove) and "Move to
@@ -817,8 +820,7 @@ for a single user.
    pages.
 9. **Later.** Typed outputs: docs done (2026-11-14); sheets and decks later. Push agents with
    bring-your-own key, team workspaces, paid plans, visual editing, custom domains. Tags beside the
-   category, a group-by-category view, personal categories for artifacts shared with you, and the
-   CLI defaulting to the git repo name.
+   category, a group-by-category view, and personal categories for artifacts shared with you.
 
 ## Decisions
 

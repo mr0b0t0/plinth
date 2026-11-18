@@ -2,7 +2,7 @@ import type { ArtifactSummary, CategoryCount } from "@plinth/shared";
 import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { json, ME, stubApi } from "../components/viewer/test-utils.ts";
+import { apiError, json, ME, stubApi } from "../components/viewer/test-utils.ts";
 
 // The session store is module state; load a fresh copy of the page for each test.
 async function loadPage() {
@@ -34,8 +34,15 @@ const art = (over: Partial<ArtifactSummary> = {}): ArtifactSummary => {
   };
 };
 
-/** A backend with a fixed list; records the rename calls and answers them. */
-function backend(items: ArtifactSummary[], categories: CategoryCount[]) {
+/**
+ * A backend with a list; records the rename calls and answers them, applying each rename to the
+ * list as the Worker would (so a reload shows the new names). `failRename` answers it with an error.
+ */
+function backend(
+  items: ArtifactSummary[],
+  categories: CategoryCount[],
+  opts: { failRename?: boolean } = {},
+) {
   const s = { items, categories };
   const api = stubApi({
     me: ME,
@@ -46,8 +53,21 @@ function backend(items: ArtifactSummary[], categories: CategoryCount[]) {
         return json({ items: hits, categories: s.categories });
       }
       if (c.method === "POST" && c.path === "/categories/rename") {
-        const { to } = c.body as { from: string; to: string | null };
-        return json({ updated: 2, category: to === "acme" ? "Acme" : to });
+        if (opts.failRename) return apiError(403, "forbidden", "Your session expired. Reload.");
+        const { from, to } = c.body as { from: string; to: string | null };
+        const stored = to === "acme" ? "Acme" : to === "acme_site" ? "Acme site" : to;
+        const key = (n: string) => n.toLowerCase().replace(/[\s\-_]+/g, " ");
+        const moved = s.items.filter((a) => a.category !== null && key(a.category) === key(from));
+        s.items = s.items.map((a) => (moved.includes(a) ? { ...a, category: stored } : a));
+        const rest = s.categories.filter((x) => key(x.name) !== key(from));
+        const into = rest.find((x) => x.name === stored);
+        s.categories =
+          stored === null
+            ? rest
+            : into
+              ? rest.map((x) => (x === into ? { ...x, count: x.count + moved.length } : x))
+              : [...rest, { name: stored, count: moved.length }];
+        return json({ updated: moved.length, category: stored });
       }
       return undefined;
     },
@@ -266,7 +286,7 @@ describe("Dashboard categories", () => {
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   });
 
-  it("renames to a new name, or removes the category", async () => {
+  it("renames to a new name: the list reloads with it, and the focus returns to Rename category", async () => {
     const f = fixture();
     const { calls } = backend(f.items, f.categories);
     const Dashboard = await loadPage();
@@ -274,8 +294,10 @@ describe("Dashboard categories", () => {
     render(<Dashboard />);
     await screen.findByText("Acme report");
     await pick(user, "Acme site (2)");
+    const loads = () => calls.filter((c) => c.method === "GET" && c.path.startsWith("/artifacts"));
+    const before = loads().length;
     await user.click(screen.getByRole("button", { name: "Rename category" }));
-    let dialog = screen.getByRole("dialog", { name: "Rename category" });
+    const dialog = screen.getByRole("dialog", { name: "Rename category" });
     const input = within(dialog).getByRole("combobox", { name: "New name" });
     await user.clear(input);
     await user.type(input, "  acme  ");
@@ -286,13 +308,90 @@ describe("Dashboard categories", () => {
     expect(renames()[0]?.body).toEqual({ from: "Acme site", to: "acme" });
     // The filter follows the stored spelling the Worker returned.
     expect(window.location.search).toBe("?category=Acme");
+    // The Rename button is still there under the new name, and has the focus back.
+    const again = screen.getByRole("button", { name: "Rename category" });
+    expect(document.activeElement).toBe(again);
+    // The list is fetched again, and the rows and the menu show the new name.
+    await waitFor(() => expect(loads().length).toBe(before + 1));
+    const region = screen.getByRole("region", { name: "Artifacts" });
+    expect(rowTitles().sort()).toEqual(["Acme plan", "Acme report"]);
+    expect(within(region).getAllByText("Acme")).toHaveLength(2);
+    expect(within(region).queryByText("Acme site")).toBeNull();
+    await user.click(categoryTrigger());
+    expect(screen.getByRole("menuitemradio", { name: "Acme (2)" })).toBeTruthy();
+    expect(screen.queryByRole("menuitemradio", { name: "Acme site (2)" })).toBeNull();
+  });
 
-    await pick(user, "blog (1)");
+  it("removes a category only after a confirmation naming the count, then shows them under No category", async () => {
+    const f = fixture();
+    const { calls } = backend(f.items, f.categories);
+    const Dashboard = await loadPage();
+    const user = userEvent.setup();
+    render(<Dashboard />);
+    await screen.findByText("Acme report");
+    await pick(user, "Acme site (2)");
     await user.click(screen.getByRole("button", { name: "Rename category" }));
+    let dialog = screen.getByRole("dialog", { name: "Rename category" });
+    await user.click(within(dialog).getByRole("button", { name: "Remove category" }));
+    const renames = () => calls.filter((c) => c.path === "/categories/rename");
+    // Nothing sent yet: a confirmation that names how many artifacts lose it.
+    expect(renames()).toHaveLength(0);
+    let confirm = screen.getByRole("alertdialog", { name: "Remove “Acme site” from 2 artifacts?" });
+    expect(document.activeElement).toBe(within(confirm).getByRole("button", { name: "Back" }));
+    // Back returns to the rename dialog, still with nothing sent.
+    await user.click(within(confirm).getByRole("button", { name: "Back" }));
     dialog = screen.getByRole("dialog", { name: "Rename category" });
     await user.click(within(dialog).getByRole("button", { name: "Remove category" }));
-    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-    expect(renames()[1]?.body).toEqual({ from: "blog", to: null });
-    expect(window.location.search).toBe("");
+    confirm = screen.getByRole("alertdialog", { name: "Remove “Acme site” from 2 artifacts?" });
+    await user.click(within(confirm).getByRole("button", { name: "Remove from 2 artifacts" }));
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+    expect(renames()).toHaveLength(1);
+    expect(renames()[0]?.body).toEqual({ from: "Acme site", to: null });
+    // The filter shows where they went, and the focus is on the category menu.
+    expect(window.location.search).toBe("?category=");
+    await waitFor(() => expect(document.activeElement).toBe(categoryTrigger()));
+    expect(categoryTrigger().textContent).toBe("Category: No category");
+    await waitFor(() =>
+      expect(rowTitles().sort()).toEqual(["Acme plan", "Acme report", "Loose page"]),
+    );
+    expect(screen.queryByRole("button", { name: "Rename category" })).toBeNull();
+  });
+
+  it("keeps the dialog open with the error when the rename fails", async () => {
+    const f = fixture();
+    const { calls } = backend(f.items, f.categories, { failRename: true });
+    const Dashboard = await loadPage();
+    const user = userEvent.setup();
+    render(<Dashboard />);
+    await screen.findByText("Acme report");
+    await pick(user, "blog (1)");
+    await user.click(screen.getByRole("button", { name: "Rename category" }));
+    const dialog = screen.getByRole("dialog", { name: "Rename category" });
+    const input = within(dialog).getByRole("combobox", { name: "New name" });
+    await user.clear(input);
+    await user.type(input, "Journal");
+    await user.click(within(dialog).getByRole("button", { name: "Rename" }));
+    expect(await within(dialog).findByText("Your session expired. Reload.")).toBeTruthy();
+    expect(screen.getByRole("dialog", { name: "Rename category" })).toBe(dialog);
+    for (const name of ["Rename", "Remove category"]) {
+      expect((within(dialog).getByRole("button", { name }) as HTMLButtonElement).disabled).toBe(
+        false,
+      );
+    }
+    expect(window.location.search).toBe("?category=blog");
+    expect(screen.queryByText("Category renamed")).toBeNull();
+
+    // The removal fails the same way: the confirmation stays, with the error and its button back.
+    await user.click(within(dialog).getByRole("button", { name: "Remove category" }));
+    const confirm = screen.getByRole("alertdialog");
+    await user.click(within(confirm).getByRole("button", { name: "Remove from 1 artifact" }));
+    expect(await within(confirm).findByText("Your session expired. Reload.")).toBeTruthy();
+    expect(
+      (within(confirm).getByRole("button", { name: "Remove from 1 artifact" }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(false);
+    expect(calls.filter((c) => c.path === "/categories/rename")).toHaveLength(2);
+    expect(window.location.search).toBe("?category=blog");
+    expect(screen.queryByText("Category removed")).toBeNull();
   });
 });

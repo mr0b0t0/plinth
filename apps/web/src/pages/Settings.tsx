@@ -77,14 +77,21 @@ export default function Settings({ params }: { params: Record<string, string> })
     return () => ctrl.abort();
   }, [pending, slug, reload]);
 
-  // A link to a section (the dashboard's "Move to category…" opens #settings-category): scroll to
-  // it once the settings have loaded.
+  // A link to a section (the dashboard's "Move to category…" opens #settings-category): once the
+  // settings have loaded, scroll to its heading (scroll-margin-top clears the sticky top bar) and
+  // put the focus in its first field, so the shortcut lands where the person types.
   const scrolled = useRef(false);
   useEffect(() => {
     if (state.status !== "ready" || scrolled.current) return;
     scrolled.current = true;
     const id = window.location.hash.slice(1);
-    if (id) document.getElementById(id)?.scrollIntoView?.({ block: "start" });
+    const heading = id ? document.getElementById(id) : null;
+    if (!heading) return;
+    heading.scrollIntoView?.({ block: "start" });
+    heading
+      .closest("section")
+      ?.querySelector<HTMLElement>("input, textarea, select")
+      ?.focus({ preventScroll: true });
   }, [state.status]);
 
   const refreshSharing = useCallback(async () => {
@@ -180,8 +187,8 @@ export default function Settings({ params }: { params: Record<string, string> })
               )
             }
           />
+          {/* Not keyed on the category: a remount after Save would drop the focus. */}
           <CategorySection
-            key={`category-${state.artifact.category ?? ""}`}
             artifact={state.artifact}
             onSaved={(category) =>
               setState((s) =>

@@ -4,7 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { clearToasts, Toaster } from "../ui/index.ts";
-import { json, stubApi } from "../viewer/test-utils.ts";
+import { apiError, json, stubApi } from "../viewer/test-utils.ts";
 import { CategorySection, snapTargets } from "./SettingsSections.tsx";
 
 const summary = (over: Partial<ArtifactSummary> = {}): ArtifactSummary => ({
@@ -32,26 +32,35 @@ const NAMES = [
   { name: "blog", count: 1 },
 ];
 
-/** The section as Settings mounts it: keyed on the stored category, merged into the artifact. */
-function Harness({ initial }: { initial: ArtifactSummary }) {
+/** The section as Settings mounts it (not keyed, so a save keeps the focus), merged into the artifact. */
+function Harness({
+  initial,
+  onSaved,
+}: {
+  initial: ArtifactSummary;
+  onSaved?: (category: string | null) => void;
+}) {
   const [artifact, setArtifact] = useState(initial);
   return (
     <>
       <CategorySection
-        key={`category-${artifact.category ?? ""}`}
         artifact={artifact}
-        onSaved={(category) => setArtifact((a) => ({ ...a, category }))}
+        onSaved={(category) => {
+          onSaved?.(category);
+          setArtifact((a) => ({ ...a, category }));
+        }}
       />
       <Toaster />
     </>
   );
 }
 
-function backend() {
+function backend({ failPatch = false } = {}) {
   return stubApi({
     handle: (c) => {
       if (c.method === "GET" && c.path === "/categories") return json({ items: NAMES });
       if (c.method === "PATCH" && c.path === "/artifacts/art1") {
+        if (failPatch) return apiError(403, "forbidden", "Your session expired. Reload the page.");
         const { category } = c.body as { category: string | null };
         // The Worker snaps onto the owner's spelling.
         const stored = category === "acme-site" ? "Acme Site" : category;
@@ -130,11 +139,71 @@ describe("CategorySection", () => {
     await user.type(field(), "a​b");
     await user.click(screen.getByRole("button", { name: "Save category" }));
     expect(
-      await screen.findByText(
-        "A category cannot contain control, invisible or line-break characters.",
-      ),
+      await screen.findByText("A category cannot contain control or invisible characters."),
+    ).toBeTruthy();
+    await user.clear(field());
+    await user.type(field(), "- _");
+    await user.click(screen.getByRole("button", { name: "Save category" }));
+    expect(
+      await screen.findByText("A category needs a character other than spaces, '-' and '_'."),
     ).toBeTruthy();
     expect(calls.some((c) => c.method === "PATCH")).toBe(false);
+  });
+
+  it("keeps the focus in the field after Save and after Remove", async () => {
+    backend();
+    const user = userEvent.setup();
+    render(<Harness initial={summary()} />);
+    await user.type(field(), "Fresh{Enter}");
+    await screen.findByText("Category saved");
+    await waitFor(() => expect(document.activeElement).toBe(field()));
+    await user.click(screen.getByRole("button", { name: "Remove category" }));
+    await screen.findByText("Category removed");
+    await waitFor(() =>
+      expect(screen.queryByRole("button", { name: "Remove category" })).toBeNull(),
+    );
+    expect(document.activeElement).toBe(field());
+  });
+
+  it("says why Save stays off when the name snaps back onto the current, shared one", async () => {
+    const { calls } = backend();
+    const user = userEvent.setup();
+    render(<Harness initial={summary({ category: "Acme Site" })} />);
+    await waitFor(() => expect(calls.some((c) => c.path === "/categories")).toBe(true));
+    await user.clear(field());
+    await user.type(field(), "acme site");
+    expect(
+      screen.getByText(
+        "Matches “Acme Site”, its current category. To respell it on every artifact, use Rename category on your dashboard.",
+      ),
+    ).toBeTruthy();
+    expect(
+      (screen.getByRole("button", { name: "Save category" }) as HTMLButtonElement).disabled,
+    ).toBe(true);
+  });
+
+  it("shows the error and re-enables the buttons when the save or the removal fails", async () => {
+    const { calls } = backend({ failPatch: true });
+    const saved = vi.fn();
+    const user = userEvent.setup();
+    render(<Harness initial={summary({ category: "blog" })} onSaved={saved} />);
+    await user.clear(field());
+    await user.type(field(), "Other");
+    await user.click(screen.getByRole("button", { name: "Save category" }));
+    expect(await screen.findByText("Your session expired. Reload the page.")).toBeTruthy();
+    const save = screen.getByRole("button", { name: "Save category" }) as HTMLButtonElement;
+    const remove = screen.getByRole("button", { name: "Remove category" }) as HTMLButtonElement;
+    expect(save.disabled).toBe(false);
+    expect(remove.disabled).toBe(false);
+    expect(field().value).toBe("Other");
+
+    await user.click(remove);
+    await waitFor(() => expect(calls.filter((c) => c.method === "PATCH")).toHaveLength(2));
+    expect(await screen.findByText("Your session expired. Reload the page.")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Remove category" })).toBeTruthy();
+    expect(saved).not.toHaveBeenCalled();
+    expect(screen.queryByText("Category saved")).toBeNull();
+    expect(screen.queryByText("Category removed")).toBeNull();
   });
 });
 

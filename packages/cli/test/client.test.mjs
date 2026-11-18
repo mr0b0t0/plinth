@@ -404,7 +404,7 @@ describe("plinth publish --category", () => {
 
   it("refuses a name that is too long, empty or has control characters before any request", async () => {
     const dir = build(site(1));
-    for (const bad of ["x".repeat(61), "   ", "a\u202Eb", "a\u200Bb"]) {
+    for (const bad of ["x".repeat(61), "   ", "a\u202Eb", "a\u200Bb", "-", " _ - "]) {
       const from = fake.state.requests.length;
       const r = await plinth(["publish", dir, "--category", bad], { extraEnv: asPat() });
       assert.equal(r.code, 2, `${JSON.stringify(bad)}: ${r.stderr}`);
@@ -431,6 +431,80 @@ describe("plinth publish --category", () => {
     } finally {
       fake.state.notOwner = false;
     }
+  });
+
+  it("turns line breaks and separators into a space, as the server stores them", async () => {
+    const r = await plinth(
+      ["publish", build(site(1)), "--json", "--category", "acme\u2028site\nweb"],
+      {
+        extraEnv: asPat(),
+      },
+    );
+    assert.equal(r.code, 0, r.stderr);
+    assert.equal(fake.state.lastUploadInput.category, "acme site web");
+  });
+
+  it("says the category was not applied when the folder already matches and nothing is sent", async () => {
+    const a = fake.seed(site(1));
+    const from = fake.state.requests.length;
+    const r = await plinth(
+      ["publish", build(site(1)), "--id", a.id, "--base-version", "1", "--category", "Acme site"],
+      { extraEnv: asPat() },
+    );
+    assert.equal(r.code, 0, r.stderr);
+    assert.match(r.stderr, /nothing to publish/);
+    assert.match(r.stderr, /--category was not applied, since nothing was sent/);
+    assert.equal(since(from).filter((q) => q.method === "PUT" || q.method === "POST").length, 0);
+    assert.equal(a.category, undefined);
+    const json = await plinth(
+      [
+        "publish",
+        build(site(1)),
+        "--id",
+        a.id,
+        "--base-version",
+        "1",
+        "--json",
+        "--category",
+        "Acme site",
+      ],
+      { extraEnv: asPat() },
+    );
+    assert.equal(json.code, 0, json.stderr);
+    assert.match(json.stderr, /--category was not applied/);
+    assert.ok(!("category" in JSON.parse(json.stdout)));
+  });
+
+  it("reads the stored category back when a publish's answer was lost", async () => {
+    fake.state.dropBundle = "after";
+    const r = await plinth(["publish", build(site(3)), "--json", "--category", "Acme site"], {
+      extraEnv: asPat(),
+    });
+    assert.equal(r.code, 0, r.stderr);
+    const out = JSON.parse(r.stdout);
+    assert.equal(out.recovered, true);
+    assert.equal(out.category, "Acme site");
+  });
+
+  it("reads the stored category back when an inline update's answer was lost", async () => {
+    const a = fake.seed(site(2));
+    fake.state.dropPut = "after";
+    const r = await plinth(
+      [
+        "publish",
+        build({ ...site(2), "assets/a1.js": "console.log('cat');" }),
+        "--id",
+        a.id,
+        "--json",
+        "--category",
+        "Acme site",
+      ],
+      { extraEnv: asPat() },
+    );
+    assert.equal(r.code, 0, r.stderr);
+    const out = JSON.parse(r.stdout);
+    assert.equal(out.recovered, true);
+    assert.equal(out.category, "Acme site");
   });
 
   it("leaves category out of every body when the flag is absent", async () => {

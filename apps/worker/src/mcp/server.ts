@@ -258,9 +258,10 @@ export const PLUGIN_NOTE = `In Claude Code without the plinth-artifacts skill, s
  */
 export const CATEGORY_NOTE =
   "category (optional): the project or client this belongs to, usually the repo you are working in. " +
-  "Call list_artifacts first and reuse a name from its categories for the same project; the server " +
-  "also matches case, spaces, '-' and '_' onto the owner's existing name and returns the name it " +
-  "stored. A short name only: no paths, emails or secrets. Only the owner sees it. ";
+  "Call list_artifacts first (limit 0 returns only the names) and reuse one from its categories for " +
+  "the same project; the server also matches case, spaces, '-' and '_' onto the owner's existing " +
+  "name and returns the name it stored. A short name only: no paths, emails or secrets. Only the " +
+  "owner sees it. ";
 
 /** The server instructions' sentence about categories. */
 export const CATEGORY_INSTRUCTION =
@@ -413,12 +414,16 @@ export function buildMcpServer(ctx: Ctx): McpServer {
       description:
         "List the connected user's artifacts and those shared with them, newest first, plus categories: " +
         "the user's own category names with counts, to reuse when publishing. Optional query filters " +
-        "by title; optional category filters the user's own artifacts. category is null on artifacts " +
+        "by title; optional category filters the user's own artifacts; limit 0 returns only the " +
+        "categories, the cheap read before publishing. category is null on artifacts " +
         `shared with the user. ${UNTRUSTED_NOTE}`,
       inputSchema: listArtifactsInput,
       annotations: MCP_TOOL_ANNOTATIONS.list_artifacts,
     },
-    (args) => run(() => listArtifacts(ctx, { query: args.query, category: args.category })),
+    (args) =>
+      run(() =>
+        listArtifacts(ctx, { query: args.query, category: args.category, limit: args.limit }),
+      ),
   );
 
   server.registerTool(
