@@ -6,7 +6,9 @@
 import {
   type ArtifactTypeDef,
   CONTENT_RESERVED_PREFIX,
+  RENDERERS_DIR,
   REVIEW_MODE_PARAM,
+  rendererFiles,
   typeDef,
   typedShellHtml,
 } from "@plinth/shared";
@@ -15,8 +17,6 @@ import type { ArtifactRow, VersionRow } from "../db/schema.ts";
 import { injectBridge } from "./bridge.ts";
 import { applyContentHeaders } from "./csp.ts";
 
-/** Where the web build puts renderer bundles (apps/web/build/renderers.ts, RENDERERS_DIR). */
-const RENDERERS_DIR = "__plinth-renderers";
 /** ASSETS ignores the host; a reserved TLD keeps the request from ever meaning a real site. */
 const ASSETS_ORIGIN = "https://assets.invalid";
 
@@ -63,12 +63,10 @@ export async function serveRendererFile(
   file: string,
 ): Promise<Response> {
   const def = typeDef(id);
-  const r = def?.renderer;
-  if (!def || !r) return notFound(config);
-  const expected = file === r.script ? "text/javascript" : file === r.style ? "text/css" : null;
-  if (!expected) return notFound(config);
-  const name = file === r.script ? r.script : r.style;
-  const res = await env.ASSETS.fetch(`${ASSETS_ORIGIN}/${RENDERERS_DIR}/${def.id}/${name}`);
+  const listed = def ? rendererFiles(def).find((f) => f.name === file) : undefined;
+  if (!def || !listed) return notFound(config);
+  const expected = listed.contentType;
+  const res = await env.ASSETS.fetch(`${ASSETS_ORIGIN}/${RENDERERS_DIR}/${def.id}/${listed.name}`);
   const type = (res.headers.get("Content-Type") ?? "").split(";")[0]?.trim().toLowerCase();
   if (!res.ok || type !== expected) {
     await res.body?.cancel();

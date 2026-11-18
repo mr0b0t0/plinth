@@ -6,11 +6,14 @@
 // so it never shares a chunk with the SPA and defines no globals. It runs inside the main build
 // (not as a second `vite build`), because `vite build --watch` empties dist on every rebuild and
 // would wipe a separately built bundle. Its source files join the watch list.
-import { TYPE_REGISTRY } from "@plinth/shared";
+import {
+  ARTIFACT_TYPES,
+  type ArtifactTypeDef,
+  RENDERERS_DIR,
+  rendererFiles,
+  TYPE_REGISTRY,
+} from "@plinth/shared";
 import { build, type Plugin, type ResolvedConfig } from "vite";
-
-/** Output directory inside dist; the Worker's content host reads the same path from ASSETS. */
-export const RENDERERS_DIR = "__plinth-renderers";
 
 interface Built {
   fileName: string;
@@ -19,9 +22,9 @@ interface Built {
 
 async function buildRenderer(
   config: ResolvedConfig,
-  id: string,
-  files: { script: string; style: string },
+  def: ArtifactTypeDef & { renderer: { script: string; style: string } },
 ): Promise<{ assets: Built[]; watch: string[] }> {
+  const { id, renderer: files } = def;
   const result = await build({
     configFile: false,
     root: config.root,
@@ -63,13 +66,15 @@ async function buildRenderer(
       }
     }
   }
-  for (const want of [files.script, files.style]) {
+  // Exactly the files the content host serves for this type, no more.
+  const wanted = rendererFiles(def).map((f) => f.name);
+  for (const want of wanted) {
     if (!assets.some((a) => a.fileName === want)) {
       throw new Error(`Renderer ${id}: the build did not produce ${want}`);
     }
   }
   return {
-    assets: assets.filter((a) => a.fileName === files.script || a.fileName === files.style),
+    assets: assets.filter((a) => wanted.includes(a.fileName)),
     watch: [...watch],
   };
 }
@@ -85,9 +90,10 @@ export function renderers(): Plugin {
     },
     async buildStart() {
       built = [];
-      for (const def of Object.values(TYPE_REGISTRY)) {
+      for (const id of ARTIFACT_TYPES) {
+        const def: ArtifactTypeDef = TYPE_REGISTRY[id];
         if (!def.renderer) continue;
-        const { assets, watch } = await buildRenderer(config, def.id, def.renderer);
+        const { assets, watch } = await buildRenderer(config, { ...def, renderer: def.renderer });
         for (const file of watch) this.addWatchFile(file);
         built.push({ id: def.id, assets });
       }
