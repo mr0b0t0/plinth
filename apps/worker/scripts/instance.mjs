@@ -341,7 +341,9 @@ export async function setupInstance(raw, runtime) {
  * later) into an instance config an older release wrote, keeping everything else and the leading comment. An
  * upgrade that only restarts an instance (npm, or the Docker image, which re-runs `plinth init`
  * only when its settings change) would otherwise run without flags the release needs, such as
- * enable_request_signal or the hourly staging sweep. Returns true when the file changed.
+ * enable_request_signal or the hourly staging sweep. The release's Durable Object binding and
+ * migration (live rooms) come along too, so an upgraded instance gets rooms on its next start.
+ * Returns true when the file changed.
  */
 export function refreshInstanceRuntime(paths, base) {
   const text = readFileSync(paths.wranglerConfig, "utf8");

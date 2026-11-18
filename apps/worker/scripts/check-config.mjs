@@ -9,16 +9,21 @@
 // With no config named it checks wrangler.jsonc and every wrangler.<env>.jsonc in the directory
 // (default: apps/worker). Exits 1 and names each file that fails. With --warn (the Worker's
 // `build`) it prints one warning line per file that fails and exits 0: a stale git-ignored config
-// on someone's machine must not break the build, only its deploy.
+// on someone's machine must not break the build, only its deploy. Without --warn it also prints a
+// note for a config that passes but leaves something optional off (deploy-lib runtimeConfigNotes:
+// no live-rooms binding), and still exits 0 for it.
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { runtimeConfigMissing, runtimeConfigProblem } from "./deploy-lib.mjs";
+import { runtimeConfigMissing, runtimeConfigNotes, runtimeConfigProblem } from "./deploy-lib.mjs";
 import { parseJsonc } from "./instance.mjs";
 
 const CONFIG_RE = /^wrangler(\.[A-Za-z0-9_-]+)?\.jsonc$/;
 
-/** Each named config (or every wrangler*.jsonc in `dir`) with what is wrong with it. */
+/**
+ * Each named config (or every wrangler*.jsonc in `dir`) with what is wrong with it, and notes on
+ * the ones that pass.
+ */
 export function checkWorkerConfigs(dir, files = []) {
   const names =
     files.length > 0
@@ -27,6 +32,7 @@ export function checkWorkerConfigs(dir, files = []) {
           .filter((f) => CONFIG_RE.test(f))
           .sort();
   const problems = [];
+  const notes = [];
   for (const name of names) {
     const file = path.resolve(dir, name);
     if (!existsSync(file)) {
@@ -42,8 +48,9 @@ export function checkWorkerConfigs(dir, files = []) {
     }
     const problem = runtimeConfigProblem(cfg);
     if (problem) problems.push({ name, problem, missing: runtimeConfigMissing(cfg) });
+    else for (const note of runtimeConfigNotes(cfg)) notes.push({ name, note });
   }
-  return { checked: names, problems };
+  return { checked: names, problems, notes };
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
@@ -56,7 +63,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     else if (args[i] === "--warn") warn = true;
     else files.push(args[i]);
   }
-  const { problems } = checkWorkerConfigs(dir, files);
+  const { problems, notes } = checkWorkerConfigs(dir, files);
   if (warn) {
     for (const { name, missing, problem } of problems) {
       const what = missing ? `lacks ${missing.join(" and ")}` : problem;
@@ -73,5 +80,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
         "release's flags and cron trigger and keeps the rest (docs/deploy-checklist.md#6-upgrading-and-rolling-back)",
     );
     process.exit(1);
+  } else {
+    for (const { name, note } of notes) console.error(`check-config: note: ${name}: ${note}`);
   }
 }

@@ -22,6 +22,10 @@ export type InstancePaths = {
   meta: string;
 };
 export declare const DEFAULT_PORT: number;
+export declare const REQUIRED_FLAGS: string[];
+export declare const SWEEP_CRON: string;
+export declare const ROOMS_DO: { bindings: { name: string; class_name: string }[] };
+export declare const ROOMS_MIGRATIONS: { tag: string; new_sqlite_classes: string[] }[];
 export declare class TunnelUsageError extends Error {}
 export declare function validateTunnelOptions(
   raw: Record<string, string | true | undefined>,

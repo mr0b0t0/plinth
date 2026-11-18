@@ -18,6 +18,15 @@ export const DEFAULT_PORT = 8788;
 export const REQUIRED_FLAGS = ["nodejs_compat", "enable_request_signal"];
 export const SWEEP_CRON = "0 * * * *";
 
+/**
+ * Live rooms (#36): the Durable Object binding and its migration, as apps/worker/wrangler.jsonc has
+ * them, for a base that names none. The class is SQLite-backed (the only kind Workers Free allows)
+ * and stores nothing. The tag is applied once per Worker and must never change; a config without
+ * the binding still works, with rooms off.
+ */
+export const ROOMS_DO = { bindings: [{ name: "ROOMS", class_name: "ArtifactRoom" }] };
+export const ROOMS_MIGRATIONS = [{ tag: "rooms-v1", new_sqlite_classes: ["ArtifactRoom"] }];
+
 export class TunnelUsageError extends Error {}
 
 const fail = (message) => {
@@ -132,7 +141,10 @@ export function resolveLayout(layout) {
   };
 }
 
-/** The parts every instance config shares: code paths, bindings and compatibility settings. */
+/**
+ * The parts every instance config shares: code paths, bindings (the live-rooms Durable Object
+ * included) and compatibility settings.
+ */
 function workerBase(o, layout, base) {
   const l = resolveLayout(layout);
   return {
@@ -159,6 +171,8 @@ function workerBase(o, layout, base) {
       },
     ],
     r2_buckets: [{ binding: "FILES", bucket_name: "plinth-files" }],
+    durable_objects: base.durable_objects ?? ROOMS_DO,
+    migrations: base.migrations ?? ROOMS_MIGRATIONS,
   };
 }
 

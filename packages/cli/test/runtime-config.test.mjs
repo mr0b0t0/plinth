@@ -1,6 +1,8 @@
 // Every Worker config Plinth writes carries the runtime settings this release needs: the
 // enable_request_signal compatibility flag (an abandoned upload cleans up at once) and the hourly
 // cron trigger (the staging sweep removes what a killed attempt left). One test per generator.
+// Each also carries the live-rooms Durable Object (#36): the ROOMS binding, its rooms-v1
+// migration and the room and live-editing vars, which a config may lack (rooms are then off).
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -11,9 +13,14 @@ import { fileURLToPath } from "node:url";
 import { deployToCloudflare } from "../../../apps/worker/scripts/deploy.mjs";
 import {
   buildDeployConfig,
+  hasRoomsBinding,
   mergeDeploySettings,
+  ROOMS_DO,
+  ROOMS_MIGRATIONS,
   refreshRuntime,
   runtimeBase,
+  runtimeConfigMissing,
+  runtimeConfigNotes,
   runtimeConfigProblem,
 } from "../../../apps/worker/scripts/deploy-lib.mjs";
 import {
@@ -44,6 +51,42 @@ function assertRuntime(cfg, where) {
   assert.equal(runtimeConfigProblem(cfg), null, `${where}: runtimeConfigProblem`);
 }
 
+const ROOM_VARS = [
+  "ALLOW_ROOMS",
+  "ROOM_MAX_CONNECTIONS_PER_ARTIFACT",
+  "ROOM_MAX_MESSAGE_BYTES",
+  "ROOM_MESSAGES_PER_SECOND",
+  "ALLOW_LIVE_EDITING",
+  "LIVE_CHECKPOINT_IDLE_S",
+  "LIVE_AUTO_CHECKPOINT_MIN_S",
+  "LIVE_DRAFT_FLUSH_S",
+  "LIVE_DRAFT_RETENTION_DAYS",
+];
+
+/**
+ * The ROOMS binding and the rooms-v1 migration are in `cfg`, and (unless `vars: false`, for a
+ * refreshed config, which keeps the operator's vars) the room and live-editing vars with the
+ * committed defaults.
+ */
+function assertRooms(cfg, where, { vars = true } = {}) {
+  assert.ok(
+    cfg.durable_objects?.bindings?.some(
+      (b) => b.name === "ROOMS" && b.class_name === "ArtifactRoom" && !b.script_name,
+    ),
+    `${where}: durable_objects binds ROOMS to ArtifactRoom`,
+  );
+  assert.equal(hasRoomsBinding(cfg), true, `${where}: hasRoomsBinding`);
+  assert.deepEqual(
+    cfg.migrations?.filter((m) => m.tag === "rooms-v1"),
+    [{ tag: "rooms-v1", new_sqlite_classes: ["ArtifactRoom"] }],
+    `${where}: one rooms-v1 migration, a SQLite class`,
+  );
+  assert.deepEqual(runtimeConfigNotes(cfg), [], `${where}: no rooms note`);
+  if (vars)
+    for (const k of ROOM_VARS)
+      assert.equal(cfg.vars?.[k], repoCfg.vars[k], `${where}: vars.${k} is the committed default`);
+}
+
 const layout = {
   main: "/rt/worker/index.js",
   assetsDir: "/rt/web",
@@ -67,15 +110,36 @@ const quiet = () => {};
 describe("generated Worker configs carry the flag and the cron", () => {
   it("apps/worker/wrangler.jsonc (local dev and the Workers test pool)", () => {
     assertRuntime(repoCfg, "wrangler.jsonc");
+    assertRooms(repoCfg, "wrangler.jsonc");
+    // The shared constants are what the committed config says.
+    assert.deepEqual(repoCfg.durable_objects, ROOMS_DO);
+    assert.deepEqual(repoCfg.migrations, ROOMS_MIGRATIONS);
+    for (const k of ROOM_VARS) assert.ok(k in repoCfg.vars, `wrangler.jsonc vars.${k}`);
   });
 
   it("the CLI's runtime/wrangler.base.json (packages/cli/scripts/bundle.mjs)", () => {
     const base = runtimeBase(repoCfg);
     assertRuntime(base, "wrangler.base.json");
+    assertRooms(base, "wrangler.base.json");
     // bundle.mjs builds the file with runtimeBase, so `triggers` is copied with the flags.
     const bundle = readFileSync(path.join(root, "packages/cli/scripts/bundle.mjs"), "utf8");
     assert.match(bundle, /runtimeBase\(repoCfg\)/);
+    // ...and refuses a Worker bundle that does not export the class the binding names.
+    assert.match(bundle, /export[^\n]*ArtifactRoom/);
     assert.equal(base.assets.directory, undefined);
+  });
+
+  it("the CLI's prebuilt Worker exports ArtifactRoom (when built)", (t) => {
+    const built = path.join(root, "packages/cli/runtime");
+    let js;
+    try {
+      js = readFileSync(path.join(built, "worker/index.js"), "utf8");
+    } catch {
+      t.skip("packages/cli/runtime is not built; `pnpm build` makes it");
+      return;
+    }
+    assert.match(js, /\bexport\s*\{[^}]*\bArtifactRoom\b[^}]*\}/);
+    assertRooms(JSON.parse(readFileSync(path.join(built, "wrangler.base.json"), "utf8")), "built");
   });
 
   it("plinth deploy (buildDeployConfig)", () => {
@@ -85,6 +149,12 @@ describe("generated Worker configs carry the flag and the cron", () => {
       contentZone: "example-content.net",
     });
     assertRuntime(cfg, "plinth deploy");
+    assertRooms(cfg, "plinth deploy");
+    // A base without them (an older wrangler.base.json) still gets the binding and migration.
+    const bare = { ...runtimeBase(repoCfg), durable_objects: undefined, migrations: undefined };
+    const fallback = buildDeployConfig(s, layout, bare, { databaseId: "db", contentZone: "z" });
+    assert.deepEqual(fallback.durable_objects, ROOMS_DO);
+    assert.deepEqual(fallback.migrations, ROOMS_MIGRATIONS);
   });
 
   it("tunnel instances (tunnel-lib buildWorkerConfig)", () => {
@@ -98,11 +168,14 @@ describe("generated Worker configs carry the flag and the cron", () => {
     );
     assertRuntime(buildWorkerConfig(o, layout, runtimeBase(repoCfg)), "tunnel");
     assertRuntime(buildWorkerConfig(o, root, repoCfg), "tunnel (checkout)");
+    assertRooms(buildWorkerConfig(o, layout, runtimeBase(repoCfg)), "tunnel");
+    assertRooms(buildWorkerConfig(o, root, repoCfg), "tunnel (checkout)");
   });
 
   it("localhost instances (tunnel-lib buildLocalWorkerConfig)", () => {
     const o = { name: "plinth", port: 9821, adminEmail: "me@example.com" };
     assertRuntime(buildLocalWorkerConfig(o, layout, runtimeBase(repoCfg)), "local");
+    assertRooms(buildLocalWorkerConfig(o, layout, runtimeBase(repoCfg)), "local");
   });
 
   it("refreshRuntime carries triggers into an existing config, keeping the operator's own", () => {
@@ -121,6 +194,45 @@ describe("generated Worker configs carry the flag and the cron", () => {
     assert.deepEqual(refreshRuntime(next, repoCfg), next);
   });
 
+  it("refreshRuntime adds the ROOMS binding and migration, keeping the operator's own", () => {
+    const old = {
+      name: "plinth-production",
+      compatibility_date: "2026-11-01",
+      compatibility_flags: ["nodejs_compat", FLAG],
+      triggers: { crons: [CRON] },
+      vars: { APP_HOST: "plinth.example.com", ALLOW_ROOMS: "false" },
+    };
+    const next = refreshRuntime(old, repoCfg);
+    assertRuntime(next, "refreshRuntime");
+    assertRooms(next, "refreshRuntime", { vars: false });
+    // The operator's vars are kept as they are: an explicit ALLOW_ROOMS=false stays off.
+    assert.deepEqual(next.vars, old.vars);
+    assert.deepEqual(refreshRuntime(next, repoCfg), next);
+
+    const own = refreshRuntime(
+      {
+        ...old,
+        durable_objects: { bindings: [{ name: "MINE", class_name: "Mine" }] },
+        migrations: [{ tag: "mine-v1", new_classes: ["Mine"] }],
+      },
+      repoCfg,
+    );
+    assert.deepEqual(own.durable_objects.bindings, [
+      { name: "MINE", class_name: "Mine" },
+      ...ROOMS_DO.bindings,
+    ]);
+    assert.deepEqual(own.migrations, [
+      { tag: "mine-v1", new_classes: ["Mine"] },
+      ...ROOMS_MIGRATIONS,
+    ]);
+    // Present already (by name and by tag): never duplicated or rewritten.
+    assert.deepEqual(refreshRuntime(own, repoCfg), own);
+    // A repo config without them adds nothing.
+    const { durable_objects: _d, migrations: _m, ...noRooms } = repoCfg;
+    assert.equal("durable_objects" in refreshRuntime(old, noRooms), false);
+    assert.equal("migrations" in refreshRuntime(old, noRooms), false);
+  });
+
   it("plinth init and plinth start (an instance an older release wrote is refreshed)", async () => {
     const home = path.join(tmp, "start");
     const runtime = {
@@ -134,9 +246,13 @@ describe("generated Worker configs carry the flag and the cron", () => {
     await setupInstance({ email: "me@example.com", home, port: "9822" }, runtime);
     const file = path.join(home, "plinth", "wrangler.jsonc");
     assertRuntime(parseJsonc(readFileSync(file, "utf8")), "plinth init");
+    assertRooms(parseJsonc(readFileSync(file, "utf8")), "plinth init");
     const old = parseJsonc(readFileSync(file, "utf8"));
     old.compatibility_flags = ["nodejs_compat"];
     delete old.triggers;
+    // What a release before live rooms wrote: no binding, no migration.
+    delete old.durable_objects;
+    delete old.migrations;
     writeFileSync(file, `// Generated by Plinth setup.\n${JSON.stringify(old, null, 2)}\n`);
     const log = console.log;
     console.log = quiet;
@@ -146,6 +262,8 @@ describe("generated Worker configs carry the flag and the cron", () => {
       console.log = log;
     }
     assertRuntime(parseJsonc(readFileSync(file, "utf8")), "plinth start");
+    // The operator's vars stay; the binding and migration are added.
+    assertRooms(parseJsonc(readFileSync(file, "utf8")), "plinth start");
   });
 
   it("docker/configure.mjs keeps them when it writes the container's settings", () => {
@@ -200,10 +318,27 @@ await setupInstance(raw, {
     });
     assert.equal(r.status, 0, r.stderr);
     assert.match(r.stdout, /^start$/m);
-    assertRuntime(
-      parseJsonc(readFileSync(path.join(data, "plinth", "wrangler.jsonc"), "utf8")),
-      "docker",
-    );
+    const dockerCfg = parseJsonc(readFileSync(path.join(data, "plinth", "wrangler.jsonc"), "utf8"));
+    assertRuntime(dockerCfg, "docker");
+    assertRooms(dockerCfg, "docker");
+
+    // PLINTH_ALLOW_ROOMS and PLINTH_ALLOW_LIVE_EDITING set the switches; the binding stays.
+    const off = spawnSync(process.execPath, [path.join(app, "docker/configure.mjs")], {
+      env: {
+        PATH: process.env.PATH,
+        PLINTH_HOME: data,
+        PLINTH_EMAIL: "me@example.com",
+        PLINTH_PORT: "9823",
+        PLINTH_ALLOW_ROOMS: "false",
+        PLINTH_ALLOW_LIVE_EDITING: "false",
+      },
+      encoding: "utf8",
+    });
+    assert.equal(off.status, 0, off.stderr);
+    const offCfg = parseJsonc(readFileSync(path.join(data, "plinth", "wrangler.jsonc"), "utf8"));
+    assert.equal(offCfg.vars.ALLOW_ROOMS, "false");
+    assert.equal(offCfg.vars.ALLOW_LIVE_EDITING, "false");
+    assertRooms(offCfg, "docker (rooms off)", { vars: false });
   });
 
   it("scripts/setup.mjs --remote, fresh and re-run on a config written before both", () => {
@@ -239,12 +374,17 @@ await setupInstance(raw, {
       return parseJsonc(body.join("\n"));
     };
     try {
-      assertRuntime(run(), "setup (fresh)");
+      const fresh = run();
+      assertRuntime(fresh, "setup (fresh)");
+      assertRooms(fresh, "setup (fresh)");
       const old = { ...repoCfg, name: "plinth-old", compatibility_flags: ["nodejs_compat"] };
       delete old.triggers;
+      delete old.durable_objects;
+      delete old.migrations;
       writeFileSync(file, `// old\n${JSON.stringify(old, null, 2)}\n`);
       const next = run();
       assertRuntime(next, "setup (re-run)");
+      assertRooms(next, "setup (re-run)");
       assert.equal(next.name, "plinth-old");
     } finally {
       rmSync(file, { force: true });
@@ -262,6 +402,23 @@ describe("deploys refuse a config without them", () => {
     assert.match(runtimeConfigProblem(noCron), /0 \* \* \* \*/);
     assert.match(runtimeConfigProblem({ ...full, triggers: { crons: [] } }), /triggers/);
     assert.match(runtimeConfigProblem({}), /enable_request_signal[\s\S]*0 \* \* \* \*/);
+  });
+
+  it("a config without the ROOMS binding is not refused, only noted (rooms are off)", () => {
+    const { durable_objects: _d, migrations: _m, ...noRooms } = runtimeBase(repoCfg);
+    assert.deepEqual(runtimeConfigMissing(noRooms), []);
+    assert.equal(runtimeConfigProblem(noRooms), null);
+    assert.equal(hasRoomsBinding(noRooms), false);
+    const [note, ...more] = runtimeConfigNotes(noRooms);
+    assert.equal(more.length, 0);
+    assert.match(note, /no ROOMS Durable Object binding/);
+    assert.match(note, /rooms-v1/);
+    // A binding to another Worker's class is not this Worker's room.
+    const elsewhere = {
+      ...noRooms,
+      durable_objects: { bindings: [{ ...ROOMS_DO.bindings[0], script_name: "other" }] },
+    };
+    assert.equal(hasRoomsBinding(elsewhere), false);
   });
 
   it("plinth deploy stops before touching the account when the bundled base lacks the cron", async () => {
@@ -316,6 +473,22 @@ describe("checkout deploys refuse a per-environment config without them", () => 
     writeFileSync(path.join(dir, "wrangler.production.jsonc"), JSON.stringify(refreshed, null, 2));
     const r = runCheck(dir);
     assert.equal(r.status, 0, r.stderr);
+    assert.equal(r.stderr, "");
+  });
+
+  it("passes a config without the ROOMS binding, with a note on how to turn rooms on", () => {
+    const dir = workerCopy("check-no-rooms");
+    const { durable_objects: _d, migrations: _m, ...noRooms } = refreshRuntime(oldCfg, repoCfg);
+    writeFileSync(path.join(dir, "wrangler.production.jsonc"), JSON.stringify(noRooms, null, 2));
+    const r = runCheck(dir, "wrangler.production.jsonc");
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stderr, /^check-config: note: wrangler\.production\.jsonc: [^\n]*ROOMS/);
+    // The build's --warn mode stays quiet about it.
+    const warn = spawnSync(process.execPath, [checkScript, "--warn", "--dir", dir], {
+      encoding: "utf8",
+    });
+    assert.equal(warn.status, 0);
+    assert.equal(warn.stderr, "");
   });
 
   it("refuses every wrangler.<env>.jsonc that setup wrote before 0.4.0, naming the file", () => {
