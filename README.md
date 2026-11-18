@@ -44,9 +44,10 @@ pages from any of them:
 
 ## What people use it for
 
-- **An agent with nowhere to put a page.** Cursor, VS Code, Gemini CLI and most MCP clients can
-  write HTML but have no built-in place to share it. Ask for a dashboard in Cursor and you get a link you can
-  send, not a file in your repo.
+- **An agent with nowhere to put a page.** VS Code, Gemini CLI and most MCP clients can write HTML
+  but have no built-in place to share it, and Cursor's shared canvases open only for your own Cursor
+  team. Ask for a dashboard in Cursor and you get a link you can send to the people you choose, not a
+  file in your repo.
 - **A team on different tools.** One person works in Codex, another in Claude Code, a designer in
   Cursor. Their pages land in one place with one sharing model, and any agent can pick up a comment
   on a page another agent made (the recording above).

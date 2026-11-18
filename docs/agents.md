@@ -45,7 +45,7 @@ Two channels carry these rules, so every harness gets them whatever it supports:
 | Codex | Codex Sites | yes | Plugin: Install the Plinth plugin for the skill. | yes |
 | T3 Code | T3 Code visual replies | yes | Plugin: Install the Plinth plugin in the Claude Code and Codex that T3 Code runs; their threads in T3 Code then load it. | yes |
 | Gemini CLI | none | yes | Extension: Install the Plinth extension (server and skill) from a checkout of the repository. | not yet |
-| Cursor | none | yes | Rule file: Save the Plinth rule into your project's .cursor/rules/ folder. | not yet |
+| Cursor | Cursor shared canvases (your Cursor team only) | yes | Rule file: Save the Plinth rule into your project's .cursor/rules/ folder. | not yet |
 | VS Code | none | yes | Rule file: Save the Plinth instructions into your project's .github/instructions/ folder. | not yet |
 | Other clients | none | yes | Server instructions: The server's instructions carry the core rules. Give your agent the skill file for the full ones. | not yet |
 

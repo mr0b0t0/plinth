@@ -304,7 +304,7 @@ export const HARNESSES: readonly Harness[] = [
     id: "cursor",
     label: "Cursor",
     reachesLocal: true,
-    nativeArtifacts: null,
+    nativeArtifacts: "Cursor shared canvases (your Cursor team only)",
     verified: false,
     guidance: {
       kind: "rule-file",
