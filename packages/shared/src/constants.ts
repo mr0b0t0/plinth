@@ -269,11 +269,14 @@ export const CONTENT_DATA_HEADER = "x-plinth-data";
  * - `stored`: `always` keys are in every stored declaration; `declared` keys only when the token
  *   is declared, so a declaration without it is stored byte for byte as before the token existed.
  * `room` is the live room (presence and broadcast, packages/shared/src/room.ts), not shared data.
+ * `comments`: the page may open the comment composer with its own anchors (`plinth.comments`,
+ * packages/shared/src/pageComments.ts). It is not shared data either.
  */
 export const CAPABILITY_TOKENS = [
   { token: "data", declares: true, needs: [], stored: "always" },
   { token: "viewer", declares: false, needs: [], stored: "always" },
   { token: "room", declares: true, needs: [], stored: "declared" },
+  { token: "comments", declares: true, needs: [], stored: "declared" },
 ] as const satisfies readonly {
   token: string;
   declares: boolean;

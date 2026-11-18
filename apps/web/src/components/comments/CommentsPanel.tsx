@@ -1,9 +1,17 @@
 // The comments panel on the artifact page: threads, replies, resolve, Markdown, anchoring through
-// the review-mode bridge, pins over the frame, and mention task status. The API decides every
+// the review-mode bridge (or, for a page that declares `comments`, anchors the page places itself
+// through usePageComments), pins over the frame, and mention task status. The API decides every
 // permission; the panel shows what the comments list says the caller may do, and still reacts to
 // 401 / 403 on writes.
 import { ArrowClockwiseIcon, XIcon } from "@phosphor-icons/react";
-import { API, APP_ROUTES, type CommentInfo, route } from "@plinth/shared";
+import {
+  API,
+  APP_ROUTES,
+  type CommentInfo,
+  isPageAnchor,
+  type PageAnchor,
+  route,
+} from "@plinth/shared";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ApiRequestError, api } from "../../lib/api.ts";
 import { Link, useLocation } from "../../lib/router.tsx";
@@ -28,6 +36,7 @@ import "./comments.css";
 import { buildThreads, type CommentFilter, filterThreads, highlightAnchors } from "./model.ts";
 import { PinLayer } from "./PinLayer.tsx";
 import { Thread } from "./Thread.tsx";
+import type { PageCompose, PageComposeResult } from "./usePageComments.ts";
 
 export interface CommentsPanelProps {
   artifactId: string;
@@ -45,6 +54,23 @@ export interface CommentsPanelProps {
   onClose: () => void;
   /** Told the number of open threads whenever the list loads (for the toggle's count). */
   onOpenCountChange?: (n: number) => void;
+  /**
+   * The page declares `comments` (gate.page_comments): it anchors its own comments. No bridge is
+   * connected (none is injected) and there is no "Pin to an element"; pins come from the page.
+   */
+  pageOwnsAnchors?: boolean;
+  /** The page's latest accepted compose request (usePageComments). */
+  pageCompose?: PageCompose | null;
+  /** Answer a page compose request: posted, closed (chip removed, panel closed) or busy. */
+  onPageComposeSettled?: (req: string, result: PageComposeResult) => void;
+  /** Where the page says its anchored threads are. */
+  pagePositions?: Map<string, PinPosition>;
+  /** Told the comments whenever the list loads (the page hears about anchored threads). */
+  onItemsChange?: (items: CommentInfo[]) => void;
+  /** Told the thread the person picked in the panel or by its pin. */
+  onActiveChange?: (id: string) => void;
+  /** The page asked to show a thread; `n` changes for every request. */
+  pageOpen?: { id: string; n: number } | null;
 }
 
 /** How often to look for new comments and mention progress while the panel is open. */
@@ -60,6 +86,19 @@ const FILTERS: { value: CommentFilter; label: string }[] = [
 
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 
+/** The anchor as the comments API takes it: a page anchor as validated, or an element. */
+function anchorBody(anchor: PickedAnchor | PageAnchor) {
+  if (isPageAnchor(anchor)) return anchor;
+  return {
+    selector: anchor.selector,
+    ...(anchor.text ? { text: anchor.text } : {}),
+    x: anchor.x,
+    y: anchor.y,
+  };
+}
+
+const NO_POSITIONS = new Map<string, PinPosition>();
+
 export function CommentsPanel({
   artifactId,
   slug,
@@ -69,6 +108,13 @@ export function CommentsPanel({
   opaque = false,
   onClose,
   onOpenCountChange,
+  pageOwnsAnchors = false,
+  pageCompose = null,
+  onPageComposeSettled,
+  pagePositions,
+  onItemsChange,
+  onActiveChange,
+  pageOpen = null,
 }: CommentsPanelProps) {
   const { pathname, search } = useLocation();
   const [items, setItems] = useState<CommentInfo[] | null>(null);
@@ -78,7 +124,7 @@ export function CommentsPanel({
   const [activeId, setActiveId] = useState<string | null>(null);
   const [positions, setPositions] = useState<Map<string, PinPosition>>(() => new Map());
   const [picking, setPicking] = useState(false);
-  const [anchor, setAnchor] = useState<PickedAnchor | null>(null);
+  const [anchor, setAnchor] = useState<PickedAnchor | PageAnchor | null>(null);
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
   const [composeError, setComposeError] = useState<string | undefined>();
@@ -108,6 +154,11 @@ export function CommentsPanel({
   useEffect(() => {
     if (items) onCountRef.current?.(openCount);
   }, [items, openCount]);
+  const onItemsRef = useRef(onItemsChange);
+  onItemsRef.current = onItemsChange;
+  useEffect(() => {
+    if (items) onItemsRef.current?.(items);
+  }, [items]);
   const anchors = useMemo(() => highlightAnchors(threads), [threads]);
   const anchorsKey = JSON.stringify(anchors);
   const anchorsRef = useRef(anchors);
@@ -179,7 +230,8 @@ export function CommentsPanel({
   // ---------- bridge ----------
 
   useEffect(() => {
-    if (!frame || !contentOrigin) return;
+    // A page that anchors its own comments has no bridge (the gate never asks for review mode).
+    if (!frame || !contentOrigin || pageOwnsAnchors) return;
     const handlers = {
       onMessage(msg: FrameMessage) {
         if (msg.type === "ready") {
@@ -208,7 +260,7 @@ export function CommentsPanel({
       client.destroy();
       if (bridgeRef.current === client) bridgeRef.current = null;
     };
-  }, [frame, contentOrigin, opaque]);
+  }, [frame, contentOrigin, opaque, pageOwnsAnchors]);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: anchorsKey stands for anchors
   useEffect(() => {
@@ -265,10 +317,77 @@ export function CommentsPanel({
     }
   }, [visible, activeId]);
 
+  // The person picked a thread (in the list or by its pin): the page may pan to it
+  // (usePageComments sends `focus`), every time, even when it was already the active one.
+  const onActiveRef = useRef(onActiveChange);
+  onActiveRef.current = onActiveChange;
+  const activate = useCallback((id: string) => {
+    setActiveId(id);
+    onActiveRef.current?.(id);
+  }, []);
+
   const onPinClick = (id: string) => {
     if (!visible.some((t) => t.root.id === id)) setFilter("open");
     focusThreadRef.current = id;
-    setActiveId(id);
+    activate(id);
+  };
+
+  // ---------- comments from the page ----------
+
+  // The page asked to show a thread: show it whatever the filter, then as a pin click.
+  const threadsRef = useRef(threads);
+  threadsRef.current = threads;
+  // biome-ignore lint/correctness/useExhaustiveDependencies: one run per request (`n`)
+  useEffect(() => {
+    if (!pageOpen) return;
+    const t = threadsRef.current.find((x) => x.root.id === pageOpen.id);
+    if (!t) return;
+    setFilter((f) => (f === "all" || f === t.root.status ? f : "all"));
+    focusThreadRef.current = pageOpen.id;
+    activate(pageOpen.id);
+  }, [pageOpen?.n]);
+
+  // A page compose request whose anchor (or unanchored composer) the panel holds, answered once.
+  const pageReqRef = useRef<string | null>(null);
+  const onSettledRef = useRef(onPageComposeSettled);
+  onSettledRef.current = onPageComposeSettled;
+  const settlePage = useCallback((result: PageComposeResult) => {
+    const req = pageReqRef.current;
+    if (!req) return;
+    pageReqRef.current = null;
+    onSettledRef.current?.(req, result);
+  }, []);
+  const draftRef = useRef(draft);
+  draftRef.current = draft;
+  const blockedRef = useRef(blocked);
+  blockedRef.current = blocked;
+  // biome-ignore lint/correctness/useExhaustiveDependencies: one run per request (`req`)
+  useEffect(() => {
+    if (!pageCompose || pageReqRef.current === pageCompose.req) return;
+    const { req } = pageCompose;
+    // Someone is writing a comment, or cannot comment: the page changes nothing.
+    if (draftRef.current.trim() || blockedRef.current) {
+      onSettledRef.current?.(req, { status: draftRef.current.trim() ? "busy" : "closed" });
+      return;
+    }
+    // An earlier page request that nobody wrote for yet is replaced.
+    settlePage({ status: "closed" });
+    pageReqRef.current = req;
+    setPicking(false);
+    setAnchor(pageCompose.anchor);
+    // Focus moves only when the person was using the page.
+    if (pageCompose.focus) requestAnimationFrame(() => composerRef.current?.focus());
+  }, [pageCompose?.req]);
+  // The person cannot comment after all (sign in, no role): the request ends.
+  useEffect(() => {
+    if (blocked) settlePage({ status: "closed" });
+  }, [blocked, settlePage]);
+  // Closing the panel ends it too.
+  useEffect(() => () => settlePage({ status: "closed" }), [settlePage]);
+  const removeAnchor = () => {
+    setAnchor(null);
+    settlePage({ status: "closed" });
+    composerRef.current?.focus();
   };
 
   // ---------- writes ----------
@@ -309,20 +428,12 @@ export function CommentsPanel({
         body: {
           body,
           version_number: version,
-          ...(anchor
-            ? {
-                anchor: {
-                  selector: anchor.selector,
-                  ...(anchor.text ? { text: anchor.text } : {}),
-                  x: anchor.x,
-                  y: anchor.y,
-                },
-              }
-            : {}),
+          ...(anchor ? { anchor: anchorBody(anchor) } : {}),
         },
       });
       setDraft("");
       setAnchor(null);
+      settlePage({ status: "posted", id: created.id });
       if (filter === "resolved") setFilter("open");
       focusThreadRef.current = created.id;
       setActiveId(created.id);
@@ -444,7 +555,9 @@ export function CommentsPanel({
               title={emptyText[filter]}
               description={
                 filter === "open" && threads.length === 0 && !blocked
-                  ? "Start the conversation below. Pin a comment to an element, or mention @claude or @codex to ask the owner's agent for a change."
+                  ? pageOwnsAnchors
+                    ? "Start the conversation below, or mention @claude or @codex to ask the owner's agent for a change."
+                    : "Start the conversation below. Pin a comment to an element, or mention @claude or @codex to ask the owner's agent for a change."
                   : undefined
               }
             />
@@ -458,7 +571,7 @@ export function CommentsPanel({
                     version={version}
                     active={t.root.id === activeId}
                     readOnly={blocked !== null}
-                    onActivate={setActiveId}
+                    onActivate={activate}
                     onReply={reply}
                     onSetStatus={setStatus}
                   />
@@ -480,13 +593,10 @@ export function CommentsPanel({
               value={draft}
               onChange={setDraft}
               anchor={anchor}
-              onRemoveAnchor={() => {
-                setAnchor(null);
-                composerRef.current?.focus();
-              }}
+              onRemoveAnchor={removeAnchor}
               picking={picking}
               canPin={!!frame && !!contentOrigin}
-              onStartPick={startPick}
+              onStartPick={pageOwnsAnchors ? undefined : startPick}
               onCancelPick={cancelPick}
               onSubmit={() => void submit()}
               sending={sending}
@@ -503,7 +613,7 @@ export function CommentsPanel({
       <PinLayer
         frame={frame}
         threads={threads}
-        positions={positions}
+        positions={pageOwnsAnchors ? (pagePositions ?? NO_POSITIONS) : positions}
         activeId={activeId}
         panelRef={panelRef}
         onPinClick={onPinClick}

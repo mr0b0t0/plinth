@@ -93,9 +93,12 @@ export async function computeGate(
     : version === a.currentVersion && !opts.version
       ? "/"
       : `/__plinth/v/${version}/`;
+  // A page that declares `comments` anchors its own comments and never loads in review mode, so
+  // the bridge is never injected next to it, whatever the app asked for.
+  const review = opts.review === true && !(await pageCommentsDeclared(ctx, a));
   // Decided here, recorded by the content host when the token is redeemed (services/views.ts).
-  const countView = countsAsView(ctx, d, opts, next);
-  if (opts.review) {
+  const countView = countsAsView(ctx, d, { ...opts, review }, next);
+  if (review) {
     // The flag goes in the query, before any fragment.
     const hashAt = next.indexOf("#");
     const [path, hash] = hashAt < 0 ? [next, ""] : [next.slice(0, hashAt), next.slice(hashAt)];
@@ -157,7 +160,37 @@ export const GATE_PARTS: readonly GatePart[] = [
     const live = await gateLive(ctx, a, d, opts);
     return live ? { live } : undefined;
   },
+  async ({ ctx, a }) =>
+    (await pageCommentsDeclared(ctx, a)) ? { page_comments: true } : undefined,
 ];
+
+// ---------- comments from the page ----------
+
+const currentCaps = new WeakMap<ArtifactRow, ReturnType<typeof readCurrentCaps>>();
+
+async function readCurrentCaps(ctx: Ctx, a: ArtifactRow) {
+  const row = await ctx.db
+    .select({ capabilities: versions.capabilities })
+    .from(versions)
+    .where(and(eq(versions.artifactId, a.id), eq(versions.number, a.currentVersion)))
+    .get();
+  return versionCapabilities(row);
+}
+
+/**
+ * Whether the page may open the comment composer with its own anchors (`plinth.comments`): an
+ * HTML artifact whose current version declares `comments`. The current version's declaration
+ * governs, whichever version is being opened. Read once per gate (the row object is the key).
+ */
+async function pageCommentsDeclared(ctx: Ctx, a: ArtifactRow): Promise<boolean> {
+  if (a.type !== "html") return false;
+  let caps = currentCaps.get(a);
+  if (!caps) {
+    caps = readCurrentCaps(ctx, a);
+    currentCaps.set(a, caps);
+  }
+  return (await caps)?.comments === true;
+}
 
 /**
  * The identity sealed into the enter token for shared data and rooms: only for identified viewers

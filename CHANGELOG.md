@@ -10,6 +10,14 @@ Add a line under **Unreleased** in the pull request that makes a change people w
 
 ## Unreleased
 
+- **Comments from the page.** A page that declares `comments` can open the comment composer on a
+  spot of its own (a point on a canvas, a slide, a node in a diagram) with `plinth.comments`, draw
+  its own markers for the threads and tell Plinth where to put its pins. The person still writes
+  and posts every comment, and the page never sees comment text. Opening comments on such a page no
+  longer reloads it. Agents see these anchors as `kind: "page"` in `list_comments` and mention
+  tasks. Example: `docs/examples/canvas-comments.html`.
+- **Comment pins stay on their spot when selected.** A selected or hovered pin was drawn a little
+  off its anchor; it now grows in place.
 - **The Claude Code plugin remembers your instance.** It asks which Plinth instance to use when you
   enable it (the hosted one by default), keeps the answer, and its mention watcher follows it, so a
   self-hosted or local instance no longer needs `PLINTH_URL` exported every time Claude Code starts.

@@ -1,7 +1,8 @@
 // The MCP surface agents see (tools/list with descriptions, input schemas, annotations and _meta;
 // resources/list and the preview resource; the server instructions) is pinned by hash to the
 // server before tool registration moved into per-feature files (mcp/tools/), so that move changed
-// no byte of it. A change that means to alter the surface updates the hashes here, on purpose.
+// no byte of it. A change that means to alter the surface updates the hashes here, on purpose
+// (page comments: the anchor note in list_comments and list_mentions).
 import { describe, expect, it } from "vitest";
 import { PREVIEW_RESOURCE_URI } from "../src/mcp/preview.ts";
 import { agent, mcpClient } from "./helpers.ts";
@@ -54,7 +55,7 @@ describe("MCP surface (golden)", () => {
   it("origin isolation", async () => {
     expect(await surface()).toEqual({
       names: NAMES,
-      tools: "39d810d173f65ee555676d7c949e32a4fd697ad889f384707e58623b179a79ce",
+      tools: "bc0a46f1576ac0a8bbc182f2e01b37ce95abd42d6879b84ec2b6f3701454c163",
       resources: RESOURCES,
       preview: "fd84092d5ecc5a28f494373097e8a3b6e27065d5ef6928f3e124c634f8cf6f47",
       instructions: INSTRUCTIONS,
@@ -64,7 +65,7 @@ describe("MCP surface (golden)", () => {
   it("opaque isolation", async () => {
     expect(await surface({ CONTENT_ISOLATION: "opaque" })).toEqual({
       names: NAMES,
-      tools: "11bbf73184dc3edbf81b11a90c0b4d47e24ea35f6f1e1f03e66d16f3ced3e97e",
+      tools: "81ef8d5651c4e8570b411a4b9566c8f3da0545f79e0d65ffe8b7c072ec5c3f4c",
       resources: RESOURCES,
       preview: "257bbf5bb47164c389849fffa7fc1dd46e6e7c20e4ef616b4bffefb53a8fd08b",
       instructions: INSTRUCTIONS,
@@ -76,7 +77,7 @@ describe("MCP surface (golden)", () => {
       await surface({ STAGING_CONTENT_FALLBACK: "true", CONTENT_ISOLATION: "opaque" }),
     ).toEqual({
       names: NAMES,
-      tools: "1710d68ab26ec26f731dc4801f238088c59b86d533d80e3cb3a6824cfa3baa39",
+      tools: "1cc6f713b30bac8c132603bf9cd094450e052b7d0ba5dbab801fbcbf4b79b651",
       resources: RESOURCES,
       preview: "257bbf5bb47164c389849fffa7fc1dd46e6e7c20e4ef616b4bffefb53a8fd08b",
       instructions: INSTRUCTIONS,

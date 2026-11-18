@@ -1023,7 +1023,7 @@
             "required": false,
             "name": "review",
             "schema": { "type": "string", "enum": ["1"] },
-            "description": "Review mode: inject the comment-anchoring bridge"
+            "description": "Review mode: inject the comment-anchoring bridge. Ignored for a page that declares `comments`, which anchors its own comments"
           },
           {
             "in": "query",
@@ -2131,14 +2131,46 @@
           "parent_id": { "type": "string", "minLength": 1, "maxLength": 64 },
           "version_number": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
           "anchor": {
-            "type": "object",
-            "properties": {
-              "selector": { "type": "string", "maxLength": 1000 },
-              "text": { "type": "string", "maxLength": 500 },
-              "x": { "type": "number", "minimum": 0, "maximum": 1 },
-              "y": { "type": "number", "minimum": 0, "maximum": 1 }
-            },
-            "required": ["selector"]
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "kind": { "type": "string", "const": "page" },
+                  "key": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:/-]{0,127}$" },
+                  "x": { "type": "number", "minimum": -1000000000, "maximum": 1000000000 },
+                  "y": { "type": "number", "minimum": -1000000000, "maximum": 1000000000 },
+                  "text": { "type": "string", "maxLength": 120 },
+                  "data": {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string",
+                      "pattern": "^[A-Za-z][A-Za-z0-9_]{0,31}$"
+                    },
+                    "additionalProperties": {
+                      "anyOf": [
+                        { "type": "string", "maxLength": 200 },
+                        { "type": "number" },
+                        { "type": "boolean" },
+                        { "type": "null" }
+                      ]
+                    }
+                  }
+                },
+                "required": ["kind", "key"],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "selector": { "type": "string", "maxLength": 1000 },
+                  "text": { "type": "string", "maxLength": 500 },
+                  "x": { "type": "number", "minimum": 0, "maximum": 1 },
+                  "y": { "type": "number", "minimum": 0, "maximum": 1 },
+                  "kind": { "not": {} }
+                },
+                "required": ["selector"]
+              }
+            ]
           }
         },
         "required": ["body"]
@@ -2418,7 +2450,7 @@
           },
           "capabilities": {
             "type": "array",
-            "items": { "type": "string", "enum": ["data", "viewer", "room"] },
+            "items": { "type": "string", "enum": ["data", "viewer", "room", "comments"] },
             "description": "What the returned version declares (shared data, viewer identity)"
           },
           "data_usage": {
@@ -2542,7 +2574,7 @@
           },
           "capabilities": {
             "type": "array",
-            "items": { "type": "string", "enum": ["data", "viewer", "room"] },
+            "items": { "type": "string", "enum": ["data", "viewer", "room", "comments"] },
             "description": "What the returned version declares (shared data, viewer identity)"
           },
           "data_usage": {
@@ -2955,14 +2987,43 @@
         "required": ["visibility", "has_password", "grants", "public_allowed"]
       },
       "Anchor": {
-        "type": "object",
-        "properties": {
-          "selector": { "type": "string", "maxLength": 1000 },
-          "text": { "type": "string", "maxLength": 500 },
-          "x": { "type": "number", "minimum": 0, "maximum": 1 },
-          "y": { "type": "number", "minimum": 0, "maximum": 1 }
-        },
-        "required": ["selector"]
+        "anyOf": [
+          {
+            "type": "object",
+            "properties": {
+              "kind": { "type": "string", "const": "page" },
+              "key": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:/-]{0,127}$" },
+              "x": { "type": "number", "minimum": -1000000000, "maximum": 1000000000 },
+              "y": { "type": "number", "minimum": -1000000000, "maximum": 1000000000 },
+              "text": { "type": "string", "maxLength": 120 },
+              "data": {
+                "type": "object",
+                "propertyNames": { "type": "string", "pattern": "^[A-Za-z][A-Za-z0-9_]{0,31}$" },
+                "additionalProperties": {
+                  "anyOf": [
+                    { "type": "string", "maxLength": 200 },
+                    { "type": "number" },
+                    { "type": "boolean" },
+                    { "type": "null" }
+                  ]
+                }
+              }
+            },
+            "required": ["kind", "key"],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "selector": { "type": "string", "maxLength": 1000 },
+              "text": { "type": "string", "maxLength": 500 },
+              "x": { "type": "number", "minimum": 0, "maximum": 1 },
+              "y": { "type": "number", "minimum": 0, "maximum": 1 },
+              "kind": { "not": {} }
+            },
+            "required": ["selector"]
+          }
+        ]
       },
       "CommentInfo": {
         "type": "object",
@@ -3287,7 +3348,11 @@
                 ]
               },
               "data": { "$ref": "#/components/schemas/ViewGateData" },
-              "live": { "$ref": "#/components/schemas/ViewGateLive" }
+              "live": { "$ref": "#/components/schemas/ViewGateLive" },
+              "page_comments": {
+                "const": true,
+                "description": "The current version declares `comments` (HTML only): the page may open the comment composer with its own anchors, and `review` is ignored"
+              }
             },
             "required": ["status", "artifact", "enter_url", "role"]
           },
@@ -3628,7 +3693,7 @@
           },
           "capabilities": {
             "type": "array",
-            "items": { "type": "string", "enum": ["data", "viewer", "room"] }
+            "items": { "type": "string", "enum": ["data", "viewer", "room", "comments"] }
           },
           "identified": {
             "type": "boolean",
@@ -3712,7 +3777,7 @@
         "properties": {
           "capabilities": {
             "type": "array",
-            "items": { "type": "string", "enum": ["data", "viewer", "room"] }
+            "items": { "type": "string", "enum": ["data", "viewer", "room", "comments"] }
           },
           "available": {
             "type": "boolean",

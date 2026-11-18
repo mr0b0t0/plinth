@@ -173,6 +173,14 @@ idle time), `LIVE_DRAFT_FLUSH_S` (5, from 2 to 60) and `LIVE_DRAFT_RETENTION_DAY
 connects per viewer per minute; a doc-socket frame of 64 KiB; a lease idle for 60 s may be taken
 over.
 
+**Comments from the page** ([below](#comments-from-the-page-decided-2026-11-19), no migration) add
+one field to the stored declaration and a second kind of comment anchor:
+
+| Table or column | Key fields | Notes |
+| --- | --- | --- |
+| `versions.capabilities` | adds `comments` | Written only when the page declares `comments`, so every other declaration is stored exactly as before. A row without it reads as no page comments. `comments` is neither shared data nor a room |
+| `comments.anchor` | JSON: an element anchor `{ selector, text?, x?, y? }`, or a page anchor `{ kind: "page", key, x?, y?, text?, data? }` | Element anchors are stored without `kind`, as before. Both kinds are read back through the anchor schema; a stored value no schema allows reads as no anchor |
+
 ## Auth and permissions
 
 There are three separate kinds of auth, and each has its own mechanism.
@@ -499,6 +507,11 @@ Comments are threaded and can be pinned to an element on the page. Mentioning an
 Rules for both modes: only the owner's connected agents can be mentioned, only commenters and
 editors can mention them, and an agent's change is always a new version that anyone can revert.
 
+A page that declares `comments` places its own anchors instead (a point on a canvas, a slide, a
+node in a diagram): it opens the composer, and the person writes and posts the comment. See
+[Comments from the page](#comments-from-the-page-decided-2026-11-19). Agents read either kind of
+anchor in `list_comments` and in mention tasks, as untrusted data like the comment text.
+
 ### Shared data and viewer identity
 
 Decided 2026-11-14 (issue #1). Design:
@@ -519,7 +532,9 @@ Decided 2026-11-14 (issue #1). Design:
   edit. `viewer` without `data` declares nothing (the viewer is learned through the data API). The
   declaration is parsed at publish into `versions.capabilities`; the current version's
   declaration governs, also for old version URLs. Dropping the tag switches the page API off and
-  keeps the data.
+  keeps the data. The same tag also takes `room` ([live rooms](#live-rooms)) and `comments`
+  ([comments from the page](#comments-from-the-page-decided-2026-11-19)), neither of which is shared
+  data.
 - **Writers.** Only identified viewers write: the owner and people with a grant on the artifact
   (viewer, commenter or editor, confirmed by sign-in or email code). Anonymous link viewers
   (unlisted, password, public) read but never write. Every write is stamped by the server with the
@@ -614,6 +629,71 @@ late joiner reads it. Plinth's own on-page doc editing is the room's first use.
 - **Availability.** Only with origin isolation and the `ROOMS` binding. Under opaque isolation (and
   the path fallback) `room.ready` resolves `{ available: false, reason: "opaque_isolation" }`
   without a request. A page should work alone when the room is unavailable.
+
+### Comments from the page (decided 2026-11-19)
+
+A page whose things have no stable element (a point on a `<canvas>`, a WebGL scene, a slide, a node
+in a pan-and-zoom diagram) can take comments on them: its own code opens Plinth's comment composer
+with an anchor it chose, and learns which threads are anchored where, so it can draw its own
+markers and tell Plinth where to draw its pins.
+
+- **Declaration.** `comments` in `<meta name="plinth-capabilities">` (for example
+  `content="comments"`), HTML artifacts only. It is neither shared data nor a room: a page that
+  declares only `comments` has no store and no room. The current version's declaration governs, as
+  for data and rooms, and the viewer gate says so with `page_comments: true`.
+- **Page API.** `window.plinth.comments` in `/__plinth/runtime.js`. Nothing is sent until the page
+  first uses it.
+  - `ready` resolves `{ available, reason }` and never rejects. The reasons are `not_framed` (a
+    direct content link, a thumbnail capture), `no_app` (no answer from Plinth within 3 s: an
+    in-chat preview, the editor preview, history compare, or an old app) and `not_declared`.
+  - `compose(anchor?)` opens the composer, with an anchor or none, and resolves
+    `{ status: "posted", id }`, `{ status: "closed" }` or `{ status: "busy" }`. It rejects with
+    `unavailable`, or with `invalid` when the anchor breaks the limits (checked in the page). A
+    second `compose` before the first settles closes the first.
+  - `onThreads(fn)` gets the page-anchored threads, oldest first: `{ id, pin, status, anchor }`,
+    resolved ones included, as frozen copies, and is called at once with the latest list.
+  - `locate(fn)` says where an anchor is now, as a point `{ x, y }` or a box
+    `{ left, top, width, height }` in the frame's viewport, or null. Without it Plinth draws no pin
+    for page anchors.
+  - `refresh()` runs `locate` again after the page moved things (coalesced, at most 20 a second).
+  - `open(id)` shows a thread in the panel.
+  - `onFocus(fn)` hears when the person picks a page-anchored thread in the panel or by its pin.
+- **The person posts.** A page never posts a comment and cannot fill in its text: the person writes
+  it and presses Comment, through the comments API with their own session, rate limit and role. A
+  link viewer still sees "Sign in to comment". So page code cannot turn into mention tasks under a
+  collaborator's name. The page learns `posted` only after a comment was posted; `busy` (someone is
+  writing a comment) and `closed` say nothing about the viewer's role.
+- **No comment text in the frame.** Plinth tells the page thread ids, pin numbers, status and
+  anchors (the page's own key, coordinates and data, or an element's selector) and request ids.
+  Never comment bodies, authors, emails, roles, mention state, an anchor's label or an element's
+  text excerpt.
+- **Page anchors.** `{ kind: "page", key, x?, y?, text?, data? }`: `key` names what the page anchors
+  to in its own terms (`^[A-Za-z0-9][A-Za-z0-9_.:/-]{0,127}$`), `x` and `y` are page coordinates
+  (finite, within ±10⁹), `text` is a label of at most 120 characters for the composer's chip, and
+  `data` holds at most 16 flat page-defined fields (keys `^[A-Za-z][A-Za-z0-9_]{0,31}$`; strings of
+  at most 200 characters, finite numbers, booleans or null; 1 KiB as JSON). The schema is strict:
+  anything that says `kind: "page"` is a valid page anchor or is refused. Element anchors keep their
+  shape and are stored without `kind`. The server accepts page anchors on any comment its author may
+  post, with or without the declaration, as it accepts element anchors outside review mode; both
+  are untrusted data.
+- **No review-mode reload.** For a declaring page the app does not enter review mode: opening the
+  panel does not reload the frame, so a canvas, a zoom level or form input survives, and the gate
+  ignores `review` (so `?comments` deep links stay reload-free too). The bridge is not injected, the
+  runtime positions element anchors itself, and "Pin to an element" is hidden.
+- **Limits in the app.** At most one compose a second is accepted, only after the page said hello,
+  while the tab is visible and no dialog is open; a compose while someone is writing is `busy` and
+  leaves the draft and its anchor alone. Focus moves to the composer only when it was in the frame.
+  At most 4 `open` and 20 position reports a second, and 500 threads. A page can at worst reopen a
+  panel the person closed, once a second; the report link covers a page that abuses it.
+- **Availability.** Origin and opaque isolation alike: the app identifies the frame by its window
+  (and, under origin isolation, its exact origin) and posts to it with the exact content origin, or
+  `"*"` under opaque isolation, which is safe because the messages hold nothing the framed document
+  may not see. The runtime posts only to `window.parent` at the instance's app origin and listens
+  only to it. Not under the staging path fallback, where `/__plinth/runtime.js` does not load.
+- **Agents.** No new tool. `list_comments`, `list_mentions` and the REST comment routes return page
+  anchors with `kind: "page"`; agents read `key`, `x`, `y` and `data` to find what a thread is
+  about, and treat every anchor as untrusted.
+- **Settings.** None: the feature adds no server behaviour, cost or quota beyond the comment API's.
 
 ### Big builds and reuse by hash
 
@@ -820,6 +900,9 @@ options.
 - **Comment text is untrusted input for agents.** A mention is a request from a collaborator, not
   an instruction with the owner's authority. The MCP tool descriptions say so, and agent tokens used
   for mentions are scoped to that one artifact.
+- **Pages never write comments.** A page that declares `comments` can open the composer with its
+  own anchor, but only the person posts, and the frame is never told comment text, authors or
+  roles. Page anchors are untrusted data like the comment text.
 - **Shared data is guarded on the content host.** The data API accepts only same-origin `fetch`
   requests from the artifact's own page (a custom `x-plinth-data` header, fetch metadata, an exact
   `Origin`, JSON bodies, no CORS), because every framed artifact shares one partitioned cookie jar.
