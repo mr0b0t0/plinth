@@ -708,12 +708,19 @@ function dataSchemas(): Record<string, Json> {
             description:
               "The email the page sees: only when identified and the page declares `viewer`",
           }),
+          room_email: str({
+            format: "email",
+            description:
+              "The email the page's live room shows the others in it: when the page declares " +
+              "`room` and `viewer`, rooms are active and the viewer is identified",
+          }),
         },
-        ["email"],
+        ["email", "room_email"],
       ),
       description:
-        "Present on `ok` only when the artifact's current version declares `data`: what the " +
-        "viewer is told about the page's shared data",
+        "Present on `ok` only when the artifact's current version declares `data`, or `room` " +
+        "and `viewer` with rooms active: what the viewer is told about the page's shared data " +
+        "and who its live room shows them as",
     },
     AgentDocAuthor: {
       ...obj({
@@ -951,10 +958,14 @@ function liveSchemas(): Record<string, Json> {
           version: ref("PublishResult"),
           live: obj({ rev: int({ minimum: 0 }), dirty: { type: "boolean" } }),
         }),
-        obj({
-          saved: { const: false },
-          reason: enumOf(["clean", "unchanged", "too_soon", "busy"]),
-        }),
+        obj(
+          {
+            saved: { const: false },
+            reason: enumOf(["clean", "unchanged", "too_soon", "busy"]),
+            retry_in_s: int({ minimum: 1 }),
+          },
+          ["retry_in_s"],
+        ),
       ],
     },
   };
@@ -995,7 +1006,8 @@ function liveOperations(): Operation[] {
       description:
         `${who} The version is published with the draft's base_version, so a stale draft is ` +
         "refused (409) and nothing is overwritten. A draft equal to its base writes nothing. " +
-        "resolved_text is accepted only while the draft is in conflict.",
+        "resolved_text is accepted only while the draft is in conflict, with the conflict_version " +
+        "the editor reviewed (409 when the draft now conflicts with a newer version).",
       tag: "Live editing",
       auth: "user",
       body: "LiveCheckpointInput",

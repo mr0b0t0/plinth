@@ -165,20 +165,42 @@ export function ViewerStage({
     onToggleComments();
     requestAnimationFrame(() => toggleRef.current?.focus());
   };
-  // Opening comments while editing finishes editing first.
+  // Opening comments while editing finishes editing first; when that save failed (solo edits
+  // exist only in the frame, which review mode would reload), the panel stays closed.
   const toggleComments = async () => {
-    if (editing) await live.done();
+    if (editing && !(await live.done())) return;
     onToggleComments();
   };
 
   const editRef = useRef<HTMLButtonElement>(null);
+  const barRef = useRef<HTMLElement>(null);
+  const headerRef = useRef<HTMLElement>(null);
+  // Where focus goes when editing ends, or when the control that had it went away: the Edit
+  // toggle, or at phone width (no toggle) the actions menu that holds "Edit on the page".
+  const focusEditEntry = () => {
+    const target =
+      editRef.current ??
+      headerRef.current?.querySelector<HTMLElement>('button[aria-label="Artifact actions"]') ??
+      document.getElementById("main");
+    target?.focus();
+  };
+  // A notice button that started editing or saved unmounts with focus in it: move focus on.
+  const refocusIfLost = (to: () => void) => {
+    requestAnimationFrame(() => {
+      const a = document.activeElement;
+      if (!a || a === document.body || !a.isConnected) to();
+    });
+  };
   const finishEditing = async () => {
-    await live.done();
-    requestAnimationFrame(() => editRef.current?.focus());
+    if (await live.done()) requestAnimationFrame(focusEditEntry);
+  };
+  const startEditing = () => {
+    live.start();
+    requestAnimationFrame(() => barRef.current?.focus());
   };
   const toggleEditing = () => {
     if (editing) void finishEditing();
-    else live.start();
+    else startEditing();
   };
   const signInHref = `${APP_ROUTES.login}?next=${encodeURIComponent(currentHref)}`;
 
@@ -238,7 +260,7 @@ export function ViewerStage({
       <div
         className={`pl-viewer${commentsOpen ? " pl-viewer--panel" : ""}${editing ? " pl-viewer--editing" : ""}`}
       >
-        <header className="pl-viewer__bar">
+        <header className="pl-viewer__bar" ref={headerRef}>
           <div className="pl-viewer__crumbs">
             {isOwner ? (
               <>
@@ -362,6 +384,7 @@ export function ViewerStage({
           <DataNotice data={gate.data} />
           {editing && live.mode && (
             <EditBar
+              focusRef={barRef}
               phase={live.phase}
               mode={live.mode}
               version={live.status?.base_version || artifact.version}
@@ -385,9 +408,20 @@ export function ViewerStage({
               status={live.status}
               restore={live.restore}
               signIn={live.signIn}
-              onSave={() => void live.save()}
-              onContinue={live.start}
-              onDiscard={() => void live.discard()}
+              unavailable={
+                live.roomReady
+                  ? null
+                  : live.mode === "room" && live.status === null
+                    ? "Connecting to the live draft…"
+                    : "Live editing is unavailable right now."
+              }
+              onSave={() => {
+                void live.save().then(() => refocusIfLost(focusEditEntry));
+              }}
+              onContinue={startEditing}
+              onDiscard={() => {
+                void live.discard().then(() => refocusIfLost(focusEditEntry));
+              }}
               onReview={() => void live.review()}
               onSaveRestore={() => void live.saveRestore()}
               onDropRestore={live.dropRestore}
@@ -447,6 +481,7 @@ export function ViewerStage({
             conflict={live.conflict}
             artifactId={artifact.id}
             saving={live.saving}
+            mode={live.mode === "room" && live.conflict.rev !== undefined ? "room" : "solo"}
             onClose={live.closeReview}
             onKeepMine={() => void live.keepMine()}
             onTakeLatest={() => void live.takeLatest()}

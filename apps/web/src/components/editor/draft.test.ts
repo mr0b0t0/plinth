@@ -1,5 +1,16 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { clearAllDrafts, clearDraft, draftKey, listDrafts, loadDraft, saveDraft } from "./draft.ts";
+import {
+  clearAllDrafts,
+  clearDraft,
+  clearPageDraft,
+  draftKey,
+  listDrafts,
+  loadDraft,
+  loadPageDraft,
+  pageDraftKey,
+  saveDraft,
+  savePageDraft,
+} from "./draft.ts";
 import { initialState } from "./initial.ts";
 
 afterEach(() => {
@@ -102,5 +113,44 @@ describe("initialState", () => {
     const s = await initialState(artifact, noFetch);
     expect(s.restored).toBe(false);
     expect(s.html).toBe("<p>v5</p>");
+  });
+});
+
+describe("page edits kept in sessionStorage (solo on-page editing)", () => {
+  it("keeps one per artifact with the version it was edited from, apart from source drafts", () => {
+    expect(savePageDraft("a1", 3, "# Page")).toBe(true);
+    saveDraft("a1", 3, "<p>source</p>", "");
+    expect(loadPageDraft("a1")).toMatchObject({ text: "# Page", base: 3 });
+    expect(loadPageDraft("a1")?.saved_at).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+    // The source editor never lists it, and a later save replaces it.
+    expect(listDrafts("a1").map((d) => d.html)).toEqual(["<p>source</p>"]);
+    savePageDraft("a1", 4, "# Page, later");
+    expect(loadPageDraft("a1")).toMatchObject({ text: "# Page, later", base: 4 });
+    expect(loadPageDraft("b2")).toBeNull();
+    clearPageDraft("a1");
+    expect(loadPageDraft("a1")).toBeNull();
+    expect(loadDraft("a1", 3)).not.toBeNull();
+  });
+
+  it("ignores malformed copies: a base that is not a version is never used to publish", () => {
+    for (const bad of [
+      "{not json",
+      JSON.stringify({ text: 1, base: 3 }),
+      JSON.stringify({ text: "x", base: 0 }),
+      JSON.stringify({ text: "x", base: 2.5 }),
+      JSON.stringify({ text: "x" }),
+    ]) {
+      sessionStorage.setItem(pageDraftKey("a1"), bad);
+      expect(loadPageDraft("a1")).toBeNull();
+    }
+  });
+
+  it("works without storage", () => {
+    vi.spyOn(window, "sessionStorage", "get").mockImplementation(() => {
+      throw new DOMException("blocked", "SecurityError");
+    });
+    expect(savePageDraft("a1", 1, "x")).toBe(false);
+    expect(loadPageDraft("a1")).toBeNull();
+    expect(() => clearPageDraft("a1")).not.toThrow();
   });
 });

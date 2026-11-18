@@ -166,7 +166,8 @@ the setup script, `plinth deploy`, local, tunnel and Docker instances all write 
   20 to 1, outgoing messages and the automatic ping replies are free, and an object with only idle
   sockets hibernates and accrues no duration. Four people moving cursors on a whiteboard (40
   messages a second) cost about 7,200 billed requests and 450 GB-s an hour; two people typing in a
-  doc about 1,440 requests and at most 720 D1 writes an hour ([spec.md](spec.md#costs)). When the
+  doc about 1,440 requests and at most 720 D1 writes an hour (the operations are in
+  [spec.md](spec.md#costs)). When the
   allowance runs out, sockets fail: pages work alone and docs are edited without seeing others.
 - **Off switch.** `ALLOW_ROOMS=false` turns rooms off and `ALLOW_LIVE_EDITING=false` turns on-page
   doc editing off ([self-hosting.md](self-hosting.md#settings)). Keep the binding: turning them back
@@ -182,6 +183,11 @@ the setup script, `plinth deploy`, local, tunnel and Docker instances all write 
   (`{ "tag": "rooms-v1-removed", "deleted_classes": ["ArtifactRoom"] }`; the class stores nothing,
   so nothing is lost, but turning rooms on again then needs yet another tag). Prefer
   `ALLOW_ROOMS=false` on the current release.
+
+### Creating the resources
+
+The setup script creates the D1 database and the R2 bucket and writes the Worker config with every
+binding above. Read its plan first:
 
 ```sh
 pnpm --filter @plinth/worker exec wrangler login

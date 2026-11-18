@@ -80,6 +80,8 @@ export interface DocSnapshot {
   hash: string;
   /** The draft equals its base version. */
   unchanged: boolean;
+  /** The checkpoint lock this snapshot took ("" when it took none), for resolve, finish and abort. */
+  lock: string;
 }
 
 interface Loaded {
@@ -100,6 +102,8 @@ interface Loaded {
 }
 
 interface CheckpointLock {
+  /** Random per snapshot: only the checkpoint that took the lock can release it. */
+  id: string;
   rev: number;
   text: string;
   hash: string;
@@ -299,13 +303,15 @@ export class LiveDoc {
 
   /** A doc socket closed: its lease goes; the last one out flushes and frees the memory. */
   async closed(ws: WebSocket, s: DocSocket): Promise<void> {
-    const doc = this.loaded;
-    if (!doc) return;
+    // The lease is in the socket's attachment, so it ends for the others even when the draft is
+    // not in memory (after a hibernation wake, before anyone sent a frame).
     if (s.lease) {
       const id = s.lease.id;
       s.lease = null;
       this.broadcast({ t: "released", lease: id }, ws);
     }
+    const doc = this.loaded;
+    if (!doc) return;
     const left = this.host.sockets().filter((o) => o.ws !== ws);
     if (left.length) {
       this.status(doc);
@@ -591,7 +597,7 @@ export class LiveDoc {
     const lock = this.lock;
     if (lock && hash !== null && hash === lock.hash && lock.until > Date.now()) {
       // This is the pending checkpoint's own version (its finish RPC may not arrive).
-      this.finish(doc, n, lock.text);
+      this.finish(doc, n, lock.text, lock);
       await this.flushNow();
       return;
     }
@@ -636,7 +642,7 @@ export class LiveDoc {
   /** Flush, then the draft as a checkpoint would save it, under a 30 s lock. */
   async snapshot(artifactId: string): Promise<DocSnapshot> {
     const doc = await this.ensure(artifactId);
-    const empty = { text: "", rev: 0, base_version: 1, conflict_version: null, hash: "" };
+    const empty = { text: "", rev: 0, base_version: 1, conflict_version: null, hash: "", lock: "" };
     if (!doc) return { state: "gone", ...empty, unchanged: true };
     if (this.lock && this.lock.until > Date.now()) {
       return {
@@ -647,20 +653,41 @@ export class LiveDoc {
         unchanged: false,
       };
     }
-    this.lock = null;
-    await this.flushNow();
+    // The lock is taken before the flush awaits D1, so a second snapshot arriving meanwhile is
+    // busy instead of saving the same base. Its text and hash are filled in once flushed (an
+    // empty hash never matches a version notify).
+    const lock: CheckpointLock = {
+      id: `k_${randomString(12)}`,
+      rev: doc.rev,
+      text: "",
+      hash: "",
+      until: Date.now() + LIVE_DOC.checkpointLockS * 1000,
+      resolved: false,
+    };
+    this.lock = lock;
+    try {
+      await this.flushNow();
+    } catch (e) {
+      if (this.lock === lock) this.lock = null;
+      throw e;
+    }
+    if (this.loaded !== doc || this.lock !== lock) {
+      // Reset (gone) or discarded while flushing.
+      if (this.lock === lock) this.lock = null;
+      return this.loaded === doc
+        ? { state: "busy", ...empty, rev: doc.rev, base_version: doc.baseVersion, unchanged: false }
+        : { state: "gone", ...empty, unchanged: true };
+    }
     const text = this.text(doc);
     const unchanged = text === doc.baseText;
     const hash = await sha256Hex(text);
     const state = doc.conflictVersion !== null ? "conflict" : unchanged ? "clean" : "ready";
-    if (state !== "clean") {
-      this.lock = {
-        rev: doc.rev,
-        text,
-        hash,
-        until: Date.now() + LIVE_DOC.checkpointLockS * 1000,
-        resolved: false,
-      };
+    if (state === "clean") {
+      if (this.lock === lock) this.lock = null;
+    } else if (this.lock === lock) {
+      lock.rev = doc.rev;
+      lock.text = text;
+      lock.hash = hash;
     }
     return {
       state,
@@ -670,13 +697,19 @@ export class LiveDoc {
       conflict_version: doc.conflictVersion,
       hash,
       unchanged,
+      lock: state === "clean" ? "" : lock.id,
     };
   }
 
-  /** The checkpoint will save `text` (an editor's resolution) instead of the snapshot. */
-  async resolveWith(text: string): Promise<boolean> {
-    if (!this.lock) return false;
-    this.lock = { ...this.lock, text, hash: await sha256Hex(text), resolved: true };
+  /** The checkpoint holding `lockId` will save `text` (an editor's resolution) instead. */
+  async resolveWith(lockId: string, text: string): Promise<boolean> {
+    const lock = this.lock;
+    if (!lock || lock.id !== lockId) return false;
+    const hash = await sha256Hex(text);
+    if (this.lock !== lock) return false;
+    lock.text = text;
+    lock.hash = hash;
+    lock.resolved = true;
     return true;
   }
 
@@ -685,20 +718,23 @@ export class LiveDoc {
     artifactId: string,
     n: number,
     text: string,
+    lockId: string,
   ): Promise<{ rev: number; dirty: boolean }> {
     const doc = await this.ensure(artifactId);
     if (!doc) return { rev: 0, dirty: false };
-    if (n > doc.baseVersion) this.finish(doc, n, text);
-    else this.lock = null;
+    const mine = this.lock?.id === lockId ? this.lock : null;
+    if (n > doc.baseVersion) this.finish(doc, n, text, mine);
+    else if (mine) this.lock = null;
     await this.flushNow();
     const out = { rev: doc.rev, dirty: this.text(doc) !== doc.baseText };
     await this.releaseIfIdle(doc);
     return out;
   }
 
-  private finish(doc: Loaded, n: number, text: string): void {
-    const resolved = this.lock?.resolved === true || doc.conflictVersion !== null;
-    this.lock = null;
+  private finish(doc: Loaded, n: number, text: string, lock: CheckpointLock | null): void {
+    const resolved = lock?.resolved === true || doc.conflictVersion !== null;
+    // Another checkpoint's lock (this one's ran out and a newer save took it) stays.
+    if (!this.lock || this.lock === lock || this.lock.until <= Date.now()) this.lock = null;
     doc.baseVersion = n;
     doc.baseText = text;
     if (resolved) {
@@ -715,9 +751,22 @@ export class LiveDoc {
     this.status(doc);
   }
 
-  async abortCheckpoint(): Promise<void> {
-    this.lock = null;
+  /** The checkpoint holding `lockId` gave up; another checkpoint's lock is left alone. */
+  async abortCheckpoint(lockId: string): Promise<void> {
+    if (this.lock?.id === lockId) this.lock = null;
     if (this.loaded) await this.releaseIfIdle(this.loaded);
+  }
+
+  /**
+   * The alarm's backstop for a lost version notify: when the current version is newer than the
+   * draft's base, merge onto it (or freeze) as the notify would have. Not while a checkpoint is
+   * being saved, whose own version this may be.
+   */
+  async catchUp(artifactId: string, current: number): Promise<void> {
+    const doc = this.loaded;
+    if (doc?.artifactId !== artifactId || current <= doc.baseVersion) return;
+    if (this.lock && this.lock.until > Date.now()) return;
+    await this.outside(doc, current, null);
   }
 
   /** Drop the unsaved edits: the draft goes back to the current version. */

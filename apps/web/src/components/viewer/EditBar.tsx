@@ -2,7 +2,7 @@
 // (announced politely), who else is editing, Save version (the one primary action), Discard in the
 // overflow menu behind a confirm, and Done.
 import { DotsThreeIcon, FloppyDiskIcon, PencilSimpleIcon, UsersIcon } from "@phosphor-icons/react";
-import { useState } from "react";
+import { type FormEvent, type Ref, useId, useState } from "react";
 import { Button, ConfirmDialog, Dialog, Input, Menu } from "../ui/index.ts";
 import type { LivePhase } from "./useLiveEdit.ts";
 
@@ -27,6 +27,8 @@ export interface EditBarProps {
   onReview?: () => void;
   /** The strip's accessible name (the design page shows several at once). */
   label?: string;
+  /** The strip itself, focusable, so focus can move to it when editing starts. */
+  focusRef?: Ref<HTMLElement>;
 }
 
 /** The status line's words. */
@@ -48,12 +50,24 @@ export function EditBar(props: EditBarProps) {
   const [noteOpen, setNoteOpen] = useState(false);
   const [note, setNote] = useState("");
   const [confirmDiscard, setConfirmDiscard] = useState(false);
+  const noteForm = useId();
   const conflict = phase === "conflict";
   const shown = editors.slice(0, 3);
   const more = editors.length - shown.length;
+  const submitNote = (e: FormEvent) => {
+    e.preventDefault();
+    setNoteOpen(false);
+    onSave(note.trim() || undefined);
+    setNote("");
+  };
 
   return (
-    <section className="pl-editbar" aria-label={props.label ?? "Editing on the page"}>
+    <section
+      ref={props.focusRef}
+      tabIndex={-1}
+      className="pl-editbar"
+      aria-label={props.label ?? "Editing on the page"}
+    >
       <span className="pl-editbar__state">
         <PencilSimpleIcon size={14} aria-hidden="true" />
         <span aria-live="polite" className="pl-editbar__status">
@@ -129,25 +143,21 @@ export function EditBar(props: EditBarProps) {
             <Button variant="ghost" onClick={() => setNoteOpen(false)}>
               Cancel
             </Button>
-            <Button
-              variant="primary"
-              onClick={() => {
-                setNoteOpen(false);
-                onSave(note.trim() || undefined);
-                setNote("");
-              }}
-            >
+            <Button variant="primary" type="submit" form={noteForm}>
               Save version
             </Button>
           </>
         }
       >
-        <Input
-          label="Note"
-          value={note}
-          maxLength={500}
-          onChange={(e) => setNote(e.currentTarget.value)}
-        />
+        <form id={noteForm} onSubmit={submitNote} noValidate>
+          <Input
+            label="Note"
+            value={note}
+            maxLength={500}
+            autoComplete="off"
+            onChange={(e) => setNote(e.currentTarget.value)}
+          />
+        </form>
       </Dialog>
       <ConfirmDialog
         open={confirmDiscard}

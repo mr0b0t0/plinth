@@ -199,6 +199,16 @@
     padding-inline: var(--space-4);
   }
 }
+/* The review dialog's diff (ConflictView with editor.css). The dialog body has no definite
+   height, so the flex rules the source editor uses would give Monaco 0px: the diff gets its own. */
+.pl-liveconflict .pl-conflict {
+  flex: none;
+}
+.pl-liveconflict .pl-conflict__diff {
+  flex: none;
+  height: min(60vh, 32rem);
+  min-height: 16rem;
+}
 /* Shared data: what the page sees and saves. Long emails wrap rather than widen the page. */
 .pl-viewer__data {
   display: flex;

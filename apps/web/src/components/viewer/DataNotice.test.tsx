@@ -80,6 +80,36 @@ describe("DataNotice", () => {
     );
   });
 
+  it("a live room that shows the viewer's email says so, with or without shared data", () => {
+    const roomOnly = `This page can see that you are ${EMAIL} and shows it to the other people who have it open.`;
+    expect(
+      dataNoticeText(
+        data({ capabilities: ["viewer", "room"], identified: false, room_email: EMAIL }),
+      ),
+    ).toBe(roomOnly);
+    // Shared data off on this server, the room still shows the email.
+    expect(
+      dataNoticeText(
+        data({ available: false, capabilities: ["data", "viewer", "room"], room_email: EMAIL }),
+      ),
+    ).toBe(`${roomOnly} Shared data is not available on this server.`);
+    expect(
+      dataNoticeText(
+        data({
+          capabilities: ["data", "viewer", "room"],
+          identified: true,
+          can_write: true,
+          email: EMAIL,
+          room_email: EMAIL,
+        }),
+      ),
+    ).toBe(
+      `This page can see that you are ${EMAIL}, shows it to the other people who have it open, and saves what you enter. People with access can see the entries and who wrote them.`,
+    );
+    // A room page without viewer shows nobody's email: no room line.
+    expect(dataNoticeText(data({ capabilities: ["room"] }))).toBeNull();
+  });
+
   it("viewer without data: nothing to say, the page learns nothing", () => {
     // The server never sends this (viewer alone declares nothing); the notice stays quiet anyway.
     expect(

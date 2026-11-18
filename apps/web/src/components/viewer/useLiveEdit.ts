@@ -99,8 +99,11 @@ export interface LiveEdit {
   /** Solo: page edits this tab kept from before a reload. */
   restore: PageDraft | null;
   pause: WatchPause;
+  /** Room mode with the frame connected: the shared draft can be saved or discarded from here. */
+  roomReady: boolean;
   start(): void;
-  done(): Promise<void>;
+  /** Finish editing (saving dirty edits first); false when it stayed in edit mode. */
+  done(): Promise<boolean>;
   save(note?: string): Promise<void>;
   discard(): Promise<void>;
   review(): Promise<void>;
@@ -135,6 +138,8 @@ export function useLiveEdit({
   const [reviewing, setReviewing] = useState(false);
   const [info, setInfo] = useState<LiveInfo | null>(null);
   const [restore, setRestore] = useState<PageDraft | null>(null);
+  /** An idle autosave refused as too soon: try again after `ms`, unless the draft moved on. */
+  const [idleRetry, setIdleRetry] = useState<{ rev: number; ms: number } | null>(null);
   const mode: LiveEdit["mode"] = !available
     ? null
     : gate.live?.mode === "room" && !status?.failed
@@ -348,7 +353,9 @@ export function useLiveEdit({
           ...(note ? { note } : {}),
         });
         if (r.saved) setSavedVersion(r.version.version);
-        else if (reason === "save" && (r.reason === "clean" || r.reason === "unchanged")) {
+        else if (reason === "idle" && r.reason === "too_soon" && r.retry_in_s) {
+          setIdleRetry({ rev: s.rev, ms: r.retry_in_s * 1000 });
+        } else if (reason === "save" && (r.reason === "clean" || r.reason === "unchanged")) {
           toast("Nothing to save: the page matches the current version.", "neutral");
         } else if (reason !== "idle" && r.reason === "busy") {
           toast("Someone else is saving these edits right now.", "neutral");
@@ -399,27 +406,30 @@ export function useLiveEdit({
     setEditing(true);
   }, [available, signIn]);
 
-  const done = useCallback(async () => {
+  const done = useCallback(async (): Promise<boolean> => {
     const s = latest.current.status;
     const m = latest.current.mode;
+    // Room edits stay in the shared draft whatever the save does, so editing ends either way.
     if (m === "room" && s?.dirty && s.conflict_version === null) await checkpoint("done");
     if (m === "solo" && s?.dirty) {
       // Solo edits live only in this frame: leave edit mode only once they are saved.
+      if (savingRef.current) return false;
       savingRef.current = true;
       setSaving(true);
       try {
         const text = await collect();
         const r = await publishSolo(text, latest.current.gate.artifact.version);
-        if (!r) return;
+        if (!r) return false;
       } catch (e) {
         fail(e);
-        return;
+        return false;
       } finally {
         savingRef.current = false;
         setSaving(false);
       }
     }
     setEditing(false);
+    return true;
   }, [checkpoint, collect, publishSolo, fail]);
 
   const discard = useCallback(async () => {
@@ -440,6 +450,22 @@ export function useLiveEdit({
     }
   }, [id, fail]);
 
+  // A resolution is checked against the conflict it was reviewed for: when a newer version
+  // conflicts now, the review opens again on that one instead of overwriting it.
+  const failResolve = useCallback(
+    (e: unknown) => {
+      const code = e instanceof ApiRequestError ? (e.details as { reason?: string })?.reason : null;
+      if (e instanceof ApiRequestError && e.status === 409 && code === "live_conflict") {
+        toast(e.message, "warning");
+        setConflict(null);
+        void review();
+        return;
+      }
+      fail(e);
+    },
+    [fail, review],
+  );
+
   const keepMine = useCallback(async () => {
     const c = conflict;
     if (!c) return;
@@ -455,15 +481,16 @@ export function useLiveEdit({
         rev: c.rev,
         reason: "save",
         resolved_text: c.draft,
+        conflict_version: c.current,
       });
       if (r.saved) setSavedVersion(r.version.version);
       closeReview();
     } catch (e) {
-      fail(e);
+      failResolve(e);
     } finally {
       setSaving(false);
     }
-  }, [conflict, id, publishSolo, closeReview, fail]);
+  }, [conflict, id, publishSolo, closeReview, failResolve]);
 
   const takeLatest = useCallback(async () => {
     const c = conflict;
@@ -475,18 +502,23 @@ export function useLiveEdit({
       latest.current.onReload();
       return;
     }
+    setSaving(true);
     try {
       await liveCheckpoint(id, {
         base_version: c.base,
         rev: c.rev,
         reason: "save",
         resolved_text: c.currentText,
+        conflict_version: c.current,
       });
       closeReview();
+      showToast({ title: `The page is back to v${c.current}.` });
     } catch (e) {
-      fail(e);
+      failResolve(e);
+    } finally {
+      setSaving(false);
     }
-  }, [conflict, id, closeReview, fail]);
+  }, [conflict, id, closeReview, failResolve]);
 
   // ---------- solo: keep a copy, offer it back after a reload ----------
 
@@ -533,13 +565,18 @@ export function useLiveEdit({
   const dirty = status?.dirty === true;
   const lastByYou = status?.last_by_you === true;
   const frozen = status?.conflict_version != null;
-  // biome-ignore lint/correctness/useExhaustiveDependencies: a new rev restarts the quiet spell
+  // A new rev restarts the quiet spell.
   useEffect(() => {
     if (mode !== "room" || !editing || !dirty || frozen || idleS <= 0) return;
-    const ms = idleS * 1000 + (lastByYou ? 0 : AUTOSAVE_FALLBACK_MS);
+    // Refused as too soon (the current version is younger than LIVE_AUTO_CHECKPOINT_MIN_S): try
+    // again when the server said, as long as nobody typed since.
+    const ms =
+      idleRetry && idleRetry.rev === rev
+        ? idleRetry.ms
+        : idleS * 1000 + (lastByYou ? 0 : AUTOSAVE_FALLBACK_MS);
     const t = window.setTimeout(() => void checkpoint("idle"), ms);
     return () => window.clearTimeout(t);
-  }, [mode, editing, dirty, frozen, idleS, lastByYou, rev, checkpoint]);
+  }, [mode, editing, dirty, frozen, idleS, lastByYou, rev, idleRetry, checkpoint]);
 
   // ---------- leaving the page, the save shortcut ----------
 
@@ -576,6 +613,7 @@ export function useLiveEdit({
     return status?.dirty ? "dirty" : "editing";
   }, [conflict, status, saving, editing, mode]);
 
+  const roomReady = mode === "room" && status?.connected === true;
   const pause: WatchPause =
     mode === "room" && status?.connected ? "follow" : soloDirty ? "hold" : null;
   const newerVersion =
@@ -598,6 +636,7 @@ export function useLiveEdit({
     reviewing,
     restore,
     pause,
+    roomReady,
     start,
     done,
     save,

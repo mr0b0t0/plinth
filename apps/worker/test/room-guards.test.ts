@@ -1,5 +1,5 @@
 // The live-room gates on an artifact's own content origin (#36, docs/security.md#live-rooms): the
-// WebSocket upgrade at /__plinth/room/v1/{page,doc} with its eight ordered checks, and
+// WebSocket upgrade at /__plinth/room/v1/{page,doc} with its nine ordered checks, and
 // GET /__plinth/api/v1/room behind the data API's caller checks. Cookies are minted through the
 // real gate and enter flow; previews and captures are signed the way Plinth signs them.
 import { env } from "cloudflare:workers";
@@ -190,7 +190,7 @@ describe("room upgrade: the checks, in order", () => {
     await refused(await upgrade(id, ownerP.cookie, { kind: "chat" }), 404, "unknown kind");
   });
 
-  it("6. the artifact: deleted, taken down, or of another kind than the path", async () => {
+  it("6 and 8. the artifact: deleted, taken down, or of another kind than the path", async () => {
     const { id, ownerP, owner } = await setup();
     // An HTML page on the doc path, and a page that declares nothing.
     await refused(await upgrade(id, ownerP.cookie, { kind: "doc" }), 404, "html on doc");
@@ -234,7 +234,26 @@ describe("room upgrade: the checks, in order", () => {
     await refused(await upgrade(id, ownerP.cookie), 401, "old epoch");
   });
 
-  it("8. policy: the doc channel is for owners and editors only", async () => {
+  it("7 before 8: without a pass, a doc, a declared page and an undeclared page all answer the same", async () => {
+    // A client outside a browser can forge Origin; with no cookie it must learn nothing about
+    // the artifact's type or declaration (only that it exists, as the content path says).
+    const { id: page } = await setup();
+    const { id: plain } = await setup(PLAIN);
+    const { id: doc } = await setup(undefined, DOC);
+    for (const [label, id, kind] of [
+      ["declared page", page, "page"],
+      ["declared page on the doc path", page, "doc"],
+      ["undeclared page", plain, "page"],
+      ["doc", doc, "doc"],
+      ["doc on the page path", doc, "page"],
+    ] as const) {
+      const res = await upgrade(id, null, { kind });
+      expect(await res.clone().text(), label).toBe("expired\n");
+      await refused(res, 401, label);
+    }
+  });
+
+  it("8. the kind needs a pass first; 9. policy: the doc channel is for owners and editors only", async () => {
     const { id: doc, ownerP } = await setup(undefined, DOC);
     const commenter = await person(doc, "commenter");
     const viewer = await person(doc, "viewer");

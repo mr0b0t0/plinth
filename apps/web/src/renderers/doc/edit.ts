@@ -354,7 +354,9 @@ export class DocEditor {
     } else if (e.key === "Tab" && !e.altKey && !e.ctrlKey && !e.metaKey) {
       e.preventDefault();
       const from = this.held;
-      this.close(true);
+      // Focus stays on the block just closed (there may be no next one, and the next one opens
+      // only once its lease arrives), never on the frame's body.
+      this.close(true, true);
       if (!from) return;
       const blocks = parseBlocks(joinLines(this.backend.lines));
       const next = e.shiftKey

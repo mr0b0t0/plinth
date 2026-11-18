@@ -86,6 +86,16 @@ describe("EditBar", () => {
     expect(p.onSave).toHaveBeenCalledWith("Tidy the intro");
   });
 
+  it("Enter in the note field saves with the note", async () => {
+    const p = props({ dirty: true });
+    const user = userEvent.setup();
+    render(<EditBar {...p} />);
+    await user.click(screen.getByRole("button", { name: "More editing actions" }));
+    await user.click(screen.getByRole("menuitem", { name: "Save with a note…" }));
+    await user.type(await screen.findByLabelText("Note"), "Fix typos{Enter}");
+    expect(p.onSave).toHaveBeenCalledWith("Fix typos");
+  });
+
   it("offers Review changes instead of Save while frozen by a conflict", async () => {
     const p = props({ dirty: true, phase: "conflict" });
     render(<EditBar {...p} />);
@@ -150,10 +160,46 @@ describe("LiveDraftNotice", () => {
     );
     await userEvent.click(screen.getByRole("button", { name: "Save as version" }));
     await userEvent.click(screen.getByRole("button", { name: "Continue editing" }));
-    await userEvent.click(screen.getByRole("button", { name: "Discard" }));
     expect(h.onSave).toHaveBeenCalled();
     expect(h.onContinue).toHaveBeenCalled();
-    expect(h.onDiscard).toHaveBeenCalled();
+  });
+
+  it("asks before discarding someone's page edits, and only discards on confirm", async () => {
+    const h = handlers();
+    const user = userEvent.setup();
+    render(<LiveDraftNotice draft={DRAFT} status={null} now={NOW} {...h} />);
+    await user.click(screen.getByRole("button", { name: "Discard" }));
+    const dialog = await screen.findByRole("alertdialog", {
+      name: "Discard the unsaved page edits?",
+    });
+    expect(dialog.textContent).toContain("The edits by bo@example.org are not kept anywhere.");
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(h.onDiscard).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Discard" }));
+    await user.click(await screen.findByRole("button", { name: "Discard page edits" }));
+    expect(h.onDiscard).toHaveBeenCalledTimes(1);
+  });
+
+  it("disables saving and discarding with the reason while the live draft is out of reach", () => {
+    const h = handlers();
+    render(
+      <LiveDraftNotice
+        draft={DRAFT}
+        status={null}
+        unavailable="Live editing is unavailable right now."
+        {...h}
+      />,
+    );
+    const reason = screen.getByText("Live editing is unavailable right now.");
+    for (const name of ["Save as version", "Discard"]) {
+      const b = screen.getByRole("button", { name }) as HTMLButtonElement;
+      expect(b.disabled).toBe(true);
+      expect(b.getAttribute("aria-describedby")).toBe(reason.id);
+    }
+    // Continuing to edit stays possible.
+    expect(
+      (screen.getByRole("button", { name: "Continue editing" }) as HTMLButtonElement).disabled,
+    ).toBe(false);
   });
 
   it("says who is editing with Join, and a conflict with Review changes", async () => {

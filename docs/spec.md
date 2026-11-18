@@ -413,7 +413,9 @@ forge edits that the editor's session would then save.
   It never moves backwards, never comes back after a delete or takedown, and an owner keeps at most
   20. A draft back at its base is deleted.
 - **Checkpoints.** Save (Cmd/Ctrl+S), Done, or an autosave after `LIVE_CHECKPOINT_IDLE_S` of quiet
-  (at most every `LIVE_AUTO_CHECKPOINT_MIN_S`, from the client that made the last edit) turn the
+  (from the client that made the last edit, while it is editing; no sooner than
+  `LIVE_AUTO_CHECKPOINT_MIN_S` after the current version, whoever made it, and an autosave asked
+  for sooner is tried again once that time has passed) turn the
   draft into the next version, through the ordinary publish path with the draft's `base_version`
   and the note "Edited on the page". A draft equal to its base writes nothing. Checkpoints count
   toward `MAX_PUBLISHES_PER_HOUR`; at the limit the draft stays. Edits made while a save runs are
@@ -581,8 +583,10 @@ late joiner reads it. Plinth's own on-page doc editing is the room's first use.
   `onStatus(fn)`, `join(name)` for a sub-room on the same socket (3 at most, `main` by default)
   and `leave()`. Nothing connects until first use. Messages may drop, and order holds only per
   sender. Every peer is stamped by the server: `id` is random per socket, `viewer` the per-artifact
-  `u_` id, and `role` and `email` appear only when the page also declares `viewer`. Room traffic
-  is untrusted input and presence is never authority.
+  `u_` id, and `role` and `email` appear only when the page also declares `viewer`. Such a page
+  shows each identified viewer's email to the page and to the others in the room, so the viewer
+  gets one line under the bar saying so, with or without shared data. Room traffic is untrusted
+  input and presence is never authority.
 - **Who joins.** Identified viewers only (the owner and people with a grant, signed in or confirmed
   by code). Anonymous link viewers, in-chat previews and thumbnail captures never join in v1.
   Owners and editors emit any topic; everyone else emits only the open topics. Agents never join a
@@ -590,7 +594,8 @@ late joiner reads it. Plinth's own on-page doc editing is the room's first use.
 - **Transport.** One WebSocket per page to its own origin, `wss://<id>.<CONTENT_HOST>/__plinth/room/v1/page`,
   served by the artifact's Durable Object with the Hibernation API. The handshake is checked in
   order: method, exact `Origin`, fetch metadata, the `plinth.room.v1` subprotocol, rooms active,
-  the artifact, the content pass with its identity claim at the current epoch, and policy
+  the artifact, the content pass with its identity claim at the current epoch, the kind the path
+  names (after the pass, so a caller without one learns nothing about the declaration), and policy
   (`roomAccess` in `policy.ts`); see [docs/security.md](security.md#live-rooms).
   `GET /__plinth/api/v1/room` (behind the data API's caller checks) tells the runtime first
   whether it may join and why not (`disabled`, `not_configured`, `opaque_isolation`,
@@ -932,10 +937,16 @@ are free, and a hibernating room accrues no duration. A room stores nothing.
 | Page message sent | 1/20 | 0 | 0 |
 | Re-check while sockets are open | 60 per hour per room | 1 each | 0 |
 | Sharing change, takedown, delete or a changed declaration | 1 notify call (only for artifacts that can have a room) | 1 | 0 |
+| Doc page edit (sent at most 4 times a second per typist) | 1/20 | 0 | 0 |
+| Doc draft flush | 0 | 0 | at most 1 per `LIVE_DRAFT_FLUSH_S` per doc (720 an hour at the default 5 s) |
+| Doc checkpoint (a saved version) | 2 calls | as an update | as an update |
+| Doc version published from outside | 1 notify call | 0 | 0 |
 
 For example, four people moving cursors at 10 updates a second send about 40 messages a second:
 about 7,200 billed requests and 450 GB-s an hour, so the free allowance carries about 13 such hours
-a day by requests and 28 by duration. Past the allowance, sockets fail and pages work alone;
+a day by requests and 28 by duration. Two people typing in a doc send at most 8 edits a second:
+about 1,440 billed requests and at most 720 D1 rows written an hour, against 100k D1 rows written a
+day on the free plan. Past the allowance, sockets fail and pages work alone;
 `ALLOW_ROOMS=false` turns rooms off.
 
 Not included: push-mode agent calls, which bill to the user's API key or a paid plan. Vercel was

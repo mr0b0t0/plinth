@@ -4,7 +4,7 @@
 import { env } from "cloudflare:workers";
 import { eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
-import { artifacts, versions } from "../src/db/schema.ts";
+import { accessGrants, artifacts, versions } from "../src/db/schema.ts";
 import {
   agent,
   call,
@@ -618,6 +618,20 @@ describe("doc artifacts with unsaved page edits (#36)", () => {
     const other = await agent();
     const seen = await getDetail(other.auth, id);
     expect("live_draft" in seen).toBe(false);
+    // With grants: an editor's agent sees it, a commenter's agent does not.
+    await tool(mcp, "set_visibility", { id, visibility: "allowlist" });
+    const commenter = await agent();
+    const editor = await agent();
+    const at = new Date().toISOString();
+    await db()
+      .insert(accessGrants)
+      .values([
+        { artifactId: id, email: commenter.user.email, role: "commenter", createdAt: at },
+        { artifactId: id, email: editor.user.email, role: "editor", createdAt: at },
+      ])
+      .run();
+    expect("live_draft" in (await getDetail(commenter.auth, id))).toBe(false);
+    expect((await getDetail(editor.auth, id)).live_draft).toMatchObject({ base_version: 1 });
   });
 
   it("update_artifact and REST updates warn live_draft (no action needed); without a draft they do not", async () => {

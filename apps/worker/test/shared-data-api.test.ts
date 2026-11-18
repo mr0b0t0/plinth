@@ -516,7 +516,7 @@ describe("session", () => {
     expect(gate.data).toBeUndefined();
   });
 
-  it("`room` without `data` is not shared data: not_declared, no reads, no writes, no gate notice", async () => {
+  it("`room` without `data` is not shared data: not_declared, no reads, no writes, only the room's identity notice", async () => {
     const { owner, id, ownerP } = await setup(
       '<!doctype html><meta name="plinth-capabilities" content="viewer room"><meta name="plinth-room-open" content="*"><p>x</p>',
     );
@@ -534,7 +534,12 @@ describe("session", () => {
     const bs = await browserSession(owner.user.id);
     const gate = await json(await call(`/api/v1/view/${id}`, { headers: bs.headers }));
     expect(gate.status).toBe("ok");
-    expect(gate.data).toBeUndefined();
+    // No shared data to describe, but its room shows the viewer's email (`viewer`): they are told.
+    expect(gate.data).toMatchObject({
+      capabilities: ["viewer", "room"],
+      room_email: owner.user.email,
+    });
+    expect(gate.data.email).toBeUndefined();
     // It is stored as a room declaration all the same.
     const row = await env.DB.prepare(
       "SELECT capabilities FROM versions WHERE artifact_id = ?1 AND number = 1",

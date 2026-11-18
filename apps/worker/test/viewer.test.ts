@@ -498,4 +498,27 @@ describe("the gate's live field: on-page editing of a doc (#36)", () => {
     );
     expect(claim).toEqual({ m: email, r: "editor" });
   });
+
+  it("a page whose room shows viewers' emails tells them so, with or without shared data", async () => {
+    const { person, roomPage, setup } = await import("./room-helpers.ts");
+    // room viewer, no data: the room stamps each peer's email.
+    const { id: roomOnly } = await setup(roomPage({ viewer: true }));
+    const ed = await person(roomOnly, "viewer");
+    const data = (await gateOf(roomOnly, ed.session.headers)).data;
+    expect(data).toMatchObject({ capabilities: ["viewer", "room"], room_email: ed.email });
+    expect(data.email).toBeUndefined();
+    // Rooms off: the room shows nothing, so there is nothing to say.
+    expect(
+      (await gateOf(roomOnly, ed.session.headers, { ALLOW_ROOMS: "false" })).data,
+    ).toBeUndefined();
+    // room without viewer: nobody's email, no notice.
+    const { id: anonymous } = await setup(roomPage({ viewer: false }));
+    const v = await person(anonymous, "viewer");
+    expect((await gateOf(anonymous, v.session.headers)).data).toBeUndefined();
+    // data viewer room with shared data off: still told about the room.
+    const { id: board } = await setup(roomPage({ viewer: true, data: true }));
+    const b = await person(board, "editor");
+    const off = (await gateOf(board, b.session.headers, { ALLOW_SHARED_DATA: "false" })).data;
+    expect(off).toMatchObject({ available: false, room_email: b.email });
+  });
 });

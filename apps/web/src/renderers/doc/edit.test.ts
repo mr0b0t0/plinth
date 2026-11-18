@@ -101,6 +101,18 @@ describe("DocEditor", () => {
     expect(editor.fieldElement?.value).toBe("two");
   });
 
+  it("Tab in the last block (Shift+Tab in the first) closes it and keeps focus on that block", () => {
+    const { editor } = setup("one\n\ntwo");
+    click(root.querySelectorAll("p")[1] as Element);
+    key(editor.fieldElement as Element, "Tab");
+    expect(editor.fieldElement).toBeNull();
+    expect(document.activeElement).toBe(root.querySelectorAll("p")[1]);
+    click(root.querySelector("p") as Element);
+    key(editor.fieldElement as Element, "Tab", { shiftKey: true });
+    expect(editor.fieldElement).toBeNull();
+    expect(document.activeElement).toBe(root.querySelector("p"));
+  });
+
   it("posts save to the app on Cmd/Ctrl+S, after sending the pending block", () => {
     const { local, editor } = setup("one");
     click(root.querySelector("p") as Element);

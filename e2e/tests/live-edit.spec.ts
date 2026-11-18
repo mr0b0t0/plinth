@@ -218,9 +218,18 @@ test("an agent's version is merged under the page edits, or frozen for review wh
   const dialog = page.getByRole("dialog", { name: "Review the page edits" });
   await expect(dialog).toBeVisible();
   await expect(dialog.getByText("v3 was published while you were editing")).toBeVisible();
+  // The diff is really there (the dialog body has no height of its own for Monaco to fill).
+  const diff = dialog.locator(".pl-conflict__diff .monaco-diff-editor");
+  await expect(diff).toBeVisible({ timeout: 15_000 });
+  expect((await diff.boundingBox())?.height ?? 0).toBeGreaterThan(200);
+  // Taking v3 would drop everyone's page edits: it asks first, and Cancel keeps them.
+  await dialog.getByRole("button", { name: "Discard the page edits and keep v3" }).click();
+  const ask = page.getByRole("alertdialog", { name: "Discard everyone's page edits?" });
+  await expect(ask).toBeVisible();
+  await ask.getByRole("button", { name: "Cancel" }).click();
   await dialog.getByRole("button", { name: "Save as new version on top of v3" }).click();
-  const confirm = page.getByRole("dialog", { name: "Save your draft as v4?" });
-  await confirm.getByLabel("I reviewed the differences between v3 and my draft").check();
+  const confirm = page.getByRole("dialog", { name: "Save the page edits as v4?" });
+  await confirm.getByLabel("I reviewed the differences between v3 and the page edits").check();
   await confirm.getByRole("button", { name: "Save as v4" }).click();
   await expect
     .poll(async () => (await apiGet(page.request, `/artifacts/${s.id}`)).body.current_version)

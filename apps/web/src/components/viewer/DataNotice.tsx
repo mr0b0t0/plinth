@@ -15,12 +15,20 @@ const UNAVAILABLE = "Shared data is not available on this server.";
 /** The notice for a gate's data block, or null when there is nothing to say. */
 export function dataNoticeText(data: ViewGateData | undefined): string | null {
   if (!data) return null;
-  if (!data.available) return UNAVAILABLE;
-  // `viewer` is declared only together with `data` (parseCapabilities); anything else says nothing.
-  if (!data.capabilities.includes("data")) return null;
+  // A live room that shows this viewer's email to the page and to the others in it.
+  const room = data.room_email;
+  const roomOnly = room
+    ? `This page can see that you are ${room} and shows it to the other people who have it open.`
+    : null;
+  if (!data.capabilities.includes("data")) return roomOnly;
+  if (!data.available) return roomOnly ? `${roomOnly} ${UNAVAILABLE}` : UNAVAILABLE;
   const email = data.capabilities.includes("viewer") && data.identified ? data.email : undefined;
+  if (email && room) {
+    return `This page can see that you are ${email}, shows it to the other people who have it open, and ${SAVES_WITH_AUTHORS}`;
+  }
   if (email) return `This page can see that you are ${email} and ${SAVES_WITH_AUTHORS}`;
-  return data.identified ? SAVES : READ_ONLY;
+  const saves = data.identified ? SAVES : READ_ONLY;
+  return roomOnly ? `${roomOnly} ${saves}` : saves;
 }
 
 export function DataNotice({ data }: { data: ViewGateData | undefined }) {

@@ -151,9 +151,11 @@ async function versionText(ctx: Ctx, artifactId: string, n: number): Promise<str
  * POST /api/v1/artifacts/:ref/live/checkpoint: save the live draft as the next version.
  * 1 policy; 2 snapshot (flush, 30 s lock), 503 when the room cannot be reached; 3 nothing to save
  * or another save running; 4 the page's base_version must be the draft's; 5 a resolution only
- * while in conflict, based on the conflicting version; 6 a draft equal to its base writes nothing;
- * 7 an autosave only as often as LIVE_AUTO_CHECKPOINT_MIN_S; 8 the stager, with the draft's
- * base_version; 9 any error releases the lock; 10 the room takes the version as the draft's base.
+ * while in conflict, and only against the conflicting version the editor reviewed (409 when a
+ * newer one conflicts now), based on that version; 6 a draft equal to its base writes nothing;
+ * 7 an autosave only once the current version is LIVE_AUTO_CHECKPOINT_MIN_S old (with when to
+ * try again); 8 the stager, with the draft's base_version, and a stale base makes the room catch
+ * up; 9 any error releases this save's lock; 10 the room takes the version as the draft's base.
  */
 export async function liveCheckpoint(
   ctx: Ctx,
@@ -174,9 +176,10 @@ export async function liveCheckpoint(
   if (snap.state === "clean" || snap.state === "busy") {
     return { saved: false, reason: snap.state };
   }
+  // Only the lock this snapshot took is released: a second save's abort never frees the first's.
   const abort = async () => {
     try {
-      await stub.docAbort();
+      await stub.docAbort(snap.lock);
     } catch {
       // The lock runs out on its own (30 s).
     }
@@ -196,12 +199,27 @@ export async function liveCheckpoint(
         reason: "no_conflict",
       });
     }
+    if (input.conflict_version === undefined) {
+      await abort();
+      throw new ApiError("invalid_input", "conflict_version is required with resolved_text", {
+        reason: "no_conflict_version",
+      });
+    }
+    if (input.conflict_version !== snap.conflict_version) {
+      // A newer version conflicts now: what the editor reviewed is not what they would overwrite.
+      await abort();
+      throw new ApiError(
+        "conflict",
+        `v${snap.conflict_version} was published while you reviewed. Review it.`,
+        { current_version: snap.conflict_version, reason: "live_conflict" },
+      );
+    }
     base = snap.conflict_version;
     text = input.resolved_text;
     if (text === (await versionText(ctx, a.id, base))) {
       // Resolved to the published version exactly: the draft goes, and no version is written.
       try {
-        await stub.docAbort();
+        await stub.docAbort(snap.lock);
         const d = await stub.docDiscard(a.id, snap.rev);
         if (!d.ok) throw new Error("moved");
       } catch {
@@ -211,11 +229,13 @@ export async function liveCheckpoint(
       }
       return { saved: false, reason: "unchanged" };
     }
+    let held: boolean;
     try {
-      await stub.docResolve(text);
+      held = await stub.docResolve(snap.lock, text);
     } catch {
       throw unavailable();
     }
+    if (!held) return { saved: false, reason: "busy" };
   } else if (snap.conflict_version !== null) {
     await abort();
     throw new ApiError("conflict", `v${snap.conflict_version} changed the same lines. Review it.`, {
@@ -227,10 +247,10 @@ export async function liveCheckpoint(
     return { saved: false, reason: "unchanged" };
   }
   if (input.reason === "idle") {
-    const tooSoon = await autosaveTooSoon(ctx, a, input.rev !== snap.rev);
-    if (tooSoon) {
+    const wait = await autosaveWait(ctx, a, input.rev !== snap.rev);
+    if (wait !== 0) {
       await abort();
-      return { saved: false, reason: "too_soon" };
+      return { saved: false, reason: "too_soon", ...(wait > 0 ? { retry_in_s: wait } : {}) };
     }
   }
   const note =
@@ -247,12 +267,12 @@ export async function liveCheckpoint(
     });
   } catch (e) {
     await abort();
-    throw e;
+    throw await staleRoom(stub, a.id, base, e);
   }
   let live = { rev: snap.rev, dirty: false };
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
-      live = await stub.docFinish(a.id, version.version, text);
+      live = await stub.docFinish(a.id, version.version, text, snap.lock);
       break;
     } catch {
       // Retried once; the version notify (its content hash) finishes it otherwise.
@@ -262,18 +282,63 @@ export async function liveCheckpoint(
 }
 
 /**
- * An idle autosave waits: off (LIVE_CHECKPOINT_IDLE_S=0), someone typed since the page asked, or
- * the current version is younger than LIVE_AUTO_CHECKPOINT_MIN_S.
+ * The stager refused the draft's base as stale: a version was published that the room never
+ * heard of (its notify was lost, or it was published while rooms were off). The room catches up
+ * now, merging the draft onto that version or freezing it for review, so the next save works or
+ * the editor is sent to review instead of failing again and again. Other errors pass through.
  */
-async function autosaveTooSoon(ctx: Ctx, a: ArtifactRow, typedSince: boolean): Promise<boolean> {
-  if (ctx.config.live.checkpointIdleS === 0 || typedSince) return true;
+async function staleRoom(
+  stub: NonNullable<ReturnType<typeof room>>,
+  artifactId: string,
+  base: number,
+  e: unknown,
+): Promise<unknown> {
+  const current = (
+    e instanceof ApiError && e.code === "conflict"
+      ? (e.details as { current_version?: unknown } | undefined)?.current_version
+      : undefined
+  ) as number | undefined;
+  if (typeof current !== "number" || current <= base) return e;
+  let after: LiveDraftText | null;
+  try {
+    await stub.docVersion(artifactId, current, null);
+    after = await stub.docPeek(artifactId);
+  } catch {
+    return e;
+  }
+  if (after?.conflict_version != null) {
+    return new ApiError(
+      "conflict",
+      `v${after.conflict_version} changed the same lines. Review it.`,
+      {
+        current_version: after.conflict_version,
+        reason: "live_conflict",
+      },
+    );
+  }
+  return new ApiError(
+    "conflict",
+    `v${current} was published meanwhile. Your page edits were kept on top of it; save again.`,
+    { current_version: current, reason: "live_rebased" },
+  );
+}
+
+/**
+ * How long an idle autosave waits, in seconds: 0 to save now; -1 when it never will on its own
+ * (LIVE_CHECKPOINT_IDLE_S=0, or someone typed since the page asked, whose next quiet spell asks
+ * again); otherwise until the current version is LIVE_AUTO_CHECKPOINT_MIN_S old, when the page
+ * tries again.
+ */
+async function autosaveWait(ctx: Ctx, a: ArtifactRow, typedSince: boolean): Promise<number> {
+  if (ctx.config.live.checkpointIdleS === 0 || typedSince) return -1;
   const v = await ctx.env.DB.prepare(
     "SELECT created_at FROM versions WHERE artifact_id = ?1 AND number = ?2",
   )
     .bind(a.id, a.currentVersion)
     .first<{ created_at: string }>();
-  if (!v) return false;
-  return Date.now() - Date.parse(v.created_at) < ctx.config.live.autoCheckpointMinS * 1000;
+  if (!v) return 0;
+  const left = ctx.config.live.autoCheckpointMinS * 1000 - (Date.now() - Date.parse(v.created_at));
+  return left > 0 ? Math.max(1, Math.ceil(left / 1000)) : 0;
 }
 
 /**

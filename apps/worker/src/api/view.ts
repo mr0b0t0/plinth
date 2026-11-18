@@ -16,7 +16,13 @@ import {
 import { and, eq } from "drizzle-orm";
 import { Hono } from "hono";
 import { resolveViewerSession } from "../auth/principal.ts";
-import { contentOrigin, identityClaimsActive, liveEditMode, sharedDataActive } from "../config.ts";
+import {
+  contentOrigin,
+  identityClaimsActive,
+  liveEditMode,
+  roomsActive,
+  sharedDataActive,
+} from "../config.ts";
 import { issueEnterUrl, safeNext, type ViewerIdentity } from "../content/tokens.ts";
 import { type ArtifactRow, users, versions } from "../db/schema.ts";
 import { appCookieName, secureFlag, serializeCookie } from "../lib/cookies.ts";
@@ -165,7 +171,12 @@ async function gateLive(
   };
 }
 
-/** What the live viewer tells the person about the page's shared data; only when declared. */
+/**
+ * What the live viewer tells the person about the page's shared data, and about who its live room
+ * shows them as: only when declared. A page that declares `room viewer` shows each identified
+ * viewer's email to the page and to everyone else in the room, so the viewer is told, with or
+ * without shared data (docs/security.md, "Page code harvests viewer emails").
+ */
 async function gateData(
   ctx: Ctx,
   a: ArtifactRow,
@@ -178,8 +189,17 @@ async function gateData(
     .where(and(eq(versions.artifactId, a.id), eq(versions.number, a.currentVersion)))
     .get();
   const caps = versionCapabilities(row);
-  // A page that declares only `room` keeps no shared data: nothing to tell the viewer here.
-  if (caps?.data !== true) return undefined;
+  const roomEmail =
+    identity &&
+    caps?.room === true &&
+    caps.viewer &&
+    a.type === "html" &&
+    roomsActive(ctx.config, ctx.env)
+      ? identity.email
+      : undefined;
+  // A page that declares only `room` (without `viewer`) keeps no shared data and shows nobody's
+  // email: nothing to tell the viewer here.
+  if (caps?.data !== true && !roomEmail) return undefined;
   const capabilities = capabilityList(caps);
   const available = sharedDataActive(ctx.config);
   // The identity may be sealed for rooms alone; the data notice counts it only with shared data.
@@ -196,7 +216,8 @@ async function gateData(
     identified: claim !== null,
     can_write: pageDataAccess(claim, caps, available).write,
     // The viewer is told which email the page sees (their own, or the one holding the grant).
-    ...(claim && caps?.viewer ? { email: claim.email } : {}),
+    ...(claim && caps?.viewer && caps.data ? { email: claim.email } : {}),
+    ...(roomEmail ? { room_email: roomEmail } : {}),
   };
 }
 

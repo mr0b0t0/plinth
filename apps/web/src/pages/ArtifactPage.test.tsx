@@ -418,9 +418,16 @@ describe("ArtifactPage: editing a doc on its page (#36)", () => {
     expect(screen.getByRole("region", { name: "Editing on the page" }).textContent).toContain(
       "Connecting…",
     );
+    // Focus moves into the edit bar, and back to the toggle when editing ends.
+    await waitFor(() =>
+      expect(document.activeElement).toBe(
+        screen.getByRole("region", { name: "Editing on the page" }),
+      ),
+    );
     await user.click(screen.getByRole("button", { name: "Done" }));
     await waitFor(() => expect(toggle.getAttribute("aria-pressed")).toBe("false"));
     expect(screen.queryByRole("region", { name: "Editing on the page" })).toBeNull();
+    await waitFor(() => expect(document.activeElement).toBe(toggle));
     cleanup();
 
     // A commenter's gate has no `live`: no toggle, no notice, the menu keeps no edit item.
@@ -487,6 +494,37 @@ describe("ArtifactPage: editing a doc on its page (#36)", () => {
       ),
     );
     expect(screen.getByRole("button", { name: "Edit" }).getAttribute("aria-pressed")).toBe("true");
+    // The notice that held focus is gone: focus is in the edit bar, not on the body.
+    await waitFor(() =>
+      expect(document.activeElement).toBe(
+        screen.getByRole("region", { name: "Editing on the page" }),
+      ),
+    );
+  });
+
+  it("does not offer to save or discard the shared draft before the room is reachable", async () => {
+    const draft = {
+      base_version: 3,
+      dirty: true,
+      conflict_version: null,
+      updated_at: new Date().toISOString(),
+      updated_by_email: "bo@example.org",
+    };
+    stubApi({
+      me: ME,
+      handle: (c) =>
+        c.path.startsWith("/view/") ? json(docGate({ live: live({ draft }) })) : undefined,
+    });
+    const ArtifactPage = await loadPage();
+    render(<ArtifactPage params={{ slug: "garden-plan" }} />);
+    await screen.findByTitle("Plan, version 3");
+    expect(screen.getByRole("note").textContent).toContain("Connecting to the live draft…");
+    expect(
+      (screen.getByRole("button", { name: "Save as version" }) as HTMLButtonElement).disabled,
+    ).toBe(true);
+    expect((screen.getByRole("button", { name: "Discard" }) as HTMLButtonElement).disabled).toBe(
+      true,
+    );
   });
 
   describe("while the frame follows the room", () => {
@@ -557,6 +595,77 @@ describe("ArtifactPage: editing a doc on its page (#36)", () => {
       expect(shown).toBe(frame);
       expect(shown.getAttribute("src")).toBe(ENTER(1));
       expect(document.querySelectorAll("iframe")).toHaveLength(1);
+    });
+
+    it("solo: opening Comments when the save on Done fails keeps editing and the frame", async () => {
+      let views = 0;
+      stubApi({
+        me: ME,
+        handle: (c) => {
+          if (c.path.startsWith("/view/"))
+            return json(docGate({ live: live({ mode: "solo" }) }, ++views));
+          if (c.path.startsWith("/artifacts/art123/comments")) return json({ items: [] });
+          if (c.method === "PUT") {
+            return json({ error: { code: "rate_limited", message: "Too many" } }, 429);
+          }
+          return undefined;
+        },
+      });
+      const ArtifactPage = await loadPage();
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+      render(<ArtifactPage params={{ slug: "garden-plan" }} />);
+      const frame = (await screen.findByTitle("Plan, version 3")) as HTMLIFrameElement;
+      await user.click(screen.getByRole("button", { name: "Edit" }));
+      const post = (data: Record<string, unknown>) => {
+        const e = new MessageEvent("message", {
+          origin: "http://art123.content.localhost:8787",
+          data: { source: "plinth-renderer", v: 1, ...data },
+        });
+        Object.defineProperty(e, "source", { value: frame.contentWindow });
+        act(() => {
+          window.dispatchEvent(e);
+        });
+      };
+      post({
+        type: "live",
+        connected: false,
+        failed: false,
+        editing: true,
+        holding: false,
+        dirty: true,
+        unflushed: false,
+        rev: 0,
+        base_version: 0,
+        conflict_version: null,
+        last_by_you: false,
+        last_edit_at: null,
+        editors: [],
+      });
+      const viewsBefore = views;
+      await user.click(screen.getByRole("button", { name: "Comments" }));
+      const sent = (frame.contentWindow as unknown as { postMessage: ReturnType<typeof vi.fn> })
+        .postMessage.mock.calls;
+      const collect = sent.filter((c) => c[0]?.type === "collect").at(-1);
+      expect(collect).toBeTruthy();
+      post({ type: "draft", nonce: collect?.[0].nonce, text: "# Edited on the page" });
+      await waitFor(() =>
+        expect(screen.getByRole("button", { name: "Edit" }).getAttribute("aria-pressed")).toBe(
+          "true",
+        ),
+      );
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(50);
+      });
+      // The save failed: still editing, the panel stays closed and no review-mode gate reloads
+      // the frame (the unsaved edits live only in it).
+      expect(screen.getByRole("button", { name: "Edit" }).getAttribute("aria-pressed")).toBe(
+        "true",
+      );
+      expect(screen.getByRole("button", { name: "Comments" }).getAttribute("aria-pressed")).toBe(
+        "false",
+      );
+      expect(views).toBe(viewsBefore);
+      expect(screen.getByTitle("Plan, version 3")).toBe(frame);
     });
   });
 });

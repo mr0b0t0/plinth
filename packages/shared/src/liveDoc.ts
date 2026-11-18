@@ -228,6 +228,11 @@ export const liveCheckpointInput = z.object({
   resolved_text: docText
     .optional()
     .describe("Only while the draft is in conflict: the text the editor resolved it to"),
+  conflict_version: version
+    .optional()
+    .describe(
+      "Required with resolved_text: the conflicting version the editor reviewed. A newer conflict is refused with 409",
+    ),
 });
 export type LiveCheckpointInput = z.infer<typeof liveCheckpointInput>;
 

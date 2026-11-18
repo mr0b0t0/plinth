@@ -445,8 +445,10 @@ the release that added hashes). Markdown is untrusted text like HTML.
 For a doc, owners' and editors' agents also get `live_draft`: `null`, or
 `{ base_version, dirty, conflict_version, updated_at }` when people have unsaved edits on the doc's
 page. It is metadata only; the draft text is never returned. Publish with `update_artifact` and
-`base_version` as usual: the edits are merged onto your version, and the result warns
-`live_draft`.
+`base_version` as usual: your version is published, and the result warns `live_draft`. The page
+edits are merged onto it when they touch other lines; when they change the same or adjacent lines,
+they are frozen for the people editing to review. Nothing is overwritten either way, and neither
+case needs anything from you.
 
 | Field | Type | Notes |
 | --- | --- | --- |

@@ -433,7 +433,12 @@ export interface LiveDraftText {
 /** POST /api/v1/artifacts/:ref/live/checkpoint */
 export type LiveCheckpointResult =
   | { saved: true; version: PublishResult; live: { rev: number; dirty: boolean } }
-  | { saved: false; reason: "clean" | "unchanged" | "too_soon" | "busy" };
+  | {
+      saved: false;
+      reason: "clean" | "unchanged" | "too_soon" | "busy";
+      /** too_soon: an idle autosave can be tried again after this many seconds. */
+      retry_in_s?: number;
+    };
 
 /** What the viewer is told about a page's shared data (the notice in the live viewer). */
 export interface ViewGateData {
@@ -445,6 +450,11 @@ export interface ViewGateData {
   can_write: boolean;
   /** The email the page sees: only when identified and the page declares `viewer`. */
   email?: string;
+  /**
+   * The email the page's live room shows the other people in it (and the page): when the page
+   * declares `room` and `viewer`, rooms are active and the viewer is identified.
+   */
+  room_email?: string;
 }
 
 export interface ViewArtifactStub {

@@ -15,11 +15,13 @@
 //   4. the plinth.room.v1 subprotocol (Sec-WebSocket-Protocol), the non-safelisted marker in place
 //      of the data API's custom header, which the browser WebSocket API cannot send;
 //   5. rooms active (ALLOW_ROOMS, the ROOMS binding, origin isolation) on an artifact subdomain;
-//   6. the artifact: not deleted, not taken down, and of the kind the path names (a doc socket
-//      also needs ALLOW_LIVE_EDITING);
+//   6. the artifact: not deleted, not taken down;
 //   7. the content pass at the current epoch, with an identity claim; preview and capture passes
-//      never join;
-//   8. policy (policy.ts roomAccess).
+//      never join. It comes before the kind check, so a caller without a pass learns no more than
+//      the content path tells them (that the artifact exists), never its type or declaration;
+//   8. the kind the path names (an HTML page that declares `room`, or a doc, which also needs
+//      ALLOW_LIVE_EDITING);
+//   9. policy (policy.ts roomAccess).
 // The room then gets a fresh internal request whose only header is the one built here; no client
 // header is copied. Only the status and a reason code are logged, never bodies.
 //
@@ -207,21 +209,23 @@ async function upgrade(
   // 5. Rooms active, on an artifact's own subdomain (never the path fallback).
   const kind = kindOf(path);
   if (!roomsActive(config, env) || base !== "" || !kind) return refuse(config, 404, "unavailable");
-  // 6. The artifact, and the path matching its type.
+  // 6. The artifact.
   const target = await loadRoomTarget(env, artifactId);
   if (!target) return refuse(config, 404, "gone");
-  // A doc socket also needs on-page editing on (ALLOW_LIVE_EDITING).
+  // 7. The content pass, identified, at the current epoch: before anything about the artifact's
+  // type or declaration is told apart.
+  const pass = await readContentPass(request, config, target);
+  if (!pass) return refuse(config, 401, "expired");
+  if (pass.preview) return refuse(config, 403, "preview");
+  if (pass.capture || !pass.claim) return refuse(config, 403, "not_identified");
+  // 8. The path matching the type. A doc socket also needs on-page editing on
+  // (ALLOW_LIVE_EDITING).
   const fits =
     kind === "page"
       ? target.type === "html" && target.caps?.room === true
       : typeDef(target.type)?.liveEdit === true && liveEditMode(config, env) === "room";
   if (!fits) return refuse(config, 404, "not_declared");
-  // 7. The content pass, identified, at the current epoch.
-  const pass = await readContentPass(request, config, target);
-  if (!pass) return refuse(config, 401, "expired");
-  if (pass.preview) return refuse(config, 403, "preview");
-  if (pass.capture || !pass.claim) return refuse(config, 403, "not_identified");
-  // 8. Policy.
+  // 9. Policy.
   const access = roomAccess(pass.claim, target.caps, kind, { active: true, type: target.type });
   if (!access.join) return refuse(config, 403, "forbidden");
 

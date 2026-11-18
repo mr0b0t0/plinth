@@ -294,12 +294,11 @@ describe("live API: checkpoints", () => {
     const h = ownerP.session.headers;
     const a = await connectDoc(id, ownerP.cookie);
     await editLines(a, 2, 3, "First, edited.");
-    expect(
-      await json(await checkpoint(id, h, { base_version: 1, rev: 1, reason: "idle" })),
-    ).toEqual({
-      saved: false,
-      reason: "too_soon",
-    });
+    const early = await json(await checkpoint(id, h, { base_version: 1, rev: 1, reason: "idle" }));
+    // Refused while v1 is younger than LIVE_AUTO_CHECKPOINT_MIN_S, with when to try again.
+    expect(early).toMatchObject({ saved: false, reason: "too_soon" });
+    expect(early.retry_in_s).toBeGreaterThan(590);
+    expect(early.retry_in_s).toBeLessThanOrEqual(600);
     // The version is old enough now; but someone typed since the page asked (rev 0 seen).
     await env.DB.prepare("UPDATE versions SET created_at = ?1 WHERE artifact_id = ?2")
       .bind(new Date(Date.now() - 3600_000).toISOString(), id)
@@ -311,14 +310,14 @@ describe("live API: checkpoints", () => {
       reason: "too_soon",
     });
     // Another save holds the lock.
-    await stubFor(id).docSnapshot(id);
+    const other = await stubFor(id).docSnapshot(id);
     expect(
       await json(await checkpoint(id, h, { base_version: 1, rev: 1, reason: "save" })),
     ).toEqual({
       saved: false,
       reason: "busy",
     });
-    await stubFor(id).docAbort();
+    await stubFor(id).docAbort(other.lock);
     const auto = await json(await checkpoint(id, h, { base_version: 1, rev: 1, reason: "idle" }));
     expect(auto.saved).toBe(true);
     expect((await versionRow(id, 2))?.note).toBe("Edited on the page (autosaved)");
@@ -348,7 +347,10 @@ describe("live API: checkpoints", () => {
       content: "# Plan\n\nFirst, edited.\n\nSecond, typed during the save.\n",
     });
     // A late finish is a no-op.
-    expect(await stubFor(id).docFinish(id, 2, snap.text)).toEqual({ rev: 2, dirty: true });
+    expect(await stubFor(id).docFinish(id, 2, snap.text, snap.lock)).toEqual({
+      rev: 2,
+      dirty: true,
+    });
     a.ws.close(1000);
   });
 });
@@ -401,8 +403,22 @@ describe("live API: versions published from outside", () => {
       conflict_version: 2,
     });
     const resolved = "# Plan\n\nFirst, by a person and an agent.\n\nSecond.\n";
+    // A resolution must name the conflict it was reviewed against.
+    const unnamed = await checkpoint(id, h, {
+      base_version: 1,
+      rev: 1,
+      reason: "save",
+      resolved_text: resolved,
+    });
+    expect(unnamed.status).toBe(400);
     const ok = await json(
-      await checkpoint(id, h, { base_version: 1, rev: 1, reason: "save", resolved_text: resolved }),
+      await checkpoint(id, h, {
+        base_version: 1,
+        rev: 1,
+        reason: "save",
+        resolved_text: resolved,
+        conflict_version: 2,
+      }),
     );
     expect(ok).toMatchObject({ saved: true, version: { version: 3 } });
     const reset = await a.nextOf("reset");
@@ -416,6 +432,7 @@ describe("live API: versions published from outside", () => {
       rev: reset.rev + 1,
       reason: "save",
       resolved_text: "x",
+      conflict_version: 3,
     });
     expect(wrong.status).toBe(400);
     a.ws.close(1000);
@@ -534,5 +551,240 @@ describe("live API: discard and cleanup", () => {
     await waitOnExecutionContext(ctx);
     expect(await draft(oldDoc.id)).toBeNull();
     expect(await draft(newDoc.id)).not.toBeNull();
+  });
+});
+
+describe("live API: resolving conflicts, and a room that missed a version", () => {
+  it("a resolution reviewed against one conflict is refused once a newer version conflicts", async () => {
+    const { owner, id, ownerP } = await docSetup(BASE);
+    const h = ownerP.session.headers;
+    const a = await connectDoc(id, ownerP.cookie);
+    await editLines(a, 2, 3, "First, by a person.");
+    await api(`/artifacts/${id}`, owner.auth, {
+      method: "PUT",
+      body: { content: BASE.replace("First.", "First, by an agent."), base_version: 1 },
+    });
+    expect(await a.nextOf("conflict")).toEqual({ t: "conflict", version: 2 });
+    // The editor reviews against v2; meanwhile v3 rewrites the same paragraph again.
+    const v3 = BASE.replace("First.", "First, by an agent, twice.");
+    await api(`/artifacts/${id}`, owner.auth, {
+      method: "PUT",
+      body: { content: v3, base_version: 2 },
+    });
+    expect(await a.nextOf("conflict")).toEqual({ t: "conflict", version: 3 });
+    const keepMine = {
+      base_version: 1,
+      rev: 1,
+      reason: "save",
+      resolved_text: "# Plan\n\nFirst, by a person.\n\nSecond.\n",
+    };
+    const stale = await checkpoint(id, h, { ...keepMine, conflict_version: 2 });
+    expect(stale.status).toBe(409);
+    expect((await json(stale)).error.details).toMatchObject({
+      reason: "live_conflict",
+      current_version: 3,
+    });
+    // Nothing was written over v3, and the refusal released its lock.
+    expect(await versionRow(id, 4)).toBeFalsy();
+    const ok = await json(await checkpoint(id, h, { ...keepMine, conflict_version: 3 }));
+    expect(ok).toMatchObject({ saved: true, version: { version: 4 } });
+    a.ws.close(1000);
+  });
+
+  it("taking the latest version drops the draft for everyone and writes no version", async () => {
+    const { owner, id, ownerP } = await docSetup(BASE);
+    const h = ownerP.session.headers;
+    const a = await connectDoc(id, ownerP.cookie);
+    await editLines(a, 2, 3, "First, by a person.");
+    const theirs = BASE.replace("First.", "First, by an agent.");
+    await api(`/artifacts/${id}`, owner.auth, {
+      method: "PUT",
+      body: { content: theirs, base_version: 1 },
+    });
+    expect(await a.nextOf("conflict")).toEqual({ t: "conflict", version: 2 });
+    const res = await checkpoint(id, h, {
+      base_version: 1,
+      rev: 1,
+      reason: "save",
+      resolved_text: theirs,
+      conflict_version: 2,
+    });
+    expect(await json(res)).toEqual({ saved: false, reason: "unchanged" });
+    const reset = await a.nextOf("reset");
+    expect(reset.version).toBe(2);
+    expect(await readText(a, reset.gen)).toBe(theirs);
+    expect(await draft(id)).toBeNull();
+    expect(await versionRow(id, 3)).toBeFalsy();
+    // Unfrozen: the next lease works, and a save goes on top of v2.
+    await editLines(a, 4, 5, "Second, after.", reset.rev);
+    const saved = await json(
+      await checkpoint(id, h, { base_version: 2, rev: reset.rev + 1, reason: "save" }),
+    );
+    expect(saved).toMatchObject({ saved: true, version: { version: 3 } });
+    a.ws.close(1000);
+  });
+
+  it("a save whose room missed a version gets 409, leaves that version intact, and the room catches up", async () => {
+    const { owner, id, ownerP } = await docSetup(BASE);
+    const h = ownerP.session.headers;
+    const a = await connectDoc(id, ownerP.cookie);
+    await editLines(a, 2, 3, "First, by a person.");
+    // Rooms off while the agent publishes: the open room never hears of v2.
+    const theirs = BASE.replace("Second.", "Second, by an agent.");
+    await api(`/artifacts/${id}`, owner.auth, {
+      method: "PUT",
+      body: { content: theirs, base_version: 1 },
+      vars: { ALLOW_ROOMS: "false" },
+    });
+    const refused = await checkpoint(id, h, { base_version: 1, rev: 1, reason: "save" });
+    expect(refused.status).toBe(409);
+    expect((await json(refused)).error.details).toMatchObject({
+      reason: "live_rebased",
+      current_version: 2,
+    });
+    expect(await versionRow(id, 3)).toBeFalsy();
+    const rebased = await a.nextOf("rebased");
+    expect(rebased).toMatchObject({ version: 2 });
+    const merged = "# Plan\n\nFirst, by a person.\n\nSecond, by an agent.\n";
+    expect(await readText(a, rebased.gen)).toBe(merged);
+    expect(await draft(id)).toMatchObject({ base_version: 2, content: merged });
+    // The lock was released: saving again on the new base works.
+    const ok = await json(
+      await checkpoint(id, h, { base_version: 2, rev: rebased.rev, reason: "save" }),
+    );
+    expect(ok).toMatchObject({ saved: true, version: { version: 3 } });
+    a.ws.close(1000);
+  });
+
+  it("when the missed version changed the same lines, the 409 sends the editor to review", async () => {
+    const { owner, id, ownerP } = await docSetup(BASE);
+    const h = ownerP.session.headers;
+    const a = await connectDoc(id, ownerP.cookie);
+    await editLines(a, 2, 3, "First, by a person.");
+    await api(`/artifacts/${id}`, owner.auth, {
+      method: "PUT",
+      body: { content: BASE.replace("First.", "First, by an agent."), base_version: 1 },
+      vars: { ALLOW_ROOMS: "false" },
+    });
+    const refused = await checkpoint(id, h, { base_version: 1, rev: 1, reason: "save" });
+    expect(refused.status).toBe(409);
+    expect((await json(refused)).error.details).toMatchObject({
+      reason: "live_conflict",
+      current_version: 2,
+    });
+    expect(await a.nextOf("conflict")).toEqual({ t: "conflict", version: 2 });
+    expect(await draft(id)).toMatchObject({ base_version: 1, conflict_version: 2 });
+    a.ws.close(1000);
+  });
+
+  it("the room's alarm catches a draft up onto a version whose notify was lost", async () => {
+    const { owner, id, ownerP } = await docSetup(BASE);
+    const a = await connectDoc(id, ownerP.cookie);
+    await editLines(a, 2, 3, "First, by a person.");
+    await api(`/artifacts/${id}`, owner.auth, {
+      method: "PUT",
+      body: { content: BASE.replace("Second.", "Second, by an agent."), base_version: 1 },
+      vars: { ALLOW_ROOMS: "false" },
+    });
+    await runInDurableObject(stubFor(id), async (room) => {
+      await (room as any).alarm();
+    });
+    expect(await a.nextOf("rebased")).toMatchObject({ version: 2 });
+    expect(await draft(id)).toMatchObject({ base_version: 2 });
+    a.ws.close(1000);
+  });
+});
+
+describe("live API: checkpoint locks", () => {
+  it("two snapshots at once: one is busy; an abort releases only its own lock", async () => {
+    const { id, ownerP } = await docSetup(BASE);
+    const a = await connectDoc(id, ownerP.cookie);
+    await editLines(a, 2, 3, "First, edited.");
+    const stub = stubFor(id);
+    const both = await Promise.all([stub.docSnapshot(id), stub.docSnapshot(id)]);
+    expect(both.map((s) => s.state).sort()).toEqual(["busy", "ready"]);
+    const winner = both.find((s) => s.state === "ready");
+    const loser = both.find((s) => s.state === "busy");
+    expect(winner?.lock).toMatch(/^k_/);
+    expect(loser?.lock).toBe("");
+    // The busy one's abort (and any other id) leaves the winner's lock in place.
+    await stub.docAbort(loser?.lock ?? "");
+    await stub.docAbort("k_someone_else");
+    expect((await stub.docSnapshot(id)).state).toBe("busy");
+    await stub.docAbort(winner?.lock ?? "");
+    expect((await stub.docSnapshot(id)).state).toBe("ready");
+    a.ws.close(1000);
+  });
+});
+
+describe("live API: the remaining refusals", () => {
+  it("a room that answers 'gone' gives 404 on checkpoint and on the draft", async () => {
+    const { id, ownerP } = await docSetup(BASE);
+    const h = ownerP.session.headers;
+    await runInDurableObject(stubFor(id), async (room) => {
+      const doc = (room as any).doc;
+      doc.snapshot = async () => ({
+        state: "gone",
+        text: "",
+        rev: 0,
+        base_version: 1,
+        conflict_version: null,
+        hash: "",
+        unchanged: true,
+        lock: "",
+      });
+      doc.peek = async () => null;
+    });
+    expect((await checkpoint(id, h, { base_version: 1, rev: 0, reason: "save" })).status).toBe(404);
+    expect((await api(`/artifacts/${id}/live/draft`, h)).status).toBe(404);
+  });
+
+  it("with LIVE_CHECKPOINT_IDLE_S=0 an idle save is always too_soon, with no retry", async () => {
+    const { id, ownerP } = await docSetup(BASE);
+    const a = await connectDoc(id, ownerP.cookie);
+    await editLines(a, 2, 3, "First, edited.");
+    await env.DB.prepare("UPDATE versions SET created_at = ?1 WHERE artifact_id = ?2")
+      .bind(new Date(Date.now() - 86_400_000).toISOString(), id)
+      .run();
+    const vars = { LIVE_CHECKPOINT_IDLE_S: "0" };
+    const r = await json(
+      await checkpoint(
+        id,
+        ownerP.session.headers,
+        { base_version: 1, rev: 1, reason: "idle" },
+        vars,
+      ),
+    );
+    expect(r).toEqual({ saved: false, reason: "too_soon" });
+    expect(await versionRow(id, 2)).toBeFalsy();
+    // The lock was released: an explicit save still works.
+    const saved = await json(
+      await checkpoint(
+        id,
+        ownerP.session.headers,
+        { base_version: 1, rev: 1, reason: "save" },
+        vars,
+      ),
+    );
+    expect(saved.saved).toBe(true);
+    a.ws.close(1000);
+  });
+
+  it("a discard the room cannot carry out gives 503 and keeps the draft", async () => {
+    const { id, ownerP } = await docSetup(BASE);
+    const a = await connectDoc(id, ownerP.cookie);
+    await editLines(a, 2, 3, "First, edited.");
+    await runInDurableObject(stubFor(id), async (room) => {
+      (room as any).doc.discard = async () => {
+        throw new Error("unreachable");
+      };
+    });
+    const res = await api(`/artifacts/${id}/live/draft?rev=1`, ownerP.session.headers, {
+      method: "DELETE",
+    });
+    expect(res.status).toBe(503);
+    expect((await json(res)).error.details).toEqual({ reason: "live_unavailable" });
+    expect(await draft(id)).not.toBeNull();
+    a.ws.close(1000);
   });
 });

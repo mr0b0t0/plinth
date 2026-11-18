@@ -273,6 +273,7 @@ describe("useLiveEdit", () => {
       rev: 7,
       reason: "save",
       resolved_text: "# Mine",
+      conflict_version: 4,
     });
     expect(result.current.conflict).toBeNull();
   });
@@ -354,5 +355,243 @@ describe("useLiveEdit", () => {
     expect(leave()).toBe(false);
     fromFrame({ type: "live", ...STATUS, unflushed: true });
     expect(leave()).toBe(true);
+  });
+
+  /** A room-mode hook in review of a conflict with v4 (draft "# Mine", rev 7). */
+  async function inReview(
+    handle: (c: { method: string; path: string; body: unknown }) => Response | undefined,
+  ) {
+    let conflictVersion = 4;
+    const api = stubApi({
+      handle: (c) => {
+        const r = handle(c);
+        if (r) return r;
+        if (c.path.endsWith("/live")) return json(INFO);
+        if (c.path.endsWith("/live/draft")) {
+          return json({
+            text: "# Mine",
+            base_version: 3,
+            rev: 7,
+            conflict_version: conflictVersion,
+          });
+        }
+        const m = /^\/artifacts\/art1\/versions\/(\d+)$/.exec(c.path);
+        if (m)
+          return json({ type: "doc", content: `# Theirs v${m[1]}`, source_path: "content.md" });
+        return undefined;
+      },
+    });
+    const h = hook(gate("room"));
+    act(() => h.result.current.start());
+    fromFrame({ type: "live", ...STATUS, conflict_version: 4 });
+    await act(() => h.result.current.review());
+    await waitFor(() => expect(h.result.current.conflict?.current).toBe(4));
+    return { ...api, ...h, setConflict: (n: number) => (conflictVersion = n) };
+  }
+
+  it("a resolution names the conflict it reviewed; a newer conflict reopens the review on it", async () => {
+    let refuse = true;
+    const t = await inReview((c) => {
+      if (!c.path.endsWith("/live/checkpoint")) return undefined;
+      if (refuse) {
+        refuse = false;
+        return json(
+          {
+            error: {
+              code: "conflict",
+              message: "v5 was published while you reviewed. Review it.",
+              details: { current_version: 5, reason: "live_conflict" },
+            },
+          },
+          409,
+        );
+      }
+      return json({ saved: true, version: { version: 6 }, live: { rev: 8, dirty: false } });
+    });
+    t.setConflict(5);
+    await act(() => t.result.current.keepMine());
+    expect(t.calls.filter((c) => c.method === "POST").at(-1)?.body).toMatchObject({
+      resolved_text: "# Mine",
+      conflict_version: 4,
+    });
+    // Not saved over v5: the review is open again, now against v5's text.
+    await waitFor(() => expect(t.result.current.conflict?.current).toBe(5));
+    expect(t.result.current.conflict?.currentText).toBe("# Theirs v5");
+    expect(t.result.current.reviewing).toBe(true);
+    expect(toasts).toContain("v5 was published while you reviewed. Review it.");
+  });
+
+  it("taking the latest posts that version's text for the conflict reviewed, then closes", async () => {
+    const t = await inReview((c) =>
+      c.path.endsWith("/live/checkpoint") ? json({ saved: false, reason: "unchanged" }) : undefined,
+    );
+    await act(() => t.result.current.takeLatest());
+    expect(t.calls.filter((c) => c.method === "POST").at(-1)?.body).toEqual({
+      base_version: 3,
+      rev: 7,
+      reason: "save",
+      resolved_text: "# Theirs v4",
+      conflict_version: 4,
+    });
+    expect(t.result.current.conflict).toBeNull();
+    expect(t.result.current.reviewing).toBe(false);
+    expect(toasts.at(-1)).toBe("The page is back to v4.");
+  });
+
+  it("an idle autosave refused as too soon is tried again when the server says", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    let answers = 0;
+    const { calls } = stubApi({
+      handle: (c) => {
+        if (c.path.endsWith("/live")) return json(INFO);
+        if (c.path.endsWith("/live/checkpoint")) {
+          answers++;
+          return answers === 1
+            ? json({ saved: false, reason: "too_soon", retry_in_s: 300 })
+            : json({ saved: true, version: { version: 4 }, live: { rev: 7, dirty: false } });
+        }
+        return undefined;
+      },
+    });
+    const { result } = hook(gate("room"));
+    act(() => result.current.start());
+    await waitFor(() => expect(calls.some((c) => c.path.endsWith("/live"))).toBe(true));
+    fromFrame({ type: "live", ...STATUS });
+    const posts = () => calls.filter((c) => c.method === "POST");
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(120_500);
+    });
+    expect(posts()).toHaveLength(1);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(299_000);
+    });
+    expect(posts()).toHaveLength(1);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1_500);
+    });
+    expect(posts()).toHaveLength(2);
+    expect(posts()[1]?.body).toEqual({ base_version: 3, rev: 7, reason: "idle" });
+    expect(result.current.savedVersion).toBe(4);
+  });
+
+  it("room discard: looks up the rev when the frame has not reported, and says so on a 409", async () => {
+    let refuse = false;
+    const { calls } = stubApi({
+      handle: (c) => {
+        if (c.path.endsWith("/live/draft")) {
+          return json({ text: "x", base_version: 3, rev: 12, conflict_version: null });
+        }
+        if (c.method === "DELETE") {
+          if (refuse) {
+            return json(
+              {
+                error: {
+                  code: "conflict",
+                  message: "The page edits changed since you looked. Look again.",
+                },
+              },
+              409,
+            );
+          }
+          return new Response(null, { status: 204 });
+        }
+        return undefined;
+      },
+    });
+    const { result } = hook(gate("room"));
+    await act(() => result.current.discard());
+    expect(calls.find((c) => c.method === "DELETE")?.path).toBe(
+      "/artifacts/art1/live/draft?rev=12",
+    );
+    expect(toasts.at(-1)).toBe("Unsaved page edits discarded.");
+    // With a status, its rev is the one discarded; someone typed since: 409, nothing claimed.
+    fromFrame({ type: "live", ...STATUS, editing: false, rev: 15 });
+    refuse = true;
+    await act(() => result.current.discard());
+    expect(calls.filter((c) => c.method === "DELETE").at(-1)?.path).toBe(
+      "/artifacts/art1/live/draft?rev=15",
+    );
+    expect(toasts.at(-1)).toBe("The page edits changed since you looked. Look again.");
+  });
+
+  it("solo Done leaves edit mode only after the publish succeeded", async () => {
+    let fail = true;
+    stubApi({
+      handle: (c) => {
+        if (c.method !== "PUT") return undefined;
+        return fail
+          ? apiError(429, "rate_limited")
+          : json({ id: "art1", version: 4, type: "doc", warnings: [] });
+      },
+    });
+    const { result } = hook(gate("solo"));
+    act(() => result.current.start());
+    fromFrame({ type: "live", ...STATUS, connected: false });
+    const finish = async () => {
+      let p: Promise<boolean> = Promise.resolve(false);
+      act(() => {
+        p = result.current.done();
+      });
+      const nonce = sentToFrame("collect").at(-1)?.[0].nonce as string;
+      fromFrame({ type: "draft", nonce, text: "# Edited" });
+      let out = false;
+      await act(async () => {
+        out = await p;
+      });
+      return out;
+    };
+    expect(await finish()).toBe(false);
+    expect(result.current.editing).toBe(true);
+    expect(toasts.at(-1)).toBe("Hourly version limit reached. Your edits stay as a draft.");
+    fail = false;
+    expect(await finish()).toBe(true);
+    expect(result.current.editing).toBe(false);
+  });
+
+  it("solo keeps a copy while dirty, and a reload offers it back with its own base", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const { calls } = stubApi({
+      handle: (c) =>
+        c.method === "PUT"
+          ? json({ id: "art1", version: 4, type: "doc", warnings: [] })
+          : undefined,
+    });
+    const first = hook(gate("solo"));
+    act(() => first.result.current.start());
+    fromFrame({ type: "live", ...STATUS, connected: false, dirty: true });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5_100);
+    });
+    const nonce = sentToFrame("collect").at(-1)?.[0].nonce as string;
+    fromFrame({ type: "draft", nonce, text: "# Kept" });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(10);
+    });
+    first.unmount();
+    // After a reload, now showing v5: the copy keeps v3, the version it was edited from.
+    const later = gate("solo");
+    later.artifact = { ...later.artifact, version: 5, current_version: 5 };
+    const second = hook(later);
+    expect(second.result.current.restore).toMatchObject({ text: "# Kept", base: 3 });
+    await act(() => second.result.current.saveRestore());
+    expect(calls.find((c) => c.method === "PUT")?.body).toEqual({
+      content: "# Kept",
+      base_version: 3,
+    });
+    expect(second.result.current.restore).toBeNull();
+    expect(sessionStorage.length).toBe(0);
+  });
+
+  it("solo: dropping the kept copy clears it", () => {
+    stubApi();
+    sessionStorage.setItem(
+      "plinth-draft:page-edit:art1",
+      JSON.stringify({ text: "# Old", base: 2, saved_at: "2026-11-18T00:00:00.000Z" }),
+    );
+    const { result } = hook(gate("solo"));
+    expect(result.current.restore?.base).toBe(2);
+    act(() => result.current.dropRestore());
+    expect(result.current.restore).toBeNull();
+    expect(sessionStorage.getItem("plinth-draft:page-edit:art1")).toBeNull();
   });
 });

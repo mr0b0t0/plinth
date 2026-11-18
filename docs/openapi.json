@@ -1823,7 +1823,7 @@
       "post": {
         "operationId": "liveCheckpoint",
         "summary": "Save the unsaved draft as the next version",
-        "description": "Signed-in owners and editors of a doc only (live_edit); agents are refused and publish versions instead. The version is published with the draft's base_version, so a stale draft is refused (409) and nothing is overwritten. A draft equal to its base writes nothing. resolved_text is accepted only while the draft is in conflict.",
+        "description": "Signed-in owners and editors of a doc only (live_edit); agents are refused and publish versions instead. The version is published with the draft's base_version, so a stale draft is refused (409) and nothing is overwritten. A draft equal to its base writes nothing. resolved_text is accepted only while the draft is in conflict, with the conflict_version the editor reviewed (409 when the draft now conflicts with a newer version).",
         "tags": ["Live editing"],
         "parameters": [
           {
@@ -3639,10 +3639,15 @@
             "type": "string",
             "format": "email",
             "description": "The email the page sees: only when identified and the page declares `viewer`"
+          },
+          "room_email": {
+            "type": "string",
+            "format": "email",
+            "description": "The email the page's live room shows the others in it: when the page declares `room` and `viewer`, rooms are active and the viewer is identified"
           }
         },
         "required": ["available", "capabilities", "identified", "can_write"],
-        "description": "Present on `ok` only when the artifact's current version declares `data`: what the viewer is told about the page's shared data"
+        "description": "Present on `ok` only when the artifact's current version declares `data`, or `room` and `viewer` with rooms active: what the viewer is told about the page's shared data and who its live room shows them as"
       },
       "AgentDocAuthor": {
         "type": "object",
@@ -3836,6 +3841,12 @@
             "description": "Only while the draft is in conflict: the text the editor resolved it to",
             "type": "string",
             "maxLength": 1048576
+          },
+          "conflict_version": {
+            "description": "Required with resolved_text: the conflicting version the editor reviewed. A newer conflict is refused with 409",
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
           }
         },
         "required": ["base_version", "rev", "reason"]
@@ -3979,7 +3990,8 @@
             "type": "object",
             "properties": {
               "saved": { "const": false },
-              "reason": { "type": "string", "enum": ["clean", "unchanged", "too_soon", "busy"] }
+              "reason": { "type": "string", "enum": ["clean", "unchanged", "too_soon", "busy"] },
+              "retry_in_s": { "type": "integer", "minimum": 1 }
             },
             "required": ["saved", "reason"]
           }

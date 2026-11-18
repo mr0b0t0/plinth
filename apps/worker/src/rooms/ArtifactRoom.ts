@@ -563,21 +563,23 @@ export class ArtifactRoom extends DurableObject<Bindings> {
     return this.doc.snapshot(artifactId);
   }
 
-  /** The pending checkpoint saves an editor's resolution of a conflict instead. */
-  async docResolve(text: string): Promise<boolean> {
-    return this.doc.resolveWith(text);
+  /** The checkpoint holding `lockId` saves an editor's resolution of a conflict instead. */
+  async docResolve(lockId: string, text: string): Promise<boolean> {
+    return this.doc.resolveWith(lockId, text);
   }
 
   async docFinish(
     artifactId: string,
     n: number,
     text: string,
+    lockId: string,
   ): Promise<{ rev: number; dirty: boolean }> {
-    return this.doc.finishCheckpoint(artifactId, n, text);
+    return this.doc.finishCheckpoint(artifactId, n, text, lockId);
   }
 
-  async docAbort(): Promise<void> {
-    await this.doc.abortCheckpoint();
+  /** The checkpoint holding `lockId` gave up (another checkpoint's lock stays). */
+  async docAbort(lockId: string): Promise<void> {
+    await this.doc.abortCheckpoint(lockId);
   }
 
   async docDiscard(artifactId: string, rev: number): Promise<{ ok: boolean; rev: number }> {
@@ -603,6 +605,7 @@ export class ArtifactRoom extends DurableObject<Bindings> {
     if (!open.length) return;
     const artifactId = open[0]?.s.artifactId ?? "";
     let row: {
+      current_version: number;
       access_epoch: number;
       taken_down_at: string | null;
       deleted_at: string | null;
@@ -610,7 +613,7 @@ export class ArtifactRoom extends DurableObject<Bindings> {
     } | null;
     try {
       row = await this.env.DB.prepare(
-        `SELECT a.access_epoch, a.taken_down_at, a.deleted_at, v.capabilities
+        `SELECT a.current_version, a.access_epoch, a.taken_down_at, a.deleted_at, v.capabilities
            FROM artifacts a
            LEFT JOIN versions v ON v.artifact_id = a.id AND v.number = a.current_version
           WHERE a.id = ?1`,
@@ -630,6 +633,15 @@ export class ArtifactRoom extends DurableObject<Bindings> {
         this.drop(ws, ROOM_CLOSE.unauthorized, "access_changed");
       } else if (s.kind === "page" && !sameDeclaration(caps, s)) {
         this.drop(ws, ROOM_CLOSE.redeclared, "redeclared");
+      }
+    }
+    // A doc version whose notify was lost (or published while rooms were off): the draft in
+    // memory catches up, so a checkpoint is not refused as stale until everyone leaves.
+    if (row && !row.deleted_at && !row.taken_down_at && this.sockets("doc").length) {
+      try {
+        await this.doc.catchUp(artifactId, row.current_version);
+      } catch {
+        console.error("live doc catch-up failed");
       }
     }
     if (this.sockets().length) {

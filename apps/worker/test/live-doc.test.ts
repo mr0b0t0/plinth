@@ -6,7 +6,7 @@ import { runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { LIMITS, LIVE_DOC } from "@plinth/shared";
 import { describe, expect, it } from "vitest";
-import { browserSession, createToken, createUser, publish, uniqueEmail } from "./helpers.ts";
+import { browserSession, call, createToken, createUser, publish, uniqueEmail } from "./helpers.ts";
 import {
   type Client,
   connectDoc,
@@ -17,6 +17,7 @@ import {
   grant,
   person,
   sealedCookie,
+  upgrade,
   within,
 } from "./room-helpers.ts";
 
@@ -362,5 +363,59 @@ describe("doc socket: the D1 flush", () => {
     expect(again.rev).toBe(2);
     a.ws.close(1000);
     b.ws.close(1000);
+  });
+});
+
+describe("doc socket: leases end with their sockets", () => {
+  it("after a hibernation wake (the draft not in memory), a closing socket still releases its lease", async () => {
+    const { id, ownerP } = await docSetup();
+    const ed = await person(id, "editor");
+    const a = await connectDoc(id, ownerP.cookie);
+    const b = await connectDoc(id, ed.cookie);
+    const held = await lease(a, 2, 3);
+    expect(held.t).toBe("leased");
+    expect((await b.nextOf("leased")).lease).toBe(held.lease);
+    // As after a wake: the attachments keep the lease, the memory is gone.
+    await runInDurableObject(stubFor(id), async (room) => {
+      (room as any).doc.loaded = null;
+    });
+    a.ws.close(1000);
+    expect(await b.nextOf("released")).toEqual({ t: "released", lease: held.lease });
+    // The block is free again.
+    b.send({ t: "sync" });
+    const w = await b.nextOf("welcome");
+    expect(w.leases).toEqual([]);
+    const mine = await lease(b, 2, 3, w.rev);
+    expect(mine.t).toBe("leased");
+    b.ws.close(1000);
+  });
+
+  it("an editor demoted through sharing loses the socket (4401) and the lease; the block is free and the old pass no longer joins", async () => {
+    const { id, ownerP } = await docSetup();
+    const ed = await person(id, "editor");
+    const a = await connectDoc(id, ownerP.cookie);
+    const b = await connectDoc(id, ed.cookie);
+    const held = await lease(b, 2, 3);
+    expect(held.t).toBe("leased");
+    expect((await a.nextOf("leased")).lease).toBe(held.lease);
+    const res = await call(`/api/v1/artifacts/${id}/sharing`, {
+      method: "PUT",
+      headers: { ...ownerP.session.headers, "Content-Type": "application/json" },
+      body: JSON.stringify({ grants: [{ email: ed.email, role: "commenter" }] }),
+    });
+    expect(res.status).toBe(200);
+    expect(await within(b.closed)).toMatchObject({ code: 4401 });
+    // Every pass predates the change (the epoch is per artifact), so the owner's socket goes too.
+    expect(await within(a.closed)).toMatchObject({ code: 4401 });
+    expect((await upgrade(id, ed.cookie, { kind: "doc" })).status).toBe(401);
+    // A fresh owner pass joins and the block is leasable again.
+    const fresh = await connectDoc(id, await cookieFor(id, ownerP.session.headers));
+    expect(fresh.welcome.leases).toEqual([]);
+    expect((await lease(fresh, 2, 3, fresh.welcome.rev)).t).toBe("leased");
+    // The demoted person, with a new pass, is a commenter: no doc channel.
+    expect(
+      (await upgrade(id, await cookieFor(id, ed.session.headers), { kind: "doc" })).status,
+    ).toBe(403);
+    fresh.ws.close(1000);
   });
 });

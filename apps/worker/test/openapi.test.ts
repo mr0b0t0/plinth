@@ -302,7 +302,7 @@ describe("OpenAPI document", () => {
     expect(ok.required).not.toContain("data");
     const data = doc.components.schemas.ViewGateData;
     expect(Object.keys(data.properties).sort()).toEqual(
-      ["available", "can_write", "capabilities", "email", "identified"].sort(),
+      ["available", "can_write", "capabilities", "email", "identified", "room_email"].sort(),
     );
     expect(data.required.sort()).toEqual(
       ["available", "can_write", "capabilities", "identified"].sort(),

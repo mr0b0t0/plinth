@@ -4,9 +4,9 @@
 // the gate gives them no `live`, so they see versions only.
 import { WarningIcon } from "@phosphor-icons/react";
 import type { LiveDraftInfo } from "@plinth/shared";
-import type { ReactNode } from "react";
+import { type ReactNode, useId, useState } from "react";
 import type { PageDraft } from "../editor/draft.ts";
-import { Button } from "../ui/index.ts";
+import { Button, ConfirmDialog } from "../ui/index.ts";
 import { timeAgo } from "./format.ts";
 import type { LiveFrameStatus } from "./rendererProtocol.ts";
 
@@ -19,6 +19,11 @@ export interface LiveDraftNoticeProps {
   restore?: PageDraft | null;
   /** Confirmed by code without an account: no editing actions. */
   signIn?: boolean;
+  /**
+   * Why the shared draft cannot be saved or discarded from here right now (the room is not
+   * connected), or null when it can. Those two actions are disabled with this as the reason.
+   */
+  unavailable?: string | null;
   /** For tests. */
   now?: number;
   onSave: () => void;
@@ -44,10 +49,15 @@ export function noticeKind(
   return null;
 }
 
+const draftAuthor = (d: LiveDraftInfo | null) => d?.updated_by_email ?? null;
+
 export function LiveDraftNotice(props: LiveDraftNoticeProps) {
   const { draft, status, restore, signIn, onSave, onContinue, onDiscard, onReview } = props;
   const kind = noticeKind(props);
+  const [confirmDiscard, setConfirmDiscard] = useState(false);
+  const reasonId = useId();
   if (!kind) return null;
+  const blocked = kind === "draft" ? (props.unavailable ?? null) : null;
   const actions = !signIn;
   let text: string;
   let buttons: ReactNode = null;
@@ -76,15 +86,22 @@ export function LiveDraftNotice(props: LiveDraftNoticeProps) {
     const when = timeAgo(draft?.updated_at, props.now);
     text = `Unsaved page edits${by ? ` by ${by}` : ""}${when ? `, ${when}` : ""}`;
     if (actions) {
+      const why = blocked ? { "aria-describedby": reasonId } : {};
       buttons = (
         <>
-          <Button size="sm" variant="secondary" onClick={onSave}>
+          <Button size="sm" variant="secondary" onClick={onSave} disabled={!!blocked} {...why}>
             Save as version
           </Button>
           <Button size="sm" variant="ghost" onClick={onContinue}>
             Continue editing
           </Button>
-          <Button size="sm" variant="ghost" onClick={onDiscard}>
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => setConfirmDiscard(true)}
+            disabled={!!blocked}
+            {...why}
+          >
             Discard
           </Button>
         </>
@@ -110,7 +127,24 @@ export function LiveDraftNotice(props: LiveDraftNoticeProps) {
       {signIn && kind !== "restore" && (
         <span className="pl-livenotice__hint">Sign in to edit.</span>
       )}
+      {blocked && actions && (
+        <span id={reasonId} className="pl-livenotice__hint">
+          {blocked}
+        </span>
+      )}
       {buttons && <span className="pl-livenotice__actions">{buttons}</span>}
+      <ConfirmDialog
+        open={confirmDiscard}
+        onClose={() => setConfirmDiscard(false)}
+        onConfirm={() => {
+          setConfirmDiscard(false);
+          onDiscard();
+        }}
+        title="Discard the unsaved page edits?"
+        description={`The page goes back to the current version, for everyone editing it.${draftAuthor(draft) ? ` The edits by ${draftAuthor(draft)} are not kept anywhere.` : ""} Saved versions are not touched.`}
+        confirmLabel="Discard page edits"
+        danger
+      />
     </div>
   );
 }
