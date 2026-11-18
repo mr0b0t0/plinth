@@ -198,6 +198,13 @@ artifact id or slug. Results are JSON text. Errors come back as tool errors with
 `{"error": {"code", "message"}}`, codes as in the REST API (`not_found`, `conflict`,
 `quota_exceeded`, `payload_too_large`, `rate_limited`, ...).
 
+Every tool carries MCP annotations (`MCP_TOOL_ANNOTATIONS` in `apps/worker/src/mcp/server.ts`):
+a `title`, and `readOnlyHint`, `destructiveHint`, `idempotentHint` and `openWorldHint` set
+explicitly. The read tools are read-only. Publishing, updating and restoring add a version anyone
+can revert, so they are not destructive; `set_visibility` (it replaces the viewer allowlist) and
+`write_artifact_data` (shared data is not versioned) are. No tool is open-world: each acts only on
+this instance.
+
 ### `publish_artifact`
 
 Create an artifact. Scope `artifacts:write`.

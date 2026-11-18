@@ -4,6 +4,7 @@ import { users } from "../src/db/schema.ts";
 import {
   BUILD_NOTE,
   contentNote,
+  MCP_TOOL_ANNOTATIONS,
   MCP_TOOL_SUMMARIES,
   OPAQUE_NOTE,
   UPLOAD_NOTE,
@@ -57,6 +58,23 @@ describe("MCP endpoint", () => {
     }
     // The discovery table (/llms.txt) lists exactly the live tools.
     expect(Object.keys(MCP_TOOL_SUMMARIES).sort()).toEqual(names);
+  });
+
+  it("annotates every tool with a title and explicit read-only and destructive hints", async () => {
+    const a = await agent();
+    const client = await mcpClient(a.token);
+    const { tools } = await client.listTools();
+    expect(Object.keys(MCP_TOOL_ANNOTATIONS).sort()).toEqual(tools.map((t) => t.name).sort());
+    for (const t of tools) {
+      const ann = t.annotations;
+      expect(ann, t.name).toEqual(MCP_TOOL_ANNOTATIONS[t.name as keyof typeof MCP_TOOL_ANNOTATIONS]);
+      expect(ann?.title, t.name).toBe(t.title);
+      expect(typeof ann?.readOnlyHint, t.name).toBe("boolean");
+      expect(typeof ann?.destructiveHint, t.name).toBe("boolean");
+    }
+    // Writes that only add a version stay non-destructive; the two that can remove data are not.
+    const destructive = tools.filter((t) => t.annotations?.destructiveHint).map((t) => t.name);
+    expect(destructive.sort()).toEqual(["set_visibility", "write_artifact_data"]);
   });
 
   it("start_upload says where its requests may come from; publish and update point to it", async () => {
