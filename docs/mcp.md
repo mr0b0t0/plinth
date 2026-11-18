@@ -78,10 +78,11 @@ claude plugin install plinth@plinth
 
 Inside a Claude Code session the same is `/plugin marketplace add mr0b0t0/plinth`, then
 `/plugin install plinth@plinth`. Then run `/mcp`, choose `plugin:plinth:plinth` and sign in; click
-**Allow** on the Plinth page that opens. The plugin's server points at the hosted instance. For your
-own instance, either add the bare server below with your instance's URL (the Connect panel puts it
-first there), or set `PLINTH_URL` to your instance's origin every time Claude Code starts, for
-example in your shell profile ([agents.md](agents.md#claude-code)).
+**Allow** on the Plinth page that opens. The plugin's server points at the hosted instance unless
+you set the plugin's Plinth instance option: for your own instance, install with
+`claude plugin install plinth@plinth --config instance_url=<origin>`, or run
+`/plugin configure plinth@plinth` in a session, then restart Claude Code
+([agents.md](agents.md#claude-code)).
 Source: [Install and manage plugins](https://code.claude.com/docs/en/discover-plugins).
 
 **Tools only, without Plinth's rules:**

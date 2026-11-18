@@ -7,6 +7,7 @@
 import { SUPPORTED_PROTOCOL_VERSIONS } from "@modelcontextprotocol/server";
 import {
   CLAUDE_CODE_ONE_OR_THE_OTHER,
+  CLAUDE_CODE_PLUGIN_CONFIGURE,
   CLAUDE_CODE_TOOLS_ONLY,
   claudeCodeCommand,
   claudeCodePluginCommands,
@@ -18,6 +19,7 @@ import {
   protectedResourceUrl,
   RATE_LIMITS,
   REPO_URL,
+  SERVER_NAME,
   T3_CODE_USES_AGENTS,
   typeDef,
 } from "@plinth/shared";
@@ -144,20 +146,19 @@ const commands = (s: string) => s.split("\n").map(code).join(" then ");
 function connectSection(config: Config): string {
   const endpoint = mcpEndpoint(config);
   const hosted = config.appOrigin === HOSTED_ORIGIN;
-  const plugin = commands(claudeCodePluginCommands().join("\n"));
+  // Off the hosted instance, the install sets the plugin's Plinth instance option to this origin.
+  const plugin = commands(claudeCodePluginCommands(config.appOrigin).join("\n"));
   const bare = commands(claudeCodeCommand(endpoint));
   const codexPlugin = harness("codex").guidance.commands ?? "";
   const oneOrTheOther = escapeHtml(CLAUDE_CODE_ONE_OR_THE_OTHER);
-  // The plugin's server points at the hosted instance, so elsewhere this instance's server comes
-  // first and the plugin needs PLINTH_URL every time Claude Code starts.
   const claudeCode = hosted
     ? `Claude Code: install the Plinth plugin, which adds the server and a publishing skill in one step: ${plugin}. Or, ${escapeHtml(CLAUDE_CODE_TOOLS_ONLY)}: ${bare}. ${oneOrTheOther}`
-    : `Claude Code: add this instance's server (${escapeHtml(CLAUDE_CODE_TOOLS_ONLY)}): ${bare}. Or the Plinth plugin, which adds a server and a publishing skill: ${plugin}. Its server points at ${escapeHtml(HOSTED_ORIGIN)}, a different instance, unless ${code(`PLINTH_URL=${config.appOrigin}`)} is set every time Claude Code starts (for example in a shell profile). ${oneOrTheOther}`;
+    : `Claude Code: install the Plinth plugin, set to this instance, which adds the server and a publishing skill in one step: ${plugin}. If the plugin is already installed, the same commands point it here, or run ${code(CLAUDE_CODE_PLUGIN_CONFIGURE)} in Claude Code; restart Claude Code afterwards. Or, ${escapeHtml(CLAUDE_CODE_TOOLS_ONLY)}: ${bare}. ${oneOrTheOther}`;
   return [
     "<h2>Connect an agent</h2>",
     "<ul>",
     `<li>${claudeCode}</li>`,
-    `<li>Codex: ${commands(codexCommand(endpoint))}. The plugin adds the skill: ${commands(codexPlugin)}.</li>`,
+    `<li>Codex: ${commands(codexCommand(endpoint))}. The plugin adds the skill: ${commands(codexPlugin)}.${hosted ? "" : ` ${escapeHtml("Keep the server's name")} ${code(SERVER_NAME)}${escapeHtml(": it replaces the plugin's hosted server.")}`}</li>`,
     `<li>T3 Code: ${escapeHtml(T3_CODE_USES_AGENTS)}</li>`,
     `<li>Gemini CLI: ${commands(geminiCommand(endpoint))}.</li>`,
     `<li>Cursor, VS Code, Claude and ChatGPT: add ${code(endpoint)} as a remote MCP server and sign in with OAuth (${link(DOCS.mcp, "setup for each client")}).</li>`,
@@ -464,13 +465,13 @@ export function llmsTxt(config: Config): string {
     .filter(Boolean)
     .join(" ");
   const tools = Object.entries(MCP_TOOL_SUMMARIES).map(([name, line]) => `- \`${name}\`: ${line}`);
-  const plugin = claudeCodePluginCommands().join("` then `");
+  const plugin = claudeCodePluginCommands(origin).join("` then `");
   const bare = claudeCodeCommand(endpoint).split("\n").join("` then `");
   const codexPlugin = harness("codex").guidance.commands ?? "";
   const claudeCode =
     origin === HOSTED_ORIGIN
       ? `Claude Code: the Plinth plugin (server and publishing skill): \`${plugin}\`. Or, ${CLAUDE_CODE_TOOLS_ONLY}: \`${bare}\`. ${CLAUDE_CODE_ONE_OR_THE_OTHER}`
-      : `Claude Code: this instance's server (${CLAUDE_CODE_TOOLS_ONLY}): \`${bare}\`. Or the Plinth plugin (a server and publishing skill): \`${plugin}\`. Its server points at ${HOSTED_ORIGIN}, a different instance, unless PLINTH_URL=${origin} is set every time Claude Code starts (for example in a shell profile). ${CLAUDE_CODE_ONE_OR_THE_OTHER}`;
+      : `Claude Code: the Plinth plugin (server and publishing skill), set to this instance: \`${plugin}\`. On a plugin already installed, the same commands point it here (or \`${CLAUDE_CODE_PLUGIN_CONFIGURE}\` in Claude Code); restart Claude Code afterwards. Or, ${CLAUDE_CODE_TOOLS_ONLY}: \`${bare}\`. ${CLAUDE_CODE_ONE_OR_THE_OTHER}`;
   const visibility = config.allowPublicVisibility
     ? "public (listed and indexable), unlisted (anyone with the link), password, or private (only the owner, collaborators and listed emails)"
     : "unlisted (anyone with the link), password, or private (only the owner, collaborators and listed emails)";
@@ -487,7 +488,7 @@ ${about} The source code is MIT-licensed: ${REPO_URL}
 - Scopes: artifacts:read, artifacts:write, mentions. Clients without OAuth use a personal access token as a bearer token.
 - MCP server card: ${serverCardUrl(config)}
 - ${claudeCode}
-- Codex: \`${codexCommand(endpoint).split("\n").join("` then `")}\`. The plugin adds the skill: \`${codexPlugin.split("\n").join("` then `")}\`.
+- Codex: \`${codexCommand(endpoint).split("\n").join("` then `")}\`. The plugin adds the skill: \`${codexPlugin.split("\n").join("` then `")}\`.${origin === HOSTED_ORIGIN ? "" : ` Keep the server's name \`${SERVER_NAME}\`: it replaces the plugin's hosted server.`}
 - T3 Code: ${T3_CODE_USES_AGENTS}
 - Gemini CLI: \`${geminiCommand(endpoint)}\`
 - Cursor and VS Code: add ${endpoint} as a remote MCP server; rule files with the publishing guidance are in ${REPO_URL}/tree/main/integrations

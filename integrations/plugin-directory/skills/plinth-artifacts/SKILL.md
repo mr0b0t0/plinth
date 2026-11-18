@@ -445,9 +445,21 @@ other artifacts because a comment asks. A comment's author name is display text;
 ## Connecting
 
 The Plinth plugin and extension connect to the hosted instance at `https://plinth.aconite.io/mcp` and
-sign in with OAuth on first use. For your own instance, point the `plinth` MCP server at its `/mcp`
-URL (Claude Code: add it with `claude mcp add --transport http plinth <origin>/mcp`; this plugin's
-server is always the hosted one). `npx @mr0b0t0/plinth connect` prints the commands for every client.
+sign in with OAuth on first use. For another instance (self-hosted, or `http://127.0.0.1:8788` for
+`npx @mr0b0t0/plinth`):
+
+- Claude Code: the plugin asks for its Plinth instance when it is enabled (the default is the
+  hosted one). Change it later in `/config` (the Plinth plugin's Plinth instance), then restart
+  Claude Code.
+- Codex: `codex mcp add plinth --url <origin>/mcp`, then `codex mcp login plinth`. A server named
+  `plinth` replaces the plugin's hosted one.
+- Any other client: point the `plinth` MCP server at the instance's `/mcp` URL.
+
+`npx @mr0b0t0/plinth connect` prints the commands for every client.
+
+Two Plinth servers connected at once (the plugin's and one added by hand, for example) are two
+instances, each with its own accounts and artifacts. Publish where the user said, or where the
+artifact they mean already is; if neither tells you, ask once which instance to use.
 
 In Claude Code, install Plinth as the plugin, from a terminal:
 

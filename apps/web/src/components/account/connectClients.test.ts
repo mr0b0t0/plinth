@@ -2,7 +2,10 @@ import {
   CLAUDE_CODE_ONE_OR_THE_OTHER,
   claudeCodePluginCommands,
   claudeCodePluginSlashCommands,
+  HOSTED_ORIGIN,
   harness,
+  PLUGIN_INSTANCE_OPTION,
+  PLUGIN_USER_CONFIG,
 } from "@plinth/shared";
 import { describe, expect, it } from "vitest";
 import {
@@ -46,11 +49,18 @@ describe("connect commands and links", () => {
     expect(g.kind).toBe("plugin");
     expect(g.commands).toBe(claudeCodePluginSlashCommands().join("\n"));
     expect(g.summary).toContain("tools only");
-    // `plinth connect` prints the bare server for the local instance first, then this note: it
-    // must offer keeping that server, so following the output never gives two servers.
-    expect(g.ownInstance).toContain("PLINTH_URL");
-    expect(g.ownInstance).toContain("every time Claude Code starts");
-    expect(g.ownInstance).toContain("skip the plugin's server and keep the one added above");
+    // On another instance the install sets the plugin's Plinth instance option (checked with Claude
+    // Code 2.1.327: `--config` saves it on a fresh install and on one that is already there).
+    expect(claudeCodePluginCommands("https://plinth.example")).toEqual([
+      "claude plugin marketplace add mr0b0t0/plinth",
+      "claude plugin install plinth@plinth --config instance_url=https://plinth.example",
+    ]);
+    expect(claudeCodePluginCommands(HOSTED_ORIGIN)).toEqual(claudeCodePluginCommands());
+    expect(PLUGIN_USER_CONFIG[PLUGIN_INSTANCE_OPTION].default).toBe(HOSTED_ORIGIN);
+    expect(g.ownInstance).toContain("/plugin configure plinth@plinth");
+    expect(g.ownInstance).not.toContain("PLINTH_URL");
+    // Codex: a user server named plinth replaces the plugin's (checked with Codex 0.169).
+    expect(harness("codex").guidance.ownInstance).toContain("under the name plinth");
     expect(CLAUDE_CODE_ONE_OR_THE_OTHER).toContain("plugin:plinth:plinth");
   });
 

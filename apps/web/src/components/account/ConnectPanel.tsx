@@ -4,6 +4,7 @@
 import { ArrowSquareOutIcon, CheckCircleIcon } from "@phosphor-icons/react";
 import {
   CLAUDE_CODE_ONE_OR_THE_OTHER,
+  CLAUDE_CODE_PLUGIN_CONFIGURE,
   CLAUDE_CODE_PLUGIN_SERVER,
   CLAUDE_CODE_TOOLS_ONLY,
   type ConnectionInfo,
@@ -125,9 +126,9 @@ const ALLOW = (
 );
 
 /**
- * Claude Code: the plugin (server and rules) and the bare server (tools only). On the hosted
- * instance the plugin comes first. Anywhere else the bare server comes first, because the plugin's
- * server points at the hosted instance unless PLINTH_URL is set every time Claude Code starts.
+ * Claude Code: the plugin (server and rules) first, then the bare server (tools only). On an
+ * instance other than the hosted one, the install also sets the plugin's Plinth instance option to
+ * this origin (the plugin's server is otherwise the hosted instance's).
  */
 function ClaudeCodeSteps({ endpoint }: { endpoint: string }) {
   const origin = originOf(endpoint);
@@ -144,54 +145,45 @@ function ClaudeCodeSteps({ endpoint }: { endpoint: string }) {
       <code>claude mcp login</code> opens Plinth in your browser; click <strong>Allow</strong>.
     </>
   );
-  if (hosted) {
-    return (
-      <div className="pl-acct-howto__item">
-        <p>Install the Plinth plugin: the server and Plinth's publishing rules in one step.</p>
-        <CopyBlock
-          label="Run in a terminal"
-          value={claudeCodePluginCommands().join("\n")}
-          copyLabel="Copy plugin commands"
-          copiedMessage="Commands copied"
-        />
-        <p>
-          Or inside Claude Code: <code>{addMarketplace}</code>, then <code>{install}</code>.{" "}
-          {pluginSignIn}
-        </p>
-        <CopyBlock
-          label={`Or, ${CLAUDE_CODE_TOOLS_ONLY}`}
-          value={claudeCodeCommand(endpoint)}
-          copyLabel="Copy tools-only commands"
-          copiedMessage="Commands copied"
-        />
-        <p className="type-small text-muted">
-          {bareSignIn} {CLAUDE_CODE_ONE_OR_THE_OTHER}
-        </p>
-      </div>
-    );
-  }
-  const exportLine = `export PLINTH_URL=${origin}`;
   return (
     <div className="pl-acct-howto__item">
-      <p>Add this instance's server to Claude Code. It gives the {CLAUDE_CODE_TOOLS_ONLY}.</p>
+      <p>
+        {hosted
+          ? "Install the Plinth plugin: the server and Plinth's publishing rules in one step."
+          : "Install the Plinth plugin, set to this instance: the server and Plinth's publishing rules in one step."}
+      </p>
       <CopyBlock
         label="Run in a terminal"
-        value={claudeCodeCommand(endpoint)}
-        copyLabel="Copy Claude Code commands"
-        copiedMessage="Commands copied"
-      />
-      <p>{bareSignIn}</p>
-      <CopyBlock
-        label="Or, the Plinth plugin: the server and Plinth's rules"
-        value={[exportLine, ...claudeCodePluginCommands()].join("\n")}
+        value={claudeCodePluginCommands(origin).join("\n")}
         copyLabel="Copy plugin commands"
         copiedMessage="Commands copied"
       />
+      <p>
+        Or inside Claude Code: <code>{addMarketplace}</code>, then <code>{install}</code>
+        {hosted ? (
+          "."
+        ) : (
+          <>
+            , and enter <code>{origin}</code> when it asks for the Plinth instance.
+          </>
+        )}{" "}
+        {pluginSignIn}
+      </p>
+      {!hosted && (
+        <p className="type-small text-muted">
+          Already have the plugin? The terminal commands above point it at this instance, or run{" "}
+          <code>{CLAUDE_CODE_PLUGIN_CONFIGURE}</code> in Claude Code. Restart Claude Code
+          afterwards.
+        </p>
+      )}
+      <CopyBlock
+        label={`Or, ${CLAUDE_CODE_TOOLS_ONLY}`}
+        value={claudeCodeCommand(endpoint)}
+        copyLabel="Copy tools-only commands"
+        copiedMessage="Commands copied"
+      />
       <p className="type-small text-muted">
-        The plugin's server points at plinth.aconite.io, a different instance, unless{" "}
-        <code>PLINTH_URL</code> is set when Claude Code starts. Add <code>{exportLine}</code> to
-        your shell profile (such as <code>~/.zshrc</code> or <code>~/.bashrc</code>) so every
-        terminal has it. {pluginSignIn} {CLAUDE_CODE_ONE_OR_THE_OTHER}
+        {bareSignIn} {CLAUDE_CODE_ONE_OR_THE_OTHER}
       </p>
     </div>
   );
@@ -231,9 +223,8 @@ function T3CodeSteps({ endpoint }: { endpoint: string }) {
         <ClaudeCodeSteps endpoint={endpoint} />
         {originOf(endpoint) !== HOSTED_ORIGIN && (
           <p className="type-small text-muted">
-            The T3 Code desktop app does not read your shell profile: for the plugin, set{" "}
-            <code>PLINTH_URL</code> under <strong>Variables</strong> in its Claude provider settings
-            (<strong>Settings &gt; Providers</strong>), or use this instance's server instead.
+            The plugin keeps its Plinth instance in Claude Code's settings, so the Claude that T3
+            Code runs uses it too, as long as it runs with the same Claude Code profile.
           </p>
         )}
       </section>

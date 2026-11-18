@@ -83,8 +83,8 @@ describe("ConnectPanel", () => {
     expect(screen.getByText(/Add custom MCP server/)).toBeTruthy();
 
     await user.click(screen.getByRole("tab", { name: "Claude Code" }));
-    expect(codeText("Run in a terminal")).toBe(claudeCodeCommand(ENDPOINT));
-    expect(screen.getByRole("button", { name: "Copy Claude Code commands" })).toBeTruthy();
+    expect(codeText(/tools only/)).toBe(claudeCodeCommand(ENDPOINT));
+    expect(screen.getByRole("button", { name: "Copy tools-only commands" })).toBeTruthy();
 
     await user.click(screen.getByRole("tab", { name: "Codex" }));
     expect(codeText("Run in a terminal")).toBe(codexCommand(ENDPOINT));
@@ -141,27 +141,27 @@ describe("ConnectPanel", () => {
     expect(screen.queryByText("Teach it Plinth's rules")).toBeNull();
   });
 
-  it("on another instance, puts this instance's server first and points the plugin here", async () => {
+  it("on another instance, sets the plugin to this instance and keeps the bare server second", async () => {
     const user = userEvent.setup();
     renderPanel();
     await user.click(screen.getByRole("tab", { name: "Claude Code" }));
     const panel = screen.getByRole("tabpanel");
     const captions = [...panel.querySelectorAll("figcaption")].map((f) => f.textContent);
-    expect(captions).toEqual([
-      "Run in a terminal",
-      "Or, the Plinth plugin: the server and Plinth's rules",
-    ]);
-    // What a person runs first connects to this instance, not to the hosted one.
-    expect(codeText("Run in a terminal")).toBe(claudeCodeCommand(ENDPOINT));
-    expect(screen.getByRole("button", { name: "Copy Claude Code commands" })).toBeTruthy();
-    expect(panel.textContent).toContain("tools only, without Plinth's rules");
-    // The plugin's block sets PLINTH_URL before installing, and the note says to keep it set.
-    expect(codeText(/the Plinth plugin/)).toBe(
-      "export PLINTH_URL=https://plinth.example\nclaude plugin marketplace add mr0b0t0/plinth\nclaude plugin install plinth@plinth",
+    expect(captions).toEqual(["Run in a terminal", "Or, tools only, without Plinth's rules"]);
+    // The plugin install sets its instance option, so it connects here and not to the hosted one.
+    expect(codeText("Run in a terminal")).toBe(
+      "claude plugin marketplace add mr0b0t0/plinth\nclaude plugin install plinth@plinth --config instance_url=https://plinth.example",
     );
-    expect(screen.getByRole("button", { name: "Copy plugin commands" })).toBeTruthy();
-    expect(panel.textContent).toContain("a different instance");
-    expect(panel.textContent).toMatch(/shell profile/);
+    expect(codeText(/tools only/)).toBe(claudeCodeCommand(ENDPOINT));
+    expect(panel.textContent).toContain("set to this instance");
+    // In a session, /plugin install asks for the option: say what to enter, and how to change it.
+    expect(panel.textContent).toContain(
+      "and enter https://plinth.example when it asks for the Plinth instance.",
+    );
+    expect(screen.getByText("/plugin configure plinth@plinth")).toBeTruthy();
+    expect(panel.textContent).toContain("Restart Claude Code afterwards.");
+    expect(panel.textContent).not.toContain("PLINTH_URL");
+    expect(panel.textContent).not.toContain("shell profile");
     expect(panel.textContent).toContain(
       "Use one or the other: doing both gives Claude Code two Plinth servers (plinth and plugin:plinth:plinth) and two connections.",
     );
@@ -198,20 +198,25 @@ describe("ConnectPanel", () => {
     expect(headings).toEqual(["Claude in T3 Code", "Codex in T3 Code", "Teach it Plinth's rules"]);
     const blocks = [...panel.querySelectorAll("pre code")].map((c) => c.textContent);
     expect(blocks).toEqual([
+      "claude plugin marketplace add mr0b0t0/plinth\nclaude plugin install plinth@plinth --config instance_url=https://plinth.example",
       claudeCodeCommand(ENDPOINT),
-      "export PLINTH_URL=https://plinth.example\nclaude plugin marketplace add mr0b0t0/plinth\nclaude plugin install plinth@plinth",
       codexCommand(ENDPOINT),
       "codex plugin marketplace add mr0b0t0/plinth\ncodex plugin add plinth@plinth",
     ]);
-    // On another instance, the desktop app needs PLINTH_URL in its own settings.
-    expect(panel.textContent).toContain("does not read your shell profile");
+    // On another instance, the plugin's option lives in Claude Code's settings, which T3 Code's
+    // Claude reads; the Codex server named plinth replaces the plugin's hosted one.
+    expect(panel.textContent).toContain("same Claude Code profile");
+    expect(panel.textContent).not.toContain("PLINTH_URL");
+    expect(panel.textContent).toContain("it replaces the plugin's hosted server");
   });
 
-  it("on the hosted instance, the T3 Code tab has no PLINTH_URL note", async () => {
+  it("on the hosted instance, the T3 Code tab has no instance note", async () => {
     const user = userEvent.setup();
     renderPanel({ endpoint: "https://plinth.aconite.io/mcp" });
     await user.click(screen.getByRole("tab", { name: "T3 Code" }));
-    expect(screen.getByRole("tabpanel").textContent).not.toContain("shell profile");
+    const text = screen.getByRole("tabpanel").textContent;
+    expect(text).not.toContain("same Claude Code profile");
+    expect(text).not.toContain("--config");
   });
 
   it("remembers the chosen client", async () => {

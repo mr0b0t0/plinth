@@ -33,15 +33,15 @@ export const SKILL_SOURCE = `integrations/skill/${SKILL_NAME}/SKILL.md`;
 /** Plugin metadata, shared by the Claude Code and portable (Codex, ChatGPT) manifests. */
 export const PLUGIN = {
   name: "plinth",
-  version: "0.14.0",
+  version: "0.15.0",
   /**
    * SHA-256 of the sources the plugin ships (the skill and the mention watcher; see
    * scripts/plugin-sources.mjs), and the `version` it was recorded under. When they change, bump
    * `version` (one minor above main, so installed plugins update), then run `pnpm integrations`,
    * which records both here; it refuses while `version` still equals `skillHashVersion`.
    */
-  skillHash: "e86bdf9b568ec3246cf677bd95a38150692c6a607edc06b8643d48122c1e3814",
-  skillHashVersion: "0.14.0",
+  skillHash: "3a1caca7ad99c08b295a1cd2d452b558c44f372fa9f201548fa3d7bfd233fa19",
+  skillHashVersion: "0.15.0",
   description:
     "Publish, update and share HTML artifacts and Markdown documents on Plinth: the Plinth MCP server plus a skill with its publishing rules",
   author: { name: "Aconite Software & Investments, Lda.", url: "https://aconite.io" },
@@ -54,6 +54,26 @@ export const PLUGIN = {
   termsOfServiceUrl: `${HOSTED_ORIGIN}/legal/terms`,
   supportUrl: `${REPO_URL}/issues`,
   documentationUrl: `${REPO_URL}/blob/main/docs/agents.md`,
+} as const;
+
+/**
+ * The Claude Code plugin's one option (`userConfig` in .claude-plugin/plugin.json): which Plinth
+ * instance its server and mention watcher use. Claude Code asks for it when the plugin is enabled,
+ * keeps it in settings.json (`pluginConfigs`), shows it in /config, and fills `${user_config.<key>}`
+ * into the server URL. Hooks get it as CLAUDE_PLUGIN_OPTION_INSTANCE_URL; monitors get nothing, so
+ * the SessionStart hook saves it for the watcher (integrations/watcher/plinth-mentions.mjs). Needs
+ * Claude Code 2.1.83 or later. Not `required`: a required option left at its default is reported
+ * as unset on every install, and the default is what most people want.
+ */
+export const PLUGIN_INSTANCE_OPTION = "instance_url";
+export const PLUGIN_USER_CONFIG = {
+  [PLUGIN_INSTANCE_OPTION]: {
+    type: "string",
+    title: "Plinth instance",
+    description:
+      "The Plinth instance to publish to: its origin only, like https://plinth.example.com (no path, no trailing slash). Keep the default for the hosted instance.",
+    default: HOSTED_ORIGIN,
+  },
 } as const;
 
 /**
@@ -118,13 +138,22 @@ export function claudeCodeCommand(endpoint: string): string {
   ].join("\n");
 }
 
-/** Claude Code: install the Plinth plugin (the MCP server plus the plinth-artifacts skill). */
-export function claudeCodePluginCommands(): string[] {
+/**
+ * Claude Code: install the Plinth plugin (the MCP server plus the plinth-artifacts skill). For an
+ * instance other than the hosted one, the install sets the plugin's instance option to it; run on a
+ * plugin that is already installed, the same command only saves the option (checked with Claude
+ * Code 2.1.327), and Claude Code applies it at the next start.
+ */
+export function claudeCodePluginCommands(origin: string = HOSTED_ORIGIN): string[] {
+  const install = `claude plugin install ${PLUGIN.name}@${PLUGIN.name}`;
   return [
     `claude plugin marketplace add ${MARKETPLACE_REPO}`,
-    `claude plugin install ${PLUGIN.name}@${PLUGIN.name}`,
+    origin === HOSTED_ORIGIN ? install : `${install} --config ${PLUGIN_INSTANCE_OPTION}=${origin}`,
   ];
 }
+
+/** Inside a Claude Code session: change the plugin's options (the Plinth instance). */
+export const CLAUDE_CODE_PLUGIN_CONFIGURE = `/plugin configure ${PLUGIN.name}@${PLUGIN.name}`;
 
 /**
  * The same install inside a Claude Code session. The two-step form works in every Claude Code
@@ -297,8 +326,7 @@ export const HARNESSES: readonly Harness[] = [
       summary:
         "Install the Plinth plugin: the server and the skill in one step. A bare claude mcp add gives the tools only, without Plinth's rules.",
       commands: claudeCodePluginSlashCommands().join("\n"),
-      ownInstance:
-        "The plugin's server points at plinth.aconite.io. For this instance, set PLINTH_URL to its origin every time Claude Code starts (for example in your shell profile), or skip the plugin's server and keep the one added above.",
+      ownInstance: `The plugin asks which Plinth instance to use when you enable it: enter this instance's origin. To change it later, run ${CLAUDE_CODE_PLUGIN_CONFIGURE} in Claude Code and restart it.`,
     },
   },
   {
@@ -312,7 +340,7 @@ export const HARNESSES: readonly Harness[] = [
       summary: "Install the Plinth plugin for the skill.",
       commands: codexPluginCommands().join("\n"),
       ownInstance:
-        "The plugin also adds the hosted server; for this instance keep the server added above.",
+        "Keep the server added above under the name plinth: it replaces the plugin's hosted server, and the plugin adds the skill.",
     },
   },
   {
@@ -326,8 +354,7 @@ export const HARNESSES: readonly Harness[] = [
       summary:
         "Install the Plinth plugin in the Claude Code and Codex that T3 Code runs; their threads in T3 Code then load it.",
       commands: [...claudeCodePluginCommands(), ...codexPluginCommands()].join("\n"),
-      ownInstance:
-        "The plugins' servers point at plinth.aconite.io; for this instance keep the servers added above.",
+      ownInstance: `In Claude Code, set the plugin's Plinth instance to this instance (${CLAUDE_CODE_PLUGIN_CONFIGURE}, then restart). In Codex, keep the plinth server added above: it replaces the plugin's hosted one.`,
     },
   },
   {

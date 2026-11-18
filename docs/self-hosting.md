@@ -70,7 +70,15 @@ It:
    `https://<app host>/healthz`. A new custom domain's certificate can take a few minutes; the
    deploy still succeeds and `npx @mr0b0t0/plinth status --cloudflare` checks again later.
 
-It ends with the commands that connect Claude Code, Codex and the other agents.
+It ends with the commands that connect Claude Code, Codex and the other agents. For Claude Code,
+that is the Plinth plugin set to your instance
+(`claude plugin install plinth@plinth --config instance_url=https://<app host>`). For Codex, it is
+your instance's server under the name `plinth`, which replaces the plugin's hosted server
+([agents.md](agents.md#claude-code)). A plugin installed from Anthropic's plugin directory or
+OpenAI's works with your instance the same way: set the Claude Code plugin's Plinth instance option,
+or add your server as `plinth` in Codex. ChatGPT connects from OpenAI's servers to the instance its
+listing names, the hosted one, so add your instance there as a custom connector instead, if it is
+reachable from the internet.
 
 Flags: `--app-host`, `--content-host`, `--email-provider sendgrid|resend|console` (console only
 with `--single-user`), `--email-from`, `--admin-email`, `--single-user` or `--multi-user`,

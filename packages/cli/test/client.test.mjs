@@ -1188,29 +1188,46 @@ describe("origin and credentials", () => {
     assert.doesNotMatch(who.stderr, /Body is unusable|already been read/);
   });
 
-  it("orders Claude Code like the Connect panel: plugin first only on the hosted instance", () => {
+  it("orders Claude Code like the Connect panel: the plugin first, set to this instance", () => {
+    // A stand-in for runtime/harnesses.mjs (packages/shared/src/harnesses.ts), so this runs
+    // without a build; connectClients.test.ts checks the real commands.
     const reg = {
       HOSTED_ORIGIN,
-      claudeCodePluginCommands: () => ["claude plugin install plinth@plinth"],
+      CLAUDE_CODE_PLUGIN_CONFIGURE: "/plugin configure plinth@plinth",
+      claudeCodePluginCommands: (origin = HOSTED_ORIGIN) => [
+        origin === HOSTED_ORIGIN
+          ? "claude plugin install plinth@plinth"
+          : `claude plugin install plinth@plinth --config instance_url=${origin}`,
+      ],
       claudeCodeCommand: (endpoint) => `claude mcp add --transport http plinth ${endpoint}`,
     };
     const own = claudeCodeConnectText(reg, "http://localhost:8787");
+    const pluginAt = own.indexOf(
+      "claude plugin install plinth@plinth --config instance_url=http://localhost:8787",
+    );
     const bareAt = own.indexOf("claude mcp add --transport http plinth http://localhost:8787/mcp");
-    const exportAt = own.indexOf("export PLINTH_URL=http://localhost:8787");
-    const pluginAt = own.indexOf("claude plugin install");
-    assert.ok(bareAt >= 0 && bareAt < exportAt, own);
-    assert.ok(exportAt < pluginAt, own);
-    assert.match(own, /tools only, without Plinth's rules/);
-    assert.match(own, /a different instance, unless PLINTH_URL is set every time/);
+    assert.ok(pluginAt >= 0 && pluginAt < bareAt, own);
+    assert.match(own, /set to this instance/);
+    assert.match(
+      own,
+      /\/plugin configure plinth@plinth in Claude Code\)\. Restart Claude Code afterwards\./,
+    );
+    assert.match(own, /Or tools only, without Plinth's rules/);
     assert.match(own, /Use one or the other/);
+    assert.doesNotMatch(own, /PLINTH_URL/);
     const hosted = claudeCodeConnectText(reg, HOSTED_ORIGIN);
-    assert.doesNotMatch(hosted, /PLINTH_URL/);
+    assert.doesNotMatch(hosted, /--config|PLINTH_URL|configure/);
     assert.ok(hosted.indexOf("claude plugin install") < hosted.indexOf("claude mcp add"), hosted);
     assert.match(hosted, /Or tools only, without Plinth's rules/);
-    assert.match(hosted, /Use one or the other/);
-    // The plugin's server really does default to the hosted instance.
-    const mcp = readFileSync(path.resolve(pkgDir, "../../integrations/plugin/.mcp.json"), "utf8");
-    assert.ok(mcp.includes(`\${PLINTH_URL:-${HOSTED_ORIGIN}}/mcp`), mcp);
+    // The plugin's server really does follow the option, with the hosted instance as its default
+    // and PLINTH_URL still taking precedence.
+    const root = path.resolve(pkgDir, "../..");
+    const mcp = readFileSync(path.join(root, "integrations/plugin/.mcp.json"), "utf8");
+    assert.ok(mcp.includes(`\${PLINTH_URL:-\${user_config.instance_url}}/mcp`), mcp);
+    const manifest = JSON.parse(
+      readFileSync(path.join(root, "integrations/plugin/.claude-plugin/plugin.json"), "utf8"),
+    );
+    assert.equal(manifest.userConfig.instance_url.default, HOSTED_ORIGIN);
   });
 
   it("runs from a copy without runtime/ or wrangler", async () => {

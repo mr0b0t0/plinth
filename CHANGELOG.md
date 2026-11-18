@@ -10,6 +10,13 @@ Add a line under **Unreleased** in the pull request that makes a change people w
 
 ## Unreleased
 
+- **The Claude Code plugin remembers your instance.** It asks which Plinth instance to use when you
+  enable it (the hosted one by default), keeps the answer, and its mention watcher follows it, so a
+  self-hosted or local instance no longer needs `PLINTH_URL` exported every time Claude Code starts.
+  From a terminal: `claude plugin install plinth@plinth --config instance_url=<origin>`; later,
+  `/plugin configure plinth@plinth`. `PLINTH_URL` still works and wins. The directory build has the
+  option too, and the Connect panel, `/llms.txt` and `plinth connect` print the right command for
+  each instance. Plugin 0.15.0.
 - **Plinth shows up properly in Codex.** The plugin now carries Codex's listing block (name,
   short description, icon, starter prompts, links), so Codex and Codex plugin directories show it
   with its own icon and description. Plugin 0.13.0.
