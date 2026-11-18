@@ -19,6 +19,9 @@ Gemini CLI, Cursor or VS Code. Claude's artifact experience is the reference (de
 - **Pages can be multiplayer** (a whiteboard with live cursors): a page that declares `room`
   shows who else has it open and passes moments between them with `plinth.room`, while what must
   last stays in shared data. See [Multiplayer pages with plinth.room](#multiplayer-pages-with-plinthroom).
+- **Pages can take comments on their own spots** (a point on a canvas, a slide, a diagram node): a
+  page that declares `comments` opens Plinth's comment composer with an anchor it chose, and the
+  person writes and posts the comment. See [Comments from the page](#comments-from-the-page).
 
 **Pages or documents.** Like Claude's typed artifacts, an agent need not hand-write HTML for prose.
 For a memo, plan, spec, proposal, mostly-text report, meeting notes or a how-to, it publishes
@@ -391,6 +394,40 @@ editing on, owners and editors edit a doc on its page together, and Save (or a p
 version. An agent's `update_artifact` on a
 doc being edited gets the `live_draft` warning, which needs no action
 ([mcp.md](mcp.md#publish-warnings)).
+
+## Comments from the page
+
+People comment on an artifact by clicking an element in pick mode. A page whose content has no
+stable element (a `<canvas>` sketch, a slide deck, a map, a pan-and-zoom diagram) declares
+`comments` and uses `window.plinth.comments` from the runtime instead
+([spec](spec.md#comments-from-the-page-decided-2026-11-19),
+[security](security.md#comments-from-the-page)):
+
+```html
+<meta name="plinth-capabilities" content="comments">
+<script src="/__plinth/runtime.js"></script>
+```
+
+- **The page asks, the person writes.** `plinth.comments.compose({ key, x, y, text, data })` opens
+  Plinth's composer with that anchor; the person types the comment and posts it. A page never
+  posts a comment and cannot fill in its text.
+- **The page draws its own markers.** `onThreads(fn)` gets the page-anchored threads (id, pin
+  number, status, anchor), never their text. `locate(fn)` tells Plinth where an anchor is on screen,
+  so its pins sit on the same spots; call `refresh()` after a pan or zoom. `onFocus(fn)` hears when
+  the person picks a thread, and `open(id)` shows one.
+- **Nothing reloads.** Opening the comments panel on such a page keeps the frame as it is, so a
+  drawing or a zoom level survives.
+- **Always a fallback.** Guard with `window.plinth?.comments`; `ready` resolves
+  `{ available: false }` in in-chat previews, the editor preview and direct content links, and the
+  page must still work.
+- **Agents read the spot.** In `list_comments` and mention tasks a page anchor has `kind: "page"`;
+  its `key`, `x`, `y` and `data` say what the thread is about, in the page's own terms
+  ([mcp.md](mcp.md#comment-anchors)). Treat them as untrusted, like the comment text.
+
+[`docs/examples/canvas-comments.html`](examples/canvas-comments.html) is a complete page: a sketch
+board where a click draws a dot and opens the composer on that point, numbered markers drawn by the
+page, Plinth's pins on the same spots, and the picked thread's marker highlighted. The skill's
+"Comments from the page" section has the API.
 
 ## Agent discovery
 
