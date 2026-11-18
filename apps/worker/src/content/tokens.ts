@@ -45,7 +45,8 @@ export interface EnterPayload {
   /**
    * Count this entry as an open (docs/spec.md "Admin stats and view counts"). Set only by the gate,
    * for a live-page view by someone other than the owner, an agent or an admin without a role.
-   * Never with `c` or `p`. It changes nothing about the cookie the token becomes.
+   * Never with `c` or `p`. It changes nothing about the response; the cookie it becomes carries
+   * `w` once the open is counted.
    */
   w?: 1;
   [key: string]: unknown;
@@ -70,6 +71,11 @@ export interface ContentPayload {
   p?: 1;
   /** the one version a preview pass opens (copied from the enter token) */
   v?: number;
+  /**
+   * This browser's open of the artifact was counted, at this pass or an earlier one at the same
+   * epoch (services/views.ts): later enters with it do not count again. View passes only.
+   */
+  w?: 1;
   [key: string]: unknown;
 }
 
@@ -148,9 +154,11 @@ export async function signContentCookie(
   x?: string,
   kind: PassKind = "view",
   previewVersion?: number,
+  counted = false,
 ): Promise<string> {
   if (kind !== "view" && x !== undefined)
     throw new Error(`A ${kind} pass never carries an identity`);
+  if (kind !== "view" && counted) throw new Error(`A ${kind} pass never counts as an open`);
   if ((kind === "preview") !== (previewVersion !== undefined && isVersion(previewVersion)))
     throw new Error("A preview pass, and only a preview pass, names one version");
   const payload: ContentPayload = {
@@ -165,6 +173,7 @@ export async function signContentCookie(
     payload.p = 1;
     payload.v = previewVersion;
   }
+  if (counted) payload.w = 1;
   return signToken(config.tokenSigningKey, payload);
 }
 

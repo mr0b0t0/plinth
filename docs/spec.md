@@ -300,19 +300,26 @@ records who opened it.
   token. Enter records an open only after every existing check passed (signature, artifact,
   access epoch, takedown, nonce), and only when all of these hold: the pass is a view pass, the
   token carries `w`, `VIEW_COUNTS` is on, the request has `Sec-Fetch-Dest: iframe`, the user agent
-  does not look like a bot, and the browser does not already hold a valid view pass for that
-  artifact. The response (status, `Location`, cookie, CSP) is the same whether or not it counted.
+  does not look like a bot, and the browser's view pass for that artifact (if any) is not already
+  marked counted. The response (status, `Location`, cookie attributes, CSP) is the same whether or
+  not it counted.
 - **Not counted.** The owner's own opens, agents (verifying a publish), an admin without a role
   (even on a public page), review mode, explicit versions (history, compare, `/a/:slug/v/:n`),
   Plinth's own paths (`/__plinth/`, such as the editor preview), thumbnail captures and in-chat
   previews (their tokens refuse `w`), replayed or expired tokens, requests without
-  `Sec-Fetch-Dest: iframe` (curl, scripts) and self-declared bots and headless browsers. Link
+  `Sec-Fetch-Dest: iframe` (curl, scripts) and self-declared bots and headless browsers (a bot
+  token such as `Googlebot/` or `Slackbot`, or a `+https://` contact URL; a bare "bot" in a phone
+  model does not count as one). Link
   unfurlers never run the app, so they never reach the gate or enter. Editors, commenters,
   allowlist and password viewers, link visitors and deep links to normal paths count.
 - **Dedupe.** At most once per browser per artifact per content pass: a sliding 12 hours, reset by
-  an access-epoch change. It reuses the existing content cookie; there is no new cookie, storage
-  or identifier. Browsers that drop partitioned cookies count every open, so counts are
-  "opens", indicative, never unique people.
+  an access-epoch change (any grant, visibility or password change), so the same browser can count
+  again sooner after one. A counted enter marks the content cookie it sets with one signed bit
+  (`w`), and every later view enter at that epoch carries the mark forward, counted or not, so an
+  editor who moves between the editor preview, history and the live page counts once, and an
+  uncounted pass (the preview, history, review mode) never stops a later live open from counting.
+  There is no new cookie, storage or identifier. Browsers that drop partitioned cookies count
+  every open, so counts are "opens", indicative, never unique people.
 - **Storage.** One D1 upsert per counted open into `artifact_view_days`, written after the
   response (`waitUntil`). A failed write never fails the open. The hourly cron, at 03 UTC, folds
   days older than 90 into `artifact_view_totals` in one transaction, so the daily table stays
@@ -321,16 +328,19 @@ records who opened it.
 - **`VIEW_COUNTS`** (default on) turns recording off. Stored counts are kept, and the fold still
   runs.
 - **Owners see their own counts.** The Share dialog shows "Opened N times in the last 30 days · N
-  in all", and `GET /api/v1/artifacts/:ref/views` returns the last 7 and 30 days, a 30-day daily
-  series and the all-time total. It goes through the policy action `views`: the owner only (an
+  since <first counted day>" ("No opens counted yet." before the first one: opens from before the
+  instance began counting are not known), and `GET /api/v1/artifacts/:ref/views` returns the last
+  7 and 30 days, a 30-day daily series, the total and `since`, the first day with a counted open. It goes through the policy action `views`: the owner only (an
   agent needs `artifacts:read`); editors, viewers and an admin without a role are denied, and a
   taken-down artifact answers `taken_down`. Counts are not in `ArtifactSummary`, MCP or anything
   the app host answers without signing in.
 - **Admins see instance aggregates.** `/admin/stats` (`GET /api/v1/admin/stats?days=7|30|90`,
   default 30) is for the signed-in people whose email is in `ADMIN_EMAIL`; everyone else, agents
   included, gets the same 404. It shows people, live artifacts by visibility and taken down,
-  versions and agent versions, storage, shared data, agent connections by client, open reports
-  and opens, with daily series over the window (UTC days, zero-filled). It names no artifact,
+  versions and agent versions, storage, shared data, agent connections by client (and how many
+  were used in the window, including any revoked since), open reports and opens, with daily series
+  over the window (UTC days, zero-filled). Tiles whose figure covers the window say so in their
+  label. It names no artifact,
   owner or viewer and has no top-N list, so it is no way around "admins view only reported
   artifacts". Storage, artifact, version and shared-data totals count live artifacts only (as
   the quota does); opens of deleted and taken-down artifacts stay in the view totals until a hard

@@ -100,25 +100,30 @@ describe("AdminStats", () => {
     const Page = await loadPage();
     render(<Page />);
     expect(await screen.findByRole("heading", { name: "Stats", level: 1 })).toBeTruthy();
-    await screen.findByText("Opens", { selector: "dt" });
+    await screen.findByText("Opens, last 30 days", { selector: "dt" });
     expect(document.title).toBe("Stats · Plinth");
     expect(calls.some((c) => c.path === "/admin/stats?days=30")).toBe(true);
 
     expect(tile("People").textContent).toContain("1,234");
-    expect(tile("People").textContent).toContain("+8 in period");
+    expect(tile("People").textContent).toContain("+8 in the last 30 days");
     const artifacts = tile("Artifacts").textContent ?? "";
     expect(artifacts).toContain("57");
     expect(artifacts).toContain("3 public");
     expect(artifacts).toContain("50 private");
     expect(artifacts).not.toContain("password");
     expect(artifacts).toContain("1 taken down");
-    expect(tile("Publishes").textContent).toContain("4,321 versions in all");
-    expect(tile("Publishes").textContent).toContain("4,000 by agents");
+    // Period figures say so in their label; the rest are instance totals.
+    const publishes = tile("Publishes, last 30 days").textContent ?? "";
+    expect(publishes).toContain("90");
+    expect(publishes).toContain("60 by agents");
+    expect(publishes).toContain("4,321 versions kept on live pages");
     expect(tile("Storage").textContent).toContain("2.4 MB");
-    expect(tile("Shared data").textContent).toContain("900 B on 2 pages");
+    expect(tile("Shared data entries").textContent).toContain("12");
+    expect(tile("Shared data entries").textContent).toContain("900 B on 2 pages");
+    expect(tile("Agent connections").textContent).toContain("4 used in the last 30 days");
     expect(tile("Agent connections").textContent).toContain("Claude 5");
-    expect(tile("Opens").textContent).toContain("412");
-    expect(tile("Opens").textContent).toContain("98,765 in all");
+    expect(tile("Opens, last 30 days").textContent).toContain("412");
+    expect(tile("Opens, last 30 days").textContent).toContain("98,765 counted in all");
     const reports = tile("Open reports");
     expect(within(reports).getByRole("link").getAttribute("href")).toBe("/admin/reports");
     for (const dd of document.querySelectorAll(".pl-stat__value")) {
@@ -161,6 +166,29 @@ describe("AdminStats", () => {
         7,
       ),
     );
+    expect(tile("Publishes, last 7 days")).toBeTruthy();
+    expect(tile("Opens, last 7 days")).toBeTruthy();
+    expect(tile("People").textContent).toContain("in the last 7 days");
+  });
+
+  it("leaves out an empty caption on an instance with no artifacts", async () => {
+    statsHandler((days) => {
+      const s = stats(days);
+      return {
+        ...s,
+        totals: {
+          ...s.totals,
+          artifacts: 0,
+          artifacts_taken_down: 0,
+          artifacts_by_visibility: { public: 0, unlisted: 0, password: 0, allowlist: 0 },
+        },
+      };
+    });
+    const Page = await loadPage();
+    render(<Page />);
+    await screen.findByText("Opens, last 30 days", { selector: "dt" });
+    expect(tile("Artifacts").querySelector(".pl-stat__caption")).toBeNull();
+    expect(tile("People").querySelector(".pl-stat__caption")).toBeTruthy();
   });
 
   it("says when stats could not load, and tries again", async () => {
@@ -178,7 +206,7 @@ describe("AdminStats", () => {
     expect(await screen.findByText("Stats could not be loaded")).toBeTruthy();
     fail = false;
     await user.click(screen.getByRole("button", { name: "Try again" }));
-    await screen.findByText("Opens", { selector: "dt" });
+    await screen.findByText("Opens, last 30 days", { selector: "dt" });
     expect(calls.filter((c) => c.path.startsWith("/admin/stats")).length).toBe(2);
   });
 
@@ -189,6 +217,13 @@ describe("AdminStats", () => {
     await screen.findByText("Opens", { selector: "dt" });
     expect(tile("Opens").querySelector(".pl-stat__value")?.textContent).toBe("Off");
     expect(tile("Opens").textContent).toContain("VIEW_COUNTS");
+    // The chart says counting is off, so a drop to zero does not read as traffic stopping.
+    const opens = document.querySelector("figure.pl-trend") as HTMLElement;
+    expect(opens.querySelector("figcaption")?.textContent).toContain(
+      "Counting is turned off on this instance (VIEW_COUNTS)",
+    );
+    const publishes = document.querySelectorAll("figure.pl-trend")[1] as HTMLElement;
+    expect(publishes.querySelector("figcaption")?.textContent).not.toContain("turned off");
   });
 
   it("goes to the dashboard when the API says not found (no longer an admin)", async () => {

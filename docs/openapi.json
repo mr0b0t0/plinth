@@ -1431,7 +1431,7 @@
       "get": {
         "operationId": "getArtifactViews",
         "summary": "How often other people opened an artifact (owner only)",
-        "description": "Owner only. Daily open counts; no viewer data. An open is one browser opening the live page, at most once per 12 hours; the owner, agents, previews and history never count.",
+        "description": "Owner only. Daily open counts; no viewer data. An open is one browser opening the live page it had not opened in the last 12 hours, or since its sharing last changed; the owner, agents, previews and history never count.",
         "tags": ["Artifacts"],
         "parameters": [
           {
@@ -3146,7 +3146,7 @@
               "agent_publishes": { "type": "integer" },
               "connections_used": {
                 "type": "integer",
-                "description": "Connections used during the window"
+                "description": "Connections used during the window, including any revoked since"
               },
               "views": { "type": "integer" },
               "artifacts_viewed": { "type": "integer" }
@@ -3176,7 +3176,12 @@
             "type": "boolean",
             "description": "Whether this instance counts opens (VIEW_COUNTS)"
           },
-          "total": { "type": "integer", "description": "Opens ever counted" },
+          "total": { "type": "integer", "description": "Opens counted since `since`" },
+          "since": {
+            "type": ["string", "null"],
+            "format": "date",
+            "description": "The first UTC day with a counted open, or null. Opens before this instance began counting are not known."
+          },
           "last_7": { "type": "integer" },
           "last_30": { "type": "integer" },
           "days": {
@@ -3192,7 +3197,7 @@
             "description": "The last 30 UTC days, oldest first"
           }
         },
-        "required": ["enabled", "total", "last_7", "last_30", "days"]
+        "required": ["enabled", "total", "since", "last_7", "last_30", "days"]
       },
       "DevOutbox": {
         "type": "object",

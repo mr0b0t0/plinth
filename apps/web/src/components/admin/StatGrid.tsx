@@ -24,9 +24,10 @@ interface Tile {
   caption?: ReactNode;
 }
 
-/** Join caption parts with a middle dot that screen readers skip. */
+/** Join caption parts with a middle dot that screen readers skip; null when nothing is shown. */
 function parts(items: ReactNode[]): ReactNode {
   const shown = items.filter((x) => x !== null && x !== false && x !== "");
+  if (shown.length === 0) return null;
   return shown.map((x, i) => (
     // biome-ignore lint/suspicious/noArrayIndexKey: positional caption parts
     <span key={i}>
@@ -40,6 +41,8 @@ function parts(items: ReactNode[]): ReactNode {
 export function statTiles(s: AdminStats): Tile[] {
   const t = s.totals;
   const w = s.window;
+  // Big figures are instance totals unless the label says they cover the selected period.
+  const period = `last ${s.days} days`;
   const byVisibility = VISIBILITIES.filter((v) => (t.artifacts_by_visibility[v] ?? 0) > 0).map(
     (v) =>
       `${formatCount(t.artifacts_by_visibility[v] ?? 0)} ${VISIBILITY_META[v].label.toLowerCase()}`,
@@ -48,7 +51,7 @@ export function statTiles(s: AdminStats): Tile[] {
     {
       label: "People",
       value: formatCount(t.users),
-      caption: `+${formatCount(w.new_users)} in period`,
+      caption: `+${formatCount(w.new_users)} in the ${period}`,
     },
     {
       label: "Artifacts",
@@ -59,16 +62,16 @@ export function statTiles(s: AdminStats): Tile[] {
       ]),
     },
     {
-      label: "Publishes",
+      label: `Publishes, ${period}`,
       value: formatCount(w.publishes),
       caption: parts([
-        `${formatCount(t.versions)} versions in all`,
-        `${formatCount(t.agent_versions)} by agents`,
+        `${formatCount(w.agent_publishes)} by agents`,
+        `${formatCount(t.versions)} versions kept on live pages`,
       ]),
     },
     { label: "Storage", value: formatBytes(t.storage_bytes) },
     {
-      label: "Shared data",
+      label: "Shared data entries",
       value: formatCount(t.data_docs),
       caption: `${formatBytes(t.data_bytes)} on ${formatCount(t.data_artifacts)} ${
         t.data_artifacts === 1 ? "page" : "pages"
@@ -78,7 +81,7 @@ export function statTiles(s: AdminStats): Tile[] {
       label: "Agent connections",
       value: formatCount(t.connections),
       caption: parts([
-        `${formatCount(w.connections_used)} used in period`,
+        `${formatCount(w.connections_used)} used in the ${period}`,
         ...CLIENT_TYPES.map(
           (c) => `${CLIENT_NAMES[c]} ${formatCount(t.connections_by_client[c] ?? 0)}`,
         ),
@@ -86,9 +89,9 @@ export function statTiles(s: AdminStats): Tile[] {
     },
     s.view_counts
       ? {
-          label: "Opens",
+          label: `Opens, ${period}`,
           value: formatCount(w.views),
-          caption: `${formatCount(t.views)} in all`,
+          caption: `${formatCount(t.views)} counted in all`,
         }
       : {
           label: "Opens",

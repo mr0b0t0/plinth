@@ -43,6 +43,7 @@ export async function instanceStats(ctx: Ctx, days: 7 | 30 | 90): Promise<AdminS
     versions,
     data,
     connections,
+    connectionsUsedInWindow,
     openReports,
     allViews,
     viewDays,
@@ -68,10 +69,11 @@ export async function instanceStats(ctx: Ctx, days: 7 | 30 | 90): Promise<AdminS
         WHERE a.deleted_at IS NULL`,
     ),
     q(
-      `SELECT client_type, count(*) AS n, coalesce(sum(last_used_at >= ?1), 0) AS used
-         FROM agent_connections WHERE revoked_at IS NULL GROUP BY client_type`,
-      startIso,
+      `SELECT client_type, count(*) AS n FROM agent_connections WHERE revoked_at IS NULL
+        GROUP BY client_type`,
     ),
+    // Used in the window, including connections revoked since: their publishes are in the window.
+    q("SELECT count(*) AS n FROM agent_connections WHERE last_used_at >= ?1", startIso),
     q("SELECT count(*) AS n FROM reports WHERE state = 'open'"),
     q(
       `SELECT (SELECT coalesce(sum(views), 0) FROM artifact_view_days)
@@ -128,12 +130,10 @@ export async function instanceStats(ctx: Ctx, days: 7 | 30 | 90): Promise<AdminS
     number
   >;
   let liveConnections = 0;
-  let connectionsUsed = 0;
   for (const row of rows(connections)) {
     const t = row.client_type as ClientType;
     if (t in connectionsByClient) connectionsByClient[t] = num(row.n);
     liveConnections += num(row.n);
-    connectionsUsed += num(row.used);
   }
 
   const usersPerDay = byDay(newUsers, "d", "n");
@@ -181,7 +181,7 @@ export async function instanceStats(ctx: Ctx, days: 7 | 30 | 90): Promise<AdminS
       new_artifacts: sum("artifacts"),
       publishes: sum("publishes"),
       agent_publishes: sum("agent_publishes"),
-      connections_used: connectionsUsed,
+      connections_used: num(first(connectionsUsedInWindow).n),
       views: sum("views"),
       artifacts_viewed: num(first(viewedInWindow).n),
     },
@@ -195,7 +195,8 @@ const OWNER_DAYS = 30;
 /**
  * One artifact's open counts, for its owner. Authorization comes first, so a stranger learns
  * nothing. Reads the last 30 daily rows, one sum over the older daily rows (at most 61 on an
- * instance whose cron folds them) and the folded total: one primary-key range each.
+ * instance whose cron folds them) and the folded total: one primary-key range each. `since` is the
+ * first day with a counted open, so the total never claims more than the server knows.
  */
 export async function artifactViews(ctx: Ctx, ref: string): Promise<ArtifactViews> {
   const { artifact } = await requireArtifact(ctx, ref, "views");
@@ -209,20 +210,28 @@ export async function artifactViews(ctx: Ctx, ref: string): Promise<ArtifactView
       .bind(artifact.id, start),
     db
       .prepare(
-        `SELECT coalesce(sum(views), 0) AS n FROM artifact_view_days
-          WHERE artifact_id = ?1 AND day < ?2`,
+        `SELECT coalesce(sum(CASE WHEN day < ?2 THEN views END), 0) AS n,
+                min(CASE WHEN views > 0 THEN day END) AS first
+           FROM artifact_view_days WHERE artifact_id = ?1`,
       )
       .bind(artifact.id, start),
-    db.prepare("SELECT views FROM artifact_view_totals WHERE artifact_id = ?1").bind(artifact.id),
+    db
+      .prepare("SELECT views, first_day FROM artifact_view_totals WHERE artifact_id = ?1")
+      .bind(artifact.id),
   ]);
   const perDay = new Map<string, number>();
   for (const row of recent?.results ?? []) perDay.set(String(row.day), num(row.views));
   const series = range.map((day) => ({ day, views: perDay.get(day) ?? 0 }));
   const last30 = series.reduce((acc, d) => acc + d.views, 0);
   const last7 = series.slice(-7).reduce((acc, d) => acc + d.views, 0);
+  const total = last30 + num(older?.results[0]?.n) + num(folded?.results[0]?.views);
+  const firsts = [folded?.results[0]?.first_day, older?.results[0]?.first].filter(
+    (d): d is string => typeof d === "string",
+  );
   return {
     enabled: ctx.config.viewCounts,
-    total: last30 + num(older?.results[0]?.n) + num(folded?.results[0]?.views),
+    total,
+    since: total > 0 ? ([...firsts].sort()[0] ?? null) : null,
     last_7: last7,
     last_30: last30,
     days: series,

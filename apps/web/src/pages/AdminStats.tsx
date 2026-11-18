@@ -134,6 +134,11 @@ function StatsView({ stats }: { stats: AdminStatsData }) {
           unit={["open", "opens"]}
           days={days}
           series={[{ label: "Opens", values: pick((d) => d.views) }]}
+          note={
+            stats.view_counts
+              ? undefined
+              : "Counting is turned off on this instance (VIEW_COUNTS), so no new opens are recorded."
+          }
         />
         <TrendChart
           title="Publishes per day"
@@ -161,10 +166,11 @@ function StatsView({ stats }: { stats: AdminStatsData }) {
         />
       </div>
       <p className="pl-stats__footnote">
-        An open is one browser opening a page it had not opened in the last 12 hours. Owners' own
-        opens, previews, history, agents and admins reviewing are not counted. Days are UTC. Plinth
-        keeps one number per page per day, never who opened it. These figures never name pages or
-        people; reported pages are on Reports.
+        An open is one browser opening a page it had not opened in the last 12 hours, or since the
+        page's sharing last changed. Owners' own opens, previews, history, agents and admins
+        reviewing are not counted, nor are opens from before this instance began counting. Days are
+        UTC. Plinth keeps one number per page per day, never who opened it. These figures never name
+        pages or people; reported pages are on Reports.
       </p>
     </>
   );

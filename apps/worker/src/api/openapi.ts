@@ -596,7 +596,9 @@ function responseSchemas(): Record<string, Json> {
         new_artifacts: int(),
         publishes: int(),
         agent_publishes: int(),
-        connections_used: int({ description: "Connections used during the window" }),
+        connections_used: int({
+          description: "Connections used during the window, including any revoked since",
+        }),
         views: int(),
         artifacts_viewed: int(),
       }),
@@ -608,7 +610,13 @@ function responseSchemas(): Record<string, Json> {
     }),
     ArtifactViews: obj({
       enabled: { type: "boolean", description: "Whether this instance counts opens (VIEW_COUNTS)" },
-      total: int({ description: "Opens ever counted" }),
+      total: int({ description: "Opens counted since `since`" }),
+      since: nullable("string", {
+        format: "date",
+        description:
+          "The first UTC day with a counted open, or null. Opens before this instance began " +
+          "counting are not known.",
+      }),
       last_7: int(),
       last_30: int(),
       days: {
@@ -1434,7 +1442,8 @@ function operations(): Operation[] {
       summary: "How often other people opened an artifact (owner only)",
       description:
         "Owner only. Daily open counts; no viewer data. An open is one browser opening the live " +
-        "page, at most once per 12 hours; the owner, agents, previews and history never count.",
+        "page it had not opened in the last 12 hours, or since its sharing last changed; the " +
+        "owner, agents, previews and history never count.",
       tag: "Artifacts",
       auth: "agent",
       scope: "artifacts:read",

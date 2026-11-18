@@ -233,6 +233,7 @@ describe("identity claim: issued for identified viewers", () => {
       capture: false,
       preview: false,
       version: null,
+      counted: false,
     });
   });
 
@@ -320,7 +321,13 @@ describe("identity claim: nobody else gets one", () => {
     expect(asOk(gate).role).toBeNull();
     expect(await claimIn(gate)).toBeNull();
     const { pass } = await passFrom(gate);
-    expect(pass).toEqual({ claim: null, capture: false, preview: false, version: null });
+    expect(pass).toEqual({
+      claim: null,
+      capture: false,
+      preview: false,
+      version: null,
+      counted: false,
+    });
 
     await db()
       .update(artifacts)
@@ -449,6 +456,7 @@ describe("identity claim: tokens and cookies", () => {
       capture: false,
       preview: false,
       version: null,
+      counted: false,
     });
   });
 
@@ -479,7 +487,13 @@ describe("identity claim: tokens and cookies", () => {
     const identified = await passFrom(await gateHttp(artifact.id, s.headers));
     expect(identified.pass?.claim?.email).toBe(owner.user.email);
     const anonymous = await passFrom(await gateHttp(artifact.id));
-    expect(anonymous.pass).toEqual({ claim: null, capture: false, preview: false, version: null });
+    expect(anonymous.pass).toEqual({
+      claim: null,
+      capture: false,
+      preview: false,
+      version: null,
+      counted: false,
+    });
     // Same name, path and host: the browser replaces the first cookie with the second.
     const attrs = (sc: string) =>
       sc

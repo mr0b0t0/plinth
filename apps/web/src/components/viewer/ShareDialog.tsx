@@ -10,7 +10,7 @@ import {
   type Visibility,
 } from "@plinth/shared";
 import { useEffect, useRef, useState } from "react";
-import { deleteAllData, getArtifactViews, getDataSummary } from "../../lib/api.ts";
+import { ApiRequestError, deleteAllData, getArtifactViews, getDataSummary } from "../../lib/api.ts";
 import { formatBytes } from "../history/format.ts";
 import {
   Button,
@@ -231,31 +231,63 @@ function SharedDataRow({
 interface ViewsState {
   status: "idle" | "loading" | "ok" | "error";
   views: ArtifactViews | null;
+  /** Why the counts could not be loaded, when the server said (a takedown). */
+  reason: "taken_down" | null;
+  reload: () => void;
 }
 
 /** The artifact's open counts, read while `active` (the owner's open dialog). */
 export function useArtifactViews(active: boolean, ref: string): ViewsState {
-  const [state, setState] = useState<ViewsState>({ status: "idle", views: null });
+  const [state, setState] = useState<Omit<ViewsState, "reload">>({
+    status: "idle",
+    views: null,
+    reason: null,
+  });
+  const [nonce, setNonce] = useState(0);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: nonce is the reload trigger
   useEffect(() => {
     if (!active) return;
     const ctrl = new AbortController();
     setState((s) => ({ ...s, status: "loading" }));
     getArtifactViews(ref, ctrl.signal)
-      .then((views) => setState({ status: "ok", views }))
-      .catch(() => {
-        if (!ctrl.signal.aborted) setState({ status: "error", views: null });
+      .then((views) => setState({ status: "ok", views, reason: null }))
+      .catch((e: unknown) => {
+        if (ctrl.signal.aborted) return;
+        const details = e instanceof ApiRequestError ? e.details : undefined;
+        const takenDown =
+          typeof details === "object" &&
+          details !== null &&
+          (details as { reason?: unknown }).reason === "taken_down";
+        setState({ status: "error", views: null, reason: takenDown ? "taken_down" : null });
       });
     return () => ctrl.abort();
-  }, [active, ref]);
-  return state;
+  }, [active, ref, nonce]);
+  return { ...state, reload: () => setNonce((n) => n + 1) };
 }
 
 const times = (n: number) => `${n.toLocaleString("en")} ${n === 1 ? "time" : "times"}`;
 
-/** "Opened 24 times in the last 30 days · 310 in all" (or "No one else has opened it yet."). */
+/** "12 Nov 2026" for a UTC day ("2026-11-12"). */
+export function formatDay(day: string): string {
+  const d = new Date(`${day}T00:00:00Z`);
+  if (Number.isNaN(d.getTime())) return day;
+  return new Intl.DateTimeFormat("en-GB", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+    timeZone: "UTC",
+  }).format(d);
+}
+
+/**
+ * "Opened 24 times in the last 30 days · 310 since 12 Nov 2026", or "No opens counted yet." The
+ * server knows only the opens it counted, so the total is dated from the first one.
+ */
 export function viewsSentence(v: ArtifactViews): string {
-  if (v.total === 0) return "No one else has opened it yet.";
-  return `Opened ${times(v.last_30)} in the last 30 days · ${v.total.toLocaleString("en")} in all`;
+  if (v.total === 0) return "No opens counted yet.";
+  const total = v.total.toLocaleString("en");
+  const tail = v.since ? `${total} since ${formatDay(v.since)}` : `${total} in all`;
+  return `Opened ${times(v.last_30)} in the last 30 days · ${tail}`;
 }
 
 /**
@@ -264,7 +296,25 @@ export function viewsSentence(v: ArtifactViews): string {
  */
 function ViewsRow({ state }: { state: ViewsState }) {
   if (state.status === "error") {
-    return <p className="pl-share-views__error">Could not load how often this page was opened.</p>;
+    return (
+      <div className="pl-share-data">
+        <p className="pl-field__error" role="alert">
+          <WarningCircleIcon aria-hidden="true" />
+          <span>
+            {state.reason === "taken_down"
+              ? "This page was taken down, so how often it was opened is not shown."
+              : "Could not load how often this page was opened."}
+          </span>
+        </p>
+        {state.reason !== "taken_down" && (
+          <div>
+            <Button size="sm" onClick={state.reload}>
+              Try again
+            </Button>
+          </div>
+        )}
+      </div>
+    );
   }
   const v = state.views;
   if (state.status !== "ok" || !v || !v.enabled) return null;
@@ -277,8 +327,9 @@ function ViewsRow({ state }: { state: ViewsState }) {
         {v.total > 0 && <Sparkline values={v.days.map((d) => d.views)} />}
       </div>
       <p className="pl-share-views__help">
-        Counts opens by people other than you, at most once per browser every 12 hours. Days are
-        UTC. Plinth keeps no record of who opened it.
+        Counts opens by people other than you since this instance began counting: once per browser
+        every 12 hours, and again after you change who can open the page. Days are UTC. Plinth keeps
+        no record of who opened it.
       </p>
     </div>
   );

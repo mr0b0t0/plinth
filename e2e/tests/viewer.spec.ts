@@ -431,8 +431,9 @@ test.describe("open counts and admin stats", () => {
       await page.getByRole("button", { name: "Share" }).click();
     }
     const dialog = page.getByRole("dialog", { name: "Share this artifact" });
+    // Dated from the first counted open: earlier opens are not known.
     await expect(dialog.getByRole("status").filter({ hasText: /^Opened/ })).toHaveText(
-      "Opened 1 time in the last 30 days · 1 in all",
+      /^Opened 1 time in the last 30 days · 1 since \d{1,2} \w+ \d{4}$/,
     );
     await expect(dialog.getByText("Counts opens by people other than you")).toBeVisible();
     await expectAccessible(page);

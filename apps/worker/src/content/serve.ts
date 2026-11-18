@@ -172,6 +172,8 @@ type ContentPass = {
   preview: boolean;
   /** The one version a preview pass opens; null for every other pass. */
   version: number | null;
+  /** This browser's open was already counted at this epoch (a view pass carrying `w`). */
+  counted: boolean;
 };
 
 /** One cookie value as a pass for this artifact at its epoch, or null when it is not one. */
@@ -186,8 +188,11 @@ async function openPass(
   const preview = pass.p === 1;
   if (capture && preview) return null;
   if (preview !== isVersion(pass.v)) return null;
+  // Only a view pass is ever marked counted (signContentCookie refuses the others).
+  if (pass.w !== undefined && (pass.w !== 1 || capture || preview)) return null;
+  const counted = pass.w === 1;
   const version = preview ? (pass.v as number) : null;
-  if (pass.x === undefined) return { claim: null, capture, preview, version };
+  if (pass.x === undefined) return { claim: null, capture, preview, version, counted };
   // Capture and preview passes never carry an identity (issueEnterUrl refuses both).
   if (capture || preview) return null;
   if (typeof pass.x !== "string") return null;
@@ -204,6 +209,7 @@ async function openPass(
     capture: false,
     preview: false,
     version: null,
+    counted,
   };
 }
 
@@ -238,6 +244,7 @@ export async function readContentPass(
         found.version !== pass.version)
     )
       return null;
+    if (found) found.counted ||= pass.counted;
     found ??= pass;
   }
   return found;
@@ -386,13 +393,16 @@ async function serve(
     if (preview && base) return expired();
     const kind: PassKind = capture ? "capture" : preview ? "preview" : "view";
     // An open counts (services/views.ts) only for a view pass the gate flagged, from a browser in
-    // the app's frame that holds no view pass for this artifact yet (reloads and second tabs
-    // within the cookie's lifetime count once). It reads the incoming cookies, before the new one,
-    // and never changes the response below.
-    let countable = false;
-    if (kind === "view" && payload.w === 1 && config.viewCounts && isCountableRequest(request)) {
-      const prior = await readContentPass(request, config, current);
-      countable = !prior || prior.capture || prior.preview;
+    // the app's frame whose view pass for this artifact was not counted yet. The cookie remembers
+    // a counted open (`w`), and every later view enter at this epoch carries it forward, flagged or
+    // not, so reloads, second tabs and the editor's preview count nothing more while the pass
+    // lives. It reads the incoming cookies, before the new one, and changes nothing else about
+    // the response below.
+    let seen = false;
+    let countNow = false;
+    if (kind === "view" && config.viewCounts) {
+      seen = (await readContentPass(request, config, current))?.counted === true;
+      countNow = !seen && payload.w === 1 && isCountableRequest(request);
     }
     const value = await signContentCookie(
       config,
@@ -401,6 +411,7 @@ async function serve(
       x,
       kind,
       preview ? (payload.v as number) : undefined,
+      seen || countNow,
     );
     const next = safeNext(url.searchParams.get("next"));
     const res = redirect(config, 302, `${base}${next}`, enterOpts);
@@ -417,7 +428,7 @@ async function serve(
         maxAge: passMaxAgeS(kind),
       }),
     );
-    if (countable) {
+    if (countNow) {
       const write = recordView(env.DB, artifactId, Date.now());
       if (defer) defer(write);
       else await write;

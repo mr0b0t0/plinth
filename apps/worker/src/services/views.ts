@@ -40,9 +40,13 @@ export function countsAsView(
   return true;
 }
 
-/** User agents that announce a crawler, an unfurler, a headless browser or a script. */
+/**
+ * User agents that announce a crawler, an unfurler, a headless browser or a script. A bot names
+ * itself with a product token ("Googlebot/2.1", "Slackbot-LinkExpanding") or a contact URL
+ * ("+https://..."); a bare "bot" is not enough, since phone models such as "CUBOT" contain it.
+ */
 const BOT_UA =
-  /bot\b|bot\/|crawl|spider|slurp|headless|lighthouse|preview|facebookexternalhit|embedly|python-requests|curl|wget|go-http-client/i;
+  /[a-z]bot\/|slackbot|telegrambot|\+https?:\/\/|crawl|spider|slurp|headless|lighthouse|bingpreview|facebookexternalhit|embedly|^whatsapp\/|python-requests|^curl\/|^wget\/|go-http-client/i;
 
 /** Whether a user agent looks like a bot. An empty one does. Read in memory only, never stored. */
 export function looksLikeBot(userAgent: string | null): boolean {

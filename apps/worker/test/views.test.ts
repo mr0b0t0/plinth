@@ -10,7 +10,7 @@ import {
 import { env } from "cloudflare:workers";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { getConfig, parseConfig } from "../src/config.ts";
-import { issueEnterUrl, verifyEnterToken } from "../src/content/tokens.ts";
+import { issueEnterUrl, signContentCookie, verifyEnterToken } from "../src/content/tokens.ts";
 import worker from "../src/index.ts";
 import { newId } from "../src/lib/crypto.ts";
 import { nowIso } from "../src/lib/time.ts";
@@ -180,6 +180,7 @@ afterEach(() => {
 
 describe("who counts", () => {
   it("an anonymous visitor counts once per browser per content pass", async () => {
+    const started = Date.now();
     const { p } = await linkPage("public");
     const first = await open(p.slug);
     expect(await viewsOf(p.id)).toBe(1);
@@ -193,13 +194,15 @@ describe("who counts", () => {
     await bumpEpoch(p.id);
     await open(p.slug, { cookie: first.cookie });
     expect(await viewsOf(p.id)).toBe(3);
-    // Counted under today's UTC day.
-    const row = await env.DB.prepare(
+    // Counted under the UTC day of each open (two days only if the test crossed midnight).
+    const rows = await env.DB.prepare(
       "SELECT day, views FROM artifact_view_days WHERE artifact_id = ?1",
     )
       .bind(p.id)
       .all<{ day: string; views: number }>();
-    expect(row.results).toEqual([{ day: utcDay(Date.now()), views: 3 }]);
+    const days = new Set([utcDay(started), utcDay(Date.now())]);
+    for (const r of rows.results) expect(days.has(r.day), r.day).toBe(true);
+    expect(rows.results.reduce((n, r) => n + r.views, 0)).toBe(3);
   });
 
   it("never counts the owner, signed in or through their own allowlist code", async () => {
@@ -262,6 +265,57 @@ describe("who counts", () => {
     expect(pwGate.status).toBe("ok");
     expect((await redeem(pwGate.enter_url)).status).toBe(302);
     expect(await viewsOf(pw.id)).toBe(1);
+  });
+
+  it("counts an editor's live open after the editor preview, and only once", async () => {
+    const owner = await agent();
+    const editor = await createUser();
+    const { body: p } = await publish(owner.auth, { visibility: "allowlist", emails: [] });
+    const put = await run(`/api/v1/artifacts/${p.id}/sharing`, {
+      method: "PUT",
+      headers: { ...owner.auth, "Content-Type": "application/json" },
+      body: JSON.stringify({ grants: [{ email: editor.email, role: "editor" }] }),
+    });
+    expect(put.status).toBe(200);
+    const headers = (await browserSession(editor.id)).headers;
+    const preview = `?next=${encodeURIComponent("/__plinth/preview")}`;
+    // The editor opens /a/<slug>/edit first: its preview frame sets a view pass without counting.
+    const edit = await open(p.slug, { headers, query: preview });
+    expect(await viewsOf(p.id)).toBe(0);
+    // Then the live page, holding that pass: this open counts.
+    const live = await open(p.slug, { headers, cookie: edit.cookie });
+    expect(await viewsOf(p.id)).toBe(1);
+    // Back to the editor and history, then the live page again: the counted mark carries over.
+    const again = await open(p.slug, { headers, query: preview, cookie: live.cookie });
+    const history = await open(p.slug, { headers, query: "?version=1", cookie: again.cookie });
+    await open(p.slug, { headers, cookie: history.cookie });
+    expect(await viewsOf(p.id)).toBe(1);
+  });
+
+  it("counts a commenter whose frame first loaded in review mode", async () => {
+    const { p } = await linkPage();
+    const review = await open(p.slug, { query: "?review=1" });
+    expect(await viewsOf(p.id)).toBe(0);
+    const live = await open(p.slug, { cookie: review.cookie });
+    expect(await viewsOf(p.id)).toBe(1);
+    await open(p.slug, { cookie: live.cookie });
+    expect(await viewsOf(p.id)).toBe(1);
+  });
+
+  it("counts an admin who holds a role, like anyone else with that role", async () => {
+    const adm = await admin();
+    const owner = await agent();
+    const { body: p } = await publish(owner.auth, { visibility: "allowlist", emails: [] });
+    const put = await run(`/api/v1/artifacts/${p.id}/sharing`, {
+      method: "PUT",
+      headers: { ...owner.auth, "Content-Type": "application/json" },
+      body: JSON.stringify({ grants: [{ email: adm.user.email, role: "editor" }] }),
+    });
+    expect(put.status).toBe(200);
+    const { gate } = await open(p.slug, { headers: adm.headers, vars: adm.vars });
+    expect(gate.role).toBe("editor");
+    expect((await tokenOf(gate.enter_url))?.w).toBe(1);
+    expect(await viewsOf(p.id)).toBe(1);
   });
 
   it("never counts an admin without a role, on a reported private page or a public one", async () => {
@@ -372,6 +426,13 @@ describe("captures and previews", () => {
         previewVersion: 1,
       }),
     ).rejects.toThrow("A capture or preview never counts as a view");
+    // Nor does a capture or preview cookie ever carry the counted mark.
+    await expect(
+      signContentCookie(config, art.id, 1, undefined, "capture", undefined, true),
+    ).rejects.toThrow("A capture pass never counts as an open");
+    await expect(
+      signContentCookie(config, art.id, 1, undefined, "preview", 1, true),
+    ).rejects.toThrow("A preview pass never counts as an open");
   });
 
   it("a capture pass in the browser does not stop a real open from counting", async () => {
@@ -414,6 +475,50 @@ describe("request checks at enter", () => {
       expect((await redeem(gate.enter_url, { headers })).status).toBe(302);
     }
     expect(await viewsOf(p.id)).toBe(0);
+  });
+
+  it("never takes a real browser for a bot, on desktop or mobile", () => {
+    const browsers = [
+      CHROME,
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 Edg/131.0.0.0",
+      "Mozilla/5.0 (Macintosh; Intel Mac OS X 14.7; rv:133.0) Gecko/20100101 Firefox/133.0",
+      "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.1 Safari/605.1.15",
+      "Mozilla/5.0 (iPhone; CPU iPhone OS 18_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.1 Mobile/15E148 Safari/604.1",
+      "Mozilla/5.0 (iPhone; CPU iPhone OS 18_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/131.0.6778.73 Mobile/15E148 Safari/604.1",
+      "Mozilla/5.0 (iPad; CPU OS 17_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Mobile/15E148 Safari/604.1",
+      "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36",
+      "Mozilla/5.0 (Linux; Android 14; SM-S918B) AppleWebKit/537.36 (KHTML, like Gecko) SamsungBrowser/26.0 Chrome/122.0.0.0 Mobile Safari/537.36",
+      "Mozilla/5.0 (Android 14; Mobile; rv:133.0) Gecko/133.0 Firefox/133.0",
+      // Phone models that contain "bot".
+      "Mozilla/5.0 (Linux; Android 12; CUBOT KINGKONG 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36",
+      "Mozilla/5.0 (Linux; Android 9; CUBOT X19 Build/PPR1.180610.011) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36",
+      // In-app browsers.
+      "Mozilla/5.0 (iPhone; CPU iPhone OS 18_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 Instagram 357.0.0.25.101",
+      "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/131.0.0.0 Mobile Safari/537.36 [FB_IAB/FB4A;FBAV/490.0.0.0;]",
+    ];
+    for (const ua of browsers) expect(looksLikeBot(ua), ua).toBe(false);
+  });
+
+  it("knows the common crawlers, unfurlers and scripts", () => {
+    const bots = [
+      "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)",
+      "Mozilla/5.0 (compatible; bingbot/2.0; +http://www.bing.com/bingbot.htm)",
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) BingPreview/1.0b",
+      "facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)",
+      "Twitterbot/1.0",
+      "Slackbot-LinkExpanding 1.0 (+https://api.slack.com/robots)",
+      "Mozilla/5.0 (compatible; Discordbot/2.0; +https://discordapp.com)",
+      "LinkedInBot/1.0 (compatible; Mozilla/5.0; Apache-HttpClient +http://www.linkedin.com)",
+      "TelegramBot (like TwitterBot)",
+      "WhatsApp/2.23.20.0",
+      "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_10_1) AppleWebKit/600.2.5 (KHTML, like Gecko) Version/8.0.2 Safari/600.2.5 (Applebot/0.1; +http://www.apple.com/go/applebot)",
+      "Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko; compatible; GPTBot/1.2; +https://openai.com/gptbot)",
+      "Mozilla/5.0 (compatible; Bytespider; spider-feedback@bytedance.com)",
+      "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/131.0.0.0 Safari/537.36",
+      "Mozilla/5.0 (Linux; Android 11; moto g power (2022)) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36 Chrome-Lighthouse",
+      "Go-http-client/2.0",
+    ];
+    for (const ua of bots) expect(looksLikeBot(ua), ua).toBe(true);
   });
 
   it("the bot pattern and the frame check", () => {
@@ -587,6 +692,45 @@ describe("folding old days", () => {
     await foldViewDays(env.DB, now);
     expect(await totalOf(p.id)).toEqual({ views: 12, first_day: utcDay(now - 120 * DAY_MS) });
     expect(await daysOf(p.id)).toEqual(recent);
+  });
+
+  it("never folds a day the 90-day admin trend still shows", async () => {
+    const adm = await admin();
+    const { p } = await linkPage();
+    // The 03 UTC run of today (in the future before 03 UTC; the same UTC day either way).
+    const at3 = new Date();
+    at3.setUTCHours(3, 0, 0, 0);
+    const now = at3.getTime();
+    vi.useFakeTimers({ toFake: ["Date"], now: now + 9 * 3_600_000 });
+    try {
+      await seed(p.id, 91, 1, now); // past the cutoff: folds
+      await seed(p.id, 90, 2, now); // the cutoff day: older than the trend, kept as a day
+      await seed(p.id, 89, 3, now); // the oldest day of the 90-day trend
+      const stats = async () => {
+        const res = await run("/api/v1/admin/stats?days=90", { headers: adm.headers }, adm.vars);
+        expect(res.status).toBe(200);
+        return (await json(res)) as { series: { day: string; views: number }[] };
+      };
+      const before = await stats();
+      const ctl = createExecutionContext();
+      await worker.scheduled(
+        createScheduledController({ scheduledTime: now, cron: "0 * * * *" }),
+        env as never,
+        ctl,
+      );
+      await waitOnExecutionContext(ctl);
+      expect(await totalOf(p.id)).toEqual({ views: 1, first_day: utcDay(now - 91 * DAY_MS) });
+      expect(await daysOf(p.id)).toEqual([
+        { day: utcDay(now - 90 * DAY_MS), views: 2 },
+        { day: utcDay(now - 89 * DAY_MS), views: 3 },
+      ]);
+      const after = await stats();
+      expect(after.series[0]?.day).toBe(utcDay(now - 89 * DAY_MS));
+      expect(after.series[0]?.views).toBe(before.series[0]?.views);
+      expect(after.series[0]?.views).toBeGreaterThanOrEqual(3);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("runs from the hourly cron at 03 UTC only, whether or not counting is on", async () => {

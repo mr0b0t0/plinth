@@ -19,6 +19,7 @@ const summary = (docs: number, bytes: number, caps: DataSummary["capabilities"] 
 const views = (last30: number, total: number, enabled = true): ArtifactViews => ({
   enabled,
   total,
+  since: total > 0 ? "2026-10-01" : null,
   last_7: Math.min(last30, 2),
   last_30: last30,
   days: Array.from({ length: 30 }, (_, i) => ({
@@ -198,25 +199,37 @@ describe("ShareDialog open counts", () => {
     handler(views(3, 5));
     renderDialog();
     const status = await screen.findByText(/^Opened /);
-    expect(status.textContent).toBe("Opened 3 times in the last 30 days · 5 in all");
+    expect(status.textContent).toBe("Opened 3 times in the last 30 days · 5 since 1 Oct 2026");
     expect(status.getAttribute("role")).toBe("status");
-    expect(screen.getByText(/at most once per browser every 12 hours/)).toBeTruthy();
+    expect(screen.getByText(/once per browser every 12 hours/).textContent).toMatch(
+      /since this instance began counting.*again after you change who can open the page/,
+    );
     expect(document.querySelector(".pl-sparkline")?.getAttribute("aria-hidden")).toBe("true");
     expect(document.querySelectorAll(".pl-sparkline__bar").length).toBe(30);
   });
 
-  it("says one time, and says so when no one else has opened it", async () => {
+  it("says one time, and claims no more than it counted when there is nothing", async () => {
     handler(views(1, 1));
     renderDialog();
     expect((await screen.findByText(/^Opened /)).textContent).toBe(
-      "Opened 1 time in the last 30 days · 1 in all",
+      "Opened 1 time in the last 30 days · 1 since 1 Oct 2026",
     );
     cleanup();
 
+    // Opens from before counting began are not known, so it never says no one opened it.
     handler(views(0, 0));
     renderDialog();
-    expect(await screen.findByText("No one else has opened it yet.")).toBeTruthy();
+    expect(await screen.findByText("No opens counted yet.")).toBeTruthy();
+    expect(screen.queryByText(/No one/)).toBeNull();
     expect(document.querySelector(".pl-sparkline")).toBeNull();
+    cleanup();
+
+    // Without a first day, the total stands alone.
+    handler({ ...views(2, 7), since: null });
+    renderDialog();
+    expect((await screen.findByText(/^Opened /)).textContent).toBe(
+      "Opened 2 times in the last 30 days · 7 in all",
+    );
   });
 
   it("shows nothing when the instance does not count opens", async () => {
@@ -237,10 +250,42 @@ describe("ShareDialog open counts", () => {
     expect(calls.some((c) => c.path.endsWith("/views"))).toBe(false);
   });
 
-  it("says so in one quiet line when the counts cannot be loaded", async () => {
-    handler(apiError(500, "internal"));
+  it("says so in its own section when the counts cannot be loaded, and tries again", async () => {
+    let fail = true;
+    const { calls } = stubApi({
+      handle: (c) => {
+        if (c.path === "/artifacts/s1/views")
+          return fail ? apiError(500, "internal") : json(views(3, 5));
+        if (c.path === "/artifacts/s1/data") return json(summary(0, 0, []));
+        return undefined;
+      },
+    });
+    const user = userEvent.setup();
     renderDialog();
     const line = await screen.findByText("Could not load how often this page was opened.");
-    expect(line.closest('[role="alert"]')).toBeNull();
+    expect(line.closest('[role="alert"]')?.closest(".pl-share-data")).toBeTruthy();
+    fail = false;
+    await user.click(screen.getByRole("button", { name: "Try again" }));
+    expect((await screen.findByText(/^Opened /)).textContent).toMatch(/^Opened 3 times/);
+    expect(calls.filter((c) => c.path === "/artifacts/s1/views").length).toBe(2);
+  });
+
+  it("says why when the page was taken down, with nothing to retry", async () => {
+    handler(
+      json(
+        {
+          error: {
+            code: "forbidden",
+            message: "This artifact was taken down.",
+            details: { reason: "taken_down" },
+          },
+        },
+        403,
+      ),
+    );
+    renderDialog();
+    const line = await screen.findByText(/This page was taken down/);
+    expect(line.closest(".pl-share-data")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
   });
 });

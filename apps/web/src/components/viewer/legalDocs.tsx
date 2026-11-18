@@ -11,7 +11,7 @@ export const LEGAL_DOC_IDS = ["terms", "privacy", "acceptable-use"] as const;
 export type LegalDocId = (typeof LEGAL_DOC_IDS)[number];
 
 /** When the text of these pages last changed. Update it with any change to the wording. */
-export const LEGAL_UPDATED = "14 November 2026";
+export const LEGAL_UPDATED = "18 November 2026";
 
 export const isLegalDocId = (v: string): v is LegalDocId =>
   (LEGAL_DOC_IDS as readonly string[]).includes(v);
@@ -199,6 +199,13 @@ function privacy(op: OperatorInfo, cfg: LegalConfig): LegalDoc {
               they gave one.
             </li>
             <li>
+              <strong>How often pages are opened</strong>: one number per page per day, counting
+              opens by people other than the page's owner. Nothing about who opened a page is kept
+              with it: no email address, IP address or browser details. The page's owner sees these
+              numbers for their own pages, and the people who run this service see totals across all
+              pages, never page by page.
+            </li>
+            <li>
               <strong>Technical logs</strong>: IP addresses, times and requests, to keep the service
               secure and stop abuse.
             </li>
@@ -211,7 +218,9 @@ function privacy(op: OperatorInfo, cfg: LegalConfig): LegalDoc {
           <p>
             To run the service you asked for, to keep it secure and free of abuse (our legitimate
             interest), and to handle reports of illegal content as the law requires. We do not sell
-            your data, show ads, or use analytics or tracking cookies.
+            your data, show ads, or use third-party analytics or tracking cookies. The open counts
+            above are kept by the service itself, to show owners how often their pages are opened
+            and us how the service is used.
           </p>
         ),
       },
@@ -236,6 +245,7 @@ function privacy(op: OperatorInfo, cfg: LegalConfig): LegalDoc {
               What people enter on shared pages: until the page's owner clears it or deletes the
               page.
             </li>
+            <li>How often a page was opened: until the page's stored copy is erased.</li>
             <li>
               A deleted artifact disappears from Plinth at once. Its stored copy is erased when you
               ask us to, or when your account is closed.
@@ -252,7 +262,9 @@ function privacy(op: OperatorInfo, cfg: LegalConfig): LegalDoc {
             Only the cookies the service needs to work: your sign-in, protection against forged
             requests, proof that you entered an artifact's password or confirmed your email, and a
             viewing cookie for each artifact you open. On a page that saves what its viewers enter,
-            that cookie also says who you are, so the page cannot pretend to be someone else.
+            that cookie also says who you are, so the page cannot pretend to be someone else. The
+            viewing cookie also notes whether your open of that page was already counted, so opening
+            it again within 12 hours is not counted twice; it adds nothing else about you.
           </p>
         ),
       },

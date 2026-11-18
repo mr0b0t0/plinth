@@ -100,7 +100,8 @@
   font-size: var(--text-sm);
   font-weight: var(--weight-semibold);
 }
-.pl-trend__summary {
+.pl-trend__summary,
+.pl-trend__note {
   color: var(--color-ink-muted);
   font-size: var(--text-xs);
 }
@@ -135,6 +136,11 @@
   width: 100%;
   height: auto;
   overflow: visible;
+}
+.pl-trend__bar,
+.pl-trend__bar--hatch {
+  /* The hit rect under each bar takes the pointer, so the hover highlight holds over the bar too. */
+  pointer-events: none;
 }
 .pl-trend__bar {
   fill: var(--color-accent);

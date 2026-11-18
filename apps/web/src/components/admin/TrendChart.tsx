@@ -20,6 +20,8 @@ export interface TrendChartProps {
   days: string[];
   /** One series, or two that stack (the first at the baseline, solid). */
   series: [TrendSeries] | [TrendSeries, TrendSeries];
+  /** A sentence after the summary, part of the caption ("Counting is off ..."). */
+  note?: string;
 }
 
 const W = 600;
@@ -58,7 +60,7 @@ export function summarize(unit: [string, string], days: string[], totals: number
   return `${span}: ${count(sum, unit)} in all, most on ${days[peak]} (${formatCount(totals[peak] ?? 0)}).`;
 }
 
-export function TrendChart({ title, unit, days, series }: TrendChartProps) {
+export function TrendChart({ title, unit, days, series, note }: TrendChartProps) {
   const patternId = useId().replace(/:/g, "");
   const stacked = series.length > 1;
   const totals = days.map((_, i) => series.reduce((sum, s) => sum + (s.values[i] ?? 0), 0));
@@ -74,6 +76,7 @@ export function TrendChart({ title, unit, days, series }: TrendChartProps) {
         <span className="pl-trend__title">{title}</span>
         <span className="visually-hidden">. </span>
         <span className="pl-trend__summary type-num">{summarize(unit, days, totals)}</span>
+        {note && <span className="pl-trend__note">{note}</span>}
       </figcaption>
       {stacked && (
         <ul className="pl-trend__legend" aria-hidden="true">

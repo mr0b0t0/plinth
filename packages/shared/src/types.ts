@@ -452,6 +452,8 @@ export interface AdminStats {
 export interface ArtifactViews {
   enabled: boolean;
   total: number;
+  /** The first UTC day with a counted open (`total` counts from it), or null when there is none. */
+  since: string | null;
   last_7: number;
   last_30: number;
   days: { day: string; views: number }[];

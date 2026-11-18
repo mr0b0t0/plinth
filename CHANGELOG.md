@@ -17,6 +17,7 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   publishes, storage, shared data, agent connections, open reports and opens, with 7/30/90-day
   trends), and owners see how often other people opened a page in its Share dialog. Opens are
   kept as a daily number per page, never who opened it; `VIEW_COUNTS=off` turns counting off.
+  Apply migration `0010_view_counts.sql` before deploying.
 - **The plugin's Plinth server loads in Codex and GitHub Copilot CLI.** Plugin 0.10.0 put a field
   in its `mcp.json` server entry that the Agent Plugins schema doesn't allow, so Codex and Copilot
   CLI installed the skill but skipped the server (Copilot logs `field "extensions" is not

@@ -4,12 +4,13 @@
 import { createExecutionContext, waitOnExecutionContext } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { type AdminStats, type ArtifactViews, COOKIES, CSRF_HEADER } from "@plinth/shared";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { parseConfig } from "../src/config.ts";
 import { sessions } from "../src/db/schema.ts";
 import worker from "../src/index.ts";
 import { hashToken, newToken } from "../src/lib/crypto.ts";
 import { isoIn, nowIso } from "../src/lib/time.ts";
+import { storageUsed } from "../src/services/stage.ts";
 import { getOrCreateUser } from "../src/services/users.ts";
 import { utcDay } from "../src/services/views.ts";
 import {
@@ -102,6 +103,18 @@ async function seedDay(artifactId: string, day: string, views: number) {
     .run();
 }
 
+/** Pin the clock to midday UTC of today, so a run that crosses midnight keeps one "today". */
+function pinToday() {
+  const noon = new Date();
+  noon.setUTCHours(12, 0, 0, 0);
+  vi.useFakeTimers({ toFake: ["Date"], now: noon.getTime() });
+  return noon.getTime();
+}
+
+afterEach(() => {
+  vi.useRealTimers();
+});
+
 const views = (ref: string, headers: Record<string, string>, vars: Record<string, unknown> = {}) =>
   run(`/api/v1/artifacts/${ref}/views`, { headers }, vars);
 
@@ -153,13 +166,14 @@ describe("GET /api/v1/admin/stats: who may call it", () => {
 
 describe("GET /api/v1/admin/stats: the figures", () => {
   it("returns one zero-filled day per day of the window, oldest first, uncached", async () => {
+    const now = pinToday();
     const adm = await admin();
     for (const days of [7, 30, 90]) {
       const s = await adm.stats(days);
       expect(s.days).toBe(days);
       expect(s.series).toHaveLength(days);
-      expect(s.series.at(-1)?.day).toBe(utcDay(Date.now()));
-      expect(s.series[0]?.day).toBe(utcDay(Date.now() - (days - 1) * DAY_MS));
+      expect(s.series.at(-1)?.day).toBe(utcDay(now));
+      expect(s.series[0]?.day).toBe(utcDay(now - (days - 1) * DAY_MS));
       const sorted = [...s.series.map((d) => d.day)].sort();
       expect(s.series.map((d) => d.day)).toEqual(sorted);
       for (const d of s.series)
@@ -178,6 +192,7 @@ describe("GET /api/v1/admin/stats: the figures", () => {
   });
 
   it("moves with each publish, version, data write, connection, report and counted open", async () => {
+    pinToday();
     const adm = await admin();
     const before = await adm.stats(7);
 
@@ -231,9 +246,18 @@ describe("GET /api/v1/admin/stats: the figures", () => {
     expect(t("agent_versions")).toBe(2);
     expect(w("publishes")).toBe(2);
     expect(w("agent_publishes")).toBe(2);
-    expect(t("storage_bytes")).toBeGreaterThan(0);
+    // The quota's own measure: the new owner's live versions, stored bytes.
+    const used = await storageUsed({ env } as never, owner.user.id);
+    expect(used).toBeGreaterThan(0);
+    expect(t("storage_bytes")).toBe(used);
+    const usage = await env.DB.prepare(
+      "SELECT docs, bytes FROM artifact_data_usage WHERE artifact_id = ?1",
+    )
+      .bind(p.id)
+      .first<{ docs: number; bytes: number }>();
+    expect(usage?.bytes).toBeGreaterThan(0);
     expect(t("data_docs")).toBe(1);
-    expect(t("data_bytes")).toBeGreaterThan(0);
+    expect(t("data_bytes")).toBe(usage?.bytes);
     expect(t("data_artifacts")).toBe(1);
     expect(t("connections")).toBe(1);
     expect(
@@ -248,6 +272,28 @@ describe("GET /api/v1/admin/stats: the figures", () => {
     expect(today(after).publishes - today(before).publishes).toBe(2);
     expect(today(after).views - today(before).views).toBe(1);
     expect(today(after).users - today(before).users).toBe(1);
+  });
+
+  it("counts a connection used in the window and revoked since as used", async () => {
+    pinToday();
+    const adm = await admin();
+    const before = await adm.stats(7);
+    const owner = await agent({ clientType: "codex" });
+    await publish(owner.auth);
+    const conn = await env.DB.prepare(
+      "SELECT id FROM agent_connections WHERE user_id = ?1 AND last_used_at IS NOT NULL",
+    )
+      .bind(owner.user.id)
+      .first<{ id: string }>();
+    expect(conn).toBeTruthy();
+    await env.DB.prepare("UPDATE agent_connections SET revoked_at = ?2 WHERE id = ?1")
+      .bind(conn?.id, nowIso())
+      .run();
+    const after = await adm.stats(7);
+    // No longer a live connection, but its publish is in the window and so is its use.
+    expect(after.totals.connections - before.totals.connections).toBe(0);
+    expect(after.window.agent_publishes - before.window.agent_publishes).toBe(1);
+    expect(after.window.connections_used - before.window.connections_used).toBe(1);
   });
 
   it("counts live artifacts only, and keeps the opens of deleted ones in the view totals", async () => {
@@ -332,6 +378,7 @@ describe("GET /api/v1/artifacts/:ref/views", () => {
       expect(v.last_7).toBe(4);
       expect(v.last_30).toBe(13);
       expect(v.total).toBe(119);
+      expect(v.since).toBe("2026-01-01");
       expect(v.days).toHaveLength(30);
       expect(v.days.at(-1)).toEqual({ day: utcDay(now), views: 3 });
       expect(v.days[0]).toEqual({ day: utcDay(now - 29 * DAY_MS), views: 5 });
@@ -342,10 +389,12 @@ describe("GET /api/v1/artifacts/:ref/views", () => {
   it("counts a real open", async () => {
     const owner = await agent();
     const { body: p } = await publish(owner.auth);
-    expect((await json<ArtifactViews>(await views(p.id, owner.auth))).total).toBe(0);
+    const none = await json<ArtifactViews>(await views(p.id, owner.auth));
+    expect(none).toMatchObject({ total: 0, since: null });
+    const now = pinToday();
     await countedOpen(p.slug);
     const v = await json<ArtifactViews>(await views(p.id, owner.auth));
-    expect(v).toMatchObject({ total: 1, last_7: 1, last_30: 1 });
+    expect(v).toMatchObject({ total: 1, last_7: 1, last_30: 1, since: utcDay(now) });
   });
 
   it("is the owner's only: collaborators get 403, strangers 404, anonymous 401", async () => {
