@@ -17,6 +17,11 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   `/plugin configure plinth@plinth`. `PLINTH_URL` still works and wins. The directory build has the
   option too, and the Connect panel, `/llms.txt` and `plinth connect` print the right command for
   each instance. Plugin 0.15.0.
+- **Review account sign-in.** An operator can give one ordinary account a password, for a
+  directory's reviewers who cannot receive sign-in emails: set `REVIEW_LOGIN_EMAIL` and the secret
+  `REVIEW_LOGIN_PASSWORD_HASH` (from `apps/worker/scripts/review-login-hash.mjs`). It signs in at
+  `/login/review`, linked from the sign-in page, and locks after repeated wrong passwords. Off
+  unless both are set; never an admin account ([security.md](docs/security.md#review-account-sign-in)).
 - **Plinth shows up properly in Codex.** The plugin now carries Codex's listing block (name,
   short description, icon, starter prompts, links), so Codex and Codex plugin directories show it
   with its own icon and description. Plugin 0.13.0.

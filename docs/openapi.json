@@ -175,6 +175,38 @@
         ]
       }
     },
+    "/auth/review-login": {
+      "post": {
+        "operationId": "reviewLogin",
+        "summary": "Sign in to the review account with its password",
+        "description": "Exists only when REVIEW_LOGIN_EMAIL and REVIEW_LOGIN_PASSWORD_HASH are set; 404 everywhere else. Signs in that one ordinary account, for a directory's reviewers, and sets the session cookie like the other sign-ins. Locks for the rest of the hour after repeated wrong passwords.",
+        "tags": ["Auth"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": { "schema": { "$ref": "#/components/schemas/ReviewLoginInput" } }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/LoginResult" } }
+            }
+          },
+          "400": { "$ref": "#/components/responses/E400" },
+          "403": { "$ref": "#/components/responses/E403" },
+          "404": { "$ref": "#/components/responses/E404" },
+          "429": { "$ref": "#/components/responses/E429" },
+          "default": { "$ref": "#/components/responses/Error" }
+        },
+        "security": [
+          { "csrfHeader": [] },
+          { "bearerAuth": [] },
+          { "sessionCookie": [], "csrfHeader": [] }
+        ]
+      }
+    },
     "/auth/logout": {
       "post": {
         "operationId": "logout",
@@ -2065,6 +2097,14 @@
         "properties": { "token": { "type": "string", "minLength": 10, "maxLength": 200 } },
         "required": ["token"]
       },
+      "ReviewLoginInput": {
+        "type": "object",
+        "properties": {
+          "email": { "type": "string", "maxLength": 254 },
+          "password": { "type": "string", "minLength": 1, "maxLength": 256 }
+        },
+        "required": ["email", "password"]
+      },
       "UpdateProfileInput": {
         "type": "object",
         "properties": { "name": { "type": "string", "maxLength": 100 } },
@@ -3182,6 +3222,10 @@
           "upload_ticket_ttl_s": {
             "type": "integer",
             "description": "How long an upload ticket stays valid"
+          },
+          "review_login": {
+            "type": "boolean",
+            "description": "The review account's password sign-in (REVIEW_LOGIN_EMAIL and REVIEW_LOGIN_PASSWORD_HASH) is on"
           }
         },
         "required": [
@@ -3199,7 +3243,8 @@
           "source_url",
           "limits",
           "cdn_allowlist",
-          "upload_ticket_ttl_s"
+          "upload_ticket_ttl_s",
+          "review_login"
         ]
       },
       "LoginResult": {

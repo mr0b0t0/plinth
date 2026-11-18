@@ -158,6 +158,13 @@ export const RATE_LIMITS = {
   loginPerEmailPerHour: 5,
   loginPerIpPerHour: 20,
   codeAttemptsPerEmailPerHour: 10,
+  /** Review-account password sign-ins (REVIEW_LOGIN_*) from one address, right or wrong. */
+  reviewLoginAttemptsPerIpPerHour: 10,
+  /**
+   * Wrong review-account passwords across all addresses before that sign-in locks for the rest of
+   * the hour, so guessing cannot be spread over many IPs.
+   */
+  reviewLoginFailuresPerHour: 20,
   passwordAttemptsPerArtifactPerIpPerHour: 10,
   /** Across all addresses, so guessing cannot be spread over many IPs. */
   passwordAttemptsPerArtifactPerHour: 100,

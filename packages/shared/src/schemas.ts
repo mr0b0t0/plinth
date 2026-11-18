@@ -244,6 +244,10 @@ export const verifyLoginCodeInput = z.object({
   code: z.string().regex(/^\d{6}$/, "Six digits"),
 });
 export const verifyMagicLinkInput = z.object({ token: z.string().min(10).max(200) });
+export const reviewLoginInput = z.object({
+  email: emailSchema,
+  password: z.string().min(1).max(256),
+});
 export const updateProfileInput = z.object({
   // No "@": a display name must not look like an email address (or an agent mention) to agents
   // reading comment authors.

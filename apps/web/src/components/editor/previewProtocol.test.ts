@@ -37,6 +37,7 @@ const config: AppConfig = {
   },
   cdn_allowlist: ["cdnjs.cloudflare.com", "cdn.jsdelivr.net"],
   upload_ticket_ttl_s: 1800,
+  review_login: false,
 };
 
 const NONCE = "0123456789abcdef0123456789abcdef";

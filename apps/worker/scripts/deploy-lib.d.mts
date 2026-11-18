@@ -58,6 +58,7 @@ export declare function refreshRuntime<T extends Runtime>(
 export declare function runtimeBase(repoCfg: Record<string, unknown>): Record<string, unknown>;
 export declare function runtimeConfigMissing(cfg: unknown): string[];
 export declare function runtimeConfigProblem(cfg: unknown): string | null;
+export declare function reviewLoginConfigProblem(cfg: unknown): string | null;
 export declare function hasRoomsBinding(cfg: unknown): boolean;
 export declare function runtimeConfigNotes(cfg: unknown): string[];
 export declare function instanceName(raw: Raw): string;

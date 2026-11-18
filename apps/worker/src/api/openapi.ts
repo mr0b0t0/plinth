@@ -36,6 +36,7 @@ import {
   reportInput,
   requestLoginInput,
   restoreVersionInput,
+  reviewLoginInput,
   SCOPES,
   SHA256_RE,
   setVisibilityInput,
@@ -144,6 +145,7 @@ function requestSchemas(): Record<string, Json> {
     RequestLoginInput: fromZod(requestLoginInput),
     VerifyLoginCodeInput: fromZod(verifyLoginCodeInput),
     VerifyMagicLinkInput: fromZod(verifyMagicLinkInput),
+    ReviewLoginInput: fromZod(reviewLoginInput),
     UpdateProfileInput: fromZod(updateProfileInput),
     CreateTokenInput: fromZod(createTokenInput),
     RenameConnectionInput: fromZod(renameConnectionInput),
@@ -550,6 +552,11 @@ function responseSchemas(): Record<string, Json> {
         description: "Hosts artifacts may load scripts and styles from (the CSP's CDN_ALLOWLIST)",
       },
       upload_ticket_ttl_s: int({ description: "How long an upload ticket stays valid" }),
+      review_login: {
+        type: "boolean",
+        description:
+          "The review account's password sign-in (REVIEW_LOGIN_EMAIL and REVIEW_LOGIN_PASSWORD_HASH) is on",
+      },
     }),
     LoginResult: obj({
       ok: { const: true },
@@ -1108,6 +1115,21 @@ function operations(): Operation[] {
       body: "VerifyMagicLinkInput",
       ok: [200, "LoginResult"],
       errors: [400, 403, 429],
+    },
+    {
+      method: "post",
+      path: API.loginReview,
+      operationId: "reviewLogin",
+      summary: "Sign in to the review account with its password",
+      description:
+        "Exists only when REVIEW_LOGIN_EMAIL and REVIEW_LOGIN_PASSWORD_HASH are set; 404 everywhere else. " +
+        "Signs in that one ordinary account, for a directory's reviewers, and sets the session cookie like the other sign-ins. " +
+        "Locks for the rest of the hour after repeated wrong passwords.",
+      tag: "Auth",
+      auth: "optional",
+      body: "ReviewLoginInput",
+      ok: [200, "LoginResult"],
+      errors: [400, 403, 404, 429],
     },
     {
       method: "post",

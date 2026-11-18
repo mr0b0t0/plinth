@@ -11,6 +11,7 @@ const page = (load: () => Promise<{ default: ComponentType<any> }>) => lazy(load
 const Home = page(() => import("./pages/Home.tsx"));
 const Login = page(() => import("./pages/Login.tsx"));
 const Magic = page(() => import("./pages/Magic.tsx"));
+const ReviewLogin = page(() => import("./pages/ReviewLogin.tsx"));
 const Dashboard = page(() => import("./pages/Dashboard.tsx"));
 const Connections = page(() => import("./pages/Connections.tsx"));
 const Consent = page(() => import("./pages/Consent.tsx"));
@@ -31,6 +32,7 @@ export const ROUTES: [string, Page][] = [
   [APP_ROUTES.home, Home],
   [APP_ROUTES.login, Login],
   [APP_ROUTES.magic, Magic],
+  [APP_ROUTES.reviewLogin, ReviewLogin],
   [APP_ROUTES.dashboard, Dashboard],
   [APP_ROUTES.connections, Connections],
   [APP_ROUTES.consent, Consent],
