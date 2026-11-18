@@ -16,7 +16,7 @@ Status on 2026-11-14: **deployed** at <https://plinth.aconite.io>, with artifact
 | `ADMIN_EMAIL` | The maintainer's address |
 | Operator (legal pages) | `OPERATOR_NAME="Aconite Software & Investments, Lda."`, `OPERATOR_ADDRESS="Avenida República da Bulgária, Lote 15, Loja A, 1950-375 Lisboa, Portugal"`, `OPERATOR_REGISTRATION="VAT PT516696696"`, `OPERATOR_EMAIL=hello@aconite.io` |
 | Browser Rendering | `BROWSER` binding, for thumbnails and link-preview images (0.4.1); `THUMBNAILS` uses its default (on) |
-| Live rooms (#36) | Not deployed yet. `ALLOW_ROOMS` and `ALLOW_LIVE_EDITING` use their defaults (on) once the config has the `ROOMS` binding; `LIVE_DRAFT_RETENTION_DAYS` stays at 30. The privacy notice covers presence and unsaved page edits ([deploy-checklist.md](deploy-checklist.md#5-human-steps-to-go-live), step 13) |
+| Live rooms (#36) | On since 2026-11-18: the `ROOMS` binding (`ArtifactRoom`, migration tag `rooms-v1`) was added to the config by hand; `ALLOW_ROOMS` and `ALLOW_LIVE_EDITING` use their defaults (on) and `LIVE_DRAFT_RETENTION_DAYS` stays at 30. The privacy notice covers presence and unsaved page edits ([deploy-checklist.md](deploy-checklist.md#5-human-steps-to-go-live), step 13) |
 | Compatibility and cron | `nodejs_compat` and `enable_request_signal`; hourly cron `0 * * * *` for the staging sweep and upload-ticket pruning (0.4.0) |
 | Config file | `apps/worker/wrangler.production.jsonc` (git-ignored; written by `scripts/setup.mjs`) |
 
@@ -26,9 +26,9 @@ All in the operator's Cloudflare account:
 
 | Resource | Name / ID | Created by |
 | --- | --- | --- |
-| D1 database | `plinth` (`7dd95d0b-dd98-469f-8eac-8c6a06c35b52`), migrations 0001, 0002 and 0004 to 0010 applied (there is no 0003) | `scripts/setup.mjs --remote --env production` |
+| D1 database | `plinth` (`7dd95d0b-dd98-469f-8eac-8c6a06c35b52`), migrations 0001, 0002 and 0004 to 0011 applied (there is no 0003) | `scripts/setup.mjs --remote --env production` |
 | R2 bucket | `plinth-files` | `scripts/setup.mjs` |
-| Worker | `plinth` (version `ffc12bab-83bf-4f86-bd8f-c723e0455714`, commit `bb25eb8`: v0.5.0 plus MCP tool annotations (#40), artifact categories (#44, migration `0009_categories.sql`) and admin stats with view counts (#43, migration `0010_view_counts.sql`, `VIEW_COUNTS` on by default), both applied first; v0.5.0 (`1b094e6`) brought the T3 Code harness entry and in-chat previews (#28 to #32); v0.4.1 brought big builds and uploads (0.4.0) and thumbnails, migrations `0006_stored_bytes.sql`, `0007_upload_tickets.sql` and `0008_thumbnails.sql` applied first) | `wrangler deploy --config wrangler.production.jsonc` |
+| Worker | `plinth` (version `0193eab8-73d1-48e9-a9b5-ded81c2e6098`, commit `3aea8c9`: live rooms and on-page doc editing (#49, migration `0011_live_drafts.sql` applied first, the `ROOMS` Durable Object), the Codex listing metadata (#47) and the plugin's instance option in the connect instructions (#50); before it `bb25eb8`: v0.5.0 plus MCP tool annotations (#40), artifact categories (#44, migration `0009_categories.sql`) and admin stats with view counts (#43, migration `0010_view_counts.sql`, `VIEW_COUNTS` on by default), both applied first; v0.5.0 (`1b094e6`) brought the T3 Code harness entry and in-chat previews (#28 to #32); v0.4.1 brought big builds and uploads (0.4.0) and thumbnails, migrations `0006_stored_bytes.sql`, `0007_upload_tickets.sql` and `0008_thumbnails.sql` applied first) | `wrangler deploy --config wrangler.production.jsonc` |
 | Worker secrets | `SESSION_SECRET`, `TOKEN_SIGNING_KEY` (generated), `SENDGRID_API_KEY` | `scripts/setup.mjs` |
 | Workers Custom Domain | `plinth.aconite.io`, plus the read-only `AAAA 100::` record and certificate Cloudflare creates for it | `wrangler deploy` |
 | Domain and zone | `plinthusercontent.com`, registered through Cloudflare Registrar (Free plan zone). SSL/TLS "Full (strict)", "Always Use HTTPS" on, Universal SSL for `plinthusercontent.com` and `*.plinthusercontent.com` | Cloudflare dashboard |
@@ -120,6 +120,15 @@ After the v0.5.0 deploy (2026-11-16, `1b094e6`):
   of a custom connector's `frame-src`; a listing in the Claude directory can ask for the site.
 - **Connect an agent** shows the T3 Code tab with its Claude and Codex sections.
 
+After the 2026-11-18 evening deploy (`3aea8c9`, migration `0011` applied first, version
+`0193eab8`):
+
+- `GET /healthz`: `{"ok":true,"environment":"production"}`; the version serves 100% of traffic and
+  `wrangler versions view` lists `env.ROOMS (ArtifactRoom)` as a Durable Object binding.
+- **Live editing**: an owner's doc page shows the **Edit** toggle ("Edit on the page").
+- **Connect instructions**: the hosted `/llms.txt` gives the plugin commands without `--config`,
+  as it should on the hosted instance.
+
 After the 2026-11-18 deploy (`bb25eb8`, migrations `0009` and `0010` applied first):
 
 - `GET /healthz`: `{"ok":true,"environment":"production"}`; `/mcp/server-card` reports `0.5.0`
@@ -134,13 +143,6 @@ After the 2026-11-18 deploy (`bb25eb8`, migrations `0009` and `0010` applied fir
 1. **Public Suffix List** (optional): submit `plinthusercontent.com` to the private section so that
    artifacts are separate sites from each other, not only from the app (see
    [deploy-checklist.md](deploy-checklist.md#public-suffix-list)).
-2. **Live rooms** (#36), with the release that brings them: re-run
-   `scripts/setup.mjs --remote --env production` with the original arguments (it adds the `ROOMS`
-   binding and the `rooms-v1` migration and keeps the vars) or add both keys to
-   `wrangler.production.jsonc` by hand ([deploy-checklist.md](deploy-checklist.md#live-rooms)).
-   The redeploy below applies migration `0011_live_drafts` first. The privacy notice covers
-   presence and unsaved page edits, so rooms and on-page editing go live with that deploy; setting
-   `ALLOW_ROOMS` and `ALLOW_LIVE_EDITING` to `"false"` and redeploying turns them off.
 
 ## Redeploy
 
