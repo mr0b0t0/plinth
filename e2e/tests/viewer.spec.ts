@@ -1,10 +1,12 @@
 // The artifact page and its gates, as an anonymous viewer: each visibility, direct content links,
-// permanent version links, the report flow through to an admin takedown, and the legal pages.
+// permanent version links, the report flow through to an admin takedown, open counts and the admin
+// Stats page, and the legal pages.
 import path from "node:path";
 import AxeBuilder from "@axe-core/playwright";
 import { expect, type Page, test } from "@playwright/test";
-import { APP_ORIGIN, CONTENT_HOST, uniqueEmail } from "../support/api.ts";
+import { APP_ORIGIN, apiGet, CONTENT_HOST, uniqueEmail } from "../support/api.ts";
 import { signInApi } from "../support/auth.ts";
+import { seedSession } from "../support/db.ts";
 import { latestCode } from "../support/mail.ts";
 import { mcpClient, tool } from "../support/mcp.ts";
 import { shotsDir } from "../support/shots.ts";
@@ -386,6 +388,107 @@ test.describe("reports and takedown", () => {
     const res = await page.request.get(a.content_url, { maxRedirects: 0 });
     expect(res.status()).toBe(404);
     expect(res.headers()["clear-site-data"]).toBe('"storage"');
+  });
+});
+
+test.describe("open counts and admin stats", () => {
+  test("the owner's Share dialog counts another browser's open, not the owner's", async ({
+    page,
+    browser,
+  }) => {
+    test.setTimeout(60_000);
+    const marker = unique("counted");
+    // Unlisted: anyone with the link (public visibility is off on the e2e instance).
+    const a = await publish({ title: "Counted page", marker });
+
+    // The owner opens it first: never counted.
+    await signInApi(page.request, a.owner);
+    await page.goto(a.url);
+    await expectExhibit(page, a, marker);
+
+    // Someone else, in a fresh browser. The project's user agent, not the bare headless one
+    // (which reads as a bot and is not counted).
+    const otherCtx = await browser.newContext({ userAgent: test.info().project.use.userAgent });
+    try {
+      const other = await otherCtx.newPage();
+      await other.goto(a.url);
+      await expectExhibit(other, a, marker);
+    } finally {
+      await otherCtx.close();
+    }
+
+    // The count is written after the response; wait for it, scoped to this artifact.
+    await expect
+      .poll(async () => (await apiGet(page.request, `/artifacts/${a.slug}/views`)).body.total)
+      .toBe(1);
+
+    await page.reload();
+    await expectExhibit(page, a, marker);
+    if (isMobile()) {
+      await page.getByRole("button", { name: "Artifact actions" }).click();
+      await page.getByRole("menuitem", { name: "Share" }).click();
+    } else {
+      await page.getByRole("button", { name: "Share" }).click();
+    }
+    const dialog = page.getByRole("dialog", { name: "Share this artifact" });
+    await expect(dialog.getByRole("status").filter({ hasText: /^Opened/ })).toHaveText(
+      "Opened 1 time in the last 30 days · 1 in all",
+    );
+    await expect(dialog.getByText("Counts opens by people other than you")).toBeVisible();
+    await expectAccessible(page);
+    await shot(page, "share-dialog-views");
+  });
+
+  test("the Stats page is for admins only", async ({ page, browser }) => {
+    // Not an admin: the page does not exist, and neither does its API.
+    const userCtx = await browser.newContext();
+    try {
+      await seedSession(userCtx, uniqueEmail("not-admin"));
+      const user = await userCtx.newPage();
+      await user.goto(`${APP_ORIGIN}/admin/stats`);
+      await expect(user.getByRole("heading", { name: "Page not found" })).toBeVisible();
+      expect((await apiGet(user.request, "/admin/stats")).status).toBe(404);
+    } finally {
+      await userCtx.close();
+    }
+
+    await seedSession(page.context(), ADMIN);
+    await page.goto("/admin/stats");
+    await expect(page).toHaveTitle("Stats · Plinth");
+    await expect(page.getByRole("heading", { level: 1, name: "Stats" })).toBeVisible();
+    // The tiles, by label. The database is shared with other tests: no absolute numbers.
+    for (const label of [
+      "People",
+      "Artifacts",
+      "Publishes",
+      "Storage",
+      "Shared data",
+      "Agent connections",
+      "Opens",
+      "Open reports",
+    ]) {
+      await expect(page.locator("dt", { hasText: label }).first()).toBeVisible();
+    }
+    await expect(page.getByRole("link", { name: "Review reports" })).toHaveAttribute(
+      "href",
+      "/admin/reports",
+    );
+    await expect(page.getByRole("figure", { name: /Opens per day/ })).toBeVisible();
+    // The sidebar (a slide-over on a phone) has both admin pages.
+    if (!isMobile()) {
+      await expect(page.getByRole("link", { name: "Stats", exact: true })).toBeVisible();
+      await expect(page.getByRole("link", { name: "Reports", exact: true })).toBeVisible();
+    }
+    await shot(page, "admin-stats");
+    await expectAccessible(page);
+
+    // A shorter period refetches; the trend tables have one row per day.
+    await page.getByRole("radio", { name: "7 days" }).check();
+    await expect(page.getByRole("heading", { name: "Per day, last 7 days" })).toBeVisible();
+    const opens = page.getByRole("figure", { name: /Opens per day/ });
+    await opens.getByText("Show numbers").click();
+    await expect(opens.locator("tbody tr")).toHaveCount(7);
+    await expectAccessible(page);
   });
 });
 

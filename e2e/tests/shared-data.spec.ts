@@ -213,7 +213,10 @@ test("a poll among invited people, from first vote to takedown", async ({
     await pollFrame(page);
     await expect(tally(page)).toHaveText("2");
     const dialog = await openShareDialog(page);
-    await expect(dialog.getByRole("status")).toContainText("Shared data: 2 entries");
+    // The dialog also shows the open count, in its own status line.
+    await expect(dialog.getByRole("status").filter({ hasText: "Shared data" })).toContainText(
+      "Shared data: 2 entries",
+    );
     await dialog.getByRole("button", { name: "Delete all shared data" }).click();
     const confirm = page.getByRole("alertdialog", { name: "Delete all shared data?" });
     await confirm.getByRole("button", { name: "Delete 2 entries" }).click();
