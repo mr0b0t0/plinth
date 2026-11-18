@@ -1,5 +1,5 @@
-// Migrations 0006 (versions.stored_bytes) and 0007 (upload_tickets): they apply, and the ticket
-// table's CHECK constraints refuse rows that would break the ticket rules.
+// Migrations 0006 (versions.stored_bytes), 0007 (upload_tickets) and 0009 (categories): they apply,
+// and the ticket table's CHECK constraints refuse rows that would break the ticket rules.
 import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 import { newId } from "../src/lib/crypto.ts";
@@ -193,5 +193,62 @@ describe("migration 0010_view_counts", () => {
     await expect(day(body.id, "2026-11-18", 1)).rejects.toThrow();
     await expect(day("no-such-artifact", "2026-11-18", 1)).rejects.toThrow();
     await expect(total("no-such-artifact", 1, "2026-11-18")).rejects.toThrow();
+describe("migration 0009_categories", () => {
+  interface Col {
+    name: string;
+    type: string;
+    notnull: number;
+    dflt_value: unknown;
+  }
+
+  it("adds a nullable category column to artifacts and upload_tickets, with no default", async () => {
+    for (const table of ["artifacts", "upload_tickets"]) {
+      const cols = await D1().prepare(`PRAGMA table_info(${table})`).all<Col>();
+      const col = cols.results.find((c) => c.name === "category");
+      expect(col, table).toMatchObject({ type: "TEXT", notnull: 0, dflt_value: null });
+    }
+  });
+
+  it("puts no CHECK on either column (the Worker validates the text)", async () => {
+    const a = await agent();
+    const { body } = await publish(a.auth);
+    const odd = "x".repeat(500);
+    await D1().prepare("UPDATE artifacts SET category = ? WHERE id = ?").bind(odd, body.id).run();
+    const row = await D1()
+      .prepare("SELECT category FROM artifacts WHERE id = ?")
+      .bind(body.id)
+      .first<{ category: string | null }>();
+    expect(row?.category).toBe(odd);
+    await insertTicket(a.user.id, {
+      credential: "connection",
+      connection_id: a.connectionId,
+      admin_token_hash: null,
+      mode: "publish",
+      artifact_id: null,
+      base_version: null,
+    });
+    await D1()
+      .prepare("UPDATE upload_tickets SET category = ? WHERE user_id = ?")
+      .bind(odd, a.user.id)
+      .run();
+  });
+
+  it("creates the partial index artifacts_owner_category", async () => {
+    const idx = await D1()
+      .prepare("SELECT sql FROM sqlite_master WHERE type = 'index' AND name = ?")
+      .bind("artifacts_owner_category")
+      .first<{ sql: string }>();
+    expect(idx?.sql).toMatch(/ON artifacts\s*\(owner_id, category\)/);
+    expect(idx?.sql).toMatch(/deleted_at IS NULL AND category IS NOT NULL/);
+  });
+
+  it("leaves a new artifact uncategorised", async () => {
+    const a = await agent();
+    const { body } = await publish(a.auth);
+    const row = await D1()
+      .prepare("SELECT category FROM artifacts WHERE id = ?")
+      .bind(body.id)
+      .first<{ category: string | null }>();
+    expect(row?.category).toBeNull();
   });
 });

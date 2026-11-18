@@ -37,6 +37,7 @@ import {
   decide,
   principalEmail,
   principalUserId,
+  seesOwnerMetadata,
 } from "../policy.ts";
 import { requireTypeDef, resolveSource } from "./artifactTypes.ts";
 import { claimArtifactAttempts } from "./attempts.ts";
@@ -230,6 +231,8 @@ export function toSummary(
       thumbnailsActive(ctx.config, ctx.env) && !a.takenDownAt
         ? appUrl(ctx.config, `/api/v1/artifacts/${a.id}/thumbnail?version=${a.currentVersion}`)
         : null,
+    // The read gate for owner-only metadata: every summary path goes through here.
+    category: seesOwnerMetadata(role) ? (a.category ?? null) : null,
   };
 }
 

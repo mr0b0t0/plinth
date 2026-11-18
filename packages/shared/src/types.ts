@@ -47,6 +47,11 @@ export interface ArtifactSummary {
    * null when this instance takes no thumbnails. It may answer 404 until the first capture lands.
    */
   thumbnail_url: string | null;
+  /**
+   * The owner's category (docs/spec.md "Categories"). null when unset, and always null for anyone
+   * but the owner. Untrusted text.
+   */
+  category: string | null;
 }
 
 export interface AssetInfo {
@@ -94,6 +99,8 @@ export interface PublishResult {
   warnings: PublishWarning[];
   /** How the version's files were stored: written now, or reused from earlier versions. */
   stored: StoredSummary;
+  /** The stored (snapped) category, present only when this call set one. Never on a restore. */
+  category?: string;
 }
 
 export type PublishWarningCode =
@@ -498,4 +505,17 @@ export interface DevOutboxItem {
   subject: string;
   text: string;
   created_at: string;
+}
+
+/** One of the caller's own category names and how many live artifacts use it. */
+export interface CategoryCount {
+  name: string;
+  count: number;
+}
+
+/** list_artifacts and GET /api/v1/artifacts: the artifacts plus the caller's own category names. */
+export interface ArtifactList {
+  items: ArtifactSummary[];
+  /** The caller's own categories, most-used first, whatever the query or filter. */
+  categories: CategoryCount[];
 }

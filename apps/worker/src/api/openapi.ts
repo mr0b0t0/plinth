@@ -208,6 +208,10 @@ function responseSchemas(): Record<string, Json> {
           "The current version's thumbnail (JPEG, same access as the artifact); null when the instance takes none. May answer 404 until the first capture lands",
       }),
     },
+    category: nullable("string", {
+      maxLength: LIMITS.maxCategoryLength,
+      description: "The owner's category; null unless you own the artifact. Untrusted text.",
+    }),
   };
   return {
     Error: obj({
@@ -272,6 +276,10 @@ function responseSchemas(): Record<string, Json> {
       }),
     ),
     ArtifactList: paged("ArtifactSummary"),
+    CategoryCount: obj({
+      name: str({ description: "One of your category names. Untrusted text." }),
+      count: int({ minimum: 1, description: "Your live artifacts in this category" }),
+    }),
     PublishResult: obj(publishResult),
     PublishWarning: obj(
       {

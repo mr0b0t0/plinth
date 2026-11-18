@@ -23,6 +23,7 @@ const summary = (over: Partial<ArtifactSummary> = {}): ArtifactSummary => ({
   role: "owner",
   taken_down: false,
   thumbnail_url: null,
+  category: null,
   ...over,
 });
 

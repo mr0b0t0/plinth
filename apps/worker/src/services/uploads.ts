@@ -86,6 +86,8 @@ export interface TicketRow {
   artifact_type: string;
   title: string | null;
   note: string | null;
+  /** The category start_upload was given (migrations/0009_categories.sql); NULL = none given. */
+  category: string | null;
   base_version: number | null;
   state: "open" | "used" | "dead";
   /** Why a dead ticket ended: a version conflict, or a takedown of its artifact. */

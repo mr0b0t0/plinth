@@ -2040,6 +2040,11 @@
             "type": ["string", "null"],
             "format": "uri",
             "description": "The current version's thumbnail (JPEG, same access as the artifact); null when the instance takes none. May answer 404 until the first capture lands"
+          },
+          "category": {
+            "type": ["string", "null"],
+            "maxLength": 60,
+            "description": "The owner's category; null unless you own the artifact. Untrusted text."
           }
         },
         "required": [
@@ -2057,7 +2062,8 @@
           "owner",
           "role",
           "taken_down",
-          "thumbnail_url"
+          "thumbnail_url",
+          "category"
         ]
       },
       "ArtifactDetail": {
@@ -2123,6 +2129,11 @@
             "format": "uri",
             "description": "The current version's thumbnail (JPEG, same access as the artifact); null when the instance takes none. May answer 404 until the first capture lands"
           },
+          "category": {
+            "type": ["string", "null"],
+            "maxLength": 60,
+            "description": "The owner's category; null unless you own the artifact. Untrusted text."
+          },
           "version": { "type": "integer", "minimum": 1, "description": "The version returned" },
           "source_path": {
             "type": "string",
@@ -2184,6 +2195,7 @@
           "role",
           "taken_down",
           "thumbnail_url",
+          "category",
           "version",
           "source_path",
           "html",
@@ -2236,6 +2248,11 @@
             "type": ["string", "null"],
             "format": "uri",
             "description": "The current version's thumbnail (JPEG, same access as the artifact); null when the instance takes none. May answer 404 until the first capture lands"
+          },
+          "category": {
+            "type": ["string", "null"],
+            "maxLength": 60,
+            "description": "The owner's category; null unless you own the artifact. Untrusted text."
           },
           "version": { "type": "integer", "minimum": 1, "description": "The version returned" },
           "source_path": {
@@ -2298,6 +2315,7 @@
           "role",
           "taken_down",
           "thumbnail_url",
+          "category",
           "version",
           "source_path",
           "content",
@@ -2312,6 +2330,21 @@
           "items": { "type": "array", "items": { "$ref": "#/components/schemas/ArtifactSummary" } }
         },
         "required": ["items"]
+      },
+      "CategoryCount": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "One of your category names. Untrusted text."
+          },
+          "count": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Your live artifacts in this category"
+          }
+        },
+        "required": ["name", "count"]
       },
       "PublishResult": {
         "type": "object",
