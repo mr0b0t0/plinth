@@ -19,6 +19,7 @@ import { openJson, viewerIdFor } from "../lib/crypto.ts";
 import { ApiError } from "../lib/errors.ts";
 import type { PageClaim } from "../policy.ts";
 import { fileKey, type ManifestEntry } from "../services/storage.ts";
+import { isCountableRequest, recordView } from "../services/views.ts";
 import { injectBridge, serveBridgeScript } from "./bridge.ts";
 import { applyContentHeaders, type ContentCspOptions } from "./csp.ts";
 import { DATA_API_PREFIX, serveDataApi } from "./data-api.ts";
@@ -278,14 +279,19 @@ export function resolveFilePath(filePath: string): string | null {
   return rel;
 }
 
+/**
+ * Serve a content-host request. `defer` keeps work alive after the response (the Worker's
+ * waitUntil); without it (direct calls in tests) that work is awaited before answering.
+ */
 export async function serveContent(
   request: Request,
   env: Bindings,
   config: Config,
   route: Extract<HostRoute, { kind: "content" }>,
+  defer?: (p: Promise<unknown>) => void,
 ): Promise<Response> {
   try {
-    return await serve(request, env, config, route);
+    return await serve(request, env, config, route, defer);
   } catch (e) {
     // Never show internals (stack traces, SQL) on a content host.
     console.error("content host error:", e instanceof Error ? e.message : "unknown");
@@ -307,6 +313,7 @@ async function serve(
   env: Bindings,
   config: Config,
   route: Extract<HostRoute, { kind: "content" }>,
+  defer?: (p: Promise<unknown>) => void,
 ): Promise<Response> {
   // Shared data (content/data-api.ts): its own method, caller and JSON checks, never a redirect.
   if (route.path.startsWith(DATA_API_PREFIX)) return serveDataApi(request, env, config, route);
@@ -378,6 +385,15 @@ async function serve(
     // A preview is for an artifact's own subdomain only: never the path fallback on the app host.
     if (preview && base) return expired();
     const kind: PassKind = capture ? "capture" : preview ? "preview" : "view";
+    // An open counts (services/views.ts) only for a view pass the gate flagged, from a browser in
+    // the app's frame that holds no view pass for this artifact yet (reloads and second tabs
+    // within the cookie's lifetime count once). It reads the incoming cookies, before the new one,
+    // and never changes the response below.
+    let countable = false;
+    if (kind === "view" && payload.w === 1 && config.viewCounts && isCountableRequest(request)) {
+      const prior = await readContentPass(request, config, current);
+      countable = !prior || prior.capture || prior.preview;
+    }
     const value = await signContentCookie(
       config,
       artifactId,
@@ -401,6 +417,11 @@ async function serve(
         maxAge: passMaxAgeS(kind),
       }),
     );
+    if (countable) {
+      const write = recordView(env.DB, artifactId, Date.now());
+      if (defer) defer(write);
+      else await write;
+    }
     return res;
   }
 

@@ -181,6 +181,16 @@ content host checks it against its own subdomain. Any change to visibility, the 
 grants bumps the artifact's access epoch, which invalidates every outstanding token, cookie and
 password pass at once.
 
+**Open counts** ([spec](spec.md#admin-stats-and-view-counts)). The gate may add one signed bit,
+`w`, to the viewer token, for a normal open of the live page by someone other than the owner, an
+agent or an admin without a role. The issuer refuses `w` on capture and preview tokens, and a
+viewer cannot add it without breaking the signature. The enter exchange counts the open only after
+every check above (signature, artifact, epoch, takedown, nonce) and only for a view pass; it reads
+the request's existing content cookie to count each browser once, and stores nothing about the
+viewer. The response is the same, byte for byte apart from the cookie's signature, whether or not
+the open counted: same status, `Location`, cookie attributes and Content Security Policy, and no
+CORS headers. The write runs after the response, and a failure is logged as a fixed string.
+
 ## Cookies
 
 | Cookie | Host | Flags | Lifetime | Purpose |

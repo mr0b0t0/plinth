@@ -42,6 +42,12 @@ export interface EnterPayload {
   p?: 1;
   /** The one version a preview may show. */
   v?: number;
+  /**
+   * Count this entry as an open (docs/spec.md "Admin stats and view counts"). Set only by the gate,
+   * for a live-page view by someone other than the owner, an agent or an admin without a role.
+   * Never with `c` or `p`. It changes nothing about the cookie the token becomes.
+   */
+  w?: 1;
   [key: string]: unknown;
 }
 
@@ -96,7 +102,7 @@ export async function issueEnterUrl(
   artifact: { id: string; accessEpoch: number },
   next = "/",
   identity?: ViewerIdentity,
-  opts: { capture?: boolean; previewVersion?: number } = {},
+  opts: { capture?: boolean; previewVersion?: number; countView?: boolean } = {},
 ): Promise<string> {
   const payload: EnterPayload = {
     k: "enter",
@@ -114,6 +120,11 @@ export async function issueEnterUrl(
     if (!isVersion(opts.previewVersion)) throw new Error("A preview names one version");
     payload.p = 1;
     payload.v = opts.previewVersion;
+  }
+  if (opts.countView) {
+    if (opts.capture || opts.previewVersion !== undefined)
+      throw new Error("A capture or preview never counts as a view");
+    payload.w = 1;
   }
   if (identity) {
     payload.x = await sealJson(config.tokenSigningKey, IDENTITY_CLAIM_INFO, artifact.id, {
