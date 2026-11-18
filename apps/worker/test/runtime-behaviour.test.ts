@@ -3,7 +3,10 @@
 // mapping, update() retries, all() paging, the shared poller (interval floor, hidden tabs, stop,
 // expiry) and the refetch after the page's own write.
 import { describe, expect, it } from "vitest";
-import { RUNTIME_SCRIPT } from "../src/content/runtime.ts";
+import { runtimeScript } from "../src/content/runtime.ts";
+import { config } from "./helpers.ts";
+
+const RUNTIME_SCRIPT = runtimeScript(config());
 
 type Json = Record<string, any>;
 interface Reply {
