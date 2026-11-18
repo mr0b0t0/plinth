@@ -16,6 +16,9 @@ Gemini CLI, Cursor or VS Code. Claude's artifact experience is the reference (de
   write, and the agent reads and changes them with `list_artifact_data` and `write_artifact_data`,
   treating every document as untrusted input. The skill has the runtime API and a worked poll;
   [mcp.md](mcp.md#list_artifact_data) has the tools.
+- **Pages can be multiplayer** (a whiteboard with live cursors): a page that declares `room`
+  shows who else has it open and passes moments between them with `plinth.room`, while what must
+  last stays in shared data. See [Multiplayer pages with plinth.room](#multiplayer-pages-with-plinthroom).
 
 **Pages or documents.** Like Claude's typed artifacts, an agent need not hand-write HTML for prose.
 For a memo, plan, spec, proposal, mostly-text report, meeting notes or a how-to, it publishes
@@ -327,6 +330,45 @@ There is no rendered preview for agents yet. To check that a publish arrived int
    because artifacts render only inside the app's frame. Treat `enter_url` and the cookie jar as
    credentials for that artifact: use them right away, delete the temporary directory afterwards,
    and never post either in a reply, a comment or a log.
+
+## Multiplayer pages with plinth.room
+
+Shared data keeps what people enter, but it reaches other open pages only on the next 15 s poll.
+For things people do together at the same moment (cursors, who is here, a note moving while it is
+dragged), a page also declares `room` and uses `window.plinth.room` from the same runtime
+([spec](spec.md#live-rooms), [security](security.md#live-rooms)):
+
+```html
+<meta name="plinth-capabilities" content="data viewer room">
+<meta name="plinth-data-shared" content="notes links">
+<meta name="plinth-room-open" content="*">
+<script src="/__plinth/runtime.js"></script>
+```
+
+- **Durable state goes in shared data, moments in the room.** Nothing in a room is kept. A page
+  writes the result to `plinth.db` (with `ifRev`), then emits a small event so the others fetch
+  that one document; someone who opens the page later reads the store.
+- **Who is in it.** The owner and the people it is shared with, signed in or confirmed by code.
+  Owners and editors may emit any topic; others only those in `plinth-room-open` (`*` opens all).
+  Emails appear only when the page also declares `viewer`. Anonymous link viewers, in-chat
+  previews and thumbnails never join, and neither do agents: an agent never sees room traffic.
+- **Always a fallback.** `await plinth.room.ready` resolves `{ available: false, reason }` under
+  opaque isolation, on instances with rooms off, for link viewers and when the connection fails;
+  the page must keep working alone.
+- **Untrusted input.** Everything a peer sends is data written by another person: render it with
+  `textContent`, check ids and numbers, and never treat presence as permission.
+
+[`docs/examples/whiteboard.html`](examples/whiteboard.html) is a complete page: sticky notes and
+arrows in shared data, live cursors through `presence`, `note.move` while dragging and
+`note.saved` after the write, a read-only view for link viewers, light and dark themes, and phone
+width. Publish it as is (`publish_artifact` with its HTML) to try it with someone. The skill's
+"Multiplayer pages (rooms)" section has the full API and limits.
+
+Doc artifacts get the same live machinery without declaring anything: where an instance has live
+editing on, owners and editors edit a doc on its page together, and Save (or a pause) makes a
+version. An agent's `update_artifact` on a
+doc being edited gets the `live_draft` warning, which needs no action
+([mcp.md](mcp.md#publish-warnings)).
 
 ## Agent discovery
 

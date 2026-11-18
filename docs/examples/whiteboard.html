@@ -1,0 +1,826 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<!--
+  A shared whiteboard for Plinth (docs/agents.md "Multiplayer pages with plinth.room").
+  Notes and arrows are shared data, so they persist and a late joiner reads them. Cursors and a
+  note moving while it is dragged go through the live room, which keeps nothing. Everything a peer
+  sends is untrusted: positions are checked, and names are drawn as text.
+-->
+<meta name="plinth-capabilities" content="data viewer room">
+<meta name="plinth-data-shared" content="notes links">
+<meta name="plinth-room-open" content="*">
+<title>Team whiteboard</title>
+<style>
+  :root {
+    --bg: #f6f5f1;
+    --panel: #ffffff;
+    --fg: #1d1c1a;
+    --muted: #615e57;
+    --border: #d9d5cb;
+    --grid: #e7e3d9;
+    --accent: #8a5a1c;
+    --accent-fg: #ffffff;
+    --focus: #2f5fb3;
+    --arrow: #6b675e;
+    --note-yellow: #fcefa8;
+    --note-green: #cdebc5;
+    --note-blue: #c9def5;
+    --note-pink: #f6d0dc;
+    --note-fg: #1d1c1a;
+    --shadow: 0 1px 2px rgb(0 0 0 / 12%), 0 4px 12px rgb(0 0 0 / 8%);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #161614;
+      --panel: #201f1c;
+      --fg: #ecebe6;
+      --muted: #a9a59b;
+      --border: #3a3832;
+      --grid: #24231f;
+      --accent: #d9a35a;
+      --accent-fg: #1d1c1a;
+      --focus: #8fb2f0;
+      --arrow: #a9a59b;
+      --note-yellow: #5a4f1c;
+      --note-green: #2c4a2a;
+      --note-blue: #233a57;
+      --note-pink: #57283a;
+      --note-fg: #f3f1ea;
+      --shadow: 0 1px 2px rgb(0 0 0 / 50%), 0 4px 12px rgb(0 0 0 / 35%);
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--fg);
+    font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  header {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px 16px;
+    padding: 10px 16px;
+    background: var(--panel);
+    border-bottom: 1px solid var(--border);
+  }
+  h1 { font-size: 17px; margin: 0; font-weight: 650; }
+  .tools { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+  button {
+    font: inherit;
+    font-size: 14px;
+    color: var(--fg);
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 5px 10px;
+    min-height: 32px;
+    cursor: pointer;
+  }
+  button:disabled { opacity: 0.5; cursor: default; }
+  button:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+  .note textarea:focus-visible { outline: none; }
+  .note:focus-within { outline: 2px solid var(--focus); outline-offset: 2px; }
+  button.primary { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
+  button[aria-pressed="true"] { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+  .swatch { width: 32px; padding: 0; }
+  .swatch span { display: block; width: 16px; height: 16px; margin: auto; border-radius: 4px; border: 1px solid var(--border); }
+  #peers { list-style: none; display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 0 auto; padding: 0; font-size: 13px; color: var(--muted); }
+  #peers li { display: flex; align-items: center; gap: 5px; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #peers i { width: 9px; height: 9px; border-radius: 50%; flex: none; }
+  #banner, #msg { margin: 0; padding: 8px 16px; font-size: 14px; border-bottom: 1px solid var(--border); }
+  #banner { background: var(--panel); color: var(--muted); }
+  #msg { color: var(--fg); }
+  #banner:empty, #msg:empty { display: none; }
+  #viewport { flex: 1; min-height: 320px; overflow: auto; position: relative; overscroll-behavior: contain; }
+  #board {
+    position: relative;
+    width: 1600px;
+    height: 1000px;
+    background-color: var(--bg);
+    background-image: radial-gradient(var(--grid) 1.5px, transparent 1.5px);
+    background-size: 24px 24px;
+  }
+  #links { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+  #links line { stroke: var(--arrow); stroke-width: 2; }
+  #links path { fill: var(--arrow); }
+  .note {
+    position: absolute;
+    width: 160px;
+    height: 120px;
+    display: flex;
+    flex-direction: column;
+    border-radius: 6px;
+    box-shadow: var(--shadow);
+    color: var(--note-fg);
+    background: var(--note-yellow);
+  }
+  .note[data-color="green"] { background: var(--note-green); }
+  .note[data-color="blue"] { background: var(--note-blue); }
+  .note[data-color="pink"] { background: var(--note-pink); }
+  .note.selected { outline: 2px solid var(--accent); outline-offset: 2px; z-index: 2; }
+  .note.moving { transition: left 90ms linear, top 90ms linear; }
+  .grip {
+    flex: none;
+    height: 22px;
+    min-height: 0;
+    padding: 0 8px;
+    border: 0;
+    border-radius: 6px 6px 0 0;
+    background: rgb(0 0 0 / 6%);
+    color: inherit;
+    font-size: 11px;
+    text-align: left;
+    cursor: grab;
+    touch-action: none;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+  .grip:active { cursor: grabbing; }
+  .note textarea {
+    flex: 1;
+    width: 100%;
+    resize: none;
+    border: 0;
+    padding: 6px 8px;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    font-size: 14px;
+  }
+  @media (pointer: coarse) { .note textarea { font-size: 16px; } }
+  .cursor { position: absolute; left: 0; top: 0; pointer-events: none; z-index: 5; transition: transform 100ms linear; }
+  .cursor svg { display: block; }
+  .cursor span {
+    display: inline-block;
+    margin: 2px 0 0 12px;
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-size: 12px;
+    color: #fff;
+    white-space: nowrap;
+    max-width: 200px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  @media (max-width: 520px) {
+    header { padding: 8px 16px; }
+    #peers { margin-left: 0; width: 100%; }
+  }
+</style>
+<script src="/__plinth/runtime.js"></script>
+</head>
+<body data-room="closed">
+<header>
+  <h1>Team whiteboard</h1>
+  <div class="tools" role="toolbar" aria-label="Board tools">
+    <button type="button" id="add" class="primary" disabled>Add note</button>
+    <button type="button" class="swatch" data-color="yellow" aria-label="Yellow notes" aria-pressed="true"><span style="background: var(--note-yellow)"></span></button>
+    <button type="button" class="swatch" data-color="green" aria-label="Green notes" aria-pressed="false"><span style="background: var(--note-green)"></span></button>
+    <button type="button" class="swatch" data-color="blue" aria-label="Blue notes" aria-pressed="false"><span style="background: var(--note-blue)"></span></button>
+    <button type="button" class="swatch" data-color="pink" aria-label="Pink notes" aria-pressed="false"><span style="background: var(--note-pink)"></span></button>
+    <button type="button" id="connect" aria-pressed="false" disabled>Connect two notes</button>
+    <button type="button" id="remove" disabled>Delete note</button>
+  </div>
+  <ul id="peers" aria-label="People here"></ul>
+</header>
+<p id="banner" role="status"></p>
+<p id="msg" role="alert"></p>
+<div id="viewport">
+  <div id="board">
+    <svg id="links" aria-hidden="true">
+      <defs><marker id="head" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0 10 5 0 10z"></path></marker></defs>
+    </svg>
+  </div>
+</div>
+<script>
+"use strict";
+// Board geometry (board pixels; the board scrolls inside #viewport on small screens).
+const W = 1600, H = 1000, NW = 160, NH = 120;
+const COLORS = ["yellow", "green", "blue", "pink"];
+const ID_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
+const MOVE_MS = 100; // note.move and cursor updates: at most 10 a second
+
+const board = document.getElementById("board");
+const viewport = document.getElementById("viewport");
+const svg = document.getElementById("links");
+const banner = document.getElementById("banner");
+const msg = document.getElementById("msg");
+const peersList = document.getElementById("peers");
+const addBtn = document.getElementById("add");
+const connectBtn = document.getElementById("connect");
+const removeBtn = document.getElementById("remove");
+
+const notes = new Map(); // id -> { data, rev, el, ta, grip }
+const links = new Map(); // id -> { data, rev, line }
+const cursors = new Map(); // peer socket id -> element
+let notesC = null, linksC = null; // shared-data collections, or null when the page runs alone
+let canWrite = true;
+let room = null;
+let color = "yellow";
+let selected = null;
+let connectFrom = null;
+let connecting = false;
+let drag = null;
+let localSeq = 0;
+const notices = { data: "", room: "" };
+
+const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+const finite = (v) => typeof v === "number" && Number.isFinite(v);
+
+/** Shared data is written by other people: keep only well-formed fields. */
+function cleanNote(d) {
+  if (!d || typeof d !== "object" || !finite(d.x) || !finite(d.y)) return null;
+  return {
+    x: clamp(Math.round(d.x), 0, W - NW),
+    y: clamp(Math.round(d.y), 0, H - NH),
+    text: typeof d.text === "string" ? d.text.slice(0, 500) : "",
+    color: COLORS.includes(d.color) ? d.color : "yellow",
+  };
+}
+function cleanLink(d) {
+  if (!d || typeof d !== "object") return null;
+  if (typeof d.from !== "string" || typeof d.to !== "string" || d.from === d.to) return null;
+  if (!ID_RE.test(d.from) || !ID_RE.test(d.to)) return null;
+  return { from: d.from, to: d.to };
+}
+
+function say(text) {
+  msg.textContent = text;
+  if (text) setTimeout(() => { if (msg.textContent === text) msg.textContent = ""; }, 6000);
+}
+function showNotices() {
+  banner.textContent = [notices.data, notices.room].filter(Boolean).join(" ");
+}
+function errorText(e) {
+  if (!e) return "Something went wrong.";
+  if (e.code === "rate_limited") return "Slow down a moment, then try again.";
+  if (e.code === "quota_exceeded") return "This board is full. Delete a few notes first.";
+  if (e.code === "read_only" || e.code === "forbidden") return "You can view this board but not change it.";
+  if (e.code === "expired") return "Your access changed. Reload the page.";
+  return "Could not save. Check your connection and try again.";
+}
+
+// ---------- notes ----------
+
+function noteEl(id) {
+  const el = document.createElement("div");
+  el.className = "note";
+  el.dataset.id = id;
+  const grip = document.createElement("button");
+  grip.type = "button";
+  grip.className = "grip";
+  grip.setAttribute("aria-label", "Move note (arrow keys)");
+  const ta = document.createElement("textarea");
+  ta.setAttribute("aria-label", "Note text");
+  ta.maxLength = 500;
+  ta.placeholder = "Write something";
+  el.append(grip, ta);
+  board.append(el);
+
+  el.addEventListener("pointerdown", () => pick(id));
+  ta.addEventListener("focus", () => { if (!connecting) pick(id); });
+  grip.addEventListener("pointerdown", (e) => startDrag(e, id));
+  grip.addEventListener("keydown", (e) => {
+    const step = e.shiftKey ? 40 : 10;
+    const d = { ArrowLeft: [-step, 0], ArrowRight: [step, 0], ArrowUp: [0, -step], ArrowDown: [0, step] }[e.key];
+    const n = notes.get(id);
+    if (!d || !n || !canWrite) return;
+    e.preventDefault();
+    const x = clamp(n.data.x + d[0], 0, W - NW), y = clamp(n.data.y + d[1], 0, H - NH);
+    n.data = { ...n.data, x, y };
+    place(n, x, y);
+    sendMove(id, x, y, true);
+    clearTimeout(n.keySave);
+    n.keySave = setTimeout(() => saveNote(id, { x: n.data.x, y: n.data.y }), 400);
+  });
+  let typing = null;
+  ta.addEventListener("input", () => {
+    clearTimeout(typing);
+    typing = setTimeout(() => saveNote(id, { text: ta.value.slice(0, 500) }), 800);
+  });
+  ta.addEventListener("change", () => {
+    clearTimeout(typing);
+    saveNote(id, { text: ta.value.slice(0, 500) });
+  });
+  return { el, ta, grip };
+}
+
+function place(n, x, y) {
+  n.el.style.left = x + "px";
+  n.el.style.top = y + "px";
+  drawLinks();
+}
+
+function upsertNote(id, data, rev) {
+  const clean = cleanNote(data);
+  if (!clean || !ID_RE.test(id)) return;
+  let n = notes.get(id);
+  if (!n) {
+    n = { data: clean, rev, ...noteEl(id) };
+    notes.set(id, n);
+  } else if (rev !== undefined && n.rev !== undefined && rev < n.rev) {
+    return; // an older copy than the one we have
+  }
+  n.data = drag && drag.id === id ? { ...clean, x: n.data.x, y: n.data.y } : clean;
+  if (rev !== undefined) n.rev = rev;
+  n.el.dataset.color = n.data.color;
+  n.el.classList.remove("moving");
+  if (document.activeElement !== n.ta) n.ta.value = n.data.text;
+  n.grip.textContent = "";
+  place(n, n.data.x, n.data.y);
+  setEditable();
+}
+
+function removeNote(id) {
+  const n = notes.get(id);
+  if (!n) return;
+  n.el.remove();
+  notes.delete(id);
+  if (selected === id) pick(null);
+  if (drag && drag.id === id) drag = null;
+  drawLinks();
+}
+
+function pick(id) {
+  if (connecting && id) {
+    if (!connectFrom) connectFrom = id;
+    else if (connectFrom !== id) {
+      addLink(connectFrom, id);
+      setConnecting(false);
+    }
+  }
+  selected = id && notes.has(id) ? id : null;
+  highlight();
+}
+function highlight() {
+  for (const [nid, n] of notes) n.el.classList.toggle("selected", nid === selected || nid === connectFrom);
+  removeBtn.disabled = !canWrite || !selected;
+}
+
+function applyNotes(docs) {
+  const seen = new Set();
+  for (const d of docs) {
+    seen.add(d.id);
+    upsertNote(d.id, d.data, d.rev);
+  }
+  for (const id of [...notes.keys()]) if (!seen.has(id) && !id.startsWith("local-")) removeNote(id);
+}
+
+/** Write a field change on top of the latest copy, retrying on a conflict with someone else's write. */
+async function saveNote(id, patch) {
+  const n = notes.get(id);
+  if (!n || !canWrite) return false;
+  upsertNote(id, { ...n.data, ...patch }, n.rev); // show it now; the write follows
+  if (!notesC) return true;
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const cur = notes.get(id);
+    if (!cur) return false;
+    try {
+      const doc = await notesC.set(id, { ...cur.data, ...patch }, { ifRev: cur.rev });
+      upsertNote(doc.id, doc.data, doc.rev);
+      if (room) room.emit("note.saved", { id });
+      return true;
+    } catch (e) {
+      if (e.code !== "conflict") {
+        say(errorText(e));
+        return false;
+      }
+      const fresh = await notesC.get(id).catch(() => undefined);
+      if (fresh === null) {
+        removeNote(id);
+        return false;
+      }
+      if (fresh) upsertNote(fresh.id, fresh.data, fresh.rev);
+    }
+  }
+  say("Someone else kept changing this note. Try again.");
+  return false;
+}
+
+/** Near the middle of what is on screen, clear of other notes when there is room. */
+function freeSpot() {
+  const cx = viewport.scrollLeft + viewport.clientWidth / 2 - NW / 2;
+  const cy = viewport.scrollTop + viewport.clientHeight / 2 - NH / 2;
+  const taken = (x, y) =>
+    [...notes.values()].some((n) => Math.abs(n.data.x - x) < NW + 12 && Math.abs(n.data.y - y) < NH + 12);
+  for (let ring = 0; ring < 4; ring++) {
+    for (let i = -ring; i <= ring; i++) {
+      for (let j = -ring; j <= ring; j++) {
+        if (Math.max(Math.abs(i), Math.abs(j)) !== ring) continue;
+        const x = Math.round(clamp(cx + i * (NW + 48), 0, W - NW));
+        const y = Math.round(clamp(cy + j * (NH + 40), 0, H - NH));
+        if (!taken(x, y)) return [x, y];
+      }
+    }
+  }
+  return [Math.round(clamp(cx + 24 * (notes.size % 8), 0, W - NW)), Math.round(clamp(cy, 0, H - NH))];
+}
+
+async function addNote() {
+  if (!canWrite) return;
+  const [x, y] = freeSpot();
+  const data = { x, y, text: "", color };
+  let id;
+  if (notesC) {
+    try {
+      const doc = await notesC.add(data);
+      id = doc.id;
+      upsertNote(doc.id, doc.data, doc.rev);
+      if (room) room.emit("note.saved", { id });
+    } catch (e) {
+      say(errorText(e));
+      return;
+    }
+  } else {
+    id = "local-" + ++localSeq;
+    upsertNote(id, data, 0);
+  }
+  pick(id);
+  notes.get(id)?.ta.focus();
+}
+
+async function removeSelected() {
+  const id = selected;
+  const n = id && notes.get(id);
+  if (!n || !canWrite) return;
+  const attached = [...links].filter(([, l]) => l.data.from === id || l.data.to === id);
+  if (notesC) {
+    try {
+      await notesC.delete(id, { ifRev: n.rev });
+    } catch (e) {
+      if (e.code === "conflict") say("Someone changed this note just now. Look again before deleting it.");
+      else if (e.code !== "not_found") say(errorText(e));
+      if (e.code !== "not_found") return;
+    }
+    for (const [lid, l] of attached) {
+      await linksC.delete(lid, { ifRev: l.rev }).catch(() => {});
+      if (room) room.emit("link.saved", { id: lid });
+    }
+    if (room) room.emit("note.saved", { id });
+  }
+  for (const [lid] of attached) removeLink(lid);
+  removeNote(id);
+}
+
+// ---------- dragging ----------
+
+let lastMove = 0, moveTimer = null, moveArgs = null;
+function sendMove(id, x, y, now) {
+  moveArgs = { id, x, y };
+  const wait = MOVE_MS - (Date.now() - lastMove);
+  if (now || wait <= 0) return flushMove();
+  if (!moveTimer) moveTimer = setTimeout(flushMove, wait);
+}
+function flushMove() {
+  clearTimeout(moveTimer);
+  moveTimer = null;
+  if (!moveArgs || !room) return;
+  lastMove = Date.now();
+  room.emit("note.move", moveArgs);
+  moveArgs = null;
+}
+
+function startDrag(e, id) {
+  const n = notes.get(id);
+  if (!n || !canWrite || e.button > 0) return;
+  e.preventDefault();
+  const r = board.getBoundingClientRect();
+  drag = { id, pointer: e.pointerId, dx: e.clientX - r.left - n.data.x, dy: e.clientY - r.top - n.data.y, moved: false };
+  n.grip.setPointerCapture(e.pointerId);
+  const move = (ev) => {
+    if (!drag || drag.pointer !== ev.pointerId || drag.id !== id) return;
+    const b = board.getBoundingClientRect();
+    const x = clamp(Math.round(ev.clientX - b.left - drag.dx), 0, W - NW);
+    const y = clamp(Math.round(ev.clientY - b.top - drag.dy), 0, H - NH);
+    drag.moved = true;
+    n.data = { ...n.data, x, y };
+    place(n, x, y);
+    sendMove(id, x, y, false);
+  };
+  const end = (ev) => {
+    if (!drag || drag.pointer !== ev.pointerId) return;
+    const moved = drag.moved;
+    drag = null;
+    n.grip.removeEventListener("pointermove", move);
+    n.grip.removeEventListener("pointerup", end);
+    n.grip.removeEventListener("pointercancel", end);
+    if (!moved) return;
+    flushMove();
+    saveNote(id, { x: n.data.x, y: n.data.y });
+  };
+  n.grip.addEventListener("pointermove", move);
+  n.grip.addEventListener("pointerup", end);
+  n.grip.addEventListener("pointercancel", end);
+}
+
+// ---------- arrows ----------
+
+function edge(cx, cy, tx, ty) {
+  const dx = tx - cx, dy = ty - cy;
+  if (!dx && !dy) return [cx, cy];
+  const s = Math.min(Math.abs((NW / 2 + 6) / (dx || 1e-9)), Math.abs((NH / 2 + 6) / (dy || 1e-9)));
+  return [cx + dx * s, cy + dy * s];
+}
+function drawLinks() {
+  for (const [id, l] of links) {
+    const a = notes.get(l.data.from), b = notes.get(l.data.to);
+    if (!a || !b) {
+      if (l.line) l.line.remove();
+      l.line = null;
+      continue;
+    }
+    if (!l.line) {
+      l.line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+      l.line.setAttribute("marker-end", "url(#head)");
+      l.line.dataset.id = id;
+      svg.append(l.line);
+    }
+    const ax = a.data.x + NW / 2, ay = a.data.y + NH / 2, bx = b.data.x + NW / 2, by = b.data.y + NH / 2;
+    const [x1, y1] = edge(ax, ay, bx, by), [x2, y2] = edge(bx, by, ax, ay);
+    l.line.setAttribute("x1", String(x1));
+    l.line.setAttribute("y1", String(y1));
+    l.line.setAttribute("x2", String(x2));
+    l.line.setAttribute("y2", String(y2));
+  }
+}
+function upsertLink(id, data, rev) {
+  const clean = cleanLink(data);
+  if (!clean || !ID_RE.test(id)) return;
+  const l = links.get(id) || { line: null };
+  l.data = clean;
+  l.rev = rev;
+  links.set(id, l);
+  drawLinks();
+}
+function removeLink(id) {
+  const l = links.get(id);
+  if (!l) return;
+  if (l.line) l.line.remove();
+  links.delete(id);
+}
+function applyLinks(docs) {
+  const seen = new Set();
+  for (const d of docs) {
+    seen.add(d.id);
+    upsertLink(d.id, d.data, d.rev);
+  }
+  for (const id of [...links.keys()]) if (!seen.has(id) && !id.startsWith("local-")) removeLink(id);
+}
+async function addLink(from, to) {
+  for (const l of links.values()) if (l.data.from === from && l.data.to === to) return;
+  if (!linksC) return upsertLink("local-" + ++localSeq, { from, to }, 0);
+  try {
+    const doc = await linksC.add({ from, to });
+    upsertLink(doc.id, doc.data, doc.rev);
+    if (room) room.emit("link.saved", { id: doc.id });
+  } catch (e) {
+    say(errorText(e));
+  }
+}
+function setConnecting(on) {
+  connecting = on;
+  connectFrom = null;
+  connectBtn.setAttribute("aria-pressed", String(on));
+  connectBtn.textContent = on ? "Pick two notes…" : "Connect two notes";
+  highlight();
+}
+
+// ---------- the live room: cursors, people, moves ----------
+
+function hue(s) {
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) % 360;
+  return h;
+}
+function personName(p) {
+  return p.you ? "You" : p.email || "Someone";
+}
+
+function renderPeers(peers) {
+  // One person with two tabs is two peers with the same viewer id: list them once.
+  const byViewer = new Map();
+  for (const p of peers) if (!byViewer.has(p.viewer) || p.you) byViewer.set(p.viewer, p);
+  peersList.replaceChildren(
+    ...[...byViewer.values()].map((p) => {
+      const li = document.createElement("li");
+      const dot = document.createElement("i");
+      dot.style.background = `hsl(${hue(p.viewer)} 65% 45%)`;
+      li.append(dot, document.createTextNode(personName(p)));
+      return li;
+    }),
+  );
+  const live = new Set();
+  for (const p of peers) {
+    const pr = p.presence || {};
+    if (p.you || !finite(pr.x) || !finite(pr.y)) continue;
+    live.add(p.id);
+    let el = cursors.get(p.id);
+    if (!el) {
+      el = document.createElement("div");
+      el.className = "cursor";
+      el.dataset.viewer = p.viewer;
+      const arrow = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+      arrow.setAttribute("width", "16");
+      arrow.setAttribute("height", "16");
+      arrow.setAttribute("viewBox", "0 0 16 16");
+      const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+      path.setAttribute("d", "M1 1 1 14 5 10 8 15 10 14 7 9 13 9z");
+      path.setAttribute("stroke", "#fff");
+      arrow.append(path);
+      const label = document.createElement("span");
+      el.append(arrow, label);
+      board.append(el);
+      cursors.set(p.id, el);
+    }
+    const c = `hsl(${hue(p.viewer)} 65% 45%)`;
+    el.querySelector("path").setAttribute("fill", c);
+    const label = el.querySelector("span");
+    label.style.background = c;
+    label.textContent = personName(p); // text only: an email is never markup
+    el.style.transform = `translate(${clamp(pr.x, 0, W)}px, ${clamp(pr.y, 0, H)}px)`;
+  }
+  for (const [id, el] of cursors) {
+    if (!live.has(id)) {
+      el.remove();
+      cursors.delete(id);
+    }
+  }
+}
+
+let lastCursor = 0, cursorTimer = null, cursorAt = null;
+function sendCursor() {
+  clearTimeout(cursorTimer);
+  cursorTimer = null;
+  if (!room || !cursorAt) return;
+  lastCursor = Date.now();
+  room.presence(cursorAt);
+}
+board.addEventListener("pointermove", (e) => {
+  if (!room) return;
+  const r = board.getBoundingClientRect();
+  cursorAt = { x: Math.round(e.clientX - r.left), y: Math.round(e.clientY - r.top) };
+  const wait = MOVE_MS - (Date.now() - lastCursor);
+  if (wait <= 0) sendCursor();
+  else if (!cursorTimer) cursorTimer = setTimeout(sendCursor, wait);
+});
+board.addEventListener("pointerleave", () => {
+  if (!room) return;
+  clearTimeout(cursorTimer);
+  cursorTimer = null;
+  cursorAt = null;
+  room.presence({ x: null, y: null });
+});
+
+// Refetch what a peer says it saved, a few ids at a time.
+const pending = { notes: new Set(), links: new Set() };
+let refetchTimer = null;
+function refetchSoon(kind, id) {
+  if (typeof id !== "string" || !ID_RE.test(id) || pending[kind].size > 50) return;
+  pending[kind].add(id);
+  if (!refetchTimer) refetchTimer = setTimeout(refetch, 250);
+}
+async function refetch() {
+  refetchTimer = null;
+  for (const [kind, coll, up, rm] of [
+    ["notes", notesC, upsertNote, removeNote],
+    ["links", linksC, upsertLink, removeLink],
+  ]) {
+    const ids = [...pending[kind]];
+    pending[kind].clear();
+    if (!coll) continue;
+    for (const id of ids) {
+      try {
+        const doc = await coll.get(id);
+        if (doc) up(doc.id, doc.data, doc.rev);
+        else rm(id);
+      } catch (e) {}
+    }
+  }
+}
+
+function startRoom(r) {
+  room = r;
+  room.onStatus((s) => { document.body.dataset.room = s; });
+  room.onPeers(renderPeers);
+  // A peer dragging a note: show it moving. Only existing notes, only finite numbers.
+  room.on("note.move", (d) => {
+    if (!d || typeof d !== "object" || typeof d.id !== "string") return;
+    const n = notes.get(d.id);
+    if (!n || !finite(d.x) || !finite(d.y) || (drag && drag.id === d.id)) return;
+    const x = clamp(Math.round(d.x), 0, W - NW), y = clamp(Math.round(d.y), 0, H - NH);
+    n.el.classList.add("moving");
+    n.data = { ...n.data, x, y };
+    place(n, x, y);
+  });
+  room.on("note.saved", (d) => d && refetchSoon("notes", d.id));
+  room.on("link.saved", (d) => d && refetchSoon("links", d.id));
+}
+
+// ---------- start ----------
+
+function setEditable() {
+  addBtn.disabled = !canWrite;
+  connectBtn.disabled = !canWrite || notes.size < 2;
+  removeBtn.disabled = !canWrite || !selected;
+  for (const n of notes.values()) {
+    n.ta.readOnly = !canWrite;
+    n.grip.disabled = !canWrite;
+  }
+}
+
+const ROOM_WHY = {
+  opaque_isolation: "this server does not run live rooms",
+  disabled: "live rooms are turned off on this server",
+  not_configured: "live rooms are not set up on this server",
+  not_declared: "this version of the page has no room",
+  preview: "this is a preview",
+  not_identified: "only people the board is shared with see each other",
+  expired: "your access changed",
+  full: "the board has too many people on it",
+  rate_limited: "too many messages were sent",
+  network: "the connection failed",
+};
+const DATA_WHY = {
+  opaque_isolation: "this server does not keep page data",
+  disabled: "page data is turned off on this server",
+  not_declared: "this version of the page keeps no data",
+  preview: "this is a preview",
+  expired: "your access changed",
+  network: "the connection failed",
+};
+
+addBtn.addEventListener("click", addNote);
+removeBtn.addEventListener("click", removeSelected);
+connectBtn.addEventListener("click", () => setConnecting(!connecting));
+for (const b of document.querySelectorAll(".swatch")) {
+  b.addEventListener("click", () => {
+    color = b.dataset.color;
+    for (const o of document.querySelectorAll(".swatch")) o.setAttribute("aria-pressed", String(o === b));
+    if (selected) saveNote(selected, { color });
+  });
+}
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && connecting) setConnecting(false);
+});
+window.addEventListener("plinth:expired", () => {
+  canWrite = false;
+  setEditable();
+  document.body.dataset.expired = "true";
+  notices.data = "Your access changed. Reload the page.";
+  notices.room = "";
+  showNotices();
+});
+
+async function start() {
+  const P = window.plinth;
+  if (!P) {
+    notices.data = "Saving and live cursors are not available here. Notes you add stay in this tab.";
+    showNotices();
+    setEditable();
+    return;
+  }
+  const s = await P.ready;
+  document.body.dataset.dataReason = String(s.reason);
+  if (s.available) {
+    canWrite = s.canWrite;
+    notesC = P.db.collection("notes");
+    linksC = P.db.collection("links");
+    const onErr = (e) => {
+      if (e && e.code === "expired") return; // the plinth:expired handler says it
+      say("Could not load the board. Reload the page.");
+    };
+    notesC.onSnapshot(applyNotes, onErr);
+    linksC.onSnapshot(applyLinks, onErr);
+    if (!canWrite) notices.data = "You can view this board. Only people it is shared with can change it.";
+  } else {
+    canWrite = true;
+    notices.data = `Saving is off here (${DATA_WHY[s.reason] || "it is unavailable"}). Notes you add stay in this tab.`;
+  }
+  setEditable();
+  showNotices();
+
+  const r = await P.room.ready;
+  document.body.dataset.roomReason = String(r.reason);
+  if (r.available) {
+    startRoom(P.room);
+  } else if (!document.body.dataset.expired) {
+    const saves = s.available && canWrite ? " Changes still save." : "";
+    notices.room = `Live cursors are off here (${ROOM_WHY[r.reason] || "the room is unavailable"}).${saves}`;
+    showNotices();
+  }
+}
+start();
+</script>
+</body>
+</html>
