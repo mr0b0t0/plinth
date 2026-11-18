@@ -193,6 +193,9 @@ describe("migration 0010_view_counts", () => {
     await expect(day(body.id, "2026-11-18", 1)).rejects.toThrow();
     await expect(day("no-such-artifact", "2026-11-18", 1)).rejects.toThrow();
     await expect(total("no-such-artifact", 1, "2026-11-18")).rejects.toThrow();
+  });
+});
+
 describe("migration 0009_categories", () => {
   interface Col {
     name: string;
