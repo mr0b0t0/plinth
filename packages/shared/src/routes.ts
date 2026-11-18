@@ -69,6 +69,8 @@ export const API = {
   report: "/artifacts/:ref/report",
   adminReports: "/admin/reports",
   adminReport: "/admin/reports/:id",
+  adminStats: "/admin/stats", // GET instance aggregates (admins only)
+  artifactViews: "/artifacts/:ref/views", // GET open counts (the owner only)
   // shared data (mirror list_artifact_data and write_artifact_data; DELETE clears, owner only)
   data: "/artifacts/:ref/data", // GET summary, POST ops, DELETE all (signed-in owner)
   dataCollection: "/artifacts/:ref/data/:collection", // GET a page

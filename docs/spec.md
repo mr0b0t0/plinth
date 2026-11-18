@@ -320,6 +320,21 @@ records who opened it.
   daily rows, and every total stays correct.
 - **`VIEW_COUNTS`** (default on) turns recording off. Stored counts are kept, and the fold still
   runs.
+- **Owners see their own counts.** The Share dialog shows "Opened N times in the last 30 days · N
+  in all", and `GET /api/v1/artifacts/:ref/views` returns the last 7 and 30 days, a 30-day daily
+  series and the all-time total. It goes through the policy action `views`: the owner only (an
+  agent needs `artifacts:read`); editors, viewers and an admin without a role are denied, and a
+  taken-down artifact answers `taken_down`. Counts are not in `ArtifactSummary`, MCP or anything
+  the app host answers without signing in.
+- **Admins see instance aggregates.** `/admin/stats` (`GET /api/v1/admin/stats?days=7|30|90`,
+  default 30) is for the signed-in people whose email is in `ADMIN_EMAIL`; everyone else, agents
+  included, gets the same 404. It shows people, live artifacts by visibility and taken down,
+  versions and agent versions, storage, shared data, agent connections by client, open reports
+  and opens, with daily series over the window (UTC days, zero-filled). It names no artifact,
+  owner or viewer and has no top-N list, so it is no way around "admins view only reported
+  artifacts". Storage, artifact, version and shared-data totals count live artifacts only (as
+  the quota does); opens of deleted and taken-down artifacts stay in the view totals until a hard
+  erase, and the daily series count activity, including artifacts deleted since.
 
 ### Editing
 
@@ -614,6 +629,8 @@ options.
   Only identified viewers write, stamps come from the server, quotas and write rate limits apply,
   and agents treat every document as untrusted input. Details in `docs/security.md`.
 - **Tokens.** Stored hashed, shown once, revocable per connection, with last-used timestamps.
+- **Open counts are aggregates.** One number per artifact per UTC day, never who opened it, shown
+  only to the artifact's owner and, summed over the instance, to admins.
 - **Quotas and rate limits.** Each account is limited to 100 artifacts by default, set by an
   environment variable with a per-account override. Storage and publishes per hour are capped too.
   Rate limits on password attempts and email codes.
@@ -707,6 +724,8 @@ Open counts run on the same allowances:
 | Counted open (enter) | 0 extra | about 1 | 1, on top of the existing `used_nonces` row |
 | Uncounted enter | 0 | 0 | 0 |
 | Daily fold (cron, 03 UTC) | 0 | the rows older than 90 days, plus the totals rows they touch | about 1 per folded row, plus deletes |
+| Owner opens the Share dialog | 1 | ≤ 92 | 0 |
+| Admin stats page load | 1 | the users, artifacts, versions, connections, data-usage and reports rows, plus view rows in the window | 0 |
 
 At the free tier's 100k rows written a day, an instance can take about 50k counted opens a day,
 with their nonce writes, before any other writes. `VIEW_COUNTS=off` removes the extra write.

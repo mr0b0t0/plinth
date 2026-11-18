@@ -80,6 +80,7 @@ Agents fetch artifact links as text, so the app host answers them without runnin
   `/.well-known/mcp.json` and `/.well-known/mcp/server-card.json`) and `/.well-known/ai-catalog.json`
   carry only configuration. Unknown `/.well-known/` paths and missing files answer `404`, never
   the SPA.
+- None of these ever include open counts.
 
 ## Opaque content isolation
 
@@ -343,6 +344,14 @@ REST, MCP and the content host alike. Roles: owner; editor (view, comment, menti
 commenter (view, comment, mention); viewer (view). Strangers get 404, not 403, so private artifacts
 do not reveal that they exist. Agents act as their user, further limited by token scopes
 (`artifacts:read`, `artifacts:write`, `mentions`).
+
+An artifact's open counts ([spec](spec.md#admin-stats-and-view-counts)) are behind their own
+policy action, `views`: the owner only, a read action for agents (`artifacts:read`). Editors and
+viewers get 403 and strangers 404, and an admin without a role is denied like anyone else. The
+admin Stats page (`GET /api/v1/admin/stats`) checks the current `ADMIN_EMAIL` at the route and
+again in the service, and answers everyone else, agents included, with the same 404 as an unknown
+endpoint. It returns instance-wide aggregates only: no statement selects an artifact's id, slug
+or title, an owner or an email, so it reveals nothing about any artifact an admin may not view.
 
 ## Tokens and secrets
 
