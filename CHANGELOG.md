@@ -10,6 +10,9 @@ Add a line under **Unreleased** in the pull request that makes a change people w
 
 ## Unreleased
 
+- **MCP tool annotations.** Every tool now says whether it only reads, whether it can remove
+  data, and whether repeating it is safe, so clients can ask before the right calls and directories
+  (Anthropic's connector directory requires them) can list Plinth.
 - **The plugin's Plinth server loads in Codex and GitHub Copilot CLI.** Plugin 0.10.0 put a field
   in its `mcp.json` server entry that the Agent Plugins schema doesn't allow, so Codex and Copilot
   CLI installed the skill but skipped the server (Copilot logs `field "extensions" is not
