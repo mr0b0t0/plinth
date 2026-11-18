@@ -19,7 +19,8 @@
 //      gate redirect;
 //   9. the declaration (`data`);
 //  10. policy (policy.ts, through services/data.ts), rate limits, quotas, the guarded write.
-// Bodies and document contents are never logged.
+// Bodies and document contents are never logged. Routes are entries of DATA_API_ROUTES, and the
+// dispatcher runs these checks before any handler, so a route cannot skip them.
 //
 // GET /__plinth/api/v1/room (live rooms, #36) shares checks 1 to 4, then branches to roomInfo()
 // in content/room.ts, which has its own availability, artifact, pass and policy steps: a page
@@ -28,7 +29,7 @@ import { CONTENT_DATA_HEADER, CONTENT_RESERVED_PREFIX, dataObjectSchema } from "
 import { z } from "zod";
 import { type Bindings, type Config, contentOrigin, sharedDataActive } from "../config.ts";
 import { ApiError } from "../lib/errors.ts";
-import { pageDataAccess } from "../policy.ts";
+import { type PageClaim, pageDataAccess } from "../policy.ts";
 import { versionCapabilities } from "../services/artifacts.ts";
 import {
   changes,
@@ -76,40 +77,18 @@ function errorResponse(config: Config, e: ApiError): Response {
 
 const refuse = (message: string) => new ApiError("forbidden", message);
 
-type Route =
-  | { kind: "session" }
-  | { kind: "room" }
-  | { kind: "changes" }
-  | { kind: "collection"; collection: string }
-  | { kind: "doc"; collection: string; docId: string };
-
-const ROUTE_METHODS: Record<Route["kind"], ReadonlySet<string>> = {
-  session: new Set(["GET"]),
-  room: new Set(["GET"]),
-  changes: new Set(["GET"]),
-  collection: new Set(["GET", "POST"]),
-  doc: new Set(["GET", "PUT", "DELETE"]),
-};
-
-function parseRoute(path: string): Route | null {
+/** The decoded path segments after /__plinth/api/v1/, or null outside it. */
+function pathSegments(path: string): string[] | null {
   if (!path.startsWith(V1)) return null;
-  const parts = path.slice(V1.length).split("/");
   const seg: string[] = [];
-  for (const p of parts) {
+  for (const p of path.slice(V1.length).split("/")) {
     try {
       seg.push(decodeURIComponent(p));
     } catch {
       throw new ApiError("invalid_input", "Bad path");
     }
   }
-  if (seg.length === 1 && seg[0] === "session") return { kind: "session" };
-  if (seg.length === 1 && seg[0] === "room") return { kind: "room" };
-  if (seg.length === 1 && seg[0] === "changes") return { kind: "changes" };
-  if (seg[0] === "data" && seg.length === 2 && seg[1])
-    return { kind: "collection", collection: seg[1] };
-  if (seg[0] === "data" && seg.length === 3 && seg[1] && seg[2])
-    return { kind: "doc", collection: seg[1], docId: seg[2] };
-  return null;
+  return seg;
 }
 
 /** Checks 2 to 4: the request must come from this artifact's own page, by fetch. */
@@ -211,6 +190,171 @@ async function loadTarget(env: Bindings, artifactId: string) {
   };
 }
 
+// ---------- routes ----------
+
+/** What a handler on the shared-data pipeline gets, after checks 1 to 10 passed. */
+export interface DataRouteCtx {
+  request: Request;
+  env: Bindings;
+  config: Config;
+  method: string;
+  url: URL;
+  params: Record<string, string>;
+  /** The parsed JSON body (check 6) for POST and PUT, else undefined. */
+  body: unknown;
+  target: DataTarget;
+  claim: PageClaim | null;
+  access: ReturnType<typeof pageDataAccess>;
+  /** The page writer, or null for a read-only caller. */
+  writer: DataWriter | null;
+  view: (row: Parameters<typeof toPageDoc>[0]) => ReturnType<typeof toPageDoc>;
+}
+
+/** What a handler with its own steps gets, after checks 1 to 4 (and 6) passed. */
+export interface OwnRouteCtx {
+  request: Request;
+  env: Bindings;
+  config: Config;
+  artifactId: string;
+  params: Record<string, string>;
+  /** The parsed JSON body (check 6) for POST and PUT, else undefined. */
+  body: unknown;
+}
+
+interface RouteBase {
+  kind: string;
+  /** The route's params from the decoded segments after v1/, or null when it does not match. */
+  match: (seg: string[]) => Record<string, string> | null;
+  methods: readonly string[];
+  /** An example path after v1/, for the test that runs every check on every route. */
+  example: string;
+  /** Refuse a request without an Origin header, even a read (check 4 always refuses a wrong one). */
+  requireOrigin?: boolean;
+}
+
+/**
+ * One entry of the route table. `data` routes run every check, 1 to 10, before the handler;
+ * `reportsUnavailable` answers 200 `{ available: false, reason }` instead of refusing when shared
+ * data is off or not declared (the session). `own` routes run checks 1 to 4 (and 6 for a body)
+ * in the dispatcher, then take their own availability, artifact, pass and policy steps: the live
+ * room, which has no shared data and may be on where shared data is off.
+ */
+export type DataApiRoute =
+  | (RouteBase & {
+      pipeline: "data";
+      reportsUnavailable?: boolean;
+      handler: (c: DataRouteCtx) => Promise<Response>;
+    })
+  | (RouteBase & { pipeline: "own"; handler: (c: OwnRouteCtx) => Promise<Response> });
+
+const one = (name: string) => (seg: string[]) =>
+  seg.length === 1 && seg[0] === name ? ({} as Record<string, string>) : null;
+
+/**
+ * Every route under /__plinth/api/v1/, one per entry. A feature adds its route here and never
+ * re-implements or skips the dispatcher's checks.
+ */
+export const DATA_API_ROUTES: readonly DataApiRoute[] = [
+  {
+    kind: "session",
+    match: one("session"),
+    methods: ["GET"],
+    example: "session",
+    pipeline: "data",
+    reportsUnavailable: true,
+    handler: async (c) =>
+      respond(c.config, 200, await session(c.env.DB, c.config, c.target, c.claim)),
+  },
+  {
+    kind: "room",
+    match: one("room"),
+    methods: ["GET"],
+    example: "room",
+    pipeline: "own",
+    handler: async (c) =>
+      respond(c.config, 200, await roomInfo(c.request, c.env, c.config, c.artifactId)),
+  },
+  {
+    kind: "changes",
+    match: one("changes"),
+    methods: ["GET"],
+    example: "changes",
+    pipeline: "data",
+    handler: async (c) => respond(c.config, 200, await changes(c.env.DB, c.target.id)),
+  },
+  {
+    kind: "collection",
+    match: (seg) =>
+      seg[0] === "data" && seg.length === 2 && seg[1] ? { collection: seg[1] } : null,
+    methods: ["GET", "POST"],
+    example: "data/tasks",
+    pipeline: "data",
+    handler: collectionRoute,
+  },
+  {
+    kind: "doc",
+    match: (seg) =>
+      seg[0] === "data" && seg.length === 3 && seg[1] && seg[2]
+        ? { collection: seg[1], docId: seg[2] }
+        : null,
+    methods: ["GET", "PUT", "DELETE"],
+    example: "data/tasks/a1",
+    pipeline: "data",
+    handler: docRoute,
+  },
+];
+
+function matchRoute(path: string): { route: DataApiRoute; params: Record<string, string> } | null {
+  const seg = pathSegments(path);
+  if (!seg) return null;
+  for (const route of DATA_API_ROUTES) {
+    const params = route.match(seg);
+    if (params) return { route, params };
+  }
+  return null;
+}
+
+async function collectionRoute(c: DataRouteCtx): Promise<Response> {
+  const collection = c.params.collection as string;
+  if (c.method === "POST") {
+    const { data } = parseBody(postBody, c.body);
+    return respond(
+      c.config,
+      201,
+      c.view(await createDoc(c.env.DB, c.config, c.target, c.writer, collection, data)),
+    );
+  }
+  const cursor = c.url.searchParams.get("cursor");
+  if (cursor !== null && cursor.length > 400) throw new ApiError("invalid_input", "Bad cursor");
+  const page = await listDocs(c.env.DB, c.target.id, collection, {
+    limit: intParam(c.url.searchParams.get("limit"), "limit", 1, 200) ?? 50,
+    cursor,
+  });
+  return respond(c.config, 200, { docs: page.docs.map(c.view), next_cursor: page.next_cursor });
+}
+
+async function docRoute(c: DataRouteCtx): Promise<Response> {
+  const collection = c.params.collection as string;
+  const rawId = c.params.docId as string;
+  const d1 = c.env.DB;
+  if (c.method === "GET") {
+    const docId = resolveDocId(rawId, c.claim?.viewerId ?? null);
+    const row = docId ? await getDoc(d1, c.target.id, collection, docId) : null;
+    if (!row) throw new ApiError("not_found", "Document not found");
+    return respond(c.config, 200, c.view(row));
+  }
+  if (c.method === "PUT") {
+    const { data, if_rev } = parseBody(putBody, c.body);
+    const r = await putDoc(d1, c.config, c.target, c.writer, collection, rawId, data, if_rev);
+    return respond(c.config, r.created ? 201 : 200, c.view(r.doc));
+  }
+  const ifRev = intParam(c.url.searchParams.get("if_rev"), "if_rev", 1, 999_999_999);
+  await deleteDoc(d1, c.config, c.target, c.writer, collection, rawId, ifRev);
+  return respond(c.config, 204, null);
+}
+
+// ---------- the dispatcher ----------
+
 export async function serveDataApi(
   request: Request,
   env: Bindings,
@@ -226,6 +370,7 @@ export async function serveDataApi(
   }
 }
 
+/** Checks 1 to 10, in order, for every route; then the route's handler. */
 async function handle(
   request: Request,
   env: Bindings,
@@ -241,19 +386,27 @@ async function handle(
   if (!METHODS.has(method)) return notAllowed();
   // 2 to 4. Caller.
   checkCaller(request, config, artifactId);
-  const route = parseRoute(path);
-  if (!route) throw new ApiError("not_found", "Not found");
-  if (!ROUTE_METHODS[route.kind].has(method)) return notAllowed();
+  const matched = matchRoute(path);
+  if (!matched) throw new ApiError("not_found", "Not found");
+  const { route, params } = matched;
+  if (!route.methods.includes(method)) return notAllowed();
+  if (route.requireOrigin && request.headers.get("origin") === null) {
+    throw refuse("Cross-origin requests are refused");
+  }
 
-  // The live room's availability: its own steps after the caller checks (content/room.ts).
-  if (route.kind === "room") {
-    return respond(config, 200, await roomInfo(request, env, config, artifactId));
+  // A route with its own steps after the caller checks (the live room, content/room.ts).
+  if (route.pipeline === "own") {
+    let body: unknown;
+    if (method === "POST" || method === "PUT") {
+      body = await readJsonBody(request, config.data.maxDocBytes + 1024);
+    }
+    return route.handler({ request, env, config, artifactId, params, body });
   }
 
   // 5. Availability, before any cookie: under opaque isolation there are none.
   const off = unavailableReason(config, null, { assumeDeclared: true });
   if (off) {
-    if (route.kind === "session") return respond(config, 200, { available: false, reason: off });
+    if (route.reportsUnavailable) return respond(config, 200, { available: false, reason: off });
     throw new ApiError("feature_disabled", "Shared data is not available here", { reason: off });
   }
 
@@ -280,7 +433,7 @@ async function handle(
   // shared data: its pass carries no identity and is meant for one look at the page.
   const reason = pass.preview ? "preview" : unavailableReason(config, target.caps);
   if (reason) {
-    if (route.kind === "session") return respond(config, 200, { available: false, reason });
+    if (route.reportsUnavailable) return respond(config, 200, { available: false, reason });
     const message =
       reason === "preview"
         ? "Shared data is not available in a preview"
@@ -296,56 +449,18 @@ async function handle(
     access.write && claim
       ? { email: claim.email, role: claim.role, viewerId: claim.viewerId, via: "page" }
       : null;
-  const d1 = env.DB;
-  const url = new URL(request.url);
-  const view = (row: Parameters<typeof toPageDoc>[0]) => toPageDoc(row, claim, access.seeIdentity);
-
-  switch (route.kind) {
-    case "session":
-      return respond(config, 200, await session(d1, config, target, claim));
-    case "changes":
-      return respond(config, 200, await changes(d1, target.id));
-    case "collection": {
-      if (method === "POST") {
-        const { data } = parseBody(postBody, body);
-        return respond(
-          config,
-          201,
-          view(await createDoc(d1, config, target, writer, route.collection, data)),
-        );
-      }
-      const cursor = url.searchParams.get("cursor");
-      if (cursor !== null && cursor.length > 400) throw new ApiError("invalid_input", "Bad cursor");
-      const page = await listDocs(d1, target.id, route.collection, {
-        limit: intParam(url.searchParams.get("limit"), "limit", 1, 200) ?? 50,
-        cursor,
-      });
-      return respond(config, 200, { docs: page.docs.map(view), next_cursor: page.next_cursor });
-    }
-    case "doc": {
-      if (method === "GET") {
-        const docId = resolveDocId(route.docId, claim?.viewerId ?? null);
-        const row = docId ? await getDoc(d1, target.id, route.collection, docId) : null;
-        if (!row) throw new ApiError("not_found", "Document not found");
-        return respond(config, 200, view(row));
-      }
-      if (method === "PUT") {
-        const { data, if_rev } = parseBody(putBody, body);
-        const r = await putDoc(
-          d1,
-          config,
-          target,
-          writer,
-          route.collection,
-          route.docId,
-          data,
-          if_rev,
-        );
-        return respond(config, r.created ? 201 : 200, view(r.doc));
-      }
-      const ifRev = intParam(url.searchParams.get("if_rev"), "if_rev", 1, 999_999_999);
-      await deleteDoc(d1, config, target, writer, route.collection, route.docId, ifRev);
-      return respond(config, 204, null);
-    }
-  }
+  return route.handler({
+    request,
+    env,
+    config,
+    method,
+    url: new URL(request.url),
+    params,
+    body,
+    target,
+    claim,
+    access,
+    writer,
+    view: (row) => toPageDoc(row, claim, access.seeIdentity),
+  });
 }
