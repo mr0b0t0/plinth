@@ -16,7 +16,7 @@ Status on 2026-11-14: **deployed** at <https://plinth.aconite.io>, with artifact
 | `ADMIN_EMAIL` | The maintainer's address |
 | Operator (legal pages) | `OPERATOR_NAME="Aconite Software & Investments, Lda."`, `OPERATOR_ADDRESS="Avenida República da Bulgária, Lote 15, Loja A, 1950-375 Lisboa, Portugal"`, `OPERATOR_REGISTRATION="VAT PT516696696"`, `OPERATOR_EMAIL=hello@aconite.io` |
 | Browser Rendering | `BROWSER` binding, for thumbnails and link-preview images (0.4.1); `THUMBNAILS` uses its default (on) |
-| Live rooms (#36) | Not deployed yet. Before the first deploy with the `ROOMS` binding, `ALLOW_ROOMS` and `ALLOW_LIVE_EDITING` are set to `"false"` explicitly (both default on), until the privacy notice covers presence and unsaved page edits ([deploy-checklist.md](deploy-checklist.md#5-human-steps-to-go-live), step 13) |
+| Live rooms (#36) | Not deployed yet. `ALLOW_ROOMS` and `ALLOW_LIVE_EDITING` use their defaults (on) once the config has the `ROOMS` binding; `LIVE_DRAFT_RETENTION_DAYS` stays at 30. The privacy notice covers presence and unsaved page edits ([deploy-checklist.md](deploy-checklist.md#5-human-steps-to-go-live), step 13) |
 | Compatibility and cron | `nodejs_compat` and `enable_request_signal`; hourly cron `0 * * * *` for the staging sweep and upload-ticket pruning (0.4.0) |
 | Config file | `apps/worker/wrangler.production.jsonc` (git-ignored; written by `scripts/setup.mjs`) |
 
@@ -134,13 +134,13 @@ After the 2026-11-18 deploy (`bb25eb8`, migrations `0009` and `0010` applied fir
 1. **Public Suffix List** (optional): submit `plinthusercontent.com` to the private section so that
    artifacts are separate sites from each other, not only from the app (see
    [deploy-checklist.md](deploy-checklist.md#public-suffix-list)).
-2. **Live rooms** (#36), with the release that brings them: add `"ALLOW_ROOMS": "false"` and
-   `"ALLOW_LIVE_EDITING": "false"` to the `vars` of `wrangler.production.jsonc`, then re-run
+2. **Live rooms** (#36), with the release that brings them: re-run
    `scripts/setup.mjs --remote --env production` with the original arguments (it adds the `ROOMS`
-   binding and the `rooms-v1` migration and keeps the vars) or add both keys by hand
-   ([deploy-checklist.md](deploy-checklist.md#live-rooms)). The redeploy below applies migration
-   `0011_live_drafts` first. Once the privacy notice covers presence and unsaved page edits,
-   turning them on is a change to those two vars and a redeploy.
+   binding and the `rooms-v1` migration and keeps the vars) or add both keys to
+   `wrangler.production.jsonc` by hand ([deploy-checklist.md](deploy-checklist.md#live-rooms)).
+   The redeploy below applies migration `0011_live_drafts` first. The privacy notice covers
+   presence and unsaved page edits, so rooms and on-page editing go live with that deploy; setting
+   `ALLOW_ROOMS` and `ALLOW_LIVE_EDITING` to `"false"` and redeploying turns them off.
 
 ## Redeploy
 

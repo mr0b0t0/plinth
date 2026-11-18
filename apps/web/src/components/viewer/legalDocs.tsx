@@ -206,6 +206,12 @@ function privacy(op: OperatorInfo, cfg: LegalConfig): LegalDoc {
               pages, never page by page.
             </li>
             <li>
+              <strong>Unsaved page edits</strong>: when you edit a document on its page, we keep the
+              unsaved draft and who last changed it until it is saved as a version or discarded, and
+              for at most 30 days. Who is on a page, where their cursor is, and live messages
+              between people on a page are passed along and never stored.
+            </li>
+            <li>
               <strong>Technical logs</strong>: IP addresses, times and requests, to keep the service
               secure and stop abuse.
             </li>
@@ -246,6 +252,7 @@ function privacy(op: OperatorInfo, cfg: LegalConfig): LegalDoc {
               page.
             </li>
             <li>How often a page was opened: until the page's stored copy is erased.</li>
+            <li>Unsaved page drafts: until saved or discarded, at most 30 days.</li>
             <li>
               A deleted artifact disappears from Plinth at once. Its stored copy is erased when you
               ask us to, or when your account is closed.

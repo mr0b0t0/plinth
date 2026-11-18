@@ -40,6 +40,16 @@ describe("Legal", () => {
     );
   });
 
+  it("the privacy notice covers unsaved page edits and says live room traffic is never stored", async () => {
+    stubApi();
+    render(<Legal params={{ doc: "privacy" }} />);
+    await screen.findByRole("heading", { level: 1 });
+    const text = (document.body.textContent ?? "").replace(/\s+/g, " ");
+    expect(text).toContain("Unsaved page edits: when you edit a document on its page");
+    expect(text).toContain("are passed along and never stored.");
+    expect(text).toContain("Unsaved page drafts: until saved or discarded, at most 30 days.");
+  });
+
   it("publishes no terms or privacy notice without an operator, but keeps the acceptable use policy", () => {
     expect(legalDoc("terms", personal)).toBeNull();
     expect(legalDoc("privacy", personal)).toBeNull();

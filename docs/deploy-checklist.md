@@ -413,12 +413,13 @@ These need accounts, money or legal judgement, so no script does them.
     write, and the identity in the viewing cookie). An operator with a privacy notice of their own
     should cover the same, or set `ALLOW_SHARED_DATA` to `"false"`.
 13. Live rooms and on-page doc editing are on unless `ALLOW_ROOMS` and `ALLOW_LIVE_EDITING` are set
-    to a false value, once the config has the `ROOMS` binding (a setup re-run adds it). **Hosted
-    instance:** set both to `"false"` in `wrangler.production.jsonc` before the first deploy with
-    the binding, and keep them off until the privacy notice covers presence (who has a page open,
-    shown to the others in its room) and unsaved page edits (kept in D1, with who made them, until
-    someone saves or discards them, or for `LIVE_DRAFT_RETENTION_DAYS`). An operator with a privacy
-    notice of their own should cover the same, or set both to `"false"`.
+    to a false value, once the config has the `ROOMS` binding (a setup re-run adds it). The hosted
+    instance's privacy notice covers them, so it may run with both on: unsaved page edits (the
+    draft and who last changed it, kept in D1 until someone saves or discards it, and for at most
+    `LIVE_DRAFT_RETENTION_DAYS`, 30 by default) and presence (who has a page open, where their
+    cursor is, and live messages between them, passed along and never stored). An operator with a
+    privacy notice of their own should cover the same, or set both to `"false"`; one who raises
+    `LIVE_DRAFT_RETENTION_DAYS` should say so in their notice.
 14. Turn on GitHub private vulnerability reporting for the repository (see
     [security.md](security.md)).
 15. Watch the first days with `wrangler tail` and the Cloudflare analytics for the Worker, D1 and
