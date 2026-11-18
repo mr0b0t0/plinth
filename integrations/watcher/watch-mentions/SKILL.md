@@ -1,9 +1,13 @@
 ---
 name: watch-mentions
-description: Connect, check or disconnect the Plinth mention watcher, which brings new @mentions on the user's Plinth artifacts into open Claude Code sessions without being asked. Use when the user wants mentions picked up automatically, asks whether the watcher is on, or wants to turn it off.
+description: Claude Code only. Connect, check or disconnect the Plinth mention watcher, which brings new @mentions on the user's Plinth artifacts into open Claude Code sessions without being asked. Use when the user wants mentions picked up automatically, asks whether the watcher is on, or wants to turn it off.
 ---
 
 # Plinth mention watcher
+
+This works only in Claude Code: the watcher, its monitor and its start-up hook are Claude Code
+plugin features. In any other client (Codex, Copilot CLI, Gemini CLI), tell the user the watcher
+is not available there, and offer to check for waiting requests with `list_mentions` instead.
 
 The Plinth plugin runs a small background monitor in every Claude Code session. Once it is
 connected, it checks Plinth every 30 seconds and tells you when a new @mention request is waiting.

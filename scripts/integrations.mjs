@@ -140,9 +140,11 @@ outputs.set(
     $schema: "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
     mcpServers: {
       [SERVER_NAME]: {
+        // Only the fields the Agent Plugins schema allows (type, url, headers). Any other field,
+        // `extensions` included, makes the entry invalid, and Codex and Copilot CLI then skip the
+        // server. OAuth needs no hint: clients find it from the server's 401.
         type: "streamable-http",
         url: hostedMcp,
-        extensions: { "com.openai": { auth: { type: "oauth" } } },
       },
     },
   }),
