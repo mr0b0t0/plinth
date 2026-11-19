@@ -38,12 +38,18 @@ test("comments from the page work with an opaque-origin frame", async ({ page })
   await expect(board(page).locator("h1")).toHaveText("Sketch board", { timeout: 15_000 });
   const body = board(page).locator("body");
   expect(await body.evaluate(() => self.origin)).toBe("null");
-  expect(
-    await body.evaluate(
+  // The heading renders before the runtime script after it has loaded: wait for the runtime.
+  await expect
+    .poll(
       () =>
-        (window as unknown as { plinth: { comments: { ready: unknown } } }).plinth.comments.ready,
-    ),
-  ).toEqual({ available: true, reason: null });
+        body.evaluate(
+          () =>
+            (window as unknown as { plinth?: { comments?: { ready: unknown } } }).plinth?.comments
+              ?.ready ?? null,
+        ),
+      { timeout: 15_000 },
+    )
+    .toEqual({ available: true, reason: null });
   await body.evaluate(() => {
     (window as unknown as { __mark: number }).__mark = 7;
   });

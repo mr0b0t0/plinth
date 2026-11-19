@@ -21,11 +21,17 @@ const board = (page: Page): FrameLocator => page.frameLocator(CURRENT_FRAME);
 async function open(page: Page, slug: string) {
   await page.goto(`/a/${slug}`);
   await expect(board(page).locator("h1")).toHaveText("Sketch board", { timeout: 15_000 });
-  // The board said hello at load, and the app welcomed it.
-  const ready = await board(page)
-    .locator("body")
-    .evaluate(() => window.plinth.comments.ready);
-  expect(ready).toEqual({ available: true, reason: null });
+  // The board said hello at load, and the app welcomed it. The heading renders before the
+  // runtime script after it has loaded, so wait for the runtime rather than read it once.
+  await expect
+    .poll(
+      () =>
+        board(page)
+          .locator("body")
+          .evaluate(() => window.plinth?.comments?.ready ?? null),
+      { timeout: 15_000 },
+    )
+    .toEqual({ available: true, reason: null });
 }
 
 /** Marks the frame's document, so a reload (a new document) would lose the mark. */
