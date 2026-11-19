@@ -574,7 +574,8 @@ describe("the viewer gate", () => {
       },
     ]);
     expect(JSON.stringify(gate)).not.toContain(LINEAR.recipe);
-    expect(JSON.stringify(gate)).not.toMatch(/config_hash|target/);
+    // Any `target…` key, except Ask an agent's `ask.targets` (client types), which is no source's.
+    expect(JSON.stringify(gate)).not.toMatch(/config_hash|"target(?!s")/);
   });
 
   it("gives each source's age from the stamps still stored, so losing the freshest one makes it older", async () => {

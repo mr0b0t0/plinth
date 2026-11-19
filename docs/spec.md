@@ -359,7 +359,7 @@ One remote MCP server over streamable HTTP at `/mcp`. All tools act as the conne
 | `list_versions(id)` | Version history with notes and authors |
 | `restore_version(id, version)` | Make an old version current by publishing it as a new one |
 | `set_visibility(id, visibility, emails?, password?, notify?)` | Change who can view. `notify: true` emails the people `emails` adds ([Invitation emails](#invitation-emails-decided-2026-11-19)) |
-| `list_mentions(state?)` | Pending requests addressed to this agent |
+| `list_mentions(state?)` | Pending requests addressed to this agent (from `@mentions`, Ask an agent and page requests) |
 | `claim_mention(task_id)` | Lock a request so two agents do not both act on it |
 | `reply_comment(comment_id, body, result_version?, done?, failed?)` | Answer in the thread and complete the claimed task: `result_version` (done with a version), `done` (done without one) or `failed`, at most one. On a page request, the requester's page shows the reply text, with no author |
 | `list_comments(id)` | Every comment thread on an artifact, for addressing feedback. A thread whose root has `kind: "page_request"` is listed only for the owner, editors and its requester |
@@ -815,6 +815,17 @@ A page that declares `requests` files tasks into the same pull queue from its ow
 people who could mention the agent themselves: see
 [Page requests](#page-requests-decided-2026-11-19). Such a task says `source: "page"` and carries no
 owner authority.
+
+**Ask an agent** posts an ordinary comment whose target
+travels in a structured field, never as `@name` text: `request_to` on `POST
+/api/v1/artifacts/:ref/comments` is one of the client types (`claude`, `codex` or `other`), accepted
+on a root comment only (400 `invalid_input`, reason `reply`, on a reply). It makes one task for the
+owner's connections of that client type, target label `@claude`, `@codex` or `@agent` (`other`
+covers every client that is not Claude or Codex, which no `@name` reaches), unless the body already
+names that type. It is refused with 400 `invalid_input`, reason `no_agent`, and nothing is written,
+when the owner has no connection of that type that can take mentions (not revoked, not limited to
+one artifact, with the `mentions` scope). An agent's `request_to`, like its `@mentions`, creates no
+task.
 
 ### Shared data and viewer identity
 

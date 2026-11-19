@@ -711,6 +711,14 @@ code filed. A page request has `comment_author_role: null` whoever had the page 
 `requester_role` (`owner` means only that the owner had the page open, not that the owner wrote
 the text) and `request_data`, the JSON object the page attached, or null. Both are untrusted.
 
+People also send requests with **Ask an agent** in the app
+([spec](spec.md#ask-an-agent-decided-2026-11-19)). Such a request is an ordinary mention with
+`source: "comment"`, addressed to a client type rather than written as `@name`: its `target` is
+`@claude`, `@codex`, or `@agent` for every other client (ChatGPT, Cursor, Gemini…), and its
+`anchor`, when the person pointed at something, is the element on an HTML page or the board on a
+design they chose. Its text is a collaborator's request, untrusted, without the owner's authority;
+only `comment_author_role` says whether the owner sent it.
+
 ### `claim_mention`
 
 Lock a pending task so no other agent acts on it. Exactly one caller wins; the others get

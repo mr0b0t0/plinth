@@ -634,6 +634,17 @@ export type ViewGate =
        * HTML artifact whose current version declares `requests`, for an identified viewer.
        */
       requests?: ViewGateRequests;
+      /**
+       * Ask an agent (docs/spec.md "Ask an agent"): present for everyone who may mention the
+       * owner's agents here (the owner, editors and commenters, never agents). Its targets may be
+       * empty: the request is then posted as a plain comment.
+       */
+      ask?: ViewGateAsk;
+      /**
+       * Editing on the page is off for this owner or editor of a live type on the current
+       * version, and why: the Edit slot shows Ask an agent instead. Never together with `live`.
+       */
+      live_off?: ViewGateLiveOff;
     }
   | { status: "password_required"; artifact: ViewArtifactStub }
   | { status: "email_required"; artifact: ViewArtifactStub }
@@ -670,6 +681,22 @@ export interface ViewGateLive {
   /** Confirmed by code without an account: they can watch, and must sign in to edit. */
   sign_in?: true;
   draft: LiveDraftInfo | null;
+}
+
+/**
+ * Who a request from Ask an agent can go to: the client types of the owner's connections that can
+ * take mentions (not revoked, not limited to one artifact, with the `mentions` scope), in
+ * CLIENT_TYPES order. Never a connection's label or id.
+ */
+export interface ViewGateAsk {
+  targets: ClientType[];
+}
+
+/** Why editing on the page is off (ALLOW_LIVE_EDITING off, or opaque isolation). */
+export type LiveOffReason = "disabled" | "isolation";
+
+export interface ViewGateLiveOff {
+  reason: LiveOffReason;
 }
 
 /** Unsaved page edits, as an editor is told about them. */

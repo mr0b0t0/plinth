@@ -102,6 +102,17 @@ export const MENTION_AGENT_NAMES = {
 };
 
 /**
+ * The target label of a task that Ask an agent creates (`request_to`), per client type. `other`
+ * covers every client that is not Claude or Codex (ChatGPT, Cursor, Gemini…), which no `@name`
+ * reaches.
+ */
+export const REQUEST_TARGET_LABELS = {
+  claude: "@claude",
+  codex: "@codex",
+  other: "@agent",
+};
+
+/**
  * The client type a mention name stands for, or null. An own-key lookup, so a name such as
  * "constructor" or "toString" is never mistaken for an agent name through Object.prototype.
  */

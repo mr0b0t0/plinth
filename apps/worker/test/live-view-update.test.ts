@@ -99,7 +99,12 @@ describe("the gate's hold field", () => {
     const { a, id, headers } = await owned();
     const g = await gate(headers, id);
     expect(g.hold).toBe(true);
-    expect(Object.keys(g).at(-1)).toBe("hold");
+    // Ask an agent's part comes after it, for everyone who may mention (this owner too).
+    expect(
+      Object.keys(g)
+        .filter((k) => k !== "ask")
+        .at(-1),
+    ).toBe("hold");
     // The current version's declaration governs, on a version link too.
     const put = await call(`/api/v1/artifacts/${id}`, {
       method: "PUT",

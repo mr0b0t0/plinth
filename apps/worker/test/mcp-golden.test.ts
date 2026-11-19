@@ -30,6 +30,8 @@
 // claim_mention's "act with" sentence, reply_comment's `done` input and its page-request
 // sentence, and "(from comments or from pages)" in the instructions.
 // Invitation emails add set_visibility's `notify` input and its sentence in the description.
+// Ask an agent adds list_mentions' sentence on requests sent from the app (the "@agent" target
+// for every other client) and the untrusted note's Ask an agent sentence, on every instance.
 import { describe, expect, it } from "vitest";
 import { PREVIEW_RESOURCE_URI } from "../src/mcp/preview.ts";
 import { agent, mcpClient } from "./helpers.ts";
@@ -82,7 +84,7 @@ const NAMES = [
 ];
 
 const RESOURCES = "8c9a70350ae4c13067ef489e651d5f5eafe12471c2c63f7c925f9d3bf5bf5e78";
-const INSTRUCTIONS = "de92f8fd37dbcf7b1d04f9685181ba84c1feaf83cae2160f6fdbeaf0b5da9a46";
+const INSTRUCTIONS = "083d01ca9cf39df759663515687313a4937ea40ba6a08f158f6e5cdf6f3c49a0";
 /** Every pin but "category sharing on" is the surface with category sharing off. */
 const OFF = { ALLOW_CATEGORY_SHARING: "false" };
 
@@ -90,7 +92,7 @@ describe("MCP surface (golden)", () => {
   it("origin isolation", async () => {
     expect(await surface(OFF)).toEqual({
       names: NAMES,
-      tools: "ee727bb077349c73f790fcadfca41c1d26879f87684be43dca4e20ebd621dd03",
+      tools: "21c3b203ac08ca0dcfb8589cd4caed476fe3b5a5b496b6f59a9bf6da778d08f8",
       resources: RESOURCES,
       preview: "fd84092d5ecc5a28f494373097e8a3b6e27065d5ef6928f3e124c634f8cf6f47",
       instructions: INSTRUCTIONS,
@@ -100,7 +102,7 @@ describe("MCP surface (golden)", () => {
   it("opaque isolation", async () => {
     expect(await surface({ ...OFF, CONTENT_ISOLATION: "opaque" })).toEqual({
       names: NAMES,
-      tools: "2423eccaea73ec89b57ac692b8d20a148d0642663b46864dcade9e4120757587",
+      tools: "631c94626669aa74ed6642010c281bc2bbc4ca1069b1d75b2ec4506c260ed253",
       resources: RESOURCES,
       preview: "257bbf5bb47164c389849fffa7fc1dd46e6e7c20e4ef616b4bffefb53a8fd08b",
       instructions: INSTRUCTIONS,
@@ -112,7 +114,7 @@ describe("MCP surface (golden)", () => {
       await surface({ ...OFF, STAGING_CONTENT_FALLBACK: "true", CONTENT_ISOLATION: "opaque" }),
     ).toEqual({
       names: NAMES,
-      tools: "9360c921e63a7e1de4abbb3fce456bd519eb988d6729dff5e74b5eaff8729d65",
+      tools: "a1f25977ecd4175162d39325b71b93dc3a3d104a683193628855a8483eb11ae0",
       resources: RESOURCES,
       preview: "257bbf5bb47164c389849fffa7fc1dd46e6e7c20e4ef616b4bffefb53a8fd08b",
       instructions: INSTRUCTIONS,
@@ -122,10 +124,10 @@ describe("MCP surface (golden)", () => {
   it("category sharing on (the default): the share note and the instructions' sentence", async () => {
     expect(await surface()).toEqual({
       names: NAMES,
-      tools: "0f8273ad746c3a99b3a97b0777ac35845a9e7daa339acec0c27ca2b911ea26cc",
+      tools: "7f91997320fd6b821be277986c679d2ef0b10f4aebb3243f322fc9388633852b",
       resources: RESOURCES,
       preview: "fd84092d5ecc5a28f494373097e8a3b6e27065d5ef6928f3e124c634f8cf6f47",
-      instructions: "141a818ae8521ca40c082d6d4134028015b5205ce2b46642b82dc9a0da6e78db",
+      instructions: "cc88f888cc6fb8bf839db71477685a18352792152d589a95b60eb4959bccd7f7",
     });
   });
 });
