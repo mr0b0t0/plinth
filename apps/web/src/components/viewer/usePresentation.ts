@@ -1,8 +1,9 @@
 // Presenting a deck (an artifact whose type has `present`, the slides type) from the viewer: the
 // slide the frame is on, Present (the app puts its own frame full screen), Presenter view (the
-// frame shows notes, the next slide and a timer) with an optional audience window in step, and
-// printing. The app only ever handles slide numbers and view names; the deck's text stays in the
-// frame, on the artifact's own origin.
+// frame shows notes, the next slide and a timer) with an optional audience window in step,
+// printing, and the .pptx download (the frame builds and saves the file; the app sends a nonce and
+// hears back booleans and a count). The app only ever handles slide numbers and view names; the
+// deck's text stays in the frame, on the artifact's own origin.
 //
 // The slide is kept in the app URL's fragment (#slide=N), written with history.replaceState and
 // never sent to the server, so a reload or a shared link opens the same slide. A new frame (a newer
@@ -21,6 +22,7 @@ import {
   writeFragment,
 } from "./presentChannel.ts";
 import {
+  exportMessage,
   gotoMessage,
   newNonce,
   postPrint,
@@ -56,6 +58,44 @@ export interface Presentation {
   exit(): void;
   openAudience(): void;
   print(notes: boolean): void;
+  /** A .pptx is being made in the frame. */
+  exporting: boolean;
+  /** Ask the frame to build the deck as .pptx and download it. */
+  exportPptx(): void;
+}
+
+/** How long the app waits for the frame's answer to an export before it gives up. */
+export const EXPORT_TIMEOUT_MS = 90_000;
+
+/** The toast for a finished export. Exported for tests. */
+export function exportedToast(m: { ok: boolean; images_skipped: number; opaque: boolean }): {
+  title: string;
+  description?: string;
+  tone: "success" | "warning" | "danger";
+} {
+  if (!m.ok) {
+    return {
+      title: "The .pptx could not be made",
+      description: "Try again, or print the deck as PDF.",
+      tone: "danger",
+    };
+  }
+  if (m.images_skipped === 0) return { title: "Downloaded the .pptx", tone: "success" };
+  if (m.opaque) {
+    return {
+      title: "Downloaded the .pptx",
+      description: "Images were left out: this Plinth instance serves decks with opaque origins.",
+      tone: "warning",
+    };
+  }
+  return {
+    title: "Downloaded the .pptx",
+    description:
+      m.images_skipped === 1
+        ? "1 image could not be added."
+        : `${m.images_skipped} images could not be added.`,
+    tone: "warning",
+  };
 }
 
 export interface PresentationOptions {
@@ -107,6 +147,11 @@ export function usePresentation(o: PresentationOptions): Presentation {
     available && initial.pair ? "audience" : "off",
   );
   const [fullscreen, setFullscreen] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  /** The nonce of the export the app is waiting for, and its timeout. */
+  const pendingExport = useRef<{ nonce: string; timer: ReturnType<typeof setTimeout> } | null>(
+    null,
+  );
 
   const wanted = useRef<number | null>(initial.slide);
   const modeRef = useRef(mode);
@@ -157,6 +202,15 @@ export function usePresentation(o: PresentationOptions): Presentation {
       if (!m) return;
       if (m.type === "fullscreen") {
         requestFullscreen(() => showToast({ title: "Use Present in the bar" }));
+        return;
+      }
+      if (m.type === "exported") {
+        const pending = pendingExport.current;
+        if (!pending || m.nonce !== pending.nonce) return;
+        clearTimeout(pending.timer);
+        pendingExport.current = null;
+        setExporting(false);
+        showToast(exportedToast(m));
         return;
       }
       if (m.type === "view") {
@@ -226,7 +280,13 @@ export function usePresentation(o: PresentationOptions): Presentation {
     };
   }, [available, mode, initial.pair, artifactId, goto]);
 
-  useEffect(() => () => channel.current?.close(), []);
+  useEffect(
+    () => () => {
+      channel.current?.close();
+      if (pendingExport.current) clearTimeout(pendingExport.current.timer);
+    },
+    [],
+  );
 
   const present = useCallback(() => {
     if (!available) return;
@@ -265,6 +325,23 @@ export function usePresentation(o: PresentationOptions): Presentation {
     postPrint(frameRef.current, targetRef.current, notes);
   }, []);
 
+  const exportPptx = useCallback(() => {
+    if (!available || pendingExport.current) return;
+    const nonce = newNonce();
+    if (!postToDeck(frameRef.current, targetRef.current, exportMessage(nonce))) {
+      showToast({ title: "The .pptx could not be made", tone: "danger" });
+      return;
+    }
+    const timer = setTimeout(() => {
+      if (pendingExport.current?.nonce !== nonce) return;
+      pendingExport.current = null;
+      setExporting(false);
+      showToast({ title: "The .pptx could not be made", tone: "danger" });
+    }, EXPORT_TIMEOUT_MS);
+    pendingExport.current = { nonce, timer };
+    setExporting(true);
+  }, [available]);
+
   const presenting = available && (fullscreen || mode === "presenter");
   return {
     available,
@@ -279,5 +356,7 @@ export function usePresentation(o: PresentationOptions): Presentation {
     exit,
     openAudience,
     print,
+    exporting,
+    exportPptx,
   };
 }

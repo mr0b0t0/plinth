@@ -21,6 +21,8 @@ const presenting = (over: Partial<Presentation> = {}): Presentation => ({
   exit: vi.fn(),
   openAudience: vi.fn(),
   print: vi.fn(),
+  exporting: false,
+  exportPptx: vi.fn(),
   ...over,
 });
 

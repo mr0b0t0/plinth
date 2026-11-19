@@ -378,19 +378,23 @@ body {
 /* ---------- the overview: every slide stacked ---------- */
 
 .plinth-slides[data-mode="overview"] .plinth-slides__deck,
-.plinth-slides[data-print] .plinth-slides__deck {
+.plinth-slides[data-print] .plinth-slides__deck,
+.plinth-slides[data-export] .plinth-slides__deck {
   position: static;
   flex-direction: column;
   gap: 24px;
   padding: 16px 0 40px;
 }
 
-/* While printing, every slide is laid out on screen too, so each can be fitted first. */
-.plinth-slides[data-print][data-mode] .plinth-slides__deck {
+/* While printing, every slide is laid out on screen too, so each can be fitted first. A .pptx
+   export does the same for one synchronous measure (export.ts), so it is never painted. */
+.plinth-slides[data-print][data-mode] .plinth-slides__deck,
+.plinth-slides[data-export][data-mode] .plinth-slides__deck {
   display: flex;
 }
 
-.plinth-slides[data-print][data-mode] .plinth-slides__frame:not([data-print-x]) {
+.plinth-slides[data-print][data-mode] .plinth-slides__frame:not([data-print-x]),
+.plinth-slides[data-export][data-mode] .plinth-slides__frame:not([data-print-x]) {
   display: block;
 }
 
@@ -626,6 +630,31 @@ body {
   white-space: nowrap;
 }
 
+/* The .pptx is ready (export.ts): a Download button that starts it from a click in the frame. */
+.plinth-slides__ready {
+  position: fixed;
+  z-index: 1;
+  top: 12px;
+  left: 50%;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  max-width: calc(100% - 32px);
+  padding: 4px 4px 4px 14px;
+  border-radius: 10px;
+  background: var(--slides-ctl-bg);
+  box-shadow: 0 2px 12px rgb(0 0 0 / 0.18);
+  color: var(--slides-ctl-fg);
+  font-size: 0.875rem;
+  transform: translateX(-50%);
+}
+
+.plinth-slides__ready-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .plinth-slides__controls {
     transition: none;
@@ -655,6 +684,7 @@ body {
   }
 
   html .plinth-slides[data-mode] .plinth-slides__controls,
+  html .plinth-slides[data-mode] .plinth-slides__ready,
   html .plinth-slides[data-mode] .plinth-slides__presenter,
   html .plinth-slides[data-mode] .plinth-slides__live,
   html .plinth-slides[data-mode] .plinth-slides__label {

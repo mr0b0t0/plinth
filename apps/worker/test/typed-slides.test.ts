@@ -351,11 +351,8 @@ describe("slides on the content host", () => {
     const css = await call(`${contentOrigin(p.id)}/__plinth/types/slides/slides.css`);
     expect(css.headers.get("content-type")).toMatch(/^text\/css/);
     expect(await css.text()).toContain(".plinth-slides");
-    for (const path of [
-      "/__plinth/types/slides/doc.js",
-      "/__plinth/types/slides/slides-pptx.js",
-      "/__plinth/types/slides/index.html",
-    ]) {
+    // The lazy .pptx writer (slides-pptx.js) is served too: typed-slides-pptx.test.ts.
+    for (const path of ["/__plinth/types/slides/doc.js", "/__plinth/types/slides/index.html"]) {
       expect((await call(`${contentOrigin(p.id)}${path}`)).status, path).toBe(404);
     }
   });

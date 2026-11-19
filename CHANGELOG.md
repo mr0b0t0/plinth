@@ -10,6 +10,13 @@ Add a line under **Unreleased** in the pull request that makes a change people w
 
 ## Unreleased
 
+- **Download a deck as .pptx.** **Download .pptx** in a deck's menu saves it as an editable
+  PowerPoint file (Keynote and Google Slides open it too): one slide per slide with its text,
+  lists, tables, images, links, footer, slide numbers and speaker notes, in the colours on screen.
+  The file is built in the viewer's browser from the slides as shown; nothing goes to the server.
+  On instances with opaque content isolation the file leaves out the deck's image files, and says
+  so. Update the plugin for the agent's note on it.
+
 - **Dictation, run by Plinth, for pages that ask for it.** A page that declares `dictation` can
   take the words a viewer speaks (`plinth.dictation`): Plinth's app runs the browser's speech
   recognizer after the viewer's click and consent, shows "Listening" with a Stop the page cannot
