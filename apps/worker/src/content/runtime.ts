@@ -61,6 +61,17 @@
 //              is { id, name, type, size, url, mine, createdAt, uploadedBy? { email, role, via } };
 //              its name is untrusted text. Errors add unsupported_type, type_mismatch and aborted.
 //              Nothing is fetched until ready is read or a method is called.
+//   doc.source { id, label, connector, ref | null, fetchedAt, agent? } on a document an owner's
+//              agent stamped with a data source (agent: the connection's label, only with
+//              `viewer`); absent on every other document
+//   freshness  (doc, { staleAfterMinutes }) -> { fetchedAt, ageMs, text, stale } | null
+//   cite       (el, doc, { field, staleAfterMinutes }) -> the badge: one <sup class="plinth-cite">
+//              in el saying where the figure came from and how old it is, or "not fetched" for a
+//              document without a stamp; text only. cite.scan(root, { collection: docs }) fills
+//              every [data-plinth-cite="collection/docId#field"]; cite.missing(root) lists
+//              elements with a digit in their own text and no badge. No request: it also works on
+//              inline objects ({ source: { label, connector, fetched_at } }) under opaque
+//              isolation. A badge is page code; the viewer bar's sources line is the server's
 //
 // Under opaque isolation the page's origin is "null": ready resolves unavailable without any
 // request, and db calls reject with "unavailable". A 401 means the content pass expired: listeners
@@ -80,6 +91,7 @@ import type { RuntimeContext, RuntimeFragment } from "./runtime/fragment.ts";
 import { LIVE_FRAGMENT } from "./runtime/live.ts";
 import { PEOPLE_FRAGMENT } from "./runtime/people.ts";
 import { ROOM_FRAGMENT } from "./runtime/room.ts";
+import { SOURCES_FRAGMENT } from "./runtime/sources.ts";
 import { VERSION_FRAGMENT } from "./runtime/version.ts";
 
 /**
@@ -96,6 +108,7 @@ export const RUNTIME_FRAGMENTS: readonly RuntimeFragment[] = [
   LIVE_FRAGMENT,
   VERSION_FRAGMENT,
   FILES_FRAGMENT,
+  SOURCES_FRAGMENT,
 ];
 
 /** Assemble the script from `fragments`, with the app channel when one of them uses it. */

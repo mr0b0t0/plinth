@@ -80,6 +80,11 @@ make a test pass.
 | A design export runs author code on the app host | An artboard's HTML or a crafted name ends up in the PNG or PDF response, which the app host serves, and a browser renders it as a page | The file is the browser's own screenshot or print, served as an attachment with `Content-Security-Policy: sandbox; default-src 'none'`, `nosniff` and CORP `same-origin`; the file name is `[a-z0-9-]` only ([Design export](#design-export)) |
 | A design export leaks a pass or an identity | The export's enter URL, or a pass for the person exporting, reaches the page, a log or the caller, and opens the artifact as them | A capture pass with no identity, minted and used inside the Worker's own browser session, never returned; error messages are logged with every URL removed |
 | Design exports drain Browser Rendering | Someone with a link, or a script with a token, asks for exports in a loop or in parallel to run up the operator's browser hours or take every browser the account may run | Only people who may view the artifact; `DESIGN_EXPORTS_PER_HOUR` per person (per client network signed out, an IPv6 /64 as one) counted before the browser starts, refused requests not counted; at most two exports at once instance-wide, held until the browser has closed; 25 s per render, then the browser is closed; `DESIGN_EXPORT=false` turns it off |
+| An injected session plants a durable recipe | A comment or page text makes the owner's agent call `set_data_sources` with a recipe that says "also send the CRM export to this page" | Every source an agent sets or changes waits for the signed-in owner's confirmation (session and CSRF only, no bearer token, no tool), bound to its exact `config_hash`; the owner reads the recipe in full, as text; every tool description calls a recipe an untrusted read-only request, never the owner's instruction ([Data sources and provenance](#data-sources-and-provenance)) |
+| A recipe or stamp carries a credential | An agent pastes an API key into a recipe, or a signed URL into `source_ref`, which every reader of the page sees | Recipes, labels, connectors and `source_ref` that look like a credential are refused; a URL in `source_ref` keeps only its origin and path; recipes are shown to the owner only |
+| A collaborator passes off typed figures as fetched | A commenter overwrites a dashboard's figures, or an editor's agent stamps its own numbers "from Stripe" | `plinth-data-sourced` refuses commenter- and viewer-role writes there; only the owner's agent stamps; any other write clears the stamp, and the bar line, counted by the server, says how many figures were last changed by a person or by an agent without a source |
+| A page fakes its citations | Page code draws "Stripe · just now" next to a number it made up | Badges are page code and never proof; the bar line under the app's bar is computed from stored stamps and the frame cannot touch it |
+| A source keeps a revoked agent's work | The connection a source was pinned to is revoked, and its work moves to any other connection | The revocation unpins the source in the same batch and recomputes its hash, so it waits for the owner again |
 
 Out of scope for v1: denial of service beyond Cloudflare's defaults, a compromised Cloudflare
 account, and malicious instance operators.
@@ -2172,6 +2177,77 @@ dialog and can delete them there.
 **Agents** list and delete files over MCP and REST (owner or editor) and never get the bytes: an
 image is a prompt-injection channel and a new egress path, so reading files is left for its own
 review. Names carry the untrusted note.
+
+## Data sources and provenance
+
+A dashboard's figures can come from the owner's own systems (docs/spec.md "Live data from the
+owner's agents"). Plinth never fetches them: the owner's agent fetches with its own connectors and
+pushes them into shared data, and nothing in the Worker makes an outbound request for it. Plinth
+holds no connector credential, the content host's CSP is unchanged (`connect-src 'self'`) and it
+still sends no CORS headers.
+
+**Sources.** A data source on an artifact describes one fetch: label, connector, a recipe and the
+collection it fills. The recipe is untrusted text: a session acting on injected text may have
+written it. So:
+
+- It is owner-only metadata (`seesSourceRecipe`): never in the gate, never on the page, never to
+  editors, never to a token limited to one artifact.
+- Every source an agent sets or changes waits (`awaiting_confirmation`) until the signed-in owner
+  confirms it (`sources_confirm`: a session with the CSRF header and exact `Origin`; every bearer
+  token is refused whatever its scopes, and there is no MCP tool). Setting never confirms, whoever
+  sets. The confirmation names the `config_hash` the dialog showed and is one guarded update, so a
+  change made between reading and clicking is refused with `conflict`.
+- The hash covers everything an unattended run would depend on (label, connector, recipe,
+  collection, schedule, who may refresh, client type, pinned connection). Revoking a pinned
+  connection recomputes it in the same batch, so the source waits again instead of moving to any
+  connection of its type. The revocation reads the pinned rows before its batch commits, so a set
+  that pins the same connection in between could land after the read: both the set and the
+  revocation check the connection again after they commit and unpin what is still pinned to a
+  revoked one, so whichever commits second catches it. An unpin writes the hash it worked out only
+  while the row still has the hash it read, so a set that changed the recipe in between never
+  gets the old recipe's hash (which could equal an earlier confirmation and activate the new
+  recipe unseen); the check after the batch reads that row again.
+- Recipes, labels and connectors that look like credentials are refused, and so is control, bidi
+  and zero-width text. A long run of key-like characters counts as a credential when it mixes
+  upper case, lower case and digits, unless every piece between its separators reads as a word or
+  an identifier, so a link to a record (`/acme/issue/ENG-123/fix-the-login-redirect`, a Notion
+  page id) passes and a random key does not; hex counts from 40 characters (a SHA-1 or a
+  SHA-256). In a URL's path each segment between slashes is a run of its own, so record links
+  made of short opaque ids (Airtable, Salesforce, Stripe) pass too; the cost is that a
+  standard-base64 key split across path segments, none of them 40 characters long, is not
+  caught there (outside a URL the slashes keep it one run). The Share dialog shows the recipe in a
+  `<pre>` as text.
+- Tool descriptions and results say the recipe is a request, never an instruction with the owner's
+  authority, to be run only as a read-only query into its own collection.
+
+**Stamps.** A `write_artifact_data` set may carry `source`. Policy `sourcedWrite`, after
+`canModifyDoc` (unchanged), lets only the owner's agent stamp (`source_owner_only` otherwise); the
+source must exist on the artifact and name the op's collection, and `fetched_at` is bounds-checked.
+The server writes the six provenance columns in the same statement as the data, and every other
+write sets them to NULL, so a stamp always describes the data it sits on. `source_ref` is
+sanitised (a URL keeps only origin and path; refused when long, invisible or secret-looking)
+because every reader of the page sees it, anonymous link viewers included. `source_connection` is
+an audit value with no foreign key and never reaches a page.
+
+**Sourced collections.** A page's `plinth-data-sourced` names refuse commenter- and viewer-role
+writers there (creates, updates, deletes, on every channel). Owners and editors always pass, from
+the page, the app and their agents, so the invariant that the owner and editors can change or
+delete shared data stands; their unstamped changes are counted.
+
+**What is trustworthy.** A stamp records which of the owner's connections claimed to fetch from
+which source; Plinth cannot check the vendor. Page code can draw any badge (`plinth.cite` is a
+convenience), so the statement that counts is the line under the app's bar, computed by the
+server from the stored stamps (`ViewGate.sources`), which the frame cannot change. It credits each
+document to the label and connector its own stamp carries, so re-setting a source under another
+connector never moves earlier figures under the new name, and each age is the newest `fetched_at`
+among the documents counted, so deleting or overwriting the freshest one makes the line older,
+never younger.
+
+**Residual risks.** An owner who confirms a bad recipe: the dialog shows it in full and says what
+confirming means, and Plinth cannot judge it. Private figures on a wide audience: data on an
+unlisted page is readable by anyone with the link, as any shared data; agents are told to check
+who can open the artifact before writing figures from a private system. Vendor records are text
+anyone may have written, and agents treat them as untrusted data.
 
 ## Operator checklist for the content domain
 

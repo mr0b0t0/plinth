@@ -528,6 +528,28 @@ PDFs, video and audio ([spec](spec.md#files-people-add-to-a-page-decided-2026-11
 
 The skill's "Files people add to a page" section has the full API.
 
+## Live data from the user's own systems
+
+A dashboard can show figures from the user's issue tracker, CRM or billing system, each with where
+it came from and how old it is ([spec](spec.md#live-data-from-the-owners-agents-decided-2026-11-19),
+[security](security.md#data-sources-and-provenance)). Plinth never fetches and holds no connector
+credentials: you fetch with your own connectors and push the figures.
+
+- **Write the figures** with `write_artifact_data`, each set carrying `source: { id, ref?,
+  fetched_at }` (one document per figure group). Only the owner's agent stamps.
+- **Describe the fetch** with `set_data_sources`: a label, the connector, the collection and a
+  recipe written as a read-only query. Never put credentials in a recipe or `ref`. The user
+  confirms each new or changed source in Plinth: give them `confirm_url`.
+- **The page** declares `data` (and `viewer` to show which connection fetched), optionally
+  `<meta name="plinth-data-sourced" content="issues">` so only the owner and editors write those
+  collections, and marks figures with `plinth.cite` badges. The line under Plinth's bar, counted
+  by the server, is what readers can trust; a badge is page code.
+- **Refreshing** is in the session: when the user asks, fetch again and write the figures with
+  `source`. On opaque-isolation instances put the figures inline in a new version and cite inline
+  objects.
+
+The skill's "Live data from your own systems" section has the details.
+
 ## Shared categories
 
 An owner can share a whole category with people in the app

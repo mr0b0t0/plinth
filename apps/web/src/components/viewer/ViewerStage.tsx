@@ -112,7 +112,24 @@ export function ViewerStage({
 }: ViewerStageProps) {
   const { me, config } = useSession();
   const [theme, setTheme] = useTheme();
-  const [shareOpen, setShareOpen] = useState(false);
+  // The owner's link to review data sources (set_data_sources' confirm_url, ?sources=review) opens
+  // the share dialog, where they are reviewed and confirmed.
+  const [shareOpen, setShareOpen] = useState(
+    () =>
+      gate.role === "owner" &&
+      new URLSearchParams(window.location.search).get("sources") === "review",
+  );
+  // The flag is used once: a reload or a shared copy of the address opens the page as usual.
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    if (url.searchParams.get("sources") !== "review") return;
+    url.searchParams.delete("sources");
+    window.history.replaceState(
+      window.history.state,
+      "",
+      `${url.pathname}${url.search}${url.hash}`,
+    );
+  }, []);
   // A design's PNG and PDF export dialog (designItems.ts offers it).
   const [exportOpen, setExportOpen] = useState(false);
   const [frame, setFrame] = useState<HTMLIFrameElement | null>(null);
@@ -420,6 +437,8 @@ export function ViewerStage({
         slug={slug}
         visibility={artifact.visibility}
         isOwner={isOwner}
+        onSourcesChange={() => onReload?.()}
+        hasSources={(gate.sources?.length ?? 0) > 0}
       />
       {artifact.type === "design" && (
         <ExportDialog

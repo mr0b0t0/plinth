@@ -4,6 +4,7 @@ export * from "./categories.ts";
 export * from "./ci.ts";
 export * from "./constants.ts";
 export * from "./data.ts";
+export * from "./dataSources.ts";
 export * from "./design.ts";
 export * from "./designSystem.ts";
 export * from "./designSystemSchema.ts";

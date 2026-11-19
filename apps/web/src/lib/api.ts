@@ -7,6 +7,7 @@ import {
   type ArtifactViews,
   COOKIES,
   CSRF_HEADER,
+  type DataSourceInfo,
   type DataSummary,
   type DesignExportOptions,
   type ErrorBody,
@@ -134,6 +135,35 @@ export function deleteArtifactFile(ref: string, file: string): Promise<{ deleted
 /** Delete every file people uploaded to a page (signed-in owner; CSRF header). */
 export function deleteAllFiles(ref: string): Promise<{ files: number }> {
   return api<{ files: number }>(route(API.files, { ref }), { method: "DELETE" });
+}
+
+// ---------- data sources (owner review in the share dialog) ----------
+
+/** The artifact's data sources (owner and editors; the recipe for the owner only). */
+export function getDataSources(
+  ref: string,
+  signal?: AbortSignal,
+): Promise<{ sources: DataSourceInfo[]; untrusted: string }> {
+  return api<{ sources: DataSourceInfo[]; untrusted: string }>(route(API.dataSources, { ref }), {
+    signal,
+  });
+}
+
+/** Confirm a data source as shown (the signed-in owner; CSRF header). */
+export function confirmDataSource(
+  ref: string,
+  source: string,
+  configHash: string,
+): Promise<DataSourceInfo> {
+  return api<DataSourceInfo>(route(API.dataSourceConfirm, { ref, source }), {
+    method: "POST",
+    body: { config_hash: configHash },
+  });
+}
+
+/** Remove a data source (the owner; CSRF header). */
+export function removeDataSource(ref: string, source: string): Promise<{ removed: string }> {
+  return api<{ removed: string }>(route(API.dataSource, { ref, source }), { method: "DELETE" });
 }
 
 // ---------- open counts and admin stats ----------

@@ -63,6 +63,7 @@ describe("MCP endpoint", () => {
         "write_artifact_data",
         "read_sheet",
         "edit_sheet",
+        "set_data_sources",
       ].sort(),
     );
     for (const name of names) {
@@ -86,10 +87,12 @@ describe("MCP endpoint", () => {
       expect(typeof ann?.readOnlyHint, t.name).toBe("boolean");
       expect(typeof ann?.destructiveHint, t.name).toBe("boolean");
     }
-    // Writes that only add a version stay non-destructive; the three that can remove data are not.
+    // Writes that only add a version stay non-destructive; the four that can remove data are not
+    // (set_data_sources replaces the list, removing the sources left out).
     const destructive = tools.filter((t) => t.annotations?.destructiveHint).map((t) => t.name);
     expect(destructive.sort()).toEqual([
       "delete_artifact_file",
+      "set_data_sources",
       "set_visibility",
       "write_artifact_data",
     ]);

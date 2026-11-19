@@ -24,6 +24,7 @@ import {
 } from "../lib/crypto.ts";
 import { notFound } from "../lib/errors.ts";
 import { isoIn, nowIso } from "../lib/time.ts";
+import { unpinConnectionQueries, unpinIfRevoked } from "../services/dataSources.ts";
 
 /** How long a pending authorization request waits for the person to consent. */
 export const REQUEST_TTL_MS = 10 * 60 * 1000;
@@ -421,7 +422,11 @@ async function revokeGrant(db: Db, grantId: string, connectionId: string) {
       .update(agentConnections)
       .set({ revokedAt: now })
       .where(and(eq(agentConnections.id, connectionId), isNull(agentConnections.revokedAt))),
+    // Data sources pinned to the connection wait for the owner again (services/dataSources.ts).
+    ...(await unpinConnectionQueries(db, connectionId, now)),
   ]);
+  // A source pinned after the read above and before the batch committed.
+  await unpinIfRevoked(db, connectionId, now);
 }
 
 export async function tokenRequest(

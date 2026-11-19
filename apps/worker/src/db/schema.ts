@@ -265,6 +265,14 @@ export const artifactDocs = sqliteTable(
     updatedVia: text("updated_via", { enum: dataVia }).notNull(),
     updatedByLabel: text("updated_by_label"),
     updatedAt: text("updated_at").notNull(),
+    // Provenance (migrations/0015_data_sources.sql): set only by an owner's agent write with
+    // `source`, cleared by every other write.
+    sourceId: text("source_id"),
+    sourceLabel: text("source_label"),
+    sourceConnector: text("source_connector"),
+    sourceRef: text("source_ref"),
+    fetchedAt: text("fetched_at"),
+    sourceConnection: text("source_connection"),
   },
   (t) => [primaryKey({ columns: [t.artifactId, t.collection, t.docId] })],
 );
@@ -379,6 +387,57 @@ export const artifactFileUsage = sqliteTable("artifact_file_usage", {
   seq: integer("seq").notNull().default(0),
 });
 
+// Data sources and the refresh queue (migrations/0015_data_sources.sql, docs/spec.md "Live data
+// from the owner's agents"). A source counts as confirmed only while confirmedHash = configHash.
+export const dataSources = sqliteTable(
+  "data_sources",
+  {
+    artifactId: text("artifact_id").notNull(),
+    sourceId: text("source_id").notNull(),
+    label: text("label").notNull(),
+    connector: text("connector").notNull(),
+    recipe: text("recipe").notNull(),
+    collection: text("collection").notNull(),
+    everyMinutes: integer("every_minutes"),
+    requestableBy: text("requestable_by", { enum: dataRole }).notNull().default("editor"),
+    targetClientType: text("target_client_type", { enum: ["claude", "codex", "other"] }).notNull(),
+    targetConnection: text("target_connection"),
+    pinLostAt: text("pin_lost_at"),
+    configHash: text("config_hash").notNull(),
+    confirmedHash: text("confirmed_hash"),
+    confirmedAt: text("confirmed_at"),
+    lastFetchedAt: text("last_fetched_at"),
+    lastFinishedAt: text("last_finished_at"),
+    lastOutcome: text("last_outcome", { enum: ["done", "failed"] }),
+    lastError: text("last_error"),
+    createdByConnection: text("created_by_connection"),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.artifactId, t.sourceId] })],
+);
+
+export const dataRefreshTasks = sqliteTable("data_refresh_tasks", {
+  id: text("id").primaryKey(),
+  artifactId: text("artifact_id").notNull(),
+  sourceId: text("source_id").notNull(),
+  configHash: text("config_hash").notNull(),
+  reason: text("reason", { enum: ["request", "schedule"] }).notNull(),
+  requestedByEmail: text("requested_by_email"),
+  requestedByRole: text("requested_by_role", { enum: dataRole }),
+  requestedVia: text("requested_via", { enum: ["page", "app", "agent", "schedule"] }).notNull(),
+  state: text("state", { enum: ["pending", "claimed", "done", "failed", "expired"] })
+    .notNull()
+    .default("pending"),
+  claimedBy: text("claimed_by"),
+  claimedAt: text("claimed_at"),
+  finishedAt: text("finished_at"),
+  resultVersion: integer("result_version"),
+  createdAt: text("created_at").notNull(),
+  expiresAt: text("expires_at").notNull(),
+});
+
+export type DataSourceRow = typeof dataSources.$inferSelect;
 export type CategoryShareRow = typeof categoryShares.$inferSelect;
 export type LiveDraftRow = typeof liveDrafts.$inferSelect;
 export type ArtifactDocRow = typeof artifactDocs.$inferSelect;

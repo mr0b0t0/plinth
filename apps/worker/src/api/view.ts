@@ -51,6 +51,7 @@ import {
 } from "../policy.ts";
 import { decideFor, findArtifact, grantFor, versionCapabilities } from "../services/artifacts.ts";
 import type { Ctx } from "../services/context.ts";
+import { gateSources } from "../services/dataSources.ts";
 import { readLiveDraftInfo } from "../services/live.ts";
 import { sessionCookie } from "../services/sessions.ts";
 import { parseManifest } from "../services/storage.ts";
@@ -202,6 +203,12 @@ export const GATE_PARTS: readonly GatePart[] = [
   async ({ ctx, a, identity }) => {
     const files = await gateFiles(ctx, a, identity);
     return files ? { files } : undefined;
+  },
+  // Where the figures come from (services/dataSources.ts gateSources): only for an artifact with a
+  // data source, whatever its page declares and in every isolation mode.
+  async ({ ctx, a }) => {
+    const sources = await gateSources(ctx.env.DB, a.id);
+    return sources ? { sources } : undefined;
   },
 ];
 

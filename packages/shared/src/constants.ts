@@ -208,6 +208,21 @@ export const LIMITS = {
   maxDataOps: 50,
   /** Collection names in a page's plinth-data-shared tag. */
   maxDataShared: 20,
+  // Data sources (docs/spec.md "Live data from the owner's agents"). Fixed rules, not env vars.
+  /** Collection names in a page's plinth-data-sourced tag. */
+  maxDataSourced: 20,
+  /** Data sources on one artifact. */
+  maxDataSources: 10,
+  /** Characters of a source's label and of its connector name. */
+  maxSourceLabelLength: 60,
+  /** Characters of a source's recipe (newlines count). */
+  maxSourceRecipeLength: 1000,
+  /** Characters of a document's source_ref, after it is sanitised. */
+  maxSourceRefLength: 300,
+  /** How far ahead of the server clock an agent-reported fetched_at may be. */
+  sourceFetchedAheadMs: 5 * 60 * 1000,
+  /** How old an agent-reported fetched_at may be. */
+  sourceFetchedMaxAgeMs: 30 * 24 * 60 * 60 * 1000,
   // Who is viewing (docs/spec.md "Who is viewing: names and the people list").
   /** A display name as stored (users.name, PATCH /api/v1/me). */
   maxDisplayNameLength: 100,

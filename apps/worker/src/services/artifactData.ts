@@ -18,10 +18,11 @@ import { sharedDataActive } from "../config.ts";
 import type { ArtifactRow } from "../db/schema.ts";
 import { viewerIdFor } from "../lib/crypto.ts";
 import { ApiError, notFound } from "../lib/errors.ts";
-import { peopleListOffered, principalEmail } from "../policy.ts";
+import { decide, peopleListOffered, principalEmail } from "../policy.ts";
 import { notifyViewers } from "../rooms/notify.ts";
 import {
-  decideFor,
+  accessFactsFor,
+  factsOf,
   grantFor,
   loadArtifactDetail,
   requireArtifact,
@@ -43,6 +44,7 @@ import {
   toAgentPerson,
   unavailableReason,
 } from "./data.ts";
+import { artifactSources, docStamper, recordFetched, summarySources } from "./dataSources.ts";
 import { matchPeople, peopleWithAccess } from "./people.ts";
 import { namesByEmail } from "./users.ts";
 
@@ -116,7 +118,12 @@ export async function listArtifactData(
   const d1 = ctx.env.DB;
   if (input.collection === undefined) {
     const own = principalEmail(ctx.principal);
-    return { ...(await summary(d1, ctx.config, target, own)), untrusted: DATA_UNTRUSTED_FIELD };
+    const sources = await summarySources(d1, artifact.id);
+    return {
+      ...(await summary(d1, ctx.config, target, own)),
+      ...(sources ? { sources } : {}),
+      untrusted: DATA_UNTRUSTED_FIELD,
+    };
   }
   const secret = ctx.config.tokenSigningKey;
   if (input.doc_id !== undefined) {
@@ -188,7 +195,24 @@ export async function writeArtifactData(
     });
   }
   const writer = await writerOf(ctx, artifact, role);
-  const out = await applyOps(ctx.env.DB, ctx.config, target, writer, input.ops);
+  const p = ctx.principal;
+  const stamp = docStamper(
+    ctx.env.DB,
+    artifact.id,
+    writer,
+    p.kind === "agent" ? p.connectionId : null,
+  );
+  const out = await applyOps(ctx.env.DB, ctx.config, target, writer, input.ops, stamp);
+  // Each source's last fetch is the newest fetched_at its stamps carried (the server normalised
+  // the times, so they compare as text).
+  const newest = new Map<string, string>();
+  input.ops.forEach((op, i) => {
+    if (op.op !== "set" || !op.source || !out.results[i]?.ok) return;
+    const at = new Date(op.source.fetched_at).toISOString();
+    const was = newest.get(op.source.id);
+    if (!was || was < at) newest.set(op.source.id, at);
+  });
+  await recordFetched(ctx.env.DB, artifact.id, newest);
   // Open views of the page re-read their data (live views); only the signal travels.
   if (out.results.some((r) => r.ok)) notifyViewers(ctx, artifact.id, "data");
   return out;
@@ -215,7 +239,8 @@ export async function getArtifactWithData(
   const { detail, row } = await loadArtifactDetail(ctx, ref, version);
   const caps = await capsAt(ctx, detail.id, detail.version);
   let usage: ArtifactDataInfo["data_usage"] = null;
-  if ((await decideFor(ctx, row, "data_read")).allow) {
+  const access = await accessFactsFor(ctx, row);
+  if (decide(ctx.principal, "data_read", factsOf(row), access).allow) {
     usage =
       (await ctx.env.DB.prepare(
         "SELECT docs, bytes FROM artifact_data_usage WHERE artifact_id = ?1",
@@ -223,5 +248,14 @@ export async function getArtifactWithData(
         .bind(detail.id)
         .first<{ docs: number; bytes: number }>()) ?? null;
   }
-  return { ...detail, capabilities: capabilityList(caps), data_usage: usage };
+  // The data sources, for the owner and editors (the recipe for the owner only); absent, not
+  // empty, when there are none, so results for every other artifact are unchanged.
+  const s = decide(ctx.principal, "sources_read", factsOf(row), access);
+  const sources = s.allow ? await artifactSources(ctx, detail.id, s.role) : undefined;
+  return {
+    ...detail,
+    capabilities: capabilityList(caps),
+    data_usage: usage,
+    ...(sources ? { data_sources: sources } : {}),
+  };
 }

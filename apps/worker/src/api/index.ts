@@ -12,6 +12,7 @@ import { commentsApi } from "./comments.ts";
 import { connectionsApi } from "./connections.ts";
 import { type AppEnv, authenticate } from "./context.ts";
 import { dataApi } from "./data.ts";
+import { dataSourcesApi } from "./dataSources.ts";
 import { designSystemsApi } from "./designSystems.ts";
 import { filesApi } from "./files.ts";
 import { liveApi } from "./live.ts";
@@ -75,6 +76,7 @@ api.route("/", categorySharesApi);
 api.route("/", portalsApi);
 api.route("/", sheetsApi);
 api.route("/", filesApi);
+api.route("/", dataSourcesApi);
 
 api.all("*", () => {
   throw new ApiError("not_found", "No such API endpoint");

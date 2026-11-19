@@ -14,6 +14,7 @@ import type {
   Role,
   Visibility,
 } from "./constants.ts";
+import type { ViewSource } from "./dataSources.ts";
 import type { LiveMode } from "./liveDoc.ts";
 import type { Anchor } from "./schemas.ts";
 import type { DictationAccess } from "./voice.ts";
@@ -570,6 +571,12 @@ export type ViewGate =
        * declares `files` and ALLOW_FILES is on.
        */
       files?: ViewGateFiles;
+      /**
+       * Where the page's figures come from: the artifact's data sources with the counts of its
+       * stamped and unstamped documents, computed from what the server stored. Present only when
+       * the artifact has a data source, whatever the page declares and in every isolation mode.
+       */
+      sources?: ViewSource[];
     }
   | { status: "password_required"; artifact: ViewArtifactStub }
   | { status: "email_required"; artifact: ViewArtifactStub }

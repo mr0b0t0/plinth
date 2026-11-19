@@ -73,6 +73,13 @@ export const ARTIFACT_WIPE: readonly ArtifactWipeStep[] = [
     afterTakedown: (env, result) =>
       clearTombstonedFiles(env, result?.results as TombstonedFile[] | undefined),
   },
+  // Refresh tasks for its data sources (0015_data_sources): nobody may refresh a page that is gone.
+  {
+    tables: ["data_refresh_tasks"],
+    statements: (d1, id) => [
+      d1.prepare("DELETE FROM data_refresh_tasks WHERE artifact_id = ?1").bind(id),
+    ],
+  },
 ];
 
 /**
@@ -90,6 +97,7 @@ export const ARTIFACT_KEPT: Readonly<Record<string, string>> = {
   upload_tickets: "single-use and short-lived; a commit to a deleted artifact is refused",
   artifact_view_days: "a daily number of opens with no viewer data, gone with the erase",
   artifact_view_totals: "the folded number of opens, gone with the erase",
+  data_sources: "the owner's description of where figures came from; inert once nobody can open it",
 };
 
 /**

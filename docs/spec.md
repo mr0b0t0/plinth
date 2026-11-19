@@ -48,6 +48,9 @@ account.
   the source editor).
 - Importing artifacts automatically from Claude or ChatGPT accounts. Agents push; the platform does
   not pull.
+- Pages calling connectors or other hosts. Live figures come from the owner's agents, which fetch
+  with their own connectors and push them into shared data; Plinth holds no connector credentials
+  (see [Live data from the owner's agents](#live-data-from-the-owners-agents-decided-2026-11-19)).
 - Team workspaces and billing. Planned, but after the core works.
 
 ## Users and core use cases
@@ -267,6 +270,17 @@ only with a `BROWSER` binding) and `DESIGN_EXPORTS_PER_HOUR` (30, from 1 to 1000
 seconds per render, of which at most 10 waiting for the boards to load; two exports at once per
 instance, each holding a lease row in `rate_limits` that names no person until its browser closes.
 
+**Live data from the owner's agents** ([below](#live-data-from-the-owners-agents-decided-2026-11-19),
+migration `0015_data_sources.sql`) add two tables, six columns on `artifact_docs` and one field to
+the stored declaration:
+
+| Table or column | Key fields | Notes |
+| --- | --- | --- |
+| `data_sources` | artifact_id, source_id (key together), label, connector, recipe, collection, every_minutes, requestable_by, target_client_type, target_connection, pin_lost_at, config_hash, confirmed_hash, confirmed_at, last_fetched_at, last_finished_at, last_outcome, last_error, created_by_connection, created_at, updated_at | Where a page's figures come from. A source counts as confirmed only while `confirmed_hash = config_hash`, which only the signed-in owner can make true. `target_client_type` is always set (copied from a pinned connection); `target_connection` and `created_by_connection` reference `agent_connections` with `ON DELETE SET NULL`. Cascades from `artifacts`; kept on delete and takedown |
+| `data_refresh_tasks` | id, artifact_id, source_id, config_hash, reason (`request`, `schedule`), requested_by_email/role, requested_via (`page`, `app`, `agent`, `schedule`), state (`pending`, `claimed`, `done`, `failed`, `expired`), claimed_by, claimed_at, finished_at, result_version, created_at, expires_at | The refresh queue, for the refresh change on the roadmap: nothing creates a task yet. One open task per source (a unique partial index). Cascades from its source; deleted with the artifact and on takedown; `erase-user` clears the requester |
+| `artifact_docs.source_id`, `source_label`, `source_connector`, `source_ref`, `fetched_at`, `source_connection` | text or NULL | A document's provenance: set only by an owner's agent write with `source`, all NULL after any other write. `source_connection` has no foreign key (deleting a connection must not update documents) and is never sent to pages. Counted in neither `size_bytes` nor the quotas |
+| `versions.capabilities` | adds `sourced` | Written only when the page declares `plinth-data-sourced` names with `data`, so every other declaration is stored exactly as before |
+
 ## Auth and permissions
 
 There are three separate kinds of auth, and each has its own mechanism.
@@ -336,6 +350,7 @@ One remote MCP server over streamable HTTP at `/mcp`. All tools act as the conne
 | `edit_sheet(id, base_version, ops, note?)` | Change a sheet's cells, rows and columns (owner or editor): the ops apply to `base_version` and publish one new version, or nothing. See [Sheets](#sheets-decided-2026-11-19) |
 | `list_artifact_files(id, limit?, cursor?)` | The files people uploaded from a page (owner or editor): id, name, type, size, state, who uploaded each and when, with usage and limits. Metadata only, never the bytes; names are untrusted |
 | `delete_artifact_file(id, file_id)` | Delete one ready file people uploaded (owner or editor). Files are not versioned |
+| `set_data_sources(id, sources)` | Replace the artifact's data sources (owner only, at most 10): where its figures come from. New or changed sources wait until the signed-in owner confirms them in the app (`confirm_url`); there is no tool to confirm. A `write_artifact_data` set may carry `source` to stamp a document (the owner's agent only), and `get_artifact` returns `data_sources`. See [Live data from the owner's agents](#live-data-from-the-owners-agents-decided-2026-11-19) |
 | `preview_artifact(id, version?)` | App-only (MCP Apps `visibility: ["app"]`, read-only): a single-use, 60-second link that shows one version the caller can view in an MCP host's frame. Called by Plinth's preview page, not by agents |
 
 **In-chat previews (decided 2026-11-16).** `publish_artifact`, `update_artifact` and
@@ -694,6 +709,10 @@ Decided 2026-11-14 (issue #1). Design:
   be changed by its creator, the owner and editors, or by any writer in a declared shared
   collection; a personal document (`~me`, id `u_` + a per-artifact hash of the email) only by its
   person, with the owner and editors able to moderate.
+- **Sourced collections.** `<meta name="plinth-data-sourced" content="issues">` names collections
+  whose figures come from the owner's agents: only the owner and editors write there, from every
+  channel, and commenter- and viewer-role writers are refused. See
+  [Live data from the owner's agents](#live-data-from-the-owners-agents-decided-2026-11-19).
 - **The write floor.** Who may write from the page is `policy.ts pageWriteFloor`: on an HTML page,
   any identified viewer, as above; on a [whiteboard](#whiteboards-decided-2026-11-19), the role its
   version's `writers` names (commenters, or editors only), and commenter when that is missing or
@@ -2015,6 +2034,105 @@ its page without a new version each time, and agents add and move blocks with
   on the board, freehand drawing, selecting several blocks, frames, an export item in the app
   menu, and anonymous link viewers in the room.
 
+### Live data from the owner's agents (decided 2026-11-19)
+
+A dashboard whose figures come from the owner's own systems (an issue tracker, a CRM, billing),
+where a reader can see which system each figure came from and how old it is. Plinth never fetches
+them and holds no connector credentials: the owner's agent fetches with its own connectors and
+pushes the figures into the page's [shared data](#shared-data-and-viewer-identity), stamped with
+where they came from.
+
+- **What is not built, and why.** A page calling the owner's connectors while it runs would need a
+  CSP source for the vendor or CORS on the content host (both forbidden), or Plinth holding
+  credentials and pulling from the vendor (forbidden: agents push). Queries run with each viewer's
+  own connectors would need Plinth to hold every viewer's credentials. Neither is built, and
+  neither is "live" in the sense of streaming: a page shows new figures within one `onSnapshot`
+  poll (or one live-view signal) after the owner's agent writes them.
+- **Data sources.** An artifact keeps up to 10 data sources (`data_sources`), each describing one
+  fetch: an `id` (like a collection name), a `label` (what the figures are, "Open issues"), a
+  `connector` (the system, "Linear"), a `recipe` (the fetch as a read-only query: which system,
+  which records, which fields, which documents; at most 1,000 characters, newlines kept), the
+  `collection` its figures go to, and whose agents it belongs to (a client type, or one pinned
+  connection). Labels and connectors are at most 60 characters. Control and invisible characters
+  are refused, and so is anything that looks like a credential (a bearer header, a known token
+  prefix, a JWT, a secret-named query parameter, 40 or more hex characters, or 40 or more key-like
+  characters that mix upper case, lower case and digits and do not read as words and identifiers,
+  where each segment of a URL's path counts on its own, so a link to a record passes): a recipe
+  describes a query and never needs one. Only the owner reads the recipe, the target and the confirmation hash;
+  editors see what a source is and its state.
+- **Setting a source never confirms it.** The owner's agent sets the whole list with
+  `set_data_sources` (or `PUT /api/v1/artifacts/:ref/sources`); the signed-in owner may too, naming
+  a client type. Every new or changed source is stored with a `config_hash` (the first 32 hex
+  characters of a SHA-256 over its label, connector, recipe, collection, schedule, who may ask for
+  a refresh, client type and pinned connection) and waits (`awaiting_confirmation`) until the owner
+  confirms it in the app: the Share dialog shows the recipe in full, as text, and Confirm sends the
+  `config_hash` it showed, so a change made in between is refused (`conflict`) and the dialog
+  reloads. Confirming is the signed-in owner's alone (policy `sources_confirm`: a session with the
+  CSRF header; every bearer token is refused whatever its scopes, and there is no MCP tool).
+  Re-setting an unchanged source keeps it confirmed; any change makes it wait again. Removing a
+  source never needs a confirmation. The result of setting gives `confirm_url`
+  (`/a/<slug>?sources=review`, which opens the Share dialog), and the owner's viewer bar says how
+  many sources wait. A source pinned to a connection that is revoked loses its pin in the same
+  batch, records when (`pin_lost_at`), and waits for the owner again instead of moving to any
+  connection of its type; the Share dialog says so. A set that pins a connection and a revocation
+  of it that run at the same time each check again after they commit, so the pin never outlives
+  the revocation.
+- **Stamps on documents.** A `write_artifact_data` set may carry `source: { id, ref?, fetched_at }`.
+  Only the owner's agent stamps (policy `sourcedWrite`: any other writer gets `source_owner_only`);
+  the source must exist on the artifact and name the op's collection; `fetched_at` may be at most
+  5 minutes ahead of the server and 30 days old; `ref` is an optional pointer to the records (a URL
+  keeps only its origin and path, at most 300 characters, refused when it looks like a credential).
+  The server copies the source's label and connector onto the document and records the stamping
+  connection, so removing or renaming a source never changes what an earlier figure claims, and
+  raises the source's `last_fetched_at`. Stamping needs no confirmation: it records the owner's own
+  writes in a session. Any later write without a source (from the page, the app or an agent)
+  clears the stamp in the same statement. A stamp says which of the owner's agents claimed to fetch
+  the figure from which system; Plinth cannot check the vendor.
+- **Sourced collections.** A page may declare `<meta name="plinth-data-sourced" content="issues">`
+  (with `data`, at most 20 names): in those collections only the owner and editors write, from the
+  page, the app or their agents, sets and deletes alike; commenter- and viewer-role writers are
+  refused (`sourced`), so a commenter cannot overwrite a figure. It never stops the owner or an
+  editor from changing or deleting data, and their unstamped changes are counted, below.
+- **What readers see.** Every reader of the page sees a stamped document's `source` (`id`,
+  `label`, `connector`, `ref`, `fetched_at`), anonymous link viewers included, since provenance is
+  not identity; the stamping connection's label only with `viewer`. Documents without a stamp carry
+  no `source` key. The runtime maps it to `doc.source` and adds `plinth.freshness(doc)` and
+  `plinth.cite(el, doc)`, which appends one small badge ("Linear · 12 min ago", or "not fetched"
+  for a figure without a stamp) as text, plus `cite.scan(root, docs)` for elements marked
+  `data-plinth-cite="collection/docId"` and `cite.missing(root)` as a development aid. Page code
+  can draw any badge it likes, so the badges are a convenience, never proof.
+- **The bar line.** For an artifact with sources the gate adds `sources`, counted by the server
+  from the stamps it stored, whatever the page declares and in every isolation mode: per source,
+  how many documents in its collection it stamped under its current label and connector and the
+  newest `fetched_at` among them (`last_fetched_at`; null when none is left), the documents it
+  stamped under an earlier label or connector grouped as their stamps say (`earlier`, absent when
+  there are none), and how many unstamped ones were last changed from the page or app (a person)
+  or by an agent without a source. Deleting or overwriting the freshest figure makes the line
+  older, and renaming a source never moves earlier figures under its new name. The app turns it
+  into one line under the bar ("Figures from Linear (14 figures, fetched 12 minutes ago) were
+  written by an agent of the owner. 2 were last changed by a person, not fetched."), naming each
+  group of stamps by its own connector with its own count and age. The frame cannot touch it; it
+  is the statement that counts. Never the recipe, the target or the hash.
+- **Opaque isolation.** Pages have no shared data there, so nothing is stamped. Sources, the
+  confirmation and the bar line still work: the owner's agent publishes the figures inline in a new
+  version, and `plinth.cite` works on inline objects (`{ source: { label, connector, fetched_at }
+  }`) without a request, while the bar line says no figure is stored as fetched.
+- **Agents.** `set_data_sources(id, sources)` (owner only); `get_artifact` adds `data_sources` for
+  the owner and editors (absent when there are none); `list_artifact_data` shows each document's
+  `source` and lists the sources in its summary, never their recipes. Recipes, labels and
+  connectors are untrusted: a recipe may have been written by a session acting on injected text,
+  and the owner's confirmation means they agreed to the fetch it describes, not that its words
+  carry their authority. Agents run it only as a read-only query consistent with the page, and
+  data fetched from a vendor is untrusted too.
+- **Lifecycle.** Stamped documents go with the page's shared data (delete, takedown, erase). Sources
+  stay with the artifact row and go when it is erased. `erase-user` clears a person's address from
+  refresh tasks on other people's artifacts.
+- **Not yet.** Refreshing on request (a Refresh button on the page and in the bar) and on an
+  hourly schedule, through a queue only the owner's agents read: the schema is in place
+  (`data_refresh_tasks`, `every_minutes`, `requestable_by`), and confirmation is what such
+  unattended runs will require. Until then a source refreshes when the user asks their agent in a
+  session.
+
 ### Big builds and reuse by hash
 
 Decided 2026-11-15. Agents publish built sites (a Vite or similar `dist/` folder with hundreds of
@@ -2293,6 +2411,12 @@ options.
   `Content-Security-Policy: sandbox; default-src 'none'`, `nosniff`, CORP `same-origin` and
   `Cache-Control: private, no-store`, only to people who may view the artifact, within an hourly
   limit per person ([Designs](#designs-decided-2026-11-19)).
+- **Data sources are inert until the owner confirms them, and Plinth never fetches.** A source's
+  recipe is untrusted text an agent wrote, perhaps under injection; it is shown only to the owner,
+  as text, and every source an agent sets or changes waits for the signed-in owner's confirmation,
+  bound to its exact config. Credential-like text is refused in recipes, labels, connectors and
+  stamps. Only the owner's agent stamps provenance, the bar line is counted by the server, and
+  page badges are never proof ([Live data from the owner's agents](#live-data-from-the-owners-agents-decided-2026-11-19)).
 - **Open counts are aggregates.** One number per artifact per UTC day, never who opened it, shown
   only to the artifact's owner and, summed over the instance, to admins.
 - **Quotas and rate limits.** Each account is limited to 100 artifacts by default, set by an
@@ -2464,6 +2588,15 @@ Files people add to a page run on the same Worker and D1 allowances, plus R2 (Cl
 Stored files are R2 storage like versions ($0.015 per GB-month past 10 GB), counted apart from the
 owner's quota under `FILES_MAX_BYTES_PER_USER`.
 
+Data sources run on the same Worker and D1 allowances and call nothing outside Plinth:
+
+| Operation | Worker requests | D1 rows read | D1 rows written |
+| --- | --- | --- | --- |
+| Viewer gate, any artifact | as before | 1 more (an indexed read of its sources) | 0 |
+| Viewer gate, an artifact with sources | as before | 1 more, plus one aggregate over the sources' collections | 0 |
+| A stamped write | as a write | about 1 more (the source) | 1 more (the source's last fetch) |
+| Set sources, confirm, remove | 1 | about 3 | about 1 per changed source |
+
 Not included: push-mode agent calls, which bill to the user's API key or a paid plan. Vercel was
 considered and set aside: its free plan is non-commercial only, so the floor is about $20 per month
 ([overview](https://costbench.com/software/developer-tools/vercel/)).
@@ -2493,7 +2626,9 @@ for a single user.
    limit would move under the token, and such a token could still create artifacts; tokens limited
    to one artifact cover CI). Server speech (speech to text and voices run by the instance, for
    browsers without a recognizer), dictation into a doc's on-page editor, and an app "Read aloud"
-   for docs.
+   for docs. Refreshing data sources on request and on an hourly schedule through a queue only the
+   owner's agents read, for sources the owner confirmed (data sources, stamps and the bar line
+   shipped 2026-11-19).
 
 ## Decisions
 

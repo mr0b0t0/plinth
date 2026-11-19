@@ -24,6 +24,7 @@ const DECLARED: Record<string, string[]> = {
   "canvas-comments.html": ["comments"],
   "client-checklist.html": ["data", "viewer"],
   "intake-form.html": ["data", "viewer"],
+  "live-dashboard.html": ["data", "viewer"],
   "whiteboard.html": ["data", "room", "viewer"],
 };
 
