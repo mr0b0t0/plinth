@@ -75,7 +75,8 @@ export const API = {
   adminReports: "/admin/reports",
   adminReport: "/admin/reports/:id",
   adminStats: "/admin/stats", // GET instance aggregates (admins only)
-  artifactViews: "/artifacts/:ref/views", // GET open counts (the owner only)
+  artifactStats: "/artifacts/:ref/stats", // GET who opened it, ?days=7|30|90|365 (the owner only)
+  statsArtifacts: "/stats/artifacts", // GET opens across the caller's own artifacts
   // shared data (mirror list_artifact_data and write_artifact_data; DELETE clears, owner only)
   data: "/artifacts/:ref/data", // GET summary, POST ops, DELETE all (signed-in owner)
   dataCollection: "/artifacts/:ref/data/:collection", // GET a page
@@ -99,6 +100,8 @@ export const APP_ROUTES = {
   reviewLogin: "/login/review",
   dashboard: "/dashboard",
   connections: "/connections",
+  /** Stats across the owner's artifacts. */
+  stats: "/stats",
   consent: "/oauth/consent",
   artifact: "/a/:slug",
   artifactVersion: "/a/:slug/v/:n",
@@ -106,6 +109,8 @@ export const APP_ROUTES = {
   compare: "/a/:slug/compare",
   editor: "/a/:slug/edit",
   settings: "/a/:slug/settings",
+  /** One artifact's stats, for its owner. */
+  artifactStats: "/a/:slug/stats",
   open: "/open/:id",
   report: "/a/:slug/report",
   adminReports: "/admin/reports",

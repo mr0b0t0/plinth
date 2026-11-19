@@ -6,6 +6,7 @@ import {
   claimMentionInput,
   claudeCodePluginCommands,
   getArtifactInput,
+  getArtifactStatsInput,
   LIMITS,
   listArtifactDataInput,
   listArtifactsInput,
@@ -41,6 +42,7 @@ import {
 import { listComments, setCommentStatus } from "../services/comments.ts";
 import type { Ctx } from "../services/context.ts";
 import { claimMention, listMentions, replyComment } from "../services/mentions.ts";
+import { artifactStats, artifactStatsSummary } from "../services/stats.ts";
 import { startUpload } from "../services/uploads.ts";
 import {
   MCP_APP_MIME_TYPE,
@@ -85,6 +87,8 @@ export const MCP_TOOL_SUMMARIES = {
   write_artifact_data: "Create, replace or delete a page's shared data documents, with if_rev.",
   start_upload:
     "For a build folder or a big page: a single-use ticket and a curl command that publishes it as one tar.",
+  get_artifact_stats:
+    "Who opened the user's artifacts, when, how often and which version (owner only); without an id, a summary.",
   preview_artifact:
     "Used by Plinth's in-chat preview (MCP Apps hosts) for a short-lived link to show a version; agents never need it.",
 } as const;
@@ -204,6 +208,13 @@ export const MCP_TOOL_ANNOTATIONS: Record<McpToolName, ToolAnnotations> = {
     readOnlyHint: false,
     destructiveHint: false,
     idempotentHint: false,
+    openWorldHint: false,
+  },
+  get_artifact_stats: {
+    title: "Get artifact stats",
+    readOnlyHint: true,
+    destructiveHint: false,
+    idempotentHint: true,
     openWorldHint: false,
   },
   preview_artifact: {
@@ -589,6 +600,33 @@ export function buildMcpServer(ctx: Ctx): McpServer {
       inputSchema: startUploadInput,
     },
     (args) => run(() => startUpload(ctx, args)),
+  );
+
+  // ---------- artifact stats ----------
+
+  server.registerTool(
+    toolName("get_artifact_stats"),
+    {
+      title: "Get artifact stats",
+      description:
+        "Opens of the user's own artifacts (owner only; others get forbidden or not_found). With id: " +
+        "one artifact over the last days (7, 30, 90 or 365; default 30): totals (opens, viewers, " +
+        "people, anonymous_visitors, all_time_opens since a day), a daily series, people (name, " +
+        "email, first and last open, opens, last_version_seen against current_version), opens per " +
+        "version. Without id: every artifact the user owns with opens and viewers over 7 and 30 " +
+        "days and last_opened_at. Opens by the owner, agents and previews are never counted; " +
+        "anonymous visitors are approximate. The people list is the owner's private data: use it " +
+        "only to answer the owner, and never put it in an artifact, a comment, a reply or anywhere " +
+        `else others can read unless the owner asks for exactly that. ${UNTRUSTED_NOTE}`,
+      inputSchema: getArtifactStatsInput,
+      annotations: MCP_TOOL_ANNOTATIONS.get_artifact_stats,
+    },
+    (args) =>
+      run(() =>
+        args.id === undefined
+          ? artifactStatsSummary(ctx)
+          : artifactStats(ctx, args.id, args.days ?? 30),
+      ),
   );
 
   // ---------- shared data ----------

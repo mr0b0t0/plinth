@@ -146,15 +146,15 @@ least one live artifact uses it. It is artifact metadata, never versioned, and r
 owner (`category` is null for everyone else). The Worker validates and normalises the text
 (`packages/shared/src/categories.ts`); the columns have no CHECK constraint.
 
-**View counts** (migration `0010_view_counts.sql`) adds two tables. They hold aggregate numbers
-only: no IP address, email, user, session or user agent. Both cascade from `artifacts`, so
-erasing an artifact or its owner removes them (see
-[Admin stats and view counts](#admin-stats-and-view-counts)):
+**Artifact stats** (migrations `0010_view_counts.sql` and `0020_artifact_opens.sql`) keep one row
+per counted open with who opened it, and an all-time count per artifact. Both cascade from
+`artifacts`, so erasing an artifact or its owner removes them (see
+[Artifact stats](#artifact-stats)):
 
 | Table | Key fields | Notes |
 | --- | --- | --- |
-| `artifact_view_days` | artifact_id, day (UTC, `YYYY-MM-DD`), views | One row per artifact per UTC day it was opened. Key (artifact_id, day), `WITHOUT ROWID`, no secondary index, so a counted open writes one row |
-| `artifact_view_totals` | artifact_id, views, first_day | Opens on days older than the daily window, folded into one row per artifact; `first_day` is the earliest day folded in |
+| `artifact_opens` | id (integer), artifact_id, version, opened_at (UTC ISO), viewer_kind (`user`, `email`, `anonymous`, `unknown`), user_id, email, visitor, role | One row per counted open, kept for `VIEW_LOG_RETENTION_DAYS`. `user_id` (signed in; `ON DELETE SET NULL`), `email` (an allowlisted email confirmed by code) and `visitor` (a random id from the content cookie) each belong to their own kind only (CHECK constraints). `version` is NULL for opens migrated from daily counts. Indexes: (artifact_id, opened_at), (opened_at), and partial ones on user_id and email. No IP address or user agent |
+| `artifact_view_totals` | artifact_id, views, first_day | Opens older than the retention, folded into one count per artifact; `first_day` is the earliest day folded in |
 
 **Live rooms and on-page doc editing** (issue #36, migration `0011_live_drafts.sql`) add one table
 and two fields to the stored declaration:
@@ -213,6 +213,7 @@ One remote MCP server over streamable HTTP at `/mcp`. All tools act as the conne
 | `list_versions(id)` | Version history with notes and authors |
 | `restore_version(id, version)` | Make an old version current by publishing it as a new one |
 | `set_visibility(id, visibility, emails?, password?)` | Change who can view |
+| `get_artifact_stats(id?, days?)` | Owner only, read-only: who opened one artifact over 7, 30, 90 or 365 days (totals, a daily series, people with their last version seen, opens per version), or without `id` opens and viewers over 7 and 30 days for every artifact the user owns. The people list is the owner's data and must not be passed on |
 | `list_mentions(state?)` | Pending requests addressed to this agent |
 | `claim_mention(task_id)` | Lock a request so two agents do not both act on it |
 | `reply_comment(comment_id, body, result_version?)` | Answer in the thread and mark the task done |
@@ -330,62 +331,101 @@ export yet. Design: `docs/superpowers/specs/2026-11-14-typed-outputs-doc-design.
   thumbnails are never served. `THUMBNAILS=false`, or no `BROWSER` binding, turns the feature off:
   cards keep the placeholder and previews have no image.
 
-### Admin stats and view counts
+### Artifact stats
 
-Plinth counts how often each artifact is opened, as one number per artifact per UTC day. It never
-records who opened it.
+Owners see who opened their artifacts, when, how often and which version. One row per counted open
+goes into `artifact_opens`, kept with who opened it for `VIEW_LOG_RETENTION_DAYS`; after that only
+the count survives.
 
 - **Where an open is counted.** At the content host's one-time `/__plinth/enter` exchange, never
   at the gate: the app polls the gate, and previews, history and agents call it too. When the gate
   answers `ok` for a normal open of the live page, it seals a signed one-bit `w` flag into the enter
-  token. Enter records an open only after every existing check passed (signature, artifact,
-  access epoch, takedown, nonce), and only when all of these hold: the pass is a view pass, the
-  token carries `w`, `VIEW_COUNTS` is on, the request has `Sec-Fetch-Dest: iframe`, the user agent
-  does not look like a bot, and the browser's view pass for that artifact (if any) is not already
-  marked counted. The response (status, `Location`, cookie attributes, CSP) is the same whether or
-  not it counted.
+  token, and beside it `o`, the opener (below), AES-GCM sealed and bound to the artifact id like the
+  identity claim, because the enter token travels in a URL. Enter records an open only after every
+  existing check passed (signature, artifact, access epoch, takedown, nonce), and only when all of
+  these hold: the pass is a view pass, the token carries `w`, `VIEW_COUNTS` is on, the request has
+  `Sec-Fetch-Dest: iframe`, the user agent does not look like a bot, and the browser's view pass
+  for that artifact (if any) is not already marked counted. The response (status, `Location`,
+  cookie attributes, CSP) is the same whether or not it counted.
 - **Not counted.** The owner's own opens, agents (verifying a publish), an admin without a role
   (even on a public page), review mode, explicit versions (history, compare, `/a/:slug/v/:n`),
   Plinth's own paths (`/__plinth/`, such as the editor preview), thumbnail captures and in-chat
   previews (their tokens refuse `w`), replayed or expired tokens, requests without
   `Sec-Fetch-Dest: iframe` (curl, scripts) and self-declared bots and headless browsers (a bot
   token such as `Googlebot/` or `Slackbot`, or a `+https://` contact URL; a bare "bot" in a phone
-  model does not count as one). Link
-  unfurlers never run the app, so they never reach the gate or enter. Editors, commenters,
-  allowlist and password viewers, link visitors and deep links to normal paths count.
+  model does not count as one). Link unfurlers never run the app, so they never reach the gate or
+  enter. Editors, commenters, allowlist and password viewers, link visitors and deep links to
+  normal paths count.
+- **Who is recorded.** The gate decides, from the principal that produced the `ok` gate. Anyone
+  signed in to an account is recorded by user id (`viewer_kind = 'user'`), whatever the
+  visibility, so a signed-in reader of a public page is named to its owner. A viewer who confirmed
+  an allowlisted email by code, without an account, is recorded by that email (`'email'`) when it
+  holds a grant on the artifact. Everyone else (link, public and password visitors) is
+  `'anonymous'`. Each row also has the role of the open (`editor`, `commenter` or `viewer` from a
+  grant; otherwise `public`, `link` or `password` from the visibility) and the version served (the
+  current one, since explicit versions never count). No IP address or user agent is stored. A
+  token with `w` but no readable opener records `'unknown'`.
+- **Anonymous visitors.** While `VIEW_COUNTS` is on, every view cookie carries `i`, a random
+  22-character visitor id, signed with the rest of the cookie. Enter takes it from any content
+  cookie the browser holds for that artifact (whatever its epoch, and up to 30 days after its pass
+  expired), or mints a new one, and the cookie is set to last 30 days (`TTL.visitorIdS`) instead of
+  12 hours; the pass inside it still expires after 12 hours, so access is unchanged. The id is
+  stored only on anonymous rows. "Anonymous visitors" counts distinct ids: approximate, because a
+  browser that drops partitioned cookies, a private window or a second browser is a new visitor,
+  and one who returns after 30 days without opening the page is too.
 - **Dedupe.** At most once per browser per artifact per content pass: a sliding 12 hours, reset by
   an access-epoch change (any grant, visibility or password change), so the same browser can count
   again sooner after one. A counted enter marks the content cookie it sets with one signed bit
   (`w`), and every later view enter at that epoch carries the mark forward, counted or not, so an
   editor who moves between the editor preview, history and the live page counts once, and an
   uncounted pass (the preview, history, review mode) never stops a later live open from counting.
-  There is no new cookie, storage or identifier. Browsers that drop partitioned cookies count
-  every open, so counts are "opens", indicative, never unique people.
-- **Storage.** One D1 upsert per counted open into `artifact_view_days`, written after the
-  response (`waitUntil`). A failed write never fails the open. The hourly cron, at 03 UTC, folds
-  days older than 90 into `artifact_view_totals` in one transaction, so the daily table stays
-  bounded and all-time totals survive. Instances without a cron (local, tunnel, Docker) keep their
-  daily rows, and every total stays correct.
-- **`VIEW_COUNTS`** (default on) turns recording off. Stored counts are kept, and the fold still
-  runs.
-- **Owners see their own counts.** The Share dialog shows "Opened N times in the last 30 days · N
-  since <first counted day>" ("No opens counted yet." before the first one: opens from before the
-  instance began counting are not known), and `GET /api/v1/artifacts/:ref/views` returns the last
-  7 and 30 days, a 30-day daily series, the total and `since`, the first day with a counted open. It goes through the policy action `views`: the owner only (an
-  agent needs `artifacts:read`); editors, viewers and an admin without a role are denied, and a
-  taken-down artifact answers `taken_down`. Counts are not in `ArtifactSummary`, MCP or anything
-  the app host answers without signing in.
+  Browsers that drop partitioned cookies count every open.
+- **Storage.** One D1 insert per counted open into `artifact_opens`, written after the response
+  (`waitUntil`). A failed write never fails the open and logs a fixed string. The hourly cron, at
+  03 UTC, folds opens older than `VIEW_LOG_RETENTION_DAYS` (default 365, from 90 to 3650; whole
+  UTC days) into `artifact_view_totals` and deletes them, in one transaction, so who opened a page
+  is kept only that long and all-time counts survive. The cron reads the setting on its own and
+  folds nothing when it is set to a value the Worker refuses. Instances without a cron (local,
+  tunnel, Docker) keep every row, and every total stays correct. Migration
+  `0020_artifact_opens.sql` turned each old daily count into that many `'unknown'` opens at 00:00
+  UTC of its day (no version, viewer or role) and dropped `artifact_view_days`.
+- **Erasure.** Erasing an artifact or its owner removes its rows by cascade. `erase-user` turns the
+  person's opens of other people's artifacts into `'unknown'` rows (no user id, email, visitor or
+  role), so the owners' counts stay right; deleting a user row also clears `user_id`.
+- **`VIEW_COUNTS`** (default on) is the switch: off stops recording (no flag, no opener, no visitor
+  id, the 12-hour cookie as before). What was recorded stays, owners still see it, and the fold
+  still runs.
+- **Owners see their artifacts' stats.** `GET /api/v1/artifacts/:ref/stats?days=7|30|90|365`
+  (default 30) returns `totals` (opens, viewers, people, anonymous visitors and opens, all-time
+  opens and `since`, the first day with a counted open), a zero-filled daily series (opens and
+  viewers), `people` (per person: display name if the account has one, email, kind, the role and
+  version of their last open, first and last open in the window and opens; last opened first, at
+  most 500, with `people_total`) and per-version opens and viewers. A person is one email: an
+  account and the same email confirmed by code count once. "Viewers" are distinct people plus
+  distinct anonymous visitors; `'unknown'` opens count as opens, never as viewers, and have no
+  version. It goes through the policy action `views`: the owner only (an agent needs
+  `artifacts:read`); editors, viewers and an admin without a role are denied, and a taken-down
+  artifact answers `taken_down`. `GET /api/v1/stats/artifacts` lists the caller's own artifacts
+  that are not deleted or taken down with opens and viewers over 7 and 30 days, all-time opens and
+  `last_opened_at`, most recently opened first. The MCP tool `get_artifact_stats` returns either
+  (with or without `id`). The app shows them at `/a/:slug/stats` (range picker, opens and viewers
+  charts, people and version tables; a person whose last version seen is older than the current one
+  is marked "Not the latest version") and `/stats` (a sortable table of the owner's artifacts),
+  linked from the artifact's menu, the dashboard and the Share dialog ("See who opened it"). Stats
+  are not in `ArtifactSummary` or anything the app host answers without signing in.
 - **Admins see instance aggregates.** `/admin/stats` (`GET /api/v1/admin/stats?days=7|30|90`,
   default 30) is for the signed-in people whose email is in `ADMIN_EMAIL`; everyone else, agents
   included, gets the same 404. It shows people, live artifacts by visibility and taken down,
   versions and agent versions, storage, shared data, agent connections by client (and how many
   were used in the window, including any revoked since), open reports and opens, with daily series
   over the window (UTC days, zero-filled). Tiles whose figure covers the window say so in their
-  label. It names no artifact,
-  owner or viewer and has no top-N list, so it is no way around "admins view only reported
-  artifacts". Storage, artifact, version and shared-data totals count live artifacts only (as
-  the quota does); opens of deleted and taken-down artifacts stay in the view totals until a hard
-  erase, and the daily series count activity, including artifacts deleted since.
+  label. Opens come from `artifact_opens` plus the folded totals. It names no artifact, owner or
+  viewer and has no top-N list, so it is no way around "admins view only reported artifacts".
+  Storage, artifact, version and shared-data totals count live artifacts only (as the quota does);
+  opens of deleted and taken-down artifacts stay in the totals until a hard erase, and the daily
+  series count activity, including artifacts deleted since.
+- **Later.** Time on page and scroll depth are not recorded; they would need a beacon from the
+  page and are left for their own design.
 
 ### Editing
 
@@ -915,17 +955,18 @@ Shared data runs on the same Worker and D1 allowances (D1 rows are estimates fro
 | Write | 1 | about 4 + the owner's artifacts with data | about 4 (2 rate-limit rows, the document, usage by trigger) |
 | Gate with an identity claim | 0 | +1 | 0 |
 
-Open counts run on the same allowances:
+Artifact stats run on the same allowances:
 
 | Operation | Worker requests | D1 rows read | D1 rows written |
 | --- | --- | --- | --- |
-| Counted open (enter) | 0 extra | about 1 | 1, on top of the existing `used_nonces` row |
+| Counted open (enter) | 0 extra | about 1 | 1 row plus its index entries (2 to 3), on top of the existing `used_nonces` row |
 | Uncounted enter | 0 | 0 | 0 |
-| Daily fold (cron, 03 UTC) | 0 | the rows older than 90 days, plus the totals rows they touch | about 1 per folded row, plus deletes |
-| Owner opens the Share dialog | 1 | ≤ 92 | 0 |
-| Admin stats page load | 1 | the users, artifacts, versions, connections, data-usage and reports rows, plus view rows in the window | 0 |
+| Daily fold (cron, 03 UTC) | 0 | the opens older than the retention, plus the totals rows they touch | about 1 per artifact folded, plus the deletes |
+| Owner opens an artifact's Stats | 1 | about 6 times the opens in the window, plus 2 | 0 |
+| Owner opens the Stats list | 1 | the owner's artifacts, plus their opens in the log and in the last 30 days | 0 |
+| Admin stats page load | 1 | the users, artifacts, versions, connections, data-usage and reports rows, plus the opens in the window | 0 |
 
-At the free tier's 100k rows written a day, an instance can take about 50k counted opens a day,
+At the free tier's 100k rows written a day, an instance can take roughly 25k counted opens a day,
 with their nonce writes, before any other writes. `VIEW_COUNTS=off` removes the extra write.
 
 Live rooms run on Durable Objects (SQLite-backed classes only on the Workers Free plan). Free:

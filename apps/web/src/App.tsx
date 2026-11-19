@@ -20,6 +20,8 @@ const History = page(() => import("./pages/History.tsx"));
 const Compare = page(() => import("./pages/Compare.tsx"));
 const Editor = page(() => import("./pages/Editor.tsx"));
 const Settings = page(() => import("./pages/Settings.tsx"));
+const ArtifactStats = page(() => import("./pages/ArtifactStats.tsx"));
+const Stats = page(() => import("./pages/Stats.tsx"));
 const Open = page(() => import("./pages/Open.tsx"));
 const Report = page(() => import("./pages/Report.tsx"));
 const AdminReports = page(() => import("./pages/AdminReports.tsx"));
@@ -42,6 +44,8 @@ export const ROUTES: [string, Page][] = [
   [APP_ROUTES.compare, Compare],
   [APP_ROUTES.editor, Editor],
   [APP_ROUTES.settings, Settings],
+  [APP_ROUTES.artifactStats, ArtifactStats],
+  [APP_ROUTES.stats, Stats],
   [APP_ROUTES.open, Open],
   [APP_ROUTES.report, Report],
   [APP_ROUTES.adminReports, AdminReports],

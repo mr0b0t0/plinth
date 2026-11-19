@@ -345,3 +345,12 @@ export const reportDecisionInput = z.object({
 export const adminStatsQuerySchema = z.object({
   days: z.enum(["7", "30", "90"]).default("30"),
 });
+/** GET /api/v1/artifacts/:ref/stats?days=: the owner's window in UTC days. */
+export const artifactStatsQuerySchema = z.object({
+  days: z.enum(["7", "30", "90", "365"]).default("30"),
+});
+/** get_artifact_stats: one artifact's stats with an id, the caller's summary without. */
+export const getArtifactStatsInput = z.object({
+  id: artifactRefSchema.optional(),
+  days: z.union([z.literal(7), z.literal(30), z.literal(90), z.literal(365)]).optional(),
+});

@@ -133,7 +133,8 @@ Booleans accept `true`, `1`, `yes` or `on`.
 | `ALLOW_SHARED_DATA` | `true` | Lets pages that declare it keep shared data (polls, sign-up sheets, trackers among invited people) and learn who is viewing; see [security.md](security.md#shared-data-api). Empty keeps it on; any other value than `true`, `1`, `yes` or `on` turns it off. Off: no identity claims, pages report shared data as unavailable, and MCP and REST writes are refused while reads still work, so owners can export. Always off under `CONTENT_ISOLATION=opaque` |
 | `SHOW_SOURCE_LINK` | `true` | Adds "open source", a link to Plinth's GitHub repository, to the banner under every artifact. Empty keeps it on; any other value than `true`, `1`, `yes` or `on` turns it off. The banner belongs to the app's page around the frame: the artifact's own HTML is never changed. Off keeps the banner and its report link |
 | `THUMBNAILS` | `true` | Takes a screenshot of each version for dashboard cards and link previews (`og:image`). Only works with a Browser Rendering binding, which you add to your own wrangler config: `"browser": { "binding": "BROWSER" }`. Without it, or with any other value than `true`, `1`, `yes` or `on`, cards keep their placeholder and link previews have no image. Browser Rendering is billed by Cloudflare per browser hour; local, tunnel and Docker instances run without it |
-| `VIEW_COUNTS` | `true` | Counts how often each artifact is opened, per UTC day, for the owner's Share dialog and the admin Stats page. Stores one number per artifact per day: no IP addresses, user agents or viewer identities. The owner's own opens, previews, thumbnails, agents and admins reviewing are not counted. Counts start when the instance gets this feature (migration `0010_view_counts.sql`); earlier opens are not known. Each counted open costs one D1 row written. Any value other than `true`, `1`, `yes` or `on` turns it off; stored counts stay |
+| `VIEW_COUNTS` | `true` | Records each open of an artifact by someone other than its owner, for the owner's Stats pages and the admin Stats page: when, which version, and who (the account of people signed in, the email of allowlisted viewers who confirmed it by code; everyone else only as an approximate anonymous visitor, from a random id in the viewing cookie, which then lasts 30 days). No IP addresses or user agents. The owner's own opens, previews, thumbnails, agents and admins reviewing are not counted, and each browser counts at most once every 12 hours. Each counted open costs one D1 row written (plus its index entries). Any value other than `true`, `1`, `yes` or `on` turns recording off; what was recorded stays and owners still see it |
+| `VIEW_LOG_RETENTION_DAYS` | `365` | How long each open is kept with who made it, from 90 to 3650 days. The hourly cron, at 03 UTC, folds older opens into one count per artifact and deletes them; any other value stops the Worker from starting (and the cron then folds nothing). Instances without a cron keep every open |
 | `OPENAI_APPS_CHALLENGE` | unset | The domain verification token OpenAI's plugin portal shows when you submit this instance's MCP server. It is served as plain text at `/.well-known/openai-apps-challenge`; unset, that path is 404. The token alone, with no spaces, or the Worker refuses to start |
 | `DATA_MAX_DOCS_PER_ARTIFACT` | `1000` | Shared-data documents per artifact |
 | `DATA_MAX_BYTES_PER_ARTIFACT` | `1048576` (1 MiB) | Shared-data bytes per artifact. At least `DATA_MAX_DOC_BYTES` |
@@ -281,9 +282,10 @@ Step-by-step instructions for each client are in [mcp.md](mcp.md).
 - **Abuse and usage.** Emails in `ADMIN_EMAIL` see the report queue at `/admin/reports` and can
   take an artifact down. They also see instance totals and 7, 30 or 90-day trends at
   `/admin/stats` (people, artifacts, publishes, storage, shared data, agent connections, open
-  reports and opens), which never name a page or a person. The hourly cron folds daily open counts
-  older than 90 days into one total per artifact at 03 UTC; instances without a cron (local,
-  tunnel, Docker) keep the daily rows instead, and every figure stays correct.
+  reports and opens), which never name a page or a person. Owners see who opened their own pages
+  at `/stats` and `/a/<slug>/stats`. The hourly cron folds opens older than
+  `VIEW_LOG_RETENTION_DAYS` into one count per artifact at 03 UTC; instances without a cron
+  (local, tunnel, Docker) keep every open instead, and every figure stays correct.
 - **Legal pages.** `/legal/terms`, `/legal/privacy` and `/legal/acceptable-use` are short, final,
   plain-language pages built from the `OPERATOR_*` settings. Set `OPERATOR_NAME` and
   `OPERATOR_EMAIL` (and in the EU your address and registration or VAT number) before letting other

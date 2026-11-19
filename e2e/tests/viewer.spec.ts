@@ -392,7 +392,7 @@ test.describe("reports and takedown", () => {
 });
 
 test.describe("open counts and admin stats", () => {
-  test("the owner's Share dialog counts another browser's open, not the owner's", async ({
+  test("the owner's Stats count another browser's open, not the owner's", async ({
     page,
     browser,
   }) => {
@@ -417,9 +417,11 @@ test.describe("open counts and admin stats", () => {
       await otherCtx.close();
     }
 
-    // The count is written after the response; wait for it, scoped to this artifact.
+    // The open is written after the response; wait for it, scoped to this artifact.
     await expect
-      .poll(async () => (await apiGet(page.request, `/artifacts/${a.slug}/views`)).body.total)
+      .poll(
+        async () => (await apiGet(page.request, `/artifacts/${a.slug}/stats`)).body.totals.opens,
+      )
       .toBe(1);
 
     await page.reload();
@@ -431,13 +433,32 @@ test.describe("open counts and admin stats", () => {
       await page.getByRole("button", { name: "Share" }).click();
     }
     const dialog = page.getByRole("dialog", { name: "Share this artifact" });
-    // Dated from the first counted open: earlier opens are not known.
-    await expect(dialog.getByRole("status").filter({ hasText: /^Opened/ })).toHaveText(
-      /^Opened 1 time in the last 30 days · 1 since \d{1,2} \w+ \d{4}$/,
-    );
-    await expect(dialog.getByText("Counts opens by people other than you")).toBeVisible();
     await expectAccessible(page);
-    await shot(page, "share-dialog-views");
+    await dialog.getByRole("link", { name: "See who opened it" }).click();
+    await expect(page).toHaveURL(new RegExp(`/a/${a.slug}/stats$`));
+    // One anonymous visitor (the other browser), dated from the first counted open.
+    const tile = (label: RegExp) =>
+      page.locator(".pl-stat", { has: page.locator("dt", { hasText: label }) });
+    await expect(tile(/^Opens, last 30 days$/).locator(".pl-stat__value")).toHaveText("1");
+    await expect(tile(/^Anonymous visitors$/).locator(".pl-stat__value")).toHaveText("1");
+    await expect(tile(/^People$/).locator(".pl-stat__value")).toHaveText("0");
+    await expect(tile(/^Opens in all$/)).toContainText(/Since \d{1,2} \w+ \d{4}/);
+    await expect(page.getByRole("figure", { name: /Opens per day/ })).toBeVisible();
+    await expectAccessible(page);
+    await shot(page, "artifact-stats");
+    // A shorter window keeps it in the address.
+    await page.getByRole("radio", { name: "7 days" }).check();
+    await expect(page).toHaveURL(/\?days=7$/);
+    await expect(tile(/^Opens, last 7 days$/).locator(".pl-stat__value")).toHaveText("1");
+
+    // The account-wide Stats list links to it.
+    await page.goto("/stats");
+    const row = page.getByRole("row", { name: /Counted page/ }).first();
+    await expect(row).toBeVisible();
+    await expectAccessible(page);
+    await shot(page, "account-stats");
+    await row.getByRole("link").first().click();
+    await expect(page).toHaveURL(new RegExp(`/a/${a.slug}/stats`));
   });
 
   test("the Stats page is for admins only", async ({ page, browser }) => {
@@ -477,7 +498,7 @@ test.describe("open counts and admin stats", () => {
     await expect(page.getByRole("figure", { name: /Opens per day/ })).toBeVisible();
     // The sidebar (a slide-over on a phone) has both admin pages.
     if (!isMobile()) {
-      await expect(page.getByRole("link", { name: "Stats", exact: true })).toBeVisible();
+      await expect(page.getByRole("link", { name: "Admin stats", exact: true })).toBeVisible();
       await expect(page.getByRole("link", { name: "Reports", exact: true })).toBeVisible();
     }
     await shot(page, "admin-stats");

@@ -73,7 +73,7 @@ describe("AppShell", () => {
     expect(onSignOut).toHaveBeenCalledTimes(1);
   });
 
-  it("gives admins Stats and Reports, once each, and nobody else either", async () => {
+  it("gives admins Admin stats and Reports, once each, and nobody else either", async () => {
     const stub = (isAdmin: boolean) =>
       vi.stubGlobal(
         "fetch",
@@ -95,7 +95,8 @@ describe("AppShell", () => {
       </AppShell>,
     );
     const nav = await screen.findByRole("navigation", { name: "Primary" });
-    expect(nav.querySelector('a[href="/admin/stats"]')?.textContent).toBe("Stats");
+    expect(nav.querySelector('a[href="/admin/stats"]')?.textContent).toBe("Admin stats");
+    expect(nav.querySelector('a[href="/stats"]')?.textContent).toBe("Stats");
     expect(nav.querySelectorAll('a[href="/admin/reports"]').length).toBe(1);
     cleanup();
     vi.unstubAllGlobals();
@@ -110,5 +111,7 @@ describe("AppShell", () => {
     const plain = await screen.findByRole("navigation", { name: "Primary" });
     expect(plain.querySelector('a[href="/admin/stats"]')).toBeNull();
     expect(plain.querySelector('a[href="/admin/reports"]')).toBeNull();
+    // Everyone signed in has their own Stats.
+    expect(plain.querySelector('a[href="/stats"]')?.textContent).toBe("Stats");
   });
 });
