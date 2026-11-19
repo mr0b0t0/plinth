@@ -10,6 +10,8 @@ Add a line under **Unreleased** in the pull request that makes a change people w
 
 ## Unreleased
 
+- Notifications no longer cover a dialog's buttons, and a pointer resting on one no longer keeps
+  it on screen for good.
 - **The CLI publishes design systems.** `plinth publish <dir>` publishes a folder with
   `system.json` at its top (and its images and fonts) as a design system, `--id` updates one with
   only the changed files, and `plinth upload` sends one for a `start_upload` ticket. `system.json`
