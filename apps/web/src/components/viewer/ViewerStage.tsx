@@ -279,14 +279,20 @@ export function ViewerStage({
   const editRef = useRef<HTMLButtonElement>(null);
   const headerRef = useRef<HTMLElement>(null);
   // Ask an agent, not editing: the comments panel in request mode, opened if it was closed (one
-  // reload into review mode, which the pick needs). `n` changes for every request.
+  // reload into review mode, which the pick needs). `n` changes for every request. A request
+  // lasts as long as the panel it opened: once the panel closes, Comments opens a plain composer.
   const [request, setRequest] = useState<{ n: number; anchor: AskAnchor | null } | null>(null);
+  const requestCount = useRef(0);
+  useEffect(() => {
+    if (!commentsOpen) setRequest(null);
+  }, [commentsOpen]);
   const ask = useAskAgent({
     gate,
     editing,
     openDialog: setDialog,
     openRequest: (anchor) => {
-      setRequest((r) => ({ n: (r?.n ?? 0) + 1, anchor }));
+      requestCount.current += 1;
+      setRequest({ n: requestCount.current, anchor });
       if (!commentsOpen) onToggleComments();
     },
     focusSignIn: () =>

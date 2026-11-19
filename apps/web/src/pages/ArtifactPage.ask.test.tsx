@@ -129,6 +129,43 @@ describe("Ask an agent: not editing", () => {
     );
   });
 
+  it("forgets the request once the panel closes: Comments opens a plain composer again", async () => {
+    const s = stub(gateOf());
+    const ArtifactPage = await loadPage();
+    const user = userEvent.setup();
+    render(<ArtifactPage params={{ slug: "garden-plan" }} />);
+    await screen.findByTitle("Garden plan, version 3");
+    await user.click(screen.getByRole("button", { name: "Ask an agent" }));
+    let panel = await screen.findByRole("region", { name: "Comments" });
+    expect(
+      within(panel).getByRole("form", { name: "Ask an agent to change this page" }),
+    ).toBeTruthy();
+    // Closed without sending anything.
+    await user.click(within(panel).getByRole("button", { name: "Close comments" }));
+    await waitFor(() => expect(screen.queryByRole("region", { name: "Comments" })).toBeNull());
+
+    await user.click(screen.getAllByRole("button", { name: "Comments" })[0] as HTMLElement);
+    panel = await screen.findByRole("region", { name: "Comments" });
+    const box = await within(panel).findByRole("textbox");
+    expect(
+      within(panel).queryByRole("form", { name: "Ask an agent to change this page" }),
+    ).toBeNull();
+    expect(within(panel).queryByRole("radio", { name: "Claude" })).toBeNull();
+    await user.type(box, "Nice");
+    await user.click(within(panel).getByRole("button", { name: /^(Post|Comment|Send)/ }));
+    await waitFor(() => expect(s.posted).toHaveLength(1));
+    expect(s.posted[0]).toEqual({ body: "Nice", version_number: 3 });
+
+    // Asking again still opens request mode.
+    await user.click(within(panel).getByRole("button", { name: "Close comments" }));
+    await waitFor(() => expect(screen.queryByRole("region", { name: "Comments" })).toBeNull());
+    await user.click(screen.getByRole("button", { name: "Ask an agent" }));
+    panel = await screen.findByRole("region", { name: "Comments" });
+    expect(
+      await within(panel).findByRole("form", { name: "Ask an agent to change this page" }),
+    ).toBeTruthy();
+  });
+
   it("offers commenters a ⋯ item, never the bar, and posts to the agent they pick", async () => {
     const s = stub(gateOf({ role: "commenter", artifact: DOC }));
     const ArtifactPage = await loadPage();
@@ -457,8 +494,10 @@ describe("Ask an agent in edit mode: the Ask dialog", () => {
     });
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
 
-    // Another document's key, or a key that is no structural name: nothing opens.
+    // Another document's key, no key at all, or a key that is no structural name: nothing opens.
     post({ type: "ask", anchor: { key: "slide-3", text: "x" } }, "A".repeat(43));
+    post({ type: "ask", anchor: { key: "block-1", text: "Misleading" } }, "");
+    post({ type: "ask" }, "");
     post({ type: "ask", anchor: { key: "<b>", text: "x" } });
     await act(async () => {
       await new Promise((r) => setTimeout(r, 20));

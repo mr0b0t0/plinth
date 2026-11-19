@@ -2629,12 +2629,15 @@ authority, whoever sends it (only `comment_author_role` says the owner did).
   then). The composer is titled "Ask an agent to change this page" and has "Point at something" (the
   review-mode pick: an element on an HTML page, a board on a design), the description, and the agent
   choice. It posts a comment with `request_to` against the version on view; "Write a comment
-  instead" turns it back into a plain comment.
+  instead" turns it back into a plain comment. Request mode lasts as long as the panel it opened:
+  once the panel closes, sent or not, the Comments toggle opens a plain composer again.
 - **In edit mode: the Ask dialog.** A modal dialog in the app that changes nothing in the frame: no
   review mode, no reload, the comments panel stays closed, and the frame keeps edit mode and its
   draft. It opens from the ⋯ item, or from an `ask` message the renderer posts with the frame's key
   and a page anchor (`{ kind: "page", key, text }`, a structural name such as `slide-3:image-1`,
-  shown as text); the renderer releases its own lease before it asks. It has the description, the
+  shown as text); the renderer releases its own lease before it asks. While the app is in edit
+  mode, an `ask` without the frame's key is dropped like any other editing message; only outside
+  edit mode does a keyless `ask` open the comments panel in request mode. It has the description, the
   agent choice and "Publish my changes first", off by default and shown only when there are
   unpublished changes ("The agent works from v5. Your unpublished changes are not in it unless you
   publish first.", plus, in room mode while others edit, "This also publishes the others'

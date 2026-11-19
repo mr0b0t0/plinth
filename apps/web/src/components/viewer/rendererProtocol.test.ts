@@ -433,6 +433,22 @@ describe("renderer protocol: the frame key and the review", () => {
     expect(ask({ key: "x", text: "a" }, "z".repeat(43))).toBeNull();
   });
 
+  it("drops an ask without the frame key while the app is editing", () => {
+    const { frame, src } = framed();
+    const anchor = { key: "block-1", text: "Intro" };
+    const msg = { ...base, type: "ask", anchor };
+    expect(read(src, frame, msg, { editing: true })).toBeNull();
+    expect(read(src, frame, { ...msg, key: "z".repeat(43) }, { editing: true })).toBeNull();
+    // With no key to check against, nothing in edit mode passes either.
+    expect(read(src, frame, { ...msg, key: KEY }, { editing: true, key: null })).toBeNull();
+    expect(read(src, frame, { ...msg, key: KEY }, { editing: true })).toEqual({
+      type: "ask",
+      anchor,
+    });
+    // Not editing, the keyless form still opens a composer the person confirms.
+    expect(read(src, frame, msg, { editing: false })).toEqual({ type: "ask", anchor });
+  });
+
   it("reads the new live status fields and refuses bad ones", () => {
     const { frame, src } = framed();
     const status = {

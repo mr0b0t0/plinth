@@ -515,6 +515,8 @@ interface ReadOptions {
   key?: string | null;
   /** The nonce of the `review` message the app is waiting on; `resolved` is read only for it. */
   review?: string | null;
+  /** The app is in edit mode: `ask` is then an editing message and must carry the frame key. */
+  editing?: boolean;
 }
 
 /** The kinds that carry the frame key. `shown` (live views) and `ask` outside edit mode do not. */
@@ -638,7 +640,7 @@ export function matchFrameMessage<R>(m: FrameMessage, handlers: FrameMessageHand
 /**
  * A message from the doc frame, validated, or null. It must come from `frame`'s window at exactly
  * `contentOrigin`; an editing message must carry the frame's key (`key`, when the app gave the
- * frame one); draft text is accepted only in solo mode, only for the nonce the app is waiting
+ * frame one), and while `editing` so must `ask`; draft text is accepted only in solo mode, only for the nonce the app is waiting
  * for, and only up to the instance's doc size.
  */
 export function readFrameMessage(
@@ -652,6 +654,7 @@ export function readFrameMessage(
     shown?: string | null;
     key?: string | null;
     review?: string | null;
+    editing?: boolean;
   },
 ): FrameMessage | null {
   const win = opts.frame?.contentWindow;
@@ -664,9 +667,11 @@ export function readFrameMessage(
   if (m.source !== RENDERER_MESSAGE_SOURCE || m.v !== RENDERER_PROTOCOL_VERSION) return null;
   if (typeof m.type !== "string" || !Object.hasOwn(FRAME_READERS, m.type)) return null;
   const kind = m.type as FrameMessageKind;
-  // An editing message comes only from the document that holds this frame's key. `ask` carries
-  // it in edit mode; outside it, the message only opens a composer the person must confirm.
-  const keyed = KEYED.has(kind) || (kind === "ask" && m.key !== undefined);
+  // An editing message comes only from the document that holds this frame's key. `ask` is one in
+  // edit mode, so a keyless `ask` is dropped then; outside it, the message only opens a composer
+  // the person must confirm, and carries the key only if it has one.
+  const keyed =
+    KEYED.has(kind) || (kind === "ask" && (opts.editing === true || m.key !== undefined));
   if (keyed && opts.key !== undefined && (opts.key === null || m.key !== opts.key)) return null;
   return FRAME_READERS[kind](m, opts);
 }

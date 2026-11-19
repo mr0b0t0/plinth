@@ -316,6 +316,7 @@ export function useLiveEdit({
         maxDocBytes: maxBytes,
         key: frameKey,
         review: reviewRef.current?.nonce ?? null,
+        editing: latest.current.editing,
       });
       if (!m) return;
       matchFrameMessage(m, {

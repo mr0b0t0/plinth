@@ -2620,6 +2620,8 @@ reaches agents through the mention queue exactly as an `@claude` mention does.
   other in a loop.
 - **The frame boundary.** The edit-mode Ask dialog opens from an `ask` message only with the frame
   key, from the frame's window at its exact content origin (see [Inline editing](#inline-editing)).
+  While the app is in edit mode a keyless `ask` is dropped, not taken as the outside-edit-mode
+  form, so a document the frame navigated to cannot open the dialog with an anchor it chose.
   Its anchor is a structural key and a short plain-text label, rendered as text in the dialog, the
   chip and the thread. The dialog posts nothing on its own: the person writes the request and
   presses Send. Outside edit mode Ask an agent uses the comments panel and its review-mode bridge,
