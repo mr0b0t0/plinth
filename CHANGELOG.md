@@ -10,6 +10,18 @@ Add a line under **Unreleased** in the pull request that makes a change people w
 
 ## Unreleased
 
+- **Where a dashboard's figures come from.** The owner's agent fetches figures with its own
+  connectors, writes them to the page's shared data with a `source` stamp (`write_artifact_data`),
+  and describes each fetch as a data source with `set_data_sources` (label, connector, a read-only
+  recipe and the collection it fills). Plinth never fetches and holds no connector credentials. A
+  source an agent sets or changes waits until the owner reads its recipe and confirms it in the
+  Share dialog (agents cannot confirm); revoking a connection a source was pinned to makes it wait
+  again. Every reader sees each stamped figure's source and age (`doc.source`, and the runtime's
+  `plinth.cite` badges), and one line under the bar, counted by the server, says which figures were
+  fetched by an agent of the owner and how many were last changed by a person. A page can declare
+  `plinth-data-sourced` collections that only the owner and editors write. Credential-like text is
+  refused in recipes and stamps. Works with no page declaration and under opaque isolation (figures
+  inline). Migration `0015_data_sources.sql`.
 - **Follow the presenter in a deck.** An owner or editor can turn on **Lead viewers** in a deck's
   controls or presenter view, and the people the deck is shared with who have it open follow their
   slide, with a "Following the presenter" note; paging by hand pauses it until they choose "Back to

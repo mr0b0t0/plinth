@@ -81,7 +81,13 @@ export type ArtifactAction =
    * Read the comment threads (bodies, authors' emails, mention tasks): as view, except that a
    * token bound to one artifact never may.
    */
-  | "comments_read";
+  | "comments_read"
+  /** Read the artifact's data sources (the recipe only with seesSourceRecipe): owners and editors. */
+  | "sources_read"
+  /** Set, change or remove the artifact's data sources: the owner (signed in or the owner's agent). */
+  | "sources_manage"
+  /** Confirm a data source: the owner, signed in, never an agent (as data_clear). */
+  | "sources_confirm";
 
 export interface ArtifactFacts {
   id: string;
@@ -149,6 +155,9 @@ const ACTION_SCOPES: Record<ArtifactAction, Scope> = {
   live_edit: "artifacts:write",
   people: "artifacts:read",
   comments_read: "artifacts:read",
+  sources_read: "artifacts:read",
+  sources_manage: "artifacts:write",
+  sources_confirm: "artifacts:write",
 };
 
 export function principalEmail(p: Principal): string | null {
@@ -257,6 +266,18 @@ export function decide(
       return deny(p.kind === "viewer" ? "account_required" : "forbidden", role);
     case "people":
       return role === "owner" || role === "editor"
+        ? { allow: true, role }
+        : deny(p.kind === "anonymous" ? "login_required" : "forbidden", role);
+    case "sources_read":
+      return role === "owner" || role === "editor"
+        ? { allow: true, role }
+        : deny(p.kind === "anonymous" ? "login_required" : "forbidden", role);
+    case "sources_manage":
+      return role === "owner"
+        ? { allow: true, role }
+        : deny(p.kind === "anonymous" ? "login_required" : "forbidden", role);
+    case "sources_confirm":
+      return role === "owner" && p.kind === "user"
         ? { allow: true, role }
         : deny(p.kind === "anonymous" ? "login_required" : "forbidden", role);
   }
@@ -808,4 +829,51 @@ export function meetsFloor(role: EffectiveRole, floor: EffectiveRole): boolean {
  */
 export function roomOpenTopics(caps: Pick<Capabilities, "roomOpen" | "writers"> | null): string[] {
   return !caps || caps.writers === "editor" ? [] : [...caps.roomOpen];
+}
+
+// ---------- live data from the owner's agents: data sources and provenance ----------
+
+/**
+ * Does this reader see a data source's recipe and its target and hash? The owner only (signed in,
+ * or the owner's agent), never an editor and never a token limited to one artifact. Editors see
+ * what a source is (label, connector, collection) and its state.
+ */
+export function seesSourceRecipe(p: Principal, role: EffectiveRole | null): boolean {
+  return role === "owner" && boundArtifactOf(p) === null;
+}
+
+/**
+ * Is the owner's confirmation current for this source? Only the signed-in owner can make
+ * confirmedHash equal configHash (decide "sources_confirm"); any change by an agent recomputes
+ * configHash, and revoking a pinned connection does too, so the source waits again.
+ */
+export function sourceActive(s: { configHash: string; confirmedHash: string | null }): boolean {
+  return s.confirmedHash !== null && s.confirmedHash === s.configHash;
+}
+
+/**
+ * May this data write carry a source stamp, and may this writer write in a sourced collection?
+ * Called after canModifyDoc (which it never loosens), on every channel. Rules, in order:
+ * 1. a write with a source from anyone but the owner's agent (via "agent", role "owner"): refused,
+ *    source_owner_only;
+ * 2. a commenter- or viewer-role writer in a collection the page declares in plinth-data-sourced:
+ *    refused, sourced (creates, updates and deletes);
+ * 3. otherwise allowed. Owners and editors (page, app, their agents) always pass rule 2, with or
+ *    without a source, sets and deletes alike; a set without a source clears the stamp.
+ * It narrows who may assert provenance and who writes in a sourced collection; it never stops the
+ * owner or an editor from changing or deleting data.
+ */
+export function sourcedWrite(input: {
+  via: "page" | "agent" | "app";
+  role: EffectiveRole;
+  hasSource: boolean;
+  collectionSourced: boolean;
+}): { allow: true } | { allow: false; reason: "sourced" | "source_owner_only" } {
+  if (input.hasSource && !(input.via === "agent" && input.role === "owner")) {
+    return { allow: false, reason: "source_owner_only" };
+  }
+  if (input.collectionSourced && (input.role === "commenter" || input.role === "viewer")) {
+    return { allow: false, reason: "sourced" };
+  }
+  return { allow: true };
 }

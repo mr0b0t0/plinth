@@ -115,6 +115,8 @@ const ADDED_USER_STEPS = new Set([
   "category_grants",
   // Files people add to a page (0014): their uploads on other people's pages.
   "artifact_files",
+  // Data sources (0015): the refreshes they asked for on other people's pages.
+  "data_refresh_tasks",
 ]);
 
 describe("erase statements (golden)", () => {

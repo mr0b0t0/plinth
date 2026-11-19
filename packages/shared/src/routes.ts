@@ -98,6 +98,10 @@ export const API = {
   // files people add to a page (mirror list_artifact_files and delete_artifact_file)
   files: "/artifacts/:ref/files", // GET a page of files, DELETE all (signed-in owner)
   file: "/artifacts/:ref/files/:file", // DELETE one file (owner or editor)
+  // data sources (mirror set_data_sources and get_artifact's data_sources; confirm: the signed-in owner only)
+  dataSources: "/artifacts/:ref/sources", // GET the list, PUT replace it (owner)
+  dataSource: "/artifacts/:ref/sources/:source", // DELETE one (owner)
+  dataSourceConfirm: "/artifacts/:ref/sources/:source/confirm", // POST confirm (session only, never agents)
   // on-page doc editing (signed-in owners and editors only; never agents, never MCP)
   live: "/artifacts/:ref/live", // GET LiveInfo
   liveDraft: "/artifacts/:ref/live/draft", // GET the draft text (review), DELETE ?rev=n discards

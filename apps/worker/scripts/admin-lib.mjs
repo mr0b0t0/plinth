@@ -394,6 +394,13 @@ export const ERASE_USER_STEPS = [
     sql: (email) =>
       `UPDATE artifact_files SET state = 'deleting', claimed_at = NULL, name = '', created_by_email = NULL, created_by_role = NULL WHERE created_by_email = '${email}'`,
   },
+  // Refreshes they asked for on other people's pages (0015_data_sources) keep the task, not who
+  // asked. Their own artifacts' sources and tasks cascade with the users row.
+  {
+    table: "data_refresh_tasks",
+    sql: (email) =>
+      `UPDATE data_refresh_tasks SET requested_by_email = NULL, requested_by_role = NULL WHERE requested_by_email = '${email}'`,
+  },
   // Unsaved page edits on other people's docs keep their text, not who made them.
   {
     table: "live_drafts",

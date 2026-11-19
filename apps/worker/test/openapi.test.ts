@@ -121,6 +121,7 @@ describe("OpenAPI document", () => {
         "write_artifact_data",
         "read_sheet",
         "edit_sheet",
+        "set_data_sources",
       ].sort(),
     );
   });

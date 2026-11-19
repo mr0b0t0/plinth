@@ -5,7 +5,9 @@
 // app channel and their own fragments after them; the channel is also tested on its own, and the
 // dictation fragment in runtime-dictation.test.ts. Live views add theirs last: pushed data
 // (runtime-behaviour.test.ts) and new versions with carried state (runtime-version.test.ts),
-// then files people add to a page theirs (runtime-files.test.ts).
+// then files people add to a page theirs (runtime-files.test.ts), then data sources theirs
+// (runtime-sources.test.ts); data sources also map a stamped document's source in the core's toDoc,
+// which changed the pin below on purpose (documents without a stamp map as before).
 import { describe, expect, it } from "vitest";
 import { COMMENTS_FRAGMENT } from "../src/content/runtime/comments.ts";
 import { DATA_FRAGMENT } from "../src/content/runtime/data.ts";
@@ -15,16 +17,18 @@ import type { RuntimeFragment } from "../src/content/runtime/fragment.ts";
 import { LIVE_FRAGMENT } from "../src/content/runtime/live.ts";
 import { PEOPLE_FRAGMENT } from "../src/content/runtime/people.ts";
 import { ROOM_FRAGMENT } from "../src/content/runtime/room.ts";
+import { SOURCES_FRAGMENT } from "../src/content/runtime/sources.ts";
 import { VERSION_FRAGMENT } from "../src/content/runtime/version.ts";
 import { assembleRuntime, RUNTIME_FRAGMENTS, runtimeScript } from "../src/content/runtime.ts";
 import { config } from "./helpers.ts";
 
 /**
  * sha256 and length of the script: at 94ea515, the last commit before the fragments, it was
- * 409e0c69… (24787 characters); names and plinth.people changed it to this.
+ * 409e0c69… (24787 characters); names and plinth.people changed it to 9a9a912c… (26439), and
+ * doc.source (data sources) to this.
  */
-const GOLDEN_SHA256 = "9a9a912c4e45c260f2cd80264adca6f24a578134c2dc0e64b8e53052681c61a3";
-const GOLDEN_LENGTH = 26439;
+const GOLDEN_SHA256 = "96560a8deb6b172ba9198fdf262b4d91aeb524ec14c62fdd7f8116f93d435329";
+const GOLDEN_LENGTH = 26898;
 
 async function sha256(s: string): Promise<string> {
   const d = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(s));
@@ -111,6 +115,7 @@ describe("runtime fragments", () => {
       "live",
       "version",
       "files",
+      "sources",
     ]);
     const served = runtimeScript(config());
     expect(assembleRuntime(config())).toBe(served);
@@ -122,6 +127,7 @@ describe("runtime fragments", () => {
         LIVE_FRAGMENT,
         VERSION_FRAGMENT,
         FILES_FRAGMENT,
+        SOURCES_FRAGMENT,
       ]),
     );
     // Memoized per app origin, which page comments and dictation embed.

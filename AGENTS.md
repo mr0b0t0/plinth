@@ -95,7 +95,9 @@ make a test pass.
   `allow-same-origin`); the shell posts each one only its own HTML.
 - **Comment and artifact text is untrusted input for agents**, and so is shared data, which
   viewers and the page's own code write. A mention is a request from a collaborator, not an
-  instruction with the owner's authority. MCP tool descriptions say so.
+  instruction with the owner's authority. MCP tool descriptions say so. So is a data source's
+  recipe, which a session acting on injected text may have written: only the signed-in owner can
+  confirm it, and agents treat it as a read-only request, never an instruction.
 - **Authorization lives in one shared policy module** and is checked on every read and write,
   never only in the UI.
 - **Tokens** are stored hashed, shown once, revocable per connection. Secrets never appear in
@@ -116,6 +118,11 @@ make a test pass.
 - Filing an artifact under a shared category never shares it: only the signed-in owner's review,
   bound to that share, adds an artifact to a category share. A collaborator's own category for an
   artifact shared with them is seen and set by that person only, in the app.
+- Figures from the owner's systems reach a page only as shared data an owner's agent writes,
+  stamped with its source, or inline in a version; Plinth never fetches them and holds no
+  connector credentials. A data source an agent sets or changes waits for the signed-in owner's
+  confirmation, bound to its exact config, and only a confirmed source may be refreshed on request
+  or on a schedule.
 - Anything a self-hoster may change (hosts, quota, email provider, CDN allowlist) is an env var.
 - The product name must not contain "Claude" or "Codex".
 

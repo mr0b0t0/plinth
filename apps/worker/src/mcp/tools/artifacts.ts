@@ -34,6 +34,7 @@ import {
   ROOM_PAGE_NOTE,
   SHEET_PUBLISH_NOTE,
   SLIDES_PUBLISH_NOTE,
+  SOURCES_DETAIL_NOTE,
   TYPE_UPDATE_NOTE,
   UNTRUSTED_NOTE,
   WHITEBOARD_PUBLISH_NOTE,
@@ -116,6 +117,7 @@ export const registerArtifactTools: ToolRegistrar = ({ server, ctx, opaque, prev
         "{id, title, version, current_version}, or null when you cannot open it. " +
         "category is the owner's grouping, shown only to the owner (null for everyone else). " +
         LIVE_DRAFT_NOTE +
+        SOURCES_DETAIL_NOTE +
         UNTRUSTED_NOTE,
       inputSchema: getArtifactInput,
       annotations: MCP_TOOL_ANNOTATIONS.get_artifact,

@@ -37,6 +37,9 @@ const ACTIONS = Object.keys({
   live_edit: true,
   people: true,
   comments_read: true,
+  sources_read: true,
+  sources_manage: true,
+  sources_confirm: true,
 } satisfies Record<ArtifactAction, true>) as ArtifactAction[];
 
 const ALL = ["artifacts:read", "artifacts:write", "mentions"] as const;

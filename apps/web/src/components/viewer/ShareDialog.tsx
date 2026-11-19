@@ -1,6 +1,7 @@
 // Share: the artifact's app link to copy, what the link opens for whoever gets it, and (for the
 // owner) the way to the sharing settings, the page's shared data (how much, and delete all), the
-// files people uploaded to it (FilesBlock.tsx) and how often other people opened it.
+// files people uploaded to it (FilesBlock.tsx), how often other people opened it, and its data
+// sources to review and confirm (DataSourcesSection.tsx).
 import { CopyIcon, GearSixIcon, TrashIcon, WarningCircleIcon } from "@phosphor-icons/react";
 import {
   APP_ROUTES,
@@ -28,6 +29,7 @@ import {
   useToast,
   VISIBILITY_META,
 } from "../ui/index.ts";
+import { DataSourcesSection, useDataSources } from "./DataSourcesSection.tsx";
 import { FilesBlock, filesCount, useArtifactFiles } from "./FilesBlock.tsx";
 import "./viewer.css";
 
@@ -38,6 +40,10 @@ export interface ShareDialogProps {
   slug: string;
   visibility: Visibility;
   isOwner: boolean;
+  /** A data source was confirmed or removed here: the viewer bar's sources line is out of date. */
+  onSourcesChange?: () => void;
+  /** The gate lists data sources for the artifact. */
+  hasSources?: boolean;
 }
 
 /** Copy text to the clipboard. Resolves false when the browser refuses. */
@@ -50,7 +56,16 @@ export async function copyText(text: string): Promise<boolean> {
   }
 }
 
-export function ShareDialog({ open, onClose, link, slug, visibility, isOwner }: ShareDialogProps) {
+export function ShareDialog({
+  open,
+  onClose,
+  link,
+  slug,
+  visibility,
+  isOwner,
+  onSourcesChange,
+  hasSources = false,
+}: ShareDialogProps) {
   const toast = useToast();
   const inputRef = useRef<HTMLInputElement>(null);
   const meta = VISIBILITY_META[visibility];
@@ -69,6 +84,7 @@ export function ShareDialog({ open, onClose, link, slug, visibility, isOwner }: 
   const [deletingFiles, setDeletingFiles] = useState(false);
   const [filesError, setFilesError] = useState<string | null>(null);
   const fileTotal = files.list?.usage.files ?? 0;
+  const sources = useDataSources(open && isOwner, slug);
 
   // Closing the dialog from outside drops a pending confirmation and an old error.
   useEffect(() => {
@@ -174,6 +190,19 @@ export function ShareDialog({ open, onClose, link, slug, visibility, isOwner }: 
               onDeleteAll={() => {
                 setFilesError(null);
                 setConfirmingFiles(true);
+              }}
+            />
+          )}
+          {isOwner && (
+            <DataSourcesSection
+              state={sources}
+              slug={slug}
+              expected={hasSources}
+              onChanged={() => {
+                // The button that was pressed is gone (Confirm, or the removed source): keep
+                // focus in the dialog, so Tab and Escape still work.
+                inputRef.current?.focus();
+                onSourcesChange?.();
               }}
             />
           )}

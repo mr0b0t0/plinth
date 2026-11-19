@@ -14,6 +14,7 @@ import {
   contentNote,
   PLUGIN_NOTE,
   SENSITIVE_INSTRUCTION,
+  SOURCES_INSTRUCTION,
   TYPES_NOTE,
   UNTRUSTED_NOTE,
 } from "./notes.ts";
@@ -22,6 +23,7 @@ import { registerArtifactTools } from "./tools/artifacts.ts";
 import { registerCommentTools } from "./tools/comments.ts";
 import type { ToolRegistrar } from "./tools/context.ts";
 import { registerDataTools } from "./tools/data.ts";
+import { registerDataSourceTools } from "./tools/dataSources.ts";
 import { registerDesignSystemTools } from "./tools/designSystems.ts";
 import { registerFileTools } from "./tools/files.ts";
 import { registerPreviewTools } from "./tools/preview.ts";
@@ -44,6 +46,7 @@ export const MCP_TOOL_FILES: readonly ToolRegistrar[] = [
   registerDesignSystemTools,
   registerSheetTools,
   registerFileTools,
+  registerDataSourceTools,
 ];
 
 export function buildMcpServer(ctx: Ctx): McpServer {
@@ -67,6 +70,7 @@ export function buildMcpServer(ctx: Ctx): McpServer {
         "copy, and the link stays the same. Change who can view it with set_visibility only when the " +
         "user asks. A page can keep shared data (polls, sign-up sheets, trackers among invited people): " +
         "read it with list_artifact_data and change it with write_artifact_data. " +
+        `${SOURCES_INSTRUCTION} ` +
         "For a build folder or more than ~1 MB, call start_upload instead of inline assets. " +
         "Results list warnings; fix them before handing over the link (not_scanned and live_draft need no action). " +
         `${SENSITIVE_INSTRUCTION} ` +

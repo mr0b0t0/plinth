@@ -42,6 +42,7 @@ import { EditBar } from "./EditBar.tsx";
 import { LiveDraftNotice } from "./LiveDraftNotice.tsx";
 import { PresentStrip } from "./PresentStrip.tsx";
 import { postExport, postPrint, rendererTargetOrigin } from "./rendererProtocol.ts";
+import { SourcesNotice } from "./SourcesNotice.tsx";
 import type { Dictation } from "./useDictation.ts";
 import type { LiveEdit } from "./useLiveEdit.ts";
 import type { Presentation } from "./usePresentation.ts";
@@ -430,6 +431,15 @@ const heldUpdate: StageNode = ({ update }) =>
 
 const dataNotice: StageNode = (c) => <DataNotice gate={c.gate} />;
 
+/** Where the page's figures come from, and, for the owner, sources waiting for them. */
+const sourcesNotice: StageNode = ({ gate, actions }) => (
+  <SourcesNotice
+    sources={gate.sources}
+    isOwner={gate.role === "owner"}
+    onReview={actions.openShare}
+  />
+);
+
 const editBar: StageNode = ({ editing, live, gate, refs, actions }) =>
   editing &&
   live.mode && (
@@ -495,6 +505,7 @@ export const STRIP_ITEMS: readonly StageItem[] = [
   { id: "older-version", render: olderVersion },
   { id: "held-update", render: heldUpdate },
   { id: "data-notice", render: dataNotice },
+  { id: "sources-notice", render: sourcesNotice },
   { id: "edit-bar", render: editBar },
   { id: "live-draft", render: liveDraftNotice },
   { id: "present", render: presentStrip },
