@@ -126,6 +126,19 @@ describe("mentions create tasks", () => {
     expect(c.mentions[0]).toMatchObject({ state: "pending", result_version: null });
   });
 
+  it("never reads a mention name off Object.prototype", async () => {
+    const { owner, artifact, browser } = await setup();
+    const none = await postComment(browser, artifact.slug, {
+      body: "@constructor @toString @hasOwnProperty @valueOf",
+    });
+    expect(await tasksOf(none.id)).toEqual([]);
+    const conn = await createToken(owner.user.id, { label: "Constructor" });
+    const c = await postComment(browser, artifact.slug, { body: "@constructor please" });
+    expect(
+      (await tasksOf(c.id)).map((t) => [t.targetLabel, t.targetClientType, t.targetConnection]),
+    ).toEqual([["@constructor", null, conn.connectionId]]);
+  });
+
   it("commenters and editors can mention; agent-authored comments never create tasks", async () => {
     const { owner, artifact } = await setup("allowlist");
     for (const role of ["commenter", "editor"] as const) {

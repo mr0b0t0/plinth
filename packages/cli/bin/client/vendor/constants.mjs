@@ -100,6 +100,14 @@ export const MENTION_AGENT_NAMES = {
   codex: "codex",
 };
 
+/**
+ * The client type a mention name stands for, or null. An own-key lookup, so a name such as
+ * "constructor" or "toString" is never mistaken for an agent name through Object.prototype.
+ */
+export function mentionAgentType(name) {
+  return Object.hasOwn(MENTION_AGENT_NAMES, name) ? (MENTION_AGENT_NAMES[name] ?? null) : null;
+}
+
 const KB = 1024;
 const MB = 1024 * KB;
 

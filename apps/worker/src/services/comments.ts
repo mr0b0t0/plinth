@@ -18,7 +18,7 @@ import {
   type CommentInfo,
   type CommentStatus,
   type EffectiveRole,
-  MENTION_AGENT_NAMES,
+  mentionAgentType,
   mentionHandle,
   parseMentions,
   RATE_LIMITS,
@@ -411,7 +411,7 @@ async function mentionTasksFor(
     createdAt: comment.createdAt,
   };
   const tasks: MentionTaskRow[] = [];
-  const labelNames = names.filter((n) => !MENTION_AGENT_NAMES[n]);
+  const labelNames = names.filter((n) => !mentionAgentType(n));
   const owned = labelNames.length ? await ownerMentionConnections(ctx.db, artifact.ownerId) : [];
   const seenConnections = new Set<string>();
   for (const name of names) {
@@ -459,7 +459,7 @@ function matchMentionTarget(
   name: string,
   owned: readonly { id: string; label: string }[],
 ): MentionTarget | null {
-  const clientType = MENTION_AGENT_NAMES[name];
+  const clientType = mentionAgentType(name);
   if (clientType) return { targetConnection: null, targetClientType: clientType };
   const conn = owned.find((c) => mentionHandle(c.label) === name);
   return conn ? { targetConnection: conn.id, targetClientType: null } : null;
@@ -476,7 +476,7 @@ export async function resolveMentionTarget(
   ownerId: string,
   name: string,
 ): Promise<MentionTarget | null> {
-  if (MENTION_AGENT_NAMES[name]) return matchMentionTarget(name, []);
+  if (mentionAgentType(name)) return matchMentionTarget(name, []);
   return matchMentionTarget(name, await ownerMentionConnections(db, ownerId));
 }
 

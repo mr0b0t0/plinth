@@ -318,6 +318,23 @@ describe("page requests: who files, and where it goes", () => {
     expect(r2.json.error.details.reason).toBe("unknown_agent");
   });
 
+  it("never reads a target name off Object.prototype", async () => {
+    const { owner, id, ownerP } = await setup(NO_TARGET_PAGE);
+    for (const to of ["constructor", "tostring", "hasownproperty", "valueof"]) {
+      const r = await file(id, ownerP.cookie, { body: "hi", to });
+      expect(r.res.status, to).toBe(400);
+      expect(r.json.error.details.reason, to).toBe("unknown_agent");
+    }
+    // The owner's connection with that handle is reachable like any other.
+    const conn = await agentOf(owner.user.id, "Constructor");
+    const r = await file(id, ownerP.cookie, { body: "hi", to: "constructor" });
+    expect(r.res.status).toBe(201);
+    expect(await taskOf(r.json.id)).toMatchObject({
+      target_connection: conn.connectionId,
+      target_client_type: null,
+    });
+  });
+
   it("stamps the claim's email and the owner's id, never the body's claims", async () => {
     const { id, ownerP } = await setup();
     const r = await file(id, ownerP.cookie, { body: "hi", data: { q: 3 } });

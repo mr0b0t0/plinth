@@ -21,6 +21,10 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   default: `ALLOW_PAGE_REQUESTS` turns it on (origin isolation only), with
   `PAGE_REQUESTS_*` limits; turning it on seals the viewer identity claim for identified viewers
   even where shared data and rooms are off. Migration `0016_page_requests.sql`.
+- **Mentions of names such as `@constructor` work.** A comment that mentioned `@constructor`,
+  `@tostring` or another name JavaScript objects carry by default failed with an internal error.
+  Such a name is now an ordinary handle: it reaches the owner's connection whose label normalizes
+  to it, and a page request sent to it without such a connection is refused as `unknown_agent`.
 - **Follow the presenter in a deck.** An owner or editor can turn on **Lead viewers** in a deck's
   controls or presenter view, and the people the deck is shared with who have it open follow their
   slide, with a "Following the presenter" note; paging by hand pauses it until they choose "Back to
