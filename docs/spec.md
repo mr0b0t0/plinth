@@ -1900,7 +1900,9 @@ anyone signed in.
   signed in with one address who confirms another is then signed in with the second; the gate says
   so before they ask for the code. Nothing else changes in the code flow: the same answer whether
   or not the address is listed, the same rate limits, five attempts per code, single use, the
-  grant checked again after use, and no account for an address whose code fails.
+  grant checked again after use, and no account for an address whose code fails. Because the code
+  now signs people in, each guess also counts against the sign-in code's per-address limit (10 an
+  hour), so the sign-in page, the gate and the portal share one guess budget per address.
 - **The fallback.** Where `maySignIn` refuses the address (single-user mode, for any address but
   `ADMIN_EMAIL`), the code starts a viewer session (`__Host-plinth_viewer`, 7 days, principal kind
   `viewer`) as before. Viewer sessions started before this change keep working until they expire.
@@ -1910,9 +1912,14 @@ anyone signed in.
   address beside their session (the gate, dictation and the identity claim then use that address),
   and its email opens an artifact but never files it under a personal category (`no_grant`).
 - **What people are told.** The gate and the portal say, before the code is asked for, that
-  confirming it signs the person in with that address and creates an account for it if it has none,
-  and the code's email says the same. The privacy notice says it too. On a single-user instance they
-  say that no account is needed, as before.
+  confirming it signs the person in with that address and creates an account for it if it has none.
+  A signed-in person whose own address has no access is told, on both, that confirming another
+  address signs them in with it instead. The code's email is then a sign-in email: subject "Your
+  Plinth sign-in code", the sign-in sentence first, a warning to enter the code only on the app
+  host and never give it to anyone or reply with it, and only then the artifact's title (or the
+  sharer's name, for a portal), labelled as the sharer's text. The privacy notice says it too. On a
+  single-user instance they say that no account is needed, and the email stays the "viewing code"
+  email, as before.
 - **Not a sign-up path.** A code goes only to an address that holds a grant on that artifact or
   share (or is the owner's), and an account exists only once its person has typed the code. No
   setting turns this off apart from single-user mode: an instance that lets an address sign in

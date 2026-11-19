@@ -4,6 +4,7 @@
 // instead. A non-listed email never gets a session, and the API never reveals the list.
 import { createExecutionContext, waitOnExecutionContext } from "cloudflare:test";
 import { env } from "cloudflare:workers";
+import { RATE_LIMITS } from "@plinth/shared";
 import { and, desc, eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import { artifacts, devOutbox, loginCodes, sessions, users } from "../src/db/schema.ts";
@@ -138,10 +139,22 @@ describe("allowlist viewers", () => {
     expect(await json(ask)).toEqual({ ok: true });
     const mails = await outboxFor(email);
     expect(mails).toHaveLength(1);
-    expect(mails[0]?.text).toContain("Private board deck");
-    expect(mails[0]?.text).toContain(
-      "Entering it also signs you in to Plinth with this address, and creates a Plinth account for it if it has none.",
+    // The code signs the address in, so the email is a sign-in email: it says so in the subject
+    // and first, warns never to pass the code on, and quotes the sharer's title after the code,
+    // named as theirs.
+    expect(mails[0]?.subject).toBe("Your Plinth sign-in code");
+    const text = mails[0]?.text ?? "";
+    expect(text.split("\n")[0]).toBe(
+      "This code signs you in to Plinth with this address, and creates a Plinth account for it if it has none.",
     );
+    expect(text).toContain(
+      "Enter it only on app.localhost:8787, on the page where you asked for it. Never give it to anyone or reply with it: whoever enters it is signed in as you.",
+    );
+    expect(text).toContain(
+      `The page's title, written by whoever shared it and not by Plinth, is "Private board deck".`,
+    );
+    expect(text.indexOf("Private board deck")).toBeGreaterThan(text.indexOf("Your code is"));
+    expect(text.indexOf("Private board deck")).toBeGreaterThan(text.indexOf("Never give it"));
     // No account exists until the code is confirmed.
     expect(await userByEmail(email)).toBeUndefined();
 
@@ -318,6 +331,45 @@ describe("allowlist viewers", () => {
     expect(statuses[20]).toBe(429);
   });
 
+  it("guesses at a viewing code share the sign-in code's per-address budget, both ways", async () => {
+    const { artifact } = await allowlisted([uniqueEmail("budget-other")]);
+    const limit = RATE_LIMITS.codeAttemptsPerEmailPerHour;
+
+    // Wrong viewing codes use up the address's sign-in guesses too.
+    const viewerFirst = uniqueEmail("budget-viewer");
+    for (let i = 0; i < limit; i++) {
+      await post(`/api/v1/view/${artifact.id}/code`, browser(), {
+        email: viewerFirst,
+        code: "000000",
+      });
+    }
+    const signIn = await post("/api/v1/auth/verify-code", browser(), {
+      email: viewerFirst,
+      code: "000000",
+    });
+    expect(signIn.status).toBe(429);
+
+    // And wrong sign-in codes leave no extra guesses at the gate: a listed address with a fresh,
+    // correct viewing code is refused once its sign-in budget is spent.
+    const loginFirst = uniqueEmail("budget-login");
+    const listed = await allowlisted([loginFirst]);
+    const headers = browser();
+    expect(
+      (await post(`/api/v1/view/${listed.artifact.id}/email`, headers, { email: loginFirst }))
+        .status,
+    ).toBe(200);
+    for (let i = 0; i < limit; i++) {
+      await post("/api/v1/auth/verify-code", browser(), { email: loginFirst, code: "000000" });
+    }
+    const gate = await post(`/api/v1/view/${listed.artifact.id}/code`, headers, {
+      email: loginFirst,
+      code: await codeFor(loginFirst),
+    });
+    expect(gate.status).toBe(429);
+    expect(gate.headers.get("set-cookie") ?? "").not.toMatch(/plinth_session|plinth_viewer/);
+    expect(await userByEmail(loginFirst)).toBeUndefined();
+  });
+
   it("only allowlist artifacts take viewer codes", async () => {
     const a = await agent();
     const { body: p } = await publish(a.auth);
@@ -458,7 +510,10 @@ describe("where the address may not sign in (single-user mode): a viewer session
       200,
     );
     const [mail] = await outboxFor(email);
-    expect(mail?.text).toContain("Private board deck");
+    expect(mail?.subject).toBe("Your Plinth viewing code");
+    expect(mail?.text).toContain(
+      `Someone asked to open "Private board deck" on Plinth with this email address.`,
+    );
     expect(mail?.text).not.toContain("signs you in");
     const ok = await post(
       `/api/v1/view/${artifact.id}/code`,

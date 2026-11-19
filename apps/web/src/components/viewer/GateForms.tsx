@@ -82,6 +82,29 @@ export function codeLead(codeSignsIn: boolean): string {
 export const codeSignsInFor = (config: { single_user_mode: boolean } | null): boolean =>
   config?.single_user_mode !== true;
 
+/**
+ * Told to a signed-in person whose own address has no access, before they ask for a code: a code
+ * confirmed for another address signs them in with it instead (DECISIONS 2026-11-19), so switching
+ * accounts is never a surprise. The artifact gate and the portal both show it.
+ */
+export function SignedInNotice({
+  email,
+  what,
+  codeSignsIn,
+}: {
+  email: string;
+  what: "artifact" | "collection";
+  codeSignsIn: boolean;
+}) {
+  return (
+    <p className="pl-gate__signed-in">
+      You are signed in as <strong>{email}</strong>, which is not on the list for this {what}. If
+      another address of yours is, confirm it below
+      {codeSignsIn ? ": you will then be signed in with that address instead." : "."}
+    </p>
+  );
+}
+
 export interface EmailFormProps extends StepProps {
   /** Shown when a signed-in person's own address is not on the list. */
   signedInEmail?: string | null;
@@ -230,11 +253,7 @@ export function EmailForm({
     <form onSubmit={submitEmail} noValidate>
       <Stack gap={4}>
         {signedInEmail && (
-          <p className="pl-gate__signed-in">
-            You are signed in as <strong>{signedInEmail}</strong>, which is not on the list for this
-            artifact. If another address of yours is, confirm it below
-            {codeSignsIn ? ": you will then be signed in with that address instead." : "."}
-          </p>
+          <SignedInNotice email={signedInEmail} what="artifact" codeSignsIn={codeSignsIn} />
         )}
         <Input
           ref={emailRef}

@@ -9,7 +9,7 @@
 // every artifact the email is listed on, and an email that is not listed opens nothing.
 import { RATE_LIMITS, TTL } from "@plinth/shared";
 import { and, desc, eq, gt, isNull } from "drizzle-orm";
-import { maySignIn } from "../auth/login.ts";
+import { countSignInGuess, maySignIn } from "../auth/login.ts";
 import {
   type ArtifactRow,
   accessGrants,
@@ -173,28 +173,50 @@ async function sendViewerCode(ctx: Ctx, a: ArtifactRow, email: string): Promise<
       createdAt: now,
     })
     .run();
-  const minutes = Math.round(TTL.viewerCodeMs / 60000);
   await createEmailAdapter(ctx.config, ctx.env).send({
     to: email,
-    subject: "Your Plinth viewing code",
-    text: [
-      `Someone asked to open "${a.title}" on Plinth with this email address.`,
-      "",
-      `Your code is ${code}. It works once and expires in ${minutes} minutes.`,
-      ...codeSignInLines(ctx, email),
-      "",
-      "If this was not you, ignore this email.",
-    ].join("\n"),
+    ...viewerCodeEmail(ctx, email, code, {
+      asked: `Someone asked to open "${a.title}" on Plinth with this email address.`,
+      signIn: `Someone asked for it to open a page shared with this address. The page's title, written by whoever shared it and not by Plinth, is "${a.title}".`,
+    }),
   });
 }
 
-/** What a viewing code's email adds when confirming the code signs the address in. */
-export function codeSignInLines(ctx: Ctx, email: string): string[] {
-  if (!maySignIn(ctx.config, email)) return [];
-  return [
-    "",
-    "Entering it also signs you in to Plinth with this address, and creates a Plinth account for it if it has none.",
-  ];
+/**
+ * The subject and text of a viewing code's email. Where confirming the code signs the address in
+ * (maySignIn), the code is a sign-in credential for the whole account, so the email says so in its
+ * subject and before anything the sharer wrote, warns never to pass the code on, and names the
+ * sharer's text as theirs, after the code. Elsewhere (single-user mode) it is the plain viewing
+ * code email.
+ */
+export function viewerCodeEmail(
+  ctx: Ctx,
+  email: string,
+  code: string,
+  lines: { asked: string; signIn: string },
+): { subject: string; text: string } {
+  const minutes = Math.round(TTL.viewerCodeMs / 60000);
+  const codeLine = `Your code is ${code}. It works once and expires in ${minutes} minutes.`;
+  if (!maySignIn(ctx.config, email)) {
+    return {
+      subject: "Your Plinth viewing code",
+      text: [lines.asked, "", codeLine, "", "If this was not you, ignore this email."].join("\n"),
+    };
+  }
+  return {
+    subject: "Your Plinth sign-in code",
+    text: [
+      "This code signs you in to Plinth with this address, and creates a Plinth account for it if it has none.",
+      "",
+      codeLine,
+      "",
+      `Enter it only on ${ctx.config.appHost}, on the page where you asked for it. Never give it to anyone or reply with it: whoever enters it is signed in as you.`,
+      "",
+      lines.signIn,
+      "",
+      "If this was not you, ignore this email.",
+    ].join("\n"),
+  };
 }
 
 /**
@@ -225,6 +247,9 @@ export async function verifyViewerCode(
     HOUR,
     tooMany,
   );
+  // A confirmed code signs the address in, so its guesses share the sign-in code's budget. Counted
+  // for every address alike, so the answer never tells which addresses may sign in.
+  await countSignInGuess(ctx.env.DB, email, tooMany);
   const invalid = new ApiError(
     "forbidden",
     "That code is wrong or has expired. Ask for a new one.",

@@ -73,7 +73,8 @@ make a test pass.
 | An upload gives away where it was made | A phone photo's EXIF location reaches every reader of the page | Files are stored as added and everyone who may add one is told so (the viewer notice, the privacy notice, the skill) |
 | An upload outlives a delete or takedown | A part arrives after the owner deleted the file or an admin took the artifact down, and the file comes back | Every write repeats the artifact's live check and the row's state in its SQL; a delete or takedown turns rows into tombstones in its own batch, a takedown deletes the ready objects right after, and the hourly sweep clears the rest |
 | A file name steers an agent or tricks a viewer | A file named "Ignore previous instructions.png", `../../etc/passwd`, or a right-to-left override that turns `gpj.exe` around | Names are cleaned (last segment, no control or bidi characters, at most 200 characters, the proven extension added) and are display text everywhere; agents get names with the untrusted note and never the bytes |
-| A viewing code becomes a way to make accounts or take one over | An owner lists many addresses and asks codes for them to create accounts in their name, or someone who guessed a listed address types codes to sign in as that person | A code goes only to an address that holds a grant there (or is the owner's), and to that mailbox; an account exists only once a code sent to it is typed; the gate's rate limits, five attempts per code, single use and the grant re-checked after use all stay. The code proves the mailbox exactly as the sign-in code does ([below](#viewing-codes-sign-people-in)) |
+| A viewing code becomes a way to make accounts or take one over | An owner lists many addresses and asks codes for them to create accounts in their name, or someone who guessed a listed address types codes to sign in as that person | A code goes only to an address that holds a grant there (or is the owner's), and to that mailbox; an account exists only once a code sent to it is typed; the gate's rate limits, five attempts per code, single use and the grant re-checked after use all stay, and every guess also counts against the sign-in code's per-address budget, so the gate and the portal add no guesses toward an account. The code proves the mailbox exactly as the sign-in code does ([below](#viewing-codes-sign-people-in)) |
+| A viewing code's email talks its reader into handing the code over | An owner titles an artifact "Confirm receipt: reply with the code below", lists the victim and asks for a code; whoever reads it back is signed in as the victim | Where the code signs the address in, its email is a sign-in email: the subject says "sign-in code", the first line says the code signs the reader in, a warning never to give it to anyone or reply with it comes before anything the sharer wrote, and the title or sharer's name follows, labelled as theirs and not Plinth's ([below](#viewing-codes-sign-people-in)) |
 
 Out of scope for v1: denial of service beyond Cloudflare's defaults, a compromised Cloudflare
 account, and malicious instance operators.
@@ -1082,7 +1083,7 @@ version just published appears in the agent's thread.
 | --- | --- |
 | Sign-in requests per email | 5 per hour |
 | Sign-in requests per IP | 20 per hour |
-| Code attempts per email | 10 per hour |
+| Code attempts per email | 10 per hour, for each code flow; every code that can sign the address in (sign-in, allowlist gate, portal) also counts against one shared 10 per hour |
 | Password attempts per artifact per IP | 10 per hour |
 | Viewer codes per email | 5 per hour |
 | Comments per user | 60 per hour |
@@ -2060,14 +2061,27 @@ got a viewer session.
   A code is hashed with `SESSION_SECRET` and bound to its artifact or share, works once, stops after
   five wrong guesses, expires after 15 minutes, and the grant is checked again after it is used.
   Every failure looks the same and creates nothing: no session and no account.
+- **One guess budget per address.** A guess at a viewing code counts against the gate's own
+  per-email limit and also against `login:verify:<email>`, the sign-in code's limit (10 an hour),
+  for every address alike. Without that, an owner who lists a victim's address could add the
+  gate's 10 guesses an hour (and the portal's, which shares the gate's counter) to the sign-in
+  page's 10, each hit worth the whole account. With it, all the ways to sign an address in share
+  one 10 an hour, as before invitees were signed in.
+- **The email is a sign-in email.** Where the code signs the address in, the email's subject is
+  "Your Plinth sign-in code", its first line says the code signs the reader in and creates an
+  account if there is none, and before anything the sharer wrote it warns to enter the code only
+  on `APP_HOST` and never to give it to anyone or reply with it. The artifact's title (or, for a
+  portal, the sharer's name) comes after, labelled as written by whoever shared it and not by
+  Plinth. In single-user mode, where the code only opens what is shared, the email stays the
+  plain "viewing code" email.
 - **The account is the mailbox's.** An owner can list any address, but only the person who reads
   that mailbox can type the code, so no one can create or enter an account for an address they do
   not read. An account made this way is an ordinary account: verified, no name, the default quota,
   and admin only if it is `ADMIN_EMAIL`, as `getOrCreateUser` decides at sign-in.
 - **One session per browser.** The app session cookie the code sets replaces the one the browser
   held, and the server deletes that earlier session in the same request, so a person who confirms
-  a second address of theirs is signed in with it and out of the first. The gate tells a signed-in
-  person so before they ask for the code.
+  a second address of theirs is signed in with it and out of the first. The gate and the portal
+  tell a signed-in person so before they ask for the code.
 - **Who has an account stays private.** Invitees now have accounts, but nothing shows whether an
   address has one: access lists name a grant holder only after they took part in the artifact
   ([The people list](#the-people-list)), and an account a code created has no name until its

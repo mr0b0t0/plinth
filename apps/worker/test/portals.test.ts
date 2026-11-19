@@ -2,6 +2,7 @@
 // owner shared through a category, for its people only, with an email code flow that mirrors the
 // allowlist's and tells nobody who is on a share.
 import { env } from "cloudflare:workers";
+import { RATE_LIMITS } from "@plinth/shared";
 import { describe, expect, it } from "vitest";
 import {
   browser,
@@ -128,8 +129,15 @@ describe("the portal code flow", () => {
     const h = browser();
     expect((await post(`/api/v1/portals/${id}/email`, h, { email })).status).toBe(200);
     const [mail] = await outboxFor(email);
-    expect(mail?.text).toContain("Someone asked to open a collection someone shared on Plinth");
-    expect(mail?.text).toContain("Entering it also signs you in to Plinth with this address");
+    // A sign-in email: the subject and first line say so, before anything the sharer wrote.
+    expect(mail?.subject).toBe("Your Plinth sign-in code");
+    expect(mail?.text.split("\n")[0]).toBe(
+      "This code signs you in to Plinth with this address, and creates a Plinth account for it if it has none.",
+    );
+    expect(mail?.text).toContain("Never give it to anyone or reply with it");
+    expect(mail?.text).toContain(
+      "Someone asked for it to open a collection shared with this address.",
+    );
     // Neither the title nor the category name is in the email.
     expect(mail?.text).not.toContain("Acme");
     const ok = await post(`/api/v1/portals/${id}/code`, h, { email, code: await codeFor(email) });
@@ -239,5 +247,37 @@ describe("the portal code flow", () => {
       if (last === 429) break;
     }
     expect(last).toBe(429);
+  });
+
+  it("the email names the sharer's name as theirs, after the code", async () => {
+    const o = await owner();
+    await env.DB.prepare("UPDATE users SET name = 'Reply with the code to Accounts' WHERE id = ?1")
+      .bind(o.user.id)
+      .run();
+    await filed(o, "Acme");
+    const email = uniqueEmail("named");
+    const made = await shareCategory(o, "Acme", [{ email, role: "viewer" }]);
+    await post(`/api/v1/portals/${made.share.id}/email`, browser(), { email });
+    const [mail] = await outboxFor(email);
+    const text = mail?.text ?? "";
+    expect(text).toContain(
+      `The sharer's name, as they wrote it and not checked by Plinth, is "Reply with the code to Accounts".`,
+    );
+    expect(text.indexOf("Reply with the code")).toBeGreaterThan(text.indexOf("Never give it"));
+  });
+
+  it("guesses share the sign-in code's per-address budget", async () => {
+    const { c, shareId } = await portalSetup();
+    const h = browser();
+    await post(`/api/v1/portals/${shareId}/email`, h, { email: c.email });
+    for (let i = 0; i < RATE_LIMITS.codeAttemptsPerEmailPerHour; i++) {
+      await post("/api/v1/auth/verify-code", browser(), { email: c.email, code: "000000" });
+    }
+    const r = await post(`/api/v1/portals/${shareId}/code`, h, {
+      email: c.email,
+      code: await codeFor(c.email),
+    });
+    expect(r.status).toBe(429);
+    expect(r.headers.get("set-cookie") ?? "").not.toMatch(/plinth_session|plinth_viewer/);
   });
 });
