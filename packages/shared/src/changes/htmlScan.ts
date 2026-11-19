@@ -84,6 +84,15 @@ function isSpace(c: string | undefined): boolean {
   return c === " " || c === "\n" || c === "\t" || c === "\r" || c === "\f";
 }
 
+/**
+ * ASCII letters lowercased and nothing else, as HTML does for tag and attribute names. Not
+ * String#toLowerCase, which also maps other characters ("K", U+212A, to "k") and can change
+ * a string's length ("İ", U+0130, becomes two code units).
+ */
+function asciiLower(s: string): string {
+  return s.replace(/[A-Z]+/g, (m) => m.toLowerCase());
+}
+
 interface Tag {
   name: string;
   end: boolean;
@@ -99,7 +108,7 @@ function readTag(s: string, at: number): Tag | null {
   if (end) i++;
   const nameStart = i;
   while (i < s.length && !isSpace(s[i]) && s[i] !== "/" && s[i] !== ">") i++;
-  const name = s.slice(nameStart, i).toLowerCase();
+  const name = asciiLower(s.slice(nameStart, i));
   const attrs = new Map<string, string>();
   while (i < s.length) {
     while (i < s.length && (isSpace(s[i]) || s[i] === "/")) i++;
@@ -107,7 +116,7 @@ function readTag(s: string, at: number): Tag | null {
     if (s[i] === ">") return { name, end, attrs, next: i + 1 };
     const an = i;
     while (i < s.length && !isSpace(s[i]) && s[i] !== "/" && s[i] !== ">" && s[i] !== "=") i++;
-    const attr = s.slice(an, i).toLowerCase();
+    const attr = asciiLower(s.slice(an, i));
     while (i < s.length && isSpace(s[i])) i++;
     let value = "";
     if (s[i] === "=") {
@@ -130,15 +139,22 @@ function readTag(s: string, at: number): Tag | null {
   return null;
 }
 
-/** Index of the case-insensitive end tag `</name` at or after `from`, or -1. */
-function findEndTag(s: string, lower: string, name: string, from: number): number {
+/**
+ * Index of the end tag `</name` at or after `from`, or -1. The name is compared ASCII
+ * case-insensitively in `s` itself: a lowercased copy of `s` can be longer, so its indices would
+ * point elsewhere in `s`. `name` is lowercase ASCII.
+ */
+function findEndTag(s: string, name: string, from: number): number {
   let i = from;
   for (;;) {
-    const at = lower.indexOf(`</${name}`, i);
+    const at = s.indexOf("</", i);
     if (at < 0) return -1;
-    const after = s[at + 2 + name.length];
-    if (after === undefined || after === ">" || after === "/" || isSpace(after)) return at;
     i = at + 2;
+    let k = 0;
+    while (k < name.length && asciiLower(s[i + k] ?? "") === name[k]) k++;
+    if (k < name.length) continue;
+    const after = s[i + k];
+    if (after === undefined || after === ">" || after === "/" || isSpace(after)) return at;
   }
 }
 
@@ -153,8 +169,6 @@ export function scanHtml(src: string): HtmlScan {
     scripts: [],
     styles: [],
   };
-  // Lowercased once, for end-tag searches; same length as src for every character we look for.
-  const lower = src.toLowerCase();
   let text = "";
   let headingDepth = 0;
   let under = "";
@@ -220,7 +234,7 @@ export function scanHtml(src: string): HtmlScan {
     if (tag.attrs.has("style")) out.styles.push(`attr:${tag.attrs.get("style")}`);
 
     if (RAW_TEXT.has(name) || RCDATA.has(name)) {
-      const close = findEndTag(src, lower, name, i);
+      const close = findEndTag(src, name, i);
       const body = src.slice(i, close < 0 ? src.length : close);
       const after = close < 0 ? src.length : src.indexOf(">", close);
       i = after < 0 ? src.length : after + 1;

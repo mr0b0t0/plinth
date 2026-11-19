@@ -7,6 +7,7 @@ import {
   CHANGE_LIMITS,
   CHANGES_INVISIBLE,
   CHANGES_UNREADABLE,
+  ChangeCollector,
   type ChangeItem,
   DESIGN_SYSTEM_FORMAT,
   describeChanges,
@@ -535,6 +536,46 @@ describe("design system", () => {
       { kind: "added", where: "Components", what: "Component “Card” added" },
     ]);
     for (const i of list) expect(JSON.stringify(i)).not.toMatch(/<button|acme-btn|\{color/);
+  });
+
+  it("cuts a long token value, and an alias with its value, to excerptChars", () => {
+    const stack = (last: string) =>
+      [...Array.from({ length: 15 }, (_, i) => `Familyname${i}`), last].join(", ");
+    const withFonts = (last: string) =>
+      change((ds) => {
+        ds.tokens.font = { $type: "fontFamily", body: { $value: stack(last) } };
+        ds.tokens.color.accent = { $value: "{color.brand.500}" };
+      });
+    const before = withFonts("Serif");
+    const after = change((ds) => {
+      ds.tokens.font = { $type: "fontFamily", body: { $value: stack("Sans") } };
+      ds.tokens.color.brand["500"].$value = "#2f4ac0";
+      ds.tokens.color.accent = { $value: "{color.brand.500}" };
+    });
+    expect(stack("Serif").length).toBeGreaterThan(CHANGE_LIMITS.excerptChars);
+    const list = items("design_system", before, after);
+    const font = list.find((i) => i.what === "font.body changed");
+    expect(font?.before?.startsWith("Familyname0, Familyname1, ")).toBe(true);
+    expect(font?.before?.endsWith("…")).toBe(true);
+    const added = items("design_system", JSON.stringify(base), withFonts("Serif"));
+    expect(added.find((i) => i.what === "font.body added")?.after?.endsWith("…")).toBe(true);
+    for (const i of [...list, ...added]) {
+      for (const s of [i.before, i.after]) {
+        expect(s?.length ?? 0).toBeLessThanOrEqual(CHANGE_LIMITS.excerptChars);
+      }
+    }
+  });
+});
+
+describe("ChangeCollector", () => {
+  it("cuts every before and after longer than excerptChars, whatever a describer passes", () => {
+    const out = new ChangeCollector();
+    const long = "x ".repeat(200);
+    out.add({ kind: "changed", where: "", what: "Value changed", before: long, after: "short" });
+    const [item] = out.list().items;
+    expect(item?.before?.length).toBeLessThanOrEqual(CHANGE_LIMITS.excerptChars);
+    expect(item?.before?.endsWith("…")).toBe(true);
+    expect(item?.after).toBe("short");
   });
 });
 

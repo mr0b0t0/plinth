@@ -38,6 +38,34 @@ describe("scanHtml", () => {
     expect(texts("<script>x</scripts><p>still script</p></script><p>After</p>")).toEqual(["After"]);
   });
 
+  it("finds end tags after characters whose lowercase is longer (İ), and lowercases ASCII only", () => {
+    const page = (key: string) =>
+      `<html><head><title>İstanbul İzmir guide</title><script>const apiKey = "${key}";</script></head><body><p>Hello</p></body></html>`;
+    const s = scanHtml(page("one"));
+    expect(s.title).toBe("İstanbul İzmir guide");
+    expect(s.scripts).toEqual(['const apiKey = "one";']);
+    expect(s.runs.map((r) => r.text)).toEqual(["Hello"]);
+    const list = describeChanges("html", page("one"), page("two")).items;
+    expect(list).toEqual([{ kind: "changed", where: "", what: "Scripts changed" }]);
+
+    const turkish = (word: string) =>
+      `<p>${"İ".repeat(20)}</p><script>var x=1</script><p>${word} world</p>`;
+    expect(texts(turkish("Hello"))).toEqual(["İ".repeat(20), "Hello world"]);
+    expect(describeChanges("html", turkish("Hello"), turkish("Goodbye")).items).toEqual([
+      {
+        kind: "changed",
+        where: "",
+        what: "Text changed",
+        before: "Hello world",
+        after: "Goodbye world",
+      },
+    ]);
+    // U+212A KELVIN SIGN lowercases to "k" in JavaScript, but a browser lowercases ASCII only:
+    // <lin\u212A> is not a link element.
+    expect(scanHtml('<lin\u212A rel="stylesheet" href="s.css">').styles).toEqual([]);
+    expect(texts("<p>İ</p><TITLE>T</tİtle></TITLE><p>after</p>")).toEqual(["İ", "after"]);
+  });
+
   it("decodes character references once, as text", () => {
     expect(
       texts("<p>&lt;b&gt;bold&lt;/b&gt; &amp;amp; &#x1F600; &#0; &#xD800; &unknown; &nbsp;x</p>"),

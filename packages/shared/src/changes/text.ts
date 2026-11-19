@@ -1,6 +1,6 @@
 // Text helpers for change lists: whitespace folding, excerpts, quoted names, and the excerpts of
 // two texts around where they differ.
-import { CHANGE_LIMITS } from "./types.ts";
+import { CHANGE_LIMITS } from "./limits.ts";
 
 /** Runs of whitespace become one space; the ends are trimmed. */
 export function foldSpace(s: string): string {

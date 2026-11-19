@@ -2137,11 +2137,15 @@ there is what it has to keep.
   (`changes/htmlScan.ts`), not by `DOMParser`, a `<template>` or a detached document: nothing of
   the version is parsed into nodes, loaded or run on the app origin. The scanner finds text runs,
   tag names and link, image, stylesheet and script addresses, skips comments, scripts, styles and
-  templates, and decodes character references once.
+  templates, and decodes character references once. It matches tag names and end tags as a browser
+  does, lowercasing ASCII letters only and in the source itself, never in a lowercased copy: "İ"
+  lowercases to two code units, so a copy's indices would miss `</script>` and quote the rest of
+  the page as the script's body. A test pins it.
 - **Bounded work.** Every step is linear in its input: the scanner and the Markdown reader use no
   regular expression that can backtrack across a line (tests feed a megabyte of `<`, `![`, `[a](`
   and unclosed quotes). A diff stops past 4,000 edits or 400 ms and reports the region as
-  replaced; a list holds at most 200 items of at most 160 characters each; a sheet's formulas get
+  replaced; a list holds at most 200 items, and the collector cuts every excerpt and value to 160
+  characters whatever a describer passes it; a sheet's formulas get
   1,000,000 steps. A hostile version can slow its own Compare page at most, in the viewer's own
   tab, after the page has painted.
 - **Rendered versions unchanged.** The two versions render as before: each in its own sandboxed

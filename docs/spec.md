@@ -2021,8 +2021,8 @@ from discovery tags) stays.
   were kept, when their sizes match. At most 50 files of each kind are listed, within 12 KB as
   JSON, then "and N more files", so the same summary fits one socket frame when the page's editors
   review a draft.
-- **Limits.** At most 200 items and 160 characters an excerpt. A diff stops looking for the
-  smallest set of edits past 4,000 edits or 400 ms and reports the region as replaced. The list
+- **Limits.** At most 200 items and 160 characters an excerpt or value. A diff stops looking for
+  the smallest set of edits past 4,000 edits or 400 ms and reports the region as replaced. The list
   says when it was cut, and the two rendered versions below it always show everything. A version
   the type's checks refuse is not described in detail ("One of the two versions cannot be read in
   detail"); two texts that differ in nothing a person sees say "Nothing visible changed, only how

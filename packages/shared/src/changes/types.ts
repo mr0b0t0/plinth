@@ -1,5 +1,8 @@
-// The change list's types and limits, shared by every describer. Pure and zod-free: the app's
-// Compare page imports it, and so can a renderer bundle or the room.
+// The change list's types, its collector and (from limits.ts) its limits, shared by every
+// describer. Pure and zod-free: the app's Compare page imports it, and so can a renderer bundle or
+// the room.
+import { CHANGE_LIMITS } from "./limits.ts";
+import { changeExcerpt } from "./text.ts";
 
 /** What happened to one thing a person can see. */
 export type ChangeKind = "added" | "removed" | "changed" | "moved";
@@ -18,9 +21,12 @@ export interface ChangeItem {
   where: string;
   /** What happened, as a short sentence without its place: "Paragraph changed", "B7 changed". */
   what: string;
-  /** Visible text or the value before, at most CHANGE_LIMITS.excerptChars characters. */
+  /**
+   * Visible text or the value before, at most CHANGE_LIMITS.excerptChars characters (the
+   * collector cuts a longer one).
+   */
   before?: string;
-  /** Visible text or the value after, at most CHANGE_LIMITS.excerptChars characters. */
+  /** Visible text or the value after, cut like `before`. */
   after?: string;
 }
 
@@ -30,25 +36,18 @@ export interface ChangeList {
   truncated: boolean;
 }
 
-export const CHANGE_LIMITS = {
-  /** Items one list holds; the rest are summed up by `truncated`. */
-  maxItems: 200,
-  /** Longest excerpt of visible text in an item. */
-  excerptChars: 160,
-  /** Longest name quoted inside a sentence ("Heading “…” added"). */
-  nameChars: 60,
-  /**
-   * Line or block edits a diff looks for before it reports the rest of the region as replaced, a
-   * cost cap like merge3's maxEdits.
-   */
-  maxEdits: 4000,
-  /** And the wall-clock cap of one diff, for inputs whose edits are few but costly to find. */
-  timeoutMs: 400,
-  /** Formula steps a sheet may spend so that a calculation's results can be listed. */
-  sheetEvalSteps: 1_000_000,
-} as const;
+export { CHANGE_LIMITS } from "./limits.ts";
 
-/** Collects items up to the cap, in the order they are found. */
+/** `s`, or an excerpt of it when it is longer than CHANGE_LIMITS.excerptChars. */
+function capped(s: string): string {
+  return s.length > CHANGE_LIMITS.excerptChars ? changeExcerpt(s) : s;
+}
+
+/**
+ * Collects items up to the cap, in the order they are found. It also cuts every `before` and
+ * `after` longer than CHANGE_LIMITS.excerptChars, so the bound holds whatever a describer passes
+ * (a 256-character token value, a long board or column name).
+ */
 export class ChangeCollector {
   readonly items: ChangeItem[] = [];
   truncated = false;
@@ -66,8 +65,8 @@ export class ChangeCollector {
       return false;
     }
     const clean: ChangeItem = { kind: item.kind, where: item.where, what: item.what };
-    if (item.before !== undefined && item.before !== "") clean.before = item.before;
-    if (item.after !== undefined && item.after !== "") clean.after = item.after;
+    if (item.before !== undefined && item.before !== "") clean.before = capped(item.before);
+    if (item.after !== undefined && item.after !== "") clean.after = capped(item.after);
     this.items.push(clean);
     return true;
   }
