@@ -8,6 +8,7 @@ import {
   type DictationAccess,
   type EffectiveRole,
   isPersonalDocId,
+  type LiveViewPool,
   type Role,
   type RoomDocRight,
   type RoomEmitRight,
@@ -557,4 +558,16 @@ export function liveViewAccess(
 ): { watch: boolean; data: boolean } {
   const watch = o.active && d.allow && p.kind !== "agent";
   return { watch, data: watch && o.type === "html" && caps?.data === true && o.sharedData };
+}
+
+/**
+ * Which cap pool a watch socket counts in (LiveViewPool, packages/shared/src/liveView.ts): `member`
+ * when the view decision has a role (the owner, or a grant to the viewer's email), `open` for
+ * everyone else it lets in (public and unlisted link viewers, signed in or not, password holders,
+ * an admin reviewing a report). The pools never affect each other, so a full `open` pool, the only
+ * one an outsider can fill, says nothing about whether the owner or a collaborator has the
+ * artifact open.
+ */
+export function liveViewPool(d: Extract<Decision, { allow: true }>): LiveViewPool {
+  return d.role === null ? "open" : "member";
 }

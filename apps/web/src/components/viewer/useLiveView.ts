@@ -209,8 +209,9 @@ export class LiveViewConnection {
   }
 
   /**
-   * How long to wait before acting on a signal: random(0, spread_ms). A small audience (a spread
-   * under spreadAtOnceMs) acts at once: a few requests at the same moment are no load to spread.
+   * How long to wait before acting on a signal: random(0, spread_ms). The room's spread comes from
+   * the instance's cap, never from the audience; on an instance capped so low that it is under
+   * spreadAtOnceMs, the page acts at once: that few requests at the same moment are no load.
    */
   private wait(spreadMs: number): number {
     if (spreadMs < LIVE_VIEW_LIMITS.spreadAtOnceMs) return 0;

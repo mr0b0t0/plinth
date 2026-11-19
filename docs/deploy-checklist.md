@@ -204,8 +204,10 @@ no room and stores nothing.
 - **Proxies.** The socket is `wss://<APP_HOST>/api/v1/view/<id>/watch`. Cloudflare's edge, Workers
   routes and Tunnel pass it unchanged; a reverse proxy in front of a container must forward the
   upgrade on the app host as well ([docker.md](docker.md#what-the-proxy-must-do)).
-- **Caps.** `LIVE_VIEW_MAX_SOCKETS_PER_ARTIFACT` (1000) per artifact, apart from the room's cap;
-  views over it poll.
+- **Caps.** `LIVE_VIEW_MAX_SOCKETS_PER_ARTIFACT` (1000) per artifact, apart from the room's cap,
+  half for the people an artifact is shared with and half for everyone else; views over it poll.
+  After a signal, open views spread their follow-up requests over 2 ms per socket of this cap (at
+  most 10 s), so one artifact sees at most about 500 a second at the default.
 
 ### Dictation
 

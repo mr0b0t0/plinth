@@ -45,7 +45,8 @@ make a test pass.
 | Display name used to impersonate | Someone sets their name to "Owner", "ana@example.com" or a right-to-left override that reorders the text around it | Names cannot contain `@` or the two characters that render as one (U+FE6B, U+FF20: every character whose NFKC form is `@`), nor control, bidi, zero-width or separator characters, are cut to 64 code points on every read, and are never authority: `role` and `comment_author_role` stay server-derived and Plinth's own UI shows the role beside them; tool descriptions say names are display text |
 | Cross-site WebSocket hijacking of the live-view socket | Another site, or an artifact framed by the app, opens `wss://<APP_HOST>/api/v1/view/<id>/watch` with the viewer's app cookies to learn when a private artifact changes | The handshake requires `Origin` exactly the app's origin (absent, `null`, every content origin and every other site refused), same-origin fetch metadata when sent and the `plinth.view.v1` subprotocol; app session cookies are `SameSite=Lax` too; the socket says only what the same person's gate and change counter say ([Live views](#live-views)) |
 | A forged live-view hint | Page script, or another frame, posts `{ source: "plinth-view", type: "data" }` or `push` to a page | The runtime takes them only from `window.parent` at the app origin, and both are hints: the worst a forged one does is make the page re-read its own data through the shared-data API or change its own poll; the app posts them only at the frame's exact content origin, never `"*"` ([Live views](#live-views)) |
-| An audience floods an artifact after a signal | A thousand open views of a public page re-read their gate at the same moment a version is published | Each signal carries `spread_ms`, a coarse band of the audience (0 under 100 recipients, then 1, 2, 4, 8 or 10 s as it doubles), and each view waits a random time up to it; watch sockets are capped per artifact (`LIVE_VIEW_MAX_SOCKETS_PER_ARTIFACT`), per client and per minute, and over a cap the page polls ([Live views](#live-views)) |
+| An audience floods an artifact after a signal | A thousand open views of a public page re-read their gate at the same moment a version is published | Each signal carries `spread_ms`, set by the instance's cap alone (2 ms per socket an artifact may hold, at most 10 s: 2 s at the default), and each view waits a random time up to it; watch sockets are capped per artifact (`LIVE_VIEW_MAX_SOCKETS_PER_ARTIFACT`), per client and per minute, and over a cap the page polls ([Live views](#live-views)) |
+| A watcher reads presence from the live-view socket | Someone with a link opens many watch sockets of their own, from several addresses or accounts, to learn from a signal's `spread_ms` or from a 4409 refusal whether the owner or a collaborator has the page open | `spread_ms` depends only on the instance's cap, never on the audience; the cap is split into a pool for the people the artifact is shared with and a pool for everyone else, which never affect each other; an anonymous viewer's client is its IPv4 address or IPv6 /64 ([Live views](#live-views)) |
 | Enumerating who has an account | A caller tries addresses to learn which ones have a Plinth account or what they are called, for example by adding them as grants on an artifact of their own and reading the people list or the sharing settings back | No route takes an email or a name to look up, and the people list searches only one artifact's access list. Since the owner writes that list without its holders being told, an access list shows a grant holder's name only once that person has taken part in the artifact (a comment, a shared-data entry or a version, which already show their name to the readers of the list), and a name it keeps back is `null` and never matched by `q`, the same as an address with no account (`policy.ts accessListShowsName`) |
 
 Out of scope for v1: denial of service beyond Cloudflare's defaults, a compromised Cloudflare
@@ -800,7 +801,7 @@ version just published appears in the agent's thread.
 | Live-room messages per socket | `ROOM_MESSAGES_PER_SECOND` (20, burst 40); over it each message gets `rate_limited`, and 50 such in 10 s close the socket (4429) |
 | One live-room frame | `ROOM_MAX_MESSAGE_BYTES` (8 KiB; larger closes with 1009, binary with 1003); presence 400 bytes per room; 3 rooms per socket |
 | People-list reads per reader per artifact | 600 per hour |
-| Live-view watch sockets per artifact | `LIVE_VIEW_MAX_SOCKETS_PER_ARTIFACT` (1000), apart from room sockets; 32 per client; 60 connects per client per minute (close code 4409, then the page polls) |
+| Live-view watch sockets per artifact | `LIVE_VIEW_MAX_SOCKETS_PER_ARTIFACT` (1000), apart from room sockets, half for the owner and the people it is shared with and half for everyone else; 32 per client; 60 connects per client per minute (close code 4409, then the page polls) |
 
 Limited requests get `429` with `Retry-After`; live-room limits answer on the socket instead.
 
@@ -999,8 +1000,8 @@ never names a content host.
 
 **What the socket carries.** The Worker hands the room a fresh internal request whose only custom
 header is `x-plinth-watch`, built from the checks above (artifact, epoch, socket expiry, current
-version, the data right, a client key and the caps); no client header is copied, and the room
-parses it as strictly as a room's. The room sends only frames it makes from integers: `welcome {
+version, the data right, a client key, its cap pool and the caps); no client header is copied,
+and the room parses it as strictly as a room's. The room sends only frames it makes from integers: `welcome {
 version, data }`, `version { version, spread_ms }`, `data { spread_ms }` and, just before a
 sharing change closes the socket, `access { spread_ms }`. Never artifact
 content, document data, emails, names, peers or anything a page wrote. A watch socket joins no
@@ -1010,17 +1011,33 @@ closes it with 4400. What a watcher learns, the current version number and the m
 data changes, the same person can already read from the gate and the change counter, every 15 s.
 Anonymous link viewers may watch for that reason; they still never join a room.
 
-**What `spread_ms` reveals.** It is computed from how many sockets get the signal, so it must not
-count them: that would be presence, which only identified members of a room get. It is one of six
-bands: 0 under 100 recipients, 1 s at 100, 2 s up to 200, 4 s up to 400, 8 s up to 800 and 10 s
-above (`spreadMs`, `packages/shared/src/liveView.ts`). A watcher learns at most which band the
-audience is in, never whether one more view is open. In a small audience, the usual case for a
-shared page, every frame reads 0 whoever else has it open. The first edge is above three clients'
-full socket caps (3 × 32), so one person's tabs, or two or three people's together, cannot hold
-the count at 99 and watch for one more view. Only four or more clients pooling their sockets could
-sit at a band edge, and the most they would learn is that one view opened or closed among a hundred
-or more. The open-view count itself is never sent, and Plinth's view counts are daily totals of
-opens, never who has a page open now.
+**What a watcher can learn about other views.** Whether someone else has an artifact open is
+presence, which only identified members of a room get, so nothing a watch socket sees may depend
+on the other sockets. Two things could: a value computed from the audience, and a shared cap that
+refuses one more socket. Neither can be fixed by rounding, because nothing stops one party from
+being many clients (a script sets `Origin` by hand, an IPv6 line has a whole /64 of addresses, and
+an account, a confirmed email and an anonymous window are three clients), filling the count up to
+an edge with sockets of its own and watching for the one more view that tips it over.
+
+- `spread_ms` depends only on the instance: 2 ms per socket an artifact may hold, at most 10 s
+  (`spreadMs(LIVE_VIEW_MAX_SOCKETS_PER_ARTIFACT)`, `packages/shared/src/liveView.ts`), so 2 s at
+  the default. Every frame of every artifact on the instance carries the same value, whoever else
+  has it open.
+- The cap is split into two pools that never affect each other (`policy.ts liveViewPool`): one for
+  the owner and the people the artifact is shared with (the view decision has a role), one for
+  everyone else the gate lets in (link viewers, signed in or not, password holders). Each holds
+  half of `LIVE_VIEW_MAX_SOCKETS_PER_ARTIFACT`. Only the second can be filled by someone the
+  artifact is not shared with, so a 4409 they get never depends on whether the owner or a
+  collaborator has it open.
+- An anonymous viewer's client is its network, the IPv4 address or the IPv6 /64, not the full
+  address (`lib/ip.ts`).
+
+What remains: someone who fills the open pool alone (500 sockets at the default: 16 networks or
+accounts at 32 each) can tell, from whether one more socket of theirs is refused, when another
+open-pool view opens or closes, without learning whose. That is a view by a link viewer or
+password holder, never by the owner or a collaborator, and filling the pool also sends every other
+link viewer back to polling, which is the fallback anyway. Plinth's view counts are daily totals
+of opens, never who has a page open now.
 
 **The app-to-frame hints.** On a `data` signal the app posts `{ source: "plinth-view", v: 1, type:
 "data" }` to the artifact frame, and on each frame load and status change `{ ..., type: "push",
@@ -1046,15 +1063,17 @@ lasted, until the next sharing change, its lifetime or a reconnect, the same as 
 outlives a sign-out.
 
 **Caps and fan-out.** Watch sockets are counted apart from room sockets, so viewers never fill a
-room: `LIVE_VIEW_MAX_SOCKETS_PER_ARTIFACT` (1000) per artifact, 32 per client and 60 connects per
-client per minute, where a client is the account, the confirmed email, or the address for
-anonymous viewers, kept only as a 16-character HMAC (keyed by `TOKEN_SIGNING_KEY`, per artifact).
-Over a cap the socket is closed with 4409 and the page polls, as it does without live views. Each
-signal carries `spread_ms`, a band of at least 10 ms per recipient up to 10 s (see what it
-reveals, above), and each view waits a random time up to it before it re-reads (at 0, fewer than
-100 views, it acts at once), so one artifact sees at most about 100 follow-up requests a second. A
-sharing change closes every view at once, so its `access` frame carries the same spread, and each
-view waits within it before it re-reads its gate and reconnects.
+room: `LIVE_VIEW_MAX_SOCKETS_PER_ARTIFACT` (1000) per artifact, split evenly between the two pools
+above, 32 per client and 60 connects per client per minute, where a client is the account, the
+confirmed email, or the network (IPv4 address or IPv6 /64) for anonymous viewers, kept only as a
+16-character HMAC (keyed by `TOKEN_SIGNING_KEY`, per artifact). Over a cap the socket is closed
+with 4409 and the page polls, as it does without live views. Each signal carries the instance's
+`spread_ms` (2 ms per socket an artifact may hold, at most 10 s), and each view waits a random time
+up to it before it re-reads (under 100 ms, on an instance capped below 50, it acts at once). An
+artifact never holds more sockets than the cap, so it sees at most cap ÷ spread follow-up requests
+a second: about 500 at the default, 1000 at the top bound. A sharing change closes every view at
+once, so its `access` frame carries the same spread, and each view waits within it before it
+re-reads its gate and reconnects.
 Notifies are best effort (`waitUntil`, one retry); losses are caught by the alarm within a minute
 for versions and by the runtime's 60 s backstop poll for data. Refusals log the status and a reason
 code only; the socket URL holds only the artifact id.

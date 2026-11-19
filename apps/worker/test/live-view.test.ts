@@ -104,6 +104,12 @@ async function refused(id: string, cookie: string | null, vars?: Vars) {
 
 const sessionCookie = (p: { session: { cookie: string } }) => p.session.cookie;
 
+/** The spread every frame carries on the test instance (LIVE_VIEW_MAX_SOCKETS_PER_ARTIFACT 1000). */
+const SPREAD = spreadMs(1000);
+
+/** An anonymous link viewer's handshake from one client address. */
+const from = (ip: string, vars?: Vars) => ({ headers: { "cf-connecting-ip": ip }, vars });
+
 /** A viewer session for an email confirmed by code (the app-host viewer cookie). */
 async function viewerSession(email: string): Promise<string> {
   const value = newToken("plinth_vs_");
@@ -329,6 +335,7 @@ describe("live views: the handshake", () => {
       version: 1,
       data: false,
       client: "0123456789abcdef",
+      pool: "member",
       limits: { maxSockets: 10 },
     };
     const send = (headers: Record<string, string>) =>
@@ -339,6 +346,7 @@ describe("live views: the handshake", () => {
       { ...good, client: "0123456789ABCDEF" },
       { ...good, version: -1 },
       { ...good, data: "yes" },
+      { ...good, pool: "everyone" },
       { ...good, limits: { maxSockets: 0 } },
       { ...good, artifactId: "../x" },
     ]) {
@@ -360,9 +368,9 @@ describe("live views: signals", () => {
     const a = await watch(id, sessionCookie(ownerP));
     const b = await watch(id, null);
     expect((await update(owner, id, `${PLAIN}<p>2</p>`, 1)).status).toBe(200);
-    // A small audience gets 0, never a number that counts the open views.
-    expect(await a.next()).toEqual({ t: "version", version: 2, spread_ms: 0 });
-    expect(await b.next()).toEqual({ t: "version", version: 2, spread_ms: 0 });
+    // The instance's spread, never a number that counts the open views.
+    expect(await a.next()).toEqual({ t: "version", version: 2, spread_ms: SPREAD });
+    expect(await b.next()).toEqual({ t: "version", version: 2, spread_ms: SPREAD });
 
     const mcp = await mcpClient(owner.token);
     try {
@@ -395,7 +403,7 @@ describe("live views: signals", () => {
     const w = await watch(id, sessionCookie(ownerP));
     const created = await pageWrite(id, ed.cookie, "POST", "/data/votes", { data: { n: 1 } });
     expect(created.status).toBe(201);
-    expect(await w.next()).toEqual({ t: "data", spread_ms: 0 });
+    expect(await w.next()).toEqual({ t: "data", spread_ms: SPREAD });
     const doc = await json(created);
     const put = await pageWrite(id, ed.cookie, "PUT", `/data/votes/${doc.id}`, { data: { n: 2 } });
     expect(put.status).toBe(200);
@@ -478,14 +486,32 @@ describe("live views: signals", () => {
     a.ws.close(1000);
   });
 
-  it("the room's spread is a coarse band of the audience, not a count, and stops at the cap", () => {
-    expect(spreadMs(0)).toBe(0);
-    expect(spreadMs(1)).toBe(0);
-    expect(spreadMs(LIVE_VIEW_LIMITS.spreadFromRecipients - 1)).toBe(0);
-    expect(spreadMs(LIVE_VIEW_LIMITS.spreadFromRecipients)).toBe(LIVE_VIEW_LIMITS.spreadStepMs);
-    expect(spreadMs(250)).toBe(4000);
-    expect(spreadMs(1000)).toBe(LIVE_VIEW_LIMITS.spreadMaxMs);
-    expect(spreadMs(5000)).toBe(LIVE_VIEW_LIMITS.spreadMaxMs);
+  it("the room's spread comes from the instance's cap, not from the audience", async () => {
+    const vars = { LIVE_VIEW_MAX_SOCKETS_PER_ARTIFACT: "2500" };
+    const { id, ownerP, owner } = await setup(PLAIN, { visibility: "unlisted" });
+    const w = await watch(id, sessionCookie(ownerP), { vars });
+    expect((await update(owner, id, `${PLAIN}<p>2</p>`, 1)).status).toBe(200);
+    expect(await w.next()).toEqual({ t: "version", version: 2, spread_ms: 5000 });
+    w.ws.close(1000);
+  });
+
+  it("a version tells a watcher nothing about how many views are open, at any audience size", async () => {
+    // One person at the old band edge: alone, then with 100 other views open. Each of four
+    // anonymous networks holds 25 sockets, under the per-client cap.
+    const { id, ownerP, owner } = await setup(PLAIN, { visibility: "unlisted" });
+    const me = await watch(id, sessionCookie(ownerP));
+    expect((await update(owner, id, `${PLAIN}<p>2</p>`, 1)).status).toBe(200);
+    const alone = await me.next();
+    const crowd = [];
+    for (let n = 0; n < 4; n++) {
+      for (let i = 0; i < 25; i++) crowd.push(await watch(id, null, from(`198.51.100.${n + 1}`)));
+    }
+    expect(await stubFor(id).watchers()).toBe(101);
+    expect((await update(owner, id, `${PLAIN}<p>3</p>`, 2)).status).toBe(200);
+    const withCrowd = await me.next();
+    expect({ ...withCrowd, version: 2 }).toEqual(alone);
+    expect(withCrowd).toEqual({ t: "version", version: 3, spread_ms: SPREAD });
+    for (const w of [me, ...crowd]) w.ws.close(1000);
   });
 
   it("a data write tells a watcher nothing about how many views are open", async () => {
@@ -506,8 +532,8 @@ describe("live views: signals", () => {
     const withoutOwner = await Promise.all(tabs.map((w) => w.next()));
     expect(withoutOwner).toEqual(withOwner);
     expect(withOwner).toEqual([
-      { t: "data", spread_ms: 0 },
-      { t: "data", spread_ms: 0 },
+      { t: "data", spread_ms: SPREAD },
+      { t: "data", spread_ms: SPREAD },
     ]);
     for (const w of tabs) w.ws.close(1000);
   });
@@ -539,7 +565,7 @@ describe("live views: closing", () => {
     });
     expect(res.status).toBe(200);
     for (const w of ws) {
-      expect(await w.next()).toEqual({ t: "access", spread_ms: 0 });
+      expect(await w.next()).toEqual({ t: "access", spread_ms: SPREAD });
       expect(await within(w.closed)).toEqual({ code: 4401, reason: "access_changed" });
     }
   });
@@ -557,7 +583,7 @@ describe("live views: closing", () => {
       .run();
     expect(await runDurableObjectAlarm(stubFor(id))).toBe(true);
     for (const w of [a, b]) {
-      expect(await w.next()).toEqual({ t: "access", spread_ms: 0 });
+      expect(await w.next()).toEqual({ t: "access", spread_ms: SPREAD });
       expect(await within(w.closed)).toEqual({ code: 4401, reason: "access_changed" });
     }
   });
@@ -711,7 +737,7 @@ describe("live views: closing", () => {
     const expired = closes.filter((c) => c !== "timeout");
     expect(expired).toEqual([{ code: 4401, reason: "expired" }]);
     const open = closes[0] === "timeout" ? w : x;
-    expect(await open.next()).toEqual({ t: "version", version: 2, spread_ms: spreadMs(1) });
+    expect(await open.next()).toEqual({ t: "version", version: 2, spread_ms: SPREAD });
     open.ws.close(1000);
   });
 
@@ -791,14 +817,62 @@ describe("live views: caps", () => {
     for (const w of [a, b, ...watchers]) w.ws.close(1000);
   });
 
-  it("LIVE_VIEW_MAX_SOCKETS_PER_ARTIFACT caps watchers (4409), and room sockets do not count", async () => {
+  it("LIVE_VIEW_MAX_SOCKETS_PER_ARTIFACT caps watchers (4409), half per pool, and room sockets do not count", async () => {
     const vars = { LIVE_VIEW_MAX_SOCKETS_PER_ARTIFACT: "10" };
     const { id, ownerP } = await setup(roomPage());
     const room = await connect(id, ownerP.cookie);
     const open = [];
-    for (let i = 0; i < 10; i++) open.push(await watch(id, sessionCookie(ownerP), { vars }));
+    for (let i = 0; i < 5; i++) open.push(await watch(id, sessionCookie(ownerP), { vars }));
     expect(await within(refused(id, sessionCookie(ownerP), vars))).toMatchObject({ code: 4409 });
     for (const w of [room, ...open]) w.ws.close(1000);
+  });
+
+  it("an outsider who fills the open pool learns nothing about the people it is shared with", async () => {
+    const vars = { LIVE_VIEW_MAX_SOCKETS_PER_ARTIFACT: "10" };
+    const { id, ownerP } = await setup(PLAIN, { visibility: "unlisted" });
+    const ed = await person(id, "editor");
+    // The outsider holds the whole open pool, then probes it once with nobody else there.
+    const mine = [];
+    for (let i = 0; i < 5; i++) mine.push(await watch(id, null, from("203.0.113.9", vars)));
+    const probe = () => handshake(id, null, from("203.0.113.9", vars));
+    const closeOf = async () => {
+      const res = await probe();
+      const ws = res.webSocket as WebSocket;
+      ws.accept();
+      return within(client(ws).closed);
+    };
+    const alone = await closeOf();
+    expect(alone).toMatchObject({ code: 4409 });
+    // The owner and an editor open the artifact, several tabs each: their pool is apart.
+    const members = [
+      await watch(id, sessionCookie(ownerP), { vars }),
+      await watch(id, sessionCookie(ownerP), { vars }),
+      await watch(id, sessionCookie(ed), { vars }),
+    ];
+    expect(await closeOf()).toEqual(alone);
+    // And the other way round: a full open pool never keeps a member out.
+    members.push(await watch(id, sessionCookie(ed), { vars }));
+    // Freeing one of its own sockets is the only thing that lets the outsider back in.
+    mine[0]?.ws.close(1000);
+    await mine[0]?.closed;
+    mine[0] = await watch(id, null, from("203.0.113.9", vars));
+    for (const w of [...mine, ...members]) w.ws.close(1000);
+  });
+
+  it("an anonymous viewer's client is its IPv6 /64, so one line cannot be many clients", async () => {
+    const { id } = await setup(PLAIN, { visibility: "unlisted" });
+    const open = [];
+    for (let i = 0; i < LIVE_VIEW_LIMITS.socketsPerClient; i++) {
+      open.push(await watch(id, null, from(`2001:db8:1:2::${(i + 1).toString(16)}`)));
+    }
+    // Any other address in the same /64 is the same client, over its cap.
+    const res = await handshake(id, null, from("2001:db8:1:2:ffff::1"));
+    const ws = res.webSocket as WebSocket;
+    ws.accept();
+    expect(await within(client(ws).closed)).toMatchObject({ code: 4409 });
+    // Another /64 is another client.
+    const other = await watch(id, null, from("2001:db8:1:3::1"));
+    for (const w of [other, ...open]) w.ws.close(1000);
   });
 
   it("caps watch sockets per client, and connects per client per minute (4409)", async () => {

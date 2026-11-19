@@ -443,6 +443,7 @@ describe("live views: the room's watch header (docs/security.md#live-views)", ()
     version: 2,
     data: true,
     client: "0123456789abcdef",
+    pool: "open",
     limits: { maxSockets: 1000 },
   };
 
@@ -466,6 +467,8 @@ describe("live views: the room's watch header (docs/security.md#live-views)", ()
       JSON.stringify({ ...good, data: 1 }),
       JSON.stringify({ ...good, client: "0123456789abcde" }),
       JSON.stringify({ ...good, client: "0123456789abcdeg" }),
+      JSON.stringify({ ...good, pool: "page" }),
+      JSON.stringify({ ...good, pool: undefined }),
       JSON.stringify({ ...good, limits: { maxSockets: 0 } }),
       JSON.stringify({ ...good, limits: [] }),
       JSON.stringify({ ...good, limits: undefined }),

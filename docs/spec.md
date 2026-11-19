@@ -199,10 +199,10 @@ consent lives in their browser, not in D1.
 
 **Live views** ([below](#live-views-decided-2026-11-19), no migration) store nothing and add two
 settings: `ALLOW_LIVE_VIEWS` (on) and `LIVE_VIEW_MAX_SOCKETS_PER_ARTIFACT` (1000, from 10 to
-10000). Fixed: 32 watch sockets per client and 60 connects per client per minute on one artifact,
-a socket lifetime of 12 hours (the content pass's, or less when the session or password pass it was
-opened with ends sooner), a spread in coarse bands (0 under 100 recipients, then 1, 2, 4, 8 or
-10 s as the audience doubles),
+10000, half for the people an artifact is shared with and half for everyone else). Fixed: 32
+watch sockets per client and 60 connects per client per minute on one artifact, a socket lifetime
+of 12 hours (the content pass's, or less when the session or password pass it was opened with ends
+sooner), a spread of 2 ms per socket the cap allows (at most 10 s, 2 s at the default),
 backstop polls every 60 s (the page's data) and 5 minutes (the app's gate), and a tab hidden for
 60 s closes its socket.
 
@@ -1133,11 +1133,11 @@ document through the gate and the shared-data API, with all of their checks.
   source editor, a restore or an on-page checkpoint), `data` (the page's shared data changed:
   a write from the page, an agent or the app, or the owner's "Delete all shared data") and `access`
   (sent just before a sharing change closes the socket). The client
-  sends only the text `ping`. Each signal carries `spread_ms`, a coarse band of the audience and
-  never a count of open views: 0 under 100 recipients (they act at once), then 1 s at 100 and 2, 4,
-  8 or 10 s as the audience doubles. Each open view waits a random time up to it before it acts, so
-  at most about 100 follow-up requests a second reach one artifact, whatever the audience, and a
-  watcher can tell at most which band the audience is in, never whether one more view is open.
+  sends only the text `ping`. Each signal carries `spread_ms`, which depends only on the
+  instance's cap, never on the audience: 2 ms per socket an artifact may hold, at most 10 s (2 s
+  at the default). Each open view waits a random time up to it before it acts, so at most about
+  500 follow-up requests a second reach one artifact at the default cap (cap ÷ spread, 1000 at the
+  top bound), and no frame says anything about who else has the artifact open.
 - **What the page does.** On `version` the app re-reads its own gate at once and shows the new
   version as it did after a poll ("Updated to vN"; a pinned `/v/n` link only learns the number).
   On `data` it posts `{ source: "plinth-view", v: 1, type: "data" }` to the frame at its exact
@@ -1151,8 +1151,8 @@ document through the gate and the shared-data API, with all of their checks.
   and the app reconnects when a newer gate shows data the socket lacked. Under opaque isolation
   nothing is posted to frames.
 - **Lifecycle.** A sharing change closes watch sockets (4401, reason `access_changed`), each first
-  sent an `access` frame with `spread_ms` for all of them, and every page waits a random time up to
-  it, then re-reads its gate and reconnects. A sharing change ends every content pass of the
+  sent an `access` frame with the same `spread_ms`, and every page waits a random time up to it,
+  then re-reads its gate and reconnects. A sharing change ends every content pass of the
   artifact, so the page shows a gate that now asks for an email or a password, or refuses, and
   otherwise loads a fresh frame, as for a new version. While a deck is presented or a doc is edited
   on its page the frame stays, as it does for a new version, and is renewed once that ends. A
@@ -1168,9 +1168,13 @@ document through the gate and the shared-data API, with all of their checks.
   5 minutes as a backstop. A refused or full socket is tried again after 5 minutes; a dropped one
   reconnects after 1, 2, 5, 10 and 30 s.
 - **Limits.** `ALLOW_LIVE_VIEWS` (on) and `LIVE_VIEW_MAX_SOCKETS_PER_ARTIFACT` (1000, from 10 to
-  10000), counted apart from room sockets so viewers never crowd out a room; over a cap the socket
-  is closed with 4409 and the page polls. Fixed: 32 sockets and 60 connects a minute per client
-  (an account, a confirmed email, or one address for anonymous viewers, kept only as an HMAC).
+  10000), counted apart from room sockets so viewers never crowd out a room, and split into two
+  pools of half each that never affect each other: one for the owner and the people the artifact
+  is shared with, one for everyone else the gate lets in. Someone the artifact is not shared with
+  can fill only the second, so a full pool never tells them whether the owner or a collaborator
+  has it open. Over a cap the socket is closed with 4409 and the page polls. Fixed: 32 sockets and
+  60 connects a minute per client (an account, a confirmed email, or for anonymous viewers one
+  network, an IPv4 address or an IPv6 /64, kept only as an HMAC).
 - **Availability.** Needs only `ALLOW_LIVE_VIEWS` and the `ROOMS` binding, not `ALLOW_ROOMS` and not
   origin isolation: versions are pushed under opaque isolation and the path fallback too. Data
   signals also need shared data. Without the binding live views are off, never a configuration

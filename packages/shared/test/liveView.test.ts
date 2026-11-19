@@ -1,48 +1,56 @@
 import { describe, expect, it } from "vitest";
-import { LIVE_VIEW_LIMITS, readViewWatchFrame, spreadMs } from "../src/liveView.ts";
+import {
+  LIVE_VIEW_BOUNDS,
+  LIVE_VIEW_DEFAULTS,
+  LIVE_VIEW_LIMITS,
+  livePoolCap,
+  readViewWatchFrame,
+  spreadMs,
+} from "../src/liveView.ts";
 
 describe("spreadMs", () => {
-  it("is a coarse band, never a count of open views", () => {
-    const bands = new Set<number>();
-    for (let n = 0; n <= 20_000; n++) bands.add(spreadMs(n));
-    expect([...bands].sort((a, b) => a - b)).toEqual([0, 1000, 2000, 4000, 8000, 10_000]);
-  });
-
-  it("is 0 for a small audience, so one more or one fewer view never shows", () => {
-    for (let n = 0; n < LIVE_VIEW_LIMITS.spreadFromRecipients; n++) expect(spreadMs(n)).toBe(0);
+  it("depends only on the instance's cap: 2 ms per socket an artifact may hold, up to 10 s", () => {
+    expect(spreadMs(LIVE_VIEW_DEFAULTS.maxSocketsPerArtifact)).toBe(2000);
+    expect(spreadMs(LIVE_VIEW_BOUNDS.maxSocketsPerArtifact[0])).toBe(20);
+    expect(spreadMs(2500)).toBe(5000);
+    expect(spreadMs(LIVE_VIEW_BOUNDS.maxSocketsPerArtifact[1])).toBe(LIVE_VIEW_LIMITS.spreadMaxMs);
+    expect(spreadMs(0)).toBe(0);
     expect(spreadMs(-1)).toBe(0);
     expect(spreadMs(Number.NaN)).toBe(0);
   });
 
-  it("starts above what three clients' full socket caps can reach together", () => {
-    expect(LIVE_VIEW_LIMITS.spreadFromRecipients).toBeGreaterThan(
-      3 * LIVE_VIEW_LIMITS.socketsPerClient,
-    );
-  });
-
-  it("doubles as the audience doubles, and stops at the cap", () => {
-    expect(spreadMs(100)).toBe(1000);
-    expect(spreadMs(101)).toBe(2000);
-    expect(spreadMs(200)).toBe(2000);
-    expect(spreadMs(201)).toBe(4000);
-    expect(spreadMs(400)).toBe(4000);
-    expect(spreadMs(401)).toBe(8000);
-    expect(spreadMs(800)).toBe(8000);
-    expect(spreadMs(801)).toBe(LIVE_VIEW_LIMITS.spreadMaxMs);
-    expect(spreadMs(10_000)).toBe(LIVE_VIEW_LIMITS.spreadMaxMs);
-    expect(spreadMs(Number.POSITIVE_INFINITY)).toBe(LIVE_VIEW_LIMITS.spreadMaxMs);
-  });
-
-  it("still bounds follow-ups to about 100 a second for a large audience", () => {
-    for (let n = LIVE_VIEW_LIMITS.spreadFromRecipients; n <= 1000; n++) {
-      expect(spreadMs(n)).toBeGreaterThanOrEqual(n * 10);
+  it("bounds follow-ups to cap / spread a second, at most 1000, whatever the audience", () => {
+    const [lo, hi] = LIVE_VIEW_BOUNDS.maxSocketsPerArtifact;
+    for (let cap = lo; cap <= hi; cap += 10) {
+      const spread = spreadMs(cap);
+      // An instance capped this low acts at once: at most `cap` requests, all together.
+      if (spread < LIVE_VIEW_LIMITS.spreadAtOnceMs) {
+        expect(cap).toBeLessThan(50);
+        continue;
+      }
+      expect(cap / (spread / 1000)).toBeLessThanOrEqual(1000);
     }
   });
 
-  it("every band is a spread the client accepts", () => {
-    for (const n of [0, 100, 150, 300, 600, 5000]) {
-      const frame = JSON.stringify({ t: "data", spread_ms: spreadMs(n) });
-      expect(readViewWatchFrame(frame)).toEqual({ t: "data", spread_ms: spreadMs(n) });
+  it("every spread is one the client accepts", () => {
+    for (const cap of [10, 50, 1000, 10_000]) {
+      const frame = JSON.stringify({ t: "data", spread_ms: spreadMs(cap) });
+      expect(readViewWatchFrame(frame)).toEqual({ t: "data", spread_ms: spreadMs(cap) });
     }
+  });
+});
+
+describe("livePoolCap", () => {
+  it("splits the per-artifact cap between the member and open pools, never over it", () => {
+    const [lo, hi] = LIVE_VIEW_BOUNDS.maxSocketsPerArtifact;
+    for (let cap = lo; cap <= hi; cap++) {
+      const member = livePoolCap(cap, "member");
+      const open = livePoolCap(cap, "open");
+      expect(member + open).toBe(cap);
+      expect(Math.abs(member - open)).toBeLessThanOrEqual(1);
+      expect(member).toBeGreaterThanOrEqual(5);
+    }
+    expect(livePoolCap(1000, "member")).toBe(500);
+    expect(livePoolCap(1000, "open")).toBe(500);
   });
 });

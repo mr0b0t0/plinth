@@ -3,7 +3,7 @@
 // whose current version declares `data`, while shared data is active.
 import { type ArtifactType, type Capabilities, type EffectiveRole, ROLES } from "@plinth/shared";
 import { describe, expect, it } from "vitest";
-import { type Decision, liveViewAccess, type Principal } from "../src/policy.ts";
+import { type Decision, liveViewAccess, liveViewPool, type Principal } from "../src/policy.ts";
 
 const caps = (over: Partial<Capabilities> = {}): Capabilities => ({
   data: true,
@@ -94,5 +94,14 @@ describe("policy: liveViewAccess", () => {
       watch: true,
       data: false,
     });
+  });
+});
+
+describe("policy: liveViewPool", () => {
+  it("the owner and the people it is shared with are members; everyone else is open", () => {
+    for (const role of ["owner", ...ROLES] as EffectiveRole[]) {
+      expect(liveViewPool({ allow: true, role }), role).toBe("member");
+    }
+    expect(liveViewPool({ allow: true, role: null })).toBe("open");
   });
 });

@@ -19,7 +19,7 @@
 //   8. the gate's view decision (policy.ts, through decideFor) for the cookie principal, password
 //      passes and viewer session `authenticate` resolved. Every refusal from 7 on is one identical
 //      404, so the socket tells nobody more than the gate does;
-//   9. policy.ts liveViewAccess.
+//   9. policy.ts liveViewAccess (and liveViewPool: which cap pool the socket counts in).
 // The room then gets a fresh internal request whose only custom header is built here; no client
 // header is copied. Refusals log the status and a reason code only.
 import { ARTIFACT_ID_RE, LIVE_VIEW_LIMITS, VIEW_WATCH_PROTOCOL } from "@plinth/shared";
@@ -30,8 +30,9 @@ import { type Config, liveViewsActive, sharedDataActive } from "../config.ts";
 import { sessions, versions } from "../db/schema.ts";
 import { appCookieName } from "../lib/cookies.ts";
 import { hashToken, hmacHex, verifyToken } from "../lib/crypto.ts";
+import { clientNetwork } from "../lib/ip.ts";
 import { nowIso } from "../lib/time.ts";
-import { liveViewAccess } from "../policy.ts";
+import { liveViewAccess, liveViewPool } from "../policy.ts";
 import {
   ROOM_CONNECT_URL,
   WATCH_CONNECT_HEADER,
@@ -87,7 +88,9 @@ export const watchPreflight: MiddlewareHandler<AppEnv> = async (c, next) => {
 
 /**
  * Who is connecting, as 16 hex characters: an HMAC (keyed by TOKEN_SIGNING_KEY, per artifact) of
- * the account, the confirmed email or the address. The raw value is never stored or logged.
+ * the account, the confirmed email or, for an anonymous viewer, the network (lib/ip.ts: the IPv4
+ * address, or the IPv6 /64, so one line cannot be many clients). The raw value is never stored or
+ * logged.
  */
 async function clientKey(ctx: Ctx, artifactId: string): Promise<string> {
   const p = ctx.principal;
@@ -96,7 +99,7 @@ async function clientKey(ctx: Ctx, artifactId: string): Promise<string> {
       ? `user:${p.userId}`
       : p.kind === "viewer"
         ? `viewer:${p.email}`
-        : `ip:${ctx.ip ?? "unknown"}`;
+        : `ip:${ctx.ip === null ? "unknown" : clientNetwork(ctx.ip)}`;
   const mac = await hmacHex(
     ctx.config.tokenSigningKey,
     `plinth watch client v1|${artifactId}|${who}`,
@@ -196,6 +199,7 @@ async function upgrade(c: AppContext): Promise<Response> {
     version: a.currentVersion,
     data: access.data,
     client: await clientKey(ctx, a.id),
+    pool: liveViewPool(d),
     limits: { maxSockets: config.liveViews.maxSocketsPerArtifact },
   };
   // biome-ignore lint/style/noNonNullAssertion: liveViewsActive checked the binding

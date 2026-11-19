@@ -11,7 +11,10 @@ export const VIEW_WATCH_PROTOCOL = "plinth.view.v1";
 
 /** Env-var defaults for live views (LIVE_VIEW_* env vars). */
 export const LIVE_VIEW_DEFAULTS = {
-  /** LIVE_VIEW_MAX_SOCKETS_PER_ARTIFACT: watch sockets on one artifact. */
+  /**
+   * LIVE_VIEW_MAX_SOCKETS_PER_ARTIFACT: watch sockets on one artifact, half for the people it is
+   * shared with and half for everyone else (livePoolCap).
+   */
   maxSocketsPerArtifact: 1000,
 } as const;
 
@@ -21,7 +24,11 @@ export const LIVE_VIEW_BOUNDS = {
 
 /** Fixed live-view rules, not env vars. */
 export const LIVE_VIEW_LIMITS = {
-  /** Watch sockets one client (a person's tabs and devices, or one address) may hold on one artifact. */
+  /**
+   * Watch sockets one client may hold on one artifact: a person's tabs and devices, or, for an
+   * anonymous viewer, one network (an IPv4 address or an IPv6 /64, which one line or one server
+   * usually gets whole).
+   */
   socketsPerClient: 32,
   /** Watch connects one client may make to one artifact per minute. */
   connectsPerClientPerMinute: 60,
@@ -31,16 +38,14 @@ export const LIVE_VIEW_LIMITS = {
    */
   socketTtlS: TTL.contentCookieS,
   /**
-   * Clients wait random(0, spread_ms) before acting. spread_ms is a coarse band, never a count of
-   * open views (that would be presence): 0 below `spreadFromRecipients` recipients, then
-   * `spreadStepMs` doubling each time the recipients double, up to `spreadMaxMs` (spreadMs()).
-   * The floor is above three clients' full socket caps, so no one person's tabs, nor two or three
-   * people's together, can move the band to learn whether another view is open.
+   * Clients wait random(0, spread_ms) before acting. spread_ms depends only on the instance's
+   * LIVE_VIEW_MAX_SOCKETS_PER_ARTIFACT, never on how many views are open (that would be presence,
+   * and anyone who can open enough sockets of their own could read it at a band edge):
+   * spread_ms = min(spreadMaxMs, maxSockets * spreadMsPerCapSocket) (spreadMs()).
    */
-  spreadFromRecipients: 100,
-  spreadStepMs: 1000,
+  spreadMsPerCapSocket: 2,
   spreadMaxMs: 10_000,
-  /** Under this spread clients act at once (the room sends 0 or a band of a second or more). */
+  /** Under this spread (an instance capped below 50 watch sockets an artifact) clients act at once. */
   spreadAtOnceMs: 100,
   /** While pushed, the page runtime still re-reads /changes this often (a lost `data` signal). */
   pollBackstopMs: 60_000,
@@ -72,22 +77,33 @@ export type ViewWatchFrame =
   | { t: "access"; spread_ms: number };
 
 /**
- * How long clients spread their follow-up requests when `recipients` sockets got a signal: one of
- * six bands (0, 1, 2, 4, 8 or 10 s), never the count itself. 0 under 100 recipients (they act at
- * once), 1 s at 100, then doubling as the recipients double (2 s up to 200, 4 s up to 400, 8 s up
- * to 800) and 10 s above. Every band is at least 10 ms per recipient up to the cap, so one
- * artifact still sees at most about 100 follow-up requests a second.
+ * How long clients spread their follow-up requests, for an instance whose
+ * LIVE_VIEW_MAX_SOCKETS_PER_ARTIFACT is `maxSockets`: 2 ms per socket the artifact may hold, at most
+ * 10 s (2 s at the default of 1000). It is the same in every frame of every artifact on the
+ * instance, whoever else has the artifact open, so it tells a watcher nothing about the audience.
+ * Since an artifact never has more than `maxSockets` watchers, one artifact sees at most
+ * maxSockets / spread follow-up requests a second: 500 at the default, 1000 at the top bound.
  */
-export function spreadMs(recipients: number): number {
-  const { spreadFromRecipients, spreadStepMs, spreadMaxMs } = LIVE_VIEW_LIMITS;
-  if (!(recipients >= spreadFromRecipients)) return 0;
-  let ms: number = spreadStepMs;
-  let upTo: number = spreadFromRecipients;
-  while (upTo < recipients && ms < spreadMaxMs) {
-    upTo *= 2;
-    ms *= 2;
-  }
-  return Math.min(spreadMaxMs, ms);
+export function spreadMs(maxSockets: number): number {
+  const { spreadMsPerCapSocket, spreadMaxMs } = LIVE_VIEW_LIMITS;
+  if (!(maxSockets > 0)) return 0;
+  return Math.min(spreadMaxMs, Math.floor(maxSockets * spreadMsPerCapSocket));
+}
+
+/**
+ * Watch sockets on one artifact are counted in two pools that never affect each other: `member`
+ * for the owner and the people the artifact is shared with (the view decision has a role), and
+ * `open` for everyone else the gate lets in (link viewers, anonymous or signed in, and password
+ * holders). A full pool closes new sockets 4409, so a caller who fills a pool with sockets of its
+ * own can tell when another socket in that pool opens or closes; with separate pools, nobody
+ * outside the artifact's sharing list can ever learn that its owner or a collaborator has it open.
+ */
+export type LiveViewPool = "member" | "open";
+
+/** How many watch sockets a pool may hold: half of LIVE_VIEW_MAX_SOCKETS_PER_ARTIFACT each. */
+export function livePoolCap(maxSockets: number, pool: LiveViewPool): number {
+  const member = Math.floor(maxSockets / 2);
+  return pool === "member" ? member : maxSockets - member;
 }
 
 /**

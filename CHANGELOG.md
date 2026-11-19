@@ -17,7 +17,8 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   about the page or its data travels over it. On by default wherever the `ROOMS` binding is
   configured (also under opaque isolation, for versions); `ALLOW_LIVE_VIEWS=false` turns it off and
   pages poll as before. `LIVE_VIEW_MAX_SOCKETS_PER_ARTIFACT` (1000) caps the open views that get
-  pushes. Update the plugin for the agent's rule never to tell people to reload. A reverse proxy
+  pushes, half for the people an artifact is shared with and half for everyone else, so a link
+  viewer can never tell from the socket whether the owner or a collaborator has the page open. Update the plugin for the agent's rule never to tell people to reload. A reverse proxy
   must pass WebSocket upgrades on the app host too.
 
 - **Dictation, run by Plinth, for pages that ask for it.** A page that declares `dictation` can

@@ -17,7 +17,10 @@
 // socket joins no room, is never a peer and carries no identity; it gets only frames the room
 // makes from integers: `welcome`, `version` (published, or the alarm's catch-up), `data`
 // (dataChanged) and `access` (just before a sharing change closes it). Watch sockets are counted
-// apart from room sockets, so viewers never fill a room.
+// apart from room sockets, so viewers never fill a room, and in two pools of their own (`member`,
+// `open`), so an outsider who fills the open pool learns nothing about the people the artifact is
+// shared with. No frame depends on how many sockets are open: `spread_ms` comes from the
+// instance's cap alone.
 import { DurableObject } from "cloudflare:workers";
 import {
   ARTIFACT_ID_RE,
@@ -27,7 +30,9 @@ import {
   LIMITS,
   LIVE_VIEW_LIMITS,
   type LiveDocServerFrame,
+  type LiveViewPool,
   liveDocClientFrameSchema,
+  livePoolCap,
   mergePresence,
   ROOM_CLOSE,
   ROOM_LIMITS,
@@ -73,8 +78,10 @@ export interface WatchConnect {
   version: number;
   /** The socket gets `data` signals (policy.ts liveViewAccess). The room can only take it away. */
   data: boolean;
-  /** 16 hex characters: an HMAC of who connects (account, email or address), never the raw value. */
+  /** 16 hex characters: an HMAC of who connects (account, email or network), never the raw value. */
   client: string;
+  /** The cap pool the socket counts in (policy.ts liveViewPool). */
+  pool: LiveViewPool;
   /** The instance's LIVE_VIEW_* limits, as the Worker parsed them. */
   limits: { maxSockets: number };
 }
@@ -110,6 +117,7 @@ export function parseWatchConnect(raw: string | null): WatchConnect | null {
     typeof c.data === "boolean" &&
     typeof c.client === "string" &&
     CLIENT_RE.test(c.client) &&
+    (c.pool === "member" || c.pool === "open") &&
     typeof l === "object" &&
     l !== null &&
     !Array.isArray(l) &&
@@ -124,6 +132,7 @@ export function parseWatchConnect(raw: string | null): WatchConnect | null {
     version: c.version as number,
     data: c.data as boolean,
     client: c.client as string,
+    pool: c.pool as LiveViewPool,
     limits: { maxSockets: l.maxSockets as number },
   };
 }
@@ -377,7 +386,12 @@ export class ArtifactRoom extends DurableObject<Bindings> {
       return new Response(null, { status: 101, webSocket: client, headers });
     }
     const state: WatchState = { ...info, id: `w_${randomString(16)}` };
-    this.ctx.acceptWebSocket(server, ["k:watch", `c:${info.client}`, `e:${info.epoch}`]);
+    this.ctx.acceptWebSocket(server, [
+      "k:watch",
+      `c:${info.client}`,
+      `e:${info.epoch}`,
+      `p:${info.pool}`,
+    ]);
     if (!this.save(server, state)) {
       server.close(ROOM_CLOSE.invalid, "invalid");
       return new Response(null, { status: 101, webSocket: client, headers });
@@ -389,9 +403,14 @@ export class ArtifactRoom extends DurableObject<Bindings> {
     return new Response(null, { status: 101, webSocket: client, headers });
   }
 
-  /** The watch caps: per artifact (LIVE_VIEW_MAX_SOCKETS_PER_ARTIFACT), per client, per minute. */
+  /**
+   * The watch caps: per pool (half of LIVE_VIEW_MAX_SOCKETS_PER_ARTIFACT each), per client, per
+   * minute. Only the socket's own pool counts, never the other: a refusal here is something its
+   * caller could only cause together with the sockets of its own pool.
+   */
   private watchFull(info: WatchConnect): boolean {
-    if (this.ctx.getWebSockets("k:watch").length >= info.limits.maxSockets) return true;
+    const pool = this.ctx.getWebSockets(`p:${info.pool}`).length;
+    if (pool >= livePoolCap(info.limits.maxSockets, info.pool)) return true;
     const mine = this.ctx.getWebSockets(`c:${info.client}`).length;
     if (mine >= LIVE_VIEW_LIMITS.socketsPerClient) return true;
     const now = Date.now();
@@ -421,12 +440,11 @@ export class ArtifactRoom extends DurableObject<Bindings> {
    */
   async published(n: number, data: boolean): Promise<number> {
     const behind = this.watchSockets().filter(({ s }) => s.version < n);
-    const spread = spreadMs(behind.length);
     for (const { ws, s } of behind) {
       s.version = n;
       if (!data) s.data = false;
       this.save(ws, s);
-      this.sendWatch(ws, { t: "version", version: n, spread_ms: spread });
+      this.sendWatch(ws, { t: "version", version: n, spread_ms: spreadOf(s) });
     }
     return behind.length;
   }
@@ -434,8 +452,7 @@ export class ArtifactRoom extends DurableObject<Bindings> {
   /** The artifact's shared data changed: watch sockets with the data right get a `data` frame. */
   async dataChanged(): Promise<number> {
     const to = this.watchSockets().filter(({ s }) => s.data);
-    const spread = spreadMs(to.length);
-    for (const { ws } of to) this.sendWatch(ws, { t: "data", spread_ms: spread });
+    for (const { ws, s } of to) this.sendWatch(ws, { t: "data", spread_ms: spreadOf(s) });
     return to.length;
   }
 
@@ -770,19 +787,18 @@ export class ArtifactRoom extends DurableObject<Bindings> {
       }
     }
     const watchers = this.watchSockets().filter(({ s }) => s.epoch < minEpoch);
-    this.dropWatchers(watchers.map(({ ws }) => ws));
+    this.dropWatchers(watchers);
     return n + watchers.length;
   }
 
   /**
    * Close watch sockets after a sharing change (4401 `access_changed`). Each first gets an `access`
-   * frame with `spread_ms` for this many sockets, so the views re-read their gates and reconnect
-   * spread out, as they do after any other signal.
+   * frame with the instance's `spread_ms`, so the views re-read their gates and reconnect spread
+   * out, as they do after any other signal.
    */
-  private dropWatchers(list: WebSocket[]): void {
-    const spread = spreadMs(list.length);
-    for (const ws of list) {
-      this.sendWatch(ws, { t: "access", spread_ms: spread });
+  private dropWatchers(list: { ws: WebSocket; s: WatchState }[]): void {
+    for (const { ws, s } of list) {
+      this.sendWatch(ws, { t: "access", spread_ms: spreadOf(s) });
       this.drop(ws, ROOM_CLOSE.unauthorized, "access_changed");
     }
   }
@@ -892,10 +908,10 @@ export class ArtifactRoom extends DurableObject<Bindings> {
     const now = Date.now();
     const caps = row ? versionCapabilities(row) : null;
     const behind: { ws: WebSocket; s: WatchState }[] = [];
-    const revoked: WebSocket[] = [];
+    const revoked: { ws: WebSocket; s: WatchState }[] = [];
     for (const { ws, s } of open) {
       if (!row || row.deleted_at || row.taken_down_at) this.drop(ws, ROOM_CLOSE.gone, "gone");
-      else if (s.kind === "watch" && s.epoch < row.access_epoch) revoked.push(ws);
+      else if (s.kind === "watch" && s.epoch < row.access_epoch) revoked.push({ ws, s });
       else if (s.epoch < row.access_epoch || s.passExp <= now) {
         // A watch socket that only reached its lifetime says so: the app reconnects, without
         // re-reading its gate first.
@@ -917,9 +933,8 @@ export class ArtifactRoom extends DurableObject<Bindings> {
     // Watch sockets a lost `revoke` left open, spread like the RPC's.
     this.dropWatchers(revoked);
     // Versions whose `published` was lost, or committed while live views were off.
-    const spread = spreadMs(behind.length);
     for (const { ws, s } of behind) {
-      this.sendWatch(ws, { t: "version", version: s.version, spread_ms: spread });
+      this.sendWatch(ws, { t: "version", version: s.version, spread_ms: spreadOf(s) });
     }
     // A doc version whose notify was lost (or published while rooms were off): the draft in
     // memory catches up, so a checkpoint is not refused as stale until everyone leaves.
@@ -934,6 +949,14 @@ export class ArtifactRoom extends DurableObject<Bindings> {
       await this.ctx.storage.setAlarm(now + ROOM_LIMITS.recheckIntervalS * 1000);
     }
   }
+}
+
+/**
+ * A watch frame's `spread_ms`: from the instance's cap the socket's handshake carried, never from
+ * how many sockets get the frame, which would tell every watcher how many views are open.
+ */
+function spreadOf(s: WatchState): number {
+  return spreadMs(s.limits.maxSockets);
 }
 
 /** Whether the current declaration still gives a page socket what it was admitted with. */
