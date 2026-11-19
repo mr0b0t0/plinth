@@ -36,6 +36,7 @@ export const PUBLISH_WARNING_CODES = [
   "ds_deprecated_alias",
   "design_system_unavailable",
   "design_system_outdated",
+  "blocked_feature",
 ];
 
 /** Token scopes. A personal access token or OAuth grant carries a space-separated subset. */
@@ -313,6 +314,8 @@ export const CONTENT_DATA_HEADER = "x-plinth-data";
  * `people` lets the owner and editors list, from the page, everyone the artifact is shared with.
  * `comments`: the page may open the comment composer with its own anchors (`plinth.comments`,
  * packages/shared/src/pageComments.ts). It is not shared data either.
+ * `dictation` lets the page receive words the viewer dictates (packages/shared/src/voice.ts): not
+ * shared data, not a room, and never the microphone.
  */
 export const CAPABILITY_TOKENS = [
   { token: "data", declares: true, needs: [], stored: "always" },
@@ -320,6 +323,7 @@ export const CAPABILITY_TOKENS = [
   { token: "room", declares: true, needs: [], stored: "declared" },
   { token: "people", declares: false, needs: ["data", "viewer"], stored: "declared" },
   { token: "comments", declares: true, needs: [], stored: "declared" },
+  { token: "dictation", declares: true, needs: [], stored: "declared" },
 ];
 
 export const DATA_CAPABILITIES = CAPABILITY_TOKENS.map((t) => t.token);

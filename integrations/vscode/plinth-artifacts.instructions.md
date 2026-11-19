@@ -241,7 +241,8 @@ Rules for builds:
   classic, non-module bundle (Vite: `build.modulePreload: false` and an `iife` or legacy output).
 - **Fix `warnings` before you hand over the link.** Every publish result lists them:
   `missing_file` (a referenced file is not in the upload), `root_absolute`, `blocked_host` (a
-  host outside the allowlist), `insecure_url` (`http:`) and `opaque_module`. Publish again with
+  host outside the allowlist), `insecure_url` (`http:`), `opaque_module` and `blocked_feature`
+  (the page reaches for the microphone, which no Plinth frame has). Publish again with
   the fix; a warning never blocks a publish on its own. `not_scanned` is different: it only says
   the reference check did not read some files, either past its budget (any build over about 8 MB
   of HTML, CSS and JS) or, in an update, text files reused unchanged by `{path, sha256}` or
@@ -708,3 +709,39 @@ artifact, it can only read that artifact and publish new versions of it: update 
 never try to publish a new artifact, share, restore, read or answer its comments or change its
 category with it. Those calls are refused with `forbidden` and `reason: "token_bound"`, and
 every other artifact answers `not_found`. Tell the person to use the app (or a token without that limit) for those.
+
+## Voice (speaking and dictation)
+
+A page can read text aloud and, on instances that offer it, take dictation. It never gets the
+microphone: `getUserMedia` and `SpeechRecognition` fail in every Plinth frame (a publish warns with
+`blocked_feature`), so never call them.
+
+- **Text to speech.** `speechSynthesis` works in every artifact. Call `speak()` only from a click
+  (before the viewer's first click it fails with `not-allowed`), never on load, and offer a Stop
+  (`speechSynthesis.cancel()`). Keep the text on screen. For anything private, prefer voices with
+  `localService: true`: network voices send the text to the browser maker.
+- **Dictation.** Only where `publish_artifact` describes `dictation` (the instance's
+  `ALLOW_DICTATION`). Plinth's app runs the recognizer and the page receives words, for people the
+  page is shared with; anonymous link viewers, in-chat previews and opaque-isolation instances never
+  get it.
+
+```html
+<meta name="plinth-capabilities" content="dictation">
+<script src="/__plinth/runtime.js"></script>
+```
+
+- `const d = await plinth.dictation.ready` never rejects: `{ available, reason }`. When `available`
+  is false (`reason`: `disabled`, `opaque_isolation`, `not_declared`, `not_identified`,
+  `unsupported`, `no_host`), hide the microphone button and keep typing working.
+- Call `plinth.dictation.start({ lang, interim })` straight from the button's click handler, with
+  nothing awaited before it. The first time, Plinth asks the viewer; it rejects with a
+  `PlinthError` whose `code` is `unavailable`, `no_activation`, `not_granted` (do not ask again on
+  this load), `dismissed` (may be retried on a later click), `busy`, `rate_limited`, `invalid` or
+  `network`.
+- `onFinal(({ text }) => ...)` appends a settled phrase; `onPartial(({ text }) => ...)` is a live
+  guess that replaces the previous one, so show it apart from the text. Drive the button from
+  `onState(({ state, reason }) => ...)` (`idle`, `starting`, `listening`); the viewer can stop at
+  any time from Plinth's bar (`viewer_stopped`), and a session ends after 60 s (`time_limit`).
+  `stop()` ends it from the page.
+- Dictated text is the viewer's input: render it with `textContent`, and if the page saves it, it is
+  shared data like any other entry. Declare `data` too to keep it (`content="data dictation"`).

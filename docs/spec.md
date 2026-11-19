@@ -187,6 +187,13 @@ one field to the stored declaration and a second kind of comment anchor:
 | --- | --- | --- |
 | `agent_connections.artifact_id` | artifact id or NULL | The one artifact a personal access token is limited to ([Publishing from CI](#publishing-from-ci-decided-2026-11-19)). NULL is an account-wide token or an OAuth connection; a CHECK refuses it on an OAuth row. Set at creation and never changed: to change the limit, revoke the token and make another. Deleting or taking down the artifact revokes its bound tokens in the same batch; erasing the artifact (or its owner) removes them (`ON DELETE CASCADE`, never `SET NULL`, so a bound token can never become an account-wide one). A partial index covers bound rows |
 
+**Dictation** ([below](#voice-dictation-and-text-to-speech-decided-2026-11-19), no migration) adds one
+field to the stored declaration, `versions.capabilities.dictation`, written only when the page
+declares `dictation` (a row without it reads as no dictation), and one setting, `ALLOW_DICTATION`
+(off). Fixed: 60 s per start, results of at most 2,000 characters, 1 s between starts, 10 s after
+the viewer's Stop, three Stops per page load, and a consent dialog armed after 500 ms. A viewer's
+consent lives in their browser, not in D1.
+
 ## Auth and permissions
 
 There are three separate kinds of auth, and each has its own mechanism.
@@ -614,6 +621,10 @@ Decided 2026-11-14 (issue #1). Design:
 - **Agents.** `list_artifact_data` and `write_artifact_data` (MCP) and REST mirrors under
   `/api/v1/artifacts/:ref/data` for the owner and editors. Viewer-written data is untrusted input,
   and the tool descriptions say so.
+- **The runtime script.** `/__plinth/runtime.js` is the same file for every artifact on an
+  instance and holds no secrets and no artifact data. Since dictation it embeds one public value,
+  the instance's app origin, to address and authenticate its messages to the app that frames the
+  page ([Voice](#voice-dictation-and-text-to-speech-decided-2026-11-19)).
 
 ### Live rooms
 
@@ -1002,6 +1013,83 @@ keeps every run. Guide: `docs/ci.md`.
 - **Other CI and cron** use the CLI with an exact version (`npx @mr0b0t0/plinth@<version>
   publish`), with `PLINTH_TOKEN` (and `PLINTH_URL`) from the environment.
 
+### Voice: dictation and text to speech (decided 2026-11-19)
+
+A page can take words the viewer speaks, and speak itself. What it can never have is the
+microphone.
+
+| Feature | Offered to pages? | How |
+| --- | --- | --- |
+| Text to speech (`speechSynthesis`) | Yes, in every artifact frame, with no switch | The browser's own API. No Permissions-Policy feature governs it, so Plinth cannot turn it off; the browser refuses `speak()` until the frame has had a click |
+| The frame gets the microphone (`allow="microphone"`, `getUserMedia` or a recognizer in the artifact) | No, never | The browser keeps a microphone grant for the top-level origin (the app), so one "Allow" on a friendly page would open the microphone to every artifact the viewer later opens, with no further prompt. Frames keep `allow=""` and the content host keeps `microphone=()` |
+| Dictation run by the app | Yes, behind `ALLOW_DICTATION` (off) | Plinth's own code on `APP_HOST` runs the browser's speech recognizer and posts only words to the frame |
+
+- **Declaration.** A page opts in with `dictation` in `<meta name="plinth-capabilities">` and loads
+  `/__plinth/runtime.js`. `dictation` is not shared data and not a room: a page that declares only
+  `dictation` has neither. It is stored in `versions.capabilities` only when declared, so every
+  other declaration is stored as before. The current version's declaration governs, also for old
+  version URLs. Only HTML pages; never a doc.
+- **Who gets it.** Identified viewers only: the owner and people with a grant (viewer, commenter or
+  editor), signed in or confirmed by code, the same people who write shared data or join a room.
+  Anonymous link viewers (unlisted, password, public) never do. The gate's `voice.dictation` says
+  `{ available, reason }`, decided by `dictationAccess` in `policy.ts` (`not_declared`,
+  `opaque_isolation`, `disabled`, `not_identified`). When it is available, `voice.owner_email` is
+  the owner's email, which the consent dialog names.
+- **Page API.** `window.plinth.dictation`: `ready` (resolves `{ available, reason }`, never rejects;
+  `reason` adds `unsupported` for a browser without a recognizer and `no_host` when the page is
+  not framed by the Plinth viewer: an in-chat preview, a thumbnail, the editor preview, or opened on
+  its own), `start({ lang, interim })` (call it straight from a click; rejects with `PlinthError`
+  `unavailable`, `no_activation`, `not_granted`, `dismissed`, `busy`, `rate_limited`, `invalid` or
+  `network`), `stop()` (resolves once the app reports idle after the last words, or after 2 s;
+  the app waits at most 1.5 s for the recognizer, so the page hears both first), `onPartial(fn)`,
+  `onFinal(fn)` and `onState(fn)` (`idle`, `starting`,
+  `listening`; on idle a reason: `stopped`, `viewer_stopped`, `silence`, `time_limit`, `hidden`,
+  `blurred`, `frame_reloaded`, `error`, `not_granted`). The names follow Claude's `dictation`
+  capability. Nothing is posted until the page reads `ready` or calls `start()`. The page never
+  reaches audio.
+- **Recognition.** The app runs the browser's Web Speech recognizer, in continuous mode, and posts
+  each partial and final result (cut to 2,000 characters) to the frame by `postMessage` at the
+  frame's exact content origin, never `"*"`. The browser's speech service does the work: Chrome
+  sends the audio to Google, Edge to Microsoft, Safari to Apple, unless the browser recognizes on
+  the device, which the app uses where the browser offers it without installing anything. Plinth
+  never receives audio, and receives words only when the page saves them (as shared data).
+- **Every start.** The app acts on a start only when it comes from the frame's window at its
+  exact content origin and parses, dictation is offered (instance and gate), the app has a fresh
+  click or key press (`navigator.userActivation`, which a click inside the frame gives its
+  ancestors) with focus inside the frame (a click on the app's own chrome, or on the link that
+  opened the page, does not count), the tab is visible and focused, nothing is already listening,
+  the last start was at least 1 s ago and the viewer's last Stop at least 10 s ago, and the viewer
+  has not said "Not now", been refused by the browser's own prompt, or pressed Stop three times on
+  this load.
+- **Consent.** The first start on a page opens the app's dialog "Let this page take dictation?": who
+  wrote the page (the owner's email, never the display name the owner chooses) and may save the
+  words, which company's speech service hears the audio, and how
+  to stop. It starts on "Not now", and both buttons ignore input for 500 ms after it opens. "Allow
+  on this page" is kept in the app origin's `localStorage` (`plinth:dictation:<artifact id>`),
+  cleared on sign-out; "Not now" lasts for the page load. "Dictation on this page: allowed. Turn
+  off" in the ⋯ menu takes it back and stops listening.
+- **While listening.** A red "Listening" control with **Stop** sits in the viewer bar at every width.
+  It is app chrome, so the page cannot hide or restyle it. A session ends at the page's `stop()`,
+  the viewer's Stop, silence, 60 s, a hidden tab, a blurred window (while listening the app checks
+  every 250 ms that its window has focus, because with focus inside the frame a switch to another
+  window sends the app no event), a reload or navigation of the frame (any load after the page's
+  own first one, so a start made before the page finished loading keeps going), and when the
+  viewer page changes or closes.
+- **Availability.** `ALLOW_DICTATION` (off). Only with origin isolation: under opaque isolation and
+  the path fallback the app could post the viewer's words only with `"*"`, so `ready` resolves
+  `{ available: false, reason: "opaque_isolation" }` without a message. Only while dictation is in
+  effect does the app's `Permissions-Policy` say `microphone=(self)` (the app's own origin, never
+  the content host, never `*`); otherwise it stays `microphone=()`. Firefox has no recognizer
+  (`unsupported`).
+- **Agents.** `publish_artifact` and `update_artifact` describe `dictation` only where it is in
+  effect. Dictated text a page saves is viewer input, untrusted for agents like any shared data. A
+  page that calls `getUserMedia` or constructs `SpeechRecognition` itself gets a `blocked_feature`
+  publish warning: that call fails for every viewer.
+- **Text to speech.** Native `speechSynthesis`, no Plinth API and no switch (a switch that does
+  nothing would mislead an operator). It works under opaque isolation too. Pages speak only from a
+  click and keep the text on screen; `getVoices()` and network voices are the page author's
+  choices in the viewer's browser ([docs/security.md](security.md#dictation-and-text-to-speech)).
+
 ### Big builds and reuse by hash
 
 Decided 2026-11-15. Agents publish built sites (a Vite or similar `dist/` folder with hundreds of
@@ -1069,7 +1157,8 @@ files) and big pages without merging chunks, and an update stores only what chan
   empty slide, a slide that will be shrunk to fit; a deck's `missing_file` names an image its
   Markdown shows that the version does not hold, its path resolved as the browser does: before any
   `?` or `#`, percent-decoded, `.` and `..` segments applied, an `<angle bracket>` destination read
-  whole) and
+  whole), `blocked_feature` (once per file, with a count: a script calls `getUserMedia` or
+  constructs `SpeechRecognition`, which fails in every Plinth frame; use `plinth.dictation`) and
   `not_scanned` (a note, not something to fix: the reference check reads at most 2 MB per file and
   8 MB per publish, so every big build gets it; an inline update also gets it for text files reused
   by `{path, sha256}` or carried forward, whose bytes were not sent and so were not re-checked). The result's `stored` reports files, `written`,
@@ -1238,6 +1327,11 @@ options.
   `decide` before the scope, so a leaked CI secret can read and update one artifact and nothing
   else; the GitHub Action keeps server and artifact text from being read as workflow commands
   ([Publishing from CI](#publishing-from-ci-decided-2026-11-19)).
+- **Frames never get the microphone; dictation runs in the app.** Artifact frames get no powerful
+  feature (`allow=""`, and the content host's `Permissions-Policy` turns them off). The browser
+  keeps a microphone grant for the app's origin, so delegating it to one frame would give it to
+  every artifact. With `ALLOW_DICTATION`, the app runs the recognizer after the viewer's click in
+  the page and their consent, shows a Stop the page cannot cover, and posts only words.
 - **Open counts are aggregates.** One number per artifact per UTC day, never who opened it, shown
   only to the artifact's owner and, summed over the instance, to admins.
 - **Quotas and rate limits.** Each account is limited to 100 artifacts by default, set by an
@@ -1389,7 +1483,9 @@ for a single user.
    group-by-category view, and personal categories for artifacts shared with you. Tokens limited
    to a category (declined for now: a category is owner text that is renamed and merged, so the
    limit would move under the token, and such a token could still create artifacts; tokens limited
-   to one artifact cover CI).
+   to one artifact cover CI). Server speech (speech to text and voices run by the instance, for
+   browsers without a recognizer), dictation into a doc's on-page editor, and an app "Read aloud"
+   for docs.
 
 ## Decisions
 

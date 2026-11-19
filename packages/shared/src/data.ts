@@ -34,6 +34,11 @@ export interface Capabilities {
   people: boolean;
   /** The page may open the comment composer with its own anchors (`plinth.comments`). */
   comments: boolean;
+  /**
+   * The page may receive words the viewer dictates (`plinth.dictation`, run by the app). Not shared
+   * data, not a room, and never the microphone.
+   */
+  dictation: boolean;
 }
 
 export const CAPABILITIES_META = "plinth-capabilities";
@@ -102,6 +107,7 @@ export const DECLARATION_FIELDS: readonly DeclarationField[] = [
   },
   { kind: "token", key: "people" },
   { kind: "token", key: "comments" },
+  { kind: "token", key: "dictation" },
 ];
 
 const TOKEN_INFO = new Map<string, (typeof CAPABILITY_TOKENS)[number]>(
@@ -165,9 +171,10 @@ function tokens(content: string): string[] {
  * Every meta tag is read, so a registered meta after the others is never missed. Unknown tokens
  * are ignored, and so are list entries that break their rule; at most each list's `max` are kept
  * (LIMITS.maxDataShared, ROOM_LIMITS.maxOpenTopics). Returns null unless `data`, `room` or
- * `comments` is declared: the viewer is learned through the data API or the room, so `viewer`
- * alone declares nothing, and neither does a list alone. Shared names count only with `data`,
- * open topics only with `room`.
+ * `comments` or `dictation` is declared: the viewer is learned through the data API or the room,
+ * so `viewer` alone declares nothing, and neither does a list alone. Shared names count only with
+ * `data`, open topics only with `room`. A page that declares only `comments` or `dictation` has no
+ * store and no room.
  */
 export function parseCapabilities(html: string): Capabilities | null {
   if (!/plinth-/i.test(html)) return null;

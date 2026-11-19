@@ -34,6 +34,12 @@ make a test pass.
 | A page steers the app through a deck's messages | A script on another frame posts look-alike `position` or `fullscreen` messages to the app page | Deck messages are accepted only from the window of the frame the app holds, at the exact content origin (or `null` under opaque isolation), only for decks, and carry only slide numbers; full screen still needs the person's activation ([Slides](#slides)) |
 | Leaked CI secret | A `PLINTH_TOKEN` from a pipeline shows up in a fork's logs or a compromised runner | Make it a token limited to one artifact: it can read that artifact and publish new versions of it, nothing else (every other artifact answers 404 whatever its scopes, checked in `decide` before the scope), a version is never an overwrite and anyone with edit rights can revert it; secrets are not given to fork workflows ([Publishing from CI](#publishing-from-ci)) |
 | Workflow command injection through the Action's log | A title, warning path or server message `::set-output name=x::y` or `::add-mask::` printed by the Action steers the job | Everything the client prints runs between `::stop-commands::<random>` and `::<random>::`; the Action's own annotations escape their text, the summary escapes Markdown and HTML, outputs use random heredoc delimiters; `docs/ci.md` passes outputs to scripts through `env:` ([Publishing from CI](#publishing-from-ci)) |
+| Artifact eavesdrops through the microphone | A shared page starts recording on load or on an unrelated click and saves the transcript as shared data | Frames never get the microphone (`allow=""`, the content host's `microphone=()`); the app's `microphone=(self)` is the ceiling, and only while dictation is on. Dictation runs in the app: per-artifact consent, a click in the page for every start, at most 60 s, stopped on a hidden tab, a blurred window or a frame reload, and an app "Listening" control with Stop the page cannot cover ([Dictation](#dictation-and-text-to-speech)) |
+| Fake dictation injected into a page | Another frame, or an MCP host that frames an in-chat preview, posts `final` messages so the page "hears" words nobody said | The runtime acts on voice messages only from `window.parent` at the exact app origin embedded in `runtime.js`, and only for its current session |
+| A page drives the app's recognizer | Page script posts `start` in a loop, or oversized messages | Frame window and exact content origin, a strict schema and size cap, a validated `lang`; one start a second, 10 s after the viewer's Stop, `not_granted` after "Not now" or three Stops for the page load |
+| Consent clickjacking | The page starts just before a click lands where "Allow" will appear | The dialog is app chrome above the frame, its buttons ignore input for 500 ms, and focus starts on "Not now" |
+| Dictated words go to a third party | The browser sends the audio to Google, Microsoft or Apple | Said in the consent dialog and the privacy notice; on-device recognition used where the browser offers it; Plinth never receives audio, and receives words only when the page saves them |
+| Text to speech as scareware or fingerprinting | A page speaks "your device is infected"; `getVoices()` lists installed voices | Browsers refuse `speak()` before a click in the frame; report and takedown. Fingerprinting is residual, and leaving the page with it needs the WebRTC gap |
 | Cross-site WebSocket hijacking of a live room | Artifact B, framed by the app, opens a socket to artifact A's `/__plinth/room/` with A's content cookie from the shared partitioned jar | The upgrade requires an exact `Origin` (absent or `null` refused), same-origin fetch metadata when sent, the `plinth.room.v1` subprotocol and an identified content pass at the current epoch; no CORS anywhere ([Live rooms](#live-rooms)) |
 | Page code harvests names and the access list | A page reads `plinth.viewer.name`, its authors' names or `plinth.people.list()` and copies them where link viewers or every viewer can read them | Names appear only where the email already does (`viewer` declared, identified reader); the people list only for owners and editors on a page that declares `data viewer people`, whose author is the owner or an editor; every identified viewer is told, under the bar, that the owner and editors can see everyone the page is shared with; the skill forbids copying the list or emails into shared data. WebRTC stays the known CSP gap ([The people list](#the-people-list)) |
 | Display name used to impersonate | Someone sets their name to "Owner", "ana@example.com" or a right-to-left override that reorders the text around it | Names cannot contain `@` or the two characters that render as one (U+FE6B, U+FF20: every character whose NFKC form is `@`), nor control, bidi, zero-width or separator characters, are cut to 64 code points on every read, and are never authority: `role` and `comment_author_role` stay server-derived and Plinth's own UI shows the role beside them; tool descriptions say names are display text |
@@ -137,6 +143,10 @@ What changes for the app and for artifacts:
   and the upgrade is refused before anything else is read. The runtime resolves `plinth.room.ready`
   as `{ available: false, reason: "opaque_isolation" }` without a request, and the CSP names no
   socket. See [Live rooms](#live-rooms).
+- **No dictation.** The app would have to post the viewer's words with `targetOrigin "*"`, so
+  dictation is off: the runtime resolves `plinth.dictation.ready` as `{ available: false, reason:
+  "opaque_isolation" }` without posting anything, and the app's `Permissions-Policy` keeps
+  `microphone=()`. See [Dictation and text to speech](#dictation-and-text-to-speech).
 - **postMessage.** Messages from an artifact frame arrive with `event.origin === "null"`, and a
   message to the frame can only be posted with `targetOrigin "*"`. The comments bridge identifies
   the frame by `event.source === iframe.contentWindow`, still validates every field, and posts only
@@ -274,7 +284,11 @@ off the CSP is byte for byte the one above ([Live rooms](#live-rooms)).
 
 The app host has its own strict CSP (`script-src 'self'`, `frame-ancestors 'none'`, `frame-src`
 limited to the content host), `X-Frame-Options: DENY`, `Cross-Origin-Opener-Policy: same-origin`
-and HSTS over https.
+and HSTS over https. Its `Permissions-Policy` is `camera=(), microphone=(), geolocation=(),
+payment=(), usb=()`, except that while dictation is in effect (`ALLOW_DICTATION` with origin
+isolation) it says `microphone=(self)`: the app's own origin, never the content host, never `*`.
+It is the ceiling for every artifact frame on an app page
+([Dictation and text to speech](#dictation-and-text-to-speech)).
 
 ## Sandboxed frames
 
@@ -997,6 +1011,127 @@ the notice under the bar also use). Otherwise the summary has no `people` and th
 `feature_disabled` with the reason, so the notice is accurate: no editor, and no editor's agent,
 reads the access list of a page that does not declare `people`. An agent still tells whose a `u_`
 document is from the document's own `created_by`, since only that person can create it.
+
+## Dictation and text to speech
+
+Pages may take dictation and speak. They never get the microphone. Design:
+[spec.md](spec.md#voice-dictation-and-text-to-speech-decided-2026-11-19).
+
+### Why the frame never gets the microphone
+
+A browser keeps a microphone grant for the **top-level** origin, and Permissions-Policy delegation
+decides which frames may use it. If the app delegated the microphone to artifact frames
+(`allow="microphone"` on the frame, `microphone=(self <content>)` on the app, `microphone=(self)` on
+the content host), a viewer who allowed it once, on a friendly page, would give every artifact they
+later open silent microphone access: a page a stranger shares tomorrow could record from load, save
+transcripts as shared data, or leak them over WebRTC (the known gap in the threat table). The
+browser's prompt would also name the app (`plinth.aconite.io`), so the viewer would be consenting
+to Plinth, not to the page's author. Neither origin isolation nor any per-page consent in Plinth
+can undo a grant that lives in the browser's own store.
+
+A probe (Playwright Chromium, app and content on different sites, the content host sending Plinth's
+`Permissions-Policy`) showed it:
+
+| Setup | Frame `webkitSpeechRecognition` | Frame `getUserMedia({ audio })` | App's own recognizer |
+| --- | --- | --- | --- |
+| App `microphone=()`, frame `allow=""` (dictation off) | `not-allowed` | `NotAllowedError` | `not-allowed` |
+| App `microphone=(self)`, a grant for the app, frame `allow=""` (dictation on) | `not-allowed` | `NotAllowedError` | starts |
+| App `microphone=(self <content>)`, frame `allow="microphone"`, content `microphone=(self)`, a grant for the app only | starts, no prompt | granted, no prompt | starts |
+| Opaque isolation, any of the above | `not-allowed` | `SecurityError` | starts |
+
+So Plinth never delegates the microphone. Frames keep `allow=""`, the content host keeps
+`microphone=()` (and every other powerful feature off), and the app's `Permissions-Policy` is
+`microphone=(self)` only while dictation is in effect, `microphone=()` otherwise. That header is
+the ceiling for every frame on an app page: even a frame given `allow="microphone"` by mistake
+could not get it, because `self` names the app's origin only, never the content host or `*`. An
+end-to-end test grants the app's origin the microphone and checks that the frame is still refused.
+
+### The app runs dictation
+
+With `ALLOW_DICTATION` on (origin isolation only), the app runs the browser's Web Speech
+recognizer and posts words to the frame. The page asks through `plinth.dictation` in
+`/__plinth/runtime.js`; artifact scripts share the runtime's origin and can post the same
+messages themselves, so the runtime is a convenience and every check that matters is in the app.
+
+**The gate.** `voice.dictation` is decided by `dictationAccess` in `policy.ts`: an HTML page whose
+current version declares `dictation`, origin isolation, the switch, and an identified viewer (the
+owner or a grant holder). Anonymous link viewers never get it, which covers the riskiest case, a
+public page from a stranger.
+
+**A start, checked in order by the app:**
+
+1. The message comes from this frame's window (`event.source === frame.contentWindow`) at its exact
+   content origin, and parses against a strict schema (unknown keys, a bad id or `lang`, or more
+   than 512 characters of JSON are dropped silently).
+2. Dictation is offered: the instance's config and the gate.
+3. The app has transient user activation (`navigator.userActivation.isActive`, read synchronously
+   when the message arrives; a click or key press inside the frame activates its ancestors), and
+   focus is inside this frame (`document.activeElement` is the frame). Activation from a click on
+   the app's own chrome, or from the link that opened the viewer page, does not count, so a page
+   cannot start on load or wait for the viewer to click something else.
+4. The tab is visible and the window focused.
+5. Nothing is listening; the last start was at least 1 s ago and the viewer's last Stop at least
+   10 s ago (`rate_limited`); the viewer did not say "Not now", was not refused by the browser's
+   own prompt and did not press Stop three times on this page load (`not_granted`).
+6. Consent for this artifact in this browser (below), asked for in the app's dialog if missing.
+7. The recognizer starts. It uses on-device recognition where the browser offers it without
+   installing a model; a page's request never triggers a download.
+
+**While listening.** Partials and finals (each cut to 2,000 characters) go to the frame with
+`targetOrigin` set to its exact content origin, never `"*"`, so a frame that navigated to another
+artifact's subdomain receives nothing. A session ends at the page's `stop()`, the viewer's Stop,
+silence, 60 s, a hidden tab, a blurred window (focus moving into the frame does not count), the
+frame's `load` event (a reload, a navigation or a version swap), and when the viewer page unmounts
+or its gate changes. With focus inside the frame, a switch to another window blurs only the
+frame's window, which the app cannot observe, so while listening the app also checks
+`document.hasFocus()` every 250 ms and stops `blurred` when it turns false. The frame's loads are
+counted from the moment the stage creates it: the first is the page's own document finishing, so
+a start made before then is not cut off, and every later load ends the session. The "Listening" control with Stop sits in the app's bar at every width, so the
+page cannot cover, restyle or fold it away.
+
+**Consent.** "Let this page take dictation?" is app chrome above the frame. It names the page and
+its owner by email (the gate's `voice.owner_email`, sent only to viewers who may dictate: the owner
+and people the owner granted access by email), never by the display name, which anyone can set to
+"Plinth Security" or a colleague's name. It says the page may save the words where others with access see them, names the company
+whose speech service hears the audio (Google for Chrome, Microsoft for Edge, Apple for Safari, or a
+generic sentence), and says Plinth never receives the audio. Focus starts on "Not now", and both
+buttons ignore input for 500 ms after it opens, so a click the page times to land where "Allow"
+appears does nothing. "Allow on this page" is stored in the app origin's `localStorage` under
+`plinth:dictation:<artifact id>`; artifact frames are cross-origin and cannot read or write it. The
+⋯ menu takes it back, and sign-out clears every such key, so the next person on a shared browser is
+asked again. It grants no data access: it is one viewer's choice about their own microphone in this
+browser, so it needs no server table.
+
+**The page's side.** The runtime posts only to `window.parent` with `targetOrigin` set to the
+embedded app origin, and acts on a message only from `window.parent` at that exact origin and for
+its current session. A page framed by another site (an MCP host's in-chat preview) or opened on its
+own gets `no_host`. The runtime embeds `APP_ORIGIN` as a JSON string: public configuration, the same
+bytes for every artifact on an instance, with no secrets and no artifact data.
+
+**Opaque isolation.** Off. The app would have to post the viewer's words with `"*"` to a frame
+identified only by its window, which may have navigated. The runtime resolves `ready` with
+`opaque_isolation` without posting anything, and the app's `Permissions-Policy` stays
+`microphone=()`.
+
+**What reaches whom.** The browser's speech service (Google, Microsoft or Apple) receives the
+audio under its own terms unless recognition runs on the device. Plinth never receives audio. The
+page receives the words and may save them as shared data, which agents treat as untrusted viewer
+input. The privacy notice says so while dictation is on.
+
+**Publish warning.** A page that calls `getUserMedia` or constructs `SpeechRecognition` itself gets
+`blocked_feature`: the call fails for every viewer.
+
+### Text to speech
+
+`speechSynthesis` is the browser's own and works in every artifact frame, also under opaque
+isolation. No Permissions-Policy feature governs it (`autoplay=()` does not stop it), so Plinth
+cannot switch it off and offers no setting that would pretend to. Chromium refuses `speak()`
+(`not-allowed`) until the frame has had a click, which limits pages that shout "your device is
+infected" on load; an end-to-end test pins that. Residual risks, the page author's choices inside
+the viewer's browser like any other page script: `getVoices()` lists installed voices, a
+fingerprinting surface, and network voices (Chrome's "Google ..." voices) send the spoken text to
+the browser maker. The skill tells agents to speak only from a click, keep the text on screen and
+prefer local voices for anything private. Report and takedown cover abuse.
 
 ## Comments are untrusted input for agents
 

@@ -445,6 +445,27 @@ board where a click draws a dot and opens the composer on that point, numbered m
 page, Plinth's pins on the same spots, and the picked thread's marker highlighted. The skill's
 "Comments from the page" section has the API.
 
+## Speaking and dictation
+
+Pages may speak and, on instances that offer it, take dictation; they never get the microphone
+([spec](spec.md#voice-dictation-and-text-to-speech-decided-2026-11-19),
+[security](security.md#dictation-and-text-to-speech)).
+
+- **Text to speech** is the browser's own `speechSynthesis`, in every artifact. The browser refuses
+  `speak()` before the viewer's first click in the page, so speak only from a click, offer a Stop
+  and keep the text on screen.
+- **Dictation** is offered where `publish_artifact`'s description mentions it (`ALLOW_DICTATION`).
+  A page declares `<meta name="plinth-capabilities" content="dictation">`, loads
+  `/__plinth/runtime.js`, and calls `plinth.dictation.start()` from a click. Plinth's app asks the
+  viewer once per page, runs the browser's recognizer, shows "Listening" with a Stop, and passes
+  the page words through `onPartial` and `onFinal`. Only people the page is shared with get it;
+  anonymous link viewers, in-chat previews and opaque-isolation instances get `ready` with
+  `available: false`, so the page must keep typing working.
+- **Untrusted input.** Dictated text is what a viewer said. If the page saves it, it is shared data
+  like any entry, and `list_artifact_data` marks it untrusted.
+
+The skill's "Voice" section has the full API.
+
 ## Agent discovery
 
 People hand agents Plinth links, and an agent that fetches one reads the HTML as text. The app is

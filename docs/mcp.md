@@ -472,6 +472,7 @@ fix them and publish again (all but `not_scanned` and `live_draft`, which need n
 | `blocked_host` | A script, style, image or font from a host outside the CSP's allowlist |
 | `insecure_url` | An `http:` reference |
 | `opaque_module` | Only on opaque-isolation instances: module scripts, `crossorigin` links and web fonts fail there |
+| `blocked_feature` | Once per file, with `count`: a script calls `getUserMedia` or constructs `SpeechRecognition`. Plinth frames never get the microphone, so it fails for every viewer. Declare `dictation` and use `plinth.dictation` where the instance offers it, or let people type |
 | `not_scanned` | A note, not something to fix: this many files were not checked for references. Either they were past the check's budget (at most 2 MB per file and 8 MB per publish; big builds always get it), or, in an inline update, they are HTML, CSS or JS files reused by `{path, sha256}` or carried forward, whose bytes were not sent. A bundle checks every file it carries |
 | `ds_inert_markup` | A design system's component example holds script, an event handler, a form, a frame or a meta; previews run none of them and remove them. `path` says which example |
 | `ds_missing_font` | A design system's `fonts[].src` names a file the version does not have |

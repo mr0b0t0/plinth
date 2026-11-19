@@ -66,6 +66,7 @@
     "LIVE_AUTO_CHECKPOINT_MIN_S": "600",
     "LIVE_DRAFT_FLUSH_S": "5",
     "LIVE_DRAFT_RETENTION_DAYS": "30",
+    "ALLOW_DICTATION": "false",
     "DEV_OUTBOX": "true",
     "DEV_IGNORE_CLIENT_IP": "false",
     "DEV_SEED": "false",

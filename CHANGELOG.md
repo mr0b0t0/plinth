@@ -10,6 +10,15 @@ Add a line under **Unreleased** in the pull request that makes a change people w
 
 ## Unreleased
 
+- **Dictation, run by Plinth, for pages that ask for it.** A page that declares `dictation` can
+  take the words a viewer speaks (`plinth.dictation`): Plinth's app runs the browser's speech
+  recognizer after the viewer's click and consent, shows "Listening" with a Stop the page cannot
+  hide, and passes the page only words. Artifact frames still never get the microphone. Off unless
+  an operator sets `ALLOW_DICTATION=true`; origin isolation only, and only for people the page is
+  shared with. Text to speech (`speechSynthesis`) works in every page as before, now documented,
+  and a page that calls `getUserMedia` or `SpeechRecognition` itself gets a `blocked_feature`
+  publish warning.
+
 - **Publish from CI.** A GitHub Action, `mr0b0t0/plinth/publish@v0.6.0`, publishes a build folder
   or one HTML or Markdown file as the next version of an artifact on every run, with the commit in
   the version note and the links in the job summary. A token can now be limited to one artifact

@@ -1,10 +1,13 @@
 // /__plinth/runtime.js is assembled from fragments (content/runtime/). The assembly replaced one
 // static string without a behaviour change, so the fragments before page comments, without the app
 // channel, are pinned. A change that means to alter that script updates the pin here, on purpose:
-// display names and the people fragment (who is viewing) did. Page comments added the app channel
-// and their own fragment after them; the channel is also tested on its own.
+// display names and the people fragment (who is viewing) did. Page comments and dictation added the
+// app channel and their own fragments after them; the channel is also tested on its own, and the
+// dictation fragment in runtime-dictation.test.ts.
 import { describe, expect, it } from "vitest";
+import { COMMENTS_FRAGMENT } from "../src/content/runtime/comments.ts";
 import { DATA_FRAGMENT } from "../src/content/runtime/data.ts";
+import { DICTATION_FRAGMENT } from "../src/content/runtime/dictation.ts";
 import type { RuntimeFragment } from "../src/content/runtime/fragment.ts";
 import { PEOPLE_FRAGMENT } from "../src/content/runtime/people.ts";
 import { ROOM_FRAGMENT } from "../src/content/runtime/room.ts";
@@ -87,17 +90,26 @@ function boot(script: string, opts: { framed: boolean }) {
 }
 
 describe("runtime fragments", () => {
-  it("keeps the data, room and people code byte for byte, and serves it with page comments", async () => {
+  it("keeps the data, room and people code byte for byte, and serves it with page comments and dictation", async () => {
     const before = assembleRuntime(config(), BEFORE);
     expect(before.length).toBe(GOLDEN_LENGTH);
     expect(await sha256(before)).toBe(GOLDEN_SHA256);
     // Without a fragment that uses the app channel, no configuration value is in the script.
     expect(before).not.toContain("APP_ORIGIN");
     expect(assembleRuntime({ appOrigin: APP }, BEFORE)).toBe(before);
-    expect(RUNTIME_FRAGMENTS.map((f) => f.name)).toEqual(["data", "room", "people", "comments"]);
+    expect(RUNTIME_FRAGMENTS.map((f) => f.name)).toEqual([
+      "data",
+      "room",
+      "people",
+      "comments",
+      "dictation",
+    ]);
     const served = runtimeScript(config());
     expect(assembleRuntime(config())).toBe(served);
-    // Memoized per app origin, which page comments embed.
+    expect(served).toBe(
+      assembleRuntime(config(), [...BEFORE, COMMENTS_FRAGMENT, DICTATION_FRAGMENT]),
+    );
+    // Memoized per app origin, which page comments and dictation embed.
     expect(runtimeScript(config())).toBe(served);
     expect(served).toContain(`var APP_ORIGIN = ${JSON.stringify(config().appOrigin)};`);
     expect(runtimeScript({ appOrigin: APP })).not.toBe(served);

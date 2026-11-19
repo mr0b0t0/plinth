@@ -10,7 +10,7 @@ import {
 } from "@plinth/shared";
 import { and, eq, isNull, sql } from "drizzle-orm";
 import { Hono } from "hono";
-import { instanceLimits } from "../config.ts";
+import { dictationActive, instanceLimits } from "../config.ts";
 import { artifacts, users } from "../db/schema.ts";
 import { ApiError, unauthorized } from "../lib/errors.ts";
 import { boundArtifactOf } from "../policy.ts";
@@ -44,6 +44,7 @@ meApi.get("/config", (c) => {
     limits: instanceLimits(config),
     cdn_allowlist: [...config.cdnAllowlist],
     upload_ticket_ttl_s: TTL.uploadTicketMs / 1000,
+    dictation: dictationActive(config),
   };
   const res = c.json(body);
   ensureCsrfCookie(c, res.headers);

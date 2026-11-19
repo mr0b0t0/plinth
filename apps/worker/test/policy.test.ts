@@ -406,6 +406,7 @@ describe("policy: pageDataAccess", () => {
     roomOpen: [],
     people: false,
     comments: false,
+    dictation: false,
   });
   it("full truth table, written out", () => {
     const T = true;
@@ -705,6 +706,7 @@ describe("policy: roomAccess", () => {
     roomOpen: [],
     people: false,
     comments: false,
+    dictation: false,
     ...extra,
   });
   const NONE = { join: false, emit: "none", openTopics: [], seeIdentity: false, doc: "none" };

@@ -22,10 +22,12 @@ import { LogoMark } from "../Logo.tsx";
 import { SkipLink } from "../layout/AppShell.tsx";
 import { LegalLinks } from "../layout/LegalLinks.tsx";
 import { IconProvider, Skeleton, Toaster, VISIBILITY_META } from "../ui/index.ts";
+import { DictationConsent } from "./DictationConsent.tsx";
 import { contentOriginOf, shareLink } from "./gate.ts";
 import { ShareDialog } from "./ShareDialog.tsx";
 import { StageFrame } from "./StageFrame.tsx";
 import { BAR_CONTROLS, STRIP_ITEMS, type StageContext, type StageItem } from "./stageItems.tsx";
+import { useDictation } from "./useDictation.ts";
 import { useLiveEdit } from "./useLiveEdit.ts";
 import { usePresentation } from "./usePresentation.ts";
 import type { WatchPause } from "./useVersionWatch.ts";
@@ -153,6 +155,8 @@ export function ViewerStage({
   // Presenting a deck: the slide, full screen, presenter view and its audience window.
   const present = usePresentation({ gate, frame, contentOrigin, config, slug, pinned });
   const pause: WatchPause = live.pause ?? present.pause;
+  // Dictation run by the app, for the main artifact frame only (never a preview or a compare).
+  const dictation = useDictation({ frame, contentOrigin, gate, config });
   useEffect(() => {
     onPauseChange?.(pause);
   }, [pause, onPauseChange]);
@@ -223,6 +227,7 @@ export function ViewerStage({
     live,
     editing,
     present,
+    dictation,
     hrefs: {
       current: currentHref,
       edit: editHref,
@@ -362,6 +367,7 @@ export function ViewerStage({
           />
         </Suspense>
       )}
+      <DictationConsent request={dictation.consent} />
       <ShareDialog
         open={shareOpen}
         onClose={() => setShareOpen(false)}

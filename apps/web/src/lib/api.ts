@@ -16,6 +16,7 @@ import {
   type LiveInfo,
   route,
 } from "@plinth/shared";
+import { forgetAllConsents } from "../components/viewer/voiceProtocol.ts";
 
 export class ApiRequestError extends Error {
   constructor(
@@ -64,6 +65,9 @@ export async function api<T>(
 ): Promise<T> {
   const method = opts.method ?? "GET";
   const headers: Record<string, string> = { Accept: "application/json" };
+  // Every sign-out comes through here: forget this browser's per-page dictation consents first,
+  // so the next person on a shared browser is asked again.
+  if (path === API.logout && method === "POST") forgetAllConsents();
   if (method !== "GET" && method !== "HEAD") {
     await ensureCsrf();
     headers[CSRF_HEADER] = csrfToken();

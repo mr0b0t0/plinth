@@ -55,6 +55,8 @@ const WORKER_VARS = [
   // these are the switches (docs/docker.md#settings). A reverse proxy must pass WebSocket upgrades.
   "ALLOW_ROOMS",
   "ALLOW_LIVE_EDITING",
+  // Dictation run by the app (docs/docker.md#settings); off unless set to "true".
+  "ALLOW_DICTATION",
 ];
 
 // `plinth init` flags and the variables that set them, to name the variable in its errors.

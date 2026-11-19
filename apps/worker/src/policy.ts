@@ -5,6 +5,7 @@ import {
   type ArtifactType,
   type Capabilities,
   type ClientType,
+  type DictationAccess,
   type EffectiveRole,
   isPersonalDocId,
   type Role,
@@ -509,4 +510,29 @@ export function seesPeople(p: Principal, role: EffectiveRole | null): boolean {
 /** May this principal create artifacts? Not a token bound to one artifact. */
 export function mayCreateArtifacts(p: Principal): boolean {
   return boundArtifactOf(p) === null;
+}
+
+// ---------- voice: dictation on the page (app host, the viewer gate) ----------
+
+/**
+ * May this viewer dictate into this page? There is no server resource behind dictation: the
+ * decision travels in the gate and the app (Plinth's own code on APP_HOST) enforces it, while the
+ * app's Permissions-Policy keeps every frame away from the microphone whatever the page does.
+ * `identity` is the gate's identified viewer (the owner, or a grant holder confirmed by sign-in or
+ * email code), null for anonymous link viewers and admins without a role; `active` is
+ * dictationActive(config); `caps` the current version's declaration. Rules, in order: an HTML page
+ * that declares `dictation`; origin isolation; the switch; an identified viewer.
+ */
+export function dictationAccess(
+  identity: { email: string; role: EffectiveRole } | null,
+  caps: Capabilities | null,
+  ctx: { active: boolean; isolation: "origin" | "opaque"; type: ArtifactType },
+): DictationAccess {
+  if (ctx.type !== "html" || caps?.dictation !== true) {
+    return { available: false, reason: "not_declared" };
+  }
+  if (ctx.isolation !== "origin") return { available: false, reason: "opaque_isolation" };
+  if (!ctx.active) return { available: false, reason: "disabled" };
+  if (!identity) return { available: false, reason: "not_identified" };
+  return { available: true, reason: null };
 }

@@ -18,6 +18,7 @@ import {
 } from "../src/index.ts";
 
 // ---------- the code before the registry, verbatim in behaviour ----------
+// (`dictation`, added after the registry, is false in every declaration the old code knew.)
 
 const META_TAG_RE = /<meta\b((?:[^>"']|"[^"]*"|'[^']*')*)>/gi;
 const ATTR_RE = /([^\s"'=<>/]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?/g;
@@ -71,8 +72,8 @@ function legacyParse(html: string): Capabilities | null {
     if (roomOpen.length >= ROOM_LIMITS.maxOpenTopics) break;
     if ((t === ROOM_OPEN_ALL || ROOM_TOPIC_RE.test(t)) && !roomOpen.includes(t)) roomOpen.push(t);
   }
-  // `people` and `comments` came after the registry: a page without them (the whole corpus)
-  // reads as false.
+  // `people`, `comments` and `dictation` came after the registry: a page without them (the whole
+  // corpus) reads as false.
   return {
     data,
     viewer: known.has("viewer"),
@@ -81,6 +82,7 @@ function legacyParse(html: string): Capabilities | null {
     roomOpen,
     people: false,
     comments: false,
+    dictation: false,
   };
 }
 
@@ -117,6 +119,7 @@ function legacyRead(json: string): Capabilities | null {
     roomOpen: topics,
     people: false,
     comments: false,
+    dictation: false,
   };
 }
 
@@ -164,7 +167,14 @@ function corpus(): string[] {
 describe("the declaration registry", () => {
   it("derives DATA_CAPABILITIES from the token table, in order", () => {
     expect(DATA_CAPABILITIES).toEqual(CAPABILITY_TOKENS.map((t) => t.token));
-    expect(DATA_CAPABILITIES).toEqual(["data", "viewer", "room", "people", "comments"]);
+    expect(DATA_CAPABILITIES).toEqual([
+      "data",
+      "viewer",
+      "room",
+      "people",
+      "comments",
+      "dictation",
+    ]);
   });
 
   it("places every token once, and lists name known tokens and unique metas", () => {

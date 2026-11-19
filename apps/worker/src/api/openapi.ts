@@ -19,6 +19,7 @@ import {
   DATA_COLLECTION_RE,
   DATA_DOC_ID_RE,
   DEFAULTS,
+  DICTATION_REASONS,
   ERROR_CODES,
   grantsReplaceInput,
   LIMITS,
@@ -624,6 +625,11 @@ function responseSchemas(): Record<string, Json> {
         description: "Hosts artifacts may load scripts and styles from (the CSP's CDN_ALLOWLIST)",
       },
       upload_ticket_ttl_s: int({ description: "How long an upload ticket stays valid" }),
+      dictation: {
+        type: "boolean",
+        description:
+          "Dictation is offered here (ALLOW_DICTATION with origin isolation): pages that declare `dictation` may receive words the viewer speaks, recognized by the app",
+      },
     }),
     LoginResult: obj({
       ok: { const: true },
@@ -668,8 +674,9 @@ function responseSchemas(): Record<string, Json> {
                 "The current version declares `comments` (HTML only): the page may open the " +
                 "comment composer with its own anchors, and `review` is ignored",
             },
+            voice: ref("ViewGateVoice"),
           },
-          ["data", "live", "people", "page_comments"],
+          ["data", "live", "people", "page_comments", "voice"],
         ),
         obj({ status: { const: "password_required" }, artifact: obj(viewStub) }),
         obj({ status: { const: "email_required" }, artifact: obj(viewStub) }),
@@ -1181,6 +1188,26 @@ function liveSchemas(): Record<string, Json> {
       description:
         "On-page editing of a doc: owners and editors on the current version, while live editing " +
         "is on with origin isolation. sign_in: confirmed by code without an account (watch only)",
+    },
+    ViewGateVoice: {
+      ...obj(
+        {
+          dictation: obj({
+            available: { type: "boolean" },
+            reason: { oneOf: [enumOf(DICTATION_REASONS), { type: "null" }] },
+          }),
+          owner_email: {
+            type: "string",
+            description:
+              "The owner's email, only when this viewer may dictate: the consent dialog names who wrote the page by it",
+          },
+        },
+        ["owner_email"],
+      ),
+      description:
+        "Present on `ok` only when the current version of an HTML page declares `dictation` and " +
+        "ALLOW_DICTATION is on: whether this viewer may dictate into the page (identified viewers " +
+        "only, origin isolation only). The app runs the recognizer; the page never gets the microphone",
     },
     LiveInfo: obj({
       mode: { oneOf: [mode, { type: "null" }] },
