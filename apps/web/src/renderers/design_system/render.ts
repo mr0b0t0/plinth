@@ -6,7 +6,8 @@
 // tokens and CSS apply only to swatches, specimens and preview frames.
 //
 // The chrome is kept to what a reader needs: a variable name copies itself when clicked, previews
-// follow the reader's color scheme, and code sits behind a closed disclosure.
+// follow the reader's color scheme, code sits behind a closed disclosure, and token tables have no
+// visible column headings.
 import type { DesignSystem, DsComponent, DsExample, DsToken } from "@plinth/shared";
 import { designSystemComponentCss } from "@plinth/shared";
 import { renderMarkdown } from "../doc/markdown.ts";
@@ -142,14 +143,7 @@ function sample(doc: Document, t: DsToken, value: string, theme: PreviewTheme | 
       break;
     case "type": {
       // A block child carries the ellipsis: text-overflow does nothing on a flex container.
-      s.append(
-        el(
-          doc,
-          "span",
-          { class: "ds-sample__text" },
-          "The quick brown fox jumps over the lazy dog",
-        ),
-      );
+      s.append(el(doc, "span", { class: "ds-sample__text" }, "The quick brown fox"));
       if (t.type === "typography") style.font = value;
       else if (t.type === "fontFamily") style.fontFamily = value;
       else style.fontWeight = value;
@@ -215,6 +209,10 @@ function tokenRow(doc: Document, t: DsToken): HTMLElement {
   return row;
 }
 
+/**
+ * One group's tokens. The column headings are for screen readers only: the section heading names
+ * the group, and every table has the same three columns.
+ */
 function tokenTable(doc: Document, tokens: DsToken[]): HTMLElement {
   const head = el(
     doc,
@@ -238,7 +236,7 @@ function tokenTable(doc: Document, tokens: DsToken[]): HTMLElement {
     doc,
     "div",
     { class: "ds-table" },
-    el(doc, "table", {}, cols, el(doc, "thead", {}, head), body),
+    el(doc, "table", {}, cols, el(doc, "thead", { class: "ds-visually-hidden" }, head), body),
   );
 }
 

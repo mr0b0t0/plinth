@@ -147,6 +147,18 @@ describe("boot", () => {
     expect(brand[0]?.hasAttribute("data-theme")).toBe(false);
   });
 
+  it("keeps the token tables' column headings for screen readers only", () => {
+    mountShell(JSON.stringify(FIXTURE));
+    stop = boot(window);
+    const head = root().querySelector("#ds-tokens-color thead");
+    expect(head?.className).toBe("ds-visually-hidden");
+    expect([...(head?.querySelectorAll("th[scope=col]") ?? [])].map((t) => t.textContent)).toEqual([
+      "Sample",
+      "Token",
+      "Value",
+    ]);
+  });
+
   it("shows a type specimen in a block that can end in an ellipsis", () => {
     mountShell(JSON.stringify(FIXTURE));
     stop = boot(window);
