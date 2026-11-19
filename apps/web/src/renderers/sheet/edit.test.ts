@@ -3,6 +3,7 @@
 // row line it sends, rows other people hold, struct frames), and that a value the room would
 // refuse never leaves the frame.
 import {
+  LIMITS,
   RENDERER_MESSAGE_SOURCE,
   RENDERER_PROTOCOL_VERSION,
   TYPE_REGISTRY,
@@ -35,6 +36,8 @@ class FakeSocket {
   static all: FakeSocket[] = [];
   readyState = 1 as const;
   sent: Record<string, unknown>[] = [];
+  /** A frame type whose send throws (a socket that went away). */
+  refuse: string | null = null;
   onopen: ((ev: Event) => void) | null = null;
   onclose: ((ev: CloseEvent) => void) | null = null;
   onmessage: ((ev: MessageEvent) => void) | null = null;
@@ -43,7 +46,10 @@ class FakeSocket {
     FakeSocket.all.push(this);
   }
   send(raw: string) {
-    if (raw !== "ping") this.sent.push(JSON.parse(raw));
+    if (raw === "ping") return;
+    const f = JSON.parse(raw);
+    if (f.t === this.refuse) throw new Error("closed");
+    this.sent.push(f);
   }
   close() {}
   frame(f: Record<string, unknown>) {
@@ -413,6 +419,178 @@ describe("room editing", () => {
     await tick();
     expect(document.documentElement.getAttribute("data-rows")).toBe("4");
     expect(text("A5")).toBe("Total");
+  });
+
+  it("aims a struct refused as stale at the row chosen, or drops it when that row is gone", async () => {
+    const { ws } = start();
+    const del = { op: "delete_rows", from: 2, count: 1 };
+    cell("A2").focus();
+    button("Delete row").click();
+    expect(ws.sent.at(-1)).toEqual({ t: "struct", rev: 3, op: del });
+    // Someone else deleted Apples first: deleting row 2 again would delete Pears.
+    ws.frame({ t: "struct", gen: "g1", rev: 4, op: del, by: "s2" });
+    const before = ws.sent.length;
+    ws.frame({ t: "struct_denied", reason: "stale" });
+    await tick();
+    expect(ws.sent.length).toBe(before);
+    expect(notice()).toContain("The sheet changed meanwhile");
+    expect(text("A2")).toBe("Pears");
+
+    // Someone else inserted a row above Pears first: Pears is row 4 now.
+    cell("A2").focus();
+    button("Delete row").click();
+    expect(ws.sent.at(-1)).toEqual({ t: "struct", rev: 4, op: del });
+    ws.frame({
+      t: "struct",
+      gen: "g1",
+      rev: 5,
+      op: { op: "insert_rows", before: 2, count: 1 },
+      by: "s2",
+    });
+    ws.frame({ t: "struct_denied", reason: "stale" });
+    expect(ws.sent.at(-1)).toEqual({
+      t: "struct",
+      rev: 5,
+      op: { op: "delete_rows", from: 3, count: 1 },
+    });
+
+    // Row below Total, after someone deleted the empty row above it: still below Total.
+    ws.frame({
+      t: "struct",
+      gen: "g1",
+      rev: 6,
+      op: { op: "delete_rows", from: 3, count: 1 },
+      by: "s1",
+    });
+    await tick();
+    cell("A3").focus();
+    button("Row below").click();
+    expect(ws.sent.at(-1)).toEqual({
+      t: "struct",
+      rev: 6,
+      op: { op: "insert_rows", before: 4, count: 1 },
+    });
+    ws.frame({
+      t: "struct",
+      gen: "g1",
+      rev: 7,
+      op: { op: "delete_rows", from: 2, count: 1 },
+      by: "s2",
+    });
+    ws.frame({ t: "struct_denied", reason: "stale" });
+    expect(ws.sent.at(-1)).toEqual({
+      t: "struct",
+      rev: 7,
+      op: { op: "insert_rows", before: 3, count: 1 },
+    });
+  });
+
+  it("aims a column struct refused as stale at the column chosen", async () => {
+    const { ws } = start();
+    cell("C2").focus();
+    button("Delete column").click();
+    expect(ws.sent.at(-1)).toEqual({
+      t: "struct",
+      rev: 3,
+      op: { op: "delete_columns", from: "C", count: 1 },
+    });
+    ws.frame({
+      t: "struct",
+      gen: "g1",
+      rev: 4,
+      op: { op: "insert_columns", before: "A", columns: [{ name: "Id", type: "text" }] },
+      by: "s2",
+    });
+    ws.frame({ t: "struct_denied", reason: "stale" });
+    // Price is column D now.
+    expect(ws.sent.at(-1)).toEqual({
+      t: "struct",
+      rev: 4,
+      op: { op: "delete_columns", from: "D", count: 1 },
+    });
+  });
+
+  it("asks again for the row it was asked for when a lease is stale, and writes that row", async () => {
+    const { ws } = start();
+    cell("D2").focus();
+    key(cell("D2"), " ");
+    expect(ws.sent.at(-1)).toEqual({ t: "lease", rev: 3, start: 1, end: 2 });
+    // A row goes in above Apples before the room sees this lease.
+    ws.frame({
+      t: "struct",
+      gen: "g1",
+      rev: 4,
+      op: { op: "insert_rows", before: 2, count: 1 },
+      by: "s2",
+    });
+    ws.frame({ t: "lease_denied", reason: "stale" });
+    expect(ws.sent.at(-1)).toEqual({ t: "lease", rev: 4, start: 2, end: 3 });
+    ws.frame({ t: "leased", lease: "l1", start: 2, end: 3, holder: "s1", by: YOU.email });
+    expect(ws.sent.slice(-2)).toEqual([
+      { t: "edit", lease: "l1", seq: 1, text: '["Apples",3,1.5,false,"new"]' },
+      { t: "release", lease: "l1" },
+    ]);
+  });
+
+  it("drops a write whose row is gone, or whose columns moved, when its lease is stale", async () => {
+    const { ws } = start();
+    key(cell("B3"), "Delete");
+    expect(ws.sent.at(-1)).toEqual({ t: "lease", rev: 3, start: 2, end: 3 });
+    // Pears changed meanwhile: clearing "row 3" now would clear what someone else wrote.
+    ws.frame({ t: "leased", lease: "l9", start: 2, end: 3, holder: "s2", by: "bo@example.org" });
+    ws.frame({
+      t: "op",
+      gen: "g1",
+      rev: 4,
+      lease: "l9",
+      start: 2,
+      del: 1,
+      ins: '["Plums",5,0.5,false]',
+      by: "s2",
+      seq: 1,
+    });
+    ws.frame({ t: "released", lease: "l9" });
+    let before = ws.sent.length;
+    ws.frame({ t: "lease_denied", reason: "stale" });
+    expect(ws.sent.length).toBe(before);
+    expect(notice()).toContain("The sheet changed meanwhile");
+
+    // A checkbox column goes in at D: Total's line (three cells) is the same, but D is not Paid.
+    key(cell("D4"), " ");
+    expect(ws.sent.at(-1)).toEqual({ t: "lease", rev: 4, start: 3, end: 4 });
+    ws.frame({
+      t: "struct",
+      gen: "g1",
+      rev: 5,
+      op: { op: "insert_columns", before: "D", columns: [{ name: "Urgent", type: "checkbox" }] },
+      by: "s2",
+    });
+    expect(ws.sent.at(-1)).toEqual({ t: "lease", rev: 4, start: 3, end: 4 });
+    before = ws.sent.length;
+    ws.frame({ t: "lease_denied", reason: "stale" });
+    expect(ws.sent.length).toBe(before);
+    expect(notice()).toContain("The sheet changed meanwhile");
+  });
+
+  it("refuses a paste larger than one edit frame before taking a lease, and says so", async () => {
+    const { ws } = start();
+    const row = `${"x".repeat(110)}\t1\n`;
+    const text = row.repeat(Math.ceil(LIMITS.liveDocFrameBytes / row.length) + 10);
+    const before = ws.sent.length;
+    const ev = new Event("paste", { bubbles: true, cancelable: true }) as ClipboardEvent;
+    Object.defineProperty(ev, "clipboardData", { value: { getData: () => text } });
+    cell("A2").dispatchEvent(ev);
+    expect(ws.sent.length).toBe(before);
+    expect(notice()).toContain("Paste fewer rows at a time");
+  });
+
+  it("says so when a granted write cannot be sent", async () => {
+    const { ws } = start();
+    key(cell("D2"), " ");
+    ws.refuse = "edit";
+    ws.frame({ t: "leased", lease: "l1", start: 1, end: 2, holder: "s1", by: YOU.email });
+    expect(ws.sent.at(-1)).toEqual({ t: "release", lease: "l1" });
+    expect(notice()).toContain("That change was not sent");
   });
 
   it("says why the room refused a struct", async () => {

@@ -12,7 +12,9 @@ import {
   liveDocTooLarge,
   liveRules,
   liveSheetTooLarge,
+  merge3,
   parseSheet,
+  type SheetStructOp,
   serializeSheet,
   sheetHeaderLine,
   sheetRowLine,
@@ -199,5 +201,99 @@ describe("struct frames", () => {
       expect(liveDocClientFrameSchema.safeParse({ t: "struct", rev: 4, op }).success, op.op).toBe(
         false,
       );
+  });
+});
+
+describe("sheet merges", () => {
+  // The room's merge of a live draft (ours) with a version published meanwhile (theirs).
+  const merge = (base: string[], ours: string[], theirs: string[]) =>
+    merge3(base.join("\n"), ours.join("\n"), theirs.join("\n"), {
+      rows: sheet.rows,
+      refuse: sheet.refuseMerge,
+    });
+  const struct = (lines: string[], op: SheetStructOp) => applySheetStruct(lines, op) as string[];
+  const QTY = JSON.stringify({ plinth: "sheet", v: 1, columns: [{ name: "Qty", type: "number" }] });
+  const BASE = [QTY, "[1]", "[2]", "[3]"];
+
+  it("still merges rows changed on each side when nothing moved under them", () => {
+    const ours = [...LINES];
+    ours[1] = '["Apples",4,"=B2*2"]';
+    const theirs = [...LINES];
+    theirs[2] = '["Pears",6,"=B3*2"]';
+    expect(merge(LINES, ours, theirs)).toMatchObject({ clean: true });
+    // Rows inserted on one side, plain values changed on the other: the values follow their rows.
+    const inserted = struct(BASE, { op: "insert_rows", before: 3, count: 1 });
+    expect(merge(BASE, [QTY, "[10]", "[2]", "[3]"], inserted)).toMatchObject({
+      clean: true,
+      text: [QTY, "[10]", "[]", "[2]", "[3]"].join("\n"),
+    });
+    // A formula next to rows the other side only appended: nothing it points at moved.
+    expect(merge(BASE, [QTY, '["=SUM(A3:A4)"]', "[2]", "[3]"], [...BASE, "[4]"])).toMatchObject({
+      clean: true,
+    });
+  });
+
+  it("reviews a formula that the other side's row insert or delete would point elsewhere", () => {
+    // A total added on the page; an agent inserts a row before row 2.
+    const ours = [...BASE, '["=SUM(A2:A4)"]'];
+    const theirs = struct(BASE, { op: "insert_rows", before: 2, count: 1 });
+    expect(merge(BASE, ours, theirs)).toMatchObject({ clean: false, reason: "refused" });
+    // The mirror: the page deletes a row, an agent's version adds a formula.
+    const deleted = struct(BASE, { op: "delete_rows", from: 3, count: 1 });
+    expect(merge(BASE, deleted, [...BASE, '["=A4*2"]'])).toMatchObject({
+      clean: false,
+      reason: "refused",
+    });
+    // A formula typed into a row near or far from the rows the other side inserted.
+    const five = [HEADER, '["a",1]', '["b",2]', '["c",3]', '["d",4]', '["e",5]'];
+    const typed = [...five];
+    typed[1] = '["a",1,"=B5"]';
+    for (const before of [3, 5]) {
+      expect(
+        merge(five, typed, struct(five, { op: "insert_rows", before, count: 1 })),
+        `before ${before}`,
+      ).toMatchObject({ clean: false, reason: "refused" });
+    }
+  });
+
+  it("reviews any column added or removed on one side while the other changed rows", () => {
+    const header = (names: string[]) =>
+      JSON.stringify({
+        plinth: "sheet",
+        v: 1,
+        columns: names.map((name) => ({ name, type: "text" })),
+      });
+    const base = [header(["Name", "Email", "Notes"]), '["Ann","a@x"]', '["Bob","b@x","vip"]'];
+    const phone = { op: "insert_columns", before: "C", columns: [{ name: "Phone", type: "text" }] };
+    // Ann's row is short, so the inserted column leaves its line as it was; the agent's note in
+    // C2 would land in Phone.
+    const ours = struct(base, phone as SheetStructOp);
+    expect(ours[1]).toBe(base[1]);
+    const theirs = [...base];
+    theirs[1] = '["Ann","a@x","call back"]';
+    expect(merge(base, ours, theirs)).toMatchObject({ clean: false, reason: "refused" });
+    // A row further down, and the mirror (the agent adds the column, the page sets the cell).
+    const tall = [...base, '["Cy","c@x"]', '["Di","d@x"]'];
+    const note = [...tall];
+    note[4] = '["Di","d@x","call back"]';
+    expect(merge(tall, struct(tall, phone as SheetStructOp), note)).toMatchObject({
+      clean: false,
+      reason: "refused",
+    });
+    expect(merge(tall, note, struct(tall, phone as SheetStructOp))).toMatchObject({
+      clean: false,
+      reason: "refused",
+    });
+    // A column removed past the rows' last cells: their lines stay, and the page's D3 has no
+    // column left to be in.
+    const wide = [header(["Name", "Email", "Notes", "Extra"]), '["Ann","a@x"]', '["Bob"]'];
+    const set = [...wide];
+    set[2] = '["Bob",null,null,"x"]';
+    expect(
+      merge(wide, set, struct(wide, { op: "delete_columns", from: "C", count: 1 })),
+    ).toMatchObject({ clean: false, reason: "refused" });
+    // A rename keeps every column in place, so it still merges with row changes.
+    const renamed = [header(["Name", "Mail", "Notes"]), ...tall.slice(1)];
+    expect(merge(tall, renamed, note)).toMatchObject({ clean: true });
   });
 });

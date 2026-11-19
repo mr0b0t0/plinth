@@ -248,6 +248,35 @@ describe("sheet socket: versions published from outside", () => {
     a.ws.close(1000);
   });
 
+  it("rows or columns an agent moves under the page's formulas or cells are frozen for review", async () => {
+    // The page puts a formula on Plums' row; the agent inserts a row above Pears, which would
+    // leave the formula pointing at the wrong row although the lines merge cleanly.
+    const rows = await sheetSetup(SHEET);
+    const a = await connectDoc(rows.id, rows.ownerP.cookie);
+    await editRow(a, 3, '["Plums","=B3*2"]', 0);
+    const res = await editSheet(rows.id, rows.owner.auth, {
+      base_version: 1,
+      ops: [{ op: "insert_rows", before: 3, count: 1 }],
+    });
+    expect(res.status).toBe(201);
+    expect(await a.nextOf("conflict")).toEqual({ t: "conflict", version: 2 });
+    expect(await stubFor(rows.id).docPeek(rows.id)).toMatchObject({ conflict_version: 2 });
+    a.ws.close(1000);
+
+    // The page sets Plums' Paid; the agent inserts a column before C, which leaves Plums' short
+    // line as it was, so the merged true would sit in the new column.
+    const cols = await sheetSetup(SHEET);
+    const b = await connectDoc(cols.id, cols.ownerP.cookie);
+    await editRow(b, 3, '["Plums",null,true]', 0);
+    const res2 = await editSheet(cols.id, cols.owner.auth, {
+      base_version: 1,
+      ops: [{ op: "insert_columns", before: "C", columns: [{ name: "Ok", type: "checkbox" }] }],
+    });
+    expect(res2.status).toBe(201);
+    expect(await b.nextOf("conflict")).toEqual({ t: "conflict", version: 2 });
+    b.ws.close(1000);
+  });
+
   it("a merge the sheet cannot hold is frozen for review, like an overlap", async () => {
     const { owner, id, ownerP } = await sheetSetup(SHEET);
     const a = await connectDoc(id, ownerP.cookie);

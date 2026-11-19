@@ -1905,20 +1905,29 @@ channel (`/__plinth/room/v1/doc`) serves every type whose registry row has `live
   both kept, even when they are next to each other. The same row changed differently on both
   sides, different rows inserted at the same place on both sides, or a merge whose result is not a
   valid sheet (a row the page changed that no longer fits a header the version changed) freezes the
-  draft for review, and the review shows the two versions' JSON lines side by side. `edit_sheet` and
+  draft for review, and the review shows the two versions' JSON lines side by side. So does a
+  merge in which one side moved what the other side's changes depend on, because a line merge
+  cannot move them along: one side added or removed columns while the other changed rows (a row
+  whose trailing cells are empty keeps its line, so a cell set there would land in another
+  column), or one side inserted or deleted rows other than at the end while the other side's
+  changed or added rows hold a formula (its references would point at other rows). `edit_sheet` and
   `update_artifact` warn `live_draft`, and `get_artifact` and `read_sheet` report the draft's
   metadata to owners' and editors' agents.
 - **On the page.** In edit mode Enter, F2, a double-click or typing opens the selected cell as a
   field (a list for a select column, a date picker for a date column, a text field otherwise or for
   a formula); Enter, Tab and the up and down arrows commit and move; Escape puts the row back as it
   was. Enter, Space or a double-click toggles a checkbox, Delete clears a cell, and pasting
-  tab-separated text writes the rows it covers, adding rows past the end. F2 in a column name
+  tab-separated text writes the rows it covers, adding rows past the end, up to what one edit frame
+  carries (64 KiB; a larger paste is refused with a note before anything changes). F2 in a column name
   renames it. Numbers are typed in the viewer's locale, with its decimal separator; a percent column
   takes 12.5 for 12.5%. A strip under the formula bar inserts a row above or below, deletes the
   row, inserts a column left or right, deletes the column, and opens the column's settings (name,
   type, number format, currency, decimals, options). A value the room would refuse stays in its
-  field with the reason. Rows other people hold show their email, and their typing arrives as it
-  is typed. Sort and filter stay the viewer's own while editing; downloads give what the page
+  field with the reason. A lease or `struct` the room refuses as `stale` (someone else's change
+  came first) is asked for again on the same row or column where it is now, found by the row's
+  line or the column's definition under the same columns, and dropped with "The sheet changed
+  meanwhile" when it is gone; a write is made from the row as it is when the lease is granted.
+  Rows other people hold show their email, and their typing arrives as it is typed. Sort and filter stay the viewer's own while editing; downloads give what the page
   shows.
 - **Live views.** A sheet edited on its page keeps its frame as a doc does
   ([Live views](#live-views-decided-2026-11-19)).

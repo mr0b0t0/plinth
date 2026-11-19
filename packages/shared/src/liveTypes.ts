@@ -11,6 +11,7 @@
 import type { ArtifactType } from "./artifactTypes.ts";
 import { LIMITS } from "./constants.ts";
 import type { LiveDocErrorCode } from "./liveDoc.ts";
+import type { LineHunk, Merge3Sides } from "./merge3.ts";
 import {
   checkRow,
   isFormula,
@@ -79,6 +80,8 @@ export interface LiveTypeRules {
   struct: boolean;
   /** Each line is a record of its own: changes to adjacent lines merge (merge3 `rows`). */
   rows: boolean;
+  /** A clean line merge the type still sends to review (merge3 `refuse`), when it has one. */
+  refuseMerge?: (sides: Merge3Sides) => boolean;
 }
 
 /** A sheet's header line: the header when it is valid and canonical, else null. */
@@ -118,6 +121,32 @@ function formulasIn(lines: readonly string[]): number {
     }
   }
   return n;
+}
+
+/**
+ * Whether a clean row-by-row merge of a sheet draft with a version would change what cells mean,
+ * so it goes to review instead. Rows merge as records, but a structural change on one side moves
+ * cells and rewrites that side's formulas (shiftFormula), and the other side's rows know nothing
+ * of it:
+ * - a side that adds or removes columns moves every cell right of them, and a row whose trailing
+ *   cells are empty keeps its line, so a cell the other side set there would land in another
+ *   column. Any column count change with changes on both sides is reviewed.
+ * - a side that inserts or deletes rows above other rows (not only at the end) moves them, so a
+ *   formula in a row the other side wrote would point at different cells. Reviewed when the other
+ *   side's changed or added rows hold a formula.
+ */
+export function sheetMergeRefused(s: Merge3Sides): boolean {
+  const columns = (line: string | undefined) => sheetHeaderLine(line)?.columns.length ?? -1;
+  const n = columns(s.base[0]);
+  if (columns(s.ours[0]) !== n || columns(s.theirs[0]) !== n) return true;
+  const movesRows = (hunks: readonly LineHunk[]) =>
+    hunks.some((h) => h.aEnd < s.base.length && h.aEnd - h.aStart !== h.bEnd - h.bStart);
+  const writesFormulas = (lines: readonly string[], hunks: readonly LineHunk[]) =>
+    hunks.some((h) => formulasIn(lines.slice(Math.max(1, h.bStart), h.bEnd)) > 0);
+  return (
+    (movesRows(s.oursHunks) && writesFormulas(s.theirs, s.theirsHunks)) ||
+    (movesRows(s.theirsHunks) && writesFormulas(s.ours, s.oursHunks))
+  );
 }
 
 const docRules: LiveTypeRules = {
@@ -170,6 +199,7 @@ const sheetRules: LiveTypeRules = {
   },
   struct: true,
   rows: true,
+  refuseMerge: sheetMergeRefused,
 };
 
 /** Every live-editable type's rules. A type with liveEdit has an entry (artifactTypes test). */

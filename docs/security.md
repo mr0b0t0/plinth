@@ -2074,7 +2074,11 @@ sheet's frame still runs only Plinth's renderer (`script-src 'self'`).
   (rows next to each other merge; the same row changed on both sides, or different rows inserted
   at the same place, do not). The merged text must still be a valid sheet; when it is not, the
   draft is frozen for review as for any overlap, so a merge never makes a draft that a publish
-  would refuse.
+  would refuse. A merge that would put someone's value or formula where they did not write it is
+  frozen too: one side added or removed columns while the other changed rows, or one side
+  inserted or deleted rows other than at the end while the other side's changed rows hold a
+  formula. So an agent's version cannot shift a person's cells into another column, or a
+  person's formula onto other rows, without anyone seeing it.
 - **The renderer stays free of HTML parsing.** The editor builds its fields, lists, the edit strip
   and the column settings with `createElement` and fills them through `.value` and `textContent`;
   the source test that keeps HTML sinks out of the sheet renderer covers the editor's files. Values

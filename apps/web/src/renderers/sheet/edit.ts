@@ -149,6 +149,8 @@ interface Open {
   td: HTMLElement;
   /** The row's line when the lease was granted: Escape puts it back. */
   original: string;
+  /** The header line when it opened. */
+  head: string;
   sent: boolean;
   invalid: string | null;
 }
@@ -164,16 +166,52 @@ type Want =
       /** The field's text to keep (a row re-taken after a reconnect or a merge). */
       keep?: string;
       /** The row's line as the room last had it, to find the row again. */
-      line?: string;
+      line: string;
+      /** The header line then: a row is found again only under the same columns. */
+      head: string;
       tries: number;
     }
   | {
       kind: "write";
       range: LineRange;
+      /** The range's lines when it was asked for, to find them again and to check on grant. */
+      text: string;
+      /** The header line then. */
+      head: string;
       /** The lines to put in place of the lease, from the lines as they are when granted. */
       make: (lines: readonly string[], lease: LineRange) => string[] | { error: string };
       tries: number;
     };
+
+/** A struct frame sent and not answered yet, and how to aim it again at the lines as they are. */
+interface SentStruct {
+  op: SheetStructOp;
+  tries: number;
+  /** The op for the same rows or column in `lines` now, or null when they are gone. */
+  again: (lines: readonly string[]) => SheetStructOp | null;
+}
+
+/** Whether two header lines have the same columns in the same places (their names, in order). */
+function sameColumns(a: string | undefined, b: string | undefined): boolean {
+  if (a === b) return true;
+  const x = sheetHeaderLine(a)?.columns;
+  const y = sheetHeaderLine(b)?.columns;
+  return !!x && !!y && x.length === y.length && x.every((c, i) => c.name === y[i]?.name);
+}
+
+/** Where a column (its whole definition) is in a header now, nearest `near` first; -1 if gone. */
+function findColumn(header: SheetHeader, was: SheetColumn, near: number): number {
+  const want = JSON.stringify(was);
+  if (JSON.stringify(header.columns[near]) === want) return near;
+  const at = header.columns.flatMap((c, i) => (JSON.stringify(c) === want ? [i] : []));
+  return at.length === 1 ? (at[0] as number) : -1;
+}
+
+/** The UTF-8 bytes of the edit frame that would carry `text` (the client refuses past the cap). */
+function editFrameBytes(text: string): number {
+  const frame = { t: "edit", lease: "x".repeat(32), seq: Number.MAX_SAFE_INTEGER, text };
+  return new TextEncoder().encode(JSON.stringify(frame)).byteLength;
+}
 
 /** A row line's cells, or null. */
 function rowCells(line: string | undefined): Cell[] | null {
@@ -255,7 +293,7 @@ export class SheetEditor {
   private notice: HTMLElement | null = null;
   private strip: HTMLElement | null = null;
   private panel: HTMLElement | null = null;
-  private lastStruct: { op: SheetStructOp; tries: number } | null = null;
+  private lastStruct: SentStruct | null = null;
   private readonly loc: NumberLocale;
 
   constructor(
@@ -466,7 +504,7 @@ export class SheetEditor {
               this.close(true);
               const row = l.start + 1;
               const sel = this.grid?.selected();
-              this.want = { kind: "cell", row, col: sel?.col ?? 0, tries: 0 };
+              this.want = { ...this.cellWant(row, sel?.col ?? 0), tries: 0 };
               if (this.backend.takeover(l.id)) this.hideNotice();
             },
           }
@@ -491,11 +529,21 @@ export class SheetEditor {
       return;
     }
     if (o && !this.commit()) return;
-    this.want = { kind: "cell", row, col, ...(initial !== undefined ? { initial } : {}), tries: 0 };
+    this.want = {
+      ...this.cellWant(row, col),
+      ...(initial !== undefined ? { initial } : {}),
+      tries: 0,
+    };
     if (!b.lease(range)) {
       this.want = null;
       this.showNotice("Not connected. Try again in a moment.");
     }
+  }
+
+  /** A cell to open, with the lines it is found again by. */
+  private cellWant(row: number, col: number) {
+    const lines = this.backend.lines;
+    return { kind: "cell" as const, row, col, line: lines[row - 1] ?? "", head: lines[0] ?? "" };
   }
 
   /** A one-shot change of lines under a lease: the lines are made when it is granted. */
@@ -508,28 +556,40 @@ export class SheetEditor {
     }
     if (this.open && !this.commit()) return;
     this.close(true);
-    this.want = { kind: "write", range, make, tries: 0 };
+    const lines = this.backend.lines;
+    this.want = {
+      kind: "write",
+      range,
+      text: joinLines(lines.slice(range.start, range.end)),
+      head: lines[0] ?? "",
+      make,
+      tries: 0,
+    };
     if (!this.backend.lease(range)) {
       this.want = null;
       this.showNotice("Not connected. Try again in a moment.");
     }
   }
 
+  // The lines a write makes come from the lines and the header as they are when the lease is
+  // granted, and its row numbers from the lease, so a row found again elsewhere is written right.
+
   toggle(row: number, col: number): void {
-    const header = this.header();
-    if (!header) return;
     this.write({ start: row - 1, end: row }, (lines, l) => {
+      const header = sheetHeaderLine(lines[0]);
+      if (!header) return { error: "The sheet changed meanwhile. Try again." };
       const v = rowCells(lines[l.start])?.[col] ?? null;
-      const r = rowWith(header, lines[l.start] ?? "[]", row, col, v !== true);
+      const r = rowWith(header, lines[l.start] ?? "[]", l.start + 1, col, v !== true);
       return typeof r === "string" ? [r] : r;
     });
   }
 
   clearCell(row: number, col: number): void {
-    const header = this.header();
-    if (!header || this.cellAt(row, col) === null) return;
+    if (!this.header() || this.cellAt(row, col) === null) return;
     this.write({ start: row - 1, end: row }, (lines, l) => {
-      const r = rowWith(header, lines[l.start] ?? "[]", row, col, null);
+      const header = sheetHeaderLine(lines[0]);
+      if (!header) return { error: "The sheet changed meanwhile. Try again." };
+      const r = rowWith(header, lines[l.start] ?? "[]", l.start + 1, col, null);
       return typeof r === "string" ? [r] : r;
     });
   }
@@ -558,25 +618,43 @@ export class SheetEditor {
       return;
     }
     const loc = this.loc;
-    this.write(range, (now, l) => {
+    const make = (now: readonly string[], l: LineRange): string[] | { error: string } => {
+      const head = sheetHeaderLine(now[0]);
+      if (!head) return { error: "The sheet changed meanwhile. Try again." };
       const out: string[] = [];
       for (let k = 0; k < block.length; k++) {
+        const r = l.start + 1 + k;
         const base = l.start + k < l.end ? (rowCells(now[l.start + k]) ?? []) : [];
         const cells = [...base];
         const values = block[k] as string[];
         for (let j = 0; j < values.length; j++) {
-          const c = header.columns[col + j] as SheetColumn;
+          const c = head.columns[col + j] as SheetColumn;
           const v = cellFromInput(values[j] as string, c, loc);
-          if (!v.ok) return { error: `${a1(row + k, col + j)}: ${v.message}` };
+          if (!v.ok) return { error: `${a1(r, col + j)}: ${v.message}` };
           while (cells.length <= col + j) cells.push(null);
           cells[col + j] = v.cell;
         }
-        const line = checkedRow(header, cells, row + k);
+        const line = checkedRow(head, cells, r);
         if (typeof line !== "string") return line;
         out.push(line);
       }
       return out;
-    });
+    };
+    // Checked now, before any lease: a paste that does not fit, or (with the room) is more than
+    // one edit frame carries, says so and leaves the sheet as it was.
+    const now = make(lines, range);
+    if (!Array.isArray(now)) {
+      this.showNotice(now.error);
+      return;
+    }
+    const room = !(this.backend instanceof LocalSheet);
+    if (room && editFrameBytes(now.join("\n")) > LIMITS.liveDocFrameBytes) {
+      this.showNotice(
+        `That paste is more than ${LIMITS.liveDocFrameBytes / 1024} KiB, the most one change can send. Paste fewer rows at a time.`,
+      );
+      return;
+    }
+    this.write(range, make);
   }
 
   // ---------- lease events (from the backend) ----------
@@ -589,15 +667,23 @@ export class SheetEditor {
       return;
     }
     if (w.kind === "write") {
-      const r = w.make(this.backend.lines, lease);
+      const lines = this.backend.lines;
+      // The rows written are the rows asked for (a header write re-reads the header itself).
+      const moved =
+        lease.start > 0 &&
+        (joinLines(lines.slice(lease.start, lease.end)) !== w.text ||
+          !sameColumns(w.head, lines[0]));
+      const r = moved ? { error: "The sheet changed meanwhile. Try again." } : w.make(lines, lease);
       if (!Array.isArray(r)) {
         this.backend.release();
         this.showNotice(r.error);
         return;
       }
-      this.backend.edit(r.join("\n"));
+      // A refused send has said why (too large, not connected): that notice stays.
+      const sent = this.backend.edit(r.join("\n"));
       this.backend.release();
-      this.hideNotice();
+      if (sent) this.hideNotice();
+      else if (!this.notice) this.showNotice("That change was not sent. Try again in a moment.");
       this.hooks.status();
       return;
     }
@@ -627,6 +713,7 @@ export class SheetEditor {
       field,
       td,
       original: this.backend.lines[lease.start] ?? "",
+      head: this.backend.lines[0] ?? "",
       sent: false,
       invalid: null,
     };
@@ -646,10 +733,15 @@ export class SheetEditor {
     const w = this.want;
     this.want = null;
     if (reason === "stale" && w && w.tries < STALE_RETRIES) {
-      this.want = { ...w, tries: w.tries + 1 };
-      const range = w.kind === "write" ? w.range : { start: w.row - 1, end: w.row };
-      if (!this.backend.lease(range)) this.want = null;
-      return;
+      // The lines moved meanwhile (the room's change is already applied here): ask again for the
+      // same rows where they are now, or give up when they are gone or the columns moved.
+      const next = this.relocate(w);
+      if (next) {
+        this.want = next;
+        const range = next.kind === "write" ? next.range : { start: next.row - 1, end: next.row };
+        if (!this.backend.lease(range)) this.want = null;
+        return;
+      }
     }
     if (w?.kind === "cell" && w.keep !== undefined) {
       this.dropKept(w);
@@ -660,6 +752,27 @@ export class SheetEditor {
       this.showNotice("Editing is paused until the changes are reviewed.");
     else if (reason === "watch") this.showNotice("Sign in to edit this sheet.");
     else this.showNotice("The sheet changed meanwhile. Try again.");
+  }
+
+  /**
+   * A want aimed at the lines as they are now: its row found again by its line (nearest where it
+   * was), under the same columns, or null. A header write keeps line 0 and re-reads it on grant.
+   */
+  private relocate(w: Want): Want | null {
+    const lines = this.backend.lines;
+    if (!sameColumns(w.head, lines[0])) return null;
+    const head = lines[0] ?? "";
+    if (w.kind === "write") {
+      if (w.range.start === 0) return { ...w, head, tries: w.tries + 1 };
+      const at = locateBlock(lines, w.text, w.range.start);
+      if (at < 1) return null;
+      const range = { start: at, end: at + (w.range.end - w.range.start) };
+      return { ...w, range, head, tries: w.tries + 1 };
+    }
+    if (w.row === 1) return { ...w, line: head, head, tries: w.tries + 1 };
+    const at = locateBlock(lines, w.line, w.row - 1);
+    if (at < 1) return null;
+    return { ...w, row: at + 1, head, tries: w.tries + 1 };
   }
 
   lost(reason: LeaseLoss): void {
@@ -675,6 +788,7 @@ export class SheetEditor {
         col: o.col,
         keep: o.field.value,
         line: line ?? o.original,
+        head: o.head,
         tries: 0,
       };
       return;
@@ -694,12 +808,12 @@ export class SheetEditor {
     const b = this.backend;
     if (w?.kind === "cell" && w.keep !== undefined && !b.mine && b.connected && b.settled) {
       this.want = null;
-      const at = locateBlock(b.lines, w.line ?? "", w.row - 1);
-      if (at < 1 || w.tries >= STALE_RETRIES) {
+      const next = w.tries < STALE_RETRIES ? this.relocate(w) : null;
+      if (next?.kind !== "cell") {
         this.dropKept(w);
       } else {
-        this.want = { ...w, row: at + 1, tries: w.tries + 1 };
-        if (!b.lease({ start: at, end: at + 1 })) this.want = { ...w, tries: 0 };
+        this.want = next;
+        if (!b.lease({ start: next.row - 1, end: next.row })) this.want = { ...w, tries: 0 };
       }
     }
     this.render();
@@ -719,8 +833,13 @@ export class SheetEditor {
   structDenied(reason: LeaseDenial, by?: string): void {
     const s = this.lastStruct;
     if (reason === "stale" && s && s.tries < STALE_RETRIES) {
-      this.lastStruct = { ...s, tries: s.tries + 1 };
-      if (this.backend.struct(s.op)) return;
+      // Someone else's change came first and is applied here: the same op again would hit other
+      // rows or columns, so it is aimed again at the ones chosen, or dropped when they are gone.
+      const op = s.again(this.backend.lines);
+      if (op) {
+        this.lastStruct = { ...s, op, tries: s.tries + 1 };
+        if (this.backend.struct(op)) return;
+      }
     }
     this.lastStruct = null;
     if (reason === "held") {
@@ -960,7 +1079,8 @@ export class SheetEditor {
     set("colRight", cols >= LIMITS.maxSheetColumns);
   }
 
-  private struct(op: SheetStructOp): void {
+  /** Send a struct; `again` aims it at the same rows or column if the room says it is stale. */
+  private struct(op: SheetStructOp, again: SentStruct["again"]): void {
     if (!this.canWrite()) return;
     if (this.open && !this.commit()) return;
     this.close(true);
@@ -971,7 +1091,7 @@ export class SheetEditor {
         return;
       }
     }
-    this.lastStruct = { op, tries: 0 };
+    this.lastStruct = { op, tries: 0, again };
     if (!b.struct(op)) {
       this.lastStruct = null;
       this.showNotice(
@@ -984,35 +1104,61 @@ export class SheetEditor {
     this.hideNotice();
   }
 
+  // A row action is tied to the selected row's line, and a column action to the selected
+  // column's definition, so a retry after someone else's change finds them where they are now.
+
   private rowAction(kind: "above" | "below" | "delete"): void {
     const g = this.grid;
     if (!g) return;
     const { row } = g.selected();
+    const lines = this.backend.lines;
     if (kind === "delete") {
-      if (row >= 2) this.struct({ op: "delete_rows", from: row, count: 1 });
+      const line = lines[row - 1];
+      if (row < 2 || line === undefined) return;
+      this.struct({ op: "delete_rows", from: row, count: 1 }, (now) => {
+        const at = locateBlock(now, line, row - 1);
+        return at >= 1 ? { op: "delete_rows", from: at + 1, count: 1 } : null;
+      });
       return;
     }
     const before = kind === "above" ? Math.max(2, row) : Math.max(2, row + 1);
-    this.struct({ op: "insert_rows", before, count: 1 });
+    // The row the new one goes next to: above it, or below it (the header: always row 2).
+    const next = kind === "above" ? before : before - 1;
+    const line = lines[next - 1];
+    if (line === undefined) return;
+    this.struct({ op: "insert_rows", before, count: 1 }, (now) => {
+      if (next === 1) return { op: "insert_rows", before: 2, count: 1 };
+      const at = locateBlock(now, line, next - 1);
+      if (at < 1) return null;
+      return { op: "insert_rows", before: kind === "above" ? at + 1 : at + 2, count: 1 };
+    });
   }
 
   private columnAction(kind: "left" | "right" | "delete"): void {
     const g = this.grid;
     const header = this.header();
-    if (!g || !header) return;
+    const head = this.backend.lines[0];
+    if (!g || !header || head === undefined) return;
     const { col } = g.selected();
-    if (kind === "delete") {
-      this.struct({ op: "delete_columns", from: colLetter(col), count: 1 });
-      return;
-    }
-    const at = kind === "left" ? col : col + 1;
-    const names = new Set(header.columns.map((c) => c.name));
-    let n = header.columns.length + 1;
-    while (names.has(`Column ${n}`)) n++;
-    this.struct({
-      op: "insert_columns",
-      before: colLetter(at),
-      columns: [{ name: `Column ${n}`, type: "text" }],
+    const was = header.columns[col];
+    if (!was) return;
+    const make = (h: SheetHeader, at: number): SheetStructOp => {
+      if (kind === "delete") return { op: "delete_columns", from: colLetter(at), count: 1 };
+      const names = new Set(h.columns.map((c) => c.name));
+      let n = h.columns.length + 1;
+      while (names.has(`Column ${n}`)) n++;
+      return {
+        op: "insert_columns",
+        before: colLetter(kind === "left" ? at : at + 1),
+        columns: [{ name: `Column ${n}`, type: "text" }],
+      };
+    };
+    const op = make(header, col);
+    this.struct(op, (now) => {
+      if (now[0] === head) return op;
+      const h = sheetHeaderLine(now[0]);
+      const at = h ? findColumn(h, was, col) : -1;
+      return h && at >= 0 ? make(h, at) : null;
     });
   }
 
@@ -1141,8 +1287,10 @@ export class SheetEditor {
       this.closePanel();
       this.write({ start: 0, end: 1 }, (lines) => {
         const now = sheetHeaderLine(lines[0]);
-        if (!now) return { error: "The column names changed meanwhile. Try again." };
-        const line = headerWith(now, col, change);
+        // The column as it was when the panel opened, wherever it is now.
+        const at = now ? findColumn(now, c, col) : -1;
+        if (!now || at < 0) return { error: "The column changed meanwhile. Try again." };
+        const line = headerWith(now, at, change);
         if (typeof line !== "string") return line;
         const next = sheetHeaderLine(line) as SheetHeader;
         const problem = rowsProblem(lines, next);

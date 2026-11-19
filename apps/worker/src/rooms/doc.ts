@@ -678,9 +678,11 @@ export class LiveDoc {
     const m = merge3(doc.baseText, ours, theirs, {
       maxEdits: LIVE_DOC.maxMergeEdits,
       rows: doc.rules.rows,
+      refuse: doc.rules.refuseMerge,
     });
     // A clean merge the type cannot hold (a sheet row that no longer fits a header the other side
-    // changed) is reviewed like an overlap.
+    // changed) is reviewed like an overlap, and so is one the type refuses (a sheet's columns or
+    // rows moved on one side under cells or formulas the other side wrote).
     if (m.clean && !doc.rules.tooLarge(m.text) && doc.rules.valid(m.text)) {
       doc.lines = splitLines(m.text);
       doc.baseText = theirs;

@@ -512,7 +512,7 @@ fix them and publish again (all but `not_scanned` and `live_draft`, which need n
 | `ds_deprecated_alias` | A design system token aliases a deprecated one |
 | `design_system_outdated` | The page names its design system at an older version than the current one. Read it with `get_design_system` and update if the person wants the newer tokens |
 | `design_system_unavailable` | The page names a design system you cannot open (or an artifact that is not one). One message for every case |
-| `live_draft` | A note, not something to fix: people are editing this doc or sheet on its page. Your version is published; their unsaved edits are merged onto it, or they review the two when both changed the same lines. Nothing was overwritten. Do not wait or retry for them |
+| `live_draft` | A note, not something to fix: people are editing this doc or sheet on its page. Your version is published; their unsaved edits are merged onto it, or they review the two when both changed the same lines (for a sheet, also when one side moved rows or columns under the other's changes). Nothing was overwritten. Do not wait or retry for them |
 
 At most 50 are listed, then one "and N more".
 

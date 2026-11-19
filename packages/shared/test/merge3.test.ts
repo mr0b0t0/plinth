@@ -195,6 +195,37 @@ describe("merge3", () => {
     });
   });
 
+  it("asks refuse about a clean merge only, with both sides' hunks", () => {
+    const b = L("h", "r1", "r2", "r3");
+    const seen: unknown[] = [];
+    const refuse = (s: unknown) => {
+      seen.push(s);
+      return true;
+    };
+    expect(merge3(b, L("h", "R1", "r2", "r3"), L("h", "r1", "r2", "R3"), { refuse })).toEqual({
+      clean: false,
+      reason: "refused",
+      conflicts: [],
+      work: expect.any(Number),
+    });
+    expect(seen).toEqual([
+      {
+        base: ["h", "r1", "r2", "r3"],
+        ours: ["h", "R1", "r2", "r3"],
+        theirs: ["h", "r1", "r2", "R3"],
+        oursHunks: [{ aStart: 1, aEnd: 2, bStart: 1, bEnd: 2 }],
+        theirsHunks: [{ aStart: 3, aEnd: 4, bStart: 3, bEnd: 4 }],
+      },
+    ]);
+    // Not asked when one side is unchanged, or when the lines already conflict.
+    expect(merge3(b, b, L("h", "x"), { refuse })).toMatchObject({ clean: true });
+    expect(merge3(b, L("h", "A"), L("h", "B"), { refuse })).toMatchObject({ reason: "conflict" });
+    expect(seen).toHaveLength(1);
+    expect(
+      merge3(b, L("h", "R1", "r2", "r3"), L("h", "r1", "r2", "R3"), { refuse: () => false }),
+    ).toMatchObject({ clean: true, text: L("h", "R1", "r2", "R3") });
+  });
+
   it("handles empty texts", () => {
     expect(merge3("", "", "")).toMatchObject({ clean: true, text: "" });
     expect(merge3("", "new", "")).toMatchObject({ clean: true, text: "new" });

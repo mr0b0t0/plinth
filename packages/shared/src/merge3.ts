@@ -10,6 +10,10 @@
 // change beside it. Rows inserted at the same place on both sides still conflict unless they are
 // the same, and changes that overlap still do.
 //
+// A line merge knows nothing of what the lines mean. A type whose lines refer to each other by
+// position (a sheet's formulas and columns) passes `refuse`, which sees both sides' hunks and turns
+// a clean line merge into a review (`refused`).
+//
 // The diff is Myers' O((N+M)D) algorithm in its linear-space form (the middle snake, divide and
 // conquer), on lines interned to integers, after trimming the common prefix and suffix.
 import { LIVE_DOC } from "./liveDoc.ts";
@@ -42,11 +46,23 @@ export type Merge3Result =
   | { clean: true; text: string; work: number }
   | {
       clean: false;
-      /** `too_large`: a diff had more than maxEdits edits, so nothing was compared. */
-      reason: "conflict" | "too_large";
+      /**
+       * `too_large`: a diff had more than maxEdits edits, so nothing was compared. `refused`: the
+       * lines merged, but `refuse` said the result would not mean what either side meant.
+       */
+      reason: "conflict" | "too_large" | "refused";
       conflicts: Merge3Conflict[];
       work: number;
     };
+
+/** What `refuse` sees: the three texts' lines and how each side changed the base. */
+export interface Merge3Sides {
+  base: readonly string[];
+  ours: readonly string[];
+  theirs: readonly string[];
+  oursHunks: readonly LineHunk[];
+  theirsHunks: readonly LineHunk[];
+}
 
 interface DiffState {
   a: Int32Array;
@@ -266,7 +282,12 @@ export function merge3(
   base: string,
   ours: string,
   theirs: string,
-  opts: { maxEdits?: number; rows?: boolean } = {},
+  opts: {
+    maxEdits?: number;
+    rows?: boolean;
+    /** Asked about a merge whose lines merged cleanly (both sides changed): true makes it `refused`. */
+    refuse?: ((sides: Merge3Sides) => boolean) | undefined;
+  } = {},
 ): Merge3Result {
   if (ours === theirs || theirs === base) return { clean: true, text: ours, work: 0 };
   if (ours === base) return { clean: true, text: theirs, work: 0 };
@@ -321,5 +342,7 @@ export function merge3(
   }
   for (let k = pos; k < b.length; k++) out.push(b[k] as string);
   if (conflicts.length > 0) return { clean: false, reason: "conflict", conflicts, work };
+  const sides = { base: b, ours: o, theirs: t, oursHunks: dOurs.hunks, theirsHunks: dTheirs.hunks };
+  if (opts.refuse?.(sides)) return { clean: false, reason: "refused", conflicts: [], work };
   return { clean: true, text: out.join("\n"), work };
 }
