@@ -265,11 +265,16 @@ export async function liveCheckpoint(
     }
     if (text === published) {
       // Resolved to the published version exactly: the draft goes, and no version is written.
+      // The discard runs under this snapshot's lock (and releases it), so the other choice or a
+      // save arriving meanwhile is busy, and only the version reviewed is taken.
+      let ok = false;
       try {
-        await stub.docAbort(snap.lock);
-        const d = await stub.docDiscard(a.id, snap.rev);
-        if (!d.ok) throw new Error("moved");
+        ok = (await stub.docDiscard(a.id, snap.rev, { lock: snap.lock, conflictVersion: base })).ok;
       } catch {
+        // Answered below; the lock runs out on its own when the abort is lost too.
+      }
+      if (!ok) {
+        await abort();
         throw new ApiError("conflict", "The page edits changed meanwhile. Review them again.", {
           current_version: snap.conflict_version,
         });
@@ -323,7 +328,7 @@ export async function liveCheckpoint(
   let live = { rev: snap.rev, dirty: false };
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
-      live = await stub.docFinish(a.id, version.version, text, snap.lock);
+      live = await stub.docFinish(a.id, version.version, text, snap.lock, snap.epoch);
       break;
     } catch {
       // Retried once; the version notify (its content hash) finishes it otherwise.
@@ -398,7 +403,9 @@ async function autosaveWait(ctx: Ctx, a: ArtifactRow, typedSince: boolean): Prom
 /**
  * DELETE /api/v1/artifacts/:ref/live/draft?rev=n: drop the unsaved edits. Through the room while
  * rooms are active (open pages follow); otherwise the stored row goes directly (for example after
- * the binding was removed). 409 when the draft moved past `rev`.
+ * the binding was removed). 409 when the draft moved past `rev`, and 409 `live_busy` while a save
+ * or the review's other choice holds the room's checkpoint lock, so a discard never lands under a
+ * version being published from the same draft.
  */
 export async function discardLiveDraft(
   ctx: Ctx,
@@ -409,11 +416,18 @@ export async function discardLiveDraft(
   const rev = typeof readRev === "function" ? readRev() : readRev;
   if (roomsActive(ctx.config, ctx.env)) {
     const stub = room(ctx.env, a.id);
-    let r: { ok: boolean; rev: number } | undefined;
+    let r: { ok: boolean; rev: number; busy?: true } | undefined;
     try {
       r = await stub?.docDiscard(a.id, rev);
     } catch {
       throw unavailable();
+    }
+    if (r?.busy) {
+      throw new ApiError(
+        "conflict",
+        "These page edits are being published or discarded right now. Look again in a moment.",
+        { rev: r.rev, reason: "live_busy" },
+      );
     }
     if (r && !r.ok) {
       throw new ApiError("conflict", "The page edits changed since you looked. Look again.", {

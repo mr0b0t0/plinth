@@ -83,6 +83,9 @@ export const SOLO_KEEP_MS = 5000;
 export const COLLECT_TIMEOUT_MS = 5000;
 /** Editors whose edit was not the last one autosave this much later. */
 export const AUTOSAVE_FALLBACK_MS = 30_000;
+/** A review choice refused because another choice or a save holds the room's checkpoint lock. */
+const CHOOSING_BUSY =
+  "These page edits are being published or discarded right now. Look again in a moment.";
 
 export interface UseLiveEditOptions {
   gate: OkGate;
@@ -533,6 +536,11 @@ export function useLiveEdit({
         resolved_text: c.draft,
         conflict_version: c.current,
       });
+      if (!r.saved && r.reason === "busy") {
+        // The other choice (or a save) holds the room's lock: the review stays open.
+        toast(CHOOSING_BUSY, "neutral");
+        return;
+      }
       if (r.saved) setSavedVersion(r.version.version);
       closeReview();
     } catch (e) {
@@ -554,13 +562,17 @@ export function useLiveEdit({
     }
     setSaving(true);
     try {
-      await liveCheckpoint(id, {
+      const r = await liveCheckpoint(id, {
         base_version: c.base,
         rev: c.rev,
         reason: "save",
         resolved_text: c.currentText,
         conflict_version: c.current,
       });
+      if (!r.saved && r.reason === "busy") {
+        toast(CHOOSING_BUSY, "neutral");
+        return;
+      }
       closeReview();
       showToast({ title: `The page is back to v${c.current}.` });
     } catch (e) {

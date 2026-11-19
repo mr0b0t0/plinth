@@ -3,7 +3,9 @@
 // in its canonical spelling) refused with `invalid` and not applied; a header that keeps its
 // columns; struct frames applied once and the same on every socket, refused while someone else
 // holds a lease; a version published meanwhile (edit_sheet, PUT, a restore) never merged: the
-// draft freezes, and the review's two choices publish it as it is or discard it.
+// draft freezes, and the review's two choices publish it as it is or discard it, each under the
+// room's checkpoint lock, so the two never interleave.
+import { runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { applySheetStruct, splitLines } from "@plinth/shared";
 import { describe, expect, it } from "vitest";
@@ -458,5 +460,160 @@ describe("sheet socket: versions published from outside", () => {
       text: f.draft,
     });
     f.a.ws.close(1000);
+  });
+
+  // Both choices, and the strip's "Discard unsaved changes" (DELETE live/draft), take the room's
+  // checkpoint lock: one choice resolves a frozen draft, and never on top of the other.
+  describe("the two choices against each other", () => {
+    const discardAt = (id: string, h: Record<string, string>, rev: number) =>
+      call(id, h, `/live/draft?rev=${rev}`, { method: "DELETE" });
+
+    it("a discard while Publish mine is saving is busy, and the published draft stays clean", async () => {
+      const { id, ownerP, a, draft } = await frozen('["Apples",4,true]');
+      const stub = stubFor(id);
+      // Publish mine has taken the lock and resolved to the draft; the stager is writing v3.
+      const snap = await stub.docSnapshot(id);
+      expect(snap).toMatchObject({ state: "conflict", rev: 1, conflict_version: 2 });
+      expect(await stub.docResolve(snap.lock, draft)).toBe(true);
+      const res = await discardAt(id, ownerP.session.headers, 1);
+      expect(res.status).toBe(409);
+      expect((await json(res)).error).toMatchObject({
+        code: "conflict",
+        details: { reason: "live_busy", rev: 1 },
+      });
+      expect(await stub.docPeek(id)).toMatchObject({
+        base_version: 1,
+        conflict_version: 2,
+        text: draft,
+      });
+      // v3 lands and its finish arrives before the version notify: the draft is v3, clean, so
+      // no autosave can publish v2's text over it.
+      expect(await stub.docFinish(id, 3, draft, snap.lock, snap.epoch)).toMatchObject({
+        dirty: false,
+      });
+      expect(await stub.docPeek(id)).toMatchObject({
+        base_version: 3,
+        conflict_version: null,
+        text: draft,
+      });
+      expect((await a.nextOf("reset")).version).toBe(3);
+      a.ws.close(1000);
+    });
+
+    it("a discard takes the lock before it reads: a save arriving meanwhile is busy", async () => {
+      const { id, a } = await frozen('["Apples",4,true]');
+      const stub = stubFor(id);
+      const [d, snap] = await Promise.all([stub.docDiscard(id, 1), stub.docSnapshot(id)]);
+      expect(snap.state).toBe("busy");
+      expect(d).toMatchObject({ ok: true });
+      expect(await stub.docPeek(id)).toMatchObject({
+        base_version: 2,
+        conflict_version: null,
+        text: V2,
+      });
+      // The discard released its lock when it was done.
+      expect((await stub.docSnapshot(id)).state).toBe("clean");
+      a.ws.close(1000);
+    });
+
+    it("Publish mine while Discard mine holds the lock is busy; the discard resolves it once", async () => {
+      const { id, ownerP, a, draft } = await frozen('["Apples",4,true]');
+      const h = ownerP.session.headers;
+      const stub = stubFor(id);
+      const choose = (resolved_text: string) =>
+        checkpoint(id, h, {
+          base_version: 1,
+          rev: 1,
+          reason: "save",
+          resolved_text,
+          conflict_version: 2,
+        });
+      // Discard mine is a checkpoint too: its snapshot holds the lock.
+      const snap = await stub.docSnapshot(id);
+      expect(await json(await choose(draft))).toEqual({ saved: false, reason: "busy" });
+      // Its discard runs under its own lock, and only for the version reviewed.
+      expect(await stub.docDiscard(id, 1, { lock: snap.lock, conflictVersion: 1 })).toEqual({
+        ok: false,
+        rev: 1,
+      });
+      expect(await stub.docDiscard(id, 1, { lock: snap.lock, conflictVersion: 2 })).toMatchObject({
+        ok: true,
+      });
+      expect((await a.nextOf("reset")).version).toBe(2);
+      expect(await stub.docPeek(id)).toMatchObject({ base_version: 2, conflict_version: null });
+      // The late Publish mine finds the draft clean, and no v3 is written.
+      expect(await json(await choose(draft))).toEqual({ saved: false, reason: "clean" });
+      expect(await versionRow(id, 3)).toBeNull();
+      a.ws.close(1000);
+    });
+
+    it("both choices and the strip's discard sent at once: exactly one side wins, never a mix", async () => {
+      for (let i = 0; i < 3; i++) {
+        const { id, ownerP, owner, a, draft } = await frozen('["Apples",4,true]');
+        const h = ownerP.session.headers;
+        const body = (resolved_text: string) => ({
+          base_version: 1,
+          rev: 1,
+          reason: "save",
+          resolved_text,
+          conflict_version: 2,
+        });
+        const answers = await Promise.all([
+          checkpoint(id, h, body(draft)),
+          checkpoint(id, h, body(V2)),
+          discardAt(id, h, 1),
+        ]);
+        for (const r of answers) expect(r.status).toBeLessThan(500);
+        const peeked = await stubFor(id).docPeek(id);
+        expect(peeked?.conflict_version).toBeNull();
+        if (await versionRow(id, 3)) {
+          // Published: the draft is v3, and clean.
+          expect(await content(id, owner.auth, 3)).toBe(draft);
+          expect(peeked).toMatchObject({ base_version: 3, text: draft });
+        } else {
+          // Discarded: the draft is v2, and clean.
+          expect(peeked).toMatchObject({ base_version: 2, text: V2 });
+        }
+        expect(await versionRow(id, 4)).toBeNull();
+        a.ws.close(1000);
+      }
+    });
+
+    it("a save finishing after its lock ran out and a discard replaced the lines is not finished onto them", async () => {
+      const { id, ownerP, owner, a, draft } = await frozen('["Apples",4,true]');
+      const stub = stubFor(id);
+      const snap = await stub.docSnapshot(id);
+      expect(await stub.docResolve(snap.lock, draft)).toBe(true);
+      // The save stalls past the lock's 30 s, and a discard goes through meanwhile.
+      await runInDurableObject(stub, async (room) => {
+        (room as unknown as { doc: { lock: { until: number } } }).doc.lock.until = 0;
+      });
+      expect((await discardAt(id, ownerP.session.headers, 1)).status).toBe(204);
+      expect((await a.nextOf("reset")).version).toBe(2);
+      // The late finish (v3 not readable yet) leaves the discarded draft as it is, on base v2
+      // and clean, instead of v2's lines on base v3, which the next autosave would publish.
+      expect(await stub.docFinish(id, 3, draft, snap.lock, snap.epoch)).toEqual({
+        rev: 2,
+        dirty: false,
+      });
+      expect(await stub.docPeek(id)).toMatchObject({
+        base_version: 2,
+        conflict_version: null,
+        text: V2,
+      });
+      // v3 is then a version published meanwhile like any other: the clean draft moves onto it.
+      const put = await call(id, owner.auth, "", {
+        method: "PUT",
+        body: { content: draft, base_version: 2 },
+      });
+      expect(put.status).toBe(200);
+      expect((await a.nextOf("reset")).version).toBe(3);
+      expect(await stubFor(id).docPeek(id)).toMatchObject({
+        base_version: 3,
+        conflict_version: null,
+        text: draft,
+      });
+      a.ws.close(1000);
+    });
   });
 });

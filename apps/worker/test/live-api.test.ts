@@ -715,6 +715,27 @@ describe("live API: checkpoint locks", () => {
     expect((await stub.docSnapshot(id)).state).toBe("ready");
     a.ws.close(1000);
   });
+
+  it("a discard while a save holds the lock is 409 live_busy and keeps the draft for that save", async () => {
+    const { id, ownerP } = await docSetup(BASE);
+    const h = ownerP.session.headers;
+    const a = await connectDoc(id, ownerP.cookie);
+    await editLines(a, 2, 3, "First, edited.");
+    const stub = stubFor(id);
+    const snap = await stub.docSnapshot(id);
+    expect(snap.state).toBe("ready");
+    const res = await api(`/artifacts/${id}/live/draft?rev=1`, h, { method: "DELETE" });
+    expect(res.status).toBe(409);
+    expect((await json(res)).error.details).toEqual({ rev: 1, reason: "live_busy" });
+    // The save lands and finishes: its version is the base, and the draft is clean.
+    expect(await stub.docFinish(id, 2, snap.text, snap.lock, snap.epoch)).toEqual({
+      rev: 1,
+      dirty: false,
+    });
+    // The lock went with the finish.
+    expect((await stub.docSnapshot(id)).state).toBe("clean");
+    a.ws.close(1000);
+  });
 });
 
 describe("live API: the remaining refusals", () => {

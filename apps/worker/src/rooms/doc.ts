@@ -91,6 +91,8 @@ export interface DocSnapshot {
   unchanged: boolean;
   /** The checkpoint lock this snapshot took ("" when it took none), for resolve, finish and abort. */
   lock: string;
+  /** The draft's epoch when snapshotted, for finish (see `Loaded.epoch`). */
+  epoch: string;
 }
 
 interface Loaded {
@@ -100,6 +102,12 @@ interface Loaded {
   rules: LiveTypeRules;
   /** Random per in-memory load: a client never mistakes a reload for a continuation. */
   gen: string;
+  /**
+   * Random, new on every load and whenever the lines are replaced rather than edited (a discard,
+   * a reset or rebase onto a version, a resolved conflict). A checkpoint that finishes without its
+   * lock (it ran out) finishes onto the lines only when the epoch is the one it snapshotted.
+   */
+  epoch: string;
   rev: number;
   flushedRev: number;
   baseVersion: number;
@@ -188,6 +196,7 @@ export class LiveDoc {
       def,
       rules,
       gen: randomString(16),
+      epoch: randomString(12),
       rev: draft ? (row.rev as number) : 0,
       flushedRev: draft ? (row.rev as number) : 0,
       baseVersion: draft ? (row.base_version as number) : row.current_version,
@@ -668,6 +677,7 @@ export class LiveDoc {
       doc.lines = splitLines(theirs);
       doc.baseText = theirs;
       doc.baseVersion = n;
+      doc.epoch = randomString(12);
       doc.rev += 1;
       this.revokeLeases("rebased");
       this.broadcast({ t: "reset", version: n, gen: doc.gen, rev: doc.rev });
@@ -692,6 +702,7 @@ export class LiveDoc {
       doc.baseText = theirs;
       doc.baseVersion = n;
       doc.conflictVersion = null;
+      doc.epoch = randomString(12);
       doc.rev += 1;
       this.revokeLeases("rebased");
       this.broadcast({ t: "rebased", version: n, gen: doc.gen, rev: doc.rev });
@@ -711,7 +722,15 @@ export class LiveDoc {
   /** Flush, then the draft as a checkpoint would save it, under a 30 s lock. */
   async snapshot(artifactId: string): Promise<DocSnapshot> {
     const doc = await this.ensure(artifactId);
-    const empty = { text: "", rev: 0, base_version: 1, conflict_version: null, hash: "", lock: "" };
+    const empty = {
+      text: "",
+      rev: 0,
+      base_version: 1,
+      conflict_version: null,
+      hash: "",
+      lock: "",
+      epoch: "",
+    };
     if (!doc) return { state: "gone", ...empty, unchanged: true };
     if (this.lock && this.lock.until > Date.now()) {
       return {
@@ -741,13 +760,14 @@ export class LiveDoc {
       throw e;
     }
     if (this.loaded !== doc || this.lock !== lock) {
-      // Reset (gone) or discarded while flushing.
+      // Reset (gone) while flushing, or the lock ran out and another checkpoint took it.
       if (this.lock === lock) this.lock = null;
       return this.loaded === doc
         ? { state: "busy", ...empty, rev: doc.rev, base_version: doc.baseVersion, unchanged: false }
         : { state: "gone", ...empty, unchanged: true };
     }
     const text = this.text(doc);
+    const epoch = doc.epoch;
     const unchanged = text === doc.baseText;
     const hash = await sha256Hex(text);
     const state = doc.conflictVersion !== null ? "conflict" : unchanged ? "clean" : "ready";
@@ -767,6 +787,7 @@ export class LiveDoc {
       hash,
       unchanged,
       lock: state === "clean" ? "" : lock.id,
+      epoch,
     };
   }
 
@@ -782,18 +803,29 @@ export class LiveDoc {
     return true;
   }
 
-  /** Version `n` holds the checkpoint: it becomes the draft's base; edits made since are kept. */
+  /**
+   * Version `n` holds the checkpoint: it becomes the draft's base; edits made since are kept.
+   * When the checkpoint no longer holds its lock (it ran out) and the lines were replaced since
+   * its snapshot (`epoch`: a discard, a reset), the saved text is not their ancestor, so `n` is
+   * handled as any version published meanwhile instead of becoming the base under them.
+   */
   async finishCheckpoint(
     artifactId: string,
     n: number,
     text: string,
     lockId: string,
+    epoch?: string,
   ): Promise<{ rev: number; dirty: boolean }> {
     const doc = await this.ensure(artifactId);
     if (!doc) return { rev: 0, dirty: false };
     const mine = this.lock?.id === lockId ? this.lock : null;
-    if (n > doc.baseVersion) this.finish(doc, n, text, mine);
-    else if (mine) this.lock = null;
+    if (n <= doc.baseVersion) {
+      if (mine) this.lock = null;
+    } else if (mine || epoch === undefined || epoch === doc.epoch) {
+      this.finish(doc, n, text, mine);
+    } else {
+      await this.outside(doc, n, null);
+    }
     await this.flushNow();
     const out = { rev: doc.rev, dirty: this.text(doc) !== doc.baseText };
     await this.releaseIfIdle(doc);
@@ -810,6 +842,7 @@ export class LiveDoc {
       // A resolved conflict: the saved text is the draft now.
       doc.lines = splitLines(text);
       doc.conflictVersion = null;
+      doc.epoch = randomString(12);
       doc.rev += 1;
       this.revokeLeases("closed");
       this.broadcast({ t: "reset", version: n, gen: doc.gen, rev: doc.rev });
@@ -838,30 +871,68 @@ export class LiveDoc {
     await this.outside(doc, current, null);
   }
 
-  /** Drop the unsaved edits: the draft goes back to the current version. */
-  async discard(artifactId: string, rev: number): Promise<{ ok: boolean; rev: number }> {
+  /**
+   * Drop the unsaved edits: the draft goes back to the current version. It runs under the
+   * checkpoint lock, so it never interleaves with a save or the review's other choice: `busy`
+   * while another checkpoint holds the lock; otherwise it takes the lock before its first read
+   * (a snapshot arriving meanwhile is busy) and releases it when done. `lock` is the caller's own
+   * checkpoint lock ("Discard mine" in the review), which it runs under and releases.
+   * `conflictVersion` limits it to a draft frozen against that version, which must still be the
+   * current one. `rev` (and `conflictVersion`) are checked before and after the reads.
+   */
+  async discard(
+    artifactId: string,
+    rev: number,
+    opts: { lock?: string; conflictVersion?: number } = {},
+  ): Promise<{ ok: boolean; rev: number; busy?: true }> {
     const doc = await this.ensure(artifactId);
     if (!doc) return { ok: true, rev: 0 };
-    if (rev !== doc.rev) return { ok: false, rev: doc.rev };
-    const cur = await this.host.env.DB.prepare(
-      "SELECT current_version FROM artifacts WHERE id = ?1",
-    )
-      .bind(artifactId)
-      .first<{ current_version: number }>();
-    const text = cur ? await this.versionText(doc, cur.current_version) : null;
-    if (!cur || text === null || this.loaded !== doc) return { ok: false, rev: doc.rev };
-    this.lock = null;
-    doc.lines = splitLines(text);
-    doc.baseText = text;
-    doc.baseVersion = cur.current_version;
-    doc.conflictVersion = null;
-    doc.rev += 1;
-    doc.lastBy = null;
-    this.revokeLeases("closed");
-    this.broadcast({ t: "reset", version: doc.baseVersion, gen: doc.gen, rev: doc.rev });
-    this.broadcastText(doc);
-    this.needsFlush = true;
-    await this.flushNow();
+    const held = this.lock && this.lock.until > Date.now() ? this.lock : null;
+    if (held && held.id !== opts.lock) return { ok: false, rev: doc.rev, busy: true };
+    const fits = () =>
+      this.loaded === doc &&
+      rev === doc.rev &&
+      (opts.conflictVersion === undefined || doc.conflictVersion === opts.conflictVersion);
+    if (!fits()) return { ok: false, rev: doc.rev };
+    const lock: CheckpointLock = held ?? {
+      id: `k_${randomString(12)}`,
+      rev: doc.rev,
+      text: "",
+      hash: "",
+      until: Date.now() + LIVE_DOC.checkpointLockS * 1000,
+      resolved: false,
+    };
+    this.lock = lock;
+    const release = () => {
+      if (this.lock === lock) this.lock = null;
+    };
+    try {
+      const cur = await this.host.env.DB.prepare(
+        "SELECT current_version FROM artifacts WHERE id = ?1",
+      )
+        .bind(artifactId)
+        .first<{ current_version: number }>();
+      const text = cur ? await this.versionText(doc, cur.current_version) : null;
+      const reviewed =
+        opts.conflictVersion === undefined || cur?.current_version === opts.conflictVersion;
+      if (!cur || text === null || this.lock !== lock || !fits() || !reviewed) {
+        return { ok: false, rev: doc.rev };
+      }
+      doc.lines = splitLines(text);
+      doc.baseText = text;
+      doc.baseVersion = cur.current_version;
+      doc.conflictVersion = null;
+      doc.epoch = randomString(12);
+      doc.rev += 1;
+      doc.lastBy = null;
+      this.revokeLeases("closed");
+      this.broadcast({ t: "reset", version: doc.baseVersion, gen: doc.gen, rev: doc.rev });
+      this.broadcastText(doc);
+      this.needsFlush = true;
+      await this.flushNow();
+    } finally {
+      release();
+    }
     this.status(doc);
     await this.releaseIfIdle(doc);
     return { ok: true, rev: doc.rev };

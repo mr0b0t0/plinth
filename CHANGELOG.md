@@ -21,7 +21,9 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   changed, and choose **Publish mine** (the page edits become the next version, and the other stays
   in the history) or **Discard mine** (after a confirmation that lists what will be lost). When two
   people change rows at once, each change lands on the row it was made on, or is dropped with a
-  note when that row is gone. Numbers are typed in your locale. Follows `ALLOW_LIVE_EDITING`.
+  note when that row is gone. While one editor publishes or discards, a second choice or a Discard
+  from someone else waits with a note instead of undoing it, for docs too. Numbers are typed in
+  your locale. Follows `ALLOW_LIVE_EDITING`.
 - **Follow the presenter in a deck.** An owner or editor can turn on **Lead viewers** in a deck's
   controls or presenter view, and the people the deck is shared with who have it open follow their
   slide, with a "Following the presenter" note; paging by hand pauses it until they choose "Back to

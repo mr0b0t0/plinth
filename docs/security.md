@@ -2079,6 +2079,12 @@ sheet's frame still runs only Plinth's renderer (`script-src 'self'`).
   the version published meanwhile, which stays in the history) or to that version exactly
   ("Discard mine", which writes nothing), at the draft's current `rev`, and anything else is
   refused with the draft kept. So a modified client cannot save a combination neither side wrote.
+  Both choices and every discard (`DELETE live/draft`, a doc's too) take the room's checkpoint
+  lock and are refused as busy while another save or choice holds it, so a discard cannot reset
+  the draft under a version being published from it and leave the published edits looking unsaved,
+  for the next save to revert without a review. A save that finishes after its 30 s lock ran out
+  is finished onto the draft only when the draft's lines were not replaced since its snapshot (the
+  draft's epoch); otherwise its version is handled as any version published meanwhile.
   The review shows both sheets in the app as text nodes, never as HTML, as the source diff did.
 - **The renderer stays free of HTML parsing.** The editor builds its fields, lists, the edit strip
   and the column settings with `createElement` and fills them through `.value` and `textContent`;

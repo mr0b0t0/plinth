@@ -2034,7 +2034,7 @@
       "delete": {
         "operationId": "discardLiveDraft",
         "summary": "Discard the unsaved draft (409 when it changed past rev)",
-        "description": "Signed-in owners and editors of a doc or a sheet only (live_edit); agents are refused and publish versions instead.",
+        "description": "Signed-in owners and editors of a doc or a sheet only (live_edit); agents are refused and publish versions instead. 409 with reason live_busy while a save or a review choice is publishing or discarding the same draft.",
         "tags": ["Live editing"],
         "parameters": [
           {

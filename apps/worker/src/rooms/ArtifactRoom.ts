@@ -926,8 +926,9 @@ export class ArtifactRoom extends DurableObject<Bindings> {
     n: number,
     text: string,
     lockId: string,
+    epoch?: string,
   ): Promise<{ rev: number; dirty: boolean }> {
-    return this.doc.finishCheckpoint(artifactId, n, text, lockId);
+    return this.doc.finishCheckpoint(artifactId, n, text, lockId, epoch);
   }
 
   /** The checkpoint holding `lockId` gave up (another checkpoint's lock stays). */
@@ -935,8 +936,13 @@ export class ArtifactRoom extends DurableObject<Bindings> {
     await this.doc.abortCheckpoint(lockId);
   }
 
-  async docDiscard(artifactId: string, rev: number): Promise<{ ok: boolean; rev: number }> {
-    return this.doc.discard(artifactId, rev);
+  /** Under the checkpoint lock: `busy` while another checkpoint holds it (rooms/doc.ts). */
+  async docDiscard(
+    artifactId: string,
+    rev: number,
+    opts: { lock?: string; conflictVersion?: number } = {},
+  ): Promise<{ ok: boolean; rev: number; busy?: true }> {
+    return this.doc.discard(artifactId, rev, opts);
   }
 
   async docPeek(artifactId: string) {

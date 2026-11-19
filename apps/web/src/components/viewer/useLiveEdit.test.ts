@@ -421,6 +421,22 @@ describe("useLiveEdit", () => {
     expect(toasts).toContain("v5 was published while you reviewed. Review it.");
   });
 
+  it("a choice refused as busy (the other choice is running) keeps the review open and says so", async () => {
+    const t = await inReview((c) =>
+      c.path.endsWith("/live/checkpoint") ? json({ saved: false, reason: "busy" }) : undefined,
+    );
+    const busy =
+      "These page edits are being published or discarded right now. Look again in a moment.";
+    await act(() => t.result.current.keepMine());
+    expect(t.result.current.reviewing).toBe(true);
+    expect(t.result.current.conflict?.current).toBe(4);
+    expect(toasts.at(-1)).toBe(busy);
+    toasts.length = 0;
+    await act(() => t.result.current.takeLatest());
+    expect(t.result.current.reviewing).toBe(true);
+    expect(toasts).toEqual([busy]);
+  });
+
   it("taking the latest posts that version's text for the conflict reviewed, then closes", async () => {
     const t = await inReview((c) =>
       c.path.endsWith("/live/checkpoint") ? json({ saved: false, reason: "unchanged" }) : undefined,

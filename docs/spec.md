@@ -1919,7 +1919,14 @@ its review has exactly two choices (below).
   room mode, that it drops everyone's unpublished page edits), then returns the page to vN for
   everyone. Cancel closes the review and keeps the draft frozen. The checkpoint enforces this: a
   frozen sheet draft is resolved only to the room's draft exactly or to vN exactly, at the draft's
-  current `rev`. People editing the same draft together through the room are not affected.
+  current `rev`. Both choices, and the strip's Discard (a doc's too), run under the room's
+  checkpoint lock, so one resolves the draft and never on top of the other: a choice or a Discard
+  sent while another holds the lock is refused as busy ("These page edits are being published or
+  discarded right now", 409 `live_busy` on `DELETE live/draft`) and the review stays open, and
+  Discard mine drops the draft only while vN is still the version it was reviewed against. A save
+  that finishes after its lock ran out, onto a draft that a discard or reset replaced meanwhile, is
+  handled as any version published meanwhile instead of becoming the base under the replaced
+  draft. People editing the same draft together through the room are not affected.
   `edit_sheet` and `update_artifact` warn `live_draft`, and `get_artifact` and `read_sheet` report
   the draft's metadata to owners' and editors' agents.
 - **On the page.** In edit mode Enter, F2, a double-click or typing opens the selected cell as a

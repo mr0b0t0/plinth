@@ -1763,7 +1763,10 @@ function liveOperations(): Operation[] {
       path: API.liveDraft,
       operationId: "discardLiveDraft",
       summary: "Discard the unsaved draft (409 when it changed past rev)",
-      description: who,
+      description:
+        `${who} ` +
+        "409 with reason live_busy while a save or a review choice is publishing or discarding " +
+        "the same draft.",
       tag: "Live editing",
       auth: "user",
       query: [{ name: "rev", schema: int({ minimum: 0 }), description: "The draft revision seen" }],
