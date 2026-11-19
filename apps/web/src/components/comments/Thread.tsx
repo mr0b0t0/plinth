@@ -12,6 +12,7 @@ import { APP_ROUTES, type CommentInfo, isPageAnchor, renderMarkdown, route } fro
 import { useMemo, useRef, useState } from "react";
 import { Link } from "../../lib/router.tsx";
 import { Button, ICON_SIZE } from "../ui/index.ts";
+import { OTHER_AGENT_LABEL } from "./askTargets.ts";
 import { MentionTextarea } from "./MentionTextarea.tsx";
 import { anchorLabel, fullTime, relativeTime, type Thread as ThreadData } from "./model.ts";
 
@@ -28,7 +29,9 @@ export function MentionChip({ mention, slug }: { mention: Mention; slug: string 
       ) : (
         <RobotIcon size={ICON_SIZE.xs} aria-hidden="true" />
       )}
-      <span className="cm-chip__target">{target}</span>
+      <span className="cm-chip__target">
+        {target === OTHER_AGENT_LABEL ? "The owner's other agent" : target}
+      </span>
       <span className="cm-chip__state">
         {published ? (
           <>

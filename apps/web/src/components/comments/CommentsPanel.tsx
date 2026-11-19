@@ -7,6 +7,7 @@ import { ArrowClockwiseIcon, XIcon } from "@phosphor-icons/react";
 import {
   API,
   APP_ROUTES,
+  type ClientType,
   type CommentInfo,
   isPageAnchor,
   type PageAnchor,
@@ -24,6 +25,7 @@ import {
   Spinner,
   Tooltip,
 } from "../ui/index.ts";
+import { askTargetInText } from "./askTargets.ts";
 import {
   type BridgeClient,
   connectBridge,
@@ -76,6 +78,15 @@ export interface CommentsPanelProps {
    * page request (the person clicks or tabs into the panel).
    */
   openedByPage?: boolean;
+  /**
+   * Ask an agent (the gate's `ask`): who a request can go to, and whether the viewer is the owner
+   * (for the names). Absent: this person may not ask, and the panel has no request mode.
+   */
+  ask?: { targets: ClientType[]; owner: boolean };
+  /** Ask an agent was chosen: the composer switches to request mode. `n` changes every time. */
+  request?: { n: number; anchor: PageAnchor | null } | null;
+  /** Read the targets again after a request was refused because its agent went away. */
+  onTargetsStale?: () => Promise<ClientType[] | null>;
 }
 
 /** How often to look for new comments and mention progress while the panel is open. */
@@ -121,6 +132,9 @@ export function CommentsPanel({
   onActiveChange,
   pageOpen = null,
   openedByPage = false,
+  ask,
+  request = null,
+  onTargetsStale,
 }: CommentsPanelProps) {
   const { pathname, search } = useLocation();
   const [items, setItems] = useState<CommentInfo[] | null>(null);
@@ -138,6 +152,17 @@ export function CommentsPanel({
   /** The owner or an editor (the list says so): page requests are dismissed, not withdrawn. */
   const [moderator, setModerator] = useState(false);
   const [announcement, setAnnouncement] = useState("");
+  // Ask an agent: the composer in request mode, the agents it can go to, and the one chosen.
+  const [requesting, setRequesting] = useState(false);
+  const [targets, setTargets] = useState<ClientType[]>(ask?.targets ?? []);
+  const [requestTo, setRequestTo] = useState<ClientType | null>(ask?.targets[0] ?? null);
+  const askKey = ask?.targets.join(" ") ?? "";
+  // biome-ignore lint/correctness/useExhaustiveDependencies: askKey stands for ask.targets
+  useEffect(() => {
+    const next = ask?.targets ?? [];
+    setTargets(next);
+    setRequestTo((t) => (t && next.includes(t) ? t : (next[0] ?? null)));
+  }, [askKey]);
 
   const panelRef = useRef<HTMLElement | null>(null);
   const headingRef = useRef<HTMLHeadingElement | null>(null);
@@ -419,6 +444,25 @@ export function CommentsPanel({
     composerRef.current?.focus();
   };
 
+  // Ask an agent was chosen (once per request): request mode, with the place it named, if any.
+  const requestDoneRef = useRef<number | null>(null);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: one run per request (`n`)
+  useEffect(() => {
+    if (!request || !ask || requestDoneRef.current === request.n) return;
+    requestDoneRef.current = request.n;
+    setRequesting(true);
+    if (request.anchor) {
+      settlePage({ status: "closed" });
+      setPicking(false);
+      setAnchor(request.anchor);
+    }
+    requestAnimationFrame(() => composerRef.current?.focus());
+  }, [request?.n]);
+  const leaveRequest = () => {
+    setRequesting(false);
+    requestAnimationFrame(() => composerRef.current?.focus());
+  };
+
   // ---------- writes ----------
 
   const writeError = (e: unknown): string | undefined => {
@@ -432,6 +476,18 @@ export function CommentsPanel({
         return undefined;
       }
       if (e.status === 429) return "You are commenting too fast. Try again in a while.";
+      if (
+        e.status === 400 &&
+        (e.details as { reason?: string } | undefined)?.reason === "no_agent"
+      ) {
+        // The agent was disconnected since the panel learned of it: read the targets again.
+        void onTargetsStale?.().then((next) => {
+          if (!next) return;
+          setTargets(next);
+          setRequestTo((t) => (t && next.includes(t) ? t : (next[0] ?? null)));
+        });
+        return "That agent was disconnected. Pick another, or post as a comment.";
+      }
       if (e.status === 400) return e.message;
     }
     return "That did not work. Try again.";
@@ -451,6 +507,8 @@ export function CommentsPanel({
     if (!body || sending) return;
     setSending(true);
     setComposeError(undefined);
+    // A request goes to the agent chosen; with no agent to take it, it is a plain comment.
+    const to = requesting && targets.length > 0 ? requestTo : null;
     try {
       const created = await api<CommentInfo>(commentsPath, {
         method: "POST",
@@ -458,16 +516,22 @@ export function CommentsPanel({
           body,
           version_number: version,
           ...(anchor ? { anchor: anchorBody(anchor) } : {}),
+          ...(to ? { request_to: to } : {}),
         },
       });
       setDraft("");
       setAnchor(null);
+      setRequesting(false);
       settlePage({ status: "posted", id: created.id });
       if (filter === "resolved") setFilter("open");
       focusThreadRef.current = { id: created.id, focus: true };
       setActiveId(created.id);
       afterWrite(created);
-      announce(`Comment posted.${mentionSummary(created)}`);
+      announce(
+        to
+          ? `Request sent to ${askTargetInText(to, ask?.owner === true)}.${mentionSummary(created)}`
+          : `Comment posted.${mentionSummary(created)}`,
+      );
     } catch (e) {
       setComposeError(writeError(e));
     } finally {
@@ -632,6 +696,17 @@ export function CommentsPanel({
               sending={sending}
               error={composeError}
               textareaRef={composerRef}
+              request={
+                requesting && ask
+                  ? {
+                      targets,
+                      to: requestTo,
+                      onTo: setRequestTo,
+                      owner: ask.owner,
+                      onLeave: leaveRequest,
+                    }
+                  : undefined
+              }
             />
           )}
         </footer>

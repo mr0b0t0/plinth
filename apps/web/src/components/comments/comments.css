@@ -563,3 +563,44 @@
   border-radius: var(--radius-lg);
   background: var(--color-wall);
 }
+
+/* Ask an agent: the composer in request mode (Composer.tsx). */
+.cm-ask__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1-5);
+  color: var(--color-ink);
+}
+.cm-ask__title {
+  flex: 1 1 auto;
+  margin: 0;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+}
+.cm-ask__to {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-3);
+  margin: 0;
+  padding: 0 var(--space-0-5);
+  border: 0;
+  font-size: var(--text-sm);
+}
+.cm-ask__legend {
+  padding: 0;
+  margin-bottom: var(--space-1);
+  color: var(--color-ink-muted);
+  font-size: var(--text-xs);
+}
+.cm-ask__option {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-height: 44px;
+  color: var(--color-ink);
+  cursor: pointer;
+}
+.cm-ask__option input {
+  accent-color: var(--color-accent);
+}

@@ -8,7 +8,14 @@
 // (stageItems.tsx): this component holds the state and hands every item one StageContext.
 
 import { FileIcon } from "@phosphor-icons/react";
-import { API, APP_ROUTES, type CommentInfo, route, type ViewGate } from "@plinth/shared";
+import {
+  API,
+  APP_ROUTES,
+  type ClientType,
+  type CommentInfo,
+  route,
+  type ViewGate,
+} from "@plinth/shared";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../../lib/api.ts";
 import { Link } from "../../lib/router.tsx";
@@ -22,6 +29,7 @@ import { LogoMark } from "../Logo.tsx";
 import { SkipLink } from "../layout/AppShell.tsx";
 import { LegalLinks } from "../layout/LegalLinks.tsx";
 import { IconProvider, Skeleton, Toaster, VISIBILITY_META } from "../ui/index.ts";
+import { type AskAnchor, pageAnchorOf, useAskAgent } from "./askAgent.tsx";
 import { DictationConsent } from "./DictationConsent.tsx";
 import { ExportDialog } from "./ExportDialog.tsx";
 import { contentOriginOf, shareLink } from "./gate.ts";
@@ -191,6 +199,8 @@ export function ViewerStage({
   // and the app accepts its editing messages only with that key.
   // One key per frame load: a new enter_url is a new load, a refreshed gate for the same frame is
   // not.
+  // Ask an agent from the frame (an in-frame `ask`): answered once the hook below exists.
+  const askFromFrame = useRef<(anchor: AskAnchor | null) => void>(() => undefined);
   const editable = gate.live !== undefined;
   const frameKey = useMemo(
     () => (editable && gate.enter_url ? newFrameKey() : null),
@@ -206,6 +216,7 @@ export function ViewerStage({
     frameKey,
     onReload: onReload ?? (() => undefined),
     onLeave: () => barRef.current?.focus(),
+    onAsk: (anchor) => askFromFrame.current(pageAnchorOf(anchor)),
   });
   const editing = live.editing;
   // Presenting a deck: the slide, full screen, presenter view and its audience window.
@@ -267,6 +278,30 @@ export function ViewerStage({
 
   const editRef = useRef<HTMLButtonElement>(null);
   const headerRef = useRef<HTMLElement>(null);
+  // Ask an agent, not editing: the comments panel in request mode, opened if it was closed (one
+  // reload into review mode, which the pick needs). `n` changes for every request.
+  const [request, setRequest] = useState<{ n: number; anchor: AskAnchor | null } | null>(null);
+  const ask = useAskAgent({
+    gate,
+    editing,
+    openDialog: setDialog,
+    openRequest: (anchor) => {
+      setRequest((r) => ({ n: (r?.n ?? 0) + 1, anchor }));
+      if (!commentsOpen) onToggleComments();
+    },
+    focusSignIn: () =>
+      headerRef.current?.querySelector<HTMLElement>('a[aria-label="Sign in to edit"]')?.focus(),
+  });
+  askFromFrame.current = ask.open;
+  // The agents a request can go to, read again when one went away meanwhile (`no_agent`).
+  const refreshTargets = async (): Promise<ClientType[] | null> => {
+    try {
+      const g = await api<ViewGate>(route(API.view, { ref: artifact.id || slug }));
+      return g.status === "ok" ? (g.ask?.targets ?? []) : null;
+    } catch {
+      return null;
+    }
+  };
   // While the frame shows the whole-draft review, toasts keep clear of its choices.
   useEffect(() => {
     if (!live.reviewing) return;
@@ -313,6 +348,7 @@ export function ViewerStage({
     present,
     dictation,
     update,
+    ask,
     hrefs: {
       current: currentHref,
       edit: editHref,
@@ -413,6 +449,9 @@ export function ViewerStage({
                   onClose={closeComments}
                   onOpenCountChange={setOpenCount}
                   onItemsChange={setCommentItems}
+                  ask={gate.ask ? { targets: gate.ask.targets, owner: isOwner } : undefined}
+                  request={request}
+                  onTargetsStale={refreshTargets}
                   {...pageComments}
                 />
               </div>

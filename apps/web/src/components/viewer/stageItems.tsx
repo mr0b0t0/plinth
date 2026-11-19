@@ -36,6 +36,13 @@ import type { ReactNode, RefObject } from "react";
 import { Link } from "../../lib/router.tsx";
 import { THEME_NAMES, type Theme } from "../../lib/theme.ts";
 import { Button, buttonClassName, Menu, type MenuEntry, Tooltip } from "../ui/index.ts";
+import {
+  type AskAgent,
+  askAgentButton,
+  askAgentDialog,
+  askAgentMenu,
+  editNotice,
+} from "./askAgent.tsx";
 import { boardSettings, boardSettingsDialog } from "./boardSettingsItems.tsx";
 import { DataNotice } from "./DataNotice.tsx";
 import { DictationControl } from "./DictationControl.tsx";
@@ -73,6 +80,8 @@ export interface StageContext {
   dictation: Dictation;
   /** Live views: a newer version held while the viewer uses the page (useViewUpdate). */
   update: ViewUpdate;
+  /** Ask an agent (askAgent.tsx). */
+  ask: AskAgent;
   hrefs: {
     current: string;
     edit: string;
@@ -277,6 +286,7 @@ export const MENU_ITEMS: readonly MenuItem[] = [
   compactShareHistory,
   compactEditToggle,
   compactSignInToEdit,
+  askAgentMenu,
   editSource,
   settings,
   typeItems,
@@ -293,7 +303,7 @@ export function menuEntries(c: StageContext): MenuEntry[] {
 }
 
 /** The dialogs a menu item may open, by id. One dialog per line. */
-export const STAGE_DIALOGS: readonly StageDialog[] = [boardSettingsDialog];
+export const STAGE_DIALOGS: readonly StageDialog[] = [boardSettingsDialog, askAgentDialog];
 
 // ---------- the bar's controls ----------
 
@@ -410,6 +420,7 @@ export const BAR_CONTROLS: readonly StageItem[] = [
   { id: "history", render: historyLink },
   { id: "edit", render: editToggle },
   { id: "sign-in-to-edit", render: signInToEdit },
+  { id: "ask-agent", render: askAgentButton },
   { id: "present", render: presentButton },
   { id: "comments", render: commentsToggle },
   { id: "share", render: shareButton },
@@ -527,6 +538,7 @@ export const STRIP_ITEMS: readonly StageItem[] = [
   { id: "held-update", render: heldUpdate },
   { id: "data-notice", render: dataNotice },
   { id: "sources-notice", render: sourcesNotice },
+  { id: "edit-notice", render: editNotice },
   { id: "edit-bar", render: editBar },
   { id: "live-draft", render: liveDraftNotice },
   { id: "present", render: presentStrip },

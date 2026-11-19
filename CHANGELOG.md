@@ -10,11 +10,16 @@ Add a line under **Unreleased** in the pull request that makes a change people w
 
 ## Unreleased
 
-- **Requests to the owner's agent by client type.** `POST /api/v1/artifacts/:ref/comments` takes
-  `request_to` (`claude`, `codex` or `other`, on a new thread), which sends the comment to the
-  owner's connections of that type as a mention, ChatGPT, Cursor and Gemini connections included.
-  It is refused with `no_agent` when the owner has no such agent. The viewer gate says who a request
-  can go to (`ask`) and why editing on the page is off (`live_off`).
+- **Ask an agent.** People change an HTML page or a design by asking the owner's agent: **Ask an
+  agent** (in the bar for owners and editors, in the ⋯ menu for commenters and at phone width, and
+  on the dashboard card) opens the comments panel in request mode, where they point at an element
+  or a board, describe the change and pick the agent: Claude, Codex, or any other connected client
+  such as ChatGPT, Cursor or Gemini. It reaches that agent as a mention. While editing a doc or a
+  sheet on its page, **Ask an agent** in the ⋯ menu opens a dialog that keeps the edits, with
+  **Publish my changes first** (off by default). Where editing on the page is off, the Edit slot
+  shows Ask an agent with the reason. `POST /api/v1/artifacts/:ref/comments` takes `request_to`
+  (refused with `no_agent` when the owner has no such agent), and the viewer gate says who a
+  request can go to (`ask`) and why editing is off (`live_off`).
 
 - **Review a newer version in the page itself.** When a version is published while people have
   unpublished changes on a doc or a sheet that are not combined with it, **Review changes** opens
