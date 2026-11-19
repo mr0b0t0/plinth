@@ -196,11 +196,63 @@ describe("CommentsPanel, comments from the page", () => {
     );
   });
 
-  it("settles closed for someone who cannot comment", async () => {
+  it("holds a request from someone who cannot comment like any other", async () => {
     const server: Server = { items: [], posts: [], list: { can_comment: false, signed_in: false } };
     const k = renderPanel(server, { pageCompose: { req: REQ, anchor: ANCHOR, focus: true } });
-    await within(k.panel).findByRole("link", { name: "Sign in to comment" });
-    await waitFor(() => expect(k.settled).toHaveBeenCalledWith(REQ, { status: "closed" }));
+    const link = await within(k.panel).findByRole("link", { name: "Sign in to comment" });
+    // The page is not told, not even by how soon it hears back, that this person cannot comment.
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 20));
+    });
+    expect(k.settled).not.toHaveBeenCalled();
+    // A request while the panel is open is held too, and replaces the earlier one, as for a
+    // commenter who has not written anything; focus goes where the composer would be.
+    link.blur();
+    k.rerender({ pageCompose: { req: "request-0000000002", anchor: ANCHOR, focus: true } });
+    expect(k.settled).toHaveBeenCalledWith(REQ, { status: "closed" });
+    await waitFor(() => expect(document.activeElement).toBe(link));
+    expect(k.settled).toHaveBeenCalledTimes(1);
+    // Closing the panel ends it.
+    k.unmount();
+    await waitFor(() =>
+      expect(k.settled).toHaveBeenLastCalledWith("request-0000000002", { status: "closed" }),
+    );
+    expect(k.settled).toHaveBeenCalledTimes(2);
+  });
+
+  it("moves focus to the note for a viewer who may not comment", async () => {
+    const server: Server = { items: [], posts: [], list: { can_comment: false, signed_in: true } };
+    const k = renderPanel(server);
+    const note = await within(k.panel).findByText(
+      "You can view this artifact but not comment on it",
+    );
+    k.rerender({ pageCompose: { req: REQ, anchor: ANCHOR, focus: true } });
+    await waitFor(() => expect(document.activeElement).toBe(note));
+    expect(k.settled).not.toHaveBeenCalled();
+  });
+
+  it("shows a thread the page asked for before the list had loaded", async () => {
+    const pinned = comment({ anchor: { kind: "page", key: "canvas", x: 1, y: 2 } });
+    const resolved = comment({ status: "resolved", anchor: { kind: "page", key: "b" } });
+    const active = vi.fn();
+    // The page's own marker opened the panel: the request is there when the panel mounts.
+    const k = renderPanel(
+      { items: [pinned, resolved], posts: [] },
+      { onActiveChange: active, pageOpen: { id: resolved.id, n: 1 } },
+    );
+    await waitFor(() => expect(active).toHaveBeenCalledWith(resolved.id));
+    expect((within(k.panel).getByRole("radio", { name: "All" }) as HTMLInputElement).checked).toBe(
+      true,
+    );
+    const el = k.panel.querySelector(`[data-thread-id="${resolved.id}"]`);
+    await waitFor(() => expect(document.activeElement).toBe(el));
+    // Focusing the thread tells the page again, as for a pin click; nothing else does.
+    expect(active.mock.calls.every(([id]) => id === resolved.id)).toBe(true);
+    const calls = active.mock.calls.length;
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 20));
+    });
+    expect(active.mock.calls.length).toBe(calls);
   });
 
   it("renders anchor text from the page inert", async () => {

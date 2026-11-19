@@ -11,7 +11,8 @@
 //   ready      Promise<{ available, reason }>, never rejects; reason null | "not_framed" |
 //              "no_app" | "not_declared"
 //   compose(anchor?) -> Promise<{ status: "posted", id } | { status: "closed" | "busy" }>;
-//              rejects PlinthError "unavailable" or "invalid" (the anchor breaks the limits)
+//              rejects PlinthError "unavailable" or "invalid" (the anchor breaks the limits);
+//              each request settles when the app answers it, a later one does not end it
 //   onThreads(fn) -> off   fn([{ id, pin, status, anchor: { key, x?, y?, data? } }]), page
 //              anchors only, oldest first; called at once with the latest list
 //   locate(fn | null)      fn(anchor) -> { x, y } | { left, top, width, height } | null, in the
@@ -47,6 +48,7 @@ export const COMMENTS_FRAGMENT: RuntimeFragment = {
   var CM_MAX_ID = ${L.maxId};
   var CM_MAX_COORD = ${L.maxCoord};
   var CM_READY_MS = ${L.readyTimeoutMs};
+  var CM_MAX_PENDING = 16;
   var CM_POSITIONS_MS = ${Math.ceil(1000 / L.positionsPerSecond)};
 
   var cm = {
@@ -59,7 +61,10 @@ export const COMMENTS_FRAGMENT: RuntimeFragment = {
     threadSubs: new Set(),
     focusSubs: new Set(),
     locator: null,
-    pending: null,
+    // Compose requests the app has not answered yet, by request id, oldest first. The app answers
+    // each one exactly once, and a later request does not end an earlier one: the app may refuse
+    // the later one and keep the earlier anchor in the composer.
+    pending: new Map(),
     lastPositions: null,
     lastPostAt: 0,
     posTimer: null,
@@ -111,6 +116,8 @@ export const COMMENTS_FRAGMENT: RuntimeFragment = {
     for (var i = 0; i < keys.length; i++) {
       var k = keys[i];
       var v = a[k];
+      // An optional field set to undefined is an absent one, as for the schema.
+      if (v === undefined && (k === "x" || k === "y" || k === "text" || k === "data")) continue;
       if (k === "key") {
         if (typeof v !== "string" || !CM_KEY_RE.test(v)) return null;
       } else if (k === "x" || k === "y") {
@@ -273,14 +280,15 @@ export const COMMENTS_FRAGMENT: RuntimeFragment = {
       cm.lastPositions = null;
       cmSchedule();
     } else if (m.type === "composed") {
-      var p = cm.pending;
-      if (!p || m.req !== p.req) return;
+      if (typeof m.req !== "string") return;
+      var resolve = cm.pending.get(m.req);
+      if (!resolve) return;
       if (m.status === "posted" && typeof m.id === "string" && m.id && m.id.length <= CM_MAX_ID) {
-        cm.pending = null;
-        p.resolve({ status: "posted", id: m.id });
+        cm.pending.delete(m.req);
+        resolve({ status: "posted", id: m.id });
       } else if (m.status === "closed" || m.status === "busy") {
-        cm.pending = null;
-        p.resolve({ status: m.status });
+        cm.pending.delete(m.req);
+        resolve({ status: m.status });
       }
     } else if (m.type === "focus") {
       var found = null;
@@ -341,13 +349,16 @@ export const COMMENTS_FRAGMENT: RuntimeFragment = {
       }
       return cm.ready.then(function (s) {
         if (!s.available) throw new PlinthError("unavailable", "Comments from the page are not available (" + s.reason + ").");
-        if (cm.pending) {
-          cm.pending.resolve({ status: "closed" });
-          cm.pending = null;
+        // Bounded, should an app never answer: the oldest unanswered request ends closed.
+        if (cm.pending.size >= CM_MAX_PENDING) {
+          var oldest = cm.pending.keys().next().value;
+          var end = cm.pending.get(oldest);
+          cm.pending.delete(oldest);
+          end({ status: "closed" });
         }
         return new Promise(function (resolve) {
           var req = cmReqId();
-          cm.pending = { req: req, resolve: resolve };
+          cm.pending.set(req, resolve);
           var msg = { type: "compose", req: req };
           if (clean) msg.anchor = clean;
           cmPost(msg);

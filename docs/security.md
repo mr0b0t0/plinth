@@ -851,8 +851,13 @@ policy check and rate limit.
 - **The person posts.** The page cannot post a comment or prefill its body, so text such as
   `@claude ...` never becomes a mention task under a collaborator's role without that person
   writing it. The page is not told whether the viewer can comment; it learns `posted` only after a
-  comment is posted, which then shows up for everyone, and `busy` and `closed` reveal nothing about
-  the role.
+  comment is posted, which then shows up for everyone, and `busy` only while someone is writing
+  one, which only a person who can comment can do. A request from a viewer who cannot comment (the
+  panel says "Sign in to comment" or that they may only view) is held like any other: it ends
+  `closed` when the panel closes or a later request replaces it, exactly as for a commenter who has
+  written nothing, so neither the answer nor how soon it comes tells a page that probes with
+  `compose` anything about the role. When focus moves, it goes to the composer or to the note in
+  its place, so the frame losing focus says nothing either.
 - **UI abuse.** At most one compose a second, only after the page's hello, none while the tab is
   hidden or a dialog is open; a compose while someone is writing is answered `busy` and changes
   nothing; focus moves to the composer only when focus was in the frame. At most 4 `open` and 20

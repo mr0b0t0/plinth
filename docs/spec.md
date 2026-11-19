@@ -648,8 +648,11 @@ markers and tell Plinth where to draw its pins.
     in-chat preview, the editor preview, history compare, or an old app) and `not_declared`.
   - `compose(anchor?)` opens the composer, with an anchor or none, and resolves
     `{ status: "posted", id }`, `{ status: "closed" }` or `{ status: "busy" }`. It rejects with
-    `unavailable`, or with `invalid` when the anchor breaks the limits (checked in the page). A
-    second `compose` before the first settles closes the first.
+    `unavailable`, or with `invalid` when the anchor breaks the limits (checked in the page). An
+    optional field set to `undefined` counts as absent. Each request settles when the app answers
+    it: a later `compose` does not end an earlier one, since the app may refuse the later one and
+    keep the earlier anchor in the composer (an accepted later request replaces an earlier one
+    that nobody wrote for, which then settles `closed`).
   - `onThreads(fn)` gets the page-anchored threads, oldest first: `{ id, pin, status, anchor }`,
     resolved ones included, as frozen copies, and is called at once with the latest list.
   - `locate(fn)` says where an anchor is now, as a point `{ x, y }` or a box
@@ -661,8 +664,12 @@ markers and tell Plinth where to draw its pins.
 - **The person posts.** A page never posts a comment and cannot fill in its text: the person writes
   it and presses Comment, through the comments API with their own session, rate limit and role. A
   link viewer still sees "Sign in to comment". So page code cannot turn into mention tasks under a
-  collaborator's name. The page learns `posted` only after a comment was posted; `busy` (someone is
-  writing a comment) and `closed` say nothing about the viewer's role.
+  collaborator's name. The page learns `posted` only after a comment was posted and `busy` only
+  while someone writes one. A request from a viewer who cannot comment is held like any other and
+  ends `closed` only when the panel closes or a later request replaces it, as for a commenter who
+  has written nothing, so neither the answer nor its timing says whether the viewer can comment.
+  Focus, when it moves, goes to the composer or to what stands in its place ("Sign in to
+  comment").
 - **No comment text in the frame.** Plinth tells the page thread ids, pin numbers, status and
   anchors (the page's own key, coordinates and data, or an element's selector) and request ids.
   Never comment bodies, authors, emails, roles, mention state, an anchor's label or an element's

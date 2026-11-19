@@ -448,7 +448,9 @@ their own (a canvas drawing, slides, a map, a pan-and-zoom diagram, a chart's da
   composer with that anchor; the person types and posts. You cannot post a comment or prefill its
   text from the page, so never build a page that pretends to. It resolves `{ status: "posted", id }`,
   `{ status: "closed" }` or `{ status: "busy" }` (someone is writing a comment), and rejects with
-  `invalid` when the anchor breaks the limits.
+  `invalid` when the anchor breaks the limits. Leave out (or pass `undefined` for) a field you do
+  not have. The promise may stay pending until the person posts or closes the panel; each call
+  gets its own answer, and a second call does not end the first.
 - **Anchors.** `key` names the spot in the page's own terms (`canvas`, `slide-3`, `node:42`: a
   letter or digit, then up to 127 of letters, digits and `_ . : / -`), `x` and `y` are finite page
   coordinates, `text` is a short label for the chip (120 characters), `data` up to 16 flat fields

@@ -134,6 +134,7 @@ export function CommentsPanel({
   const panelRef = useRef<HTMLElement | null>(null);
   const headingRef = useRef<HTMLHeadingElement | null>(null);
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
+  const footRef = useRef<HTMLElement | null>(null);
   const bridgeRef = useRef<BridgeClient | null>(null);
   const seenRef = useRef<Set<string> | null>(null);
   const loadingRef = useRef(false);
@@ -334,18 +335,19 @@ export function CommentsPanel({
 
   // ---------- comments from the page ----------
 
-  // The page asked to show a thread: show it whatever the filter, then as a pin click.
-  const threadsRef = useRef(threads);
-  threadsRef.current = threads;
-  // biome-ignore lint/correctness/useExhaustiveDependencies: one run per request (`n`)
+  // The page asked to show a thread: show it whatever the filter, then as a pin click. A request
+  // that opened the panel arrives before the list has loaded, so it waits for the list (once).
+  const pageOpenDoneRef = useRef<number | null>(null);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: one run per request (`n`) and list
   useEffect(() => {
-    if (!pageOpen) return;
-    const t = threadsRef.current.find((x) => x.root.id === pageOpen.id);
+    if (!pageOpen || items === null || pageOpenDoneRef.current === pageOpen.n) return;
+    pageOpenDoneRef.current = pageOpen.n;
+    const t = threads.find((x) => x.root.id === pageOpen.id);
     if (!t) return;
     setFilter((f) => (f === "all" || f === t.root.status ? f : "all"));
     focusThreadRef.current = pageOpen.id;
     activate(pageOpen.id);
-  }, [pageOpen?.n]);
+  }, [pageOpen?.n, items === null]);
 
   // A page compose request whose anchor (or unanchored composer) the panel holds, answered once.
   const pageReqRef = useRef<string | null>(null);
@@ -359,15 +361,17 @@ export function CommentsPanel({
   }, []);
   const draftRef = useRef(draft);
   draftRef.current = draft;
-  const blockedRef = useRef(blocked);
-  blockedRef.current = blocked;
+  // Whether this person can comment is never told to the page, not even by timing: a request
+  // from someone who cannot comment (the panel says "Sign in to comment") is held like any other,
+  // and ends `closed` when the panel closes or a later request replaces it, as for a commenter
+  // who has not written anything. Only writing (`busy`) or posting (`posted`) tells it more.
   // biome-ignore lint/correctness/useExhaustiveDependencies: one run per request (`req`)
   useEffect(() => {
     if (!pageCompose || pageReqRef.current === pageCompose.req) return;
     const { req } = pageCompose;
-    // Someone is writing a comment, or cannot comment: the page changes nothing.
-    if (draftRef.current.trim() || blockedRef.current) {
-      onSettledRef.current?.(req, { status: draftRef.current.trim() ? "busy" : "closed" });
+    // Someone is writing a comment: the page changes nothing.
+    if (draftRef.current.trim()) {
+      onSettledRef.current?.(req, { status: "busy" });
       return;
     }
     // An earlier page request that nobody wrote for yet is replaced.
@@ -375,13 +379,16 @@ export function CommentsPanel({
     pageReqRef.current = req;
     setPicking(false);
     setAnchor(pageCompose.anchor);
-    // Focus moves only when the person was using the page.
-    if (pageCompose.focus) requestAnimationFrame(() => composerRef.current?.focus());
+    // Focus moves only when the person was using the page: to the composer, or to what stands
+    // in its place ("Sign in to comment"), so that where focus goes says nothing either.
+    if (pageCompose.focus) {
+      requestAnimationFrame(() => {
+        const el =
+          composerRef.current ?? footRef.current?.querySelector<HTMLElement>("a, [tabindex]");
+        el?.focus();
+      });
+    }
   }, [pageCompose?.req]);
-  // The person cannot comment after all (sign in, no role): the request ends.
-  useEffect(() => {
-    if (blocked) settlePage({ status: "closed" });
-  }, [blocked, settlePage]);
   // Closing the panel ends it too. Deferred, so the effect re-run of React's strict mode (a
   // cleanup and a run again, on the same panel) does not end a request the panel still holds.
   const unmountRef = useRef<number | undefined>(undefined);
@@ -588,13 +595,15 @@ export function CommentsPanel({
           )}
         </div>
 
-        <footer className="cm-foot">
+        <footer ref={footRef} className="cm-foot">
           {blocked === "signin" ? (
             <p className="cm-note">
               <Link to={loginHref}>Sign in to comment</Link>
             </p>
           ) : blocked === "forbidden" ? (
-            <p className="cm-note">You can view this artifact but not comment on it</p>
+            <p className="cm-note" tabIndex={-1}>
+              You can view this artifact but not comment on it
+            </p>
           ) : (
             <Composer
               value={draft}

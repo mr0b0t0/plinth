@@ -176,18 +176,31 @@ test("a hostile page can only open the composer, once, and never fill it in", as
   await expect(panel.getByRole("textbox", { name: "New comment" })).toHaveValue("");
 });
 
-test("a link viewer is told to sign in, and the page hears closed", async ({ page, browser }) => {
+test("a link viewer is told to sign in, and the page hears closed when the panel closes", async ({
+  page,
+  browser,
+}) => {
   test.setTimeout(60_000);
   const { art } = await owner(page, "unlisted");
   const anon = await (await browser.newContext()).newPage();
   try {
     await open(anon, art.slug);
-    const result = await board(anon)
-      .locator("body")
-      .evaluate(() => window.plinth.comments.compose({ key: "canvas", x: 1, y: 1 }));
-    expect(result).toEqual({ status: "closed" });
+    const body = board(anon).locator("body");
+    await body.evaluate(() => {
+      window.composeResult = null;
+      window.plinth.comments.compose({ key: "canvas", x: 1, y: 1 }).then((r: unknown) => {
+        window.composeResult = r;
+      });
+    });
     const panel = anon.getByRole("region", { name: "Comments" });
     await expect(panel.getByRole("link", { name: "Sign in to comment" })).toBeVisible();
+    // The page is not told this person cannot comment, not even by how soon it hears back.
+    await anon.waitForTimeout(1500);
+    expect(await body.evaluate(() => window.composeResult)).toBeNull();
+    await panel.getByRole("button", { name: "Close comments" }).click();
+    await expect
+      .poll(() => body.evaluate(() => window.composeResult))
+      .toEqual({ status: "closed" });
   } finally {
     await anon.context().close();
   }
@@ -197,5 +210,6 @@ declare global {
   interface Window {
     // The page runtime has no types in the e2e package.
     plinth: any;
+    composeResult: unknown;
   }
 }

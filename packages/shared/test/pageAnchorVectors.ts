@@ -27,6 +27,13 @@ export const PAGE_ANCHOR_VECTORS: { name: string; anchor: unknown; ok: boolean }
     ok: true,
   },
   { name: "empty data", anchor: { key: "a", data: {} }, ok: true },
+  {
+    // `compose({ key, x, y, text, data })` with some of them unset: an absent field.
+    name: "optional fields set to undefined",
+    anchor: { key: "a", x: undefined, y: undefined, text: undefined, data: undefined },
+    ok: true,
+  },
+  { name: "a label set to undefined", anchor: { key: "slide-3", text: undefined }, ok: true },
   // not valid
   { name: "no key", anchor: {}, ok: false },
   { name: "an empty key", anchor: { key: "" }, ok: false },
@@ -68,6 +75,17 @@ export const PAGE_ANCHOR_VECTORS: { name: string; anchor: unknown; ok: boolean }
   { name: "data as an array", anchor: { key: "a", data: [1] }, ok: false },
   { name: "data as null", anchor: { key: "a", data: null }, ok: false },
   { name: "an unknown field", anchor: { key: "a", selector: "h1" }, ok: false },
+  { name: "an undefined key", anchor: { key: undefined }, ok: false },
+  {
+    name: "an unknown field set to undefined",
+    anchor: { key: "a", selector: undefined },
+    ok: false,
+  },
+  {
+    name: "a data value set to undefined",
+    anchor: { key: "a", data: { z: undefined } },
+    ok: false,
+  },
   { name: "a kind field", anchor: { key: "a", kind: "page" }, ok: false },
   { name: "null", anchor: null, ok: false },
   { name: "a string", anchor: "canvas", ok: false },

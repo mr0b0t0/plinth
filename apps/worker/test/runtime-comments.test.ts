@@ -220,7 +220,7 @@ describe("plinth.comments", () => {
     }
   });
 
-  it("settles a compose on its own request id, and a second one closes the first", async () => {
+  it("settles each compose on its own request id, only when the app answers it", async () => {
     const t = await welcomed();
     const first = t.comments.compose({ key: "canvas", x: 1, y: 2 });
     await flush();
@@ -233,9 +233,15 @@ describe("plinth.comments", () => {
       source: "plinth-comments",
       v: 1,
     });
+    let firstResult: unknown = null;
+    first.then((r: unknown) => {
+      firstResult = r;
+    });
     const second = t.comments.compose();
     await flush();
-    expect(await first).toEqual({ status: "closed" });
+    // A second request does not end the first: the app may refuse the second (too soon, or
+    // someone is writing) and keep the first anchor in the composer.
+    expect(firstResult).toBeNull();
     const req2 = t.sent("compose")[1]?.req;
     expect(req2).not.toBe(req1);
     expect(t.sent("compose")[1]).not.toHaveProperty("anchor");
@@ -244,18 +250,72 @@ describe("plinth.comments", () => {
     second.then((r: unknown) => {
       settled = r;
     });
-    t.fromApp({ type: "composed", req: req1, status: "posted", id: "x" });
-    t.fromApp({ type: "composed", req: req2, status: "posted" });
-    t.fromApp({ type: "composed", req: req2, status: "maybe" });
+    t.fromApp({ type: "composed", req: req2, status: "busy" });
+    await flush();
+    expect(settled).toEqual({ status: "busy" });
+    // The person posts with the first anchor: the page hears it.
+    t.fromApp({ type: "composed", req: req1, status: "posted", id: "c8" });
+    await flush();
+    expect(firstResult).toEqual({ status: "posted", id: "c8" });
+    // Answered once: a repeat changes nothing.
+    t.fromApp({ type: "composed", req: req1, status: "closed" });
+    await flush();
+    expect(firstResult).toEqual({ status: "posted", id: "c8" });
+    settled = null;
+    const third = t.comments.compose({ key: "b" });
+    await flush();
+    const req3 = t.sent("compose")[2]?.req;
+    third.then((r: unknown) => {
+      settled = r;
+    });
+    t.fromApp({ type: "composed", req: req2, status: "posted", id: "x" });
+    t.fromApp({ type: "composed", req: req3, status: "posted" });
+    t.fromApp({ type: "composed", req: req3, status: "maybe" });
     await flush();
     expect(settled).toBeNull();
-    t.fromApp({ type: "composed", req: req2, status: "posted", id: "c9" });
+    t.fromApp({ type: "composed", req: req3, status: "posted", id: "c9" });
     await flush();
     expect(settled).toEqual({ status: "posted", id: "c9" });
     const busy = t.comments.compose({ key: "a" });
     await flush();
-    t.fromApp({ type: "composed", req: t.sent("compose")[2]?.req, status: "busy" });
+    t.fromApp({ type: "composed", req: t.sent("compose")[3]?.req, status: "busy" });
     expect(await busy).toEqual({ status: "busy" });
+  });
+
+  it("ends the oldest unanswered request closed past 16 at once", async () => {
+    const t = await welcomed();
+    const results: unknown[] = [];
+    for (let i = 0; i < 17; i++) {
+      void t.comments.compose({ key: `k${i}` }).then((r: unknown) => {
+        results[i] = r;
+      });
+      await flush();
+    }
+    expect(results[0]).toEqual({ status: "closed" });
+    expect(results.filter(Boolean).length).toBe(1);
+    t.fromApp({ type: "composed", req: t.sent("compose")[0]?.req, status: "posted", id: "c1" });
+    t.fromApp({ type: "composed", req: t.sent("compose")[16]?.req, status: "posted", id: "c2" });
+    await flush();
+    expect(results[0]).toEqual({ status: "closed" });
+    expect(results[16]).toEqual({ status: "posted", id: "c2" });
+  });
+
+  it("drops answers for requests it never made", async () => {
+    const t = await welcomed();
+    const p = t.comments.compose({ key: "a" });
+    await flush();
+    const req = t.sent("compose")[0]?.req;
+    let settled: unknown = null;
+    p.then((r: unknown) => {
+      settled = r;
+    });
+    t.fromApp({ type: "composed", req: "someone-elses-request-0", status: "posted", id: "x" });
+    t.fromApp({ type: "composed", status: "closed" });
+    await flush();
+    expect(settled).toBeNull();
+    t.fromApp({ type: "composed", req, status: "closed" });
+    await flush();
+    expect(settled).toEqual({ status: "closed" });
   });
 
   it("tells onThreads about page anchors only, as frozen copies, latest first to late subscribers", async () => {
