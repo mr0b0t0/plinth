@@ -3,8 +3,18 @@
 // only this folder and its committed vendor/ copies (scripts/integrations.mjs keeps them in sync).
 //
 // Exit codes: 0 ok, 1 error, 2 usage, 3 conflict (the artifact changed since the version read).
+// With --json, publish prints one JSON object on stdout for every outcome: the result, the
+// `published: "unknown"` object, or `{ ok: false, exit_code, outcome, message, current_version? }`.
 import { readFileSync } from "node:fs";
-import { ApiError, apiClient, CliError, describeApiError, EXIT, guardedFetch } from "./http.mjs";
+import {
+  ApiError,
+  apiClient,
+  CliError,
+  describeApiError,
+  EXIT,
+  guardedFetch,
+  printable,
+} from "./http.mjs";
 import { resolveOrigin } from "./origin.mjs";
 import { isVersionConflict, publish, upload } from "./publish.mjs";
 import { createOAuth } from "./vendor/plinth-oauth.mjs";
@@ -25,6 +35,7 @@ const SPEC = {
     values: [...COMMON, "id", "title", "category", "note", "base-version"],
     flags: ["include-maps", "dry-run", "json"],
     positionals: 1,
+    what: "one build folder or file: plinth publish <dir|file.html|file.md>",
   },
   upload: { values: ["to"], flags: ["include-maps"], positionals: 1 },
 };
@@ -36,11 +47,12 @@ export const clientUsage = (
   ${p} login  [--url O] [--no-browser]     sign in (opens the browser once)
   ${p} logout [--url O]                    revoke and forget the sign-in
   ${p} whoami [--url O]                    who you are signed in as
-  ${p} publish <dir> [--id REF] [--title T] [--category C] [--note N] [--base-version N]
-                 [--include-maps] [--dry-run] [--json] [--url O]
-      Publish a build folder (the one with index.html at its top) as a new artifact, or as the
-      next version of --id. Unchanged files are reused, not sent again. --category files it
-      under a project on your dashboard (reuse a name you already have; owner only on --id).
+  ${p} publish <dir|file.html|file.md> [--id REF] [--title T] [--category C] [--note N]
+                 [--base-version N] [--include-maps] [--dry-run] [--json] [--url O]
+      Publish a build folder (the one with index.html at its top), or one .html or .md file, as
+      a new artifact, or as the next version of --id. Unchanged files are reused, not sent
+      again. --category files it under a project on your dashboard (reuse a name you already
+      have; owner only on --id). A PLINTH_TOKEN limited to one artifact updates that artifact.
   ${p} upload <dir> --to <upload_url>      send a folder with a start_upload ticket; the token
                                              comes from PLINTH_UPLOAD_TOKEN only
 Instance: --url, else --name/--home, else PLINTH_URL, else the single local instance, else hosted.
@@ -102,7 +114,7 @@ export function parseClientArgs(argv) {
   if (!opts.help && positionals.length !== spec.positionals) {
     throw new CliError(
       spec.positionals
-        ? `${command} takes one folder: plinth ${command} <dir>`
+        ? `${command} takes ${spec.what ?? `one folder: plinth ${command} <dir>`}`
         : `${command} takes no arguments`,
       EXIT.usage,
     );
@@ -115,7 +127,7 @@ function oauthFor(ctx) {
     clientName: CLI_CLIENT_NAME,
     scope: CLI_SCOPE,
     filePrefix: "cli-",
-    userAgent: USER_AGENT,
+    userAgent: ctx.userAgent,
     env: ctx.env,
     fetch: guardedFetch(ctx.rawFetch),
     log: ctx.stderr,
@@ -132,14 +144,53 @@ function oauthFor(ctx) {
 
 const urlHint = (ctx) => (ctx.source === "--url" ? ` --url ${ctx.origin}` : "");
 
+/** The User-Agent: plinth-cli/<version>, plus a caller's suffix such as `github-action`. */
+export function userAgentFor(suffix) {
+  if (suffix === undefined) return USER_AGENT;
+  if (!/^[a-z0-9][a-z0-9-]{0,31}$/.test(suffix)) throw new Error("Bad User-Agent suffix");
+  return `${USER_AGENT} ${suffix}`;
+}
+
+/** The --json failure object's `outcome` for an exit code. */
+const FAILURE_OUTCOME = { [EXIT.usage]: "usage", [EXIT.conflict]: "conflict" };
+
 /**
  * Run one client command. `io` holds env, stdout/stderr writers and fetch, so tests can drive it;
- * bin/plinth.mjs passes the real ones. Resolves with the exit code.
+ * bin/plinth.mjs passes the real ones; `io.userAgentSuffix` names a caller (the GitHub Action).
+ * Resolves with the exit code.
  */
 export async function main(argv, io = {}) {
   const env = io.env ?? process.env;
-  const stdout = io.stdout ?? ((s) => process.stdout.write(`${s}\n`));
+  const rawStdout = io.stdout ?? ((s) => process.stdout.write(`${s}\n`));
+  let printed = false;
+  const stdout = (s) => {
+    printed = true;
+    rawStdout(s);
+  };
   const stderr = io.stderr ?? ((s) => process.stderr.write(`${s}\n`));
+  const userAgent = userAgentFor(io.userAgentSuffix);
+  // publish --json answers on stdout whatever happens (parsed from argv, which may be malformed).
+  const jsonFailure = clientCommandOf(argv) === "publish" && argv.includes("--json");
+  const fail = (code, message, details) => {
+    stderr(`plinth: ${message}`);
+    if (jsonFailure && !printed) {
+      const current = details?.current_version;
+      rawStdout(
+        JSON.stringify(
+          {
+            ok: false,
+            exit_code: code,
+            outcome: FAILURE_OUTCOME[code] ?? "error",
+            message: printable(message),
+            ...(Number.isInteger(current) ? { current_version: current } : {}),
+          },
+          null,
+          2,
+        ),
+      );
+    }
+    return code;
+  };
   try {
     const { command, positionals, opts } = parseClientArgs(argv);
     if (opts.help) {
@@ -151,7 +202,7 @@ export async function main(argv, io = {}) {
       stdout,
       stderr,
       rawFetch: io.fetch ?? globalThis.fetch,
-      userAgent: USER_AGENT,
+      userAgent,
     };
     ctx.fetch = ctx.rawFetch;
     if (command === "upload") return await upload(positionals[0], opts, ctx);
@@ -175,7 +226,7 @@ export async function main(argv, io = {}) {
           signedOut,
         };
     ctx.api = () =>
-      apiClient({ origin: resolved.origin, userAgent: USER_AGENT, auth, fetch: ctx.rawFetch });
+      apiClient({ origin: resolved.origin, userAgent: ctx.userAgent, auth, fetch: ctx.rawFetch });
     ctx.requireAuth = async () => {
       if (await auth.token()) return;
       throw signedOut();
@@ -187,7 +238,7 @@ export async function main(argv, io = {}) {
       await oauth.login(resolved.origin, { noBrowser: opts["no-browser"] === true });
       const me = await apiClient({
         origin: resolved.origin,
-        userAgent: USER_AGENT,
+        userAgent: ctx.userAgent,
         auth: { token: () => oauth.accessToken(resolved.origin), refresh: null },
         fetch: ctx.rawFetch,
       }).get("/me");
@@ -205,23 +256,31 @@ export async function main(argv, io = {}) {
     if (command === "whoami") {
       await ctx.requireAuth();
       const me = await ctx.api().get("/me");
+      const c = me.connection;
+      // A token limited to one artifact says which (the slug and title are text from the server).
+      const limit = c?.bound
+        ? c.artifact
+          ? `, limited to ${c.artifact.slug} ("${c.artifact.title}")`
+          : ", limited to an artifact it can no longer open"
+        : "";
       stdout(
-        `${me.email} on ${resolved.origin} (${resolved.envToken ? "PLINTH_TOKEN" : `signed in as ${CLI_CLIENT_NAME}`})`,
+        printable(
+          `${me.email} on ${resolved.origin} (${resolved.envToken ? "PLINTH_TOKEN" : `signed in as ${CLI_CLIENT_NAME}`})${limit}`,
+        ),
       );
       return EXIT.ok;
     }
     if (command === "publish") return await publish(positionals[0], opts, ctx);
     throw new CliError(`Unknown command "${command}"`, EXIT.usage);
   } catch (e) {
-    if (e instanceof CliError) {
-      stderr(`plinth: ${e.message}`);
-      return e.exitCode;
-    }
+    if (e instanceof CliError) return fail(e.exitCode, e.message, e.details);
     if (e instanceof ApiError) {
-      stderr(`plinth: ${describeApiError(e)}`);
-      return isVersionConflict(e) ? EXIT.conflict : EXIT.error;
+      return fail(
+        isVersionConflict(e) ? EXIT.conflict : EXIT.error,
+        describeApiError(e),
+        isVersionConflict(e) ? e.details : undefined,
+      );
     }
-    stderr(`plinth: ${e instanceof Error ? e.message : String(e)}`);
-    return EXIT.error;
+    return fail(EXIT.error, e instanceof Error ? e.message : String(e));
   }
 }

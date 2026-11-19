@@ -1,0 +1,307 @@
+// The GitHub Action's pure parts (docs/ci.md): inputs, the version note, the CLI's argv, outputs,
+// the job summary, and the escaping that keeps text from the server or the artifact (titles,
+// warnings, error messages, file paths) from ever being read as a workflow command or as
+// Markdown. main.mjs does the I/O.
+import { randomBytes } from "node:crypto";
+import { appendFileSync } from "node:fs";
+import { LIMITS } from "../packages/cli/bin/client/vendor/constants.mjs";
+
+/** The longest version note the server takes. */
+export const MAX_NOTE_LENGTH = LIMITS.maxNoteLength;
+
+/** A Plinth personal access token's characters; anything else is refused before it is printed. */
+export const TOKEN_RE = /^[A-Za-z0-9_-]+$/;
+
+/** packages/shared SLUG_RE: an artifact slug as the server makes them (a test keeps them equal). */
+export const SLUG_RE = /^[a-z0-9](?:[a-z0-9-]{0,78}[a-z0-9])?$/;
+
+/** A usage problem with the step's inputs: the step fails with exit code 2. */
+export class InputError extends Error {}
+
+const BOOLEANS = ["link-run", "include-maps", "dry-run", "fail-on-warnings", "summary"];
+const DEFAULTS = {
+  id: "",
+  url: "https://plinth.aconite.io",
+  title: "",
+  category: "",
+  note: "",
+  "link-run": "false",
+  "base-version": "",
+  "include-maps": "false",
+  "dry-run": "false",
+  "fail-on-warnings": "false",
+  summary: "true",
+};
+
+/**
+ * The step's inputs from INPUT_* (GitHub keeps hyphens and upper-cases the name). Booleans take
+ * true or false only; a missing token or path is an InputError naming the input.
+ */
+export function readInputs(env) {
+  const raw = (name) => {
+    const v = env[`INPUT_${name.toUpperCase()}`];
+    return (v === undefined || v === "" ? (DEFAULTS[name] ?? "") : v).trim();
+  };
+  const token = raw("token");
+  if (!token)
+    throw new InputError(
+      "The token input is empty. Pass the PLINTH_TOKEN secret as the token input (and check the secret exists for this workflow).",
+    );
+  if (!TOKEN_RE.test(token))
+    throw new InputError(
+      "The token input is not a Plinth token (it has characters a token never has). Check the secret.",
+    );
+  const path = raw("path");
+  if (!path) throw new InputError("The path input is empty: name the build folder or file.");
+  const out = {
+    token,
+    path,
+    id: raw("id"),
+    url: raw("url"),
+    title: raw("title"),
+    category: raw("category"),
+    note: raw("note"),
+    baseVersion: raw("base-version"),
+  };
+  for (const b of BOOLEANS) {
+    const v = raw(b).toLowerCase();
+    if (v !== "true" && v !== "false")
+      throw new InputError(`The ${b} input must be true or false (it is "${escapeData(raw(b))}")`);
+    out[b.replace(/-(.)/g, (_, c) => c.toUpperCase())] = v === "true";
+  }
+  if (out.baseVersion && !/^[1-9][0-9]*$/.test(out.baseVersion))
+    throw new InputError("The base-version input must be a version number");
+  return out;
+}
+
+/** `s` cut to `max` code points (never inside a surrogate pair). */
+function cut(s, max) {
+  const cps = [...s];
+  return cps.length <= max ? s : cps.slice(0, max).join("");
+}
+
+/**
+ * The commit subject the run is about: the push's head commit, else the pull request's title, else
+ * `gitSubject()` (git log in the checkout), else "<workflow> #<run number>".
+ */
+export function commitSubject(env, readEvent, gitSubject) {
+  const firstLine = (s) => (typeof s === "string" ? s.split(/\r?\n/)[0].trim() : "");
+  let event = null;
+  try {
+    event = readEvent();
+  } catch {
+    event = null;
+  }
+  const fromEvent = firstLine(event?.head_commit?.message) || firstLine(event?.pull_request?.title);
+  if (fromEvent) return fromEvent;
+  let fromGit = "";
+  try {
+    fromGit = firstLine(gitSubject());
+  } catch {
+    fromGit = "";
+  }
+  if (fromGit) return fromGit;
+  const workflow = env.GITHUB_WORKFLOW || "CI";
+  return env.GITHUB_RUN_NUMBER ? `${workflow} #${env.GITHUB_RUN_NUMBER}` : workflow;
+}
+
+/** This run's page on GitHub, or null outside Actions. */
+export function runUrl(env) {
+  const { GITHUB_SERVER_URL: server, GITHUB_REPOSITORY: repo, GITHUB_RUN_ID: run } = env;
+  if (!server || !repo || !run) return null;
+  return `${server}/${repo}/actions/runs/${run}`;
+}
+
+/**
+ * The version note: the input, or "<commit subject> (<short sha>)"; with link-run, this run's URL
+ * after it. Cut to MAX_NOTE_LENGTH, keeping the SHA and the link. "-" sends none (null).
+ */
+export function defaultNote(inputs, env, readEvent, gitSubject) {
+  if (inputs.note === "-") return null;
+  const link = inputs.linkRun ? runUrl(env) : null;
+  const tail = link ? ` ${link}` : "";
+  if (inputs.note) return cut(inputs.note, MAX_NOTE_LENGTH - [...tail].length) + tail;
+  const sha = (env.GITHUB_SHA ?? "").slice(0, 7);
+  const suffix = `${sha ? ` (${sha})` : ""}${tail}`;
+  const subject = commitSubject(env, readEvent, gitSubject);
+  return cut(subject, MAX_NOTE_LENGTH - [...suffix].length) + suffix;
+}
+
+/** The CLI's arguments for this step. `id` is the artifact to update, or "" for a new one. */
+export function buildArgv(inputs, id, note) {
+  const argv = ["publish", inputs.path, "--json"];
+  if (id) {
+    argv.push("--id", id);
+    if (note !== null) argv.push("--note", note);
+    if (inputs.baseVersion) argv.push("--base-version", inputs.baseVersion);
+  } else {
+    if (inputs.title) argv.push("--title", inputs.title);
+    if (inputs.category) argv.push("--category", inputs.category);
+  }
+  if (inputs.includeMaps) argv.push("--include-maps");
+  if (inputs.dryRun) argv.push("--dry-run");
+  return argv;
+}
+
+/** The outcome for a CLI exit code and its --json object. */
+export function outcomeOf(code, json) {
+  if (json?.published === "unknown") return "unknown";
+  if (code === 0) {
+    if (json?.outcome === "nothing_to_publish" || json?.outcome === "already_published")
+      return json.outcome;
+    return json && typeof json.version === "number" ? "published" : "dry_run";
+  }
+  if (code === 3 || json?.outcome === "conflict") return "conflict";
+  return "error";
+}
+
+/**
+ * The step's outputs as [name, value] pairs. URLs are built only from a slug that looks like one
+ * the server makes, so artifact text never becomes part of a link.
+ */
+export function formatOutputs({ code, json, raw, origin }) {
+  const outcome = outcomeOf(code, json);
+  const pairs = [["outcome", outcome]];
+  const ok = code === 0 && json && typeof json.version === "number";
+  if (json && typeof json.id === "string") pairs.push(["id", json.id]);
+  const slug = typeof json?.slug === "string" && SLUG_RE.test(json.slug) ? json.slug : null;
+  if (slug) pairs.push(["slug", slug]);
+  if (ok) {
+    const v = json.version;
+    const page = slug ? `${origin}/a/${slug}` : "";
+    pairs.push(["version", String(v)]);
+    pairs.push(["url", page]);
+    pairs.push(["version-url", slug ? `${page}/v/${v}` : ""]);
+    pairs.push([
+      "compare-url",
+      slug && v > 1 ? `${page}/compare?from=${v - 1}&to=${v}&view=rendered` : "",
+    ]);
+    pairs.push(["verified", json.verified === true ? "true" : "false"]);
+    pairs.push(["warnings", String(Array.isArray(json.warnings) ? json.warnings.length : 0)]);
+  }
+  if (Number.isInteger(json?.current_version))
+    pairs.push(["current-version", String(json.current_version)]);
+  pairs.push(["json", raw ?? ""]);
+  return pairs;
+}
+
+/** A random token for ::stop-commands:: (never derived from input, never printed before use). */
+export function stopToken() {
+  return randomBytes(16).toString("hex");
+}
+
+/** A workflow command's message: one line, with % escaped first. */
+export function escapeData(s) {
+  return String(s).replace(/%/g, "%25").replace(/\r/g, "%0D").replace(/\n/g, "%0A");
+}
+
+/** A workflow command's property value (title=, file=): as escapeData, plus : and ,. */
+export function escapeProperty(s) {
+  return escapeData(s).replace(/:/g, "%3A").replace(/,/g, "%2C");
+}
+
+/**
+ * Text from the server or the artifact for the job summary: one line, with every character that
+ * Markdown or HTML gives a meaning (links, images, tables, code, emphasis, tags, headings) made
+ * literal.
+ */
+export function escapeMarkdown(s) {
+  return String(s)
+    .replace(/[\r\n]+/g, " ")
+    .replace(/[\\`*_{}[\]()<>#+!|~]/g, (c) => `\\${c}`)
+    .replace(/&/g, "&amp;");
+}
+
+/**
+ * Append name/value pairs to a $GITHUB_OUTPUT (or $GITHUB_ENV) file, each value between a fresh
+ * random heredoc delimiter that the value is checked not to contain.
+ */
+export function writeOutputFile(file, pairs) {
+  let text = "";
+  for (const [name, value] of pairs) {
+    if (!/^[a-z][a-z0-9-]*$/.test(name)) throw new Error(`Bad output name ${name}`);
+    const v = String(value);
+    let delim;
+    do delim = `plinth_${randomBytes(16).toString("hex")}`;
+    while (v.includes(delim));
+    text += `${name}<<${delim}\n${v}\n${delim}\n`;
+  }
+  appendFileSync(file, text, "utf8");
+}
+
+/** A size for the summary. */
+function size(n) {
+  if (!Number.isFinite(n)) return "";
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${Math.round(n / 1024)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+/**
+ * The job summary, in Markdown. Every string from the server or the artifact goes through
+ * escapeMarkdown; URLs are only the ones formatOutputs built. No token, email or connection label
+ * (anyone who can read the repository's Actions sees it).
+ */
+export function renderSummary({ code, json, outputs, created, message }) {
+  const out = Object.fromEntries(outputs);
+  const lines = [];
+  const outcome = out.outcome;
+  if (outcome === "published") {
+    const title = typeof json?.title === "string" ? ` of "${escapeMarkdown(json.title)}"` : "";
+    lines.push(`### Plinth: published v${out.version}${title}`, "", "| | |", "| --- | --- |");
+    if (out.url) lines.push(`| Page | ${out.url} |`);
+    if (out["version-url"]) lines.push(`| This version | ${out["version-url"]} |`);
+    if (out["compare-url"])
+      lines.push(`| Compare with v${Number(out.version) - 1} | ${out["compare-url"]} |`);
+    const s = json?.stored;
+    if (s) {
+      lines.push(
+        `| Sent | ${size(s.bytes_written)} written, ${s.reused} files reused; ${json.verified ? "verified" : "not verified"} |`,
+      );
+    }
+    const warnings = Array.isArray(json?.warnings) ? json.warnings : [];
+    if (warnings.length) {
+      const first = warnings
+        .slice(0, 5)
+        .map((w) => escapeMarkdown(`${w.code ?? ""} ${w.file ?? ""}`.trim()))
+        .join("; ");
+      lines.push(`| Warnings | ${warnings.length}: ${first}${warnings.length > 5 ? "; …" : ""} |`);
+    }
+    if (created && out.id) {
+      lines.push(
+        "",
+        `This run created a new private artifact. Add \`id: ${out.id}\` to this step (or use a token limited to it) so later runs update it.`,
+      );
+    }
+  } else if (outcome === "nothing_to_publish" || outcome === "already_published") {
+    lines.push(
+      `### Plinth: nothing to publish`,
+      "",
+      outcome === "already_published"
+        ? `v${escapeMarkdown(json?.version ?? "")} already matches this build (an earlier run published it).`
+        : `v${escapeMarkdown(json?.version ?? "")} already matches this build.`,
+    );
+  } else if (outcome === "dry_run") {
+    lines.push("### Plinth: dry run", "", "Checked the build; nothing was sent.");
+  } else if (outcome === "conflict") {
+    const now = out["current-version"] ? `v${out["current-version"]}` : "a newer version";
+    lines.push(
+      "### Plinth: not published",
+      "",
+      `Someone published ${now} while this run was sending. Re-run the job.`,
+    );
+  } else if (outcome === "unknown") {
+    lines.push(
+      "### Plinth: outcome unknown",
+      "",
+      "The answer was lost after the build was sent. Re-run the job: it does not publish twice.",
+    );
+  } else {
+    lines.push(
+      "### Plinth: not published",
+      "",
+      escapeMarkdown(message ?? `The publish failed (exit ${code}).`),
+    );
+  }
+  return `${lines.join("\n")}\n`;
+}

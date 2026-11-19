@@ -108,6 +108,8 @@ describe("plinth publish", () => {
       "id",
       "slug",
       "stored",
+      // The title, as the read-back returned it (docs/ci.md).
+      "title",
       "url",
       "verified",
       "version",
@@ -1315,4 +1317,150 @@ describe("reporting", () => {
       /Leave out source maps \(drop --include-maps\)/,
     );
   });
+});
+
+describe("plinth publish for CI: one file, bound tokens, --json failures", () => {
+  /** One file in a fresh folder. */
+  function oneFile(name, content) {
+    const dir = mkdtempSync(path.join(work, "file-"));
+    const file = path.join(dir, name);
+    writeFileSync(file, content);
+    return file;
+  }
+  const reset = () => {
+    fake.state.boundArtifact = undefined;
+  };
+
+  it("publishes report.html as index.html and notes.md as a doc", async () => {
+    reset();
+    const html = oneFile("report.html", "<!doctype html><title>Report</title><p>ok</p>");
+    const r = await plinth(["publish", html, "--json"], { extraEnv: asPat() });
+    assert.equal(r.code, 0, r.stderr);
+    const out = JSON.parse(r.stdout);
+    const a = fake.state.artifacts.get(out.id);
+    assert.equal(a.type, "html");
+    assert.deepEqual([...a.versions[0].keys()], ["index.html"]);
+    assert.equal(out.verified, true);
+
+    const md = oneFile("NOTES.MD", "# Notes\n");
+    const d = await plinth(["publish", md, "--json"], { extraEnv: asPat() });
+    assert.equal(d.code, 0, d.stderr);
+    const doc = fake.state.artifacts.get(JSON.parse(d.stdout).id);
+    assert.equal(doc.type, "doc");
+    assert.deepEqual([...doc.versions[0].keys()], ["content.md"]);
+
+    // An update of a page from one file.
+    const next = oneFile("index.htm", "<!doctype html><title>Report</title><p>v2</p>");
+    const u = await plinth(["publish", next, "--id", out.id, "--json"], { extraEnv: asPat() });
+    assert.equal(u.code, 0, u.stderr);
+    assert.equal(JSON.parse(u.stdout).version, 2);
+  });
+
+  it("refuses another extension (exit 2) and a file reached through a link", async () => {
+    reset();
+    const txt = oneFile("x.txt", "hello");
+    const from = fake.state.requests.length;
+    const r = await plinth(["publish", txt], { extraEnv: asPat() });
+    assert.equal(r.code, 2, r.stderr);
+    assert.match(r.stderr, /a build folder, or one \.html or \.md file/);
+    const real = oneFile("real.html", "<!doctype html><p>x</p>");
+    const link = path.join(path.dirname(real), "report.html");
+    symlinkSync(real, link);
+    const l = await plinth(["publish", link], { extraEnv: asPat() });
+    assert.equal(l.code, 2, l.stderr);
+    assert.match(l.stderr, /symbolic link/);
+    assert.equal(since(from).length, 0);
+  });
+
+  it("--json prints a failure object: a conflict (exit 3, current_version) and a usage error", async () => {
+    reset();
+    const a = fake.seed({ "index.html": "<p>one</p>" });
+    fake.bump(a);
+    const dir = build({ "index.html": "<p>mine</p>" });
+    const r = await plinth(["publish", dir, "--id", a.id, "--base-version", "1", "--json"], {
+      extraEnv: asPat(),
+    });
+    assert.equal(r.code, 3, r.stderr);
+    const out = JSON.parse(r.stdout);
+    assert.deepEqual(Object.keys(out).sort(), [
+      "current_version",
+      "exit_code",
+      "message",
+      "ok",
+      "outcome",
+    ]);
+    assert.equal(out.ok, false);
+    assert.equal(out.exit_code, 3);
+    assert.equal(out.outcome, "conflict");
+    assert.equal(out.current_version, 2);
+
+    // The server's own conflict (someone published between the read and the PUT).
+    const b = fake.seed({ "index.html": "<p>one</p>" });
+    fake.state.bumpBeforePut = () => fake.bump(b);
+    const s = await plinth(["publish", dir, "--id", b.id, "--json"], { extraEnv: asPat() });
+    assert.equal(s.code, 3, s.stderr);
+    assert.deepEqual(JSON.parse(s.stdout), {
+      ok: false,
+      exit_code: 3,
+      outcome: "conflict",
+      message: JSON.parse(s.stdout).message,
+      current_version: 2,
+    });
+
+    const u = await plinth(["publish", "--json"], { extraEnv: asPat() });
+    assert.equal(u.code, 2);
+    assert.deepEqual(
+      (({ ok, exit_code, outcome }) => ({ ok, exit_code, outcome }))(JSON.parse(u.stdout)),
+      { ok: false, exit_code: 2, outcome: "usage" },
+    );
+    // Without --json, stdout stays empty on failure, as before.
+    const quiet = await plinth(["publish", txtLike()], { extraEnv: asPat() });
+    assert.equal(quiet.code, 2);
+    assert.equal(quiet.stdout, "");
+  });
+
+  it("a token limited to one artifact publishes that artifact's next version without --id", async () => {
+    const a = fake.seed({ "index.html": "<p>one</p>" }, "html", "Coverage");
+    fake.state.boundArtifact = { id: a.id, slug: a.slug, title: "Coverage" };
+    try {
+      const dir = build({ "index.html": "<p>two</p>" });
+      const r = await plinth(["publish", dir, "--json", "--title", "Ignored", "--note", "n"], {
+        extraEnv: asPat(),
+      });
+      assert.equal(r.code, 0, r.stderr);
+      const out = JSON.parse(r.stdout);
+      assert.equal(out.id, a.id);
+      assert.equal(out.version, 2);
+      assert.equal(out.title, "Coverage");
+      assert.match(r.stderr, new RegExp(`PLINTH_TOKEN is limited to ${a.slug}`));
+      assert.match(r.stderr, /--title is ignored/);
+      assert.equal(fake.state.lastPut.note, "n");
+
+      const who = await plinth(["whoami"], { extraEnv: asPat() });
+      assert.equal(who.code, 0, who.stderr);
+      assert.match(who.stdout, new RegExp(`limited to ${a.slug} \\("Coverage"\\)`));
+
+      fake.state.boundArtifact = null;
+      const gone = await plinth(["publish", dir], { extraEnv: asPat() });
+      assert.equal(gone.code, 1);
+      assert.match(gone.stderr, /deleted or is no longer shared with you/);
+      const whoGone = await plinth(["whoami"], { extraEnv: asPat() });
+      assert.match(whoGone.stdout, /limited to an artifact it can no longer open/);
+    } finally {
+      reset();
+    }
+  });
+
+  it("an older server (no connection on /me) publishes a new artifact as before", async () => {
+    reset();
+    const dir = build(site(1));
+    const r = await plinth(["publish", dir, "--json"], { extraEnv: asPat() });
+    assert.equal(r.code, 0, r.stderr);
+    assert.equal(JSON.parse(r.stdout).version, 1);
+  });
+
+  /** A path that does not exist, for a usage error without --json. */
+  function txtLike() {
+    return path.join(work, "no-such-file.txt");
+  }
 });

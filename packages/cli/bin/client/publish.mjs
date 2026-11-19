@@ -1,4 +1,9 @@
-// `plinth publish <dir>` and `plinth upload <dir> --to <upload_url>`.
+// `plinth publish <dir|file.html|file.md>` and `plinth upload <dir> --to <upload_url>`.
+
+//
+// One .html (or .htm) file is published as index.html, one .md file as a doc's content.md; anything
+// else is a build folder. With PLINTH_TOKEN limited to one artifact (docs/ci.md) and no --id, the
+// token's artifact is the one updated.
 //
 // publish, new artifact: POST /uploads, then one gzipped tar to the upload_url it returns.
 // publish --id: GET the artifact for its version and file hashes; when the changed bytes are small,
@@ -10,7 +15,7 @@
 // A lost answer (the connection dropped, a proxy timeout) is never resent blindly: once the whole
 // body was sent the request may have committed, so the command asks first (the upload's status, or
 // the artifact for an inline update) and reports what it finds.
-import { readFileSync, statSync } from "node:fs";
+import { lstatSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import {
   badPaths,
@@ -88,6 +93,84 @@ export function checkCategory(raw) {
           : null;
   if (why) throw new CliError(`--category ${why} (a short project or repo name)`, EXIT.usage);
   return name;
+}
+
+/** The name a single published file takes, by extension; null for one that cannot be published. */
+export function singleFileName(p) {
+  const ext = path.extname(p).toLowerCase();
+  if (ext === ".html" || ext === ".htm") return SOURCE_FILES.html;
+  if (ext === ".md") return SOURCE_FILES.doc;
+  return null;
+}
+
+/**
+ * What `plinth publish` was given: `{ kind: "dir", abs }`, or `{ kind: "file", abs, as }` for one
+ * .html, .htm or .md file (sent as index.html or content.md). A link to a file is refused, as in
+ * a folder; anything else is a usage error.
+ */
+export function checkSource(p) {
+  if (!p)
+    throw new CliError(
+      "Name the build folder or file: plinth publish <dir|file.html|file.md>",
+      EXIT.usage,
+    );
+  const abs = path.resolve(p);
+  let st;
+  try {
+    st = lstatSync(abs);
+  } catch {
+    throw new CliError(`No such folder or file: ${p}`, EXIT.usage);
+  }
+  if (st.isSymbolicLink()) {
+    // A folder given through a link is followed, as before; a file through a link never is.
+    let target;
+    try {
+      target = statSync(abs);
+    } catch {
+      throw new CliError(`No such folder or file: ${p}`, EXIT.usage);
+    }
+    if (target.isDirectory()) return { kind: "dir", abs };
+    throw new CliError(
+      `${p} is a symbolic link; plinth never follows links. Publish the file itself.`,
+      EXIT.usage,
+    );
+  }
+  if (st.isDirectory()) return { kind: "dir", abs };
+  const as = st.isFile() ? singleFileName(abs) : null;
+  if (!as)
+    throw new CliError(`${p}: publish takes a build folder, or one .html or .md file`, EXIT.usage);
+  return { kind: "file", abs, as, size: st.size };
+}
+
+/** The files to send for a source from checkSource: the folder's, or the one file under its name. */
+function collectSource(source, opts) {
+  if (source.kind === "dir") return collect(source.abs, opts);
+  return { files: [{ path: source.as, abs: source.abs, size: source.size }], skipped: [] };
+}
+
+/**
+ * The artifact PLINTH_TOKEN is limited to (GET /me: `connection.bound`), as `{ id, slug, title }`,
+ * or null for a token without that limit (and for a server older than the limit). A bound token
+ * whose artifact the person can no longer open is an error.
+ */
+export async function boundArtifact(api) {
+  let me;
+  try {
+    me = await api.get("/me");
+  } catch (e) {
+    throw apiFailure(e);
+  }
+  return bindingOf(me);
+}
+
+/** The binding a GET /me answer describes (see boundArtifact). */
+export function bindingOf(me) {
+  const c = me?.connection;
+  if (c?.bound !== true) return null;
+  const a = c.artifact;
+  if (!a || typeof a.id !== "string")
+    throw new CliError("This token's artifact was deleted or is no longer shared with you.");
+  return { id: a.id, slug: String(a.slug ?? a.id), title: String(a.title ?? "") };
 }
 
 function checkDir(dir) {
@@ -352,7 +435,7 @@ async function afterLostPut(lost, { api, ref, detail, base, files, ctx }) {
       recovered: true,
     };
   }
-  if (mine.failed) throw new CliError(staleBase(ref, base)(now.version), EXIT.conflict);
+  if (mine.failed) throw conflictError(staleBase(ref, base)(now.version), now.version);
   throw unknownError(
     `${lost.message}\n${ref} is now v${now.version}, but it could not be compared with the folder (${mine.note}). ${rerunWithBase(base)}`,
     { id: detail.id, base },
@@ -373,10 +456,17 @@ export function isVersionConflict(e) {
   return !reason || reason === "conflict";
 }
 
+/** A CliError for a version conflict (exit 3); `current_version` goes into --json's failure object. */
+function conflictError(message, current) {
+  const err = new CliError(message, EXIT.conflict);
+  if (Number.isInteger(current)) err.details = { current_version: current };
+  return err;
+}
+
 /** A conflict as the CLI reports it (exit 3), or null when `e` is not one. */
 function conflict(e, message) {
   if (!isVersionConflict(e)) return null;
-  return new CliError(message(e.details?.current_version), EXIT.conflict);
+  return conflictError(message(e.details?.current_version), e.details?.current_version);
 }
 
 const staleBase = (ref, base) => (now) =>
@@ -435,13 +525,15 @@ async function verify(api, result, files) {
     for (const p of extra.slice(0, 20)) lines.push(printable(`  not in the folder: ${p}`));
     return { verified: false, failed: true, note: lines.join("\n") };
   }
+  const title = typeof d.title === "string" ? { title: d.title } : {};
   if (unknown.length) {
     return {
       verified: false,
       note: `Could not verify ${unknown.length} files stored without a hash`,
+      ...title,
     };
   }
-  return { verified: true, note: `Verified ${files.length} files.` };
+  return { verified: true, note: `Verified ${files.length} files.`, ...title };
 }
 
 function report(result, check, opts, out) {
@@ -458,6 +550,8 @@ function report(result, check, opts, out) {
           stored,
           warnings: warnings ?? [],
           verified: check.verified,
+          // The artifact's title as the read-back returned it: text its editors wrote.
+          ...(typeof check.title === "string" ? { title: check.title } : {}),
           ...(typeof category === "string" ? { category } : {}),
           ...(recovered ? { recovered: true } : {}),
         },
@@ -523,26 +617,48 @@ const RETRY_UPLOAD = {
   ended: "Call start_upload again for a new upload.",
 };
 
-/** plinth publish <dir> */
-export async function publish(dir, opts, ctx) {
-  const folder = checkDir(dir);
+/** plinth publish <dir|file.html|file.md> */
+export async function publish(dir, givenOpts, ctx) {
+  const source = checkSource(dir);
+  // The checks that need no request come first: a bad --category or --base-version sends nothing.
+  if (givenOpts.id !== undefined && givenOpts.title !== undefined)
+    throw new CliError("--title applies to a new artifact only", EXIT.usage);
+  if (givenOpts.category !== undefined) checkCategory(givenOpts.category);
+  let base;
+  if (givenOpts["base-version"] !== undefined) {
+    base = Number(givenOpts["base-version"]);
+    if (!Number.isInteger(base) || base < 1)
+      throw new CliError("--base-version must be a version number", EXIT.usage);
+  }
+  let opts = givenOpts;
+  // A PLINTH_TOKEN limited to one artifact publishes that artifact's next version (docs/ci.md).
+  if (opts.id === undefined && ctx.envToken) {
+    const bound = await boundArtifact(ctx.api());
+    if (bound) {
+      ctx.stderr(
+        printable(`PLINTH_TOKEN is limited to ${bound.slug}: publishing its next version.`),
+      );
+      if (opts.title !== undefined)
+        ctx.stderr("--title is ignored: it names a new artifact, and this token updates one.");
+      if (opts.category !== undefined)
+        ctx.stderr(
+          "--category is ignored: set the category on the artifact's Settings page; this token cannot.",
+        );
+      const { title: _t, category: _c, ...rest } = opts;
+      opts = { ...rest, id: bound.id };
+    }
+  }
   if (opts.id === undefined) {
     if (opts.note !== undefined)
       throw new CliError("--note applies to an update (--id)", EXIT.usage);
     if (opts["base-version"] !== undefined)
       throw new CliError("--base-version applies to an update (--id)", EXIT.usage);
-  } else if (opts.title !== undefined) {
-    throw new CliError("--title applies to a new artifact only", EXIT.usage);
   }
   const category = opts.category !== undefined ? { category: checkCategory(opts.category) } : {};
-  let base;
-  if (opts["base-version"] !== undefined) {
-    base = Number(opts["base-version"]);
-    if (!Number.isInteger(base) || base < 1)
-      throw new CliError("--base-version must be a version number", EXIT.usage);
-  }
 
-  const { files, skipped } = collect(folder, { includeMaps: opts["include-maps"] === true });
+  const { files, skipped } = collectSource(source, {
+    includeMaps: opts["include-maps"] === true,
+  });
   if (skipped.length)
     ctx.stderr(
       `Left out ${skipped.length} dotfiles and source maps (${skipped.slice(0, 5).join(", ")}${skipped.length > 5 ? ", ..." : ""}).`,
@@ -610,7 +726,9 @@ export async function publish(dir, opts, ctx) {
     const sourcePath = detail.source_path ?? SOURCE_FILES[type] ?? "index.html";
     if (!files.some((f) => f.path === sourcePath)) {
       throw new CliError(
-        `${ref} is a ${type === "doc" ? "document" : "page"}; the folder needs ${sourcePath} at its top`,
+        source.kind === "file"
+          ? `${ref} is a ${type === "doc" ? "document" : "page"}; publish a ${type === "doc" ? ".md" : ".html"} file (or a folder with ${sourcePath} at its top)`
+          : `${ref} is a ${type === "doc" ? "document" : "page"}; the folder needs ${sourcePath} at its top`,
       );
     }
     const stated = base !== undefined;
@@ -625,7 +743,7 @@ export async function publish(dir, opts, ctx) {
       // N with other files publishes as usual.
       const current = detail.version;
       if (current !== base && current !== base + 1) {
-        throw new CliError(staleBase(ref, base)(current), EXIT.conflict);
+        throw conflictError(staleBase(ref, base)(current), current);
       }
       const same = await verify(api, detail, files);
       if (same.verified) {
@@ -659,7 +777,7 @@ export async function publish(dir, opts, ctx) {
         } else ctx.stdout(url);
         return EXIT.ok;
       }
-      if (current !== base) throw new CliError(staleBase(ref, base)(current), EXIT.conflict);
+      if (current !== base) throw conflictError(staleBase(ref, base)(current), current);
     }
     const current = new Map((detail.assets ?? []).map((a) => [a.path, a.sha256]));
     const source = files.find((f) => f.path === sourcePath);

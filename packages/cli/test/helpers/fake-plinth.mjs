@@ -4,7 +4,9 @@
 // the tests' own reader. It records every request (method, path, User-Agent, Authorization) so the
 // tests can check what the client sent and where. A category given to POST /uploads or PUT is
 // echoed in the result, as the real server echoes the name it stored, and kept on the artifact,
-// which GET /artifacts/:ref returns.
+// which GET /artifacts/:ref returns. `state.boundArtifact` makes GET /me say the token is limited
+// to one artifact ({id, slug, title}, or null for one it can no longer open); `state.putError`
+// answers the next PUT with that error; `state.warnings` replaces the warnings of every publish.
 import { createHash, randomBytes } from "node:crypto";
 import { createServer } from "node:http";
 import { readTar } from "./tar-reader.mjs";
@@ -49,6 +51,11 @@ export async function startFakePlinth(options = {}) {
     // The caller is not the owner: an update (PUT or POST /uploads with an id) that carries a
     // category is refused 403 owner_only, as the real server does, before anything is written.
     notOwner: false,
+    // GET /me's connection: undefined (an older server), or a token limited to this artifact.
+    boundArtifact: undefined,
+    // The next PUT /artifacts/:ref answers { status, code, message, details } instead.
+    putError: null,
+    warnings: null,
     limits: {
       max_html_bytes: 5 * 1024 * 1024,
       max_doc_bytes: 1024 * 1024,
@@ -114,7 +121,7 @@ export async function startFakePlinth(options = {}) {
       id: a.id,
       slug: a.slug,
       type: a.type,
-      title: "t",
+      title: a.title ?? "t",
       version: n,
       source_path: sourcePath,
       category: a.category ?? null,
@@ -151,7 +158,7 @@ export async function startFakePlinth(options = {}) {
       url: `${origin}/a/${a.slug}`,
       content_url: `${origin.replace("127.0.0.1", `${a.id}.localhost`)}/`,
       visibility: "allowlist",
-      warnings: options.warnings ?? [],
+      warnings: state.warnings ?? options.warnings ?? [],
       stored: {
         files: files.size,
         written,
@@ -382,7 +389,16 @@ export async function startFakePlinth(options = {}) {
       // Everything below needs a bearer.
       const who = principal(req);
       if (!who) return apiError(res, 401, "unauthorized", "Invalid, expired or revoked token");
-      if (p === "/api/v1/me") return send(res, 200, { id: "u1", email: who.email });
+      if (p === "/api/v1/me") {
+        const b = state.boundArtifact;
+        return send(res, 200, {
+          id: "u1",
+          email: who.email,
+          ...(b === undefined
+            ? {}
+            : { connection: { id: "c1", label: "CI", bound: true, artifact: b ?? null } }),
+        });
+      }
       if (p === "/api/v1/uploads" && req.method === "POST") {
         const input = JSON.parse((await body(req)).toString() || "{}");
         const id = rid(20);
@@ -448,6 +464,11 @@ export async function startFakePlinth(options = {}) {
         if (req.method === "PUT") {
           const input = JSON.parse((await body(req)).toString());
           state.lastPut = input;
+          if (state.putError) {
+            const e = state.putError;
+            state.putError = null;
+            return apiError(res, e.status, e.code, e.message, e.details);
+          }
           if (input.category !== undefined && state.notOwner) return ownerOnly(res);
           if (state.bumpBeforePut) {
             const bump = state.bumpBeforePut;
@@ -512,8 +533,8 @@ export async function startFakePlinth(options = {}) {
     origin,
     state,
     /** Seed an artifact with one version of `files` ({path: string|Buffer}). */
-    seed(files, type = "html") {
-      const a = { id: rid(20), slug: `seeded-${rid(6)}`, type, versions: [] };
+    seed(files, type = "html", title = undefined) {
+      const a = { id: rid(20), slug: `seeded-${rid(6)}`, type, title, versions: [] };
       state.artifacts.set(a.id, a);
       commit(a, new Map(Object.entries(files).map(([k, v]) => [k, Buffer.from(v)])));
       return a;

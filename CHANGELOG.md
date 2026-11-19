@@ -10,9 +10,13 @@ Add a line under **Unreleased** in the pull request that makes a change people w
 
 ## Unreleased
 
-- **Tokens limited to one artifact.** A personal access token can be limited to one artifact you
-  own or edit: it reads that artifact and publishes new versions of it, nothing else, and deleting
-  the artifact revokes it. `GET /api/v1/me` says which artifact a token is limited to (#51).
+- **Publish from CI.** A GitHub Action, `mr0b0t0/plinth/publish@v0.6.0`, publishes a build folder
+  or one HTML or Markdown file as the next version of an artifact on every run, with the commit in
+  the version note and the links in the job summary. A token can now be limited to one artifact
+  (the artifact's Settings, **Publish from CI**): it reads that artifact and publishes new versions
+  of it, nothing else, and deleting the artifact revokes it. `plinth publish` takes a single
+  `.html` or `.md` file, uses a token's artifact when `--id` is left out, and with `--json` prints
+  a JSON object on failure too. GitLab CI and cron: `docs/ci.md` (#51).
 - **The Claude Code plugin remembers your instance.** It asks which Plinth instance to use when you
   enable it (the hosted one by default), keeps the answer, and its mention watcher follows it, so a
   self-hosted or local instance no longer needs `PLINTH_URL` exported every time Claude Code starts.

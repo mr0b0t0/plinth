@@ -637,6 +637,47 @@ late joiner reads it. Plinth's own on-page doc editing is the room's first use.
   the path fallback) `room.ready` resolves `{ available: false, reason: "opaque_isolation" }`
   without a request. A page should work alone when the room is unavailable.
 
+### Publishing from CI (decided 2026-11-19)
+
+Issue #51. A pipeline (a coverage report, a benchmark page, docs previews, a nightly report)
+publishes each run as the next version of one artifact, so the link stays the same and history
+keeps every run. Guide: `docs/ci.md`.
+
+- **The GitHub Action** lives in this repository at `publish/` and is used as
+  `mr0b0t0/plinth/publish@v<release>`. It is versioned by the release tags (`v<CLI version>`,
+  immutable); there is no moving major tag, and `pnpm release` moves the pins in the docs and the
+  app. It is a JavaScript action (`node24`) that imports the CLI client from the same commit
+  (`packages/cli/bin/client`, no dependencies and no build), so a tag or SHA pin pins everything and
+  nothing is fetched from a registry at run time. Linux and macOS runners.
+- **Inputs**: `token` (a secret), `path` (a build folder, or one `.html`/`.md` file), `id`, `url`
+  (the instance, hosted by default), `title` and `category` (a new artifact only), `note`,
+  `link-run`, `base-version`, `include-maps`, `dry-run`, `fail-on-warnings`, `summary`. **Outputs**:
+  `id`, `slug`, `version`, `url`, `version-url`, `compare-url`, `outcome` (`published`,
+  `nothing_to_publish`, `already_published`, `dry_run`, `conflict`, `unknown` or `error`),
+  `current-version` (on a conflict), `verified`, `warnings` and `json` (the CLI's `--json`). The
+  step's exit code is the CLI's (3 on a conflict, never retried); `fail-on-warnings` turns a
+  published run with warnings into 1.
+- **Which artifact.** `id`, else the artifact the token is limited to, else a new private
+  artifact (the summary then says to add `id:`). A token limited to one artifact with an `id` that
+  names another artifact fails with exit 2 before anything is sent.
+- **Version note.** By default `<commit subject> (<short sha>)` (the push's head commit, else the
+  pull request title, else the checkout's last commit, else `<workflow> #<run number>`), at most
+  500 characters, keeping the SHA. `note: "-"` sends none. `link-run: true` appends the run's URL;
+  it is off by default because the note, like the token's label, is shown to everyone who can
+  view the artifact's history.
+- **Untrusted text.** Everything the client prints runs between `::stop-commands::<random>` and
+  `::<random>::`, so no server message, warning, title or path is read as a workflow command;
+  annotations escape their text, the job summary escapes Markdown and HTML, and outputs are written
+  with random heredoc delimiters. Outputs (above all `json`, which carries the title) are untrusted
+  for the workflow too: `docs/ci.md` passes them to scripts through `env:`. The token is masked and
+  reaches the client only in its environment, never in argv, outputs or the summary.
+- **Tokens limited to one artifact** ([Auth and permissions](#auth-and-permissions)) are the
+  recommended credential: the artifact's Settings page has **Publish from CI**, which makes one and
+  shows the workflow step with the id filled in. The Connections page can make one too ("Limit to
+  one artifact"), and lists a bound token as "Only <title>".
+- **Other CI and cron** use the CLI with an exact version (`npx @mr0b0t0/plinth@<version>
+  publish`), with `PLINTH_TOKEN` (and `PLINTH_URL`) from the environment.
+
 ### Big builds and reuse by hash
 
 Decided 2026-11-15. Agents publish built sites (a Vite or similar `dist/` folder with hundreds of
@@ -798,10 +839,16 @@ files) and big pages without merging chunks, and an update stores only what chan
   `private, no-cache`. Nothing is `public` or cached at the edge. Opaque isolation keeps the old
   caching.
 - **Publish CLI.** The npm package `@mr0b0t0/plinth` gains client commands that need neither a
-  checkout nor wrangler: `plinth login|logout|whoami [--url O]`, `plinth publish <dir> [--id REF]
+  checkout nor wrangler: `plinth login|logout|whoami [--url O]`, `plinth publish <dir|file.html|file.md> [--id REF]
   [--title T] [--category C] [--note N] [--base-version N] [--include-maps] [--dry-run] [--json]`
   and `plinth
-  upload <dir> --to <upload_url>` (token from `PLINTH_UPLOAD_TOKEN` only). Exit codes: 0 ok, 1
+  upload <dir> --to <upload_url>` (token from `PLINTH_UPLOAD_TOKEN` only). One `.html` or `.htm`
+  file is published as `index.html`, one `.md` file as a doc's `content.md` (a link to a file is
+  refused). Without `--id`, a `PLINTH_TOKEN` limited to one artifact (`GET /me`) publishes that
+  artifact's next version (`--title` and `--category` are then ignored, with a note), and
+  `whoami` names the artifact. With `--json`, every failure also prints one object on stdout:
+  `{ ok: false, exit_code, outcome: "conflict" | "usage" | "error", message, current_version? }`;
+  the result object carries the artifact's `title` from the read-back. Exit codes: 0 ok, 1
   error, 2 usage, 3 conflict (never retried). With `--id` and `--base-version N`, `publish` exits 0
   without sending in exactly two cases and prints which: the current version is N+1 and its files
   equal the folder (already published, by an earlier run whose answer was lost), or it is N and its
@@ -848,6 +895,10 @@ options.
   Only identified viewers write, stamps come from the server, quotas and write rate limits apply,
   and agents treat every document as untrusted input. Details in `docs/security.md`.
 - **Tokens.** Stored hashed, shown once, revocable per connection, with last-used timestamps.
+- **Tokens for CI can be limited to one artifact.** The limit is checked inside the policy's
+  `decide` before the scope, so a leaked CI secret can read and update one artifact and nothing
+  else; the GitHub Action keeps server and artifact text from being read as workflow commands
+  ([Publishing from CI](#publishing-from-ci-decided-2026-11-19)).
 - **Open counts are aggregates.** One number per artifact per UTC day, never who opened it, shown
   only to the artifact's owner and, summed over the instance, to admins.
 - **Quotas and rate limits.** Each account is limited to 100 artifacts by default, set by an
