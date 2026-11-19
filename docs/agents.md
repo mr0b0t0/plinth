@@ -575,9 +575,11 @@ The skill's "Project files for a page" section has the recipe.
 
 ## Pages for people outside the team
 
-A client or an approver can take part in a page without a Plinth account: the owner shares it with
+A client or an approver can take part in a page without signing up first: the owner shares it with
 their email (`set_visibility` with `visibility: "allowlist"` and `emails`, which replaces the list),
-and they confirm the address with an emailed code. The viewer role is enough to write a page's
+and they confirm the address with an emailed code, which signs them in to Plinth with it (their
+account is created then; on a single-user instance they get a viewer session instead, with no
+account). The viewer role is enough to write a page's
 shared data. [`docs/examples/`](examples/README.md) holds three finished pages built for them:
 
 - [`approval-signoff.html`](examples/approval-signoff.html): named people approve a proposal, quote,
