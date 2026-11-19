@@ -1969,8 +1969,11 @@ its page without a new version each time, and agents add and move blocks with
   change is a new version under the person's name, which owners and editors can restore from
   History. When a newer version was published meanwhile, the save is refused (409, `conflict`):
   the dialog then shows that version's settings and says so ("v5 changed the board settings. Here
-  they are now."), and nothing is saved until the person saves again. The board's page links to no
-  source editor.
+  they are now."), and nothing is saved until the person saves again. Only a 409 whose
+  `current_version` is above the version the dialog read counts as that conflict; any other
+  refusal, a 409 that names no newer version included ("Another version is being written; try again
+  shortly"), shows the server's message and keeps the person's choice for another try. The board's
+  page links to no source editor.
 - **The editor.** The source editor, reached from the dashboard's Edit, still opens `board.json`
   (JSON, with the same checks as the Worker and a preview). The editor preview draws only the
   draft's own starting blocks under a banner and makes no shared-data or room call (the payload's

@@ -1,8 +1,9 @@
 // Board settings for a whiteboard (docs/spec.md "Whiteboards"): the background and who may change
 // the board from its page, as two groups of radio buttons. It reads the current version, and Save
 // publishes the settings as the next version with that version as `base_version`. When someone
-// published a newer version meanwhile, the save is refused (409): the dialog then shows that
-// version's settings, says so, and saves nothing until the person saves again. Owners and editors
+// published a newer version meanwhile, the save is refused (409 naming that version): the dialog
+// then shows that version's settings, says so, and saves nothing until the person saves again. Any
+// other refusal shows the server's message and keeps the choice. Owners and editors
 // open it from the board's ⋯ menu; the API checks the role again on every call.
 import {
   API,
@@ -23,6 +24,7 @@ import {
   BACKGROUND_CHOICES,
   conflictNotice,
   EDIT_CHOICES,
+  newerVersion,
   settingsBody,
   settingsChanged,
 } from "./boardSettings.ts";
@@ -108,11 +110,17 @@ export function BoardSettingsDialog({ artifactId, onClose, onSaved }: BoardSetti
       onSaved(result.version);
     } catch (err) {
       if (!alive.current) return;
-      if (err instanceof ApiRequestError && err.status === 409) {
+      if (
+        err instanceof ApiRequestError &&
+        err.status === 409 &&
+        newerVersion(err.details, loaded.version) !== null
+      ) {
         // A newer version exists: show its settings and save nothing until the person confirms.
         const now = await load();
         if (now) setNotice(conflictNotice(now.version));
       } else {
+        // Any other refusal, a 409 that names no newer version included ("Another version is
+        // being written"): say why and keep the person's choice for another try.
         setError(message(err, "Could not save. Try again."));
       }
     } finally {

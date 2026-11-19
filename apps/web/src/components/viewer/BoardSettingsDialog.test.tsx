@@ -7,7 +7,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { clearToasts, Toaster } from "../ui/index.ts";
 import { BoardSettingsDialog } from "./BoardSettingsDialog.tsx";
-import { conflictNotice, settingsBody, settingsNote } from "./boardSettings.ts";
+import { conflictNotice, newerVersion, settingsBody, settingsNote } from "./boardSettings.ts";
 import { apiError, type Call, json, stubApi } from "./test-utils.ts";
 
 const detail = (version: number, content: string) => ({
@@ -70,6 +70,14 @@ describe("board settings helpers", () => {
     );
     expect(settingsNote(after, after)).toBe("Board settings");
     expect(conflictNotice(5)).toBe("v5 changed the board settings. Here they are now.");
+  });
+
+  it("counts a 409 as a version conflict only when it names a newer version", () => {
+    expect(newerVersion({ current_version: 5 }, 3)).toBe(5);
+    expect(newerVersion({ current_version: 3 }, 3)).toBeNull();
+    expect(newerVersion({ current_version: "5" }, 3)).toBeNull();
+    expect(newerVersion({ reason: "attempt_expired" }, 3)).toBeNull();
+    expect(newerVersion(undefined, 3)).toBeNull();
   });
 });
 
@@ -153,6 +161,46 @@ describe("BoardSettingsDialog", () => {
     await user.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() => expect(onSaved).toHaveBeenCalledWith(6));
     expect(puts(calls)[1]?.body).toMatchObject({ base_version: 5 });
+  });
+
+  it("treats a 409 that names no newer version as a failed save, not a conflict", async () => {
+    const user = userEvent.setup();
+    let reads = 0;
+    const { calls, onSaved } = setup((c) => {
+      if (c.method === "GET" && c.path === "/artifacts/wb1") {
+        reads += 1;
+        return json(detail(2, DOTS_COMMENTERS));
+      }
+      if (c.method === "PUT") {
+        // The stager's busy refusals: a conflict code, but no current_version.
+        return json(
+          {
+            error: {
+              code: "conflict",
+              message: "Another version is being written; try again shortly",
+              details: { reason: "busy" },
+            },
+          },
+          409,
+        );
+      }
+      return undefined;
+    });
+    await user.click(await screen.findByRole("radio", { name: /^Grid/ }));
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    await screen.findByText("Another version is being written; try again shortly");
+    expect(screen.queryByText(/changed the board settings/)).toBeNull();
+    // The choice stays, and Save stays on so the person can try again against the same version.
+    expect((screen.getByRole("radio", { name: /^Grid/ }) as HTMLInputElement).checked).toBe(true);
+    const save = screen.getByRole("button", { name: "Save" }) as HTMLButtonElement;
+    await waitFor(() => expect(save.disabled).toBe(false));
+    expect(reads).toBe(1);
+    expect(onSaved).not.toHaveBeenCalled();
+
+    await user.click(save);
+    await waitFor(() => expect(puts(calls)).toHaveLength(2));
+    expect(puts(calls)[1]?.body).toMatchObject({ base_version: 2 });
   });
 
   it("says why a save failed and keeps the choice", async () => {

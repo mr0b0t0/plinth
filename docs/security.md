@@ -844,9 +844,11 @@ Whiteboards](spec.md#whiteboards-decided-2026-11-19)).
   answer the dialog. Save is the ordinary `PUT /api/v1/artifacts/:ref` (CSRF header, the policy's
   `edit` decision, the stager's `parseBoardContent` checks) with board.json that the app builds from
   two enum values (`boardSettingsText`), never from typed text, and the version the dialog read as
-  `base_version`. A save against a stale version is refused with 409; the dialog then shows the
-  newer version's settings and saves nothing until the person saves again, so no version is
-  silently overwritten. The settings carry no starting blocks, so a save never writes shared data.
+  `base_version`. A save against a stale version is refused with 409 naming the current version;
+  the dialog then shows the newer version's settings and saves nothing until the person saves
+  again, so no version is silently overwritten. A 409 that names no newer version (another version
+  being written) shows its message and keeps the choice; trying again still sends the same
+  `base_version`, so it cannot overwrite either. The settings carry no starting blocks, so a save never writes shared data.
 - **The runtime cannot be replaced by the page.** The shell has only fixed ids, the runtime defines
   `window.plinth` as a non-writable, non-configurable property before the renderer runs, and the
   renderer reads it once before it builds any DOM. It never sets an `id` or a `name` from data.

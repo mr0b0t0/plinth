@@ -76,3 +76,17 @@ export function settingsBody(
 export function conflictNotice(version: number): string {
   return `v${version} changed the board settings. Here they are now.`;
 }
+
+/**
+ * The newer version a refused save names, or null when the refusal is not about a newer version.
+ * Only a 409 whose details carry a `current_version` above the version the dialog read is a version
+ * conflict; the stager's other 409s (another version being written, an attempt that expired, too
+ * many concurrent updates) name none, and the dialog shows their message instead.
+ */
+export function newerVersion(details: unknown, read: number): number | null {
+  if (typeof details !== "object" || details === null) return null;
+  const current = (details as { current_version?: unknown }).current_version;
+  return typeof current === "number" && Number.isInteger(current) && current > read
+    ? current
+    : null;
+}
