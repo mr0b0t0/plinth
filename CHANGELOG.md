@@ -20,6 +20,9 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   build has a fixed `https://plinth.aconite.io/mcp` server and no option. With that build, add a
   self-hosted instance as its own server, or install the full plugin from this repository's
   marketplace, which keeps the option. Plugin 0.16.0.
+- **OpenAI domain verification.** Set `OPENAI_APPS_CHALLENGE` to the token OpenAI's plugin portal
+  shows, and the instance serves it at `/.well-known/openai-apps-challenge`. Unset, the path stays
+  404.
 - **The Claude Code plugin remembers your instance.** It asks which Plinth instance to use when you
   enable it (the hosted one by default), keeps the answer, and its mention watcher follows it, so a
   self-hosted or local instance no longer needs `PLINTH_URL` exported every time Claude Code starts.

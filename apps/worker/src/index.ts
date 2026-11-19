@@ -15,7 +15,7 @@ import {
   serveSource,
 } from "./app/discovery.ts";
 import { applyAppHeaders } from "./app/headers.ts";
-import { serveSpa } from "./app/spa.ts";
+import { notFoundText, serveSpa } from "./app/spa.ts";
 import { type Bindings, ConfigError, getConfig } from "./config.ts";
 import { contentRoot, resolveHost, serveContent } from "./content/serve.ts";
 import { ApiError } from "./lib/errors.ts";
@@ -99,6 +99,18 @@ for (const path of [
 app.get("/.well-known/ai-catalog.json", (c) =>
   discoveryJson(c, aiCatalog(c.get("config")), "application/ai-catalog+json"),
 );
+// OpenAI's plugin portal checks that this MCP server's domain is the submitter's: the token alone,
+// as plain text. Only where the operator set it (OPENAI_APPS_CHALLENGE); 404 everywhere else.
+app.get("/.well-known/openai-apps-challenge", (c) => {
+  const token = c.get("config").openaiAppsChallenge;
+  if (!token) return notFoundText(c);
+  const headers = new Headers({
+    "Content-Type": "text/plain; charset=utf-8",
+    "Cache-Control": "no-store",
+  });
+  applyAppHeaders(c.get("config"), headers);
+  return new Response(token, { status: 200, headers });
+});
 for (const path of [
   "/mcp/server-card",
   "/.well-known/mcp.json",

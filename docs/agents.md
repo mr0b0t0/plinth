@@ -432,6 +432,9 @@ a JavaScript single-page app, so the page an agent receives says where to go ins
   pages. Artifact pages also send `X-Robots-Tag: noindex, nofollow`, except a public artifact on an
   instance with public visibility on.
 
+`GET /.well-known/openai-apps-challenge` returns the operator's `OPENAI_APPS_CHALLENGE` token as
+plain text, for OpenAI's plugin portal to verify the MCP server's domain; without it the path is 404.
+
 Paths under `/.well-known/` that are not one of these or the OAuth metadata, and file names that
 are not app assets (`/AGENTS.md`, `/sitemap.xml`), answer `404` rather than the app.
 
