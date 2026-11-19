@@ -552,7 +552,10 @@ What else is new:
   directory, encrypted and ZIP64 archives are refused, and its parts are inflated with fflate up to
   24 MB in all, so a ZIP bomb stops there. Its XML is read by a small scanner that refuses a
   DOCTYPE and expands only the five named entities and character references, so no external
-  entity is ever resolved. A CSV never makes a formula; an .xlsx formula is kept only when it
+  entity is ever resolved. Row numbers are bounded as they are read: a `<row r>` or a cell
+  reference (`<c r="A50000000">`) past row 10,001 is refused at once, so a tiny file cannot make a
+  huge sparse table, and the row and column counts are checked before any work that grows with
+  them. A CSV never makes a formula; an .xlsx formula is kept only when it
   parses as a sheet formula (the allowlist), otherwise its cached value is used. The result passes
   the same publish checks as any sheet.
 - **Agents read cells as data.** `read_sheet`, `edit_sheet` and `get_artifact` say that cell

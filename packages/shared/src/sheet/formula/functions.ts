@@ -331,13 +331,14 @@ def(
   "AVERAGE",
   withNumbers((ns) => (ns.length ? finite(sum(ns) / ns.length) : err("#DIV/0!"))),
 );
+// A loop, not Math.min(...ns): a range can hold more numbers than a call takes arguments.
 def(
   "MIN",
-  withNumbers((ns) => (ns.length ? Math.min(...ns) : 0)),
+  withNumbers((ns) => (ns.length ? ns.reduce((m, n) => Math.min(m, n)) : 0)),
 );
 def(
   "MAX",
-  withNumbers((ns) => (ns.length ? Math.max(...ns) : 0)),
+  withNumbers((ns) => (ns.length ? ns.reduce((m, n) => Math.max(m, n)) : 0)),
 );
 def(
   "PRODUCT",

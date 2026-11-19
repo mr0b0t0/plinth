@@ -92,16 +92,18 @@ function cellFor(v: In, type: SheetColumnType): Cell {
 
 /** A sheet from a header row and data rows of typed values. Throws SheetImportError. */
 function build(names: string[], data: In[][], widths?: Map<number, number>, freezeCols = 0): Sheet {
-  const width = Math.max(names.length, ...data.map((r) => r.length));
+  // The row count is checked first, and the width found with a loop: spreading every row into
+  // Math.max throws RangeError on a long file.
+  if (data.length > LIMITS.maxSheetRows) {
+    throw new SheetImportError(
+      `A sheet holds at most ${LIMITS.maxSheetRows} rows; this file has ${data.length}`,
+    );
+  }
+  const width = data.reduce((w, r) => Math.max(w, r.length), names.length);
   if (width === 0) throw new SheetImportError("The file has no columns");
   if (width > LIMITS.maxSheetColumns) {
     throw new SheetImportError(
       `A sheet has at most ${LIMITS.maxSheetColumns} columns; this file has ${width}`,
-    );
-  }
-  if (data.length > LIMITS.maxSheetRows) {
-    throw new SheetImportError(
-      `A sheet holds at most ${LIMITS.maxSheetRows} rows; this file has ${data.length}`,
     );
   }
   const columns: SheetColumn[] = [];
@@ -261,7 +263,10 @@ function xlsxValue(c: RawCell, styles: string[]): In {
 export function sheetFromXlsx(bytes: Uint8Array): Sheet {
   const raw = readXlsx(bytes);
   const header = raw.rows[0] ?? [];
-  const width = Math.max(header.length, ...raw.rows.map((r) => r?.length ?? 0));
+  // raw.rows is sparse where the worksheet leaves out a blank row: a plain loop reads a hole as
+  // an empty row (map and a spread would keep it as undefined, and Math.max would give NaN).
+  let width = 0;
+  for (let r = 0; r < raw.rows.length; r++) width = Math.max(width, raw.rows[r]?.length ?? 0);
   const names: string[] = [];
   for (let c = 0; c < width; c++) {
     const h = header[c] ?? null;

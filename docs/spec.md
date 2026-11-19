@@ -1177,6 +1177,8 @@ not edited on its page yet.
   stays text, and the `'` a CSV export put before `=`, `+`, `-` or `@` is dropped. From an .xlsx
   (its first worksheet), a formula is kept when it parses as a sheet formula, otherwise its cached
   value is used, and number formats, column widths and frozen columns carry over where they map.
+  Rows are bounded as they are read: a worksheet row or cell reference below row 10,001 is
+  refused before anything is built, and a blank row the file leaves out stays an empty row.
   The import is checked like any sheet and stored as JSON lines. The source editor's "Import CSV or
   .xlsx" converts a file the same way in the browser and puts it in the draft; nothing is sent
   until Save. The CLI publishes one `.csv` or `.xlsx` file as a new sheet, or the next version of
@@ -1191,7 +1193,8 @@ not edited on its page yet.
   to `base_version` in order and publishes one new version through `update_artifact`, or nothing:
   `set` (a block of raw cells from a cell, growing the sheet past its end), `append_rows`,
   `insert_rows`, `delete_rows`, `set_column` (name, type, format, options, width; `null` clears),
-  `insert_columns` and `delete_columns`. Inserting and deleting rows and columns moves formula
+  `insert_columns` and `delete_columns`. An op that would take the sheet past 10,000 data rows
+  (row 10,001) is refused before the sheet grows. Inserting and deleting rows and columns moves formula
   references as Excel's structural changes do; references into deleted cells become `#REF!`. The
   result is checked once, after every op, so a column's type and its cells can change in one call.
   A stale `base_version` is a conflict before any file is read; it is the `edit` action and counts

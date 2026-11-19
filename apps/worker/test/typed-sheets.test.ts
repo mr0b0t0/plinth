@@ -204,6 +204,26 @@ describe("sheets over REST", () => {
     expect(broken.message).toMatch(
       /^The xlsx file could not be imported: This is not an .xlsx file/,
     );
+    // Too many rows is the row limit, never an internal error: a long CSV, and a tiny .xlsx that
+    // names a far-off row in a cell reference.
+    const tall = await publishSheet(a.auth, {
+      content: `a\n${"1\n".repeat(150_000)}`,
+      content_format: "csv",
+    });
+    expect(tall.res.status).toBe(400);
+    expect(errorOf(tall).message).toMatch(/at most 10000 rows; this file has 150000/);
+    const far = storedZip({
+      "xl/workbook.xml": '<workbook><sheets><sheet name="S" r:id="rId1"/></sheets></workbook>',
+      "xl/_rels/workbook.xml.rels":
+        '<Relationships><Relationship Id="rId1" Target="worksheets/sheet1.xml"/></Relationships>',
+      "xl/worksheets/sheet1.xml":
+        '<worksheet><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>H</t></is></c></row><row r="2"><c r="A50000000"><v>1</v></c></row></sheetData></worksheet>',
+    });
+    let farBin = "";
+    for (const b of far) farBin += String.fromCharCode(b);
+    const farRes = await publishSheet(a.auth, { content: btoa(farBin), content_format: "xlsx" });
+    expect(farRes.res.status).toBe(400);
+    expect(errorOf(farRes).message).toMatch(/at most 10000 rows under its header/);
     // An update imports too, and the stale base is refused as for any update.
     const up = await put(a.auth, csv.body.id, {
       content: "Item\nPlums\n",

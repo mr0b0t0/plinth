@@ -130,6 +130,32 @@ describe("applySheetOps", () => {
     );
   });
 
+  it("refuses rows past the limit before it grows the sheet", () => {
+    for (const ops of [
+      [{ op: "set", at: "A1048576", values: [[1]] }],
+      [{ op: "set", at: "A10000", values: [[1], [2], [3]] }],
+    ] as SheetOp[][]) {
+      expect(() => applySheetOps(BASE, ops)).toThrow(SheetOpError);
+      expect(() => applySheetOps(BASE, ops)).toThrow(/at most 10000 rows \(2 to 10001\)/);
+    }
+    // Row 10001 is the last row a sheet holds.
+    const ok = applySheetOps(BASE, [{ op: "set", at: "A10001", values: [["x"]] }]);
+    expect(ok.sheet.rows).toHaveLength(LIMITS.maxSheetRows);
+    expect(() => applySheetOps(BASE, [{ op: "insert_rows", before: 2, count: 200_000 }])).toThrow(
+      /at most 10000 rows/,
+    );
+    expect(() =>
+      applySheetOps(BASE, [
+        { op: "append_rows", values: Array.from({ length: 200_000 }, () => []) },
+      ]),
+    ).toThrow(/at most 10000 rows/);
+    expect(() =>
+      applySheetOps(BASE, [
+        { op: "set", at: "A2", values: Array.from({ length: 200_000 }, () => []) },
+      ]),
+    ).toThrow(/at most 10000 rows/);
+  });
+
   it("limits the cells one call writes", () => {
     const row = Array.from({ length: 3 }, () => 1);
     const values = Array.from({ length: Math.ceil(LIMITS.maxSheetOpCells / 3) + 1 }, () => row);

@@ -153,6 +153,15 @@ export function applySheetOps(
       throw new SheetOpError(i, `A sheet holds at most ${LIMITS.maxSheetRows} rows`);
     }
   };
+  // Checked before an op grows the sheet, so a far-off row costs nothing to refuse.
+  const rowsFit = (rows: number, i: number) => {
+    if (rows > LIMITS.maxSheetRows) {
+      throw new SheetOpError(
+        i,
+        `A sheet holds at most ${LIMITS.maxSheetRows} rows (2 to ${LIMITS.maxSheetRows + 1}); this op reaches row ${rows + 1}`,
+      );
+    }
+  };
 
   ops.forEach((op, i) => {
     switch (op.op) {
@@ -164,12 +173,13 @@ export function applySheetOps(
             `at must be a cell from row 2 down, such as "B2" (row 1 is the header)`,
           );
         }
-        if (at.col + Math.max(0, ...op.values.map((r) => r.length)) > width()) {
+        if (at.col + op.values.reduce((w, r) => Math.max(w, r.length), 0) > width()) {
           throw new SheetOpError(
             i,
             `the values reach past column ${colLetter(width() - 1)} (insert_columns first)`,
           );
         }
+        if (op.values.length > 0) rowsFit(at.row - 2 + op.values.length, i);
         count(
           op.values.reduce((n, r) => n + r.length, 0),
           i,
@@ -188,6 +198,7 @@ export function applySheetOps(
         break;
       }
       case "append_rows": {
+        rowsFit(s.rows.length + op.values.length, i);
         checkRows(op.values, i);
         for (const r of op.values) s.rows.push([...r]);
         rowLimit(i);
@@ -205,6 +216,7 @@ export function applySheetOps(
         if (!Number.isInteger(n) || n < 1) throw new SheetOpError(i, "count must be at least 1");
         if (values.length > n)
           throw new SheetOpError(i, `values has ${values.length} rows; count is ${n}`);
+        rowsFit(s.rows.length + n, i);
         checkRows(values, i);
         shiftAll(s.rows, { kind: "insert_rows", before: op.before, count: n });
         const fresh = Array.from({ length: n }, (_, k) => [...(values[k] ?? [])]);

@@ -304,6 +304,15 @@ describe("edit_sheet", () => {
     expect(invalid.status).toBe(400);
     const e = (await json(invalid)).error;
     expect(e.details.issues[0].message).toBe('B2: "three" is not a number (column Qty is number)');
+    const far = await editRest(a, p.id, {
+      base_version: 1,
+      ops: [{ op: "set", at: "A1048576", values: [[1]] }],
+    });
+    expect(far.status).toBe(400);
+    expect((await json(far)).error).toMatchObject({
+      message: "ops[0]: A sheet holds at most 10000 rows (2 to 10001); this op reaches row 1048576",
+      details: { op: 0 },
+    });
     const schema = await editRest(a, p.id, { base_version: 1, ops: [{ op: "explode" }] });
     expect(schema.status).toBe(400);
     const d = await json(await call(`/api/v1/artifacts/${p.id}`, { headers: a.auth }));

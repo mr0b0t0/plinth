@@ -321,6 +321,17 @@ function colNum(letters: string): number {
   return n - 1;
 }
 
+/** Refuses a worksheet row number (1 is the header) that a sheet cannot hold. */
+function checkRow(rowNum: number): void {
+  if (!Number.isInteger(rowNum) || rowNum < 1)
+    throw new SheetImportError("The worksheet has a bad row number");
+  if (rowNum > LIMITS.maxSheetRows + 1) {
+    throw new SheetImportError(
+      `A sheet holds at most ${LIMITS.maxSheetRows} rows under its header`,
+    );
+  }
+}
+
 /** The first worksheet's cells, column widths and frozen columns, as typed raw values. */
 export function readXlsx(bytes: Uint8Array): RawSheet {
   if (bytes.byteLength > LIMITS.maxSheetImportBytes) {
@@ -364,18 +375,17 @@ export function readXlsx(bytes: Uint8Array): RawSheet {
         case "row":
           rowNum = a.r ? Number(a.r) : rowNum + 1;
           nextCol = 0;
-          if (!Number.isInteger(rowNum) || rowNum < 1)
-            throw new SheetImportError("The worksheet has a bad row number");
-          if (rowNum > LIMITS.maxSheetRows + 1) {
-            throw new SheetImportError(
-              `A sheet holds at most ${LIMITS.maxSheetRows} rows under its header`,
-            );
-          }
+          checkRow(rowNum);
           break;
         case "c": {
           const m = a.r ? CELL_REF.exec(a.r) : null;
           col = m ? colNum(m[1] as string) : nextCol;
-          if (m) rowNum = Number(m[2]);
+          // A cell's own reference names its row too, so it gets the same bound as <row r>:
+          // rows[rowNum - 1] below must never reach past the rows a sheet holds.
+          if (m) {
+            rowNum = Number(m[2]);
+            checkRow(rowNum);
+          }
           nextCol = col + 1;
           cell = { t: a.t ?? "n", s: Number(a.s ?? "0") || 0 };
           f = null;

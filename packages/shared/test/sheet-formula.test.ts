@@ -332,6 +332,15 @@ describe("dependencies, cycles and the budget", () => {
     expect(ev.steps).toBeLessThan(20);
   });
 
+  it("takes MIN and MAX of a range of any size the sheet holds", () => {
+    const rows: Cell[][] = [];
+    for (let i = 0; i < 10_000; i++) rows.push(Array.from({ length: 20 }, (_, c) => i * 20 + c));
+    (rows[0] as Cell[]).push("=MAX(A2:T10001)", "=MIN(A2:T10001)");
+    const ev = evaluateSheet(sheetOf(rows), { budget: 10_000_000 });
+    expect(ev.value(2, 20)).toBe(199_999);
+    expect(ev.value(2, 21)).toBe(0);
+  });
+
   it("evaluates 50,000 formulas under the browser budget quickly", () => {
     const rows: Cell[][] = [];
     for (let i = 0; i < 10_000; i++) {

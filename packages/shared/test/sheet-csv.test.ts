@@ -111,6 +111,12 @@ describe("CSV import", () => {
     const wide = `${Array.from({ length: 101 }, (_, i) => `c${i}`).join(",")}\n`;
     expect(() => sheetFromCsv(wide)).toThrow(/at most 100 columns/);
   });
+
+  it("refuses too many rows with the row limit, however short the rows are", () => {
+    const tall = `a\n${"1\n".repeat(150_000)}`;
+    expect(() => sheetFromCsv(tall)).toThrow(SheetImportError);
+    expect(() => sheetFromCsv(tall)).toThrow(/at most 10000 rows; this file has 150000/);
+  });
 });
 
 function base64(bytes: Uint8Array): string {
@@ -180,6 +186,47 @@ describe(".xlsx import", () => {
     );
     expect(bomb.byteLength).toBeLessThan(2 * 1024 * 1024);
     expect(() => sheetFromXlsx(bomb)).toThrow(/expands to more than 24 MB/);
+  });
+
+  it("keeps the header's names when the worksheet skips a blank row", () => {
+    const s = sheetFromXlsx(
+      xlsx({
+        ...WORKBOOK,
+        "xl/worksheets/sheet1.xml":
+          '<worksheet><sheetData><row r="1"><c r="A1" t="s"><v>0</v></c><c r="B1" t="inlineStr"><is><t>Qty</t></is></c></row>' +
+          '<row r="2"><c r="A2" t="s"><v>2</v></c><c r="B2"><v>1</v></c></row>' +
+          '<row r="4"><c r="A4" t="inlineStr"><is><t>Pears</t></is></c><c r="B4"><v>3</v></c></row>' +
+          "</sheetData></worksheet>",
+      }),
+    );
+    expect(s.header.columns.map((c) => c.name)).toEqual(["Item", "Qty"]);
+    expect(s.rows).toEqual([["Apples", 1], [], ["Pears", 3]]);
+  });
+
+  it("refuses a cell reference below the row limit, before it builds anything", () => {
+    for (const ref of ["A2000000", "A50000000", "A10002"]) {
+      const bytes = xlsx({
+        ...WORKBOOK,
+        "xl/worksheets/sheet1.xml": `<worksheet><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>H</t></is></c></row><row r="2"><c r="${ref}"><v>1</v></c></row></sheetData></worksheet>`,
+      });
+      expect(() => sheetFromXlsx(bytes)).toThrow(SheetImportError);
+      expect(() => sheetFromXlsx(bytes)).toThrow(/at most 10000 rows under its header/);
+    }
+    const zero = xlsx({
+      ...WORKBOOK,
+      "xl/worksheets/sheet1.xml":
+        '<worksheet><sheetData><row r="1"><c r="A0"><v>1</v></c></row></sheetData></worksheet>',
+    });
+    expect(() => sheetFromXlsx(zero)).toThrow(/bad row number/);
+    // The last row a sheet holds is still read.
+    const last = xlsx({
+      ...WORKBOOK,
+      "xl/worksheets/sheet1.xml":
+        '<worksheet><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>H</t></is></c></row><row r="10001"><c r="A10001"><v>1</v></c></row></sheetData></worksheet>',
+    });
+    const s = sheetFromXlsx(last);
+    expect(s.rows).toHaveLength(10_000);
+    expect(s.rows[9_999]).toEqual([1]);
   });
 
   it("maps number formats", () => {
