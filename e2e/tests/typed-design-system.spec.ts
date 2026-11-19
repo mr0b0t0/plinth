@@ -191,7 +191,7 @@ test.describe("a published design system", () => {
       await expect(page.getByText("Editing v1")).toBeVisible();
       const lines = page.locator(".pl-editor .monaco-editor .view-lines").first();
       await expect(lines).toBeVisible({ timeout: 15_000 });
-      await expect(page.locator(".pl-editor-pane__label").first()).toHaveText("design system JSON");
+      await expect(page.locator(".pl-editor-pane__label").first()).toHaveText("Design system JSON");
 
       // Pasted, as a person replacing the JSON would: typed text would get Monaco's auto-closing.
       await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);

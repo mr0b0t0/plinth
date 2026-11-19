@@ -88,11 +88,11 @@
       "id": "card",
       "name": "Card",
       "status": "beta",
-      "css": ".acme-card { background: var(--acme-color-bg); color: var(--acme-color-fg); box-shadow: var(--acme-shadow-card); border-radius: var(--acme-radius-md); padding: 16px; }",
+      "css": ".acme-card { background: var(--acme-color-bg); color: var(--acme-color-fg); box-shadow: var(--acme-shadow-card); border-radius: var(--acme-radius-md); padding: 16px; display: flex; align-items: center; gap: 12px; }",
       "examples": [
         {
           "name": "With logo",
-          "html": "<div class=\"acme-card\"><img src=\"img/logo.png\" alt=\"Acme\" width=\"32\" height=\"32\"> Hello</div>",
+          "html": "<div class=\"acme-card\"><img src=\"img/logo.png\" alt=\"Acme\" width=\"32\" height=\"32\">Hello</div>",
           "height": 104
         }
       ]

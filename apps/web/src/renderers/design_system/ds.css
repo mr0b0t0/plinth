@@ -172,7 +172,8 @@
   color: var(--ds-info-fg);
 }
 
-/* Token tables: the same three columns in every group, so the tables line up. */
+/* Token tables: the samples in one narrow column, the same in every group so the names line up,
+   then the token's name, variable and value. */
 
 .ds-table table {
   width: 100%;
@@ -182,11 +183,22 @@
 }
 
 .ds-col-sample {
-  width: 36%;
+  width: 200px;
 }
 
-.ds-col-value {
-  width: 24%;
+/* "Light" and "Dark", once above a group's sample pairs. */
+.ds-themes {
+  display: flex;
+  gap: 8px;
+  box-sizing: border-box;
+  width: 200px;
+  padding: 0 12px 4px;
+  color: var(--doc-muted);
+  font-size: 0.78rem;
+}
+
+.ds-themes span {
+  flex: 1 1 0;
 }
 
 .ds-table td {
@@ -240,6 +252,10 @@
   text-underline-offset: 3px;
 }
 
+.ds-token__var[data-copied] {
+  text-decoration: none;
+}
+
 .ds-token__var[data-copied]::after {
   content: "Copied";
   display: inline-block;
@@ -256,13 +272,29 @@
   color: var(--doc-muted);
 }
 
-.ds-token__values code {
-  display: block;
-  overflow-wrap: anywhere;
+/* The variable, then the value (light, then dark), on one line while they fit. */
+.ds-token__line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 16px;
+  margin-top: 2px;
 }
 
-.ds-token__dark {
+.ds-token__line .ds-token__var {
+  margin: 0;
+}
+
+.ds-token__values {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 10px;
+  min-width: 0;
   color: var(--doc-muted);
+}
+
+.ds-token__values code {
+  overflow-wrap: anywhere;
 }
 
 /* Samples: each one shows a token's value. A light and dark pair sits on each theme's ground; a
@@ -289,6 +321,7 @@
 }
 
 .ds-sample.ds-sample--color {
+  min-height: 40px;
   background:
     linear-gradient(var(--ds-sample), var(--ds-sample)),
     repeating-conic-gradient(var(--ds-check) 0% 25%, transparent 0% 50%) 50% / 12px 12px;
@@ -308,10 +341,18 @@
   text-overflow: ellipsis;
 }
 
+/* A size or a motion token is its bar or dot alone, with no box around it. */
+.ds-sample.ds-sample--space,
+.ds-sample.ds-sample--motion {
+  min-height: 24px;
+  border: 0;
+  border-radius: 0;
+  background: none;
+}
+
 .ds-sample--space {
   display: flex;
   align-items: center;
-  padding: 0 8px;
 }
 
 .ds-sample__bar {
@@ -329,7 +370,6 @@
 
 .ds-sample--shadow {
   margin: 6px;
-  border-color: transparent;
 }
 
 .ds-sample--motion {
@@ -340,7 +380,7 @@
 .ds-sample__dot {
   position: absolute;
   top: 50%;
-  left: 8px;
+  left: 0;
   width: 12px;
   height: 12px;
   margin-top: -6px;
@@ -350,7 +390,7 @@
 }
 
 .ds-sample--motion:hover .ds-sample__dot {
-  left: calc(100% - 20px);
+  left: calc(100% - 12px);
 }
 
 .ds-sample--other {
@@ -361,7 +401,8 @@
   font-size: 0.85rem;
 }
 
-/* Components: each example is its name, its preview, and its HTML behind a disclosure. */
+/* Components: the component's CSS under its description, then each example: its name, its preview,
+   and its HTML behind a disclosure. Every disclosure is followed by the same gap. */
 
 .ds-example {
   margin: 16px 0 24px;
@@ -393,6 +434,10 @@
 
 .ds-code {
   margin-top: 8px;
+}
+
+.ds-component > .ds-code {
+  margin: 0 0 24px;
 }
 
 .ds-code summary {
@@ -480,36 +525,69 @@
     line-height: 1.6;
   }
 
-  /* Each token stacks: samples, then its name and variable, then its value. */
-  .ds-table colgroup,
-  .ds-table thead {
+  /* The row fades out at its edges, so a cut-off link reads as more to scroll to. */
+  .ds-nav {
+    -webkit-mask-image: linear-gradient(
+      90deg,
+      transparent,
+      #000 16px,
+      #000 calc(100% - 40px),
+      transparent
+    );
+    mask-image: linear-gradient(90deg, transparent, #000 16px, #000 calc(100% - 40px), transparent);
+  }
+
+  .ds-nav > ul::after {
+    content: "";
+    flex: 0 0 24px;
+  }
+
+  /* Colors, sizes and motion, whose samples are small, stay one row in a narrower sample column.
+     Every other token stacks: its sample, then its name, variable and value. */
+  .ds-table .ds-col-sample,
+  .ds-themes {
+    width: 108px;
+  }
+
+  .ds-themes {
+    padding: 0 12px 4px 0;
+  }
+
+  .ds-table td {
+    padding: 10px 0;
+  }
+
+  .ds-table td:first-child {
+    padding-right: 12px;
+  }
+
+  :is(.ds-table--type, .ds-table--radius, .ds-table--shadow, .ds-table--other) colgroup {
     display: none;
   }
 
-  .ds-table table,
-  .ds-table tbody,
-  .ds-table tr,
-  .ds-table td {
+  :is(.ds-table--type, .ds-table--radius, .ds-table--shadow, .ds-table--other)
+    :is(table, tbody, tr, td) {
     display: block;
   }
 
-  .ds-table tr {
+  :is(.ds-table--type, .ds-table--radius, .ds-table--shadow, .ds-table--other) tr {
     padding: 12px 0;
     border-bottom: 1px solid var(--doc-border);
   }
 
-  .ds-table td {
+  :is(.ds-table--type, .ds-table--radius, .ds-table--shadow, .ds-table--other)
+    :is(td, td:first-child) {
     padding: 0;
     border: 0;
   }
 
-  .ds-table td + td {
+  :is(.ds-table--type, .ds-table--radius, .ds-table--shadow, .ds-table--other) td + td {
     margin-top: 8px;
   }
 
-  .ds-token__values code {
-    display: inline;
-    margin-right: 12px;
+  :is(.ds-table--type, .ds-table--radius, .ds-table--shadow, .ds-table--other) .ds-themes {
+    width: auto;
+    padding-right: 0;
   }
 }
 

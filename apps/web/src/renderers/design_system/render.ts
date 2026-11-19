@@ -7,7 +7,7 @@
 //
 // The chrome is kept to what a reader needs: a variable name copies itself when clicked, previews
 // follow the reader's color scheme, code sits behind a closed disclosure, and token tables have no
-// visible column headings.
+// visible column headings (a group with light and dark samples labels them once, above the table).
 import type { DesignSystem, DsComponent, DsExample, DsToken } from "@plinth/shared";
 import { designSystemComponentCss } from "@plinth/shared";
 import { renderMarkdown } from "../doc/markdown.ts";
@@ -50,18 +50,36 @@ export interface Section {
 /** The element id a hash maps to: "tokens/color" -> "ds-tokens-color". */
 export const sectionId = (hash: string) => `ds-${hash.replace(/[^a-z0-9-]/gi, "-")}`;
 
-/** Copy text; when the frame may not use the clipboard, select it so the reader can copy it. */
-export function copyText(win: Window, text: string, select: Node): void {
+/**
+ * Copy text, then call `done` with whether it was copied. A framed artifact may not use the
+ * asynchronous clipboard (the app does not delegate it), so the fallback selects `select`, asks the
+ * browser to copy the selection and clears it again. When that fails too, the text stays selected
+ * so the reader can copy it.
+ */
+export function copyText(
+  win: Window,
+  text: string,
+  select: Node,
+  done: (ok: boolean) => void,
+): void {
   const fallback = () => {
+    const sel = win.getSelection();
     const range = win.document.createRange();
     range.selectNodeContents(select);
-    const sel = win.getSelection();
     sel?.removeAllRanges();
     sel?.addRange(range);
+    let ok = false;
+    try {
+      ok = win.document.execCommand?.("copy") === true;
+    } catch {
+      ok = false;
+    }
+    if (ok) sel?.removeAllRanges();
+    done(ok);
   };
   try {
     const p = win.navigator.clipboard?.writeText(text);
-    if (p) p.catch(fallback);
+    if (p) p.then(() => done(true), fallback);
     else fallback();
   } catch {
     fallback();
@@ -78,13 +96,15 @@ function copyVar(doc: Document, text: string): HTMLButtonElement {
     text,
   );
   b.addEventListener("click", () => {
-    copyText(doc.defaultView ?? window, text, b);
-    b.setAttribute("data-copied", "");
-    b.setAttribute("aria-label", "Copied");
-    setTimeout(() => {
-      b.removeAttribute("data-copied");
-      b.setAttribute("aria-label", label);
-    }, 1200);
+    copyText(doc.defaultView ?? window, text, b, (ok) => {
+      if (!ok) return;
+      b.setAttribute("data-copied", "");
+      b.setAttribute("aria-label", "Copied");
+      setTimeout(() => {
+        b.removeAttribute("data-copied");
+        b.setAttribute("aria-label", label);
+      }, 1200);
+    });
   });
   return b;
 }
@@ -183,12 +203,14 @@ function tokenRow(doc: Document, t: DsToken): HTMLElement {
   const pair = el(doc, "div", { class: "ds-token__pair" });
   if (t.dark === null) pair.append(sample(doc, t, t.value, null));
   else pair.append(sample(doc, t, t.value, "light"), sample(doc, t, t.dark, "dark"));
+  const values = el(doc, "div", { class: "ds-token__values" }, el(doc, "code", {}, t.value));
+  if (t.dark !== null) values.append(el(doc, "code", { class: "ds-token__dark" }, t.dark));
   const info = el(
     doc,
     "td",
     { class: "ds-token__info" },
     el(doc, "div", { class: "ds-token__path" }, t.path),
-    copyVar(doc, `var(${t.cssVar})`),
+    el(doc, "div", { class: "ds-token__line" }, copyVar(doc, `var(${t.cssVar})`), values),
   );
   if (t.description) info.append(el(doc, "div", { class: "ds-token__desc" }, t.description));
   if (t.deprecated) {
@@ -203,41 +225,42 @@ function tokenRow(doc: Document, t: DsToken): HTMLElement {
     );
   }
   if (t.aliasOf) info.append(el(doc, "div", { class: "ds-token__alias" }, `Alias of ${t.aliasOf}`));
-  const values = el(doc, "td", { class: "ds-token__values" }, el(doc, "code", {}, t.value));
-  if (t.dark !== null) values.append(el(doc, "code", { class: "ds-token__dark" }, t.dark));
-  row.append(el(doc, "td", { class: "ds-token__samples" }, pair), info, values);
+  row.append(el(doc, "td", { class: "ds-token__samples" }, pair), info);
   return row;
 }
 
 /**
- * One group's tokens. The column headings are for screen readers only: the section heading names
- * the group, and every table has the same three columns.
+ * One group's tokens: the samples, then each token's name, variable and value. The column headings
+ * are for screen readers only, as the section heading names the group. When a token in the group
+ * has a light and a dark sample, a small "Light" and "Dark" above the samples says which is which.
  */
-function tokenTable(doc: Document, tokens: DsToken[]): HTMLElement {
+function tokenTable(doc: Document, group: Group, tokens: DsToken[]): HTMLElement {
   const head = el(
     doc,
     "tr",
     {},
     el(doc, "th", { scope: "col" }, "Sample"),
     el(doc, "th", { scope: "col" }, "Token"),
-    el(doc, "th", { scope: "col" }, "Value"),
   );
   const body = el(doc, "tbody");
   for (const t of tokens) body.append(tokenRow(doc, t));
-  const cols = el(
-    doc,
-    "colgroup",
-    {},
-    el(doc, "col", { class: "ds-col-sample" }),
-    el(doc, "col"),
-    el(doc, "col", { class: "ds-col-value" }),
-  );
-  return el(
-    doc,
-    "div",
-    { class: "ds-table" },
+  const cols = el(doc, "colgroup", {}, el(doc, "col", { class: "ds-col-sample" }), el(doc, "col"));
+  const box = el(doc, "div", { class: `ds-table ds-table--${group}` });
+  if (tokens.some((t) => t.dark !== null)) {
+    box.append(
+      el(
+        doc,
+        "div",
+        { class: "ds-themes", "aria-hidden": "true" },
+        el(doc, "span", {}, "Light"),
+        el(doc, "span", {}, "Dark"),
+      ),
+    );
+  }
+  box.append(
     el(doc, "table", {}, cols, el(doc, "thead", { class: "ds-visually-hidden" }, head), body),
   );
+  return box;
 }
 
 // ---------- components ----------
@@ -307,10 +330,11 @@ function componentSection(
     );
   s.append(title);
   if (comp.description) s.append(prose(doc, comp.description));
-  if (comp.usage) s.append(el(doc, "h3", {}, "Usage"), prose(doc, comp.usage));
-  for (const ex of comp.examples) s.append(exampleBlock(doc, ds, comp, ex, theme));
+  // The component's CSS sits under its description, apart from each example's HTML.
   const css = designSystemComponentCss(ds, [comp]);
   if (css) s.append(codeBlock(doc, "CSS", css));
+  if (comp.usage) s.append(el(doc, "h3", {}, "Usage"), prose(doc, comp.usage));
+  for (const ex of comp.examples) s.append(exampleBlock(doc, ds, comp, ex, theme));
   return s;
 }
 
@@ -318,7 +342,8 @@ function componentSection(
 
 /**
  * Every section of the site, in navigation order. The overview is there when the design system
- * has guidelines, and empty token groups are left out.
+ * has guidelines, right under the header and with no heading of its own (the guidelines bring
+ * theirs), and empty token groups are left out.
  */
 export function sections(
   doc: Document,
@@ -335,8 +360,7 @@ export function sections(
         el(
           doc,
           "section",
-          { class: "ds-section" },
-          el(doc, "h2", {}, "Overview"),
+          { class: "ds-section ds-overview", "aria-label": "Overview" },
           prose(doc, guidelines),
         ),
     });
@@ -353,7 +377,7 @@ export function sections(
           "section",
           { class: "ds-section" },
           el(doc, "h2", {}, g.label),
-          tokenTable(doc, tokens),
+          tokenTable(doc, g.id, tokens),
         ),
     });
   }

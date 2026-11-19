@@ -2,7 +2,7 @@
 // renders every section, shows one short line for JSON it cannot use, and puts every author
 // string on the page as text.
 import { jsonForScript, TYPE_REGISTRY, typedShellHtml } from "@plinth/shared";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { boot } from "./boot.ts";
 import { groupOf, sectionId } from "./render.ts";
 import { FIXTURE } from "./testFixture.ts";
@@ -68,7 +68,12 @@ describe("boot", () => {
     for (const [, href] of nav) {
       expect(document.getElementById(sectionId((href ?? "").slice(1))), href ?? "").not.toBeNull();
     }
-    // Guidelines go through the doc renderer's Markdown.
+    // Guidelines go through the doc renderer's Markdown, right under the header: the overview has
+    // no heading of its own over theirs.
+    const overview = document.getElementById(sectionId("overview"));
+    expect(overview?.getAttribute("aria-label")).toBe("Overview");
+    expect(overview?.firstElementChild?.classList.contains("plinth-doc")).toBe(true);
+    expect(overview?.querySelector(":scope > h2")).toBeNull();
     expect(root().querySelector("#ds-overview .plinth-doc h1")?.textContent).toMatch(
       /^Using Acme UI/,
     );
@@ -155,8 +160,21 @@ describe("boot", () => {
     expect([...(head?.querySelectorAll("th[scope=col]") ?? [])].map((t) => t.textContent)).toEqual([
       "Sample",
       "Token",
-      "Value",
     ]);
+    // The value shares a line with the variable, in the token's cell.
+    const bg = root().querySelector('.ds-token[data-path="color.bg"]');
+    expect(bg?.querySelectorAll("td")).toHaveLength(2);
+    expect(bg?.querySelector(".ds-token__line .ds-token__values")).not.toBeNull();
+  });
+
+  it("labels light and dark samples once, only in a group that has a pair", () => {
+    mountShell(JSON.stringify(FIXTURE));
+    stop = boot(window);
+    const themes = root().querySelectorAll("#ds-tokens-color .ds-themes");
+    expect(themes).toHaveLength(1);
+    expect(themes[0]?.getAttribute("aria-hidden")).toBe("true");
+    expect([...(themes[0]?.children ?? [])].map((s) => s.textContent)).toEqual(["Light", "Dark"]);
+    expect(root().querySelector("#ds-tokens-space .ds-themes")).toBeNull();
   });
 
   it("shows a type specimen in a block that can end in an ellipsis", () => {
@@ -212,10 +230,14 @@ describe("boot", () => {
     expect(frames[0]?.dataset.theme).toBe("light");
     const codes = [...button.querySelectorAll<HTMLDetailsElement>("details.ds-code")];
     expect(codes.map((d) => [d.querySelector("summary")?.textContent, d.open])).toEqual([
-      ["HTML", false],
       ["CSS", false],
+      ["HTML", false],
     ]);
-    expect(codes[0]?.querySelector(".ds-example__code")?.textContent).toBe(
+    // The component's CSS sits under its description, apart from the examples' HTML.
+    expect(codes[0]?.parentElement).toBe(button);
+    expect(codes[0]?.previousElementSibling?.classList.contains("plinth-doc")).toBe(true);
+    expect(codes[1]?.closest(".ds-example")).not.toBeNull();
+    expect(codes[1]?.querySelector(".ds-example__code")?.textContent).toBe(
       '<button class="acme-btn acme-btn--primary">Save</button>',
     );
     // No view, theme or width switches.
@@ -267,8 +289,51 @@ describe("boot", () => {
       expect(name?.getAttribute("aria-label")).toBe("Copy var(--acme-color-bg)");
       name?.click();
       expect(copied).toEqual(["var(--acme-color-bg)"]);
-      expect(name?.hasAttribute("data-copied")).toBe(true);
+      await vi.waitFor(() => expect(name?.hasAttribute("data-copied")).toBe(true));
+      expect(window.getSelection()?.rangeCount ?? 0).toBe(0);
     } finally {
+      if (clipboard) Object.defineProperty(navigator, "clipboard", clipboard);
+      else delete (navigator as { clipboard?: unknown }).clipboard;
+    }
+  });
+
+  it("copies through the selection when the frame may not use the clipboard, and clears it", async () => {
+    mountShell(JSON.stringify(FIXTURE));
+    stop = boot(window);
+    const clipboard = Object.getOwnPropertyDescriptor(navigator, "clipboard");
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText: () => Promise.reject(new Error("blocked by permissions policy")) },
+    });
+    const execCommand = document.execCommand;
+    const selected: string[] = [];
+    let works = true;
+    document.execCommand = ((cmd: string) => {
+      selected.push(`${cmd}:${window.getSelection()?.toString()}`);
+      return works;
+    }) as typeof document.execCommand;
+    try {
+      const name = root().querySelector<HTMLButtonElement>(
+        '.ds-token[data-path="color.bg"] button.ds-token__var',
+      );
+      name?.click();
+      await vi.waitFor(() => expect(name?.hasAttribute("data-copied")).toBe(true));
+      expect(selected).toEqual(["copy:var(--acme-color-bg)"]);
+      expect(window.getSelection()?.toString()).toBe("");
+
+      // When the browser refuses that too, the text stays selected for the reader, and nothing
+      // says "Copied".
+      const fg = root().querySelector<HTMLButtonElement>(
+        '.ds-token[data-path="color.fg"] button.ds-token__var',
+      );
+      works = false;
+      fg?.click();
+      await vi.waitFor(() => expect(selected).toHaveLength(2));
+      expect(window.getSelection()?.toString()).toBe("var(--acme-color-fg)");
+      expect(fg?.hasAttribute("data-copied")).toBe(false);
+    } finally {
+      document.execCommand = execCommand;
+      window.getSelection()?.removeAllRanges();
       if (clipboard) Object.defineProperty(navigator, "clipboard", clipboard);
       else delete (navigator as { clipboard?: unknown }).clipboard;
     }

@@ -109,6 +109,8 @@ export default function EditorWorkspace({
   const id = artifact.id;
   const { def } = sourceOf(artifact);
   const label = def.sourceLabel;
+  // The pane header starts with a capital, as "HTML" and "Markdown" do ("Design system JSON").
+  const paneLabel = label.charAt(0).toUpperCase() + label.slice(1);
   const artifactPath = `/a/${encodeURIComponent(artifact.slug)}`;
   const codePaneId = useId();
   const tabHintId = useId();
@@ -502,7 +504,7 @@ export default function EditorWorkspace({
             start={
               <div className="pl-editor-pane">
                 <div className="pl-editor-pane__tools">
-                  <span className="pl-editor-pane__label">{label}</span>
+                  <span className="pl-editor-pane__label">{paneLabel}</span>
                   <span className="pl-editor-pane__hint type-caption text-faint" id={tabHintId}>
                     Tab indents. {TAB_FOCUS_KEYS} makes Tab move focus instead.
                   </span>

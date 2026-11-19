@@ -27,7 +27,6 @@ import { Link } from "../../lib/router.tsx";
 import { THEME_NAMES, type Theme } from "../../lib/theme.ts";
 import { Button, buttonClassName, Menu, type MenuEntry, Tooltip } from "../ui/index.ts";
 import { DataNotice } from "./DataNotice.tsx";
-import { copyForAgent } from "./designSystemItems.ts";
 import { EditBar } from "./EditBar.tsx";
 import { LiveDraftNotice } from "./LiveDraftNotice.tsx";
 import { postPrint, rendererTargetOrigin } from "./rendererProtocol.ts";
@@ -149,7 +148,6 @@ const printTyped: MenuItem = (c) => [
 /** Menu items for one artifact type, in order, after Settings and Stats. One type per line. */
 export const TYPE_MENU_ITEMS: Partial<Record<ArtifactType, readonly MenuItem[]>> = {
   doc: [printTyped],
-  design_system: [copyForAgent],
 };
 
 /** Menu items for a page that declares one capability, in order, after the type's items. */
