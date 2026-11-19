@@ -13,6 +13,7 @@ available. The end-to-end tests publish every file here and check that contract
 | [`client-checklist.html`](client-checklist.html) | The owner's team and a client tick off an onboarding or launch checklist | `data viewer`, shared `ticks notes` |
 | [`whiteboard.html`](whiteboard.html) | A team moves sticky notes together, with live cursors | `data viewer room`, shared `notes links` |
 | [`canvas-comments.html`](canvas-comments.html) | People comment on spots of a sketch | `comments` |
+| [`live-dashboard.html`](live-dashboard.html) | Figures from the owner's own systems, each with where it came from and how old it is | `data viewer`, sourced `issues` |
 
 The first three are built for people outside the owner's team: a client or an approver who has no
 Plinth account and confirms their email by code.
