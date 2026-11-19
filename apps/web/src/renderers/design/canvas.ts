@@ -241,7 +241,8 @@ export function bindCanvasInput(canvas: HTMLElement, view: Viewport, o: CanvasIn
     }
     if (handled) {
       e.preventDefault();
-      if (e.key !== "Escape") o.moved();
+      // Fit (0) keeps refitting on resize, as the Fit button does; Escape moves nothing.
+      if (e.key !== "Escape" && e.key !== "0") o.moved();
     }
   };
 

@@ -4,7 +4,7 @@
 // through "*", and the editor's preview renders the boards of the draft.
 import { expect, type Frame, test } from "@playwright/test";
 import { OPAQUE_APP_ORIGIN, uniqueEmail } from "../support/api.ts";
-import { seedSession, seedToken } from "../support/db.ts";
+import { captureLoad, openCapture, seedSession, seedToken } from "../support/db.ts";
 
 const CURRENT_FRAME = "iframe.pl-viewer-frame:not(.pl-viewer-frame--outgoing)";
 const PREVIEW_FRAME = 'iframe[title^="Preview of"]';
@@ -100,5 +100,38 @@ test("a design renders its boards with their image, prints, and previews in the 
   const previewHome = await boardFrame(pf, "home");
   await expect
     .poll(() => previewHome.locator("#hero").evaluate((i: HTMLImageElement) => i.naturalWidth))
+    .toBeGreaterThan(0);
+});
+
+test("a thumbnail capture loads the boards' image and CSS under opaque isolation too", async ({
+  page,
+}) => {
+  const email = uniqueEmail("design-opaque-capture");
+  const { token } = await seedToken(email, { clientType: "claude", origin: OPAQUE_APP_ORIGIN });
+  const res = await fetch(`${OPAQUE_APP_ORIGIN}/api/v1/artifacts`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+    body: JSON.stringify({
+      title: "Opaque capture",
+      type: "design",
+      content: DESIGN,
+      assets: [
+        { path: "img/hero.png", content: PIXEL_PNG, encoding: "base64", content_type: "image/png" },
+        { path: "brand.css", content: "h1 { color: rgb(1, 2, 3); }", content_type: "text/css" },
+      ],
+    }),
+  });
+  const art = (await res.json()) as { id: string; version: number };
+  expect(res.status, JSON.stringify(art)).toBe(201);
+  // As services/thumbnails.ts does: the boards' cookie first, then the enter URL top-level. Here
+  // the shell itself is opaque at the top, so the boards' requests have no cookie partition at
+  // all and the Worker hands the browser an unpartitioned pass.
+  await openCapture(page, await captureLoad(art.id, art.version, OPAQUE_APP_ORIGIN));
+  const shell = page.mainFrame();
+  await expect(shell.locator('html[data-ready="ok"]')).toHaveCount(1, { timeout: 15_000 });
+  const home = await boardFrame(shell, "home");
+  await expect(home.locator("h1")).toHaveCSS("color", "rgb(1, 2, 3)");
+  await expect
+    .poll(() => home.locator("#hero").evaluate((i: HTMLImageElement) => i.naturalWidth))
     .toBeGreaterThan(0);
 });

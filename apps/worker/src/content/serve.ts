@@ -417,11 +417,27 @@ function serveTypeFrame(
   gate?: PassGate,
 ): Response {
   const def = typeFrameRequest(route.path);
-  const framing = gate?.pass.preview ? "any" : "app";
   if (!def || !gate || gate.artifact.type !== def.id) {
-    return text(config, 404, "Not found", undefined, { framing });
+    return text(config, 404, "Not found", undefined, {
+      framing: gate?.pass.preview ? "any" : "app",
+    });
   }
-  return serveBoardLoader(request, config, def);
+  return serveBoardLoader(request, config, def, boardLoaderFraming(config, gate.pass));
+}
+
+/**
+ * Who may frame a board loader. Its parent is the shell. Under origin isolation, with a view or
+ * capture pass, the shell has the artifact's own origin inside the app (or at the top, for a
+ * capture), so `'self'` and the app name every ancestor and the loader keeps frame-ancestors.
+ * Under opaque isolation the shell is opaque, and with a preview pass it sits in an MCP host's
+ * sandbox: no source can name such an ancestor, so the loader goes without (the pass gate still
+ * bounds who gets it).
+ */
+export function boardLoaderFraming(
+  config: Pick<Config, "contentIsolation">,
+  pass: Pick<ContentPass, "preview">,
+): "app" | "any" {
+  return pass.preview || config.contentIsolation === "opaque" ? "any" : "app";
 }
 
 /** The reserved path row for `path` at this stage, if any. */
@@ -666,12 +682,14 @@ async function serve(
   });
   // A typed artifact's other files (content.md, images) run no script, not even an SVG opened as
   // a document: only the shell runs Plinth's renderer. A design's files are loaded by its
-  // artboards, whose origin is opaque, so they are cross-origin readable (CORP).
+  // artboards, whose origin is opaque, so they are cross-origin readable (CORP). Its source is
+  // not: no board loads it (the shell carries it inline), so it stays same-origin.
+  const opaqueReaders = def.opaqueFrames && !sourceAsText;
   applyContentHeaders(
     config,
     headers,
     def.renderer
-      ? { scripts: "none", framing, ...(def.opaqueFrames ? { opaqueReaders: true } : {}) }
+      ? { scripts: "none", framing, ...(opaqueReaders ? { opaqueReaders: true } : {}) }
       : { framing, ...(isHtml && socket ? { socket } : {}) },
   );
   // Public artifacts (only when the instance allows public visibility) may be indexed.

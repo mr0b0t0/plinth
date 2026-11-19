@@ -776,7 +776,8 @@ pan, zoom and print, each board alone at its exact size.
   the viewport is the board's width. Inline scripts and allowlisted CDN scripts run, so boards can
   be live (a carousel, hover states, a small prototype). A board has an opaque origin: no `fetch`
   of the artifact's files, no `localStorage`, no font files from assets (use Google Fonts or a
-  `data:` URL in `@font-face`), no module scripts or `crossorigin` from assets. Images, CSS, JS and
+  `data:` URL in `@font-face`), no module scripts, imports or `crossorigin` loads of assets
+  (Google Fonts' own embed and CDN scripts with `crossorigin` work). Images, CSS, JS and
   mp4/webm video go in `assets` and are referenced by relative path; font and JSON assets are
   refused.
 - **Set `id` on every artboard** so comments pinned to a board stay on it when its name changes.

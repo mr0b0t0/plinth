@@ -268,6 +268,33 @@ describe("boot", () => {
     canvas().dispatchEvent(new KeyboardEvent("keydown", { key: "0", bubbles: true }));
     expect(Number(html().getAttribute("data-zoom"))).toBeLessThan(100);
   });
+
+  it("refits on resize after the 0 key, as after the Fit button, and not after a zoom", () => {
+    mount();
+    const f = framed();
+    handle = start(f);
+    const zoom = () => Number(html().getAttribute("data-zoom"));
+    // The canvas has no layout size in the test DOM, so the viewport is the window's.
+    const resize = (width: number, height: number) => {
+      Object.assign(f.win, { innerWidth: width, innerHeight: height });
+      f.target.dispatchEvent(new Event("resize"));
+    };
+    const wide = zoom();
+    canvas().dispatchEvent(new KeyboardEvent("keydown", { key: "+", bubbles: true }));
+    canvas().dispatchEvent(new KeyboardEvent("keydown", { key: "0", bubbles: true }));
+    expect(zoom()).toBe(wide);
+    resize(400, 300);
+    const small = zoom();
+    expect(small).toBeLessThan(wide);
+    (document.querySelector('[aria-label="Fit all boards"]') as HTMLButtonElement).click();
+    resize(1280, 800);
+    expect(zoom()).toBe(wide);
+    // A zoom by key leaves the view where the person put it.
+    canvas().dispatchEvent(new KeyboardEvent("keydown", { key: "-", bubbles: true }));
+    const zoomed = zoom();
+    resize(400, 300);
+    expect(zoom()).toBe(zoomed);
+  });
 });
 
 describe("interact mode", () => {

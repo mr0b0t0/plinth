@@ -49,6 +49,13 @@ type Directive = keyof ContentSources | "navigate" | "any";
 interface ScanFlags {
   /** A module script, crossorigin link or dynamic import (fails under opaque isolation). */
   opaque: boolean;
+  /**
+   * One of those, or a web font, that loads one of the artifact's own files (a relative or
+   * root-absolute URL). From an opaque-origin document that is a CORS load the content host never
+   * answers, so it fails; the same load from a CDN that sends CORS headers (Google Fonts, unpkg)
+   * works, and a data: URL needs none. What a design's artboards are checked for.
+   */
+  opaqueLocal: boolean;
   /** Uses of the microphone APIs a frame can never have (MICROPHONE_WORDS), in scripts. */
   microphone: number;
 }
@@ -108,12 +115,15 @@ export function scanPublish(input: ScanInput): PublishWarning[] {
     budget -= f.bytes.byteLength;
     const text = decoder.decode(f.bytes);
     const found: Ref[] = [];
-    const flags: ScanFlags = { opaque: false, microphone: 0 };
+    const flags: ScanFlags = { opaque: false, opaqueLocal: false, microphone: 0 };
     if (kind === "html") scanHtml(text, found, flags);
     else if (kind === "css") scanCss(text, found, flags, "img");
     else scanJs(text, found, flags);
     checkRefs(f.path, found, input, out);
-    if (flags.opaque && input.isolation === "opaque") {
+    // An artboard is opaque on every instance, so only loads of the artifact's own files fail
+    // there; under opaque isolation the instance's own wording stays as it was.
+    const opaque = input.opaqueReason === "artboard" ? flags.opaqueLocal : flags.opaque;
+    if (opaque && input.isolation === "opaque") {
       out.push({
         code: "opaque_module",
         file: f.path,
@@ -186,6 +196,17 @@ function stripQueryAndFragment(u: string): string {
     }
   }
   return u.slice(0, end);
+}
+
+/**
+ * Whether a URL names one of the artifact's own files: relative or root-absolute, not a URL with
+ * a scheme (https:, data:, blob:), not protocol-relative and not a template placeholder.
+ */
+function isOwnFile(u: string): boolean {
+  const raw = u.trim();
+  if (raw === "" || raw.startsWith("#") || raw.startsWith("//")) return false;
+  if (raw.includes("${") || raw.includes("{{")) return false;
+  return schemeOf(raw) === null;
 }
 
 function schemeOf(u: string): string | null {
@@ -462,7 +483,11 @@ function onTag(tag: string, attrs: Map<string, string>, refs: Ref[], flags: Scan
   const src = attrs.get("src");
   if (tag === "script") {
     const type = lower(attrs.get("type") ?? "");
-    if (type === "module" || attrs.has("crossorigin")) flags.opaque = true;
+    if (type === "module" || attrs.has("crossorigin")) {
+      flags.opaque = true;
+      // An inline module's own imports are checked where its body is scanned.
+      if (src !== undefined && isOwnFile(src)) flags.opaqueLocal = true;
+    }
     if (src !== undefined) refs.push({ url: src, directive: "script" });
   } else if (src !== undefined) {
     const directive: Directive =
@@ -491,7 +516,10 @@ function onTag(tag: string, attrs: Map<string, string>, refs: Ref[], flags: Scan
     const rels = lower(attrs.get("rel") ?? "")
       .split(" ")
       .filter((r) => r !== "");
-    if (attrs.has("crossorigin") || rels.includes("modulepreload")) flags.opaque = true;
+    if (attrs.has("crossorigin") || rels.includes("modulepreload")) {
+      flags.opaque = true;
+      if (href !== undefined && isOwnFile(href)) flags.opaqueLocal = true;
+    }
     if (href !== undefined && rels.some((r) => LINK_RELS.has(r))) {
       const as = lower(attrs.get("as") ?? "");
       const directive: Directive = rels.includes("stylesheet")
@@ -602,7 +630,10 @@ function scanCss(s: string, refs: Ref[], flags: ScanFlags, urlDirective: Directi
       if (prev === undefined || !(isIdent(prev) || prev === "-")) {
         const r = readUrl(s, i + 4);
         const inFont = fontFaceDepth >= 0;
-        if (inFont) flags.opaque = true;
+        if (inFont) {
+          flags.opaque = true;
+          if (isOwnFile(r.url)) flags.opaqueLocal = true;
+        }
         refs.push({ url: r.url, directive: inFont ? "font" : urlDirective });
         i = r.end;
         continue;
@@ -802,7 +833,10 @@ function scanJs(s: string, refs: Ref[], flags: ScanFlags): void {
     switch (state) {
       case "import":
         if (t.kind === "string") {
-          if (isFileSpecifier(t.value)) refs.push({ url: t.value, directive: "script" });
+          if (isFileSpecifier(t.value)) {
+            refs.push({ url: t.value, directive: "script" });
+            if (isOwnFile(t.value)) flags.opaqueLocal = true;
+          }
           state = "none";
         } else if (t.kind === "punct" && t.value === "(") {
           flags.opaque = true;
@@ -826,13 +860,11 @@ function scanJs(s: string, refs: Ref[], flags: ScanFlags): void {
           state = "none";
         break;
       case "from":
-        if (t.kind === "string" && isFileSpecifier(t.value))
-          refs.push({ url: t.value, directive: "script" });
-        state = "none";
-        break;
       case "dynamicOpen":
-        if (t.kind === "string" && isFileSpecifier(t.value))
+        if (t.kind === "string" && isFileSpecifier(t.value)) {
           refs.push({ url: t.value, directive: "script" });
+          if (isOwnFile(t.value)) flags.opaqueLocal = true;
+        }
         state = "none";
         break;
       case "new":

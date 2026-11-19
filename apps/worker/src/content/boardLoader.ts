@@ -10,8 +10,10 @@
 // board). That is why the loader checks only `event.source === parent`, not an origin: whatever a
 // parent writes into it runs with no origin, as it would in an opaque frame of the parent's own
 // making. It is served only behind this artifact's content pass (serve.ts, the "pass" reserved
-// row), so a site that frames it without one gets the 401 text, and without frame-ancestors, since
-// an opaque shell and an MCP host's sandbox cannot be named by any source.
+// row), so a site that frames it without one gets the 401 text. Under origin isolation, for a view
+// or capture pass, it keeps frame-ancestors ('self' and the app: the shell has the artifact's real
+// origin there). Only under opaque isolation and for a preview pass does it go without, since an
+// opaque shell and an MCP host's sandbox cannot be named by any source.
 //
 // Protocol (version 1). Every message is { source: BOARD_MESSAGE_SOURCE, v: 1, type }.
 //   loader -> parent: { type: "ready" }               posted to "*" once, on load
@@ -92,11 +94,17 @@ export function boardLoaderHtml(): string {
 /**
  * The loader for a request that showed this artifact's content pass, only for an artifact whose
  * type frames it (renderer.frame with opaqueFrames). Default content script policy, the opaque
- * sandbox whatever the isolation mode, no frame-ancestors, CORP cross-origin.
+ * sandbox whatever the isolation mode, CORP cross-origin, and frame-ancestors as `framing` says
+ * (serve.ts boardLoaderFraming: kept under origin isolation for view and capture passes).
  */
-export function serveBoardLoader(request: Request, config: Config, def: ArtifactTypeDef): Response {
+export function serveBoardLoader(
+  request: Request,
+  config: Config,
+  def: ArtifactTypeDef,
+  framing: "app" | "any",
+): Response {
   const headers = new Headers({ "Content-Type": "text/html; charset=utf-8" });
-  applyContentHeaders(config, headers, { framing: "any", sandbox: true, opaqueReaders: true });
+  applyContentHeaders(config, headers, { framing, sandbox: true, opaqueReaders: true });
   if (!def.opaqueFrames) throw new Error(`Type ${def.id} has no opaque frames`);
   if (request.method === "HEAD") return new Response(null, { status: 200, headers });
   return new Response(boardLoaderHtml(), { status: 200, headers });

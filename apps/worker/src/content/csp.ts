@@ -26,11 +26,11 @@ export interface ContentCspOptions {
   /**
    * Who may frame the response. "app" (the default): only the app, `frame-ancestors 'self'
    * <app>`. "any": no frame-ancestors at all, only for a request carrying an in-chat preview pass
-   * (docs/security.md#in-chat-previews), and for a design's board loader (content/boardLoader.ts),
-   * which an opaque shell frames and only a request with this artifact's content pass gets. An MCP
-   * host frames the preview from inside its own sandboxed, opaque-origin frame, which no
-   * frame-ancestors source can name, and the pass behind it is read-only, short-lived and carries
-   * no identity.
+   * (docs/security.md#in-chat-previews), and for a design's board loader (content/boardLoader.ts)
+   * under opaque isolation or with that pass, where an opaque shell frames it; only a request with
+   * this artifact's content pass gets the loader. An MCP host frames the preview from inside its
+   * own sandboxed, opaque-origin frame, which no frame-ancestors source can name, and the pass
+   * behind it is read-only, short-lived and carries no identity.
    */
   framing?: "app" | "any";
   /**

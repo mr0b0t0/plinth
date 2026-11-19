@@ -6,7 +6,7 @@
 // preview, save, compare, restore and conflict. The opaque case is in typed-design-opaque.spec.ts.
 import { expect, type Frame, type Page, test } from "@playwright/test";
 import { APP_ORIGIN, apiGet, CONTENT_HOST, uniqueEmail } from "../support/api.ts";
-import { seedSession } from "../support/db.ts";
+import { captureLoad, openCapture, seedSession } from "../support/db.ts";
 import { mcpClient, tool } from "../support/mcp.ts";
 import { seedToken } from "../support/tokens.ts";
 
@@ -332,6 +332,44 @@ test.describe("a published design", () => {
       );
       expect(pages).toContain("@page s393x852 { size: 393px 852px; margin: 0; }");
       expect(pages).toContain("@page s1080x1080 { size: 1080px 1080px; margin: 0; }");
+    } finally {
+      await client.close();
+    }
+  });
+});
+
+test.describe("a design's thumbnail capture", () => {
+  test.use({ viewport: { width: 1200, height: 630 } });
+
+  test("a top-level load with a capture pass shows the boards with their images and styles", async ({
+    page,
+  }) => {
+    // What services/thumbnails.ts does in Browser Rendering: open the version's enter URL
+    // top-level, so the shell is the top document and each board an opaque frame inside it.
+    // The boards' own requests are keyed with a cross-site ancestor, so they need the second
+    // capture cookie the Worker hands the browser for that partition (captureFrameCookies).
+    const { artifact, client } = await publishDesign(page);
+    try {
+      await page.context().clearCookies();
+      const load = await captureLoad(artifact.id, artifact.version);
+      expect(load.cookies).toHaveLength(1);
+      expect(load.cookies[0]?.partitionKey).toEqual({
+        topLevelSite: `http://${CONTENT_HOST.replace(/:\d+$/, "")}`,
+        hasCrossSiteAncestor: true,
+      });
+      await openCapture(page, load);
+      expect(page.url()).toBe(`http://${artifact.id}.${CONTENT_HOST}/__plinth/v/1/`);
+      const shell = page.mainFrame();
+      await expect(shell.locator('html[data-ready="ok"]')).toHaveCount(1, { timeout: 15_000 });
+      await expect(shell.locator("html")).toHaveAttribute("data-boards-loaded", "3", {
+        timeout: 15_000,
+      });
+      const home = await boardFrame(shell, "home");
+      await expect(home.locator("#out")).toHaveText("script ran");
+      await expect
+        .poll(() => home.locator("#hero").evaluate((i: HTMLImageElement) => i.naturalWidth))
+        .toBeGreaterThan(0);
+      await expect(home.locator("h1")).toHaveCSS("color", "rgb(47, 91, 234)");
     } finally {
       await client.close();
     }

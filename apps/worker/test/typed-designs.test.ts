@@ -262,6 +262,33 @@ describe("designs over REST", () => {
       ref: "img/missing.png",
     });
   });
+
+  it("gives no opaque_module for Google Fonts' embed, a data: font or a CDN script with crossorigin", async () => {
+    const a = await agent();
+    for (const shared of [
+      [
+        '<link rel="preconnect" href="https://fonts.googleapis.com">',
+        '<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>',
+        '<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;700&display=swap" rel="stylesheet">',
+      ],
+      ["<style>@font-face { font-family: Brand; src: url(data:font/woff2;base64,AAAA); }</style>"],
+      [
+        '<script crossorigin src="https://unpkg.com/react@18.3.1/umd/react.production.min.js"></script>',
+      ],
+    ]) {
+      const content = [
+        ...shared,
+        '<!-- artboard name="Post" size="instagram-post" -->',
+        "<p>Hi</p>",
+      ];
+      const { res, body } = await publishDesign(a.auth, {
+        content: content.join("\n"),
+        assets: [],
+      });
+      expect(res.status).toBe(201);
+      expect(body.warnings, shared.join(" ")).toEqual([]);
+    }
+  });
 });
 
 describe("designs through start_upload", () => {
@@ -375,6 +402,8 @@ describe("designs on the content host", () => {
       expect(src.headers.get("content-type"), path).toBe("text/plain; charset=utf-8");
       expect(src.headers.get("x-content-type-options"), path).toBe("nosniff");
       expect(src.headers.get("content-security-policy"), path).toBe(noScript);
+      // No board loads the source (the shell carries it inline), so it stays same-origin.
+      expect(src.headers.get("cross-origin-resource-policy"), path).toBe("same-origin");
       expect(await src.text(), path).not.toContain("bridge.js");
     }
     for (const path of ["/img/hero.png", "/brand.css", "/__plinth/v/1/img/hero.png"]) {
@@ -398,7 +427,7 @@ describe("designs on the content host", () => {
     expect(img.headers.get("cross-origin-resource-policy")).toBe("same-origin");
   });
 
-  it("serves the board loader only with this design's pass: default scripts, one sandbox, no frame-ancestors", async () => {
+  it("serves the board loader only with this design's pass: default scripts, one sandbox, framed by the shell and the app", async () => {
     const { p, get } = await opened();
     const res = await get(LOADER, { "sec-fetch-dest": "iframe" });
     expect(res.status).toBe(200);
@@ -408,7 +437,11 @@ describe("designs on the content host", () => {
     const d = directives(res);
     expect(d.filter((x) => x.startsWith("sandbox"))).toEqual([OPAQUE_SANDBOX]);
     expect(OPAQUE_SANDBOX).not.toContain("allow-same-origin");
-    expect(d.some((x) => x.startsWith("frame-ancestors"))).toBe(false);
+    // Under origin isolation the shell has the artifact's own origin: 'self' and the app name
+    // every ancestor, so no other site can frame the loader and paint into it.
+    expect(d.filter((x) => x.startsWith("frame-ancestors"))).toEqual([
+      `frame-ancestors 'self' ${config().appOrigin}`,
+    ]);
     expect(d).toContain(
       `script-src 'self' 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval'${config()
         .cdnAllowlist.map((h) => ` https://${h}`)
@@ -423,7 +456,7 @@ describe("designs on the content host", () => {
     expect(await head.text()).toBe("");
   });
 
-  it("keeps one sandbox directive under opaque isolation", async () => {
+  it("keeps one sandbox directive under opaque isolation, where an opaque shell frames it", async () => {
     const { p, cookie } = await opened();
     const res = await run(
       `${contentOrigin(p.id)}${LOADER}`,
@@ -432,6 +465,8 @@ describe("designs on the content host", () => {
     );
     expect(res.status).toBe(200);
     expect(directives(res).filter((x) => x.startsWith("sandbox"))).toEqual([OPAQUE_SANDBOX]);
+    // No source can name an opaque shell.
+    expect(directives(res).some((x) => x.startsWith("frame-ancestors"))).toBe(false);
   });
 
   it("refuses the loader without a pass, at the top level, for other types and other files", async () => {
@@ -505,6 +540,9 @@ describe("designs on the content host", () => {
       headers: { Cookie: `${name}=${capture}`, "sec-fetch-dest": "iframe" },
     });
     expect(cap.status).toBe(200);
+    expect(directives(cap).filter((x) => x.startsWith("frame-ancestors"))).toEqual([
+      `frame-ancestors 'self' ${c.appOrigin}`,
+    ]);
   });
 
   it("serves design.js and design.css without a cookie, and nothing else under the type", async () => {

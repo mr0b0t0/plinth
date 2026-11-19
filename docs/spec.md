@@ -1121,13 +1121,17 @@ preview), never on its page.
   relative path. Font files and data files (JSON, text) are refused with what to do instead
   (Google Fonts or a `data:` URL in `@font-face`; data inline in a `<script>`): artboards have an
   opaque origin, and those loads need CORS, which the content host never sends. Publish warnings
-  read a design as opaque isolation would: `opaque_module` names module scripts, `crossorigin`
-  links and web fonts from the artifact, on every instance.
+  read a design's artboards as opaque documents on every instance: `opaque_module` names module
+  scripts, `crossorigin` links, imports and web fonts that load the design's own files (relative
+  or root-absolute URLs). The same loads from a CDN that answers with CORS (Google Fonts' own
+  embed, unpkg) and `data:` fonts work in an artboard and get no warning.
 - **The canvas.** A fixed Plinth renderer on the artifact's own origin
   (`/__plinth/types/design/`, under the strict typed shell: `script-src 'self'`) lays the boards
   out in rows by section with a label over each (name, size). Drag, the wheel and the arrow keys
   pan; Ctrl or Cmd with the wheel, a trackpad pinch, two fingers, the toolbar and `+`, `-`, `0`
-  (Fit) and `1` (100%) zoom between 5% and 400%; the Boards list zooms to one board. Each board is
+  (Fit) and `1` (100%) zoom between 5% and 400%; the Boards list zooms to one board. After Fit
+  (the button or `0`) the canvas fits again when its frame is resized, until the view is moved or
+  zoomed. Each board is
   covered so the canvas can be dragged; Interact (or a double click or tap) takes one board's cover
   off so its links, buttons and scripts can be used, and Done, Escape or a click outside puts it
   back. At most 24 board frames are alive at once; boards far off screen are placeholders until
@@ -1138,13 +1142,16 @@ preview), never on its page.
   document over itself when the renderer posts it: Plinth's base URL (the version's directory),
   viewport and reset, then the shared section, then the fragment. The loader is served only with
   this artifact's content pass, under the normal content CSP (inline script, the CDN allowlist)
-  plus the CSP `sandbox` without `allow-same-origin` in every isolation mode, and the renderer
+  plus the CSP `sandbox` without `allow-same-origin` in every isolation mode, with
+  `frame-ancestors 'self' <app>` under origin isolation (none under opaque isolation or for an
+  in-chat preview pass, whose shell no source can name), and the renderer
   frames it with the same iframe sandbox: every artboard has an opaque origin, with no cookies,
   no storage and no access to the shell, the app or another board, and it cannot navigate any of
   them (links may open a new tab, as on every artifact).
   The shell's own DOM never holds author markup. A design's files are served with
-  `Cross-Origin-Resource-Policy: cross-origin` (artboards load them from an opaque origin), never
-  run script, and its `design.html` is served as text.
+  `Cross-Origin-Resource-Policy: cross-origin` (artboards load them from an opaque origin) and
+  never run script; its `design.html`, which no board loads, is served as text with
+  `same-origin`.
 - **Print or save as PDF** is in the artifact menu: every board is mounted and laid out at 100%,
   printing waits for them to load (at most 10 seconds), and each board prints on its own page of
   exactly its size (a named `@page` per size). Ctrl or Cmd+P in the frame does the same. Browsers
@@ -1160,9 +1167,12 @@ preview), never on its page.
   artboard can and cannot load. Design content is untrusted like artifact HTML.
 - **Not yet.** Server-rendered PNG and PDF export through Browser Rendering is a separate change.
   Boards with `height="auto"`, dragging boards on the canvas, per-board dark mode and deep links to
-  one board from the app are not offered. Thumbnails capture the canvas; a board's own images may
-  be missing from them, because Plinth's capture browser loads the version top level and nested
-  opaque frames may not carry its capture pass.
+  one board from the app are not offered.
+- **Thumbnails** capture the canvas with each board's own images and styles. The capture browser
+  loads the version top level, and a board's requests (an opaque document) fall in another cookie
+  partition than the enter's, so for a design the Worker also gives that browser the same capture
+  pass for the boards' partition before the page loads, through the DevTools protocol, never in a
+  URL (docs/security.md, Designs).
 
 ### Big builds and reuse by hash
 
@@ -1226,8 +1236,8 @@ files) and big pages without merging chunks, and an update stores only what chan
   blocking, at most 50): `missing_file` (a relative reference not in the version),
   `root_absolute` (`/assets/x.js`, which loads the current version's file from an old version),
   `blocked_host` (outside the CSP's allowlist), `insecure_url` (`http:`), `opaque_module` (module
-  scripts, `crossorigin` links and fonts, which fail under `CONTENT_ISOLATION=opaque`, and in a
-  design's artboards on every instance) and
+  scripts, `crossorigin` links and fonts, which fail under `CONTENT_ISOLATION=opaque`; in a
+  design's artboards, on every instance, only those that load the design's own files) and
   `slides_setting`, `slide_empty` and `slide_dense` (a deck's ignored setting or column marker, an
   empty slide, a slide that will be shrunk to fit; a deck's `missing_file` names an image its
   Markdown shows that the version does not hold, its path resolved as the browser does: before any

@@ -18,8 +18,8 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   its scripts, styles and images run without reaching the page or each other, lets you interact
   with one board, pins comments to boards, and prints or saves the design as PDF one board per
   page. The editor previews the boards as you type and shows each problem with its line. The Plinth
-  CLI publishes a folder with `design.html` at its top as a design. Update the plugin for the
-  agent's design rules.
+  CLI publishes a folder with `design.html` at its top as a design. Thumbnails show each board
+  with its own images and styles. Update the plugin for the agent's design rules.
 
 - **Dictation, run by Plinth, for pages that ask for it.** A page that declares `dictation` can
   take the words a viewer speaks (`plinth.dictation`): Plinth's app runs the browser's speech
