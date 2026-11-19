@@ -354,6 +354,10 @@ test("Board settings: the ⋯ dialog saves a version, and a newer version is sho
     await expect(dialog.getByRole("radio", { name: /^Dots/ })).toBeChecked();
     await expect(dialog.getByRole("radio", { name: /^Commenters and editors/ })).toBeChecked();
     await expect(dialog.getByRole("textbox")).toHaveCount(0);
+    // Let the dialog's entrance animation settle so axe sees its final colours.
+    await page.waitForFunction(() =>
+      document.getAnimations().every((a) => a.playState !== "running"),
+    );
     const results = await new AxeBuilder({ page }).include('[role="dialog"]').analyze();
     expect(results.violations, JSON.stringify(results.violations, null, 2)).toEqual([]);
 
