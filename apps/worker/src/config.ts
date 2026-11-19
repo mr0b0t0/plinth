@@ -12,6 +12,7 @@ import {
   ROOM_DEFAULTS,
 } from "@plinth/shared";
 import { getDomain } from "tldts";
+import { PASSWORD_HASH_RE } from "./lib/crypto.ts";
 import type { ArtifactRoom } from "./rooms/ArtifactRoom.ts";
 
 /** Secrets are set with `wrangler secret put` (or .dev.vars locally); not in wrangler.jsonc. */
@@ -21,6 +22,8 @@ export interface Secrets {
   ADMIN_TOKEN?: string;
   SENDGRID_API_KEY?: string;
   RESEND_API_KEY?: string;
+  /** The review account's password, hashed (apps/worker/scripts/review-login-hash.mjs). */
+  REVIEW_LOGIN_PASSWORD_HASH?: string;
 }
 
 /**
@@ -37,6 +40,7 @@ export interface OptionalBindings {
 /** Vars an operator may set that the shipped wrangler.jsonc leaves out (their defaults apply). */
 export interface OptionalVars {
   VIEW_COUNTS?: string;
+  REVIEW_LOGIN_EMAIL?: string;
 }
 
 export type Bindings = Omit<Env, "ROOMS"> & Secrets & OptionalBindings & OptionalVars;
@@ -140,6 +144,12 @@ export interface Config {
   allowLiveEditing: boolean;
   /** Live editing timings (LIVE_* env vars). */
   live: LiveEditSettings;
+  /**
+   * REVIEW_LOGIN_EMAIL and REVIEW_LOGIN_PASSWORD_HASH: one ordinary account that may also sign in
+   * with a password at /login/review, for a directory's reviewers, who cannot receive sign-in
+   * emails. null (the route is a 404) unless both are set; deleting the secret turns it off.
+   */
+  reviewLogin: { email: string; passwordHash: string } | null;
   /** OPERATOR_*: who runs this instance, for its legal pages. null when none is published. */
   operator: {
     name: string;
@@ -245,6 +255,27 @@ const HOST_RE = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)
 const CDN_HOST_RE = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/;
 
 const OPERATOR_EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+/**
+ * REVIEW_LOGIN_EMAIL and REVIEW_LOGIN_PASSWORD_HASH. Either one missing turns the review sign-in
+ * off rather than failing, since removing the secret is how an operator ends a review. A hash that
+ * is set but malformed is refused, so a typo never leaves a login nobody can use, or one that
+ * checks fewer iterations.
+ */
+function parseReviewLogin(env: Record<string, unknown>): Config["reviewLogin"] {
+  const email = str(env.REVIEW_LOGIN_EMAIL).toLowerCase();
+  const passwordHash = str(env.REVIEW_LOGIN_PASSWORD_HASH);
+  if (!email || !passwordHash) return null;
+  if (!OPERATOR_EMAIL_RE.test(email)) {
+    throw new ConfigError("REVIEW_LOGIN_EMAIL is not an email address");
+  }
+  if (!PASSWORD_HASH_RE.test(passwordHash)) {
+    throw new ConfigError(
+      "REVIEW_LOGIN_PASSWORD_HASH is not a hash from apps/worker/scripts/review-login-hash.mjs (pbkdf2-sha256$100000$<salt>$<hash>)",
+    );
+  }
+  return { email, passwordHash };
+}
 
 /**
  * OPERATOR_NAME, OPERATOR_ADDRESS, OPERATOR_REGISTRATION, OPERATOR_EMAIL, OPERATOR_HOSTING: the
@@ -363,6 +394,7 @@ export function parseConfig(env: Record<string, unknown>): Config {
     rooms: parseRoomLimits(env),
     allowLiveEditing: boolDefaultOn(env.ALLOW_LIVE_EDITING),
     live: parseLiveEditSettings(env),
+    reviewLogin: parseReviewLogin(env),
     operator: parseOperator(env),
   };
   validate(config);
@@ -388,6 +420,20 @@ function validate(c: Config): void {
     throw new ConfigError("SENDGRID_API_KEY is not set");
   if (c.emailProvider === "resend" && !c.resendApiKey)
     throw new ConfigError("RESEND_API_KEY is not set");
+  if (c.reviewLogin) {
+    // The review account is an ordinary user. A shared password must never reach the admin pages,
+    // and in single-user mode only the admin may sign in at all.
+    if (c.adminEmails.includes(c.reviewLogin.email)) {
+      throw new ConfigError(
+        "REVIEW_LOGIN_EMAIL must not be an ADMIN_EMAIL address: the review account is an ordinary user",
+      );
+    }
+    if (c.singleUserMode) {
+      throw new ConfigError(
+        "REVIEW_LOGIN_EMAIL cannot be used with SINGLE_USER_MODE (only the admin signs in there)",
+      );
+    }
+  }
   if (c.sessionSecret === c.tokenSigningKey) {
     throw new ConfigError("SESSION_SECRET and TOKEN_SIGNING_KEY must be different values");
   }

@@ -147,6 +147,7 @@ Booleans accept `true`, `1`, `yes` or `on`.
 | `LIVE_AUTO_CHECKPOINT_MIN_S` | `600` (or the idle time, when longer) | Least seconds between the current version (saved, autosaved, or published by an agent) and an automatic one, at least `LIVE_CHECKPOINT_IDLE_S`. An autosave asked for sooner waits and is tried again then, while someone is still editing the page. Saved versions count toward `MAX_PUBLISHES_PER_HOUR` |
 | `LIVE_DRAFT_FLUSH_S` | `5` | How often, at most, the room writes unsaved page edits to D1, `2` to `60`. A Worker restart can lose up to this much typing, which editors' pages send again |
 | `LIVE_DRAFT_RETENTION_DAYS` | `30` | Unsaved page edits nobody touched for this long are deleted, `1` to `365` |
+| `REVIEW_LOGIN_EMAIL` | empty | With the secret `REVIEW_LOGIN_PASSWORD_HASH`: one account that may also sign in with a password at `/login/review`, for a directory's reviewers, who cannot receive sign-in emails. Off (404) unless both are set. Must not be an `ADMIN_EMAIL` address, and is refused on a single-user instance ([security.md](security.md#review-account-sign-in)) |
 | `STAGING_CONTENT_FALLBACK` | `false` | Serves content at `APP_HOST/__content/<id>/` instead of subdomains, for a staging deploy on `workers.dev` without a content domain. All artifacts then share the app's origin, so never use it with real users. Refused in production |
 | `DEV_OUTBOX` | `false` (`true` in the committed local config) | Keeps console emails in D1 and exposes `GET /api/v1/__dev/outbox` for tests. Only honoured when `ENVIRONMENT=development` |
 
@@ -157,6 +158,7 @@ Booleans accept `true`, `1`, `yes` or `on`.
 | `ADMIN_TOKEN` | optional, single-user mode | At least 32 characters if set. Extra bearer token for the owner, for scripts |
 | `SENDGRID_API_KEY` | with `EMAIL_PROVIDER=sendgrid` | API key with Mail Send permission only |
 | `RESEND_API_KEY` | with `EMAIL_PROVIDER=resend` | Sending-access API key |
+| `REVIEW_LOGIN_PASSWORD_HASH` | optional, with `REVIEW_LOGIN_EMAIL` | The review account's password, hashed. Make it with `umask 077; openssl rand -base64 24 > review-password.txt`, then `node apps/worker/scripts/review-login-hash.mjs < review-password.txt \| wrangler secret put REVIEW_LOGIN_PASSWORD_HASH`. Give the reviewers the password file's contents. Delete the secret to turn the sign-in off |
 
 Rotating `TOKEN_SIGNING_KEY` invalidates open viewer links, content cookies and password passes;
 viewers pass the gate again. Rotating `SESSION_SECRET` may invalidate pending sign-in codes and

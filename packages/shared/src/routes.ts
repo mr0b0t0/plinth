@@ -37,6 +37,8 @@ export const API = {
   loginRequest: "/auth/login",
   loginVerifyCode: "/auth/verify-code",
   loginVerifyLink: "/auth/verify-link",
+  /** The one review account's password sign-in; 404 unless REVIEW_LOGIN_* are set. */
+  loginReview: "/auth/review-login",
   logout: "/auth/logout",
   /** Development only (ENVIRONMENT=development and DEV_OUTBOX=true): emails the console sent. */
   devOutbox: "/__dev/outbox",
@@ -93,6 +95,8 @@ export const APP_ROUTES = {
   home: "/",
   login: "/login",
   magic: "/login/magic",
+  /** Password sign-in for the one review account (REVIEW_LOGIN_*); a 404 when it is off. */
+  reviewLogin: "/login/review",
   dashboard: "/dashboard",
   connections: "/connections",
   consent: "/oauth/consent",

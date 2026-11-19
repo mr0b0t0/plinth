@@ -35,6 +35,7 @@ const config: AppConfig = {
   },
   cdn_allowlist: ["cdnjs.cloudflare.com", "cdn.jsdelivr.net"],
   upload_ticket_ttl_s: 1800,
+  review_login: false,
 };
 
 describe("gate query and paths", () => {

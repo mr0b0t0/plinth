@@ -362,6 +362,11 @@ export interface AppConfig {
   cdn_allowlist: string[];
   /** How long an upload ticket from start_upload stays valid, in seconds. */
   upload_ticket_ttl_s: number;
+  /**
+   * The review account's password sign-in (REVIEW_LOGIN_EMAIL and REVIEW_LOGIN_PASSWORD_HASH) is
+   * on: the sign-in page links to /login/review. Off on almost every instance.
+   */
+  review_login: boolean;
 }
 
 export interface OperatorInfo {
