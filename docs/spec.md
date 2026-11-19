@@ -1045,18 +1045,18 @@ source editor work as for docs. A deck is not edited on its page.
   is shared with, signed in or confirmed by code), whose decks follow it, with a "Following the
   presenter" note and Stop. Paging by hand pauses following ("Back to the presenter (slide 7)"
   returns to it), and someone who opens the deck mid-talk lands on the presenter's slide. The
-  toggle shows how many people follow ("Leading · 3 following": people, not tabs). The last
-  presenter to turn it on leads; an earlier one stops leading and follows. Turning it off, or the
-  leader closing the deck, ends it for everyone. Followers send nothing, and no one learns who
-  else is watching or who leads, only the slide. It runs entirely in the deck's frame over the
-  room's `slides` channel ([Live rooms](#live-rooms)); the app is not involved, and the slide in
-  each viewer's URL fragment follows as for any paging. Anonymous link viewers, in-chat previews,
-  thumbnail captures, review mode, the editor preview and a permanent version link never follow
-  or lead, and under opaque isolation and the path fallback nothing connects. A sharing change ends
-  every follower's socket (they see "Your access changed. Reload to keep following."), a takedown
-  or delete ends all of them, and a tab hidden for 60 s disconnects and catches up when shown,
-  unless it leads. Nothing is stored: the presenter's slide lives only in the room's memory of
-  the presenter's socket.
+  toggle shows how many other people have the deck open ("Leading · 3 following": people, not
+  tabs). The last presenter to turn it on leads; an earlier one stops leading and follows.
+  Turning it off, or the leader closing the deck, ends it for everyone. Followers send nothing,
+  and no one learns who else is watching or who leads, only the slide. It runs entirely in the
+  deck's frame over the room's `slides` channel ([Live rooms](#live-rooms)); the app is not
+  involved, and the slide in each viewer's URL fragment follows as for any paging. Anonymous link
+  viewers, in-chat previews, thumbnail captures, review mode, the editor preview and a permanent
+  version link never follow or lead, and under opaque isolation and the path fallback nothing
+  connects. A sharing change closes every socket on the deck (followers see "Your access changed.
+  Reload to keep following."), as does a takedown or delete; a follower's tab hidden for 60 s
+  disconnects and catches up when shown, while a leader's stays connected. Nothing is stored: the
+  presenter's slide lives only in the room's memory of the presenter's socket.
 - **Speaker notes are not secret.** Anyone who can open the deck can read them (presenter view,
   the handout, the `.pptx`, the source). Agents treat deck text, notes included, as untrusted
   data.
