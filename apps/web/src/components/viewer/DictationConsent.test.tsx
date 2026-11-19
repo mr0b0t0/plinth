@@ -16,7 +16,7 @@ afterEach(() => {
 function request(over: Partial<DictationConsentRequest> = {}): DictationConsentRequest {
   return {
     title: "Field notes",
-    owner: "Ada",
+    owner: "ada@example.com",
     vendor: "google",
     allow: vi.fn(),
     notNow: vi.fn(),
@@ -48,11 +48,11 @@ describe("DictationConsent", () => {
   });
 
   it("says who gets the words and who hears the audio; the title is text", () => {
-    render(<DictationConsent request={request({ title: "<b>Notes</b>", owner: null })} />);
+    render(<DictationConsent request={request({ title: "<b>Notes</b>" })} />);
     const dialog = screen.getByRole("dialog");
     expect(dialog.textContent).toContain("<b>Notes</b>");
     expect(dialog.querySelector("b")).toBeNull();
-    expect(dialog.textContent).toContain("which its owner wrote");
+    expect(dialog.textContent).toContain("which ada@example.com wrote");
     expect(dialog.textContent).toContain("Chrome sends the audio to Google.");
     expect(dialog.textContent).toContain("Plinth does not receive or keep the audio.");
   });

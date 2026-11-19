@@ -41,8 +41,8 @@ function ConsentPanel({ request }: { request: DictationConsentRequest }) {
     >
       <p>
         When you start dictation on <strong>{request.title}</strong>, the words you say are sent to
-        this page, which {request.owner ?? "its owner"} wrote. The page may save them where others
-        with access can see them.
+        this page, which {request.owner} wrote. The page may save them where others with access can
+        see them.
       </p>
       <p>
         Your browser turns your speech into text. {vendorLine(request.vendor)} Plinth does not

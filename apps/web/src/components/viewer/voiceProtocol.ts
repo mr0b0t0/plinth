@@ -80,20 +80,24 @@ export function vendorLine(vendor: SpeechVendor): string {
 
 // ---------- consent: one viewer's choice in this browser, per artifact ----------
 
-/** localStorage key prefix: `plinth:dictation:<artifact id>` = "allowed". */
+/**
+ * localStorage key prefix: `plinth:dictation:<artifact id>` = the viewer id it was given for (the
+ * gate's `voice.viewer_id`), so another person on this browser is asked again.
+ */
 export const CONSENT_PREFIX = "plinth:dictation:";
 
-export function hasConsent(artifactId: string): boolean {
+export function hasConsent(artifactId: string, viewerId: string | null): boolean {
+  if (!viewerId) return false;
   try {
-    return window.localStorage.getItem(CONSENT_PREFIX + artifactId) === "allowed";
+    return window.localStorage.getItem(CONSENT_PREFIX + artifactId) === viewerId;
   } catch {
     return false;
   }
 }
 
-export function storeConsent(artifactId: string): void {
+export function storeConsent(artifactId: string, viewerId: string): void {
   try {
-    window.localStorage.setItem(CONSENT_PREFIX + artifactId, "allowed");
+    window.localStorage.setItem(CONSENT_PREFIX + artifactId, viewerId);
   } catch {
     // Storage blocked: the viewer is asked again next time.
   }
@@ -107,7 +111,7 @@ export function forgetConsent(artifactId: string): void {
   }
 }
 
-/** On sign-out: every artifact's consent, so the next person on this browser is asked again. */
+/** On sign-out: every artifact's consent in this browser. */
 export function forgetAllConsents(): void {
   try {
     const keys: string[] = [];

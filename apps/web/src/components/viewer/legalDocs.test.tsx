@@ -13,7 +13,10 @@ describe("privacy notice: dictation", () => {
     expect(text(true)).toContain("Dictation");
     expect(text(true)).toContain("Chrome sends the audio to Google");
     expect(text(true)).toContain("We do not receive or keep the");
+    // Owners are told that the consent question shows their email to the people they share with.
+    expect(text(true)).toContain("names the page's owner by their email address");
     expect(text(false)).not.toContain("Dictation");
     expect(text(false)).not.toContain("audio");
+    expect(text(false)).not.toContain("names the page's owner");
   });
 });

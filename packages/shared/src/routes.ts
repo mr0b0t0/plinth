@@ -62,6 +62,7 @@ export const API = {
   viewPassword: "/view/:ref/password",
   viewEmail: "/view/:ref/email",
   viewCode: "/view/:ref/code",
+  viewDictation: "/view/:ref/dictation", // GET the owner's email for the dictation consent dialog
   // comments and mentions
   comments: "/artifacts/:ref/comments",
   comment: "/comments/:id",

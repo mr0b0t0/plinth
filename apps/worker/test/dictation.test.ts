@@ -17,6 +17,7 @@ import { appPermissionsPolicy } from "../src/app/headers.ts";
 import { dictationActive, parseConfig } from "../src/config.ts";
 import { contentSources, PERMISSIONS_POLICY } from "../src/content/csp.ts";
 import { runtimeScript } from "../src/content/runtime.ts";
+import { viewerIdFor } from "../src/lib/crypto.ts";
 import { DICTATION_PAGE_NOTE, dictationNote } from "../src/mcp/notes.ts";
 import { dictationAccess } from "../src/policy.ts";
 import { scanPublish } from "../src/services/publishCheck.ts";
@@ -61,6 +62,14 @@ const fallback = {
 async function gate(id: string, headers: Record<string, string> = {}, vars = {}, query = "") {
   return json(await run(`http://app.localhost:8787/api/v1/view/${id}${query}`, { headers }, vars));
 }
+
+/** GET /view/:ref/dictation: the owner's email for the consent dialog. */
+function dictationOwner(id: string, headers: Record<string, string> = {}, vars = {}) {
+  return run(`http://app.localhost:8787/api/v1/view/${id}/dictation`, { headers }, vars);
+}
+
+/** The viewer's id on the page, which the app binds this browser's consent to. */
+const viewerId = (id: string, email: string) => viewerIdFor(config().tokenSigningKey, id, email);
 
 describe("ALLOW_DICTATION", () => {
   it("is off by default and in the shipped wrangler.jsonc; a true value turns it on", () => {
@@ -241,16 +250,25 @@ describe("policy: dictationAccess", () => {
 describe("the gate's voice block", () => {
   it("only when the current version of an HTML page declares dictation and the switch is on", async () => {
     const { id, ownerP } = await setup(PAGE, { visibility: "unlisted" });
-    // Those who may dictate get the owner's email for the consent dialog; nobody else does.
-    const yes = { dictation: { available: true, reason: null }, owner_email: ownerP.email };
-    expect((await gate(id, ownerP.session.headers, ON)).voice).toEqual(yes);
+    // Those who may dictate get their own id on the page, which their consent is bound to. The
+    // owner's email is never in the gate: the consent dialog asks for it when it opens.
+    const yes = async (email: string) => ({
+      dictation: { available: true, reason: null },
+      viewer_id: await viewerId(id, email),
+    });
+    expect((await gate(id, ownerP.session.headers, ON)).voice).toEqual(await yes(ownerP.email));
     // Off: nothing read, nothing said (the app answers `disabled` from its config).
     expect((await gate(id, ownerP.session.headers)).voice).toBeUndefined();
-    // Grant holders, signed in.
+    // Grant holders, signed in: each their own id.
+    const ids = new Set<string>();
     for (const role of ["viewer", "commenter", "editor"] as const) {
       const p = await person(id, role);
-      expect((await gate(id, p.session.headers, ON)).voice, role).toEqual(yes);
+      const voice = (await gate(id, p.session.headers, ON)).voice;
+      expect(voice, role).toEqual(await yes(p.email));
+      expect(JSON.stringify(voice)).not.toContain(ownerP.email);
+      ids.add(voice.viewer_id);
     }
+    expect(ids.size).toBe(3);
     // An anonymous link viewer.
     expect((await gate(id, {}, ON)).voice).toEqual({
       dictation: { available: false, reason: "not_identified" },
@@ -265,6 +283,35 @@ describe("the gate's voice block", () => {
     const a = await agent();
     const doc = await publish(a.auth, { html: undefined, type: "doc", content: "# Notes\n" });
     expect((await gate(doc.body.id, {}, ON)).voice).toBeUndefined();
+  });
+
+  it("the owner's email goes only to those who may dictate, when the dialog asks", async () => {
+    const { id, ownerP } = await setup(PAGE, { visibility: "unlisted" });
+    const owner = await dictationOwner(id, ownerP.session.headers, ON);
+    expect(owner.status).toBe(200);
+    expect(owner.headers.get("cache-control")).toBe("no-store");
+    expect(await json(owner)).toEqual({ owner_email: ownerP.email });
+    for (const role of ["viewer", "commenter", "editor"] as const) {
+      const p = await person(id, role);
+      const r = await dictationOwner(id, p.session.headers, ON);
+      expect(await json(r), role).toEqual({ owner_email: ownerP.email });
+    }
+    // Everyone else gets the same 404 as for a missing artifact: an anonymous link viewer, the
+    // switch off, opaque isolation, a page that declares nothing, an unknown artifact.
+    const notFound = async (r: Response) => {
+      expect(r.status).toBe(404);
+      expect(JSON.stringify(await json(r))).not.toContain(ownerP.email);
+    };
+    await notFound(await dictationOwner(id, {}, ON));
+    await notFound(await dictationOwner(id, ownerP.session.headers));
+    await notFound(await dictationOwner(id, ownerP.session.headers, OPAQUE_ON));
+    const plain = await setup(PLAIN, { visibility: "unlisted" });
+    await notFound(await dictationOwner(plain.id, plain.ownerP.session.headers, ON));
+    await notFound(await dictationOwner("nope", ownerP.session.headers, ON));
+    // A signed-in person with no grant on an allowlist page.
+    const allow = await setup(PAGE);
+    const stranger = await person(id, "viewer");
+    await notFound(await dictationOwner(allow.id, stranger.session.headers, ON));
   });
 
   it("the current version's declaration governs old version URLs", async () => {

@@ -403,10 +403,20 @@ export type ViewGate =
 export interface ViewGateVoice {
   dictation: DictationAccess;
   /**
-   * The owner's email, only when this viewer may dictate (the owner or a grant holder): the
-   * consent dialog names who wrote the page by it, never by the owner's chosen display name.
+   * This viewer's id on this page (the `u_` id their shared data writes carry), only when they
+   * may dictate: the app binds this browser's consent to it, so another person on the same
+   * browser is asked again.
    */
-  owner_email?: string;
+  viewer_id?: string;
+}
+
+/**
+ * GET /api/v1/view/:ref/dictation: who wrote the page, for the dictation consent dialog. Only for
+ * viewers who may dictate, and fetched only when the dialog opens.
+ */
+export interface DictationOwner {
+  /** The owner's email: the dialog names the owner by it, never by the chosen display name. */
+  owner_email: string;
 }
 
 /** How an owner or editor may edit this doc on its page (GET /view/:ref). */

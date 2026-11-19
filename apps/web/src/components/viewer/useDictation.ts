@@ -16,8 +16,13 @@
 // reload (any load of the frame after its first) and unmount.
 // Posts go only to the frame's exact content origin, never "*", so dictation is off under opaque
 // isolation (the server says so too).
-import type { AppConfig, ViewGate } from "@plinth/shared";
+//
+// The app listens from the moment the stage hands it the frame, before its config arrives: the
+// gate's voice part already carries the server's decision (switch, isolation, identity), and a
+// page's `hello` that only the config can answer is answered once it arrives.
+import { API, type AppConfig, type DictationOwner, route, type ViewGate } from "@plinth/shared";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { api } from "../../lib/api.ts";
 import { acceptFrom, targetOriginFor } from "../comments/frameGuard.ts";
 import {
   clipResult,
@@ -41,7 +46,8 @@ type OkGate = Extract<ViewGate, { status: "ok" }>;
 /** The consent dialog the stage shows while a start waits for the viewer's answer. */
 export interface DictationConsentRequest {
   title: string;
-  owner: string | null;
+  /** The owner's email, never the display name the owner chose. */
+  owner: string;
   vendor: SpeechVendor;
   allow: () => void;
   notNow: () => void;
@@ -68,7 +74,15 @@ export interface UseDictationOptions {
   contentOrigin: string;
   gate: OkGate;
   config: AppConfig | null;
+  /**
+   * The owner's email for the consent dialog, fetched only when the dialog opens (never with the
+   * gate, so a plain page load does not hand it out). Tests replace it.
+   */
+  loadOwner?: (artifactId: string) => Promise<string>;
 }
+
+const loadOwnerEmail = (artifactId: string) =>
+  api<DictationOwner>(route(API.viewDictation, { ref: artifactId })).then((r) => r.owner_email);
 
 type Phase = "consent" | "starting" | "listening";
 
@@ -106,21 +120,49 @@ export const FOCUS_POLL_MS = 250;
  */
 const frameLoads = new WeakMap<HTMLIFrameElement, number>();
 
+/**
+ * Frames whose page said `hello` while the app could not answer yet (no config, and a gate that
+ * does not settle it). The answer goes out as soon as the app knows.
+ */
+const unansweredHello = new WeakSet<HTMLIFrameElement>();
+
+/**
+ * How the app may answer this frame: "origin" (each artifact its own origin: answer at the exact
+ * content origin), "off" (opaque isolation: never answer) or "unknown" (wait). The config decides;
+ * before it arrives, the gate's voice part does when present, since the server decided it with the
+ * same switch and isolation. Without either, the page does not get dictation whatever the config
+ * says, only the reason it is told (`disabled` or `not_declared`) waits.
+ */
+function answerMode(
+  config: AppConfig | null,
+  voice: OkGate["voice"],
+): { mode: "origin" | "off" | "unknown"; on: boolean } {
+  if (config) {
+    const exact = config.content_isolation === "origin";
+    return { mode: exact ? "origin" : "off", on: exact && config.dictation === true };
+  }
+  if (!voice) return { mode: "unknown", on: false };
+  if (voice.dictation.reason === "opaque_isolation") return { mode: "off", on: false };
+  return { mode: "origin", on: voice.dictation.reason !== "disabled" };
+}
+
 export function useDictation({
   frame,
   contentOrigin,
   gate,
   config,
+  loadOwner = loadOwnerEmail,
 }: UseDictationOptions): Dictation {
   const artifactId = gate.artifact.id;
   const voice = gate.voice?.dictation;
+  // Consent is this viewer's, on this page: another person on this browser is asked again.
+  const viewerId = gate.voice?.viewer_id ?? null;
   // Origin isolation only: the app answers a page (even "disabled") only at its exact origin.
-  const exact = config?.content_isolation === "origin";
-  const on = exact && config?.dictation === true;
+  const { mode, on } = answerMode(config, gate.voice);
   const declared = on && voice !== undefined;
   const [listening, setListening] = useState(false);
   const [onDevice, setOnDevice] = useState(false);
-  const [allowed, setAllowed] = useState(() => hasConsent(artifactId));
+  const [allowed, setAllowed] = useState(() => hasConsent(artifactId, viewerId));
   const [consent, setConsent] = useState<DictationConsentRequest | null>(null);
   const load = useRef<LoadState>({
     notNow: false,
@@ -131,10 +173,8 @@ export function useDictation({
   });
   const stopRef = useRef<((reason: DictationIdleReason) => void) | null>(null);
   const reloadRef = useRef<(() => void) | null>(null);
-  // Who wrote the page, by the owner's email (never the display name, which the owner picks).
-  const ownerEmail = gate.voice?.owner_email ?? null;
-  const about = useRef({ title: gate.artifact.title, owner: ownerEmail });
-  about.current = { title: gate.artifact.title, owner: ownerEmail };
+  const about = useRef({ title: gate.artifact.title, loadOwner });
+  about.current = { title: gate.artifact.title, loadOwner };
 
   // Count the frame's loads from the start, so a dictation started before the page finished
   // loading is not cut off by that first load, and a reload after a late setup still counts.
@@ -150,15 +190,15 @@ export function useDictation({
   }, [frame]);
 
   useEffect(() => {
-    setAllowed(hasConsent(artifactId));
-  }, [artifactId]);
+    setAllowed(hasConsent(artifactId, viewerId));
+  }, [artifactId, viewerId]);
 
   const hasVoice = voice !== undefined;
   const available = voice?.available === true;
   const reason = voice?.reason ?? null;
 
   useEffect(() => {
-    if (!frame || !exact) return;
+    if (!frame || mode === "off") return;
     const target = targetOriginFor(contentOrigin, false);
     if (!target) return;
     const accept = acceptFrom(frame, contentOrigin, false);
@@ -311,7 +351,7 @@ export function useDictation({
     };
 
     const onStart = (m: { id: string; lang?: string; interim: boolean }) => {
-      if (!access().available) return refuse(m.id, "unavailable");
+      if (!access().available || !viewerId) return refuse(m.id, "unavailable");
       // Read at once: a click or key press in the frame activates the app as its ancestor.
       const activation = (navigator as Navigator & { userActivation?: { isActive: boolean } })
         .userActivation;
@@ -349,19 +389,33 @@ export function useDictation({
         poll: null,
       };
       session = s;
-      if (hasConsent(artifactId)) {
+      if (hasConsent(artifactId, viewerId)) {
         setAllowed(true);
         void begin(s);
         return;
       }
+      void ask(s, viewerId);
+    };
+
+    /** Open the consent dialog, once the app has the owner's email to name them by. */
+    const ask = async (s: Session, viewer: string) => {
+      const { title, loadOwner: fetchOwner } = about.current;
+      let owner: string;
+      try {
+        owner = await fetchOwner(artifactId);
+      } catch {
+        finish(s, "error", "network");
+        return;
+      }
+      if (session !== s || s.phase !== "consent") return;
       setConsent({
-        title: about.current.title,
-        owner: about.current.owner,
+        title,
+        owner,
         vendor: speechVendor(),
         allow: () => {
           if (session !== s || s.phase !== "consent") return;
           setConsent(null);
-          storeConsent(artifactId);
+          storeConsent(artifactId, viewer);
           setAllowed(true);
           void begin(s);
         },
@@ -377,14 +431,23 @@ export function useDictation({
       });
     };
 
+    const status = () => {
+      const a = access();
+      post({ type: "status", available: a.available, reason: a.reason });
+    };
+
     const onMessage = (e: MessageEvent) => {
       if (!accept(e)) return;
       const m = parseVoiceFrameMessage(e.data);
       if (!m) return;
-      if (m.type === "hello") {
-        const a = access();
-        post({ type: "status", available: a.available, reason: a.reason });
-      } else if (m.type === "stop") {
+      if (mode === "unknown") {
+        // Not yet known how to answer: remember the hello. A start goes unanswered; the page's
+        // start() settles with the status (unavailable whatever the config says).
+        if (m.type === "hello") unansweredHello.add(frame);
+        return;
+      }
+      if (m.type === "hello") status();
+      else if (m.type === "stop") {
         if (session?.id === m.id) end(session, "stopped");
       } else onStart(m);
     };
@@ -399,6 +462,7 @@ export function useDictation({
     };
 
     window.addEventListener("message", onMessage);
+    if (mode === "origin" && unansweredHello.delete(frame)) status();
     reloadRef.current = () => {
       if (session) finish(session, "frame_reloaded");
     };
@@ -415,7 +479,7 @@ export function useDictation({
       stopRef.current = null;
       if (session) finish(session, "frame_reloaded");
     };
-  }, [frame, contentOrigin, exact, on, hasVoice, available, reason, artifactId]);
+  }, [frame, contentOrigin, mode, on, hasVoice, available, reason, artifactId, viewerId]);
 
   const stop = useCallback(() => {
     const L = load.current;

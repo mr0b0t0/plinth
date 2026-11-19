@@ -84,6 +84,8 @@ test("dictation: ask, listen, words to the page, Stop, and no second question", 
   const dialog = consent(page);
   await expect(dialog).toBeVisible();
   await expect(dialog).toContainText(VOICE_TITLE);
+  // The owner by email, fetched when the dialog opens (the gate never carries it).
+  await expect(dialog).toContainText(`which ${email} wrote`);
   await expect(dialog.getByRole("button", { name: "Not now" })).toBeFocused();
   await page.waitForTimeout(600);
   await dialog.getByRole("button", { name: "Allow on this page" }).click();
@@ -106,13 +108,19 @@ test("dictation: ask, listen, words to the page, Stop, and no second question", 
   await expect(inFrame(page, "final")).toHaveText("hello world");
 });
 
-/** The viewer allowed dictation on this artifact in this browser before (no dialog). */
+/**
+ * The viewer allowed dictation on this artifact in this browser before (no dialog). The consent
+ * is bound to the viewer's id on the page, which the gate gives the signed-in viewer.
+ */
 async function allowed(page: Page, artifactId: string) {
+  const gate = await page.request.get(`${APP_ORIGIN}/api/v1/view/${artifactId}`);
+  const viewer = (await gate.json()).voice?.viewer_id as string | undefined;
+  expect(viewer).toMatch(/^u_/);
   await page.addInitScript(
-    ([origin, key]) => {
-      if (location.origin === origin) localStorage.setItem(key, "allowed");
+    ([origin, key, value]) => {
+      if (location.origin === origin) localStorage.setItem(key, value);
     },
-    [APP_ORIGIN, `plinth:dictation:${artifactId}`] as const,
+    [APP_ORIGIN, `plinth:dictation:${artifactId}`, viewer ?? ""] as const,
   );
 }
 

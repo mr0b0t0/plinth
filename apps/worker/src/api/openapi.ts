@@ -942,18 +942,29 @@ function liveSchemas(): Record<string, Json> {
             available: { type: "boolean" },
             reason: { oneOf: [enumOf(DICTATION_REASONS), { type: "null" }] },
           }),
-          owner_email: {
+          viewer_id: {
             type: "string",
             description:
-              "The owner's email, only when this viewer may dictate: the consent dialog names who wrote the page by it",
+              "This viewer's id on this page, only when they may dictate: the app binds this browser's consent to it",
           },
         },
-        ["owner_email"],
+        ["viewer_id"],
       ),
       description:
         "Present on `ok` only when the current version of an HTML page declares `dictation` and " +
         "ALLOW_DICTATION is on: whether this viewer may dictate into the page (identified viewers " +
         "only, origin isolation only). The app runs the recognizer; the page never gets the microphone",
+    },
+    DictationOwner: {
+      ...obj({
+        owner_email: {
+          type: "string",
+          description: "The owner's email: the consent dialog names who wrote the page by it",
+        },
+      }),
+      description:
+        "Who wrote the page, for the dictation consent dialog. Only for viewers who may dictate " +
+        "on it; the app asks only when the dialog opens",
     },
     LiveInfo: obj({
       mode: { oneOf: [mode, { type: "null" }] },
@@ -1544,6 +1555,19 @@ function operations(): Operation[] {
       body: "ViewerCodeInput",
       ok: [200, "ViewGate"],
       errors: [400, 403, 404, 429],
+    },
+    {
+      method: "get",
+      path: API.viewDictation,
+      operationId: "viewDictationOwner",
+      summary: "The owner's email for the dictation consent dialog",
+      description:
+        "Only for a viewer who may dictate on the page (the owner or a grant holder, signed in or " +
+        "confirmed by code, while dictation is on); 404 for everyone else.",
+      tag: "Viewing",
+      auth: "optional",
+      ok: [200, "DictationOwner"],
+      errors: [404],
     },
     // Comments and mentions
     {
