@@ -1136,3 +1136,19 @@ Add `data` too if the page also keeps entries.
   inside them, such as where and when a photo was taken. Say so next to the upload control.
 - Agents never upload: put your own images in the version's `assets`. `list_artifact_files` shows
   what people added (never the bytes) and `delete_artifact_file` deletes one when the person asks.
+
+## Design exports (PNG and PDF)
+
+On instances that render them (`design_export: true` in `GET /api/v1/config`), people download a
+design from the artifact menu with **Download PNG or PDF…**: a PNG of one artboard at 1x or 2x, or
+a PDF with each board on a page of its own size. Elsewhere they print or save as PDF from the
+browser.
+
+- When someone asks for a PNG or PDF of a design, point them to that menu item, or give them the
+  link `<origin>/api/v1/artifacts/<id>/export?format=png&board=<board id>&scale=2` (PNG) or
+  `?format=pdf` (every board; add `&board=<id>` for one). It downloads for anyone who may view the
+  design. Never build images or PDFs of a design yourself.
+- Set an `id` on every artboard you want people to export: the file name and the `board` parameter
+  use it. A 2x PNG must stay within 33,554,432 pixels, so a 4096 px board exports at 1x only.
+- Exports are rendered on request and limited per person per hour (`rate_limited` past it). There
+  is no MCP tool for them, and an export never changes the design or makes a version.
