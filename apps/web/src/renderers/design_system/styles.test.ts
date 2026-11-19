@@ -11,6 +11,11 @@ describe("ds.css", () => {
     const ds = read("./ds.css");
     const at = ds.indexOf('@import "../shared/prose.css";');
     expect(at).toBeGreaterThan(-1);
-    expect(ds.slice(0, at).replace(/\/\*[\s\S]*?\*\//g, "").trim()).toBe("");
+    expect(
+      ds
+        .slice(0, at)
+        .replace(/\/\*[\s\S]*?\*\//g, "")
+        .trim(),
+    ).toBe("");
   });
 });
