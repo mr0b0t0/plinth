@@ -1,5 +1,6 @@
-// An invited person without an account: they open the link, confirm their email by code on the
-// allowlist gate and see the page. Each call uses a fresh browser context.
+// An invited person not yet signed in: they open the link, confirm their email by code on the
+// allowlist gate (which signs them in with it) and see the page. Each call uses a fresh browser
+// context.
 import { type Browser, expect, type Frame, type Page } from "@playwright/test";
 import { latestCode } from "./mail.ts";
 
