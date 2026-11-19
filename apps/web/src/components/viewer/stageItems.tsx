@@ -36,13 +36,7 @@ import type { ReactNode, RefObject } from "react";
 import { Link } from "../../lib/router.tsx";
 import { THEME_NAMES, type Theme } from "../../lib/theme.ts";
 import { Button, buttonClassName, Menu, type MenuEntry, Tooltip } from "../ui/index.ts";
-import {
-  type AskAgent,
-  askAgentButton,
-  askAgentDialog,
-  askAgentMenu,
-  editNotice,
-} from "./askAgent.tsx";
+import { type AskAgent, askAgentButton, askAgentDialog, askAgentMenu } from "./askAgent.tsx";
 import { boardSettings, boardSettingsDialog } from "./boardSettingsItems.tsx";
 import { DataNotice } from "./DataNotice.tsx";
 import { DictationControl } from "./DictationControl.tsx";
@@ -538,7 +532,6 @@ export const STRIP_ITEMS: readonly StageItem[] = [
   { id: "held-update", render: heldUpdate },
   { id: "data-notice", render: dataNotice },
   { id: "sources-notice", render: sourcesNotice },
-  { id: "edit-notice", render: editNotice },
   { id: "edit-bar", render: editBar },
   { id: "live-draft", render: liveDraftNotice },
   { id: "present", render: presentStrip },

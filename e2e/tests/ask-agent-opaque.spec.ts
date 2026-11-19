@@ -1,7 +1,7 @@
 // Ask an agent under opaque content isolation (docs/spec.md "Ask an agent"): there is no editing on
 // the page, so a doc's owner gets Ask an agent in the Edit slot with the reason, `?edit` lands on
-// the viewer with the same reason as a notice, and a request posted from it reaches the owner's
-// agent. No editing message is ever exchanged with a frame whose origin is "null".
+// the viewer as usual, and a request posted from it reaches the owner's agent. No editing message
+// is ever exchanged with a frame whose origin is "null".
 import { expect, test } from "@playwright/test";
 import { OPAQUE_APP_ORIGIN, uniqueEmail } from "../support/api.ts";
 import { seedSession, seedToken } from "../support/db.ts";
@@ -34,22 +34,17 @@ test("a doc's owner gets Ask an agent with the reason instead of Edit, and the r
     timeout: 15_000,
   });
   await expect(page.getByRole("button", { name: "Edit", exact: true })).toHaveCount(0);
-  const notice = page.getByRole("status").filter({ hasText: REASON });
-  await expect(notice).toContainText("Ask an agent to make the change.");
+  await expect(page.getByRole("status").filter({ hasText: REASON })).toHaveCount(0);
   expect(new URL(page.url()).search).toBe("");
-  const ask = page.getByRole("button", { name: "Ask an agent", exact: true }).first();
+  const ask = page.getByRole("button", { name: "Ask an agent", exact: true });
   await ask.hover();
   await expect(page.getByRole("tooltip").filter({ hasText: REASON })).toBeVisible();
-  // Out of the way of the notice under it.
-  await page.mouse.move(10, 600);
-  await expect(page.getByRole("tooltip").filter({ hasText: REASON })).toBeHidden();
 
-  await notice.getByRole("button", { name: "Ask an agent" }).click();
+  await ask.click();
   const panel = page.getByRole("region", { name: "Comments" });
-  const form = panel.getByRole("form", { name: "Ask an agent to change this page" });
-  await expect(form.getByRole("radio", { name: "Claude" })).toBeChecked();
+  const form = panel.getByRole("form", { name: "Ask an agent" });
   await form.getByRole("textbox", { name: "What should change?" }).fill("Add a summary");
-  await form.getByRole("button", { name: "Send request" }).click();
+  await form.getByRole("button", { name: "Send to Claude" }).click();
   await expect(panel.locator("article").filter({ hasText: "Add a summary" })).toBeVisible();
 
   const client = await mcpClient(token, OPAQUE_APP_ORIGIN);

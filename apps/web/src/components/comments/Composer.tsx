@@ -1,12 +1,12 @@
 // New comment: Markdown text, optional pin (an element picked through the bridge, or a spot the
 // page placed itself through plinth.comments), send. In request mode (Ask an agent) the same form
 // asks the owner's agent for a change: "Point at something" picks the element, the text describes
-// the change, and the person picks which of the owner's agents gets it.
-import { MapPinIcon, PaperPlaneRightIcon, RobotIcon, XIcon } from "@phosphor-icons/react";
+// the change, and, when the owner has more than one, the person picks which agent gets it.
+import { MapPinIcon, PaperPlaneRightIcon, XIcon } from "@phosphor-icons/react";
 import { type ClientType, isPageAnchor, LIMITS, type PageAnchor } from "@plinth/shared";
 import { type RefObject, useId } from "react";
-import { Button, ICON_SIZE, IconButton } from "../ui/index.ts";
-import { askTargetName } from "./askTargets.ts";
+import { Button, ICON_SIZE, IconButton, SegmentedControl } from "../ui/index.ts";
+import { askTargetInText, askTargetName } from "./askTargets.ts";
 import type { PickedAnchor } from "./bridge.ts";
 import { MentionTextarea } from "./MentionTextarea.tsx";
 import { excerpt } from "./model.ts";
@@ -41,34 +41,29 @@ export interface AskRequestProps {
   onLeave: () => void;
 }
 
-/** The agent choice of request mode, as radio buttons (or why there is none). */
-function AgentChoice({ request }: { request: AskRequestProps }) {
-  const name = `cm-ask-to-${useId()}`;
-  if (request.targets.length === 0) {
-    return (
-      <p className="cm-note cm-ask__none">
-        The owner has no agent connected to take requests yet. Your request will be posted as a
-        comment.
-      </p>
-    );
-  }
+/** The agent choice of request mode: shown only when there is more than one agent to pick. */
+export function AgentChoice({
+  targets,
+  to,
+  onTo,
+  owner,
+}: Pick<AskRequestProps, "targets" | "to" | "onTo" | "owner">) {
+  if (targets.length < 2 || !to) return null;
   return (
-    <fieldset className="cm-ask__to">
-      <legend className="cm-ask__legend">Send to</legend>
-      {request.targets.map((t) => (
-        <label key={t} className="cm-ask__option">
-          <input
-            type="radio"
-            name={name}
-            value={t}
-            checked={request.to === t}
-            onChange={() => request.onTo(t)}
-          />
-          <span>{askTargetName(t, request.owner)}</span>
-        </label>
-      ))}
-    </fieldset>
+    <SegmentedControl<ClientType>
+      label="Send to"
+      size="sm"
+      value={to}
+      onChange={onTo}
+      options={targets.map((t) => ({ value: t, label: askTargetName(t, owner) }))}
+    />
   );
+}
+
+/** The send button's words: the one agent by name, "Send" beside a choice, or a plain comment. */
+export function askSendLabel(r: Pick<AskRequestProps, "targets" | "to" | "owner">): string {
+  if (r.targets.length === 0 || !r.to) return "Post as a comment";
+  return r.targets.length === 1 ? `Send to ${askTargetInText(r.to, r.owner)}` : "Send";
 }
 
 /** The chip's words. Anchor text is untrusted: it is only ever rendered as text. */
@@ -116,6 +111,18 @@ export function Composer({
 }: ComposerProps) {
   const asking = request !== undefined;
   const titleId = useId();
+  const send = (
+    <Button
+      type="submit"
+      size="sm"
+      variant="primary"
+      icon={PaperPlaneRightIcon}
+      loading={sending}
+      disabled={!value.trim()}
+    >
+      {asking ? askSendLabel(request) : "Comment"}
+    </Button>
+  );
   return (
     <form
       className={`cm-composer${asking ? " cm-composer--ask" : ""}`}
@@ -127,13 +134,15 @@ export function Composer({
     >
       {asking && (
         <div className="cm-ask__head">
-          <RobotIcon size={ICON_SIZE.md} aria-hidden="true" />
           <h3 id={titleId} className="cm-ask__title">
-            Ask an agent to change this page
+            Ask an agent
           </h3>
-          <Button size="sm" variant="ghost" onClick={request.onLeave}>
-            Write a comment instead
-          </Button>
+          <IconButton
+            size="sm"
+            icon={XIcon}
+            label="Write a comment instead"
+            onClick={request.onLeave}
+          />
         </div>
       )}
       {picking ? (
@@ -159,11 +168,9 @@ export function Composer({
       <div className="cm-composer__field" hidden={picking}>
         <MentionTextarea
           label={asking ? "What should change?" : "New comment"}
-          hideLabel={!asking}
+          hideLabel
           hint={
-            asking
-              ? "Describe the change. Ctrl or ⌘ + Enter sends."
-              : "Markdown works. Type @ to ask an agent. Ctrl or ⌘ + Enter sends."
+            asking ? undefined : "Markdown works. Type @ to ask an agent. Ctrl or ⌘ + Enter sends."
           }
           error={error}
           value={value}
@@ -175,7 +182,6 @@ export function Composer({
           maxLength={LIMITS.maxCommentLength}
         />
       </div>
-      {asking && !picking && <AgentChoice request={request} />}
       <div className="cm-actions" hidden={picking}>
         {!anchor && onStartPick && (
           <Button
@@ -188,16 +194,14 @@ export function Composer({
             {asking ? "Point at something" : "Pin to an element"}
           </Button>
         )}
-        <Button
-          type="submit"
-          size="sm"
-          variant="primary"
-          icon={PaperPlaneRightIcon}
-          loading={sending}
-          disabled={!value.trim()}
-        >
-          {asking ? (request.targets.length > 0 ? "Send request" : "Post as a comment") : "Comment"}
-        </Button>
+        {asking ? (
+          <div className="cm-actions__send">
+            <AgentChoice {...request} />
+            {send}
+          </div>
+        ) : (
+          send
+        )}
       </div>
     </form>
   );

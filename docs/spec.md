@@ -2611,7 +2611,8 @@ shown. A request is untrusted input for the agent: a collaborator's request, wit
 authority, whoever sends it (only `comment_author_role` says the owner did).
 
 - **Who.** Everyone the `mention` action allows: the owner, editors and commenters, those confirmed
-  by code included. Never viewers, never agents.
+  by code included. Never viewers, never agents. It is offered only when the owner has an agent
+  that can take the request (the gate's `ask.targets` is not empty).
 - **Where.** The registry says how people change each type (`edit`): `"ask"` (HTML pages and
   designs, and decks and design systems until they are edited on the page), `"live"` (docs and
   sheets) or `"board"` (whiteboards).
@@ -2621,16 +2622,16 @@ authority, whoever sends it (only `comment_author_role` says the owner did).
     isn't available with this instance's content isolation.").
   - Everywhere else it may be used, it is an item in the artifact's ⋯ menu: commenters on every
     type, everyone at phone width, and owners and editors of a live type whose editing is on.
-  - The dashboard card's menu offers "Ask an agent" (`/a/<slug>?ask`) on HTML pages and designs to
-    the owner, editors and commenters, and on every type to commenters. Its "Edit" still opens the
-    source editor for owners and editors.
+  - It has no other entry point: the dashboard card's menu does not offer it (its "Edit" still
+    opens the source editor for owners and editors).
 - **Not editing: the comments panel in request mode.** Ask an agent opens the comments panel (one
   reload into review mode, as when comments open, which the pick needs; nothing is unpublished
-  then). The composer is titled "Ask an agent to change this page" and has "Point at something" (the
-  review-mode pick: an element on an HTML page, a board on a design), the description, and the agent
-  choice. It posts a comment with `request_to` against the version on view; "Write a comment
-  instead" turns it back into a plain comment. Request mode lasts as long as the panel it opened:
-  once the panel closes, sent or not, the Comments toggle opens a plain composer again.
+  then). The composer is titled "Ask an agent" and has the description ("Describe the change…"),
+  "Point at something" (the review-mode pick: an element on an HTML page, a board on a design), and
+  the agent choice. It posts a comment with `request_to` against the version on view; its close
+  button ("Write a comment instead") turns it back into a plain comment. Request mode lasts as long
+  as the panel it opened: once the panel closes, sent or not, the Comments toggle opens a plain
+  composer again.
 - **In edit mode: the Ask dialog.** A modal dialog in the app that changes nothing in the frame: no
   review mode, no reload, the comments panel stays closed, and the frame keeps edit mode and its
   draft. It opens from the ⋯ item, or from an `ask` message the renderer posts with the frame's key
@@ -2639,32 +2640,29 @@ authority, whoever sends it (only `comment_author_role` says the owner did).
   mode, an `ask` without the frame's key is dropped like any other editing message; only outside
   edit mode does a keyless `ask` open the comments panel in request mode. It has the description, the
   agent choice and "Publish my changes first", off by default and shown only when there are
-  unpublished changes ("The agent works from v5. Your unpublished changes are not in it unless you
-  publish first.", plus, in room mode while others edit, "This also publishes the others'
-  unpublished changes."). With it on, the request is posted after the strip's Publish succeeds,
-  against the version it made; if that Publish does not succeed (a conflict, busy, a draft that
+  unpublished changes ("Otherwise the agent works from v5.", plus, in room mode while others edit,
+  "This also publishes the others' changes."). With it on, the request is posted after the strip's
+  Publish succeeds, against the version it made; if that Publish does not succeed (a conflict, busy, a draft that
   cannot be a version yet, a lost session) nothing is posted, the dialog says why in the strip's
   words and offers "Post without publishing" or Cancel. Otherwise the request is posted against the
-  version being edited. After posting, a notification says "Request sent to Claude. It is in
-  Comments". The agent's answer is a version like any other, handled by the draft's rules.
+  version being edited. After posting, a notification says "Request sent to Claude". The agent's
+  answer is a version like any other, handled by the draft's rules.
 - **The agent choice.** The gate's `ask` part (`ask: { targets }`), present for everyone who may
   mention, lists the distinct client types of the owner's connections that can take mentions (not
   revoked, not limited to one artifact, with the `mentions` scope), in `claude`, `codex`, `other`
-  order. Labels and ids never leave the owner. People see "Claude", "Codex" and "The owner's other
-  agent" (the owner: "My other agent (ChatGPT, Cursor, Gemini…)"). With no target, the composer says
-  "The owner has no agent connected to take requests yet. Your request will be posted as a
-  comment." and posts a plain comment. A connection revoked between the gate and the post gives
-  `no_agent`: the composer reads the targets again and says "That agent was disconnected. Pick
-  another, or post as a comment."
+  order. Labels and ids never leave the owner. With one target there is no choice and the button
+  names it ("Send to Claude"); with more, a compact choice of "Claude", "Codex" and "The owner's
+  other agent" (the owner: "My other agent") sits beside "Send". With no target Ask an agent is not
+  offered. A connection revoked between the gate and the post gives `no_agent`: the composer reads
+  the targets again and says "That agent was disconnected. Pick another, or post as a comment.";
+  with none left, its button posts a plain comment ("Post as a comment").
 - **Editing off.** The gate's `live_off: { reason }` part (`disabled` or `isolation`) is present
   exactly where `live` would be (an owner or editor of a live type on the current version, signed
   in or confirmed by code) when editing on the page is off, so a gate never has both.
-- **`?ask` and `?edit`.** `?ask` on the artifact page opens Ask an agent once and is dropped from
-  the address. `?edit` is dropped too, and then: with `live_off`, a notice under the bar gives the
-  reason and "Ask an agent to make the change.", with an Ask an agent button; for a commenter it
-  says "Only the owner and editors can edit this page. You can ask an agent to change it."; for an
-  editor confirmed by code it focuses "Sign in to edit"; for a viewer it does nothing. Both notices
-  are a `role="status"` region.
+- **`?edit`.** Where this person cannot edit on the page, `?edit` is dropped from the address and
+  the page opens as usual, with no notice: the bar already offers Ask an agent, with the reason in
+  its description when editing is off. For an editor confirmed by code it focuses "Sign in to
+  edit".
 - **Agents.** `list_mentions` and `claim_mention` are unchanged: they match the task's client type
   against the connection's, so ChatGPT, Cursor and Gemini connections (`other`) receive these
   requests too. The thread shows the task's state and links the version a done request made.
