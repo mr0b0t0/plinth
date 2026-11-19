@@ -16,7 +16,7 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   the new `get_design_system` tool (or `GET /api/v1/artifacts/:ref/design-system`), copy its CSS
   into the pages they build, and get a `design_system_outdated` warning when a page was built on
   an older version. `list_artifacts` takes `type` to find them. The editor checks the JSON as you
-  type.
+  type. Plugin 0.18.0.
 - **Artifact stats: see who opened your artifacts.** Each artifact's Stats page (`/a/<slug>/stats`,
   linked from its menu and the Share dialog) shows opens and viewers over 7, 30, 90 or 365 days,
   the people who opened it (name and email for people signed in and allowlisted viewers, with the
