@@ -686,10 +686,12 @@ source editor work as for docs. A deck is not edited on its page.
   dark or `auto` (the viewer's scheme on screen, light in print), system fonts, slide numbers and
   the footer.
 - **Viewing.** Keys (arrows, Page Up and Down, Space, Home, End, a number then Enter), clicks or
-  taps on the outer thirds, swipes, `#N` links and a control pill (previous, `3 / 20`, next and an
-  overview toggle, shown on input over the bottom of the slide) page the deck. The slide is centred
-  with one 16 px gutter on every side, the same in the overview and presenter view (none full
-  screen). The overview (`o` or the pill) is a grid of thumbnails, three or four across from
+  taps on the outer thirds, swipes, `#N` links and a control pill page the deck. The pill
+  (previous, next and an overview toggle, with a `3 / 20` count only when the deck shows no page
+  numbers of its own, so one counter is on screen) floats over the bottom centre of the slide on a
+  translucent surface; it shows on a pointer move, a tap or a key, stays while hovered or focused,
+  hides after 2 s idle and reserves no room. The slide is centred with one 16 px gutter on every
+  side, full screen too, the same in the overview and presenter view. The overview (`o` or the pill) is a grid of thumbnails, three or four across from
   700 px wide and one column below that; the arrows move the selected slide and Enter or a click opens it. Phones in portrait show
   the one-column overview by themselves, and review mode (so comment pins anchor to every slide)
   and the editor preview keep it in one column, without the pill. The app keeps the slide in its
@@ -698,21 +700,29 @@ source editor work as for docs. A deck is not edited on its page.
 - **Presenting.** Present is one control in the bar, a menu with two items. "Full screen" puts
   the app's own frame full screen; the frame gets no fullscreen permission of its own, and
   presenter view stays presenter view when it goes full screen. "Presenter view" (or `s`) shows,
-  inside the frame, the current slide, the next one and the notes over one bar: the elapsed timer
-  (it starts again each time presenter view opens), previous and next around the same `3 / 20`
-  count as the pill (presenter view takes no swipes or taps, so touch screens page here), and
-  Exit; Exit, Escape or `s` leave it. A slide without notes leaves the notes pane empty. The bar
-  ends level with the notes, and the parts keep that order at every width. The frame tells the app each view it switches to, so the Present menu, the paused version swap and
-  the audience window follow the deck however presenter view was opened or left. While presenter
-  view is on, the Present menu offers "Audience window" in its place; the ⋯ menu has no present
-  item. Review mode keeps the overview whatever asks for another view. "Audience window" opens a
-  second app window that follows the presenter's slide through a `BroadcastChannel` on the app
-  origin in the same browser, in every isolation mode; only slide numbers cross it. Once it has
-  heard from its presenter it shows the deck alone, without the bar or the banner; a link with a
-  pair id and no presenter window in that browser keeps the whole page. While the deck is full screen or in presenter view, a newer version does not
-  replace the frame (the bar's version notice says an older one is on view); the deck catches up
-  on the same slide when presenting ends. A permanent version link (`/a/<slug>/v/<n>`) stays on its
-  version, and its audience window opens that same version.
+  inside the frame, two columns that fit the frame's height: on the left the current slide as
+  large as fits, with one bar directly under it (the elapsed timer with pause, which starts again
+  each time presenter view opens; previous and next around the same `3 / 20` count, since
+  presenter view takes no swipes or taps and touch screens page here; the clock; Exit); on the
+  right the next slide at the top and the notes filling the rest of the height. Below 600 px wide
+  or in portrait it is one column: current, bar, next, notes. Exit, Escape or `s` leave it. A
+  slide without notes leaves the notes pane empty. The frame tells the app each view it switches
+  to, so the Present menu and the paused version swap follow the deck however presenter view was
+  opened or left. While presenter view is on, the Present menu offers "Audience window" in its
+  place; the ⋯ menu has no present item. Review mode keeps the overview whatever asks for another
+  view. "Audience window" opens a second app window on the permanent link of the version the
+  presenter's window shows (`/a/<slug>/v/<n>`), paired with it through a `BroadcastChannel` on
+  the app origin in the same browser, in every isolation mode; only slide and version numbers
+  cross it. The audience window shows exactly the presenter's current slide of that version,
+  fitted to the window at any size (never the stacked overview), sends its own frame back to that
+  slide and to the deck view whatever paged or switched it, and loads another version only when
+  the presenter's window shows one. It follows the presenter's window, in presenter view or not,
+  until either window closes; a second audience window joins the same pair. Once it has heard
+  from its presenter it shows the deck alone, without the bar or the banner; a link with a pair id
+  and no presenter window in that browser keeps the whole page. While the deck is full screen or
+  in presenter view, a newer version does not replace the frame (the bar's version notice says an
+  older one is on view); the deck catches up on the same slide when presenting ends, and its
+  audience window with it. A permanent version link stays on its version.
 - **Printing.** "Print or save as PDF" (or Ctrl+P in the deck) prints one slide per page at the
   deck's size (an `@page` size in inches); from presenter view it prints a handout with each slide
   over its notes. The frame prints itself, after its images have decoded. Browsers that ignore

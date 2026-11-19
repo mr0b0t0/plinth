@@ -5,7 +5,7 @@
 /**
  * The stage's gutter in CSS pixels, the same in every view so switching views does not move the
  * slide: around the slide in deck view (on all four sides, the slide centred), around and between
- * the overview's thumbnails, and around presenter view. A deck that fills the screen has none.
+ * the overview's thumbnails, and around presenter view. Full screen keeps it too.
  */
 export const GUTTER = 16;
 /** How far inside the slide's bottom edge the controls sit in deck view, in CSS pixels. */

@@ -9,7 +9,15 @@ import {
 } from "@plinth/shared";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { boot } from "./boot.ts";
-import { formatElapsed, type PresenterClock } from "./presenter.ts";
+import {
+  CURRENT_MAX_SHARE,
+  formatElapsed,
+  PRESENTER_BAR,
+  PRESENTER_COLUMN_GAP,
+  PRESENTER_ROW_GAP,
+  type PresenterClock,
+  presenterLayout,
+} from "./presenter.ts";
 import { PAGE_STYLE_ID, pageRule, printDeck } from "./print.ts";
 import { readSlidesAppMessage } from "./protocol.ts";
 import { CONTROLS_INSET, GUTTER, overviewColumns, overviewScale } from "./stage.ts";
@@ -93,6 +101,7 @@ const clock = (): PresenterClock & { t: number; tick?: () => void } => {
     t: 0,
     tick: undefined as (() => void) | undefined,
     now: () => c.t,
+    time: (at: number) => `T${at}`,
     every: (_ms: number, fn: () => void) => {
       c.tick = fn;
       return () => {
@@ -405,7 +414,8 @@ describe("boot", () => {
       ["Next slide", "Next slide", true],
       ["Overview", "Overview", true],
     ]);
-    expect(controls.querySelector(".plinth-slides__counter")?.textContent).toBe("1 / 5");
+    // The slides show their own numbers, so the pill has no count.
+    expect(controls.querySelector(".plinth-slides__counter")).toBeNull();
     const overview = controls.querySelector('[aria-label="Overview"]') as HTMLElement;
     expect(overview.getAttribute("aria-pressed")).toBe("false");
     overview.click();
@@ -414,7 +424,36 @@ describe("boot", () => {
     expect(overview.getAttribute("aria-pressed")).toBe("false");
   });
 
-  it("fits the slide inside the gutter on every side, and over the whole frame when it fills the screen", () => {
+  it("counts slides in the pill when the deck shows no page numbers", () => {
+    mount(`---\npaginate: false\n---\n${DECK}`);
+    const f = framed();
+    stop = boot(f.win);
+    const counter = () =>
+      document.querySelector(".plinth-slides__controls .plinth-slides__counter");
+    expect(counter()?.textContent).toBe("1 / 5");
+    key(f, "ArrowRight");
+    expect(counter()?.textContent).toBe("2 / 5");
+  });
+
+  it("shows the controls on input and hides them after two idle seconds", () => {
+    vi.useFakeTimers();
+    try {
+      mount();
+      const f = framed();
+      stop = boot(f.win);
+      expect(root().hasAttribute("data-controls")).toBe(false);
+      f.target.dispatchEvent(new Event("pointermove"));
+      expect(root().getAttribute("data-controls")).toBe("on");
+      vi.advanceTimersByTime(1999);
+      expect(root().getAttribute("data-controls")).toBe("on");
+      vi.advanceTimersByTime(1);
+      expect(root().hasAttribute("data-controls")).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("fits the slide inside the gutter on every side, full screen too", () => {
     mount();
     const f = framed();
     f.size.h = 700;
@@ -437,14 +476,15 @@ describe("boot", () => {
     expect(root().style.getPropertyValue("--controls-bottom")).toBe(
       `${Math.floor((1400 - tall) / 2) + CONTROLS_INSET}px`,
     );
+    // The frame fills the screen (Present's full screen): the same gutter, the same pill place.
     f.size.h = 700;
     (f.win as unknown as { screen: { width: number; height: number } }).screen = {
       width: 1280,
       height: 700,
     };
     f.target.dispatchEvent(new Event("resize"));
-    expect(root().style.getPropertyValue("--s")).toBe(scaled(700));
-    expect(root().style.getPropertyValue("--controls-bottom")).toBe(`${CONTROLS_INSET}px`);
+    expect(root().style.getPropertyValue("--s")).toBe(scaled(700 - 2 * GUTTER));
+    expect(root().style.getPropertyValue("--controls-bottom")).toBe(`${GUTTER + CONTROLS_INSET}px`);
   });
 
   it("asks the app for full screen on f", () => {
@@ -483,6 +523,19 @@ describe("presenter view", () => {
     c.t = 65_000;
     c.tick?.();
     expect(timer.textContent).toBe("1:05");
+    expect(p.querySelector(".plinth-slides__clock")?.textContent).toBe("T65000");
+    // Pause holds the timer, Resume carries on from there.
+    const pause = p.querySelector('[aria-label="Pause timer"]') as HTMLElement;
+    pause.click();
+    expect(pause.getAttribute("aria-label")).toBe("Resume timer");
+    c.t = 125_000;
+    c.tick?.();
+    expect(timer.textContent).toBe("1:05");
+    pause.click();
+    expect(pause.getAttribute("aria-label")).toBe("Pause timer");
+    c.t = 130_000;
+    c.tick?.();
+    expect(timer.textContent).toBe("1:10");
     key(f, "Escape");
     expect(document.querySelector(".plinth-slides__presenter")).toBeNull();
     // The timer starts again each time presenter view opens.
@@ -499,13 +552,83 @@ describe("presenter view", () => {
     const names = Array.from(bar.querySelectorAll("button")).map((b) =>
       b.getAttribute("aria-label"),
     );
-    expect(names).toEqual(["Previous slide", "Next slide", "Exit presenter view"]);
+    expect(names).toEqual(["Pause timer", "Previous slide", "Next slide", "Exit presenter view"]);
     (bar.querySelector('[aria-label="Next slide"]') as HTMLElement).click();
     (bar.querySelector('[aria-label="Next slide"]') as HTMLElement).click();
     expect(slide()).toBe("3");
     (bar.querySelector('[aria-label="Previous slide"]') as HTMLElement).click();
     expect(slide()).toBe("2");
     expect(bar.querySelector(".plinth-slides__count")?.textContent).toBe("2 / 5");
+  });
+
+  it("puts the bar under the current slide, with Next and Notes beside them, or all in one column", () => {
+    mount();
+    const f = framed();
+    f.size.w = 1280;
+    f.size.h = 732;
+    stop = boot(f.win);
+    key(f, "s");
+    const p = document.querySelector(".plinth-slides__presenter") as HTMLElement;
+    const order = () =>
+      Array.from(
+        p.querySelectorAll(".plinth-slides__pane, .plinth-slides__pbar, .plinth-slides__notes"),
+      ).map((e) => e.className.replace(/plinth-slides__(pane )?/g, "").trim());
+    // Current, bar, next, notes: the bar sits in the current slide's column, right under it.
+    expect(order()).toEqual(["pane--current", "pbar", "pane--next", "notes"]);
+    expect(p.querySelector(".plinth-slides__main")?.children[1]?.className).toBe(
+      "plinth-slides__pbar",
+    );
+    expect(p.hasAttribute("data-narrow")).toBe(false);
+    const l = presenterLayout(1280, 732, { width: 1280, height: 720 });
+    expect(p.style.getPropertyValue("--pcol")).toBe(`${l.column}px`);
+    const current = p.querySelector(".plinth-slides__pane--current") as HTMLElement;
+    expect(current.style.getPropertyValue("--s")).toBe(
+      String(Math.round(l.current * 10000) / 10000),
+    );
+    // A phone in portrait: one column, the same order.
+    f.size.w = 360;
+    f.size.h = 660;
+    f.target.dispatchEvent(new Event("resize"));
+    expect(p.hasAttribute("data-narrow")).toBe(true);
+    expect(p.style.getPropertyValue("--pcol")).toBe("");
+    expect(order()).toEqual(["pane--current", "pbar", "pane--next", "notes"]);
+  });
+
+  it("sizes two columns to fit the height, and one column as wide as the frame", () => {
+    const canvas = { width: 1280, height: 720 };
+    for (const [w, h] of [
+      [1280, 732],
+      [1920, 1080],
+      [1024, 700],
+      [800, 450],
+    ] as const) {
+      const l = presenterLayout(w, h, canvas);
+      expect(l.narrow).toBe(false);
+      const column = l.column ?? 0;
+      // The current slide and the bar under it fit the height; Next and Notes keep a third or so.
+      expect((column * 720) / 1280 + PRESENTER_ROW_GAP + PRESENTER_BAR).toBeLessThanOrEqual(
+        h - 2 * GUTTER + 0.5,
+      );
+      expect(column).toBeLessThanOrEqual(
+        CURRENT_MAX_SHARE * (w - 2 * GUTTER - PRESENTER_COLUMN_GAP),
+      );
+      expect(l.current).toBeCloseTo(column / 1280, 6);
+      const side = w - 2 * GUTTER - PRESENTER_COLUMN_GAP - column;
+      expect(l.next * 1280).toBeLessThanOrEqual(side + 0.5);
+    }
+    // A wide frame: as wide as the share allows. A short one: as tall as the height allows.
+    expect(presenterLayout(1280, 900, canvas).column).toBe(
+      Math.floor(CURRENT_MAX_SHARE * (1280 - 2 * GUTTER - PRESENTER_COLUMN_GAP)),
+    );
+    expect(presenterLayout(1600, 500, canvas).column).toBe(
+      Math.floor(((500 - 2 * GUTTER - PRESENTER_BAR - PRESENTER_ROW_GAP) * 1280) / 720),
+    );
+    const phone = presenterLayout(360, 660, canvas);
+    expect(phone).toMatchObject({ narrow: true, column: null });
+    expect(phone.current).toBeCloseTo((360 - 2 * GUTTER) / 1280, 6);
+    expect(phone.next).toBe(phone.current);
+    expect(presenterLayout(560, 400, canvas).narrow).toBe(true);
+    expect(presenterLayout(1024, 1366, canvas).narrow).toBe(true);
   });
 
   it("marks the current slide when it overflows, on the pane only", () => {

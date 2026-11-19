@@ -156,7 +156,7 @@ describe("usePresentation", () => {
     expect(result.current.mode).toBe("off");
   });
 
-  it("leaves presenter view when the frame refuses it or exits it, and lets the audience go", () => {
+  it("leaves presenter view when the frame refuses it or exits it, and keeps the audience until it closes", () => {
     vi.spyOn(window, "open").mockImplementation(() => null);
     const closed = vi.fn();
     vi.stubGlobal(
@@ -170,7 +170,7 @@ describe("usePresentation", () => {
       },
     );
     const f = fakeFrame();
-    const { result } = renderHook(() =>
+    const { result, unmount } = renderHook(() =>
       usePresentation({
         gate: gate(),
         frame: f.frame,
@@ -181,14 +181,16 @@ describe("usePresentation", () => {
     );
     act(() => result.current.presenterView());
     act(() => result.current.openAudience());
-    // The frame's own Exit presenter view button.
+    // The frame's own Exit presenter view button: the audience window still follows this one.
     fromFrame(f.contentWindow, { type: "view", mode: "deck" });
     expect(result.current.mode).toBe("off");
-    expect(closed).toHaveBeenCalled();
+    expect(closed).not.toHaveBeenCalled();
     // Review mode keeps the overview and says so.
     act(() => result.current.presenterView());
     fromFrame(f.contentWindow, { type: "view", mode: "overview" });
     expect(result.current.mode).toBe("off");
+    unmount();
+    expect(closed).toHaveBeenCalled();
     vi.unstubAllGlobals();
   });
 
@@ -253,7 +255,7 @@ describe("usePresentation", () => {
     expect(result.current.paired).toBe(false);
     const presenter = new BroadcastChannel(`plinth-present:art123:${pair}`);
     try {
-      presenter.postMessage({ v: 1, type: "slide", slide: 2 });
+      presenter.postMessage({ v: 1, type: "slide", slide: 2, version: 1 });
       await vi.waitFor(() => expect(result.current.paired).toBe(true));
     } finally {
       presenter.close();
@@ -280,6 +282,141 @@ describe("usePresentation", () => {
     expect(result.current.slide).toBe(4);
   });
 
+  it("an audience window shows the presenter's slide in deck view, whatever its own frame does", async () => {
+    const pair = "r".repeat(16);
+    window.history.replaceState(null, "", `/a/talk/v/1#present=audience&pair=${pair}`);
+    const navigate = vi.fn();
+    const f = fakeFrame();
+    const { result } = renderHook(() =>
+      usePresentation({
+        gate: gate(),
+        frame: f.frame,
+        contentOrigin: ORIGIN,
+        config: CONFIG,
+        slug: "talk",
+        pinned: true,
+        navigate,
+      }),
+    );
+    const presenter = new BroadcastChannel(`plinth-present:art123:${pair}`);
+    const deckView = { source: "plinth-renderer", v: 1, type: "view", mode: "deck" };
+    const goto = (slide: number) => ({ source: "plinth-renderer", v: 1, type: "goto", slide });
+    try {
+      presenter.postMessage({ v: 1, type: "slide", slide: 3, version: 1 });
+      await vi.waitFor(() => expect(result.current.paired).toBe(true));
+      // Deck view at any size (a phone in portrait would otherwise show the overview), slide 3.
+      expect(f.contentWindow.postMessage).toHaveBeenCalledWith(deckView, ORIGIN);
+      expect(f.contentWindow.postMessage).toHaveBeenLastCalledWith(goto(3), ORIGIN);
+      // A frame that loads later gets the same.
+      f.contentWindow.postMessage.mockClear();
+      fromFrame(f.contentWindow, { type: "ready", slide: 1, count: 5 });
+      expect(f.contentWindow.postMessage.mock.calls).toEqual([
+        [deckView, ORIGIN],
+        [goto(3), ORIGIN],
+      ]);
+      // Its own keys or taps neither change the view nor page away from the presenter's slide.
+      f.contentWindow.postMessage.mockClear();
+      fromFrame(f.contentWindow, { type: "view", mode: "overview" });
+      fromFrame(f.contentWindow, { type: "position", slide: 4, count: 5 });
+      expect(f.contentWindow.postMessage.mock.calls).toEqual([
+        [deckView, ORIGIN],
+        [goto(3), ORIGIN],
+      ]);
+      expect(result.current.mode).toBe("audience");
+      expect(navigate).not.toHaveBeenCalled();
+    } finally {
+      presenter.close();
+    }
+  });
+
+  it("an audience window moves to another version only when its presenter window shows it", async () => {
+    const pair = "s".repeat(16);
+    window.history.replaceState(null, "", `/a/talk/v/1#present=audience&pair=${pair}`);
+    const navigate = vi.fn();
+    const f = fakeFrame();
+    const g = gate();
+    // Version 2 was published; the audience shows the presenter's version 1 and stays on it.
+    g.artifact = { ...g.artifact, version: 1, current_version: 2 };
+    const { result } = renderHook(() =>
+      usePresentation({
+        gate: g,
+        frame: f.frame,
+        contentOrigin: ORIGIN,
+        config: CONFIG,
+        slug: "talk",
+        pinned: true,
+        navigate,
+      }),
+    );
+    expect(result.current.pause).toBeNull();
+    const presenter = new BroadcastChannel(`plinth-present:art123:${pair}`);
+    try {
+      presenter.postMessage({ v: 1, type: "slide", slide: 2, version: 1 });
+      await vi.waitFor(() => expect(result.current.paired).toBe(true));
+      expect(navigate).not.toHaveBeenCalled();
+      // The presenter's window now shows version 2: the audience loads it, on the same slide.
+      presenter.postMessage({ v: 1, type: "slide", slide: 2, version: 2 });
+      await vi.waitFor(() => expect(navigate).toHaveBeenCalledTimes(1));
+      expect(navigate).toHaveBeenCalledWith(`/a/talk/v/2#present=audience&pair=${pair}&slide=2`);
+    } finally {
+      presenter.close();
+    }
+  });
+
+  it("tells its audience the slide and the version it shows", async () => {
+    const open = vi.spyOn(window, "open").mockImplementation(() => null);
+    const one = fakeFrame();
+    const behind = gate();
+    // Presenting held version 1 while version 2 was published.
+    behind.artifact = { ...behind.artifact, version: 1, current_version: 2 };
+    const { result, rerender } = renderHook(
+      ({ g, frame }) =>
+        usePresentation({
+          gate: g,
+          frame,
+          contentOrigin: ORIGIN,
+          config: CONFIG,
+          slug: "talk",
+        }),
+      { initialProps: { g: behind, frame: one.frame } },
+    );
+    fromFrame(one.contentWindow, { type: "ready", slide: 4, count: 6 });
+    act(() => result.current.presenterView());
+    act(() => result.current.openAudience());
+    const url = String(open.mock.calls[0]?.[0]);
+    // The audience opens on the version the presenter shows, not the current one.
+    expect(url).toMatch(/^\/a\/talk\/v\/1#present=audience&pair=[A-Za-z0-9_-]{16,64}$/);
+    const pair = new URLSearchParams(url.split("#")[1]).get("pair");
+    const heard: unknown[] = [];
+    const audience = new BroadcastChannel(`plinth-present:art123:${pair}`);
+    audience.onmessage = (e) => heard.push(e.data);
+    try {
+      audience.postMessage({ v: 1, type: "hello" });
+      await vi.waitFor(() =>
+        expect(heard).toEqual([{ v: 1, type: "slide", slide: 4, version: 1 }]),
+      );
+      fromFrame(one.contentWindow, { type: "position", slide: 5, count: 6 });
+      await vi.waitFor(() => expect(heard).toHaveLength(2));
+      expect(heard[1]).toEqual({ v: 1, type: "slide", slide: 5, version: 1 });
+      // A second audience window joins the same pair.
+      act(() => result.current.openAudience());
+      expect(String(open.mock.calls[1]?.[0])).toBe(url);
+      // Presenting ended and the presenter's window caught up with version 2: the audience follows.
+      act(() => result.current.exit());
+      const two = fakeFrame();
+      rerender({
+        g: { ...behind, artifact: { ...behind.artifact, version: 2 } },
+        frame: two.frame,
+      });
+      fromFrame(two.contentWindow, { type: "ready", slide: 1, count: 6 });
+      fromFrame(two.contentWindow, { type: "position", slide: 5, count: 6 });
+      await vi.waitFor(() => expect(heard).toHaveLength(3));
+      expect(heard[2]).toEqual({ v: 1, type: "slide", slide: 5, version: 2 });
+    } finally {
+      audience.close();
+    }
+  });
+
   it("opens an audience window with a fresh pair id", () => {
     const open = vi.spyOn(window, "open").mockImplementation(() => null);
     const f = fakeFrame();
@@ -294,7 +431,8 @@ describe("usePresentation", () => {
     );
     act(() => result.current.openAudience());
     const [url, target, features] = open.mock.calls[0] ?? [];
-    expect(String(url)).toMatch(/^\/a\/talk#present=audience&pair=[A-Za-z0-9_-]{16,64}$/);
+    // On the version on view, so a version published later never reaches the audience by itself.
+    expect(String(url)).toMatch(/^\/a\/talk\/v\/1#present=audience&pair=[A-Za-z0-9_-]{16,64}$/);
     expect(target).toBe("_blank");
     expect(features).toBe("noopener");
     expect(audienceHref("talk", "p".repeat(16))).toBe(

@@ -1,6 +1,7 @@
 // Presenting a deck (an artifact whose type has `present`, the slides type) from the viewer: the
 // slide the frame is on, Present (the app puts its own frame full screen), and Presenter view (the
-// frame shows notes, the next slide and a timer) with an optional audience window in step. The app only ever handles slide numbers and view names; the deck's text stays in the
+// frame shows notes, the next slide and a timer) with an optional audience window in step. The app
+// only ever handles slide numbers, version numbers and view names; the deck's text stays in the
 // frame, on the artifact's own origin.
 //
 // The slide is kept in the app URL's fragment (#slide=N), written with history.replaceState and
@@ -8,8 +9,14 @@
 // version, review mode) reports `ready` and is sent back to that slide.
 //
 // The frame can change view on its own (its `s` key, Escape, its Exit button)
-// and reports every change with `view`, so `mode`, the menu, the version pause and the audience
-// window follow what is on screen, whoever switched it.
+// and reports every change with `view`, so `mode`, the menu and the version pause follow what is
+// on screen, whoever switched it.
+//
+// An audience window shows exactly the presenter window's slide of the presenter window's
+// version: it opens on that version's permanent link (so it never moves to a newer version by
+// itself), keeps its frame in deck view at any size, sends its frame back to the presenter's slide
+// whatever paged it, and loads another version only when the presenter's window shows one. It
+// follows the presenter's window until either window closes.
 import { APP_ROUTES, type AppConfig, route, typeDef, type ViewGate } from "@plinth/shared";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { showToast } from "../ui/index.ts";
@@ -39,7 +46,7 @@ export interface Presentation {
   available: boolean;
   /**
    * The deck was opened through a permanent version link (/a/:slug/v/:n): it never moves to a
-   * newer version, and its audience window opens the same version.
+   * newer version.
    */
   pinned: boolean;
   slide: number | null;
@@ -68,18 +75,21 @@ export interface PresentationOptions {
   slug: string;
   /** Opened through a permanent version link; the gate's version is the one on view. */
   pinned?: boolean;
+  /** Loads another app URL in this window (an audience window following a new version). */
+  navigate?: (href: string) => void;
 }
 
 /**
- * The URL of an audience window for `pair`: the artifact's current version, or `version` itself
- * when the presenter is on a permanent version link, so both windows show the same deck.
+ * The URL of an audience window for `pair` on `version` (the presenter's), optionally at `slide`.
+ * Without a version it is the artifact's current link.
  */
-export function audienceHref(slug: string, pair: string, version?: number): string {
+export function audienceHref(slug: string, pair: string, version?: number, slide?: number): string {
   const path =
     version === undefined
       ? route(APP_ROUTES.artifact, { slug })
       : route(APP_ROUTES.artifactVersion, { slug, n: version });
-  return `${path}#present=audience&pair=${pair}`;
+  const hash = `#present=audience&pair=${pair}`;
+  return path + (slide === undefined ? hash : writeFragment(hash, slide));
 }
 
 function writeSlide(slide: number): void {
@@ -92,10 +102,12 @@ function writeSlide(slide: number): void {
   }
 }
 
+const replaceLocation = (href: string) => window.location.replace(href);
+
 export function usePresentation(o: PresentationOptions): Presentation {
   const { gate, frame, contentOrigin, config, slug } = o;
   const pinned = o.pinned === true;
-  const pinnedVersion = pinned ? gate.artifact.version : undefined;
+  const version = gate.artifact.version;
   const artifactId = gate.artifact.id;
   const type = gate.artifact.type;
   const available = typeDef(type)?.present === true;
@@ -118,7 +130,15 @@ export function usePresentation(o: PresentationOptions): Presentation {
   frameRef.current = frame;
   const targetRef = useRef(target);
   targetRef.current = target;
+  const versionRef = useRef(version);
+  versionRef.current = version;
+  const navigateRef = useRef(o.navigate ?? replaceLocation);
+  navigateRef.current = o.navigate ?? replaceLocation;
+  /** The presenter's channel to its audience windows, and its pair id. */
   const channel = useRef<PresentChannel | null>(null);
+  const pairRef = useRef<string | null>(null);
+  /** In an audience window: the presenter's slide, once its window has sent one. */
+  const lead = useRef<number | null>(null);
 
   /** Sets the mode now, so messages that arrive before the next render see it. */
   const changeMode = useCallback((next: PresentMode) => {
@@ -126,15 +146,18 @@ export function usePresentation(o: PresentationOptions): Presentation {
     setMode(next);
   }, []);
 
-  /** Presenter view is over (the frame left it, or exit()): the audience is let go. */
-  const leavePresenter = useCallback(() => {
-    channel.current?.close();
-    channel.current = null;
-    changeMode("off");
-  }, [changeMode]);
+  /** The presenter's slide and version, to its audience windows. */
+  const tellAudience = useCallback((n: number) => {
+    if (modeRef.current === "audience") return;
+    channel.current?.post({ v: 1, type: "slide", slide: n, version: versionRef.current });
+  }, []);
 
   const goto = useCallback((n: number) => {
     postToDeck(frameRef.current, targetRef.current, gotoMessage(n));
+  }, []);
+
+  const showDeck = useCallback(() => {
+    postToDeck(frameRef.current, targetRef.current, viewMessage("deck"));
   }, []);
 
   const requestFullscreen = useCallback((afterFail?: () => void) => {
@@ -158,39 +181,48 @@ export function usePresentation(o: PresentationOptions): Presentation {
     const onMessage = (e: MessageEvent) => {
       const m = readSlidesFrameMessage(e, { frame, contentOrigin, opaque, type });
       if (!m) return;
+      const audience = modeRef.current === "audience";
       if (m.type === "fullscreen") {
         requestFullscreen(() => showToast({ title: "Use Present in the bar" }));
         return;
       }
       if (m.type === "view") {
-        // An audience window follows its presenter window whatever its own frame shows.
-        if (modeRef.current === "audience") return;
+        // An audience window shows the deck view, whatever its own frame switched to.
+        if (audience) {
+          if (lead.current !== null && m.mode !== "deck") showDeck();
+          return;
+        }
         if (m.mode === "presenter") {
           if (modeRef.current !== "presenter") changeMode("presenter");
         } else if (modeRef.current === "presenter") {
-          leavePresenter();
+          changeMode("off");
         }
         return;
       }
       setCount(m.count);
       if (m.type === "ready") {
+        if (audience && lead.current !== null) showDeck();
         const want = wanted.current;
         if (want !== null && want !== m.slide) goto(Math.min(want, m.count));
         else {
           wanted.current = m.slide;
           setSlide(m.slide);
+          tellAudience(m.slide);
         }
         if (modeRef.current === "presenter") {
           postToDeck(frame, targetRef.current, viewMessage("presenter"));
         }
         return;
       }
+      // An audience window stays on the presenter's slide, whatever paged its frame.
+      if (audience && lead.current !== null && m.slide !== lead.current) {
+        goto(lead.current);
+        return;
+      }
       wanted.current = m.slide;
       setSlide(m.slide);
       writeSlide(m.slide);
-      if (modeRef.current === "presenter") {
-        channel.current?.post({ v: 1, type: "slide", slide: m.slide });
-      }
+      tellAudience(m.slide);
     };
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);
@@ -201,9 +233,10 @@ export function usePresentation(o: PresentationOptions): Presentation {
     opaque,
     type,
     goto,
+    showDeck,
     requestFullscreen,
     changeMode,
-    leavePresenter,
+    tellAudience,
   ]);
 
   useEffect(() => {
@@ -213,22 +246,25 @@ export function usePresentation(o: PresentationOptions): Presentation {
     return () => document.removeEventListener("fullscreenchange", onChange);
   }, [available]);
 
-  // An audience window follows its presenter window.
+  // An audience window follows its presenter window: the same version, the same slide, deck view.
   useEffect(() => {
     if (!available || mode !== "audience" || !initial.pair) return;
-    const ch = openPresentChannel(artifactId, initial.pair, (m) => {
+    const pair = initial.pair;
+    const ch = openPresentChannel(artifactId, pair, (m) => {
       if (m.type !== "slide") return;
-      setPaired(true);
+      if (m.version !== versionRef.current) {
+        navigateRef.current(audienceHref(slug, pair, m.version, m.slide));
+        return;
+      }
+      lead.current = m.slide;
       wanted.current = m.slide;
+      setPaired(true);
+      showDeck();
       goto(m.slide);
     });
-    channel.current = ch;
     ch?.post({ v: 1, type: "hello" });
-    return () => {
-      ch?.close();
-      if (channel.current === ch) channel.current = null;
-    };
-  }, [available, mode, initial.pair, artifactId, goto]);
+    return () => ch?.close();
+  }, [available, mode, initial.pair, artifactId, slug, goto, showDeck]);
 
   useEffect(() => () => channel.current?.close(), []);
 
@@ -248,22 +284,23 @@ export function usePresentation(o: PresentationOptions): Presentation {
   const exit = useCallback(() => {
     if (modeRef.current === "presenter") {
       postToDeck(frameRef.current, targetRef.current, viewMessage("deck"));
-      leavePresenter();
+      changeMode("off");
     }
     if (document.fullscreenElement) void document.exitFullscreen?.().catch(() => undefined);
-  }, [leavePresenter]);
+  }, [changeMode]);
 
+  // Every audience window of this presenter shares one pair, so a second one follows as well.
   const openAudience = useCallback(() => {
     if (!available) return;
-    const pair = newNonce();
-    channel.current?.close();
-    channel.current = openPresentChannel(artifactId, pair, (m) => {
-      if (m.type === "hello" && wanted.current !== null) {
-        channel.current?.post({ v: 1, type: "slide", slide: wanted.current });
-      }
-    });
-    window.open(audienceHref(slug, pair, pinnedVersion), "_blank", "noopener");
-  }, [available, artifactId, slug, pinnedVersion]);
+    if (!channel.current || !pairRef.current) {
+      const pair = newNonce();
+      pairRef.current = pair;
+      channel.current = openPresentChannel(artifactId, pair, (m) => {
+        if (m.type === "hello" && wanted.current !== null) tellAudience(wanted.current);
+      });
+    }
+    window.open(audienceHref(slug, pairRef.current, versionRef.current), "_blank", "noopener");
+  }, [available, artifactId, slug, tellAudience]);
 
   const presenting = available && (fullscreen || mode === "presenter");
   return {

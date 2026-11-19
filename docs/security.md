@@ -402,9 +402,12 @@ What is new:
   HTML artifact cannot make itself full screen; a deck's `f` key only asks the app.
 - **The audience window.** Two app windows pair over `BroadcastChannel("plinth-present:<id>:<pair>")`
   on the app origin, so only the same browser can join. The pair id in the URL fragment is not a
-  credential; messages are validated and carry only slide numbers. The audience window drops the
-  bar and the banner (with its report link) only after a slide message from its presenter window,
-  which only an app page in the same browser can send. A crafted `#present=audience&pair=` link
+  credential; messages are validated and carry only slide and version numbers. A version number
+  only makes the audience window load that version's permanent link of the same artifact, which
+  goes through the same gate as any other version link, so the worst a forged message could do is
+  show another slide or version of a deck that window may already view. The audience window drops
+  the bar and the banner (with its report link) only after a slide message from its presenter
+  window, which only an app page in the same browser can send. A crafted `#present=audience&pair=` link
   opened anywhere else never hears one, so it keeps the whole page and the banner every artifact
   page carries.
 - **Deck text is scanned in linear time.** The deck parser and the image references behind

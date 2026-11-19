@@ -17,7 +17,7 @@
   --slides-accent: #0a58ca;
   --slides-rule: #d8dee4;
   --slides-code-bg: #f3f5f7;
-  --slides-ctl-bg: rgb(255 255 255 / 0.94);
+  --slides-ctl-bg: rgb(255 255 255 / 0.72);
   --slides-ctl-fg: #1f2328;
   --slides-warn: #9a3412;
   --slides-focus: #0a58ca;
@@ -41,7 +41,7 @@
   --slides-accent: #6cb2ff;
   --slides-rule: #343a42;
   --slides-code-bg: #1f242b;
-  --slides-ctl-bg: rgb(28 32 38 / 0.94);
+  --slides-ctl-bg: rgb(28 32 38 / 0.72);
   --slides-ctl-fg: #e6eaee;
   --slides-warn: #fdba74;
   --slides-focus: #6cb2ff;
@@ -59,7 +59,7 @@
     --slides-accent: #6cb2ff;
     --slides-rule: #343a42;
     --slides-code-bg: #1f242b;
-    --slides-ctl-bg: rgb(28 32 38 / 0.94);
+    --slides-ctl-bg: rgb(28 32 38 / 0.72);
     --slides-ctl-fg: #e6eaee;
     --slides-warn: #fdba74;
     --slides-focus: #6cb2ff;
@@ -375,31 +375,47 @@ body {
 }
 
 /* ---------- presenter view (presenter.ts) ---------- */
-/* The current slide on the left, as large as its column allows, with the bar at the column's
-   foot; the next slide and the notes on the right, ending level with the bar. The slides and the
-   notes share one card edge. On a narrow screen the same parts stack in the same order, each as
-   wide as the frame, with the bar at the bottom. */
+/* Two columns: the current slide with the bar directly under it on the left (--pcol, the slide's
+   width, from presenterLayout), the next slide and the notes on the right, the notes filling the
+   height. One column on a narrow or portrait frame ([data-narrow]): current, bar, next, notes.
+   The slides and the notes share one card edge; the gaps are presenter.ts's constants. */
 
 .plinth-slides__presenter {
   position: absolute;
   inset: 0;
   display: grid;
-  grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
-  grid-template-rows: minmax(0, 1fr) auto;
-  gap: 12px 24px;
+  grid-template-columns: var(--pcol, minmax(0, 2fr)) minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+  column-gap: 24px;
   padding: 16px;
+  overflow: hidden;
   background: var(--slides-stage);
   color: var(--slides-fg);
   font-size: 1rem;
 }
 
+.plinth-slides__presenter[data-narrow] {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow-y: auto;
+}
+
+.plinth-slides__main {
+  display: flex;
+  flex-direction: column;
+  align-self: start;
+  gap: 12px;
+  min-width: 0;
+}
+
 .plinth-slides__pane {
   position: relative;
   display: flex;
+  flex: none;
   align-items: flex-start;
   justify-content: flex-start;
   min-width: 0;
-  min-height: 0;
   overflow: hidden;
 }
 
@@ -414,33 +430,16 @@ body {
   display: none;
 }
 
-/* The current slide is sized from its grid row (presenter.ts fits the canvas to the pane); the
-   next one is as wide as its column at the deck's shape. */
-.plinth-slides__pane--current {
-  grid-column: 1;
-  grid-row: 1;
-}
-
-.plinth-slides__pane--next {
-  aspect-ratio: 16 / 9;
-}
-
 .plinth-slides__side {
   display: flex;
   flex-direction: column;
-  grid-column: 2;
-  grid-row: 1 / -1;
   gap: 8px;
+  min-width: 0;
   min-height: 0;
 }
 
-.plinth-slides__pane--next {
-  flex: none;
-  max-height: 45%;
-}
-
-:root[data-aspect="4:3"] .plinth-slides__pane--next {
-  aspect-ratio: 4 / 3;
+.plinth-slides__presenter[data-narrow] .plinth-slides__side {
+  flex: 1 0 auto;
 }
 
 .plinth-slides__caption {
@@ -448,6 +447,7 @@ body {
   color: var(--slides-muted);
   font-size: 0.75rem;
   font-weight: 500;
+  line-height: 1.4;
 }
 
 .plinth-slides__caption--notes {
@@ -462,6 +462,10 @@ body {
   overflow: auto;
   font-size: 1.125rem;
   line-height: 1.55;
+}
+
+.plinth-slides__presenter[data-narrow] .plinth-slides__notes {
+  flex: 1 0 6em;
 }
 
 .plinth-slides__notes > :first-child {
@@ -482,11 +486,10 @@ body {
   color: var(--slides-muted);
 }
 
-/* The timer on the left, paging in the middle, Exit pinned right. */
+/* Directly under the current slide and as wide: the timer and pause on the left, paging in the
+   middle, the clock and Exit on the right, in one row at every width. */
 .plinth-slides__pbar {
   display: grid;
-  grid-column: 1;
-  grid-row: 2;
   grid-template-columns: 1fr auto 1fr;
   gap: 12px;
   align-items: center;
@@ -502,17 +505,18 @@ body {
 
 .plinth-slides__group--end {
   justify-content: flex-end;
-  gap: 12px;
+  gap: 8px;
 }
 
 .plinth-slides__timer {
-  min-width: 3.25em;
+  min-width: 3em;
   font-size: 1.25rem;
   font-variant-numeric: tabular-nums;
   font-weight: 600;
 }
 
-.plinth-slides__count {
+.plinth-slides__count,
+.plinth-slides__clock {
   color: var(--slides-muted);
   font-size: 0.875rem;
   font-variant-numeric: tabular-nums;
@@ -522,41 +526,6 @@ body {
 .plinth-slides__count {
   min-width: 4.5em;
   text-align: center;
-}
-
-@media (max-width: 900px) {
-  .plinth-slides__presenter {
-    grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: auto minmax(0, 1fr) auto;
-    gap: 12px;
-  }
-
-  .plinth-slides__pane--current {
-    aspect-ratio: 16 / 9;
-    max-height: 50vh;
-  }
-
-  :root[data-aspect="4:3"] .plinth-slides__pane--current {
-    aspect-ratio: 4 / 3;
-  }
-
-  .plinth-slides__side {
-    grid-column: 1;
-    grid-row: 2;
-    overflow-y: auto;
-  }
-
-  .plinth-slides__pane--next {
-    max-height: none;
-  }
-
-  .plinth-slides__pbar {
-    grid-row: 3;
-  }
-
-  .plinth-slides__notes {
-    flex: 1 0 6em;
-  }
 }
 
 @media (max-width: 480px) {
@@ -642,8 +611,10 @@ body {
 }
 
 /* ---------- controls ---------- */
-/* One pill centred over the bottom of the slide: previous, "3 / 20", next, and the overview
-   toggle. It shows on input and hides after CONTROLS_IDLE_MS, so it reserves no room. */
+/* One pill floating over the bottom centre of the slide, on a translucent surface: previous,
+   "3 / 20" (only when the deck shows no page numbers of its own), next, and the overview toggle.
+   It shows on pointer moves, taps and keys, stays while hovered or focused, and hides after
+   CONTROLS_IDLE_MS, so it reserves no room. */
 
 .plinth-slides__controls {
   position: fixed;
@@ -655,6 +626,8 @@ body {
   padding: 2px;
   border-radius: 10px;
   background: var(--slides-ctl-bg);
+  -webkit-backdrop-filter: blur(12px) saturate(1.4);
+  backdrop-filter: blur(12px) saturate(1.4);
   box-shadow:
     0 0 0 1px var(--slides-rule),
     0 2px 8px rgb(0 0 0 / 0.12);
@@ -670,6 +643,14 @@ body {
 .plinth-slides__controls:focus-within {
   opacity: 1;
   pointer-events: auto;
+}
+
+/* A pointer resting on the shown pill keeps it (not on touch, where hover sticks after a tap). */
+@media (hover: hover) {
+  .plinth-slides__controls:hover {
+    opacity: 1;
+    pointer-events: auto;
+  }
 }
 
 .plinth-slides[data-mode="presenter"] .plinth-slides__controls,

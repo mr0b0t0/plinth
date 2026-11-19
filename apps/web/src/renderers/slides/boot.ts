@@ -35,8 +35,8 @@ import {
 const ROOT_ID = "__plinth-slides";
 const DATA_ID = "__plinth-content";
 const FALLBACK = "This deck could not be shown.";
-/** Controls hide this long after the last input. */
-export const CONTROLS_IDLE_MS = 2500;
+/** Controls hide this long after the last input (hover and keyboard focus keep them). */
+export const CONTROLS_IDLE_MS = 2000;
 
 export function readPayload(doc: Document): TypedPayload | null {
   const raw = doc.getElementById(DATA_ID)?.textContent;
@@ -65,15 +65,6 @@ function el<K extends keyof HTMLElementTagNameMap>(
   e.className = className;
   if (text !== undefined) e.textContent = text;
   return e;
-}
-
-/**
- * Whether the frame fills the screen (the app put it full screen): the slide then takes the whole
- * screen and the controls show over it only while the pointer moves.
- */
-function fillsScreen(win: Window): boolean {
-  const s = win.screen;
-  return !!s && s.width > 0 && win.innerWidth >= s.width && win.innerHeight >= s.height;
 }
 
 /** Test seams: layout measuring and the presenter's clock. */
@@ -127,9 +118,10 @@ export function boot(win: Window, opts: BootOptions = {}): () => void {
   const overviewBtn = iconButton(doc, "squares-four", "Overview", () =>
     pick(mode === "overview" ? "deck" : "overview"),
   );
+  // One counter on screen: a deck that shows its own page numbers has none in the pill.
   controls.append(
     iconButton(doc, "caret-left", "Previous slide", () => deck.prev()),
-    counter,
+    ...(settings.paginate ? [] : [counter]),
     iconButton(doc, "caret-right", "Next slide", () => deck.next()),
     separator,
     overviewBtn,
@@ -166,12 +158,11 @@ export function boot(win: Window, opts: BootOptions = {}): () => void {
       setScale(root, canvas, overviewScale(win.innerWidth, canvas.width, cols));
       root.style.removeProperty("--controls-bottom");
     } else {
-      // The slide is centred with the stage's gutter on every side (none when the deck fills the
-      // screen); the controls show just inside its bottom edge, wherever the letterbox puts it.
-      const g = fillsScreen(win) ? 0 : GUTTER;
+      // The slide is centred with the stage's gutter on every side, full screen too; the controls
+      // show just inside its bottom edge, wherever the letterbox puts it.
       const s = fitScale(
-        win.innerWidth - 2 * g,
-        win.innerHeight - 2 * g,
+        win.innerWidth - 2 * GUTTER,
+        win.innerHeight - 2 * GUTTER,
         canvas.width,
         canvas.height,
       );
@@ -217,6 +208,7 @@ export function boot(win: Window, opts: BootOptions = {}): () => void {
           exit: () => pick("deck"),
           prev: () => deck.prev(),
           next: () => deck.next(),
+          viewport: () => ({ w: win.innerWidth, h: win.innerHeight }),
           clock: opts.clock,
           measure,
         });

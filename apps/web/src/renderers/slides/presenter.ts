@@ -1,17 +1,21 @@
-// Presenter view, inside the deck's own frame: the current slide, the next one and the speaker
-// notes, over one bar: the elapsed timer (it starts again each time presenter view opens),
-// previous and next with "3 / 20" between them (touch screens have no keys, and presenter view
-// takes no swipes), and Exit. A slide that does not fit is marked on the
+// Presenter view, inside the deck's own frame. At desktop width it has two columns: on the left the
+// current slide, as large as fits, with the bar directly under it (the elapsed timer with pause,
+// previous and next with "3 / 20" between them, the clock and Exit); on the right the next slide at
+// the top and the speaker notes filling the rest of the height. On a narrow or portrait frame the
+// same parts stack in one column: current, bar, next, notes. Touch screens have no keys and
+// presenter view takes no swipes, so its bar pages. A slide that does not fit is marked on the
 // current pane. Everything here is made with createElement and textContent; the slides and notes
 // it shows are copies of what deck.ts already sanitized.
 import { dropIds, type SlideView } from "./deck.ts";
-import { iconButton } from "./icons.ts";
+import { iconButton, setIcon } from "./icons.ts";
 import { fitSlide, type Measure, overflows } from "./layout.ts";
-import { fitScale, setScale } from "./stage.ts";
+import { GUTTER, setScale } from "./stage.ts";
 
 export interface PresenterClock {
   now(): number;
   every(ms: number, fn: () => void): () => void;
+  /** The wall clock at `at`, as the bar shows it. */
+  time(at: number): string;
 }
 
 export const systemClock: PresenterClock = {
@@ -20,6 +24,7 @@ export const systemClock: PresenterClock = {
     const id = setInterval(fn, ms);
     return () => clearInterval(id);
   },
+  time: (at) => new Date(at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
 };
 
 /** "4:05" or "1:02:09". */
@@ -30,6 +35,56 @@ export function formatElapsed(ms: number): string {
   const s = total % 60;
   const ss = String(s).padStart(2, "0");
   return h > 0 ? `${h}:${String(m).padStart(2, "0")}:${ss}` : `${m}:${ss}`;
+}
+
+/** Between the two columns, in CSS pixels (slides.css uses the same). */
+export const PRESENTER_COLUMN_GAP = 24;
+/** Between a slide and the bar under it, and between the stacked parts (slides.css). */
+export const PRESENTER_ROW_GAP = 12;
+/** The bar's height (slides.css min-height). */
+export const PRESENTER_BAR = 40;
+/** The current slide's column takes at most this share of the width; Next and Notes get the rest. */
+export const CURRENT_MAX_SHARE = 0.72;
+/** In two columns the next slide takes at most this share of the height. */
+const NEXT_MAX_SHARE = 0.4;
+
+/** One column below 600 px wide or in portrait, as the deck's own overview rule. */
+export function presenterNarrow(w: number, h: number): boolean {
+  return w < 600 || h > w;
+}
+
+export interface PresenterLayout {
+  narrow: boolean;
+  /** Scales of the current and the next slide. */
+  current: number;
+  next: number;
+  /** The left column's width in two columns (the current slide's width), or null in one. */
+  column: number | null;
+}
+
+/** Sizes presenter view for a w x h frame: everything fits its height in two columns. */
+export function presenterLayout(
+  w: number,
+  h: number,
+  canvas: { width: number; height: number },
+): PresenterLayout {
+  const innerW = Math.max(1, w - 2 * GUTTER);
+  const innerH = Math.max(1, h - 2 * GUTTER);
+  if (presenterNarrow(w, h)) {
+    // Each slide as wide as the frame, unless that would leave the notes no room.
+    const s = Math.min(innerW / canvas.width, (innerH * 0.45) / canvas.height);
+    return { narrow: true, current: s, next: s, column: null };
+  }
+  const widest = CURRENT_MAX_SHARE * (innerW - PRESENTER_COLUMN_GAP);
+  const tallest = ((innerH - PRESENTER_BAR - PRESENTER_ROW_GAP) * canvas.width) / canvas.height;
+  const column = Math.max(1, Math.floor(Math.min(widest, tallest)));
+  const side = innerW - PRESENTER_COLUMN_GAP - column;
+  return {
+    narrow: false,
+    current: column / canvas.width,
+    next: Math.max(0.05, Math.min(side / canvas.width, (innerH * NEXT_MAX_SHARE) / canvas.height)),
+    column,
+  };
 }
 
 function el<K extends keyof HTMLElementTagNameMap>(
@@ -60,7 +115,10 @@ export class Presenter {
   private readonly notes: HTMLElement;
   private readonly counter: HTMLElement;
   private readonly timer: HTMLElement;
-  private readonly startedAt: number;
+  private readonly clockEl: HTMLElement;
+  private readonly pauseBtn: HTMLButtonElement;
+  private startedAt: number;
+  private pausedAt: number | null = null;
   private stopTick: (() => void) | null = null;
   private n = 1;
 
@@ -72,6 +130,8 @@ export class Presenter {
       exit: () => void;
       prev: () => void;
       next: () => void;
+      /** The frame's size, which presenter view fills. */
+      viewport: () => { w: number; h: number };
       clock?: PresenterClock;
       measure?: Measure;
     },
@@ -83,9 +143,35 @@ export class Presenter {
     this.el.setAttribute("aria-label", "Presenter view");
     this.el.dataset.plinthControl = "";
 
+    // The current slide with the bar directly under it.
+    const main = el(doc, "div", "plinth-slides__main");
     this.current = el(doc, "div", "plinth-slides__pane plinth-slides__pane--current");
+    const bar = el(doc, "div", "plinth-slides__pbar");
+    const timing = el(doc, "div", "plinth-slides__group");
+    this.timer = el(doc, "span", "plinth-slides__timer", "0:00");
+    this.timer.setAttribute("role", "timer");
+    this.timer.setAttribute("aria-label", "Elapsed time");
+    this.pauseBtn = iconButton(doc, "pause", "Pause timer", () => this.togglePause());
+    timing.append(this.timer, this.pauseBtn);
+    const paging = el(doc, "div", "plinth-slides__group plinth-slides__group--paging");
+    this.counter = el(doc, "span", "plinth-slides__count");
+    paging.append(
+      iconButton(doc, "caret-left", "Previous slide", () => this.o.prev()),
+      this.counter,
+      iconButton(doc, "caret-right", "Next slide", () => this.o.next()),
+    );
+    const end = el(doc, "div", "plinth-slides__group plinth-slides__group--end");
+    this.clockEl = el(doc, "span", "plinth-slides__clock");
+    end.append(
+      this.clockEl,
+      iconButton(doc, "x", "Exit presenter view", () => this.o.exit()),
+    );
+    bar.append(timing, paging, end);
+    main.append(this.current, bar);
+
+    // Next at the top, the notes filling the rest.
     const side = el(doc, "div", "plinth-slides__side");
-    const nextLabel = el(doc, "p", "plinth-slides__caption plinth-slides__caption--next", "Next");
+    const nextLabel = el(doc, "p", "plinth-slides__caption", "Next");
     this.next = el(doc, "div", "plinth-slides__pane plinth-slides__pane--next");
     this.next.setAttribute("inert", "");
     this.next.setAttribute("aria-hidden", "true");
@@ -98,25 +184,7 @@ export class Presenter {
     this.notes = el(doc, "div", "plinth-slides__notes");
     side.append(nextLabel, this.next, notesLabel, this.notes);
 
-    // The timer on the left, paging in the middle, Exit on the right.
-    const bar = el(doc, "div", "plinth-slides__pbar");
-    const timing = el(doc, "div", "plinth-slides__group");
-    this.timer = el(doc, "span", "plinth-slides__timer", "0:00");
-    this.timer.setAttribute("role", "timer");
-    this.timer.setAttribute("aria-label", "Elapsed time");
-    timing.append(this.timer);
-    const paging = el(doc, "div", "plinth-slides__group plinth-slides__group--paging");
-    this.counter = el(doc, "span", "plinth-slides__count");
-    paging.append(
-      iconButton(doc, "caret-left", "Previous slide", () => this.o.prev()),
-      this.counter,
-      iconButton(doc, "caret-right", "Next slide", () => this.o.next()),
-    );
-    const end = el(doc, "div", "plinth-slides__group plinth-slides__group--end");
-    end.append(iconButton(doc, "x", "Exit presenter view", () => this.o.exit()));
-    bar.append(timing, paging, end);
-
-    this.el.append(this.current, side, bar);
+    this.el.append(main, side);
   }
 
   private get clock(): PresenterClock {
@@ -135,12 +203,30 @@ export class Presenter {
     this.stopTick = null;
   }
 
+  get paused(): boolean {
+    return this.pausedAt !== null;
+  }
+
   elapsed(): number {
-    return this.clock.now() - this.startedAt;
+    return (this.pausedAt ?? this.clock.now()) - this.startedAt;
+  }
+
+  togglePause(): void {
+    const now = this.clock.now();
+    if (this.pausedAt === null) {
+      this.pausedAt = now;
+      setIcon(this.pauseBtn, "play", "Resume timer");
+    } else {
+      this.startedAt += now - this.pausedAt;
+      this.pausedAt = null;
+      setIcon(this.pauseBtn, "pause", "Pause timer");
+    }
+    this.tick();
   }
 
   tick(): void {
     this.timer.textContent = formatElapsed(this.elapsed());
+    this.clockEl.textContent = this.clock.time(this.clock.now());
   }
 
   /** Shows slide `n` as current, the one after it as next, and its notes. */
@@ -174,16 +260,15 @@ export class Presenter {
     this.layout();
   }
 
-  /** Scales the two slide panes to the space they have. */
+  /** Sizes the columns and scales the two slides to the frame (presenterLayout). */
   layout(): void {
-    for (const pane of [this.current, this.next]) {
-      const r = pane.getBoundingClientRect();
-      setScale(
-        pane,
-        this.canvas,
-        fitScale(r.width, r.height, this.canvas.width, this.canvas.height),
-      );
-    }
+    const { w, h } = this.o.viewport();
+    const l = presenterLayout(w, h, this.canvas);
+    this.el.toggleAttribute("data-narrow", l.narrow);
+    if (l.column === null) this.el.style.removeProperty("--pcol");
+    else this.el.style.setProperty("--pcol", `${l.column}px`);
+    setScale(this.current, this.canvas, l.current);
+    setScale(this.next, this.canvas, l.next);
   }
 
   get slide(): number {
