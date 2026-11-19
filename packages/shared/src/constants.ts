@@ -42,6 +42,7 @@ export const PUBLISH_WARNING_CODES = [
   "ds_deprecated_alias",
   "design_system_unavailable",
   "design_system_outdated",
+  "board_not_seeded",
 ] as const;
 export type PublishWarningCode = (typeof PUBLISH_WARNING_CODES)[number];
 
@@ -225,6 +226,11 @@ export const LIMITS = {
   maxSheetImportBytes: 2 * MB,
   /** Bytes an .xlsx import may decompress in all (its parts' XML). */
   maxSheetImportInflatedBytes: 24 * MB,
+  /**
+   * Bytes of JSON (board.json) a publish or update of a whiteboard may send: its settings and, on
+   * a new or empty board, its starting blocks and arrows (packages/shared/src/whiteboard.ts).
+   */
+  maxBoardBytes: 512 * KB,
 } as const;
 
 /** The windows an owner can pick for one artifact's stats, in UTC days. */

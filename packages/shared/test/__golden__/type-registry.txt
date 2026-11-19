@@ -165,5 +165,37 @@
       },
       "liveEdit": false
     }
+  ],
+  [
+    "whiteboard",
+    {
+      "id": "whiteboard",
+      "label": "Whiteboard",
+      "badge": "Board",
+      "sourcePath": "board.json",
+      "sourceField": "content",
+      "sourceLabel": "board JSON",
+      "contentType": "application/json; charset=utf-8",
+      "maxSourceBytes": 524288,
+      "reservedPaths": [
+        "index.html",
+        "board.json"
+      ],
+      "assetTypes": null,
+      "renderer": {
+        "script": "whiteboard.js",
+        "style": "whiteboard.css",
+        "runtime": true
+      },
+      "editor": {
+        "language": "json",
+        "wordWrap": "on"
+      },
+      "liveEdit": false,
+      "pageData": "fixed",
+      "assets": false,
+      "upload": false,
+      "editLabel": "Edit settings"
+    }
   ]
 ]

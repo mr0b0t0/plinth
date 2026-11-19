@@ -76,6 +76,16 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   off. A token limited to one artifact never sees or manages category sharing: it holds no role
   through a category grant, and the share, portal and personal-category routes answer it 403
   `token_bound`. Migration `0013_category_sharing.sql`. Plugin 0.28.0.
+- **Whiteboards.** Agents can publish a board of notes, text, boxes, ellipses and arrows that
+  people edit together (`type: "whiteboard"`). The board lives in the artifact's shared data, so
+  everyone it lets edit (commenters by default, or editors only) moves, resizes, writes on,
+  colours, connects and deletes blocks on the page, with live cursors and drags; viewers follow
+  read-only. Pan and zoom with the mouse, a trackpad,
+  touch or the keyboard, and export the board as PNG or SVG. A version holds only the board's
+  settings (`board.json`), and a new board can start with a list of blocks and arrows, written
+  once into its shared data. Agents read the board with `list_artifact_data` and add or move
+  blocks with `write_artifact_data`. Needs shared data and origin isolation; `GET /api/v1/config`
+  lists which types an instance publishes (`artifact_types`).
 
 ## 0.6.0 (2026-11-20)
 

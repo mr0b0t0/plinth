@@ -135,6 +135,7 @@ describe("OpenAPI document", () => {
       "design_system",
       "design",
       "sheet",
+      "whiteboard",
     ]);
     expect(publish.properties.content.type).toBe("string");
     expect(publish.properties.visibility.enum).toEqual([
@@ -213,6 +214,7 @@ describe("OpenAPI document", () => {
       { $ref: "#/components/schemas/DesignSystemArtifactDetail" },
       { $ref: "#/components/schemas/DesignArtifactDetail" },
       { $ref: "#/components/schemas/SheetArtifactDetail" },
+      { $ref: "#/components/schemas/WhiteboardArtifactDetail" },
     ]);
     expect(detail.discriminator).toEqual({
       propertyName: "type",
@@ -223,6 +225,7 @@ describe("OpenAPI document", () => {
         design_system: "#/components/schemas/DesignSystemArtifactDetail",
         design: "#/components/schemas/DesignArtifactDetail",
         sheet: "#/components/schemas/SheetArtifactDetail",
+        whiteboard: "#/components/schemas/WhiteboardArtifactDetail",
       },
     });
     const design = schemas.DesignArtifactDetail;
@@ -241,7 +244,7 @@ describe("OpenAPI document", () => {
     expect(deck.properties.html).toBeUndefined();
     expect(deck.properties.live_draft).toBeUndefined();
     expect(schemas.ArtifactType.description).toBe(
-      '"html": a hand-written page (source index.html). "doc": a Markdown document (source content.md) that Plinth renders. "slides": a Markdown deck (source slides.md) that Plinth renders. "design_system": design tokens, guidelines and components as JSON (source system.json) that Plinth renders as a reference site and get_design_system compiles. "design": artboards (app screens, posters, social posts, ads) as HTML (source design.html) that Plinth renders on a canvas, each artboard alone at its exact size. "sheet": a table as JSON lines (source sheet.jsonl) that Plinth renders as a spreadsheet and read_sheet evaluates. Fixed at publish.',
+      '"html": a hand-written page (source index.html). "doc": a Markdown document (source content.md) that Plinth renders. "slides": a Markdown deck (source slides.md) that Plinth renders. "design_system": design tokens, guidelines and components as JSON (source system.json) that Plinth renders as a reference site and get_design_system compiles. "design": artboards (app screens, posters, social posts, ads) as HTML (source design.html) that Plinth renders on a canvas, each artboard alone at its exact size. "sheet": a table as JSON lines (source sheet.jsonl) that Plinth renders as a spreadsheet and read_sheet evaluates. "whiteboard": a board of notes, shapes and arrows, its settings as JSON (source board.json) that Plinth renders as a live board, its blocks and arrows kept in shared data. Fixed at publish.',
     );
     const page = schemas.HtmlArtifactDetail;
     // Existing clients keep a required html field, as before typed artifacts.

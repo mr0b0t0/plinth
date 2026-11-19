@@ -1,7 +1,13 @@
 // What the editor checks in a draft before Save, per artifact type: the same parser the Worker
 // runs, so the author sees each problem (with its path) while typing, and Save waits until there
 // are none. The Worker refuses the same drafts anyway. A type with a format to check adds one line.
-import { type ArtifactType, parseDesignSystem, parseSheet } from "@plinth/shared";
+import {
+  type ArtifactType,
+  BoardContentError,
+  parseBoardContent,
+  parseDesignSystem,
+  parseSheet,
+} from "@plinth/shared";
 
 export interface SourceProblem {
   path: string;
@@ -19,6 +25,16 @@ export const SOURCE_CHECKS: Partial<Record<ArtifactType, (text: string) => Sourc
     return r.ok
       ? []
       : r.errors.map((e) => ({ path: e.cell ?? `line ${e.line}`, message: e.message }));
+  },
+  whiteboard: (text) => {
+    try {
+      parseBoardContent(text);
+      return [];
+    } catch (e) {
+      if (!(e instanceof BoardContentError)) throw e;
+      const message = e.path ? e.message.slice(e.path.length + 2) : e.message;
+      return [{ path: e.path || "board.json", message }];
+    }
   },
 };
 
