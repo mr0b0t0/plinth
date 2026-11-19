@@ -170,6 +170,9 @@ importers:
 
   packages/shared:
     dependencies:
+      diff:
+        specifier: 9.0.0
+        version: 9.0.0
       fflate:
         specifier: 0.8.3
         version: 0.8.3
