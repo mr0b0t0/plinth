@@ -17,6 +17,7 @@ export * from "./invitations.ts";
 export * from "./liveDoc.ts";
 export * from "./liveView.ts";
 export * from "./markdown.ts";
+export * from "./markdownSerialize.ts";
 export * from "./mentions.ts";
 export * from "./merge3.ts";
 export * from "./pageComments.ts";
