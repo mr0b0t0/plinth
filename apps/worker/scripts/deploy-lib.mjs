@@ -164,6 +164,7 @@ export function runtimeBase(repoCfg) {
         "ALLOW_LIVE_VIEWS",
         "LIVE_VIEW_MAX_SOCKETS_PER_ARTIFACT",
         "SHEET_EVAL_BUDGET",
+        "ALLOW_SLIDES_FOLLOW",
       ]
         .filter((k) => k in (repoCfg.vars ?? {}))
         .map((k) => [k, repoCfg.vars[k]]),

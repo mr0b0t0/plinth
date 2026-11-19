@@ -240,6 +240,45 @@ describe("usePresentation", () => {
     expect(result.current.mode).toBe("audience");
   });
 
+  it("an audience window tells its frame it is paired before any goto; others never do", () => {
+    window.history.replaceState(null, "", `/a/talk#present=audience&pair=${"p".repeat(16)}`);
+    const f = fakeFrame();
+    renderHook(() =>
+      usePresentation({
+        gate: gate(),
+        frame: f.frame,
+        contentOrigin: ORIGIN,
+        config: CONFIG,
+        slug: "talk",
+      }),
+    );
+    fromFrame(f.contentWindow, { type: "ready", slide: 1, count: 6 });
+    expect(f.contentWindow.postMessage).toHaveBeenCalledWith(
+      { source: "plinth-renderer", v: 1, type: "paired" },
+      ORIGIN,
+    );
+    const types = f.contentWindow.postMessage.mock.calls.map(
+      (c) => (c[0] as { type: string }).type,
+    );
+    expect(types[0]).toBe("paired");
+
+    window.history.replaceState(null, "", "/a/talk#slide=4");
+    const g = fakeFrame();
+    renderHook(() =>
+      usePresentation({
+        gate: gate(),
+        frame: g.frame,
+        contentOrigin: ORIGIN,
+        config: CONFIG,
+        slug: "talk",
+      }),
+    );
+    fromFrame(g.contentWindow, { type: "ready", slide: 1, count: 6 });
+    expect(
+      g.contentWindow.postMessage.mock.calls.map((c) => (c[0] as { type: string }).type),
+    ).toEqual(["goto"]);
+  });
+
   it("posts to * under opaque isolation and accepts the frame's null origin", () => {
     const f = fakeFrame();
     const { result } = renderHook(() =>

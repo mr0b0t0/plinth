@@ -7,7 +7,7 @@
 // It finds the root and data by id and reads only window properties the platform defines, never a
 // global by name, and it never loads /__plinth/runtime.js, so heading ids cannot clobber anything
 // it uses. <html> carries data-ready ("ok" or "error"), data-slide and data-count for tests and
-// thumbnails.
+// thumbnails; the root carries data-follow while the deck follows or leads a presenter (follow.ts).
 import {
   type DeckSettings,
   LIMITS,
@@ -19,6 +19,7 @@ import {
 import { buildDeck, type SlideView } from "./deck.ts";
 import { clickDownload, collectImages, showReadyNotice, writerLoader } from "./export.ts";
 import { buildExportModel, domGeometry, type Geometry, pptxFileName } from "./exportModel.ts";
+import { Follow, type FollowSocket } from "./follow.ts";
 import { fitSlide, type Measure, overflows } from "./layout.ts";
 import { bindInput, DeckController, type DeckMode } from "./nav.ts";
 import { bindOverview, revealSlide } from "./overview.ts";
@@ -48,6 +49,7 @@ export function readPayload(doc: Document): TypedPayload | null {
   if (p.v !== TYPED_PAYLOAD_VERSION || p.type !== "slides") return null;
   if (typeof p.text !== "string" || typeof p.app_origin !== "string") return null;
   if (p.view !== undefined && p.view !== "overview") return null;
+  if (p.follow !== undefined && p.follow !== "present" && p.follow !== "watch") return null;
   return value as TypedPayload;
 }
 
@@ -83,6 +85,8 @@ export interface BootOptions {
   opaque?: boolean;
   /** Saves the finished file (by default an <a download> click and the ready notice). */
   save?: (blob: Blob, name: string) => void;
+  /** Makes the follow socket (by default a WebSocket). */
+  connect?: (url: string, protocols: string[]) => FollowSocket;
 }
 
 /** Renders the deck and starts listening. Returns a function that stops everything it started. */
@@ -132,7 +136,22 @@ export function boot(win: Window, opts: BootOptions = {}): () => void {
       pick(mode === "presenter" ? "deck" : "presenter"),
     ),
   );
-  root.replaceChildren(deckEl, controls, announcer);
+  // Following the presenter: only when the shell says so (an identified viewer, rooms on), never in
+  // review mode or the editor preview, which keep the overview.
+  const follow =
+    payload.follow && !fixedOverview
+      ? new Follow({
+          win,
+          root,
+          deck,
+          right: payload.follow,
+          ...(opts.connect ? { connect: opts.connect } : {}),
+        })
+      : null;
+  // A presenter's Lead viewers toggle, in the controls and in presenter view.
+  const presenterLead = follow && payload.follow === "present" ? follow.leadButton() : null;
+  if (follow && payload.follow === "present") controls.append(follow.leadButton());
+  root.replaceChildren(deckEl, controls, announcer, ...(follow ? [follow.pill] : []));
   pageStyle(doc).textContent = pageRule(canvas, false);
 
   let idle: ReturnType<typeof setTimeout> | undefined;
@@ -200,6 +219,7 @@ export function boot(win: Window, opts: BootOptions = {}): () => void {
           exit: () => pick("deck"),
           clock: opts.clock,
           measure,
+          ...(presenterLead && !follow?.detached ? { bar: [presenterLead] } : {}),
         });
         root.append(presenter.el);
         presenter.open(n);
@@ -339,7 +359,10 @@ export function boot(win: Window, opts: BootOptions = {}): () => void {
     if (!fromApp(e, win, appOrigin)) return;
     const m = readSlidesAppMessage(e.data);
     if (!m) return;
-    if (m.type === "goto") deck.go(m.slide);
+    if (m.type === "goto") {
+      // While the deck follows a presenter, the presenter's slide wins over the app's.
+      if (!follow?.holding) deck.go(m.slide);
+    } else if (m.type === "paired") follow?.detach();
     else if (m.type === "view") {
       pick(m.mode);
       // A view the frame did not take: the app learns the one it shows.
@@ -365,8 +388,10 @@ export function boot(win: Window, opts: BootOptions = {}): () => void {
   render();
   html.setAttribute("data-ready", "ok");
   postToApp(win, appOrigin, { type: "ready", slide: deck.current, count: views.length });
+  follow?.start();
 
   return () => {
+    follow?.stop();
     clearTimeout(idle);
     unbindInput();
     unbindOverview();

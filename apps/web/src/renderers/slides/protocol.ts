@@ -7,6 +7,8 @@
 //   app -> frame: view { mode }              "deck", "presenter" or "overview"
 //   app -> frame: print { notes? }           print the deck, or the handout with notes
 //   app -> frame: export { format, nonce }   build the deck as .pptx and download it in the frame
+//   app -> frame: paired                     this frame is an audience window: its presenter
+//                                            window moves it, so it stops following the room
 //   frame -> app: ready { slide, count }     after boot
 //   frame -> app: position { slide, count }  after every change
 //   frame -> app: view { mode }              the view it now shows, after every change (its own
@@ -27,7 +29,8 @@ export type SlidesAppMessage =
   | { type: "goto"; slide: number }
   | { type: "view"; mode: DeckMode }
   | { type: "print"; notes: boolean }
-  | { type: "export"; format: "pptx"; nonce: string };
+  | { type: "export"; format: "pptx"; nonce: string }
+  | { type: "paired" };
 
 /** The app's nonce for one export request. */
 export const EXPORT_NONCE_RE = /^[A-Za-z0-9_-]{16,64}$/;
@@ -53,6 +56,7 @@ export function readSlidesAppMessage(data: unknown): SlidesAppMessage | null {
     }
     return { type: "export", format: "pptx", nonce: m.nonce };
   }
+  if (m.type === "paired") return { type: "paired" };
   return null;
 }
 

@@ -9,6 +9,9 @@
 // never sent to the server, so a reload or a shared link opens the same slide. A new frame (a newer
 // version, review mode) reports `ready` and is sent back to that slide.
 //
+// An audience window tells its frame it is paired (on every `ready`), so a deck that follows the
+// presenter over the room (follow.ts) leaves that to the presenter window and shows no note.
+//
 // The frame can change view on its own (its `s` key and Presenter control, Escape, its Exit button)
 // and reports every change with `view`, so `mode`, the strip, the version pause and the audience
 // window follow what is on screen, whoever switched it.
@@ -25,6 +28,7 @@ import {
   exportMessage,
   gotoMessage,
   newNonce,
+  pairedMessage,
   postPrint,
   postToDeck,
   rendererTargetOrigin,
@@ -234,6 +238,11 @@ export function usePresentation(o: PresentationOptions): Presentation {
       }
       setCount(m.count);
       if (m.type === "ready") {
+        // An audience window's frame follows this window's presenter window, not the room: told
+        // before any goto, so the presenter window's slides never read as paging by hand.
+        if (modeRef.current === "audience") {
+          postToDeck(frame, targetRef.current, pairedMessage());
+        }
         const want = wanted.current;
         if (want !== null && want !== m.slide) goto(Math.min(want, m.count));
         else {

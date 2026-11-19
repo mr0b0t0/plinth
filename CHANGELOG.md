@@ -10,6 +10,13 @@ Add a line under **Unreleased** in the pull request that makes a change people w
 
 ## Unreleased
 
+- **Follow the presenter in a deck.** An owner or editor can turn on **Lead viewers** in a deck's
+  controls or presenter view, and the people the deck is shared with who have it open follow their
+  slide, with a "Following the presenter" note; paging by hand pauses it until they choose "Back to
+  the presenter". Someone who opens the deck mid-talk lands on the presenter's slide. Only slide
+  numbers travel, over the deck's live room; nobody sees who else is watching. It needs live rooms
+  (origin isolation and the `ROOMS` binding) and is on by default; `ALLOW_SLIDES_FOLLOW=false`
+  turns it off. Link viewers without an identity do not follow.
 - **Your own categories for artifacts shared with you, and sharing a whole category.** On the
   dashboard, "Move to category…" now files an artifact someone shared with you under a category of
   your own, which only you see; the Category menu covers yours under Shared (#42). Owners can share

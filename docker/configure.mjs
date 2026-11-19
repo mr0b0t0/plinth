@@ -64,6 +64,8 @@ const WORKER_VARS = [
   "ALLOW_LIVE_VIEWS",
   // Formula steps one read_sheet call may spend (docs/self-hosting.md#settings).
   "SHEET_EVAL_BUDGET",
+  // Following the presenter in a deck (docs/docker.md#settings), through the same live rooms.
+  "ALLOW_SLIDES_FOLLOW",
 ];
 
 // `plinth init` flags and the variables that set them, to name the variable in its errors.

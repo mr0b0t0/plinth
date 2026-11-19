@@ -564,6 +564,9 @@ body {
   bottom: 12px;
   left: 50%;
   display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  max-width: calc(100% - 24px);
   gap: 4px;
   align-items: center;
   padding: 4px;
@@ -630,6 +633,45 @@ body {
   white-space: nowrap;
 }
 
+/* Following the presenter (follow.ts): the follower's status, and a presenter's toggle. */
+.plinth-slides__follow {
+  position: fixed;
+  z-index: 1;
+  top: 12px;
+  right: 12px;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  max-width: calc(100% - 24px);
+  padding: 4px 4px 4px 12px;
+  border-radius: 10px;
+  background: var(--slides-ctl-bg);
+  box-shadow: 0 2px 12px rgb(0 0 0 / 0.18);
+  color: var(--slides-ctl-fg);
+  font-size: 0.875rem;
+}
+
+.plinth-slides__follow[hidden],
+.plinth-slides__follow [hidden] {
+  display: none;
+}
+
+.plinth-slides__follow-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.plinth-slides__lead[aria-pressed="true"] {
+  background: var(--slides-accent);
+  color: var(--slides-bg);
+}
+
+.plinth-slides__btn:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
 /* The .pptx is ready (export.ts): a Download button that starts it from a click in the frame. */
 .plinth-slides__ready {
   position: fixed;
@@ -684,6 +726,7 @@ body {
   }
 
   html .plinth-slides[data-mode] .plinth-slides__controls,
+  html .plinth-slides[data-mode] .plinth-slides__follow,
   html .plinth-slides[data-mode] .plinth-slides__ready,
   html .plinth-slides[data-mode] .plinth-slides__presenter,
   html .plinth-slides[data-mode] .plinth-slides__live,

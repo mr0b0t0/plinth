@@ -62,6 +62,7 @@ make a test pass.
 | A sheet's cell becomes markup or script | A cell, column name or title holds `<img onerror>`, `</script>` or a `javascript:` link | Strict publish parser and link rule; `jsonForScript` in the shell; the renderer uses `textContent` only and re-checks links; the strict shell CSP ([Sheets](#sheets)) |
 | A downloaded sheet attacks the spreadsheet app | A CSV cell `=cmd\|' /C calc'!A0` or an .xlsx formula calling HYPERLINK or WEBSERVICE runs when the file is opened | CSV text starting with `=`, `+`, `-`, `@`, tab or CR gets a leading `'`; .xlsx text is inline strings and its formulas come only from the function allowlist, with no external links or macros ([Sheets](#sheets)) |
 | A sheet exhausts the Worker or the browser | Formulas that reference each other in a long chain or a cycle, `REPT` of huge text, a 1 MB sheet of formulas, or a ZIP bomb, XML that makes a scanner backtrack, or a small file of very many cells sent as an import | An explicit stack and cycle detection (`#CYCLE!`), a step budget on both sides (`#LIMIT!`), text capped and charged by the length made and read, publish parses but never evaluates, and imports capped at 2 MB in and 24 MB inflated, inflated in small steps, scanned in linear time, and refused once their cells pass what 1 MB holds; numeric text matched in linear time; an edit's inserts and deletes capped at 4 MB of formula text rewritten ([Sheets](#sheets)) |
+| A viewer steers the audience's decks | Someone with view access to a deck (or a page script elsewhere) sends `goto` frames on the deck's `slides` socket to move everyone's slide, or reads the socket to learn who is watching | Only owners' and editors' sockets carry `present`, stamped by the gate from policy; a `watch` socket may send nothing but `ping` (anything else is `forbidden` and a rate drop); the handshake has the room's hijacking checks; frames carry only slide numbers, the leading socket's random id and, to the leader alone, a count of viewers ([Live rooms](#live-rooms)) |
 
 Out of scope for v1: denial of service beyond Cloudflare's defaults, a compromised Cloudflare
 account, and malicious instance operators.
@@ -424,9 +425,10 @@ What is new:
   sanitizer's class allowlist did not change. The footer is shown as text, never Markdown. Heading
   ids are prefixed per slide (`s<n>-`), and copies of a slide (presenter view, the handout) carry
   no ids at all.
-- **Numbers only between the app and the frame.** The app sends `goto { slide }`, `view { mode }`
-  and `print { notes }`; the frame sends `ready` and `position` (a slide and a count), `view { mode }`
-  (the view it switched to) and `fullscreen`. Slides are integers from 1 to 500 on both ends; nothing carries deck text. The
+- **Numbers only between the app and the frame.** The app sends `goto { slide }`, `view { mode }`,
+  `print { notes }` and `paired` (no data: an audience window's frame stops following the
+  presenter over the room, so it can only turn following off); the frame sends `ready` and
+  `position` (a slide and a count), `view { mode }` (the view it switched to) and `fullscreen`. Slides are integers from 1 to 500 on both ends; nothing carries deck text. The
   renderer acts only on messages whose `event.source` is its parent and whose origin is the exact
   app origin, and posts only to the app origin.
 - **Opaque frames are identified by window.** The app accepts a deck's messages only from the
@@ -487,6 +489,15 @@ What is new:
   blob URL is released when it goes. The file name is the deck's title reduced to letters, digits,
   spaces, dots, dashes and underscores, at most 80 characters. Links in the file keep only what the
   doc's URL rules allow (web and mail links, and `#N` as a link to a slide of the deck).
+- **Following the presenter stays in the frame.** The shell's payload carries `follow` (`present`
+  for owners and editors, `watch` for everyone else) only for an identified view pass on the
+  current version's own path, outside review mode, with rooms and `ALLOW_SLIDES_FOLLOW` on; every
+  other shell (anonymous link viewers, previews, captures, pinned versions, review mode, the editor
+  preview) has the same bytes as before. The renderer then opens the room's `slides` channel on the
+  deck's own origin ([Live rooms](#live-rooms)), so the app is not involved and no new message
+  crosses between the app and the frame. Only Plinth's renderer runs on a deck's origin, so the
+  frames it sends are Plinth's; the room still enforces the rights on every frame.
+
 ## Design systems
 
 A design system (`artifacts.type = 'design_system'`) stores JSON in `system.json` and is shown by a
@@ -1149,8 +1160,9 @@ and agents have no bulk delete; only the owner clears everything, in the app.
 
 A page that declares `room` (spec: "Live rooms") gets presence and broadcast through one WebSocket
 to `/__plinth/room/v1/page` on its own content origin, served by the artifact's Durable Object
-(`ArtifactRoom`, one per artifact). Plinth's doc renderer uses `/__plinth/room/v1/doc` the same way.
-The room runs Plinth's fixed code; there is still no per-artifact server code.
+(`ArtifactRoom`, one per artifact). Plinth's doc renderer uses `/__plinth/room/v1/doc` the same way,
+and its slides renderer `/__plinth/room/v1/slides`. The room runs Plinth's fixed code; there is
+still no per-artifact server code.
 
 **The threat: cross-site WebSocket hijacking.** A WebSocket handshake is not subject to CORS: any
 page can open a socket to any host, and the browser attaches that host's cookies. Every artifact
@@ -1177,7 +1189,8 @@ The upgrade (`apps/worker/src/content/room.ts`) therefore checks, in this order:
    without a pass (one that forges `Origin` outside a browser) learns only what the content path
    tells them, that the artifact exists, and never its type or whether it declares `room`.
 8. **Kind.** The path names it: `page` for an HTML artifact whose current version declares
-   `room`, `doc` for a doc.
+   `room`, `doc` for a doc (with `ALLOW_LIVE_EDITING`), `slides` for a deck (a type with `follow`,
+   with `ALLOW_SLIDES_FOLLOW`). Any other name under the prefix is a 404.
 9. **Policy.** `roomAccess` in `policy.ts` decides joining and what the socket may do. Everyone
    identified joins a page room and may set presence, which is never authority. Emitting is a
    right: owners and editors emit any topic, commenters only the page's `plinth-room-open` topics,
@@ -1202,7 +1215,7 @@ authority. Only the status and a reason code of a refusal are logged, never fram
 **Revocation.** A socket is admitted at one access epoch. The Worker tells the room after a
 sharing change (`revoke`, close code 4401), a takedown or delete (`gone`, 4404) and a version that
 changes the room declaration (`redeclare`, 4410), through `waitUntil` with one retry, and only for
-artifacts that can have a room (a doc, or a page whose current or previous version declares
+artifacts that can have a room (a doc, a deck, or a page whose current or previous version declares
 `room`), or, while live views are on, for every artifact, since any of them may have watch sockets
 ([Live views](#live-views)). While any socket is open, the room's alarm re-reads the artifact in D1 every 60 s and
 closes sockets whose epoch is old, whose pass expired, or whose artifact is gone; that catches a
@@ -1216,6 +1229,22 @@ by code only watch, and passes sealed before the flag existed watch until a relo
 enforces leases (exclusive line ranges), refuses edits past the doc limits (1 MB, 50,000 lines;
 doc frames up to 64 KiB) and never creates a version; checkpoints and discards go through the app
 host's REST API.
+
+**The slides channel.** `/__plinth/room/v1/slides` carries slide numbers and nothing else
+(`packages/shared/src/slidesRoom.ts`, `apps/worker/src/rooms/slides.ts`). Every identified viewer
+of a deck may join; `slidesRoomAccess` in `policy.ts` gives owners and editors `present` and
+everyone else `watch`, and the gate stamps that right into the room header. A `watch` socket may
+send the keep-alive `ping` and nothing else: any other frame is refused as `forbidden` and counts
+as a rate drop, so a grant to view cannot move anyone's deck. A `present` socket may send exactly
+`{t:"start",slide}`, `{t:"goto",slide}` or `{t:"stop"}` (hand-validated, no other key, a slide
+from 1 to 500), each at most 128 bytes before it is parsed (1009 above). The last socket to
+`start` leads, and a `goto` from any other is `not_leading`. Positions name the leading socket by
+its random id; no frame carries an email, a name, a role or a viewer id, and only the leader learns
+the audience (a count of distinct viewers, its own left out), so a follower learns nothing about
+who else is watching or who presents. The room stores nothing: the position lives in the
+presenter's hibernation attachment, and when the leader leaves the next presenter leads or every
+socket gets `stopped`. Slides sockets count toward `ROOM_MAX_CONNECTIONS_PER_ARTIFACT` and the
+per-viewer caps like page and doc sockets.
 
 **Caps.** Per artifact, per viewer and per connection, with a connect throttle (see
 [Rate limits and quotas](#rate-limits-and-quotas)); a socket's hibernation attachment stays under

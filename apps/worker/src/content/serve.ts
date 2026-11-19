@@ -11,7 +11,13 @@ import {
   typeDef,
 } from "@plinth/shared";
 import { and, eq, isNull } from "drizzle-orm";
-import { type Bindings, type Config, liveEditMode, roomsActive } from "../config.ts";
+import {
+  type Bindings,
+  type Config,
+  liveEditMode,
+  roomsActive,
+  slidesFollowActive,
+} from "../config.ts";
 import { getDb } from "../db/client.ts";
 import { type ArtifactRow, artifacts, type VersionRow } from "../db/schema.ts";
 import { secureFlag, serializeCookie } from "../lib/cookies.ts";
@@ -649,6 +655,21 @@ async function serve(
       !url.searchParams.has(REVIEW_MODE_PARAM)
         ? ("room" as const)
         : undefined;
+    // Following the presenter: any identified view pass (never a capture or a preview, which has
+    // no socket) on the current version's own path, outside review mode, with following on. Owners
+    // and editors may present; everyone else follows.
+    const follow =
+      def.follow === true &&
+      socket !== undefined &&
+      slidesFollowActive(config, env) &&
+      pass.claim !== null &&
+      !pass.capture &&
+      !vm &&
+      !url.searchParams.has(REVIEW_MODE_PARAM)
+        ? editor
+          ? ("present" as const)
+          : ("watch" as const)
+        : undefined;
     return serveTypedEntry(request, env, config, {
       artifact,
       version,
@@ -658,6 +679,7 @@ async function serve(
       framing,
       socket,
       ...(live ? { live } : {}),
+      ...(follow ? { follow } : {}),
     });
   }
   const entry = v.entries.get(rel);

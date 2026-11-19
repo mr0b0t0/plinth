@@ -169,8 +169,9 @@ the setup script, `plinth deploy`, local, tunnel and Docker instances all write 
   doc about 1,440 requests and at most 720 D1 writes an hour (the operations are in
   [spec.md](spec.md#costs)). When the
   allowance runs out, sockets fail: pages work alone and docs are edited without seeing others.
-- **Off switch.** `ALLOW_ROOMS=false` turns rooms off and `ALLOW_LIVE_EDITING=false` turns on-page
-  doc editing off ([self-hosting.md](self-hosting.md#settings)). Keep the binding: turning them back
+- **Off switch.** `ALLOW_ROOMS=false` turns rooms off, `ALLOW_LIVE_EDITING=false` turns on-page
+  doc editing off and `ALLOW_SLIDES_FOLLOW=false` turns following the presenter in decks off
+  ([self-hosting.md](self-hosting.md#settings)). Keep the binding: turning them back
   on then needs no deploy-time change. A config without the binding also deploys and runs, with
   rooms off; `check-config` (and so `deploy:<env>`) prints a note naming it.
 - **Isolation.** Rooms need `CONTENT_ISOLATION=origin`. Under `opaque` and the staging path
