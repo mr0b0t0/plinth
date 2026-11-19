@@ -113,7 +113,7 @@ reuse by hash](#big-builds-and-reuse-by-hash)). The row's `r2_prefix` is authori
 | --- | --- | --- |
 | `users` | id, email, name, auth provider, created_at | One row per person who signs in |
 | `agent_connections` | id, user_id, label, client type, token hash, last_used_at | One per connected agent, e.g. "Work Claude". Revocable individually |
-| `artifacts` | id, owner_id, slug, title, type, current_version, visibility, password hash, category, created_at | `visibility` is public, unlisted, password or allowlist. `type` is `html` (a hand-written `index.html`) or `doc` (Markdown in `content.md`), fixed at publish. `category` is the owner's own grouping (NULL = none), shown only to the owner |
+| `artifacts` | id, owner_id, slug, title, type, current_version, visibility, password hash, category, created_at | `visibility` is public, unlisted, password or allowlist. `type` is `html` (a hand-written `index.html`), `doc` (Markdown in `content.md`) or `design_system` (JSON in `system.json`), fixed at publish. `category` is the owner's own grouping (NULL = none), shown only to the owner |
 | `versions` | id, artifact_id, number, r2_prefix, size_bytes, stored_bytes, manifest, created_by (user or agent), note, created_at | Immutable, and written only once its files are in R2 (commit last). A restore creates a new row. `size_bytes` is what a viewer loads; `stored_bytes` is what this version added to R2 (NULL for versions written before 0.4.0, which count `size_bytes`). Each manifest entry has `path`, `size_bytes`, `content_type`, a server-computed `sha256` (absent on files stored before 0.4.0) and, for a reused file, a server-written `stored_at` (`v<m>[.<nonce>]/<path>`, relative to `artifacts/<artifact_id>/`, never returned by the API) |
 | `access_grants` | artifact_id, email, role | Role is viewer, commenter or editor. Used for allowlists and collaborators |
 | `comments` | id, artifact_id, version, parent_id, author, body, mentions, status | Threaded. `status` is open or resolved |
@@ -208,8 +208,8 @@ One remote MCP server over streamable HTTP at `/mcp`. All tools act as the conne
 | `publish_artifact(title, html \| type+content, assets?, visibility?, category?)` | Create an artifact. Returns its id and URL, `warnings` and `stored` (and `category`, the stored name, when one was given). Private by default (`allowlist` with nobody added). `type: "doc"` with Markdown in `content` makes a document |
 | `update_artifact(id, html \| content, assets?, base_version?, note?, category?)` | Publish a new version of an existing artifact, in the source field its type takes. An asset may be `{path, sha256}` to reuse a file of the current version. `category` is owner only. Returns `warnings` and `stored` |
 | `start_upload(id?, base_version?, type?, title?, note?, category?)` | For a build folder or a large page: mint a single-use, 30-minute upload ticket for one new artifact, or for one update of `id` (then `base_version` is required). The result has `upload_url`, `upload_token`, `target` (with `id`: the artifact updated, or the one the publish will create), `commands.curl` (and `commands.npx` on release builds), the instance's `limits` and `content_isolation` |
-| `get_artifact(id, version?)` | Read metadata, `type`, the source (`html` for a page, `content` for a doc, and `source_path`) and each asset's `sha256`, so an agent can edit from the current state |
-| `list_artifacts(query?, category?, limit?)` | List the user's artifacts and their own category names (`limit: 0` returns only the names) |
+| `get_artifact(id, version?)` | Read metadata, `type`, the source (`html` for a page, `content` for a doc or a design system, and `source_path`) and each asset's `sha256`, so an agent can edit from the current state. An HTML page that names its design system also gets `design_system` (see [Design systems](#design-systems-decided-2026-11-19)) |
+| `list_artifacts(query?, category?, type?, limit?)` | List the user's artifacts and their own category names (`limit: 0` returns only the names). `type` filters by artifact type, for example `design_system` |
 | `list_versions(id)` | Version history with notes and authors |
 | `restore_version(id, version)` | Make an old version current by publishing it as a new one |
 | `set_visibility(id, visibility, emails?, password?)` | Change who can view |
@@ -220,6 +220,7 @@ One remote MCP server over streamable HTTP at `/mcp`. All tools act as the conne
 | `resolve_comment(comment_id, resolved?)` | Resolve or reopen a thread |
 | `list_artifact_data(id, collection?, doc_id?, limit?, cursor?)` | Read an artifact's shared data (owner or editor): a summary, one page of a collection, or one document. Every result is marked untrusted |
 | `write_artifact_data(id, ops)` | Change shared data (owner or editor): 1 to 50 `set`/`delete` ops, each with a required `if_rev`, each succeeding or failing on its own |
+| `get_design_system(id, version?, include?, components?)` | Read a design system (type `design_system`) the user can open, to build another artifact with it: tokens resolved to values, one CSS block of custom properties for light and dark, Google Fonts links, guidelines and component examples. Read-only; every text field is untrusted |
 | `preview_artifact(id, version?)` | App-only (MCP Apps `visibility: ["app"]`, read-only): a single-use, 60-second link that shows one version the caller can view in an MCP host's frame. Called by Plinth's preview page, not by agents |
 
 **In-chat previews (decided 2026-11-16).** `publish_artifact`, `update_artifact` and
@@ -274,7 +275,9 @@ A plain REST API mirrors these tools for scripts and CI (`POST /api/v1/uploads` 
 `start_upload` and takes a bearer token only; `GET /api/v1/artifacts?query=&category=` mirrors
 `list_artifacts` and returns `{ items, categories }`). Beyond the tools, `PATCH /api/v1/artifacts/:ref`
 sets the title or the category (owner), `GET /api/v1/categories` lists the caller's own category
-names, and `POST /api/v1/categories/rename` renames, merges or clears one (signed-in session only). Size limits: 5 MB of HTML (1 MB of Markdown for a
+names, and `POST /api/v1/categories/rename` renames, merges or clears one (signed-in session only).
+`GET /api/v1/artifacts/:ref/design-system?version=&include=&components=` mirrors `get_design_system`,
+and `GET /api/v1/artifacts?type=` filters the list by type. Size limits: 5 MB of HTML (1 MB of Markdown for a
 doc), and per version a total size and a file count set by the operator with `MAX_VERSION_BYTES`
 (default 50 MB, at most 64 MB) and `MAX_ASSETS_PER_VERSION` (default 511, at most 900). A JSON
 request body may be up to 40 MB. `GET /api/v1/config` returns the instance's limits.
@@ -294,7 +297,10 @@ editors can also edit a doc on its rendered page ([Editing](#editing)): for them
 version while rooms and live editing are on, the shell's payload carries `live: "room"` and the
 renderer connects the doc socket; every other shell is byte for byte as before. Decks and sheets
 join the same type registry (`packages/shared/src/artifactTypes.ts`) later; no .docx or .pptx
-export yet. Design: `docs/superpowers/specs/2026-11-14-typed-outputs-doc-design.md`.
+export yet. Design: `docs/superpowers/specs/2026-11-14-typed-outputs-doc-design.md`. The second
+type is `design_system` (decided 2026-11-19): design tokens, guidelines and components as JSON,
+which agents read with `get_design_system` to build other pages; see
+[Design systems](#design-systems-decided-2026-11-19).
 
 ## Features
 
@@ -614,6 +620,73 @@ late joiner reads it. Plinth's own on-page doc editing is the room's first use.
 - **Availability.** Only with origin isolation and the `ROOMS` binding. Under opaque isolation (and
   the path fallback) `room.ready` resolves `{ available: false, reason: "opaque_isolation" }`
   without a request. A page should work alone when the room is unavailable.
+
+### Design systems (decided 2026-11-19)
+
+A design system is a reference artifact that later work is built on: design tokens, components with
+live previews, and guidelines. Agents read it before they make a page, so the pages a person asks
+for look the same. It is the third artifact type, `design_system`, beside `html` and `doc`.
+
+- **Format.** One JSON file, `system.json`, in format `plinth.design-system/1`: `name`,
+  `description` (Markdown), `prefix` (CSS variables are `--<prefix>-<path>`, default `ds`), `fonts`
+  (a Google Fonts `css2` URL, or a font file among the version's assets), `tokens` (a subset of the
+  W3C Design Tokens Community Group format, 2025.10: groups, `$value`, `$type` set on the token or
+  inherited from its group, `$description`, `$deprecated`, and aliases such as
+  `{color.brand.500}`), `themes.dark` (overrides of existing tokens, `$value` only), `guidelines`
+  (Markdown), `css` (shared by every component) and `components` (each with HTML examples and its
+  own CSS). Token types: color, dimension, fontFamily, fontWeight, duration, cubicBezier, number,
+  shadow, typography and border. Unknown keys are refused, so typos fail loudly. Limits: 1 MB of
+  JSON, 2,000 tokens nested at most 8 deep, alias chains of 16, 200 components of 1 to 20 examples
+  (20 KB of HTML each), 200 KB of guidelines, 100 KB of shared CSS. Assets are images and fonts.
+- **Validation.** One parser (`packages/shared/src/designSystem.ts`) serves the Worker, the
+  renderer and the editor. A publish, update or bundle that does not parse is refused with
+  `invalid_input` and up to 50 problems, each with its path into the JSON. Every string that
+  reaches CSS passes one value grammar (no `;`, braces, angle brackets, backslash, `@`, quotes or
+  line breaks; no `url(`, `expression(` or comments; at most 256 characters), font family names are
+  quoted by Plinth, and the `css` blocks may not hold `<` or `@import`, because the compiled CSS is
+  copied into other pages. Non-fatal problems are publish warnings: `ds_inert_markup` (an example
+  holds script, a handler, a form, a frame or a meta), `ds_missing_font`, `ds_no_dark_theme` and
+  `ds_deprecated_alias`. Restore copies stored files without checking them again, as for docs.
+- **The site.** A fixed Plinth renderer on the artifact's own origin (`/__plinth/types/design_system/`,
+  `script-src 'self'`, like a doc) shows the overview and guidelines, the tokens by kind (colors,
+  typography, spacing and sizes, radii, shadows, motion, others) with light and dark samples, CSS
+  variable names and copy buttons, and every component with live previews in light, dark or both at
+  360 px, 768 px or full width, beside its HTML and CSS. Guidelines, descriptions and usage follow
+  the doc type's Markdown rules. The site's own chrome uses Plinth's neutral styles; the design
+  system's tokens and CSS apply only to samples and previews. Navigation is by hash
+  (`#tokens/color`, `#components/button`).
+- **Previews.** Each example renders in its own `srcdoc` frame with `sandbox="allow-same-origin"`
+  and nothing else, so no script runs in it whatever the markup holds, and nothing in it submits,
+  opens popups or navigates the page. The frame inherits the shell's CSP. The example HTML also
+  passes an allowlist sanitizer (no script, handlers, frames, forms, links out, or outside URLs).
+  Under opaque isolation the frames inherit the sandbox and are opaque too. Previews that need
+  script are not supported; states are shown with classes.
+- **Reading one from an agent.** `get_design_system` and its REST mirror read a design system as
+  the caller, through the policy module with the `view` action: the owner, people it is shared with,
+  and anyone with the link when it is unlisted or public (agents never pass a password). An artifact
+  of another type is refused only after the access decision, so a caller who cannot view it gets the
+  same 404 as for a missing id. The result has `css` (a `:root` block, then the dark theme for
+  `prefers-color-scheme: dark` unless the page set `data-theme="light"`, and for
+  `data-theme="dark"`), `font_links`, `fonts` (with `portable: false` for the design system's own
+  font files, which another artifact cannot load), `tokens` with resolved light and dark values,
+  `guidelines`, `component_css` and `components`; `include` and `components` trim it. A stored
+  version that no longer parses returns its `problems`. Every result says `untrusted: true`.
+- **Building on one.** Pages cannot load another artifact's files: the agent copies the CSS it uses
+  into the page it publishes, and names the design system in the page's head with
+  `<meta name="plinth-design-system" content="<id>@<version>">`. On publish the server checks that
+  reference once, as the publisher: `design_system_outdated` when a newer version exists, and one
+  `design_system_unavailable` message for every other case (missing, deleted, not viewable, taken
+  down, another type). `get_artifact` on such a page returns
+  `design_system: { id, title, version, current_version }` when the caller may view the design
+  system, or `null`; pages without the meta get no field.
+- **In the app.** The source editor holds the JSON with Monaco's JSON language and the format's
+  JSON Schema, shows the parser's problems under the editor and keeps Save off until there are
+  none. The dashboard shows a "Design system" badge and a "Design systems" filter when there is
+  one. The artifact menu's "Copy for an agent" copies a line with the design system's link and id,
+  never its title.
+- **Not in v1.** No runtime loading across artifacts (it would need CSP sources for other artifact
+  origins and a content pass for two artifacts), no script in previews, no on-page or live editing,
+  no themes other than `dark`, and no copying of font or image files between artifacts.
 
 ### Big builds and reuse by hash
 
@@ -972,7 +1045,7 @@ for a single user.
 7. **Open-source launch.** Deploy button, setup script, docs, license, contribution guide.
 8. **Hosted public instance.** Public visibility, report and takedown flow, terms and privacy
    pages.
-9. **Later.** Typed outputs: docs done (2026-11-14); sheets and decks later. Push agents with
+9. **Later.** Typed outputs: docs done (2026-11-14), design systems done (2026-11-19); sheets and decks later. Push agents with
    bring-your-own key, team workspaces, paid plans, custom domains. Tags beside the category, a
    group-by-category view, and personal categories for artifacts shared with you.
 
@@ -985,7 +1058,7 @@ for a single user.
 | Sign-in | Email magic link only for now. Email goes through a small adapter chosen by an environment variable, with SendGrid and Resend both supported. The hosted instance uses Aconite's existing SendGrid account |
 | Quota | 100 artifacts per account by default. Set by an environment variable, with a per-account override |
 | What an artifact may load | Same rules as Claude's artifact platform. Scripts inline or from an allowlist of public CDNs (cdnjs, jsDelivr, unpkg, Tailwind, jQuery, Plotly). Styles inline or Google Fonts. Images from the artifact's own files or data URIs. `fetch`, XHR and WebSocket calls to other hosts are blocked. The page runs in a sandboxed frame |
-| Typed outputs | In scope, modelled as on Claude: a type is a renderer page plus a content format, and an artifact made from a type stores content files instead of hand-written HTML. Plain HTML ships first; docs, sheets and decks follow as types. Docs shipped 2026-11-14 (Markdown in `content.md`, rendered by a fixed Plinth renderer on the artifact's origin); sheets and decks next |
+| Typed outputs | In scope, modelled as on Claude: a type is a renderer page plus a content format, and an artifact made from a type stores content files instead of hand-written HTML. Plain HTML ships first; docs, sheets and decks follow as types. Docs shipped 2026-11-14 (Markdown in `content.md`, rendered by a fixed Plinth renderer on the artifact's origin); design systems 2026-11-19 (JSON in `system.json`, a reference site, and `get_design_system` for agents building other pages); sheets and decks next |
 
 The CDN allowlist is a configuration value, so a self-hoster can tighten or extend it.
 

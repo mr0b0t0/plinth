@@ -10,12 +10,15 @@
 // (room notifications, per-type publish warnings). stage.ts and artifacts.ts call the hooks and
 // never branch on a type id.
 import {
+  type ArtifactDetailBase,
   type ArtifactType,
   type ArtifactTypeDef,
   type PublishResult,
+  type PublishWarning,
   typeDef,
 } from "@plinth/shared";
 import { ApiError } from "../lib/errors.ts";
+import { designSystemHooks } from "./artifactTypes/design_system.ts";
 import { docHooks } from "./artifactTypes/doc.ts";
 import { htmlHooks } from "./artifactTypes/html.ts";
 import type { Ctx } from "./context.ts";
@@ -60,12 +63,27 @@ export interface TypeHooks {
    * the result, with any per-type publish warnings added.
    */
   afterCommit?(ctx: Ctx, v: CommittedVersion): Promise<PublishResult>;
+  /**
+   * Per-type publish warnings about the staged source, before the commit (never on a restore).
+   * `paths` are every file of the version, the source included. Advisory: never blocks a publish.
+   */
+  publishWarnings?(ctx: Ctx, v: StagedSource): Promise<PublishWarning[]>;
+  /** Extra fields of get_artifact for a version of this type, read as the caller. */
+  detail?(ctx: Ctx, text: string): Promise<Partial<ArtifactDetailBase>>;
+}
+
+/** A version's source as publishWarnings sees it, before the commit. */
+export interface StagedSource {
+  def: ArtifactTypeDef;
+  text: string;
+  paths: ReadonlySet<string>;
 }
 
 /** Every type's hooks, keyed by its id. One type per line, in ARTIFACT_TYPES order. */
 const TYPE_HOOKS: { readonly [K in ArtifactType]: TypeHooks } = {
   html: htmlHooks,
   doc: docHooks,
+  design_system: designSystemHooks,
 };
 
 /** The Worker hooks of a registry row. */

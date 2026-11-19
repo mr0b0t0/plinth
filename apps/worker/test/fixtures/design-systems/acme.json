@@ -1,0 +1,99 @@
+{
+  "format": "plinth.design-system/1",
+  "name": "Acme UI",
+  "description": "Product UI for Acme's web apps.",
+  "prefix": "acme",
+  "fonts": [
+    {
+      "family": "Inter",
+      "google": "https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap"
+    },
+    { "family": "Acme Mono", "src": "fonts/acme-mono.woff2", "weight": "400", "style": "normal" }
+  ],
+  "tokens": {
+    "color": {
+      "$type": "color",
+      "brand": { "500": { "$value": "#3355ff", "$description": "Primary actions" } },
+      "bg": { "$value": "#ffffff" },
+      "fg": { "$value": "#1f2328" },
+      "accent": { "$value": "{color.brand.500}" }
+    },
+    "space": {
+      "$type": "dimension",
+      "1": { "$value": "4px" },
+      "2": { "$value": { "value": 8, "unit": "px" } }
+    },
+    "radius": { "$type": "dimension", "md": { "$value": "8px" } },
+    "font": {
+      "body": {
+        "$type": "typography",
+        "$value": {
+          "fontFamily": "Inter, system-ui, sans-serif",
+          "fontSize": "16px",
+          "fontWeight": 400,
+          "lineHeight": 1.5
+        }
+      }
+    },
+    "shadow": {
+      "card": {
+        "$type": "shadow",
+        "$value": {
+          "color": "#0000001f",
+          "offsetX": "0px",
+          "offsetY": "1px",
+          "blur": "3px",
+          "spread": "0px"
+        }
+      }
+    },
+    "motion": {
+      "fast": { "$type": "duration", "$value": "120ms" },
+      "ease": { "$type": "cubicBezier", "$value": [0.2, 0, 0, 1] }
+    }
+  },
+  "themes": {
+    "dark": {
+      "color": {
+        "bg": { "$value": "#0d1117" },
+        "fg": { "$value": "#e6edf3" },
+        "brand": { "500": { "$value": "#6b8cff" } }
+      }
+    }
+  },
+  "guidelines": "# Using Acme UI\n\nOne primary button per view.\n\n## Colour\n\nUse `--acme-color-accent` for actions.",
+  "css": ".acme-btn { font: inherit; border: 0; padding: var(--acme-space-2) 16px; border-radius: var(--acme-radius-md); }",
+  "components": [
+    {
+      "id": "button",
+      "name": "Button",
+      "status": "stable",
+      "description": "Triggers an action.",
+      "usage": "- Do: one primary per view\n- Don't: use for navigation",
+      "css": ".acme-btn--primary { background: var(--acme-color-accent); color: #fff; }",
+      "examples": [
+        {
+          "name": "Primary",
+          "html": "<button class=\"acme-btn acme-btn--primary\">Save</button>",
+          "height": 96
+        },
+        {
+          "name": "Disabled",
+          "html": "<button class=\"acme-btn acme-btn--primary\" disabled>Save</button>"
+        }
+      ]
+    },
+    {
+      "id": "card",
+      "name": "Card",
+      "status": "beta",
+      "css": ".acme-card { background: var(--acme-color-bg); color: var(--acme-color-fg); box-shadow: var(--acme-shadow-card); border-radius: var(--acme-radius-md); padding: 16px; }",
+      "examples": [
+        {
+          "name": "With logo",
+          "html": "<div class=\"acme-card\"><img src=\"img/logo.png\" alt=\"Acme\" width=\"32\" height=\"32\"> Hello</div>"
+        }
+      ]
+    }
+  ]
+}

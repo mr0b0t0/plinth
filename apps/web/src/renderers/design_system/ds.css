@@ -1,0 +1,501 @@
+/* The design_system type's reference site (served as /__plinth/types/design_system/ds.css on
+   content origins). Plinth's own neutral styles, with system fonts: the design system's tokens and
+   CSS apply only to swatches, specimens and preview frames, so a broken token set never makes the
+   reference unreadable. Guidelines and descriptions use the doc renderer's prose styles. */
+
+@import "../shared/prose.css";
+
+:root {
+  --ds-panel: #f6f8fa;
+  --ds-check: #e8ebef;
+  --ds-accent: #0a58ca;
+  --ds-warn-bg: #fff4e0;
+  --ds-warn-fg: #7a4a00;
+  --ds-info-bg: #e7f0ff;
+  --ds-info-fg: #0a3d8f;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --ds-panel: #181b20;
+    --ds-check: #23272e;
+    --ds-accent: #6cb2ff;
+    --ds-warn-bg: #3a2a10;
+    --ds-warn-fg: #f3c98a;
+    --ds-info-bg: #142640;
+    --ds-info-fg: #a9c8ff;
+  }
+}
+
+.plinth-design_system {
+  display: block;
+  margin: 0 auto;
+  max-width: 1200px;
+  padding: 32px 16px 72px;
+  overflow-wrap: break-word;
+}
+
+.plinth-design_system:focus {
+  outline: none;
+}
+
+.ds-prose.plinth-doc {
+  max-width: 72ch;
+  margin: 0 0 1em;
+  padding: 0;
+}
+
+.ds-header {
+  margin-bottom: 28px;
+  padding-bottom: 20px;
+  border-bottom: 1px solid var(--doc-rule);
+}
+
+.ds-header h1 {
+  margin: 0 0 8px;
+  color: var(--doc-heading);
+  font-size: 2rem;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+  line-height: 1.2;
+}
+
+.ds-eyebrow {
+  margin: 0 0 4px;
+  color: var(--doc-muted);
+  font-size: 0.8rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.ds-lede {
+  font-size: 1.1rem;
+}
+
+.ds-muted {
+  color: var(--doc-muted);
+  font-size: 0.92rem;
+}
+
+.plinth-design_system code {
+  font-family: var(--doc-mono);
+  font-size: 0.85em;
+}
+
+.ds-layout {
+  display: grid;
+  grid-template-columns: 200px minmax(0, 1fr);
+  gap: 32px;
+  align-items: start;
+}
+
+.ds-nav {
+  position: sticky;
+  top: 16px;
+  max-height: calc(100vh - 32px);
+  overflow-y: auto;
+  font-size: 0.92rem;
+}
+
+.ds-nav ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ds-nav li {
+  margin: 0;
+}
+
+.ds-nav a {
+  display: block;
+  padding: 5px 8px;
+  border-radius: 6px;
+  color: var(--doc-fg);
+  text-decoration: none;
+}
+
+.ds-nav a:hover {
+  background: var(--ds-panel);
+}
+
+.ds-nav a:focus-visible,
+.ds-copy:focus-visible,
+.ds-seg button:focus-visible,
+.ds-table:focus-visible {
+  outline: 2px solid var(--doc-focus);
+  outline-offset: 2px;
+}
+
+.ds-nav__child a {
+  padding-left: 20px;
+  color: var(--doc-muted);
+}
+
+.ds-section {
+  margin: 0 0 48px;
+  scroll-margin-top: 16px;
+}
+
+.ds-section h2 {
+  margin: 0 0 16px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--doc-rule);
+  color: var(--doc-heading);
+  font-size: 1.45rem;
+  font-weight: 650;
+}
+
+.ds-section h3 {
+  margin: 20px 0 8px;
+  color: var(--doc-heading);
+  font-size: 1.05rem;
+}
+
+.ds-fonts,
+.ds-component-list {
+  padding-left: 1.4em;
+}
+
+.ds-badge {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  vertical-align: middle;
+}
+
+.ds-badge--warn {
+  background: var(--ds-warn-bg);
+  color: var(--ds-warn-fg);
+}
+
+.ds-badge--info {
+  background: var(--ds-info-bg);
+  color: var(--ds-info-fg);
+}
+
+/* Token tables */
+
+.ds-table {
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.ds-table table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.92rem;
+}
+
+.ds-table th,
+.ds-table td {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--doc-border);
+  text-align: left;
+  vertical-align: top;
+}
+
+.ds-table th {
+  color: var(--doc-muted);
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.ds-token__samples {
+  display: flex;
+  gap: 8px;
+  min-width: 132px;
+}
+
+.ds-token__path {
+  color: var(--doc-heading);
+  font-weight: 600;
+}
+
+.ds-token__name {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 2px;
+}
+
+.ds-token__desc,
+.ds-token__alias,
+.ds-token__deprecated {
+  margin-top: 4px;
+  color: var(--doc-muted);
+}
+
+.ds-token__values code {
+  display: block;
+  white-space: nowrap;
+}
+
+.ds-token__dark {
+  color: var(--doc-muted);
+}
+
+.ds-copy {
+  padding: 1px 8px;
+  border: 1px solid var(--doc-border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--doc-fg);
+  font: inherit;
+  font-size: 0.78rem;
+  cursor: pointer;
+}
+
+.ds-copy:hover {
+  background: var(--ds-panel);
+}
+
+/* Samples: each one shows a token's value; light and dark samples sit on their own ground. */
+
+.ds-sample {
+  flex: 1 1 0;
+  min-width: 56px;
+  min-height: 48px;
+  border: 1px solid var(--doc-border);
+  border-radius: 8px;
+  background: #ffffff;
+  color: #1f2328;
+}
+
+.ds-sample[data-theme="dark"] {
+  background: #0d1117;
+  color: #e6edf3;
+}
+
+.ds-sample.ds-sample--color {
+  background:
+    linear-gradient(var(--ds-sample), var(--ds-sample)),
+    repeating-conic-gradient(var(--ds-check) 0% 25%, transparent 0% 50%) 50% / 12px 12px;
+}
+
+.ds-sample--type {
+  display: flex;
+  align-items: center;
+  min-width: 220px;
+  padding: 8px 10px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.ds-sample--space {
+  display: flex;
+  align-items: center;
+  padding: 0 8px;
+}
+
+.ds-sample__bar {
+  display: block;
+  max-width: 100%;
+  height: 12px;
+  border-radius: 2px;
+  background: var(--ds-accent);
+}
+
+.ds-sample--radius {
+  border-width: 2px;
+  border-color: var(--ds-accent);
+}
+
+.ds-sample--shadow {
+  margin: 6px;
+  border-color: transparent;
+}
+
+.ds-sample--motion {
+  position: relative;
+  overflow: hidden;
+}
+
+.ds-sample__dot {
+  position: absolute;
+  top: 50%;
+  left: 8px;
+  width: 12px;
+  height: 12px;
+  margin-top: -6px;
+  border-radius: 50%;
+  background: var(--ds-accent);
+  transition: left var(--ds-duration, 400ms) var(--ds-easing, ease);
+}
+
+.ds-sample--motion:hover .ds-sample__dot {
+  left: calc(100% - 20px);
+}
+
+.ds-sample--other {
+  display: flex;
+  align-items: center;
+  padding: 0 8px;
+  font-family: var(--doc-mono);
+  font-size: 0.85rem;
+}
+
+/* Components */
+
+.ds-example {
+  margin: 16px 0 24px;
+  border: 1px solid var(--doc-border);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.ds-example__bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--doc-border);
+  background: var(--ds-panel);
+}
+
+.ds-example__name {
+  margin-right: auto;
+  color: var(--doc-heading);
+  font-weight: 600;
+}
+
+.ds-seg {
+  display: inline-flex;
+  border: 1px solid var(--doc-border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.ds-seg[hidden] {
+  display: none;
+}
+
+.ds-seg button {
+  padding: 3px 10px;
+  border: 0;
+  border-right: 1px solid var(--doc-border);
+  background: transparent;
+  color: var(--doc-fg);
+  font: inherit;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.ds-seg button:last-child {
+  border-right: 0;
+}
+
+.ds-seg button[aria-pressed="true"] {
+  background: var(--doc-bg);
+  color: var(--doc-heading);
+  font-weight: 600;
+}
+
+.ds-example__stage {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, 1fr);
+  gap: 1px;
+  background: var(--doc-border);
+}
+
+.ds-example__stage[hidden] {
+  display: none;
+}
+
+.ds-preview__frame {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  background: #ffffff;
+  resize: horizontal;
+}
+
+.ds-preview__frame[data-theme="dark"] {
+  background: #0d1117;
+}
+
+.ds-example__code {
+  margin: 0;
+  padding: 14px 16px;
+  overflow-x: auto;
+  background: var(--doc-code-bg);
+  font-size: 0.85rem;
+  line-height: 1.5;
+  white-space: pre;
+}
+
+.ds-example__code[hidden] {
+  display: none;
+}
+
+.ds-error {
+  max-width: 72ch;
+  margin: 0 auto;
+}
+
+.ds-error h1 {
+  font-size: 1.5rem;
+}
+
+.ds-problems code {
+  font-weight: 600;
+}
+
+@media (max-width: 760px) {
+  .ds-layout {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 16px;
+  }
+
+  .ds-nav {
+    position: static;
+    max-height: none;
+  }
+
+  .ds-nav ul {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+  }
+
+  .ds-nav__child {
+    display: none;
+  }
+
+  .ds-example__stage {
+    grid-auto-flow: row;
+  }
+}
+
+@page {
+  margin: 16mm;
+}
+
+@media print {
+  :root {
+    color-scheme: light;
+  }
+
+  .ds-nav,
+  .ds-copy,
+  .ds-seg {
+    display: none;
+  }
+
+  .ds-layout {
+    display: block;
+  }
+
+  .ds-section,
+  .ds-example {
+    break-inside: avoid;
+  }
+}

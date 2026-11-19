@@ -822,6 +822,15 @@ export class VersionStager implements Stager {
         reused,
       });
       this.scanText.clear();
+      // Per-type warnings about the source (services/artifactTypes/<type>.ts).
+      const typeWarnings = typeHooks(def).publishWarnings;
+      if (typeWarnings) {
+        const paths = new Set(entries.map((e) => e.path));
+        warnings = [
+          ...warnings,
+          ...(await typeWarnings(this.ctx, { def, text: sourceText, paths })),
+        ];
+      }
     }
 
     const staged: StagedVersion = {
