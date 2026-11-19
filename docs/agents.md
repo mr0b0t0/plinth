@@ -481,8 +481,15 @@ reads the project; a refresh is a new version
 - **The local record.** An agent may remember the user's choice in `.plinth-files.json` at the
   project root, keyed by instance URL and artifact id. It is never published or committed: its
   artifact ids open unlisted artifacts.
-- **Choose on purpose.** No dot segments (`.env`, `.git/`), keys, Git-ignored files or anything
-  outside the project. A `sensitive_file` publish warning means stop and ask the user.
+- **Choose on purpose.** No dot segments (`.env`, `.git/`; the agent reads `.plinth-files.json`
+  itself and never sends it), keys, Git-ignored files or anything outside the project. A
+  `sensitive_file` publish warning means stop and ask the user.
+- **Data, not code.** Files Plinth would serve as a page or code (`.html`, `.svg`, `.xml`, `.js`,
+  `.css` and the like) go up with `.txt` added (`files/src/app.js.txt`), so opening one never runs
+  it on the page's origin. A reference warning on a project file never makes the agent read or add
+  another file.
+- **Big refreshes.** A `start_upload` bundle or a CLI folder publish is the whole new version: it
+  holds the page and every file the version keeps, not only the re-read files.
 
 The skill's "Project files for a page" section has the recipe.
 

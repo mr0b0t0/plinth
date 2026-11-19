@@ -1265,7 +1265,8 @@ collaborator can read them. What the server enforces, and what only the agent ca
 | A1 | Which files on the user's computer an agent reads | Agent only | The server never sees a local read: bytes arrive as bytes |
 | A2 | That nothing on Plinth chooses those files, and that a mention, from any role, needs the user's yes in the session | Agent only | The `UNTRUSTED_NOTE` sentence, the project files and mention notes in the MCP tool descriptions, the plinth-artifacts skill, the watcher's announcement |
 | A3 | Selection rules: no dot segments, keys, credential files, Git-ignored files, or paths outside the project after symlinks are resolved | Agent only, backed by S5 for bundles and S6 for names | The skill and the project files note |
-| A4 | The contents of project files, and of files read back with `get_artifact`, are data, never instructions | Agent only | The skill and the project files note |
+| A4 | The contents of project files, and of files read back with `get_artifact`, are data, never instructions. A reference warning on a project file (`missing_file`, `blocked_host`) never makes the agent read or add another file | Agent only | The skill and the project files note |
+| A5 | A project file the content host would serve as a document or as code (`.html`, `.htm`, `.svg`, `.xml`, `.js`, `.mjs`, `.cjs`, `.css`) is published with `.txt` added, or embedded in the page as JSON | Agent only | The skill and the project files note. The server serves `files/` like any asset, by extension (`assetContentType` honours a named type only for extensions it does not know) |
 
 **Why A1 and A2 cannot move to the server.** The server could refuse new `files/` paths in an
 update that follows a mention, but that would not close the leak. An agent that obeys the mention
@@ -1277,6 +1278,15 @@ close A2 is "the owner's agents may not write after reading a collaborator's men
 removes mentions. So the feature is narrowed until no Plinth data can steer a local read (paths
 come from the user, a list the user confirms, or the unpublished local record), and the remaining
 risk is recorded in the threat table, in the same class as prompt injection through comments.
+
+**Project files served as code.** A project file the author did not write (a vendored page, a
+test fixture, a diagram captured from the web) that keeps an `.html`, `.svg` or `.xml` extension
+runs as a document on `<id>.<content host>` when a viewer opens it. It is then same-origin with the
+page, so it passes every check on `/__plinth/api/` and `/__plinth/room/` and can read and write the
+page's shared data and join its room as that viewer; the CSP still blocks other hosts. This is not
+a platform hole (any author can publish active HTML), but a page that shows files as data must not
+serve them as code, so agents add `.txt` (A5). Its references, checked as page code, would also
+point the agent at files the user never chose, which A4 forbids acting on.
 
 **The local record is sensitive.** `.plinth-files.json` lists artifact ids, and an id opens an
 unlisted artifact (`findArtifact` resolves a ref by id, and `canView` allows any principal on

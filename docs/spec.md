@@ -1098,7 +1098,9 @@ they are versioned, reverted and access-checked with the page. The page reads th
 (`fetch("./files/data.csv")`); under `CONTENT_ISOLATION=opaque` a page cannot `fetch` its own
 files, so small files are embedded as `<script type="application/json">`. A refresh is a new
 version with `base_version`, sending the re-read files and reusing the rest by `{path, sha256}`.
-Plinth never reads an agent's project, because agents push. There is no `files` runtime API and no
+A `start_upload` bundle or a folder published with the CLI is the whole new version and carries
+nothing forward, so for a refresh it holds the page and every file the version keeps, not only the
+re-read files. Plinth never reads an agent's project, because agents push. There is no `files` runtime API and no
 live read, and the feature adds no tool, route, env var or stored state.
 
 - **Who chooses the files.** Only the user in the session chooses which local files an agent reads
@@ -1110,7 +1112,17 @@ live read, and the feature adds no tool, route, env var or stored state.
   no exception; with no one to ask, the agent fails the task with `reply_comment` and
   `failed: true`. Paths come from the user's words, a list the agent shows and the user confirms,
   or the local record below, and every read drops dot segments, keys and credential files,
-  Git-ignored files and anything outside the project after symlinks are resolved.
+  Git-ignored files and anything outside the project after symlinks are resolved. The record
+  itself is the one dot-segment file the agent reads, and it is never sent.
+- **Served as data.** A project file is served by its extension on the artifact's origin like any
+  asset, so an `.html`, `.htm`, `.svg` or `.xml` file runs as a document there when a viewer opens
+  it, with the page's shared data and room in reach, and HTML, CSS and JS files get the reference
+  check that page code gets; a named `content_type` applies only to extensions Plinth does not
+  know. The agent adds `.txt` to a project file of those types and of `.js`, `.mjs`, `.cjs` and
+  `.css` (`files/src/app.js.txt`), or embeds it in the page as JSON, and keeps the real project
+  path in the local record. A reference warning on a project file comes from its contents: the
+  agent never reads or adds another file to fix it, and adds `.txt` instead. This is agent-side;
+  the server serves and checks a `files/` path as it does any other.
 - **The local record.** Agents keep the user's choices in `.plinth-files.json` at the project root
   (`PROJECT_FILES_RECORD`): `{"plinth_project_files": 1, "artifacts": [{instance, artifact_id,
   files: [{project, asset}]}]}`, written only when the user chooses or confirms files in the

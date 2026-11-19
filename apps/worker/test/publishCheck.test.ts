@@ -21,7 +21,16 @@ import relativeHtml from "./fixtures/vite/relative/index.html.txt?raw";
 import relativeCss from "./fixtures/vite/relative/index-C9-cblZV.css.txt?raw";
 import relativeJs from "./fixtures/vite/relative/index-k1RVcvWO.js.txt?raw";
 import relativeLazy from "./fixtures/vite/relative/lazy-CGOUc0_U.js.txt?raw";
-import { agent, config, fetchWith, json, publish } from "./helpers.ts";
+import {
+  agent,
+  call,
+  config,
+  contentOrigin,
+  enterContent,
+  fetchWith,
+  json,
+  publish,
+} from "./helpers.ts";
 
 const enc = new TextEncoder();
 const file = (path: string, text: string): FileEntry => ({
@@ -388,5 +397,65 @@ describe("sensitive_file (names of the files a request sent)", () => {
     expect(w.slice(0, max - 1).every((x) => x.code === "sensitive_file" && !x.count)).toBe(true);
     expect(w[max - 1]).toMatchObject({ code: "sensitive_file", count: 60 - (max - 1) });
     expect(w[max - 1]?.count).toBe(11);
+  });
+});
+
+describe("project files shown as data (files/ with .txt added)", () => {
+  // A code tour: the project's app.js imports a file the user never chose, and a vendored page
+  // loads a stylesheet that is not in the version and a script from another host. The server
+  // checks and serves files/ like any path; the recipe (PROJECT_FILES_NOTE, the skill) adds .txt,
+  // so these files are neither checked as page code nor run as documents on the artifact's origin.
+  const APP_JS = 'import { x } from "./util.js";\nconsole.log(x);\n';
+  const PAGE_HTML =
+    '<!doctype html><link rel="stylesheet" href="./style.css">' +
+    '<script src="https://evil.example/x.js"></script>';
+  const TOUR = "<!doctype html><title>Tour</title><pre>tour</pre>";
+
+  const served = async (id: string, path: string) => {
+    const { cookie } = await enterContent(id);
+    return call(`${contentOrigin(id)}/${path}`, { headers: { Cookie: cookie ?? "" } });
+  };
+
+  it("at their own extensions they are checked and served as page code", async () => {
+    const a = await agent();
+    const raw = await publish(a.auth, {
+      html: TOUR,
+      assets: [
+        { path: "files/src/app.js", content: APP_JS },
+        { path: "files/src/page.html", content: PAGE_HTML },
+      ],
+    });
+    expect(raw.res.status).toBe(201);
+    const codes = raw.body.warnings.map((w: PublishWarning) => `${w.code} ${w.file}`).sort();
+    expect(codes).toEqual([
+      "blocked_host files/src/page.html",
+      "missing_file files/src/app.js",
+      "missing_file files/src/page.html",
+    ]);
+    const page = await served(raw.body.id, "files/src/page.html");
+    expect(page.headers.get("content-type")).toBe("text/html; charset=utf-8");
+  });
+
+  it("with .txt added they give no reference warnings and are served as text/plain", async () => {
+    const a = await agent();
+    const txt = await publish(a.auth, {
+      html: TOUR,
+      assets: [
+        { path: "files/src/app.js.txt", content: APP_JS },
+        { path: "files/src/page.html.txt", content: PAGE_HTML },
+      ],
+    });
+    expect(txt.res.status).toBe(201);
+    expect(txt.body.warnings).toEqual([]);
+    for (const [path, text] of [
+      ["files/src/app.js.txt", APP_JS],
+      ["files/src/page.html.txt", PAGE_HTML],
+    ] as const) {
+      const res = await served(txt.body.id, path);
+      expect(res.status, path).toBe(200);
+      expect(res.headers.get("content-type"), path).toBe("text/plain; charset=utf-8");
+      expect(res.headers.get("x-content-type-options"), path).toBe("nosniff");
+      expect(await res.text(), path).toBe(text);
+    }
   });
 });
