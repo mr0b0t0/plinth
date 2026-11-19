@@ -21,6 +21,7 @@ const FILES = readdirSync(DIR)
 /** What get_artifact reports as `capabilities` for each example (sorted). */
 const DECLARED: Record<string, string[]> = {
   "approval-signoff.html": ["data", "viewer"],
+  "ask-agent.html": ["requests"],
   "canvas-comments.html": ["comments"],
   "client-checklist.html": ["data", "viewer"],
   "intake-form.html": ["data", "viewer"],

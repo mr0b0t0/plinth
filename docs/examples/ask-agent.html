@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<!--
+  A report whose readers ask the owner's agent for follow-ups, for Plinth (docs/agents.md "Page
+  requests"). The people the page is shared with as commenters or editors type a request; it lands
+  in the owner's agent's queue (list_mentions, source "page"), and the agent answers later with a
+  new version or a reply. The list shows only the reader's own requests: their state, the version
+  that answered them and the agent's answers, which are untrusted text shown with textContent.
+  Needs an instance with ALLOW_PAGE_REQUESTS on; elsewhere the report still shows and the form
+  stays off.
+-->
+<meta name="plinth-capabilities" content="requests">
+<meta name="plinth-requests-to" content="claude">
+<title>Quarterly sales report</title>
+<style>
+  :root {
+    --bg: #f7f6f2;
+    --panel: #ffffff;
+    --fg: #1c1b19;
+    --muted: #5f5c55;
+    --border: #d8d4ca;
+    --accent: #2c5aa8;
+    --accent-fg: #ffffff;
+    --ok: #2f6b3a;
+    --warn: #8a5a12;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #151513;
+      --panel: #1f1e1b;
+      --fg: #ecebe5;
+      --muted: #a8a499;
+      --border: #3a3832;
+      --accent: #8db0ee;
+      --accent-fg: #151513;
+      --ok: #8fd19a;
+      --warn: #e2b46a;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 16px;
+    background: var(--bg);
+    color: var(--fg);
+    font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  main { max-width: 720px; margin: 0 auto; }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  h2 { font-size: 17px; margin: 24px 0 8px; }
+  p { margin: 0 0 12px; color: var(--muted); }
+  table { width: 100%; border-collapse: collapse; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; }
+  th, td { padding: 8px 10px; text-align: left; border-bottom: 1px solid var(--border); }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  tr:last-child td { border-bottom: 0; }
+  form { display: grid; gap: 8px; }
+  label { font-weight: 600; }
+  textarea {
+    width: 100%;
+    min-height: 80px;
+    padding: 8px;
+    font: inherit;
+    color: var(--fg);
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+  }
+  button {
+    justify-self: start;
+    padding: 8px 14px;
+    font: inherit;
+    font-weight: 600;
+    color: var(--accent-fg);
+    background: var(--accent);
+    border: 0;
+    border-radius: 6px;
+    cursor: pointer;
+  }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+  #status { font-size: 13px; min-height: 1.5em; }
+  ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+  li { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; }
+  .meta { font-size: 13px; color: var(--muted); }
+  .state { font-weight: 600; }
+  li[data-state="done"] .state { color: var(--ok); }
+  li[data-state="pending"] .state, li[data-state="claimed"] .state { color: var(--warn); }
+  .request, .answer { margin: 4px 0 0; overflow-wrap: anywhere; white-space: pre-wrap; }
+  .answer { border-left: 3px solid var(--border); padding-left: 8px; }
+</style>
+<script src="/__plinth/runtime.js"></script>
+</head>
+<body>
+<main>
+  <h1>Quarterly sales report</h1>
+  <p>Revenue by region for the first half of the year.</p>
+  <table>
+    <thead><tr><th>Region</th><th class="num">Q1</th><th class="num">Q2</th></tr></thead>
+    <tbody>
+      <tr><td>North</td><td class="num">412,000</td><td class="num">438,500</td></tr>
+      <tr><td>South</td><td class="num">298,200</td><td class="num">305,900</td></tr>
+      <tr><td>East</td><td class="num">351,700</td><td class="num">366,100</td></tr>
+      <tr><td>West</td><td class="num">274,400</td><td class="num">289,800</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Ask for a change</h2>
+  <form id="ask">
+    <label for="body">What should the owner's agent do?</label>
+    <textarea id="body" maxlength="4000" placeholder="Add the Q3 numbers when they are in" disabled></textarea>
+    <button id="send" type="submit" disabled>Ask</button>
+  </form>
+  <p id="status" role="status"></p>
+
+  <h2>Your requests</h2>
+  <ul id="list"></ul>
+</main>
+<script>
+const form = document.getElementById("ask");
+const body = document.getElementById("body");
+const send = document.getElementById("send");
+const status = document.getElementById("status");
+const list = document.getElementById("list");
+
+const WORDS = { pending: "Waiting", claimed: "In progress", done: "Done", failed: "Closed" };
+
+function render(items) {
+  list.replaceChildren(...items.map((r) => {
+    const li = document.createElement("li");
+    li.dataset.id = r.id;
+    const state = r.resolved && r.state !== "done" ? "failed" : r.state;
+    li.dataset.state = state;
+    const meta = document.createElement("div");
+    meta.className = "meta";
+    const label = document.createElement("span");
+    label.className = "state";
+    label.textContent = WORDS[state] || state;
+    meta.append(label, ` · asked on version ${r.version}`);
+    if (r.resultVersion) meta.append(` · answered in version ${r.resultVersion}`);
+    const text = document.createElement("p");
+    text.className = "request";
+    text.textContent = r.body;
+    li.append(meta, text);
+    for (const a of r.answers) {
+      const answer = document.createElement("p");
+      answer.className = "answer";
+      answer.textContent = a.body;
+      li.append(answer);
+    }
+    return li;
+  }));
+  document.body.dataset.count = String(items.length);
+}
+
+const requests = window.plinth?.requests;
+(requests ? requests.ready : Promise.resolve({ available: false, reason: "no_runtime", canFile: false }))
+  .then((s) => {
+    document.body.dataset.reason = String(s.reason);
+    document.body.dataset.canFile = String(s.canFile);
+    if (!s.available) {
+      status.textContent = "Requests to the owner's agent are not available here.";
+      document.body.dataset.ready = "1";
+      return;
+    }
+    if (!s.canFile) {
+      status.textContent = "Only people who can comment on this page can send requests.";
+    } else {
+      body.disabled = false;
+      send.disabled = false;
+    }
+    requests.onChange(render, (e) => { status.dataset.error = e.code; });
+    document.body.dataset.ready = "1";
+  });
+
+form.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const text = body.value.trim();
+  if (!text || !requests) return;
+  send.disabled = true;
+  status.dataset.error = "";
+  try {
+    await requests.file({ body: text });
+    body.value = "";
+    status.textContent = "Sent. The owner's agent answers when it next runs.";
+    render(await requests.mine());
+  } catch (err) {
+    status.dataset.error = err.code;
+    status.textContent = err.code === "rate_limited"
+      ? "Too many requests for now. Try again later."
+      : `Could not send the request (${err.code}).`;
+  } finally {
+    send.disabled = false;
+  }
+});
+</script>
+</body>
+</html>
