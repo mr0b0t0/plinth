@@ -4,13 +4,15 @@
 //
 // FollowClient is the socket: it connects to /__plinth/room/v1/slides on the deck's own origin,
 // validates every server frame by hand, pings every 30 s, backs off 1, 2, 5, 10 then 30 s, closes
-// after 60 s in a hidden tab (unless it leads) and reconnects when shown, and stops for good on 4401
-// (access changed) and 4404 (gone). A presenter that was leading takes the lead again after a
-// reconnect, unless someone else leads by then.
+// after 60 s in a hidden tab (unless it leads; between reconnects it stops retrying instead) and
+// reconnects when shown, and stops for good on 4401 (access changed) and 4404 (gone). A presenter
+// that was leading takes the lead again after a reconnect, unless someone else leads by then, and
+// sends the slide it moved to while its `start` was on the way.
 //
 // Follow is the deck's side: it moves the deck to the leader's slide while following, pauses when
 // the person pages by hand ("Back to the presenter (slide 7)"), and, for a presenter, sends `start`,
-// `goto` on every change and `stop`. Only slide numbers go in and out; every element is made with
+// `goto` on every change and `stop`. An audience window (the app's `paired`) detaches it: its
+// presenter window moves it instead. Only slide numbers go in and out; every element is made with
 // createElement and textContent.
 import {
   parseSlidesServerFrame,
@@ -199,9 +201,13 @@ export class FollowClient {
       this.hiddenTimer = setTimeout(() => {
         this.hiddenTimer = null;
         // A presenter keeps leading from a background tab (its audience window may be in front).
-        if (!this.ws || this.leading) return;
+        if (this.stopped || this.wantLead) return;
         this.pausedHidden = true;
+        // Between reconnects: no retry until the tab is shown again.
+        if (this.retry) clearTimeout(this.retry);
+        this.retry = null;
         const ws = this.ws;
+        if (!ws) return;
         this.ws = null;
         ws.onclose = null;
         ws.close(1000);
@@ -256,6 +262,13 @@ export class FollowClient {
       }
       case "at": {
         const mine = f.by === this.you?.id;
+        if (mine && this.wantLead && f.slide !== this.slide) {
+          // The deck moved while `start` was on the way: the room's own `at` confirms the lead at
+          // the old slide, so the followers get the one on screen now.
+          this.send({ t: "goto", slide: this.slide });
+          this.at = { slide: this.slide, by: f.by };
+          break;
+        }
         if (!mine && this.wantLead && this.at?.by === this.you?.id) {
           // Another presenter started after this one: it leads now, and this one stops for good,
           // so the room never hands the lead back to it unasked.
@@ -334,6 +347,8 @@ export class Follow {
   private readonly leadButtons: HTMLButtonElement[] = [];
   /** The deck is moving to the leader's slide: that change is not the person paging. */
   private applying = false;
+  /** An audience window: its presenter window moves the deck, so this follows nobody. */
+  detached = false;
   private readonly unwatch: () => void;
 
   constructor(private readonly o: FollowOptions) {
@@ -364,6 +379,25 @@ export class Follow {
   stop(): void {
     this.unwatch();
     this.client.stop();
+  }
+
+  /** Following someone else: the deck shows the leader's slide, whatever the app asks for. */
+  get holding(): boolean {
+    return !this.detached && this.following && !this.client.wantLead && this.client.leader !== null;
+  }
+
+  /**
+   * The app says this frame is an audience window (`paired`): the presenter window moves it over
+   * the pair's channel, so it leaves the room and shows no note, toggle or data-follow.
+   */
+  detach(): void {
+    if (this.detached) return;
+    this.detached = true;
+    this.stop();
+    this.pill.remove();
+    for (const b of this.leadButtons) b.remove();
+    this.leadButtons.length = 0;
+    this.o.root.removeAttribute("data-follow");
   }
 
   /** A Lead viewers toggle (presenters only), kept in step with the others. */
@@ -406,6 +440,7 @@ export class Follow {
 
   /** Brings the deck, the pill and the toggles up to date with the client. */
   sync(): void {
+    if (this.detached) return;
     const c = this.client;
     const leader = c.leader;
     if (!leader) this.following = true;

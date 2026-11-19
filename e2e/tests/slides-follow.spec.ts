@@ -4,7 +4,8 @@
 // same way (apps/worker/test/slides-room.test.ts). The owner turns on Lead
 // viewers and pages; the viewer's deck follows with the "Following the presenter" note; the viewer
 // pages back by hand, which pauses following, and "Back to the presenter" returns to the owner's
-// slide. An anonymous viewer of an unlisted deck opens no socket and sees no note.
+// slide. A presenter's own audience window follows its presenter window, not the room, so it shows
+// no note while they lead. An anonymous viewer of an unlisted deck opens no socket and sees no note.
 import { type Browser, expect, type FrameLocator, type Page, test } from "@playwright/test";
 import { apiPut, publishArtifact, uniqueEmail } from "../support/api.ts";
 import { seedSession } from "../support/db.ts";
@@ -109,6 +110,57 @@ test("viewers follow the presenter's slide, pause by paging, and go back to it",
     await expect(note).toBeHidden({ timeout: 10_000 });
   } finally {
     await viewer.context().close();
+  }
+});
+
+test("a presenter's audience window follows its presenter window and shows no note while they lead", async ({
+  page,
+  context,
+}) => {
+  test.setTimeout(90_000);
+  const owner = uniqueEmail("follow-pair");
+  const { token } = await seedToken(owner, { label: "Deck agent", clientType: "claude" });
+  const art = await publishArtifact(page.request, token, {
+    title: "Kickoff",
+    html: undefined,
+    type: "slides",
+    content: DECK,
+    visibility: "allowlist",
+  });
+  await seedSession(context, owner);
+  await page.goto(`/a/${art.slug}`);
+  await ready(page);
+  await page.keyboard.press("s");
+  await expect(root(page)).toHaveAttribute("data-mode", "presenter");
+  const strip = page.getByRole("region", { name: "Presenter view" });
+  const opened = context.waitForEvent("page");
+  await strip.getByRole("button", { name: "Audience window" }).click();
+  const audience = await opened;
+  try {
+    await expect(deck(audience).locator('html[data-ready="ok"]')).toHaveCount(1, {
+      timeout: 15_000,
+    });
+    // Told it is paired, the audience frame leaves the room: no note, no toggle.
+    await expect(deck(audience).locator(".plinth-slides__follow")).toHaveCount(0, {
+      timeout: 10_000,
+    });
+    await expect(deck(audience).locator(".plinth-slides__lead")).toHaveCount(0);
+
+    const lead = deck(page).locator(".plinth-slides__presenter .plinth-slides__lead");
+    await expect(lead).toBeEnabled({ timeout: 15_000 });
+    await lead.press("Enter");
+    await expect(lead).toHaveAttribute("aria-pressed", "true");
+    await page.keyboard.press("ArrowRight");
+    await page.keyboard.press("ArrowRight");
+    await expect(html(page)).toHaveAttribute("data-slide", "3");
+    await expect(html(audience)).toHaveAttribute("data-slide", "3", { timeout: 10_000 });
+    await expect(deck(audience).locator(".plinth-slides__follow")).toHaveCount(0);
+    await expect(root(audience)).not.toHaveAttribute("data-follow", /.*/);
+    await page.keyboard.press("ArrowRight");
+    await expect(html(audience)).toHaveAttribute("data-slide", "4", { timeout: 10_000 });
+    await expect(deck(audience).locator(".plinth-slides__follow")).toHaveCount(0);
+  } finally {
+    await audience.close();
   }
 });
 

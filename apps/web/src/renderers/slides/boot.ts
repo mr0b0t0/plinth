@@ -219,7 +219,7 @@ export function boot(win: Window, opts: BootOptions = {}): () => void {
           exit: () => pick("deck"),
           clock: opts.clock,
           measure,
-          ...(presenterLead ? { bar: [presenterLead] } : {}),
+          ...(presenterLead && !follow?.detached ? { bar: [presenterLead] } : {}),
         });
         root.append(presenter.el);
         presenter.open(n);
@@ -359,7 +359,10 @@ export function boot(win: Window, opts: BootOptions = {}): () => void {
     if (!fromApp(e, win, appOrigin)) return;
     const m = readSlidesAppMessage(e.data);
     if (!m) return;
-    if (m.type === "goto") deck.go(m.slide);
+    if (m.type === "goto") {
+      // While the deck follows a presenter, the presenter's slide wins over the app's.
+      if (!follow?.holding) deck.go(m.slide);
+    } else if (m.type === "paired") follow?.detach();
     else if (m.type === "view") {
       pick(m.mode);
       // A view the frame did not take: the app learns the one it shows.

@@ -8,6 +8,8 @@
 //   app -> frame: goto { slide }           a deck shows slide N (slidesProtocol.ts)
 //   app -> frame: view { mode }            a deck switches view: deck, presenter or overview
 //   app -> frame: export { format, nonce } a deck builds its .pptx and downloads it in the frame
+//   app -> frame: paired                   a deck is an audience window: it follows its presenter
+//                                          window, never the presenter in the room
 //   frame -> app: live { ...status }       numbers, booleans and co-editor emails; never text
 //   frame -> app: save                     Cmd/Ctrl+S inside the frame
 //   frame -> app: draft { nonce, text }    the answer to collect, solo mode only
@@ -119,6 +121,21 @@ export function exportMessage(nonce: string): ExportMessage {
 }
 
 /**
+ * A deck's frame is an audience window, kept in step by its presenter window (`goto` over the
+ * pair's BroadcastChannel): it stops following the presenter over the room and shows no note or
+ * Lead viewers toggle. It carries no data.
+ */
+export interface PairedMessage {
+  source: typeof RENDERER_MESSAGE_SOURCE;
+  v: typeof RENDERER_PROTOCOL_VERSION;
+  type: "paired";
+}
+
+export function pairedMessage(): PairedMessage {
+  return { source: RENDERER_MESSAGE_SOURCE, v: RENDERER_PROTOCOL_VERSION, type: "paired" };
+}
+
+/**
  * Post a deck message (a slide number, a view name, or an export request with the app's own
  * nonce: nothing the frame does not already have) to the frame at `targetOrigin`, "*" included for
  * opaque frames. False when it cannot.
@@ -126,7 +143,7 @@ export function exportMessage(nonce: string): ExportMessage {
 export function postToDeck(
   frame: HTMLIFrameElement | null,
   targetOrigin: string | null,
-  message: GotoMessage | ViewMessage | ExportMessage,
+  message: GotoMessage | ViewMessage | ExportMessage | PairedMessage,
 ): boolean {
   const win = frame?.contentWindow;
   if (!win || !targetOrigin) return false;
@@ -221,6 +238,7 @@ export const APP_MESSAGE_KINDS = [
   "goto",
   "view",
   "export",
+  "paired",
 ] as const;
 export type AppMessageKind = (typeof APP_MESSAGE_KINDS)[number];
 
@@ -231,7 +249,8 @@ export type AppToFrameMessage =
   | CollectMessage
   | GotoMessage
   | ViewMessage
-  | ExportMessage;
+  | ExportMessage
+  | PairedMessage;
 
 /** Post an editing message to the frame's window at the exact origin. False when it cannot. */
 export function postToRenderer(

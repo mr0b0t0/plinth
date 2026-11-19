@@ -2,7 +2,13 @@
 // 4401 and 4404 stop it, reconnecting leads again) and the deck's side (following, pausing by hand,
 // "Back to the presenter", Lead viewers sending start, goto and stop, a takeover), with a fake
 // socket.
-import { ROOM_LIMITS, TYPE_REGISTRY, typedShellHtml } from "@plinth/shared";
+import {
+  RENDERER_MESSAGE_SOURCE,
+  RENDERER_PROTOCOL_VERSION,
+  ROOM_LIMITS,
+  TYPE_REGISTRY,
+  typedShellHtml,
+} from "@plinth/shared";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { boot } from "./boot.ts";
 import {
@@ -195,6 +201,27 @@ describe("FollowClient", () => {
     vi.advanceTimersByTime(FOLLOW_HIDDEN_CLOSE_MS * 2);
     expect(p.s.closed).toBeNull();
   });
+
+  it("a tab hidden for 60 s between reconnects stops retrying until it is shown", () => {
+    const { f, s } = setup("watch");
+    welcome(s);
+    visibility = "hidden";
+    document.dispatchEvent(new Event("visibilitychange"));
+    s.drop();
+    // Every retry fails at once (1, 2, 5, 10 and 30 s), so at 48 s the next one is due at 78 s,
+    // and the hidden close fires at 60 s while no socket is open.
+    for (const d of [1, 2, 5, 10, 30]) {
+      vi.advanceTimersByTime(d * 1000);
+      last().drop();
+    }
+    const n = FakeSocket.all.length;
+    vi.advanceTimersByTime(10 * 60_000);
+    expect(FakeSocket.all.length).toBe(n);
+    expect(f.client.connected).toBe(false);
+    visibility = "visible";
+    document.dispatchEvent(new Event("visibilitychange"));
+    expect(FakeSocket.all.length).toBe(n + 1);
+  });
 });
 
 describe("Follow: watching", () => {
@@ -279,6 +306,23 @@ describe("Follow: presenting", () => {
     expect(s.frames().length).toBe(n);
   });
 
+  it("a slide changed while start was on the way goes to the room when the lead is confirmed", () => {
+    const { f, s, deck } = setup("present");
+    welcome(s, { id: "s_me", present: true });
+    deck.go(4);
+    f.toggleLead();
+    // Paged before the room's own `at` came back: nothing to send yet.
+    deck.next();
+    expect(s.frames()).toEqual([{ t: "start", slide: 4 }]);
+    s.frame({ t: "at", slide: 4, by: "s_me" });
+    expect(f.client.leading).toBe(true);
+    expect(s.frames().at(-1)).toEqual({ t: "goto", slide: 5 });
+    // The same slide: nothing more.
+    const n = s.frames().length;
+    s.frame({ t: "at", slide: 5, by: "s_me" });
+    expect(s.frames().length).toBe(n);
+  });
+
   it("another presenter taking over turns Lead viewers off and follows them", () => {
     const { f, s, deck } = setup("present");
     const button = f.leadButton();
@@ -336,11 +380,24 @@ describe("boot with follow", () => {
     if (!main || !data) throw new Error("unexpected shell");
     document.body.innerHTML = main + data;
   }
+  const APP = "https://plinth.example.com";
+  let target = new EventTarget();
+  let parent = { postMessage: vi.fn() };
+  /** A message from the app page that frames the deck. */
+  const app = (m: Record<string, unknown>) =>
+    target.dispatchEvent(
+      new MessageEvent("message", {
+        data: { source: RENDERER_MESSAGE_SOURCE, v: RENDERER_PROTOCOL_VERSION, ...m },
+        origin: APP,
+        source: parent as unknown as Window,
+      }),
+    );
   function framedWin(): Window {
-    const target = new EventTarget();
+    target = new EventTarget();
+    parent = { postMessage: vi.fn() };
     return {
       document,
-      parent: { postMessage: vi.fn() },
+      parent,
       print: vi.fn(),
       origin: "https://abc.content.example",
       location: { protocol: "https:", host: "abc.content.example" },
@@ -381,6 +438,42 @@ describe("boot with follow", () => {
       ".plinth-slides__controls .plinth-slides__lead",
     );
     expect(toggle?.textContent).toBe("Lead viewers");
+  });
+
+  it("an audience window (paired) leaves the room; its presenter window's slides never pause it", () => {
+    // The owner's audience window: the shell gives it `present`, and the main window leads.
+    mount("present");
+    started.push(boot(framedWin(), { measure, connect }));
+    const s = last();
+    welcome(s, { id: "s_audience", present: true, at: { slide: 1, by: "s_main" } });
+    expect(document.querySelector(".plinth-slides__follow")?.hasAttribute("hidden")).toBe(false);
+    app({ type: "paired" });
+    expect(s.closed).toBe(1000);
+    expect(document.querySelector(".plinth-slides__follow")).toBeNull();
+    expect(document.querySelector(".plinth-slides__lead")).toBeNull();
+    expect(document.getElementById("__plinth-slides")?.hasAttribute("data-follow")).toBe(false);
+    // The presenter window's next slide reaches it before the room's `at` would.
+    app({ type: "goto", slide: 2 });
+    expect(document.documentElement.getAttribute("data-slide")).toBe("2");
+    expect(document.querySelector(".plinth-slides__follow")).toBeNull();
+    vi.advanceTimersByTime(10 * 60_000);
+    expect(FakeSocket.all.length).toBe(1);
+    // Presenter view in the audience window has no Lead viewers toggle either.
+    target.dispatchEvent(new KeyboardEvent("keydown", { key: "s", cancelable: true }));
+    expect(document.querySelector(".plinth-slides__lead")).toBeNull();
+  });
+
+  it("while following, the presenter's slide wins over the app's goto", () => {
+    mount("watch");
+    started.push(boot(framedWin(), { measure, connect }));
+    welcome(last(), { at: { slide: 3, by: "s_lead" } });
+    app({ type: "goto", slide: 1 });
+    expect(document.documentElement.getAttribute("data-slide")).toBe("3");
+    expect(document.getElementById("__plinth-slides")?.getAttribute("data-follow")).toBe("on");
+    // Paused by hand, the app's goto applies again.
+    document.querySelector<HTMLButtonElement>(".plinth-slides__follow button")?.click();
+    app({ type: "goto", slide: 2 });
+    expect(document.documentElement.getAttribute("data-slide")).toBe("2");
   });
 
   it("refuses a payload with an unknown follow value", () => {

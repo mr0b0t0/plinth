@@ -1049,14 +1049,19 @@ source editor work as for docs. A deck is not edited on its page.
   tabs). The last presenter to turn it on leads; an earlier one stops leading and follows.
   Turning it off, or the leader closing the deck, ends it for everyone. Followers send nothing,
   and no one learns who else is watching or who leads, only the slide. It runs entirely in the
-  deck's frame over the room's `slides` channel ([Live rooms](#live-rooms)); the app is not
-  involved, and the slide in each viewer's URL fragment follows as for any paging. Anonymous link
-  viewers, in-chat previews, thumbnail captures, review mode, the editor preview and a permanent
-  version link never follow or lead, and under opaque isolation and the path fallback nothing
-  connects. A sharing change closes every socket on the deck (followers see "Your access changed.
-  Reload to keep following."), as does a takedown or delete; a follower's tab hidden for 60 s
-  disconnects and catches up when shown, while a leader's stays connected. Nothing is stored: the
-  presenter's slide lives only in the room's memory of the presenter's socket.
+  deck's frame over the room's `slides` channel ([Live rooms](#live-rooms)), and the slide in each
+  viewer's URL fragment follows as for any paging. The app is involved only for a presenter's
+  audience window: it tells that window's frame it is paired (`paired`), and the frame closes its
+  socket and shows no note or toggle, since its presenter window moves it. While a deck follows,
+  the presenter's slide wins over a `goto` from the app. A slide the presenter moves to before the
+  room confirms the lead is sent once it does. Anonymous link viewers, in-chat previews,
+  thumbnail captures, review mode, the editor preview and a permanent version link never follow
+  or lead, and under opaque isolation and the path fallback nothing connects. A sharing change
+  closes every socket on the deck (followers see "Your access changed. Reload to keep
+  following."), as does a takedown or delete; a follower's tab hidden for 60 s disconnects (or,
+  between reconnects, stops retrying) and catches up when shown, while a leader's stays
+  connected. Nothing is stored: the presenter's slide lives only in the room's memory of the
+  presenter's socket.
 - **Speaker notes are not secret.** Anyone who can open the deck can read them (presenter view,
   the handout, the `.pptx`, the source). Agents treat deck text, notes included, as untrusted
   data.
@@ -1071,8 +1076,8 @@ source editor work as for docs. A deck is not edited on its page.
   with `plinth upload`, the `commands.npx` that `start_upload` returns.
 - **Security.** Deck Markdown and notes are rendered only on the artifact's content origin. The app
   and the frame exchange only slide numbers, counts, view names, booleans and the app's own nonce
-  (renderer protocol version 1: `goto`, `view`, `print { notes }` and `export { format, nonce }`
-  from the app; `ready`, `position`, `view`, `fullscreen` and
+  (renderer protocol version 1: `goto`, `view`, `print { notes }`, `export { format, nonce }` and
+  `paired` from the app; `ready`, `position`, `view`, `fullscreen` and
   `exported { nonce, ok, images_skipped, opaque }` from the frame); see
   [docs/security.md](security.md#typed-artifacts).
 - **Not in this slice.** Anonymous link viewers following a presenter (rooms admit identified

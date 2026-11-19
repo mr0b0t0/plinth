@@ -422,9 +422,10 @@ What is new:
   sanitizer's class allowlist did not change. The footer is shown as text, never Markdown. Heading
   ids are prefixed per slide (`s<n>-`), and copies of a slide (presenter view, the handout) carry
   no ids at all.
-- **Numbers only between the app and the frame.** The app sends `goto { slide }`, `view { mode }`
-  and `print { notes }`; the frame sends `ready` and `position` (a slide and a count), `view { mode }`
-  (the view it switched to) and `fullscreen`. Slides are integers from 1 to 500 on both ends; nothing carries deck text. The
+- **Numbers only between the app and the frame.** The app sends `goto { slide }`, `view { mode }`,
+  `print { notes }` and `paired` (no data: an audience window's frame stops following the
+  presenter over the room, so it can only turn following off); the frame sends `ready` and
+  `position` (a slide and a count), `view { mode }` (the view it switched to) and `fullscreen`. Slides are integers from 1 to 500 on both ends; nothing carries deck text. The
   renderer acts only on messages whose `event.source` is its parent and whose origin is the exact
   app origin, and posts only to the app origin.
 - **Opaque frames are identified by window.** The app accepts a deck's messages only from the
