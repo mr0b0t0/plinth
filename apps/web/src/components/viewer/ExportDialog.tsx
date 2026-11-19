@@ -19,6 +19,7 @@ export interface ExportDialogProps {
 
 type Format = "png" | "pdf";
 type Scale = "1" | "2";
+/** No board picked: every board for a PDF, the first board for a PNG. */
 const ALL = "";
 
 /** Whether a board fits the PNG pixel cap at this scale. */
@@ -67,7 +68,10 @@ export function ExportDialog({ open, onClose, artifactRef, version }: ExportDial
     getDesignExportOptions(artifactRef, version, ctrl.signal)
       .then((o) => {
         setOptions(o);
-        setBoard((b) => (o.boards.some((x) => x.id === b) ? b : (o.boards[0]?.id ?? ALL)));
+        // Keep the choice unless this version lacks that board. Never pick a board here: the
+        // dialog outlives a close and the format can change while the boards load, so a PDF's
+        // "All boards" must survive a reload.
+        setBoard((b) => (b === ALL || o.boards.some((x) => x.id === b) ? b : ALL));
       })
       .catch((err: unknown) => {
         if (ctrl.signal.aborted) return;
@@ -77,7 +81,7 @@ export function ExportDialog({ open, onClose, artifactRef, version }: ExportDial
   }, [open, artifactRef, version]);
 
   const boards = options?.boards ?? [];
-  // A PNG is one board: "All boards" is a PDF choice only.
+  // A PNG is one board: "All boards" is a PDF choice only, so a PNG without a pick takes the first.
   const chosen = boards.find((b) => b.id === board) ?? (format === "png" ? boards[0] : undefined);
   const scaleNumber = Number(scale) as 1 | 2;
   const tooBig =
@@ -142,9 +146,8 @@ export function ExportDialog({ open, onClose, artifactRef, version }: ExportDial
           onChange={(f) => {
             setFormat(f);
             setError(null);
-            // A PDF starts at every board, its default; a PNG needs one.
+            // A PDF starts at every board, its default; a PNG without a pick takes the first.
             if (f === "pdf" && f !== format) setBoard(ALL);
-            if (f === "png" && board === ALL) setBoard(boards[0]?.id ?? ALL);
           }}
           options={[
             { value: "png", label: "PNG" },

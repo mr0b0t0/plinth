@@ -187,6 +187,97 @@ describe("ExportDialog", () => {
     expect(exp?.path).toBe("/artifacts/launch-kit/export?format=pdf&version=2&board=poster");
   });
 
+  it("keeps every board for a PDF when the dialog is opened again", async () => {
+    const { calls } = stubApi({
+      handle: (c) => {
+        if (c.path.startsWith("/artifacts/launch-kit/export/options")) return json(OPTIONS);
+        if (c.path.startsWith("/artifacts/launch-kit/export?"))
+          return file("application/pdf", "launch-kit.pdf");
+        return undefined;
+      },
+    });
+    // The viewer keeps the dialog mounted, so its choices outlive a close.
+    const view = (open: boolean) => (
+      <ExportDialog open={open} onClose={vi.fn()} artifactRef="launch-kit" version={2} />
+    );
+    const { rerender } = render(view(true));
+    let select = (await screen.findByRole("combobox", { name: "Artboard" })) as HTMLSelectElement;
+    await waitFor(() => expect(select.disabled).toBe(false));
+    await userEvent.click(screen.getByRole("radio", { name: "PDF" }));
+    expect(select.value).toBe("");
+    rerender(view(false));
+    rerender(view(true));
+    select = (await screen.findByRole("combobox", { name: "Artboard" })) as HTMLSelectElement;
+    await waitFor(() => expect(select.disabled).toBe(false));
+    expect((screen.getByRole("radio", { name: "PDF" }) as HTMLInputElement).checked).toBe(true);
+    expect(select.value).toBe("");
+    await userEvent.click(screen.getByRole("button", { name: "Download PDF" }));
+    await waitFor(() => expect(saved).toHaveLength(1));
+    const exp = calls.find((c) => c.path.startsWith("/artifacts/launch-kit/export?"));
+    expect(exp?.path).toBe("/artifacts/launch-kit/export?format=pdf&version=2");
+  });
+
+  it("keeps every board for a PDF picked while the boards are still loading", async () => {
+    let release: (r: Response) => void = () => undefined;
+    const pending = new Promise<Response>((resolve) => {
+      release = resolve;
+    });
+    const { calls } = stubApi({
+      handle: (c) => {
+        if (c.path.startsWith("/artifacts/launch-kit/export/options")) return pending;
+        if (c.path.startsWith("/artifacts/launch-kit/export?"))
+          return file("application/pdf", "launch-kit.pdf");
+        return undefined;
+      },
+    });
+    renderDialog();
+    const select = (await screen.findByRole("combobox", { name: "Artboard" })) as HTMLSelectElement;
+    expect(select.disabled).toBe(true);
+    await userEvent.click(screen.getByRole("radio", { name: "PDF" }));
+    release(json(OPTIONS));
+    await waitFor(() => expect(select.disabled).toBe(false));
+    expect(select.value).toBe("");
+    await userEvent.click(screen.getByRole("button", { name: "Download PDF" }));
+    await waitFor(() => expect(saved).toHaveLength(1));
+    const exp = calls.find((c) => c.path.startsWith("/artifacts/launch-kit/export?"));
+    expect(exp?.path).toBe("/artifacts/launch-kit/export?format=pdf&version=2");
+  });
+
+  it("keeps every board for a PDF across a version change, and drops a board the version lacks", async () => {
+    const v3: DesignExportOptions = {
+      ...OPTIONS,
+      version: 3,
+      boards: [{ id: "cover", name: "Cover", width: 800, height: 600 }],
+    };
+    stubApi({
+      handle: (c) => {
+        if (c.path === "/artifacts/launch-kit/export/options?version=2") return json(OPTIONS);
+        if (c.path === "/artifacts/launch-kit/export/options?version=3") return json(v3);
+        if (c.path === "/artifacts/launch-kit/export/options?version=4") return json(OPTIONS);
+        return undefined;
+      },
+    });
+    const view = (version: number) => (
+      <ExportDialog open onClose={vi.fn()} artifactRef="launch-kit" version={version} />
+    );
+    const { rerender } = render(view(2));
+    let select = (await screen.findByRole("combobox", { name: "Artboard" })) as HTMLSelectElement;
+    await waitFor(() => expect(select.disabled).toBe(false));
+    await userEvent.click(screen.getByRole("radio", { name: "PDF" }));
+    rerender(view(3));
+    select = (await screen.findByRole("combobox", { name: "Artboard" })) as HTMLSelectElement;
+    await waitFor(() => expect(select.options).toHaveLength(2));
+    expect(select.value).toBe("");
+    // A board picked for the PDF that the next version does not have falls back to every board.
+    await userEvent.selectOptions(select, "cover");
+    rerender(view(4));
+    await waitFor(() => expect(select.options).toHaveLength(3));
+    expect(select.value).toBe("");
+    // Back on PNG, the first board is chosen.
+    await userEvent.click(screen.getByRole("radio", { name: "PNG" }));
+    expect(select.value).toBe("home");
+  });
+
   it("keeps 2x off for a board over the pixel cap", async () => {
     stubApi({ handle: (c) => (c.path.includes("/export/options") ? json(OPTIONS) : undefined) });
     renderDialog();
