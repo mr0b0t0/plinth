@@ -88,6 +88,13 @@ export class Board {
   sync: BoardSync | null = null;
   live: Live | null = null;
   private peers: RuntimePeer[] = [];
+  /**
+   * Where peers are dragging blocks, with the rev of the stored copy each was drawn over. Only
+   * drawn: the model's copy of a block is the server's, which every save starts from, so a peer's
+   * unsaved position is never written by this viewer. It goes once that copy changes, this viewer
+   * changes the block, or a snapshot arrives.
+   */
+  private readonly peerMoves = new Map<string, { x: number; y: number; rev: number }>();
   private drag: Drag | null = null;
   private pinch: Map<number, { x: number; y: number }> = new Map();
   private pinchDist = 0;
@@ -114,12 +121,18 @@ export class Board {
       const sel = p.presence?.sel;
       if (!p.you && typeof sel === "string") peerSelections.set(sel, hueOf(p.viewer));
     }
+    for (const [id, m] of this.peerMoves) {
+      if (this.model.blocks.get(id)?.rev !== m.rev || this.sync?.saving(id)) {
+        this.peerMoves.delete(id);
+      }
+    }
     const s: DrawState = {
       selected: this.selected,
       connectFrom: this.connectFrom,
       editing: this.editing,
       readOnly: this.readOnly,
       peerSelections,
+      peerMoves: this.peerMoves,
     };
     if (
       this.selected &&
@@ -258,7 +271,15 @@ export class Board {
   /** Save the fields a change set; `before` holds them as they were, for a drag already drawn. */
   private save(id: string, patch: Partial<BoardBlock>, before?: Partial<BoardBlock>): void {
     if (!this.model.blocks.has(id) || this.readOnly || !this.sync) return;
+    this.peerMoves.delete(id);
     void this.sync.saveBlock(id, patch, before);
+  }
+
+  /** A block as this viewer sees it: the stored copy, where a peer is dragging it. */
+  private shown(id: string): BoardBlock | undefined {
+    const b = this.model.blocks.get(id)?.data;
+    const m = this.peerMoves.get(id);
+    return b && m ? { ...b, x: m.x, y: m.y } : b;
   }
 
   async deleteSelected(): Promise<void> {
@@ -442,7 +463,9 @@ export class Board {
       if (this.selected !== id) this.select(id);
       if (this.readOnly) return;
       const b = this.model.blocks.get(id)?.data;
-      if (!b) return;
+      const seen = this.shown(id);
+      if (!b || !seen) return;
+      // This viewer takes the block from where it is drawn (a peer may be dragging it).
       const at = this.world(e);
       if (target?.closest?.(".wb-resize")) {
         this.drag = {
@@ -459,8 +482,8 @@ export class Board {
           kind: "move",
           pointer: e.pointerId,
           id,
-          dx: at.x - b.x,
-          dy: at.y - b.y,
+          dx: at.x - seen.x,
+          dy: at.y - seen.y,
           moved: false,
           bx: b.x,
           by: b.y,
@@ -521,6 +544,7 @@ export class Board {
       const y = coord(at.y - drag.dy);
       if (x === cur.data.x && y === cur.data.y) return;
       drag.moved = true;
+      this.peerMoves.delete(drag.id);
       cur.data = { ...cur.data, x, y };
       this.live?.moving(drag.id, x, y);
     } else {
@@ -565,7 +589,7 @@ export class Board {
     if (step && id) {
       e.preventDefault();
       if (this.readOnly) return;
-      const b = this.model.blocks.get(id)?.data;
+      const b = this.shown(id);
       if (!b) return;
       const n = e.shiftKey ? 50 : 10;
       this.save(id, { x: coord(b.x + step[0] * n), y: coord(b.y + step[1] * n) });
@@ -623,17 +647,19 @@ export class Board {
     }
     this.model.applySnapshot(collection, docs);
     for (const [id, e] of keep) if (this.model.blocks.has(id)) this.model.blocks.set(id, e);
-    for (const el of this.view.blocks.values()) el.classList.remove("moving");
+    if (collection === "blocks") this.peerMoves.clear();
     this.redraw();
   }
 
-  /** A peer is dragging a block: show it moving, unless this viewer is dragging it too. */
+  /**
+   * A peer is dragging a block: draw it moving, unless this viewer is dragging it too or saving
+   * it. Only drawn: the model keeps the stored copy (see peerMoves).
+   */
   peerMoved(id: string, x: number, y: number): void {
     const cur = this.model.blocks.get(id);
     if (!cur || (this.drag && "id" in this.drag && this.drag.id === id)) return;
     if (this.sync?.saving(id)) return;
-    cur.data = { ...cur.data, x: coord(x), y: coord(y) };
-    this.view.blocks.get(id)?.classList.add("moving");
+    this.peerMoves.set(id, { x: coord(x), y: coord(y), rev: cur.rev });
     this.redraw();
   }
 }

@@ -822,7 +822,9 @@ Whiteboards](spec.md#whiteboards-decided-2026-11-19)).
 - **No silent overwrites from the page.** The renderer writes a block at the rev it read. On a
   conflict it reads the newer copy and writes only the fields its viewer changed on top of it; a
   field the other writer (a person or an agent) changed meanwhile keeps their value, and the viewer
-  is told. A stale copy of a whole block is never written back over someone else's change.
+  is told. A stale copy of a whole block is never written back over someone else's change. A
+  peer's drag, which the room carries before it is saved, is only drawn: no other viewer's save
+  ever writes it.
 - **The editor preview.** The preview loader frame holds the owner's content pass, so the
   renderer must not act there: the app's editor preview alone sets the payload's `preview`, and
   then the renderer makes no shared-data or room call and draws only the draft's own starting
