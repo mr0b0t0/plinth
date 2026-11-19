@@ -111,12 +111,15 @@ test("two editors on one doc: a held block, typing that arrives live, Publish ma
 
   // The owner opens the first paragraph and types.
   await frameOf(page).locator("p", { hasText: "First paragraph." }).click();
-  const field = frameOf(page).locator("textarea.plinth-doc__field");
-  await expect(field).toHaveValue("First paragraph.");
+  const field = frameOf(page).locator('.plinth-doc__open [contenteditable="true"]');
+  // The block opens as formatted text: no Markdown field anywhere.
+  await expect(field).toHaveText("First paragraph.");
+  await expect(frameOf(page).locator("textarea")).toHaveCount(0);
   await expect(field).toBeFocused();
   if (info.project.name === "mobile") {
-    // Touch screens get a 16px field, so focusing it does not zoom the page.
-    expect(await field.evaluate((el) => getComputedStyle(el).fontSize)).toBe("16px");
+    // Touch screens get text of at least 16px, so focusing it does not zoom the page.
+    const size = await field.evaluate((el) => Number.parseFloat(getComputedStyle(el).fontSize));
+    expect(size).toBeGreaterThanOrEqual(16);
   }
   await field.press("End");
   await field.pressSequentially(" Typed live.");
@@ -129,14 +132,14 @@ test("two editors on one doc: a held block, typing that arrives live, Publish ma
   await expect(other.getByRole("region", { name: "Editing on the page" })).toContainText(s.owner);
   // Clicking it does not open it.
   await frameOf(other).locator("p.plinth-doc__held").click();
-  await expect(frameOf(other).locator("textarea")).toHaveCount(0);
+  await expect(frameOf(other).locator('[contenteditable="true"]')).toHaveCount(0);
   await expect(frameOf(other).locator(".plinth-doc__notice")).toContainText(
     `${s.owner} is editing this.`,
   );
 
   // The editor edits another block at the same time.
   await frameOf(other).locator("p", { hasText: "Third paragraph." }).click();
-  const theirs = frameOf(other).locator("textarea.plinth-doc__field");
+  const theirs = frameOf(other).locator('.plinth-doc__open [contenteditable="true"]');
   await theirs.press("End");
   await theirs.pressSequentially(" And theirs.");
   await expect(frameOf(page).locator("p", { hasText: "And theirs." })).toBeVisible();
@@ -170,7 +173,7 @@ test("an agent's version is merged under the page edits, or frozen for review wh
   await connected(page);
 
   await frameOf(page).locator("p", { hasText: "First paragraph." }).click();
-  const field = frameOf(page).locator("textarea.plinth-doc__field");
+  const field = frameOf(page).locator('.plinth-doc__open [contenteditable="true"]');
   await field.press("End");
   await field.pressSequentially(" Mine.");
   await field.press("Escape");
@@ -270,7 +273,7 @@ test("a review open in two browsers: one choice takes effect, and the other revi
   /** The owner edits the first paragraph, and the agent rewrites it on `base`. */
   async function clash(base: number, mark: string) {
     await frameOf(page).locator("p", { hasText: "First" }).first().click();
-    const field = frameOf(page).locator("textarea.plinth-doc__field");
+    const field = frameOf(page).locator('.plinth-doc__open [contenteditable="true"]');
     await field.press("End");
     await field.pressSequentially(` ${mark}`);
     await field.press("Escape");
@@ -332,7 +335,7 @@ test("a commenter never sees draft text, nor any editing control", async ({ page
   await startEditing(page);
   await connected(page);
   await frameOf(page).locator("p", { hasText: "Second paragraph." }).click();
-  const field = frameOf(page).locator("textarea.plinth-doc__field");
+  const field = frameOf(page).locator('.plinth-doc__open [contenteditable="true"]');
   await field.press("End");
   await field.pressSequentially(" Secret draft words.");
   await field.press("Escape");

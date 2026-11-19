@@ -546,3 +546,165 @@ test.describe("editing a doc", () => {
     }
   });
 });
+
+test.describe("editing a doc on its page as formatted text", () => {
+  const FENCED = "- An item\n\n  ```\n  fenced in a list\n  ```";
+  const V1 = [
+    `# ${TITLE}`,
+    "",
+    "First paragraph.",
+    "",
+    "![A tiny square](pixel.png)",
+    "",
+    FENCED,
+    "",
+    "Last paragraph.",
+    "",
+  ].join("\n");
+
+  /** Turns edit mode on: the bar's Edit, or its item in the ⋯ menu at phone width. */
+  async function startEditing(page: Page) {
+    const toggle = page.getByRole("button", { name: "Edit", exact: true });
+    if (await toggle.isVisible()) await toggle.click();
+    else {
+      await page.getByRole("button", { name: "Artifact actions" }).click();
+      await page.getByRole("menuitem", { name: "Edit on the page" }).click();
+    }
+    const bar = page.getByRole("region", { name: "Editing on the page" });
+    await expect(bar).toBeVisible();
+    await expect(bar).not.toContainText("Connecting", { timeout: 10_000 });
+    return bar;
+  }
+
+  test("no Markdown is shown: format, turn into, alt text, Ask an agent, publish and compare", async ({
+    page,
+  }) => {
+    test.setTimeout(120_000);
+    const problems = watchConsole(page);
+    const { artifact, client } = await publishDoc(page, V1);
+    try {
+      await page.goto(`/a/${artifact.slug}`);
+      const frame = page.frameLocator(CURRENT_FRAME);
+      await expect(frame.locator("h1")).toContainText(TITLE, { timeout: 15_000 });
+      const bar = await startEditing(page);
+      const open = frame.locator('.plinth-doc__open [contenteditable="true"]');
+
+      // A paragraph opens as formatted text; bold comes from the toolbar.
+      await frame.locator("p", { hasText: "First paragraph." }).click();
+      await expect(open).toHaveText("First paragraph.");
+      await open.press("End");
+      await open.pressSequentially(" Bold words");
+      for (let i = 0; i < "Bold words".length; i++) await open.press("Shift+ArrowLeft");
+      await frame.getByRole("button", { name: /^Bold/ }).click();
+      await expect(open.locator("strong")).toHaveText("Bold words");
+      await open.press("Escape");
+      await expect(frame.locator("p strong", { hasText: "Bold words" })).toBeVisible();
+
+      // Turn into: the last paragraph becomes a heading.
+      await frame.locator("p", { hasText: "Last paragraph." }).click();
+      await frame.getByRole("button", { name: "Block actions" }).click();
+      await frame
+        .getByRole("group", { name: "Turn into" })
+        .getByRole("menuitemradio", { name: "Heading 2" })
+        .click();
+      await expect(frame.locator(".plinth-doc__open h2")).toHaveText("Last paragraph.");
+      await frame.locator(".plinth-doc__open h2").press("Escape");
+
+      // The image's alt text is a field; the image itself is changed by an agent.
+      await frame.locator("p", { has: frame.locator('img[alt="A tiny square"]') }).click();
+      await frame.getByLabel("Alt text").fill("A small square");
+      await frame.getByLabel("Alt text").press("Escape");
+      await expect(frame.locator('img[alt="A small square"]')).toHaveCount(1);
+
+      // A block the editor cannot show faithfully is read-only, with Ask an agent.
+      await frame.locator("ul", { hasText: "An item" }).click();
+      const blockbar = frame.locator(".plinth-doc__blockbar");
+      await expect(blockbar).toContainText("can't be edited here");
+      await blockbar.getByRole("button", { name: "Ask an agent to change this" }).click();
+      const dialog = page.getByRole("dialog", { name: "Ask an agent" });
+      await expect(dialog).toContainText("Block 4");
+      await dialog.getByRole("button", { name: "Cancel" }).click();
+      await expect(dialog).toHaveCount(0);
+
+      // Nowhere is there Markdown or a source field.
+      await expect(frame.locator("textarea")).toHaveCount(0);
+      const shown = (await frame.locator("main").innerText()).replace(/\s+/g, " ");
+      expect(shown).not.toContain("**");
+      expect(shown).not.toContain("## ");
+      expect(shown).not.toContain("![");
+
+      await page.getByRole("button", { name: "Publish", exact: true }).click();
+      await expect(bar).toContainText("Published as v2", { timeout: 10_000 });
+      const v2 = (await apiGet(page.request, `/artifacts/${artifact.id}`)).body.content as string;
+      expect(v2).toContain("First paragraph. **Bold words**");
+      expect(v2).toContain("## Last paragraph.");
+      expect(v2).toContain("![A small square](pixel.png)");
+      // The block nobody edited keeps its bytes.
+      expect(v2).toContain(FENCED);
+
+      // Compare lists the changes in words, with no Markdown on the page.
+      await page.goto(`/a/${artifact.slug}/compare?from=1&to=2`);
+      const changes = page.getByRole("region", { name: "What changed from v1 to v2" });
+      await expect(changes.getByRole("listitem").first()).toBeVisible();
+      await expect(page.locator("main")).not.toContainText("**");
+      expect(problems).toEqual([]);
+    } finally {
+      await client.close();
+    }
+  });
+
+  test("the block menu inserts, moves and deletes blocks, keeping the others' bytes", async ({
+    page,
+  }) => {
+    test.setTimeout(90_000);
+    const { artifact, client } = await publishDoc(page, V1);
+    try {
+      await page.goto(`/a/${artifact.slug}`);
+      const frame = page.frameLocator(CURRENT_FRAME);
+      await expect(frame.locator("h1")).toContainText(TITLE, { timeout: 15_000 });
+      const bar = await startEditing(page);
+
+      // Insert a bulleted list below the first paragraph, and type an item.
+      await frame.locator("p", { hasText: "First paragraph." }).click();
+      await frame.getByRole("button", { name: "Block actions" }).click();
+      await frame
+        .getByRole("group", { name: "Insert below" })
+        .getByRole("menuitem", { name: "Bulleted list" })
+        .click();
+      const item = frame.locator('.plinth-doc__open [contenteditable="true"]');
+      await expect(item).toBeFocused();
+      await item.pressSequentially("New item");
+      await item.press("Escape");
+      await expect(frame.locator("li", { hasText: "New item" })).toBeVisible();
+
+      // Move the last paragraph up, then delete the first paragraph.
+      await frame.locator("p", { hasText: "Last paragraph." }).click();
+      await frame.getByRole("button", { name: "Block actions" }).click();
+      await frame.getByRole("menuitem", { name: "Move up" }).click();
+      await frame.locator("p", { hasText: "First paragraph." }).click();
+      await frame.getByRole("button", { name: "Block actions" }).click();
+      await frame.getByRole("menuitem", { name: "Delete" }).click();
+      await expect(frame.locator("p", { hasText: "First paragraph." })).toHaveCount(0);
+
+      await page.getByRole("button", { name: "Publish", exact: true }).click();
+      await expect(bar).toContainText("Published as v2", { timeout: 10_000 });
+      const v2 = (await apiGet(page.request, `/artifacts/${artifact.id}`)).body.content as string;
+      expect(v2).toBe(
+        [
+          `# ${TITLE}`,
+          "",
+          "- New item",
+          "",
+          "![A tiny square](pixel.png)",
+          "",
+          "Last paragraph.",
+          "",
+          FENCED,
+          "",
+        ].join("\n"),
+      );
+    } finally {
+      await client.close();
+    }
+  });
+});

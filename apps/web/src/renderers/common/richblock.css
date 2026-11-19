@@ -1,0 +1,130 @@
+/* Formatted-text editing of one block (richblock.ts): the toolbar, the link field, the alt text
+   field and the editable text. The block keeps the page's own look; these only add the controls.
+   Colours come from the renderer's own palette (--doc-* on a doc), with neutral fallbacks. */
+
+.plinth-rich__toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.25rem;
+  margin: 0 0 0.375rem;
+  padding: 0.25rem 0;
+  background: inherit;
+  font: 0.8125rem / 1.2 var(--doc-font, system-ui, sans-serif);
+}
+.plinth-rich__btn {
+  min-width: 2rem;
+  min-height: 2rem;
+  padding: 0.25rem 0.5rem;
+  border: 1px solid var(--doc-border, #d8dee4);
+  border-radius: 4px;
+  background: var(--doc-bg, #ffffff);
+  color: var(--doc-fg, #1f2328);
+  font: inherit;
+  cursor: pointer;
+}
+.plinth-rich__btn:hover {
+  border-color: var(--doc-live, #8f5a2a);
+}
+.plinth-rich__btn:focus-visible {
+  outline: 2px solid var(--doc-focus, #0a58ca);
+  outline-offset: 1px;
+}
+.plinth-rich__btn[aria-pressed="true"] {
+  border-color: var(--doc-live, #8f5a2a);
+  background: var(--doc-live, #8f5a2a);
+  color: var(--doc-bg, #ffffff);
+}
+.plinth-rich__fmt-strong {
+  font-weight: 700;
+}
+.plinth-rich__fmt-em {
+  font-style: italic;
+}
+.plinth-rich__fmt-code {
+  font-family: var(--doc-mono, ui-monospace, monospace);
+}
+.plinth-rich__fmt-strike {
+  text-decoration: line-through;
+}
+.plinth-rich__link {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  margin: 0 0 0.375rem;
+  font: 0.8125rem / 1.2 var(--doc-font, system-ui, sans-serif);
+}
+.plinth-rich__link[hidden] {
+  display: none;
+}
+.plinth-rich__link input,
+.plinth-rich__alt input {
+  flex: 1 1 12rem;
+  min-height: 2rem;
+  padding: 0.25rem 0.5rem;
+  border: 1px solid var(--doc-border, #d8dee4);
+  border-radius: 4px;
+  background: var(--doc-bg, #ffffff);
+  color: var(--doc-fg, #1f2328);
+  /* 16px keeps mobile browsers from zooming when the field is focused. */
+  font: 1rem / 1.3 var(--doc-font, system-ui, sans-serif);
+}
+.plinth-rich__content [contenteditable="true"],
+.plinth-rich__content[contenteditable="true"] {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  caret-color: var(--doc-live, #8f5a2a);
+}
+.plinth-rich__content p:empty,
+.plinth-rich__content li:empty,
+.plinth-rich__content th:empty,
+.plinth-rich__content td:empty,
+.plinth-rich__content code:empty,
+p.plinth-rich__content:empty,
+.plinth-rich__content:is(h1, h2, h3, h4, h5, h6):empty {
+  min-height: 1.5em;
+}
+p.plinth-rich__content:empty::before {
+  content: "Write something";
+  color: var(--doc-muted, #59636e);
+}
+.plinth-rich__tight {
+  margin: 0;
+}
+.plinth-rich__atom {
+  border-radius: 3px;
+  box-shadow: 0 0 0 1px var(--doc-border, #d8dee4);
+  cursor: default;
+  user-select: all;
+}
+.plinth-rich__image-wrap {
+  display: grid;
+  gap: 0.5rem;
+}
+.plinth-rich__image {
+  margin: 0;
+}
+.plinth-rich__alt {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.375rem 0.5rem;
+  font: 0.8125rem / 1.2 var(--doc-font, system-ui, sans-serif);
+  color: var(--doc-muted, #59636e);
+}
+@media (pointer: coarse) {
+  .plinth-rich__btn {
+    min-width: 2.75rem;
+    min-height: 2.75rem;
+  }
+}
+@media print {
+  .plinth-rich__toolbar,
+  .plinth-rich__link,
+  .plinth-rich__alt {
+    display: none;
+  }
+}

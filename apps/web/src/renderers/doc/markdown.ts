@@ -5,6 +5,13 @@
 //
 // Dialect: CommonMark plus GitHub tables, strikethrough and bare-URL links. No highlighting, math,
 // footnotes, task lists or front matter.
+import {
+  DOC_DIALECT,
+  type MarkdownTools,
+  type MdEnv,
+  type RecordableMarkdown,
+  recordSources,
+} from "@plinth/shared";
 import MarkdownItParser, { type MarkdownIt, type StateCore, type Token } from "markdown-it";
 
 const REL = "noopener noreferrer nofollow";
@@ -174,17 +181,23 @@ function docRule(state: StateCore): void {
   }
 }
 
-function createMarkdown(): MarkdownIt {
+/** The parser options and link check every doc instance shares. */
+function baseMarkdown(): MarkdownIt {
   const md = new MarkdownItParser({
     html: false,
     linkify: true,
     typographer: false,
     breaks: false,
   });
-  const { escapeHtml } = md.utils;
   // markdown-it calls this on the normalized URL. It must admit both kinds; docRule then applies
   // the rule for the kind the URL turned out to be.
   md.validateLink = (url) => isSafeHref(url) || isSafeImageSrc(url);
+  return md;
+}
+
+function createMarkdown(): MarkdownIt {
+  const md = baseMarkdown();
+  const { escapeHtml } = md.utils;
   md.core.ruler.push("plinth_doc", docRule);
 
   const r = md.renderer.rules;
@@ -227,4 +240,41 @@ export function markdown(): MarkdownIt {
 /** The doc's HTML. Safe by construction; sanitize.ts still checks it before insertion. */
 export function renderMarkdown(src: string): string {
   return markdown().render(src);
+}
+
+let source: MarkdownIt | null = null;
+
+/**
+ * The parser the formatted-text editor reads a block's model with (markdownSerialize.ts): the same
+ * dialect and link check as the page, without the page's rewrites, and with each link and image
+ * token recording the Markdown it was written as. It renders nothing.
+ */
+export function sourceMarkdown(): MarkdownIt {
+  if (!source) {
+    source = baseMarkdown();
+    recordSources(source as unknown as RecordableMarkdown);
+  }
+  return source;
+}
+
+/** What the formatted-text editor checks a doc block with: the doc's dialect and both parsers. */
+export function docMarkdownTools(): MarkdownTools {
+  return {
+    source: sourceMarkdown() as unknown as MarkdownTools["source"],
+    render: markdown() as unknown as MarkdownTools["render"],
+    dialect: DOC_DIALECT,
+  };
+}
+
+/** The doc's reference definitions, which every block of it is read and checked with. */
+export function docEnv(text: string): MdEnv {
+  const env: { references?: Record<string, unknown> } = {};
+  sourceMarkdown().parse(text, env as Parameters<MarkdownIt["parse"]>[1]);
+  return { references: env.references ?? {} };
+}
+
+/** Inline Markdown (an atom: an image, a reference link) as the page renders it, with `env`. */
+export function renderInlineMarkdown(src: string, env: MdEnv): string {
+  const copy = { references: { ...(env.references ?? {}) } };
+  return markdown().renderInline(src, copy as Parameters<MarkdownIt["renderInline"]>[1]);
 }

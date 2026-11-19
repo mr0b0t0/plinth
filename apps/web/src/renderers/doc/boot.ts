@@ -12,7 +12,9 @@
 // text, which the app saves through its own session after asking for it with `collect`. A frozen
 // draft is reviewed whole in the frame (common/review.ts) when the app sends `review`. Every
 // editing message to the app carries the frame key the app put in the address
-// (common/frameKey.ts), which is taken out of it before anything renders.
+// (common/frameKey.ts), which is taken out of it before anything renders. Blocks are edited as
+// formatted text (edit.ts); "Ask an agent" on a block posts `ask` with a structural anchor
+// ("block-3", "block-3:image"), and the app opens its Ask dialog.
 //
 // Live views: { type: "version", n, nonce } shows version n in place (follow.ts) and answers
 // { type: "shown", n, nonce, ok }. It is refused (ok: false, and the app loads a fresh frame) while
@@ -190,6 +192,9 @@ function live(
       if (local) return soloBase;
       return client && client.baseVersion > 0 ? client.baseVersion : null;
     },
+    // A place the person wants an agent to change (an image, a block shown read-only): the app
+    // opens its Ask dialog. The anchor is a structural name, never the block's text.
+    ask: (anchor: { key: string; text: string }) => post({ type: "ask", anchor }),
   };
   const events = {
     granted: (l: Parameters<DocEditor["granted"]>[0]) => editor?.granted(l),

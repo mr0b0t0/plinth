@@ -313,9 +313,11 @@ describe("doc renderer on-page editing (#36)", () => {
     expect(live).toMatchObject({ editing: true, connected: false, dirty: false });
     expect(JSON.stringify(live)).not.toContain("one");
     (root().querySelector("p") as HTMLElement).click();
-    const field = root().querySelector("textarea") as HTMLTextAreaElement;
-    field.value = "uno";
-    field.dispatchEvent(new Event("input"));
+    // The block opens as formatted text (no Markdown field); typing goes to the solo copy.
+    const field = root().querySelector('[contenteditable="true"]') as HTMLElement;
+    expect(root().querySelector("textarea")).toBeNull();
+    field.textContent = "uno";
+    field.dispatchEvent(new Event("input", { bubbles: true }));
     // A collect from another origin, or with a malformed nonce, is ignored.
     post({ ...base, type: "collect", nonce: NONCE }, "https://evil.example");
     post({ ...base, type: "collect", nonce: "short" });
@@ -323,7 +325,23 @@ describe("doc renderer on-page editing (#36)", () => {
     post({ ...base, type: "collect", nonce: NONCE });
     expect(posted("draft")).toEqual([{ ...base, type: "draft", nonce: NONCE, text: "uno\n\ntwo" }]);
     post({ ...base, type: "edit", on: false });
-    expect(root().querySelector("textarea")).toBeNull();
+    expect(root().querySelector("[contenteditable]")).toBeNull();
+  });
+
+  it("asks the app about a block it cannot edit, by its place and never its text", async () => {
+    mountShell("Intro\n\n- secret item\n\n  ```\n  fenced in a list\n  ```");
+    stop = boot(window);
+    post({ ...base, type: "edit", on: true });
+    await Promise.resolve();
+    (root().querySelector("ul") as HTMLElement).click();
+    const ask = [...root().querySelectorAll("button")].find(
+      (b) => b.textContent === "Ask an agent to change this",
+    ) as HTMLElement;
+    ask.click();
+    expect(posted("ask")).toEqual([
+      { ...base, type: "ask", anchor: { key: "block-2", text: "Block 2" } },
+    ]);
+    expect(JSON.stringify(posted("ask"))).not.toContain("secret");
   });
 
   it("with live: room, follows the live draft over the doc socket, never sending text to the app", async () => {

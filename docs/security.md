@@ -103,6 +103,8 @@ make a test pass.
 | A request looks sent to an agent that cannot take it | Ask an agent names Claude while the owner's only Claude token was revoked, is limited to one artifact or lacks `mentions`, so the person waits on a request no agent will ever see | `request_to` is checked against the owner's connections that could claim it (`takesRequests`), and refused with `no_agent` before anything is written; the gate lists only those client types ([Ask an agent](#ask-an-agent)) |
 | A forged `ask` from the frame | A document the frame navigated to, or another window, posts `ask` to open the Ask dialog with an anchor of its choosing | In edit mode `ask` is an editing message: the frame window, the exact content origin and the frame key are checked, and the anchor must be a structural key (`PAGE_ANCHOR_KEY_RE`) and short plain text; at worst it prefills a dialog the person must still write and post ([Ask an agent](#ask-an-agent)) |
 | A request carries the owner's authority it does not have | A commenter's Ask an agent request says "share this with everyone", or the owner's own request is quoted back to the agent by a commenter | A request is an ordinary mention: untrusted text, described as such in `list_mentions` and the untrusted note; only `comment_author_role`, derived by the server, says whether the owner sent it ([Ask an agent](#ask-an-agent)) |
+| A browser or paste puts markup into an edited doc block | An extension or a paste leaves `<img onerror>` or a styled `<span>` in the `contenteditable` block | The editor reads the block back by allowlist (bold, italic, code, strikethrough, breaks, text, and links and kept parts it drew, known by reference); anything else is text, paste is `text/plain`, and every block renders through the sanitizer ([Docs as formatted text](#docs-as-formatted-text)) |
+| A person's edit makes the doc unpublishable or changes other blocks | Typing `<html>` as a paragraph, or deleting the block above an agent's `<html>` block | The serializer escapes a block's leading `<`, a Delete or Move re-sends the agent's block escaped, the room checks the doc's rules, and only the leased block's lines are replaced; blocks the model would change are read-only |
 
 Out of scope for v1: denial of service beyond Cloudflare's defaults, a compromised Cloudflare
 account, and malicious instance operators.
@@ -2554,7 +2556,9 @@ cookie, CSP, sandbox flag or setting was added, and the content host still sends
   text edit changes its line count only by appending at the end), and a parity test runs the rules
   against the Worker's real publish hooks. So a modified client cannot leave a draft that a
   Publish would refuse, and a person's natural edit cannot either: the doc editor escapes a
-  leading `<html` or `<!doctype html` in any block as `\<`. Structural ops must be of a kind the
+  leading `<` of any block it writes as `\<`, and a Delete or Move that would bring an agent's
+  block starting like an HTML document to the top writes that block escaped in the same edit
+  ([Docs as formatted text](#docs-as-formatted-text)). Structural ops must be of a kind the
   artifact's type takes, and may not touch another socket's lease.
 - **Never merged, except a doc's clean merge.** A doc's draft is merged with a version published
   meanwhile only when `merge3` is clean, the result fits and it passes the doc's rules (#49). A
@@ -2630,6 +2634,43 @@ reaches agents through the mention queue exactly as an `@claude` mention does.
 - **Publish first.** "Publish my changes first" runs the strip's own Publish (the room checkpoint,
   or the solo `PUT` with `base_version`), with every check it has; when it does not succeed nothing
   is posted, so a request never points at a version that does not hold what the person saw.
+
+## Docs as formatted text
+
+People edit a doc on its page as formatted text and never see Markdown (spec: "Docs as formatted
+text"). It changes only which Markdown a person's typing produces: nothing new is reachable from a
+page, the room accepts any doc lines and checks the doc's rules as before, and no endpoint, cookie,
+CSP, sandbox flag or env var was added.
+
+- **No HTML parsing in the editor.** The editable block is drawn from its model with
+  `createElement` and `textContent`. The parts of a block the model keeps as written (an image in
+  text, a reference link, an autolink) are drawn by the page's own pipeline, markdown-it with html
+  off and the URL allowlist, and then the unchanged DOM sanitizer, exactly as the page draws them.
+- **Reading the page back by allowlist.** A `contenteditable` element can hold anything a browser,
+  an extension or a paste puts there. After each input the editor walks it and keeps only bold,
+  italic, inline code, strikethrough, line breaks, text, and the links and kept parts it drew
+  itself, which it knows by a `WeakMap` reference, never by an attribute; any other element counts
+  as its text. A copied or forged element is text. Paste and drop insert `text/plain` only, and the
+  browser's own formatting commands are refused.
+- **Links.** A link a person sets is checked by the same rule as the page's own links (`http`,
+  `https`, `mailto`, a `#fragment` or a path on the artifact's origin), and the page's renderer
+  checks it again when the block renders. Editing never follows a link.
+- **What is written.** The serializer escapes every character that would start syntax, so text
+  stays text: a person can type `<script>`, `**`, `[x](javascript:…)` or `<html>` and the doc shows
+  exactly that. A `<` at the start of a block is written `\<`, so no block a person writes can make
+  the doc start like an HTML document, which the stager refuses. A Delete or Move that would bring
+  an agent's block starting like one to the top writes it escaped in the same lease; the room's
+  check still refuses anything else.
+- **Fidelity before editing, verification after.** A block is editable only when its model,
+  written back, renders exactly as the original with the page's own parser and reads back into the
+  same model, so the editor cannot turn a block into something that renders differently. A block
+  that fails is read-only (Ask an agent, Move and Delete, byte for byte). Every text the editor
+  sends is read back first and is not sent when it would not round trip. Untouched blocks, and the
+  reference definitions after a block, keep their bytes.
+- **Ask an agent from a block.** The renderer's `ask` carries a structural anchor (`block-3`,
+  `block-3:image`) and a label made from it ("Block 3"), never the block's text, so no draft text
+  reaches the app page; the app accepts it only as an editing message, with the frame key (see
+  [Ask an agent](#ask-an-agent)).
 
 ## Comparing versions
 

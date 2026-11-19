@@ -10,6 +10,14 @@ Add a line under **Unreleased** in the pull request that makes a change people w
 
 ## Unreleased
 
+- **Edit docs as formatted text.** On a doc's page, a block opens as formatted text, with a
+  toolbar (bold, italic, code, link, strikethrough) and a block menu: **Turn into** another kind,
+  **Insert below** (any kind, a divider or a table), **Move up**, **Move down** and **Delete**. No
+  Markdown is shown anywhere; Plinth writes the changes back as Markdown and keeps every block
+  nobody touched byte for byte. An image's alt text is a field, and **Add or replace an image: Ask
+  an agent** opens the Ask dialog. Blocks the page cannot show faithfully as formatted text are
+  shown as they are, with **Ask an agent to change this**, Move and Delete.
+
 - **Ask an agent.** People change an HTML page or a design by asking the owner's agent: **Ask an
   agent** (in the bar for owners and editors, in the ⋯ menu for commenters and at phone width, and
   on the dashboard card) opens the comments panel in request mode, where they point at an element

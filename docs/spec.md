@@ -459,7 +459,8 @@ allowlist is unchanged. Raw HTML in the Markdown shows as text, links pass an al
 a new tab, and the shell's CSP (header and a meta copy, so the editor preview gets it too) allows
 only `script-src 'self'`; a doc's other files run no script. The type is fixed at publish
 (`artifacts.type`, default `html`); versions, `base_version` conflicts and restore work as for HTML.
-The editor edits the Markdown with a live preview, and Compare lists what changed between two
+The source editor edits the Markdown with a live preview (on the page, people edit a doc as
+formatted text and never see Markdown), and Compare lists what changed between two
 versions block by block, in words. Owners and
 editors can also edit a doc on its rendered page ([Editing](#editing)): for them, on the current
 version while rooms and live editing are on, the shell's payload carries `live: "room"` and the
@@ -615,11 +616,11 @@ page shows the strip and makes the REST calls, and renders no content.
   check the type's publish hook makes on the source alone, so a draft can always be published: a
   doc never starts like a whole HTML document (`<html` or `<!doctype html` first, which the stager
   refuses), and a sheet keeps the rules of [Live sheets](#live-sheets-decided-2026-11-19). To keep
-  that rule out of people's way, the doc editor writes a `<` that would open `<html` or
-  `<!doctype html` at the start of any top-level block as `\<`, which renders as `<`, so any block
-  can become the first one when the block above it is deleted. A block an agent wrote that way is
-  not escaped; deleting the block above it is refused with the reason, and an agent's version can
-  change it.
+  that rule out of people's way, the doc editor writes a `<` at the start of any top-level block
+  it writes as `\<`, which renders as `<`, so any block a person wrote can become the first one.
+  When a Delete or a Move would leave a block an agent wrote first while it starts like an HTML
+  document, the same edit writes that block again with its `<` escaped. Only emptying the first
+  block by typing, above such a block, is still refused, with the reason.
 - **Drafts are not versions.** The draft is one `live_drafts` row per artifact, written by the room
   at most every `LIVE_DRAFT_FLUSH_S` (and on release, when the last editor leaves, and before a
   save). It never moves backwards, never comes back after a delete or takedown, and an owner keeps
@@ -711,8 +712,9 @@ page shows the strip and makes the REST calls, and renders no content.
   source") turns edit mode on; a strip under the bar says what is happening ("Draft saved",
   "Saving draft…", "Publishing…", "Published as v7", "Editing v5"), who else is editing and where
   ("row 12", a structural place, never content), with Publish, a menu with "Publish with a note…"
-  and "Discard unpublished changes", and Done. A doc's block opens as a plain text field holding
-  its Markdown; blocks other people hold show their email and their text as it arrives. Esc at the
+  and "Discard unpublished changes", and Done. A doc's block opens as formatted text, never as
+  Markdown ([Docs as formatted text](#docs-as-formatted-text-decided-2026-11-19)); blocks other
+  people hold show their email and their text as it arrives. Esc at the
   top level of edit mode moves focus to the strip. Owners and editors who are not editing see one
   line when unpublished changes exist, when someone is editing, or when a version needs review.
   Edit mode and comment review mode exclude each other. While the review is open, app
@@ -2673,6 +2675,58 @@ authority, whoever sends it (only `comment_author_role` says the owner did).
   comments panel. Nothing changes on the content host or in the frames' sandbox.
 - **No setting.** Ask an agent adds no env var, table or route: it is a field on the comment route
   and two gate parts.
+
+### Docs as formatted text (decided 2026-11-19)
+
+People edit a doc on its page as formatted text: no person sees Markdown or any source. A doc is
+still Markdown in `content.md`, which agents read and write as before; the page turns what people
+do into Markdown. Everything runs in the doc renderer on the artifact's content origin, through
+the same leases, room, drafts and Publish as [Editing](#editing).
+
+- **The model.** A click or Enter on a block takes its lease and draws it again as editable text,
+  in a small closed model (`packages/shared/src/markdownSerialize.ts`): headings (level, and `#`
+  or underlined style), paragraphs, quotes, bulleted lists (marker, tight or loose), numbered lists
+  (start number and `.` or `)`), GitHub tables (each column's alignment), fenced code (fence and
+  info string), indented code, dividers and images. Inline text carries bold, italic, inline code,
+  links and strikethrough. Anything else inline (an image in text, a reference link, an autolink)
+  is kept as written and cannot be changed in place. A bare URL a person types stays text and
+  becomes a link when the block renders.
+- **Reading the page back.** After every input the renderer reads the edited DOM against an
+  allowlist (bold, italic, code, strikethrough, line breaks, text, and the links and kept parts it
+  drew itself); anything else counts as its text, so nothing a browser inserts becomes markup.
+  Paste is plain text only.
+- **Writing it back.** The serializer writes the model as CommonMark with GitHub tables,
+  strikethrough and bare-URL links (the doc's dialect, html off): emphasis as `*…*`, escapes
+  wherever text would start syntax, a `<` at the start of any top-level block as `\<`, lists from
+  their own start number, and code fences lengthened when the code holds one. Reference
+  definitions that follow a block stay byte for byte after it. Only the leased block's lines are
+  ever replaced, so a block nobody edited keeps its bytes.
+- **The fidelity check.** A block is editable in place only when its model, written back,
+  renders exactly as the original (the same markdown-it tokens with the page's own instance and
+  the doc's reference definitions) and reads back into the same model, and the block defines no
+  references itself. A block that fails (a code block in a list item, a quote in a list item, a
+  definition inside a quote) is shown read-only, with "Ask an agent to change this", Move and
+  Delete, which move or remove its lines byte for byte.
+- **Verify after each edit.** Before it sends, the renderer reads its own Markdown back; a
+  formatting command whose result CommonMark cannot express is undone, with "That formatting can't
+  be kept here.", and nothing is sent.
+- **Formatting and the block menu.** A toolbar and the shortcuts Cmd/Ctrl+B, I, E (code), K (a
+  link, checked by the same rule as the page's links) and Shift+X (strikethrough). Enter ends a
+  block (a new item in a list, a new paragraph in a quote), Shift+Enter is a line break, Tab and
+  Shift+Tab indent and outdent list items (three levels at most) and move between table cells,
+  and Esc gives the block back. Each block's menu has "Turn into" (paragraph, heading 1 to 3,
+  bulleted or numbered list, quote, code block), "Insert below" (the same kinds, a divider, a table
+  of a chosen size, and "Add or replace an image: Ask an agent"), "Move up", "Move down" and
+  "Delete". A move takes one lease over both blocks and swaps their lines. A new list never joins
+  the list next to it.
+- **Images are agent-only.** An image block's alt text is a field; the image itself, and adding
+  one, are left to agents through Ask an agent, whose page anchor names the place (`block-3`, or
+  `block-3:image`), never its text.
+- **An empty doc** shows "Write something", which starts a new paragraph.
+- **Security.** Nothing new reaches the content host or the app: the room accepts any doc lines as
+  before and checks the doc's rules, the sanitizer runs on every rendered block and every kept part,
+  and the editor builds its DOM with `createElement` and `textContent` only. The serializer only
+  changes which Markdown a person's typing produces.
 
 ### Big builds and reuse by hash
 
