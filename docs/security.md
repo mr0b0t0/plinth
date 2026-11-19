@@ -676,7 +676,10 @@ Whiteboards](spec.md#whiteboards-decided-2026-11-19)).
   peer's drag, which the room carries before it is saved, is only drawn: no other viewer's save
   ever writes it. In the mirror case, a peer's save of a block this viewer is dragging or
   resizing does not replace the block under the pointer: it is read once the gesture ends, and
-  the drop's conflict puts the move or size on top of the peer's change.
+  the drop's conflict puts the move or size on top of the peer's change. A block whose text the
+  viewer is editing is held the same way, and the edit is written at the rev it began from, so a
+  peer's text saved meanwhile is a conflict: theirs is kept, and the viewer's text replaces it
+  only if the viewer presses "Use mine".
 - **The editor preview.** The preview loader frame holds the owner's content pass, so the
   renderer must not act there: the app's editor preview alone sets the payload's `preview`, and
   then the renderer makes no shared-data or room call and draws only the draft's own starting

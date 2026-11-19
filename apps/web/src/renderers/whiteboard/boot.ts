@@ -150,9 +150,9 @@ async function startLive(win: Window, board: Board, runtime: PlinthRuntime): Pro
       board.setReadOnly(true);
       board.banner(READ_ONLY_TEXT);
     },
-    say: (t) => board.say(t),
+    say: (t, action) => board.say(t, action),
     emit: (topic, d) => board.live?.saved(topic, d.id),
-    busy: (id) => board.gesturing(id),
+    busy: (id) => board.holds(id),
   });
 
   win.addEventListener("plinth:expired", () => {

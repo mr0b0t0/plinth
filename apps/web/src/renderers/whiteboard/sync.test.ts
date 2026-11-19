@@ -6,7 +6,7 @@ import type { BoardBlock } from "@plinth/shared";
 import { describe, expect, it, vi } from "vitest";
 import { BoardModel } from "./model.ts";
 import type { RuntimeCollection, RuntimeDoc } from "./runtime.ts";
-import { BoardSync, KEPT_THEIRS_TEXT, READ_ONLY_TEXT } from "./sync.ts";
+import { BoardSync, KEPT_THEIRS_TEXT, READ_ONLY_TEXT, USE_MINE_LABEL } from "./sync.ts";
 
 const blk = (x: number): BoardBlock => ({ kind: "note", x, y: 0, w: 100, h: 80, text: "" });
 
@@ -141,7 +141,29 @@ describe("BoardSync", () => {
     // Their x and text stand; the colour, which they did not change, is written on top.
     expect(blocks.docs.get("a")?.data).toEqual({ ...blk(50), text: "theirs", color: "blue" });
     expect(blocks.calls.filter((c) => c.op === "set").map((c) => c.ifRev)).toEqual([3, 7]);
-    expect(deps.say).toHaveBeenCalledWith(KEPT_THEIRS_TEXT);
+    // Their text was kept over the viewer's, which they are offered back.
+    expect(deps.say).toHaveBeenCalledWith(
+      KEPT_THEIRS_TEXT,
+      expect.objectContaining({ label: USE_MINE_LABEL }),
+    );
+    deps.say.mock.calls[0]?.[1]?.run();
+    await vi.waitFor(() => expect(blocks.docs.get("a")?.data).toMatchObject({ text: "mine" }));
+    expect(blocks.docs.get("a")?.data).toEqual({ ...blk(50), text: "mine", color: "blue" });
+  });
+
+  it("writes a change made over an older copy at that copy's rev", async () => {
+    const { sync, blocks, model, put, deps } = setup();
+    put("a", { ...blk(0), text: "A1" }, 3);
+    // The model was read again at rev 7 (their text) after the viewer began a text edit at 3.
+    blocks.docs.set("a", { id: "a", data: { ...blk(0), text: "theirs" }, rev: 7 });
+    model.upsertBlock("a", { ...blk(0), text: "theirs" }, 7);
+    expect(await sync.saveBlock("a", { text: "mine" }, { text: "A1" }, 3)).toBe(true);
+    expect(blocks.calls.filter((c) => c.op === "set").map((c) => c.ifRev)).toEqual([3]);
+    expect(blocks.docs.get("a")).toEqual({ id: "a", data: { ...blk(0), text: "theirs" }, rev: 7 });
+    expect(deps.say).toHaveBeenCalledWith(
+      KEPT_THEIRS_TEXT,
+      expect.objectContaining({ label: USE_MINE_LABEL }),
+    );
   });
 
   it("gives up after four conflicts", async () => {

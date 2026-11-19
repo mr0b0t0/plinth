@@ -4,8 +4,10 @@
 // fields are put on top of it, up to four times, and a field someone else changed meanwhile keeps
 // their value (the viewer is told). One write per block is in flight at a time, and later changes
 // to it are folded into the next one. A refusal the viewer cannot fix (read_only, forbidden) turns
-// the board read-only. A peer's save of a block this viewer is saving, dragging or resizing is
-// read once that is over, so it never replaces what the viewer is in the middle of.
+// the board read-only. A peer's save of a block this viewer is saving, dragging, resizing or
+// editing the text of is read once that is over, so it never replaces what the viewer is in the
+// middle of. A text edit is written at the rev it started from, so a peer's text saved meanwhile
+// is a conflict: their text is kept, and the viewer is offered to put theirs back.
 import { type BoardArrow, type BoardBlock, cleanBlock } from "@plinth/shared";
 import type { BoardModel, Entry } from "./model.ts";
 import type { RuntimeCollection, RuntimeError } from "./runtime.ts";
@@ -18,17 +20,23 @@ export interface SyncDeps {
   changed(): void;
   /** The server refused a write this viewer cannot fix: stop offering edits. */
   readOnly(): void;
-  /** A short message for the viewer. */
-  say(text: string): void;
+  /** A short message for the viewer, with a button that does something about it. */
+  say(text: string, action?: SayAction): void;
   /** Tell the room a block or arrow was saved (a no-op without a room). */
   emit(topic: "block.saved" | "arrow.saved", data: { id: string }): void;
   /**
-   * Whether this viewer holds a block in a gesture already drawn into the model (a drag or a
-   * resize): a peer's save of it is read once the gesture ends (release).
+   * Whether this viewer holds a block (a drag or a resize already drawn into the model, or an edit
+   * of its text): a peer's save of it is read once that ends (release).
    */
   busy?(id: string): boolean;
   /** Waits; a test passes its own. */
   wait?(ms: number): Promise<void>;
+}
+
+/** A button on a message. */
+export interface SayAction {
+  label: string;
+  run(): void;
 }
 
 const ATTEMPTS = 4;
@@ -38,6 +46,8 @@ const MAX_BACKOFF_MS = 30_000;
 export const READ_ONLY_TEXT = "You can view this board but not change it.";
 export const KEPT_THEIRS_TEXT =
   "Someone else changed this block at the same time. Their change was kept.";
+/** The button that writes the viewer's text over a peer's that was kept instead. */
+export const USE_MINE_LABEL = "Use mine";
 
 /** The fields of a block one change sets. */
 export type BlockPatch = Partial<BoardBlock>;
@@ -102,9 +112,11 @@ export class BoardSync {
    * drag); it defaults to the model's values. While a write of this block runs, the newest fields
    * wait and go next, so a drag that ends during a save makes one more write, not many. Resolves
    * true once the server has the change, or a newer copy that kept someone else's value instead
-   * (and the viewer was told).
+   * (and the viewer was told). `since` is the rev the change was made over, for one that began
+   * before the model's copy (a text edit): a peer's save since then is a conflict, never written
+   * over.
    */
-  saveBlock(id: string, patch: BlockPatch, before?: BlockPatch): Promise<boolean> {
+  saveBlock(id: string, patch: BlockPatch, before?: BlockPatch, since?: number): Promise<boolean> {
     const m = this.d.model;
     const cur = m.blocks.get(id);
     if (!cur || this.stopped) return Promise.resolve(false);
@@ -114,7 +126,8 @@ export class BoardSync {
       for (const k of Object.keys(patch) as (keyof BoardBlock)[]) {
         was[k] = before && k in before ? before[k] : cur.data[k];
       }
-      this.known.set(id, { data: { ...cur.data, ...was } as BoardBlock, rev: cur.rev });
+      const rev = since === undefined ? cur.rev : Math.min(since, cur.rev);
+      this.known.set(id, { data: { ...cur.data, ...was } as BoardBlock, rev });
     }
     m.blocks.set(id, { data: { ...cur.data, ...patch }, rev: cur.rev });
     this.d.changed();
@@ -205,11 +218,14 @@ export class BoardSync {
     const left: BlockPatch = { ...patch };
     const queued = this.queued.get(id);
     let kept = false;
+    /** The viewer's newest text, when theirs was kept instead: offered back to them. */
+    let lostText: string | undefined;
     const keys = new Set([...Object.keys(patch), ...Object.keys(queued ?? {})]);
     for (const k of keys as Set<keyof BoardBlock>) {
       const mine = k in patch ? patch[k] : queued?.[k];
       if (same(theirs[k], was[k]) || same(theirs[k], mine)) continue;
       kept = true;
+      if (k === "text") lostText = queued && "text" in queued ? queued.text : patch.text;
       delete left[k];
       if (queued) delete queued[k];
     }
@@ -217,7 +233,13 @@ export class BoardSync {
     this.known.set(id, { data: theirs, rev });
     this.d.model.blocks.set(id, { data: { ...theirs, ...left, ...queued }, rev });
     this.d.changed();
-    if (kept) this.d.say(KEPT_THEIRS_TEXT);
+    if (kept && lostText !== undefined && lostText !== theirs.text) {
+      const text = lostText;
+      this.d.say(KEPT_THEIRS_TEXT, {
+        label: USE_MINE_LABEL,
+        run: () => void this.saveBlock(id, { text }),
+      });
+    } else if (kept) this.d.say(KEPT_THEIRS_TEXT);
     return left;
   }
 
@@ -321,8 +343,8 @@ export class BoardSync {
     try {
       const doc = await coll.get(id);
       const m = this.d.model;
-      // A block this viewer is saving, dragging or resizing keeps its local copy (which a drag's
-      // drop is read from) and is read again once that is over.
+      // A block this viewer is saving, dragging, resizing or editing keeps its local copy (which a
+      // drag's drop and a text edit's base are read from) and is read again once that is over.
       if (collection === "blocks" && this.held(id)) {
         this.deferred.add(id);
         return;
@@ -341,8 +363,8 @@ export class BoardSync {
   }
 
   /**
-   * This viewer is done with a block (a gesture ended, or its save settled): read it again if a
-   * peer saved it meanwhile. A save the gesture started keeps it deferred until that settles.
+   * This viewer is done with a block (a gesture or a text edit ended, or its save settled): read it
+   * again if a peer saved it meanwhile. A save that started keeps it deferred until that settles.
    */
   release(id: string): void {
     if (!this.deferred.has(id) || this.held(id)) return;
