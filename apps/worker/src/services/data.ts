@@ -17,6 +17,7 @@ import {
   type DataOp,
   type DataOpResult,
   type DataSession,
+  type DataSummary,
   type DataUnavailableReason,
   type DataVia,
   dataShapeError,
@@ -33,7 +34,13 @@ import { base64url, fromBase64url, newId, viewerIdFor } from "../lib/crypto.ts";
 import { ApiError } from "../lib/errors.ts";
 import { hit } from "../lib/ratelimit.ts";
 import { nowIso } from "../lib/time.ts";
-import { canModifyDoc, type PageClaim, pageDataAccess, pagePeopleAccess } from "../policy.ts";
+import {
+  canModifyDoc,
+  type PageClaim,
+  pageDataAccess,
+  pagePeopleAccess,
+  peopleListOffered,
+} from "../policy.ts";
 import { type Person, peopleWithAccess } from "./people.ts";
 import { namesByEmail } from "./users.ts";
 
@@ -175,8 +182,17 @@ export async function changes(d1: D1Database, artifactId: string): Promise<{ seq
   return { seq: (await usageOf(d1, artifactId)).seq };
 }
 
-/** What an agent sees first: declaration, usage, limits and one line per collection. */
-export async function summary(d1: D1Database, config: Config, target: DataTarget) {
+/**
+ * What an agent sees first: declaration, usage, limits and one line per collection, plus `people`
+ * (everyone with access) only when the page offers its people list (policy.ts peopleListOffered),
+ * read by `readerEmail` so the caller's own row carries their name.
+ */
+export async function summary(
+  d1: D1Database,
+  config: Config,
+  target: DataTarget,
+  readerEmail: string | null,
+): Promise<Omit<DataSummary, "untrusted">> {
   const usage = await usageOf(d1, target.id);
   const { results } = await d1
     .prepare(
@@ -185,14 +201,16 @@ export async function summary(d1: D1Database, config: Config, target: DataTarget
     )
     .bind(target.id)
     .all<{ name: string; docs: number; bytes: number; updated_at: string }>();
-  const people = await peopleWithAccess(d1, config.tokenSigningKey, target.id);
+  const people = peopleListOffered(target.caps, sharedDataActive(config))
+    ? await peopleWithAccess(d1, config.tokenSigningKey, target.id, readerEmail)
+    : null;
   return {
     capabilities: capabilityList(target.caps),
     available: unavailableReason(config, target.caps) === null,
     usage: { docs: usage.docs, bytes: usage.bytes },
     limits: limitsOf(config),
     collections: results,
-    people: people.map(toAgentPerson),
+    ...(people ? { people: people.map(toAgentPerson) } : {}),
   };
 }
 

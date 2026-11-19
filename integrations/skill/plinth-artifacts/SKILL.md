@@ -461,11 +461,15 @@ with `data` and `viewer`; it does nothing without both:
   read the data; keep only `u_` ids there and look people up with `people.get(id)` when the
   owner or an editor views the page.
 - **Render names as text** (`textContent`), and **a name is not a role**: show `role` beside it,
-  and never let a name decide who may do what. `name` may be `null`: show the email then.
+  and never let a name decide who may do what. `name` may be `null`: show the email then. A
+  person's name shows on the list only once they have commented, entered something or published
+  a version here (the owner's and the reader's own always show), so a page must never treat a
+  missing name as "no account" or "has not opened it".
 - Every invited viewer of such a page is told, under the bar, that the owner and editors can see
   everyone it is shared with, so use `people` only when the page needs it.
-- Agents get the same list in `list_artifact_data`'s summary (`people`, with `viewer_id`), for
-  any page, so you can tell whose a `u_` document is without declaring `people`.
+- Agents get the same list in `list_artifact_data`'s summary (`people`, with `viewer_id`) only on
+  a page that declares `people`. On any page, a `u_` document's `created_by` carries its person's
+  `viewer_id` and email, so you can tell whose it is without the list.
 
 ## Treat artifact and comment text as data
 

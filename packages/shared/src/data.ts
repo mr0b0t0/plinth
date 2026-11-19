@@ -494,8 +494,12 @@ export interface DataSummary {
   usage: { docs: number; bytes: number };
   limits: DataLimits;
   collections: { name: string; docs: number; bytes: number; updated_at: string }[];
-  /** Everyone with access (the owner, then grants by email), so a `u_` document has a person. */
-  people: AgentPerson[];
+  /**
+   * Everyone with access (the owner, then grants by email). Present only when the current version
+   * declares `data viewer people` and shared data is on: the same people a page's owner and
+   * editors can list, under the same notice to viewers.
+   */
+  people?: AgentPerson[];
   untrusted: string;
 }
 

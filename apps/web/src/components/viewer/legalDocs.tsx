@@ -172,8 +172,10 @@ function privacy(op: OperatorInfo, cfg: LegalConfig): LegalDoc {
             <li>
               <strong>Your email address</strong>, and a name if you add one: to sign you in, to
               show who owns, edits or comments on an artifact and, on pages that show who is
-              viewing, to the page and the people it is shared with. A page can also let its owner
-              and editors see everyone it is shared with, by email address, name and role.
+              viewing, to the page and the people it is shared with. A page can also let its owner,
+              its editors and their agents see everyone it is shared with, by email address and
+              role, and by name once that person has commented, entered something or published a
+              version on it.
             </li>
             <li>
               <strong>Your artifacts</strong>: every version of the pages, files, titles, categories

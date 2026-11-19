@@ -260,8 +260,9 @@ describe("people list: what owners and editors see", () => {
     expect(res.status).toBe(200);
     contentHeaders(res);
     const body = await json(res);
+    // The editor has a name but has not taken part yet, so the owner sees their address alone.
     const grants = [
-      { id: ed.viewerId, email: ed.email, name: "Bo Editor", role: "editor", you: false },
+      { id: ed.viewerId, email: ed.email, name: null, role: "editor", you: false },
       { id: vw.viewerId, email: vw.email, name: null, role: "viewer", you: false },
       {
         id: await viewerIdFor(SECRET, id, "zed-no-account@example.com"),
@@ -284,20 +285,31 @@ describe("people list: what owners and editors see", () => {
       ],
       total: 4,
     });
-    // The editor sees the same list, with their own row marked.
+    // The editor sees the same list, with their own row marked and named.
     const seen = await json(await api(id, "/people", { cookie: ed.cookie }));
+    expect(seen.people.filter((p: { you: boolean }) => p.you)).toEqual([
+      { id: ed.viewerId, email: ed.email, name: "Bo Editor", role: "editor", you: true },
+    ]);
+    // Once the editor writes an entry, the owner sees their name too.
     expect(
-      seen.people.filter((p: { you: boolean }) => p.you).map((p: { id: string }) => p.id),
-    ).toEqual([ed.viewerId]);
+      (await api(id, "/data/notes/n1", { cookie: ed.cookie, body: { data: { t: 1 } } })).status,
+    ).toBe(201);
+    const after = await json(await api(id, "/people", { cookie: ownerP.cookie }));
+    expect(after.people.find((p: { id: string }) => p.id === ed.viewerId).name).toBe("Bo Editor");
   });
 
   it("q matches every term in names and emails, ignoring case; limit and total", async () => {
     const { id, ownerP } = await setup(peoplePage());
     await setName(ownerP.userId, "Ana Owner");
     const ed = await holder(id, "editor", "Bo Editor");
-    await holder(id, "viewer", "Cy Viewer");
+    const cy = await holder(id, "viewer", "Cy Viewer");
     const q = async (query: string) =>
       json(await api(id, `/people?${query}`, { cookie: ownerP.cookie }));
+    // A name the list keeps back (nobody has taken part yet) is not searched either.
+    expect((await q("q=bo")).total).toBe(0);
+    for (const who of [ed, cy]) {
+      await api(id, "/data/signups/~me", { cookie: who.cookie, body: { data: { yes: true } } });
+    }
     expect((await q("q=bo")).people.map((p: { id: string }) => p.id)).toEqual([ed.viewerId]);
     expect((await q("q=EDITOR%20bo")).people.map((p: { id: string }) => p.id)).toEqual([
       ed.viewerId,
@@ -318,6 +330,7 @@ describe("people list: what owners and editors see", () => {
   it("/people/<id>: a person with access now, else 404", async () => {
     const { id, ownerP } = await setup(peoplePage());
     const ed = await holder(id, "editor", "Bo Editor");
+    await api(id, "/data/notes/n1", { cookie: ed.cookie, body: { data: { t: 1 } } });
     const one = await api(id, `/people/${ed.viewerId}`, { cookie: ownerP.cookie });
     expect(one.status).toBe(200);
     contentHeaders(one);

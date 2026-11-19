@@ -14,10 +14,11 @@ import {
   type EffectiveRole,
   type PeopleResult,
 } from "@plinth/shared";
+import { sharedDataActive } from "../config.ts";
 import type { ArtifactRow } from "../db/schema.ts";
 import { viewerIdFor } from "../lib/crypto.ts";
 import { ApiError, notFound } from "../lib/errors.ts";
-import { principalEmail } from "../policy.ts";
+import { peopleListOffered, principalEmail } from "../policy.ts";
 import { getArtifact, grantFor, requireArtifact, versionCapabilities } from "./artifacts.ts";
 import type { Ctx } from "./context.ts";
 import {
@@ -98,7 +99,8 @@ export async function listArtifactData(
   const target = await targetOf(ctx, artifact);
   const d1 = ctx.env.DB;
   if (input.collection === undefined) {
-    return { ...(await summary(d1, ctx.config, target)), untrusted: DATA_UNTRUSTED_FIELD };
+    const own = principalEmail(ctx.principal);
+    return { ...(await summary(d1, ctx.config, target, own)), untrusted: DATA_UNTRUSTED_FIELD };
   }
   const secret = ctx.config.tokenSigningKey;
   if (input.doc_id !== undefined) {
@@ -126,14 +128,26 @@ export async function listArtifactData(
 
 /**
  * GET /api/v1/artifacts/:ref/people: everyone with access (owner or editor, policy action
- * `people`), optionally filtered by `q`, the same list list_artifact_data's summary carries.
+ * `people`), optionally filtered by `q`, the same list list_artifact_data's summary carries. Only
+ * while the page offers it (policy.ts peopleListOffered): otherwise 403 `feature_disabled` with the
+ * reason, as the page route gives.
  */
 export async function listArtifactPeople(
   ctx: Ctx,
   input: { id: string; q?: string },
 ): Promise<PeopleResult> {
   const { artifact } = await requireArtifact(ctx, input.id, "people");
-  const people = await peopleWithAccess(ctx.env.DB, ctx.config.tokenSigningKey, artifact.id);
+  const { caps } = await targetOf(ctx, artifact);
+  if (!peopleListOffered(caps, sharedDataActive(ctx.config))) {
+    const reason = unavailableReason(ctx.config, caps) ?? "not_declared";
+    throw new ApiError("feature_disabled", "This artifact does not list its people", { reason });
+  }
+  const people = await peopleWithAccess(
+    ctx.env.DB,
+    ctx.config.tokenSigningKey,
+    artifact.id,
+    principalEmail(ctx.principal),
+  );
   return {
     people: matchPeople(people, input.q).map(toAgentPerson),
     untrusted: PEOPLE_UNTRUSTED_FIELD,

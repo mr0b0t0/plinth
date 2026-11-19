@@ -1,13 +1,16 @@
 // Who may list an artifact's people (policy.ts): pagePeopleAccess on the page, and the `people`
-// action for agents and the app. Owners and editors only, never anyone else.
+// action for agents and the app. Owners and editors only, never anyone else, and only where the
+// page offers the list (peopleListOffered). Whose names an access list shows (accessListShowsName).
 import { type Capabilities, type EffectiveRole, ROLES } from "@plinth/shared";
 import { describe, expect, it } from "vitest";
 import {
   type ArtifactFacts,
+  accessListShowsName,
   decide,
   type PageClaim,
   type Principal,
   pagePeopleAccess,
+  peopleListOffered,
   scopeFor,
 } from "../src/policy.ts";
 
@@ -124,5 +127,32 @@ describe("policy: the people action", () => {
     expect(
       decide(user("u-owner"), "people", artifact({ deleted: true }), access(null)),
     ).toMatchObject({ allow: false, reason: "not_found" });
+  });
+});
+
+describe("policy: peopleListOffered", () => {
+  it("is the one switch for the page, agents and REST: `data viewer people` while active", () => {
+    expect(peopleListOffered(caps(), true)).toBe(true);
+    expect(peopleListOffered(caps(), false)).toBe(false);
+    expect(peopleListOffered(caps({ people: false }), true)).toBe(false);
+    expect(peopleListOffered(caps({ viewer: false }), true)).toBe(false);
+    expect(peopleListOffered(caps({ data: false, room: true }), true)).toBe(false);
+    expect(peopleListOffered(null, true)).toBe(false);
+  });
+});
+
+describe("policy: accessListShowsName", () => {
+  it("names the owner, the reader's own row and holders who took part, nobody else", () => {
+    const roles: EffectiveRole[] = ["owner", ...ROLES];
+    for (const role of roles) {
+      for (const you of [true, false]) {
+        for (const tookPart of [true, false]) {
+          expect(
+            accessListShowsName({ role, you, tookPart }),
+            `${role} you=${you} tookPart=${tookPart}`,
+          ).toBe(role === "owner" || you || tookPart);
+        }
+      }
+    }
   });
 });

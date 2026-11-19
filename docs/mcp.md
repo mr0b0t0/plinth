@@ -626,12 +626,16 @@ refused. Scope `artifacts:read`.
 ```
 
 - No `collection`: `{ capabilities, available, usage: { docs, bytes }, limits, collections: [{
-  name, docs, bytes, updated_at }], people, untrusted }`. `available` says whether pages can use
+  name, docs, bytes, updated_at }], people?, untrusted }`. `available` says whether pages can use
   shared data right now (feature on, `origin` isolation, current version declares `data`).
-  `people` is everyone with access, the owner first and then every grant by email, as `{
-  viewer_id, email, name, role }`, whatever the page declares: a `u_` document's id is its
-  person's `viewer_id`. It is who has access, never who opened the page.
-  `GET /api/v1/artifacts/:ref/people?q=` returns the same list for scripts.
+  `people` is there only when the current version declares `data viewer people` and shared data
+  is on: everyone with access, the owner first and then every grant by email, as `{ viewer_id,
+  email, name, role }`. It is who has access, never who opened the page. A grant holder's `name`
+  is `null` until they have commented, written shared data or published a version on the artifact
+  (the owner's name and your own are always there), because the owner typed their address.
+  `GET /api/v1/artifacts/:ref/people?q=` returns the same list for scripts, and answers 403
+  `feature_disabled` where the summary has none. On any page, a `u_` document's id is its
+  person's `viewer_id`, which its `created_by` carries.
 - A `collection`: `{ docs, next_cursor, untrusted }`, in creation order.
 - A `doc_id`: `{ doc, untrusted }`.
 

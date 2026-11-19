@@ -652,16 +652,29 @@ never a directory.
   per reader per artifact. The routes are entries of the shared-data route table, so the data API's
   ten checks run first (see [docs/security.md](security.md#the-people-list)). Search runs only over
   that one list: nothing takes an arbitrary email or name and says whether it has an account.
+- **Names on the access list.** The owner types every grant's address and its holder is not told,
+  so an access list (the people list for the page, agents and REST, and the owner's sharing
+  settings) shows a grant holder's name only once that person has taken part in the artifact:
+  written a comment, a shared-data entry or a version of it, each of which already shows their name
+  to the people who can read the list. The owner's name and the reader's own row are always shown.
+  Until then the entry has `name: null`, exactly like an address with no account, and `q` does not
+  match the name, so adding addresses never tells the owner which have an account or what they are
+  called (`policy.ts accessListShowsName`).
 - **Telling the viewer.** The gate's `people` block (`name`, `list`) adds to the line under the
   bar: the name the page sees beside the email, and, on a page that declares `people`, "The owner
   and editors can see everyone this page is shared with", shown to every identified viewer since
   their address is on the list.
-- **Agents and REST.** No new MCP tool. `list_artifact_data` without a collection returns `people`
-  (`{ viewer_id, email, name, role }`, the same list) for every owner or editor caller, whatever
-  the page declares, so an agent can tell whose a `u_` document is; document authors gain `name`.
-  `GET /api/v1/artifacts/:ref/people?q=` mirrors it (policy action `people`: owners and editors,
-  `artifacts:read`). The owner's `GET /api/v1/artifacts/:ref/sharing` gains `name` on each grant.
-  Names are untrusted for agents and the tool descriptions say so.
+- **Agents and REST.** No new MCP tool. Document authors gain `name` for owners' and editors'
+  agents on any page, beside the `viewer_id` that already tells whose a `u_` document is (only its
+  person can create it). The access list reaches agents only where the page offers it: when the
+  current version declares `data viewer people` and shared data is on (`policy.ts
+  peopleListOffered`, the same answer the page route and the notice use), `list_artifact_data`
+  without a collection also returns `people` (`{ viewer_id, email, name, role }`, the same list),
+  and `GET /api/v1/artifacts/:ref/people?q=` mirrors it (policy action `people`: owners and
+  editors, `artifacts:read`; 403 `feature_disabled` with the reason otherwise). Without the
+  declaration only the owner sees the access list, in the sharing settings, as before; the owner's
+  `GET /api/v1/artifacts/:ref/sharing` gains `name` on each grant under the rule above. Names are
+  untrusted for agents and the tool descriptions say so.
 - **Availability.** With shared data: under opaque isolation, or with `ALLOW_SHARED_DATA` off, the
   people routes refuse and the session reports `can_list_people: false`. Names follow identity
   claims (`ALLOW_SHARED_DATA` or `ALLOW_ROOMS`). There is no switch of its own: the list is opt-in
@@ -879,8 +892,10 @@ options.
   and agents treat every document as untrusted input. Details in `docs/security.md`.
 - **Names are display text; the people list is the access list.** Display names have no `@` and
   no control or invisible characters, and never stand for a role. A page sees them only where it
-  sees an email. Only the owner and editors list who has access, on a page that declares
-  `people`, and every identified viewer is told; there is no visit log and no directory search.
+  sees an email. Only the owner and editors (and their agents) list who has access, on a page that
+  declares `people`, and every identified viewer is told; there is no visit log and no directory
+  search. An access list names a grant holder only once they have taken part in the artifact, so
+  the addresses an owner adds never reveal which have an account.
 - **Tokens.** Stored hashed, shown once, revocable per connection, with last-used timestamps.
 - **Open counts are aggregates.** One number per artifact per UTC day, never who opened it, shown
   only to the artifact's owner and, summed over the instance, to admins.

@@ -413,11 +413,22 @@ export function isAdmin(p: Principal): boolean {
 // ---------- who is viewing: the people list on the page ----------
 
 /**
+ * Does the artifact offer its people list at all: its current version declares `data viewer
+ * people` while shared data is active (`active`: sharedDataActive(config))? This one answer governs
+ * every way to read the list: the page (pagePeopleAccess), owners' and editors' agents
+ * (list_artifact_data's summary) and REST (GET /api/v1/artifacts/:ref/people), and the notice
+ * under the bar tells every identified viewer exactly when it is true. Without it nobody but the
+ * owner (in the sharing settings) sees the access list.
+ */
+export function peopleListOffered(caps: Capabilities | null, active: boolean): boolean {
+  return active && caps?.data === true && caps.viewer && caps.people;
+}
+
+/**
  * May this page reader list the artifact's people (/__plinth/api/v1/people)? Owners and editors
- * with an identity claim, on a page whose current version declares `data viewer people`, while
- * shared data is active (`active`: sharedDataActive(config)). Commenters, viewers and anonymous
- * link viewers never: the list holds every grant holder's email. The role comes from the claim,
- * sealed at the current access epoch, so a demoted editor's pass stops working at once.
+ * with an identity claim, on a page that offers the list (peopleListOffered). Commenters, viewers
+ * and anonymous link viewers never: the list holds every grant holder's email. The role comes from
+ * the claim, sealed at the current access epoch, so a demoted editor's pass stops working at once.
  */
 export function pagePeopleAccess(
   claim: PageClaim | null,
@@ -425,7 +436,22 @@ export function pagePeopleAccess(
   active: boolean,
 ): { list: boolean } {
   const editor = claim?.role === "owner" || claim?.role === "editor";
-  return {
-    list: active && editor && caps?.data === true && caps.viewer && caps.people,
-  };
+  return { list: editor && peopleListOffered(caps, active) };
+}
+
+/**
+ * May an access list (the people list, the owner's sharing settings) show this person's display
+ * name? The owner types every grant's address and its holder is not told, so a name beside such an
+ * address would say whether it has an account and what that account is called. An access list
+ * therefore names only the owner (whose name the gate already shows every viewer), the reader's own
+ * row, and a grant holder who has taken part in this artifact: written a comment, a shared-data
+ * entry or a version, each of which already shows their name to the people who can read the list.
+ * Everyone else is listed by address alone, whether or not an account stands behind it.
+ */
+export function accessListShowsName(p: {
+  role: EffectiveRole;
+  you: boolean;
+  tookPart: boolean;
+}): boolean {
+  return p.role === "owner" || p.you || p.tookPart;
 }

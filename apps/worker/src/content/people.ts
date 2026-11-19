@@ -83,7 +83,7 @@ export async function listPeopleRoute(c: DataRouteCtx): Promise<PagePeopleList> 
   const limit = limitParam(c.url.searchParams.get("limit"));
   const reader = await allowed(c);
   const matched = matchPeople(
-    await peopleWithAccess(c.env.DB, c.config.tokenSigningKey, c.target.id),
+    await peopleWithAccess(c.env.DB, c.config.tokenSigningKey, c.target.id, reader.email),
     q,
   );
   return {
@@ -97,7 +97,10 @@ export async function getPersonRoute(c: DataRouteCtx): Promise<PagePerson> {
   const id = c.params.id as string;
   const reader = await allowed(c);
   const person = PERSON_ID_RE.test(id)
-    ? personById(await peopleWithAccess(c.env.DB, c.config.tokenSigningKey, c.target.id), id)
+    ? personById(
+        await peopleWithAccess(c.env.DB, c.config.tokenSigningKey, c.target.id, reader.email),
+        id,
+      )
     : null;
   if (!person) throw new ApiError("not_found", "Nobody with access has this id");
   return toPagePerson(person, reader);

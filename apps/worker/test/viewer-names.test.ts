@@ -9,6 +9,7 @@ import { describe, expect, it } from "vitest";
 import { eraseUserSql } from "../scripts/admin-lib.mjs";
 import { viewerIdFor } from "../src/lib/crypto.ts";
 import {
+  APP,
   agent,
   browserSession,
   call,
@@ -20,7 +21,7 @@ import {
   tool,
 } from "./helpers.ts";
 import { api, holder, peoplePage, SECRET, setName, storeRawName } from "./people-helpers.ts";
-import { cookieFor, grant, roomPage, sealedCookie, setup } from "./room-helpers.ts";
+import { cookieFor, grant, roomPage, run, sealedCookie, setup } from "./room-helpers.ts";
 
 async function stored(userId: string): Promise<string | null> {
   const row = await env.DB.prepare("SELECT name FROM users WHERE id = ?1")
@@ -155,15 +156,34 @@ describe("names on the page", () => {
 });
 
 describe("names for agents, the owner and the viewer", () => {
-  it("list_artifact_data: people in the summary and names on authors, for owners and editors", async () => {
+  it("list_artifact_data: names on authors on any page, people in the summary only with `people`", async () => {
     const { owner, id, ownerP } = await setup(peoplePage({ people: false }));
     await setName(ownerP.userId, "Ana Owner");
     const ed = await holder(id, "editor", "Bo Editor");
     await api(id, "/data/notes/n1", { cookie: ed.cookie, body: { data: { t: 1 } } });
     const client = await mcpClient(owner.token);
-    const sum = await tool(client, "list_artifact_data", { id });
+    let sum = await tool(client, "list_artifact_data", { id });
     expect(sum.isError).toBe(false);
-    // The access list, whatever the page declares.
+    // Without `people` the access list stays in the owner's sharing settings: no agent gets it.
+    expect(sum.data).not.toHaveProperty("people");
+    expect(sum.data.untrusted).toContain("Names are display text");
+    const page = await tool(client, "list_artifact_data", { id, collection: "notes" });
+    expect(page.data.docs[0].created_by).toMatchObject({
+      email: ed.email,
+      name: "Bo Editor",
+      viewer_id: ed.viewerId,
+    });
+    const one = await tool(client, "list_artifact_data", { id, collection: "notes", doc_id: "n1" });
+    expect(one.data.doc.updated_by.name).toBe("Bo Editor");
+
+    // Declaring `people` turns the list on for agents, exactly as for the page.
+    const republished = await call(`/api/v1/artifacts/${id}`, {
+      method: "PUT",
+      headers: { ...owner.auth, "Content-Type": "application/json" },
+      body: JSON.stringify({ html: peoplePage(), base_version: 1 }),
+    });
+    expect(republished.status).toBe(200);
+    sum = await tool(client, "list_artifact_data", { id });
     expect(sum.data.people).toEqual([
       {
         viewer_id: await viewerIdFor(SECRET, id, ownerP.email),
@@ -173,12 +193,11 @@ describe("names for agents, the owner and the viewer", () => {
       },
       { viewer_id: ed.viewerId, email: ed.email, name: "Bo Editor", role: "editor" },
     ]);
-    expect(sum.data.untrusted).toContain("Names are display text");
-    const page = await tool(client, "list_artifact_data", { id, collection: "notes" });
-    expect(page.data.docs[0].created_by).toMatchObject({ email: ed.email, name: "Bo Editor" });
-    const one = await tool(client, "list_artifact_data", { id, collection: "notes", doc_id: "n1" });
-    expect(one.data.doc.updated_by.name).toBe("Bo Editor");
     await client.close();
+    // Shared data off on the instance: no list either.
+    const off = await mcpClient(owner.token, { ALLOW_SHARED_DATA: "false" });
+    expect((await tool(off, "list_artifact_data", { id })).data).not.toHaveProperty("people");
+    await off.close();
 
     // An editor's agent gets the same; a commenter's is refused as before.
     const edAgent = await agent();
@@ -193,10 +212,11 @@ describe("names for agents, the owner and the viewer", () => {
     await cc.close();
   });
 
-  it("GET /api/v1/artifacts/:ref/people mirrors the summary, with q; owners and editors only", async () => {
+  it("GET /api/v1/artifacts/:ref/people mirrors the summary, with q; owners and editors, only with `people`", async () => {
     const { owner, id, ownerP } = await setup(peoplePage());
     await setName(ownerP.userId, "Ana Owner");
     const ed = await holder(id, "editor", "Bo Editor");
+    await api(id, "/data/notes/n1", { cookie: ed.cookie, body: { data: { t: 1 } } });
     const res = await call(`/api/v1/artifacts/${id}/people?q=bo`, { headers: owner.auth });
     expect(res.status).toBe(200);
     const body = await json(res);
@@ -219,17 +239,134 @@ describe("names for agents, the owner and the viewer", () => {
       headers: owner.auth,
     });
     expect(tooLong.status).toBe(400);
+    // Off where the page could not list them: shared data off, or `people` not declared.
+    const off = await run(
+      `${APP}/api/v1/artifacts/${id}/people`,
+      { headers: owner.auth },
+      { ALLOW_SHARED_DATA: "false" },
+    );
+    expect(off.status).toBe(403);
+    expect((await json(off)).error).toMatchObject({
+      code: "feature_disabled",
+      details: { reason: "disabled" },
+    });
+    const noList = await publish(owner.auth, {
+      html: peoplePage({ people: false }),
+      visibility: "allowlist",
+    });
+    const refused = await call(`/api/v1/artifacts/${noList.body.id}/people`, {
+      headers: owner.auth,
+    });
+    expect(refused.status).toBe(403);
+    expect((await json(refused)).error).toMatchObject({
+      code: "feature_disabled",
+      details: { reason: "not_declared" },
+    });
   });
 
-  it("the owner's sharing settings name the person behind each address; editors still get 403", async () => {
-    const { id, ownerP } = await setup(peoplePage());
+  it("an address the owner adds says nothing about its account until its holder takes part", async () => {
+    const { owner, id, ownerP } = await setup(peoplePage());
+    // Three accounts with names, which the owner knows only by address, and an address with none.
+    const commenter = await createUser();
+    const writer = await createUser();
+    const publisher = await agent();
+    await setName(commenter.id, "Cat Commenter");
+    await setName(writer.id, "Wes Writer");
+    await setName(publisher.user.id, "Pia Publisher");
+    const put = await call(`/api/v1/artifacts/${id}/sharing`, {
+      method: "PUT",
+      headers: { ...ownerP.session.headers, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        grants: [
+          { email: commenter.email, role: "commenter" },
+          { email: writer.email, role: "viewer" },
+          { email: publisher.user.email, role: "editor" },
+          { email: "nobody-yet@example.com", role: "viewer" },
+        ],
+      }),
+    });
+    expect(put.status).toBe(200);
+    expect((await json(put)).grants.map((g: { name: string | null }) => g.name)).toEqual([
+      null,
+      null,
+      null,
+      null,
+    ]);
+    const ownerCookie = await cookieFor(id, ownerP.session.headers);
+    const client = await mcpClient(owner.token);
+    /** The name beside each address on every surface that lists access, which all agree. */
+    const seen = async () => {
+      const sharing = await json(
+        await call(`/api/v1/artifacts/${id}/sharing`, { headers: ownerP.session.headers }),
+      );
+      const rest = await json(
+        await call(`/api/v1/artifacts/${id}/people`, { headers: owner.auth }),
+      );
+      const page = await json(await api(id, "/people", { cookie: ownerCookie }));
+      const sum = (await tool(client, "list_artifact_data", { id })).data;
+      const of = (list: { email: string; name: string | null }[]) =>
+        Object.fromEntries(
+          list.filter((p) => p.email !== ownerP.email).map((p) => [p.email, p.name]),
+        );
+      const views = [of(sharing.grants), of(rest.people), of(page.people), of(sum.people)];
+      for (const v of views.slice(1)) expect(v).toEqual(views[0]);
+      return views[0];
+    };
+    const nobody = {
+      [commenter.email]: null,
+      [writer.email]: null,
+      [publisher.user.email]: null,
+      "nobody-yet@example.com": null,
+    };
+    expect(await seen()).toEqual(nobody);
+    // A search cannot find a name the list keeps back.
+    for (const q of ["cat", "wes", "pia publisher"]) {
+      const onPage = await api(id, `/people?q=${encodeURIComponent(q)}`, { cookie: ownerCookie });
+      expect((await json(onPage)).total, q).toBe(0);
+      const rest = await call(`/api/v1/artifacts/${id}/people?q=${encodeURIComponent(q)}`, {
+        headers: owner.auth,
+      });
+      expect((await json(rest)).people, q).toEqual([]);
+    }
+
+    // A comment, a shared-data entry and a version each show their author's name, and only theirs.
+    const cs = await browserSession(commenter.id);
+    const comment = await call(`/api/v1/artifacts/${id}/comments`, {
+      method: "POST",
+      headers: { ...cs.headers, "Content-Type": "application/json" },
+      body: JSON.stringify({ body: "Looks good" }),
+    });
+    expect(comment.status).toBe(201);
+    expect(await seen()).toEqual({ ...nobody, [commenter.email]: "Cat Commenter" });
+    const ws = await browserSession(writer.id);
+    const wrote = await api(id, "/data/signups/~me", {
+      cookie: await cookieFor(id, ws.headers),
+      body: { data: { yes: true } },
+    });
+    expect(wrote.status).toBe(201);
+    expect(await seen()).toEqual({
+      ...nobody,
+      [commenter.email]: "Cat Commenter",
+      [writer.email]: "Wes Writer",
+    });
+    const published = await call(`/api/v1/artifacts/${id}`, {
+      method: "PUT",
+      headers: { ...publisher.auth, "Content-Type": "application/json" },
+      body: JSON.stringify({ html: peoplePage(), base_version: 1 }),
+    });
+    expect(published.status).toBe(200);
+    expect(await seen()).toEqual({
+      ...nobody,
+      [commenter.email]: "Cat Commenter",
+      [writer.email]: "Wes Writer",
+      [publisher.user.email]: "Pia Publisher",
+    });
+    await client.close();
+  });
+
+  it("the owner's sharing settings stay owner-only", async () => {
+    const { id } = await setup(peoplePage());
     const ed = await holder(id, "editor", "Bo Editor");
-    await grant(id, "nobody-yet@example.com", "viewer");
-    const res = await call(`/api/v1/artifacts/${id}/sharing`, { headers: ownerP.session.headers });
-    expect(res.status).toBe(200);
-    const grants = (await json(res)).grants as { email: string; name: string | null }[];
-    expect(grants.find((g) => g.email === ed.email)?.name).toBe("Bo Editor");
-    expect(grants.find((g) => g.email === "nobody-yet@example.com")?.name).toBeNull();
     const es = await browserSession(ed.userId as string);
     expect((await call(`/api/v1/artifacts/${id}/sharing`, { headers: es.headers })).status).toBe(
       403,

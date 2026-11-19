@@ -30,7 +30,7 @@ import { appCookieName, secureFlag, serializeCookie } from "../lib/cookies.ts";
 import { signToken, verifyPassword, viewerIdFor } from "../lib/crypto.ts";
 import { ApiError } from "../lib/errors.ts";
 import { hit } from "../lib/ratelimit.ts";
-import { type Decision, type Principal, pageDataAccess } from "../policy.ts";
+import { type Decision, type Principal, pageDataAccess, peopleListOffered } from "../policy.ts";
 import { decideFor, findArtifact, grantFor, versionCapabilities } from "../services/artifacts.ts";
 import type { Ctx } from "../services/context.ts";
 import { readLiveDraftInfo } from "../services/live.ts";
@@ -286,7 +286,8 @@ async function gatePeople(
   const name = (await namesByEmail(ctx.env.DB, [identity.email])).get(identity.email) ?? null;
   const out: ViewGatePeople = {
     ...(name ? { name } : {}),
-    ...(data && caps.people ? { list: true as const } : {}),
+    // Exactly when anyone (the page, agents, REST) can read the list: policy.ts peopleListOffered.
+    ...(peopleListOffered(caps, sharedDataActive(ctx.config)) ? { list: true as const } : {}),
   };
   return out.name || out.list ? out : undefined;
 }

@@ -32,7 +32,7 @@ make a test pass.
 | Cross-site WebSocket hijacking of a live room | Artifact B, framed by the app, opens a socket to artifact A's `/__plinth/room/` with A's content cookie from the shared partitioned jar | The upgrade requires an exact `Origin` (absent or `null` refused), same-origin fetch metadata when sent, the `plinth.room.v1` subprotocol and an identified content pass at the current epoch; no CORS anywhere ([Live rooms](#live-rooms)) |
 | Page code harvests names and the access list | A page reads `plinth.viewer.name`, its authors' names or `plinth.people.list()` and copies them where link viewers or every viewer can read them | Names appear only where the email already does (`viewer` declared, identified reader); the people list only for owners and editors on a page that declares `data viewer people`, whose author is the owner or an editor; every identified viewer is told, under the bar, that the owner and editors can see everyone the page is shared with; the skill forbids copying the list or emails into shared data. WebRTC stays the known CSP gap ([The people list](#the-people-list)) |
 | Display name used to impersonate | Someone sets their name to "Owner", "ana@example.com" or a right-to-left override that reorders the text around it | Names cannot contain `@`, control, bidi, zero-width or separator characters, are cut to 64 code points on every read, and are never authority: `role` and `comment_author_role` stay server-derived and Plinth's own UI shows the role beside them; tool descriptions say names are display text |
-| Enumerating who has an account | A caller tries addresses to learn which ones have a Plinth account or what they are called | No route takes an email or a name: the people list searches only one artifact's access list, which the caller already has the right to see. A name beside an address says an account exists, visible only to readers who already see that address |
+| Enumerating who has an account | A caller tries addresses to learn which ones have a Plinth account or what they are called, for example by adding them as grants on an artifact of their own and reading the people list or the sharing settings back | No route takes an email or a name to look up, and the people list searches only one artifact's access list. Since the owner writes that list without its holders being told, an access list shows a grant holder's name only once that person has taken part in the artifact (a comment, a shared-data entry or a version, which already show their name to the readers of the list), and a name it keeps back is `null` and never matched by `q`, the same as an address with no account (`policy.ts accessListShowsName`) |
 
 Out of scope for v1: denial of service beyond Cloudflare's defaults, a compromised Cloudflare
 account, and malicious instance operators.
@@ -824,15 +824,32 @@ is who has access, never who opened the page or when: no visit is recorded. `q` 
 only, so nothing anywhere takes an arbitrary email or name and says whether it has an account. The
 routes are GET only, take no body and never log names, emails or queries.
 
+**Names on an access list.** The owner writes every grant's address, adding one sends nothing to
+its holder, and a name beside an address says that it has an account. So an access list (this
+list, its agent and REST copies, and the owner's sharing settings) names a grant holder only after
+they have taken part in the artifact: written a comment, a shared-data entry or a version. Those
+already show their name to everyone who can read the list, so the list tells no reader anything
+new. The owner's own name (which the gate shows every viewer) and the reader's own row are always
+named. A name kept back reads as `null`, exactly like an address without an account, and `q` only
+searches the names shown. The rule is `accessListShowsName` in `policy.ts`, and the SQL works out
+"has taken part" only for holders whose account has a name. Pages, agents and the owner still see
+names wherever the person themselves wrote something (document authors, comments, versions) or is
+present (room peers), as before.
+
 **Editors see viewers' addresses.** Editors can read the list from the page although
 `/sharing` stays owner-only. They can already change the page, read every writer's email over
 MCP and log the email of everyone who opens a `viewer` page, and owners grant editor on purpose.
 Every identified viewer of a page that declares `people` is told, under the bar, that the owner and
 editors can see everyone it is shared with.
 
-**Agents and REST.** Owners' and editors' agents get the same list in `list_artifact_data`'s
-summary, whatever the page declares, and `GET /api/v1/artifacts/:ref/people` (policy action
-`people`, `artifacts:read`) mirrors it for scripts.
+**Agents and REST, under the same declaration.** Owners' and editors' agents get the same list in
+`list_artifact_data`'s summary, and `GET /api/v1/artifacts/:ref/people` (policy action `people`,
+`artifacts:read`) mirrors it for scripts, only while the current version declares `data viewer
+people` and shared data is on (`peopleListOffered` in `policy.ts`, the answer the page route and
+the notice under the bar also use). Otherwise the summary has no `people` and the route answers 403
+`feature_disabled` with the reason, so the notice is accurate: no editor, and no editor's agent,
+reads the access list of a page that does not declare `people`. An agent still tells whose a `u_`
+document is from the document's own `created_by`, since only that person can create it.
 
 ## Comments are untrusted input for agents
 

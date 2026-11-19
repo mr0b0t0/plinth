@@ -176,6 +176,17 @@ test("names and the people list on a page shared with a team", async ({ page, br
     await expect(frame(ed).locator("#people")).toContainText("Ana Owner · owner");
     await expect(frame(ed).locator("#signups")).toHaveText("Ana Owner");
 
+    // The owner typed the editor's address, so their name shows to the owner only once they
+    // take part: here, by signing up.
+    await openPage(page, art.url);
+    await expect(frame(page).locator("#people")).toContainText(`${editor} · editor`);
+    await expect(frame(page).locator("#people")).not.toContainText("Bo Editor");
+    await frame(ed).getByRole("button", { name: "Sign up" }).click();
+    await expect(frame(ed).locator("#signups li")).toHaveCount(2);
+    await openPage(page, art.url);
+    await expect(frame(page).locator("#people")).toContainText("Bo Editor · editor");
+    await expect(frame(page).locator("#signups")).toContainText("Bo Editor");
+
     // 5. The viewer confirms by code: no account, so no name; no list, but they are told.
     const vw = await listedViewer(browser, art.url, viewer);
     pages.push(vw);
@@ -183,7 +194,7 @@ test("names and the people list on a page shared with a team", async ({ page, br
     await expect(frame(vw).locator("body")).toHaveAttribute("data-can-list", "false");
     await expect(frame(vw).locator("#people-error")).toHaveText("forbidden");
     await expect(frame(vw).locator("#people li")).toHaveCount(0);
-    await expect(frame(vw).locator("#signups")).toHaveText("Ana Owner");
+    await expect(frame(vw).locator("#signups li")).toHaveText(["Ana Owner", "Bo Editor"]);
     await expect(notice(vw)).toContainText(PEOPLE_SENTENCE);
     await expect(notice(vw)).not.toContainText("also sees your name");
 
