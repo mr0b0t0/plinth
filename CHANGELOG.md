@@ -85,7 +85,8 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   settings (`board.json`), and a new board can start with a list of blocks and arrows, written
   once into its shared data. Agents read the board with `list_artifact_data` and add or move
   blocks with `write_artifact_data`. Needs shared data and origin isolation; `GET /api/v1/config`
-  lists which types an instance publishes (`artifact_types`).
+  lists which types an instance publishes (`artifact_types`). Plugin 0.29.0: when and how agents
+  publish and change whiteboards.
 
 ## 0.6.0 (2026-11-20)
 
