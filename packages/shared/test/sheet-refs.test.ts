@@ -156,6 +156,52 @@ describe("applySheetOps", () => {
     ).toThrow(/at most 10000 rows/);
   });
 
+  it("limits the formula text one call's inserts and deletes rewrite", () => {
+    // 49 rows of 10 formulas of 1,990 characters: under 1 MB, but each insert or delete re-reads
+    // all of it (about 90 ms for =A2+A2+...), and 200 of them took 25 s. The charge is by length,
+    // so a formula of one string, quick to read, keeps this test fast.
+    const f = `="${"a".repeat(1_987)}"`;
+    const big: Sheet = {
+      header: { columns: Array.from({ length: 10 }, (_, i) => ({ name: `c${i}`, type: "text" })) },
+      rows: Array.from({ length: 49 }, () => Array(10).fill(f)),
+    };
+    const perOp = 49 * 10 * f.length;
+    const fits = Math.floor(LIMITS.maxSheetOpShiftChars / perOp);
+    const churn: SheetOp[] = [];
+    for (let k = 0; k < 100; k++) {
+      churn.push(
+        { op: "insert_rows", before: 2, count: 1 },
+        { op: "delete_rows", from: 2, count: 1 },
+      );
+    }
+    let caught: unknown;
+    try {
+      applySheetOps(big, churn);
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBeInstanceOf(SheetOpError);
+    expect((caught as SheetOpError).index).toBe(fits);
+    expect((caught as SheetOpError).message).toMatch(/moves the references of at most/);
+    // Columns are charged the same way, and the ops that fit still apply.
+    expect(() =>
+      applySheetOps(
+        big,
+        Array.from(
+          { length: fits + 1 },
+          (_, k): SheetOp =>
+            k % 2 === 0
+              ? { op: "insert_columns", before: "A", columns: [{ name: "x" }] }
+              : { op: "delete_columns", from: "A" },
+        ),
+      ),
+    ).toThrow(/moves the references of at most/);
+    expect(applySheetOps(big, churn.slice(0, fits)).sheet.rows).toHaveLength(49);
+    // A sheet of short formulas takes every op a call allows.
+    const small: Sheet = { ...BASE, rows: Array.from({ length: 100 }, () => ["=A2+1", 2]) };
+    expect(applySheetOps(small, churn).changed.rows_inserted).toBe(100);
+  });
+
   it("limits the cells one call writes", () => {
     const row = Array.from({ length: 3 }, () => 1);
     const values = Array.from({ length: Math.ceil(LIMITS.maxSheetOpCells / 3) + 1 }, () => row);

@@ -163,6 +163,23 @@ describe("CSV import", () => {
     expect(Date.now() - t0).toBeLessThan(1_000);
   });
 
+  it("never runs a number pattern on a long field, and the pattern is linear", () => {
+    // 60,000 digits and an x took the old backtracking pattern about 2 s before the cell limit
+    // refused the field.
+    const start = Date.now();
+    expect(() => sheetFromCsv(`h\n${"1".repeat(60_000)}x\n`)).toThrow(/over 4000 characters/);
+    const s = sheetFromCsv(`h\n${"1".repeat(1_023)}x\n`);
+    expect(s.rows[0]?.[0]).toBe(`${"1".repeat(1_023)}x`);
+    expect(Date.now() - start).toBeLessThan(250);
+    const n = sheetFromCsv("h,p\n1.,50%\n.5,5%\n");
+    expect(n.header.columns.map((c) => c.type)).toEqual(["number", "number"]);
+    expect(n.rows).toEqual([
+      [1, 0.5],
+      [0.5, 0.05],
+    ]);
+    expect(sheetFromCsv("h\n5%%\n").rows).toEqual([["5%%"]]);
+  });
+
   it("refuses cells a 1 MB sheet cannot hold before it makes values of them", () => {
     const wide = Array.from({ length: 10_001 }, () => Array(100).fill("1").join(",")).join("\n");
     expect(() => sheetFromCsv(wide)).toThrow(SheetImportError);

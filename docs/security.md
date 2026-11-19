@@ -46,7 +46,7 @@ make a test pass.
 | Enumerating who has an account | A caller tries addresses to learn which ones have a Plinth account or what they are called, for example by adding them as grants on an artifact of their own and reading the people list or the sharing settings back | No route takes an email or a name to look up, and the people list searches only one artifact's access list. Since the owner writes that list without its holders being told, an access list shows a grant holder's name only once that person has taken part in the artifact (a comment, a shared-data entry or a version, which already show their name to the readers of the list), and a name it keeps back is `null` and never matched by `q`, the same as an address with no account (`policy.ts accessListShowsName`) |
 | A sheet's cell becomes markup or script | A cell, column name or title holds `<img onerror>`, `</script>` or a `javascript:` link | Strict publish parser and link rule; `jsonForScript` in the shell; the renderer uses `textContent` only and re-checks links; the strict shell CSP ([Sheets](#sheets)) |
 | A downloaded sheet attacks the spreadsheet app | A CSV cell `=cmd\|' /C calc'!A0` or an .xlsx formula calling HYPERLINK or WEBSERVICE runs when the file is opened | CSV text starting with `=`, `+`, `-`, `@`, tab or CR gets a leading `'`; .xlsx text is inline strings and its formulas come only from the function allowlist, with no external links or macros ([Sheets](#sheets)) |
-| A sheet exhausts the Worker or the browser | Formulas that reference each other in a long chain or a cycle, `REPT` of huge text, a 1 MB sheet of formulas, or a ZIP bomb, XML that makes a scanner backtrack, or a small file of very many cells sent as an import | An explicit stack and cycle detection (`#CYCLE!`), a step budget on both sides (`#LIMIT!`), text capped and charged by the length made and read, publish parses but never evaluates, and imports capped at 2 MB in and 24 MB inflated, inflated in small steps, scanned in linear time, and refused once their cells pass what 1 MB holds ([Sheets](#sheets)) |
+| A sheet exhausts the Worker or the browser | Formulas that reference each other in a long chain or a cycle, `REPT` of huge text, a 1 MB sheet of formulas, or a ZIP bomb, XML that makes a scanner backtrack, or a small file of very many cells sent as an import | An explicit stack and cycle detection (`#CYCLE!`), a step budget on both sides (`#LIMIT!`), text capped and charged by the length made and read, publish parses but never evaluates, and imports capped at 2 MB in and 24 MB inflated, inflated in small steps, scanned in linear time, and refused once their cells pass what 1 MB holds; numeric text matched in linear time; an edit's inserts and deletes capped at 4 MB of formula text rewritten ([Sheets](#sheets)) |
 
 Out of scope for v1: denial of service beyond Cloudflare's defaults, a compromised Cloudflare
 account, and malicious instance operators.
@@ -533,8 +533,11 @@ sheets. Text passes six layers:
    they return, and SUBSTITUTE pays a step per match it replaces), so one 32,767-character text
    read many times stays within the budget's CPU: when a read was free, 200,000 steps of
    `LEN(A2)` took 1.4 s, and of `TRIM` over spaces 190 ms. Text longer than 1,024
-   characters is never converted to a number or a boolean. Wildcard criteria are matched by a
-   loop whose work is charged, never by a regular expression built from cell text.
+   characters is never converted to a number or a boolean, and numeric text is matched by a
+   pattern with one way to read each character (`\d+\.?\d*` tried every split of a digit run
+   with a bad tail, about 1 ms for 1,024 characters, which no step paid for). Wildcard criteria
+   are matched by a loop whose work is charged, never by a regular expression built from cell
+   text.
 5. **CSV export.** RFC 4180 quoting and the OWASP formula-injection guard: a text value (a literal
    or a formula's text result) starting with `=`, `+`, `-`, `@`, tab or carriage return is written
    with a leading `'`; numbers are never prefixed. UTF-8 with a BOM, CRLF.
@@ -584,7 +587,9 @@ What else is new:
   heap out. Excel's `_xHHHH_`
   escapes are expanded with a loop like entities, and no replace with a callback runs on text a
   file can make long. A CSV field is built from slices of the text, never a character at a time
-  (a 2 MB field took more than 64 MB that way). `<col>` widths are read only for columns
+  (a 2 MB field took more than 64 MB that way), and a CSV field longer than 1,024 characters is
+  text without any pattern run on it (the number pattern is linear too; the old one took about a
+  second on a 40,000-digit field). `<col>` widths are read only for columns
   1 to 100 and from at most 100 ranges, whatever `min` and `max` say. A CSV keeps at most 10,000
   rows under its header and only counts the rest, and counts its cells before it makes values of
   them. A CSV never makes a formula; an .xlsx formula is kept only when it
@@ -596,6 +601,13 @@ What else is new:
   action and `edit_sheet` the `edit` action through `policy.ts`, and `edit_sheet` publishes only
   through `update_artifact`, which checks edit rights and the base version again: there is no cell
   write outside a version.
+- **Edits are bounded by the formulas they rewrite.** Each `insert_rows`, `delete_rows`,
+  `insert_columns` or `delete_columns` re-reads every formula in the sheet to move its references,
+  so one call rewrites at most 4 MB of formula text (`LIMITS.maxSheetOpShiftChars`), counted
+  before each formula is read. The ops run before the publish rate limit, as every publish's
+  validation does, so a call whose ops are refused costs no quota; this cap keeps each such call to
+  a few hundred milliseconds. Before it, 200 inserts and deletes on a 1 MB sheet of formulas took
+  25 s of CPU.
 - **Sort and filter are local.** They reorder and hide rows on the viewer's page only and are never
   saved or sent.
 

@@ -839,7 +839,7 @@ editor. Scope `artifacts:write`. REST: `POST /api/v1/artifacts/:ref/sheet/edits`
 | --- | --- | --- |
 | `id` | string | The sheet's id or slug |
 | `base_version` | integer | Required: the version you read. A stale one is a `conflict` (with `current_version`): read again and re-apply |
-| `ops` | array, 1-200 | Applied in order to `base_version`; at most 10,000 cells written in all |
+| `ops` | array, 1-200 | Applied in order to `base_version`; at most 10,000 cells written in all. Each insert or delete of rows or columns rewrites the references of every formula in the sheet, and one call rewrites at most 4 MB (4,194,304 characters) of formula text in all |
 | `note` | string, up to 500, optional | Default "Edited cells" |
 
 | Op | Shape | Notes |

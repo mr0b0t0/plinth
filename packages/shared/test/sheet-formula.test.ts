@@ -6,6 +6,8 @@ import {
   dateSerial,
   evaluateSheet,
   LIMITS,
+  NUMERIC_TEXT,
+  numberFromText,
   parseFormula,
   SHEET_FUNCTION_NAMES,
   type Sheet,
@@ -141,6 +143,23 @@ describe("values and coercion", () => {
     expect(calc("A1", rows)).toBe("C1");
     expect(calc("Z99", rows)).toBe(null);
     expect(calc("A2:A4", rows)).toEqual(E("#VALUE!"));
+  });
+
+  it("reads numeric text in time linear in its length", () => {
+    expect(numberFromText("1.")).toBe(1);
+    expect(numberFromText(" .5 ")).toBe(0.5);
+    expect(numberFromText("+3.25E-2")).toBe(0.0325);
+    expect(numberFromText("-12e3")).toBe(-12_000);
+    expect(numberFromText("50%")).toBe(0.5);
+    expect(numberFromText("1.2.3")).toBe(null);
+    expect(numberFromText("1e")).toBe(null);
+    expect(numberFromText(".")).toBe(null);
+    // A digit run with a bad tail: `\d+\.?\d*` tried every split of the run, about 1 ms for
+    // 1,024 characters and twice that with a %, charged only the steps around the conversion.
+    const start = Date.now();
+    for (let i = 0; i < 1_000; i++) numberFromText(`${"1".repeat(1_022)}x%`);
+    expect(NUMERIC_TEXT.test(`${"1".repeat(100_000)}x`)).toBe(false);
+    expect(Date.now() - start).toBeLessThan(250);
   });
 
   it("SUM skips text in ranges but converts text it is given", () => {

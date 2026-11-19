@@ -19,7 +19,14 @@ import {
   type SheetNumberFormat,
   serializeSheet,
 } from "./format.ts";
-import { isoDateSerial, MIN_DATE_SERIAL, numberFromText, serialIso } from "./formula/values.ts";
+import {
+  isoDateSerial,
+  MAX_CONVERTED_TEXT,
+  MIN_DATE_SERIAL,
+  NUMERIC_TEXT,
+  numberFromText,
+  serialIso,
+} from "./formula/values.ts";
 import { platform } from "./platform.ts";
 import {
   COLUMN_NAME_SOURCE_CHARS,
@@ -162,11 +169,14 @@ const GUARDED = /^'[=+\-@]/;
 
 function csvValue(s: string): In {
   if (s === "") return null;
+  // No number, date or boolean is this long, so a long field is text without a pattern run on it
+  // (build() refuses it later if it passes the cell limit).
+  if (s.length > MAX_CONVERTED_TEXT) return { t: "s", v: GUARDED.test(s) ? s.slice(1) : s };
   const t = s.trim();
   if (/^(true|false)$/i.test(t)) return { t: "b", v: t.toLowerCase() === "true" };
   const date = isoDateSerial(t);
   if (date !== null) return { t: "n", v: date, fmt: "date" };
-  if (/^[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?%?$/.test(t)) {
+  if (NUMERIC_TEXT.test(t.endsWith("%") ? t.slice(0, -1) : t)) {
     const n = numberFromText(t);
     if (n !== null)
       return t.endsWith("%") ? { t: "n", v: n, fmt: { style: "percent" } } : { t: "n", v: n };

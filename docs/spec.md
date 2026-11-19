@@ -1149,7 +1149,9 @@ not edited on its page yet.
   length, and text a function or comparison reads (to walk, search, compare, lowercase or trim
   it) costs a step per 32 characters, so one long text read many times is paid for each time;
   SUBSTITUTE also costs a step per match it replaces. Text
-  longer than 1,024 characters is never read as a number or a boolean (`#VALUE!`). A publish
+  longer than 1,024 characters is never read as a number or a boolean (`#VALUE!`), and numeric
+  text is matched by a pattern with one way to read each character, so a conversion is linear in
+  its length. A publish
   parses formulas and never evaluates them.
 - **Viewing.** The page shows a toolbar (title, row count, a filter box, Download CSV and Excel), a
   formula bar with the selected cell's address and its raw text, and the grid: column letters and
@@ -1207,7 +1209,10 @@ not edited on its page yet.
   `insert_rows`, `delete_rows`, `set_column` (name, type, format, options, width; `null` clears),
   `insert_columns` and `delete_columns`. An op that would take the sheet past 10,000 data rows
   (row 10,001) is refused before the sheet grows. Inserting and deleting rows and columns moves formula
-  references as Excel's structural changes do; references into deleted cells become `#REF!`. The
+  references as Excel's structural changes do; references into deleted cells become `#REF!`. Each
+  such op rewrites every formula in the sheet, and one call rewrites at most 4 MB (4,194,304
+  characters) of formula text in all, four passes over a sheet that is all formulas; the op that
+  passes it is refused and nothing is published. The
   result is checked once, after every op, so a column's type and its cells can change in one call.
   A stale `base_version` is a conflict before any file is read; it is the `edit` action and counts
   toward `MAX_PUBLISHES_PER_HOUR`. `get_artifact` returns the JSON lines in `content`.
@@ -1599,7 +1604,7 @@ Sheets run on the same Worker allowances:
 | Publish or update a sheet | as any update | linear in its size: one `JSON.parse` per row and one parse per formula, never an evaluation (a 1 MB sheet takes tens of milliseconds) | as an update |
 | CSV or .xlsx import | as the publish | linear in the file (an .xlsx decompresses at most 24 MB of XML, about 2 MB at a time; memory stays near the parts' text and the cells a 1 MB sheet can hold) | as the publish |
 | `read_sheet` | 1 | at most `SHEET_EVAL_BUDGET` formula steps (200,000 by default, a few milliseconds; text read costs a step per 32 characters, so long text does not make a step dearer) | as `get_artifact` |
-| `edit_sheet` | 1 | the ops, then a publish's validation | as an update |
+| `edit_sheet` | 1 | the ops (inserts and deletes rewrite at most 4 MB of formula text per call, a few hundred milliseconds at worst), then a publish's validation | as an update |
 | Viewing and downloads | as any typed page | none: the browser computes and builds the files | none |
 
 On the free plan's 10 ms of CPU per request, the largest sheets may need a lower

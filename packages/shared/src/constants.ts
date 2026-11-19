@@ -202,6 +202,12 @@ export const LIMITS = {
   maxSheetOps: 200,
   /** Cells one edit_sheet call writes. */
   maxSheetOpCells: 10_000,
+  /**
+   * Formula characters one edit_sheet call rewrites. Each insert or delete of rows or columns
+   * re-reads every formula in the sheet to move its references, so this bounds the call's CPU:
+   * four passes over a sheet that is all formulas.
+   */
+  maxSheetOpShiftChars: 4 * MB,
   /** Cells one read_sheet call returns, at most. */
   maxSheetReadCells: 10_000,
   /** Cells read_sheet returns when the call names no limit. */

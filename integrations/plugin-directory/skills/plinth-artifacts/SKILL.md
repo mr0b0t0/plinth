@@ -798,7 +798,9 @@ An `eval_budget` warning means some values are `#LIMIT!`: read a smaller range.
 **Changing a sheet.** Use `edit_sheet` with `base_version` and `ops` for cell, row and column
 changes: `set` (`{"op":"set","at":"B2","values":[[4]]}`), `append_rows`, `insert_rows`,
 `delete_rows`, `set_column`, `insert_columns`, `delete_columns`. One call publishes one version or
-nothing; inserted and deleted rows and columns move formula references. Send `update_artifact` with
+nothing; inserted and deleted rows and columns move formula references. Each insert or delete
+rewrites every formula, and one call rewrites at most 4 MB of formula text: insert or delete
+several adjacent rows in one op (`count`) rather than one op per row. Send `update_artifact` with
 the whole JSON lines only to rewrite the sheet. On a conflict, `read_sheet` again and re-apply your
 ops to the new version. The type cannot change.
 

@@ -81,12 +81,15 @@ function copySheet(s: Sheet): Sheet {
   };
 }
 
-function shiftAll(rows: Cell[][], change: StructuralChange, skip?: Set<Cell[]>): void {
+/** Moves every formula's references for `change`, charging each formula's length first. */
+function shiftAll(rows: Cell[][], change: StructuralChange, charge: (chars: number) => void): void {
   for (const r of rows) {
-    if (skip?.has(r)) continue;
     for (let c = 0; c < r.length; c++) {
       const v = r[c];
-      if (isFormula(v)) r[c] = shiftFormula(v, change);
+      if (isFormula(v)) {
+        charge(v.length);
+        r[c] = shiftFormula(v, change);
+      }
     }
   }
 }
@@ -120,6 +123,17 @@ export function applySheetOps(
     written += n;
     if (written > LIMITS.maxSheetOpCells) {
       throw new SheetOpError(i, `One call writes at most ${LIMITS.maxSheetOpCells} cells`);
+    }
+  };
+  // Re-reading formulas is what an insert or delete costs; the cells it writes are counted above.
+  let shifted = 0;
+  const shiftCharge = (i: number) => (chars: number) => {
+    shifted += chars;
+    if (shifted > LIMITS.maxSheetOpShiftChars) {
+      throw new SheetOpError(
+        i,
+        `One call moves the references of at most ${LIMITS.maxSheetOpShiftChars} characters of formulas, and each insert or delete of rows or columns moves every formula in the sheet; send fewer inserts and deletes per call (one op can insert or delete several rows or columns)`,
+      );
     }
   };
   const width = () => s.header.columns.length;
@@ -218,7 +232,7 @@ export function applySheetOps(
           throw new SheetOpError(i, `values has ${values.length} rows; count is ${n}`);
         rowsFit(s.rows.length + n, i);
         checkRows(values, i);
-        shiftAll(s.rows, { kind: "insert_rows", before: op.before, count: n });
+        shiftAll(s.rows, { kind: "insert_rows", before: op.before, count: n }, shiftCharge(i));
         const fresh = Array.from({ length: n }, (_, k) => [...(values[k] ?? [])]);
         s.rows.splice(op.before - 2, 0, ...fresh);
         rowLimit(i);
@@ -239,7 +253,7 @@ export function applySheetOps(
           throw new SheetOpError(i, `count must be from 1 to ${last - op.from + 1}`);
         }
         s.rows.splice(op.from - 2, n);
-        shiftAll(s.rows, { kind: "delete_rows", from: op.from, count: n });
+        shiftAll(s.rows, { kind: "delete_rows", from: op.from, count: n }, shiftCharge(i));
         changed.rows_deleted += n;
         break;
       }
@@ -263,7 +277,7 @@ export function applySheetOps(
           throw new SheetOpError(i, `A sheet has at most ${LIMITS.maxSheetColumns} columns`);
         }
         const n = op.columns.length;
-        shiftAll(s.rows, { kind: "insert_columns", before: c, count: n });
+        shiftAll(s.rows, { kind: "insert_columns", before: c, count: n }, shiftCharge(i));
         s.header.columns.splice(c, 0, ...op.columns.map(columnDef));
         for (const r of s.rows) if (r.length > c) r.splice(c, 0, ...new Array<Cell>(n).fill(null));
         changed.columns_inserted += n;
@@ -278,7 +292,7 @@ export function applySheetOps(
         if (n >= width()) throw new SheetOpError(i, "A sheet keeps at least one column");
         s.header.columns.splice(c, n);
         for (const r of s.rows) if (r.length > c) r.splice(c, n);
-        shiftAll(s.rows, { kind: "delete_columns", from: c, count: n });
+        shiftAll(s.rows, { kind: "delete_columns", from: c, count: n }, shiftCharge(i));
         if (s.header.freeze && s.header.freeze.cols > width()) s.header.freeze.cols = width();
         changed.columns_deleted += n;
         break;
