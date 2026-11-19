@@ -51,10 +51,8 @@ const meta = {
   keywords: [...PLUGIN.keywords],
 };
 
-// The full Claude Code plugin's server follows its Plinth instance option (PLUGIN_USER_CONFIG),
-// whose default is the hosted instance, and PLINTH_URL overrides it, as before the option existed.
-// The directory build has neither: see its section below.
-const optionMcp = `\${user_config.${PLUGIN_INSTANCE_OPTION}}/mcp`;
+// The full Claude Code plugin has the Plinth instance option (PLUGIN_USER_CONFIG), whose default is
+// the hosted instance; its server is below. The directory build has no option: see its section.
 const listingFields = {
   privacyPolicyUrl: PLUGIN.privacyPolicyUrl,
   termsOfServiceUrl: PLUGIN.termsOfServiceUrl,
