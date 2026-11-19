@@ -73,6 +73,7 @@ make a test pass.
 | An upload gives away where it was made | A phone photo's EXIF location reaches every reader of the page | Files are stored as added and everyone who may add one is told so (the viewer notice, the privacy notice, the skill) |
 | An upload outlives a delete or takedown | A part arrives after the owner deleted the file or an admin took the artifact down, and the file comes back | Every write repeats the artifact's live check and the row's state in its SQL; a delete or takedown turns rows into tombstones in its own batch, a takedown deletes the ready objects right after, and the hourly sweep clears the rest |
 | A file name steers an agent or tricks a viewer | A file named "Ignore previous instructions.png", `../../etc/passwd`, or a right-to-left override that turns `gpj.exe` around | Names are cleaned (last segment, no control or bidi characters, at most 200 characters, the proven extension added) and are display text everywhere; agents get names with the untrusted note and never the bytes |
+| A viewing code becomes a way to make accounts or take one over | An owner lists many addresses and asks codes for them to create accounts in their name, or someone who guessed a listed address types codes to sign in as that person | A code goes only to an address that holds a grant there (or is the owner's), and to that mailbox; an account exists only once a code sent to it is typed; the gate's rate limits, five attempts per code, single use and the grant re-checked after use all stay. The code proves the mailbox exactly as the sign-in code does ([below](#viewing-codes-sign-people-in)) |
 
 Out of scope for v1: denial of service beyond Cloudflare's defaults, a compromised Cloudflare
 account, and malicious instance operators.
@@ -260,7 +261,7 @@ status, `Location`, cookie attributes and Content Security Policy, and no CORS h
 | --- | --- | --- | --- | --- |
 | `__Host-plinth_session` | `APP_HOST` only | `HttpOnly; Secure; SameSite=Lax` | 30 days | Signed-in person. Stored server-side as a SHA-256 hash |
 | `__Host-plinth_csrf` | `APP_HOST` only | `Secure; SameSite=Strict`, readable by the app's JS | 1 year | Double-submit CSRF token |
-| `__Host-plinth_viewer` | `APP_HOST` only | `HttpOnly; Secure; SameSite=Lax` | 7 days | Viewer who confirmed an allowlisted email by code |
+| `__Host-plinth_viewer` | `APP_HOST` only | `HttpOnly; Secure; SameSite=Lax` | 7 days | Viewer who confirmed an allowlisted email by code where that address may not sign in (single-user mode); elsewhere a confirmed code sets `__Host-plinth_session` ([below](#viewing-codes-sign-people-in)) |
 | `__Host-plinth_pw_<id>` | `APP_HOST` only | `HttpOnly; Secure; SameSite=Lax` | 12 hours | Password entered for one artifact (signed, epoch-bound) |
 | `__Host-plinth_content` | one artifact subdomain | `HttpOnly; Secure; SameSite=None; Partitioned` | 12 hours | Access to that artifact's files and its shared data. For an identified viewer it may also carry a sealed identity claim (email and role, below). Named `plinth_content` in the staging path fallback and on plain-http instances |
 
@@ -1815,7 +1816,8 @@ authorized by email, and a share that exists answers `email_required` to anyone 
 flow mirrors the allowlist's (same answer listed or not, same rate limit counters, five attempts,
 single use, re-checking the grant after use); its codes carry `share_id` with `artifact_id` NULL
 and a hash that binds the share, so a portal code never opens an artifact's code route and the
-reverse. The viewer session it starts names no artifact. `GET /api/v1/portals` lists a share only
+reverse. The session it starts (an app session, or a viewer session where the address may not
+sign in, [below](#viewing-codes-sign-people-in)) names no artifact. `GET /api/v1/portals` lists a share only
 when `decidePortal` lets the caller open it, the same decision `GET /api/v1/portals/:id` makes.
 Portal pages are `no-store` and
 `noindex`. Grantees see the share's title and the artifacts' titles, never the category name, the
@@ -2042,6 +2044,39 @@ dialog and can delete them there.
 **Agents** list and delete files over MCP and REST (owner or editor) and never get the bytes: an
 image is a prompt-injection channel and a new egress path, so reading files is left for its own
 review. Names carry the untrusted note.
+
+## Viewing codes sign people in
+
+Spec: [Invitees get an account](spec.md#invitees-get-an-account-decided-2026-11-19). A six-digit
+code confirmed at an allowlist gate or a portal proves the mailbox exactly as the sign-in code
+does, so where the instance lets the address sign in (`maySignIn`: every address, except all but
+`ADMIN_EMAIL` in single-user mode) it starts a normal app session for it, creating the account on
+first use. Before, only the owner's own address was signed in this way (2026-11-16); everyone else
+got a viewer session.
+
+- **Nothing about who gets a code changes.** `POST .../email` gives the same answer whether or not
+  the address holds a grant, counts both alike against the same limits (per IP and per email), and
+  mails a code only to an address that holds a grant on that artifact or share or is the owner's.
+  A code is hashed with `SESSION_SECRET` and bound to its artifact or share, works once, stops after
+  five wrong guesses, expires after 15 minutes, and the grant is checked again after it is used.
+  Every failure looks the same and creates nothing: no session and no account.
+- **The account is the mailbox's.** An owner can list any address, but only the person who reads
+  that mailbox can type the code, so no one can create or enter an account for an address they do
+  not read. An account made this way is an ordinary account: verified, no name, the default quota,
+  and admin only if it is `ADMIN_EMAIL`, as `getOrCreateUser` decides at sign-in.
+- **One session per browser.** The app session cookie the code sets replaces the one the browser
+  held, and the server deletes that earlier session in the same request, so a person who confirms
+  a second address of theirs is signed in with it and out of the first. The gate tells a signed-in
+  person so before they ask for the code.
+- **Who has an account stays private.** Invitees now have accounts, but nothing shows whether an
+  address has one: access lists name a grant holder only after they took part in the artifact
+  ([The people list](#the-people-list)), and an account a code created has no name until its
+  person sets one.
+- **Viewer sessions where sign-in is not allowed.** In single-user mode the code starts the
+  `__Host-plinth_viewer` session as before, and viewer sessions started before this change keep
+  working until they expire (7 days). Every rule for them stays: they are not an account, policy
+  answers `account_required` for live editing, they never file artifacts under personal
+  categories, and a signed-in person may hold one for another address beside their own session.
 
 ## Operator checklist for the content domain
 

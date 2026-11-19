@@ -23,14 +23,17 @@ and email work is in [deploy-checklist.md](deploy-checklist.md).
 ## Choose a mode
 
 **Multi-user (default).** People sign in with an email magic link or six-digit code. Each person
-connects their own agents and owns their own artifacts. Needs an email provider.
+connects their own agents and owns their own artifacts. Needs an email provider. Someone an
+artifact or a category is shared with by email signs in the same way when they confirm the code
+at its gate: that creates their account if they have none.
 
 **Single-user.** For one person. Set `SINGLE_USER_MODE=true` and exactly one `ADMIN_EMAIL`. Agents
 connect with OAuth as on any instance. Optionally set a secret `ADMIN_TOKEN` of at least 32
 characters: agents and scripts can then also send it as a bearer token and act as `ADMIN_EMAIL`. The web app still signs that one address in by email code. In
 single-user mode production accepts `EMAIL_PROVIDER=console`, which writes the code to the Worker
 log instead of sending mail; read it with `wrangler tail`. Use a real provider if the log is shared
-with anyone else.
+with anyone else. People you share an artifact with by email still confirm their address by code,
+but get a 7-day viewer session instead of an account, since only `ADMIN_EMAIL` may sign in.
 
 **On your own machine.** Either mode can also run on your computer instead of Cloudflare Workers,
 with D1 and R2 on local disk and a Cloudflare Tunnel for access:
@@ -119,7 +122,7 @@ Booleans accept `true`, `1`, `yes` or `on`.
 | `MAX_ASSETS_PER_VERSION` | `511` | Asset files in one version, besides the main document. `1` to `900`. On Workers Free set a small value, for example `20` |
 | `MAX_STORAGE_BYTES_PER_USER` | `1073741824` (1 GiB) | Bytes stored per account across all versions of its artifacts. A file a version reuses from an earlier version of the same artifact is stored, and counted, once |
 | `CDN_ALLOWLIST` | cdnjs.cloudflare.com, cdn.jsdelivr.net, unpkg.com, cdn.tailwindcss.com, code.jquery.com, cdn.plot.ly | Script hosts artifacts may load from, comma or space separated. Empty means the default list |
-| `SINGLE_USER_MODE` | `false` | One-person instance; needs exactly one `ADMIN_EMAIL` |
+| `SINGLE_USER_MODE` | `false` | One-person instance; needs exactly one `ADMIN_EMAIL`. Only that address signs in: people an artifact is shared with confirm their email by code and get a viewer session, not an account. Off, a confirmed code signs the person in and creates their account if they have none |
 | `OPERATOR_NAME` | empty | Who runs the instance, named in its terms of use and privacy notice. With `OPERATOR_EMAIL`, the instance publishes both pages; without, only the acceptable use policy (right for a personal instance) |
 | `OPERATOR_EMAIL` | empty | The one published contact address (questions, privacy, reports, authorities). A monitored inbox |
 | `OPERATOR_ADDRESS` | empty | Registered address, shown in the terms and privacy notice |

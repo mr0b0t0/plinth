@@ -36,6 +36,7 @@ export type LegalConfig = Pick<
   | "dictation"
   | "category_sharing"
   | "files"
+  | "single_user_mode"
 >;
 
 const EMAIL_SERVICE: Record<AppConfig["email_provider"], string | null> = {
@@ -184,6 +185,8 @@ function privacy(op: OperatorInfo, cfg: LegalConfig): LegalDoc {
               its editors and their agents see everyone it is shared with, by email address and
               role, and by name once that person has commented, entered something or published a
               version on it.
+              {!cfg.single_user_mode &&
+                " When someone shares an artifact or a collection with your address, confirming the code we email you there signs you in and creates a Plinth account for that address if it has none, just as signing in does."}
             </li>
             <li>
               <strong>Your artifacts</strong>: every version of the pages, files, titles, categories

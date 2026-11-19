@@ -2,7 +2,7 @@ import type { ViewGate } from "@plinth/shared";
 import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { EmailForm, PasswordForm } from "./GateForms.tsx";
+import { codeLead, codeSignsInFor, EmailForm, PasswordForm } from "./GateForms.tsx";
 import { apiError, json, stubApi } from "./test-utils.ts";
 
 const OK: ViewGate = {
@@ -86,7 +86,7 @@ describe("EmailForm", () => {
     expect(calls.filter((c) => c.path === "/view/s1/code").at(-1)).toMatchObject({
       body: { email: "guest@example.org", code: "123456" },
     });
-    // A confirmed code may have signed the owner in, so the session is reloaded.
+    // A confirmed code signs the address in, so the session is reloaded.
     expect(calls.at(-1)).toMatchObject({ method: "GET", path: "/me" });
   });
 
@@ -97,6 +97,38 @@ describe("EmailForm", () => {
     );
     expect(screen.getByText(/You are signed in as/).textContent).toContain(
       "ada@example.org, which is not on the list",
+    );
+    // Confirming another address signs in with it instead.
+    expect(screen.getByText(/You are signed in as/).textContent).toContain(
+      "confirm it below: you will then be signed in with that address instead.",
+    );
+  });
+
+  it("on a single-user instance, a code for another address leaves the session as it is", () => {
+    stubApi();
+    render(
+      <EmailForm
+        artifactRef="s1"
+        query={{}}
+        onGate={() => {}}
+        signedInEmail="ada@example.org"
+        codeSignsIn={false}
+      />,
+    );
+    const text = screen.getByText(/You are signed in as/).textContent ?? "";
+    expect(text).toContain("If another address of yours is, confirm it below.");
+    expect(text).not.toContain("instead");
+  });
+});
+
+describe("codeLead", () => {
+  it("says a code signs the address in and creates an account, except on a single-user instance", () => {
+    expect(codeLead(codeSignsInFor({ single_user_mode: false }))).toBe(
+      "Confirming it signs you in to Plinth with that address, and creates an account for it if it has none.",
+    );
+    expect(codeLead(codeSignsInFor(null))).toContain("signs you in");
+    expect(codeLead(codeSignsInFor({ single_user_mode: true }))).toBe(
+      "You do not need an account.",
     );
   });
 });

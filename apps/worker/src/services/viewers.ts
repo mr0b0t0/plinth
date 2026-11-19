@@ -1,10 +1,12 @@
-// Allowlist viewers without an account. A viewer confirms an email with a six-digit code sent to it;
-// that creates an app-host viewer session (cookie plinth_viewer) naming the email. The session
-// carries no artifact: policy.ts checks the email's grant on every artifact, so one confirmation
-// opens every artifact the email is listed on, and an email that is not listed opens nothing.
-// The artifact's owner has no grant row but may always open it: the owner's own email gets a code
-// too, and confirming it signs the owner in to the app (a normal user session), since the code is
-// the same proof of the mailbox as the sign-in code.
+// Allowlist viewers confirm an email with a six-digit code sent to it. Confirming signs them in to
+// the app with that address (docs/spec.md "Auth and permissions", Viewers): a normal user session,
+// the account created on first use, exactly as the sign-in code does, since the code is the same
+// proof of the mailbox. The artifact's owner has no grant row but may always open it: the owner's
+// own email gets a code too and is signed in the same way. Only where the instance does not let
+// the address sign in (single-user mode, any address but the admin's) does the code start an
+// app-host viewer session (cookie plinth_viewer) naming the email instead. Neither session carries
+// an artifact: policy.ts checks the email's grant on every artifact, so one confirmation opens
+// every artifact the email is listed on, and an email that is not listed opens nothing.
 import { RATE_LIMITS, TTL } from "@plinth/shared";
 import { and, desc, eq, gt, isNull } from "drizzle-orm";
 import { maySignIn } from "../auth/login.ts";
@@ -33,6 +35,7 @@ import { factsOf, findArtifact } from "./artifacts.ts";
 import { categoryGrantFor } from "./categoryShares.ts";
 import type { Ctx } from "./context.ts";
 import { createUserSession } from "./sessions.ts";
+import { getOrCreateUser } from "./users.ts";
 
 /** Wrong guesses allowed on one code before it stops working. */
 export const MAX_VIEWER_CODE_ATTEMPTS = 5;
@@ -101,7 +104,10 @@ async function codeHolder(
   return listed ? { kind: "listed" } : null;
 }
 
-/** What a confirmed code yields: an app session for the owner, a viewer session for anyone else. */
+/**
+ * What a confirmed code yields: an app session for an address that may sign in (the owner, or a
+ * listed person, whose account is created on first use), a viewer session for one that may not.
+ */
 export type ViewerCodeResult =
   | { kind: "user"; value: string; user: UserRow }
   | { kind: "viewer"; value: string };
@@ -175,17 +181,27 @@ async function sendViewerCode(ctx: Ctx, a: ArtifactRow, email: string): Promise<
       `Someone asked to open "${a.title}" on Plinth with this email address.`,
       "",
       `Your code is ${code}. It works once and expires in ${minutes} minutes.`,
+      ...codeSignInLines(ctx, email),
       "",
       "If this was not you, ignore this email.",
     ].join("\n"),
   });
 }
 
+/** What a viewing code's email adds when confirming the code signs the address in. */
+export function codeSignInLines(ctx: Ctx, email: string): string[] {
+  if (!maySignIn(ctx.config, email)) return [];
+  return [
+    "",
+    "Entering it also signs you in to Plinth with this address, and creates a Plinth account for it if it has none.",
+  ];
+}
+
 /**
- * Check a code and, on success, create a session: an app session for the owner, a viewer session
- * for a listed email. Returns the cookie value (shown once; only its hash is stored). Every failure
- * looks the same: wrong code, expired code, used code, too many attempts, or an email that is not
- * (or no longer) listed.
+ * Check a code and, on success, create a session (sessionForCode): an app session for the owner and
+ * for a listed email that may sign in, a viewer session for one that may not. Returns the cookie
+ * value (shown once; only its hash is stored). Every failure looks the same: wrong code, expired
+ * code, used code, too many attempts, or an email that is not (or no longer) listed.
  */
 export async function verifyViewerCode(
   ctx: Ctx,
@@ -253,20 +269,33 @@ export async function verifyViewerCode(
   // The owner may have removed the email since the code was sent.
   const holder = await codeHolder(ctx, a, email);
   if (!holder) throw invalid;
-  if (holder.kind === "owner") {
-    return {
-      kind: "user",
-      value: await createUserSession(ctx.db, holder.user.id),
-      user: holder.user,
-    };
-  }
+  return sessionForCode(ctx, email, holder.kind === "owner" ? holder.user : null);
+}
 
+/**
+ * The session a confirmed code starts, once the caller has checked that the address holds a grant
+ * or is the owner's: the owner's own account; an account for any other address that may sign in
+ * (found, or created and marked verified, as the sign-in code does); a viewer session otherwise.
+ */
+export async function sessionForCode(
+  ctx: Ctx,
+  email: string,
+  owner: UserRow | null,
+): Promise<ViewerCodeResult> {
+  if (owner) {
+    return { kind: "user", value: await createUserSession(ctx.db, owner.id), user: owner };
+  }
+  if (maySignIn(ctx.config, email)) {
+    const user = await getOrCreateUser(ctx.db, ctx.config, email, { verified: true });
+    return { kind: "user", value: await createUserSession(ctx.db, user.id), user };
+  }
   return { kind: "viewer", value: await createViewerSession(ctx, email) };
 }
 
 /**
- * A viewer session for a confirmed email (no account): the cookie value, shown once; only its hash
- * is stored. It names no artifact: policy checks the email's grants on every artifact.
+ * A viewer session for a confirmed email that may not sign in (single-user mode): the cookie
+ * value, shown once; only its hash is stored. It names no artifact: policy checks the email's
+ * grants on every artifact.
  */
 export async function createViewerSession(ctx: Ctx, email: string): Promise<string> {
   const value = newToken(VIEWER_SESSION_PREFIX);
