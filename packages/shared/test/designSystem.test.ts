@@ -2,6 +2,7 @@
 // injection guard, the compiled CSS and the page reference meta.
 import { describe, expect, it } from "vitest";
 import {
+  cssUrlArgs,
   DESIGN_SYSTEM_FORMAT,
   type DesignSystem,
   type DsParseResult,
@@ -10,6 +11,7 @@ import {
   designSystemFontFaces,
   designSystemFontLinks,
   designSystemJsonSchema,
+  isPlainRelativeUrl,
   LIMITS,
   parseDesignSystem,
   parseDesignSystemRef,
@@ -578,6 +580,123 @@ describe("the CSS injection guard", () => {
       }),
       "components[0].css",
     );
+  });
+
+  it("refuses CSS escapes, so an escaped at-rule or function cannot pass", () => {
+    for (const css of [
+      "@\\69mport url(//evil.example/a.css);",
+      "@\\000069mport 'x.css';",
+      "a { background: u\\72l(//evil.example/x) }",
+      "a { content: '\\'' }",
+    ]) {
+      refusedAt(
+        withChange((ds) => {
+          ds.css = css;
+        }),
+        "css",
+        /\\/,
+      );
+    }
+    refusedAt(
+      withChange((ds) => {
+        ((ds.components as Json[])[0] as Json).css = "@\\69mport url(x.css);";
+      }),
+      "components[0].css",
+      /\\/,
+    );
+  });
+
+  it("refuses url() to another host, a root path or a scheme in CSS blocks", () => {
+    const blocks = [
+      "a { background: url(//evil.example/x.png) }",
+      'a { background: url("//evil.example/x)y") }',
+      "a { background: url('https://evil.example/x.png') }",
+      "a { background: URL(http://evil.example/x.png) }",
+      "a { background: url( /x.png ) }",
+      "a { background: url(../x.png) }",
+      "a { background: url(data:image/svg+xml;base64,AAAA) }",
+      "@font-face { font-family: X; src: url(https://evil.example/x.woff2) }",
+    ];
+    for (const css of blocks) {
+      refusedAt(
+        withChange((ds) => {
+          ds.css = css;
+        }),
+        "css",
+        /url\(\) with a relative path/,
+      );
+    }
+    refusedAt(
+      withChange((ds) => {
+        ((ds.components as Json[])[0] as Json).css = "a{background:url(//evil.example/x)}";
+      }),
+      "components[0].css",
+    );
+  });
+
+  it("refuses url() it cannot read plainly and functions that take a URL as a string", () => {
+    for (const css of [
+      'a { background: url("img/a.png) }',
+      "a { background: url(img/a.png }",
+      'a { background: url("a.png" x) }',
+      "a { background: url(a b.png) }",
+      "a { background: url(a'b.png) }",
+      "a { background: url(javascript:alert(1)) }",
+    ]) {
+      refusedAt(
+        withChange((ds) => {
+          ds.css = css;
+        }),
+        "css",
+        /not plain/,
+      );
+    }
+    for (const css of [
+      "a { background: image-set('https://evil.example/x.png' 1x) }",
+      "a { background: -webkit-image-set('https://evil.example/x.png' 1x) }",
+      "a { background: image('https://evil.example/x.png') }",
+      "@font-face { font-family: X; src: src('https://evil.example/x.woff2') }",
+    ]) {
+      refusedAt(
+        withChange((ds) => {
+          ds.css = css;
+        }),
+        "css",
+        /image-set\(\)/,
+      );
+    }
+  });
+
+  it("keeps CSS blocks with relative, fragment and raster data url()", () => {
+    const ds = ok(
+      parseDesignSystem(
+        withChange((d) => {
+          d.css =
+            ".hero { background: url(img/hero.png?v=2) no-repeat, url( 'img/b.webp' ) }\n" +
+            '.m { mask: url(#mask-1); background-image: url("data:image/png;base64,iVBORw0KGgo=") }\n' +
+            ".x { border-image-source: none; list-style-image: url(./dot.png) }";
+        }),
+      ),
+    );
+    expect(ds.css).toContain("url(img/hero.png?v=2)");
+  });
+
+  it("reads url() arguments as a CSS tokenizer does", () => {
+    expect(cssUrlArgs("a{b:url(x.png) url( 'y z' ) URL(\"q\")}")).toEqual(["x.png", "y z", "q"]);
+    expect(cssUrlArgs('a{b:url("//evil.example/x)y")}')).toEqual(["//evil.example/x)y"]);
+    expect(cssUrlArgs("a{b:url(x.png}")).toBeNull();
+    expect(cssUrlArgs("a{b:url('x.png' )")).toEqual(["x.png"]);
+    expect(cssUrlArgs("a{b:url('x.png' y)")).toBeNull();
+    expect(cssUrlArgs("a{b:url('x.png'")).toBeNull();
+    expect(cssUrlArgs("a{b:url(x\\29 .png)}")).toBeNull();
+    expect(cssUrlArgs("İİİİ url(//e)")).toEqual(["//e"]);
+    expect(cssUrlArgs("no urls here")).toEqual([]);
+    for (const u of ["a.png", "img/a.png", "./a.png", "fonts/x.woff2?v=1", "a.svg#icon"]) {
+      expect(isPlainRelativeUrl(u), u).toBe(true);
+    }
+    for (const u of ["", "/a.png", "//e/a", "https://e/a", "../a", "a/../../b", "a%2e", "a b"]) {
+      expect(isPlainRelativeUrl(u), u).toBe(false);
+    }
   });
 
   it("refuses Google Fonts URLs that are not css2 or hold quotes", () => {

@@ -24,7 +24,13 @@ import { ApiError, isUniqueViolation, notFound, unauthorized } from "../lib/erro
 import { enforce } from "../lib/ratelimit.ts";
 import { nowIso } from "../lib/time.ts";
 import { getVersionRow, requireArtifact } from "./artifacts.ts";
-import { checkAsset, requireTypeDef, resolveSource, typeHooks } from "./artifactTypes.ts";
+import {
+  checkAsset,
+  requireTypeDef,
+  resolveSource,
+  typeHooks,
+  typePublishWarnings,
+} from "./artifactTypes.ts";
 import {
   ATTEMPT_GUARD,
   attemptCutoff,
@@ -816,10 +822,11 @@ export class VersionStager implements Stager {
       const manifestPaths = new Set(entries.map((e) => e.path));
       // Per-type warnings about the source (services/artifactTypes/<type>.ts), capped with the
       // reference warnings.
-      const typeWarnings = typeHooks(def).publishWarnings;
-      const extra = typeWarnings
-        ? await typeWarnings(this.ctx, { def, text: sourceText, paths: manifestPaths })
-        : [];
+      const extra = await typePublishWarnings(this.ctx, {
+        def,
+        text: sourceText,
+        paths: manifestPaths,
+      });
       warnings = scanPublish({
         files,
         manifestPaths,

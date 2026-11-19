@@ -95,6 +95,32 @@ describe("sanitizeComponentHtml", () => {
       '<div style="background: url(img/a.png) no-repeat; color: red">x</div>',
     ],
     [
+      "keeps style with a quoted relative url() and a raster data: url()",
+      "<div style=\"background: url(&quot;img/a.png&quot;), url('data:image/png;base64,iVBORw0KGgo=')\">x</div>",
+      "<div style=\"background: url(&quot;img/a.png&quot;), url('data:image/png;base64,iVBORw0KGgo=')\">x</div>",
+    ],
+    [
+      "drops style whose quoted url() holds a ) (off-host behind the first parenthesis)",
+      '<div style="background:url(&quot;//evil.example/x)y&quot;)">a</div><div style="background:url(\'//evil.example/x)y\')">b</div>',
+      "<div>a</div><div>b</div>",
+    ],
+    [
+      "drops style with a protocol-relative or schemed url()",
+      '<div style="background:url(//evil.example/x)">a</div><div style="background:url(&quot; //evil.example/x &quot;)">b</div><div style="background:url(HTTPS://evil.example/x)">c</div><div style="background:URL(/x.png)">d</div>',
+      "<div>a</div><div>b</div><div>c</div><div>d</div>",
+    ],
+    [
+      "drops style whose url() cannot be read plainly",
+      '<div style="background:url(&quot;img/a.png">a</div><div style="background:url(img/a.png">b</div><div style="background:url(&quot;a.png&quot; x)">c</div><div style="background:url(a b.png)">d</div><div style="background:url(a&quot;.png)">e</div><div style="background:url(img/%2e%2e/a.png)">f</div>',
+      "<div>a</div><div>b</div><div>c</div><div>d</div><div>e</div><div>f</div>",
+    ],
+    [
+      "keeps SVG title and desc as text only",
+      '<svg><title>Logo <b>mark</b><img src=x onerror="alert(1)"></title><desc><p>A</p> desc</desc><circle r="1"></circle></svg>',
+      '<svg><title>Logo mark</title><desc>A desc</desc><circle r="1"></circle></svg>',
+    ],
+    ["still drops the HTML title element", "<title>t</title><p>x</p>", "<p>x</p>"],
+    [
       "removes svg style (mXSS)",
       "<svg><style>@import url(https://evil.example/x.css)</style></svg>",
       "<svg></svg>",

@@ -91,6 +91,32 @@ export function typeHooks(def: ArtifactTypeDef): TypeHooks {
   return TYPE_HOOKS[def.id];
 }
 
+/**
+ * A type's publish warnings for a staged source. The hook is advisory, so an error inside it (a D1
+ * read that fails) never fails the publish: it is logged by name only and becomes one
+ * `not_scanned` note saying the type's checks did not run.
+ */
+export async function typePublishWarnings(ctx: Ctx, v: StagedSource): Promise<PublishWarning[]> {
+  const hook = typeHooks(v.def).publishWarnings;
+  if (!hook) return [];
+  try {
+    return await hook(ctx, v);
+  } catch (e) {
+    console.error(
+      "publish warnings hook failed:",
+      v.def.id,
+      e instanceof Error ? e.name : "unknown",
+    );
+    return [
+      {
+        code: "not_scanned",
+        file: v.def.sourcePath,
+        message: `The ${v.def.id} checks of ${v.def.sourcePath} did not run (a temporary error), so warnings they give may be missing. The version is published. No action needed`,
+      },
+    ];
+  }
+}
+
 function refuse(def: ArtifactTypeDef, field: string, message: string): ApiError {
   return new ApiError("invalid_input", message, { type: def.id, field });
 }

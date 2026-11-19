@@ -537,7 +537,9 @@ several pages to share one look. Publish it with `type: "design_system"` and the
 - **Always give a dark theme**: `themes.dark` holds only `$value` overrides of tokens that exist.
 - **Values are plain CSS values** without `;`, braces, `<`, `>`, `\`, `@`, quotes, `url(` or
   comments; write font family names without quotes (Plinth quotes them). `css` blocks may not
-  contain `<` or `@import`.
+  contain `<`, `\` (CSS escapes), `@import` or `image-set()`, and their `url()`s take only a
+  relative path to the design system's own files (`url(img/hero.png)`), a `#fragment` or a
+  `data:image` PNG, JPEG, GIF, WebP or AVIF.
 - **Fonts other pages will use** should be Google Fonts (`https://fonts.googleapis.com/css2?...`)
   or system stacks. A font file in the design system's own assets (`"src": "fonts/x.woff2"`) works
   on its own site only: other pages cannot load another artifact's files.

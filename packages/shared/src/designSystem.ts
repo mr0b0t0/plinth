@@ -7,7 +7,10 @@
 // The compiled CSS leaves this artifact: agents copy it into the pages they build. So every string
 // that reaches CSS passes one value grammar (no `;`, braces, angle brackets, backslash, `@`, quotes
 // or line breaks; no `url(`, `expression(` or comments), font family names are quoted by the
-// compiler and never by the author, and the free-form CSS blocks may not hold `<` or `@import`.
+// compiler and never by the author, and the free-form CSS blocks may not hold `<`, a backslash,
+// `@import`, a function that takes a URL as a string, or a url() that is not a relative path, a
+// #fragment or a raster data: image. All of it is defence in depth: the CSP of the page the CSS
+// lands in is what stops a load from another host.
 import { LIMITS } from "./constants.ts";
 
 export const DESIGN_SYSTEM_FORMAT = "plinth.design-system/1";
@@ -239,11 +242,92 @@ export function cssValueProblem(s: string): string | null {
   return null;
 }
 
-/** Why a free-form CSS block is refused, or null. */
+const CSS_SPACE = new Set([" ", "\t", "\n", "\r", "\f"]);
+// biome-ignore lint/suspicious/noControlCharactersInRegex: matching control characters is the point.
+const URL_ARG_BAD = /["'()\\\s\u0000-\u001f\u007f-\u009f]/;
+
+/**
+ * The argument of every `url(` in CSS text, as a browser's tokenizer reads it, or null when one
+ * cannot be read plainly: an unclosed `url(`, a backslash escape, a line break in a quoted URL,
+ * anything but `)` after the closing quote, or a quote, parenthesis, space or control character
+ * inside an unquoted URL. A caller refuses null. A single forward pass (the only regular expression
+ * finds the literal `url(`), so its cost is linear whatever the text holds.
+ */
+export function cssUrlArgs(css: string): string[] | null {
+  const out: string[] = [];
+  // A fresh regular expression per call: lastIndex is the scan position.
+  const find = /url\(/gi;
+  for (let m = find.exec(css); m !== null; m = find.exec(css)) {
+    let j = m.index + 4;
+    while (j < css.length && CSS_SPACE.has(css[j] as string)) j++;
+    const q = css[j];
+    let arg: string;
+    if (q === '"' || q === "'") {
+      const end = css.indexOf(q, j + 1);
+      if (end === -1) return null;
+      arg = css.slice(j + 1, end);
+      if (arg.includes("\\") || arg.includes("\n") || arg.includes("\r") || arg.includes("\f")) {
+        return null;
+      }
+      j = end + 1;
+      while (j < css.length && CSS_SPACE.has(css[j] as string)) j++;
+      if (css[j] !== ")") return null;
+    } else {
+      const end = css.indexOf(")", j);
+      if (end === -1) return null;
+      let k = end;
+      while (k > j && CSS_SPACE.has(css[k - 1] as string)) k--;
+      arg = css.slice(j, k);
+      if (URL_ARG_BAD.test(arg)) return null;
+      j = end;
+    }
+    out.push(arg);
+    find.lastIndex = j + 1;
+  }
+  return out;
+}
+
+const PLAIN_URL_RE =
+  /^[A-Za-z0-9._~-]+(?:\/[A-Za-z0-9._~-]+)*(?:\?[A-Za-z0-9._~=&-]*)?(?:#[A-Za-z0-9._~-]*)?$/;
+
+/**
+ * Whether a URL is a plain relative path to one of the artifact's own files: path segments of
+ * letters, digits and `._~-` (no `..`), then an optional query and fragment of the same. So no
+ * scheme, no leading `/` (and no protocol-relative `//`), no escapes, quotes, parentheses, spaces
+ * or percent-encoding.
+ */
+export function isPlainRelativeUrl(u: string): boolean {
+  if (!PLAIN_URL_RE.test(u)) return false;
+  const path = u.split(/[?#]/)[0] ?? "";
+  return !path.split("/").includes("..");
+}
+
+/** Raster images inline, as a preview's `src` may hold them. */
+const DATA_RASTER_RE = /^data:image\/(png|jpeg|gif|webp|avif);base64,[A-Za-z0-9+/=]*$/;
+const FRAGMENT_RE = /^#[A-Za-z][\w-]*$/;
+/** CSS functions that take a URL as a bare string, so no url() check sees it. */
+const CSS_STRING_URL_FN = /image-set\(|(?<![\w-])(?:image|src|cross-fade|element|expression)\(/i;
+
+/**
+ * Why a free-form CSS block is refused, or null. Defence in depth: the CSP of the page the CSS ends
+ * up in is the boundary that stops loads from other hosts. These checks keep the block from ending
+ * a <style> element, from escaping its way past them, and from naming another host at all.
+ */
 function cssBlockProblem(s: string): string | null {
   if (s.includes("<")) return "may not contain <, so it can never end a <style> element";
+  if (s.includes("\\")) return "may not contain \\ (CSS escapes): write the characters themselves";
   if (/@import/i.test(s))
     return "may not use @import: put the rules in this block, and fonts in fonts[]";
+  if (CSS_STRING_URL_FN.test(s))
+    return "may not use image-set(), image(), src(), cross-fade(), element() or expression(): use url() with a relative path";
+  const urls = cssUrlArgs(s);
+  if (urls === null)
+    return 'holds a url() that is not plain: write url(path) or url("path") with no quotes, parentheses or spaces inside';
+  for (const u of urls) {
+    if (!(isPlainRelativeUrl(u) || FRAGMENT_RE.test(u) || DATA_RASTER_RE.test(u))) {
+      return `may only use url() with a relative path to this design system's own files, a #fragment or a raster data: image, not ${JSON.stringify(u.slice(0, 80))} (other pages' CSP blocks other hosts, and fonts go in fonts[])`;
+    }
+  }
   return null;
 }
 

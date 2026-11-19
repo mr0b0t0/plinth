@@ -685,10 +685,16 @@ for look the same. It is the third artifact type, `design_system`, beside `html`
   `invalid_input` and up to 50 problems, each with its path into the JSON. Every string that
   reaches CSS passes one value grammar (no `;`, braces, angle brackets, backslash, `@`, quotes or
   line breaks; no `url(`, `expression(` or comments; at most 256 characters), font family names are
-  quoted by Plinth, and the `css` blocks may not hold `<` or `@import`, because the compiled CSS is
-  copied into other pages. Non-fatal problems are publish warnings: `ds_inert_markup` (an example
-  holds script, a handler, a form, a frame or a meta), `ds_missing_font`, `ds_no_dark_theme` and
-  `ds_deprecated_alias`. They count toward the publish's cap of 50 warnings with the reference
+  quoted by Plinth, and the `css` blocks may not hold `<`, a backslash (so no CSS escape such as
+  `@\69mport`), `@import`, `image-set()`, `image()`, `src()`, `cross-fade()`, `element()` or
+  `expression()`, and each `url()` in them, read as a browser's CSS tokenizer reads it, must be a
+  plain relative path (letters, digits, `._~-` and `/`, no `..`, an optional query and fragment), a
+  `#fragment` or a raster `data:image` URL, because the compiled CSS is copied into other pages.
+  These checks are defence in depth; the content CSP of the page the CSS ends up in is what stops
+  loads from other hosts. Non-fatal problems are publish warnings: `ds_inert_markup` (an example
+  holds script, a handler, a form, a frame or a meta), `ds_missing_font`, `ds_no_dark_theme`,
+  `ds_deprecated_alias`, and `missing_file` with the block's `path` for a CSS block's `url()` that
+  names a file the version does not have. They count toward the publish's cap of 50 warnings with the reference
   warnings. Restore copies stored files without checking them again, as for docs.
 - **Typography.** A typography token compiles to one variable per part
   (`--<prefix>-<path>-font-size` and so on) and a `font` shorthand that reads them. When
@@ -804,7 +810,9 @@ files) and big pages without merging chunks, and an update stores only what chan
   scripts, `crossorigin` links and fonts, which fail under `CONTENT_ISOLATION=opaque`) and
   `not_scanned` (a note, not something to fix: the reference check reads at most 2 MB per file and
   8 MB per publish, so every big build gets it; an inline update also gets it for text files reused
-  by `{path, sha256}` or carried forward, whose bytes were not sent and so were not re-checked). The result's `stored` reports files, `written`,
+  by `{path, sha256}` or carried forward, whose bytes were not sent and so were not re-checked; and
+  when a type's own checks, such as a page's design system reference, fail on a temporary error,
+  which is logged and never fails the publish). The result's `stored` reports files, `written`,
   `reused` and bytes. Agents verify a publish by comparing `get_artifact`'s asset hashes.
 - **Out-of-band upload.** `start_upload` (MCP) or bearer-only `POST /api/v1/uploads` mints a
   ticket: single use, 30 minutes, at most 5 attempts, bound to its connection (or, in single-user
