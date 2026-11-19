@@ -7,11 +7,20 @@
 // back as it was. A checkbox toggles with Enter, Space or a double-click; Delete clears a cell;
 // pasting tab-separated text writes the rows it covers. Rows other people hold show their email.
 //
-// Rows and columns: the edit strip inserts and deletes them with a `struct` frame, which the room
-// applies only while nobody else holds a lease, and the column settings change a column's name,
-// type and format through a lease on the header line. Every line this sends is checked first with
-// the same rules the room applies (checkRow, the header rules), so a refused value never leaves the
-// frame and the room's draft is always a valid sheet.
+// Rows and columns: the edit strip, a row's menu (from its number, or Alt+Down in a cell) and a
+// column's menu (its header's button, or Alt+Down in the header) insert, delete and move them with
+// a `struct` frame, which the room applies only while nobody else holds a lease; Alt+Shift+Up and
+// Down move the selected row. Everything else about a column goes through a lease on the header
+// line, re-serialized: the column settings (name, type, number format with its decimals, currency
+// and thousands separators, width, and a select column's options as a list to add to, rename,
+// reorder and remove from), its width by dragging the header's edge or with Alt+Left and
+// Alt+Right (8 px a step, 40 to 800), and "Freeze up to this column" or "Unfreeze". Renaming an
+// option that cells hold also renames it in those cells, in one change of the whole sheet. Every
+// line this sends is checked first with the same rules the room applies (checkRow, the header
+// rules), so a refused value never leaves the frame and the room's draft is always a valid sheet.
+//
+// At phone width an open cell's field is not in the cell: it is docked at the bottom of the page
+// with the column's name and a Done button, and the menus and the settings are full-width sheets.
 //
 // Two backends, as for docs: the room's socket (../common/live.ts, "room" mode) or a local copy of
 // the lines that only this frame edits (LocalSheet, "solo" mode). Everything is built with
@@ -47,10 +56,20 @@ import {
   type LiveBackend,
   locateBlock,
 } from "../common/live.ts";
-import type { Grid } from "./grid.ts";
+import { clampWidth, columnWidth, type Grid } from "./grid.ts";
 import { cellFromInput, inputText, type NumberLocale, numberLocale, parseTsv } from "./input.ts";
 
 export const EDIT_DEBOUNCE_MS = 250;
+/** Alt+Left and Alt+Right change a width by this much; it is sent once the keys rest. */
+export const WIDTH_STEP = 8;
+export const WIDTH_DEBOUNCE_MS = 400;
+/** At most this many columns stay in view (the header's `freeze`). */
+export const MAX_FROZEN = 5;
+/** A select column lists at most this many options, each at most this long. */
+export const MAX_OPTIONS = 100;
+export const MAX_OPTION_CHARS = 100;
+/** Below this width (the frame's), an open cell's field docks at the bottom of the page. */
+export const DOCK_QUERY = "(max-width: 640px)";
 const STALE_RETRIES = 3;
 const RULES = liveRules("sheet");
 
@@ -155,6 +174,18 @@ interface Open {
   head: string;
   sent: boolean;
   invalid: string | null;
+  /** The field is docked at the bottom of the page (phone width), not in the cell. */
+  docked: boolean;
+  /** A commit was refused with a notice, which goes once a value is kept. */
+  refused?: boolean;
+}
+
+/** One item of a row's or a column's menu. */
+interface MenuItem {
+  label: string;
+  run: () => void;
+  /** Why it cannot be chosen now: the item stays in the menu, with this as its description. */
+  off?: string;
 }
 
 /** What a granted lease is for. */
@@ -183,6 +214,8 @@ type Want =
       /** The lines to put in place of the lease, from the lines as they are when granted. */
       make: (lines: readonly string[], lease: LineRange) => string[] | { error: string };
       tries: number;
+      /** Said in the frame's live region once the change is sent. */
+      said?: string;
     };
 
 /** A struct frame sent and not answered yet, and how to aim it again at the lines as they are. */
@@ -283,8 +316,100 @@ function rowsProblem(lines: readonly string[], header: SheetHeader): string | nu
   return null;
 }
 
+/** The header with its first `cols` columns frozen (0: none), canonical. */
+export function headerFrozen(header: SheetHeader, cols: number): string {
+  const h: SheetHeader = { columns: header.columns };
+  if (cols > 0) h.freeze = { cols };
+  return serializeSheet({ header: h, rows: [] });
+}
+
+/** A select column's option list as edited: each entry, and the option it was (null: added). */
+export interface OptionEntry {
+  from: string | null;
+  value: string;
+}
+
+/**
+ * The options an edited list stands for (trimmed, empty entries dropped), the options it renames
+ * (old to new) and the ones it drops, or why the list cannot be a column's.
+ */
+export function readOptions(
+  entries: readonly OptionEntry[],
+  before: readonly string[],
+): { options: string[]; renames: Map<string, string>; removed: string[] } | { error: string } {
+  const options: string[] = [];
+  const seen = new Set<string>();
+  const kept = new Set<string>();
+  const renames = new Map<string, string>();
+  for (const e of entries) {
+    const v = e.value.trim().normalize("NFC");
+    if (v === "") continue;
+    if (v.length > MAX_OPTION_CHARS) {
+      return { error: `An option is at most ${MAX_OPTION_CHARS} characters` };
+    }
+    if (seen.has(v)) return { error: `The option "${v}" is listed twice` };
+    seen.add(v);
+    options.push(v);
+    if (e.from !== null) {
+      kept.add(e.from);
+      if (e.from !== v) renames.set(e.from, v);
+    }
+  }
+  if (options.length === 0 || options.length > MAX_OPTIONS) {
+    return { error: `A select column lists 1 to ${MAX_OPTIONS} options` };
+  }
+  return { options, renames, removed: before.filter((o) => !kept.has(o)) };
+}
+
+/** The first cell of column `col` (from row 2 down) that holds one of `values`, or null. */
+function firstUse(
+  lines: readonly string[],
+  col: number,
+  values: ReadonlySet<string>,
+): { at: string; value: string } | null {
+  if (values.size === 0) return null;
+  for (let i = 1; i < lines.length; i++) {
+    const v = rowCells(lines[i])?.[col];
+    if (typeof v === "string" && values.has(v)) return { at: a1(i + 1, col), value: v };
+  }
+  return null;
+}
+
+/** The lines with `col`'s cells renamed (old option to new), checked against `header`. */
+function renamedRows(
+  lines: readonly string[],
+  header: SheetHeader,
+  col: number,
+  renames: ReadonlyMap<string, string>,
+): string[] | { error: string } {
+  const out: string[] = [];
+  for (let i = 1; i < lines.length; i++) {
+    const line = lines[i] as string;
+    const cells = rowCells(line);
+    if (!cells) return { error: `Row ${i + 1} is not a row` };
+    const v = cells[col];
+    const to = typeof v === "string" ? renames.get(v) : undefined;
+    if (to === undefined) {
+      out.push(line);
+      continue;
+    }
+    const next = [...cells];
+    next[col] = to;
+    const r = checkedRow(header, next, i + 1);
+    if (typeof r !== "string") return r;
+    out.push(r);
+  }
+  return out;
+}
+
 const isPrintable = (e: KeyboardEvent) =>
   e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey && e.key !== " ";
+
+/** A key that opens the menu of the row or the column it is pressed in. */
+const isMenuKey = (e: KeyboardEvent) =>
+  (e.altKey && !e.shiftKey && !e.ctrlKey && !e.metaKey && e.key === "ArrowDown") ||
+  (e.shiftKey && e.key === "F10") ||
+  e.key === "ContextMenu";
 
 export class SheetEditor {
   editing = false;
@@ -297,14 +422,37 @@ export class SheetEditor {
   private panel: HTMLElement | null = null;
   private lastStruct: SentStruct | null = null;
   private readonly loc: NumberLocale;
+  /** The docked field's panel (phone width), while a cell is open there. */
+  private dock: HTMLElement | null = null;
+  /** The open row or column menu, the control that opened it, and where focus goes back. */
+  private menu: { el: HTMLElement; button: HTMLElement | null; back: HTMLElement | null } | null =
+    null;
+  /** The frame's polite live region (row moves, widths, freezing). */
+  private announcer: HTMLElement | null = null;
+  /** A width changed with Alt+arrows, sent once the keys rest. */
+  private widthPending: { col: number; was: SheetColumn; width: number } | null = null;
+  private widthTimer: ReturnType<typeof setTimeout> | null = null;
+  /**
+   * A row move sent: the lines it was sent against, the moved row's line as it will be once the
+   * move lands (its formulas rewritten), and the column to select there.
+   */
+  private moving: { line: string; before: string; col: number; focus: boolean } | null = null;
+  private readonly dockOpt: boolean | undefined;
 
   constructor(
     private readonly win: Window,
     private backend: SheetBackend,
     private readonly hooks: SheetEditorHooks,
-    opts: { locale?: string } = {},
+    opts: { locale?: string; dock?: boolean } = {},
   ) {
     this.loc = numberLocale(opts.locale);
+    this.dockOpt = opts.dock;
+  }
+
+  /** Phone width: an open cell's field docks at the bottom, and menus are full-width sheets. */
+  private narrow(): boolean {
+    if (this.dockOpt !== undefined) return this.dockOpt;
+    return typeof this.win.matchMedia === "function" && this.win.matchMedia(DOCK_QUERY).matches;
   }
 
   get doc(): Document {
@@ -313,7 +461,7 @@ export class SheetEditor {
 
   /** A cell's text is waiting in the debounce, not yet sent. */
   get pending(): boolean {
-    return this.timer !== null;
+    return this.timer !== null || this.widthTimer !== null;
   }
 
   setBackend(b: SheetBackend): void {
@@ -327,8 +475,11 @@ export class SheetEditor {
     const old = this.grid;
     if (old && old !== grid) this.listen(old, false);
     this.grid = grid;
-    grid.setLocked((td) => this.open?.td === td);
+    // A docked field leaves its cell showing the value as it is typed.
+    grid.setLocked((td) => this.open?.td === td && !this.open.docked);
     if (old !== grid && this.editing) this.listen(grid, true);
+    grid.setEditable(this.editing);
+    grid.setHeaderTools(this.editing ? this.headerTools : null);
     if (this.editing) this.mountStrip();
     const o = this.open;
     if (o) {
@@ -338,7 +489,7 @@ export class SheetEditor {
       if (td) {
         o.row = row;
         o.td = td;
-        td.replaceChildren(o.field);
+        this.place(o);
         if (focused) o.field.focus();
       }
     }
@@ -351,12 +502,19 @@ export class SheetEditor {
       t.addEventListener("keydown", this.onKey);
       t.addEventListener("dblclick", this.onDouble);
       t.addEventListener("paste", this.onPaste);
+      t.addEventListener("click", this.onRowNumber);
+      t.addEventListener("focusin", this.onFocus);
     } else {
       t.removeEventListener("keydown", this.onKey);
       t.removeEventListener("dblclick", this.onDouble);
       t.removeEventListener("paste", this.onPaste);
+      t.removeEventListener("click", this.onRowNumber);
+      t.removeEventListener("focusin", this.onFocus);
     }
   }
+
+  /** The strip's buttons follow the selected cell. */
+  private readonly onFocus = () => this.updateStrip();
 
   /** Who holds which rows (only in edit mode). */
   render(): void {
@@ -377,10 +535,16 @@ export class SheetEditor {
 
   setEditing(on: boolean): void {
     if (on === this.editing) return;
-    if (!on) this.close(true);
+    if (!on) {
+      // A width still waiting for the keys to rest is sent first.
+      this.commitWidth();
+      this.close(true);
+    }
     this.editing = on;
     const g = this.grid;
     if (g) this.listen(g, on);
+    g?.setEditable(on);
+    g?.setHeaderTools(on ? this.headerTools : null);
     if (on) {
       this.win.addEventListener("keydown", this.onSaveKey);
       this.mountStrip();
@@ -389,11 +553,29 @@ export class SheetEditor {
       this.strip?.remove();
       this.strip = null;
       this.closePanel();
+      this.closeMenu(false);
       this.hideNotice();
+      this.announcer?.remove();
+      this.announcer = null;
+      this.moving = null;
     }
     g?.el.classList.toggle("plinth-sheet__page--editing", on);
     this.render();
     this.hooks.status();
+  }
+
+  /** A polite announcement in the frame, of this person's own row moves, widths and freezing. */
+  private announce(text: string): void {
+    let el = this.announcer;
+    if (!el) {
+      el = this.doc.createElement("div");
+      el.className = "plinth-sheet__announce";
+      el.setAttribute("role", "status");
+      el.setAttribute("aria-live", "polite");
+      this.doc.body.append(el);
+      this.announcer = el;
+    }
+    el.textContent = text;
   }
 
   private readonly onSaveKey = (e: KeyboardEvent) => {
@@ -432,6 +614,23 @@ export class SheetEditor {
     const at = this.addressOf(e.target);
     if (!at) return;
     const header = at.row === 1;
+    if (isMenuKey(e)) {
+      e.preventDefault();
+      const from = e.target as HTMLElement;
+      if (header) this.columnMenu(at.col, from, null);
+      else this.rowMenu(at.row, from);
+      return;
+    }
+    if (e.altKey && !e.ctrlKey && !e.metaKey) {
+      if (header && !e.shiftKey && (e.key === "ArrowLeft" || e.key === "ArrowRight")) {
+        e.preventDefault();
+        this.nudgeWidth(at.col, e.key === "ArrowLeft" ? -WIDTH_STEP : WIDTH_STEP);
+      } else if (!header && e.shiftKey && (e.key === "ArrowUp" || e.key === "ArrowDown")) {
+        e.preventDefault();
+        this.moveRow(e.key === "ArrowUp" ? -1 : 1, at.row, true);
+      }
+      return;
+    }
     // In the header the sort button has the focus: F2 renames, Enter still sorts.
     if (header && e.key !== "F2") return;
     const col = this.header()?.columns[at.col];
@@ -452,6 +651,8 @@ export class SheetEditor {
 
   private readonly onDouble = (e: MouseEvent) => {
     if (this.open?.td.contains(e.target as Node)) return;
+    // The header's own controls (its menu button, its width handle) are not the cell.
+    if ((e.target as Element).closest?.(".plinth-sheet__tool")) return;
     const at = this.addressOf(e.target);
     if (!at) return;
     e.preventDefault();
@@ -465,6 +666,17 @@ export class SheetEditor {
     if (!at || text === undefined || text === "") return;
     e.preventDefault();
     this.paste(at.row, at.col, text);
+  };
+
+  /** A click on a row's number opens the row's menu. */
+  private readonly onRowNumber = (e: MouseEvent) => {
+    const th = (e.target as Element).closest?.("tbody th.plinth-sheet__rownum") as
+      | HTMLElement
+      | null
+      | undefined;
+    const row = Number((th?.parentElement as HTMLElement | null)?.dataset.row);
+    if (!th || !Number.isInteger(row) || row < 2) return;
+    this.rowMenu(row, th);
   };
 
   /** Enter or a double-click: a checkbox toggles, any other cell opens. */
@@ -553,11 +765,15 @@ export class SheetEditor {
   }
 
   /** A one-shot change of lines under a lease: the lines are made when it is granted. */
-  private write(range: LineRange, make: Extract<Want, { kind: "write" }>["make"]): void {
+  private write(
+    range: LineRange,
+    make: Extract<Want, { kind: "write" }>["make"],
+    opts: { what?: string; said?: string } = {},
+  ): void {
     if (!this.canWrite()) return;
     const other = this.heldBy(range);
     if (other) {
-      this.explainHeld(other, range.start === 0 ? "the column names" : "this row");
+      this.explainHeld(other, opts.what ?? (range.start === 0 ? "the column names" : "this row"));
       return;
     }
     if (this.open && !this.commit()) return;
@@ -570,6 +786,7 @@ export class SheetEditor {
       head: lines[0] ?? "",
       make,
       tries: 0,
+      ...(opts.said ? { said: opts.said } : {}),
     };
     if (!this.backend.lease(range)) {
       this.want = null;
@@ -688,8 +905,12 @@ export class SheetEditor {
       // A refused send has said why (too large, not connected): that notice stays.
       const sent = this.backend.edit(r.join("\n"));
       this.backend.release();
-      if (sent) this.hideNotice();
-      else if (!this.notice) this.showNotice("That change was not sent. Try again in a moment.");
+      if (sent) {
+        this.hideNotice();
+        if (w.said) this.announce(w.said);
+      } else if (!this.notice) {
+        this.showNotice("That change was not sent. Try again in a moment.");
+      }
       this.hooks.status();
       return;
     }
@@ -704,7 +925,10 @@ export class SheetEditor {
     }
     // A row taken again keeps its open field, and what was typed in it meanwhile.
     const kept = w.keep !== undefined ? this.open : null;
-    if (kept && kept.td !== td) kept.field.remove();
+    if (kept && kept.td !== td) {
+      if (kept.docked) kept.td.classList.remove("plinth-sheet__cell--docked");
+      else kept.field.remove();
+    }
     const value =
       kept?.field.value ??
       w.keep ??
@@ -722,8 +946,9 @@ export class SheetEditor {
       head: this.backend.lines[0] ?? "",
       sent: false,
       invalid: null,
+      docked: kept?.docked ?? this.narrow(),
     };
-    td.replaceChildren(field);
+    this.place(this.open);
     this.grid?.select(row, w.col);
     this.grid?.showRaw(value);
     this.hideNotice();
@@ -822,6 +1047,7 @@ export class SheetEditor {
         if (!b.lease({ start: next.row - 1, end: next.row })) this.want = { ...w, tries: 0 };
       }
     }
+    this.landed();
     this.render();
   }
 
@@ -844,10 +1070,18 @@ export class SheetEditor {
       const op = s.again(this.backend.lines);
       if (op) {
         this.lastStruct = { ...s, op, tries: s.tries + 1 };
+        const m = this.moving;
+        const lines = this.backend.lines;
+        const landing = op.op === "move_rows" ? applySheetStruct(lines, op)?.[op.to - 1] : null;
+        if (m && landing) {
+          m.line = landing;
+          m.before = joinLines(lines);
+        }
         if (this.backend.struct(op)) return;
       }
     }
     this.lastStruct = null;
+    this.moving = null;
     if (reason === "held") {
       this.showNotice(`${by ?? "Someone"} is editing. Rows and columns change once they finish.`);
     } else if (reason === "frozen") {
@@ -898,6 +1132,8 @@ export class SheetEditor {
       setTimeout(() => {
         if (this.open?.field !== field || this.doc.activeElement === field) return;
         if (!this.doc.hasFocus()) return;
+        // The docked panel's own Done button commits by itself.
+        if (this.dock?.contains(this.doc.activeElement)) return;
         if (this.want?.kind === "cell" && this.want.keep !== undefined) return;
         if (!this.commit()) this.cancel();
       }, 0);
@@ -980,8 +1216,9 @@ export class SheetEditor {
     return true;
   }
 
-  /** Send a pending cell now. */
+  /** Send a pending cell (and a width waiting for the keys to rest) now. */
   flush(): void {
+    this.commitWidth();
     if (!this.timer) return;
     this.cancelTimer();
     this.send();
@@ -994,9 +1231,11 @@ export class SheetEditor {
     this.cancelTimer();
     if (this.backend.mine && !this.send()) {
       this.showNotice(o.invalid ?? "This value cannot be kept here.");
+      o.refused = true;
       o.field.focus();
       return false;
     }
+    if (o.refused) this.hideNotice();
     this.close(true);
     return true;
   }
@@ -1025,8 +1264,65 @@ export class SheetEditor {
     this.cancelTimer();
     if (!o) return;
     o.field.remove();
+    this.closeDock();
+    o.td.classList.remove("plinth-sheet__cell--docked");
     this.grid?.repaint(o.row, o.col);
     this.grid?.select(o.row, o.col);
+  }
+
+  /** Put an open field where it is edited: in its cell, or docked at the bottom of the page. */
+  private place(o: Open): void {
+    if (!o.docked) {
+      o.td.replaceChildren(o.field);
+      return;
+    }
+    o.td.classList.add("plinth-sheet__cell--docked");
+    const d = this.doc;
+    const name = o.row === 1 ? "Column name" : (this.header()?.columns[o.col]?.name ?? "");
+    const where = a1(o.row, o.col);
+    let dock = this.dock;
+    if (!dock) {
+      dock = d.createElement("div");
+      dock.className = "plinth-sheet__dock";
+      dock.setAttribute("role", "group");
+      d.body.append(dock);
+      d.body.classList.add("plinth-sheet--docked");
+      this.dock = dock;
+    }
+    dock.setAttribute("aria-label", `Edit ${where}`);
+    const label = d.createElement("div");
+    label.className = "plinth-sheet__dock-label";
+    const strong = d.createElement("span");
+    strong.className = "plinth-sheet__dock-name";
+    strong.textContent = name;
+    const addr = d.createElement("span");
+    addr.className = "plinth-sheet__dock-addr";
+    addr.textContent = where;
+    label.append(strong, addr);
+    const done = d.createElement("button");
+    done.type = "button";
+    done.className = "plinth-sheet__btn plinth-sheet__dock-done";
+    done.textContent = "Done";
+    done.addEventListener("click", () => {
+      const at = this.open;
+      if (!at) return;
+      if (this.commit()) this.focusCell(at.row, at.col);
+    });
+    o.field.setAttribute(
+      "aria-label",
+      `Edit ${where}${name && o.row > 1 ? `, ${name}` : ""}. Enter to finish, Escape to cancel.`,
+    );
+    dock.replaceChildren(label, o.field, done);
+    // The page keeps the cell above the docked panel in view.
+    this.doc.documentElement.style.setProperty("--sheet-dock-h", `${dock.offsetHeight || 120}px`);
+    o.td.scrollIntoView?.({ block: "nearest", inline: "nearest" });
+  }
+
+  private closeDock(): void {
+    if (!this.dock) return;
+    this.dock.remove();
+    this.dock = null;
+    this.doc.body.classList.remove("plinth-sheet--docked");
   }
 
   // ---------- rows and columns ----------
@@ -1059,13 +1355,16 @@ export class SheetEditor {
     add("rowAbove", "Row above", () => this.rowAction("above"));
     add("rowBelow", "Row below", () => this.rowAction("below"));
     add("rowDelete", "Delete row", () => this.rowAction("delete"));
+    add("rowUp", "Move row up", () => this.moveRow(-1));
+    add("rowDown", "Move row down", () => this.moveRow(1));
     add("colLeft", "Column left", () => this.columnAction("left"));
     add("colRight", "Column right", () => this.columnAction("right"));
     add("colDelete", "Delete column", () => this.columnAction("delete"));
     add("colEdit", "Column settings", () => this.openPanel());
     const hint = d.createElement("span");
     hint.className = "plinth-sheet__hint";
-    hint.textContent = "Double-click a cell, or select it and type, to edit.";
+    hint.textContent =
+      "Double-click a cell, or select it and type, to edit. Alt+Down opens a row's or a column's menu.";
     strip.append(hint);
     return strip;
   }
@@ -1074,27 +1373,30 @@ export class SheetEditor {
     if (!this.strip || !this.grid) return;
     const { row } = this.grid.selected();
     const cols = this.header()?.columns.length ?? 0;
+    const last = this.backend.lines.length;
     const set = (k: string, disabled: boolean) => {
       const b = this.stripButtons.get(k);
       if (b) b.disabled = disabled;
     };
     set("rowAbove", row < 2);
     set("rowDelete", row < 2);
+    set("rowUp", row <= 2);
+    set("rowDown", row < 2 || row >= last);
     set("colDelete", cols <= 1);
     set("colLeft", cols >= LIMITS.maxSheetColumns);
     set("colRight", cols >= LIMITS.maxSheetColumns);
   }
 
   /** Send a struct; `again` aims it at the same rows or column if the room says it is stale. */
-  private struct(op: SheetStructOp, again: SentStruct["again"]): void {
-    if (!this.canWrite()) return;
-    if (this.open && !this.commit()) return;
+  private struct(op: SheetStructOp, again: SentStruct["again"]): boolean {
+    if (!this.canWrite()) return false;
+    if (this.open && !this.commit()) return false;
     this.close(true);
     const b = this.backend;
     for (const l of b.leases.values()) {
       if (l.id !== b.mine?.id) {
         this.showNotice(`${l.by} is editing. Rows and columns change once they finish.`);
-        return;
+        return false;
       }
     }
     this.lastStruct = { op, tries: 0, again };
@@ -1105,9 +1407,10 @@ export class SheetEditor {
           ? "That change does not fit the sheet."
           : "Not connected. Try again in a moment.",
       );
-      return;
+      return false;
     }
     this.hideNotice();
+    return true;
   }
 
   // A row action is tied to the selected row's line, and a column action to the selected
@@ -1140,12 +1443,56 @@ export class SheetEditor {
     });
   }
 
-  private columnAction(kind: "left" | "right" | "delete"): void {
+  /**
+   * Move a row (the selected one by default) up or down by one, in the sheet's own order: the
+   * room rewrites every formula's references so they keep pointing at the same cells. Once it
+   * lands the row stays selected where it went, and the move is announced.
+   */
+  moveRow(dir: -1 | 1, row = this.grid?.selected().row ?? 0, focus = false): void {
+    const g = this.grid;
+    if (!g) return;
+    if (g.view().sort) {
+      this.showNotice("Rows move in the sheet's own order. Turn the sort off first.");
+      return;
+    }
+    const lines = this.backend.lines;
+    const to = row + dir;
+    const line = lines[row - 1];
+    if (row < 2 || to < 2 || to > lines.length || line === undefined) return;
+    const op: SheetStructOp = { op: "move_rows", from: row, count: 1, to };
+    const landing = applySheetStruct(lines, op)?.[to - 1];
+    if (landing === undefined) return;
+    // Set first: alone (solo), the move lands before struct() returns.
+    this.moving = { line: landing, before: joinLines(lines), col: g.selected().col, focus };
+    const sent = this.struct(op, (now) => {
+      const at = locateBlock(now, line, row - 1);
+      const from = at + 1;
+      if (at < 1 || from + dir < 2 || from + dir > now.length) return null;
+      return { op: "move_rows", from, count: 1, to: from + dir };
+    });
+    if (!sent) this.moving = null;
+  }
+
+  /** A row move landed: the row stays selected (and focused) where it went, and it is said. */
+  private landed(): void {
+    const m = this.moving;
+    const op = this.lastStruct?.op;
+    if (!m || op?.op !== "move_rows") return;
+    const lines = this.backend.lines;
+    if (lines[op.to - 1] !== m.line || joinLines(lines) === m.before) return;
+    this.moving = null;
+    this.grid?.select(op.to, m.col);
+    if (m.focus) this.grid?.cell(op.to, m.col)?.focus();
+    this.announce(`Row ${op.from} moved to row ${op.to}.`);
+    this.updateStrip();
+  }
+
+  private columnAction(kind: "left" | "right" | "delete", which?: number): void {
     const g = this.grid;
     const header = this.header();
     const head = this.backend.lines[0];
     if (!g || !header || head === undefined) return;
-    const { col } = g.selected();
+    const col = which ?? g.selected().col;
     const was = header.columns[col];
     if (!was) return;
     const make = (h: SheetHeader, at: number): SheetStructOp => {
@@ -1168,6 +1515,328 @@ export class SheetEditor {
     });
   }
 
+  // ---------- the header: widths, freezing, menus ----------
+
+  /**
+   * A column header's controls in edit mode: its menu button, and the handle on its edge. Built
+   * from the column the grid shows (the room's lines may not have arrived yet).
+   */
+  private readonly headerTools = (col: number, c: SheetColumn): HTMLElement[] => {
+    const d = this.doc;
+    const menu = d.createElement("button");
+    menu.type = "button";
+    menu.className = "plinth-sheet__tool plinth-sheet__colmenu";
+    // The header's own stop is its sort button (Alt+Down opens this menu from there).
+    menu.tabIndex = -1;
+    menu.setAttribute("aria-label", `Column ${colLetter(col)} menu: ${c.name}`);
+    menu.setAttribute("aria-haspopup", "menu");
+    menu.setAttribute("aria-expanded", "false");
+    menu.addEventListener("click", (e) => {
+      e.stopPropagation();
+      this.columnMenu(col, menu, menu);
+    });
+    const handle = d.createElement("span");
+    handle.className = "plinth-sheet__tool plinth-sheet__resize";
+    // Pointer only: Alt+Left and Alt+Right, and the settings' Width field, do it by keyboard.
+    handle.setAttribute("aria-hidden", "true");
+    handle.title = "Drag to change the width";
+    handle.addEventListener("pointerdown", (e) => this.dragWidth(e, col, handle));
+    return [menu, handle];
+  };
+
+  /** Drag a header's edge: the width shows as it moves, and is sent when the pointer lets go. */
+  private dragWidth(e: PointerEvent, col: number, handle: HTMLElement): void {
+    const g = this.grid;
+    const was = this.header()?.columns[col];
+    if (!g || !was || e.button !== 0 || !this.canWrite()) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const start = e.clientX;
+    const from = g.width(col);
+    let w = from;
+    try {
+      handle.setPointerCapture(e.pointerId);
+    } catch {
+      // a synthetic pointer
+    }
+    const move = (ev: PointerEvent) => {
+      w = clampWidth(from + ev.clientX - start);
+      g.setWidth(col, w);
+    };
+    const end = (ev: PointerEvent) => {
+      handle.removeEventListener("pointermove", move);
+      handle.removeEventListener("pointerup", end);
+      handle.removeEventListener("pointercancel", end);
+      if (ev.type === "pointercancel" || w === from) {
+        g.setWidth(col, from);
+        return;
+      }
+      this.setWidth(col, was, w);
+    };
+    handle.addEventListener("pointermove", move);
+    handle.addEventListener("pointerup", end);
+    handle.addEventListener("pointercancel", end);
+  }
+
+  /** Alt+Left or Alt+Right in a header: 8 px narrower or wider, sent once the keys rest. */
+  private nudgeWidth(col: number, delta: number): void {
+    const g = this.grid;
+    const c = this.header()?.columns[col];
+    if (!g || !c || !this.canWrite()) return;
+    const p =
+      this.widthPending?.col === col ? this.widthPending : { col, was: c, width: columnWidth(c) };
+    if (this.widthPending && this.widthPending.col !== col) this.commitWidth();
+    const width = clampWidth(p.width + delta);
+    this.widthPending = { ...p, width };
+    g.setWidth(col, width);
+    this.announce(`${c.name}: ${width} pixels wide.`);
+    if (this.widthTimer) clearTimeout(this.widthTimer);
+    this.widthTimer = setTimeout(() => this.commitWidth(), WIDTH_DEBOUNCE_MS);
+    this.hooks.status();
+  }
+
+  /** Send a width that Alt+arrows changed, now. */
+  private commitWidth(): void {
+    if (this.widthTimer) clearTimeout(this.widthTimer);
+    this.widthTimer = null;
+    const p = this.widthPending;
+    this.widthPending = null;
+    if (p && p.width !== columnWidth(p.was)) this.setWidth(p.col, p.was, p.width);
+  }
+
+  /** A column's width, through a lease on the header line. */
+  private setWidth(col: number, was: SheetColumn, width: number): void {
+    this.writeColumn(col, was, (c) => ({ ...c, width: clampWidth(width) }), {
+      said: `${was.name}: ${clampWidth(width)} pixels wide.`,
+    });
+  }
+
+  /** One column's definition changed through a lease on the header line, found where it is now. */
+  private writeColumn(
+    col: number,
+    was: SheetColumn,
+    change: (c: SheetColumn) => SheetColumn,
+    opts: { said?: string } = {},
+  ): void {
+    this.write(
+      { start: 0, end: 1 },
+      (lines) => {
+        const now = sheetHeaderLine(lines[0]);
+        const at = now ? findColumn(now, was, col) : -1;
+        if (!now || at < 0) return { error: "The column changed meanwhile. Try again." };
+        const line = headerWith(now, at, change);
+        if (typeof line !== "string") return line;
+        const problem = rowsProblem(lines, sheetHeaderLine(line) as SheetHeader);
+        if (problem) return { error: `Some cells do not fit: ${problem}` };
+        return [line];
+      },
+      opts,
+    );
+  }
+
+  /** "Freeze up to this column" (the first `col + 1` columns stay in view), or none with -1. */
+  freezeTo(col: number): void {
+    const header = this.header();
+    if (!header) return;
+    const was = col >= 0 ? header.columns[col] : undefined;
+    if (col >= 0 && !was) return;
+    if (col + 1 > MAX_FROZEN) {
+      this.showNotice(`At most ${MAX_FROZEN} columns stay in view.`);
+      return;
+    }
+    const said =
+      col < 0
+        ? "No columns stay in view."
+        : col === 0
+          ? "Column A stays in view."
+          : `Columns A to ${colLetter(col)} stay in view.`;
+    this.write(
+      { start: 0, end: 1 },
+      (lines) => {
+        const now = sheetHeaderLine(lines[0]);
+        if (!now) return { error: "The sheet changed meanwhile. Try again." };
+        if (!was) return [headerFrozen(now, 0)];
+        const at = findColumn(now, was, col);
+        if (at < 0) return { error: "The column changed meanwhile. Try again." };
+        if (at + 1 > MAX_FROZEN) return { error: `At most ${MAX_FROZEN} columns stay in view.` };
+        return [headerFrozen(now, at + 1)];
+      },
+      { said },
+    );
+  }
+
+  /** A column's menu, from its header's button or Alt+Down in the header. */
+  private columnMenu(col: number, from: HTMLElement, button: HTMLElement | null): void {
+    const header = this.header();
+    const c = header?.columns[col];
+    if (!header || !c || !this.canWrite()) return;
+    const frozen = header.freeze?.cols ?? 0;
+    const items: MenuItem[] = [{ label: "Column settings…", run: () => this.openPanel(col) }];
+    if (frozen !== col + 1) {
+      items.push({
+        label: "Freeze up to this column",
+        run: () => this.freezeTo(col),
+        ...(col + 1 > MAX_FROZEN ? { off: `At most ${MAX_FROZEN} columns stay in view.` } : {}),
+      });
+    }
+    if (frozen > 0) items.push({ label: "Unfreeze columns", run: () => this.freezeTo(-1) });
+    items.push(
+      { label: "Insert column left", run: () => this.columnAction("left", col) },
+      { label: "Insert column right", run: () => this.columnAction("right", col) },
+      {
+        label: "Delete column",
+        run: () => this.columnAction("delete", col),
+        ...(header.columns.length <= 1 ? { off: "A sheet keeps at least one column." } : {}),
+      },
+    );
+    const back = this.grid?.cell(1, col)?.querySelector<HTMLElement>(".plinth-sheet__sort") ?? from;
+    this.openMenu(from, `Column ${colLetter(col)}, ${c.name}`, items, back, button);
+  }
+
+  /** A row's menu, from its number or Alt+Down in one of its cells. */
+  private rowMenu(row: number, from: HTMLElement): void {
+    const g = this.grid;
+    if (!g || row < 2 || !this.canWrite()) return;
+    const last = this.backend.lines.length;
+    const col = g.selected().col;
+    const select = () => g.select(row, col);
+    const items: MenuItem[] = [
+      {
+        label: "Insert row above",
+        run: () => {
+          select();
+          this.rowAction("above");
+        },
+      },
+      {
+        label: "Insert row below",
+        run: () => {
+          select();
+          this.rowAction("below");
+        },
+      },
+      {
+        label: "Move row up",
+        run: () => {
+          select();
+          this.moveRow(-1, row, true);
+        },
+        ...(row <= 2 ? { off: "This is the first row." } : {}),
+      },
+      {
+        label: "Move row down",
+        run: () => {
+          select();
+          this.moveRow(1, row, true);
+        },
+        ...(row >= last ? { off: "This is the last row." } : {}),
+      },
+      {
+        label: "Delete row",
+        run: () => {
+          select();
+          this.rowAction("delete");
+        },
+      },
+    ];
+    this.openMenu(from, `Row ${row}`, items, g.cell(row, col) ?? from, null);
+  }
+
+  /**
+   * A menu of buttons (role="menu"): next to what opened it, or a full-width sheet at phone width.
+   * The arrows, Home and End move between its items, Escape closes it and goes back, and Tab or
+   * a click elsewhere closes it.
+   */
+  private openMenu(
+    anchor: HTMLElement,
+    label: string,
+    items: readonly MenuItem[],
+    back: HTMLElement | null,
+    button: HTMLElement | null,
+  ): void {
+    this.closeMenu(false);
+    const d = this.doc;
+    const menu = d.createElement("div");
+    menu.className = "plinth-sheet__menu";
+    menu.setAttribute("role", "menu");
+    menu.setAttribute("aria-label", label);
+    const buttons: HTMLButtonElement[] = [];
+    items.forEach((it, i) => {
+      const b = d.createElement("button");
+      b.type = "button";
+      b.className = "plinth-sheet__menu-item";
+      b.setAttribute("role", "menuitem");
+      b.tabIndex = -1;
+      b.textContent = it.label;
+      if (it.off) {
+        // Kept in the menu with its reason, as a menu item that cannot be chosen now.
+        b.setAttribute("aria-disabled", "true");
+        const why = d.createElement("span");
+        why.id = `__plinth-menu-why-${i}`;
+        why.hidden = true;
+        why.textContent = it.off;
+        menu.append(why);
+        b.setAttribute("aria-describedby", why.id);
+        b.title = it.off;
+      }
+      b.addEventListener("click", () => {
+        if (it.off) {
+          this.announce(it.off);
+          return;
+        }
+        this.closeMenu(false);
+        it.run();
+      });
+      buttons.push(b);
+      menu.append(b);
+    });
+    menu.addEventListener("keydown", (e) => {
+      const at = buttons.indexOf(d.activeElement as HTMLButtonElement);
+      let to = -1;
+      if (e.key === "ArrowDown") to = (at + 1) % buttons.length;
+      else if (e.key === "ArrowUp") to = (at - 1 + buttons.length) % buttons.length;
+      else if (e.key === "Home") to = 0;
+      else if (e.key === "End") to = buttons.length - 1;
+      else if (e.key === "Escape") {
+        e.preventDefault();
+        e.stopPropagation();
+        this.closeMenu(true);
+        return;
+      } else if (e.key === "Tab") {
+        this.closeMenu(false);
+        return;
+      } else return;
+      e.preventDefault();
+      buttons[to]?.focus();
+    });
+    if (this.narrow()) menu.classList.add("plinth-sheet__menu--sheet");
+    else {
+      const r = anchor.getBoundingClientRect();
+      const width = this.win.innerWidth || d.documentElement.clientWidth || 0;
+      menu.style.top = `${Math.round(r.bottom + 2)}px`;
+      menu.style.left = `${Math.max(8, Math.round(Math.min(r.left, width - 248)))}px`;
+    }
+    d.body.append(menu);
+    button?.setAttribute("aria-expanded", "true");
+    this.menu = { el: menu, button, back };
+    d.addEventListener("pointerdown", this.onOutside, true);
+    buttons[0]?.focus();
+  }
+
+  private readonly onOutside = (e: Event) => {
+    if (this.menu && !this.menu.el.contains(e.target as Node)) this.closeMenu(false);
+  };
+
+  private closeMenu(goBack: boolean): void {
+    const m = this.menu;
+    if (!m) return;
+    this.menu = null;
+    this.doc.removeEventListener("pointerdown", this.onOutside, true);
+    m.el.remove();
+    m.button?.setAttribute("aria-expanded", "false");
+    if (goBack) m.back?.focus();
+  }
+
   // ---------- column settings ----------
 
   private closePanel(): void {
@@ -1175,16 +1844,19 @@ export class SheetEditor {
     this.panel = null;
   }
 
-  private openPanel(): void {
+  /** The settings of a column (the selected one by default). */
+  openPanel(which?: number): void {
     const g = this.grid;
     const header = this.header();
     if (!g || !header || !this.canWrite()) return;
     this.closePanel();
-    const col = g.selected().col;
-    const c = header.columns[col] as SheetColumn;
+    const col = which ?? g.selected().col;
+    const c = header.columns[col];
+    if (!c) return;
     const d = this.doc;
     const form = d.createElement("form");
     form.className = "plinth-sheet__panel";
+    if (this.narrow()) form.classList.add("plinth-sheet__panel--sheet");
     form.setAttribute("aria-label", `Column ${colLetter(col)} settings`);
     const field = (labelText: string, input: HTMLElement) => {
       const label = d.createElement("label");
@@ -1233,16 +1905,29 @@ export class SheetEditor {
     decimals.max = "10";
     decimals.value = c.format?.decimals !== undefined ? String(c.format.decimals) : "";
     const decimalsRow = field("Decimals", decimals);
-    const options = d.createElement("textarea");
-    options.rows = 3;
-    options.value = (c.options ?? []).join("\n");
-    const optionsRow = field("Options, one per line", options);
+    const grouping = d.createElement("input");
+    grouping.type = "checkbox";
+    grouping.checked = c.format?.grouping !== false;
+    const groupingRow = field("Thousands separators", grouping);
+    groupingRow.classList.add("plinth-sheet__panel-field--check");
+    const width = d.createElement("input");
+    width.type = "number";
+    width.min = String(40);
+    width.max = String(800);
+    width.step = "1";
+    width.placeholder = "Automatic";
+    const widthWas = c.width !== undefined ? String(c.width) : "";
+    width.value = widthWas;
+    field("Width in pixels", width);
+    const options = this.optionList(c.options ?? []);
+    form.append(options.el);
     const sync = () => {
       const num = type.value === "number";
       styleRow.hidden = !num;
       decimalsRow.hidden = !num || style.value === "";
+      groupingRow.hidden = !num || style.value === "";
       currencyRow.hidden = !num || style.value !== "currency";
-      optionsRow.hidden = type.value !== "select";
+      options.el.hidden = type.value !== "select";
     };
     type.addEventListener("change", sync);
     style.addEventListener("change", sync);
@@ -1255,7 +1940,17 @@ export class SheetEditor {
     cancel.type = "button";
     cancel.className = "plinth-sheet__btn";
     cancel.textContent = "Cancel";
-    cancel.addEventListener("click", () => this.closePanel());
+    const back = () => {
+      this.closePanel();
+      this.grid?.focusSelected();
+    };
+    cancel.addEventListener("click", back);
+    form.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        back();
+      }
+    });
     const actions = d.createElement("div");
     actions.className = "plinth-sheet__panel-actions";
     actions.append(apply, cancel);
@@ -1263,26 +1958,35 @@ export class SheetEditor {
     form.addEventListener("submit", (e) => {
       e.preventDefault();
       const t = type.value as SheetColumnType;
+      const w = width.value.trim();
+      const px = w === "" ? null : Number(w);
+      if (px !== null && (!Number.isInteger(px) || px < 40 || px > 800)) {
+        this.showNotice("A width is a whole number of pixels from 40 to 800.");
+        width.focus();
+        return;
+      }
+      const list = t === "select" ? readOptions(options.entries(), c.options ?? []) : null;
+      if (list && "error" in list) {
+        this.showNotice(list.error);
+        return;
+      }
+      const renames = list && c.type === "select" ? list.renames : new Map<string, string>();
       const change = (old: SheetColumn): SheetColumn => {
         const next: SheetColumn = { name: name.value.normalize("NFC"), type: t };
-        if (old.width !== undefined) next.width = old.width;
+        // An untouched width field keeps the width as it is now (dragged meanwhile, say).
+        if (w === widthWas) {
+          if (old.width !== undefined) next.width = old.width;
+        } else if (px !== null) next.width = px;
         if (t === "number" && style.value !== "") {
           const f: SheetNumberFormat = { style: style.value as SheetNumberFormat["style"] };
           if (style.value === "currency") f.currency = currency.value.trim().toUpperCase();
           if (decimals.value !== "") f.decimals = Number(decimals.value);
-          if (old.format?.grouping !== undefined) f.grouping = old.format.grouping;
+          // Separators are on unless turned off; an explicit "on" stays as it was written.
+          if (!grouping.checked) f.grouping = false;
+          else if (old.format?.grouping === true) f.grouping = true;
           next.format = f;
         }
-        if (t === "select") {
-          next.options = [
-            ...new Set(
-              options.value
-                .split("\n")
-                .map((o) => o.trim())
-                .filter(Boolean),
-            ),
-          ];
-        }
+        if (list && !("error" in list)) next.options = list.options;
         return next;
       };
       const first = headerWith(header, col, change);
@@ -1290,23 +1994,178 @@ export class SheetEditor {
         this.showNotice(first.error);
         return;
       }
+      const lines = this.backend.lines;
+      // An option that cells hold cannot just go: say where, and keep the panel open.
+      if (list && !("error" in list) && c.type === "select") {
+        const held = firstUse(lines, col, new Set(list.removed));
+        if (held) {
+          this.showNotice(
+            `${held.at} holds "${held.value}". Change those cells first, or keep the option.`,
+          );
+          return;
+        }
+      }
+      const said = `Column ${colLetter(col)} settings applied.`;
+      // Renaming options that cells hold renames them in those cells too: one change of the
+      // whole sheet, header and rows, so the rows always fit the header.
+      if (firstUse(lines, col, new Set(renames.keys()))) {
+        const make = (now: readonly string[], l: LineRange): string[] | { error: string } => {
+          if (l.start !== 0 || l.end !== now.length) {
+            return { error: "The sheet changed meanwhile. Try again." };
+          }
+          const h = sheetHeaderLine(now[0]);
+          const at = h ? findColumn(h, c, col) : -1;
+          if (!h || at < 0) return { error: "The column changed meanwhile. Try again." };
+          const line = headerWith(h, at, change);
+          if (typeof line !== "string") return line;
+          const next = sheetHeaderLine(line) as SheetHeader;
+          const rows = renamedRows(now, next, at, renames);
+          if (!Array.isArray(rows)) return rows;
+          const problem = rowsProblem([line, ...rows], next);
+          if (problem) return { error: `Some cells do not fit: ${problem}` };
+          return [line, ...rows];
+        };
+        const range = { start: 0, end: lines.length };
+        const now = make(lines, range);
+        if (!Array.isArray(now)) {
+          this.showNotice(now.error);
+          return;
+        }
+        if (
+          !(this.backend instanceof LocalSheet) &&
+          editFrameBytes(now.join("\n")) > LIMITS.liveDocFrameBytes
+        ) {
+          this.showNotice(
+            `Renaming those options rewrites more than ${LIMITS.liveDocFrameBytes / 1024} KiB of rows, the most one change can send. Change the cells in smaller steps, then rename the option.`,
+          );
+          return;
+        }
+        this.closePanel();
+        this.write(range, make, { what: "this sheet", said });
+        return;
+      }
       this.closePanel();
-      this.write({ start: 0, end: 1 }, (lines) => {
-        const now = sheetHeaderLine(lines[0]);
-        // The column as it was when the panel opened, wherever it is now.
-        const at = now ? findColumn(now, c, col) : -1;
-        if (!now || at < 0) return { error: "The column changed meanwhile. Try again." };
-        const line = headerWith(now, at, change);
-        if (typeof line !== "string") return line;
-        const next = sheetHeaderLine(line) as SheetHeader;
-        const problem = rowsProblem(lines, next);
-        if (problem) return { error: `Some cells do not fit: ${problem}` };
-        return [line];
-      });
+      this.writeColumn(col, c, change, { said });
     });
     this.panel = form;
     g.slot.append(form);
     name.focus();
+  }
+
+  /**
+   * A select column's options as a list: each one a field to rename it, with Move up, Move down
+   * and Remove, then a field and a button to add one (at most 100, of at most 100 characters).
+   */
+  private optionList(initial: readonly string[]): { el: HTMLElement; entries(): OptionEntry[] } {
+    const d = this.doc;
+    const box = d.createElement("fieldset");
+    box.className = "plinth-sheet__options";
+    const legend = d.createElement("legend");
+    legend.textContent = "Options";
+    const list = d.createElement("ol");
+    list.className = "plinth-sheet__options-list";
+    const rows: { from: string | null; input: HTMLInputElement }[] = initial.map((o) => {
+      const input = d.createElement("input");
+      input.value = o;
+      return { from: o, input };
+    });
+    const addInput = d.createElement("input");
+    addInput.maxLength = MAX_OPTION_CHARS;
+    addInput.placeholder = "New option";
+    addInput.setAttribute("aria-label", "New option");
+    const add = d.createElement("button");
+    add.type = "button";
+    add.className = "plinth-sheet__btn";
+    add.textContent = "Add option";
+    const count = d.createElement("p");
+    count.className = "plinth-sheet__options-count";
+    const small = (text: string, label: string, run: () => void, off: boolean) => {
+      const b = d.createElement("button");
+      b.type = "button";
+      b.className = "plinth-sheet__btn plinth-sheet__btn--small";
+      b.textContent = text;
+      b.setAttribute("aria-label", label);
+      b.disabled = off;
+      b.addEventListener("click", run);
+      return b;
+    };
+    const draw = (focus?: { at: number; part: "input" | "up" | "down" | "remove" }) => {
+      const items = rows.map((r, i) => {
+        const li = d.createElement("li");
+        li.className = "plinth-sheet__option";
+        r.input.maxLength = MAX_OPTION_CHARS;
+        const shown = () => r.input.value.trim() || `option ${i + 1}`;
+        r.input.setAttribute("aria-label", `Option ${i + 1}`);
+        const up = small("↑", `Move ${shown()} up`, () => swap(i, i - 1, "up"), i === 0);
+        const down = small(
+          "↓",
+          `Move ${shown()} down`,
+          () => swap(i, i + 1, "down"),
+          i === rows.length - 1,
+        );
+        const remove = small("Remove", `Remove ${shown()}`, () => drop(i), false);
+        r.input.oninput = () => {
+          up.setAttribute("aria-label", `Move ${shown()} up`);
+          down.setAttribute("aria-label", `Move ${shown()} down`);
+          remove.setAttribute("aria-label", `Remove ${shown()}`);
+        };
+        li.append(r.input, up, down, remove);
+        if (focus?.at === i) {
+          const target = { input: r.input, up, down, remove }[focus.part];
+          queueMicrotask(() => (target.disabled ? r.input : target).focus());
+        }
+        return li;
+      });
+      list.replaceChildren(...items);
+      const full = rows.length >= MAX_OPTIONS;
+      add.disabled = full;
+      addInput.disabled = full;
+      count.textContent = `${rows.length} of ${MAX_OPTIONS} options`;
+    };
+    const swap = (i: number, j: number, part: "up" | "down") => {
+      const a = rows[i];
+      const b = rows[j];
+      if (!a || !b) return;
+      rows[i] = b;
+      rows[j] = a;
+      draw({ at: j, part });
+    };
+    const drop = (i: number) => {
+      rows.splice(i, 1);
+      draw();
+      queueMicrotask(() => (rows[i]?.input ?? rows[i - 1]?.input ?? addInput).focus());
+    };
+    const push = () => {
+      const v = addInput.value.trim();
+      if (v === "" || rows.length >= MAX_OPTIONS) return;
+      const input = d.createElement("input");
+      input.value = v;
+      rows.push({ from: null, input });
+      addInput.value = "";
+      draw();
+      addInput.focus();
+    };
+    add.addEventListener("click", push);
+    addInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        // Enter adds the option; it does not apply the whole panel.
+        e.preventDefault();
+        push();
+      }
+    });
+    const adder = d.createElement("div");
+    adder.className = "plinth-sheet__options-add";
+    adder.append(addInput, add);
+    box.append(legend, list, adder, count);
+    draw();
+    return {
+      el: box,
+      entries: () => [
+        ...rows.map((r) => ({ from: r.from, value: r.input.value })),
+        // Text left in the new option's field is added too.
+        ...(addInput.value.trim() ? [{ from: null, value: addInput.value }] : []),
+      ],
+    };
   }
 
   // ---------- notices ----------

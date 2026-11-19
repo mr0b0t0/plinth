@@ -75,7 +75,10 @@ export function liveSheetTooLarge(text: string): boolean {
  */
 export type LineMap = readonly number[];
 
-/** A type's structural ops (a sheet's rows and columns), as the room and the renderers apply them. */
+/**
+ * A type's structural ops (a sheet's rows and columns: insert, delete, and move rows), as the room
+ * and the renderers apply them.
+ */
 export interface LiveStructRules {
   /** The op kinds this type takes. The room refuses an op of another kind with `invalid`. */
   kinds: readonly string[];
@@ -220,7 +223,7 @@ const sheetStruct: LiveStructRules = {
     const next = applySheetStruct(lines, op);
     return next ? { lines: next } : { error: "invalid" };
   },
-  // A row or column insert or delete rewrites formulas that may sit in any row.
+  // A row or column insert, delete or move rewrites formulas that may sit in any row.
   touches: () => "all",
 };
 

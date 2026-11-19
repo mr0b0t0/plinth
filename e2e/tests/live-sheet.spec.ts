@@ -37,14 +37,14 @@ interface Setup {
   editor: string;
 }
 
-async function setup(page: Page): Promise<Setup> {
+async function setup(page: Page, content = SHEET): Promise<Setup> {
   const owner = uniqueEmail("sheet-owner");
   const editor = uniqueEmail("sheet-editor");
   const { token } = await seedToken(owner, { label: "Work agent", clientType: "claude" });
   const art = await publishArtifact(page.request, token, {
     title: "Fruit",
     type: "sheet",
-    content: SHEET,
+    content,
     html: undefined,
     visibility: "allowlist",
   });
@@ -60,6 +60,8 @@ async function setup(page: Page): Promise<Setup> {
 
 const frameOf = (page: Page) => page.frameLocator(CURRENT_FRAME);
 const cell = (page: Page, a: string) => frameOf(page).locator(`#__plinth-cell-${a}`);
+/** The open cell's field: in the cell, or docked at the bottom of the page at phone width. */
+const fieldOf = (page: Page) => frameOf(page).locator(".plinth-sheet__input");
 
 async function openAs(browser: Browser, email: string, slug: string, base?: Page) {
   const page = base ?? (await (await browser.newContext()).newPage());
@@ -98,7 +100,7 @@ test("two editors on one sheet: a held row, typing that arrives live, a row both
 
   // The owner opens Qty of Apples and types.
   await cell(page, "B2").dblclick();
-  const field = frameOf(page).locator("#__plinth-cell-B2 .plinth-sheet__input");
+  const field = fieldOf(page);
   await expect(field).toBeFocused();
   await expect(field).toHaveValue("3");
   await field.fill("30");
@@ -120,7 +122,7 @@ test("two editors on one sheet: a held row, typing that arrives live, a row both
   // The editor edits another row at the same time, by typing into a selected cell.
   await cell(other, "A3").click();
   await cell(other, "A3").press("P");
-  const theirs = frameOf(other).locator("#__plinth-cell-A3 .plinth-sheet__input");
+  const theirs = fieldOf(other);
   await expect(theirs).toHaveValue("P");
   await theirs.fill("Pears, ripe");
   await theirs.press("Enter");
@@ -175,7 +177,7 @@ test("an agent's edit_sheet during the page edits is never merged: the review pu
   /** Type `value` into a cell and wait until the strip shows the edit. */
   async function type(a: string, value: string) {
     await cell(page, a).dblclick();
-    const field = frameOf(page).locator(`#__plinth-cell-${a} .plinth-sheet__input`);
+    const field = fieldOf(page);
     await field.fill(value);
     await field.press("Enter");
     await expect(bar).toContainText(/Draft saved|Saving draft/);
@@ -268,4 +270,218 @@ test("an agent's edit_sheet during the page edits is never merged: the review pu
   await expect(cell(page, "B4")).toHaveText("9");
   const after = await apiGet(page.request, `/artifacts/${s.id}`);
   expect(after.body.current_version).toBe(4);
+});
+
+/** Choose an item of a column's menu, opened from its header's button. */
+async function columnMenu(page: Page, a: string, item: string) {
+  await cell(page, a).locator(".plinth-sheet__colmenu").click();
+  const menu = frameOf(page).getByRole("menu");
+  await expect(menu).toBeVisible();
+  await menu.getByRole("menuitem", { name: item }).click();
+  await expect(menu).toHaveCount(0);
+}
+
+test("column settings, widths, freezing, options and row moves on the page publish as one version", async ({
+  page,
+}) => {
+  test.setTimeout(120_000);
+  const header = JSON.stringify({
+    plinth: "sheet",
+    v: 1,
+    columns: [
+      { name: "Item", type: "text" },
+      { name: "Qty", type: "number" },
+      { name: "Price", type: "number", format: { style: "currency", currency: "EUR" } },
+      { name: "Stage", type: "select", options: ["new", "done"] },
+    ],
+  });
+  const s = await setup(
+    page,
+    [header, '["Apples",3,1500,"new"]', '["Pears",5,2,"done"]', '["Total","=SUM(B2:B3)"]'].join(
+      "\n",
+    ),
+  );
+  await openAs(page.context().browser() as Browser, s.owner, s.slug, page);
+  await startEditing(page);
+  const bar = page.getByRole("region", { name: "Editing on the page" });
+  const frame = frameOf(page);
+  const settings = frame.locator(".plinth-sheet__panel");
+  const saved = async () => expect(bar).toContainText(/Draft saved|Saving draft/);
+
+  // Price: no thousands separators, and 180 px wide.
+  await columnMenu(page, "C1", "Column settings…");
+  await expect(settings).toBeVisible();
+  await settings.getByLabel("Thousands separators").uncheck();
+  await settings.getByLabel("Width in pixels").fill("180");
+  await settings.getByRole("button", { name: "Apply" }).click();
+  await expect(settings).toHaveCount(0);
+  await expect(cell(page, "C2")).not.toContainText(/1[,.\s  ]500/);
+  await saved();
+
+  // Stage: "done" renamed "shipped" (in its cell too), and a third option added.
+  await columnMenu(page, "D1", "Column settings…");
+  await settings.getByLabel("Option 2").fill("shipped");
+  await settings.getByLabel("New option").fill("later");
+  await settings.getByRole("button", { name: "Add option" }).click();
+  await settings.getByRole("button", { name: "Apply" }).click();
+  await expect(cell(page, "D3")).toHaveText("shipped");
+
+  // Item stays in view; Qty two steps wider with the keyboard.
+  await columnMenu(page, "A1", "Freeze up to this column");
+  await expect(cell(page, "A2")).toHaveClass(/plinth-sheet__frozen/);
+  await cell(page, "B1").locator(".plinth-sheet__sort").focus();
+  await page.keyboard.press("Alt+ArrowRight");
+  await page.keyboard.press("Alt+ArrowRight");
+  await expect(frame.locator(".plinth-sheet__announce")).toHaveText("Qty: 136 pixels wide.", {
+    timeout: 10_000,
+  });
+  // The width is sent once the keys rest (WIDTH_DEBOUNCE_MS).
+  await page.waitForTimeout(800);
+
+  // Pears above Apples: the total still adds both.
+  await cell(page, "A3").click();
+  await frame.getByRole("button", { name: "Move row up" }).click();
+  await expect(cell(page, "A2")).toHaveText("Pears");
+  await expect(frame.locator(".plinth-sheet__announce")).toHaveText("Row 3 moved to row 2.");
+  await expect(cell(page, "B4")).toHaveText("8");
+  await saved();
+
+  await page.getByRole("button", { name: "Publish", exact: true }).click();
+  await expect(bar).toContainText("Published as v2", { timeout: 10_000 });
+  const detail = await apiGet(page.request, `/artifacts/${s.id}`);
+  const lines = (detail.body.content as string).split("\n");
+  expect(JSON.parse(lines[0] as string)).toEqual({
+    plinth: "sheet",
+    v: 1,
+    columns: [
+      { name: "Item", type: "text" },
+      { name: "Qty", type: "number", width: 136 },
+      {
+        name: "Price",
+        type: "number",
+        width: 180,
+        format: { style: "currency", currency: "EUR", grouping: false },
+      },
+      { name: "Stage", type: "select", options: ["new", "shipped", "later"] },
+    ],
+    freeze: { cols: 1 },
+  });
+  expect(lines.slice(1)).toEqual([
+    '["Pears",5,2,"shipped"]',
+    '["Apples",3,1500,"new"]',
+    '["Total","=SUM(B2:B3)"]',
+  ]);
+});
+
+test("a cell opens in a docked editor at phone width, and in the cell otherwise", async ({
+  page,
+}) => {
+  test.setTimeout(60_000);
+  const s = await setup(page);
+  await openAs(page.context().browser() as Browser, s.owner, s.slug, page);
+  await startEditing(page);
+  const frame = frameOf(page);
+  await cell(page, "B3").dblclick();
+  const field = fieldOf(page);
+  await expect(field).toBeFocused();
+  const phone = (page.viewportSize()?.width ?? 1024) <= 640;
+  const dock = frame.getByRole("group", { name: "Edit B3" });
+  if (phone) {
+    await expect(dock).toBeVisible();
+    await expect(dock).toContainText("Qty");
+    await expect(cell(page, "B3").locator(".plinth-sheet__input")).toHaveCount(0);
+    // The docked editor fits the page: no sideways scroll.
+    const box = await dock.boundingBox();
+    expect(box && box.x >= 0 && box.x + box.width <= 361).toBe(true);
+    await field.fill("12");
+    await dock.getByRole("button", { name: "Done" }).click();
+    await expect(dock).toHaveCount(0);
+  } else {
+    await expect(dock).toHaveCount(0);
+    await expect(cell(page, "B3").locator(".plinth-sheet__input")).toHaveCount(1);
+    await field.fill("12");
+    await field.press("Enter");
+  }
+  await expect(cell(page, "B3")).toHaveText("12");
+  await expect(cell(page, "B5")).toHaveText("17");
+  // A row's menu, from its number: a sheet across the bottom at phone width.
+  await frame.locator('tr[data-row="4"] th').click();
+  const menu = frame.getByRole("menu", { name: "Row 4" });
+  await expect(menu).toBeVisible();
+  if (phone) await expect(menu).toHaveClass(/plinth-sheet__menu--sheet/);
+  await page.keyboard.press("Escape");
+  await expect(menu).toHaveCount(0);
+});
+
+test("an agent's version during a row move or a width change is never merged: the review shows both", async ({
+  page,
+}) => {
+  test.setTimeout(120_000);
+  const s = await setup(page);
+  await openAs(page.context().browser() as Browser, s.owner, s.slug, page);
+  await startEditing(page);
+  const bar = page.getByRole("region", { name: "Editing on the page" });
+
+  async function agentSets(at: string, value: number, base: number) {
+    const client = await mcpClient(s.token);
+    try {
+      const r = await tool<{ version: number }>(client, "edit_sheet", {
+        id: s.id,
+        base_version: base,
+        ops: [{ op: "set", at, values: [[value]] }],
+      });
+      expect(r.isError, r.text).toBe(false);
+    } finally {
+      await client.close();
+    }
+  }
+
+  // A row swap on the page, an agent's cell meanwhile: Publish mine keeps the swap.
+  await cell(page, "A3").click();
+  await frameOf(page).getByRole("button", { name: "Move row up" }).click();
+  await expect(cell(page, "A2")).toHaveText("Pears");
+  await expect(bar).toContainText(/Draft saved|Saving draft/);
+  await agentSets("B4", 9, 1);
+  await expect(bar).toContainText("v2 was published while you edited.", { timeout: 10_000 });
+  await bar.getByRole("button", { name: "Review changes" }).click();
+  const review = frameOf(page).getByRole("region", { name: "Review v2 and the page changes" });
+  const mine = review.getByRole("region", { name: "Your page changes" });
+  await expect(mine).toContainText("Row 2 removed");
+  await expect(mine).toContainText("Row 3 added");
+  await review.getByRole("button", { name: "Publish mine", exact: true }).click();
+  await expect(bar).toContainText("Published as v3", { timeout: 10_000 });
+  const v3 = (await apiGet(page.request, `/artifacts/${s.id}`)).body.content as string;
+  expect(v3.split("\n").slice(1)).toEqual([
+    '["Pears",5,0.5,false]',
+    '["Apples",3,1.5,true]',
+    '["Plums",2,2]',
+    '["Total","=SUM(B2:B4)","=SUM(C2:C4)"]',
+  ]);
+
+  // A width on the page, an agent's cell meanwhile: Discard mine goes back to the agent's.
+  await cell(page, "B1").locator(".plinth-sheet__sort").focus();
+  await page.keyboard.press("Alt+ArrowRight");
+  // The width is sent once the keys rest (WIDTH_DEBOUNCE_MS).
+  await page.waitForTimeout(800);
+  await expect(bar).toContainText(/Draft saved|Saving draft/, { timeout: 10_000 });
+  await agentSets("B4", 4, 3);
+  await expect(bar).toContainText("v4 was published while you edited.", { timeout: 10_000 });
+  await bar.getByRole("button", { name: "Review changes" }).click();
+  const second = frameOf(page).getByRole("region", { name: "Review v4 and the page changes" });
+  await expect(second.getByRole("region", { name: "Your page changes" })).toContainText(
+    "width changed",
+  );
+  await second.getByRole("button", { name: "Discard mine" }).click();
+  const confirm = frameOf(page).getByRole("alertdialog", { name: "Discard the page changes?" });
+  await confirm.getByRole("button", { name: "Discard the page changes" }).click();
+  await expect(frameOf(page).locator(".plinth-review__announce")).toHaveText(
+    "The page changes were discarded. The page shows v4.",
+    { timeout: 10_000 },
+  );
+  const v4 = (await apiGet(page.request, `/artifacts/${s.id}`)).body;
+  expect(v4.current_version).toBe(4);
+  expect(JSON.parse((v4.content as string).split("\n")[0] as string).columns[1]).toEqual({
+    name: "Qty",
+    type: "number",
+  });
 });

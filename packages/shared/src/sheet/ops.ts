@@ -1,4 +1,5 @@
-// Cell, row and column changes to a sheet (edit_sheet's ops). Pure and atomic: applySheetOps works
+// Cell, row and column changes to a sheet (edit_sheet's ops, and `move_rows`, which only a live
+// sheet's struct frame sends: edit_sheet's schema does not take it). Pure and atomic: applySheetOps works
 // on a copy and throws SheetOpError (with the op's index) for the first op it cannot apply, so the
 // caller's sheet never changes. Inserting or deleting rows and columns moves the references of
 // every formula (refs.ts). The result is not checked against the column types here: the caller
@@ -31,6 +32,8 @@ export type SheetOp =
   | { op: "append_rows"; values: Cell[][] }
   | { op: "insert_rows"; before: number; count?: number; values?: Cell[][] }
   | { op: "delete_rows"; from: number; count?: number }
+  /** Rows `from` to `from + count - 1` (A1) moved so that the first of them is row `to`. */
+  | { op: "move_rows"; from: number; count?: number; to: number }
   | {
       op: "set_column";
       column: string;
@@ -43,6 +46,7 @@ export type SheetOp =
   | { op: "insert_columns"; before: string; columns: SheetColumnInput[] }
   | { op: "delete_columns"; from: string; count?: number };
 
+/** The ops edit_sheet takes (move_rows is the live sheet's own). */
 export const SHEET_OP_KINDS = [
   "set",
   "append_rows",
@@ -259,6 +263,30 @@ export function applySheetOps(
         changed.rows_deleted += n;
         break;
       }
+      case "move_rows": {
+        const n = op.count ?? 1;
+        const last = s.rows.length + 1;
+        if (!Number.isInteger(op.from) || op.from < 2 || op.from > last) {
+          throw new SheetOpError(
+            i,
+            last < 2 ? "The sheet has no rows to move" : `from must be a row from 2 to ${last}`,
+          );
+        }
+        if (!Number.isInteger(n) || n < 1 || op.from + n - 1 > last) {
+          throw new SheetOpError(i, `count must be from 1 to ${last - op.from + 1}`);
+        }
+        const lastTo = last - n + 1;
+        if (!Number.isInteger(op.to) || op.to < 2 || op.to > lastTo || op.to === op.from) {
+          throw new SheetOpError(
+            i,
+            `to must be a row from 2 to ${lastTo} other than ${op.from} (the row the first moved row lands on)`,
+          );
+        }
+        shiftAll(s.rows, { kind: "move_rows", from: op.from, count: n, to: op.to }, shiftCharge(i));
+        const moved = s.rows.splice(op.from - 2, n);
+        s.rows.splice(op.to - 2, 0, ...moved);
+        break;
+      }
       case "set_column": {
         const c = column(op.column, i);
         const col = s.header.columns[c] as SheetColumn;
@@ -310,20 +338,23 @@ export function applySheetOps(
 
 /**
  * A structural change to a live sheet draft (the room's `struct` frame): the four edit_sheet ops
- * that move rows or columns, without values. Rows are A1 rows (2 is the first data row), columns
- * letters.
+ * that move rows or columns, without values, and `move_rows`. Rows are A1 rows (2 is the first
+ * data row), columns letters. `move_rows` takes rows `from` to `from + count - 1` and puts them
+ * back so that the first of them is row `to`; the references into them follow them (refs.ts).
  */
 export type SheetStructOp =
   | { op: "insert_rows"; before: number; count: number }
   | { op: "delete_rows"; from: number; count: number }
   | { op: "insert_columns"; before: string; columns: SheetColumnInput[] }
-  | { op: "delete_columns"; from: string; count: number };
+  | { op: "delete_columns"; from: string; count: number }
+  | { op: "move_rows"; from: number; count: number; to: number };
 
 export const SHEET_STRUCT_KINDS = [
   "insert_rows",
   "delete_rows",
   "insert_columns",
   "delete_columns",
+  "move_rows",
 ] as const;
 
 /**

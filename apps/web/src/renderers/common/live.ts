@@ -778,6 +778,13 @@ function isStructOp(op: unknown): boolean {
         LETTERS_RE.test(op.from) &&
         isInt(op.count, 1, LIMITS.maxSheetColumns)
       );
+    case "move_rows":
+      return (
+        onlyKeys(op, new Set(["op", "from", "count", "to"])) &&
+        isSheetRow(op.from) &&
+        isRowCount(op.count) &&
+        isSheetRow(op.to)
+      );
     default:
       return false;
   }

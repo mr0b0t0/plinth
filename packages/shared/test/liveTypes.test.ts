@@ -234,6 +234,33 @@ describe("sheet structural changes", () => {
     expect(del).toEqual([HEADER, '["Pears",5,"=B2*2"]', '["Sum",null,"=SUM(C2:C2)"]']);
   });
 
+  it("moves rows, and the references into them follow them", () => {
+    // Pears above Apples: B3 (Pears) is now B2, and the total still adds the same cells.
+    const up = applySheetStruct(LINES, { op: "move_rows", from: 3, count: 1, to: 2 });
+    expect(up).toEqual([
+      HEADER,
+      '["Pears",5,"=B2*2"]',
+      '["Apples",3,"=B3*2"]',
+      '["Sum",null,"=SUM(C2:C3)"]',
+    ]);
+    // The total row to the top: its range moves past it, and every other row keeps its cells.
+    const top = applySheetStruct(LINES, { op: "move_rows", from: 4, count: 1, to: 2 });
+    expect(top).toEqual([
+      HEADER,
+      '["Sum",null,"=SUM(C3:C4)"]',
+      '["Apples",3,"=B3*2"]',
+      '["Pears",5,"=B4*2"]',
+    ]);
+    // Two rows down past the last: the same as moving the last row up.
+    const down = applySheetStruct(LINES, { op: "move_rows", from: 2, count: 2, to: 3 });
+    expect(down).toEqual(top);
+    for (const r of [up, top]) expect(sheet.valid((r as string[]).join("\n"))).toBe(true);
+    // Rows that are not there, a landing row past the end, or no move at all.
+    expect(applySheetStruct(LINES, { op: "move_rows", from: 5, count: 1, to: 2 })).toBeNull();
+    expect(applySheetStruct(LINES, { op: "move_rows", from: 2, count: 2, to: 4 })).toBeNull();
+    expect(applySheetStruct(LINES, { op: "move_rows", from: 3, count: 1, to: 3 })).toBeNull();
+  });
+
   it("insert and delete columns", () => {
     const ins = applySheetStruct(LINES, {
       op: "insert_columns",
@@ -264,7 +291,7 @@ describe("sheet structural changes", () => {
 });
 
 describe("struct op tables", () => {
-  it("a sheet takes its four ops, touches every lease, and applies them as the frames do", () => {
+  it("a sheet takes its five ops, touches every lease, and applies them as the frames do", () => {
     const s = sheet.struct;
     if (!s) throw new Error("no struct rules");
     expect([...s.kinds]).toEqual([
@@ -272,7 +299,11 @@ describe("struct op tables", () => {
       "delete_rows",
       "insert_columns",
       "delete_columns",
+      "move_rows",
     ]);
+    const move = { op: "move_rows", from: 3, count: 1, to: 2 } as const;
+    expect(s.touches(LINES, move)).toBe("all");
+    expect(s.apply(LINES, move)).toEqual({ lines: applySheetStruct(LINES, move) });
     const op = { op: "insert_rows", before: 3, count: 1 } as const;
     expect(s.touches(LINES, op)).toBe("all");
     expect(s.apply(LINES, op)).toEqual({ lines: applySheetStruct(LINES, op) });
@@ -281,12 +312,13 @@ describe("struct op tables", () => {
 });
 
 describe("struct frames", () => {
-  it("the client schema takes the four ops and nothing else", () => {
+  it("the client schema takes the five ops and nothing else", () => {
     const ok = [
       { op: "insert_rows", before: 2, count: 1 },
       { op: "delete_rows", from: 3, count: 2 },
       { op: "insert_columns", before: "C", columns: [{ name: "New", type: "number" }] },
       { op: "delete_columns", from: "A", count: 1 },
+      { op: "move_rows", from: 3, count: 1, to: 2 },
     ];
     for (const op of ok)
       expect(liveDocClientFrameSchema.safeParse({ t: "struct", rev: 4, op }).success, op.op).toBe(
@@ -300,6 +332,11 @@ describe("struct frames", () => {
       { op: "insert_columns", before: "C", columns: [{ name: "New", colour: "red" }] },
       { op: "insert_columns", before: "C", columns: [] },
       { op: "delete_columns", from: "A" },
+      { op: "move_rows", from: 3, count: 1 },
+      { op: "move_rows", from: 1, count: 1, to: 3 },
+      { op: "move_rows", from: 3, count: 0, to: 2 },
+      { op: "move_rows", from: 3, count: 1, to: "2" },
+      { op: "move_rows", from: 3, count: 1, to: 2, values: [["x"]] },
       { op: "set", at: "B2", values: [[1]] },
     ];
     for (const op of bad)

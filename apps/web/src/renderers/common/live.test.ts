@@ -509,6 +509,7 @@ describe("readServerFrame", () => {
       by: "s",
     },
     { t: "struct", gen: "g", rev: 4, op: { op: "delete_columns", from: "C", count: 1 }, by: "s" },
+    { t: "struct", gen: "g", rev: 4, op: { op: "move_rows", from: 5, count: 2, to: 2 }, by: "s" },
     { t: "struct_denied", reason: "held", by: "a@b.c" },
     { t: "struct_denied", reason: "stale" },
   ];

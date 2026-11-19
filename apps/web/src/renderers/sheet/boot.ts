@@ -113,6 +113,8 @@ export interface BootOptions {
   connect?: ConstructorParameters<typeof LiveDocClient>[0]["connect"];
   /** For tests: the locale numbers are typed in. */
   locale?: string;
+  /** For tests: dock an open cell's field at the bottom (phone width), or never. */
+  dock?: boolean;
 }
 
 const ERRORS: Record<string, string> = {
@@ -177,11 +179,15 @@ export function boot(win: Window, opts: BootOptions = {}): () => void {
     if (!grid.update(sheet, ev)) {
       const view = grid.view();
       const editing = grid.el.classList.contains("plinth-sheet__page--editing");
+      // A rebuild (new columns, a width, a row count) keeps the focus on the selected cell.
+      const focused = grid.el.contains(doc.activeElement);
       grid = build();
       grid.el.classList.toggle("plinth-sheet__page--editing", editing);
       root.replaceChildren(grid.el);
       grid.restore(view);
       editor?.attach(grid);
+      const now = doc.activeElement;
+      if (focused && (now === null || now === doc.body)) grid.focusSelected();
     } else editor?.render();
     mark();
   };
@@ -277,7 +283,10 @@ export function boot(win: Window, opts: BootOptions = {}): () => void {
       },
     };
     const makeEditor = (b: SheetBackend) => {
-      const e = new SheetEditor(win, b, hooks, opts.locale ? { locale: opts.locale } : {});
+      const e = new SheetEditor(win, b, hooks, {
+        ...(opts.locale ? { locale: opts.locale } : {}),
+        ...(opts.dock !== undefined ? { dock: opts.dock } : {}),
+      });
       e.attach(grid);
       return e;
     };
