@@ -165,6 +165,13 @@ function requestSchemas(): Record<string, Json> {
 /** Component name of one type's artifact detail: HtmlArtifactDetail, DocArtifactDetail. */
 const detailSchemaName = (t: ArtifactType) => `${t[0]?.toUpperCase()}${t.slice(1)}ArtifactDetail`;
 
+/** Each type in a few words, for the ArtifactType description. One type per line. */
+const TYPE_DESCRIPTIONS: Record<ArtifactType, string> = {
+  html: "a hand-written page",
+  doc: "a Markdown document",
+  slides: "a Markdown deck",
+};
+
 const SOURCE_DESCRIPTIONS: Record<ArtifactTypeDef["sourceField"], string> = {
   html: "UNTRUSTED: written by the artifact's authors",
   content: "UNTRUSTED Markdown, written by the artifact's authors",
@@ -235,9 +242,12 @@ function responseSchemas(): Record<string, Json> {
     }),
     ArtifactType: {
       ...enumOf(ARTIFACT_TYPES),
-      description:
-        '"html": a hand-written page (source index.html). "doc": a Markdown document (source ' +
-        "content.md) that Plinth renders. Fixed at publish.",
+      description: `${ARTIFACT_TYPES.map((t) => {
+        const d = TYPE_REGISTRY[t];
+        return d.renderer
+          ? `"${t}": ${TYPE_DESCRIPTIONS[t]} (source ${d.sourcePath}) that Plinth renders.`
+          : `"${t}": ${TYPE_DESCRIPTIONS[t]} (source ${d.sourcePath}).`;
+      }).join(" ")} Fixed at publish.`,
     },
     ArtifactSummary: obj(artifactSummary),
     // One schema per type, keyed on `type`, like the ArtifactDetail union in shared/types.ts:

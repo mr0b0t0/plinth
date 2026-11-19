@@ -22,6 +22,7 @@ const ARTIFACT: ViewArtifact = {
   owner_name: null,
 };
 const DOC: ViewArtifact = { ...ARTIFACT, type: "doc" };
+const SLIDES: ViewArtifact = { ...ARTIFACT, type: "slides" };
 const ENTER = "http://art123.content.localhost:8787/__plinth/enter?t=token-1&next=%2F";
 
 const DATA: ViewGateData = {
@@ -102,6 +103,18 @@ const SCENARIOS: Scenario[] = [
     signedIn: true,
     compact: false,
     opaque: true,
+  },
+  {
+    name: "slides, anonymous viewer, wide",
+    gate: { role: null, artifact: SLIDES },
+    signedIn: false,
+    compact: false,
+  },
+  {
+    name: "slides, owner, compact",
+    gate: { role: "owner", artifact: SLIDES },
+    signedIn: true,
+    compact: true,
   },
 ];
 

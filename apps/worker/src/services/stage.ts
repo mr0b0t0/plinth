@@ -813,13 +813,15 @@ export class VersionStager implements Stager {
         if (!e) continue;
         files.push({ path: byRaw.get(raw) ?? raw, bytes, contentType: e.content_type });
       }
+      const manifestPaths = new Set(entries.map((e) => e.path));
       warnings = scanPublish({
         files,
-        manifestPaths: new Set(entries.map((e) => e.path)),
+        manifestPaths,
         sources: contentSources(this.ctx.config),
         isolation: this.ctx.config.contentIsolation,
         unscanned: this.unscanned.map((p) => byRaw.get(p) ?? p),
         reused,
+        typed: typeHooks(def).sourceWarnings?.(def, sourceText, manifestPaths),
       });
       this.scanText.clear();
     }

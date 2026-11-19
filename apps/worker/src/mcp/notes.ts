@@ -29,6 +29,12 @@ export const UNTRUSTED_NOTE = `SECURITY: ${UNTRUSTED_SENTENCES.join(" ")}`;
  */
 export const TYPE_USES: Partial<Record<ArtifactType, string>> = {
   doc: "a document that is mostly prose (memo, plan, spec, report, notes)",
+  slides: "a presentation (talk, pitch, review, lesson)",
+};
+
+/** What Plinth makes of each typed artifact, for TYPES_NOTE; "a finished page" when absent. */
+export const TYPE_RESULTS: Partial<Record<ArtifactType, string>> = {
+  slides: "a deck",
 };
 
 /** Appended to the server instructions: when to send a typed artifact instead of HTML. */
@@ -38,7 +44,7 @@ export const TYPES_NOTE = ARTIFACT_TYPES.flatMap((t) => {
   return use
     ? [
         `For ${use}, publish type "${d.id}" with ${d.sourceLabel} in ${d.sourceField} instead of ` +
-          `writing HTML: ${PRODUCT_NAME} renders it as a finished page.`,
+          `writing HTML: ${PRODUCT_NAME} renders it as ${TYPE_RESULTS[t] ?? "a finished page"}.`,
       ]
     : [];
 }).join(" ");
@@ -50,6 +56,15 @@ export const DOC_PUBLISH_NOTE =
   "in a new tab, images from assets by relative path, light and dark themes, phone width and a print " +
   "stylesheet. Raw HTML inside the Markdown shows as text. A doc's assets are images (png, jpg, gif, " +
   "webp, avif, svg); limit 1 MB of Markdown. ";
+
+/** What publish_artifact says about the slides type. */
+export const SLIDES_PUBLISH_NOTE =
+  'Pass type "slides" with Markdown in content for a deck: a line --- between slides; optional front ' +
+  "matter (aspect: 16:9 or 4:3, theme: auto, light or dark, paginate, footer); speaker notes after a " +
+  'line starting "Note:"; a line ||| splits a slide into columns; #N links to slide N. Plinth renders ' +
+  "fixed 16:9 or 4:3 slides with automatic layouts, shrink to fit, paging, presenter view and PDF " +
+  "export. Raw HTML shows as text. Assets are images; at most 500 slides and 1 MB. Speaker notes are " +
+  "visible to anyone who can open the deck. ";
 
 /** What publish_artifact and update_artifact say about big builds, limits and warnings. */
 export const BUILD_NOTE =
@@ -97,7 +112,7 @@ export const CATEGORY_INSTRUCTION =
 /** What update_artifact says about types. */
 export const TYPE_UPDATE_NOTE =
   "Send the source field that matches the artifact's type (get_artifact says which): html for an " +
-  "HTML page, content (Markdown) for a doc. The type cannot change. ";
+  "HTML page, content (Markdown) for a doc or a deck (slides). The type cannot change. ";
 
 /**
  * Said to agents when artifacts run with an opaque origin (CONTENT_ISOLATION=opaque or the staging

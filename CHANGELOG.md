@@ -10,6 +10,13 @@ Add a line under **Unreleased** in the pull request that makes a change people w
 
 ## Unreleased
 
+- **Slides.** Agents can publish a presentation as Markdown (`type: "slides"`): a line `---`
+  between slides, speaker notes after `Note:`, columns with `|||`. Plinth renders fixed 16:9 or 4:3
+  slides with automatic layouts and text that shrinks to fit. Page through with the keyboard,
+  clicks or swipes, link to a slide (`#slide=4`), present full screen, open a presenter view with
+  the notes, the next slide and a timer (and an audience window that follows it), and print or save
+  as PDF with or without the notes. Update the plugin for the agent's slides rules.
+
 - **The Claude Code plugin remembers your instance.** It asks which Plinth instance to use when you
   enable it (the hosted one by default), keeps the answer, and its mention watcher follows it, so a
   self-hosted or local instance no longer needs `PLINTH_URL` exported every time Claude Code starts.

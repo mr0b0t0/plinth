@@ -33,6 +33,9 @@ export const PUBLISH_WARNING_CODES = [
   "opaque_module",
   "not_scanned",
   "live_draft",
+  "slides_setting",
+  "slide_empty",
+  "slide_dense",
 ] as const;
 export type PublishWarningCode = (typeof PUBLISH_WARNING_CODES)[number];
 
@@ -77,6 +80,10 @@ export const LIMITS = {
   maxHtmlBytes: 5 * MB,
   /** Bytes of Markdown (content.md) per version of a doc artifact. */
   maxDocBytes: 1 * MB,
+  /** Bytes of Markdown (slides.md) per version of a slides artifact. */
+  maxSlidesBytes: 1 * MB,
+  /** Slides in one deck. */
+  maxSlides: 500,
   // On-page doc editing (#36, packages/shared/src/liveDoc.ts). A live draft keeps maxDocBytes.
   /** Lines in a live doc draft. */
   maxLiveDocLines: 50_000,

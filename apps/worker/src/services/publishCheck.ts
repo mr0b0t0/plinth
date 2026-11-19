@@ -26,6 +26,11 @@ export interface ScanInput {
    * sha256} or a carry-forward): not re-checked, so a file they import that is gone goes unseen.
    */
   reused?: string[];
+  /**
+   * Warnings the version's type found in its own source (TypeHooks.sourceWarnings), listed first
+   * and capped with the rest.
+   */
+  typed?: PublishWarning[];
 }
 
 type Directive = keyof ContentSources | "navigate" | "any";
@@ -62,7 +67,7 @@ function kindOf(f: FileEntry): "html" | "css" | "js" | null {
 }
 
 export function scanPublish(input: ScanInput): PublishWarning[] {
-  const out: PublishWarning[] = [];
+  const out: PublishWarning[] = [...(input.typed ?? [])];
   let budget = LIMITS.maxScanBytes;
   const unscanned = [...(input.unscanned ?? [])];
   for (const f of input.files) {

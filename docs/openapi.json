@@ -1872,14 +1872,14 @@
           "type": {
             "default": "html",
             "type": "string",
-            "enum": ["html", "doc"],
-            "description": "\"html\" (default): a hand-written page sent as html. \"doc\": a Markdown document sent as content, which Plinth renders as a finished page. Fixed at publish."
+            "enum": ["html", "doc", "slides"],
+            "description": "\"html\" (default): a hand-written page sent as html. \"doc\": a Markdown document sent as content, which Plinth renders as a finished page. \"slides\": a Markdown deck sent as content, which Plinth renders as a presentation. Fixed at publish."
           },
           "html": { "type": "string", "minLength": 1, "description": "Complete HTML document" },
           "content": {
             "type": "string",
             "minLength": 1,
-            "description": "The source of a typed artifact: for type \"doc\", the Markdown document (stored as content.md). Not for html artifacts, which send html."
+            "description": "The source of a typed artifact: for type \"doc\", the Markdown document (stored as content.md); for type \"slides\", the deck's Markdown with a line --- between slides (stored as slides.md). Not for html artifacts, which send html."
           },
           "assets": {
             "maxItems": 900,
@@ -1935,7 +1935,7 @@
           "content": {
             "type": "string",
             "minLength": 1,
-            "description": "The source of a typed artifact: for type \"doc\", the Markdown document (stored as content.md). Not for html artifacts, which send html."
+            "description": "The source of a typed artifact: for type \"doc\", the Markdown document (stored as content.md); for type \"slides\", the deck's Markdown with a line --- between slides (stored as slides.md). Not for html artifacts, which send html."
           },
           "assets": {
             "maxItems": 900,
@@ -2186,8 +2186,8 @@
           },
           "type": {
             "type": "string",
-            "enum": ["html", "doc"],
-            "description": "\"html\" (default): a hand-written page sent as html. \"doc\": a Markdown document sent as content, which Plinth renders as a finished page. Fixed at publish."
+            "enum": ["html", "doc", "slides"],
+            "description": "\"html\" (default): a hand-written page sent as html. \"doc\": a Markdown document sent as content, which Plinth renders as a finished page. \"slides\": a Markdown deck sent as content, which Plinth renders as a presentation. Fixed at publish."
           },
           "title": { "type": "string", "minLength": 1, "maxLength": 200 },
           "base_version": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
@@ -2247,8 +2247,8 @@
       },
       "ArtifactType": {
         "type": "string",
-        "enum": ["html", "doc"],
-        "description": "\"html\": a hand-written page (source index.html). \"doc\": a Markdown document (source content.md) that Plinth renders. Fixed at publish."
+        "enum": ["html", "doc", "slides"],
+        "description": "\"html\": a hand-written page (source index.html). \"doc\": a Markdown document (source content.md) that Plinth renders. \"slides\": a Markdown deck (source slides.md) that Plinth renders. Fixed at publish."
       },
       "ArtifactSummary": {
         "type": "object",
@@ -2324,13 +2324,15 @@
         "description": "An artifact and one version's source. The source field depends on `type`",
         "oneOf": [
           { "$ref": "#/components/schemas/HtmlArtifactDetail" },
-          { "$ref": "#/components/schemas/DocArtifactDetail" }
+          { "$ref": "#/components/schemas/DocArtifactDetail" },
+          { "$ref": "#/components/schemas/SlidesArtifactDetail" }
         ],
         "discriminator": {
           "propertyName": "type",
           "mapping": {
             "html": "#/components/schemas/HtmlArtifactDetail",
-            "doc": "#/components/schemas/DocArtifactDetail"
+            "doc": "#/components/schemas/DocArtifactDetail",
+            "slides": "#/components/schemas/SlidesArtifactDetail"
           }
         }
       },
@@ -2582,6 +2584,130 @@
           "data_usage"
         ]
       },
+      "SlidesArtifactDetail": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z0-9]{20}$",
+            "description": "Also the artifact's content subdomain"
+          },
+          "slug": { "type": "string" },
+          "title": { "type": "string" },
+          "type": {
+            "type": "string",
+            "enum": ["slides"],
+            "description": "Slides: always \"slides\""
+          },
+          "visibility": {
+            "type": "string",
+            "enum": ["public", "unlisted", "password", "allowlist"]
+          },
+          "current_version": { "type": "integer", "minimum": 1 },
+          "version_count": { "type": "integer", "minimum": 1 },
+          "created_at": { "type": "string", "format": "date-time" },
+          "updated_at": { "type": "string", "format": "date-time" },
+          "url": {
+            "type": "string",
+            "format": "uri",
+            "description": "App page: <APP_HOST>/a/<slug>"
+          },
+          "content_url": {
+            "type": "string",
+            "format": "uri",
+            "description": "Artifact origin on the content host. Needs a viewer token unless entered"
+          },
+          "owner": {
+            "type": "object",
+            "properties": {
+              "id": { "type": "string" },
+              "email": { "type": "string", "format": "email" },
+              "name": { "type": ["string", "null"] }
+            },
+            "required": ["id", "email", "name"]
+          },
+          "role": { "type": "string", "enum": ["owner", "viewer", "commenter", "editor"] },
+          "taken_down": { "type": "boolean" },
+          "thumbnail_url": {
+            "type": ["string", "null"],
+            "format": "uri",
+            "description": "The current version's thumbnail (JPEG, same access as the artifact); null when the instance takes none. May answer 404 until the first capture lands"
+          },
+          "category": {
+            "type": ["string", "null"],
+            "maxLength": 60,
+            "description": "The owner's category; null unless you own the artifact. Untrusted text."
+          },
+          "version": { "type": "integer", "minimum": 1, "description": "The version returned" },
+          "source_path": {
+            "type": "string",
+            "enum": ["slides.md"],
+            "description": "The version file holding the source"
+          },
+          "content": {
+            "type": "string",
+            "description": "UNTRUSTED Markdown, written by the artifact's authors"
+          },
+          "assets": {
+            "type": "array",
+            "description": "The version's other files; never index.html or content.md",
+            "items": {
+              "type": "object",
+              "properties": {
+                "path": { "type": "string" },
+                "size_bytes": { "type": "integer" },
+                "content_type": { "type": "string" },
+                "sha256": {
+                  "type": ["string", "null"],
+                  "pattern": "^[0-9a-f]{64}$",
+                  "description": "Lowercase hex SHA-256, computed by the server; null for files stored before reuse by hash"
+                }
+              },
+              "required": ["path", "size_bytes", "content_type", "sha256"]
+            }
+          },
+          "capabilities": {
+            "type": "array",
+            "items": { "type": "string", "enum": ["data", "viewer", "room"] },
+            "description": "What the returned version declares (shared data, viewer identity)"
+          },
+          "data_usage": {
+            "oneOf": [
+              {
+                "type": "object",
+                "properties": { "docs": { "type": "integer" }, "bytes": { "type": "integer" } },
+                "required": ["docs", "bytes"]
+              },
+              { "type": "null" }
+            ],
+            "description": "Shared data totals; null when there is none or the caller cannot read it"
+          }
+        },
+        "required": [
+          "id",
+          "slug",
+          "title",
+          "type",
+          "visibility",
+          "current_version",
+          "version_count",
+          "created_at",
+          "updated_at",
+          "url",
+          "content_url",
+          "owner",
+          "role",
+          "taken_down",
+          "thumbnail_url",
+          "category",
+          "version",
+          "source_path",
+          "content",
+          "assets",
+          "capabilities",
+          "data_usage"
+        ]
+      },
       "ArtifactList": {
         "type": "object",
         "properties": {
@@ -2686,7 +2812,10 @@
               "insecure_url",
               "opaque_module",
               "not_scanned",
-              "live_draft"
+              "live_draft",
+              "slides_setting",
+              "slide_empty",
+              "slide_dense"
             ]
           },
           "file": { "type": "string", "description": "The version file the reference is in" },

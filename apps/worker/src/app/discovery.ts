@@ -184,8 +184,8 @@ function moreSection(config: Config): string {
 function mcpSection(config: Config, ref: string | null): string {
   const endpoint = mcpEndpoint(config);
   const read = ref
-    ? `Call ${code("get_artifact")} with ${code(`{"id": "${ref}"}`)} for this artifact's metadata and source (HTML, or a doc's Markdown); ${code("list_versions")}, ${code("list_comments")}, ${code("reply_comment")} and ${code("update_artifact")} take the same id.`
-    : `${code("get_artifact")} with an artifact's id or slug (the part after ${code("/a/")} in its link) returns its metadata and source (HTML, or a doc's Markdown).`;
+    ? `Call ${code("get_artifact")} with ${code(`{"id": "${ref}"}`)} for this artifact's metadata and source (HTML, or a doc's or a deck's Markdown); ${code("list_versions")}, ${code("list_comments")}, ${code("reply_comment")} and ${code("update_artifact")} take the same id.`
+    : `${code("get_artifact")} with an artifact's id or slug (the part after ${code("/a/")} in its link) returns its metadata and source (HTML, or a doc's or a deck's Markdown).`;
   return [
     `<h2>Read ${ref ? "it" : "artifacts"} through MCP</h2>`,
     "<ul>",
@@ -503,8 +503,8 @@ ${tools.join("\n")}
 
 Artifact links look like ${origin}/a/<slug> (a version: ${origin}/a/<slug>/v/<n>). The page is a JavaScript app; to read the artifact as an agent:
 
-- Through MCP: \`get_artifact\` with \`{"id": "<slug>"}\` returns metadata and source (HTML, or a doc's Markdown), with the access of the person who signed in. This works for every artifact they may open.
-- Without signing in, only for artifacts anyone with the link may open: ${origin}/a/<slug>/source returns the main HTML document (a doc's Markdown) as plain text (\`?version=<n>\` for another version). Private and password-protected artifacts answer 404 there.
+- Through MCP: \`get_artifact\` with \`{"id": "<slug>"}\` returns metadata and source (HTML, or a doc's or a deck's Markdown), with the access of the person who signed in. This works for every artifact they may open.
+- Without signing in, only for artifacts anyone with the link may open: ${origin}/a/<slug>/source returns the main HTML document (a doc's or a deck's Markdown) as plain text (\`?version=<n>\` for another version). Private and password-protected artifacts answer 404 there.
 
 Owners choose who can view each artifact: ${visibility}. New artifacts are private.
 

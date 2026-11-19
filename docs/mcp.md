@@ -213,9 +213,9 @@ Create an artifact. Scope `artifacts:write`.
 | Field | Type | Notes |
 | --- | --- | --- |
 | `title` | string, 1-200 | |
-| `html` | string | A complete HTML document. Up to 5 MB. Required unless `type` is `doc` |
-| `type` | `html` \| `doc`, optional | Default `html`. `doc` makes a document from Markdown in `content`; fixed at publish |
-| `content` | string, optional | For `type: "doc"` only: the Markdown. Up to 1 MB |
+| `html` | string | A complete HTML document. Up to 5 MB. Required unless `type` is `doc` or `slides` |
+| `type` | `html` \| `doc` \| `slides`, optional | Default `html`. `doc` makes a document and `slides` a deck from Markdown in `content`; fixed at publish |
+| `content` | string, optional | For `type: "doc"` or `"slides"` only: the Markdown. Up to 1 MB (and 500 slides) |
 | `assets` | array, optional, up to the instance's file limit (default 511) | `{ path, content, encoding?: "utf8" \| "base64", sha256?, content_type? }`. Relative paths, no `..`, no empty segment or trailing `/`, not `index.html`, not under `__plinth/`. The content type comes from the extension; `content_type` is used only for an extension Plinth does not know |
 | `visibility` | `public` \| `unlisted` \| `password` \| `allowlist` | Default `allowlist` with nobody added: private to the owner and collaborators. `public` only where the instance allows it |
 | `password` | string, 6-200, optional | Needed for `password` |
@@ -255,6 +255,29 @@ are reserved.
 }
 ```
 
+A deck (type `slides`): send Markdown in `content` with a line `---` between slides. Optional front
+matter sets `aspect` (`16:9` or `4:3`), `theme` (`auto`, `light`, `dark`), `paginate` and a plain-text
+`footer`; a line starting `Note:` starts the slide's speaker notes; lines `|||` split a slide into
+2 or 3 columns; `[text](#3)` links to slide 3. Plinth renders fixed 16:9 or 4:3 slides with automatic
+layouts, text that shrinks to fit, paging, Present, a presenter view and printing to PDF (with or
+without notes). Speaker notes are visible to anyone who can open the deck. Assets are images;
+`slides.md` and `index.html` are reserved. A deck needs at least one slide and holds at most 500.
+
+```json
+{
+  "title": "Q4 review",
+  "type": "slides",
+  "content": "---\naspect: 16:9\nfooter: Q4 review\n---\n\n# Q4 review\n\nRevenue and hiring\n\nNote: Keep this under a minute.\n\n---\n\n## Revenue\n\n- Up 18% on Q3\n\n![Revenue by month](chart.png)\n",
+  "assets": [
+    { "path": "chart.png", "content": "iVBORw0KGgo...", "encoding": "base64", "content_type": "image/png" }
+  ]
+}
+```
+
+A deck's publish result also warns `slides_setting` (an ignored setting or column marker),
+`slide_empty`, `slide_dense` (a slide that will be shrunk to fit: split it or move detail into its
+notes) and `missing_file` for an image it shows that is not in `assets`.
+
 A mismatch is refused with `invalid_input` and a message saying what to send instead, for example
 `type doc needs its Markdown in content`, or `content for type doc is Markdown` when `content` is
 a whole HTML document.
@@ -279,7 +302,7 @@ Publish a new version. Owner or editor. Scope `artifacts:write`.
 | --- | --- | --- |
 | `id` | string | |
 | `html` | string | The full new document. For an HTML page |
-| `content` | string | The full new Markdown. For a doc, instead of `html` (up to 1 MB) |
+| `content` | string | The full new Markdown. For a doc or a deck, instead of `html` (up to 1 MB) |
 | `assets` | array, optional | Omit to keep the current assets; pass `[]` to remove them all. An entry with `sha256` and no `content` reuses that file from the current version |
 | `note` | string, up to 500, optional | Shown in the version history |
 | `base_version` | integer, optional | The version you edited. If it is no longer current, the call fails with `conflict` instead of overwriting |
@@ -439,7 +462,8 @@ At most 50 are listed, then one "and N more".
 
 Read metadata, the source and the asset list. Scope `artifacts:read`. The result has `type`
 and `source_path`, then `html` for an HTML page (`source_path: "index.html"`) or `content`, the
-Markdown, for a doc (`source_path: "content.md"`), never both. `assets` never lists those paths;
+Markdown, for a doc (`source_path: "content.md"`) or a deck (`source_path: "slides.md"`, speaker
+notes included), never both. `assets` never lists those paths;
 each asset has `path`, `size_bytes`, `content_type` and `sha256` (`null` for files stored before
 the release that added hashes). Markdown is untrusted text like HTML.
 

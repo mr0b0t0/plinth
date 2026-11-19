@@ -48,13 +48,13 @@ const NAMES = [
 ];
 
 const RESOURCES = "8c9a70350ae4c13067ef489e651d5f5eafe12471c2c63f7c925f9d3bf5bf5e78";
-const INSTRUCTIONS = "f02ea19d7e256cc954a9fbe5f208dddbfb36ca4445da04825a5a032db46132b8";
+const INSTRUCTIONS = "df08ad45142c896f45108c43ba23e4467ccb341351aee40515e7129c729c0837";
 
 describe("MCP surface (golden)", () => {
   it("origin isolation", async () => {
     expect(await surface()).toEqual({
       names: NAMES,
-      tools: "39d810d173f65ee555676d7c949e32a4fd697ad889f384707e58623b179a79ce",
+      tools: "897d3fe034ed53ee7bb0b30c3eeb230e96362f6c12f80865e578f0cebfa3ceee",
       resources: RESOURCES,
       preview: "fd84092d5ecc5a28f494373097e8a3b6e27065d5ef6928f3e124c634f8cf6f47",
       instructions: INSTRUCTIONS,
@@ -64,7 +64,7 @@ describe("MCP surface (golden)", () => {
   it("opaque isolation", async () => {
     expect(await surface({ CONTENT_ISOLATION: "opaque" })).toEqual({
       names: NAMES,
-      tools: "11bbf73184dc3edbf81b11a90c0b4d47e24ea35f6f1e1f03e66d16f3ced3e97e",
+      tools: "b42779588e7bc5512d67a866f4ae20e2c07813432cb317279d517dea019b856b",
       resources: RESOURCES,
       preview: "257bbf5bb47164c389849fffa7fc1dd46e6e7c20e4ef616b4bffefb53a8fd08b",
       instructions: INSTRUCTIONS,
@@ -76,7 +76,7 @@ describe("MCP surface (golden)", () => {
       await surface({ STAGING_CONTENT_FALLBACK: "true", CONTENT_ISOLATION: "opaque" }),
     ).toEqual({
       names: NAMES,
-      tools: "1710d68ab26ec26f731dc4801f238088c59b86d533d80e3cb3a6824cfa3baa39",
+      tools: "87da48a42986edd82aeefe15dd0aaabd90c90592b982f9f2ec1dd7d5e98d5edb",
       resources: RESOURCES,
       preview: "257bbf5bb47164c389849fffa7fc1dd46e6e7c20e4ef616b4bffefb53a8fd08b",
       instructions: INSTRUCTIONS,

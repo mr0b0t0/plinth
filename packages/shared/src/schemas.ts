@@ -61,14 +61,16 @@ export const contentSchema = z
   .string()
   .min(1)
   .describe(
-    'The source of a typed artifact: for type "doc", the Markdown document (stored as content.md). ' +
+    'The source of a typed artifact: for type "doc", the Markdown document (stored as content.md); ' +
+      'for type "slides", the deck\'s Markdown with a line --- between slides (stored as slides.md). ' +
       "Not for html artifacts, which send html.",
   );
 export const artifactTypeSchema = z
   .enum(ARTIFACT_TYPES)
   .describe(
     '"html" (default): a hand-written page sent as html. "doc": a Markdown document sent as ' +
-      "content, which Plinth renders as a finished page. Fixed at publish.",
+      'content, which Plinth renders as a finished page. "slides": a Markdown deck sent as content, ' +
+      "which Plinth renders as a presentation. Fixed at publish.",
   );
 export const noteSchema = z.string().trim().max(LIMITS.maxNoteLength);
 export const passwordSchema = z

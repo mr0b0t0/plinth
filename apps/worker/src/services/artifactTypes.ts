@@ -10,14 +10,18 @@
 // (room notifications, per-type publish warnings). stage.ts and artifacts.ts call the hooks and
 // never branch on a type id.
 import {
+  ARTIFACT_TYPES,
   type ArtifactType,
   type ArtifactTypeDef,
   type PublishResult,
+  type PublishWarning,
+  TYPE_REGISTRY,
   typeDef,
 } from "@plinth/shared";
 import { ApiError } from "../lib/errors.ts";
 import { docHooks } from "./artifactTypes/doc.ts";
 import { htmlHooks } from "./artifactTypes/html.ts";
+import { slidesHooks } from "./artifactTypes/slides.ts";
 import type { Ctx } from "./context.ts";
 
 export interface SourceInput {
@@ -56,6 +60,16 @@ export interface TypeHooks {
   /** Said to the agent when an asset is of a content type the type does not take. */
   assetRule?: string;
   /**
+   * Advisory publish warnings about the source itself, given every path of the version's final
+   * manifest. Runs where the reference scan runs (never on a restore), and its warnings share the
+   * scan's cap. Never throws for a source that validate accepted.
+   */
+  sourceWarnings?(
+    def: ArtifactTypeDef,
+    text: string,
+    manifestPaths: ReadonlySet<string>,
+  ): PublishWarning[];
+  /**
    * After the commit, outside its error handling: never makes the commit look failed. Returns
    * the result, with any per-type publish warnings added.
    */
@@ -66,12 +80,18 @@ export interface TypeHooks {
 const TYPE_HOOKS: { readonly [K in ArtifactType]: TypeHooks } = {
   html: htmlHooks,
   doc: docHooks,
+  slides: slidesHooks,
 };
 
 /** The Worker hooks of a registry row. */
 export function typeHooks(def: ArtifactTypeDef): TypeHooks {
   return TYPE_HOOKS[def.id];
 }
+
+/** `pass type "doc" or "slides"`: every type that takes content, from the registry. */
+const TYPED_CHOICES = ARTIFACT_TYPES.filter((t) => TYPE_REGISTRY[t].sourceField === "content")
+  .map((t) => `"${t}"`)
+  .join(" or ");
 
 function refuse(def: ArtifactTypeDef, field: string, message: string): ApiError {
   return new ApiError("invalid_input", message, { type: def.id, field });
@@ -117,7 +137,7 @@ export function resolveSource(
         def,
         "content",
         publishing
-          ? 'content is for typed artifacts: pass type "doc", or send html'
+          ? `content is for typed artifacts: pass type ${TYPED_CHOICES}, or send html`
           : "This artifact is an HTML page: send html. The type cannot change.",
       );
     }

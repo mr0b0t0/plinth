@@ -125,7 +125,7 @@ describe("OpenAPI document", () => {
     expect(publish.type).toBe("object");
     // html is required for type html only (the Worker's resolveSource), so only title is.
     expect(publish.required.sort()).toEqual(["title"]);
-    expect(publish.properties.type.enum).toEqual(["html", "doc"]);
+    expect(publish.properties.type.enum).toEqual(["html", "doc", "slides"]);
     expect(publish.properties.content.type).toBe("string");
     expect(publish.properties.visibility.enum).toEqual([
       "public",
@@ -194,14 +194,25 @@ describe("OpenAPI document", () => {
     expect(detail.oneOf).toEqual([
       { $ref: "#/components/schemas/HtmlArtifactDetail" },
       { $ref: "#/components/schemas/DocArtifactDetail" },
+      { $ref: "#/components/schemas/SlidesArtifactDetail" },
     ]);
     expect(detail.discriminator).toEqual({
       propertyName: "type",
       mapping: {
         html: "#/components/schemas/HtmlArtifactDetail",
         doc: "#/components/schemas/DocArtifactDetail",
+        slides: "#/components/schemas/SlidesArtifactDetail",
       },
     });
+    const deck = schemas.SlidesArtifactDetail;
+    expect(deck.required).toContain("content");
+    expect(deck.properties.type.enum).toEqual(["slides"]);
+    expect(deck.properties.source_path.enum).toEqual(["slides.md"]);
+    expect(deck.properties.html).toBeUndefined();
+    expect(deck.properties.live_draft).toBeUndefined();
+    expect(schemas.ArtifactType.description).toBe(
+      '"html": a hand-written page (source index.html). "doc": a Markdown document (source content.md) that Plinth renders. "slides": a Markdown deck (source slides.md) that Plinth renders. Fixed at publish.',
+    );
     const page = schemas.HtmlArtifactDetail;
     // Existing clients keep a required html field, as before typed artifacts.
     expect(page.required).toContain("html");
