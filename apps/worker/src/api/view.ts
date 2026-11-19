@@ -138,9 +138,12 @@ export async function computeGate(
     .where(eq(users.id, a.ownerId))
     .get();
   const identity = await identityFor(ctx, a, d);
-  // Each part adds its own optional fields, in list order, after the fields every gate has.
+  // Each part adds its own optional fields, in list order, after the fields every gate has. The
+  // parts only read, and each makes its own checks, so they run at the same time: the gate waits
+  // for the slowest part, not for their sum.
   const parts: GateFields = {};
-  for (const part of GATE_PARTS) Object.assign(parts, await part({ ctx, a, d, opts, identity }));
+  const results = await Promise.all(GATE_PARTS.map((part) => part({ ctx, a, d, opts, identity })));
+  for (const fields of results) Object.assign(parts, fields);
   return {
     status: "ok",
     artifact: {
@@ -175,9 +178,10 @@ export interface GatePartInput {
 export type GatePart = (input: GatePartInput) => Promise<GateFields | undefined>;
 
 /**
- * The parts of an ok gate, one per line, run in this order. A feature adds its part (a sibling
- * optional field such as `comments` or `files`) and its line here; it never changes another
- * part's output.
+ * The parts of an ok gate, one per line. They run concurrently, so a part only reads and never
+ * depends on another; their fields go into the gate in this order. A feature adds its part (a
+ * sibling optional field such as `comments` or `files`) and its line here; it never changes
+ * another part's output.
  */
 export const GATE_PARTS: readonly GatePart[] = [
   async ({ ctx, a, identity }) => {
@@ -205,11 +209,9 @@ export const GATE_PARTS: readonly GatePart[] = [
     return files ? { files } : undefined;
   },
   // Where the figures come from (services/dataSources.ts gateSources): only for an artifact with a
-  // data source, whatever its page declares and in every isolation mode.
-  async ({ ctx, a }) => {
-    const sources = await gateSources(ctx.env.DB, a.id);
-    return sources ? { sources } : undefined;
-  },
+  // data source or with figures stamped by one it no longer has, whatever its page declares and in
+  // every isolation mode.
+  async ({ ctx, a }) => gateSources(ctx.env.DB, a.id),
 ];
 
 // ---------- files people add to a page ----------

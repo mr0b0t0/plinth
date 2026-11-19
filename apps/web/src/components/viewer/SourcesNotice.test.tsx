@@ -119,6 +119,49 @@ describe("sourcesNoticeText", () => {
   });
 });
 
+describe("sourcesNoticeText: unconfirmed and removed sources", () => {
+  it("says when figures come from a source the owner has not confirmed", () => {
+    expect(sourcesNoticeText([src({ status: "awaiting_confirmation" })], NOW)).toBe(
+      "Figures from Linear (14 figures, fetched 12 minutes ago, from a source the owner has not confirmed) were written by an agent of the owner.",
+    );
+    // Earlier stamps of that source say so too.
+    expect(
+      sourcesNoticeText(
+        [
+          src({
+            status: "awaiting_confirmation",
+            fetched: 0,
+            last_fetched_at: null,
+            earlier: [{ label: "Old", connector: "Jira", fetched: 2, last_fetched_at: null }],
+          }),
+        ],
+        NOW,
+      ),
+    ).toContain("Jira (2 figures, from a source the owner has not confirmed)");
+  });
+
+  it("names figures from a removed source as their stamps say, with or without other sources", () => {
+    const gone = {
+      id: "stripe",
+      label: "Revenue",
+      connector: "Stripe",
+      collection: "revenue",
+      fetched: 3,
+      last_fetched_at: "2026-11-18T09:00:00.000Z",
+    };
+    expect(sourcesNoticeText(undefined, NOW, [gone])).toBe(
+      "Figures from Stripe (3 figures, fetched yesterday, from a source since removed) were written by an agent of the owner.",
+    );
+    expect(sourcesNoticeText([src()], NOW, [gone])).toBe(
+      "Figures from Linear (14 figures, fetched 12 minutes ago) and Stripe (3 figures, fetched yesterday, from a source since removed) were written by an agent of the owner.",
+    );
+    expect(sourcesNoticeText([], NOW, [])).toBeNull();
+    render(<SourcesNotice sources={undefined} removed={[gone]} isOwner onReview={() => {}} />);
+    expect(screen.getByRole("note").textContent).toContain("from a source since removed");
+    expect(screen.queryByRole("button", { name: "Review" })).toBeNull();
+  });
+});
+
 describe("SourcesNotice", () => {
   it("renders labels as text, never markup", () => {
     const evil = '<img src=x onerror="alert(1)">';

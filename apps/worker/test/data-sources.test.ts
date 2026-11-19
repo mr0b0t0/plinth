@@ -16,7 +16,7 @@ import { isoIn, nowIso } from "../src/lib/time.ts";
 import { revokeToken } from "../src/oauth/service.ts";
 import type { Principal } from "../src/policy.ts";
 import { revokeConnection } from "../src/services/connections.ts";
-import { setDataSources } from "../src/services/dataSources.ts";
+import { SOURCES_UNTRUSTED_FIELD, setDataSources } from "../src/services/dataSources.ts";
 import {
   DASHBOARD,
   dashboard,
@@ -264,10 +264,12 @@ describe("who reads them", () => {
       created_at: expect.any(String),
       updated_at: expect.any(String),
     });
+    expect(ed.body.data_sources_untrusted).toBe(SOURCES_UNTRUSTED_FIELD);
     const list = await rest(`/artifacts/${d.id}/sources`, editor.session);
     expect(JSON.stringify(list.body)).not.toContain(LINEAR.recipe);
     const cm = await rest(`/artifacts/${d.id}`, commenter.auth);
     expect(cm.body).not.toHaveProperty("data_sources");
+    expect(cm.body).not.toHaveProperty("data_sources_untrusted");
     expect((await rest(`/artifacts/${d.id}/sources`, commenter.auth)).status).toBe(403);
   });
 });
@@ -305,6 +307,33 @@ describe("a pinned connection that goes away", () => {
     expect(view[0].pin_lost_at).toBeTruthy();
     const c = await confirm(d.id, d.owner.session, view[0].config_hash);
     expect(c.body).toMatchObject({ status: "active", pin_lost_at: null });
+  });
+
+  it("revoking it never brings back a confirmation the owner gave before the source was pinned", async () => {
+    const d = await dashboard();
+    // The owner confirms the source as any Claude connection may run it...
+    const first = await setSources(d.id, d.owner.auth, [LINEAR]);
+    await confirm(d.id, d.owner.session, first.body.sources[0].config_hash);
+    // ...then an agent pins it to its own connection, which the owner never confirms.
+    const pinned = await setSources(d.id, d.owner.auth, [{ ...LINEAR, pin_connection: true }]);
+    expect(pinned.body.sources[0].status).toBe("awaiting_confirmation");
+    expect(
+      await rest(`/connections/${d.owner.connectionId}`, d.owner.session, "DELETE"),
+    ).toMatchObject({ status: 200 });
+    // Unpinned, the config is the one confirmed earlier, but the revocation cleared that.
+    const row = await env.DB.prepare(
+      "SELECT target_connection, config_hash, confirmed_hash, confirmed_at FROM data_sources WHERE artifact_id = ?1",
+    )
+      .bind(d.id)
+      .first<Record<string, string | null>>();
+    expect(row?.target_connection).toBeNull();
+    expect(row?.config_hash).toBe(first.body.sources[0].config_hash);
+    expect(row?.confirmed_hash).toBeNull();
+    expect(row?.confirmed_at).toBeNull();
+    const other = await createToken(d.owner.userId);
+    const view = await ownerView(d.id, { Authorization: `Bearer ${other.token}` });
+    expect(view[0]).toMatchObject({ status: "awaiting_confirmation", confirmed_at: null });
+    expect(view[0].pin_lost_at).toBeTruthy();
   });
 
   /** An OAuth connection of the dashboard's owner, with a grant its tokens resolve to. */
@@ -674,6 +703,69 @@ describe("the viewer gate", () => {
     });
   });
 
+  it("shows figures stamped by a removed source as from a removed source, never drops them", async () => {
+    const d = await dashboard();
+    const commenter = await d.as("commenter");
+    const stripe = { ...LINEAR, id: "stripe", label: "Revenue", connector: "Stripe" };
+    await setSources(d.id, d.owner.auth, [LINEAR, stripe]);
+    const at = now();
+    await writeOne(d.id, d.owner.auth, {
+      doc_id: "a",
+      data: { n: 1 },
+      source: { id: "linear", fetched_at: at },
+    });
+    for (const docId of ["b", "c"]) {
+      await writeOne(d.id, d.owner.auth, {
+        doc_id: docId,
+        data: { n: 1 },
+        source: { id: "stripe", fetched_at: at },
+      });
+    }
+    let gate = await gateOf(d.id, commenter.session);
+    expect(gate).not.toHaveProperty("removed_sources");
+    // Stripe is removed; Linear still fills the same collection.
+    await setSources(d.id, d.owner.auth, [LINEAR]);
+    gate = await gateOf(d.id, commenter.session);
+    expect(gate.sources).toHaveLength(1);
+    expect(gate.sources[0]).toMatchObject({ id: "linear", fetched: 1, by_person: 0, by_agent: 0 });
+    const gone = {
+      id: "stripe",
+      label: "Revenue",
+      connector: "Stripe",
+      collection: "issues",
+      fetched: 2,
+      last_fetched_at: new Date(at).toISOString(),
+    };
+    expect(gate.removed_sources).toEqual([gone]);
+    expect(Object.keys(gate).slice(-2)).toEqual(["sources", "removed_sources"]);
+    // With no source left at all, the stamped figures are still named.
+    const del = await rest(`/artifacts/${d.id}/sources/linear`, d.owner.session, "DELETE");
+    expect(del.status).toBe(200);
+    gate = await gateOf(d.id, commenter.session);
+    expect(gate).not.toHaveProperty("sources");
+    // The same age: ordered by collection and source id.
+    expect(gate.removed_sources).toEqual([
+      { ...gone, id: "linear", label: "Open issues", connector: "Linear", fetched: 1 },
+      gone,
+    ]);
+    // A source that now fills another collection: its old stamps are from a removed source too.
+    await setSources(d.id, d.owner.auth, [{ ...LINEAR, collection: "elsewhere" }]);
+    gate = await gateOf(d.id, commenter.session);
+    expect(gate.sources[0]).toMatchObject({ id: "linear", collection: "elsewhere", fetched: 0 });
+    expect(gate.removed_sources.map((r: { id: string }) => r.id).sort()).toEqual([
+      "linear",
+      "stripe",
+    ]);
+    // Once a write clears the stamps, nothing is left to say.
+    for (const docId of ["a", "b", "c"]) {
+      const rev = (await rest(`/artifacts/${d.id}/data/issues/${docId}`, d.owner.auth)).body.doc
+        .rev;
+      await writeOne(d.id, d.owner.auth, { doc_id: docId, data: { n: 2 }, if_rev: rev });
+    }
+    gate = await gateOf(d.id, commenter.session);
+    expect(gate).not.toHaveProperty("removed_sources");
+  });
+
   it("is there whatever the page declares, and under opaque isolation; absent without sources", async () => {
     const d = await dashboard("<!doctype html><title>Plain</title><p>Inline figures</p>");
     let gate = await gateOf(d.id, d.owner.session);
@@ -755,10 +847,14 @@ describe("what agents are told", () => {
     const client = await mcpClient(d.owner.token);
     let r = await tool(client, "get_artifact", { id: d.id });
     expect(r.data).not.toHaveProperty("data_sources");
+    expect(r.data).not.toHaveProperty("data_sources_untrusted");
     await setSources(d.id, d.owner.auth, [LINEAR]);
     r = await tool(client, "get_artifact", { id: d.id });
     await client.close();
     expect(r.data.data_sources[0]).toMatchObject({ id: "linear", recipe: LINEAR.recipe });
+    // The untrusted-input marker travels with the sources, as in every other result with them.
+    expect(r.data.data_sources_untrusted).toBe(SOURCES_UNTRUSTED_FIELD);
+    expect(r.data.data_sources_untrusted).toMatch(/^UNTRUSTED: /);
   });
 
   it("the REST document lists the four routes; the confirmation takes a session only and mirrors no tool", () => {

@@ -14,7 +14,7 @@ import type {
   Role,
   Visibility,
 } from "./constants.ts";
-import type { ViewSource } from "./dataSources.ts";
+import type { RemovedSourceStamps, ViewSource } from "./dataSources.ts";
 import type { LiveMode } from "./liveDoc.ts";
 import type { Anchor } from "./schemas.ts";
 import type { DictationAccess } from "./voice.ts";
@@ -557,6 +557,12 @@ export type ViewGate =
        * the artifact has a data source, whatever the page declares and in every isolation mode.
        */
       sources?: ViewSource[];
+      /**
+       * Documents still stamped by a source the artifact no longer has in that collection (it was
+       * removed, or now fills another collection), grouped as their stamps say, newest first.
+       * Present only when there are some, with or without `sources`.
+       */
+      removed_sources?: RemovedSourceStamps[];
     }
   | { status: "password_required"; artifact: ViewArtifactStub }
   | { status: "email_required"; artifact: ViewArtifactStub }

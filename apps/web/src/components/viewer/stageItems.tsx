@@ -435,6 +435,7 @@ const dataNotice: StageNode = (c) => <DataNotice gate={c.gate} />;
 const sourcesNotice: StageNode = ({ gate, actions }) => (
   <SourcesNotice
     sources={gate.sources}
+    removed={gate.removed_sources}
     isOwner={gate.role === "owner"}
     onReview={actions.openShare}
   />

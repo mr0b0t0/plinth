@@ -59,34 +59,118 @@ function keyLikeRun(run: string): boolean {
     .every((piece) => WORDLIKE_PIECE.test(piece));
 }
 
-/** An http or https URL up to its query or fragment: scheme, host and path. */
-const URL_UP_TO_QUERY = /\bhttps?:\/\/[^\s?#]*/gi;
+/** A URL of any scheme (`https:`, `postgres:`, `mongodb+srv:`) up to its query or fragment. */
+const URL_UP_TO_QUERY = /\b[a-z][a-z0-9+.-]*:\/\/[^\s?#]*/gi;
+/** The same URL in parts: scheme with `://`, authority, path, and the query when there is one. */
+const URL_PARTS = /\b([a-z][a-z0-9+.-]*:\/\/)([^\s/?#]*)([^\s?#]*)(\?[^\s#]*)?/gi;
 /** In a URL's path `/` separates segments, so a run stops there: base64url and `+`, `=`. */
 const PATH_RUN = /[A-Za-z0-9_+=-]{40,}/g;
 /** Anywhere else `/` stays in the run, so a standard-base64 key with slashes is one run. */
 const TEXT_RUN = /[A-Za-z0-9_+/=-]{40,}/g;
+/** 32 or more hex characters: a hex API key, an MD5-sized secret, a SHA-1 or a SHA-256. */
+const HEX_RUN = /[0-9a-fA-F]{32,}/;
 
 /**
- * Text that looks like it holds a credential: a bearer header, a well-known token prefix (OpenAI
- * and Anthropic `sk-`, GitHub `ghp_` and `gho_`, Slack `xox?-`, AWS `AKIA`, Plinth's own
- * `plinth_`), a JWT, a URL query parameter named like a secret, a run of 40 or more hex
- * characters (a SHA-1 or SHA-256, an API key), or a run of 40 or more base64 or base64url
- * characters that mixes upper case, lower case and digits and does not read as words and
- * identifiers (keyLikeRun). In a URL's host and path each segment between slashes is a run of its
- * own, so a link to a record whose segments are short opaque ids (Airtable, Salesforce, Stripe)
- * passes; elsewhere `/` joins the run. Recipes describe queries; they never need any of these.
+ * Well-known credential prefixes, at the start of the text or after a character that is not a
+ * letter or digit: OpenAI and Anthropic `sk-`, GitHub `ghp_`, `gho_`, `ghu_`, `ghs_`, `ghr_` and
+ * `github_pat_`, GitLab `glpat-`, Slack `xox?-`, AWS `AKIA` (and `ASIA` with its 16 characters),
+ * a Google API key (`AIza` and 35 more), Stripe secret, restricted and webhook keys (`sk_live_`,
+ * `rk_live_`, `sk_test_`, `rk_test_`, `whsec_`), and Plinth's own `plinth_`.
+ */
+const TOKEN_PREFIX =
+  /(?:^|[^A-Za-z0-9])(?:sk-|gh[pousr]_|github_pat_|glpat-|xox[abprse]-|AKIA|ASIA[0-9A-Z]{16}|AIza[0-9A-Za-z_-]{35}|[sr]k_(?:live|test)_|whsec_|plinth_)/;
+/** Anthropic and OpenAI key prefixes in any case (`SK-ant-`); a bare `SK-` is a Jira key. */
+const TOKEN_PREFIX_ANY_CASE = /(?:^|[^A-Za-z0-9])sk-(?:ant|proj|svcacct|admin)-/i;
+/** A header that carries a credential: `Authorization:` (Basic, Bearer or any) or `X-Api-Key`. */
+const CREDENTIAL_HEADER =
+  /\b(?:proxy-)?authorization\s*:|\bx-(?:api-key|api-token|auth-token|access-token)\b/i;
+/** A credential written as a field: `api_key=…`, `client_secret: …`, `password=…`. */
+const CREDENTIAL_FIELD =
+  /\b(?:api[-_]?key|api[-_]?token|access[-_]?token|auth[-_]?token|client[-_]?secret|secret[-_]?key|password|passwd)\s*[:=]\s*\S/i;
+/**
+ * A query or fragment parameter named like a secret, with or without a prefix: `?token=`,
+ * `?client_secret=`, `#access_token=`, `&X-Amz-Signature=`. Each prefix piece ends with a
+ * separator the piece cannot hold, so the match never backtracks.
+ */
+const SECRET_PARAM =
+  /[?&;#](?:[A-Za-z0-9]+[_.-])*(?:token|key|secret|sig|signature|password|passwd|pwd|apikey|accesstoken|credential|auth)=/i;
+/** A URL whose user info holds a password: `postgres://admin:pw@host`, `redis://:pw@host`. */
+const URL_PASSWORD = /\b[a-z][a-z0-9+.-]*:\/\/[^\s/?#@:]*:[^\s/?#@]*@/i;
+/**
+ * A bare `user:password@host`, without a scheme. The user part cannot hold `:`, so the match
+ * never backtracks; `mailto:person@host` is an address, not a password (looksLikeSecret).
+ */
+const BARE_PASSWORD = /(?:^|[\s"'(<[,;=])([^\s"'()<>[\],;=/@:]+):[^\s"'()<>[\]/@]+@[A-Za-z0-9-]/g;
+
+// Each id may be followed by the punctuation of the sentence the link sits in ("…/edit).").
+/** A Google Docs, Sheets, Slides, Forms or Drive id, the segment after `/d/`, `/e/` or `/folders/`. */
+const GOOGLE_ID = /^[A-Za-z0-9_-]+[.,;:!)'"\]]*$/;
+/** A full commit SHA (SHA-1 or SHA-256), the segment after `/commit/`, `/commits/`, `/blob/` or `/tree/`. */
+const COMMIT_SHA = /^(?:[0-9a-f]{40}|[0-9a-f]{64})[.,;:!)'"\]]*$/;
+/** A Notion page id: 32 hex characters, the whole segment or the end of the page's name. */
+const NOTION_ID = /(^|-)[0-9a-f]{32}(?=[.,;:!)'"\]]*$)/;
+/** A Notion view or peeked page in the query: `v=`, `p=` or `pvs=` with 32 hex characters. */
+const NOTION_QUERY_ID = /([?&](?:v|p|pvs)=)[0-9a-f]{32}(?=&|[.,;:!)'"\]]*$)/g;
+
+/**
+ * The text with the record ids of a few hosts blanked out, for the run checks only: Google Docs
+ * and Drive ids on docs.google.com and drive.google.com, full commit SHAs in github.com and
+ * gitlab.com links, and Notion page and view ids on notion.so and notion.site. Only a segment in
+ * that place, on that host, is blanked, and the prefix, header and parameter checks still read
+ * the text as it was.
+ */
+function withoutRecordIds(text: string): string {
+  return text.replace(
+    URL_PARTS,
+    (all, scheme: string, authority: string, path: string, query: string | undefined) => {
+      const host = authority.replace(/^.*@/, "").replace(/:\d*$/, "").toLowerCase();
+      const google = host === "docs.google.com" || host === "drive.google.com";
+      const code = host === "github.com" || host === "www.github.com" || host === "gitlab.com";
+      const notion = /(?:^|\.)notion\.(?:so|site)$/.test(host);
+      if (!google && !code && !notion) return all;
+      const segments = path.split("/");
+      const kept = segments.map((seg, i) => {
+        const before = segments[i - 1] ?? "";
+        if (google && ["d", "e", "folders"].includes(before) && GOOGLE_ID.test(seg)) return "-";
+        if (code && ["commit", "commits", "blob", "tree"].includes(before) && COMMIT_SHA.test(seg))
+          return "-";
+        if (notion) return seg.replace(NOTION_ID, "$1-");
+        return seg;
+      });
+      const q = notion && query ? query.replace(NOTION_QUERY_ID, "$1-") : (query ?? "");
+      return `${scheme}${authority}${kept.join("/")}${q}`;
+    },
+  );
+}
+
+/**
+ * Text that looks like it holds a credential: a bearer header or any `Authorization:` header,
+ * `X-Api-Key`, a well-known token prefix (TOKEN_PREFIX), a field such as `api_key=` or
+ * `password:`, a JWT, a query or fragment parameter named like a secret, a URL or a bare
+ * `user:password@host` with a password, a run of 32 or more hex characters, or a run of 40 or more
+ * base64 or base64url characters that mixes upper case, lower case and digits and does not read
+ * as words and identifiers (keyLikeRun). In a URL's host and path each segment between slashes is
+ * a run of its own, so a link to a record whose segments are short opaque ids (Airtable,
+ * Salesforce, Stripe) passes; elsewhere `/` joins the run. In their own links, the ids of Google
+ * Docs and Drive, full commit SHAs on GitHub and GitLab, and Notion page and view ids are not runs
+ * (withoutRecordIds). Recipes describe queries and labels and connectors name things: none of them
+ * ever needs any of these.
  */
 export function looksLikeSecret(text: string): boolean {
   if (/\bbearer\s+\S/i.test(text)) return true;
-  if (/(?:^|[^A-Za-z0-9])(?:sk-|ghp_|gho_|xox[abp]-|AKIA|plinth_)/.test(text)) return true;
+  if (TOKEN_PREFIX.test(text) || TOKEN_PREFIX_ANY_CASE.test(text)) return true;
+  if (CREDENTIAL_HEADER.test(text) || CREDENTIAL_FIELD.test(text)) return true;
   if (/eyJ[A-Za-z0-9_-]*\.eyJ[A-Za-z0-9_-]*\./.test(text)) return true;
-  if (/[?&;](?:token|key|secret|sig|signature|access_token|api_key|apikey|password)=/i.test(text))
-    return true;
-  if (/[0-9a-fA-F]{40,}/.test(text)) return true;
-  for (const url of text.match(URL_UP_TO_QUERY) ?? []) {
+  if (SECRET_PARAM.test(text) || URL_PASSWORD.test(text)) return true;
+  for (const m of text.matchAll(BARE_PASSWORD)) {
+    if ((m[1] ?? "").toLowerCase() !== "mailto") return true;
+  }
+  const runs = withoutRecordIds(text);
+  if (HEX_RUN.test(runs)) return true;
+  for (const url of runs.match(URL_UP_TO_QUERY) ?? []) {
     for (const run of url.match(PATH_RUN) ?? []) if (keyLikeRun(run)) return true;
   }
-  for (const run of text.replace(URL_UP_TO_QUERY, " ").match(TEXT_RUN) ?? []) {
+  for (const run of runs.replace(URL_UP_TO_QUERY, " ").match(TEXT_RUN) ?? []) {
     if (keyLikeRun(run)) return true;
   }
   return false;
@@ -127,22 +211,23 @@ export function recipeProblem(s: string): string | null {
 }
 
 /**
- * A document's source_ref as stored, or why it is refused. Trimmed; an http or https URL keeps
- * only its origin and path (query, fragment, user name and password are dropped); any other text
- * is kept as it is. Empty is null. Refused past LIMITS.maxSourceRefLength, with control or
- * invisible characters, or when it looks like it holds a credential. Every reader of the page may
- * see it, anonymous link viewers included.
+ * A document's source_ref as stored, or why it is refused. Trimmed; a URL of any scheme
+ * (`https://`, `postgres://`, `mongodb+srv://`, `redis://`) keeps only its scheme, host and path
+ * (user name, password, query and fragment are dropped); any other text is kept as it is, and a
+ * bare `user:password@host` is refused (looksLikeSecret). Empty is null. Refused past
+ * LIMITS.maxSourceRefLength, with control or invisible characters, or when it looks like it holds
+ * a credential. Every reader of the page may see it, anonymous link viewers included.
  */
 export function sanitizeSourceRef(
   ref: string,
 ): { ok: true; ref: string | null } | { ok: false; problem: string } {
   let s = ref.trim();
   if (s.length === 0) return { ok: true, ref: null };
-  if (/^https?:\/\//i.test(s)) {
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(s)) {
     // Scheme, then user info (up to the last "@" before the path), host and path; the query and
     // the fragment are dropped. Parsed by hand: this package runs without the DOM's URL.
-    const m = /^(https?):\/\/(?:[^/?#]*@)?([^/?#@]+)([^?#]*)/i.exec(s);
-    if (!m) return { ok: false, problem: "source_ref is not a valid URL" };
+    const m = /^([a-z][a-z0-9+.-]*):\/\/(?:[^/?#]*@)?([^/?#@]*)([^?#]*)/i.exec(s);
+    if (!m || (!m[2] && !m[3])) return { ok: false, problem: "source_ref is not a valid URL" };
     s = `${(m[1] ?? "").toLowerCase()}://${(m[2] ?? "").toLowerCase()}${m[3] || "/"}`;
   }
   if (s.length > LIMITS.maxSourceRefLength) {
@@ -351,6 +436,22 @@ export interface ViewSource {
 export interface EarlierStamps {
   label: string;
   connector: string;
+  fetched: number;
+  /** The newest fetched_at among those documents. */
+  last_fetched_at: string | null;
+}
+
+/**
+ * Documents stamped by a source this artifact no longer has in their collection (ViewGate
+ * `removed_sources`): the stamps keep their label and connector, so readers still see where the
+ * figures were said to come from, and that the source is gone.
+ */
+export interface RemovedSourceStamps {
+  /** The source id the stamps carry. */
+  id: string;
+  label: string;
+  connector: string;
+  collection: string;
   fetched: number;
   /** The newest fetched_at among those documents. */
   last_fetched_at: string | null;

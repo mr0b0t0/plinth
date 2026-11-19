@@ -1222,10 +1222,12 @@ connectors and push the figures.
 
    Only the owner's agent stamps. `fetched_at` is when you fetched (not in the future, at most 30
    days old). `ref` is optional and every reader sees it: a record id or a URL without credentials
-   (the query and fragment are dropped).
+   (its user name, password, query and fragment are dropped, and `user:password@host` is refused).
 4. **Tell the user to confirm** each new or changed source at `confirm_url`: it waits until they
    read the recipe in Plinth and confirm it. You cannot confirm, and re-setting an unchanged source
-   keeps it confirmed.
+   keeps it confirmed. Until then the line under Plinth's bar says the figures come from a source
+   the owner has not confirmed; figures stamped by a source you removed are named as from a
+   removed source until a write clears their stamps.
 5. **The page** declares `data` (and `viewer` if it should show which connection fetched), loads
    `/__plinth/runtime.js`, and marks each figure:
 

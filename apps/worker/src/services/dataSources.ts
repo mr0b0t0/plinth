@@ -15,6 +15,7 @@ import {
   LIMITS,
   normalizeRecipe,
   normalizeSourceText,
+  type RemovedSourceStamps,
   recipeProblem,
   type SetDataSourcesInput,
   type SetDataSourcesResult,
@@ -183,21 +184,78 @@ export async function summarySources(
 }
 
 /**
- * The viewer bar's sources (ViewGate `sources`), for everyone who may open the page: one indexed
- * read of the artifact's sources and, only when it has some, one aggregate over their collections,
- * counted from the stamps the server stored. Each document is credited to what its own stamp says
- * (the label and connector copied onto it when it was written), so renaming a source never moves
- * earlier figures under its new name; and each age is the newest fetched_at among the documents
- * counted, so deleting or overwriting the freshest one never leaves the line claiming the rest are
- * newer than they are. Never the recipe, the target or the hash. Undefined when the artifact has
- * no source.
+ * The viewer bar's sources (ViewGate `sources` and `removed_sources`), for everyone who may open
+ * the page. One round trip reads the artifact's sources and, from an index that holds stamped
+ * documents only, those whose source is no longer on the artifact in their collection; only an
+ * artifact with sources then takes one aggregate over their collections. Everything is counted
+ * from the stamps the server stored. Each document is credited to what its own stamp says (the
+ * label and connector copied onto it when it was written), so renaming a source never moves
+ * earlier figures under its new name, and removing one never makes its figures vanish from the
+ * line; each age is the newest fetched_at among the documents counted, so deleting or overwriting
+ * the freshest one never leaves the line claiming the rest are newer than they are. Never the
+ * recipe, the target or the hash. Undefined when there is nothing to say.
  */
 export async function gateSources(
   d1: D1Database,
   artifactId: string,
-): Promise<ViewSource[] | undefined> {
-  const rows = await rowsOf(d1, artifactId);
-  if (rows.length === 0) return undefined;
+): Promise<{ sources?: ViewSource[]; removed_sources?: RemovedSourceStamps[] } | undefined> {
+  const [current, gone] = await d1.batch<SourceRow | StampGroup>([
+    d1
+      .prepare("SELECT * FROM data_sources WHERE artifact_id = ?1 ORDER BY created_at, source_id")
+      .bind(artifactId),
+    d1
+      .prepare(
+        `SELECT d.collection, d.source_id, d.source_label, d.source_connector,
+                count(*) AS n, max(d.fetched_at) AS newest
+           FROM artifact_docs d
+          WHERE d.artifact_id = ?1 AND d.source_id IS NOT NULL
+            AND NOT EXISTS (SELECT 1 FROM data_sources s
+                             WHERE s.artifact_id = ?1 AND s.source_id = d.source_id
+                               AND s.collection = d.collection)
+          GROUP BY d.collection, d.source_id, d.source_label, d.source_connector
+          ORDER BY d.collection, d.source_id, d.source_label, d.source_connector`,
+      )
+      .bind(artifactId),
+  ]);
+  const rows = (current?.results ?? []) as SourceRow[];
+  const removed = ((gone?.results ?? []) as StampGroup[]).map(
+    (g): RemovedSourceStamps => ({
+      id: g.source_id ?? "",
+      label: g.source_label ?? "",
+      connector: g.source_connector ?? "",
+      collection: g.collection,
+      fetched: g.n,
+      last_fetched_at: g.newest,
+    }),
+  );
+  const out: { sources?: ViewSource[]; removed_sources?: RemovedSourceStamps[] } = {};
+  if (rows.length > 0) out.sources = await currentSources(d1, artifactId, rows);
+  if (removed.length > 0) out.removed_sources = newestFirst(removed);
+  return out.sources || out.removed_sources ? out : undefined;
+}
+
+/** One group of documents in the gate's aggregates. */
+interface StampGroup {
+  collection: string;
+  source_id: string | null;
+  source_label: string | null;
+  source_connector: string | null;
+  n: number;
+  newest: string | null;
+}
+
+/** Groups with an age, newest first (a group without one last). */
+function newestFirst<T extends { last_fetched_at: string | null }>(list: T[]): T[] {
+  const t = (e: T) => e.last_fetched_at ?? "";
+  return list.sort((a, b) => (t(a) === t(b) ? 0 : t(a) > t(b) ? -1 : 1));
+}
+
+/** The artifact's current sources, counted over their collections. */
+async function currentSources(
+  d1: D1Database,
+  artifactId: string,
+  rows: SourceRow[],
+): Promise<ViewSource[]> {
   const { results } = await d1
     .prepare(
       `SELECT collection, source_id, source_label, source_connector,
@@ -209,15 +267,7 @@ export async function gateSources(
         GROUP BY collection, source_id, source_label, source_connector, person`,
     )
     .bind(artifactId)
-    .all<{
-      collection: string;
-      source_id: string | null;
-      source_label: string | null;
-      source_connector: string | null;
-      person: number;
-      n: number;
-      newest: string | null;
-    }>();
+    .all<StampGroup & { person: number }>();
   return rows.map((r) => {
     let fetched = 0;
     let newest: string | null = null;
@@ -231,6 +281,7 @@ export async function gateSources(
         else byAgent += g.n;
         continue;
       }
+      // Another source id's stamps are that source's, or in removed_sources once it is gone.
       if (g.source_id !== r.source_id) continue;
       const label = g.source_label ?? "";
       const connector = g.source_connector ?? "";
@@ -256,12 +307,7 @@ export async function gateSources(
       by_person: byPerson,
       by_agent: byAgent,
     };
-    if (earlier.size > 0) {
-      const t = (e: EarlierStamps) => e.last_fetched_at ?? "";
-      out.earlier = [...earlier.values()].sort((a, b) =>
-        t(a) === t(b) ? 0 : t(a) > t(b) ? -1 : 1,
-      );
-    }
+    if (earlier.size > 0) out.earlier = newestFirst([...earlier.values()]);
     return out;
   });
 }
@@ -584,9 +630,10 @@ export async function unpinIfRevoked(db: Db, connectionId: string, now = nowIso(
 
 /**
  * Queries for the batch that revokes a connection (services/connections.ts revokeConnection, and
- * the OAuth grant revocation): every source pinned to it is unpinned, marks when, and gets the hash
- * of its new config (no pin), which no longer matches the owner's confirmation, so it waits for the
- * owner again instead of moving to any connection of its type (fail closed). Its open refresh tasks
+ * the OAuth grant revocation): every source pinned to it is unpinned, marks when, gets the hash of
+ * its new config (no pin) and loses its confirmation, so it waits for the owner again instead of
+ * moving to any connection of its type (fail closed), even when the owner once confirmed that same
+ * config without the pin. Its open refresh tasks
  * end. Reads the affected rows first (an index scan on data_sources_target). Each unpin applies only
  * while the row still has the config_hash that was read, so a hash worked out from a config a set
  * has since replaced never lands on the new config (it could equal an older confirmation).
@@ -612,7 +659,16 @@ export async function unpinConnectionQueries(db: Db, connectionId: string, now =
     out.push(
       db
         .update(dataSources)
-        .set({ targetConnection: null, pinLostAt: now, configHash: hash, updatedAt: now })
+        // The confirmation is cleared too: the config without the pin may be one the owner
+        // confirmed before an agent pinned it, and a revocation must never bring that back.
+        .set({
+          targetConnection: null,
+          pinLostAt: now,
+          configHash: hash,
+          confirmedHash: null,
+          confirmedAt: null,
+          updatedAt: now,
+        })
         .where(
           and(
             eq(dataSources.artifactId, r.artifactId),

@@ -340,6 +340,7 @@ describe("how readers see it", () => {
     expect(s.body).not.toHaveProperty("sources");
     const g = await rest(`/artifacts/${d.id}`, d.owner.auth);
     expect(g.body).not.toHaveProperty("data_sources");
+    expect(g.body).not.toHaveProperty("data_sources_untrusted");
   });
 
   it("deleting the artifact wipes stamped documents and refresh tasks, and keeps the source row", async () => {

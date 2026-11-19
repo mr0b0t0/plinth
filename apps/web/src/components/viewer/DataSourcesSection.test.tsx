@@ -155,6 +155,29 @@ describe("Data sources in the share dialog", () => {
     });
     renderDialog();
     expect(await screen.findByText(/was pinned to was revoked/)).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Confirm Open issues" })).toBeTruthy();
+  });
+
+  it("never asks to confirm a source that is confirmed and has no Confirm button", async () => {
+    stubApi({
+      handle: (c) =>
+        c.path === "/artifacts/s1/sources"
+          ? json({
+              sources: [
+                source({
+                  status: "active",
+                  confirmed_at: "2026-11-19T10:30:00.000Z",
+                  pin_lost_at: "2026-11-19T11:00:00.000Z",
+                }),
+              ],
+              untrusted: "U",
+            })
+          : undefined,
+    });
+    renderDialog();
+    expect(await screen.findByText(/Confirmed/)).toBeTruthy();
+    expect(screen.queryByText(/Confirm to let/)).toBeNull();
+    expect(screen.queryByRole("button", { name: "Confirm Open issues" })).toBeNull();
   });
 
   it("only the owner loads the sources", async () => {

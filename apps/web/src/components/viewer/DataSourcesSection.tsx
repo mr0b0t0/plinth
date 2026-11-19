@@ -118,7 +118,7 @@ function SourceItem({
           )}
         </span>
       </div>
-      {source.pin_lost_at && (
+      {source.pin_lost_at && awaiting && (
         <p className="pl-field__error" role="alert">
           <WarningCircleIcon aria-hidden="true" />
           <span>

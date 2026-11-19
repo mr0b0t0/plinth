@@ -2,11 +2,12 @@
 // same as before the parts: the fields every ok gate has, in order, then `data`, then `live`, then
 // `people`, then `page_comments`, then `voice` (dictation, gate-voice in dictation.test.ts), then
 // `watch` (live views, live-view.test.ts), then `hold` (live views, live-view-update.test.ts), then
-// `files`, then `sources` (data sources, data-sources.test.ts), each only when its part has
-// something to say.
+// `files`, then `sources` and `removed_sources` (data sources, data-sources.test.ts), each only
+// when its part has something to say. The parts run concurrently; their fields keep this order.
 import { describe, expect, it } from "vitest";
-import { GATE_PARTS } from "../src/api/view.ts";
-import { agent, browserSession, call, json, publish } from "./helpers.ts";
+import { GATE_PARTS, type GatePart } from "../src/api/view.ts";
+import { run } from "./data-sources-helpers.ts";
+import { APP, agent, browserSession, call, json, publish } from "./helpers.ts";
 
 const DECLARED = `<!doctype html><title>Poll</title>
 <meta name="plinth-capabilities" content="data viewer room">
@@ -88,5 +89,37 @@ describe("gate parts", () => {
     expect(Object.keys(gate)).toEqual([...BASE_KEYS, "live", "watch"]);
     expect(Object.keys(gate.live)).toEqual(["mode", "draft"]);
     expect(gate.live).toEqual({ mode: "room", draft: null });
+  });
+
+  it("runs the parts at the same time and still adds their fields in list order", async () => {
+    const a = await agent();
+    const { body } = await publish(a.auth, { visibility: "allowlist" });
+    // The first extra part waits until the second has run: one after the other, the gate would
+    // never answer. The second finishes first, and its field still comes last.
+    let release: () => void = () => undefined;
+    const second = new Promise<void>((r) => {
+      release = r;
+    });
+    const extra: GatePart[] = [
+      async () => {
+        await second;
+        return { extra_first: true } as never;
+      },
+      async () => {
+        release();
+        return { extra_second: true } as never;
+      },
+    ];
+    const list = GATE_PARTS as GatePart[];
+    list.push(...extra);
+    try {
+      // Through this module's own Worker, so the parts pushed here are the ones it runs.
+      const s = await browserSession(a.user.id);
+      const gate = await json(await run(`${APP}/api/v1/view/${body.id}`, { headers: s.headers }));
+      expect(Object.keys(gate)).toEqual([...BASE_KEYS, "watch", "extra_first", "extra_second"]);
+    } finally {
+      list.splice(list.length - extra.length, extra.length);
+    }
+    expect(GATE_PARTS.length).toBe(9);
   });
 });

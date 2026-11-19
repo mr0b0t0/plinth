@@ -625,6 +625,8 @@ export interface ArtifactDataInfo {
    * Absent, not empty, when it has none.
    */
   data_sources?: DataSourceInfo[];
+  /** With data_sources only: the untrusted-input note for their label, connector and recipe. */
+  data_sources_untrusted?: string;
 }
 
 /** Limits as list_artifact_data and the page session report them. */

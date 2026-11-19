@@ -151,6 +151,114 @@ describe("looksLikeSecret", () => {
     }
   });
 
+  it("lets Google Docs and Drive ids, commit SHAs and Notion ids through in their own links", () => {
+    const gid = ["1BxiMVs0XRA5nFMd", "KvBdBZjgmUUqptlb", "s74OgvE2upms"].join("");
+    const sha = "9fceb02d0ae598e95dc970b74767f19372d61af8";
+    const hex32 = "2a1b3c4d5e6f7a8b9c0d1e2f3a4b5c6d";
+    const links = [
+      `https://docs.google.com/spreadsheets/d/${gid}/edit#gid=0`,
+      `https://docs.google.com/document/d/${gid}/edit`,
+      `https://docs.google.com/presentation/d/${gid}/view`,
+      `https://docs.google.com/forms/d/e/1FAIpQLSd${gid}/viewform`,
+      `https://docs.google.com/spreadsheets/d/e/2PACX-${gid}/pubhtml`,
+      `https://drive.google.com/file/d/${gid}/view`,
+      `https://drive.google.com/drive/folders/${gid}`,
+      `https://drive.google.com/drive/u/0/folders/${gid}`,
+      `https://github.com/acme/web/commit/${sha}`,
+      `https://github.com/acme/web/blob/${sha}/src/index.ts`,
+      `https://github.com/acme/web/tree/${sha}/docs`,
+      `https://github.com/acme/web/pull/12/commits/${sha}`,
+      `https://gitlab.com/acme/web/-/commit/${sha}`,
+      `https://www.notion.so/acme/${hex32}?v=${hex32.split("").reverse().join("")}`,
+      `https://acme.notion.site/Q4-Roadmap-${hex32}?pvs=${hex32}`,
+    ];
+    for (const url of links) {
+      expect(looksLikeSecret(url), url).toBe(false);
+      expect(recipeProblem(`Read ${url} and count the rows`), url).toBeNull();
+      expect(sanitizeSourceRef(url).ok, url).toBe(true);
+    }
+    // Only in that place, on that host: the same ids elsewhere are still runs.
+    for (const s of [
+      `https://example.com/spreadsheets/d/${gid}/edit`,
+      `https://docs.google.com/spreadsheets/u/${gid}/edit`,
+      `https://docs.google.com.example.net/d/${gid}`,
+      `https://example.com/acme/web/commit/${sha}`,
+      `https://github.com/acme/web/issues/${sha}`,
+      `https://github.com/acme/web/commit/${sha}?token=1`,
+      `https://example.com/${hex32}`,
+      `https://www.notion.so/acme/${hex32}?x=${hex32}`,
+      `id ${gid}`,
+      `commit ${sha}`,
+      `page ${hex32}`,
+    ]) {
+      expect(looksLikeSecret(s), s).toBe(true);
+    }
+  });
+
+  it("catches more key shapes and credential headers, in labels and connectors too", () => {
+    const at = (...parts: string[]) => parts.join("");
+    const keys = [
+      at("AI", "za", "SyD-9tSrke72PouQMnMX-a7eZSW0jkFMBWY"),
+      at("0123456789abcdef", "0123456789abcdef"),
+      at("gl", "pat-", "xxxxxxxxxxxxxxxxxxxx"),
+      at("rk", "_live_", "51Hx"),
+      at("sk", "_live_", "51Hx"),
+      at("sk", "_test_", "4eC3"),
+      at("wh", "sec_", "abc"),
+      at("SK", "-ant-", "api03-x"),
+      at("Sk", "-Proj-", "x"),
+      at("gh", "s_", "abc"),
+      at("git", "hub_pat_", "11ABC"),
+      at("AS", "IA", "EXAMPLEFIXTURE00"),
+      "Authorization: Basic dXNlcjpwYXNz",
+      "authorization:x",
+      "X-Api-Key: 1234",
+      "send the x-api-key header",
+      "https://api.example.com/oauth?client_secret=abc",
+      "https://api.example.com/cb#access_token=abc&state=1",
+      "https://bucket.example.com/f?X-Amz-Signature=abc",
+      "https://api.example.com/v1?refresh_token=abc",
+      "api_key=abc",
+      "client_secret: abc",
+      "password=abc",
+    ];
+    for (const s of keys) {
+      expect(looksLikeSecret(s), s).toBe(true);
+      expect(recipeProblem(`Fetch with ${s}`), s).toMatch(/credential/);
+      // Labels and connectors are shown to every reader in the bar: the same check.
+      const short = s.slice(0, LIMITS.maxSourceLabelLength);
+      if (looksLikeSecret(short)) {
+        expect(sourceTextProblem(short, "label"), s).toMatch(/credential/);
+        expect(sourceTextProblem(short, "connector"), s).toMatch(/credential/);
+      }
+    }
+    expect(
+      sourceTextProblem(at("AI", "za", "SyD-9tSrke72PouQMnMX-a7eZSW0jkFMBWY"), "label"),
+    ).toMatch(/credential/);
+    expect(sourceTextProblem("Authorization: Basic dXNlcjpwYXNz", "connector")).toMatch(
+      /credential/,
+    );
+  });
+
+  it("does not take ordinary words, Jira keys or short ids for those", () => {
+    for (const s of [
+      "SK-123 and SK-42: open bugs",
+      "Basic count of open issues",
+      "Authorization review queue",
+      "Count the API keys issued this month",
+      "Monkey business: ?monkey=1&keyword=x&sortKey=asc",
+      "AIza is too short",
+      "Sales in ASIA by quarter",
+      "deadbeef 0123456789abcdef (16 hex)",
+      "risk-free rate; task-list; desk-top",
+      "Stripe: pk_live_ is a publishable key prefix, not a secret",
+      "Google Sheets",
+      "GitLab",
+    ]) {
+      expect(looksLikeSecret(s), s).toBe(false);
+    }
+  });
+
   it("lets ordinary recipes through", () => {
     for (const s of [
       "Linear: count open issues in team ENG by state; one document per state in collection issues.",
@@ -214,6 +322,46 @@ describe("sanitizeSourceRef", () => {
     expect(sanitizeSourceRef(`https://x.example/files/${FAKE.mixed}`).ok).toBe(false);
     expect(sanitizeSourceRef(`https://x.example/files/${FAKE.dashed}/view`).ok).toBe(false);
     expect(sanitizeSourceRef(`airtable:${FAKE.slashed}`).ok).toBe(false);
+  });
+
+  it("drops the user name and password of a URL of any scheme", () => {
+    const pw = ["hun", "ter2"].join("");
+    for (const [input, kept] of [
+      [
+        `postgres://admin:${pw}@db.example.com:5432/sales?sslmode=require`,
+        "postgres://db.example.com:5432/sales",
+      ],
+      [
+        `mongodb+srv://u:${pw}@cluster0.example.net/app?retryWrites=true`,
+        "mongodb+srv://cluster0.example.net/app",
+      ],
+      [`redis://:${pw}@cache.example.com:6379/0`, "redis://cache.example.com:6379/0"],
+      [`ssh://git@github.com/acme/web.git`, "ssh://github.com/acme/web.git"],
+      [`HTTPS://admin:${pw}@X.Example/a#f`, "https://x.example/a"],
+      ["file:///reports/q4.csv", "file:///reports/q4.csv"],
+    ]) {
+      expect(sanitizeSourceRef(input as string), input).toEqual({ ok: true, ref: kept });
+    }
+    expect(sanitizeSourceRef(`postgres://admin:${pw}@`).ok).toBe(false);
+  });
+
+  it("refuses a bare user:password@host, and keeps an address or a user without a password", () => {
+    const pw = ["hun", "ter2"].join("");
+    for (const ref of [`admin:${pw}@db.example.com`, `see admin:${pw}@db.example.com:5432`]) {
+      expect(sanitizeSourceRef(ref), ref).toMatchObject({ ok: false });
+      expect(looksLikeSecret(ref), ref).toBe(true);
+    }
+    expect(looksLikeSecret(`postgres://admin:${pw}@db.example.com/sales`)).toBe(true);
+    expect(looksLikeSecret(`redis://:${pw}@cache.example.com`)).toBe(true);
+    for (const ok of [
+      "mailto:sales@example.com",
+      "sales@example.com",
+      "git@github.com:acme/web.git",
+      "ssh://git@github.com/acme/web.git",
+      "Owner: ana@example.com",
+    ]) {
+      expect(looksLikeSecret(ok), ok).toBe(false);
+    }
   });
 
   it("checks a URL path segment by segment, and the text around it as before", () => {

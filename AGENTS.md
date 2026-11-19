@@ -118,11 +118,12 @@ make a test pass.
 - Filing an artifact under a shared category never shares it: only the signed-in owner's review,
   bound to that share, adds an artifact to a category share. A collaborator's own category for an
   artifact shared with them is seen and set by that person only, in the app.
-- Figures from the owner's systems reach a page only as shared data an owner's agent writes,
-  stamped with its source, or inline in a version; Plinth never fetches them and holds no
-  connector credentials. A data source an agent sets or changes waits for the signed-in owner's
-  confirmation, bound to its exact config, and only a confirmed source may be refreshed on request
-  or on a schedule.
+- Plinth never fetches figures from the owner's systems and holds no connector credentials:
+  agents push them, as shared data or inline in a version. A source stamp on a document is set
+  only by an owner's agent, in its own source's collection, and any other write clears it; figures
+  stamped by a source the owner has not confirmed, or by one since removed, are shown to readers as
+  such. A data source an agent sets or changes waits for the signed-in owner's confirmation, bound
+  to its exact config, and only a confirmed source may be refreshed on request or on a schedule.
 - Anything a self-hoster may change (hosts, quota, email provider, CDN allowlist) is an env var.
 - The product name must not contain "Claude" or "Codex".
 

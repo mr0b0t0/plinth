@@ -73,3 +73,7 @@ ALTER TABLE artifact_docs ADD COLUMN fetched_at TEXT;        -- agent-reported, 
 -- The connection that wrote the stamp: an audit value with no foreign key, so deleting a connection
 -- never updates artifact_docs (which would move every page's change counter). Never sent to pages.
 ALTER TABLE artifact_docs ADD COLUMN source_connection TEXT;
+-- Stamped documents only, for the viewer gate's figures from a source the artifact no longer has:
+-- an artifact without stamps reads nothing from it.
+CREATE INDEX artifact_docs_stamped ON artifact_docs(artifact_id, source_id, collection)
+  WHERE source_id IS NOT NULL;

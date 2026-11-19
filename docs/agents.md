@@ -539,7 +539,8 @@ credentials: you fetch with your own connectors and push the figures.
   fetched_at }` (one document per figure group). Only the owner's agent stamps.
 - **Describe the fetch** with `set_data_sources`: a label, the connector, the collection and a
   recipe written as a read-only query. Never put credentials in a recipe or `ref`. The user
-  confirms each new or changed source in Plinth: give them `confirm_url`.
+  confirms each new or changed source in Plinth: give them `confirm_url`. Until they do, the line
+  under the bar says the figures come from a source the owner has not confirmed.
 - **The page** declares `data` (and `viewer` to show which connection fetched), optionally
   `<meta name="plinth-data-sourced" content="issues">` so only the owner and editors write those
   collections, and marks figures with `plinth.cite` badges. The line under Plinth's bar, counted

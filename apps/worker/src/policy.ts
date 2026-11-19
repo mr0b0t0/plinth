@@ -845,7 +845,8 @@ export function seesSourceRecipe(p: Principal, role: EffectiveRole | null): bool
 /**
  * Is the owner's confirmation current for this source? Only the signed-in owner can make
  * confirmedHash equal configHash (decide "sources_confirm"); any change by an agent recomputes
- * configHash, and revoking a pinned connection does too, so the source waits again.
+ * configHash, and revoking a pinned connection recomputes it and clears confirmedHash, so the
+ * source waits again.
  */
 export function sourceActive(s: { configHash: string; confirmedHash: string | null }): boolean {
   return s.confirmedHash !== null && s.confirmedHash === s.configHash;

@@ -271,7 +271,7 @@ the stored declaration:
 | --- | --- | --- |
 | `data_sources` | artifact_id, source_id (key together), label, connector, recipe, collection, every_minutes, requestable_by, target_client_type, target_connection, pin_lost_at, config_hash, confirmed_hash, confirmed_at, last_fetched_at, last_finished_at, last_outcome, last_error, created_by_connection, created_at, updated_at | Where a page's figures come from. A source counts as confirmed only while `confirmed_hash = config_hash`, which only the signed-in owner can make true. `target_client_type` is always set (copied from a pinned connection); `target_connection` and `created_by_connection` reference `agent_connections` with `ON DELETE SET NULL`. Cascades from `artifacts`; kept on delete and takedown |
 | `data_refresh_tasks` | id, artifact_id, source_id, config_hash, reason (`request`, `schedule`), requested_by_email/role, requested_via (`page`, `app`, `agent`, `schedule`), state (`pending`, `claimed`, `done`, `failed`, `expired`), claimed_by, claimed_at, finished_at, result_version, created_at, expires_at | The refresh queue, for the refresh change on the roadmap: nothing creates a task yet. One open task per source (a unique partial index). Cascades from its source; deleted with the artifact and on takedown; `erase-user` clears the requester |
-| `artifact_docs.source_id`, `source_label`, `source_connector`, `source_ref`, `fetched_at`, `source_connection` | text or NULL | A document's provenance: set only by an owner's agent write with `source`, all NULL after any other write. `source_connection` has no foreign key (deleting a connection must not update documents) and is never sent to pages. Counted in neither `size_bytes` nor the quotas |
+| `artifact_docs.source_id`, `source_label`, `source_connector`, `source_ref`, `fetched_at`, `source_connection` | text or NULL | A document's provenance: set only by an owner's agent write with `source`, all NULL after any other write. `source_connection` has no foreign key (deleting a connection must not update documents) and is never sent to pages. Counted in neither `size_bytes` nor the quotas. A partial index (`artifact_docs_stamped`) holds stamped documents only |
 | `versions.capabilities` | adds `sourced` | Written only when the page declares `plinth-data-sourced` names with `data`, so every other declaration is stored exactly as before |
 
 ## Auth and permissions
@@ -2017,12 +2017,17 @@ where they came from.
   which records, which fields, which documents; at most 1,000 characters, newlines kept), the
   `collection` its figures go to, and whose agents it belongs to (a client type, or one pinned
   connection). Labels and connectors are at most 60 characters. Control and invisible characters
-  are refused, and so is anything that looks like a credential (a bearer header, a known token
-  prefix, a JWT, a secret-named query parameter, 40 or more hex characters, or 40 or more key-like
-  characters that mix upper case, lower case and digits and do not read as words and identifiers,
-  where each segment of a URL's path counts on its own, so a link to a record passes): a recipe
-  describes a query and never needs one. Only the owner reads the recipe, the target and the confirmation hash;
-  editors see what a source is and its state.
+  are refused, and so is anything that looks like a credential (an `Authorization` or `X-Api-Key`
+  header, a known token or key prefix such as `sk-`, `ghp_`, `glpat-`, `AIza`, `rk_live_` or
+  `xoxb-`, a field such as `api_key=` or `password:`, a JWT, a secret-named query or fragment
+  parameter such as `?client_secret=` or `#access_token=`, a URL or a bare `user:password@host`
+  with a password, 32 or more hex characters, or 40 or more key-like characters that mix upper
+  case, lower case and digits and do not read as words and identifiers, where each segment of a
+  URL's path counts on its own, so a link to a record passes; in their own links the ids of Google
+  Docs and Drive, full commit SHAs on GitHub and GitLab, and Notion page and view ids are not
+  counted): a recipe describes a query and never needs one, and labels and connectors, which
+  every reader sees, are checked the same way. Only the owner reads the recipe, the target and
+  the confirmation hash; editors see what a source is and its state.
 - **Setting a source never confirms it.** The owner's agent sets the whole list with
   `set_data_sources` (or `PUT /api/v1/artifacts/:ref/sources`); the signed-in owner may too, naming
   a client type. Every new or changed source is stored with a `config_hash` (the first 32 hex
@@ -2035,22 +2040,27 @@ where they came from.
   Re-setting an unchanged source keeps it confirmed; any change makes it wait again. Removing a
   source never needs a confirmation. The result of setting gives `confirm_url`
   (`/a/<slug>?sources=review`, which opens the Share dialog), and the owner's viewer bar says how
-  many sources wait. A source pinned to a connection that is revoked loses its pin in the same
-  batch, records when (`pin_lost_at`), and waits for the owner again instead of moving to any
-  connection of its type; the Share dialog says so. A set that pins a connection and a revocation
+  many sources wait. A source pinned to a connection that is revoked loses its pin and the owner's
+  confirmation in the same batch, records when (`pin_lost_at`), and waits for the owner again
+  instead of moving to any connection of its type, even when the owner had confirmed the same
+  source before it was pinned; the Share dialog says so. A set that pins a connection and a revocation
   of it that run at the same time each check again after they commit, so the pin never outlives
   the revocation.
 - **Stamps on documents.** A `write_artifact_data` set may carry `source: { id, ref?, fetched_at }`.
   Only the owner's agent stamps (policy `sourcedWrite`: any other writer gets `source_owner_only`);
   the source must exist on the artifact and name the op's collection; `fetched_at` may be at most
   5 minutes ahead of the server and 30 days old; `ref` is an optional pointer to the records (a URL
-  keeps only its origin and path, at most 300 characters, refused when it looks like a credential).
+  of any scheme keeps only its scheme, host and path, so a user name and password, a query and a
+  fragment are dropped; at most 300 characters; refused when it looks like a credential, a bare
+  `user:password@host` included).
   The server copies the source's label and connector onto the document and records the stamping
   connection, so removing or renaming a source never changes what an earlier figure claims, and
   raises the source's `last_fetched_at`. Stamping needs no confirmation: it records the owner's own
-  writes in a session. Any later write without a source (from the page, the app or an agent)
-  clears the stamp in the same statement. A stamp says which of the owner's agents claimed to fetch
-  the figure from which system; Plinth cannot check the vendor.
+  writes in a session, and the bar line says when a figure's source is not confirmed. Any later
+  write without a source (from the page, the app or an agent) clears the stamp in the same
+  statement. A stamp says which of the owner's agents claimed to fetch the figure from which
+  system; Plinth cannot check the vendor. Figures without a stamp, which the owner's and editors'
+  agents may write too, are never presented as fetched.
 - **Sourced collections.** A page may declare `<meta name="plinth-data-sourced" content="issues">`
   (with `data`, at most 20 names): in those collections only the owner and editors write, from the
   page, the app or their agents, sets and deletes alike; commenter- and viewer-role writers are
@@ -2066,22 +2076,28 @@ where they came from.
   can draw any badge it likes, so the badges are a convenience, never proof.
 - **The bar line.** For an artifact with sources the gate adds `sources`, counted by the server
   from the stamps it stored, whatever the page declares and in every isolation mode: per source,
-  how many documents in its collection it stamped under its current label and connector and the
-  newest `fetched_at` among them (`last_fetched_at`; null when none is left), the documents it
-  stamped under an earlier label or connector grouped as their stamps say (`earlier`, absent when
-  there are none), and how many unstamped ones were last changed from the page or app (a person)
-  or by an agent without a source. Deleting or overwriting the freshest figure makes the line
-  older, and renaming a source never moves earlier figures under its new name. The app turns it
-  into one line under the bar ("Figures from Linear (14 figures, fetched 12 minutes ago) were
-  written by an agent of the owner. 2 were last changed by a person, not fetched."), naming each
-  group of stamps by its own connector with its own count and age. The frame cannot touch it; it
-  is the statement that counts. Never the recipe, the target or the hash.
+  its status, how many documents in its collection it stamped under its current label and
+  connector and the newest `fetched_at` among them (`last_fetched_at`; null when none is left),
+  the documents it stamped under an earlier label or connector grouped as their stamps say
+  (`earlier`, absent when there are none), and how many unstamped ones were last changed from the
+  page or app (a person) or by an agent without a source. Documents still stamped by a source the
+  artifact no longer has in their collection (removed, or now filling another collection) come in
+  `removed_sources`, grouped as their stamps say, with or without `sources`, so removing a source
+  never makes its figures vanish from the line. Deleting or overwriting the freshest figure makes
+  the line older, and renaming a source never moves earlier figures under its new name. The app
+  turns it into one line under the bar ("Figures from Linear (14 figures, fetched 12 minutes ago)
+  were written by an agent of the owner. 2 were last changed by a person, not fetched."), naming
+  each group of stamps by its own connector with its own count and age, and adding "from a source
+  the owner has not confirmed" to the figures of a source that waits for the owner and "from a
+  source since removed" to those of a removed one. The frame cannot touch it; it is the statement
+  that counts. Never the recipe, the target or the hash.
 - **Opaque isolation.** Pages have no shared data there, so nothing is stamped. Sources, the
   confirmation and the bar line still work: the owner's agent publishes the figures inline in a new
   version, and `plinth.cite` works on inline objects (`{ source: { label, connector, fetched_at }
   }`) without a request, while the bar line says no figure is stored as fetched.
 - **Agents.** `set_data_sources(id, sources)` (owner only); `get_artifact` adds `data_sources` for
-  the owner and editors (absent when there are none); `list_artifact_data` shows each document's
+  the owner and editors (absent when there are none), with `data_sources_untrusted`, the
+  untrusted-input note for their text; `list_artifact_data` shows each document's
   `source` and lists the sources in its summary, never their recipes. Recipes, labels and
   connectors are untrusted: a recipe may have been written by a session acting on injected text,
   and the owner's confirmation means they agreed to the fetch it describes, not that its words
@@ -2549,8 +2565,8 @@ Data sources run on the same Worker and D1 allowances and call nothing outside P
 
 | Operation | Worker requests | D1 rows read | D1 rows written |
 | --- | --- | --- | --- |
-| Viewer gate, any artifact | as before | 1 more (an indexed read of its sources) | 0 |
-| Viewer gate, an artifact with sources | as before | 1 more, plus one aggregate over the sources' collections | 0 |
+| Viewer gate, any artifact | as before | 1 more, plus the stamped documents of sources it no longer has (one batch: an indexed read of its sources and one over an index of stamped documents only, which reads nothing when there are none) | 0 |
+| Viewer gate, an artifact with sources | as before | as above, plus one aggregate over the sources' collections | 0 |
 | A stamped write | as a write | about 1 more (the source) | 1 more (the source's last fetch) |
 | Set sources, confirm, remove | 1 | about 3 | about 1 per changed source |
 

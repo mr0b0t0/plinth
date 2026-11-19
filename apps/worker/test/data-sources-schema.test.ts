@@ -102,5 +102,20 @@ describe("schema: data sources (migration 0015)", () => {
       "data_sources_schedule",
       "data_sources_target",
     ]);
+    // The gate's read of figures from removed sources uses an index of stamped documents only.
+    const stamped = await env.DB.prepare(
+      "SELECT sql FROM sqlite_master WHERE type = 'index' AND name = 'artifact_docs_stamped'",
+    ).first<{ sql: string }>();
+    expect(stamped?.sql).toMatch(/WHERE source_id IS NOT NULL/);
+    const plan = await env.DB.prepare(
+      `EXPLAIN QUERY PLAN SELECT d.collection, d.source_id, count(*) FROM artifact_docs d
+        WHERE d.artifact_id = ?1 AND d.source_id IS NOT NULL
+          AND NOT EXISTS (SELECT 1 FROM data_sources s WHERE s.artifact_id = ?1
+                            AND s.source_id = d.source_id AND s.collection = d.collection)
+        GROUP BY d.collection, d.source_id, d.source_label, d.source_connector`,
+    )
+      .bind("x")
+      .all<{ detail: string }>();
+    expect(plan.results.map((r) => r.detail).join("\n")).toContain("artifact_docs_stamped");
   });
 });

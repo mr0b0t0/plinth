@@ -44,7 +44,13 @@ import {
   toAgentPerson,
   unavailableReason,
 } from "./data.ts";
-import { artifactSources, docStamper, recordFetched, summarySources } from "./dataSources.ts";
+import {
+  artifactSources,
+  docStamper,
+  recordFetched,
+  SOURCES_UNTRUSTED_FIELD,
+  summarySources,
+} from "./dataSources.ts";
 import { matchPeople, peopleWithAccess } from "./people.ts";
 import { namesByEmail } from "./users.ts";
 
@@ -256,6 +262,6 @@ export async function getArtifactWithData(
     ...detail,
     capabilities: capabilityList(caps),
     data_usage: usage,
-    ...(sources ? { data_sources: sources } : {}),
+    ...(sources ? { data_sources: sources, data_sources_untrusted: SOURCES_UNTRUSTED_FIELD } : {}),
   };
 }

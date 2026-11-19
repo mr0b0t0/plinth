@@ -2,10 +2,11 @@
 // owner's agents"): where the page's figures come from and how old they are, counted by the server
 // from the stamps it stored, and how many were last changed by a person or by an agent without a
 // source. The page draws its own badges, which its code can fake; this line is app chrome the frame
-// cannot touch, so it is the one that counts. React text only: labels and connectors are untrusted.
+// cannot touch, so it is the one that counts. Figures from a source the owner has not confirmed,
+// or from one since removed, say so. React text only: labels and connectors are untrusted.
 // For the owner, a second line when a source waits for their confirmation, with a Review button.
 import { PlugsConnectedIcon } from "@phosphor-icons/react";
-import type { ViewSource } from "@plinth/shared";
+import type { RemovedSourceStamps, ViewSource } from "@plinth/shared";
 import { relativeTime } from "../history/format.ts";
 
 const figures = (n: number) => `${n} ${n === 1 ? "figure" : "figures"}`;
@@ -16,30 +17,55 @@ export function joinAnd(parts: string[]): string {
   return `${parts.slice(0, -1).join(", ")} and ${parts[parts.length - 1]}`;
 }
 
-/** The sentence for a gate's sources, or null when there are none. `now` for the ages. */
+/** What a group of stamps says about its source, after its count and age. */
+type GroupNote = "" | "unconfirmed" | "removed";
+
+const NOTES: Record<GroupNote, string> = {
+  "": "",
+  unconfirmed: ", from a source the owner has not confirmed",
+  removed: ", from a source since removed",
+};
+
+/**
+ * The sentence for a gate's sources, or null when there is nothing to say. `now` for the ages.
+ * `removed` are the gate's `removed_sources`: figures still stamped by a source that is gone.
+ */
 export function sourcesNoticeText(
   sources: readonly ViewSource[] | undefined,
   now: number = Date.now(),
+  removed: readonly RemovedSourceStamps[] = [],
 ): string | null {
-  if (!sources || sources.length === 0) return null;
+  const list = sources ?? [];
+  if (list.length === 0 && removed.length === 0) return null;
   const parts: string[] = [];
   // One entry per group of stamps, each with its own count and age: a source's current stamps,
-  // then those it wrote under an earlier label or connector, named as their stamps say.
-  const groups: { connector: string; fetched: number; at: string | null }[] = [];
-  for (const s of sources) {
+  // then those it wrote under an earlier label or connector, named as their stamps say, then the
+  // stamps of sources that are gone. Stamps of a source the owner has not confirmed say so.
+  const groups: { connector: string; fetched: number; at: string | null; note: GroupNote }[] = [];
+  for (const s of list) {
+    const note: GroupNote = s.status === "active" ? "" : "unconfirmed";
     if (s.fetched > 0)
-      groups.push({ connector: s.connector, fetched: s.fetched, at: s.last_fetched_at });
+      groups.push({ connector: s.connector, fetched: s.fetched, at: s.last_fetched_at, note });
     for (const e of s.earlier ?? []) {
       if (e.fetched > 0)
-        groups.push({ connector: e.connector, fetched: e.fetched, at: e.last_fetched_at });
+        groups.push({ connector: e.connector, fetched: e.fetched, at: e.last_fetched_at, note });
     }
   }
+  for (const r of removed) {
+    if (r.fetched > 0)
+      groups.push({
+        connector: r.connector,
+        fetched: r.fetched,
+        at: r.last_fetched_at,
+        note: "removed",
+      });
+  }
   const named = new Set(groups.map((g) => g.connector));
-  const empty = sources.filter((s) => s.fetched === 0 && !named.has(s.connector));
+  const empty = list.filter((s) => s.fetched === 0 && !named.has(s.connector));
   if (groups.length > 0) {
     const each = groups.map((g) => {
       const age = g.at ? `, fetched ${relativeTime(g.at, now)}` : "";
-      return `${g.connector} (${figures(g.fetched)}${age})`;
+      return `${g.connector} (${figures(g.fetched)}${age}${NOTES[g.note]})`;
     });
     parts.push(`Figures from ${joinAnd(each)} were written by an agent of the owner.`);
   }
@@ -55,7 +81,7 @@ export function sourcesNoticeText(
   const seen = new Set<string>();
   let byPerson = 0;
   let byAgent = 0;
-  for (const s of sources) {
+  for (const s of list) {
     if (seen.has(s.collection)) continue;
     seen.add(s.collection);
     byPerson += s.by_person;
@@ -85,14 +111,17 @@ export function sourcesReviewText(sources: readonly ViewSource[] | undefined): s
 
 export function SourcesNotice({
   sources,
+  removed,
   isOwner,
   onReview,
 }: {
   sources: readonly ViewSource[] | undefined;
+  /** The gate's `removed_sources`. */
+  removed?: readonly RemovedSourceStamps[];
   isOwner: boolean;
   onReview: () => void;
 }) {
-  const text = sourcesNoticeText(sources);
+  const text = sourcesNoticeText(sources, Date.now(), removed);
   const review = isOwner ? sourcesReviewText(sources) : null;
   if (!text && !review) return null;
   return (

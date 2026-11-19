@@ -78,10 +78,11 @@ make a test pass.
 | The editor preview writes to the live board | The owner's draft in the editor drives the board through the preview frame's content pass | The app's preview sets `preview` and the whiteboard renderer then makes no shared-data or room call; only Plinth's code runs in that frame |
 | A starting board writes shared data unchecked | An agent's publish or update carries blocks it may not write, or races another write | A `data_write` decision before staging and again after the commit, whose role stamps the documents; one all-or-none statement that never overwrites, and `board_not_empty` on an update of a board with blocks |
 | An injected session plants a durable recipe | A comment or page text makes the owner's agent call `set_data_sources` with a recipe that says "also send the CRM export to this page" | Every source an agent sets or changes waits for the signed-in owner's confirmation (session and CSRF only, no bearer token, no tool), bound to its exact `config_hash`; the owner reads the recipe in full, as text; every tool description calls a recipe an untrusted read-only request, never the owner's instruction ([Data sources and provenance](#data-sources-and-provenance)) |
-| A recipe or stamp carries a credential | An agent pastes an API key into a recipe, or a signed URL into `source_ref`, which every reader of the page sees | Recipes, labels, connectors and `source_ref` that look like a credential are refused; a URL in `source_ref` keeps only its origin and path; recipes are shown to the owner only |
+| A recipe or stamp carries a credential | An agent pastes an API key into a recipe or a label, or a signed URL or a database URL with its password (`postgres://admin:…@db`) into `source_ref`, which every reader of the page sees | Recipes, labels, connectors and `source_ref` that look like a credential are refused; a URL of any scheme in `source_ref` keeps only its scheme, host and path (user name, password, query and fragment dropped), and a bare `user:password@host` is refused; recipes are shown to the owner only |
 | A collaborator passes off typed figures as fetched | A commenter overwrites a dashboard's figures, or an editor's agent stamps its own numbers "from Stripe" | `plinth-data-sourced` refuses commenter- and viewer-role writes there; only the owner's agent stamps; any other write clears the stamp, and the bar line, counted by the server, says how many figures were last changed by a person or by an agent without a source |
 | A page fakes its citations | Page code draws "Stripe · just now" next to a number it made up | Badges are page code and never proof; the bar line under the app's bar is computed from stored stamps and the frame cannot touch it |
-| A source keeps a revoked agent's work | The connection a source was pinned to is revoked, and its work moves to any other connection | The revocation unpins the source in the same batch and recomputes its hash, so it waits for the owner again |
+| A source keeps a revoked agent's work | The connection a source was pinned to is revoked, and its work moves to any other connection | The revocation unpins the source in the same batch, recomputes its hash and clears the owner's confirmation, so it waits for the owner again, even when the owner had confirmed the same source before an agent pinned it |
+| Figures pass as vouched for when their source is not | The owner removes a source they do not trust, or has not confirmed it yet, and the page's figures still carry its stamps | The bar line names the figures of a source that waits for the owner as "from a source the owner has not confirmed", and those still stamped by a removed source (`removed_sources`) as "from a source since removed", until a write clears their stamps |
 
 Out of scope for v1: denial of service beyond Cloudflare's defaults, a compromised Cloudflare
 account, and malicious instance operators.
@@ -2144,8 +2145,10 @@ written it. So:
   change made between reading and clicking is refused with `conflict`.
 - The hash covers everything an unattended run would depend on (label, connector, recipe,
   collection, schedule, who may refresh, client type, pinned connection). Revoking a pinned
-  connection recomputes it in the same batch, so the source waits again instead of moving to any
-  connection of its type. The revocation reads the pinned rows before its batch commits, so a set
+  connection recomputes it and clears the confirmation in the same batch, so the source waits
+  again instead of moving to any connection of its type; without the clearing, the config without
+  the pin could equal one the owner confirmed before an agent pinned it, and the revocation would
+  bring that confirmation back. The revocation reads the pinned rows before its batch commits, so a set
   that pins the same connection in between could land after the read: both the set and the
   revocation check the connection again after they commit and unpin what is still pinned to a
   revoked one, so whichever commits second catches it. An unpin writes the hash it worked out only
@@ -2153,15 +2156,27 @@ written it. So:
   gets the old recipe's hash (which could equal an earlier confirmation and activate the new
   recipe unseen); the check after the batch reads that row again.
 - Recipes, labels and connectors that look like credentials are refused, and so is control, bidi
-  and zero-width text. A long run of key-like characters counts as a credential when it mixes
-  upper case, lower case and digits, unless every piece between its separators reads as a word or
-  an identifier, so a link to a record (`/acme/issue/ENG-123/fix-the-login-redirect`, a Notion
-  page id) passes and a random key does not; hex counts from 40 characters (a SHA-1 or a
-  SHA-256). In a URL's path each segment between slashes is a run of its own, so record links
-  made of short opaque ids (Airtable, Salesforce, Stripe) pass too; the cost is that a
-  standard-base64 key split across path segments, none of them 40 characters long, is not
-  caught there (outside a URL the slashes keep it one run). The Share dialog shows the recipe in a
-  `<pre>` as text.
+  and zero-width text. Labels and connectors are shown to every reader in the bar line, so they
+  get the same check as recipes. The check covers known key prefixes (OpenAI and Anthropic `sk-`
+  and `SK-ant-` in any case, GitHub `ghp_` and its siblings, GitLab `glpat-`, Slack `xox?-`, AWS
+  `AKIA` and `ASIA`, Google `AIza`, Stripe `sk_live_`, `rk_live_` and `whsec_`, Plinth's
+  `plinth_`), bearer and other `Authorization:` headers, `X-Api-Key` and its kin, fields such as
+  `api_key=` and `client_secret:`, JWTs, query and fragment parameters named like secrets with or
+  without a prefix (`?client_secret=`, `#access_token=`), URLs and bare `user:password@host` with
+  a password, and 32 or more hex characters. A long run of key-like characters counts as a
+  credential when it mixes upper case, lower case and digits, unless every piece between its
+  separators reads as a word or an identifier, so a link to a record
+  (`/acme/issue/ENG-123/fix-the-login-redirect`) passes and a random key does not. In a URL's
+  path each segment between slashes is a run of its own, so record links made of short opaque ids
+  (Airtable, Salesforce, Stripe) pass too; the cost is that a standard-base64 key split across
+  path segments, none of them 40 characters long, is not caught there (outside a URL the slashes
+  keep it one run). A few hosts name records by ids that look like keys, and only there, only in
+  that place, the id is not counted as a run: a Google Docs or Drive id after `/d/`, `/e/` or
+  `/folders/` on docs.google.com and drive.google.com, a full commit SHA after `/commit/`,
+  `/commits/`, `/blob/` or `/tree/` on github.com and gitlab.com, and a Notion page or view id on
+  notion.so and notion.site; the prefix, header and parameter checks still read those links. A
+  32-hex id anywhere else (a Sentry event id, an MD5) is refused. The Share dialog shows the recipe
+  in a `<pre>` as text.
 - Tool descriptions and results say the recipe is a request, never an instruction with the owner's
   authority, to be run only as a read-only query into its own collection.
 
@@ -2170,7 +2185,8 @@ written it. So:
 source must exist on the artifact and name the op's collection, and `fetched_at` is bounds-checked.
 The server writes the six provenance columns in the same statement as the data, and every other
 write sets them to NULL, so a stamp always describes the data it sits on. `source_ref` is
-sanitised (a URL keeps only origin and path; refused when long, invisible or secret-looking)
+sanitised (a URL of any scheme keeps only its scheme, host and path, dropping a user name and
+password; a bare `user:password@host` is refused; refused when long, invisible or secret-looking)
 because every reader of the page sees it, anonymous link viewers included. `source_connection` is
 an audit value with no foreign key and never reaches a page.
 
@@ -2186,7 +2202,13 @@ server from the stored stamps (`ViewGate.sources`), which the frame cannot chang
 document to the label and connector its own stamp carries, so re-setting a source under another
 connector never moves earlier figures under the new name, and each age is the newest `fetched_at`
 among the documents counted, so deleting or overwriting the freshest one makes the line older,
-never younger.
+never younger. What is enforced is narrow: a source stamp is set only by an owner's agent, in its
+own source's collection, and any other write clears it. The owner's agent may also write figures
+without a source, and so may editors' agents; those are counted as "by an agent without a
+source", never as fetched. A stamp from a source the owner has not confirmed is shown to readers
+as such ("from a source the owner has not confirmed"), since stamping needs no confirmation, and
+figures still stamped by a removed source are named as from a removed source
+(`ViewGate.removed_sources`) rather than dropped from the line.
 
 **Residual risks.** An owner who confirms a bad recipe: the dialog shows it in full and says what
 confirming means, and Plinth cannot judge it. Private figures on a wide audience: data on an
