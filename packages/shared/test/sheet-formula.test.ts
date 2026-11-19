@@ -341,6 +341,57 @@ describe("dependencies, cycles and the budget", () => {
     expect(ev.value(2, 21)).toBe(0);
   });
 
+  it("charges the text a function or comparison reads, a step per 32 characters", () => {
+    // A2 is the longest text a formula makes; its REPT costs 32,767 steps (text made).
+    const long = '=REPT("x",32767)';
+    const steps = (formula: string) => {
+      const ev = evaluateSheet(sheetOf([[long, formula]]), { budget: 10_000_000 });
+      return ev.steps - evaluateSheet(sheetOf([[long, "=1"]]), { budget: 10_000_000 }).steps;
+    };
+    const read = Math.floor(32_767 / 32);
+    for (const f of [
+      "=LEN(A2)",
+      "=MID(A2,32767,1)",
+      '=FIND("y",A2)',
+      '=SEARCH("y",A2)',
+      '=SUBSTITUTE(A2,"x","")',
+      "=EXACT(A2,A2)",
+      '=A2="x"',
+      "=COUNTIF(A2:A2,A2)",
+      "=MATCH(A2,A2:A3,0)",
+      '=SWITCH(A2,"x",1,2)',
+    ]) {
+      expect(steps(f), f).toBeGreaterThanOrEqual(read);
+    }
+    // Only the text walked: the first or last character of it costs a few steps.
+    expect(steps("=LEFT(A2)")).toBeLessThan(20);
+    expect(steps("=RIGHT(A2)")).toBeLessThan(20);
+    // Characters are code points, walked without an array: a surrogate pair is one.
+    const pairs = [["𝄞a𝄞", "=LEN(A2)", "=LEFT(A2,2)", "=RIGHT(A2,2)", "=MID(A2,2,2)"]];
+    const ev = evaluateSheet(sheetOf(pairs), { budget: 1_000 });
+    expect([1, 2, 3, 4].map((c) => ev.value(2, c))).toEqual([3, "𝄞a", "a𝄞", "a𝄞"]);
+  });
+
+  it("bounds the CPU of one long text read many times", () => {
+    // 451 formulas of 249 LEN(A2) each: when a read was free, 200,000 steps took 1.4 s here.
+    const f = `=${Array(249).fill("LEN(A2)").join("+")}`;
+    const rows: Cell[][] = [['=REPT("x",32767)']];
+    for (let i = 0; i < 91; i++) rows.push(Array(5).fill(f));
+    const t0 = Date.now();
+    const ev = evaluateSheet(sheetOf(rows), { budget: 200_000 });
+    expect(ev.exhausted).toBe(true);
+    expect(ev.value(3, 0)).toEqual(E("#LIMIT!"));
+    expect(Date.now() - t0).toBeLessThan(500);
+  });
+
+  it("never reads text longer than 1,024 characters as a number or a boolean", () => {
+    expect(calc('VALUE(REPT("0",1023)&"7")')).toBe(7);
+    expect(calc('VALUE(REPT("0",1024)&"7")')).toEqual(E("#VALUE!"));
+    expect(calc('REPT("0",1025)+1')).toEqual(E("#VALUE!"));
+    expect(calc('IF(REPT(" ",1020)&"TRUE",1,2)')).toBe(1);
+    expect(calc('IF(REPT(" ",1021)&"TRUE",1,2)')).toEqual(E("#VALUE!"));
+  });
+
   it("evaluates 50,000 formulas under the browser budget quickly", () => {
     const rows: Cell[][] = [];
     for (let i = 0; i < 10_000; i++) {

@@ -2,8 +2,9 @@
 // function is looked up by its upper-cased name in a Map; no property is read by a key the data
 // supplies. Formula cells are computed in dependency order with an explicit stack (never JS
 // recursion across cells), each once, and a cycle makes every cell on it #CYCLE!. Every AST node
-// evaluated and every cell a range visits costs one step; when the budget runs out, every formula
-// cell not yet computed is #LIMIT! and `exhausted` is set. The Worker (read_sheet, with the
+// evaluated and every cell a range visits costs one step, text a function makes costs its length,
+// and text a function or comparison reads costs a step per 32 characters (values.ts). When the
+// budget runs out, every formula cell not yet computed is #LIMIT! and `exhausted` is set. The Worker (read_sheet, with the
 // instance's SHEET_EVAL_BUDGET) and the renderer (LIMITS.sheetEvalBrowserBudget) run this same code.
 import { A1_MAX_COL } from "../address.ts";
 import { type Cell, isFormula, type Sheet } from "../format.ts";
@@ -16,6 +17,7 @@ import {
   isError,
   isoDateSerial,
   type SheetError,
+  textCost,
   todaySerial,
   toNumber,
   toText,
@@ -402,6 +404,8 @@ class Evaluator implements EvalContext, SheetEvaluation {
     if (op === "=" || op === "<>" || op === "<" || op === ">" || op === "<=" || op === ">=") {
       if (isError(a)) return a;
       if (isError(b)) return b;
+      // Text compares without case: both sides are lowercased, and that costs their length.
+      this.charge(textCost(a) + textCost(b));
       const c = compareValues(a, b);
       switch (op) {
         case "=":

@@ -7,8 +7,11 @@
 // Rows, columns and cells are counted as they are read, so a small file cannot build a table the
 // sheet limits would refuse. Nothing in the file is ever run: formulas are kept
 // only when they parse as sheet formulas (the allowlist), otherwise their cached value is used.
+// No replace with a callback runs on text of unbounded length: it keeps every match.
 import { Inflate } from "fflate";
 import { LIMITS } from "../constants.ts";
+import { XLFN_FUNCTIONS } from "./formula/arity.ts";
+import { parseFormula } from "./formula/parser.ts";
 import { platform } from "./platform.ts";
 
 export class SheetImportError extends Error {}
@@ -302,13 +305,34 @@ export function scanXml(xml: string, h: XmlHandler): void {
   if (last < xml.length) h.text(xmlDecode(xml.slice(last)));
 }
 
-/** Excel's _xHHHH_ escapes in strings (control characters it cannot write as XML). */
-function unescapeExcel(s: string): string {
-  return s.includes("_x")
-    ? s.replace(/_x([0-9A-Fa-f]{4})_/g, (_m, h: string) =>
-        String.fromCharCode(Number.parseInt(h, 16)),
-      )
-    : s;
+const HEX4 = /^[0-9A-Fa-f]{4}$/;
+
+/**
+ * Excel's _xHHHH_ escapes in strings (control characters it cannot write as XML). A loop, as in
+ * xmlDecode: a replace with a callback kept every match, and 22 MB of "_x0041_" ran a heap of
+ * 512 MB out.
+ */
+export function unescapeExcel(s: string): string {
+  let at = s.indexOf("_x");
+  if (at < 0) return s;
+  let done = "";
+  const parts: string[] = [];
+  let last = 0;
+  while (at >= 0) {
+    const hex = s.slice(at + 2, at + 6);
+    if (s[at + 6] !== "_" || !HEX4.test(hex)) {
+      at = s.indexOf("_x", at + 1);
+      continue;
+    }
+    parts.push(s.slice(last, at), String.fromCharCode(Number.parseInt(hex, 16)));
+    last = at + 7;
+    if (parts.length >= 4096) {
+      done += parts.join("");
+      parts.length = 0;
+    }
+    at = s.indexOf("_x", last);
+  }
+  return done + parts.join("") + s.slice(last);
 }
 
 // ---------- SpreadsheetML ----------
@@ -320,6 +344,7 @@ export type RawCell =
   | { t: "n"; v: number; style: number }
   | { t: "b"; v: boolean }
   | { t: "e"; v: string }
+  /** A formula the import keeps: it parses as a sheet formula, `_xlfn.` prefixes dropped. */
   | { t: "f"; f: string; cached: RawCell };
 
 export interface RawSheet {
@@ -447,12 +472,34 @@ function checkRow(rowNum: number): void {
 }
 
 /**
+ * The formula an import keeps for an .xlsx cell's `<f>` text, or null when its cached value is used
+ * instead: it must parse as a sheet formula (the function allowlist) once the `_xlfn.` prefixes of
+ * functions sheets know are dropped. A source too long to be a sheet formula even without its
+ * prefixes (each adds 6 characters to a name and "(" of at least 2) is never rewritten.
+ */
+export function keptFormula(f: string): string | null {
+  if (f === "" || f.length >= LIMITS.maxSheetFormulaChars * 4) return null;
+  const src = f.replace(/_xlfn\.([A-Z.]+)\(/g, (m, name: string) =>
+    XLFN_FUNCTIONS.has(name) ? `${name}(` : m,
+  );
+  return src.length < LIMITS.maxSheetFormulaChars && parseFormula(src).ok ? src : null;
+}
+
+/** The characters of a value's text in JSON lines: a string, an error code, or "=" and a formula. */
+function textLength(c: RawCell): number {
+  if (c === null) return 0;
+  if (c.t === "s" || c.t === "e") return c.v.length;
+  return c.t === "f" ? c.f.length + 1 : 0;
+}
+
+/**
  * Refuses an import once `bytes`, its estimated JSON lines, passes the sheet limit. A cell with a
  * value costs at least two bytes there (the value and a comma or bracket) and a data row's text at
- * least its length, so a refusal here is a file whose sheet would be refused anyway, found before
- * its cells fill memory (10,001 rows of 100 cells fit the row and column bounds). Only an empty
- * string or a formula with no valid source and no cached value, which spreadsheet apps do not
- * write, is counted though it ends up blank.
+ * least its length (a kept formula's source, or the cached value a dropped formula falls back to),
+ * so a refusal here is a file whose sheet would be refused anyway, found before its cells fill
+ * memory (10,001 rows of 100 cells fit the row and column bounds). Only an empty string or a
+ * formula with no valid source and no cached value, which spreadsheet apps do not write, is
+ * counted though it ends up blank.
  */
 export function checkSheetBytes(bytes: number): void {
   if (bytes > LIMITS.maxSheetBytes) {
@@ -564,9 +611,13 @@ export function readXlsx(bytes: Uint8Array): RawSheet {
         return;
       }
       const value = rawValue(cell, v, inline, strings);
-      const out: RawCell = f && !fShared ? { t: "f", f, cached: value } : value;
+      // The formula is decided here, not after the table is built, so a cell is counted as what
+      // it becomes: a kept formula by its source, a dropped one by the cached value it falls back
+      // to (one long shared string can stand behind every cell of a small file).
+      const kept = f && !fShared ? keptFormula(f) : null;
+      const out: RawCell = kept !== null ? { t: "f", f: kept, cached: value } : value;
       if (out !== null) {
-        jsonBytes += 2 + (rowNum > 1 && (out.t === "s" || out.t === "e") ? out.v.length : 0);
+        jsonBytes += 2 + (rowNum > 1 ? textLength(out) : 0);
         checkSheetBytes(jsonBytes);
         let row = rows[rowNum - 1];
         if (!row) {

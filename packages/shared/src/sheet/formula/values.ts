@@ -47,6 +47,30 @@ export const SHEET_ERROR_MEANINGS: Readonly<Record<SheetErrorCode, string>> = {
   "#LIMIT!": "Not calculated: the sheet needed more steps than the calculation budget",
 };
 
+/**
+ * Characters of text that cost one step to read. A function or comparison that walks, compares or
+ * lowercases text pays for it this way, so the step budget bounds its CPU: one long text read many
+ * times costs what it does (=LEN(A2)+LEN(A2)+... over 32,767 characters took 1.4 s at 200,000
+ * steps when a read was free). About what a step's own work costs, so short text is nearly free.
+ */
+export const TEXT_CHARS_PER_STEP = 32;
+
+/** The steps reading `units` UTF-16 units of text costs. */
+export function textSteps(units: number): number {
+  return Math.floor(units / TEXT_CHARS_PER_STEP);
+}
+
+/** The steps reading `v` costs: its length for text, nothing for any other value. */
+export function textCost(v: Value): number {
+  return typeof v === "string" ? textSteps(v.length) : 0;
+}
+
+/**
+ * Text longer than this is never read as a number or a boolean (#VALUE!), so a conversion costs at
+ * most this much whatever a cell holds. No number or TRUE needs as many characters.
+ */
+export const MAX_CONVERTED_TEXT = 1_024;
+
 /** Numbers rounded to 15 significant digits, as spreadsheets show them. */
 export function round15(n: number): number {
   return n === 0 ? 0 : Number(n.toPrecision(15));
@@ -63,6 +87,7 @@ const NUMERIC_TEXT = /^[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?$/;
 
 /** A number from numeric text ("3", " 2.5 ", "50%", "2026-01-31"), or null. */
 export function numberFromText(s: string): number | null {
+  if (s.length > MAX_CONVERTED_TEXT) return null;
   const t = s.trim();
   if (t === "") return null;
   if (NUMERIC_TEXT.test(t)) {
@@ -100,6 +125,7 @@ export function toBoolean(v: Value): boolean | SheetError {
   if (typeof v === "boolean") return v;
   if (typeof v === "number") return v !== 0;
   if (typeof v === "string") {
+    if (v.length > MAX_CONVERTED_TEXT) return err("#VALUE!");
     const u = v.trim().toUpperCase();
     if (u === "TRUE") return true;
     if (u === "FALSE") return false;

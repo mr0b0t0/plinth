@@ -14,6 +14,8 @@ import {
   round15,
   type SheetError,
   serialDate,
+  textCost,
+  textSteps,
   toBoolean,
   toNumber,
   toText,
@@ -45,6 +47,35 @@ function int(a: Arg | undefined): number | SheetError {
 
 function text(a: Arg | undefined): string | SheetError {
   return toText(scalar(a));
+}
+
+/** compareValues, charging the text it lowercases (textCost). */
+function compare(a: Value, b: Value, ctx: EvalContext): number {
+  ctx.charge(textCost(a) + textCost(b));
+  return compareValues(a, b);
+}
+
+// Characters as LEN, LEFT, RIGHT and MID count them: code points, a surrogate pair being one.
+// Walked with an index, never spread into an array of characters.
+const isHigh = (c: number) => c >= 0xd800 && c <= 0xdbff;
+const isLow = (c: number) => c >= 0xdc00 && c <= 0xdfff;
+const pairAt = (t: string, i: number) =>
+  i >= 0 && isHigh(t.charCodeAt(i)) && isLow(t.charCodeAt(i + 1));
+
+/** The index `n` characters after `from` in `t` (or its end), charging the text walked. */
+function forward(t: string, from: number, n: number, ctx: EvalContext): number {
+  let i = from;
+  for (let k = 0; k < n && i < t.length; k++) i += pairAt(t, i) ? 2 : 1;
+  ctx.charge(textSteps(i - from));
+  return i;
+}
+
+/** The index `n` characters before the end of `t` (or 0), charging the text walked. */
+function backward(t: string, n: number, ctx: EvalContext): number {
+  let i = t.length;
+  for (let k = 0; k < n && i > 0; k++) i -= pairAt(t, i - 2) ? 2 : 1;
+  ctx.charge(textSteps(t.length - i));
+  return i;
 }
 
 /**
@@ -101,6 +132,8 @@ function roundTo(x: number, digits: number, mode: "round" | "up" | "down"): numb
  * is ignored. Linear backtracking to the last *, with its work charged to the budget.
  */
 export function wildcardMatch(pattern: string, s: string, ctx: EvalContext): boolean {
+  // The pattern is read and the text lowercased before the match starts.
+  ctx.charge(textSteps(pattern.length + s.length));
   const p: { ch: string; star: boolean; any: boolean }[] = [];
   for (let i = 0; i < pattern.length; i++) {
     const c = pattern[i] as string;
@@ -144,6 +177,8 @@ function criterion(c: Value, ctx: EvalContext): Criterion | SheetError {
   if (c === null) return (v) => v === null || v === "";
   if (typeof c === "number") return (v) => typeof v === "number" && compareValues(v, c) === 0;
   if (typeof c === "boolean") return (v) => v === c;
+  // The criterion is read once here; each cell it is matched against pays for its own text.
+  ctx.charge(textCost(c));
   const m = /^(<=|>=|<>|<|>|=)?([\s\S]*)$/.exec(c) as RegExpExecArray;
   const op = m[1] ?? "=";
   const rest = m[2] as string;
@@ -154,15 +189,21 @@ function criterion(c: Value, ctx: EvalContext): Criterion | SheetError {
     if (typeof target === "number") return typeof v === "number" ? compareValues(v, target) : null;
     if (typeof target === "boolean")
       return typeof v === "boolean" ? compareValues(v, target) : null;
-    return typeof v === "string" ? compareValues(v, target) : null;
+    return typeof v === "string" ? compare(v, target, ctx) : null;
   };
   const target: Value = n !== null ? n : asBool !== null ? asBool : rest;
+  const lower = typeof target === "string" ? target.toLowerCase() : "";
+  const sameText = (v: Value): boolean => {
+    if (typeof v !== "string") return false;
+    ctx.charge(textCost(v));
+    return v.toLowerCase() === lower;
+  };
   if (op === "=") {
     if (rest === "") return (v) => v === null || v === "";
     if (typeof target === "string") {
       return hasWildcard(target)
         ? (v) => typeof v === "string" && wildcardMatch(target, v, ctx)
-        : (v) => typeof v === "string" && v.toLowerCase() === target.toLowerCase();
+        : sameText;
     }
     return (v) => cmp(v, target) === 0;
   }
@@ -171,7 +212,7 @@ function criterion(c: Value, ctx: EvalContext): Criterion | SheetError {
     if (typeof target === "string") {
       return hasWildcard(target)
         ? (v) => !(typeof v === "string" && wildcardMatch(target, v, ctx))
-        : (v) => !(typeof v === "string" && v.toLowerCase() === target.toLowerCase());
+        : (v) => !sameText(v);
     }
     return (v) => cmp(v, target) !== 0;
   }
@@ -242,9 +283,7 @@ function countMatches(m: { hits: boolean[] }): number {
 function lookupEquals(v: Value, want: Value, wild: boolean, ctx: EvalContext): boolean {
   if (v === null || isError(v)) return false;
   if (typeof want === "string" && typeof v === "string") {
-    return wild && hasWildcard(want)
-      ? wildcardMatch(want, v, ctx)
-      : v.toLowerCase() === want.toLowerCase();
+    return wild && hasWildcard(want) ? wildcardMatch(want, v, ctx) : compare(v, want, ctx) === 0;
   }
   if (typeof want !== typeof v) return false;
   return compareValues(v, want) === 0;
@@ -271,7 +310,7 @@ function findIn(
   for (let i = 0; i < len; i++) {
     const v = get(i);
     if (v === null || isError(v) || typeof v !== typeof want) continue;
-    const c = compareValues(v, want);
+    const c = compare(v, want, ctx);
     if (c === 0) return i;
     if (mode === "le") {
       if (c < 0) best = i;
@@ -531,7 +570,7 @@ lazy("SWITCH", (nodes, ctx) => {
   for (; i + 1 < nodes.length; i += 2) {
     const c = scalar(ctx.arg(nodes[i] as Node));
     if (isError(c)) return c;
-    if (compareValues(v, c) === 0 && typeof v === typeof c)
+    if (compare(v, c, ctx) === 0 && typeof v === typeof c)
       return scalar(ctx.arg(nodes[i + 1] as Node));
   }
   return i < nodes.length ? scalar(ctx.arg(nodes[i] as Node)) : err("#N/A");
@@ -652,9 +691,13 @@ def("TEXTJOIN", (args, ctx) => {
   }
   return ctx.text(parts.join(delim));
 });
-def("LEN", (args) => {
+def("LEN", (args, ctx) => {
   const t = text(args[0]);
-  return isError(t) ? t : [...t].length;
+  if (isError(t)) return t;
+  ctx.charge(textCost(t));
+  let n = 0;
+  for (let i = 0; i < t.length; i += pairAt(t, i) ? 2 : 1) n++;
+  return n;
 });
 const slice =
   (from: "left" | "right"): Fn =>
@@ -664,9 +707,8 @@ const slice =
     const n = args[1] === undefined ? 1 : int(args[1]);
     if (isError(n)) return n;
     if (n < 0) return err("#VALUE!");
-    const chars = [...t];
     return ctx.text(
-      (from === "left" ? chars.slice(0, n) : chars.slice(Math.max(0, chars.length - n))).join(""),
+      from === "left" ? t.slice(0, forward(t, 0, n, ctx)) : t.slice(backward(t, n, ctx)),
     );
   };
 def("LEFT", slice("left"));
@@ -679,7 +721,8 @@ def("MID", (args, ctx) => {
   const n = int(args[2]);
   if (isError(n)) return n;
   if (start < 1 || n < 0) return err("#VALUE!");
-  return ctx.text([...t].slice(start - 1, start - 1 + n).join(""));
+  const from = forward(t, 0, start - 1, ctx);
+  return ctx.text(t.slice(from, forward(t, from, n, ctx)));
 });
 const mapText =
   (f: (s: string) => string): Fn =>
@@ -715,6 +758,8 @@ def("SUBSTITUTE", (args, ctx) => {
   const to = text(args[2]);
   if (isError(to)) return to;
   if (from === "") return t;
+  // The search reads the whole text, whatever it finds.
+  ctx.charge(textCost(t));
   if (args[3] === undefined) {
     const parts = t.split(from);
     if (t.length + (parts.length - 1) * (to.length - from.length) > 32_767) return err("#VALUE!");
@@ -748,6 +793,8 @@ const finder =
     const start = args[2] === undefined ? 1 : int(args[2]);
     if (isError(start)) return start;
     if (start < 1 || start > within.length + 1) return err("#VALUE!");
+    // A search reads the text it searches (SEARCH lowercases all of it) and what it looks for.
+    ctx.charge(textCost(within) + textCost(what));
     if (!insensitive || !hasWildcard(what)) {
       const at = insensitive
         ? within.toLowerCase().indexOf(what.toLowerCase(), start - 1)
@@ -770,11 +817,13 @@ def("VALUE", (args) => {
   if (typeof v === "string") return numberFromText(v) ?? err("#VALUE!");
   return v === null ? 0 : err("#VALUE!");
 });
-def("EXACT", (args) => {
+def("EXACT", (args, ctx) => {
   const a = text(args[0]);
   if (isError(a)) return a;
   const b = text(args[1]);
   if (isError(b)) return b;
+  if (a.length !== b.length) return false;
+  ctx.charge(textCost(a));
   return a === b;
 });
 
@@ -802,9 +851,9 @@ def("XLOOKUP", (args, ctx) => {
     for (let i = 0; i < lv.len; i++) {
       const v = lv.get(i);
       if (v === null || isError(v) || typeof v !== typeof want) continue;
-      const c = compareValues(v, want);
+      const c = compare(v, want, ctx);
       if ((mode === -1 && c < 0) || (mode === 1 && c > 0)) {
-        if (at < 0 || (mode === -1 ? compareValues(v, best) > 0 : compareValues(v, best) < 0)) {
+        if (at < 0 || (mode === -1 ? compare(v, best, ctx) > 0 : compare(v, best, ctx) < 0)) {
           at = i;
           best = v;
         }

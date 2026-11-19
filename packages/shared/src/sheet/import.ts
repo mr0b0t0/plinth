@@ -19,8 +19,6 @@ import {
   type SheetNumberFormat,
   serializeSheet,
 } from "./format.ts";
-import { XLFN_FUNCTIONS } from "./formula/arity.ts";
-import { parseFormula } from "./formula/parser.ts";
 import { isoDateSerial, MIN_DATE_SERIAL, numberFromText, serialIso } from "./formula/values.ts";
 import { platform } from "./platform.ts";
 import { checkSheetBytes, type RawCell, readXlsx, SheetImportError } from "./xlsxRead.ts";
@@ -41,9 +39,25 @@ type In =
 
 const CONTROL_OR_FORMAT = /[\p{Cc}\p{Cf}]/gu;
 
+/** A column name is read from this many characters of its header cell, and keeps at most 100. */
+export const COLUMN_NAME_SOURCE_CHARS = 1_000;
+
+/** The first `n` UTF-16 units of `s`, one fewer when the last would split a surrogate pair. */
+function cut(s: string, n: number): string {
+  if (s.length <= n) return s;
+  const last = s.charCodeAt(n - 1);
+  return s.slice(0, last >= 0xd800 && last <= 0xdbff ? n - 1 : n);
+}
+
 function columnName(raw: string, i: number): string {
-  const name = raw.replace(CONTROL_OR_FORMAT, " ").replace(/\s+/g, " ").trim().normalize("NFC");
-  return (name || colLetter(i)).slice(0, 100);
+  // Cut before the replaces and normalize: header cells are not counted toward the sheet's size,
+  // and one shared string of megabytes can stand behind all 100 of them.
+  const name = cut(raw, COLUMN_NAME_SOURCE_CHARS)
+    .replace(CONTROL_OR_FORMAT, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .normalize("NFC");
+  return cut(name || colLetter(i), 100).trimEnd();
 }
 
 /** Text as a literal cell: a leading = or ' would change its meaning, so it is kept with a '. */
@@ -270,15 +284,9 @@ function xlsxValue(c: RawCell, formatOf: FormatOf): In {
       const fmt = formatOf(c.style);
       return fmt ? { t: "n", v: c.v, fmt } : { t: "n", v: c.v };
     }
-    case "f": {
-      const cached = xlsxValue(c.cached, formatOf);
-      const src = c.f.replace(/_xlfn\.([A-Z.]+)\(/g, (m, name: string) =>
-        XLFN_FUNCTIONS.has(name) ? `${name}(` : m,
-      );
-      return src.length < LIMITS.maxSheetFormulaChars && parseFormula(src).ok
-        ? { t: "f", f: src, cached }
-        : cached;
-    }
+    case "f":
+      // readXlsx keeps only formulas that parse (keptFormula), their prefixes already dropped.
+      return { t: "f", f: c.f, cached: xlsxValue(c.cached, formatOf) };
   }
 }
 

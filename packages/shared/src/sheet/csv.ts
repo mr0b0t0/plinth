@@ -68,20 +68,32 @@ export function readCsv(input: string, maxRows: number): { rows: string[][]; row
   let first = true;
   let keep = true;
   let row: string[] = [];
-  let field = "";
+  // A field is built from slices of the text, each run of plain characters at once and joined
+  // every 4,096 runs: adding one character at a time made a chain of one node per character, and
+  // a 2 MB field took more than 64 MB of heap.
+  let done = "";
+  const parts: string[] = [];
   // The field's length, counted while fields are no longer kept, and whether the record so far
   // holds any character or delimiter (a record without either is blank).
   let fieldLen = 0;
   let filled = false;
   let quoted = false;
-  const add = (s: string) => {
-    if (keep) field += s;
-    fieldLen += s.length;
+  /** Adds text[from, to) to the field. */
+  const add = (from: number, to: number) => {
+    if (to <= from) return;
+    fieldLen += to - from;
     filled = true;
+    if (!keep) return;
+    parts.push(text.slice(from, to));
+    if (parts.length >= 4096) {
+      done += parts.join("");
+      parts.length = 0;
+    }
   };
   const endField = () => {
-    if (keep) row.push(field);
-    field = "";
+    if (keep) row.push(done + parts.join(""));
+    done = "";
+    parts.length = 0;
     fieldLen = 0;
   };
   const endRecord = () => {
@@ -93,39 +105,47 @@ export function readCsv(input: string, maxRows: number): { rows: string[][]; row
     filled = false;
   };
   let i = 0;
+  // The start of the run of plain characters not yet added to the field.
+  let run = 0;
   const n = text.length;
   while (i < n) {
     const ch = text[i] as string;
     if (quoted) {
       if (ch === '"') {
         if (text[i + 1] === '"') {
-          add('"');
+          // The run and one of the two quotes.
+          add(run, i + 1);
           i += 2;
+          run = i;
           continue;
         }
+        add(run, i);
         quoted = false;
         i++;
+        run = i;
         continue;
       }
-      add(ch);
       i++;
       continue;
     }
-    if (ch === '"' && fieldLen === 0) {
+    if (ch === '"' && fieldLen === 0 && run === i) {
       quoted = true;
       i++;
+      run = i;
     } else if (ch === delim) {
+      add(run, i);
       endField();
       filled = true;
       i++;
+      run = i;
     } else if (ch === "\r" || ch === "\n") {
+      add(run, i);
       endRecord();
       i += ch === "\r" && text[i + 1] === "\n" ? 2 : 1;
-    } else {
-      add(ch);
-      i++;
-    }
+      run = i;
+    } else i++;
   }
+  add(run, n);
   if (filled) endRecord();
   return { rows, rowCount };
 }

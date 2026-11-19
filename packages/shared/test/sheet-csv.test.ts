@@ -1,6 +1,6 @@
 // CSV export (quoting, BOM, CRLF, the formula-injection guard) and CSV and .xlsx import.
 import { deflateSync, strToU8, zipSync } from "fflate";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   evaluateSheet,
   importSheet,
@@ -15,7 +15,14 @@ import {
   sheetFromXlsx,
   toCsv,
 } from "../src/index.ts";
-import { inflateInSlices, readXlsx, scanXml, xmlDecode } from "../src/sheet/xlsxRead.ts";
+import { COLUMN_NAME_SOURCE_CHARS } from "../src/sheet/import.ts";
+import {
+  inflateInSlices,
+  readXlsx,
+  scanXml,
+  unescapeExcel,
+  xmlDecode,
+} from "../src/sheet/xlsxRead.ts";
 
 function sheetFrom(text: string): Sheet {
   const r = parseSheet(text);
@@ -135,6 +142,22 @@ describe("CSV import", () => {
     // A 2 MB file of one-character rows is the row refusal with its count.
     const long = `a\n${"1\n".repeat(1_048_000)}`;
     expect(() => sheetFromCsv(long)).toThrow(/at most 10000 rows; this file has 1048000/);
+  });
+
+  it("builds fields from slices of the text, with the same quoting rules", () => {
+    expect(parseCsv('"ab"cd,a"b,"""",""\n"open')).toEqual([["abcd", 'a"b', '"', ""], ["open"]]);
+    const big = "a".repeat(1_500_000);
+    expect(parseCsv(`h\n"${big}""x"`)[1]).toEqual([`${big}"x`]);
+  });
+
+  it("reads a column name from the first 1,000 characters of its header cell", () => {
+    const s = sheetFromCsv(`x${" ".repeat(1_000)}y,b\n1,2\n`);
+    expect(s.header.columns.map((c) => c.name)).toEqual(["x", "b"]);
+    // 2 MB of one header cell, mostly spaces to collapse: only its start is read.
+    const t0 = Date.now();
+    const long = sheetFromCsv(`${" a".repeat(1_000_000)}\n1\n`);
+    expect(long.header.columns[0]?.name).toBe("a ".repeat(50).trim());
+    expect(Date.now() - t0).toBeLessThan(1_000);
   });
 
   it("refuses cells a 1 MB sheet cannot hold before it makes values of them", () => {
@@ -389,6 +412,81 @@ describe(".xlsx import", () => {
       "xl/worksheets/sheet1.xml": `<worksheet><sheetData><row>${text}</row>${`<row>${text}</row>`.repeat(300)}</sheetData></worksheet>`,
     });
     expect(() => sheetFromXlsx(long)).toThrow(/at most 1 MB; this file holds more cells/);
+  });
+
+  it("counts a formula cell as what it becomes: its source, or the cached value it falls back to", () => {
+    const sheet = (rows: string, strings = "<sst></sst>") =>
+      xlsx({
+        ...WORKBOOK,
+        "xl/sharedStrings.xml": strings,
+        "xl/worksheets/sheet1.xml": `<worksheet><sheetData><row><c><v>1</v></c></row>${rows}</sheetData></worksheet>`,
+      });
+    // One 3,600-character shared string behind 300 cells whose formula does not parse: each cell
+    // becomes that string, so a 10 KB file holds more than 1 MB of sheet.
+    const strings = `<sst><si><t>${"y".repeat(3_600)}</t></si></sst>`;
+    const dropped = '<c t="s"><f>1+</f><v>0</v></c>';
+    const cached = sheet(`<row>${dropped}</row>`.repeat(300), strings);
+    expect(cached.byteLength).toBeLessThan(20_000);
+    expect(() => readXlsx(cached)).toThrow(/at most 1 MB; this file holds more cells/);
+    // 600 formulas of 1,999 characters that parse are past 1 MB too.
+    const f = Array(1_000).fill("1").join("+");
+    expect(() => readXlsx(sheet(`<row><c><f>${f}</f></c></row>`.repeat(600)))).toThrow(
+      /at most 1 MB; this file holds more cells/,
+    );
+    // Within the limit: a kept formula without its prefix, a dropped one as its cached value.
+    const few = readXlsx(
+      sheet(`<row>${dropped}<c t="str"><f>_xlfn.CONCAT("a")</f><v>a</v></c></row>`, strings),
+    );
+    expect(few.rows[1]).toEqual([
+      { t: "s", v: "y".repeat(3_600) },
+      { t: "f", f: 'CONCAT("a")', cached: { t: "s", v: "a" } },
+    ]);
+  });
+
+  it("expands Excel's _xHHHH_ escapes with a loop", () => {
+    expect(unescapeExcel("a_x0041_b _x00_ _x004G_ _x_x0042_ _x0043__x0044_ _x0045")).toBe(
+      "aAb _x00_ _x004G_ _xB CD _x0045",
+    );
+    expect(unescapeExcel("_x0041_".repeat(1_000_000))).toBe("A".repeat(1_000_000));
+    const s = sheetFromXlsx(
+      xlsx({
+        ...WORKBOOK,
+        "xl/sharedStrings.xml": "<sst><si><t>Item_x0021_</t></si><si><t>a_x000A_b</t></si></sst>",
+        "xl/worksheets/sheet1.xml":
+          '<worksheet><sheetData><row><c t="s"><v>0</v></c></row><row><c t="s"><v>1</v></c><c t="inlineStr"><is><t>_x0031_</t></is></c></row></sheetData></worksheet>',
+      }),
+    );
+    expect(s.header.columns.map((c) => c.name)).toEqual(["Item!", "B"]);
+    expect(s.rows).toEqual([["a\nb", "1"]]);
+  });
+
+  it("runs no replace over text a file can make long", () => {
+    // A shared string of 2 MB of escapes nobody references, and one of 2 MB of words behind
+    // every header cell: neither may reach a replace (a replace with a callback keeps every
+    // match, and the header's patterns used to run over the whole cell 100 times).
+    const subjects: number[] = [];
+    const replace = String.prototype.replace;
+    const spy = vi.spyOn(String.prototype, "replace").mockImplementation(function (
+      this: string,
+      ...args: Parameters<string["replace"]>
+    ) {
+      subjects.push(this.length);
+      return replace.apply(this, args);
+    });
+    try {
+      const s = sheetFromXlsx(
+        xlsx({
+          ...WORKBOOK,
+          "xl/sharedStrings.xml": `<sst><si><t>${"a b ".repeat(500_000)}</t></si><si><t>${"_x0041_".repeat(300_000)}</t></si></sst>`,
+          "xl/worksheets/sheet1.xml": `<worksheet><sheetData><row><c t="s"><v>0</v></c></row><row><c><v>1</v></c></row></sheetData></worksheet>`,
+        }),
+      );
+      expect(s.header.columns[0]?.name).toBe("a b ".repeat(25).trim());
+    } finally {
+      spy.mockRestore();
+    }
+    expect(subjects.length).toBeGreaterThan(0);
+    expect(Math.max(...subjects)).toBeLessThanOrEqual(COLUMN_NAME_SOURCE_CHARS);
   });
 
   it("reads a long number format code in linear time, and one past 255 characters as General", () => {
