@@ -256,6 +256,8 @@ export default function Consent() {
                     hint={`Shown on your Connections page and next to what it publishes. ${mentionReachText(
                       mentionReach(label.trim() || defaultLabel, connections, {
                         client_type: clientType,
+                        // The grant holds exactly what the client asked for.
+                        scopes: state.req.scopes,
                       }),
                     )}`}
                     value={label}

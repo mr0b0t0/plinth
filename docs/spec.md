@@ -1101,14 +1101,17 @@ agents on one artifact").
 - **Examples.** `docs/examples/` holds finished pages for invited people, including people outside
   the owner's team who confirm their email by code: an approval sign-off
   (`approval-signoff.html`), a client intake form (`intake-form.html`) and a client checklist
-  (`client-checklist.html`), all `data viewer` (the checklist adds a shared `ticks` collection),
+  (`client-checklist.html`), all `data viewer` (the checklist adds shared `ticks` and `notes`),
   plus a whiteboard (with a room) and a canvas that takes comments. They keep what only the owner's
   side decides in the HTML (the subject and its revision, the required approvals, the questions,
   the items, "closed"), which changes only by a new version, and what participants contribute in
-  shared data (personal `signoffs` and `intake` documents, `ticks` keyed by item id), whose server
-  stamps say who wrote it. The pages count only what the stamps vouch for: a sign-off someone else
-  changed or an agent wrote, and a team item ticked by anyone but the owner or an editor, are shown
-  and not counted. The server's write rules are unchanged; the pages decide only what to count. A
+  shared data (personal `signoffs` and `intake` documents, `ticks` and `notes` keyed by item id),
+  whose server stamps say who wrote it. The pages count only what the stamps vouch for: only
+  personal sign-offs count, one per person; a sign-off someone else changed or an agent wrote, and
+  a team item ticked by anyone but the owner or an editor, are shown and not counted; a link
+  viewer, who gets no stamps, is told that only invited people can see the result. A deleted entry
+  leaves no mark, since shared data keeps no history. The server's write rules are unchanged; the
+  pages decide only what to count. A
   sign-off is a record of who clicked and when, not an electronic signature. Intake is one page
   per client, because everyone who can open a page reads all of its data.
 - **The example contract.** Every file in `docs/examples/` publishes without warnings, renders in

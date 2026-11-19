@@ -143,6 +143,33 @@ describe("Consent", () => {
     expect(consents[0]?.body).toMatchObject({ label: "Laptop Claude", client_type: "claude" });
   });
 
+  it("says how comments reach the connection, from the scopes the client asked for", async () => {
+    backend({ req: REQ({ client_name: "Gemini CLI" }) });
+    const Consent = await loadPage();
+    const user = userEvent.setup();
+    render(<Consent />);
+    await screen.findByRole("heading", { level: 1 });
+    await user.click(screen.getByRole("button", { name: "Change name" }));
+    const name = screen.getByLabelText("Name this connection");
+    const hint = document.getElementById(`${name.id}-hint`)?.textContent ?? "";
+    expect(hint).toContain("Collaborators reach it by writing @gemini-cli in a comment.");
+  });
+
+  it("warns that a client without the mentions scope cannot pick up requests", async () => {
+    backend({
+      req: REQ({ client_name: "Gemini CLI", scopes: ["artifacts:read", "artifacts:write"] }),
+    });
+    const Consent = await loadPage();
+    const user = userEvent.setup();
+    render(<Consent />);
+    await screen.findByRole("heading", { level: 1 });
+    await user.click(screen.getByRole("button", { name: "Change name" }));
+    const name = screen.getByLabelText("Name this connection");
+    const hint = document.getElementById(`${name.id}-hint`)?.textContent ?? "";
+    expect(hint).toContain("does not have the Answer mentions permission");
+    expect(hint).not.toContain("@gemini-cli");
+  });
+
   it("falls back to the default name when the field is cleared", async () => {
     const consents = backend({});
     const Consent = await loadPage();

@@ -14,20 +14,26 @@
       group. Item ids are document ids: a lowercase letter or digit, then up to 63 of a-z 0-9 -.
       Never rename an id: its tick would be left behind. Rewording the label is fine.
 
-  Stored as shared data, collection "ticks", declared shared so any writer may tick or untick any
-  item. The document id is the item id. Shape: { done: boolean, note: string (at most 500) }.
+  Stored as shared data, two collections declared shared so any writer may change any item's
+  documents. The document id is the item id in both:
+    - "ticks": { done: boolean }, written only by ticking or unticking;
+    - "notes": { text: string (at most 500) }, written only by saving a note.
+  Notes have their own documents so that saving one never changes who the tick's stamp names.
 
-  Trust the stamp, not the data. A team item counts as done only when its last change was made by
-  the owner or an editor (updatedBy.role); one ticked by anyone else shows "waiting for the team to
-  confirm" and does not count. Client items count whoever ticks them. Plinth enforces who may write
-  at all; this page only decides what to count. Who did what comes only from Plinth's stamps.
+  Trust the stamp, not the data. A team item counts as done only when its tick's last change was
+  made by the owner or an editor (updatedBy.role); one ticked by anyone else shows "waiting for the
+  team to confirm" and does not count. Client items count whoever ticks them. A reader who gets no
+  stamps (a link viewer) cannot tell who ticked a team item, so the page does not count team items
+  for them. Plinth enforces who may write at all; this page only decides what to count. Who did
+  what comes only from Plinth's stamps. Deleting a document leaves no trace: since both
+  collections are shared, any writer can delete a tick or a note through the page's runtime.
 
   An agent adds, removes or rewords items in ITEMS with update_artifact (base_version, a note), and
-  reads progress with list_artifact_data(id, "ticks"). It ticks a team item with
+  reads progress with list_artifact_data(id, "ticks") (and "notes"). It ticks a team item with
   write_artifact_data (if_rev on every op) only when the owner asks.
 -->
 <meta name="plinth-capabilities" content="data viewer">
-<meta name="plinth-data-shared" content="ticks">
+<meta name="plinth-data-shared" content="ticks notes">
 <title>Launch checklist: Acme</title>
 <style>
   :root {
@@ -166,12 +172,14 @@ const msg = document.getElementById("msg");
 const progressEl = document.getElementById("progress");
 const barEl = document.getElementById("bar");
 
-const rows = new Map(); // item id -> { item, li, box, state, note, noteInput, noteBtn }
+const rows = new Map(); // item id -> { item, li, box, state, note, noteBy, noteInput, noteBtn }
 let ticks = null;
+let notes = null;
 let canWrite = false;
 let isTeam = false; // the viewer is the owner or an editor
-let lastDocs = [];
-const pending = new Set(); // item ids with a write in flight
+let lastTicks = [];
+let lastNotes = [];
+const pending = new Set(); // "tick:<id>" and "note:<id>" with a write in flight
 
 function el(tag, className, text) {
   const node = document.createElement(tag);
@@ -203,11 +211,11 @@ function today() {
 }
 
 /** Shared data is written by other people: keep only well-formed fields. */
-function clean(d) {
-  return {
-    done: Boolean(d && d.done === true),
-    note: d && typeof d.note === "string" ? d.note.slice(0, NOTE_MAX) : "",
-  };
+function cleanTick(d) {
+  return { done: Boolean(d && d.done === true) };
+}
+function cleanNote(d) {
+  return { text: d && typeof d.text === "string" ? d.text.slice(0, NOTE_MAX) : "" };
 }
 
 function build() {
@@ -242,6 +250,7 @@ function build() {
     meta.append(" ", overdue);
     const state = el("span", "state");
     const note = el("span", "note");
+    const noteBy = el("span", "meta");
     const details = document.createElement("details");
     details.append(el("summary", "", "Note"));
     const noteRow = el("div", "note-row");
@@ -255,67 +264,91 @@ function build() {
     noteBtn.disabled = true;
     noteRow.append(noteInput, noteBtn);
     details.append(noteRow);
-    body.append(label, meta, state, note, details);
+    body.append(label, meta, state, note, noteBy, details);
     li.append(box, body);
     g.append(li);
-    const row = { item, li, box, overdue, state, note, noteInput, noteBtn };
+    const row = { item, li, box, overdue, state, note, noteBy, noteInput, noteBtn };
     rows.set(item.id, row);
-    box.addEventListener("change", () => save(item.id, { done: box.checked }));
-    noteBtn.addEventListener("click", () => save(item.id, { note: noteInput.value.slice(0, NOTE_MAX) }));
+    box.addEventListener("change", () => save("tick", item.id, { done: box.checked }));
+    noteBtn.addEventListener("click", () => save("note", item.id, { text: noteInput.value.slice(0, NOTE_MAX) }));
   }
 }
 
-/** A tick counts when it says done and, for a team item, the owner or an editor made it. */
+/**
+ * A tick counts when it says done and, for a team item, the owner or an editor made its last
+ * change. A reader without stamps (a link viewer) cannot tell who did, so a team item is
+ * "unverified" for them and not counted.
+ */
 function counts(item, doc) {
-  if (!doc || !clean(doc.data).done) return { done: false, waiting: false };
-  if (item.side === "client") return { done: true, waiting: false };
+  const none = { done: false, waiting: false, unverified: false };
+  if (!doc || !cleanTick(doc.data).done) return none;
+  if (item.side === "client") return { ...none, done: true };
   const u = doc.updatedBy;
-  if (!u && !doc.createdBy) return { done: true, waiting: false }; // a reader without stamps
-  const team = Boolean(u && (u.role === "owner" || u.role === "editor"));
-  return { done: team, waiting: !team };
+  if (!u) return { ...none, unverified: true };
+  const team = u.role === "owner" || u.role === "editor";
+  return { ...none, done: team, waiting: !team };
 }
 
-function render(docs) {
-  lastDocs = docs;
-  const byId = new Map();
-  for (const d of docs) if (rows.has(d.id)) byId.set(d.id, d); // ids not in ITEMS are ignored
+/** Documents by item id; ids not in ITEMS are ignored. */
+function byItem(docs) {
+  const out = new Map();
+  for (const d of docs) if (rows.has(d.id)) out.set(d.id, d);
+  return out;
+}
+
+function render() {
+  const tickOf = byItem(lastTicks);
+  const noteOf = byItem(lastNotes);
   const day = today();
   const tally = { client: [0, 0], team: [0, 0] };
+  let unverified = 0;
   for (const row of rows.values()) {
     const { item } = row;
-    const doc = byId.get(item.id);
-    const { done, waiting } = counts(item, doc);
+    const doc = tickOf.get(item.id);
+    const { done, waiting, unverified: unknown } = counts(item, doc);
     tally[item.side][1]++;
     if (done) tally[item.side][0]++;
+    if (unknown) unverified++;
     row.li.dataset.done = String(done);
-    if (!pending.has(item.id)) row.box.checked = done;
-    row.overdue.textContent = !done && item.due && item.due < day ? "overdue" : "";
+    if (!pending.has(`tick:${item.id}`)) row.box.checked = done;
+    row.overdue.textContent = !done && !unknown && item.due && item.due < day ? "overdue" : "";
     const u = doc?.updatedBy;
     if (done) {
       row.state.textContent = u ? `Done by ${who(u)}, ${when(doc.updatedAt)}${u.via === "agent" ? " via agent" : ""}` : "Done";
     } else if (waiting) {
       row.state.textContent = `Marked done by ${who(u)}; waiting for the team to confirm`;
+    } else if (unknown) {
+      row.state.textContent = "Marked done. Only people this checklist is shared with can see whether the team confirmed it.";
     } else {
       row.state.textContent = "";
     }
     row.state.dataset.pending = String(waiting);
-    const n = doc ? clean(doc.data).note : "";
+    const noteDoc = noteOf.get(item.id);
+    const n = noteDoc ? cleanNote(noteDoc.data).text : "";
+    const nu = noteDoc?.updatedBy;
     row.note.textContent = n ? `Note: ${n}` : "";
-    if (document.activeElement !== row.noteInput) row.noteInput.value = n;
+    row.noteBy.textContent = n && nu ? `Note by ${who(nu)}, ${when(noteDoc.updatedAt)}${nu.via === "agent" ? " via agent" : ""}` : "";
+    if (document.activeElement !== row.noteInput && !pending.has(`note:${item.id}`)) row.noteInput.value = n;
   }
   const done = tally.client[0] + tally.team[0];
   const total = tally.client[1] + tally.team[1];
-  progressEl.textContent = `${done} of ${total} done (client ${tally.client[0]} of ${tally.client[1]}, team ${tally.team[0]} of ${tally.team[1]})`;
-  barEl.style.width = total ? `${Math.round((done / total) * 100)}%` : "0";
+  if (unverified > 0) {
+    // A link viewer: count only what needs no stamp, and say why team items are left out.
+    progressEl.textContent = `Client items: ${tally.client[0]} of ${tally.client[1]} done. Only people this checklist is shared with can see the team's progress.`;
+    barEl.style.width = tally.client[1] ? `${Math.round((tally.client[0] / tally.client[1]) * 100)}%` : "0";
+  } else {
+    progressEl.textContent = `${done} of ${total} done (client ${tally.client[0]} of ${tally.client[1]}, team ${tally.team[0]} of ${tally.team[1]})`;
+    barEl.style.width = total ? `${Math.round((done / total) * 100)}%` : "0";
+  }
   setControls();
 }
 
 function setControls() {
   for (const row of rows.values()) {
     const mayTick = canWrite && (row.item.side === "client" || isTeam);
-    row.box.disabled = !mayTick || pending.has(row.item.id);
+    row.box.disabled = !mayTick || pending.has(`tick:${row.item.id}`);
     row.noteInput.disabled = !canWrite;
-    row.noteBtn.disabled = !canWrite || pending.has(row.item.id);
+    row.noteBtn.disabled = !canWrite || pending.has(`note:${row.item.id}`);
   }
 }
 
@@ -331,20 +364,26 @@ function errorText(e) {
   return "Could not save. Try again.";
 }
 
-/** Change one field on top of the latest copy (update retries on a conflict). */
-async function save(id, patch) {
-  if (!ticks || pending.has(id)) return;
-  pending.add(id);
+/**
+ * Write a tick or a note on top of the latest copy (update retries on a conflict). A tick and a
+ * note are separate documents, so saving a note never changes whose tick the stamp shows.
+ */
+async function save(kind, id, data) {
+  const coll = kind === "tick" ? ticks : notes;
+  const key = `${kind}:${id}`;
+  if (!coll || pending.has(key)) return;
+  pending.add(key);
   setControls();
   msg.textContent = "";
   try {
-    const doc = await ticks.update(id, (d) => ({ ...clean(d), ...patch }));
-    render([...lastDocs.filter((d) => d.id !== id), doc]);
+    const doc = await coll.update(id, () => data);
+    if (kind === "tick") lastTicks = [...lastTicks.filter((d) => d.id !== id), doc];
+    else lastNotes = [...lastNotes.filter((d) => d.id !== id), doc];
   } catch (e) {
     msg.textContent = errorText(e);
   } finally {
-    pending.delete(id);
-    render(lastDocs);
+    pending.delete(key);
+    render();
   }
 }
 
@@ -371,7 +410,7 @@ function ready(canWriteNow, reason) {
 
 async function start() {
   build();
-  render([]);
+  render();
   const P = window.plinth;
   if (!P) {
     banner.textContent = "Ticking is not available here. The checklist is shown read-only.";
@@ -389,10 +428,19 @@ async function start() {
   isTeam = role === "owner" || role === "editor";
   if (!canWrite) banner.textContent = "You can see the checklist. Only people it was shared with can tick items.";
   ticks = P.db.collection("ticks");
-  ticks.onSnapshot(render, (e) => {
+  notes = P.db.collection("notes");
+  const failed = (e) => {
     if (e && e.code === "expired") return; // the plinth:expired handler says it
     msg.textContent = "Could not load the checklist. Reload the page.";
-  });
+  };
+  ticks.onSnapshot((docs) => {
+    lastTicks = docs;
+    render();
+  }, failed);
+  notes.onSnapshot((docs) => {
+    lastNotes = docs;
+    render();
+  }, failed);
   setControls();
   ready(canWrite, "");
 }

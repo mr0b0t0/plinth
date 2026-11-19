@@ -197,9 +197,36 @@ test("approval sign-off: two outside approvers, a new revision, moderation and a
     await expect(rowA).toContainText(`changed by ${owner} (owner)`);
     await expect(rowA).toHaveAttribute("data-counted", "false");
     await expect(fo.locator("#status")).toHaveText("0 of 2 approvals on revision 2");
+
+    // A adds approvals that are not their personal document, through the runtime: the server
+    // takes them (any writer may create a non-personal document), and the page counts none.
+    const forged = await inFrame(pageA)
+      .locator("body")
+      .evaluate(async () => {
+        const c = (window as any).plinth.db.collection("signoffs");
+        const s = { decision: "approve", revision: 2, note: "" };
+        try {
+          await c.add(s);
+          await c.add(s);
+          await c.set("approval-b", s);
+          return "ok";
+        } catch (e) {
+          return (e as { code: string }).code;
+        }
+      });
+    expect(forged).toBe("ok");
+    await reopen(page);
+    await expect(fo.locator("#list li")).toHaveCount(5);
+    // A's moderated sign-off and the three extra documents; B's own (earlier revision) is vouched.
+    await expect(fo.locator('#list li[data-counted="false"]')).toHaveCount(4);
+    await expect(
+      fo.locator('#list li[data-counted="false"]', { hasText: "not a personal sign-off" }),
+    ).toHaveCount(3);
+    await expect(fo.locator("#status")).toHaveText("0 of 2 approvals on revision 2");
     await shot(page, "approval-owner");
 
-    // A link viewer reads the decisions without names and cannot sign.
+    // A link viewer reads the decisions without names and cannot sign. Without stamps the page
+    // cannot tell whose sign-offs these are, so it does not say whether the subject is approved.
     const unlisted = await tool(client, "set_visibility", { id: art.id, visibility: "unlisted" });
     expect(unlisted.isError, unlisted.text).toBe(false);
     const anon = await (await browser.newContext()).newPage();
@@ -208,9 +235,13 @@ test("approval sign-off: two outside approvers, a new revision, moderation and a
     await readyFrame(anon);
     const fx = inFrame(anon);
     await expect(fx.locator("body")).toHaveAttribute("data-can-write", "false");
-    await expect(fx.locator("#list li")).toHaveCount(2);
+    await expect(fx.locator("#list li")).toHaveCount(5);
     await expect(fx.getByRole("button", { name: "Approve" })).toBeDisabled();
     expect(await fx.locator("#list").textContent()).not.toContain("@");
+    await expect(fx.locator("#status")).toHaveText(
+      "Only people this page was shared with can see whether it is approved.",
+    );
+    await expect(fx.locator("#status")).toHaveAttribute("data-state", "unverified");
     await expect(fx.locator("#banner")).toHaveText(
       "You can see the sign-offs. Only people this page was shared with can sign.",
     );
@@ -377,6 +408,46 @@ test("client checklist: client ticks count, team ticks need the team, items chan
     await expect(kickoff.locator(".state")).toContainText(`Done by ${owner}`);
     await expect(fo.locator("#progress")).toHaveText("2 of 7 done (client 1 of 4, team 1 of 3)");
 
+    // The client adds a note to that team item: notes are their own documents, so the tick keeps
+    // the owner's stamp and still counts.
+    await reopen(pc);
+    const clientKickoff = fc.locator('li[data-item="kickoff-call"]');
+    await clientKickoff.locator("summary").click();
+    await clientKickoff.getByLabel("Note on Kickoff call booked").fill("Booked for Tuesday");
+    await clientKickoff.getByRole("button", { name: "Save note" }).click();
+    await expect(clientKickoff.locator(".note")).toHaveText("Note: Booked for Tuesday");
+    await reopen(page);
+    await expect(kickoff.locator(".state")).toContainText(`Done by ${owner}`);
+    await expect(kickoff.locator(".note")).toHaveText("Note: Booked for Tuesday");
+    await expect(kickoff).toContainText(`Note by ${visitor}`);
+    await expect(fo.locator("#progress")).toHaveText("2 of 7 done (client 1 of 4, team 1 of 3)");
+
+    // A tick the client forced on a team item stays unconfirmed when the owner only adds a note.
+    const forcedLaunch = await (await readyFrame(pc)).evaluate(() =>
+      (window as any).plinth.db
+        .collection("ticks")
+        .set("launch", { done: true })
+        .then(
+          () => "ok",
+          (e: { code: string }) => e.code,
+        ),
+    );
+    expect(forcedLaunch).toBe("ok");
+    await reopen(page);
+    const launch = fo.locator('li[data-item="launch"]');
+    await expect(launch.locator(".state")).toHaveText(
+      `Marked done by ${visitor}; waiting for the team to confirm`,
+    );
+    await launch.locator("summary").click();
+    await launch.getByLabel("Note on Site launched").fill("Scheduled for Friday");
+    await launch.getByRole("button", { name: "Save note" }).click();
+    await expect(launch.locator(".note")).toHaveText("Note: Scheduled for Friday");
+    await reopen(page);
+    await expect(launch.locator(".state")).toHaveText(
+      `Marked done by ${visitor}; waiting for the team to confirm`,
+    );
+    await expect(fo.locator("#progress")).toHaveText("2 of 7 done (client 1 of 4, team 1 of 3)");
+
     // The agent removes an item in a new version: its tick is ignored, the total drops.
     await agentEdit(
       client,
@@ -396,19 +467,44 @@ test("client checklist: client ticks count, team ticks need the team, items chan
           op: "set",
           collection: "ticks",
           doc_id: "staging-site",
-          data: { done: true, note: "Staging is up." },
+          data: { done: true },
+          if_rev: 0,
+        },
+        {
+          op: "set",
+          collection: "notes",
+          doc_id: "staging-site",
+          data: { text: "Staging is up." },
           if_rev: 0,
         },
       ],
     });
     expect(written.isError, written.text).toBe(false);
-    expect(written.data.results[0]?.ok).toBe(true);
+    expect(written.data.results.map((r) => r.ok)).toEqual([true, true]);
     await reopen(page);
     const staging = fo.locator('li[data-item="staging-site"]');
     await expect(staging.locator(".state")).toContainText(`Done by ${owner}`);
     await expect(staging.locator(".state")).toContainText("via agent");
     await expect(staging.locator(".note")).toHaveText("Note: Staging is up.");
     await expect(fo.locator("#progress")).toHaveText("2 of 6 done (client 0 of 3, team 2 of 3)");
+
+    // A link viewer gets no stamps, so the page cannot tell who ticked a team item: it counts only
+    // the client items and says why.
+    const unlisted = await tool(client, "set_visibility", { id: art.id, visibility: "unlisted" });
+    expect(unlisted.isError, unlisted.text).toBe(false);
+    const anon = await (await browser.newContext()).newPage();
+    pages.push(anon);
+    await anon.goto(art.url);
+    await readyFrame(anon);
+    const fx = inFrame(anon);
+    await expect(fx.locator("body")).toHaveAttribute("data-can-write", "false");
+    await expect(fx.locator("#progress")).toHaveText(
+      "Client items: 0 of 3 done. Only people this checklist is shared with can see the team's progress.",
+    );
+    await expect(fx.locator('li[data-item="kickoff-call"] .state')).toHaveText(
+      "Marked done. Only people this checklist is shared with can see whether the team confirmed it.",
+    );
+    expect(await fx.locator("#groups").textContent()).not.toContain("@");
   } finally {
     await client.close();
     for (const p of pages) await p.context().close();

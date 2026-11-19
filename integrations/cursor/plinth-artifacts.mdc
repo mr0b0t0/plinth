@@ -769,13 +769,16 @@ answer questions or tick items on a page:
   `{ answers, submitted, formRevision }`. One page per client: everyone it is shared with can read
   every answer. Ask only what the work needs; never passwords, card or bank numbers, government ids
   or health data. New questions are new fields and a bumped form revision in a new version.
-- **Checklist:** `data viewer` and `<meta name="plinth-data-shared" content="ticks">`, the items in
-  the HTML and one tick document per item, keyed by its id. Never rename an item id (its tick would
-  be lost). Count a team item only when its `updatedBy.role` is `owner` or `editor`. Tick a team
-  item with `write_artifact_data` only when the owner asks.
+- **Checklist:** `data viewer` and `<meta name="plinth-data-shared" content="ticks notes">`, the
+  items in the HTML, one `ticks` document (`{ done }`) and one `notes` document (`{ text }`) per
+  item, keyed by its id, so a note never changes the tick's stamp. Never rename an item id (its
+  tick would be lost). Count a team item only when its tick's `updatedBy.role` is `owner` or
+  `editor`. Tick a team item with `write_artifact_data` only when the owner asks.
 - **Count only what the stamps vouch for**, and show who did what from `createdBy` and
-  `updatedBy`, never from emails stored in data. A sign-off someone else changed or an agent
-  wrote is shown but not counted. Plinth decides who may write; the page decides what counts.
+  `updatedBy`, never from emails stored in data. Count only personal (`personal`) sign-offs, one
+  per person; a sign-off someone else changed or an agent wrote is shown but not counted. A reader
+  without stamps (a link viewer) gets no verdict. A deleted entry leaves no mark. Plinth decides
+  who may write; the page decides what counts.
 - **Start from the finished pages** when asked for one of these: `approval-signoff.html`,
   `intake-form.html` and `client-checklist.html` in
   `https://github.com/mr0b0t0/plinth/tree/main/docs/examples` (its README has every document

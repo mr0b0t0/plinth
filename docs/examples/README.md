@@ -10,7 +10,7 @@ available. The end-to-end tests publish every file here and check that contract
 | --- | --- | --- |
 | [`approval-signoff.html`](approval-signoff.html) | Named people approve a proposal, quote, design or plan, or ask for changes | `data viewer` |
 | [`intake-form.html`](intake-form.html) | A new client's people answer project questions | `data viewer` |
-| [`client-checklist.html`](client-checklist.html) | The owner's team and a client tick off an onboarding or launch checklist | `data viewer`, shared `ticks` |
+| [`client-checklist.html`](client-checklist.html) | The owner's team and a client tick off an onboarding or launch checklist | `data viewer`, shared `ticks notes` |
 | [`whiteboard.html`](whiteboard.html) | A team moves sticky notes together, with live cursors | `data viewer room`, shared `notes links` |
 | [`canvas-comments.html`](canvas-comments.html) | People comment on spots of a sketch | `comments` |
 
@@ -31,8 +31,17 @@ the stamps only, never from an email stored in the data.
 
 Plinth decides who may write at all (the owner and the people the page is shared with). The pages
 then decide what to count, and they count only what the stamps vouch for: a sign-off that someone
-else changed, or a team item ticked by someone who is not on the team, is shown and marked but not
-counted.
+else changed or that is not its person's own document, or a team item ticked by someone who is not
+on the team, is shown and marked but not counted. A link viewer gets no stamps, so for them the
+pages say that only invited people can see whether something is approved or confirmed, rather
+than count entries they cannot check.
+
+The stamps describe the documents that exist. Shared data keeps no history, so a deleted document
+leaves no trace on the page: the owner and editors may delete any entry, each person may delete
+their own sign-off or answers, and on the checklist, whose collections are shared, any invited
+person may delete any tick or note through the page's runtime. Deleting one sends an item back to
+"not done" or removes a sign-off without a mark. Share these pages only with people you trust not
+to do that, and read the results with `list_artifact_data` when it matters.
 
 ## Trying one
 
@@ -82,11 +91,16 @@ sign for someone else):
 - Each person approves or requests changes (a note is required to request changes), and can
   withdraw. The list shows who signed, their decision and note, the revision they saw ("earlier
   revision" once the subject moved on) and when.
-- The status line counts only current-revision sign-offs made by their own person from the page:
-  "Approved: 2 of 2 on revision 3", "1 of 2 approvals on revision 3", or "Changes requested by
-  1 person" (any current request for changes blocks approval). A sign-off the owner or an editor
-  changed shows "changed by" with their email and role, and one written by an agent shows "via
-  agent"; neither counts.
+- The status line counts only current-revision sign-offs made by their own person from the page,
+  one personal document per person: "Approved: 2 of 2 on revision 3", "1 of 2 approvals on
+  revision 3", or "Changes requested by 1 person" (any current request for changes blocks
+  approval). A sign-off the owner or an editor changed shows "changed by" with their email and
+  role, and one written by an agent shows "via agent"; neither counts. Any invited person can also
+  add documents that are not their personal one (with `add` or `set` through the runtime); those
+  show "not a personal sign-off" and never count.
+- A link viewer sees the decisions and notes without names, and the status line says only people
+  the page was shared with can see whether it is approved.
+- A sign-off the owner or an editor deletes, or one its person withdraws, is simply gone.
 - Plinth records who clicked and when. This is not an electronic signature: there is no document
   hash, consent step or audit export.
 
@@ -144,27 +158,37 @@ Invite the client's people with the viewer role.
 | --- | --- |
 | `ITEMS` | Each item's `id` (a lowercase letter or digit, then up to 63 of `a-z`, `0-9`, `-`), `label`, `side` (`client` or `team`), and optionally `due` (`YYYY-MM-DD`) and `group` |
 
-Shared data: collection `ticks`, declared shared (`<meta name="plinth-data-shared" content="ticks">`)
-so any writer may tick or untick any item. The document id is the item id:
+Shared data: two collections, both declared shared
+(`<meta name="plinth-data-shared" content="ticks notes">`) so any writer may change any item's
+documents. The document id is the item id in both:
 
 ```js
-{ done: boolean, note: string /* at most 500 characters, optional */ }
+// ticks: written only by ticking or unticking
+{ done: boolean }
+// notes: written only by saving a note
+{ text: string /* at most 500 characters */ }
 ```
 
+A note has its own document so that saving one never changes the tick's stamp: a client's note on
+a team item leaves the team's tick counted, and an owner's note on an item a client ticked does not
+confirm it.
+
 - Items show by group with their side, due date and "overdue" when the date has passed and the
-  item is not done. A done item shows who did it and when; anyone with write access can add a note.
+  item is not done. A done item shows who ticked it and when; anyone with write access can add a
+  note, which shows who wrote it.
 - **Trust the stamp, not the data.** A client item counts as done whoever ticks it. A team item
-  counts only when its last change was made by the owner or an editor; one ticked by anyone else
-  shows "Marked done by ...; waiting for the team to confirm" and does not count. Viewers and
+  counts only when its tick's last change was made by the owner or an editor; one ticked by anyone
+  else shows "Marked done by ...; waiting for the team to confirm" and does not count. Viewers and
   commenters get no checkbox for team items, so this happens only through a page's runtime.
 - Progress reads "7 of 12 done (client 3 of 5, team 4 of 7)". A tick whose item is no longer in
-  `ITEMS` is ignored.
+  `ITEMS` is ignored. A link viewer cannot tell who ticked a team item, so for them a ticked team
+  item reads "Marked done" and progress counts only the client items.
 
 The owner's agent adds, removes or rewords items in `ITEMS` with `update_artifact`, and never
-renames an `id` (its tick would be left behind). It reads progress with
-`list_artifact_data(id, "ticks")`, and ticks a team item with `write_artifact_data` (with `if_rev`)
-only when the owner asks; that write is stamped with the owner's email and role and `via: agent`,
-so it counts.
+renames an `id` (its tick and note would be left behind). It reads progress with
+`list_artifact_data(id, "ticks")` and notes with `list_artifact_data(id, "notes")`, and ticks a
+team item with `write_artifact_data` (with `if_rev`) only when the owner asks; that write is
+stamped with the owner's email and role and `via: agent`, so it counts.
 
 Invite the client's people with the viewer role, and the owner's colleagues as editors so their
 ticks on team items count.

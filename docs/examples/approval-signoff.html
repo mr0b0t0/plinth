@@ -21,10 +21,14 @@
   nobody can sign for someone else. Shape: { decision: "approve" | "changes", revision: number,
   note: string (at most 1000 characters) }.
 
-  Who signed comes only from Plinth's stamps (createdBy, updatedBy), never from data. A sign-off
-  that someone else changed (the owner or an editor can moderate any document) or that an agent
-  wrote is shown, marked, and not counted. Everyone who can open the page reads every sign-off.
-  Plinth records who clicked and when; this is not an electronic signature.
+  Who signed comes only from Plinth's stamps (createdBy, updatedBy), never from data. Only personal
+  documents count, at most one per person: any writer can also add other documents to the
+  collection, and those are shown, marked, and not counted. So is a sign-off that someone else
+  changed (the owner or an editor can moderate any document) or that an agent wrote. A reader who
+  gets no stamps (a link viewer) cannot tell who signed, so the page does not tell them whether it
+  is approved. A sign-off the owner or an editor deletes leaves no trace on the page. Everyone who
+  can open the page reads every sign-off. Plinth records who clicked and when; this is not an
+  electronic signature.
 
   An agent reads results with list_artifact_data(id, "signoffs"). It changes the subject with
   get_artifact, an edit that bumps data-revision, and update_artifact with base_version and a
@@ -90,6 +94,7 @@
   #status { font-weight: 650; margin: 0 0 12px; }
   #status[data-state="approved"] { color: var(--accent); }
   #status[data-state="changes"] { color: var(--warn); }
+  #status[data-state="unverified"] { color: var(--muted); }
   #me { color: var(--muted); margin: 0 0 8px; font-size: 15px; }
   #me:empty { display: none; }
   label { display: block; font-size: 15px; margin-bottom: 4px; }
@@ -238,17 +243,33 @@ function when(iso) {
   return Number.isNaN(d.getTime()) ? "" : d.toLocaleString();
 }
 
+/** The reader gets Plinth's stamps on this document (link viewers never do). */
+function stamped(doc) {
+  return Boolean(doc.createdBy && doc.updatedBy);
+}
+
 /**
- * A sign-off counts only when the stamps vouch that its person made it, from the page: nobody
- * else changed it since (moderation by the owner or an editor), and no agent wrote it. A reader
- * without stamps (a link viewer) cannot tell, so every sign-off counts in their view.
+ * A sign-off counts only when the stamps vouch that its person made it, from the page: it is a
+ * personal document (only its own person can create one), nobody else changed it since
+ * (moderation by the owner or an editor), and no agent wrote it. Without stamps nothing is vouched.
  */
 function vouched(doc) {
+  if (doc.personal !== true || !stamped(doc)) return false;
   const c = doc.createdBy;
   const u = doc.updatedBy;
-  if (!c && !u) return true;
-  if (!c || !u) return false;
-  return c.via === "page" && u.via === "page" && c.email === u.email;
+  return Boolean(c.email) && c.via === "page" && u.via === "page" && c.email === u.email;
+}
+
+/** The documents that count: vouched, and at most one per person (the oldest). */
+function countedDocs(docs) {
+  const seen = new Set();
+  const out = new Set();
+  for (const doc of docs) {
+    if (!vouched(doc) || seen.has(doc.createdBy.email)) continue;
+    seen.add(doc.createdBy.email);
+    out.add(doc);
+  }
+  return out;
 }
 
 function el(tag, className, text) {
@@ -258,9 +279,8 @@ function el(tag, className, text) {
   return node;
 }
 
-function row(doc, s) {
+function row(doc, s, counted) {
   const li = document.createElement("li");
-  const counted = vouched(doc);
   li.dataset.counted = String(counted);
   li.dataset.decision = s.decision;
   li.append(el("span", "who", who(doc.createdBy)));
@@ -280,7 +300,8 @@ function row(doc, s) {
   } else if (u && u.via === "agent") {
     li.append(el("span", "meta", "changed via agent"));
   }
-  if (!counted) li.append(el("span", "tag", "not counted"));
+  if (stamped(doc) && doc.personal !== true) li.append(el("span", "meta", "not a personal sign-off"));
+  if (!counted && stamped(doc)) li.append(el("span", "tag", "not counted"));
   if (s.note) li.append(el("p", "note", s.note));
   return li;
 }
@@ -292,13 +313,18 @@ function render(docs) {
     if (s) shown.push({ doc, s });
   }
   shown.sort((a, b) => (a.doc.createdAt < b.doc.createdAt ? -1 : 1));
-  list.replaceChildren(...shown.map(({ doc, s }) => row(doc, s)));
+  const counted = countedDocs(shown.map(({ doc }) => doc));
+  list.replaceChildren(...shown.map(({ doc, s }) => row(doc, s, counted.has(doc))));
   empty.hidden = shown.length > 0;
 
-  const current = shown.filter(({ doc, s }) => s.revision === REVISION && vouched(doc));
+  const current = shown.filter(({ doc, s }) => s.revision === REVISION && counted.has(doc));
   const approvals = current.filter(({ s }) => s.decision === "approve").length;
   const changes = current.filter(({ s }) => s.decision === "changes").length;
-  if (changes > 0) {
+  if (shown.some(({ doc }) => !stamped(doc))) {
+    // A link viewer: without stamps the page cannot tell whose sign-offs these are.
+    statusEl.dataset.state = "unverified";
+    statusEl.textContent = "Only people this page was shared with can see whether it is approved.";
+  } else if (changes > 0) {
     statusEl.dataset.state = "changes";
     statusEl.textContent = `Changes requested by ${changes} ${changes === 1 ? "person" : "people"}`;
   } else if (approvals >= REQUIRED) {

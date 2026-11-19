@@ -44,7 +44,7 @@ make a test pass.
 | Page code harvests names and the access list | A page reads `plinth.viewer.name`, its authors' names or `plinth.people.list()` and copies them where link viewers or every viewer can read them | Names appear only where the email already does (`viewer` declared, identified reader); the people list only for owners and editors on a page that declares `data viewer people`, whose author is the owner or an editor; every identified viewer is told, under the bar, that the owner and editors can see everyone the page is shared with; the skill forbids copying the list or emails into shared data. WebRTC stays the known CSP gap ([The people list](#the-people-list)) |
 | Display name used to impersonate | Someone sets their name to "Owner", "ana@example.com" or a right-to-left override that reorders the text around it | Names cannot contain `@` or the two characters that render as one (U+FE6B, U+FF20: every character whose NFKC form is `@`), nor control, bidi, zero-width or separator characters, are cut to 64 code points on every read, and are never authority: `role` and `comment_author_role` stay server-derived and Plinth's own UI shows the role beside them; tool descriptions say names are display text |
 | Enumerating who has an account | A caller tries addresses to learn which ones have a Plinth account or what they are called, for example by adding them as grants on an artifact of their own and reading the people list or the sharing settings back | No route takes an email or a name to look up, and the people list searches only one artifact's access list. Since the owner writes that list without its holders being told, an access list shows a grant holder's name only once that person has taken part in the artifact (a comment, a shared-data entry or a version, which already show their name to the readers of the list), and a name it keeps back is `null` and never matched by `q`, the same as an address with no account (`policy.ts accessListShowsName`) |
-| A participant forges what a page counts | An invited viewer writes another person's sign-off, or ticks a team-only checklist item through the page's runtime | A personal document can be created only by its own person, and every write is stamped by the server; what only the owner's side decides is in the versioned HTML; the example pages count a sign-off only when its own person made its last change from the page, and a team item only when the owner or an editor did ([Example pages and server stamps](#example-pages-and-server-stamps)) |
+| A participant forges what a page counts | An invited viewer writes another person's sign-off, adds extra approval documents that are not their personal one, or ticks a team-only checklist item through the page's runtime | A personal document can be created only by its own person, and every write is stamped by the server; what only the owner's side decides is in the versioned HTML; the example pages count only personal sign-offs, one per person, whose own person made the last change from the page, and a team item only when the owner or an editor made its tick's last change; a link viewer, who gets no stamps, is told that only invited people can see the result. Deletions are not marked: shared data keeps no history ([Example pages and server stamps](#example-pages-and-server-stamps)) |
 | A mention reaches an agent nobody meant | A collaborator writes `@claude-code` for the owner's Claude Code, and an older connection whose name makes the same handle takes it | Only the owner's own connections are ever targets; the Connections page and the naming dialogs show each connection's handle and warn when an older one takes it; a comment written by an agent never creates a task |
 
 Out of scope for v1: denial of service beyond Cloudflare's defaults, a compromised Cloudflare
@@ -1257,11 +1257,24 @@ no server change. What they rely on:
   and people with a grant write, link viewers read only, a personal `u_` document is created only
   by its own person, and the owner and editors may change or delete any document. The pages never
   replace that rule.
-- **What counts is the page's, from the stamps.** A page counts a sign-off only when its creator
-  made its last change from the page (`createdBy` and `updatedBy` agree, `via: "page"`), and a
-  team checklist item only when the owner or an editor made its last change. A moderated sign-off,
-  one an agent wrote, or a team item a viewer ticked through the runtime is shown and marked, never
-  counted. This is display logic on top of server-derived stamps; a page cannot forge a stamp.
+- **What counts is the page's, from the stamps.** A page counts a sign-off only when it is a
+  personal document (`personal`, which only its own person can create) whose creator made its last
+  change from the page (`createdBy` and `updatedBy` agree, `via: "page"`), and at most one per
+  person; and a team checklist item only when the owner or an editor made the last change to its
+  tick. Notes are separate documents, so writing one never changes a tick's stamp. A moderated
+  sign-off, one an agent wrote, an extra document a viewer added, or a team item a viewer ticked
+  through the runtime is shown and marked, never counted. This is display logic on top of
+  server-derived stamps; a page cannot forge a stamp.
+- **No stamps, no verdict.** Link viewers get no stamps, so the pages cannot check whose entries
+  they see. For them the approval page does not say whether the subject is approved and the
+  checklist does not count team items; both say that only invited people can see it.
+- **Deletions leave no mark.** Shared data is not versioned and keeps no record of deleted
+  documents. The owner and editors (and their agents) may delete any sign-off, each person their
+  own, and on the checklist, whose collections are shared, any invited person may delete any tick
+  or note. A deleted entry disappears from the page without a "changed by" mark: an approval page
+  can go from "Changes requested" to "Approved", and a team item back to not done. The pages say
+  so; the owner reads the results with `list_artifact_data` when it matters. Preventing it would
+  need per-collection write rules on the server.
 - **Decisions are versioned.** The subject, its revision, the required approvals, the questions,
   the items and "closed" are in the HTML. Only the owner, editors and their agents publish
   versions, so invited people cannot change them, and every change can be reverted.
