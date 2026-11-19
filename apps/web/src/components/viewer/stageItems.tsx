@@ -53,6 +53,7 @@ import { LiveDraftNotice } from "./LiveDraftNotice.tsx";
 import { PresentStrip } from "./PresentStrip.tsx";
 import { postExport, postPrint, rendererTargetOrigin } from "./rendererProtocol.ts";
 import { SourcesNotice } from "./SourcesNotice.tsx";
+import { replaceSheet, replaceSheetDialog } from "./sheetReplaceItems.tsx";
 import type { Dictation } from "./useDictation.ts";
 import type { LiveEdit } from "./useLiveEdit.ts";
 import type { Presentation } from "./usePresentation.ts";
@@ -240,7 +241,7 @@ export const TYPE_MENU_ITEMS: Partial<Record<ArtifactType, readonly MenuItem[]>>
   slides: [presenterView, printTyped, printWithNotes, downloadPptx],
   design_system: [copyForAgent],
   design: [printTyped, downloadDesign],
-  sheet: [downloadSheet, printTyped],
+  sheet: [downloadSheet, printTyped, replaceSheet],
   whiteboard: [boardSettings],
 };
 
@@ -303,7 +304,12 @@ export function menuEntries(c: StageContext): MenuEntry[] {
 }
 
 /** The dialogs a menu item may open, by id. One dialog per line. */
-export const STAGE_DIALOGS: readonly StageDialog[] = [boardSettingsDialog, askAgentDialog];
+// biome-ignore format: one dialog per line, so each feature adds its own line
+export const STAGE_DIALOGS: readonly StageDialog[] = [
+  boardSettingsDialog,
+  askAgentDialog,
+  replaceSheetDialog,
+];
 
 // ---------- the bar's controls ----------
 

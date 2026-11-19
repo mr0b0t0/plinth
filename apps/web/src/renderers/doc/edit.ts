@@ -270,6 +270,39 @@ export class DocEditor {
     // view mode keeps the page's own addresses, as before.
     pinFiles(this.root, this.editing ? (this.hooks.fileVersion?.() ?? null) : null);
     if (this.field) this.grow(this.field);
+    this.tryFirst();
+  }
+
+  // ---------- `?edit`: the first block, open for typing ----------
+
+  /** The app started editing from `?edit` (New and Import): open the first block once drawn. */
+  private wantFirst = false;
+
+  focusFirst(): void {
+    this.wantFirst = true;
+    this.tryFirst();
+  }
+
+  /**
+   * Once the draft is here: open the doc's first block (a new doc's title) so the person types
+   * into it. When that block is someone else's, or this person cannot write now, the block only
+   * takes the focus, and nothing is asked of the room.
+   */
+  private tryFirst(): void {
+    const b = this.backend;
+    if (!this.wantFirst || !this.editing || !b.ready) return;
+    this.wantFirst = false;
+    const first = parseBlocks(joinLines(b.lines)).find((x) => x.end > x.start);
+    if (!first) {
+      this.openInsert(0);
+      return;
+    }
+    if (b.you?.right !== "write" || b.conflictVersion !== null || this.heldBy(first)) {
+      const el = [...this.root.children].find((n) => rangeOf(n)?.start === first.start);
+      (el as HTMLElement | undefined)?.focus();
+      return;
+    }
+    this.open(first);
   }
 
   private decorate(el: Element, held: boolean): void {
@@ -314,6 +347,7 @@ export class DocEditor {
       this.root.removeEventListener("keydown", this.onKey);
       this.win.removeEventListener("keydown", this.onSaveKey);
       this.hideNotice();
+      this.wantFirst = false;
     }
     this.render();
     this.hooks.status();

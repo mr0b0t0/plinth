@@ -103,6 +103,7 @@ make a test pass.
 | A request looks sent to an agent that cannot take it | Ask an agent names Claude while the owner's only Claude token was revoked, is limited to one artifact or lacks `mentions`, so the person waits on a request no agent will ever see | `request_to` is checked against the owner's connections that could claim it (`takesRequests`), and refused with `no_agent` before anything is written; the gate lists only those client types ([Ask an agent](#ask-an-agent)) |
 | A forged `ask` from the frame | A document the frame navigated to, or another window, posts `ask` to open the Ask dialog with an anchor of its choosing | In edit mode `ask` is an editing message: the frame window, the exact content origin and the frame key are checked, and the anchor must be a structural key (`PAGE_ANCHOR_KEY_RE`) and short plain text; at worst it prefills a dialog the person must still write and post ([Ask an agent](#ask-an-agent)) |
 | A request carries the owner's authority it does not have | A commenter's Ask an agent request says "share this with everyone", or the owner's own request is quoted back to the agent by a commenter | A request is an ordinary mention: untrusted text, described as such in `list_mentions` and the untrusted note; only `comment_author_role`, derived by the server, says whether the owner sent it ([Ask an agent](#ask-an-agent)) |
+| A spreadsheet file attacks the app, or a replacement lands under someone's work | A crafted .xlsx or CSV picked for Import or "Replace with a file…" exhausts or runs something in the app; a replacement is saved over a version an agent or an editor published since the file was chosen, or over unpublished page changes | The app sends the file as it is and never parses it: the Worker's bounded importer converts and checks it, and its refusal comes back as text; the replacement carries `base_version` (a newer version gets 409 and a second confirmation) and is off while page changes exist or someone edits on the page ([New and Import](#new-and-import)) |
 
 Out of scope for v1: denial of service beyond Cloudflare's defaults, a compromised Cloudflare
 account, and malicious instance operators.
@@ -2666,6 +2667,39 @@ there is what it has to keep.
 - **No source in History.** The source diff is gone: neither History nor Compare shows a version's
   source text. The source stays readable to agents (MCP, REST, the CLI and `GET /a/<slug>/source`,
   which is plain text and linked only from discovery tags).
+
+## New and Import
+
+The dashboard's New and Import, and a sheet's "Replace with a file…" (spec: "New and Import"),
+are the app calling the REST routes agents use, with the signed-in session. Nothing new is
+reachable from a page or from another site: no route, content-host endpoint, cookie, CSP, sandbox
+flag, env var or MCP tool was added.
+
+- **Same route, same checks.** A blank artifact or an import is `POST /api/v1/artifacts`, and a
+  replacement is `PUT /api/v1/artifacts/:ref`, with the CSRF token and the exact `Origin` check
+  of every cookie-authenticated write (`Origin: null` from an artifact frame is refused), the
+  publish rate, the artifact and storage quotas, and `mayCreateArtifacts` (a token limited to one
+  artifact never creates one). A replacement runs under the `edit` action in `policy.ts`, like any
+  update. A new artifact is private (allowlist) until its owner shares it.
+- **No silent overwrite.** "Replace with a file…" sends the version on screen as `base_version`,
+  so a version published since the file was chosen is refused with 409 and the person is asked
+  again, naming that version. The item is off while the sheet has unpublished page changes or
+  someone is editing it on the page, so a replacement never lands under a shared draft.
+- **Files are read on the server only.** The app sends a picked file as it is (CSV and TSV as
+  text, an .xlsx as base64) and never parses it: the bounded importer of
+  [Sheets](#sheets) converts and checks it, and its refusal reaches the app as a sentence and cell
+  messages, rendered as React text nodes. The app bundle carries no spreadsheet reader, so a
+  crafted file cannot run or exhaust anything on the app origin. The app checks only the name and
+  the 2 MB limit before sending; the Worker checks both again.
+- **v1's note.** `POST /api/v1/artifacts` takes `note` for v1 (the zod note schema, at most 500
+  characters), which History shows as text. MCP's `publish_artifact` does not list it.
+- **`?edit` starts editing only where the gate allows it.** The page starts edit mode from `?edit`
+  only when the gate has `live` (an owner or editor of a live type on the current version, signed
+  in, under origin isolation), as the Edit toggle does. The `focus: "first"` it adds to the `edit`
+  message goes to the frame the app holds, at its exact content origin, like every editing message
+  ([Inline editing](#inline-editing)); in the frame it only moves focus or asks the room for a
+  lease, which the room checks as it checks a click. A link someone sends with `?edit` opens edit
+  mode for its reader only where they could press Edit themselves, and edits nothing by itself.
 
 ## Operator checklist for the content domain
 

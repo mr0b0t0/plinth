@@ -129,7 +129,11 @@ export interface LiveEdit {
   pause: WatchPause;
   /** Room mode with the frame connected: the shared draft can be published or discarded here. */
   roomReady: boolean;
-  start(): void;
+  /**
+   * Turn edit mode on. `focus: "first"` (`?edit`, from New and Import): the frame gets the focus,
+   * on its first block or cell, once it has loaded and turned editing on.
+   */
+  start(opts?: { focus?: "first" }): void;
   /** Finish editing (publishing dirty edits first); false when it stayed in edit mode. */
   done(): Promise<boolean>;
   publish(note?: string): Promise<void>;
@@ -304,6 +308,8 @@ export function useLiveEdit({
   const onResolvedRef = useRef<(m: Extract<FrameMessage, { type: "resolved" }>) => void>(
     () => undefined,
   );
+  /** Editing was started from `?edit`: the next edit message asks for focus on the first place. */
+  const focusFirst = useRef(false);
 
   useEffect(() => {
     if (!available) return;
@@ -333,6 +339,8 @@ export function useLiveEdit({
           ) {
             setRebasedVersion(next.base_version);
           }
+          // The frame turned editing on: a `focus: "first"` it was sent has been acted on.
+          if (next.editing) focusFirst.current = false;
           setStatus(next);
         },
         save() {
@@ -368,7 +376,12 @@ export function useLiveEdit({
     if (!available || !frame) return;
     if (!editing && !told.current) return;
     told.current = editing;
-    const send = () => postToRenderer(frame, target, editMessage(editing, soloBase));
+    const send = () => {
+      const focus = editing && focusFirst.current ? ("first" as const) : undefined;
+      // The frame's own focus() moves the keyboard only once its window has the focus.
+      if (focus) frame.focus();
+      postToRenderer(frame, target, editMessage(editing, soloBase, focus));
+    };
     send();
     frame.addEventListener("load", send);
     return () => frame.removeEventListener("load", send);
@@ -591,12 +604,16 @@ export function useLiveEdit({
 
   // ---------- starting and finishing ----------
 
-  const start = useCallback(() => {
-    if (!available || signIn) return;
-    setSavedVersion(null);
-    setRebasedVersion(null);
-    setEditing(true);
-  }, [available, signIn]);
+  const start = useCallback(
+    (opts?: { focus?: "first" }) => {
+      if (!available || signIn) return;
+      focusFirst.current = opts?.focus === "first";
+      setSavedVersion(null);
+      setRebasedVersion(null);
+      setEditing(true);
+    },
+    [available, signIn],
+  );
 
   const done = useCallback(async (): Promise<boolean> => {
     const s = latest.current.status;

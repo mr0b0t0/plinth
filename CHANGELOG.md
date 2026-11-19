@@ -10,6 +10,13 @@ Add a line under **Unreleased** in the pull request that makes a change people w
 
 ## Unreleased
 
+- **New and Import.** **New** on the dashboard starts a blank document or sheet that opens
+  straight in edit mode, with the focus on its title or first cell (where editing on the page is
+  on), or imports a spreadsheet (.xlsx, .csv or .tsv) as a new sheet, converted by Plinth as it is
+  for agents. A sheet's ⋯ menu has **Replace with a file…**, which makes the next version from a
+  file and keeps the link, sharing and comments; it asks again when a newer version was published
+  meanwhile, and waits while there are unpublished changes on the page. HTML pages and designs
+  still come only from agents. `POST /api/v1/artifacts` takes `note` for the first version.
 - **Ask an agent.** People change an HTML page or a design by asking the owner's agent: **Ask an
   agent** (in the bar for owners and editors, in the ⋯ menu for commenters and at phone width, and
   on the dashboard card) opens the comments panel in request mode, where they point at an element

@@ -161,6 +161,18 @@ export const publishArtifactInput = z.object({
 });
 export type PublishArtifactInput = z.input<typeof publishArtifactInput>;
 
+/**
+ * POST /api/v1/artifacts: the publish, plus v1's version note, which the app's New and Import set
+ * ("Created in the app", "Imported from sales.xlsx"). MCP's publish_artifact takes
+ * publishArtifactInput, without it.
+ */
+export const restPublishArtifactInput = publishArtifactInput.extend({
+  note: noteSchema
+    .optional()
+    .describe('A note for v1, shown in History (e.g. "Imported from sales.xlsx"). Empty: none'),
+});
+export type RestPublishArtifactInput = z.input<typeof restPublishArtifactInput>;
+
 export const updateArtifactInput = z.object({
   id: artifactRefSchema,
   /** The field matching the artifact's type: html for a page, content for a doc. No type: fixed. */

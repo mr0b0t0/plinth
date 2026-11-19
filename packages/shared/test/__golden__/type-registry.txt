@@ -46,7 +46,12 @@
         "language": "markdown",
         "wordWrap": "on"
       },
-      "edit": "live"
+      "edit": "live",
+      "create": {
+        "label": "Document",
+        "title": "Untitled document",
+        "content": "# Untitled document\n"
+      }
     }
   ],
   [
@@ -167,7 +172,12 @@
         "language": "plaintext",
         "wordWrap": "off"
       },
-      "edit": "live"
+      "edit": "live",
+      "create": {
+        "label": "Sheet",
+        "title": "Untitled sheet",
+        "content": "{\"plinth\":\"sheet\",\"v\":1,\"columns\":[{\"name\":\"Column 1\",\"type\":\"text\"},{\"name\":\"Column 2\",\"type\":\"text\"},{\"name\":\"Column 3\",\"type\":\"text\"}]}\n[]\n[]\n[]\n[]\n[]\n[]\n[]\n[]\n[]\n[]\n[]\n[]\n[]\n[]\n[]\n[]\n[]\n[]\n[]\n[]"
+      }
     }
   ],
   [

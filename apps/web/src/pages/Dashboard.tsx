@@ -3,7 +3,8 @@
 // ?category=), and the artifact quota. A category is the owner's own on their artifacts and the
 // person's own on artifacts shared with them (issue #42). With category sharing on, the owner shares
 // a category from here, reviews what waits in a shared one (?review=<share id>), and the Shared tab
-// links the collections other people shared with them.
+// links the collections other people shared with them. "New" (NewMenu.tsx) starts a blank document
+// or sheet that opens in edit mode, or imports a spreadsheet as a sheet.
 import {
   ArrowsDownUpIcon,
   FolderSimpleIcon,
@@ -47,6 +48,7 @@ import {
   useSignOut,
 } from "../components/account/hooks.tsx";
 import { MyCategoryDialog } from "../components/account/MyCategoryDialog.tsx";
+import { NewMenu, newHint } from "../components/account/NewMenu.tsx";
 import { Note } from "../components/account/Note.tsx";
 import { CONNECT_AGENT_HREF } from "../components/account/nav.ts";
 import { RenameCategoryDialog } from "../components/account/RenameCategoryDialog.tsx";
@@ -459,7 +461,19 @@ export default function Dashboard() {
   );
 
   return (
-    <AppShell onSignOut={signOut} title="Artifacts" actions={nothingYet ? undefined : searchField}>
+    <AppShell
+      onSignOut={signOut}
+      title="Artifacts"
+      actions={
+        // With nothing yet, New stands in the empty state, beside Connect an agent.
+        nothingYet ? undefined : (
+          <>
+            {searchField}
+            {me && <NewMenu config={config} />}
+          </>
+        )
+      }
+    >
       {!nothingYet && list.status !== "error" && (
         <div className="pl-dash-bar" ref={barRef}>
           <SegmentedControl<Filter>
@@ -576,6 +590,7 @@ export default function Dashboard() {
                 Connect an agent, then ask it to publish something. Whatever it publishes stands
                 here, and you decide who can see it.
               </p>
+              {newHint(config) && <p>{newHint(config)}</p>}
               <CopyField
                 label="MCP server URL"
                 value={mcpUrl(config?.app_origin)}
@@ -585,9 +600,12 @@ export default function Dashboard() {
             </div>
           }
           action={
-            <ButtonLink to={CONNECT_AGENT_HREF} variant="primary" icon={PlugIcon}>
-              Connect an agent
-            </ButtonLink>
+            <span className="pl-dash__empty-actions">
+              <ButtonLink to={CONNECT_AGENT_HREF} variant="primary" icon={PlugIcon}>
+                Connect an agent
+              </ButtonLink>
+              {me && <NewMenu config={config} variant="secondary" />}
+            </span>
           }
         />
       ) : items.length === 0 ? (

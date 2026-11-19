@@ -1990,7 +1990,9 @@ editors also edit a sheet on its page, live with each other
   The import is checked like any sheet and stored as JSON lines. The source editor's "Import CSV or
   .xlsx" converts a file the same way in the browser and puts it in the draft; nothing is sent
   until Save. The CLI publishes one `.csv` or `.xlsx` file as a new sheet, or the next version of
-  `--id`.
+  `--id`. In the app, the dashboard's "Import a spreadsheet" and a sheet's "Replace with a file…"
+  send the file to the Worker, which converts it the same way ([New and
+  Import](#new-and-import-decided-2026-11-19)).
 - **Agents.** `read_sheet(id, version?, range?, values?, limit_cells?)` returns the columns (with
   their letters, types and formats) and the cells of an A1 range (default every data row), a
   formula as `{f, v}`, every other cell as itself, at most `limit_cells` cells (default 2,000, at
@@ -2673,6 +2675,58 @@ authority, whoever sends it (only `comment_author_role` says the owner did).
   comments panel. Nothing changes on the content host or in the frames' sandbox.
 - **No setting.** Ask an agent adds no env var, table or route: it is a field on the comment route
   and two gate parts.
+
+### New and Import (decided 2026-11-19)
+
+People start documents and sheets in the app, and bring in spreadsheets they already have. HTML
+pages and designs come only from agents.
+
+- **New.** The dashboard's **New** button (in the top bar; while there is nothing yet, in the empty
+  state beside "Connect an agent") opens a menu built from the type registry's `create` rows:
+  "Document" and "Sheet", then "Import a spreadsheet (.xlsx, .csv)…", then "Connect an agent",
+  described "Pages and designs are made by your agents.". The blank items are offered only where
+  editing on the page works here (`inline_editing` in `GET /api/v1/config` is not null) and for
+  types the instance publishes now (`artifact_types`); Import is offered wherever sheets are. Only
+  types edited on the page have a `create` row (docs and sheets).
+- **A blank artifact is a placeholder v1.** New publishes the type's `create` row with the signed-in
+  session over `POST /api/v1/artifacts`, the route agents use: a doc titled "Untitled document"
+  whose Markdown is `# Untitled document`, or a sheet titled "Untitled sheet" with three text
+  columns, "Column 1" to "Column 3", and 20 empty rows. v1 has the note "Created in the app", and
+  the first Publish on the page makes v2. A version is never empty and an artifact always has a
+  current version, so the starter content is v1. It is private, like every publish, and counts
+  toward `MAX_PUBLISHES_PER_HOUR`, the artifact quota and the storage quota. A token limited to one
+  artifact cannot create one (`mayCreateArtifacts`), as everywhere.
+- **Import.** A file input for `.xlsx`, `.csv` and `.tsv`, at most 2 MB. The app sends the file as
+  it is: CSV and TSV as text and an .xlsx as base64, with `content_format` `csv` or `xlsx`, the
+  file name without its extension as the title, and the note "Imported from <file name>". The
+  Worker converts and checks it exactly as it does for agents (see Imports under
+  [Sheets](#sheets-decided-2026-11-19)), so the app carries no spreadsheet reader of its own. A
+  refusal shows the Worker's sentence and the cells it names ("B7: …"), never code. The sheet then
+  opens in edit mode where editing on the page works, and on its page otherwise.
+- **`?edit` starts editing.** On the artifact page, `?edit` for an owner or editor who may edit
+  there (the gate's `live`, without `sign_in`) is dropped from the address and the page opens in
+  edit mode. The app focuses the frame and posts `edit { on: true, focus: "first" }` (again on the
+  frame's load, until the frame reports that it is editing). Once the draft is drawn, the doc
+  renderer opens the first block for typing, so a new doc's title takes the keyboard, and the
+  sheet renderer focuses cell A2 (A1 when there are no rows). When someone else holds that block,
+  or the person cannot write, it only takes the focus and nothing is asked of the room. Every
+  other case of `?edit` is described under [Ask an agent](#ask-an-agent-decided-2026-11-19).
+- **Replace with a file.** A sheet's ⋯ menu has "Replace with a file…" for owners and editors on
+  the current version. It takes the same files and limits as Import and confirms first ("This
+  makes v6 from sales.xlsx. Comments and sharing stay. v5 stays in history."), then sends `PUT
+  /api/v1/artifacts/:ref` with `content_format`, `content`, `base_version` (the version on screen)
+  and the note "Replaced from <file name>". The new version keeps the link, the sharing and the
+  comments. When a newer version was published since, the save is refused (409) and the dialog
+  asks again against it ("v6 was published by Ana since you chose the file. Replace v6 too?"), or
+  the person cancels. While the sheet has unpublished changes on its page or someone is editing it
+  there, the item is off and says "Publish or discard the unpublished changes first", so a
+  replacement never races a shared draft. After a replace the page shows the new version.
+- **Where editing on the page is off** (`ALLOW_LIVE_EDITING=false`, opaque isolation, the path
+  fallback): New offers only Import, and an imported sheet opens on its page. Import and "Replace
+  with a file…" are ordinary app requests and work in every isolation mode.
+- **REST.** `POST /api/v1/artifacts` takes `note`, v1's version note (at most 500 characters,
+  trimmed; empty for none). MCP's `publish_artifact` does not list it. New and Import add no
+  route, table, env var or MCP tool.
 
 ### Big builds and reuse by hash
 

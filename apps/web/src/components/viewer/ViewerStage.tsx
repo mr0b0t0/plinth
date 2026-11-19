@@ -44,6 +44,7 @@ import {
   type StageItem,
 } from "./stageItems.tsx";
 import { useDictation } from "./useDictation.ts";
+import { useEditStart } from "./useEditStart.ts";
 import { useLiveEdit } from "./useLiveEdit.ts";
 import { useLiveDataRelay } from "./useLiveView.ts";
 import { usePresentation } from "./usePresentation.ts";
@@ -219,6 +220,8 @@ export function ViewerStage({
     onAsk: (anchor) => askFromFrame.current(pageAnchorOf(anchor)),
   });
   const editing = live.editing;
+  // `?edit` (New and Import): start editing, with the focus on the frame's first block or cell.
+  useEditStart(live);
   // Presenting a deck: the slide, full screen, presenter view and its audience window.
   const present = usePresentation({ gate, frame, contentOrigin, config, slug, pinned });
   const pause: WatchPause = live.pause ?? present.pause;
