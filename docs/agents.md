@@ -505,6 +505,19 @@ never need to tell anyone to reload. Pages that keep shared data get `onSnapshot
 way; do not shorten `intervalMs` to make them faster. With `ALLOW_LIVE_VIEWS=false`, or without the
 `ROOMS` binding, pages poll every 15 s as before.
 
+## Keeping state across versions
+
+When a new version reaches an open view, a doc updates in place (the reader keeps their place),
+and a page that loads `/__plinth/runtime.js` keeps its scroll position and where it was inside the
+artifact. Hand anything else to the next version with `plinth.onVersion(() => ({ state }))` (JSON,
+at most 16 KiB) and read it back once as `plinth.carried`; return `false` only while the viewer has
+unsaved input, and the page waits behind an Update notice. A page without the runtime where people
+type can declare `hold` in `plinth-capabilities`: while focus is in it, a new version waits for
+the viewer's Update. Every other page is replaced at once, as before
+([spec](spec.md#live-views-decided-2026-11-19),
+[security](security.md#keeping-state-across-versions)). With `ALLOW_LIVE_VIEWS=false` every new
+version reloads the frame.
+
 ## Project files for a page
 
 A page that shows or works on files from the project (a log viewer, a CSV explorer, a code tour)
