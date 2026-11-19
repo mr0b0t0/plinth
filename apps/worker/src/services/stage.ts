@@ -23,6 +23,7 @@ import { hashToken, newArtifactId, newId, randomString } from "../lib/crypto.ts"
 import { ApiError, isUniqueViolation, notFound, unauthorized } from "../lib/errors.ts";
 import { enforce } from "../lib/ratelimit.ts";
 import { nowIso } from "../lib/time.ts";
+import { mayCreateArtifacts } from "../policy.ts";
 import { getVersionRow, requireArtifact } from "./artifacts.ts";
 import { checkAsset, requireTypeDef, resolveSource, typeHooks } from "./artifactTypes.ts";
 import {
@@ -191,6 +192,19 @@ export async function newArtifactTarget(
   input: { type: ArtifactType; title?: string; category?: string; artifactId?: string },
 ): Promise<VersionTarget> {
   const actor = requireActor(ctx);
+  // A token limited to one artifact never creates one (policy.mayCreateArtifacts): publish_artifact,
+  // POST /artifacts, start_upload and POST /uploads without id, and a publish ticket's redeem. The
+  // message does not echo the artifact's id.
+  if (!mayCreateArtifacts(ctx.principal)) {
+    throw new ApiError(
+      "forbidden",
+      "This token is limited to one artifact and cannot create artifacts",
+      {
+        reason: "token_bound",
+        next: "Publish a new version of that artifact (pass its id), or use a token without that limit",
+      },
+    );
+  }
   if (ctx.principal.kind === "agent" && !ctx.principal.scopes.has("artifacts:write")) {
     throw new ApiError("forbidden", "This token lacks the artifacts:write scope");
   }

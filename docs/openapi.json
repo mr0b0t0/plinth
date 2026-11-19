@@ -51,7 +51,9 @@
         "responses": {
           "200": {
             "description": "Success",
-            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Me" } } }
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/MeOrBound" } }
+            }
           },
           "401": { "$ref": "#/components/responses/E401" },
           "default": { "$ref": "#/components/responses/Error" }
@@ -239,7 +241,7 @@
       "post": {
         "operationId": "createToken",
         "summary": "Create a personal access token",
-        "description": "The token is returned once. Only its hash is stored.",
+        "description": "The token is returned once. Only its hash is stored. With `artifact` (an id or slug you own or edit), the token is limited to that artifact: it may read it and publish new versions of it, nothing else (every other call answers 403 with reason `token_bound`, and every other artifact 404). It holds `artifacts:read` and, by default, `artifacts:write`; never `mentions`.",
         "tags": ["Connections"],
         "requestBody": {
           "required": true,
@@ -257,6 +259,7 @@
           "400": { "$ref": "#/components/responses/E400" },
           "401": { "$ref": "#/components/responses/E401" },
           "403": { "$ref": "#/components/responses/E403" },
+          "404": { "$ref": "#/components/responses/E404" },
           "default": { "$ref": "#/components/responses/Error" }
         },
         "security": [{ "sessionCookie": [], "csrfHeader": [] }]
@@ -2181,7 +2184,8 @@
             "minItems": 1,
             "type": "array",
             "items": { "type": "string", "enum": ["artifacts:read", "artifacts:write", "mentions"] }
-          }
+          },
+          "artifact": { "type": "string", "minLength": 1, "maxLength": 200 }
         },
         "required": ["label"]
       },
@@ -3513,7 +3517,11 @@
           },
           "created_at": { "type": "string", "format": "date-time" },
           "last_used_at": { "type": ["string", "null"], "format": "date-time" },
-          "revoked_at": { "type": ["string", "null"], "format": "date-time" }
+          "revoked_at": { "type": ["string", "null"], "format": "date-time" },
+          "artifact": {
+            "oneOf": [{ "$ref": "#/components/schemas/BoundArtifactInfo" }, { "type": "null" }],
+            "description": "The one artifact a personal access token is limited to; null for an account-wide token or an OAuth connection"
+          }
         },
         "required": [
           "id",
@@ -3523,8 +3531,21 @@
           "scopes",
           "created_at",
           "last_used_at",
-          "revoked_at"
+          "revoked_at",
+          "artifact"
         ]
+      },
+      "BoundArtifactInfo": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "slug": {
+            "type": ["string", "null"],
+            "description": "null once you may no longer view the artifact (deleted, taken down, unshared)"
+          },
+          "title": { "type": ["string", "null"], "description": "As slug. Untrusted text." }
+        },
+        "required": ["id", "slug", "title"]
       },
       "ConnectionList": {
         "type": "object",
@@ -3554,7 +3575,11 @@
           "created_at": { "type": "string", "format": "date-time" },
           "artifact_limit": { "type": "integer" },
           "artifact_count": { "type": "integer" },
-          "is_admin": { "type": "boolean" }
+          "is_admin": { "type": "boolean" },
+          "connection": {
+            "oneOf": [{ "$ref": "#/components/schemas/MeConnection" }, { "type": "null" }],
+            "description": "The bearer connection making the call; null for a signed-in person"
+          }
         },
         "required": [
           "id",
@@ -3563,8 +3588,54 @@
           "created_at",
           "artifact_limit",
           "artifact_count",
-          "is_admin"
+          "is_admin",
+          "connection"
         ]
+      },
+      "BoundMe": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string", "description": "The token's person" },
+          "connection": { "$ref": "#/components/schemas/MeConnection" }
+        },
+        "required": ["id", "connection"]
+      },
+      "MeOrBound": {
+        "oneOf": [
+          { "$ref": "#/components/schemas/Me" },
+          { "$ref": "#/components/schemas/BoundMe" }
+        ],
+        "description": "The account (Me), or, for a token limited to one artifact, only the person's id and the connection (BoundMe)"
+      },
+      "MeConnection": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": ["string", "null"],
+            "description": "null for the single-user ADMIN_TOKEN"
+          },
+          "label": { "type": "string" },
+          "bound": {
+            "type": "boolean",
+            "description": "The token is limited to one artifact (it may only read it and publish new versions of it)"
+          },
+          "artifact": {
+            "oneOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "id": { "type": "string" },
+                  "slug": { "type": "string" },
+                  "title": { "type": "string", "description": "Untrusted text" }
+                },
+                "required": ["id", "slug", "title"]
+              },
+              { "type": "null" }
+            ],
+            "description": "The artifact a bound token is limited to, while its person may view it; null otherwise"
+          }
+        },
+        "required": ["id", "label", "bound", "artifact"]
       },
       "AppConfig": {
         "type": "object",

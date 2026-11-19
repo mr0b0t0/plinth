@@ -1,0 +1,83 @@
+name: Publish to Plinth
+description: Publish a build folder or one HTML or Markdown file to Plinth as the next version of an artifact
+author: mr0b0t0
+branding:
+  icon: upload-cloud
+  color: gray-dark
+inputs:
+  token:
+    description: "A Plinth personal access token, ideally one limited to the artifact. Pass a secret: ${{ secrets.PLINTH_TOKEN }}"
+    required: true
+  path:
+    description: A build folder with index.html (or content.md) at its top, or one .html or .md file
+    required: true
+  id:
+    description: "The artifact to update (id or slug). Empty: the token's artifact if it is limited to one, else a new private artifact"
+    required: false
+    default: ""
+  url:
+    description: The Plinth instance the token was made on
+    required: false
+    default: https://plinth.aconite.io
+  title:
+    description: Title of a new artifact (ignored on updates)
+    required: false
+    default: ""
+  category:
+    description: Category of a new artifact (ignored on updates; change it on the artifact's Settings page)
+    required: false
+    default: ""
+  note:
+    description: 'Version note. Empty: the commit subject and short SHA. "-": no note'
+    required: false
+    default: ""
+  link-run:
+    description: Append this run's URL to the note (shows the repository to everyone who can view the artifact)
+    required: false
+    default: "false"
+  base-version:
+    description: Publish only if the artifact is still at this version (exit 3 otherwise)
+    required: false
+    default: ""
+  include-maps:
+    description: Also send source maps
+    required: false
+    default: "false"
+  dry-run:
+    description: Check and report what would be sent; publish nothing
+    required: false
+    default: "false"
+  fail-on-warnings:
+    description: Fail the step when the publish reports warnings to fix (it is still published; not_scanned and live_draft never fail it)
+    required: false
+    default: "false"
+  summary:
+    description: Write a job summary
+    required: false
+    default: "true"
+outputs:
+  id:
+    description: The artifact's id
+  slug:
+    description: The artifact's slug
+  version:
+    description: The version now current
+  url:
+    description: The artifact's page (always the latest version)
+  version-url:
+    description: This version's permanent page
+  compare-url:
+    description: The rendered comparison with the previous version (empty for v1)
+  outcome:
+    description: published, nothing_to_publish, already_published, dry_run, conflict, unknown or error
+  current-version:
+    description: On a conflict, the version someone else published
+  verified:
+    description: true when every file was read back and matched
+  warnings:
+    description: The number of publish warnings to fix (not counting not_scanned and live_draft)
+  json:
+    description: "The CLI's --json output. It holds the artifact's title and warning text: untrusted, never paste it into a script"
+runs:
+  using: node24
+  main: main.mjs

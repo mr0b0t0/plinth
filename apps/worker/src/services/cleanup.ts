@@ -36,6 +36,18 @@ export const ARTIFACT_WIPE: readonly ArtifactWipeStep[] = [
     claimsAttempts: true,
     statements: (d1, id, now) => [claimArtifactAttempts(d1, id, now)],
   },
+  // Tokens limited to the artifact (0012_bound_tokens) are revoked: they can never act again, and
+  // the row stays on its person's Connections page until the artifact's erase removes it.
+  {
+    tables: ["agent_connections"],
+    statements: (d1, id, now) => [
+      d1
+        .prepare(
+          "UPDATE agent_connections SET revoked_at = ?1 WHERE artifact_id = ?2 AND revoked_at IS NULL",
+        )
+        .bind(new Date(now).toISOString(), id),
+    ],
+  },
 ];
 
 /**

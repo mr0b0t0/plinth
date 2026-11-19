@@ -6,7 +6,7 @@
 // in list_comments and list_mentions; the design_system type: get_design_system, list_artifacts'
 // type filter, the publish and update notes, and the server instructions' design system sentence;
 // the slides type: its publish note, the type and content descriptions and the instructions' deck
-// sentence).
+// sentence; publishing from CI: the instructions' sentence on tokens limited to one artifact).
 import { describe, expect, it } from "vitest";
 import { PREVIEW_RESOURCE_URI } from "../src/mcp/preview.ts";
 import { agent, mcpClient } from "./helpers.ts";
@@ -54,7 +54,7 @@ const NAMES = [
 ];
 
 const RESOURCES = "8c9a70350ae4c13067ef489e651d5f5eafe12471c2c63f7c925f9d3bf5bf5e78";
-const INSTRUCTIONS = "ca1a080e217664904532f73f57a349d6f22e0f6382606e142f26837a6fe153e7";
+const INSTRUCTIONS = "8daece5aa1ae373f7bf0790a789834c922c56339db2a009b44e928ad9d831d4c";
 
 describe("MCP surface (golden)", () => {
   it("origin isolation", async () => {

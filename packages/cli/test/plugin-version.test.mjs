@@ -185,3 +185,37 @@ describe("PLUGIN.skillHash", () => {
     assert.notEqual(pluginSourcesHash(d), h);
   });
 });
+
+describe("the GitHub Action's pins (publishing from CI)", () => {
+  const semver = (v) => v.split(/[.-]/).slice(0, 3).map(Number);
+  const atLeast = (a, b) => {
+    const [x, y] = [semver(a), semver(b)];
+    for (let i = 0; i < 3; i++) if (x[i] !== y[i]) return x[i] > y[i];
+    return true;
+  };
+
+  it("pins a release tag no older than the CLI, and every doc pins the same one", async () => {
+    const { ACTION_REF, CI_CLI_VERSION } = await import("../../shared/src/ci.ts");
+    const { CI_PINNED, ciPinsIn } = await import("../../../scripts/ci-pins.mjs");
+    const cli = JSON.parse(readFileSync(path.join(root, "packages/cli/package.json"), "utf8"));
+    assert.match(ACTION_REF, /^mr0b0t0\/plinth\/publish@v\d+\.\d+\.\d+$/);
+    assert.equal(ACTION_REF, `mr0b0t0/plinth/publish@v${CI_CLI_VERSION}`);
+    // pnpm release moves the pin to the version it releases; it is never behind the CLI.
+    assert.ok(atLeast(CI_CLI_VERSION, cli.version), `${CI_CLI_VERSION} < ${cli.version}`);
+    for (const rel of CI_PINNED) {
+      const pins = ciPinsIn(readFileSync(path.join(root, rel), "utf8"));
+      assert.ok(pins.length > 0, `${rel} pins nothing`);
+      for (const p of pins) assert.equal(p, CI_CLI_VERSION, rel);
+    }
+  });
+
+  it("pnpm release rewrites every Action and CLI pin, and nothing else", async () => {
+    const { withCiPins } = await import("../../../scripts/ci-pins.mjs");
+    const text =
+      "uses: mr0b0t0/plinth/publish@v0.6.0\nnpx --yes @mr0b0t0/plinth@0.6.0 publish\nother@v0.6.0";
+    assert.equal(
+      withCiPins(text, "0.7.0"),
+      "uses: mr0b0t0/plinth/publish@v0.7.0\nnpx --yes @mr0b0t0/plinth@0.7.0 publish\nother@v0.6.0",
+    );
+  });
+});

@@ -29,6 +29,7 @@ const existing = (label: string, revoked = false): ConnectionInfo => ({
   created_at: "2026-11-01T00:00:00Z",
   last_used_at: null,
   revoked_at: revoked ? "2026-11-02T00:00:00Z" : null,
+  artifact: null,
 });
 
 // Same page plus a hash: happy-dom treats it as a fragment change, not a navigation.

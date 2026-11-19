@@ -32,6 +32,8 @@ make a test pass.
 | A page drives the comment composer | A page that declares `comments` opens the composer again and again, swaps the anchor under a comment someone is writing, prefills `@claude ...` for a collaborator to click through, or reads comment text through the channel | The page can only open the composer: it never posts and cannot fill in the text; at most one compose a second, none while the tab is hidden or a dialog is open, none before the page said hello; a closed panel reopened at most once a second, by compose and `open` together; `busy` and no change while someone is writing; no page request moves focus, so keystrokes meant for the page never land in the composer; the frame is told ids, pins, status and anchors only ([Comments from the page](#comments-from-the-page)) |
 | Design system injects into pages built from it | A design system's token value or CSS closes a `<style>` element, imports a stylesheet from another host, or carries a script that an agent copies into a page | One value grammar for every string that reaches CSS (no `;`, braces, `<`, `>`, `\`, `@`, quotes or line breaks, no `url(`), font names quoted by Plinth, no `<` or `@import` in CSS blocks; `get_design_system` marks every field untrusted and tells agents never to copy scripts or handlers; the page's own CSP still applies ([Design systems](#design-systems)) |
 | A page steers the app through a deck's messages | A script on another frame posts look-alike `position` or `fullscreen` messages to the app page | Deck messages are accepted only from the window of the frame the app holds, at the exact content origin (or `null` under opaque isolation), only for decks, and carry only slide numbers; full screen still needs the person's activation ([Slides](#slides)) |
+| Leaked CI secret | A `PLINTH_TOKEN` from a pipeline shows up in a fork's logs or a compromised runner | Make it a token limited to one artifact: it can read that artifact and publish new versions of it, nothing else (every other artifact answers 404 whatever its scopes, checked in `decide` before the scope), a version is never an overwrite and anyone with edit rights can revert it; secrets are not given to fork workflows ([Publishing from CI](#publishing-from-ci)) |
+| Workflow command injection through the Action's log | A title, warning path or server message `::set-output name=x::y` or `::add-mask::` printed by the Action steers the job | Everything the client prints runs between `::stop-commands::<random>` and `::<random>::`; the Action's own annotations escape their text, the summary escapes Markdown and HTML, outputs use random heredoc delimiters; `docs/ci.md` passes outputs to scripts through `env:` ([Publishing from CI](#publishing-from-ci)) |
 | Cross-site WebSocket hijacking of a live room | Artifact B, framed by the app, opens a socket to artifact A's `/__plinth/room/` with A's content cookie from the shared partitioned jar | The upgrade requires an exact `Origin` (absent or `null` refused), same-origin fetch metadata when sent, the `plinth.room.v1` subprotocol and an identified content pass at the current epoch; no CORS anywhere ([Live rooms](#live-rooms)) |
 | Page code harvests names and the access list | A page reads `plinth.viewer.name`, its authors' names or `plinth.people.list()` and copies them where link viewers or every viewer can read them | Names appear only where the email already does (`viewer` declared, identified reader); the people list only for owners and editors on a page that declares `data viewer people`, whose author is the owner or an editor; every identified viewer is told, under the bar, that the owner and editors can see everyone the page is shared with; the skill forbids copying the list or emails into shared data. WebRTC stays the known CSP gap ([The people list](#the-people-list)) |
 | Display name used to impersonate | Someone sets their name to "Owner", "ana@example.com" or a right-to-left override that reorders the text around it | Names cannot contain `@` or the two characters that render as one (U+FE6B, U+FF20: every character whose NFKC form is `@`), nor control, bidi, zero-width or separator characters, are cut to 64 code points on every read, and are never authority: `role` and `comment_author_role` stay server-derived and Plinth's own UI shows the role beside them; tool descriptions say names are display text |
@@ -492,6 +494,35 @@ do not reveal that they exist. Agents act as their user, further limited by toke
 (`artifacts:read`, `artifacts:write`, `mentions`). An artifact's category is returned only to its
 owner (`policy.seesOwnerMetadata`, applied in the one function that builds artifact summaries).
 
+A personal access token may be **limited to one artifact** (`agent_connections.artifact_id`, for
+CI). The policy carries it on the agent principal (`boundArtifactId`, rebuilt from the live
+connection row on every request and when an upload ticket is redeemed), and `decide` checks it right
+after `deleted` and **before** the scope: any other artifact is `not_found` for every action and
+every scope set, so a bound token cannot learn which ids or slugs exist (a missing one answers the
+same 404). On its own artifact only `view` and `edit` pass, and they still need the person's current
+role and the token's scope, so a takedown, a delete or removing the person's grant stops the token
+too; every other action there is denied with `token_bound` (403) only when the token may view that
+artifact now, so it reveals nothing; otherwise the action gets the answer viewing gets (404 once the
+person's grant is gone, `taken_down` after a takedown). Reading the comment threads is its own
+action (`comments_read`, the same rule as `view` for everyone else), so a bound token never sees
+comment bodies, commenters' emails or mention tasks. Calls that are not about one artifact go
+through the policy too: `mayCreateArtifacts` refuses `publish_artifact`, `POST /artifacts`,
+`start_upload` and `POST /uploads` without an id, and the redeem of a publish ticket;
+`list_artifacts` returns at most the bound artifact, after `decide(view)`, with no categories (a
+category filter returns nothing); `GET /categories` returns none; the category is hidden by
+`seesOwnerMetadata(principal, role)` and `data_usage` by `decide(data_read)`; `canActOnMention`
+refuses a bound token (which never holds `mentions`), and an `@<label>` mention never targets one.
+`GET /me` answers a bound token with the person's id and the connection only: no email, name,
+artifact count or limit, or admin flag. Artifact summaries (`get_artifact`, `list_artifacts`, update
+results) and the version list show it the people as a link viewer sees them
+(`seesPeople(principal, role)`): the owner by name with no id or email, a version's author by name or
+the address's local part with no ids, even when the token is the owner's, so a leaked CI token
+gives away no email address. The Connections list and `GET /me` name the bound artifact
+only where `decide(view)` allows it for the person now. A binding only narrows: the column is never
+updated, deleting or taking down the artifact revokes its tokens, erasing it removes them by cascade
+(never `SET NULL`), and a CHECK refuses it on an OAuth connection. Only the artifact's owner or an
+editor (`edit`) can make one; strangers get 404.
+
 An artifact's open counts ([spec](spec.md#admin-stats-and-view-counts)) are behind their own
 policy action, `views`: the owner only, a read action for agents (`artifacts:read`). Anyone who
 may view the page but is not its owner gets 403 (`forbidden`): editors, viewers, and signed-in
@@ -512,6 +543,10 @@ or title, an owner or an email, so it reveals nothing about any artifact an admi
   its own; revoking a connection kills its tokens immediately.
 - Upload tokens (`plinth_up_...`, from `start_upload`) are 32 random bytes, stored only as SHA-256
   hashes, and usable for one bundle request only ([below](#uploads-from-start_upload)).
+- A personal access token can be limited to one artifact ([Authorization](#authorization)); it is
+  an ordinary connection otherwise: hashed, shown once, listed and revoked on Connections. For CI
+  it belongs in a secret (a GitHub environment secret behind branch protection, or a masked and
+  protected GitLab variable), never in the repository or a workflow file.
 - Artifact passwords are hashed with PBKDF2-SHA256 and a per-password salt.
 - Sign-in codes and magic links are single use and expire after 15 minutes.
 - Secrets never appear in logs, in URLs (except the one-time viewer token), or in the client
@@ -1044,6 +1079,35 @@ policy check and rate limit.
   injected next to the page's own code, and the frame is not reloaded when the panel opens.
 - **Residual risk.** No user-activation check is possible across frames (page script can post the
   protocol itself), so the controls above are the app's.
+
+## Publishing from CI
+
+The GitHub Action (`publish/`, `docs/ci.md`) runs on the user's runner and pushes; Plinth never
+pulls. What it does about text it did not write and about the token:
+
+- **No workflow commands from the server or the artifact.** Before it runs the CLI client, the
+  Action prints `::stop-commands::<token>`, with a fresh random token from `crypto.randomBytes`
+  that is never derived from input; until it prints `::<token>::` the runner reads every line as
+  plain text, so a server error, a warning's file path, a title or a slug that begins with
+  `::set-output`, `::add-mask::` or `::error` does nothing. Crash handlers print the resume line
+  first. The Action's own commands come after it: annotations escape `%`, CR and LF in their text
+  (and `:` and `,` in properties), so each stays one line.
+- **Outputs and the summary.** Outputs are written to `$GITHUB_OUTPUT` between random heredoc
+  delimiters that are checked not to occur in the value. URLs are built only from a slug matching
+  the server's slug pattern. The job summary escapes every server string for Markdown and HTML
+  and holds no token, email or connection label, since anyone who can read the repository's
+  Actions sees it. Outputs are still untrusted for the workflow (the `json` output carries the
+  title, which anyone with edit rights chose): `docs/ci.md` passes them to `run:` and
+  `actions/github-script` through `env:`, never as `${{ }}` inside a script.
+- **The token.** It is checked against the token alphabet, then masked with `::add-mask::` (in
+  case it was not passed as a secret), and reaches the client only in its environment
+  (`PLINTH_TOKEN`), with every `INPUT_*` variable removed; never in argv, outputs or the summary.
+  The client binds it to the `url` input's origin, refuses redirects and runs with an empty
+  `PLINTH_HOME`, so no local instance is ever picked.
+- **Forks.** GitHub does not give secrets to workflows from forks; `docs/ci.md` says never to use
+  `pull_request_target` to build and publish a fork's code with the token.
+- **Pinning.** The Action is used at a release tag or a commit SHA, and imports the client from
+  the same commit with no dependencies, so the pin covers everything it runs.
 
 ## Operator checklist for the content domain
 

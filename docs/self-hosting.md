@@ -268,6 +268,12 @@ The MCP endpoint is `https://<APP_HOST>/mcp`.
 
 Step-by-step instructions for each client are in [mcp.md](mcp.md).
 
+**CI.** Pipelines publish to your instance with the GitHub Action or the CLI, given its app origin
+(`url: https://<APP_HOST>` on the Action, `PLINTH_URL` for the CLI) and a token made on it,
+ideally one limited to the artifact (its Settings page, **Publish from CI**). Tokens limited to
+one artifact need migration `0012_bound_tokens.sql`, which `deploy` applies; there is no setting
+to turn them on or off. See [ci.md](ci.md).
+
 ## Operating notes
 
 - **Quota.** `MAX_ARTIFACTS_PER_USER` is the default. To change one account, set

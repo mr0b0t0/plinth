@@ -86,6 +86,22 @@ The page is private until you share it; the response has its link. `PUT /api/v1/
 publishes the next run as a new version at the same link (add `base_version` to refuse a stale
 write). Every endpoint is in [docs/openapi.json](docs/openapi.json).
 
+### From CI
+
+Publish a build on every run as the next version of one artifact, with a token that can only
+read that artifact and publish new versions of it (the artifact's **Settings**, **Publish from
+CI**):
+
+```yaml
+- uses: mr0b0t0/plinth/publish@v0.6.0
+  with:
+    path: dist
+    token: ${{ secrets.PLINTH_TOKEN }}
+    id: k3x9mq2v7d8p4t6w1n5r # your artifact's id
+```
+
+GitLab CI, cron and every input and output: [docs/ci.md](docs/ci.md).
+
 ### If you already use Claude Code artifacts
 
 Claude Code can publish artifacts of its own, and they are the quickest way to share a page inside
@@ -246,6 +262,7 @@ from `<id>.content.localhost:8787`. Contributions are welcome: start with
 | --- | --- |
 | [docs/mcp.md](docs/mcp.md) | Connecting each client; tokens for scripts; every MCP tool; the mention workflow |
 | [docs/agents.md](docs/agents.md) | The plugin and skill for Claude Code, Codex and other agents |
+| [docs/ci.md](docs/ci.md) | Publishing from GitHub Actions, GitLab CI or cron with a token limited to one artifact |
 | [docs/local-hosting.md](docs/local-hosting.md) | Running Plinth on your computer, localhost only or through a Cloudflare Tunnel |
 | [docs/self-hosting.md](docs/self-hosting.md) | Your own Cloudflare deployment: one command or from a checkout; every setting |
 | [docs/docker.md](docs/docker.md) | The Docker image: localhost, behind a reverse proxy, or through a Cloudflare Tunnel |

@@ -16,7 +16,7 @@ import { eq } from "drizzle-orm";
 import { type ArtifactRow, artifacts } from "../db/schema.ts";
 import { ApiError, unauthorized } from "../lib/errors.ts";
 import { nowIso } from "../lib/time.ts";
-import { mayBulkEditCategories, principalUserId } from "../policy.ts";
+import { boundArtifactOf, mayBulkEditCategories, principalUserId } from "../policy.ts";
 import { decideFor, requireArtifact, summaryFor } from "./artifacts.ts";
 import type { Ctx } from "./context.ts";
 
@@ -120,6 +120,13 @@ export async function resolveCategory(
 export async function requireCategoryRight(ctx: Ctx, artifact: ArtifactRow): Promise<void> {
   const d = await decideFor(ctx, artifact, "manage");
   if (d.allow) return;
+  if (!d.allow && d.reason === "token_bound") {
+    throw new ApiError(
+      "forbidden",
+      "This token may only read this artifact and publish new versions of it; set the category on the artifact's Settings page",
+      { field: "category", reason: "token_bound" },
+    );
+  }
   throw new ApiError("forbidden", "Only the owner sets an artifact's category", {
     field: "category",
     reason: "owner_only",
@@ -137,6 +144,8 @@ export async function listCategories(ctx: Ctx): Promise<CategoryCount[]> {
   if (ctx.principal.kind === "agent" && !ctx.principal.scopes.has("artifacts:read")) {
     throw new ApiError("forbidden", "This token lacks the artifacts:read scope");
   }
+  // A token limited to one artifact never sees the owner's category names.
+  if (boundArtifactOf(ctx.principal) !== null) return [];
   return ownerCategories(ctx, uid);
 }
 

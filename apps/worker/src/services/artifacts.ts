@@ -35,12 +35,14 @@ import {
   type AccessFacts,
   type ArtifactAction,
   type ArtifactFacts,
+  boundArtifactOf,
   canMakePublic,
   type Decision,
   decide,
   principalEmail,
   principalUserId,
   seesOwnerMetadata,
+  seesPeople,
 } from "../policy.ts";
 import { notifyRoom } from "../rooms/notify.ts";
 import { requireTypeDef, resolveSource, typeHooks } from "./artifactTypes.ts";
@@ -92,6 +94,7 @@ export async function findArtifact(ctx: Ctx, ref: string): Promise<ArtifactRow |
 
 export function factsOf(a: ArtifactRow): ArtifactFacts {
   return {
+    id: a.id,
     ownerId: a.ownerId,
     visibility: a.visibility,
     hasPassword: !!a.passwordHash,
@@ -185,6 +188,13 @@ export function denialError(
       return ctx.principal.kind === "anonymous" ? unauthorized() : forbidden();
     case "account_required":
       return unauthorized("Sign in to do this");
+    case "token_bound":
+      // Only on the token's own artifact, which it may view: this reveals nothing.
+      return new ApiError(
+        "forbidden",
+        "This token may only read this artifact and publish new versions of it",
+        { reason: "token_bound" },
+      );
     case "forbidden":
       // Someone with a role gets "forbidden"; a stranger should not learn the artifact exists.
       return d.role ? forbidden() : notFound();
@@ -233,8 +243,8 @@ export function toSummary(
     updated_at: a.updatedAt,
     url: appUrl(ctx.config, `/a/${a.slug}`),
     content_url: `${contentOrigin(ctx.config, a.id)}/`,
-    // Link viewers (no role) do not learn the owner's address or id.
-    owner: role
+    // Link viewers (no role) and tokens bound to one artifact do not learn the owner's address or id.
+    owner: seesPeople(ctx.principal, role)
       ? { id: owner.id, email: owner.email, name: owner.name }
       : { id: null, email: null, name: owner.name },
     // Callers only build summaries for artifacts the principal may view; viewers get "viewer".
@@ -245,7 +255,7 @@ export function toSummary(
         ? appUrl(ctx.config, `/api/v1/artifacts/${a.id}/thumbnail?version=${a.currentVersion}`)
         : null,
     // The read gate for owner-only metadata: every summary path goes through here.
-    category: seesOwnerMetadata(role) ? (a.category ?? null) : null,
+    category: seesOwnerMetadata(ctx.principal, role) ? (a.category ?? null) : null,
   };
 }
 
@@ -493,6 +503,15 @@ export async function getArtifact(
   ref: string,
   version?: number,
 ): Promise<ArtifactDetail> {
+  return (await loadArtifactDetail(ctx, ref, version)).detail;
+}
+
+/** getArtifact, plus the row it read (for callers that ask the policy about more than `view`). */
+export async function loadArtifactDetail(
+  ctx: Ctx,
+  ref: string,
+  version?: number,
+): Promise<{ detail: ArtifactDetail; row: ArtifactRow }> {
   const { artifact, role } = await requireArtifact(ctx, ref, "view");
   const def = requireTypeDef(artifact.type);
   const v = await requireVersion(ctx, artifact, version ?? artifact.currentVersion);
@@ -519,9 +538,11 @@ export async function getArtifact(
   // Per-type fields (an HTML page's design system reference), read as the caller.
   const extra = (await typeHooks(def).detail?.(ctx, text)) ?? {};
   // html for a page, content for every typed artifact; never both.
-  return def.id === "html"
-    ? { ...base, ...live, ...extra, type: "html", html: text }
-    : { ...base, ...live, ...extra, type: def.id, content: text };
+  const detail: ArtifactDetail =
+    def.id === "html"
+      ? { ...base, ...live, ...extra, type: "html", html: text }
+      : { ...base, ...live, ...extra, type: def.id, content: text };
+  return { detail, row: artifact };
 }
 
 /**
@@ -540,6 +561,9 @@ export async function listArtifacts(
   if (ctx.principal.kind === "agent" && !ctx.principal.scopes.has("artifacts:read")) {
     throw new ApiError("forbidden", "This token lacks the artifacts:read scope");
   }
+  // A token limited to one artifact lists that one at most, and never the owner's categories.
+  const bound = boundArtifactOf(ctx.principal);
+  if (bound !== null) return listBound(ctx, bound, filter);
   const shared = ctx.db
     .select({ id: accessGrants.artifactId })
     .from(accessGrants)
@@ -600,6 +624,27 @@ export async function listArtifacts(
   return { items, categories };
 }
 
+/**
+ * list_artifacts for a token bound to one artifact: that artifact when the policy lets it view it
+ * (and it matches `query`), with no categories. A category filter returns nothing: a filter on the
+ * owner's names would let the token probe the bound artifact's category.
+ */
+async function listBound(
+  ctx: Ctx,
+  bound: string,
+  filter: { query?: string; category?: string; limit?: number },
+): Promise<ArtifactList> {
+  const none: ArtifactList = { items: [], categories: [] };
+  if (filter.limit === 0 || filter.category?.trim()) return none;
+  const row = await findArtifact(ctx, bound);
+  if (!row) return none;
+  const d = await decideFor(ctx, row, "view");
+  if (!d.allow) return none;
+  const q = filter.query?.trim().toLowerCase();
+  if (q && !row.title.toLowerCase().includes(q) && !row.slug.includes(q)) return none;
+  return { items: [await summaryFor(ctx, row, d.role)], categories: [] };
+}
+
 export async function listVersions(ctx: Ctx, ref: string): Promise<VersionInfo[]> {
   const { artifact, role } = await requireArtifact(ctx, ref, "view");
   const rows = await ctx.db
@@ -615,19 +660,21 @@ export async function listVersions(ctx: Ctx, ref: string): Promise<VersionInfo[]
     )
     .orderBy(desc(versions.number))
     .all();
+  // Link viewers and tokens bound to one artifact: names or local parts, no ids (seesPeople).
+  const people = seesPeople(ctx.principal, role);
   return rows.map(({ v, user, conn }) => {
     const author: Author = conn
       ? {
           kind: "connection",
           label: conn.label,
-          user_id: role ? v.createdByUser : null,
-          connection_id: role ? conn.id : null,
+          user_id: people ? v.createdByUser : null,
+          connection_id: people ? conn.id : null,
         }
       : {
           kind: "user",
           // Link viewers see a name or the address's local part, never the full email.
-          label: user?.name || (role ? user?.email : user?.email?.split("@")[0]) || "Unknown",
-          user_id: role ? v.createdByUser : null,
+          label: user?.name || (people ? user?.email : user?.email?.split("@")[0]) || "Unknown",
+          user_id: people ? v.createdByUser : null,
           connection_id: null,
         };
     return {

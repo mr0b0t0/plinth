@@ -33,6 +33,11 @@ export type Principal =
       connectionLabel: string;
       clientType: ClientType;
       scopes: ReadonlySet<Scope>;
+      /**
+       * The one artifact a personal access token is limited to (docs/spec.md "Publishing from
+       * CI"), or null for an account-wide token, an OAuth connection and the ADMIN_TOKEN.
+       */
+      boundArtifactId: string | null;
     };
 
 export type ArtifactAction =
@@ -64,9 +69,15 @@ export type ArtifactAction =
    */
   | "live_edit"
   /** List everyone with access (owner and grants, with names): owners and editors. */
-  | "people";
+  | "people"
+  /**
+   * Read the comment threads (bodies, authors' emails, mention tasks): as view, except that a
+   * token bound to one artifact never may.
+   */
+  | "comments_read";
 
 export interface ArtifactFacts {
+  id: string;
   ownerId: string;
   visibility: Visibility;
   hasPassword: boolean;
@@ -94,7 +105,9 @@ export type DenyReason =
   | "taken_down"
   | "scope"
   /** The principal has the role but no account session (a viewer confirmed by code). */
-  | "account_required";
+  | "account_required"
+  /** A token limited to this artifact asked for more than viewing it and publishing versions. */
+  | "token_bound";
 
 export type Decision =
   | { allow: true; role: EffectiveRole | null }
@@ -116,6 +129,7 @@ const ACTION_SCOPES: Record<ArtifactAction, Scope> = {
   views: "artifacts:read",
   live_edit: "artifacts:write",
   people: "artifacts:read",
+  comments_read: "artifacts:read",
 };
 
 export function principalEmail(p: Principal): string | null {
@@ -155,6 +169,18 @@ export function decide(
   access: AccessFacts,
 ): Decision {
   if (artifact.deleted) return deny("not_found");
+  const bound = boundArtifactOf(p);
+  if (bound !== null) {
+    // Any other artifact does not exist for this token, whatever the action or the token's
+    // scopes, so a bound token cannot probe which ids or slugs exist (a missing one is 404 too).
+    if (artifact.id !== bound) return deny("not_found");
+    if (!BOUND_ACTIONS.has(action)) {
+      // token_bound only where the token may view the artifact now, so the 403 tells it nothing
+      // that viewing would not; otherwise (its person lost access, a takedown) the view answer.
+      const v = decide(p, "view", artifact, access);
+      return v.allow ? deny("token_bound", v.role) : v;
+    }
+  }
   if (p.kind === "agent" && !p.scopes.has(scopeFor(action))) return deny("scope");
 
   const role = roleOf(p, artifact, access);
@@ -171,6 +197,7 @@ export function decide(
   switch (action) {
     case "view":
     case "report":
+    case "comments_read":
       return canView(p, artifact, access, role, isAdmin);
     case "comment":
     case "mention": {
@@ -366,6 +393,8 @@ export function canActOnMention(
   artifactOwnerId: string,
 ): boolean {
   if (p.kind !== "agent" || !p.scopes.has("mentions")) return false;
+  // Bound tokens never hold `mentions`; refused here too, in case a row ever says otherwise.
+  if (boundArtifactOf(p) !== null) return false;
   if (p.userId !== artifactOwnerId) return false;
   if (task.targetConnection) return p.connectionId === task.targetConnection;
   return task.targetClientType === p.clientType;
@@ -373,10 +402,11 @@ export function canActOnMention(
 
 /**
  * Owner-only metadata (the category) is the owner's own organisation: hidden from every other role,
- * including editors and an admin reviewing a report.
+ * including editors and an admin reviewing a report, and from a token limited to one artifact,
+ * even the owner's.
  */
-export function seesOwnerMetadata(role: EffectiveRole | null): boolean {
-  return role === "owner";
+export function seesOwnerMetadata(p: Principal, role: EffectiveRole | null): boolean {
+  return role === "owner" && boundArtifactOf(p) === null;
 }
 
 /**
@@ -454,4 +484,29 @@ export function accessListShowsName(p: {
   tookPart: boolean;
 }): boolean {
   return p.role === "owner" || p.you || p.tookPart;
+}
+
+// ---------- publishing from CI: tokens bound to one artifact (issue #51) ----------
+
+/** What a token bound to one artifact may do there: what a viewer may, plus new versions. */
+const BOUND_ACTIONS: ReadonlySet<ArtifactAction> = new Set<ArtifactAction>(["view", "edit"]);
+
+/** The one artifact a bound token may touch, or null for every other principal. */
+export function boundArtifactOf(p: Principal): string | null {
+  return p.kind === "agent" ? p.boundArtifactId : null;
+}
+
+/**
+ * Does this principal learn who the people on an artifact are: the owner's id and email, and the
+ * ids and full emails of the people and connections that published its versions? Role holders do;
+ * a link viewer and a token bound to one artifact (even the owner's) see them as a link viewer does,
+ * by name or the address's local part. A leaked CI token then gives away no email address.
+ */
+export function seesPeople(p: Principal, role: EffectiveRole | null): boolean {
+  return role !== null && boundArtifactOf(p) === null;
+}
+
+/** May this principal create artifacts? Not a token bound to one artifact. */
+export function mayCreateArtifacts(p: Principal): boolean {
+  return boundArtifactOf(p) === null;
 }

@@ -10,6 +10,16 @@ Add a line under **Unreleased** in the pull request that makes a change people w
 
 ## Unreleased
 
+- **Publish from CI.** A GitHub Action, `mr0b0t0/plinth/publish@v0.6.0`, publishes a build folder
+  or one HTML or Markdown file as the next version of an artifact on every run, with the commit in
+  the version note and the links in the job summary. A token can now be limited to one artifact
+  (the artifact's Settings, **Publish from CI**): it reads that artifact and publishes new versions
+  of it, nothing else (not even the owner's or other people's email addresses), and deleting the
+  artifact revokes it. `plinth publish` takes a single
+  `.html` or `.md` file, uses a token's artifact when `--id` is left out, and with `--json` prints
+  a JSON object on failure too, and prints `live_draft` as a note that needs no action. GitLab CI
+  and cron: `docs/ci.md` (#51).
+
 - **Slides.** Agents can publish a presentation as Markdown (`type: "slides"`): a line `---`
   between slides, speaker notes after `Note:`, columns with `|||`. Plinth renders fixed 16:9 or 4:3
   slides with automatic layouts and text that shrinks to fit. Page through with the keyboard,

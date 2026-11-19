@@ -81,6 +81,7 @@ import {
   enterContent,
   json,
   mcpClient,
+  personCtxFor,
   publish,
   tool,
   versionRow,
@@ -641,7 +642,7 @@ describe("the bundle route and the upload token", () => {
   it("401 after the connection is revoked; the attempt counts and the lease is released", async () => {
     const a = await agent();
     const t = await mint(a);
-    await revokeConnection(db(), a.user.id, a.connectionId);
+    await revokeConnection(personCtxFor(a.user), a.connectionId);
     const res = await postBundle(t.upload_url, { token: t.upload_token });
     expect(res.status).toBe(401);
     expect(await ticket(t.upload_id)).toMatchObject({
@@ -1611,7 +1612,7 @@ describe("an abandoned, slow or over-quota bundle leaves nothing behind", () => 
         commitStaged: async (ctx, target, staged, o) => {
           // Past every check in the handler: only the batch's guard is left.
           if (when === "just before the batch") {
-            await revokeConnection(db(), a.user.id, a.connectionId);
+            await revokeConnection(personCtxFor(a.user), a.connectionId);
           }
           return stageDeps.commitStaged(ctx, target, staged, o);
         },
@@ -1619,7 +1620,7 @@ describe("an abandoned, slow or over-quota bundle leaves nothing behind", () => 
       const pending = redeem(t, body, deps).catch((e: unknown) => e);
       if (when === "while streaming") {
         await atStall;
-        await revokeConnection(db(), a.user.id, a.connectionId);
+        await revokeConnection(personCtxFor(a.user), a.connectionId);
         resume();
       }
       const e = (await pending) as ApiError;
@@ -2290,7 +2291,7 @@ describe("reserved artifact ids", () => {
     await mint(other, {}, stageDeps);
     await mint(other, {}, stageDeps);
     expect((await mintError(a, {}, stageDeps)).code).toBe("quota_exceeded");
-    await revokeConnection(db(), a.user.id, other.connectionId);
+    await revokeConnection(personCtxFor(a.user), other.connectionId);
     // The revoked connection's tickets can never commit, so they no longer count.
     await mint(a, {}, stageDeps);
     expect((await publish(a.auth)).res.status).toBe(201);
@@ -2533,7 +2534,7 @@ describe("GET /uploads/:id", () => {
     const res = await postBundle(t.upload_url, { token: t.upload_token, body: tar(SITE) });
     expect(res.status).toBe(201);
     expect((await readStatus(statusUrlOf(t), t.upload_token)).status).toBe(200);
-    await revokeConnection(db(), a.user.id, a.connectionId);
+    await revokeConnection(personCtxFor(a.user), a.connectionId);
     const revoked = await readStatus(statusUrlOf(t), t.upload_token);
     const wrong = await readStatus(statusUrlOf(t), `${UPLOAD_TOKEN_PREFIX}${"w".repeat(43)}`);
     expect([revoked.status, wrong.status]).toEqual([404, 404]);
