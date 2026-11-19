@@ -201,7 +201,8 @@ consent lives in their browser, not in D1.
 settings: `ALLOW_LIVE_VIEWS` (on) and `LIVE_VIEW_MAX_SOCKETS_PER_ARTIFACT` (1000, from 10 to
 10000). Fixed: 32 watch sockets per client and 60 connects per client per minute on one artifact,
 a socket lifetime of 12 hours (the content pass's, or less when the session or password pass it was
-opened with ends sooner), a spread of 10 ms per recipient up to 10 s,
+opened with ends sooner), a spread in coarse bands (0 under 100 recipients, then 1, 2, 4, 8 or
+10 s as the audience doubles),
 backstop polls every 60 s (the page's data) and 5 minutes (the app's gate), and a tab hidden for
 60 s closes its socket.
 
@@ -1132,10 +1133,11 @@ document through the gate and the shared-data API, with all of their checks.
   source editor, a restore or an on-page checkpoint), `data` (the page's shared data changed:
   a write from the page, an agent or the app, or the owner's "Delete all shared data") and `access`
   (sent just before a sharing change closes the socket). The client
-  sends only the text `ping`. Each signal carries `spread_ms` (10 ms per recipient, at most 10 s):
-  each open view waits a random time up to it before it acts (under 100 ms, fewer than ten views,
-  they act at once), so at most about 100 follow-up requests a second reach one artifact, whatever
-  the audience.
+  sends only the text `ping`. Each signal carries `spread_ms`, a coarse band of the audience and
+  never a count of open views: 0 under 100 recipients (they act at once), then 1 s at 100 and 2, 4,
+  8 or 10 s as the audience doubles. Each open view waits a random time up to it before it acts, so
+  at most about 100 follow-up requests a second reach one artifact, whatever the audience, and a
+  watcher can tell at most which band the audience is in, never whether one more view is open.
 - **What the page does.** On `version` the app re-reads its own gate at once and shows the new
   version as it did after a poll ("Updated to vN"; a pinned `/v/n` link only learns the number).
   On `data` it posts `{ source: "plinth-view", v: 1, type: "data" }` to the frame at its exact

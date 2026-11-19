@@ -360,8 +360,9 @@ describe("live views: signals", () => {
     const a = await watch(id, sessionCookie(ownerP));
     const b = await watch(id, null);
     expect((await update(owner, id, `${PLAIN}<p>2</p>`, 1)).status).toBe(200);
-    expect(await a.next()).toEqual({ t: "version", version: 2, spread_ms: spreadMs(2) });
-    expect(await b.next()).toEqual({ t: "version", version: 2, spread_ms: spreadMs(2) });
+    // A small audience gets 0, never a number that counts the open views.
+    expect(await a.next()).toEqual({ t: "version", version: 2, spread_ms: 0 });
+    expect(await b.next()).toEqual({ t: "version", version: 2, spread_ms: 0 });
 
     const mcp = await mcpClient(owner.token);
     try {
@@ -394,7 +395,7 @@ describe("live views: signals", () => {
     const w = await watch(id, sessionCookie(ownerP));
     const created = await pageWrite(id, ed.cookie, "POST", "/data/votes", { data: { n: 1 } });
     expect(created.status).toBe(201);
-    expect(await w.next()).toEqual({ t: "data", spread_ms: spreadMs(1) });
+    expect(await w.next()).toEqual({ t: "data", spread_ms: 0 });
     const doc = await json(created);
     const put = await pageWrite(id, ed.cookie, "PUT", `/data/votes/${doc.id}`, { data: { n: 2 } });
     expect(put.status).toBe(200);
@@ -477,12 +478,38 @@ describe("live views: signals", () => {
     a.ws.close(1000);
   });
 
-  it("the room's spread grows with the audience and stops at the cap", () => {
+  it("the room's spread is a coarse band of the audience, not a count, and stops at the cap", () => {
     expect(spreadMs(0)).toBe(0);
-    expect(spreadMs(1)).toBe(LIVE_VIEW_LIMITS.spreadMsPerSocket);
-    expect(spreadMs(250)).toBe(2500);
+    expect(spreadMs(1)).toBe(0);
+    expect(spreadMs(LIVE_VIEW_LIMITS.spreadFromRecipients - 1)).toBe(0);
+    expect(spreadMs(LIVE_VIEW_LIMITS.spreadFromRecipients)).toBe(LIVE_VIEW_LIMITS.spreadStepMs);
+    expect(spreadMs(250)).toBe(4000);
     expect(spreadMs(1000)).toBe(LIVE_VIEW_LIMITS.spreadMaxMs);
     expect(spreadMs(5000)).toBe(LIVE_VIEW_LIMITS.spreadMaxMs);
+  });
+
+  it("a data write tells a watcher nothing about how many views are open", async () => {
+    const { id, ownerP } = await setup(POLL);
+    const ed = await person(id, "editor");
+    const owner = await watch(id, sessionCookie(ownerP));
+    const tabs = [];
+    for (let i = 0; i < 2; i++) tabs.push(await watch(id, sessionCookie(ed)));
+    const write = () => pageWrite(id, ed.cookie, "POST", "/data/votes", { data: { n: 1 } });
+    expect((await write()).status).toBe(201);
+    const withOwner = await Promise.all(tabs.map((w) => w.next()));
+    expect(await owner.next()).toMatchObject({ t: "data" });
+    // The owner closes the page: the editor's next write reads exactly the same frames.
+    owner.ws.close(1000);
+    await new Promise((r) => setTimeout(r, 200));
+    expect(await stubFor(id).watchers()).toBe(2);
+    expect((await write()).status).toBe(201);
+    const withoutOwner = await Promise.all(tabs.map((w) => w.next()));
+    expect(withoutOwner).toEqual(withOwner);
+    expect(withOwner).toEqual([
+      { t: "data", spread_ms: 0 },
+      { t: "data", spread_ms: 0 },
+    ]);
+    for (const w of tabs) w.ws.close(1000);
   });
 });
 
@@ -512,7 +539,7 @@ describe("live views: closing", () => {
     });
     expect(res.status).toBe(200);
     for (const w of ws) {
-      expect(await w.next()).toEqual({ t: "access", spread_ms: spreadMs(3) });
+      expect(await w.next()).toEqual({ t: "access", spread_ms: 0 });
       expect(await within(w.closed)).toEqual({ code: 4401, reason: "access_changed" });
     }
   });
@@ -530,7 +557,7 @@ describe("live views: closing", () => {
       .run();
     expect(await runDurableObjectAlarm(stubFor(id))).toBe(true);
     for (const w of [a, b]) {
-      expect(await w.next()).toEqual({ t: "access", spread_ms: spreadMs(2) });
+      expect(await w.next()).toEqual({ t: "access", spread_ms: 0 });
       expect(await within(w.closed)).toEqual({ code: 4401, reason: "access_changed" });
     }
   });

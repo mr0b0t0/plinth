@@ -30,10 +30,17 @@ export const LIVE_VIEW_LIMITS = {
    * expires, and the app re-reads the gate and reconnects.
    */
   socketTtlS: TTL.contentCookieS,
-  /** Clients wait random(0, spread_ms) before acting; spread_ms = min(max, recipients * this). */
-  spreadMsPerSocket: 10,
+  /**
+   * Clients wait random(0, spread_ms) before acting. spread_ms is a coarse band, never a count of
+   * open views (that would be presence): 0 below `spreadFromRecipients` recipients, then
+   * `spreadStepMs` doubling each time the recipients double, up to `spreadMaxMs` (spreadMs()).
+   * The floor is above three clients' full socket caps, so no one person's tabs, nor two or three
+   * people's together, can move the band to learn whether another view is open.
+   */
+  spreadFromRecipients: 100,
+  spreadStepMs: 1000,
   spreadMaxMs: 10_000,
-  /** Under this spread (fewer than 10 recipients) clients act at once. */
+  /** Under this spread clients act at once (the room sends 0 or a band of a second or more). */
   spreadAtOnceMs: 100,
   /** While pushed, the page runtime still re-reads /changes this often (a lost `data` signal). */
   pollBackstopMs: 60_000,
@@ -64,12 +71,23 @@ export type ViewWatchFrame =
    */
   | { t: "access"; spread_ms: number };
 
-/** How long clients spread their follow-up requests when `recipients` sockets got a signal. */
+/**
+ * How long clients spread their follow-up requests when `recipients` sockets got a signal: one of
+ * six bands (0, 1, 2, 4, 8 or 10 s), never the count itself. 0 under 100 recipients (they act at
+ * once), 1 s at 100, then doubling as the recipients double (2 s up to 200, 4 s up to 400, 8 s up
+ * to 800) and 10 s above. Every band is at least 10 ms per recipient up to the cap, so one
+ * artifact still sees at most about 100 follow-up requests a second.
+ */
 export function spreadMs(recipients: number): number {
-  return Math.min(
-    LIVE_VIEW_LIMITS.spreadMaxMs,
-    Math.max(0, recipients) * LIVE_VIEW_LIMITS.spreadMsPerSocket,
-  );
+  const { spreadFromRecipients, spreadStepMs, spreadMaxMs } = LIVE_VIEW_LIMITS;
+  if (!(recipients >= spreadFromRecipients)) return 0;
+  let ms: number = spreadStepMs;
+  let upTo: number = spreadFromRecipients;
+  while (upTo < recipients && ms < spreadMaxMs) {
+    upTo *= 2;
+    ms *= 2;
+  }
+  return Math.min(spreadMaxMs, ms);
 }
 
 /**
