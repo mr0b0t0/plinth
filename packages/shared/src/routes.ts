@@ -75,6 +75,7 @@ export const API = {
   viewEmail: "/view/:ref/email",
   viewCode: "/view/:ref/code",
   viewDictation: "/view/:ref/dictation", // GET the owner's email for the dictation consent dialog
+  viewWatch: "/view/:ref/watch", // GET WebSocket upgrade (plinth.view.v1): live views, the app only
   // comments and mentions
   comments: "/artifacts/:ref/comments",
   comment: "/comments/:id",

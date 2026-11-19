@@ -161,6 +161,8 @@ export function runtimeBase(repoCfg) {
         "LIVE_DRAFT_RETENTION_DAYS",
         "ALLOW_DICTATION",
         "ALLOW_CATEGORY_SHARING",
+        "ALLOW_LIVE_VIEWS",
+        "LIVE_VIEW_MAX_SOCKETS_PER_ARTIFACT",
       ]
         .filter((k) => k in (repoCfg.vars ?? {}))
         .map((k) => [k, repoCfg.vars[k]]),

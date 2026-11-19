@@ -26,6 +26,7 @@ import {
   dictationActive,
   identityClaimsActive,
   liveEditMode,
+  liveViewsActive,
   roomsActive,
   sharedDataActive,
 } from "../config.ts";
@@ -38,6 +39,7 @@ import { hit } from "../lib/ratelimit.ts";
 import {
   type Decision,
   dictationAccess,
+  liveViewAccess,
   type Principal,
   pageDataAccess,
   peopleListOffered,
@@ -183,7 +185,24 @@ export const GATE_PARTS: readonly GatePart[] = [
     const voice = await gateVoice(ctx, a, d);
     return voice ? { voice } : undefined;
   },
+  async ({ ctx, a, d }) => (gateWatch(ctx, a, d) ? { watch: true as const } : undefined),
 ];
+
+// ---------- live views ----------
+
+/**
+ * Whether the app should open the watch socket (docs/spec.md "Live views"): anyone this gate lets
+ * in, never an agent, while live views are active; pinned version links too, so they can say a
+ * newer version exists. The declaration matters only for the data right, which the socket's
+ * handshake decides, so nothing is read here.
+ */
+function gateWatch(ctx: Ctx, a: ArtifactRow, d: Extract<Decision, { allow: true }>): boolean {
+  return liveViewAccess(ctx.principal, d, null, {
+    active: liveViewsActive(ctx.config, ctx.env),
+    sharedData: sharedDataActive(ctx.config),
+    type: a.type,
+  }).watch;
+}
 
 // ---------- comments from the page ----------
 

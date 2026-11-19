@@ -1,13 +1,21 @@
 // Notices a newer version of the artifact on view (an agent or editor published one) and hands it
 // to the page. It reads the same gate the page loaded, every VERSION_POLL_MS while the tab is
-// visible and once when the tab comes back. Gates are cheap: an unused enter URL is just a signed
+// visible, once when the tab comes back, and at once when the live-view socket says a version was
+// published (checkNow; useLiveView.ts). While that socket is open the poll is only a backstop,
+// every LIVE_VIEW_LIMITS.gateBackstopMs. Gates are cheap: an unused enter URL is just a signed
 // token that expires.
-import type { ViewGate } from "@plinth/shared";
-import { useEffect, useRef } from "react";
+import { LIVE_VIEW_LIMITS, type ViewGate } from "@plinth/shared";
+import { useEffect, useMemo, useRef } from "react";
 import { api } from "../../lib/api.ts";
+import type { LiveViewStatus } from "./useLiveView.ts";
 
 /** Same pace as the comments panel. */
 export const VERSION_POLL_MS = 15_000;
+
+/** How often to poll the gate: the usual pace, or only as a backstop while signals are pushed. */
+export function versionPollMs(live: LiveViewStatus): number {
+  return live === "open" ? LIVE_VIEW_LIMITS.gateBackstopMs : VERSION_POLL_MS;
+}
 
 type OkGate = Extract<ViewGate, { status: "ok" }>;
 
@@ -49,9 +57,35 @@ export function nextGate(
 }
 
 /**
+ * What to do with the gate re-read after a sharing change closed the watch socket (4401
+ * `access_changed`; useLiveView.ts). A sharing change ends every content pass of the artifact, so
+ * a frame keeps working only until its next request, and a new frame from `fresh` renews it.
+ * - `fresh` is not "ok": access ended, so it is shown (the gate asks again, or refuses).
+ * - Paused (a deck presented, a doc edited on its page): the frame stays, as it does for a new
+ *   version; only the count of versions moves on (`gate`, when it did). `renew` says the page
+ *   should load a fresh gate once the pause ends.
+ * - Otherwise `fresh` replaces the frame, as a new version does.
+ */
+export type AccessOutcome =
+  | { kind: "show"; gate: ViewGate }
+  | { kind: "keep"; gate: OkGate | null; renew: true };
+
+export function afterAccessChange(
+  shown: OkGate,
+  fresh: ViewGate,
+  pinned: boolean,
+  paused: WatchPause = null,
+): AccessOutcome {
+  if (fresh.status !== "ok") return { kind: "show", gate: fresh };
+  if (paused) return { kind: "keep", gate: nextGate(shown, fresh, pinned, paused), renew: true };
+  return { kind: "show", gate: fresh };
+}
+
+/**
  * Polls `path` (the page's own gate path) while `gate` is on view and calls `onNewer` with the gate
- * to show when a newer version appears; `paused` keeps the frame (see WatchPause). Failures and gates that are no longer "ok" are ignored:
- * the page keeps what it has until the next navigation.
+ * to show when a newer version appears; `paused` keeps the frame (see WatchPause). Failures and
+ * gates that are no longer "ok" are ignored: the page keeps what it has until the next navigation.
+ * `checkNow` reads the gate at once; a check already running is followed by one more.
  */
 export function useVersionWatch(
   path: string,
@@ -60,16 +94,22 @@ export function useVersionWatch(
   onNewer: (gate: OkGate) => void,
   intervalMs: number = VERSION_POLL_MS,
   paused: WatchPause = null,
-): void {
+): { checkNow: () => void } {
   const latest = useRef({ gate, onNewer, paused });
   latest.current = { gate, onNewer, paused };
   const watching = gate !== null;
+  const checkRef = useRef<() => void>(() => undefined);
 
   useEffect(() => {
     if (!watching) return;
     let ctrl: AbortController | null = null;
+    let again = false;
     const check = async () => {
-      if (document.visibilityState !== "visible" || ctrl) return;
+      if (document.visibilityState !== "visible") return;
+      if (ctrl) {
+        again = true;
+        return;
+      }
       ctrl = new AbortController();
       try {
         const fresh = await api<ViewGate>(path, { signal: ctrl.signal });
@@ -80,17 +120,32 @@ export function useVersionWatch(
         // Offline or a hiccup: try again on the next tick.
       } finally {
         ctrl = null;
+        if (again) {
+          again = false;
+          void check();
+        }
       }
     };
-    const id = window.setInterval(check, intervalMs);
+    checkRef.current = () => void check();
     const onVisible = () => {
       if (document.visibilityState === "visible") void check();
     };
     document.addEventListener("visibilitychange", onVisible);
     return () => {
-      window.clearInterval(id);
+      checkRef.current = () => undefined;
+      again = false;
       ctrl?.abort();
       document.removeEventListener("visibilitychange", onVisible);
     };
-  }, [path, pinned, watching, intervalMs]);
+  }, [path, pinned, watching]);
+
+  // The pace on its own, so a change of pace (the live-view socket opening) never cancels a
+  // check that is under way, such as the one its welcome asked for.
+  useEffect(() => {
+    if (!watching) return;
+    const id = window.setInterval(() => checkRef.current(), intervalMs);
+    return () => window.clearInterval(id);
+  }, [watching, intervalMs]);
+
+  return useMemo(() => ({ checkNow: () => checkRef.current() }), []);
 }

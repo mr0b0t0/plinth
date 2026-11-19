@@ -9,6 +9,7 @@ import {
   type DictationAccess,
   type EffectiveRole,
   isPersonalDocId,
+  type LiveViewPool,
   type Role,
   type RoomDocRight,
   type RoomEmitRight,
@@ -636,4 +637,38 @@ export function decidePortal(
  */
 export function seesPersonalCategory(p: Principal, role: EffectiveRole | null): boolean {
   return p.kind === "user" && role !== null && role !== "owner";
+}
+
+// ---------- live views: pushed versions and data changes (app host, the watch socket) ----------
+
+/**
+ * May this principal hold a watch socket on the artifact, and does it get `data` signals? `d` is
+ * the view decision (the gate's, `decideFor(ctx, a, "view")`); `active` is liveViewsActive(config,
+ * env); `sharedData` is sharedDataActive(config); `caps` the current version's declaration. Anyone
+ * who may open the artifact may watch (anonymous link viewers included: a watch socket joins no
+ * room, sees no peers and carries no identity), never an agent, which publishes and never pulls.
+ * Data signals follow pageDataAccess's read rule: an HTML page whose current version declares
+ * `data`, with shared data active. The gate and the handshake both ask this, so the decision lives
+ * here.
+ */
+export function liveViewAccess(
+  p: Principal,
+  d: Decision,
+  caps: Capabilities | null,
+  o: { active: boolean; sharedData: boolean; type: ArtifactType },
+): { watch: boolean; data: boolean } {
+  const watch = o.active && d.allow && p.kind !== "agent";
+  return { watch, data: watch && o.type === "html" && caps?.data === true && o.sharedData };
+}
+
+/**
+ * Which cap pool a watch socket counts in (LiveViewPool, packages/shared/src/liveView.ts): `member`
+ * when the view decision has a role (the owner, or a grant to the viewer's email), `open` for
+ * everyone else it lets in (public and unlisted link viewers, signed in or not, password holders,
+ * an admin reviewing a report). The pools never affect each other, so a full `open` pool, the only
+ * one an outsider can fill, says nothing about whether the owner or a collaborator has the
+ * artifact open.
+ */
+export function liveViewPool(d: Extract<Decision, { allow: true }>): LiveViewPool {
+  return d.role === null ? "open" : "member";
 }

@@ -47,6 +47,9 @@ export const DEV_VARS: Record<string, string> = {
   ALLOW_DICTATION: "true",
   // Category sharing (docs/spec.md "Category sharing and personal categories"), on by default too.
   ALLOW_CATEGORY_SHARING: "true",
+  // Live views (docs/spec.md "Live views"): pushed versions and data changes over the app's watch
+  // socket, on both servers (it needs only the ROOMS binding, not origin isolation).
+  ALLOW_LIVE_VIEWS: "true",
   // Fresh for every run; never committed, never reused.
   SESSION_SECRET: randomBytes(48).toString("base64url"),
   TOKEN_SIGNING_KEY: randomBytes(48).toString("base64url"),
