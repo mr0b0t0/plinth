@@ -338,6 +338,79 @@ describe("plinth publish", () => {
     assert.equal(r.code, 1);
     assert.match(r.stderr, /No index\.html/);
     assert.match(r.stderr, /slides\.md for a deck/);
+    assert.match(r.stderr, /sheet\.jsonl for a sheet/);
+  });
+
+  it("publishes a folder with sheet.jsonl as a sheet, stored canonical, and still verifies", async () => {
+    const sheet =
+      '{"plinth":"sheet","v":1,"columns":[{"name":"Item"},{"name":"Qty","type":"number"}]}\n["Apples",3]\n';
+    const dir = build({ "sheet.jsonl": sheet });
+    const dry = await plinth(["publish", dir, "--dry-run"], { extraEnv: asPat() });
+    assert.equal(dry.code, 0, dry.stderr);
+    assert.match(dry.stdout, /as a new sheet/);
+    const r = await plinth(["publish", dir, "--json"], { extraEnv: asPat() });
+    assert.equal(r.code, 0, r.stderr);
+    assert.deepEqual(fake.state.lastUploadInput, { type: "sheet" });
+    const out = JSON.parse(r.stdout);
+    assert.equal(out.verified, true);
+    const stored = fake.state.artifacts.get(out.id).versions[0];
+    // The fake stores it without the final newline, as the server's canonical form may differ.
+    assert.equal(stored.get("sheet.jsonl").bytes.toString(), sheet.slice(0, -1));
+  });
+
+  it("imports one .csv file as a new sheet, and an .xlsx as the next version of one", async () => {
+    const dir = build({ "q4-budget.csv": "Item,Qty\nApples,3\n", "book.xlsx": "PK-not-really" });
+    const dry = await plinth(["publish", path.join(dir, "q4-budget.csv"), "--dry-run"], {
+      extraEnv: asPat(),
+    });
+    assert.equal(dry.code, 0, dry.stderr);
+    assert.match(dry.stdout, /Would import q4-budget\.csv .* as a new sheet/);
+    const r = await plinth(["publish", path.join(dir, "q4-budget.csv"), "--json"], {
+      extraEnv: asPat(),
+    });
+    assert.equal(r.code, 0, r.stderr);
+    assert.deepEqual(fake.state.lastPost, {
+      type: "sheet",
+      title: "q4-budget",
+      content: "Item,Qty\nApples,3\n",
+      content_format: "csv",
+    });
+    const out = JSON.parse(r.stdout);
+    assert.equal(out.verified, true);
+
+    const up = await plinth(["publish", path.join(dir, "book.xlsx"), "--id", out.id, "--json"], {
+      extraEnv: asPat(),
+    });
+    assert.equal(up.code, 0, up.stderr);
+    const put = fake.state.lastPut;
+    assert.equal(put.content_format, "xlsx");
+    assert.equal(Buffer.from(put.content, "base64").toString(), "PK-not-really");
+    assert.equal(put.base_version, 1);
+    assert.equal(JSON.parse(up.stdout).version, 2);
+
+    const stale = await plinth(
+      ["publish", path.join(dir, "q4-budget.csv"), "--id", out.id, "--base-version", "1"],
+      { extraEnv: asPat() },
+    );
+    assert.equal(stale.code, 3);
+
+    const page = fake.seed(site(1));
+    const wrong = await plinth(["publish", path.join(dir, "q4-budget.csv"), "--id", page.id], {
+      extraEnv: asPat(),
+    });
+    assert.equal(wrong.code, 1);
+    assert.match(wrong.stderr, /is a page; a \.csv or \.xlsx file updates a sheet only/);
+  });
+
+  it("checks a sheet's sheet.jsonl against the sheet limit", () => {
+    const limits = { ...fake.state.limits, max_sheet_bytes: 100 };
+    assert.throws(
+      () => checkLimits([{ path: "sheet.jsonl", size: 200 }], "sheet.jsonl", "sheet", limits),
+      /limit is 100 B/,
+    );
+    assert.doesNotThrow(() =>
+      checkLimits([{ path: "sheet.jsonl", size: 20 }], "sheet.jsonl", "sheet", limits),
+    );
   });
 
   it("publishes a folder with slides.md as a deck, and updates it inline with content", async () => {
@@ -1459,7 +1532,7 @@ describe("plinth publish for CI: one file, bound tokens, --json failures", () =>
     const from = fake.state.requests.length;
     const r = await plinth(["publish", txt], { extraEnv: asPat() });
     assert.equal(r.code, 2, r.stderr);
-    assert.match(r.stderr, /a build folder, or one \.html or \.md file/);
+    assert.match(r.stderr, /a build folder, or one \.html, \.md, \.csv or \.xlsx file/);
     const real = oneFile("real.html", "<!doctype html><p>x</p>");
     const link = path.join(path.dirname(real), "report.html");
     symlinkSync(real, link);

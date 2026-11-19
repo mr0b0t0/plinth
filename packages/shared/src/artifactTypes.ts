@@ -4,13 +4,14 @@
 // under /__plinth/types/<id>/. This one table drives validation, storage paths, wire fields,
 // serving, the shell, the editor, the diff label and the dashboard badge.
 //
-// Each type is its own module, artifactTypes/<id>.ts. Adding a type (deck, sheet) is that module,
+// Each type is its own module, artifactTypes/<id>.ts. Adding a type is that module,
 // one line in ARTIFACT_TYPES, one line in TYPE_REGISTRY, its Worker hooks
 // (apps/worker/src/services/artifactTypes/<id>.ts) and, for a type with a renderer, a renderer
 // directory (apps/web/src/renderers/<id>/main.ts); no wire change.
 import { designSystem } from "./artifactTypes/design_system.ts";
 import { doc } from "./artifactTypes/doc.ts";
 import { html } from "./artifactTypes/html.ts";
+import { sheet } from "./artifactTypes/sheet.ts";
 import { slides } from "./artifactTypes/slides.ts";
 import { escapeHtml } from "./markdown.ts";
 
@@ -21,11 +22,12 @@ export const ARTIFACT_TYPES = [
   "doc",
   "slides",
   "design_system",
+  "sheet",
 ] as const;
 export type ArtifactType = (typeof ARTIFACT_TYPES)[number];
 
 /** The languages the source editor holds. The web app has a Monaco setup for each one. */
-export type EditorLanguage = "html" | "markdown" | "json";
+export type EditorLanguage = "html" | "markdown" | "json" | "plaintext";
 
 export interface ArtifactTypeDef {
   id: ArtifactType;
@@ -70,6 +72,7 @@ export const TYPE_REGISTRY: { readonly [K in ArtifactType]: TypeModule<K> } = {
   doc,
   slides,
   design_system: designSystem,
+  sheet,
 };
 
 /**

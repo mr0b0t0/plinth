@@ -54,6 +54,8 @@ export const API = {
   restore: "/artifacts/:ref/versions/:n/restore", // POST restore_version
   visibility: "/artifacts/:ref/visibility", // PUT set_visibility
   designSystem: "/artifacts/:ref/design-system", // GET get_design_system
+  sheet: "/artifacts/:ref/sheet", // GET read_sheet
+  sheetEdits: "/artifacts/:ref/sheet/edits", // POST edit_sheet
   sharing: "/artifacts/:ref/sharing", // GET settings, PUT grants
   // categories (the caller's own names; rename and merge for the signed-in owner only)
   categories: "/categories", // GET names with counts

@@ -117,6 +117,8 @@ describe("OpenAPI document", () => {
         "set_visibility",
         "update_artifact",
         "write_artifact_data",
+        "read_sheet",
+        "edit_sheet",
       ].sort(),
     );
   });
@@ -126,7 +128,13 @@ describe("OpenAPI document", () => {
     expect(publish.type).toBe("object");
     // html is required for type html only (the Worker's resolveSource), so only title is.
     expect(publish.required.sort()).toEqual(["title"]);
-    expect(publish.properties.type.enum).toEqual(["html", "doc", "slides", "design_system"]);
+    expect(publish.properties.type.enum).toEqual([
+      "html",
+      "doc",
+      "slides",
+      "design_system",
+      "sheet",
+    ]);
     expect(publish.properties.content.type).toBe("string");
     expect(publish.properties.visibility.enum).toEqual([
       "public",
@@ -202,6 +210,7 @@ describe("OpenAPI document", () => {
       { $ref: "#/components/schemas/DocArtifactDetail" },
       { $ref: "#/components/schemas/SlidesArtifactDetail" },
       { $ref: "#/components/schemas/DesignSystemArtifactDetail" },
+      { $ref: "#/components/schemas/SheetArtifactDetail" },
     ]);
     expect(detail.discriminator).toEqual({
       propertyName: "type",
@@ -210,6 +219,7 @@ describe("OpenAPI document", () => {
         doc: "#/components/schemas/DocArtifactDetail",
         slides: "#/components/schemas/SlidesArtifactDetail",
         design_system: "#/components/schemas/DesignSystemArtifactDetail",
+        sheet: "#/components/schemas/SheetArtifactDetail",
       },
     });
     const deck = schemas.SlidesArtifactDetail;
@@ -219,7 +229,7 @@ describe("OpenAPI document", () => {
     expect(deck.properties.html).toBeUndefined();
     expect(deck.properties.live_draft).toBeUndefined();
     expect(schemas.ArtifactType.description).toBe(
-      '"html": a hand-written page (source index.html). "doc": a Markdown document (source content.md) that Plinth renders. "slides": a Markdown deck (source slides.md) that Plinth renders. "design_system": design tokens, guidelines and components as JSON (source system.json) that Plinth renders as a reference site and get_design_system compiles. Fixed at publish.',
+      '"html": a hand-written page (source index.html). "doc": a Markdown document (source content.md) that Plinth renders. "slides": a Markdown deck (source slides.md) that Plinth renders. "design_system": design tokens, guidelines and components as JSON (source system.json) that Plinth renders as a reference site and get_design_system compiles. "sheet": a table as JSON lines (source sheet.jsonl) that Plinth renders as a spreadsheet and read_sheet evaluates. Fixed at publish.',
     );
     const page = schemas.HtmlArtifactDetail;
     // Existing clients keep a required html field, as before typed artifacts.

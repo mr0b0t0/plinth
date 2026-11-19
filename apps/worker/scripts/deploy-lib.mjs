@@ -160,6 +160,7 @@ export function runtimeBase(repoCfg) {
         "LIVE_DRAFT_FLUSH_S",
         "LIVE_DRAFT_RETENTION_DAYS",
         "ALLOW_DICTATION",
+        "SHEET_EVAL_BUDGET",
       ]
         .filter((k) => k in (repoCfg.vars ?? {}))
         .map((k) => [k, repoCfg.vars[k]]),

@@ -7,15 +7,24 @@ import { CliError, formatBytes } from "./http.mjs";
 import { ASSET_PATH_RE, DEFAULTS, LIMITS } from "./vendor/constants.mjs";
 
 /** The source file of each artifact type, at the top of the folder (the first one found wins). */
-export const SOURCE_FILES = { html: "index.html", doc: "content.md", slides: "slides.md" };
+export const SOURCE_FILES = {
+  html: "index.html",
+  doc: "content.md",
+  slides: "slides.md",
+  sheet: "sheet.jsonl",
+};
+
+/** One file a publish imports as a sheet (the server converts it): its content_format by extension. */
+export const IMPORT_FORMATS = { ".csv": "csv", ".xlsx": "xlsx" };
 
 /** The field a type's source goes in on PUT /artifacts: html for a page, content for Markdown. */
 export const sourceField = (type) => (type === "html" ? "html" : "content");
 
-/** The most bytes a type's source may hold: the instance's limit, or the fixed deck limit. */
+/** The most bytes a type's source may hold: the instance's limit, or the fixed type limit. */
 export function sourceMaxBytes(type, limits) {
   if (type === "doc") return limits.max_doc_bytes;
   if (type === "slides") return LIMITS.maxSlidesBytes;
+  if (type === "sheet") return limits.max_sheet_bytes ?? LIMITS.maxSheetBytes;
   return limits.max_html_bytes;
 }
 
@@ -103,6 +112,9 @@ export function defaultLimits() {
     max_request_bytes: LIMITS.maxInlineRequestBytes,
     max_bundle_bytes: DEFAULTS.maxVersionBytes + LIMITS.bundleOverheadBytes,
     max_bundle_file_bytes: LIMITS.maxBundleFileBytes,
+    max_sheet_bytes: LIMITS.maxSheetBytes,
+    max_sheet_rows: LIMITS.maxSheetRows,
+    max_sheet_columns: LIMITS.maxSheetColumns,
   };
 }
 

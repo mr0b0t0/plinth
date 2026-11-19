@@ -147,6 +147,11 @@ export interface Config {
    * Permissions-Policy at microphone=().
    */
   allowDictation: boolean;
+  /**
+   * SHEET_EVAL_BUDGET (default 200,000; 10,000 to 20,000,000): formula steps one read_sheet call
+   * may spend. Never affects the browser, which has its own fixed budget.
+   */
+  sheetEvalBudget: number;
   /** OPERATOR_*: who runs this instance, for its legal pages. null when none is published. */
   operator: {
     name: string;
@@ -193,6 +198,9 @@ export interface LiveEditSettings {
 }
 
 export class ConfigError extends Error {}
+
+/** SHEET_EVAL_BUDGET's bounds. */
+export const SHEET_EVAL_BUDGET_BOUNDS = [10_000, 20_000_000] as const;
 
 /** The smallest MAX_VERSION_BYTES an instance may set (1 MB). */
 export const MIN_VERSION_BYTES = 1024 * 1024;
@@ -371,6 +379,13 @@ export function parseConfig(env: Record<string, unknown>): Config {
     allowLiveEditing: boolDefaultOn(env.ALLOW_LIVE_EDITING),
     live: parseLiveEditSettings(env),
     allowDictation: bool(env.ALLOW_DICTATION),
+    sheetEvalBudget: boundedInt(
+      env,
+      "SHEET_EVAL_BUDGET",
+      DEFAULTS.sheetEvalBudget,
+      SHEET_EVAL_BUDGET_BOUNDS[0],
+      SHEET_EVAL_BUDGET_BOUNDS[1],
+    ),
     operator: parseOperator(env),
   };
   validate(config);
@@ -616,6 +631,9 @@ export function instanceLimits(
     max_request_bytes: LIMITS.maxInlineRequestBytes,
     max_bundle_bytes: maxBundleBytes(c),
     max_bundle_file_bytes: LIMITS.maxBundleFileBytes,
+    max_sheet_bytes: LIMITS.maxSheetBytes,
+    max_sheet_rows: LIMITS.maxSheetRows,
+    max_sheet_columns: LIMITS.maxSheetColumns,
   };
 }
 

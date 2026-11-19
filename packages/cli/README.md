@@ -99,20 +99,23 @@ Everything else, from the content domain to email and the Public Suffix List, is
 
 The `plinth` command also publishes to any Plinth instance, the hosted one included: a built site
 (Vite, Next export, anything with `index.html` at the top of its folder) or a folder of files. A
-folder with `content.md` at its top is published as a document, and one with `slides.md` (and its
-images) as a deck.
+folder with `content.md` at its top is published as a document, one with `slides.md` (and its
+images) as a deck, and one with `sheet.jsonl` as a sheet. One `.csv` or `.xlsx` file is imported
+as a sheet: its first row names the columns.
 
 ```sh
 npx @mr0b0t0/plinth login                 # once: approve "Plinth CLI" in the browser
 npx @mr0b0t0/plinth publish dist          # a new private artifact; prints its link
 npx @mr0b0t0/plinth publish dist --id my-report-k3x9   # the next version of that artifact
 npx @mr0b0t0/plinth publish report.html   # one page (sent as index.html); notes.md makes a document
+npx @mr0b0t0/plinth publish budget.xlsx   # a sheet (budget.csv works too)
 ```
 
 - **What is sent.** Every file under the folder, as one compressed upload. Dotfiles are left out,
   and so are source maps (`*.map`) unless you add `--include-maps`. Symbolic links are refused:
   copy the files the page needs into the folder instead. One `.html` (or `.htm`) file is sent as
-  `index.html`, one `.md` file as a document's `content.md`; any other single file is a usage
+  `index.html`, one `.md` file as a document's `content.md`, and one `.csv` or `.xlsx` file (at
+  most 2 MB) in one request that the instance imports as a sheet; any other single file is a usage
   error (exit 2), and so is a file given through a symbolic link. Paths may use letters, digits, `.`, `_`,
   `-` and `/`; the command suggests a new name for any other.
 - **Limits.** It checks the instance's limits (from `/api/v1/config`) before sending anything:
@@ -196,7 +199,7 @@ Client commands (they work with any instance, need no Cloudflare account and no 
 | `plinth login` | Sign in to an instance in the browser (`--no-browser` prints the address) |
 | `plinth logout` | Revoke and forget that sign-in |
 | `plinth whoami` | The account you are signed in as, and on which instance (and the artifact a token is limited to) |
-| `plinth publish <dir\|file.html\|file.md>` | Publish a build folder or one file; `--id`, `--title`, `--category`, `--note`, `--base-version`, `--include-maps`, `--dry-run`, `--json` |
+| `plinth publish <dir\|file.html\|file.md\|file.csv\|file.xlsx>` | Publish a build folder or one file (a `.csv` or `.xlsx` becomes a sheet); `--id`, `--title`, `--category`, `--note`, `--base-version`, `--include-maps`, `--dry-run`, `--json` |
 | `plinth upload <dir> --to <upload_url>` | Send a folder with a `start_upload` ticket (token in `PLINTH_UPLOAD_TOKEN`) |
 
 Exit codes: 0 done, 1 error, 2 wrong usage, 3 the artifact changed since the version you read.

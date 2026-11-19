@@ -10,6 +10,17 @@ Add a line under **Unreleased** in the pull request that makes a change people w
 
 ## Unreleased
 
+- **Sheets.** Agents can publish a table people sort, filter, calculate with or download (`type:
+  "sheet"`): JSON lines with typed columns (text, number with currency or percent formats, date,
+  checkbox, select, link) and Excel formulas (SUM, IF, VLOOKUP, XLOOKUP and 67 more) that Plinth
+  computes itself. The page has a frozen header, sort, a filter, a formula bar, print, light and
+  dark, and phone width, and anyone who can view it downloads it as CSV or Excel (.xlsx) built in
+  the browser. Agents read computed values with `read_sheet` and change cells, rows and columns
+  with `edit_sheet`, one version per call. A CSV or .xlsx file can be published as a sheet
+  (`content_format`, `plinth publish data.csv`, or "Import CSV or .xlsx" in the editor).
+  `SHEET_EVAL_BUDGET` sets how much formula work one `read_sheet` may do. Update the plugin for the
+  agent's sheet rules.
+
 - **Dictation, run by Plinth, for pages that ask for it.** A page that declares `dictation` can
   take the words a viewer speaks (`plinth.dictation`): Plinth's app runs the browser's speech
   recognizer after the viewer's click and consent, shows "Listening" with a Stop the page cannot

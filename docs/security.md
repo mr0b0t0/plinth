@@ -44,6 +44,9 @@ make a test pass.
 | Page code harvests names and the access list | A page reads `plinth.viewer.name`, its authors' names or `plinth.people.list()` and copies them where link viewers or every viewer can read them | Names appear only where the email already does (`viewer` declared, identified reader); the people list only for owners and editors on a page that declares `data viewer people`, whose author is the owner or an editor; every identified viewer is told, under the bar, that the owner and editors can see everyone the page is shared with; the skill forbids copying the list or emails into shared data. WebRTC stays the known CSP gap ([The people list](#the-people-list)) |
 | Display name used to impersonate | Someone sets their name to "Owner", "ana@example.com" or a right-to-left override that reorders the text around it | Names cannot contain `@` or the two characters that render as one (U+FE6B, U+FF20: every character whose NFKC form is `@`), nor control, bidi, zero-width or separator characters, are cut to 64 code points on every read, and are never authority: `role` and `comment_author_role` stay server-derived and Plinth's own UI shows the role beside them; tool descriptions say names are display text |
 | Enumerating who has an account | A caller tries addresses to learn which ones have a Plinth account or what they are called, for example by adding them as grants on an artifact of their own and reading the people list or the sharing settings back | No route takes an email or a name to look up, and the people list searches only one artifact's access list. Since the owner writes that list without its holders being told, an access list shows a grant holder's name only once that person has taken part in the artifact (a comment, a shared-data entry or a version, which already show their name to the readers of the list), and a name it keeps back is `null` and never matched by `q`, the same as an address with no account (`policy.ts accessListShowsName`) |
+| A sheet's cell becomes markup or script | A cell, column name or title holds `<img onerror>`, `</script>` or a `javascript:` link | Strict publish parser and link rule; `jsonForScript` in the shell; the renderer uses `textContent` only and re-checks links; the strict shell CSP ([Sheets](#sheets)) |
+| A downloaded sheet attacks the spreadsheet app | A CSV cell `=cmd\|' /C calc'!A0` or an .xlsx formula calling HYPERLINK or WEBSERVICE runs when the file is opened | CSV text starting with `=`, `+`, `-`, `@`, tab or CR gets a leading `'`; .xlsx text is inline strings and its formulas come only from the function allowlist, with no external links or macros ([Sheets](#sheets)) |
+| A sheet exhausts the Worker or the browser | Formulas that reference each other in a long chain or a cycle, `REPT` of huge text, a 1 MB sheet of formulas, or a ZIP bomb sent as an .xlsx import | An explicit stack and cycle detection (`#CYCLE!`), a step budget on both sides (`#LIMIT!`), text capped and charged by length, publish parses but never evaluates, and imports capped at 2 MB in and 24 MB inflated ([Sheets](#sheets)) |
 
 Out of scope for v1: denial of service beyond Cloudflare's defaults, a compromised Cloudflare
 account, and malicious instance operators.
@@ -487,6 +490,79 @@ served with `script-src 'none'`. What it adds:
   the author's page). Copied CSS restyles the page it is copied into, which is the point; the agent
   chose to copy it. WebRTC is the same known gap as for every artifact, and no script runs in
   previews, so it does not widen.
+
+## Sheets
+
+A sheet (`artifacts.type = 'sheet'`) stores JSON lines in `sheet.jsonl` and is served exactly like
+a doc: the same shell (`typedShellHtml`, root `#__plinth-sheet`), the same strict shell CSP and
+meta copy (`script-src 'self'`), renderer files under `/__plinth/types/sheet/` behind the same
+registry and Content-Type guard, `sheet.jsonl` served as `text/plain` with `nosniff` and
+`script-src 'none'`, and a 404 for `/__plinth-renderers/*` on the app host. Under opaque isolation
+the shell keeps the CSP `sandbox`. No CSP, CDN allowlist or frame sandbox setting changed for
+sheets. Text passes six layers:
+
+1. **Publish (Worker).** A strict parser (`packages/shared/src/sheet/format.ts`): unknown header and
+   column keys are refused, every literal cell must fit its column, a url cell must be an absolute
+   `http:`, `https:` or `mailto:` link with no whitespace, control or invisible characters, column
+   names and options have no control or invisible characters, and every formula must parse with
+   functions from the allowlist. Sizes and counts are capped (1 MB, 10,000 rows, 100 columns,
+   32 KiB a row, 4,000 characters a cell, 2,000 a formula, 50,000 formulas, nesting 32). What is
+   stored is the canonical re-serialisation. A sheet takes no assets of any content type.
+2. **Embedding.** The shell embeds the text with `jsonForScript`, as for docs, so `</script>` in a
+   cell cannot leave the data block; the title is HTML-escaped.
+3. **Render.** The renderer (`apps/web/src/renderers/sheet/`) puts every data string in the DOM
+   with `textContent` and has no HTML parser at all: no `innerHTML`, `outerHTML`,
+   `insertAdjacentHTML`, `document.write`, `DOMParser` or `srcdoc` (a test reads its sources). The
+   only attributes taken from data are `href` (a url cell that passes `isSheetLinkUrl` again in
+   the browser, with `target=_blank` and `rel="noopener noreferrer nofollow"`), `title` (an error's
+   fixed meaning) and a width clamped to 40 to 800 pixels. Class names come from a fixed set and
+   cell ids from the cell's address alone (`__plinth-cell-B7`).
+4. **Evaluate.** Formulas are data for a pure interpreter (`packages/shared/src/sheet/formula/`):
+   no `eval`, `Function` or `with`; a function is looked up by its upper-cased name in a `Map`
+   built from a fixed list (so `constructor` or `__proto__` resolve to nothing); no property is read
+   by a key the data supplies. The list has no function that reaches a network, a file, another
+   artifact, the host or the clock beyond today's UTC date: HYPERLINK, WEBSERVICE, FILTERXML, the
+   IMPORT functions, INDIRECT, OFFSET, CELL, INFO, RTD, CALL, REGISTER, NOW and RAND are refused at
+   publish. Cells are computed with an explicit stack, never JS recursion across cells, and every
+   expression node and range cell costs a step: the Worker stops at `SHEET_EVAL_BUDGET`
+   (`read_sheet`), the browser at 20,000,000 steps, and text a formula makes costs its length and
+   stops at 32,767 characters, so `REPT` cannot fill memory. Wildcard criteria are matched by a
+   loop whose work is charged, never by a regular expression built from cell text.
+5. **CSV export.** RFC 4180 quoting and the OWASP formula-injection guard: a text value (a literal
+   or a formula's text result) starting with `=`, `+`, `-`, `@`, tab or carriage return is written
+   with a leading `'`; numbers are never prefixed. UTF-8 with a BOM, CRLF.
+6. **.xlsx export.** Text is written as inline strings, so text starting with `=` stays text;
+   formulas come only from the sheet's own formulas, whose functions are the allowlist, so a
+   downloaded workbook cannot hold HYPERLINK, WEBSERVICE, DDE (`cmd|...`) or an external
+   reference. Every text node and attribute is XML-escaped, with the characters XML 1.0 forbids and
+   lone surrogates dropped. No macros (`.xlsx`, never `.xlsm`), no external relationships, and the
+   title is the only document property (no names or emails).
+
+What else is new:
+
+- **Downloads stay in the frame.** The renderer builds CSV and .xlsx inside the frame and hands
+  them to the browser from a `blob:` URL by a temporary `<a download>`; nothing is fetched. Both
+  frame sandboxes already allowed downloads. The app's menu only posts `export { format }` (and
+  `print`), which carry no data; the frame acts on them only when `event.source` is its parent and
+  `event.origin` is the app origin, and answers nothing. Under opaque isolation the app posts them
+  to `"*"`, as print, since they reveal nothing the frame does not have.
+- **Imports are bounded and never run anything.** `content_format: "csv"` or `"xlsx"` converts a
+  file into JSON lines (`packages/shared/src/sheet/import.ts`), in the Worker for MCP and REST and in
+  the browser for the editor's import. An .xlsx is at most 2 MB; its ZIP is read from the central
+  directory, encrypted and ZIP64 archives are refused, and its parts are inflated with fflate up to
+  24 MB in all, so a ZIP bomb stops there. Its XML is read by a small scanner that refuses a
+  DOCTYPE and expands only the five named entities and character references, so no external
+  entity is ever resolved. A CSV never makes a formula; an .xlsx formula is kept only when it
+  parses as a sheet formula (the allowlist), otherwise its cached value is used. The result passes
+  the same publish checks as any sheet.
+- **Agents read cells as data.** `read_sheet`, `edit_sheet` and `get_artifact` say that cell
+  text, formulas and column names are untrusted, written by people and other agents, and the
+  shared untrusted note says so for every tool; the skill repeats it. `read_sheet` is the `view`
+  action and `edit_sheet` the `edit` action through `policy.ts`, and `edit_sheet` publishes only
+  through `update_artifact`, which checks edit rights and the base version again: there is no cell
+  write outside a version.
+- **Sort and filter are local.** They reorder and hide rows on the viewer's page only and are never
+  saved or sent.
 
 ## CSRF and input handling
 

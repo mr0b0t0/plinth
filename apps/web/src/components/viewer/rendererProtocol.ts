@@ -7,6 +7,7 @@
 //   app -> frame: collect { nonce }        solo mode only: send me the edited text
 //   app -> frame: goto { slide }           a deck shows slide N (slidesProtocol.ts)
 //   app -> frame: view { mode }            a deck switches view: deck, presenter or overview
+//   app -> frame: export { format }        a sheet downloads itself as "csv" or "xlsx"
 //   frame -> app: live { ...status }       numbers, booleans and co-editor emails; never text
 //   frame -> app: save                     Cmd/Ctrl+S inside the frame
 //   frame -> app: draft { nonce, text }    the answer to collect, solo mode only
@@ -113,6 +114,37 @@ export function postToDeck(
   return true;
 }
 
+// ---------- sheets (the sheet type) ----------
+
+export type SheetExportFormat = "csv" | "xlsx";
+
+export interface ExportMessage {
+  source: typeof RENDERER_MESSAGE_SOURCE;
+  v: typeof RENDERER_PROTOCOL_VERSION;
+  type: "export";
+  format: SheetExportFormat;
+}
+
+export function exportMessage(format: SheetExportFormat): ExportMessage {
+  return { source: RENDERER_MESSAGE_SOURCE, v: RENDERER_PROTOCOL_VERSION, type: "export", format };
+}
+
+/**
+ * Ask a sheet's frame to download itself. The message names only a format, which the frame's
+ * own toolbar offers anyway, so it may go to "*" for opaque frames, like print. False when it
+ * cannot be sent.
+ */
+export function postExport(
+  frame: HTMLIFrameElement | null,
+  targetOrigin: string | null,
+  format: SheetExportFormat,
+): boolean {
+  const win = frame?.contentWindow;
+  if (!win || !targetOrigin) return false;
+  win.postMessage(exportMessage(format), targetOrigin);
+  return true;
+}
+
 // ---------- on-page editing (#36) ----------
 
 export interface EditMessage {
@@ -199,6 +231,7 @@ export const APP_MESSAGE_KINDS = [
   "collect",
   "goto",
   "view",
+  "export",
 ] as const;
 export type AppMessageKind = (typeof APP_MESSAGE_KINDS)[number];
 
@@ -208,7 +241,8 @@ export type AppToFrameMessage =
   | EditMessage
   | CollectMessage
   | GotoMessage
-  | ViewMessage;
+  | ViewMessage
+  | ExportMessage;
 
 /** Post an editing message to the frame's window at the exact origin. False when it cannot. */
 export function postToRenderer(

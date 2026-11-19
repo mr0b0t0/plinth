@@ -113,7 +113,7 @@ reuse by hash](#big-builds-and-reuse-by-hash)). The row's `r2_prefix` is authori
 | --- | --- | --- |
 | `users` | id, email, name, auth provider, created_at | One row per person who signs in |
 | `agent_connections` | id, user_id, label, client type, token hash, last_used_at, artifact_id | One per connected agent, e.g. "Work Claude". Revocable individually. `artifact_id` is NULL, or the one artifact a personal access token is limited to |
-| `artifacts` | id, owner_id, slug, title, type, current_version, visibility, password hash, category, created_at | `visibility` is public, unlisted, password or allowlist. `type` is `html` (a hand-written `index.html`), `doc` (Markdown in `content.md`), `slides` (a deck's Markdown in `slides.md`) or `design_system` (JSON in `system.json`), fixed at publish. `category` is the owner's own grouping (NULL = none), shown only to the owner |
+| `artifacts` | id, owner_id, slug, title, type, current_version, visibility, password hash, category, created_at | `visibility` is public, unlisted, password or allowlist. `type` is `html` (a hand-written `index.html`), `doc` (Markdown in `content.md`), `slides` (a deck's Markdown in `slides.md`), `design_system` (JSON in `system.json`) or `sheet` (JSON lines in `sheet.jsonl`, no assets), fixed at publish. `category` is the owner's own grouping (NULL = none), shown only to the owner |
 | `versions` | id, artifact_id, number, r2_prefix, size_bytes, stored_bytes, manifest, created_by (user or agent), note, created_at | Immutable, and written only once its files are in R2 (commit last). A restore creates a new row. `size_bytes` is what a viewer loads; `stored_bytes` is what this version added to R2 (NULL for versions written before 0.4.0, which count `size_bytes`). Each manifest entry has `path`, `size_bytes`, `content_type`, a server-computed `sha256` (absent on files stored before 0.4.0) and, for a reused file, a server-written `stored_at` (`v<m>[.<nonce>]/<path>`, relative to `artifacts/<artifact_id>/`, never returned by the API) |
 | `access_grants` | artifact_id, email, role | Role is viewer, commenter or editor. Used for allowlists and collaborators |
 | `comments` | id, artifact_id, version, parent_id, author, body, mentions, status | Threaded. `status` is open or resolved |
@@ -241,8 +241,8 @@ One remote MCP server over streamable HTTP at `/mcp`. All tools act as the conne
 
 | Tool | Purpose |
 | --- | --- |
-| `publish_artifact(title, html \| type+content, assets?, visibility?, category?)` | Create an artifact. Returns its id and URL, `warnings` and `stored` (and `category`, the stored name, when one was given). Private by default (`allowlist` with nobody added). `type: "doc"` with Markdown in `content` makes a document, `type: "slides"` a deck |
-| `update_artifact(id, html \| content, assets?, base_version?, note?, category?)` | Publish a new version of an existing artifact, in the source field its type takes. An asset may be `{path, sha256}` to reuse a file of the current version. `category` is owner only. Returns `warnings` and `stored` |
+| `publish_artifact(title, html \| type+content, assets?, visibility?, category?)` | Create an artifact. Returns its id and URL, `warnings` and `stored` (and `category`, the stored name, when one was given). Private by default (`allowlist` with nobody added). `type: "doc"` with Markdown in `content` makes a document, `type: "slides"` a deck, `type: "sheet"` with JSON lines (or `content_format` `csv` or `xlsx`) a sheet |
+| `update_artifact(id, html \| content, content_format?, assets?, base_version?, note?, category?)` | Publish a new version of an existing artifact, in the source field its type takes (a sheet may send CSV or an .xlsx with `content_format`). An asset may be `{path, sha256}` to reuse a file of the current version. `category` is owner only. Returns `warnings` and `stored` |
 | `start_upload(id?, base_version?, type?, title?, note?, category?)` | For a build folder or a large page: mint a single-use, 30-minute upload ticket for one new artifact, or for one update of `id` (then `base_version` is required). The result has `upload_url`, `upload_token`, `target` (with `id`: the artifact updated, or the one the publish will create), `commands.curl` (and `commands.npx` on release builds), the instance's `limits` and `content_isolation` |
 | `get_artifact(id, version?)` | Read metadata, `type`, the source (`html` for a page, `content` for a doc, a deck or a design system, and `source_path`) and each asset's `sha256`, so an agent can edit from the current state. An HTML page that names its design system also gets `design_system` (see [Design systems](#design-systems-decided-2026-11-19)) |
 | `list_artifacts(query?, category?, type?, limit?)` | List the user's artifacts and their own category names (`limit: 0` returns only the names). `type` filters by artifact type, for example `design_system` |
@@ -257,6 +257,8 @@ One remote MCP server over streamable HTTP at `/mcp`. All tools act as the conne
 | `list_artifact_data(id, collection?, doc_id?, limit?, cursor?)` | Read an artifact's shared data (owner or editor): a summary, one page of a collection, or one document. Every result is marked untrusted |
 | `write_artifact_data(id, ops)` | Change shared data (owner or editor): 1 to 50 `set`/`delete` ops, each with a required `if_rev`, each succeeding or failing on its own |
 | `get_design_system(id, version?, include?, components?)` | Read a design system (type `design_system`) the user can open, to build another artifact with it: tokens resolved to values, one CSS block of custom properties for light and dark, Google Fonts links, guidelines and component examples. Read-only; every text field is untrusted |
+| `read_sheet(id, version?, range?, values?, limit_cells?)` | Read a sheet's columns and the cells of an A1 range, formulas with their computed values (within `SHEET_EVAL_BUDGET`). Read-only, the `view` action; cell text is untrusted |
+| `edit_sheet(id, base_version, ops, note?)` | Change a sheet's cells, rows and columns (owner or editor): the ops apply to `base_version` and publish one new version, or nothing. See [Sheets](#sheets-decided-2026-11-19) |
 | `preview_artifact(id, version?)` | App-only (MCP Apps `visibility: ["app"]`, read-only): a single-use, 60-second link that shows one version the caller can view in an MCP host's frame. Called by Plinth's preview page, not by agents |
 
 **In-chat previews (decided 2026-11-16).** `publish_artifact`, `update_artifact` and
@@ -314,13 +316,16 @@ sets the title or the category (owner), `GET /api/v1/categories` lists the calle
 names, and `POST /api/v1/categories/rename` renames, merges or clears one (signed-in session only).
 `GET /api/v1/artifacts/:ref/design-system?version=&include=&components=` mirrors `get_design_system`,
 and `GET /api/v1/artifacts?type=` filters the list by type.
+`GET /api/v1/artifacts/:ref/sheet?version=&range=&values=&limit_cells=` mirrors `read_sheet`, and
+`POST /api/v1/artifacts/:ref/sheet/edits` (`{ base_version, ops, note? }`) mirrors `edit_sheet`.
 `POST /api/v1/connections` (people only) takes an optional `artifact` (id or slug) to limit the new
 token to it; every `ConnectionInfo` carries `artifact` (`{ id, slug, title }` for a bound token,
 with slug and title null once the person may no longer view it; null otherwise), and
 `GET /api/v1/me` returns `connection` for a bearer caller (`{ id, label, bound, artifact }`; the
 artifact only while the person may view it) and null for a session; for a token limited to one
 artifact it returns only `id` (the person's) and `connection`, none of the account fields. Size
-limits: 5 MB of HTML (1 MB of Markdown for a doc, and 1 MB and 500 slides for a deck), and per
+limits: 5 MB of HTML (1 MB of Markdown for a doc, 1 MB and 500 slides for a deck, and 1 MB, 10,000
+rows and 100 columns for a sheet), and per
 version a total size and a file count set by the operator with `MAX_VERSION_BYTES` (default 50 MB,
 at most 64 MB) and `MAX_ASSETS_PER_VERSION` (default 511, at most 900). A JSON request body may be
 up to 40 MB. `GET /api/v1/config` returns the instance's limits.
@@ -343,8 +348,11 @@ is `slides` (decided 2026-11-19, [Slides](#slides-decided-2026-11-19)): Markdown
 between slides, stored as `slides.md`, rendered as a deck by the same kind of fixed renderer.
 The third is `design_system` (decided 2026-11-19): design tokens, guidelines and components as
 JSON, which agents read with `get_design_system` to build other pages; see
-[Design systems](#design-systems-decided-2026-11-19). Sheets join the same type registry
-(`packages/shared/src/artifactTypes.ts`) later; no .docx or .pptx export yet. Design:
+[Design systems](#design-systems-decided-2026-11-19). The fourth is `sheet` (decided 2026-11-19):
+a table as JSON lines in `sheet.jsonl`, rendered as a spreadsheet with formulas computed by
+Plinth's own engine, CSV and .xlsx downloads built in the frame, and `read_sheet` and `edit_sheet`
+for agents; see [Sheets](#sheets-decided-2026-11-19). Every type is a row of one registry
+(`packages/shared/src/artifactTypes.ts`); no .docx or .pptx export yet. Design:
 `docs/superpowers/specs/2026-11-14-typed-outputs-doc-design.md`.
 
 ## Features
@@ -1090,6 +1098,118 @@ microphone.
   click and keep the text on screen; `getVoices()` and network voices are the page author's
   choices in the viewer's browser ([docs/security.md](security.md#dictation-and-text-to-speech)).
 
+### Sheets (decided 2026-11-19)
+
+A table people sort, filter, calculate with or download (a budget, a tracker, a list of records,
+a price comparison) is a sheet: the agent writes JSON lines, Plinth renders a spreadsheet. It is the
+fourth [typed output](#mcp-interface) and works like the others: `publish_artifact` and
+`update_artifact` take `type: "sheet"` with the source in `content`, a version stores
+`sheet.jsonl` and nothing else (a sheet has no assets), and versions, `base_version` conflicts,
+restore, history, diffs and the source editor work as for docs. Cells are versioned content, never
+shared data: every change, an agent's or a person's, is a new version anyone can revert. A sheet is
+not edited on its page yet.
+
+- **Format.** Line 1 is the header, `{"plinth":"sheet","v":1,"columns":[...],"freeze":{"cols":n}}`,
+  and every later line is one row, a JSON array of cells. In A1 terms the header's column names are
+  row 1 and data starts at row 2, so formulas mean the same in Plinth and in Excel. A column has a
+  `name` (1 to 100 characters, no control or invisible characters), a `type` (`text`, the default,
+  `number`, `date`, `checkbox`, `select` or `url`), an optional `width` (40 to 800 pixels), a
+  `format` for numbers (`style` `plain`, `percent` or `currency`, `decimals` 0 to 10, `currency` an
+  ISO 4217 code, `grouping`) and `options` for a select (1 to 100 distinct strings). `freeze.cols`
+  keeps 0 to 5 columns in view; the header row always stays. Unknown keys are refused. A cell is
+  `null`, a finite number, a boolean or a string; a string starting with `=` is a formula and a
+  leading `'` keeps the rest literal (`"'=x"` shows `=x`). Literal cells must fit their column: a
+  number in a number column, `YYYY-MM-DD` (1900-03-01 to 9999-12-31) in a date column, a boolean
+  in a checkbox column, one of the options in a select column, an absolute `http:`, `https:` or
+  `mailto:` link of at most 2,000 characters with no whitespace in a url column; a text column
+  takes any cell. Formulas are allowed in every column. No blank lines; one final newline is
+  dropped. The parser is one module (`packages/shared/src/sheet/`) for the Worker, the renderer
+  and the editor.
+- **Canonical storage.** The Worker stores every accepted sheet re-serialised: the header's keys in
+  a fixed order, one `JSON.stringify` per row with trailing empty cells trimmed, no final newline.
+  Each row therefore has one spelling, and a version diff shows only the rows that changed. This
+  holds for inline publishes, updates and bundles alike; the CLI's read-back allows for it.
+- **Formulas.** Plinth's own Excel-compatible interpreter (`packages/shared/src/sheet/formula/`),
+  the same code in the Worker and in the browser: A1 references (`B7`, `$B$7`), ranges (`A1:B5`,
+  `B:B`, `2:5`), Excel's operators and precedence (`-2^2` is 4), and these functions, each with
+  Excel's meaning: SUM, AVERAGE, MIN, MAX, COUNT, COUNTA, COUNTBLANK, COUNTIF, COUNTIFS, SUMIF,
+  SUMIFS, AVERAGEIF, AVERAGEIFS, PRODUCT, MEDIAN, STDEV, ROUND, ROUNDUP, ROUNDDOWN, INT, ABS, MOD,
+  POWER, SQRT, CEILING, FLOOR, IF, IFS, IFERROR, IFNA, AND, OR, NOT, XOR, SWITCH, ISBLANK, ISNUMBER,
+  ISTEXT, ISERROR, ISNA, CONCAT, CONCATENATE, TEXTJOIN, LEN, LEFT, RIGHT, MID, UPPER, LOWER, PROPER,
+  TRIM, SUBSTITUTE, REPT, FIND, SEARCH, VALUE, EXACT, VLOOKUP, HLOOKUP, XLOOKUP, INDEX, MATCH, DATE,
+  YEAR, MONTH, DAY, WEEKDAY, EDATE, EOMONTH, DAYS and TODAY. Any other name is refused at publish
+  with the list; there are no other sheets, external references, defined names, arrays or `@`, and
+  nothing that reaches a network, another artifact or the clock beyond today's UTC date (no
+  HYPERLINK, WEBSERVICE, INDIRECT, OFFSET, NOW or RAND). Dates are 1900-system serials (a date
+  column's literal is its serial in formulas); numbers show rounded to 15 significant digits.
+  Errors are Excel's (`#DIV/0!`, `#VALUE!`, `#REF!`, `#NAME?`, `#N/A`, `#NUM!`) plus `#CYCLE!`
+  for every cell on a circular reference and `#LIMIT!` for a cell not computed within the step
+  budget. Each formula is computed once, in dependency order, with an explicit stack; one step is
+  charged per expression node and per cell a range visits. A publish parses formulas and never
+  evaluates them.
+- **Viewing.** The page shows a toolbar (title, row count, a filter box, Download CSV and Excel), a
+  formula bar with the selected cell's address and its raw text, and the grid: column letters and
+  the header row stay at the top, frozen columns at the left, numbers right-aligned in their
+  format, dates as `YYYY-MM-DD`, checkboxes as a symbol with a spoken Yes or No, links that open in
+  a new tab, and errors with what they mean. Clicking a header sorts ascending, descending, then
+  back to the stored order; the filter keeps rows whose shown text contains it. Sort and filter
+  are the viewer's only and never saved. Arrow keys move between cells. Rows are in chunks of 200
+  that the browser lays out only on screen, so 10,000 rows stay usable while find in page, comment
+  pins (cell ids `__plinth-cell-B7`), print and screen readers see every cell. Light and dark,
+  phone width (the grid scrolls in its own box), and print (no toolbar, the header row repeats on
+  every page). The browser spends at most 20,000,000 steps; a sheet past that shows `#LIMIT!` in
+  the cells it did not compute, with a note.
+- **Downloads.** Anyone who can view the sheet downloads it as CSV or .xlsx, from the artifact
+  menu or the frame's own toolbar. The frame builds the file and hands it to the browser from a
+  `blob:` URL; nothing is fetched and no CDN, CSP or sandbox setting changes. CSV holds values:
+  UTF-8 with a BOM, CRLF, RFC 4180 quoting, and text starting with `=`, `+`, `-`, `@`, tab or
+  carriage return written with a leading `'` (numbers never are). The .xlsx is SpreadsheetML
+  written by Plinth and zipped with fflate 0.8.3: one worksheet named after the title, the header
+  in bold, column widths, the frozen pane, number formats from the column formats, text as inline
+  strings (text starting with `=` stays text), formulas with Plinth's computed values cached
+  (`fullCalcOnLoad`, so Excel computes its own; newer functions carry Excel's `_xlfn.` prefix), the
+  title as its only document property, no macros and no external relationships.
+- **Imports.** `content_format` on `publish_artifact` and `update_artifact` (type sheet only) takes
+  `"csv"` (CSV text) or `"xlsx"` (an .xlsx file in base64, at most 2 MB, of which at most 24 MB of
+  its parts is ever decompressed) instead of JSON lines; `"jsonl"` is the default. The first row
+  names the columns and each column's type is inferred from its values (all numbers, all dates,
+  all TRUE or FALSE, all links, else text). A CSV never makes a formula: text starting with `=`
+  stays text, and the `'` a CSV export put before `=`, `+`, `-` or `@` is dropped. From an .xlsx
+  (its first worksheet), a formula is kept when it parses as a sheet formula, otherwise its cached
+  value is used, and number formats, column widths and frozen columns carry over where they map.
+  The import is checked like any sheet and stored as JSON lines. The source editor's "Import CSV or
+  .xlsx" converts a file the same way in the browser and puts it in the draft; nothing is sent
+  until Save. The CLI publishes one `.csv` or `.xlsx` file as a new sheet, or the next version of
+  `--id`.
+- **Agents.** `read_sheet(id, version?, range?, values?, limit_cells?)` returns the columns (with
+  their letters, types and formats) and the cells of an A1 range (default every data row), a
+  formula as `{f, v}`, every other cell as itself, at most `limit_cells` cells (default 2,000, at
+  most 10,000) with `next_range` to continue. It evaluates only the requested formulas and what
+  they depend on, within `SHEET_EVAL_BUDGET` steps (default 200,000); past it the result carries an
+  `eval_budget` warning and those cells are `#LIMIT!`. It is the `view` action, like `get_artifact`.
+  `edit_sheet(id, base_version, ops, note?)` applies 1 to 200 ops (at most 10,000 cells written)
+  to `base_version` in order and publishes one new version through `update_artifact`, or nothing:
+  `set` (a block of raw cells from a cell, growing the sheet past its end), `append_rows`,
+  `insert_rows`, `delete_rows`, `set_column` (name, type, format, options, width; `null` clears),
+  `insert_columns` and `delete_columns`. Inserting and deleting rows and columns moves formula
+  references as Excel's structural changes do; references into deleted cells become `#REF!`. The
+  result is checked once, after every op, so a column's type and its cells can change in one call.
+  A stale `base_version` is a conflict before any file is read; it is the `edit` action and counts
+  toward `MAX_PUBLISHES_PER_HOUR`. `get_artifact` returns the JSON lines in `content`.
+- **Limits.** Fixed, like the doc limits: 1 MB of JSON lines, 10,000 data rows, 100 columns (A to
+  CV), 32 KiB per row line, 4,000 characters per cell, 2,000 per formula, 50,000 formulas, formula
+  nesting 32 deep. `GET /api/v1/config` reports `max_sheet_bytes`, `max_sheet_rows` and
+  `max_sheet_columns`.
+- **Security.** Sheet text reaches the DOM only through `textContent` in the renderer on the
+  artifact's content origin; the renderer contains no HTML parser, links pass the link rule again
+  in the browser, and cell ids come from addresses only. The app and the frame exchange only
+  `print` and `export { format }`, which carry no data; the frame acts on them only from its parent
+  at the app origin. Cell text and column names are untrusted data for agents. See
+  [docs/security.md](security.md#sheets).
+- **Not in this slice.** Editing cells on the page with other editors (live sheets) comes next;
+  multiple worksheets, charts, conditional formatting, merged cells, cell styles and server-side
+  exports are not planned.
+
 ### Big builds and reuse by hash
 
 Decided 2026-11-15. Agents publish built sites (a Vite or similar `dist/` folder with hundreds of
@@ -1457,6 +1577,19 @@ about 1,440 billed requests and at most 720 D1 rows written an hour, against 100
 day on the free plan. Past the allowance, sockets fail and pages work alone;
 `ALLOW_ROOMS=false` turns rooms off.
 
+Sheets run on the same Worker allowances:
+
+| Operation | Worker requests | Worker CPU | D1 rows |
+| --- | --- | --- | --- |
+| Publish or update a sheet | as any update | linear in its size: one `JSON.parse` per row and one parse per formula, never an evaluation (a 1 MB sheet takes tens of milliseconds) | as an update |
+| CSV or .xlsx import | as the publish | linear in the file (an .xlsx decompresses at most 24 MB of XML) | as the publish |
+| `read_sheet` | 1 | at most `SHEET_EVAL_BUDGET` formula steps (200,000 by default, a few milliseconds) | as `get_artifact` |
+| `edit_sheet` | 1 | the ops, then a publish's validation | as an update |
+| Viewing and downloads | as any typed page | none: the browser computes and builds the files | none |
+
+On the free plan's 10 ms of CPU per request, the largest sheets may need a lower
+`SHEET_EVAL_BUDGET`, and an operator on Workers Paid can raise it to 20,000,000.
+
 Not included: push-mode agent calls, which bill to the user's API key or a paid plan. Vercel was
 considered and set aside: its free plan is non-commercial only, so the floor is about $20 per month
 ([overview](https://costbench.com/software/developer-tools/vercel/)).
@@ -1478,7 +1611,7 @@ for a single user.
 7. **Open-source launch.** Deploy button, setup script, docs, license, contribution guide.
 8. **Hosted public instance.** Public visibility, report and takedown flow, terms and privacy
    pages.
-9. **Later.** Typed outputs: docs done (2026-11-14), slides and design systems done (2026-11-19); sheets later. Push agents with
+9. **Later.** Typed outputs: docs done (2026-11-14), slides, design systems and sheets done (2026-11-19); editing a sheet's cells on its page next. Push agents with
    bring-your-own key, team workspaces, paid plans, custom domains. Tags beside the category, a
    group-by-category view, and personal categories for artifacts shared with you. Tokens limited
    to a category (declined for now: a category is owner text that is renamed and merged, so the
@@ -1496,7 +1629,7 @@ for a single user.
 | Sign-in | Email magic link only for now. Email goes through a small adapter chosen by an environment variable, with SendGrid and Resend both supported. The hosted instance uses Aconite's existing SendGrid account |
 | Quota | 100 artifacts per account by default. Set by an environment variable, with a per-account override |
 | What an artifact may load | Same rules as Claude's artifact platform. Scripts inline or from an allowlist of public CDNs (cdnjs, jsDelivr, unpkg, Tailwind, jQuery, Plotly). Styles inline or Google Fonts. Images from the artifact's own files or data URIs. `fetch`, XHR and WebSocket calls to other hosts are blocked. The page runs in a sandboxed frame |
-| Typed outputs | In scope, modelled as on Claude: a type is a renderer page plus a content format, and an artifact made from a type stores content files instead of hand-written HTML. Plain HTML ships first; docs, sheets and decks follow as types. Docs shipped 2026-11-14 (Markdown in `content.md`, rendered by a fixed Plinth renderer on the artifact's origin); decks shipped 2026-11-19 (`slides`, Markdown in `slides.md`); design systems 2026-11-19 (JSON in `system.json`, a reference site, and `get_design_system` for agents building other pages); sheets next |
+| Typed outputs | In scope, modelled as on Claude: a type is a renderer page plus a content format, and an artifact made from a type stores content files instead of hand-written HTML. Plain HTML ships first; docs, sheets and decks follow as types. Docs shipped 2026-11-14 (Markdown in `content.md`, rendered by a fixed Plinth renderer on the artifact's origin); decks shipped 2026-11-19 (`slides`, Markdown in `slides.md`); design systems 2026-11-19 (JSON in `system.json`, a reference site, and `get_design_system` for agents building other pages); sheets 2026-11-19 (JSON lines in `sheet.jsonl`, Plinth's own formula engine, CSV and .xlsx downloads and imports, `read_sheet` and `edit_sheet`) |
 
 The CDN allowlist is a configuration value, so a self-hoster can tighten or extend it.
 

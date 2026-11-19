@@ -57,6 +57,8 @@ const WORKER_VARS = [
   "ALLOW_LIVE_EDITING",
   // Dictation run by the app (docs/docker.md#settings); off unless set to "true".
   "ALLOW_DICTATION",
+  // Formula steps one read_sheet call may spend (docs/self-hosting.md#settings).
+  "SHEET_EVAL_BUDGET",
 ];
 
 // `plinth init` flags and the variables that set them, to name the variable in its errors.
