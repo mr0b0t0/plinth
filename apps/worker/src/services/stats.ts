@@ -23,7 +23,7 @@ import {
   type Visibility,
 } from "@plinth/shared";
 import { ApiError, unauthorized } from "../lib/errors.ts";
-import { principalUserId } from "../policy.ts";
+import { mayReadStatsSummary, principalUserId } from "../policy.ts";
 import { requireArtifact } from "./artifacts.ts";
 import type { Ctx } from "./context.ts";
 import { requireAdmin } from "./reports.ts";
@@ -360,6 +360,13 @@ export async function artifactStatsSummary(ctx: Ctx): Promise<ArtifactStatsSumma
   if (!uid) throw unauthorized();
   if (ctx.principal.kind === "agent" && !ctx.principal.scopes.has("artifacts:read")) {
     throw new ApiError("forbidden", "This token lacks the artifacts:read scope");
+  }
+  // A token limited to one artifact never lists the person's other artifacts (policy).
+  if (!mayReadStatsSummary(ctx.principal)) {
+    throw new ApiError("forbidden", "This token is limited to one artifact and cannot list stats", {
+      reason: "token_bound",
+      next: "Use a token without that limit",
+    });
   }
   const now = Date.now();
   const start30 = windowStart(now, 30);

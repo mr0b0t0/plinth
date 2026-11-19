@@ -197,7 +197,8 @@ CI](#publishing-from-ci-decided-2026-11-19)). It always holds `artifacts:read` a
 `artifacts:write`, never `mentions`. It may view that artifact (as its person may, with the person's
 current rights) and publish new versions of it, and nothing else: no new artifacts, no other
 artifact (404 for every action, whatever its scopes), no sharing, title, category, restore, delete,
-comments (reading or writing them), shared data, view counts or mentions (403 `token_bound` on its
+comments (reading or writing them), shared data, stats (its own artifact's, or the summary across
+its person's artifacts, which is always refused) or mentions (403 `token_bound` on its
 own artifact while it may view it; once its person may not, every action answers as viewing does).
 It is never the target of an `@<label>` mention. It does not see the artifact's category, its
 shared-data usage or the owner's category names; it does see the version list and `live_draft`

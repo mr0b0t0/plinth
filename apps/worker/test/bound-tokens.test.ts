@@ -320,7 +320,11 @@ describe("using a token limited to one artifact", () => {
       }),
       "data write",
     );
-    bound(await req("GET", `/artifacts/${id}/views`, t.auth), "views");
+    bound(await req("GET", `/artifacts/${id}/stats`, t.auth), "stats");
+    // The summary across the person's artifacts would list the ones the binding hides.
+    const summary = await req("GET", "/stats/artifacts", t.auth);
+    bound(summary, "stats summary");
+    expect(JSON.stringify(summary.body)).not.toContain("Other page");
     // An update that carries a category is refused before anything is written.
     const withCategory = await req("PUT", `/artifacts/${id}`, t.auth, {
       html: "<p>x</p>",
@@ -376,6 +380,8 @@ describe("using a token limited to one artifact", () => {
       ["restore_version", { id, version: 1 }],
       ["list_artifact_data", { id }],
       ["list_comments", { id }],
+      ["get_artifact_stats", { id }],
+      ["get_artifact_stats", {}],
       [
         "write_artifact_data",
         { id, ops: [{ op: "delete", collection: "votes", doc_id: "a", if_rev: 1 }] },
@@ -513,7 +519,7 @@ describe("the end of a token limited to one artifact", () => {
       ["POST", `/artifacts/${id}/comments`, { body: "hi" }],
       ["GET", `/artifacts/${id}/comments`, undefined],
       ["GET", `/artifacts/${id}/data`, undefined],
-      ["GET", `/artifacts/${id}/views`, undefined],
+      ["GET", `/artifacts/${id}/stats`, undefined],
     ] as const) {
       const r = await req(method, path, t.auth, body);
       expect(r.status, `${method} ${path}`).toBe(404);

@@ -198,7 +198,7 @@ holds `artifacts:read` and may hold `artifacts:write`, never `mentions`. It can 
 only that artifact: `get_artifact`, `list_versions`, `update_artifact` and `start_upload` with its
 id work as for any token; every other artifact answers `not_found`, and `publish_artifact`,
 `start_upload` without id, `set_visibility`, `restore_version`, a category, comments
-(`list_comments` too) and shared data are refused with `forbidden` and `reason: "token_bound"`.
+(`list_comments` too), shared data and `get_artifact_stats` (with or without id) are refused with `forbidden` and `reason: "token_bound"`.
 `list_artifacts` returns only that artifact, and no categories. Its results name the owner and
 the versions' authors as a link viewer sees them: no email addresses or ids. `GET /api/v1/me` says
 so, with no account fields: `connection.bound` is true and `connection.artifact` names it. Publishing from

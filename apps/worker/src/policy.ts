@@ -460,3 +460,12 @@ export function seesPeople(p: Principal, role: EffectiveRole | null): boolean {
 export function mayCreateArtifacts(p: Principal): boolean {
   return boundArtifactOf(p) === null;
 }
+
+/**
+ * May this principal read the stats summary across its person's artifacts (every artifact they
+ * own, with ids, slugs, titles and opens)? Not a token bound to one artifact: the summary would list
+ * the artifacts the binding hides. One artifact's stats go through decide(views) as usual.
+ */
+export function mayReadStatsSummary(p: Principal): boolean {
+  return boundArtifactOf(p) === null;
+}

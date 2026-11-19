@@ -405,7 +405,9 @@ action (`comments_read`, the same rule as `view` for everyone else), so a bound 
 comment bodies, commenters' emails or mention tasks. Calls that are not about one artifact go
 through the policy too: `mayCreateArtifacts` refuses `publish_artifact`, `POST /artifacts`,
 `start_upload` and `POST /uploads` without an id, and the redeem of a publish ticket;
-`list_artifacts` returns at most the bound artifact, after `decide(view)`, with no categories (a
+`mayReadStatsSummary` refuses `GET /stats/artifacts` and `get_artifact_stats` without an id with
+`token_bound`, since the summary would list every artifact the person owns (one artifact's stats
+are the `views` action, refused like the rest); `list_artifacts` returns at most the bound artifact, after `decide(view)`, with no categories (a
 category filter returns nothing); `GET /categories` returns none; the category is hidden by
 `seesOwnerMetadata(principal, role)` and `data_usage` by `decide(data_read)`; `canActOnMention`
 refuses a bound token (which never holds `mentions`), and an `@<label>` mention never targets one.
