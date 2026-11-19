@@ -26,6 +26,11 @@ export interface ScanInput {
    * sha256} or a carry-forward): not re-checked, so a file they import that is gone goes unseen.
    */
   reused?: string[];
+  /**
+   * Warnings from the version's type (its publishWarnings hook), listed after the reference
+   * warnings and inside the same cap.
+   */
+  extra?: PublishWarning[];
 }
 
 type Directive = keyof ContentSources | "navigate" | "any";
@@ -84,6 +89,7 @@ export function scanPublish(input: ScanInput): PublishWarning[] {
       out.push({ code: "opaque_module", file: f.path, message: OPAQUE });
     }
   }
+  out.push(...(input.extra ?? []));
   const reused = input.reused ?? [];
   if (unscanned.length + reused.length > 0) {
     const parts: string[] = [];

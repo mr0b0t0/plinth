@@ -646,6 +646,67 @@ describe("compiled output", () => {
     );
   });
 
+  it("a dark typography override that adds or drops parts defines every variable either theme reads", () => {
+    const text = withChange((ds) => {
+      const font = tokens(ds).font as Json;
+      font.caption = { $type: "typography", $value: { fontFamily: "Inter", fontSize: "12px" } };
+      font.small = { $value: "{font.caption}" };
+      const dark = (ds.themes as Json).dark as Json;
+      dark.font = {
+        // Adds a weight and a line height the light value lacks.
+        caption: {
+          $value: { fontFamily: "Inter", fontSize: "14px", fontWeight: 700, lineHeight: 1.2 },
+        },
+        // Drops the light value's weight and line height.
+        body: { $value: { fontFamily: "Inter", fontSize: "18px" } },
+      };
+    });
+    const ds = ok(parseDesignSystem(text));
+    const [light, media, explicit] = designSystemCss(ds).split("\n");
+    const declared = (block: string) =>
+      new Set([...block.matchAll(/(--[\w-]+):/g)].map((m) => m[1]));
+    const used = (block: string) => [...block.matchAll(/var\((--[\w-]+)\)/g)].map((m) => m[1]);
+    const lightVars = declared(light ?? "");
+    for (const v of used(light ?? "")) expect(lightVars, `light reads ${v}`).toContain(v);
+    for (const block of [media ?? "", explicit ?? ""]) {
+      const vars = new Set([...lightVars, ...declared(block)]);
+      for (const v of used(block)) expect(vars, `dark reads ${v}`).toContain(v);
+      expect(block).toContain("--acme-font-caption-font-weight:700;");
+      expect(block).toContain("--acme-font-caption-line-height:1.2;");
+      // What the dark shorthand resets them to, so the part variables agree with it.
+      expect(block).toContain("--acme-font-body-font-weight:normal;");
+      expect(block).toContain("--acme-font-body-line-height:normal;");
+      // The alias's own part follows its target's dark value.
+      expect(block).toContain(
+        "--acme-font-small-font-weight:var(--acme-font-caption-font-weight);",
+      );
+    }
+    expect(light).toContain("--acme-font-caption-font-weight:normal;");
+    const by = Object.fromEntries(ds.tokens.map((t) => [t.path, t]));
+    expect(by["font.caption"]?.dark).toBe("700 14px/1.2 Inter");
+    expect(by["font.caption"]?.darkCssValue).toBe(
+      "var(--acme-font-caption-font-weight) var(--acme-font-caption-font-size)/var(--acme-font-caption-line-height) var(--acme-font-caption-font-family)",
+    );
+    expect(by["font.small"]?.parts.map((p) => p.name)).toEqual([
+      "font-family",
+      "font-size",
+      "font-weight",
+      "line-height",
+    ]);
+  });
+
+  it("refuses a dark typography part whose variable another token already has", () => {
+    const text = withChange((ds) => {
+      const font = tokens(ds).font as Json;
+      font.caption = { $type: "typography", $value: { fontFamily: "Inter", fontSize: "12px" } };
+      font["caption-font-weight"] = { $type: "fontWeight", $value: 400 };
+      ((ds.themes as Json).dark as Json).font = {
+        caption: { $value: { fontFamily: "Inter", fontSize: "12px", fontWeight: 700 } },
+      };
+    });
+    refusedAt(text, "tokens.font.caption-font-weight", /--acme-font-caption-font-weight/);
+  });
+
   it("font links and font faces", () => {
     const ds = ok(parseDesignSystem(JSON.stringify(ACME)));
     expect(designSystemFontLinks(ds)).toEqual([ACME.fonts[0]?.google]);
@@ -702,6 +763,49 @@ describe("parseDesignSystemRef", () => {
     expect(
       parseDesignSystemRef(page("", `<meta name="plinth-design-system" content="${id}">`)),
     ).toBeNull();
+  });
+
+  it("treats an unterminated comment as running to the end", () => {
+    expect(
+      parseDesignSystemRef(page(`<!-- <meta name="plinth-design-system" content="${id}">`)),
+    ).toBeNull();
+    expect(
+      parseDesignSystemRef(page(`<!-- x --><meta name="plinth-design-system" content="${id}">`)),
+    ).toEqual({ id, version: null });
+  });
+
+  it("skips a meta with an unclosed quote, and tags that only start with meta", () => {
+    expect(
+      parseDesignSystemRef(page(`<metax name="plinth-design-system" content="${id}">`)),
+    ).toBeNull();
+    expect(
+      parseDesignSystemRef(
+        page(`<meta name="a>b" content='c'><meta name="plinth-design-system" content="${id}">`),
+      ),
+    ).toEqual({ id, version: null });
+    expect(
+      parseDesignSystemRef(
+        page(`<meta name="x><meta name="plinth-design-system" content="${id}">`),
+      ),
+    ).toBeNull();
+  });
+
+  // It runs on every HTML publish and every get_artifact of an HTML page, on text anyone wrote.
+  it("is linear on input built to make a scan backtrack", () => {
+    const mark = '<meta name="plinth-design-system" content="nope">';
+    const inputs = [
+      "<meta x".repeat(36_000),
+      `${"<meta x".repeat(36_000)}${mark}`,
+      `${"<meta".repeat(52_000)}${mark}`,
+      `${"<!--".repeat(64_000)}${mark}`,
+      `<meta a='${"<meta x ".repeat(32_000)}${mark}`,
+      `${"<meta a=".repeat(36_000)}${mark}`,
+    ];
+    for (const html of inputs) {
+      const start = Date.now();
+      parseDesignSystemRef(html);
+      expect(Date.now() - start, `${html.slice(0, 12)}…`).toBeLessThan(250);
+    }
   });
 
   it("takes the first of two", () => {

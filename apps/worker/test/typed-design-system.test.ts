@@ -210,6 +210,31 @@ describe("publishing a design system", () => {
     ]);
   });
 
+  it("caps per-type warnings with the publish's own: at most 50, then one 'and N more'", async () => {
+    const a = await agent();
+    // 60 examples with inert markup, then a font file the version lacks: 61 warnings.
+    const content = variant((d) => {
+      d.components = [1, 2, 3].map((n) => ({
+        id: `c${n}`,
+        name: `C${n}`,
+        examples: Array.from({ length: 20 }, (_, i) => ({
+          name: `E${i}`,
+          html: `<button onclick="x()">${i}</button>`,
+        })),
+      }));
+    });
+    const { res, body } = await publishDs(a.auth, { content, assets: [ASSETS[0]] });
+    expect(res.status).toBe(201);
+    expect(body.warnings).toHaveLength(50);
+    expect(body.warnings.slice(0, 49).every((w: Json) => w.code === "ds_inert_markup")).toBe(true);
+    expect(body.warnings[49]).toMatchObject({
+      code: "ds_inert_markup",
+      file: "system.json",
+      count: 12,
+      message: "and 12 more",
+    });
+  });
+
   it("updates keep the type, conflicts are refused, restores publish the old JSON", async () => {
     const a = await agent();
     const { body: p } = await publishDs(a.auth);

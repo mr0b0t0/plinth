@@ -34,9 +34,19 @@ function readPayload(doc: Document): TypedPayload | null {
   return value as TypedPayload;
 }
 
+/** The hash without its "#", percent-decoded when it decodes (a malformed one is used as is). */
+function hashOf(doc: Document): string {
+  const raw = doc.defaultView?.location.hash.slice(1) ?? "";
+  try {
+    return decodeURIComponent(raw);
+  } catch {
+    return raw;
+  }
+}
+
 /** Scroll to the section the hash names (#tokens/color), if there is one. */
 function follow(doc: Document): void {
-  const hash = decodeURIComponent(doc.defaultView?.location.hash.slice(1) ?? "");
+  const hash = hashOf(doc);
   if (!hash) return;
   const target = doc.getElementById(sectionId(hash)) ?? doc.getElementById(hash);
   target?.scrollIntoView?.({ block: "start" });

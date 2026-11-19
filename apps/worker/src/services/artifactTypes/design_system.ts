@@ -63,6 +63,7 @@ export const designSystemHooks: TypeHooks = {
         });
       }
     }
-    return out.slice(0, LIMITS.maxWarnings);
+    // Uncapped: the stager caps them with the publish's own (at most 50, then "and N more").
+    return out;
   },
 };

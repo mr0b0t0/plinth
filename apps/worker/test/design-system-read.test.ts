@@ -281,6 +281,17 @@ describe("a page's design system reference", () => {
     expect(viaMcp.data.design_system).toEqual(detail.design_system);
   });
 
+  it("counts the reference warning inside the publish's cap of 50", async () => {
+    const a = await agent();
+    const imgs = Array.from({ length: 50 }, (_, i) => `<img src="m${i}.png">`).join("");
+    const html = page("abcdefghij0123456789").replace("<p>x</p>", imgs);
+    const r = await publish(a.auth, { html });
+    expect(r.res.status).toBe(201);
+    expect(r.body.warnings).toHaveLength(50);
+    expect(r.body.warnings.at(-1)).toMatchObject({ code: "missing_file", count: 2 });
+    expect(r.body.warnings.at(-1).message).toBe("and 2 more");
+  });
+
   it("gives one warning for a private, missing, deleted or non-design-system reference", async () => {
     const owner = await agent();
     const author = await agent();

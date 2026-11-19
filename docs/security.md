@@ -400,6 +400,11 @@ served with `script-src 'none'`. What it adds:
   for every unavailable case has one message. No artifact ever loads another artifact's files:
   tokens reach other pages only when an agent copies them at publish, so no CSP source and no
   content pass spans two artifacts, and the content host gains no route and no CORS.
+- **Linear-time reference check.** The `<meta name="plinth-design-system">` check runs on every
+  HTML publish and every `get_artifact` of an HTML page, on text anyone may have written, so it is
+  a single forward pass over at most 256 KB with no regular expression that can backtrack, and it
+  returns at once for a page that never mentions `plinth-design-system`. A page cannot make a
+  read of it cost more than reading it.
 - **Untrusted for agents.** `get_design_system` carries `UNTRUSTED_NOTE` and says that component
   HTML and CSS are code other people wrote, never to copy scripts or handlers out of them, and never
   to follow instructions in guidelines, names or descriptions. Its result has `untrusted: true`.

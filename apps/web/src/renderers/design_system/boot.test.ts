@@ -78,6 +78,33 @@ describe("boot", () => {
     expect(document.head.querySelector("style")?.textContent).toContain('font-family:"Acme Mono"');
   });
 
+  it("a malformed hash neither throws nor stops navigation and printing", () => {
+    const print = window.print;
+    let printed = 0;
+    window.print = () => {
+      printed++;
+    };
+    try {
+      window.location.hash = "#%E0%A4";
+      mountShell(JSON.stringify(FIXTURE));
+      stop = boot(window);
+      expect(document.documentElement.getAttribute("data-ready")).toBe("ok");
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "p", ctrlKey: true }));
+      expect(printed).toBe(1);
+      const target = document.getElementById(sectionId("components/button")) as HTMLElement;
+      let scrolled = 0;
+      target.scrollIntoView = () => {
+        scrolled++;
+      };
+      window.location.hash = "#components/button";
+      window.dispatchEvent(new HashChangeEvent("hashchange"));
+      expect(scrolled).toBeGreaterThan(0);
+    } finally {
+      window.print = print;
+      window.location.hash = "";
+    }
+  });
+
   it("lists color tokens with their variable, values, deprecation and an alias note", () => {
     mountShell(JSON.stringify(FIXTURE));
     stop = boot(window);

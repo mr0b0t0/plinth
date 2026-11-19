@@ -646,7 +646,13 @@ for look the same. It is the third artifact type, `design_system`, beside `html`
   quoted by Plinth, and the `css` blocks may not hold `<` or `@import`, because the compiled CSS is
   copied into other pages. Non-fatal problems are publish warnings: `ds_inert_markup` (an example
   holds script, a handler, a form, a frame or a meta), `ds_missing_font`, `ds_no_dark_theme` and
-  `ds_deprecated_alias`. Restore copies stored files without checking them again, as for docs.
+  `ds_deprecated_alias`. They count toward the publish's cap of 50 warnings with the reference
+  warnings. Restore copies stored files without checking them again, as for docs.
+- **Typography.** A typography token compiles to one variable per part
+  (`--<prefix>-<path>-font-size` and so on) and a `font` shorthand that reads them. When
+  `themes.dark` adds a part the light value lacks, or leaves one out, the part's variable is still
+  set in both themes, to `normal` where that theme has no value (what its shorthand resets the part
+  to), so neither theme's shorthand reads a variable the other alone defines.
 - **The site.** A fixed Plinth renderer on the artifact's own origin (`/__plinth/types/design_system/`,
   `script-src 'self'`, like a doc) shows the overview and guidelines, the tokens by kind (colors,
   typography, spacing and sizes, radii, shadows, motion, others) with light and dark samples, CSS
@@ -678,7 +684,10 @@ for look the same. It is the third artifact type, `design_system`, beside `html`
   `design_system_unavailable` message for every other case (missing, deleted, not viewable, taken
   down, another type). `get_artifact` on such a page returns
   `design_system: { id, title, version, current_version }` when the caller may view the design
-  system, or `null`; pages without the meta get no field.
+  system, or `null`; pages without the meta get no field. The meta is read from the first 256 KB
+  before `<body>` in one forward pass, as a browser would read the tag: comments are skipped (an
+  unclosed comment or tag runs to the end, so nothing after it counts), and a page that never
+  mentions `plinth-design-system` is not scanned at all.
 - **In the app.** The source editor holds the JSON with Monaco's JSON language and the format's
   JSON Schema, shows the parser's problems under the editor and keeps Save off until there are
   none. The dashboard shows a "Design system" badge and a "Design systems" filter when there is

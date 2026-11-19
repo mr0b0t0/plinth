@@ -64,8 +64,12 @@ export interface DsTokenPart {
   /** "font-family", "font-size", "font-weight", "line-height", "letter-spacing". */
   name: string;
   cssVar: string;
+  /** What the light block holds: `normal` when only the dark value has this part. */
   cssValue: string;
-  /** What the dark theme sets it to, when the theme overrides the token. */
+  /**
+   * What the dark blocks hold, when the theme overrides the token (`normal` when the override
+   * leaves this part out) or when only the dark value has the part; else null.
+   */
   darkCssValue: string | null;
 }
 
@@ -268,8 +272,10 @@ class Issues {
   err(path: string, message: string): void {
     if (this.errors.length < L.maxErrors) this.errors.push({ path, message });
   }
+  // Every warning is kept, so a publish can say how many it left out; the format's limits bound
+  // them (one per example, one per alias token, one for the theme).
   warn(code: DsWarningCode, path: string, message: string): void {
-    if (this.warnings.length < L.maxErrors) this.warnings.push({ code, path, message });
+    this.warnings.push({ code, path, message });
   }
   get full(): boolean {
     return this.errors.length >= L.maxErrors;
@@ -1189,8 +1195,9 @@ export function parseDesignSystem(source: string): DsParseResult {
     const light = comp.value(t.path, "light");
     const darkVal = hasDarkTheme ? comp.value(t.path, "dark") : null;
     const override = dark.has(t.path) ? darkVal : null;
+    const parts = light ? tokenParts(light, darkVal, override !== null) : [];
     // Every variable a token adds, its typography parts included, must be its own.
-    const vars = [cssVar, ...(light?.parts ?? []).map((p) => comp.varOf(t.path, p.name))];
+    const vars = [cssVar, ...parts.map((p) => comp.varOf(t.path, p.name))];
     let clash = false;
     for (const v of vars) {
       const other = comp.cssVars.get(v);
@@ -1222,12 +1229,7 @@ export function parseDesignSystem(source: string): DsParseResult {
       aliasOf,
       description: t.description,
       deprecated: t.deprecated,
-      parts: light.parts.map((p) => ({
-        name: p.name,
-        cssVar: comp.varOf(t.path, p.name),
-        cssValue: p.css,
-        darkCssValue: override?.parts.find((o) => o.name === p.name)?.css ?? null,
-      })),
+      parts: parts.map((p) => ({ ...p, cssVar: comp.varOf(t.path, p.name) })),
     });
   }
 
@@ -1252,6 +1254,41 @@ export function parseDesignSystem(source: string): DsParseResult {
   };
 }
 
+/** A typography token's parts, in the order its variables list them. */
+const TYPOGRAPHY_PARTS = [
+  "font-family",
+  "font-size",
+  "font-weight",
+  "line-height",
+  "letter-spacing",
+] as const;
+
+/**
+ * A token's part variables: every part either theme gives it, so neither theme's font shorthand
+ * reads a variable only the other one sets. A theme that leaves an optional part out sets it to
+ * `normal`, which is what its shorthand resets that part to (font-family and font-size are required
+ * in both). Without a dark override of the token itself, the dark blocks set only a part its light
+ * value lacks (an alias whose target's dark value adds one); the rest follow their var().
+ */
+function tokenParts(
+  light: Val,
+  dark: Val | null,
+  overridden: boolean,
+): Omit<DsTokenPart, "cssVar">[] {
+  const out: Omit<DsTokenPart, "cssVar">[] = [];
+  for (const name of TYPOGRAPHY_PARTS) {
+    const l = light.parts.find((p) => p.name === name);
+    const d = dark?.parts.find((p) => p.name === name);
+    if (!l && !d) continue;
+    out.push({
+      name,
+      cssValue: l?.css ?? "normal",
+      darkCssValue: overridden ? (d?.css ?? "normal") : l ? null : (d?.css ?? null),
+    });
+  }
+  return out;
+}
+
 // ---------- compiled output ----------
 
 function declarations(tokens: readonly DsToken[], theme: Theme): string {
@@ -1260,9 +1297,9 @@ function declarations(tokens: readonly DsToken[], theme: Theme): string {
     if (theme === "light") {
       for (const p of t.parts) out += `${p.cssVar}:${p.cssValue};`;
       out += `${t.cssVar}:${t.cssValue};`;
-    } else if (t.darkCssValue !== null) {
+    } else {
       for (const p of t.parts) if (p.darkCssValue !== null) out += `${p.cssVar}:${p.darkCssValue};`;
-      out += `${t.cssVar}:${t.darkCssValue};`;
+      if (t.darkCssValue !== null) out += `${t.cssVar}:${t.darkCssValue};`;
     }
   }
   return out;
@@ -1329,26 +1366,88 @@ export function designSystemComponentCss(
 /** `<meta name="plinth-design-system" content="<id>[@<version>]">` names a page's design system. */
 export const DESIGN_SYSTEM_META = "plinth-design-system";
 
-const META_TAG_RE = /<meta\b((?:[^>"']|"[^"]*"|'[^']*')*)>/gi;
-const ATTR_RE = /([^\s"'=<>/]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?/g;
-const COMMENT_RE = /<!--[\s\S]*?-->/g;
 const REF_RE = /^([a-z0-9]{20})(?:@([1-9]\d{0,8}))?$/;
+const HAS_META_RE = /plinth-design-system/i;
 
-/** The design system an HTML page names in its head, or null. The first such meta wins. */
-export function parseDesignSystemRef(html: string): { id: string; version: number | null } | null {
-  const head = html.slice(0, 256 * 1024).replace(COMMENT_RE, "");
-  const body = head.search(/<body[\s>]/i);
-  const text = body >= 0 ? head.slice(0, body) : head;
-  for (const m of text.matchAll(META_TAG_RE)) {
-    const attrs = new Map<string, string>();
-    for (const a of (m[1] ?? "").matchAll(ATTR_RE)) {
-      const k = (a[1] ?? "").toLowerCase();
-      if (!attrs.has(k)) attrs.set(k, a[2] ?? a[3] ?? a[4] ?? "");
+const isSpace = (ch: string | undefined): boolean =>
+  ch === " " || ch === "\t" || ch === "\n" || ch === "\f" || ch === "\r";
+
+/** Whether `<name` starts a tag at `at` (ASCII case-insensitive, then a space, `/` or `>`). */
+function tagAt(s: string, at: number, name: string): boolean {
+  for (let k = 0; k < name.length; k++) {
+    if ((s.charCodeAt(at + 1 + k) | 0x20) !== name.charCodeAt(k)) return false;
+  }
+  const next = s[at + 1 + name.length];
+  return isSpace(next) || next === "/" || next === ">";
+}
+
+/**
+ * A start tag's attributes from `i` (just past its name) to its `>`, the way an HTML tokenizer
+ * reads them: names lowercased, values quoted or not, the first of a repeated name kept. Null when
+ * the input ends inside the tag, which a browser drops. Each character is read once.
+ */
+function readAttributes(s: string, i: number): { attrs: Map<string, string>; end: number } | null {
+  const attrs = new Map<string, string>();
+  const n = s.length;
+  for (;;) {
+    while (i < n && (isSpace(s[i]) || s[i] === "/")) i++;
+    if (i >= n) return null;
+    if (s[i] === ">") return { attrs, end: i + 1 };
+    const nameStart = i;
+    i++; // A name's first character may be "=".
+    while (i < n && !isSpace(s[i]) && s[i] !== "/" && s[i] !== ">" && s[i] !== "=") i++;
+    const name = s.slice(nameStart, i).toLowerCase();
+    while (i < n && isSpace(s[i])) i++;
+    let value = "";
+    if (s[i] === "=") {
+      i++;
+      while (i < n && isSpace(s[i])) i++;
+      const q = s[i];
+      if (q === '"' || q === "'") {
+        const close = s.indexOf(q, i + 1);
+        if (close < 0) return null;
+        value = s.slice(i + 1, close);
+        i = close + 1;
+      } else {
+        const valueStart = i;
+        while (i < n && !isSpace(s[i]) && s[i] !== ">") i++;
+        value = s.slice(valueStart, i);
+      }
     }
-    if (attrs.get("name")?.trim().toLowerCase() !== DESIGN_SYSTEM_META) continue;
-    const ref = REF_RE.exec((attrs.get("content") ?? "").trim());
+    if (!attrs.has(name)) attrs.set(name, value);
+  }
+}
+
+/**
+ * The design system an HTML page names in its head, or null. The first such meta wins. It runs on
+ * every HTML publish and every get_artifact of an HTML page, so it is one forward pass over at
+ * most 256 KB, with no regular expression that can backtrack: comments are skipped (an unclosed
+ * one runs to the end, as in a browser), and the scan stops at <body>.
+ */
+export function parseDesignSystemRef(html: string): { id: string; version: number | null } | null {
+  const s = html.slice(0, 256 * 1024);
+  if (!HAS_META_RE.test(s)) return null;
+  let i = 0;
+  for (;;) {
+    const lt = s.indexOf("<", i);
+    if (lt < 0) return null;
+    if (s.startsWith("<!--", lt)) {
+      const end = s.indexOf("-->", lt + 4);
+      if (end < 0) return null;
+      i = end + 3;
+      continue;
+    }
+    if (tagAt(s, lt, "body")) return null;
+    if (!tagAt(s, lt, "meta")) {
+      i = lt + 1;
+      continue;
+    }
+    const tag = readAttributes(s, lt + 5);
+    if (!tag) return null;
+    i = tag.end;
+    if (tag.attrs.get("name")?.trim().toLowerCase() !== DESIGN_SYSTEM_META) continue;
+    const ref = REF_RE.exec((tag.attrs.get("content") ?? "").trim());
     if (!ref) return null;
     return { id: ref[1] as string, version: ref[2] ? Number(ref[2]) : null };
   }
-  return null;
 }
