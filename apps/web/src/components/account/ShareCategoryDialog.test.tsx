@@ -107,6 +107,8 @@ describe("ShareCategoryDialog", () => {
         { id: "a", version: 2, category_rev: 1, decision: "shared" },
         { id: "b", version: 2, category_rev: 1, decision: "private" },
       ],
+      // "Notify people" is ticked by default and someone new is on the list.
+      notify: true,
     });
   });
 

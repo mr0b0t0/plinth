@@ -25,6 +25,7 @@ import { handleMcp } from "./mcp/server.ts";
 import { mcpResourceMetadataUrl, oauthRoutes } from "./oauth/routes.ts";
 import { pruneUploadTickets, sweepStagingAttempts } from "./services/attempts.ts";
 import { sweepArtifactFiles } from "./services/files.ts";
+import { pruneInvitationMarks } from "./services/invitations.ts";
 import { liveRetentionDays, pruneLiveDrafts } from "./services/live.ts";
 import { foldViewDays } from "./services/views.ts";
 
@@ -153,6 +154,8 @@ const SCHEDULED_TASKS: readonly ((env: Bindings, at: number) => Promise<unknown>
   (env, at) => pruneLiveDrafts(env.DB, liveRetentionDays(env), at),
   // Files people added to pages: expired uploads, then tombstones whose objects may go.
   (env, at) => sweepArtifactFiles(env, at),
+  // Invitation email counters (hashed addresses) older than two days.
+  (env, at) => pruneInvitationMarks(env.DB, at),
 ];
 
 export default {
@@ -197,7 +200,8 @@ export default {
    * The hourly cron trigger (wrangler.jsonc `triggers`): remove what abandoned upload attempts
    * left, upload tickets past their status window (services/attempts.ts), and live doc drafts
    * nobody touched for LIVE_DRAFT_RETENTION_DAYS (services/live.ts), and the files people added to
-   * pages that were deleted, cancelled or never finished (services/files.ts). At 03 UTC, also fold daily
+   * pages that were deleted, cancelled or never finished (services/files.ts), and invitation email
+   * counters older than two days (services/invitations.ts). At 03 UTC, also fold daily
    * open counts older than the window into per-artifact totals (services/views.ts), whether or not
    * counting is on. Needs only the D1 and R2 bindings, not the host configuration.
    */

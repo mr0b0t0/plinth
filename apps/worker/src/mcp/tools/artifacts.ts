@@ -28,6 +28,7 @@ import {
   DESIGN_SYSTEM_PUBLISH_NOTE,
   DOC_PUBLISH_NOTE,
   dictationNote,
+  INVITATION_NOTE,
   LIVE_DRAFT_NOTE,
   PROJECT_FILES_NOTE,
   REUSE_NOTE,
@@ -181,6 +182,7 @@ export const registerArtifactTools: ToolRegistrar = ({ server, ctx, opaque, prev
         "the link), password (needs password unless one is already set), or allowlist (private: the owner, " +
         "collaborators and the listed emails; viewers confirm their address by code). Passing emails " +
         "replaces the viewer allowlist; allowlist with no emails is private to the owner and collaborators. " +
+        INVITATION_NOTE +
         UNTRUSTED_NOTE,
       inputSchema: setVisibilityInput,
     },

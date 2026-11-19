@@ -10,6 +10,7 @@ import { bumpAccessEpoch, requireArtifact } from "../services/artifacts.ts";
 import { prunePersonalCategories } from "../services/categories.ts";
 import { sharingCategoryShare } from "../services/categoryShares.ts";
 import type { Ctx } from "../services/context.ts";
+import { newInvitees, sendInvitations } from "../services/invitations.ts";
 import { grantNames } from "../services/people.ts";
 import { getUserById } from "../services/users.ts";
 import { type AppEnv, parseBody, serviceCtx } from "./context.ts";
@@ -59,7 +60,7 @@ sharingApi.get("/artifacts/:ref/sharing", async (c) => {
 /** Replace every grant (viewer, commenter, editor). The owner's own email is ignored. */
 sharingApi.put("/artifacts/:ref/sharing", async (c) => {
   const ctx = serviceCtx(c);
-  const { grants } = await parseBody(c, grantsReplaceInput);
+  const { grants, notify } = await parseBody(c, grantsReplaceInput);
   const { artifact } = await requireArtifact(ctx, c.req.param("ref"), "manage");
   const owner = await getUserById(ctx.db, artifact.ownerId);
   const byEmail = new Map<string, (typeof grants)[number]["role"]>();
@@ -68,6 +69,16 @@ sharingApi.put("/artifacts/:ref/sharing", async (c) => {
     if (byEmail.has(g.email)) throw new ApiError("invalid_input", `Duplicate email: ${g.email}`);
     byEmail.set(g.email, g.role);
   }
+  // Who held a grant before, so that only people this change adds are emailed (`notify`).
+  const before = notify
+    ? (
+        await ctx.db
+          .select({ email: accessGrants.email })
+          .from(accessGrants)
+          .where(eq(accessGrants.artifactId, artifact.id))
+          .all()
+      ).map((g) => g.email)
+    : [];
   const now = nowIso();
   const stmts = [
     ctx.db.delete(accessGrants).where(eq(accessGrants.artifactId, artifact.id)),
@@ -81,5 +92,22 @@ sharingApi.put("/artifacts/:ref/sharing", async (c) => {
   await prunePersonalCategories(ctx.env.DB, { artifactId: artifact.id }).run();
   await bumpAccessEpoch(ctx, artifact.id);
   const fresh = (await requireArtifact(ctx, artifact.id, "manage")).artifact;
-  return c.json(await settings(ctx, fresh));
+  const invitations = await sendInvitations(ctx, {
+    notify,
+    owner,
+    target: {
+      kind: "artifact",
+      id: fresh.id,
+      slug: fresh.slug,
+      title: fresh.title,
+      takenDown: fresh.takenDownAt !== null,
+    },
+    invitees: newInvitees(
+      before,
+      [...byEmail].map(([email, role]) => ({ email, role })),
+      owner?.email ?? null,
+    ),
+  });
+  const out = await settings(ctx, fresh);
+  return c.json(invitations ? { ...out, invitations } : out);
 });

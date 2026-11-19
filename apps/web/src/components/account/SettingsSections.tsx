@@ -10,6 +10,7 @@ import {
   CI_DOCS_URL,
   categoryKey,
   categoryProblem,
+  invitationSkippedSummary,
   LIMITS,
   normalizeCategory,
   ROLES,
@@ -25,6 +26,7 @@ import { ApiRequestError, api } from "../../lib/api.ts";
 import { Link, navigate } from "../../lib/router.tsx";
 import {
   Button,
+  Checkbox,
   Dialog,
   IconButton,
   Input,
@@ -469,23 +471,27 @@ export function PeopleSection({
   const [role, setRole] = useState<Role>("viewer");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // Invitation emails (docs/spec.md "Invitation emails"): on by default, for the person added.
+  const [notify, setNotify] = useState(true);
   const emailRef = useRef<HTMLInputElement>(null);
   const grants: GrantDraft[] = sharing.grants.map((g) => ({ email: g.email, role: g.role }));
   // The display name of the account behind each address, when it has one (display text only).
   const names = new Map(sharing.grants.map((g) => [g.email, g.name ?? null]));
 
-  const put = async (next: GrantDraft[]): Promise<boolean> => {
+  /** Save the whole list. Only adding a person asks to email them; role changes and undo never do. */
+  const put = async (next: GrantDraft[], invite = false): Promise<SharingSettings | null> => {
     setBusy(true);
     try {
       const res = await api<SharingSettings>(route(API.sharing, { ref: artifact.id }), {
         method: "PUT",
-        body: { grants: next },
+        body: invite ? { grants: next, notify: true } : { grants: next },
       });
-      onChange(res);
-      return true;
+      const { invitations: _sent, ...settings } = res;
+      onChange(settings);
+      return res;
     } catch (err) {
       toast.error("Could not update people", errMsg(err));
-      return false;
+      return null;
     } finally {
       setBusy(false);
     }
@@ -502,9 +508,17 @@ export function PeopleSection({
     }
     setError(null);
     const added = r.grants[r.grants.length - 1];
-    if (await put(r.grants)) {
+    const res = await put(r.grants, notify);
+    if (res) {
       setEmail("");
-      toast.success("Person added", `${added?.email} · ${ROLE_META[role].label}`);
+      const emailed = added && res.invitations?.emailed.includes(added.email);
+      toast.success(
+        "Person added",
+        `${added?.email} · ${ROLE_META[role].label}${emailed ? " · Invitation emailed" : ""}`,
+      );
+      const skipped = invitationSkippedSummary(res.invitations);
+      if (skipped)
+        toast.toast({ title: "No invitation sent", description: skipped, tone: "warning" });
       emailRef.current?.focus();
     }
   };
@@ -623,6 +637,13 @@ export function PeopleSection({
         <Button type="submit" icon={UserPlusIcon} loading={busy} className="pl-acct-add__button">
           Add person
         </Button>
+        <Checkbox
+          label="Notify people"
+          hint="Email the person you add the link to this artifact, in your name."
+          checked={notify}
+          className="pl-acct-add__notify"
+          onChange={(e) => setNotify(e.target.checked)}
+        />
       </form>
       <p className="type-small text-muted">
         Changes apply at once. Anyone who has it open now will need to open the link again.

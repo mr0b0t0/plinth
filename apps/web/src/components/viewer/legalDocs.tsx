@@ -238,6 +238,15 @@ function privacy(op: OperatorInfo, cfg: LegalConfig): LegalDoc {
               </li>
             )}
             <li>
+              <strong>Invitations</strong>: when an owner gives you access to an artifact
+              {cfg.category_sharing ? " or a shared category" : ""} and chooses to notify you, we
+              email you on their behalf: their name and email address, the artifact's title
+              {cfg.category_sharing ? " (or the name they chose for the category)" : ""}, your role
+              and the link. When you notify the people you add, we send them those details about
+              you. So that nobody gets the same invitation twice, we keep a scrambled (hashed) form
+              of the address for up to three days.
+            </li>
+            <li>
               <strong>Comments</strong>: their text, who wrote them, and requests made to agents.
             </li>
             <li>
@@ -318,6 +327,7 @@ function privacy(op: OperatorInfo, cfg: LegalConfig): LegalDoc {
             </li>
             <li>When you ask us to close your account, we erase it with everything above.</li>
             <li>Sign-in and viewing codes: 15 minutes. Technical logs: a few days.</li>
+            <li>The scrambled record that an invitation was sent: up to three days.</li>
           </ul>
         ),
       },

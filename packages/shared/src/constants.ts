@@ -336,6 +336,12 @@ export const RATE_LIMITS = {
   uploadMissesPerIpPerHour: 60,
   /** Reads of an artifact's people list (/__plinth/api/v1/people) per reader per artifact. */
   peopleReadsPerViewerPerHour: 600,
+  /** Invitation emails one owner's sharing changes may send (docs/spec.md "Invitation emails"). */
+  invitationsPerOwnerPerDay: 100,
+  /** Invitation emails one sharing change may send, so one request stays within Worker limits. */
+  invitationsPerChange: 40,
+  /** Invitation emails one address may receive, from every owner together. */
+  invitationsPerRecipientPerDay: 10,
 } as const;
 
 export const DEFAULTS = {

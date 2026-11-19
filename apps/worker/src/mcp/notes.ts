@@ -280,3 +280,12 @@ export function dictationNote(
 export function contentNote(config: Pick<Ctx["config"], "contentIsolation">): string {
   return config.contentIsolation === "opaque" ? OPAQUE_NOTE : "";
 }
+
+/**
+ * What set_visibility says about invitation emails (docs/spec.md "Invitation emails"): agents
+ * never email people unless the user asked.
+ */
+export const INVITATION_NOTE =
+  "With notify: true, Plinth emails each person the emails list newly adds a link to the " +
+  "artifact on the user's behalf (people who already had access get nothing). Set it only when " +
+  "the user asked you to notify them; by default nobody is emailed. ";
