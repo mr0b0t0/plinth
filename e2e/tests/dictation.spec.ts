@@ -169,6 +169,7 @@ test("the page finishing its own load does not stop a dictation started before i
   await page.goto(art.url);
   const frame = await artifactFrame(page, "data-ready");
   expect(await frame.evaluate(() => document.readyState)).not.toBe("complete");
+  await expect(inFrame(page, "ready")).toHaveText("available");
   await page.frameLocator(FRAME).getByRole("button", { name: "Speak" }).click();
   await expect(inFrame(page, "result")).toHaveText("started");
   await expect(inFrame(page, "state")).toHaveText("listening");
@@ -182,6 +183,47 @@ test("the page finishing its own load does not stop a dictation started before i
     setTimeout(() => location.reload(), 0);
   });
   await expect(page.locator(".pl-viewer__listening").getByRole("status")).toHaveText("");
+});
+
+/**
+ * The page asks (its `hello`) as its script runs, often before the app has its own config and
+ * session. The app answers from the gate's voice part instead of missing the hello, which left the
+ * page with no_host (and every start unavailable) for the whole load.
+ */
+test("a page that asks before the app has its config is answered from the gate", async ({
+  page,
+}) => {
+  const { email, art } = await owner(page, voicePage());
+  await seedSession(page.context(), email);
+  await fakeRecognizer(page, APP_ORIGIN);
+  await allowed(page, art.id);
+  let release = () => {};
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await page.route(`${APP_ORIGIN}/api/v1/config`, async (route) => {
+    await held;
+    await route.continue();
+  });
+  try {
+    await page.goto(art.url);
+    await artifactFrame(page, "data-ready");
+    await expect(inFrame(page, "ready")).toHaveText("available");
+    await page.frameLocator(FRAME).getByRole("button", { name: "Speak" }).click();
+    await expect(inFrame(page, "result")).toHaveText("started");
+    await expect(inFrame(page, "final")).toHaveText("hello world");
+    // The config arriving later changes nothing: the dictation goes on, and Stop still ends it.
+    const me = page.waitForResponse(`${APP_ORIGIN}/api/v1/me`);
+    release();
+    await me;
+    await expect(inFrame(page, "state")).toHaveText("listening");
+    const listening = page.locator(".pl-viewer__listening");
+    await expect(listening.getByRole("status")).toHaveText("Listening");
+    await listening.getByRole("button", { name: "Stop" }).click();
+    await expect(inFrame(page, "state")).toHaveText("idle:viewer_stopped");
+  } finally {
+    release();
+  }
 });
 
 test("a start without a click is refused and opens no dialog", async ({ page }) => {
