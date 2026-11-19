@@ -115,6 +115,12 @@ export const BOARD_IFRAME_SANDBOX = ARTIFACT_IFRAME_SANDBOX_OPAQUE;
 export const DESIGN_BOARD_PARAM = "plinth-board";
 /** The board loader's file name under /__plinth/frames/design/ (the registry's renderer.frame). */
 export const BOARD_LOADER_FILE = "board.html";
+/**
+ * ?plinth-print=1: the design lays every board out for print at 100% (with ?plinth-board=<id>,
+ * that one board), mounts them all and never calls print() itself. The server-side PDF export
+ * opens a version with it and prints the page from its own browser.
+ */
+export const DESIGN_PRINT_PARAM = "plinth-print";
 
 const ATTRS = ["id", "name", "size", "width", "height", "background", "section"] as const;
 type Attr = (typeof ATTRS)[number];

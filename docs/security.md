@@ -77,6 +77,9 @@ make a test pass.
 | A whiteboard's room keeps old rights | A commenter keeps emitting `block.move` after the owner made the board editors-only | The settings version changes the effective open topics, so its sockets close with 4410 as it commits and reconnect with no right to emit; the data API refuses their writes from the next request |
 | The editor preview writes to the live board | The owner's draft in the editor drives the board through the preview frame's content pass | The app's preview sets `preview` and the whiteboard renderer then makes no shared-data or room call; only Plinth's code runs in that frame |
 | A starting board writes shared data unchecked | An agent's publish or update carries blocks it may not write, or races another write | A `data_write` decision before staging and again after the commit, whose role stamps the documents; one all-or-none statement that never overwrites, and `board_not_empty` on an update of a board with blocks |
+| A design export runs author code on the app host | An artboard's HTML or a crafted name ends up in the PNG or PDF response, which the app host serves, and a browser renders it as a page | The file is the browser's own screenshot or print, served as an attachment with `Content-Security-Policy: sandbox; default-src 'none'`, `nosniff` and CORP `same-origin`; the file name is `[a-z0-9-]` only ([Design export](#design-export)) |
+| A design export leaks a pass or an identity | The export's enter URL, or a pass for the person exporting, reaches the page, a log or the caller, and opens the artifact as them | A capture pass with no identity, minted and used inside the Worker's own browser session, never returned; error messages are logged with every URL removed |
+| Design exports drain Browser Rendering | Someone with a link, or a script with a token, asks for exports in a loop or in parallel to run up the operator's browser hours or take every browser the account may run | Only people who may view the artifact; `DESIGN_EXPORTS_PER_HOUR` per person (per client network signed out, an IPv6 /64 as one) counted before the browser starts, refused requests not counted; at most two exports at once instance-wide, held until the browser has closed; 25 s per render, then the browser is closed; `DESIGN_EXPORT=false` turns it off |
 
 Out of scope for v1: denial of service beyond Cloudflare's defaults, a compromised Cloudflare
 account, and malicious instance operators.
@@ -1094,6 +1097,56 @@ file.
   retried after a day, so neither a burst of dashboard loads nor repeated preview fetches can
   launch a browser per request.
 
+### Design export
+
+A design downloads as a PNG of one artboard or a PDF of its boards, rendered by the same Browser
+Rendering binding ([spec](spec.md#designs-decided-2026-11-19)). It is in effect only with
+`DESIGN_EXPORT` on and the `BROWSER` binding; elsewhere the endpoint answers `feature_disabled`
+and the menu has only the browser's own print.
+
+- **The thumbnail's load, at the export layout.** The Worker mints a one-time capture pass for the
+  exact version (no identity claim, 120 seconds, this artifact at this epoch), with `next` at the
+  version's `?plinth-print=1` (and `&plinth-board=<id>`), and hands the browser the same pass for
+  the boards' cookie partition through the DevTools protocol before the page loads, as for a
+  design's thumbnail ([Designs](#designs)). The URL never leaves the Worker: it is not returned,
+  and a failed render is logged with every URL removed from the error text. The page the browser
+  opens is the strict typed shell (`script-src 'self'`); author code still runs only inside the
+  opaque board frames, which in that layout are mounted at 100% with no covers or chrome.
+- **Who may export.** `GET /api/v1/artifacts/:ref/export` and `/export/options` take the policy
+  module's `view` check, like reading the artifact and its thumbnail: a stranger gets the same
+  404 as for a missing artifact, a signed-out visitor of a private design the same refusal as
+  when viewing it. The type is checked after that, and the query (format, board, scale, version)
+  only then, so the answer never says what type an artifact is to someone who may not view it,
+  and a malformed request from them still gets their 404. Agents' bearer tokens work (`artifacts:read`); there
+  is no MCP tool.
+- **The file is ours, not the author's.** The response is the browser's own PNG or PDF, sent from
+  the app host as an attachment with `Content-Security-Policy: sandbox; default-src 'none'`,
+  `X-Content-Type-Options: nosniff`, `Cross-Origin-Resource-Policy: same-origin`,
+  `Cache-Control: private, no-store` and the app's other headers. Its name is the slug and the
+  board id, `[a-z0-9-]` only. A PDF can hold the boards' links, as a print from the browser does;
+  it holds nothing a viewer of the artifact could not already see.
+- **Cost.** Every export launches a browser, so the hourly limit (`DESIGN_EXPORTS_PER_HOUR`, 30
+  by default, per person, per confirmed email, or signed out per client network) is counted before
+  the browser starts, after the input checks, so a typo costs nothing. Signed out, the key is the
+  network from `lib/ip.ts` (an IPv4 address, or an IPv6 address's /64), so a line that may pick
+  any address in its /64 is still one client. A render has 25 seconds and waits at most 10 for
+  boards to load, every wait ending 7 seconds before the budget so the print still runs; a PNG is
+  at most 33,554,432 device pixels.
+- **Concurrency.** Browser Rendering limits the browsers an account runs at once, and thumbnails
+  already take up to two. At most two exports render at once across the instance: a lease row in
+  `rate_limits` (`design-export:running:<random id>`, no person in it), taken in one guarded
+  statement before the hourly count. A request that finds both taken answers 503 `unavailable`
+  with `Retry-After: 10` and is not counted; someone already over the hourly limit is refused
+  before taking one. The lease is given back only once the browser has closed: a render past its
+  25 seconds is aborted, which closes the browser, and the Worker keeps running (`waitUntil`)
+  until it has. A lease that is never given back stops counting after 60 seconds. Browser
+  Rendering may still answer busy when the account's other browsers are taken, and the export
+  then answers 503 `unavailable`. Nothing is stored.
+- **Residual risks.** A board's scripts run in the export's browser, as in a thumbnail, and can
+  spend its 25 seconds; they reach only the CDN allowlist. Whoever may view a design can export
+  it, so a link viewer of an unlisted design spends the operator's browser time within the
+  per-network limit; an operator who does not want that sets `DESIGN_EXPORT=false`.
+
 ## In-chat previews
 
 Hosts that support [MCP Apps](https://github.com/modelcontextprotocol/ext-apps) (T3 Code, Claude,
@@ -1180,6 +1233,8 @@ version just published appears in the agent's thread.
 | One live-room frame | `ROOM_MAX_MESSAGE_BYTES` (8 KiB; larger closes with 1009, binary with 1003); presence 400 bytes per room; 3 rooms per socket |
 | People-list reads per reader per artifact | 600 per hour |
 | Live-view watch sockets per artifact | `LIVE_VIEW_MAX_SOCKETS_PER_ARTIFACT` (1000), apart from room sockets, half for the owner and the people it is shared with and half for everyone else; 32 per client; 60 connects per client per minute (close code 4409, then the page polls) |
+| Design exports (PNG and PDF) per person, per confirmed email, or per client network signed out (an IPv6 /64 as one) | `DESIGN_EXPORTS_PER_HOUR` (30) |
+| Design exports rendering at once, instance-wide | 2 (busy answers `503` with `Retry-After: 10`, not counted) |
 
 Limited requests get `429` with `Retry-After`; live-room limits answer on the socket instead.
 

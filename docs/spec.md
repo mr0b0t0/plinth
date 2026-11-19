@@ -260,6 +260,13 @@ block positions within ±1,000,000, sizes 24 to 4,000, text up to 2,000 characte
 to 120. No new setting: a whiteboard needs `ALLOW_SHARED_DATA` and origin isolation, and its board
 counts toward the `DATA_*` limits like any page's shared data.
 
+**Design export** ([Designs](#designs-decided-2026-11-19), no migration) stores nothing: every
+file is rendered on request and never kept. It adds two settings, `DESIGN_EXPORT` (on, in effect
+only with a `BROWSER` binding) and `DESIGN_EXPORTS_PER_HOUR` (30, from 1 to 1000), counted in
+`rate_limits` like every other limit. Fixed: PNG at 1x or 2x, at most 33,554,432 device pixels; 25
+seconds per render, of which at most 10 waiting for the boards to load; two exports at once per
+instance, each holding a lease row in `rate_limits` that names no person until its browser closes.
+
 ## Auth and permissions
 
 There are three separate kinds of auth, and each has its own mechanism.
@@ -1571,6 +1578,31 @@ preview), never on its page.
   printing waits for them to load (at most 10 seconds), and each board prints on its own page of
   exactly its size (a named `@page` per size). Ctrl or Cmd+P in the frame does the same. Browsers
   other than Chromium may ignore per-board page sizes.
+- **Download PNG or PDF** (decided 2026-11-19), where the instance has a Browser Rendering
+  binding (`BROWSER`) and `DESIGN_EXPORT` is on (the default): the artifact menu's "Download PNG or
+  PDF…" picks a board and a format, and the server renders the version on screen in Cloudflare
+  Browser Rendering. A PNG is one board at 1x or 2x (at most 33,554,432 device pixels, so a
+  4096 px board only at 1x), transparent where the board is; a PDF is every board, or one, each on
+  a page of exactly its size. REST: `GET /api/v1/artifacts/:ref/export/options?version=` lists the
+  version's boards, and `GET /api/v1/artifacts/:ref/export?format=png|pdf&version=&board=&scale=`
+  returns the file as an attachment named `<slug>[-<board>].png` or `.pdf`. Anyone who may view
+  the artifact may export it (the `view` action; strangers get 404), at most
+  `DESIGN_EXPORTS_PER_HOUR` times an hour per person (per confirmed email, or signed out per
+  client network, an IPv6 /64 counting as one client); a refused request (a bad board or scale)
+  is not counted. At most two exports render at once across the instance, beside the thumbnails'
+  two; a request that finds both busy answers 503 `unavailable` with `Retry-After: 10` and is not
+  counted either. The browser opens the exact
+  version as a thumbnail capture does: a one-time capture pass with no identity, the boards'
+  cookie partition given the same pass through the DevTools protocol, at `?plinth-print=1` (with
+  `&plinth-board=<id>` for one board), where the renderer lays the boards out at 100% with no
+  chrome or covers, mounts every one and counts them as they load; the Worker waits for them (at
+  most 10 seconds, then renders what loaded) and prints the page or takes the board's box. The
+  whole render has 25 seconds, and every wait ends 7 seconds before that so a slow board still
+  leaves a file of the boards that loaded; a render past its 25 seconds is stopped and its browser
+  closed. A failure answers 503 `unavailable`, an instance without the binding
+  or with `DESIGN_EXPORT` off answers 403 `feature_disabled` and its menu has only Print. Agents
+  have no export tool; the endpoint takes their bearer tokens like the thumbnail's. Each export
+  spends Browser Rendering time, which Cloudflare bills per browser hour.
 - **Comments.** Review mode keeps every cover on, so a comment pins to a board's cover
   (`#__plinth-board-<id>`) and stays on the board at every zoom and across versions while its `id`
   stays the same.
@@ -1580,9 +1612,9 @@ preview), never on its page.
 - **Agents.** The MCP descriptions and the plinth-artifacts skill say when to pick a design (fixed
   sizes; `html` for one interactive page, `doc` for prose), the format and its presets, and what an
   artboard can and cannot load. Design content is untrusted like artifact HTML.
-- **Not yet.** Server-rendered PNG and PDF export through Browser Rendering is a separate change.
-  Boards with `height="auto"`, dragging boards on the canvas, per-board dark mode and deep links to
-  one board from the app are not offered.
+- **Not yet.** Boards with `height="auto"`, dragging boards on the canvas, per-board dark mode,
+  deep links to one board from the app and an MCP tool that returns a board's picture to the agent
+  are not offered.
 - **Thumbnails** capture the canvas with each board's own images and styles. The capture browser
   loads the version top level, and a board's requests (an opaque document) fall in another cookie
   partition than the enter's, so for a design the Worker also gives that browser the same capture
@@ -2255,6 +2287,12 @@ options.
   app host. Uploads pass the shared-data API's caller checks with JSON bodies, only identified
   viewers upload, the quotas are apart from the owner's storage, and a takedown deletes the files
   ([Files people add to a page](#files-people-add-to-a-page-decided-2026-11-19)).
+- **Design exports are downloads that run nothing.** The PNG or PDF comes from Plinth's own
+  browser, which opens the version with a one-time capture pass that carries no identity and is
+  never returned or logged. It is served from the app host as an attachment with
+  `Content-Security-Policy: sandbox; default-src 'none'`, `nosniff`, CORP `same-origin` and
+  `Cache-Control: private, no-store`, only to people who may view the artifact, within an hourly
+  limit per person ([Designs](#designs-decided-2026-11-19)).
 - **Open counts are aggregates.** One number per artifact per UTC day, never who opened it, shown
   only to the artifact's owner and, summed over the instance, to admins.
 - **Quotas and rate limits.** Each account is limited to 100 artifacts by default, set by an
@@ -2447,7 +2485,7 @@ for a single user.
 7. **Open-source launch.** Deploy button, setup script, docs, license, contribution guide.
 8. **Hosted public instance.** Public visibility, report and takedown flow, terms and privacy
    pages.
-9. **Later.** Typed outputs: docs done (2026-11-14), slides, design systems, designs, sheets and whiteboards done (2026-11-19); editing a sheet's cells on its page next. Push agents with
+9. **Later.** Typed outputs: docs done (2026-11-14), slides, design systems, designs (with PNG and PDF export through Browser Rendering), sheets and whiteboards done (2026-11-19); editing a sheet's cells on its page next. Push agents with
    bring-your-own key, team workspaces, paid plans, custom domains. Tags beside the category and a
    group-by-category view (personal categories for artifacts shared with you, and sharing a whole
    category, shipped 2026-11-19). Tokens limited
@@ -2466,7 +2504,7 @@ for a single user.
 | Sign-in | Email magic link only for now. Email goes through a small adapter chosen by an environment variable, with SendGrid and Resend both supported. The hosted instance uses Aconite's existing SendGrid account |
 | Quota | 100 artifacts per account by default. Set by an environment variable, with a per-account override |
 | What an artifact may load | Same rules as Claude's artifact platform. Scripts inline or from an allowlist of public CDNs (cdnjs, jsDelivr, unpkg, Tailwind, jQuery, Plotly). Styles inline or Google Fonts. Images from the artifact's own files or data URIs. `fetch`, XHR and WebSocket calls to other hosts are blocked. The page runs in a sandboxed frame |
-| Typed outputs | In scope, modelled as on Claude: a type is a renderer page plus a content format, and an artifact made from a type stores content files instead of hand-written HTML. Plain HTML ships first; docs, sheets and decks follow as types. Docs shipped 2026-11-14 (Markdown in `content.md`, rendered by a fixed Plinth renderer on the artifact's origin); decks shipped 2026-11-19 (`slides`, Markdown in `slides.md`); design systems 2026-11-19 (JSON in `system.json`, a reference site, and `get_design_system` for agents building other pages); designs 2026-11-19 (artboards in `design.html` on a canvas, each in a nested opaque frame); sheets 2026-11-19 (JSON lines in `sheet.jsonl`, Plinth's own formula engine, CSV and .xlsx downloads and imports, `read_sheet` and `edit_sheet`)); whiteboards 2026-11-19 (settings in `board.json`, the board itself in shared data, capabilities fixed by the server with a write floor that fails closed) |
+| Typed outputs | In scope, modelled as on Claude: a type is a renderer page plus a content format, and an artifact made from a type stores content files instead of hand-written HTML. Plain HTML ships first; docs, sheets and decks follow as types. Docs shipped 2026-11-14 (Markdown in `content.md`, rendered by a fixed Plinth renderer on the artifact's origin); decks shipped 2026-11-19 (`slides`, Markdown in `slides.md`); design systems 2026-11-19 (JSON in `system.json`, a reference site, and `get_design_system` for agents building other pages); designs 2026-11-19 (artboards in `design.html` on a canvas, each in a nested opaque frame; PNG and PDF export rendered by Browser Rendering where the instance has it); sheets 2026-11-19 (JSON lines in `sheet.jsonl`, Plinth's own formula engine, CSV and .xlsx downloads and imports, `read_sheet` and `edit_sheet`)); whiteboards 2026-11-19 (settings in `board.json`, the board itself in shared data, capabilities fixed by the server with a write floor that fails closed) |
 
 The CDN allowlist is a configuration value, so a self-hoster can tighten or extend it.
 

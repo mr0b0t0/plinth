@@ -1197,3 +1197,21 @@ what is missing with `write_artifact_data`.
 - **Settings** (`edit`, `background`) change with `update_artifact`, `content` and `base_version`.
   It takes blocks only while the board has none (`board_not_empty` otherwise).
 - People change the board between your reads: change only what you were asked to.
+
+## Design exports (PNG and PDF)
+
+On instances that render them (`design_export: true` in `GET /api/v1/config`), people download a
+design from the artifact menu with **Download PNG or PDF…**: a PNG of one artboard at 1x or 2x, or
+a PDF with each board on a page of its own size. Elsewhere they print or save as PDF from the
+browser.
+
+- When someone asks for a PNG or PDF of a design, point them to that menu item, or give them the
+  link `<origin>/api/v1/artifacts/<id>/export?format=png&board=<board id>&scale=2` (PNG) or
+  `?format=pdf` (every board; add `&board=<id>` for one). It downloads for anyone who may view the
+  design. Never build images or PDFs of a design yourself.
+- Set an `id` on every artboard you want people to export: the file name and the `board` parameter
+  use it. A 2x PNG must stay within 33,554,432 pixels, so a 4096 px board exports at 1x only.
+- Exports are rendered on request and limited per person per hour (`rate_limited` past it). Only
+  two render at once on an instance: `unavailable` with `Retry-After` means try again after that
+  many seconds, and it does not count against the hour. There is no MCP tool for them, and an
+  export never changes the design or makes a version.

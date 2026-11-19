@@ -7,6 +7,7 @@ import {
   ASSET_PATH_RE,
   CLIENT_TYPES,
   COMMENT_STATUSES,
+  DESIGN_EXPORT,
   LIMITS,
   MENTION_STATES,
   REPORT_STATES,
@@ -261,6 +262,34 @@ export const getDesignSystemInput = z.object({
     .describe("Only these component ids (default all)."),
 });
 export type GetDesignSystemInput = z.input<typeof getDesignSystemInput>;
+
+// ---------- design export (GET /artifacts/:ref/export and /export/options) ----------
+
+/** An artboard id, as the design format allows it. */
+const designBoardIdSchema = z
+  .string()
+  .regex(/^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$/, "An artboard id: a-z, 0-9 and -, up to 40")
+  .describe("Artboard id");
+
+export const designExportOptionsInput = z.object({
+  id: artifactRefSchema,
+  version: versionNumberSchema.optional(),
+});
+export type DesignExportOptionsInput = z.infer<typeof designExportOptionsInput>;
+
+export const designExportInput = z.object({
+  id: artifactRefSchema,
+  format: z.enum(DESIGN_EXPORT.formats).describe("png (one artboard) or pdf"),
+  version: versionNumberSchema.optional(),
+  board: designBoardIdSchema
+    .optional()
+    .describe("The artboard: required for png; for pdf, only this board (default every board)"),
+  scale: z
+    .union([z.literal(1), z.literal(2)])
+    .optional()
+    .describe("png only: device pixels per CSS px (default 1)"),
+});
+export type DesignExportInput = z.infer<typeof designExportInput>;
 
 // ---------- sheets (read_sheet, edit_sheet) ----------
 

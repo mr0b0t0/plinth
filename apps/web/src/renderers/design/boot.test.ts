@@ -134,7 +134,7 @@ afterEach(() => {
   handle = undefined;
   document.body.innerHTML = "";
   document.getElementById(PRINT_STYLE_ID)?.remove();
-  for (const a of ["data-ready", "data-boards", "data-boards-loaded", "data-zoom"]) {
+  for (const a of ["data-ready", "data-boards", "data-boards-loaded", "data-zoom", "data-export"]) {
     html().removeAttribute(a);
   }
   resetPrint();
@@ -427,5 +427,81 @@ describe("one board alone", () => {
     handle = start(framed("?plinth-board=nope"));
     expect(document.getElementById("__plinth-design")?.getAttribute("data-mode")).toBe("canvas");
     expect(document.querySelectorAll(".plinth-design__board")).toHaveLength(3);
+  });
+});
+
+describe("the export layout (?plinth-print=1, the server's PNG and PDF)", () => {
+  const root = () => document.getElementById("__plinth-design") as HTMLElement;
+
+  it("mounts every board at 100% with one named page per size, and never prints itself", () => {
+    mount();
+    const f = framed("?plinth-print=1", "/__plinth/v/2/");
+    handle = start(f, { maxLive: 1 });
+    expect(root().getAttribute("data-mode")).toBe("export");
+    expect(root().hasAttribute("data-print")).toBe(true);
+    expect(html().hasAttribute("data-export")).toBe(true);
+    expect(html().getAttribute("data-ready")).toBe("ok");
+    expect(html().getAttribute("data-boards")).toBe("3");
+    // No canvas, chrome or covers: only the boards, in source order.
+    expect(document.querySelector(".plinth-design__canvas")).toBeNull();
+    expect(document.querySelector(".plinth-design__toolbar")).toBeNull();
+    expect(document.querySelector(".plinth-design__cover")).toBeNull();
+    expect(
+      [...document.querySelectorAll<HTMLElement>(".plinth-design__board")].map(
+        (b) => b.dataset.board,
+      ),
+    ).toEqual(["home", "post", "mrec"]);
+    // Every board is mounted, whatever the live-frame limit, each in its opaque frame.
+    const iframes = document.querySelectorAll<HTMLIFrameElement>(".plinth-design__board iframe");
+    expect(iframes).toHaveLength(3);
+    for (const el of iframes) expect(el.getAttribute("sandbox")).toBe(BOARD_IFRAME_SANDBOX);
+    const css = document.getElementById(PRINT_STYLE_ID)?.textContent ?? "";
+    expect(css).toContain("@page s393x852 { size: 393px 852px; margin: 0; }");
+    expect(css).toContain("@page s1080x1080 { size: 1080px 1080px; margin: 0; }");
+    expect(css).toContain("@page s300x250 { size: 300px 250px; margin: 0; }");
+    // Loaded boards are counted for the export's browser.
+    expect(html().getAttribute("data-boards-loaded")).toBe("0");
+    for (const id of ["home", "post", "mrec"]) {
+      const w = winOf(f, id);
+      fromWindow(f, w, boardMsg("ready"));
+      fromWindow(f, w, boardMsg("loaded"));
+    }
+    expect(html().getAttribute("data-boards-loaded")).toBe("3");
+    // The app's print message does nothing here: the export's own browser prints.
+    f.target.dispatchEvent(
+      new MessageEvent("message", {
+        data: { source: RENDERER_MESSAGE_SOURCE, v: RENDERER_PROTOCOL_VERSION, type: "print" },
+        origin: APP,
+        source: f.parent as unknown as Window,
+      }),
+    );
+    expect(f.print).not.toHaveBeenCalled();
+  });
+
+  it("lays out only the board named by ?plinth-board, with its page size", () => {
+    mount();
+    handle = start(framed("?plinth-print=1&plinth-board=post"));
+    expect(root().getAttribute("data-mode")).toBe("export");
+    expect(document.querySelectorAll(".plinth-design__board")).toHaveLength(1);
+    expect(frameFor("post")).not.toBeNull();
+    expect(html().getAttribute("data-boards")).toBe("1");
+    const css = document.getElementById(PRINT_STYLE_ID)?.textContent ?? "";
+    expect(css.match(/@page/g)).toHaveLength(1);
+    expect(css).toContain("@page s1080x1080");
+  });
+
+  it("is an error for an unknown board, never another board", () => {
+    mount();
+    handle = start(framed("?plinth-print=1&plinth-board=nope"));
+    expect(html().getAttribute("data-ready")).toBe("error");
+    expect(document.querySelectorAll(".plinth-design__board")).toHaveLength(0);
+    expect(root().textContent).toBe(FALLBACK);
+  });
+
+  it("is the canvas unless plinth-print is exactly 1", () => {
+    mount();
+    handle = start(framed("?plinth-print=yes"));
+    expect(root().getAttribute("data-mode")).toBe("canvas");
+    expect(html().hasAttribute("data-export")).toBe(false);
   });
 });

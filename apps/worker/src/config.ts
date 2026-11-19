@@ -4,6 +4,7 @@ import {
   CONTENT_ISOLATION_MODES,
   type ContentIsolation,
   DEFAULTS,
+  DESIGN_EXPORT,
   FILE_BOUNDS,
   FILE_DEFAULTS,
   type InstanceLimits,
@@ -29,7 +30,7 @@ export interface Secrets {
 
 /**
  * Bindings a deploy may lack. BROWSER is Cloudflare Browser Rendering (`"browser": { "binding":
- * "BROWSER" }`), used for thumbnails, which an operator adds by hand; local, tunnel and Docker
+ * "BROWSER" }`), used for thumbnails and design exports, which an operator adds by hand; local, tunnel and Docker
  * instances run without it. ROOMS is the live-room Durable Object namespace (class ArtifactRoom),
  * which every config Plinth generates carries; an older config without it simply has rooms off.
  */
@@ -184,6 +185,16 @@ export interface Config {
   allowFiles: boolean;
   /** Limits on files people add to pages (FILES_* env vars). */
   files: FileLimits;
+  /**
+   * DESIGN_EXPORT (default on): designs can be downloaded as PNG or PDF rendered by Browser
+   * Rendering. Only in effect with a BROWSER binding; see designExportActive.
+   */
+  designExport: boolean;
+  /**
+   * DESIGN_EXPORTS_PER_HOUR (default 30; 1 to 1000): exports one person, or one address signed
+   * out, may start per hour.
+   */
+  designExportsPerHour: number;
   /** OPERATOR_*: who runs this instance, for its legal pages. null when none is published. */
   operator: {
     name: string;
@@ -453,6 +464,13 @@ export function parseConfig(env: Record<string, unknown>): Config {
     allowSlidesFollow: boolDefaultOn(env.ALLOW_SLIDES_FOLLOW),
     allowFiles: bool(env.ALLOW_FILES),
     files: parseFileLimits(env),
+    designExport: boolDefaultOn(env.DESIGN_EXPORT),
+    designExportsPerHour: boundedInt(
+      env,
+      "DESIGN_EXPORTS_PER_HOUR",
+      DESIGN_EXPORT.perHour,
+      ...DESIGN_EXPORT.perHourBounds,
+    ),
     operator: parseOperator(env),
   };
   validate(config);
@@ -770,6 +788,18 @@ export function identityClaimsActive(c: Config, env: OptionalBindings): boolean 
  */
 export function thumbnailsActive(c: Pick<Config, "thumbnails">, env: OptionalBindings): boolean {
   return c.thumbnails && env.BROWSER !== undefined;
+}
+
+/**
+ * Whether designs can be downloaded as PNG or PDF rendered on the server: DESIGN_EXPORT is on and
+ * the operator added a Browser Rendering binding (BROWSER). Without the binding, people keep the
+ * browser's own Print or save as PDF; that is not a configuration error.
+ */
+export function designExportActive(
+  c: Pick<Config, "designExport">,
+  env: OptionalBindings,
+): boolean {
+  return c.designExport && env.BROWSER !== undefined;
 }
 
 /** Bytes on the wire one bundle may have: the version limit plus tar headers and padding. */

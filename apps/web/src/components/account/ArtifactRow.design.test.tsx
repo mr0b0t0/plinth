@@ -48,9 +48,12 @@ describe("a design in the dashboard", () => {
 });
 
 describe("a design's menu", () => {
-  it("offers Print or save as PDF, as a doc does, and an HTML page does not", () => {
-    expect(TYPE_MENU_ITEMS.design).toEqual(TYPE_MENU_ITEMS.doc);
-    expect(TYPE_MENU_ITEMS.design).toHaveLength(1);
+  it("offers Print or save as PDF, as a doc does, then the server export, and an HTML page has neither", () => {
+    // Print first, as for a doc; then "Download PNG or PDF…" (designItems.ts), which shows only
+    // where the instance renders exports (ExportDialog.test.tsx).
+    expect(TYPE_MENU_ITEMS.design?.[0]).toBe(TYPE_MENU_ITEMS.doc?.[0]);
+    expect(TYPE_MENU_ITEMS.doc).toHaveLength(1);
+    expect(TYPE_MENU_ITEMS.design).toHaveLength(2);
     expect(TYPE_MENU_ITEMS.html).toBeUndefined();
   });
 });
