@@ -8,7 +8,7 @@
 // their cost is linear in the input whatever it holds. They aim at what builds emit (Vite, esbuild,
 // hand-written pages): HTML attributes, CSS url() and @import, JS import specifiers. They do not
 // try to understand every JavaScript construct; a reference they miss is only a warning not given.
-import { LIMITS, type PublishWarning } from "@plinth/shared";
+import { CONTENT_RESERVED_PREFIX, LIMITS, type PublishWarning } from "@plinth/shared";
 import type { ContentSources } from "../content/csp.ts";
 import type { FileEntry } from "./storage.ts";
 
@@ -264,6 +264,9 @@ function checkRefs(file: string, refs: Ref[], input: ScanInput, out: PublishWarn
       checkHost(file, raw, hostOf(raw.slice(2)), r.directive, input, out);
       continue;
     }
+    // Plinth's own reserved paths (/__plinth/runtime.js, the data API) are the same for every
+    // version and are meant to be written root-absolute; a page that loads them is not at fault.
+    if (raw.startsWith(CONTENT_RESERVED_PREFIX)) continue;
     if (raw.startsWith("/")) {
       rootAbsolute += 1;
       if (!firstRoot) firstRoot = raw;

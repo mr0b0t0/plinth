@@ -131,6 +131,14 @@ describe("publish warning rules", () => {
     ]);
   });
 
+  it("Plinth's own /__plinth/ paths are not root_absolute; other root paths still are", () => {
+    const page = '<script src="/__plinth/runtime.js"></script><img src="/logo.png">';
+    expect(scan([file("index.html", '<script src="/__plinth/runtime.js"></script>')])).toEqual([]);
+    expect(scan([file("index.html", page)])).toEqual([
+      expect.objectContaining({ code: "root_absolute", ref: "/logo.png", count: 1 }),
+    ]);
+  });
+
   it("resolves relative paths, queries, fragments, percent-encoding and directories", () => {
     const html = `<a href="nowhere.html">links are not loads</a>
       <img src="img/a%20b.png?v=1#x"><img src="./img/../img/c.png"><iframe src="sub/"></iframe>

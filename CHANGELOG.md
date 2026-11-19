@@ -10,6 +10,9 @@ Add a line under **Unreleased** in the pull request that makes a change people w
 
 ## Unreleased
 
+- **No `root_absolute` warning for Plinth's runtime.** A page that loads `/__plinth/runtime.js`
+  (shared data, rooms, page comments, dictation) no longer gets a publish warning it could not fix.
+
 - **Dictation, run by Plinth, for pages that ask for it.** A page that declares `dictation` can
   take the words a viewer speaks (`plinth.dictation`): Plinth's app runs the browser's speech
   recognizer after the viewer's click and consent, shows "Listening" with a Stop the page cannot

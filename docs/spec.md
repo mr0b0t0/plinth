@@ -1150,7 +1150,8 @@ files) and big pages without merging chunks, and an update stores only what chan
   reused file counts once.
 - **Publish warnings.** Every publish, update and bundle result lists `warnings` (advisory, never
   blocking, at most 50): `missing_file` (a relative reference not in the version),
-  `root_absolute` (`/assets/x.js`, which loads the current version's file from an old version),
+  `root_absolute` (`/assets/x.js`, which loads the current version's file from an old version;
+  never for Plinth's own `/__plinth/` paths, such as the runtime script),
   `blocked_host` (outside the CSP's allowlist), `insecure_url` (`http:`), `opaque_module` (module
   scripts, `crossorigin` links and fonts, which fail under `CONTENT_ISOLATION=opaque`) and
   `slides_setting`, `slide_empty` and `slide_dense` (a deck's ignored setting or column marker, an

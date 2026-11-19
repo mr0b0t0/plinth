@@ -468,7 +468,7 @@ fix them and publish again (all but `not_scanned` and `live_draft`, which need n
 | `code` | What it means |
 | --- | --- |
 | `missing_file` | A relative reference (`src`, `href`, `url()`, `import`) names a file the version does not have |
-| `root_absolute` | A reference starts with `/`, so it loads the current version's file even when an older version is viewed. Build with relative URLs (Vite: `base: './'`) |
+| `root_absolute` | A reference starts with `/`, so it loads the current version's file even when an older version is viewed. Build with relative URLs (Vite: `base: './'`). Plinth's own paths under `/__plinth/` (the runtime script) are meant to be root-absolute and never get it |
 | `blocked_host` | A script, style, image or font from a host outside the CSP's allowlist |
 | `insecure_url` | An `http:` reference |
 | `opaque_module` | Only on opaque-isolation instances: module scripts, `crossorigin` links and web fonts fail there |
