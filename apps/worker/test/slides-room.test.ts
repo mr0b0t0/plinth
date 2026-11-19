@@ -14,7 +14,16 @@ import { IDENTITY_CLAIM_INFO, signContentCookie } from "../src/content/tokens.ts
 import { artifacts } from "../src/db/schema.ts";
 import { sealJson, signToken } from "../src/lib/crypto.ts";
 import { parseConnect, type RoomConnect } from "../src/rooms/ArtifactRoom.ts";
-import { APP, call, config, contentOrigin, db, enterContent, publish } from "./helpers.ts";
+import {
+  APP,
+  call,
+  config,
+  contentOrigin,
+  db,
+  enterContent,
+  publish,
+  uniqueEmail,
+} from "./helpers.ts";
 import {
   type Client,
   client,
@@ -25,6 +34,7 @@ import {
   person,
   roomPage,
   run,
+  sealedCookie,
   setup,
   upgrade,
   within,
@@ -126,6 +136,20 @@ describe("slides socket: the gate", () => {
     }
     o.ws.close(1000);
     v.ws.close(1000);
+  });
+
+  it("people confirmed by code (no account) join too: an editor presents, a viewer watches", async () => {
+    const { id } = await deckSetup();
+    for (const [role, present] of [
+      ["editor", true],
+      ["viewer", false],
+    ] as const) {
+      const email = uniqueEmail(`coded-${role}`);
+      await grant(id, email, role);
+      const c = await slides(id, await sealedCookie(id, email, role, false));
+      expect(c.welcome.you.present, role).toBe(present);
+      c.ws.close(1000);
+    }
   });
 
   it("is not there for an HTML page (even one that declares room) or a doc", async () => {

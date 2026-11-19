@@ -1,12 +1,13 @@
 // Following the presenter (docs/spec.md "Slides"): the owner of a deck and a viewer it is shared
-// with (confirmed by code, no account) have it open in two browsers. The owner turns on Lead
+// with have it open in two browsers. The viewer is signed in: email codes share one per-hour
+// budget across the whole suite (DEV_IGNORE_CLIENT_IP), and a viewer confirmed by code follows the
+// same way (apps/worker/test/slides-room.test.ts). The owner turns on Lead
 // viewers and pages; the viewer's deck follows with the "Following the presenter" note; the viewer
 // pages back by hand, which pauses following, and "Back to the presenter" returns to the owner's
 // slide. An anonymous viewer of an unlisted deck opens no socket and sees no note.
 import { type Browser, expect, type FrameLocator, type Page, test } from "@playwright/test";
 import { apiPut, publishArtifact, uniqueEmail } from "../support/api.ts";
 import { seedSession } from "../support/db.ts";
-import { latestCode } from "../support/mail.ts";
 import { seedToken } from "../support/tokens.ts";
 
 const CURRENT_FRAME = "iframe.pl-viewer-frame:not(.pl-viewer-frame--outgoing)";
@@ -28,17 +29,11 @@ async function ready(page: Page) {
   }
 }
 
-/** A listed viewer confirms their email by code on the allowlist gate, in a fresh context. */
+/** A listed viewer, signed in, in a fresh context. */
 async function listedViewer(browser: Browser, slug: string, email: string): Promise<Page> {
   const page = await (await browser.newContext()).newPage();
+  await seedSession(page.context(), email);
   await page.goto(`/a/${slug}`);
-  const since = new Date(Date.now() - 1000).toISOString();
-  await page.getByLabel("Email").fill(email);
-  await page.getByRole("button", { name: "Send code" }).click();
-  await expect(page.getByText("If this address has access, we sent a code")).toBeVisible();
-  const code = await latestCode(page.request, email, { since });
-  await page.getByLabel("Six-digit code").fill(code);
-  await page.getByRole("button", { name: "Confirm code" }).click();
   await ready(page);
   return page;
 }
