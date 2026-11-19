@@ -67,12 +67,15 @@ describe("parseDeck: slides", () => {
     expect(parseDeck(deck(LIMITS.maxSlides + 1)).slides).toHaveLength(501);
   });
 
-  it("parses 1 MB of Markdown in well under 100 ms", () => {
+  // A wall-clock bound shared CI runners can meet (a local run takes about 10 ms, a CI run once
+  // took 215 ms); a parser quadratic in the deck would take far longer on 1 MB. Same bound as the
+  // adversarial inputs below.
+  it("parses 1 MB of Markdown in under a second", () => {
     const slide = `## Title\n\n${"- a bullet with some words in it\n".repeat(20)}\n---\n`;
     const text = slide.repeat(Math.floor(LIMITS.maxSlidesBytes / slide.length));
     const t0 = Date.now();
     const d = parseDeck(text);
-    expect(Date.now() - t0).toBeLessThan(100);
+    expect(Date.now() - t0).toBeLessThan(1000);
     expect(d.slides.length).toBeGreaterThan(1000);
   });
 });
