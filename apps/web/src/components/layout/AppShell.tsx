@@ -4,7 +4,6 @@
 // useSession() only. Below 48rem the sidebar becomes a slide-over opened from the top bar.
 import {
   ChartBarIcon,
-  ChartLineUpIcon,
   FileIcon,
   FlagIcon,
   ListIcon,
@@ -61,12 +60,10 @@ export interface Crumb {
 
 const PRIMARY_NAV: NavItem[] = [
   { label: "Artifacts", to: APP_ROUTES.dashboard, icon: FileIcon },
-  { label: "Stats", to: APP_ROUTES.stats, icon: ChartLineUpIcon },
   { label: "Connections", to: APP_ROUTES.connections, icon: PlugIcon },
 ];
-// "Admin stats": the owner's own Stats is in the primary nav.
 const ADMIN_NAV: NavItem[] = [
-  { label: "Admin stats", to: APP_ROUTES.adminStats, icon: ChartBarIcon },
+  { label: "Stats", to: APP_ROUTES.adminStats, icon: ChartBarIcon },
   { label: "Reports", to: APP_ROUTES.adminReports, icon: FlagIcon },
 ];
 
@@ -79,7 +76,7 @@ export interface AppShellProps {
   onSignOut?: () => void;
   /** Extra user-menu entries, shown above the theme choices. */
   userMenuItems?: MenuEntry[];
-  /** Extra sidebar links after the primary ones (admins get Admin stats and Reports automatically). */
+  /** Extra sidebar links after the primary ones (admins get Stats and Reports automatically). */
   extraNav?: NavItem[];
   /**
    * content (default): children sit in the page column with the page padding.

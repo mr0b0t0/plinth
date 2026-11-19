@@ -410,8 +410,9 @@ the count survives.
   `last_opened_at`, most recently opened first. The MCP tool `get_artifact_stats` returns either
   (with or without `id`). The app shows them at `/a/:slug/stats` (range picker, opens and viewers
   charts, people and version tables; a person whose last version seen is older than the current one
-  is marked "Not the latest version") and `/stats` (a sortable table of the owner's artifacts),
-  linked from the artifact's menu, the dashboard and the Share dialog ("See who opened it"). Stats
+  is marked "Not the latest version"), linked from the artifact's menu, the dashboard row menu and
+  the Share dialog ("See who opened it"). The list across artifacts is for agents (the MCP tool and
+  the API); the app has no separate page for it. Stats
   are not in `ArtifactSummary` or anything the app host answers without signing in.
 - **Admins see instance aggregates.** `/admin/stats` (`GET /api/v1/admin/stats?days=7|30|90`,
   default 30) is for the signed-in people whose email is in `ADMIN_EMAIL`; everyone else, agents

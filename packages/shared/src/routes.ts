@@ -101,7 +101,6 @@ export const APP_ROUTES = {
   dashboard: "/dashboard",
   connections: "/connections",
   /** Stats across the owner's artifacts. */
-  stats: "/stats",
   consent: "/oauth/consent",
   artifact: "/a/:slug",
   artifactVersion: "/a/:slug/v/:n",
