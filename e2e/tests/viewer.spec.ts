@@ -450,15 +450,6 @@ test.describe("open counts and admin stats", () => {
     await page.getByRole("radio", { name: "7 days" }).check();
     await expect(page).toHaveURL(/\?days=7$/);
     await expect(tile(/^Opens, last 7 days$/).locator(".pl-stat__value")).toHaveText("1");
-
-    // The account-wide Stats list links to it.
-    await page.goto("/stats");
-    const row = page.getByRole("row", { name: /Counted page/ }).first();
-    await expect(row).toBeVisible();
-    await expectAccessible(page);
-    await shot(page, "account-stats");
-    await row.getByRole("link").first().click();
-    await expect(page).toHaveURL(new RegExp(`/a/${a.slug}/stats`));
   });
 
   test("the Stats page is for admins only", async ({ page, browser }) => {
@@ -498,7 +489,7 @@ test.describe("open counts and admin stats", () => {
     await expect(page.getByRole("figure", { name: /Opens per day/ })).toBeVisible();
     // The sidebar (a slide-over on a phone) has both admin pages.
     if (!isMobile()) {
-      await expect(page.getByRole("link", { name: "Admin stats", exact: true })).toBeVisible();
+      await expect(page.getByRole("link", { name: "Stats", exact: true })).toBeVisible();
       await expect(page.getByRole("link", { name: "Reports", exact: true })).toBeVisible();
     }
     await shot(page, "admin-stats");

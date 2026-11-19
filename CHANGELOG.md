@@ -13,8 +13,7 @@ Add a line under **Unreleased** in the pull request that makes a change people w
 - **Artifact stats: see who opened your artifacts.** Each artifact's Stats page (`/a/<slug>/stats`,
   linked from its menu and the Share dialog) shows opens and viewers over 7, 30, 90 or 365 days,
   the people who opened it (name and email for people signed in and allowlisted viewers, with the
-  version they last saw), opens per version and an approximate count of anonymous visitors; the new
-  `/stats` page lists all your artifacts. Agents read the same with the `get_artifact_stats` MCP
+  version they last saw), opens per version and an approximate count of anonymous visitors. Agents read the same with the `get_artifact_stats` MCP
   tool, `GET /api/v1/artifacts/:ref/stats` and `GET /api/v1/stats/artifacts` (owner only). This
   replaces the open counts in the Share dialog and `GET /api/v1/artifacts/:ref/views`, which is
   gone. Opens are kept with who made them for `VIEW_LOG_RETENTION_DAYS` (default 365), then only
