@@ -382,8 +382,15 @@ export function CommentsPanel({
   useEffect(() => {
     if (blocked) settlePage({ status: "closed" });
   }, [blocked, settlePage]);
-  // Closing the panel ends it too.
-  useEffect(() => () => settlePage({ status: "closed" }), [settlePage]);
+  // Closing the panel ends it too. Deferred, so the effect re-run of React's strict mode (a
+  // cleanup and a run again, on the same panel) does not end a request the panel still holds.
+  const unmountRef = useRef<number | undefined>(undefined);
+  useEffect(() => {
+    window.clearTimeout(unmountRef.current);
+    return () => {
+      unmountRef.current = window.setTimeout(() => settlePage({ status: "closed" }), 0);
+    };
+  }, [settlePage]);
   const removeAnchor = () => {
     setAnchor(null);
     settlePage({ status: "closed" });

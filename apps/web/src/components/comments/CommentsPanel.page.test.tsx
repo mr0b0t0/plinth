@@ -3,6 +3,7 @@
 import type { CommentInfo, PageAnchor } from "@plinth/shared";
 import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { StrictMode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { api } from "../../lib/api.ts";
 import type { PinPosition } from "./bridge.ts";
@@ -141,8 +142,37 @@ describe("CommentsPanel, comments from the page", () => {
     expect(k.settled).toHaveBeenCalledWith(REQ, { status: "closed" });
     k.rerender({ pageCompose: { req: "request-0000000002", anchor: null, focus: false } });
     k.unmount();
-    expect(k.settled).toHaveBeenLastCalledWith("request-0000000002", { status: "closed" });
+    await waitFor(() =>
+      expect(k.settled).toHaveBeenLastCalledWith("request-0000000002", { status: "closed" }),
+    );
     expect(k.settled).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps a request through React's strict-mode effect re-run", async () => {
+    serve({ items: [], posts: [] });
+    const { frame } = fakeFrame();
+    const settled = vi.fn();
+    render(
+      <StrictMode>
+        <CommentsPanel
+          artifactId="art1"
+          slug="board-abc"
+          version={1}
+          frame={frame}
+          contentOrigin={ORIGIN}
+          onClose={vi.fn()}
+          pageOwnsAnchors
+          pageCompose={{ req: REQ, anchor: ANCHOR, focus: false }}
+          onPageComposeSettled={settled}
+        />
+      </StrictMode>,
+    );
+    await screen.findByText("No comments yet.");
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 10));
+    });
+    expect(settled).not.toHaveBeenCalled();
+    expect(screen.getByText(/Placed by the page/)).toBeTruthy();
   });
 
   it("is busy while someone writes, and replaces an earlier request nobody wrote for", async () => {
