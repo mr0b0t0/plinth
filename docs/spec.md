@@ -41,7 +41,9 @@ account.
   page can reach is Plinth's fixed shared-data service (see
   [Shared data and viewer identity](#shared-data-and-viewer-identity)), its live room at
   `/__plinth/room/` (see [Live rooms](#live-rooms)) and the files it stored at `/__plinth/files/`
-  (see [Files people add to a page](#files-people-add-to-a-page-decided-2026-11-19)).
+  (see [Files people add to a page](#files-people-add-to-a-page-decided-2026-11-19)), and the
+  requests it hands to the owner's agent through that same service (see
+  [Page requests](#page-requests-decided-2026-11-19)).
 - Character-level co-editing (OT or CRDT), and live editing of HTML artifacts' text (pages build
   their own multiplayer with [live rooms](#live-rooms)).
 - On-page editing of HTML artifacts and designs (docs are edited on the page; HTML and designs in
@@ -247,6 +249,18 @@ declares `files` (a row without it reads as no files):
 | `artifact_files` | id, artifact_id, r2_key, name, content_type, size_bytes, state (`pending`, `ready`, `deleting`), parts, parts_done, part_etags, multipart_id, created_by_email/role, created_via (`page`), created_at, completed_at, expires_at, claimed_at | One file people uploaded from the page. Its bytes are at `artifacts/<artifact_id>/files/<id>` in R2, under the artifact's root. `content_type` is one of the twelve types the server proves from the bytes (CHECK); `name` is cleaned display text. A `deleting` row is a tombstone that counts toward nothing until the sweep clears its object. Cascades from `artifacts`; `erase-user` tombstones a person's uploads on other people's pages and clears their name and address |
 | `artifact_file_usage` | artifact_id, files, bytes, seq | Exact totals per artifact (pending and ready rows) kept by SQLite triggers on `artifact_files`, for one-row quota checks. `seq` moves when a file becomes ready or goes, and is what pages poll. Deleted with the artifact and on takedown |
 
+**Page requests** ([below](#page-requests-decided-2026-11-19), migration `0016_page_requests.sql`) add
+no table: a request is a root comment with exactly one mention task. Two columns on `comments`, one
+index, and two fields of the stored declaration, `versions.capabilities.requests` and
+`requestsTo`, written only when the page declares `requests` (a row without them reads as no
+requests):
+
+| Column | Values | Notes |
+| --- | --- | --- |
+| `comments.kind` | `comment` (default) or `page_request` (CHECK) | `page_request` only on a root a page filed; replies are always `comment` |
+| `comments.request_data` | JSON object or NULL | What the page attached (at most 8 KiB, nesting 16), page requests only. Untrusted |
+| index `comments_page_requests` | `(artifact_id, author_email, created_at) WHERE kind = 'page_request'` | The requester's own list, the open-request caps and `erase-user` by email |
+
 ## Auth and permissions
 
 There are three separate kinds of auth, and each has its own mechanism.
@@ -306,8 +320,8 @@ One remote MCP server over streamable HTTP at `/mcp`. All tools act as the conne
 | `set_visibility(id, visibility, emails?, password?)` | Change who can view |
 | `list_mentions(state?)` | Pending requests addressed to this agent |
 | `claim_mention(task_id)` | Lock a request so two agents do not both act on it |
-| `reply_comment(comment_id, body, result_version?)` | Answer in the thread and mark the task done |
-| `list_comments(id)` | Every comment thread on an artifact, for addressing feedback |
+| `reply_comment(comment_id, body, result_version?, done?, failed?)` | Answer in the thread and complete the claimed task: `result_version` (done with a version), `done` (done without one) or `failed`, at most one. On a page request, the requester's page shows the reply text, with no author |
+| `list_comments(id)` | Every comment thread on an artifact, for addressing feedback. A thread whose root has `kind: "page_request"` is listed only for the owner, editors and its requester |
 | `resolve_comment(comment_id, resolved?)` | Resolve or reopen a thread |
 | `list_artifact_data(id, collection?, doc_id?, limit?, cursor?)` | Read an artifact's shared data (owner or editor): a summary, one page of a collection, or one document. Every result is marked untrusted |
 | `write_artifact_data(id, ops)` | Change shared data (owner or editor): 1 to 50 `set`/`delete` ops, each with a required `if_rev`, each succeeding or failing on its own |
@@ -641,6 +655,11 @@ node in a diagram): it opens the composer, and the person writes and posts the c
 [Comments from the page](#comments-from-the-page-decided-2026-11-19). Agents read either kind of
 anchor in `list_comments` and in mention tasks, as untrusted data like the comment text.
 
+A page that declares `requests` files tasks into the same pull queue from its own code, for the
+people who could mention the agent themselves: see
+[Page requests](#page-requests-decided-2026-11-19). Such a task says `source: "page"` and carries no
+owner authority.
+
 ### Shared data and viewer identity
 
 Decided 2026-11-14 (issue #1). Design:
@@ -675,7 +694,7 @@ Decided 2026-11-14 (issue #1). Design:
   `TOKEN_SIGNING_KEY`) into the enter token, and the content host copies it into the per-artifact
   content cookie (`__Host-` prefixed, so a sibling artifact cannot toss in someone else's; a
   request whose valid passes disagree on who is viewing has none). Only identified viewers get a
-  claim, and only while shared data, [files](#files-people-add-to-a-page-decided-2026-11-19) or [live rooms](#live-rooms) are active;
+  claim, and only while shared data, [files](#files-people-add-to-a-page-decided-2026-11-19), [live rooms](#live-rooms) or [page requests](#page-requests-decided-2026-11-19) are active;
   everyone else is anonymous to the page.
   `window.plinth.viewer` is `{ id, email, role }` or null; `email` is set only when the page
   declares `viewer`, and `id` is opaque and different on every artifact. The app tells the viewer
@@ -1870,6 +1889,87 @@ note. Everyone who can open the page sees them. No file can ever run as a page o
   request. The notice under the viewer bar tells each person that the page keeps files people add,
   and who can see who added them.
 
+### Page requests (decided 2026-11-19)
+
+A page can hand a piece of work to the artifact owner's agent: "regenerate this chart for Q3",
+"add the rows I just pasted", "summarise the poll". The request lands in the same pull queue as an
+`@claude` comment, and the agent picks it up in its next session, or within 30 seconds where the
+Claude Code plugin's mention watcher runs. It answers with a new version, a shared-data write or a
+reply, and the page shows the person the state of their own requests and the agent's answers.
+Agents push and the platform never pulls, so this is asynchronous: answers arrive when the
+owner's agent runs.
+
+- **Declaration.** `requests` in `<meta name="plinth-capabilities">`, with `/__plinth/runtime.js`,
+  and optionally `<meta name="plinth-requests-to" content="claude">`: one name, `claude`, `codex`
+  or a connection handle (the names a comment can `@mention`), the first valid one kept. On its own
+  `requests` declares no shared data and no room. HTML pages only; the current version's
+  declaration governs, for old version URLs too. Dropping it turns the page API off
+  (`not_declared`) and leaves existing requests in the queue and the app.
+- **Who files.** Identified viewers with the mention right: the owner, editors and commenters,
+  signed in or confirmed by code. Viewer-role people, anonymous link viewers, in-chat previews and
+  Plinth's thumbnail browser never file. The server stamps the requester: the email sealed into the
+  content pass (the owner's own, or the one that holds the strongest grant), stored as the root
+  comment's author. A request is not parsed for `@names` (its one target is `to`, or the declared
+  default; with neither it is refused), does not count toward the comment rate, and is a root
+  comment of kind `page_request` with exactly one mention task. `pageRequestAccess` in `policy.ts`
+  decides.
+- **Who sees it.** In the app and over MCP and REST, a request's thread is visible only to the
+  owner, editors and its requester, matched against every email the browser holds (a signed-in
+  account and an email confirmed by code); everyone else gets "not found", whether they list,
+  reply by `parent_id`, reply with `reply_comment` or resolve. In-app visibility follows the
+  identities the browser holds now: if the requester's confirmed email expires while another
+  account stays signed in, the request is hidden until they confirm it again. An agent sees only
+  requests filed under its user's own email, besides those it sees as owner or editor.
+- **What the page sees.** Only its viewer's own requests (`pageSeesRequest`), each with its state,
+  whether it was resolved, its target, its own text and data, the version it was filed on and the
+  one that answered it, timestamps, and the answers written by the owner's agents
+  (`pageSeesAnswer`), the newest five, oldest first. No author of anything, ever: no email, name,
+  connection label or role of anyone, whether or not the page declares `viewer`. Replies people type
+  in the app stay in the app; the reply box on a request's thread says so.
+- **Authority.** A request carries no owner authority, even when the owner's own session filed it.
+  `list_mentions` reports it with `source: "page"`, `comment_author_role: null`, a separate
+  `requester_role` (the role of the person whose session had the page open) and `request_data`
+  (untrusted JSON); `list_comments` and the REST comment routes report `kind: "page_request"`.
+  Agents never put people's names or email addresses into an answer: the page reads it.
+- **Completion.** The agent claims the task, acts with `update_artifact`, `write_artifact_data` or a
+  reply, and answers with `reply_comment`: `result_version` marks it done with that version,
+  `done: true` without one, `failed: true` failed. Resolving a request's thread in the app (the
+  owner and editors dismiss, the requester withdraws) ends its open task as `failed`; reopening the
+  thread does not revive it.
+- **Page API.** `window.plinth.requests`: `ready` (`{ available, reason, canFile, to, limits }`,
+  never rejects; `reason` is `opaque_isolation`, `disabled`, `not_declared`, `preview`,
+  `not_identified`, `expired` or `network`), `file({ body, data?, to? })`, `mine()` (the caller's
+  own, newest first), `get(id)` and `onChange(fn, onError?, { intervalMs })`, which polls every 30 s
+  (at least 15 s) while the tab is visible and one of the caller's requests is open, and at once
+  after `file()`. A request is `{ id, state, resolved, to, body, data, version, resultVersion,
+  createdAt, completedAt, answers: [{ body, createdAt }] }`. Nothing is fetched until the page
+  reads `ready` or calls a method. The runtime has `plinth.requests` only on an instance where page
+  requests are in effect; elsewhere the script is byte for byte what it was before, and pages guard
+  with `window.plinth?.requests`.
+- **Transport.** Under the shared-data API, behind its caller checks (`x-plinth-data`, same-origin
+  fetch metadata, an exact `Origin`, JSON bodies, no CORS), with an `Origin` required on `POST`:
+  `GET /__plinth/api/v1/requests` (200 `{ available, reason, can_file, to, limits, requests }`),
+  `POST /__plinth/api/v1/requests` (`{ body, data?, to? }`, strict, at most 32 KiB on the wire; 201)
+  and `GET /__plinth/api/v1/requests/<id>` (200, or 404 alike for anything that is not one of the
+  caller's own). Errors: 400 `invalid_input` (`no_target`, `unknown_agent`), 403 `forbidden`
+  (`cannot_file`) or `feature_disabled` (the unavailable reason), 401 for a missing or ended pass
+  (never the gate redirect), 429 `rate_limited` with `Retry-After` (`per_viewer`, `per_artifact`,
+  `open_requester`, `open_artifact`).
+- **Limits** (env vars): `ALLOW_PAGE_REQUESTS` (off), `PAGE_REQUESTS_PER_VIEWER_PER_HOUR` (10, 1 to
+  100, per requester per artifact), `PAGE_REQUESTS_PER_ARTIFACT_PER_HOUR` (60, 1 to 1000) and
+  `PAGE_REQUESTS_MAX_OPEN_PER_ARTIFACT` (25, 1 to 500, pending or claimed). Fixed: 3 open requests
+  per person per artifact, 4,000 characters of text, 8 KiB of data, 20 listed requests and 5
+  answers each. The open caps and the artifact's access epoch, takedown and deletion are checked in
+  the statement that writes the request.
+- **Lifecycle.** Requests go with the artifact. On a takedown they stay, as comments do, their
+  tasks leave `list_mentions` and new filing gets 404. `erase-user` deletes the requests filed under
+  the person's email, with their tasks and replies.
+- **Availability.** Only with origin isolation, and only while `ALLOW_PAGE_REQUESTS` is on. Turning
+  it on seals the viewer identity claim into identified viewers' content passes even when shared
+  data, files and rooms are off. The notice under the viewer bar tells each person who may file
+  that the page can send requests to the owner's agent as their email, and that the owner, editors
+  and they see them under Comments. When push mode lands, page requests go to push agents too.
+
 ### Big builds and reuse by hash
 
 Decided 2026-11-15. Agents publish built sites (a Vite or similar `dist/` folder with hundreds of
@@ -2142,6 +2242,12 @@ options.
   app host. Uploads pass the shared-data API's caller checks with JSON bodies, only identified
   viewers upload, the quotas are apart from the owner's storage, and a takedown deletes the files
   ([Files people add to a page](#files-people-add-to-a-page-decided-2026-11-19)).
+- **Pages hand work to the owner's agent, never with the owner's authority.** Page requests pass
+  the shared-data API's caller checks, with an `Origin` required on `POST`; only people who could
+  mention the agent file them, under the email sealed in their pass; thread visibility is checked
+  on every comment read and write; the page reads only its viewer's own requests and the owner's
+  agents' answers, with no author of anything; and agents treat each request as untrusted text with
+  no owner authority ([Page requests](#page-requests-decided-2026-11-19)).
 - **Open counts are aggregates.** One number per artifact per UTC day, never who opened it, shown
   only to the artifact's owner and, summed over the instance, to admins.
 - **Quotas and rate limits.** Each account is limited to 100 artifacts by default, set by an

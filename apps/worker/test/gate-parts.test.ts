@@ -29,8 +29,8 @@ const ARTIFACT_KEYS = [
 ];
 
 describe("gate parts", () => {
-  it("runs the data part, the live part, the people part, page comments, voice, watch, hold, then files", () => {
-    expect(GATE_PARTS.length).toBe(8);
+  it("runs the data part, the live part, the people part, page comments, voice, watch, hold, files, then page requests", () => {
+    expect(GATE_PARTS.length).toBe(9);
   });
 
   it("a page that declares comments and data: `data`, then `page_comments`", async () => {

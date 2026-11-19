@@ -115,12 +115,14 @@ const ADDED_USER_STEPS = new Set([
   "category_grants",
   // Files people add to a page (0014): their uploads on other people's pages.
   "artifact_files",
+  // Page requests (0016): requests filed under their address, named apart from comments' step.
+  "page_requests",
 ]);
 
 describe("erase statements (golden)", () => {
   it("are the same SQL as before they became step lists", async () => {
     // sha256 of eraseUserSql and eraseArtifactSql at 94ea515, before the step lists.
-    const before = ERASE_USER_STEPS.filter((s) => !ADDED_USER_STEPS.has(s.table))
+    const before = ERASE_USER_STEPS.filter((s) => !ADDED_USER_STEPS.has(s.name ?? s.table))
       .map((s) => s.sql("ann@example.com"))
       .join("; ");
     expect(await sha256(before)).toBe(

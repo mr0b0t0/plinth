@@ -435,6 +435,7 @@ export const CAPABILITY_TOKENS = [
   { token: "dictation", declares: true, needs: [], stored: "declared" },
   { token: "hold", declares: true, needs: [], stored: "declared" },
   { token: "files", declares: true, needs: [], stored: "declared" },
+  { token: "requests", declares: true, needs: [], stored: "declared" },
 ] as const satisfies readonly {
   token: string;
   declares: boolean;
@@ -442,6 +443,11 @@ export const CAPABILITY_TOKENS = [
   stored: "always" | "declared";
 }[];
 export type DataCapability = (typeof CAPABILITY_TOKENS)[number]["token"];
+
+/** The meta naming a page's default request target (docs/spec.md "Page requests"). */
+export const REQUESTS_TO_META = "plinth-requests-to";
+/** A request target: `claude`, `codex` or a connection handle, as mentionHandle() normalises labels. */
+export const PAGE_REQUEST_TO_RE = /^[a-z0-9][a-z0-9_.-]{0,79}$/;
 export const DATA_CAPABILITIES: readonly DataCapability[] = CAPABILITY_TOKENS.map((t) => t.token);
 
 /** Query parameter that turns on review mode (comment anchoring bridge) on a content host. */

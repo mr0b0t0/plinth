@@ -17,7 +17,10 @@ import {
   writeArtifactDataInput,
 } from "../src/index.ts";
 
-/** No room, and (later tokens) no people list, no page comments, no dictation, no hold and no files. */
+/**
+ * No room, and (later tokens) no people list, no page comments, no dictation, no hold, no files and
+ * no page requests.
+ */
 const NO_ROOM = {
   room: false,
   roomOpen: [],
@@ -26,6 +29,8 @@ const NO_ROOM = {
   dictation: false,
   hold: false,
   files: false,
+  requests: false,
+  requestsTo: [],
 };
 const caps = (content: string) => `<meta name="plinth-capabilities" content="${content}">`;
 
@@ -154,6 +159,8 @@ describe("parseCapabilities: rooms", () => {
       dictation: false,
       hold: false,
       files: false,
+      requests: false,
+      requestsTo: [],
     });
     expect(parseCapabilities(caps("viewer room"))).toMatchObject({ data: false, viewer: true });
     expect(parseCapabilities(caps("data viewer room"))).toMatchObject({
@@ -222,6 +229,7 @@ describe("data constants", () => {
       "dictation",
       "hold",
       "files",
+      "requests",
     ]);
     expect(DEFAULTS.data).toEqual({
       maxDocsPerArtifact: 1000,

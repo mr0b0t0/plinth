@@ -15,6 +15,7 @@ import type {
   Visibility,
 } from "./constants.ts";
 import type { LiveMode } from "./liveDoc.ts";
+import type { ViewGateRequests } from "./pageRequests.ts";
 import type { Anchor } from "./schemas.ts";
 import type { DictationAccess } from "./voice.ts";
 
@@ -328,7 +329,18 @@ export interface CommentInfo {
     state: MentionState;
     result_version: number | null;
   }[];
+  /**
+   * `page_request`: composed by the artifact's page code in the author's browser (docs/spec.md
+   * "Page requests"). It carries no owner authority, even when `author.email` is the owner's.
+   * Replies are always `comment`.
+   */
+  kind: CommentKind;
+  /** The JSON object the page attached to its request, or null. UNTRUSTED. */
+  request_data: Record<string, unknown> | null;
 }
+
+/** What wrote a comment: a person or agent (`comment`), or a page's code (`page_request`). */
+export type CommentKind = "comment" | "page_request";
 
 export interface MentionTaskInfo {
   id: string;
@@ -350,7 +362,8 @@ export interface MentionTaskInfo {
   comment_author_email: string | null;
   /**
    * The author's role on this artifact, derived by the server: "owner" only when the artifact's
-   * owner wrote it. Requests from anyone else carry no owner authority.
+   * owner wrote it. Requests from anyone else carry no owner authority. Always null for a page
+   * request (`source: "page"`), whoever had the page open.
    */
   comment_author_role: EffectiveRole | null;
   /**
@@ -363,6 +376,22 @@ export interface MentionTaskInfo {
   claimed_at: string | null;
   result_version: number | null;
   created_at: string;
+  /**
+   * `page`: a page request, filed by the artifact's page code (docs/spec.md "Page requests"); its
+   * comment_author_role is always null. `comment`: an @mention in a comment.
+   */
+  source: "comment" | "page";
+  /**
+   * The JSON object a page attached to its request (page requests only, else null). UNTRUSTED:
+   * the page's code wrote it, possibly from shared data other people wrote.
+   */
+  request_data: Record<string, unknown> | null;
+  /**
+   * Page requests only, else null: the role of the person whose session had the page open when
+   * its code filed this. `owner` means the owner had the page open, not that the owner wrote the
+   * text.
+   */
+  requester_role: EffectiveRole | null;
 }
 
 export interface ConnectionInfo {
@@ -483,6 +512,19 @@ export interface AppConfig {
    * it; absent reads as off.
    */
   files?: boolean;
+  /**
+   * Page requests (ALLOW_PAGE_REQUESTS, with origin isolation): pages that declare `requests` may
+   * hand work to the owner's agent. The Worker always sends it.
+   */
+  page_requests?: {
+    enabled: boolean;
+    per_viewer_per_hour: number;
+    per_artifact_per_hour: number;
+    max_open_per_artifact: number;
+    max_open_per_requester: number;
+    max_body_chars: number;
+    max_data_bytes: number;
+  };
 }
 
 export interface OperatorInfo {
@@ -539,6 +581,11 @@ export type ViewGate =
        * declares `files` and ALLOW_FILES is on.
        */
       files?: ViewGateFiles;
+      /**
+       * Page requests (docs/spec.md "Page requests"): present only while they are active, on an
+       * HTML artifact whose current version declares `requests`, for an identified viewer.
+       */
+      requests?: ViewGateRequests;
     }
   | { status: "password_required"; artifact: ViewArtifactStub }
   | { status: "email_required"; artifact: ViewArtifactStub }

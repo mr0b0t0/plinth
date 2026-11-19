@@ -10,6 +10,17 @@ Add a line under **Unreleased** in the pull request that makes a change people w
 
 ## Unreleased
 
+- **Pages that hand work to the owner's agent.** A page that declares `requests`
+  (`<meta name="plinth-capabilities" content="requests">`, with
+  `<meta name="plinth-requests-to" content="claude">`) lets the people who may comment on it send
+  a request to the owner's agent from the page (`plinth.requests.file`). It lands in the agent's
+  mention queue with `source: "page"`, and the page shows each person their own requests, their
+  state and the agent's answers, never anyone's name or address. Only the owner, editors and the
+  requester see a request in Comments, where the owner and editors dismiss it and the requester
+  withdraws it. `reply_comment` gains `done: true` for an answer without a new version. Off by
+  default: `ALLOW_PAGE_REQUESTS` turns it on (origin isolation only), with
+  `PAGE_REQUESTS_*` limits; turning it on seals the viewer identity claim for identified viewers
+  even where shared data and rooms are off. Migration `0016_page_requests.sql`.
 - **Follow the presenter in a deck.** An owner or editor can turn on **Lead viewers** in a deck's
   controls or presenter view, and the people the deck is shared with who have it open follow their
   slide, with a "Following the presenter" note; paging by hand pauses it until they choose "Back to

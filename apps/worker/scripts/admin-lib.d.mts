@@ -63,6 +63,8 @@ export declare function eraseUserSql(email: string): string;
 export declare function eraseArtifactSql(ref: string): string;
 export interface EraseStep {
   table: string;
+  /** Tells a second step on the same table apart (the erase golden test names added steps). */
+  name?: string;
   sql: (subject: string) => string;
 }
 export declare const ERASE_USER_STEPS: readonly EraseStep[];

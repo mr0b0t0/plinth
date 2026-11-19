@@ -170,6 +170,8 @@ describe("the dictation declaration", () => {
       dictation: true,
       hold: false,
       files: false,
+      requests: false,
+      requestsTo: [],
     });
     const stored = serializeCapabilities(c as Capabilities);
     expect(stored).toBe('{"data":false,"viewer":false,"shared":[],"dictation":true}');
@@ -224,6 +226,8 @@ describe("policy: dictationAccess", () => {
     dictation,
     hold: false,
     files: false,
+    requests: false,
+    requestsTo: [],
   });
   const who = (role: EffectiveRole) => ({ email: `${role}@example.com`, role });
   const ctx = { active: true, isolation: "origin" as const, type: "html" as const };

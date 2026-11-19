@@ -82,11 +82,22 @@ export function filesNoticeText(gate: NoticeGate): string | null {
   return `${who} ${FILES_METADATA_NOTE}`;
 }
 
+/**
+ * Page requests (`requests`): the page can send requests to the owner's agent in this viewer's
+ * name, under the email the gate sealed, and who sees them. Nothing for a viewer who cannot file.
+ */
+export function requestsNoticeText(gate: NoticeGate): string | null {
+  const r = gate.requests;
+  if (!r?.can_file) return null;
+  return `This page can send requests to the owner's agent as ${r.email}. The owner and editors see them, and so do you, under Comments.`;
+}
+
 /** The notice's lines, in the order they are read out. One line function per line. */
 export const DATA_NOTICE_LINES: readonly NoticeLine[] = [
   (gate) => dataNoticeText(gate.data),
   peopleNoticeText,
   filesNoticeText,
+  requestsNoticeText,
 ];
 
 /** The whole notice for a gate, or null when no line has anything to say. */

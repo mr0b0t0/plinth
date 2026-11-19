@@ -4,13 +4,14 @@ import {
   type Me,
   type MeConnection,
   normalizeDisplayName,
+  PAGE_REQUEST_LIMITS,
   REPO_URL,
   TTL,
   updateProfileInput,
 } from "@plinth/shared";
 import { and, eq, isNull, sql } from "drizzle-orm";
 import { Hono } from "hono";
-import { dictationActive, filesActive, instanceLimits } from "../config.ts";
+import { dictationActive, filesActive, instanceLimits, pageRequestsActive } from "../config.ts";
 import { artifacts, users } from "../db/schema.ts";
 import { ApiError, unauthorized } from "../lib/errors.ts";
 import { boundArtifactOf } from "../policy.ts";
@@ -48,6 +49,15 @@ meApi.get("/config", (c) => {
     category_sharing: config.allowCategorySharing,
     live_views: config.allowLiveViews,
     files: filesActive(config),
+    page_requests: {
+      enabled: pageRequestsActive(config),
+      per_viewer_per_hour: config.pageRequests.perViewerPerHour,
+      per_artifact_per_hour: config.pageRequests.perArtifactPerHour,
+      max_open_per_artifact: config.pageRequests.maxOpenPerArtifact,
+      max_open_per_requester: PAGE_REQUEST_LIMITS.maxOpenPerRequester,
+      max_body_chars: PAGE_REQUEST_LIMITS.maxBodyChars,
+      max_data_bytes: PAGE_REQUEST_LIMITS.maxDataBytes,
+    },
   };
   const res = c.json(body);
   ensureCsrfCookie(c, res.headers);

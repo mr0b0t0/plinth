@@ -111,6 +111,7 @@ describe("runtime fragments", () => {
       "live",
       "version",
       "files",
+      "requests",
     ]);
     const served = runtimeScript(config());
     expect(assembleRuntime(config())).toBe(served);

@@ -8,6 +8,8 @@ import {
   type DataCapability,
   type EffectiveRole,
   LIMITS,
+  PAGE_REQUEST_TO_RE,
+  REQUESTS_TO_META,
 } from "./constants.ts";
 import { utf8Bytes } from "./pageComments.ts";
 import { ROOM_LIMITS, ROOM_OPEN_ALL, ROOM_OPEN_META, ROOM_TOPIC_RE } from "./room.ts";
@@ -49,6 +51,17 @@ export interface Capabilities {
    * the artifact's own store. Not shared data; `viewer` adds who uploaded each file.
    */
   files: boolean;
+  /**
+   * The page may hand work to the owner's agent (`plinth.requests`, docs/spec.md "Page requests"):
+   * identified viewers with the mention right file requests that land in the mention queue. Not
+   * shared data and not a room.
+   */
+  requests: boolean;
+  /**
+   * The page's default request target (plinth-requests-to): at most one name, `claude`, `codex` or
+   * a connection handle, kept only with `requests`. Empty when the page names none.
+   */
+  requestsTo: string[];
 }
 
 export const CAPABILITIES_META = "plinth-capabilities";
@@ -120,6 +133,17 @@ export const DECLARATION_FIELDS: readonly DeclarationField[] = [
   { kind: "token", key: "dictation" },
   { kind: "token", key: "hold" },
   { kind: "token", key: "files" },
+  { kind: "token", key: "requests" },
+  {
+    kind: "list",
+    key: "requestsTo",
+    meta: REQUESTS_TO_META,
+    needs: "requests",
+    stored: "requests",
+    max: 1,
+    accept: (t) => PAGE_REQUEST_TO_RE.test(t),
+    checkOnRead: true,
+  },
 ];
 
 const TOKEN_INFO = new Map<string, (typeof CAPABILITY_TOKENS)[number]>(
@@ -178,15 +202,17 @@ function tokens(content: string): string[] {
 
 /**
  * Read a page's declaration from its HTML: the first <meta name="plinth-capabilities"> and the
- * first of each registered list meta (plinth-data-shared, plinth-room-open), in any attribute
- * order and quote style, names compared case-insensitively, tags inside HTML comments ignored.
+ * first of each registered list meta (plinth-data-shared, plinth-room-open, plinth-requests-to), in
+ * any attribute order and quote style, names compared case-insensitively, tags inside HTML
+ * comments ignored.
  * Every meta tag is read, so a registered meta after the others is never missed. Unknown tokens
  * are ignored, and so are list entries that break their rule; at most each list's `max` are kept
- * (LIMITS.maxDataShared, ROOM_LIMITS.maxOpenTopics). Returns null unless `data`, `room`,
- * `comments`, `dictation`, `hold` or `files` is declared: the viewer is learned through the data API
- * or the room, so `viewer` alone declares nothing, and neither does a list alone. Shared names
- * count only with `data`, open topics only with `room`. A page that declares only `comments`,
- * `dictation`, `hold` or `files` has no document store and no room.
+ * (LIMITS.maxDataShared, ROOM_LIMITS.maxOpenTopics, one request target). Returns null unless
+ * `data`, `room`, `comments`, `dictation`, `hold`, `files` or `requests` is declared: the viewer is
+ * learned through the data API or the room, so `viewer` alone declares nothing, and neither does a
+ * list alone. Shared names count only with `data`, open topics only with `room`, the request
+ * target only with `requests`. A page that declares only `comments`, `dictation`, `hold`, `files`
+ * or `requests` has no document store and no room.
  */
 export function parseCapabilities(html: string): Capabilities | null {
   if (!/plinth-/i.test(html)) return null;

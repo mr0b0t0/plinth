@@ -35,6 +35,10 @@
 // declare `files` alone. The dispatcher checks the JSON type before any of them; the body itself is
 // read only after their availability, artifact, pass and declaration steps, so an instance with
 // files off, or a caller without a pass, never costs a part's read and decode.
+//
+// /__plinth/api/v1/requests and /requests/<id> (page requests: a page hands work to the owner's
+// agent) share checks 1 to 4 and 6, with an Origin required on POST, then take their own steps in
+// content/requests.ts: requests are not shared data, and a page may declare `requests` alone.
 import { waitUntil } from "cloudflare:workers";
 import {
   CONTENT_DATA_HEADER,
@@ -80,6 +84,13 @@ import {
   readCreateBody,
 } from "./files-api.ts";
 import { getPersonRoute, listPeopleRoute } from "./people.ts";
+import {
+  matchRequest,
+  matchRequests,
+  readRequestBody,
+  requestRoute,
+  requestsRoute,
+} from "./requests.ts";
 import { roomInfo } from "./room.ts";
 import type { HostRoute } from "./serve.ts";
 import { readContentPass } from "./serve.ts";
@@ -284,6 +295,11 @@ interface RouteBase {
   /** Refuse a request without an Origin header, even a read (check 4 always refuses a wrong one). */
   requireOrigin?: boolean;
   /**
+   * Refuse a request of these methods without an Origin header (check 4 always refuses a wrong
+   * one). Browsers send Origin on every same-origin POST, but not on a same-origin GET.
+   */
+  requireOriginOn?: readonly string[];
+  /**
    * Check 6 for an `own` route's POST and PUT bodies: its own JSON reader (still JSON only and
    * size-capped while reading), run when the handler calls `readBody`. Without one, the
    * shared-data reader and cap.
@@ -424,6 +440,27 @@ export const DATA_API_ROUTES: readonly DataApiRoute[] = [
     exampleBody: JSON.stringify({ data: "AAAA" }),
     handler: filePartRoute,
   },
+  // Page requests (content/requests.ts): their own steps after checks 1 to 4 and 6. POST needs an
+  // exact Origin, not only "when sent".
+  {
+    kind: "requests",
+    match: matchRequests,
+    methods: ["GET", "POST"],
+    example: "requests",
+    pipeline: "own",
+    requireOriginOn: ["POST"],
+    readBody: readRequestBody,
+    exampleBody: JSON.stringify({ body: "Add the Q3 numbers", to: "claude" }),
+    handler: requestsRoute,
+  },
+  {
+    kind: "request",
+    match: matchRequest,
+    methods: ["GET"],
+    example: "requests/0123456789abcdefghij",
+    pipeline: "own",
+    handler: requestRoute,
+  },
 ];
 
 function matchRoute(path: string): { route: DataApiRoute; params: Record<string, string> } | null {
@@ -528,7 +565,10 @@ async function handle(
   if (!matched) throw new ApiError("not_found", "Not found");
   const { route, params } = matched;
   if (!route.methods.includes(method)) return notAllowed();
-  if (route.requireOrigin && request.headers.get("origin") === null) {
+  if (
+    (route.requireOrigin || route.requireOriginOn?.includes(method)) &&
+    request.headers.get("origin") === null
+  ) {
     throw refuse("Cross-origin requests are refused");
   }
 

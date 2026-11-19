@@ -173,6 +173,10 @@ export function runtimeBase(repoCfg) {
         "FILES_MAX_BYTES_PER_USER",
         "FILES_UPLOADS_PER_UPLOADER_PER_HOUR",
         "FILES_UPLOADS_PER_ARTIFACT_PER_HOUR",
+        "ALLOW_PAGE_REQUESTS",
+        "PAGE_REQUESTS_PER_VIEWER_PER_HOUR",
+        "PAGE_REQUESTS_PER_ARTIFACT_PER_HOUR",
+        "PAGE_REQUESTS_MAX_OPEN_PER_ARTIFACT",
       ]
         .filter((k) => k in (repoCfg.vars ?? {}))
         .map((k) => [k, repoCfg.vars[k]]),

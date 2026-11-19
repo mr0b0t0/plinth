@@ -36,6 +36,7 @@ export type LegalConfig = Pick<
   | "dictation"
   | "category_sharing"
   | "files"
+  | "page_requests"
 >;
 
 const EMAIL_SERVICE: Record<AppConfig["email_provider"], string | null> = {
@@ -239,6 +240,8 @@ function privacy(op: OperatorInfo, cfg: LegalConfig): LegalDoc {
             )}
             <li>
               <strong>Comments</strong>: their text, who wrote them, and requests made to agents.
+              {cfg.page_requests?.enabled &&
+                " This includes requests a page sends to its owner's agent while you have it open, stored under your email like a comment you wrote."}
             </li>
             <li>
               <strong>Connected agents</strong>: their names, permissions and when they were last
@@ -328,10 +331,11 @@ function privacy(op: OperatorInfo, cfg: LegalConfig): LegalDoc {
             Only the cookies the service needs to work: your sign-in, protection against forged
             requests, proof that you entered an artifact's password or confirmed your email, and a
             viewing cookie for each artifact you open. On a page that saves what its viewers enter
-            {cfg.files ? " or keeps the files they add" : ""}, that cookie also says who you are, so
-            the page cannot pretend to be someone else. The viewing cookie also notes whether your
-            open of that page was already counted, so opening it again within 12 hours is not
-            counted twice; it adds nothing else about you.
+            {cfg.files ? " or keeps the files they add" : ""}
+            {cfg.page_requests?.enabled ? " or sends requests to its owner's agent" : ""}, that
+            cookie also says who you are, so the page cannot pretend to be someone else. The viewing
+            cookie also notes whether your open of that page was already counted, so opening it
+            again within 12 hours is not counted twice; it adds nothing else about you.
           </p>
         ),
       },

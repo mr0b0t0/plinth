@@ -68,6 +68,8 @@ const WORKER_VARS = [
   "ALLOW_SLIDES_FOLLOW",
   // Files people add to a page (docs/docker.md#settings); off unless set to "true".
   "ALLOW_FILES",
+  // Pages that hand work to the owner's agent (docs/docker.md#settings); off unless set to "true".
+  "ALLOW_PAGE_REQUESTS",
 ];
 
 // `plinth init` flags and the variables that set them, to name the variable in its errors.

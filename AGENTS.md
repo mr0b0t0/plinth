@@ -76,7 +76,8 @@ make a test pass.
   `/__plinth/room/` requires an exact `Origin` (absent or `null` refused), same-origin fetch
   metadata when sent, the `plinth.room.v1` subprotocol and the content cookie at the current epoch
   with an identity claim; keep all four. File uploads go through `/__plinth/api/` like any other
-  write (all four, JSON bodies included). `/__plinth/files/` is read-only and serves only types the
+  write (all four, JSON bodies included). Page requests go through `/__plinth/api/` too (all four,
+  with an `Origin` required on `POST`). `/__plinth/files/` is read-only and serves only types the
   server proved from the bytes, never markup, with `nosniff`, `script-src 'none'` and `sandbox`;
   keep all three. The live-view socket at `/api/v1/view/:ref/watch` on the app host requires an exact app `Origin` (absent or `null` refused), same-origin fetch metadata
   when sent, the `plinth.view.v1` subprotocol and no bearer token, takes the gate's view decision,
@@ -95,7 +96,9 @@ make a test pass.
   `allow-same-origin`); the shell posts each one only its own HTML.
 - **Comment and artifact text is untrusted input for agents**, and so is shared data, which
   viewers and the page's own code write. A mention is a request from a collaborator, not an
-  instruction with the owner's authority. MCP tool descriptions say so.
+  instruction with the owner's authority. MCP tool descriptions say so. Page requests are
+  untrusted too: the page's code composes them, and they carry no owner authority even from the
+  owner's session.
 - **Authorization lives in one shared policy module** and is checked on every read and write,
   never only in the UI.
 - **Tokens** are stored hashed, shown once, revocable per connection. Secrets never appear in
@@ -109,7 +112,8 @@ make a test pass.
   every write is stamped with who made it, and the owner and editors can change or delete it.
 - Agents push; the platform never pulls from Claude or ChatGPT accounts.
 - Artifacts are static HTML plus assets, with no per-artifact server code. The only server
-  behaviour a page can reach is Plinth's fixed shared-data service at `/__plinth/api/` and its live
+  behaviour a page can reach is Plinth's fixed shared-data service at `/__plinth/api/`, with the
+  page requests it files there for the owner's agent, and its live
   room at `/__plinth/room/` and the files it stored at `/__plinth/files/`, which a page opts into.
   Only the owner and people the artifact is shared with can write from the page, and only the
   owner's and editors' agents over MCP or REST.

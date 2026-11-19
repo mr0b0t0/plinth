@@ -273,6 +273,8 @@ describe("createVersion stores capabilities", () => {
       dictation: false,
       hold: false,
       files: false,
+      requests: false,
+      requestsTo: [],
     });
     expect(versionCapabilities(null)).toBeNull();
     // Malformed stored values read as nothing declared, never as a crash.
@@ -291,6 +293,8 @@ describe("createVersion stores capabilities", () => {
       dictation: false,
       hold: false,
       files: false,
+      requests: false,
+      requestsTo: [],
     });
     // A room declaration, alone or with data; topics that break the rule are dropped.
     expect(
@@ -309,6 +313,8 @@ describe("createVersion stores capabilities", () => {
       dictation: false,
       hold: false,
       files: false,
+      requests: false,
+      requestsTo: [],
     });
     expect(
       versionCapabilities({ capabilities: '{"data":false,"viewer":false,"room":"yes"}' }),
@@ -329,6 +335,8 @@ describe("createVersion stores capabilities", () => {
       dictation: false,
       hold: false,
       files: false,
+      requests: false,
+      requestsTo: [],
     });
   });
 });

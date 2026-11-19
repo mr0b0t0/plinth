@@ -119,6 +119,12 @@ export const comments = sqliteTable("comments", {
     .default("open"),
   createdAt: text("created_at").notNull(),
   resolvedAt: text("resolved_at"),
+  /** `page_request`: filed by a page that declares `requests` (0016_page_requests). */
+  kind: text("kind", { enum: ["comment", "page_request"] })
+    .notNull()
+    .default("comment"),
+  /** JSON object a page attached to its request (page_request only). Untrusted. */
+  requestData: text("request_data"),
 });
 
 export const mentionTasks = sqliteTable("mention_tasks", {

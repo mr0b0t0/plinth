@@ -161,6 +161,10 @@ Booleans accept `true`, `1`, `yes` or `on`.
 | `FILES_MAX_BYTES_PER_USER` | `1073741824` (1 GiB) | Bytes of files across one owner's live artifacts, apart from `MAX_STORAGE_BYTES_PER_USER`. At least `FILES_MAX_BYTES_PER_ARTIFACT` |
 | `FILES_UPLOADS_PER_UPLOADER_PER_HOUR` | `60` | Uploads one person may start on one artifact per hour. At least 1 |
 | `FILES_UPLOADS_PER_ARTIFACT_PER_HOUR` | `300` | Uploads everyone together may start on one artifact per hour. At least 1 |
+| `ALLOW_PAGE_REQUESTS` | `false` | Page requests: pages that declare `requests` let the people who may comment on them hand work to the owner's agent, which picks it up from its mention queue ([spec](spec.md#page-requests-decided-2026-11-19), [security.md](security.md#page-requests)). Only `true`, `1`, `yes` or `on` turns it on; only with `CONTENT_ISOLATION=origin`. Turning this on seals the viewer identity claim into identified viewers' content passes even when `ALLOW_SHARED_DATA` and `ALLOW_ROOMS` are off. Each request is stored like a comment under the requester's email; the privacy notice says so while it is on, and an operator with a notice of their own should do the same |
+| `PAGE_REQUESTS_PER_VIEWER_PER_HOUR` | `10` | Requests one person may file on one artifact per hour, `1` to `100` |
+| `PAGE_REQUESTS_PER_ARTIFACT_PER_HOUR` | `60` | Requests everyone together may file on one artifact per hour, `1` to `1000` |
+| `PAGE_REQUESTS_MAX_OPEN_PER_ARTIFACT` | `25` | Requests waiting for or claimed by the owner's agent on one artifact, `1` to `500`. One person may have at most 3 open on an artifact |
 | `STAGING_CONTENT_FALLBACK` | `false` | Serves content at `APP_HOST/__content/<id>/` instead of subdomains, for a staging deploy on `workers.dev` without a content domain. All artifacts then share the app's origin, so never use it with real users. Refused in production |
 | `DEV_OUTBOX` | `false` (`true` in the committed local config) | Keeps console emails in D1 and exposes `GET /api/v1/__dev/outbox` for tests. Only honoured when `ENVIRONMENT=development` |
 

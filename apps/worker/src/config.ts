@@ -12,6 +12,8 @@ import {
   LIVE_DEFAULTS,
   LIVE_VIEW_BOUNDS,
   LIVE_VIEW_DEFAULTS,
+  PAGE_REQUEST_BOUNDS,
+  PAGE_REQUEST_DEFAULTS,
   ROOM_BOUNDS,
   ROOM_DEFAULTS,
 } from "@plinth/shared";
@@ -184,6 +186,14 @@ export interface Config {
   allowFiles: boolean;
   /** Limits on files people add to pages (FILES_* env vars). */
   files: FileLimits;
+  /**
+   * ALLOW_PAGE_REQUESTS (default off): pages that declare `requests` let identified viewers with
+   * the mention right hand work to the owner's agent. Only in effect with origin isolation; see
+   * pageRequestsActive.
+   */
+  allowPageRequests: boolean;
+  /** Limits on page requests (PAGE_REQUESTS_* env vars). */
+  pageRequests: PageRequestLimits;
   /** OPERATOR_*: who runs this instance, for its legal pages. null when none is published. */
   operator: {
     name: string;
@@ -238,6 +248,15 @@ export interface FileLimits {
   uploadsPerUploaderPerHour: number;
   /** FILES_UPLOADS_PER_ARTIFACT_PER_HOUR: uploads everyone starts on one artifact. */
   uploadsPerArtifactPerHour: number;
+}
+
+export interface PageRequestLimits {
+  /** PAGE_REQUESTS_PER_VIEWER_PER_HOUR: per requester per artifact (1 to 100). */
+  perViewerPerHour: number;
+  /** PAGE_REQUESTS_PER_ARTIFACT_PER_HOUR: all requesters of one artifact (1 to 1000). */
+  perArtifactPerHour: number;
+  /** PAGE_REQUESTS_MAX_OPEN_PER_ARTIFACT: pending or claimed page requests (1 to 500). */
+  maxOpenPerArtifact: number;
 }
 
 export interface LiveEditSettings {
@@ -453,6 +472,27 @@ export function parseConfig(env: Record<string, unknown>): Config {
     allowSlidesFollow: boolDefaultOn(env.ALLOW_SLIDES_FOLLOW),
     allowFiles: bool(env.ALLOW_FILES),
     files: parseFileLimits(env),
+    allowPageRequests: bool(env.ALLOW_PAGE_REQUESTS),
+    pageRequests: {
+      perViewerPerHour: boundedInt(
+        env,
+        "PAGE_REQUESTS_PER_VIEWER_PER_HOUR",
+        PAGE_REQUEST_DEFAULTS.perViewerPerHour,
+        ...PAGE_REQUEST_BOUNDS.perViewerPerHour,
+      ),
+      perArtifactPerHour: boundedInt(
+        env,
+        "PAGE_REQUESTS_PER_ARTIFACT_PER_HOUR",
+        PAGE_REQUEST_DEFAULTS.perArtifactPerHour,
+        ...PAGE_REQUEST_BOUNDS.perArtifactPerHour,
+      ),
+      maxOpenPerArtifact: boundedInt(
+        env,
+        "PAGE_REQUESTS_MAX_OPEN_PER_ARTIFACT",
+        PAGE_REQUEST_DEFAULTS.maxOpenPerArtifact,
+        ...PAGE_REQUEST_BOUNDS.maxOpenPerArtifact,
+      ),
+    },
     operator: parseOperator(env),
   };
   validate(config);
@@ -738,6 +778,17 @@ export function filesActive(c: Pick<Config, "allowFiles" | "contentIsolation">):
   return c.allowFiles && c.contentIsolation === "origin";
 }
 
+/**
+ * Page requests are in effect: ALLOW_PAGE_REQUESTS is on and each artifact is its own origin. Under
+ * opaque isolation a page has no cookies, so nobody could be identified to file one, and page
+ * requests are off there; that is not a configuration error.
+ */
+export function pageRequestsActive(
+  c: Pick<Config, "allowPageRequests" | "contentIsolation">,
+): boolean {
+  return c.allowPageRequests && c.contentIsolation === "origin";
+}
+
 /** Something on the page that reads the identity claim, and whether it is switched on. */
 export interface IdentityReader {
   name: string;
@@ -752,12 +803,15 @@ export const IDENTITY_READERS: readonly IdentityReader[] = [
   { name: "shared data", active: (c) => c.allowSharedData },
   { name: "live rooms", active: roomsActive },
   { name: "files", active: (c) => c.allowFiles },
+  // Page requests (docs/spec.md "Page requests"): the content endpoint files and lists by the
+  // claim's email.
+  { name: "page requests", active: (c) => c.allowPageRequests },
 ];
 
 /**
  * Whether the gate seals an identity claim into identified viewers' content passes: only with
  * origin isolation, and only while something on the page reads it (IDENTITY_READERS: shared data,
- * rooms or files).
+ * rooms, files or page requests).
  */
 export function identityClaimsActive(c: Config, env: OptionalBindings): boolean {
   return c.contentIsolation === "origin" && IDENTITY_READERS.some((r) => r.active(c, env));

@@ -135,6 +135,8 @@ export function CommentsPanel({
   const [sending, setSending] = useState(false);
   const [composeError, setComposeError] = useState<string | undefined>();
   const [blocked, setBlocked] = useState<Blocked>(null);
+  /** The owner or an editor (the list says so): page requests are dismissed, not withdrawn. */
+  const [moderator, setModerator] = useState(false);
   const [announcement, setAnnouncement] = useState("");
 
   const panelRef = useRef<HTMLElement | null>(null);
@@ -186,11 +188,15 @@ export function CommentsPanel({
       loadingRef.current = true;
       if (opts.manual) setRefreshing(true);
       try {
-        const res = await api<{ items: CommentInfo[]; can_comment?: boolean; signed_in?: boolean }>(
-          commentsPath,
-        );
+        const res = await api<{
+          items: CommentInfo[];
+          can_comment?: boolean;
+          signed_in?: boolean;
+          can_moderate?: boolean;
+        }>(commentsPath);
         // Say up front when this person cannot comment, instead of after they typed something.
         if (res.can_comment === false) setBlocked(res.signed_in ? "forbidden" : "signin");
+        setModerator(res.can_moderate === true);
         const seen = seenRef.current;
         if (seen) {
           const fresh = res.items.filter((c) => !seen.has(c.id));
@@ -594,6 +600,7 @@ export function CommentsPanel({
                     version={version}
                     active={t.root.id === activeId}
                     readOnly={blocked !== null}
+                    moderator={moderator}
                     onActivate={activate}
                     onReply={reply}
                     onSetStatus={setStatus}

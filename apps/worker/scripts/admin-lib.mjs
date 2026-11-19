@@ -359,6 +359,15 @@ export const ERASE_USER_STEPS = [
     sql: (email) =>
       `DELETE FROM comments WHERE author_user_id IN (SELECT id FROM users WHERE email = '${email}')`,
   },
+  // Requests their sessions filed from pages (0016_page_requests), on anyone's artifact: a person
+  // confirmed by code has no author_user_id, so the step above misses them. Their tasks and
+  // replies cascade. `name` tells this step apart from the one above.
+  {
+    table: "comments",
+    name: "page_requests",
+    sql: (email) =>
+      `DELETE FROM comments WHERE kind = 'page_request' AND author_email = '${email}'`,
+  },
   { table: "access_grants", sql: (email) => `DELETE FROM access_grants WHERE email = '${email}'` },
   // Category shares of other people's that hold this address (0013_category_sharing); the
   // person's own shares, and their personal categories, cascade with the users row.

@@ -21,6 +21,7 @@ Status on 2026-11-14: **deployed** at <https://plinth.aconite.io>, with artifact
 | Dictation | Off: `ALLOW_DICTATION` is not set, so its default (off) applies. It is turned on only after the maintainer approves the privacy notice's Dictation paragraph and the manual browser pass in [deploy-checklist.md](deploy-checklist.md#dictation) |
 | Category sharing | `ALLOW_CATEGORY_SHARING` is not set, so its default (on) applies once a release with it is deployed (migration `0013_category_sharing.sql`). The privacy notice's "Shared categories" item is part of that release and needs the maintainer's approval before the deploy |
 | Files people add to a page | Off: `ALLOW_FILES` is not set, so its default (off) applies. It is turned on only after the maintainer approves the privacy notice's "Files people add to pages" items and the acceptable use policy's line on files, and the manual browser pass in [deploy-checklist.md](deploy-checklist.md#files-people-add-to-a-page) |
+| Page requests | Off: `ALLOW_PAGE_REQUESTS` is not set, so its default (off) applies (migration `0016_page_requests.sql` ships either way). It is turned on only after the maintainer approves the privacy notice's sentence on requests a page sends, and the manual pass in [deploy-checklist.md](deploy-checklist.md#page-requests) |
 | Compatibility and cron | `nodejs_compat` and `enable_request_signal`; hourly cron `0 * * * *` for the staging sweep and upload-ticket pruning (0.4.0) |
 | Config file | `apps/worker/wrangler.production.jsonc` (git-ignored; written by `scripts/setup.mjs`) |
 

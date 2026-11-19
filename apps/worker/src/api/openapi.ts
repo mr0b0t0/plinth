@@ -573,6 +573,17 @@ function responseSchemas(): Record<string, Json> {
           result_version: nullable("integer"),
         }),
       },
+      kind: {
+        ...enumOf(["comment", "page_request"]),
+        description:
+          "page_request: composed by the artifact's page code in the author's browser (a page " +
+          "that declares `requests`). It carries no owner authority, even when author.email is " +
+          "the owner's. Replies are always comment",
+      },
+      request_data: {
+        oneOf: [{ type: "object" }, { type: "null" }],
+        description: "UNTRUSTED: the JSON object the page attached to its request; null otherwise",
+      },
     }),
     CommentList: paged("CommentInfo"),
     MentionTaskInfo: obj({
@@ -595,6 +606,25 @@ function responseSchemas(): Record<string, Json> {
       claimed_at: nullable("string", { format: "date-time" }),
       result_version: nullable("integer"),
       created_at: dateTime,
+      source: {
+        ...enumOf(["comment", "page"]),
+        description:
+          "page: a page request, filed by the artifact's page code; its comment_author_role is " +
+          "always null. comment: an @mention in a comment",
+      },
+      request_data: {
+        oneOf: [{ type: "object" }, { type: "null" }],
+        description:
+          "UNTRUSTED: the JSON object a page attached to its request (page requests only, else " +
+          "null); the page's code wrote it, possibly from shared data other people wrote",
+      },
+      requester_role: {
+        oneOf: [effectiveRole, { type: "null" }],
+        description:
+          "Page requests only, else null: the role of the person whose session had the page " +
+          "open when its code filed it. owner means the owner had the page open, not that the " +
+          "owner wrote the text",
+      },
     }),
     MentionList: paged("MentionTaskInfo"),
     ConnectionInfo: obj({
@@ -728,6 +758,22 @@ function responseSchemas(): Record<string, Json> {
         description:
           "Pages that declare `files` may keep files people add here (ALLOW_FILES with origin isolation)",
       },
+      page_requests: {
+        ...obj({
+          enabled: {
+            type: "boolean",
+            description: "ALLOW_PAGE_REQUESTS with origin isolation",
+          },
+          per_viewer_per_hour: int({ minimum: 1 }),
+          per_artifact_per_hour: int({ minimum: 1 }),
+          max_open_per_artifact: int({ minimum: 1 }),
+          max_open_per_requester: int({ minimum: 1 }),
+          max_body_chars: int({ minimum: 1 }),
+          max_data_bytes: int({ minimum: 1 }),
+        }),
+        description:
+          "Pages that declare `requests` may hand work to the owner's agent here, within these limits",
+      },
     }),
     LoginResult: obj({
       ok: { const: true },
@@ -787,8 +833,19 @@ function responseSchemas(): Record<string, Json> {
                 "an Update button instead of replacing it",
             },
             files: ref("ViewGateFiles"),
+            requests: ref("ViewGateRequests"),
           },
-          ["data", "live", "people", "page_comments", "voice", "watch", "hold", "files"],
+          [
+            "data",
+            "live",
+            "people",
+            "page_comments",
+            "voice",
+            "watch",
+            "hold",
+            "files",
+            "requests",
+          ],
         ),
         obj({ status: { const: "password_required" }, artifact: obj(viewStub) }),
         obj({ status: { const: "email_required" }, artifact: obj(viewStub) }),
@@ -2871,6 +2928,21 @@ function filesSchemas(): Record<string, Json> {
       description:
         "Present on `ok` only when the current version of an HTML page declares `files` and " +
         "ALLOW_FILES is on: what the viewer is told about the files people add to it",
+    },
+    ViewGateRequests: {
+      ...obj({
+        can_file: {
+          type: "boolean",
+          description: "This viewer may file requests: the owner, an editor or a commenter",
+        },
+        email: str({
+          format: "email",
+          description: "The email requests are filed under: the one sealed into the content pass",
+        }),
+      }),
+      description:
+        "Present on `ok` only while page requests are on (ALLOW_PAGE_REQUESTS, origin isolation), " +
+        "on an HTML page whose current version declares `requests`, for an identified viewer",
     },
   };
 }
