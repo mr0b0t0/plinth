@@ -1,0 +1,78 @@
+// A whiteboard's Board settings (docs/spec.md "Whiteboards"): the two choices a board's versions
+// hold, as the app shows and saves them. Pure helpers, so the dialog and its tests agree. The app
+// builds board.json itself from two known values (never from text a person typed), and saves it
+// as a new version against the version the dialog read, so a newer version is never overwritten.
+import {
+  type BoardBackground,
+  type BoardEditMode,
+  type BoardSettings,
+  boardSettingsText,
+} from "@plinth/shared";
+
+export const BACKGROUND_CHOICES: readonly {
+  value: BoardBackground;
+  label: string;
+  description: string;
+}[] = [
+  { value: "dots", label: "Dots", description: "A light dot grid behind the blocks." },
+  { value: "grid", label: "Grid", description: "Light lines behind the blocks." },
+  { value: "plain", label: "Plain", description: "No pattern." },
+];
+
+export const EDIT_CHOICES: readonly {
+  value: BoardEditMode;
+  label: string;
+  description: string;
+}[] = [
+  {
+    value: "commenters",
+    label: "Commenters and editors",
+    description: "Everyone it is shared with as a commenter or an editor changes the board.",
+  },
+  {
+    value: "editors",
+    label: "Editors only",
+    description: "Commenters see the board and follow along, but cannot change it.",
+  },
+];
+
+const labelOf = <T extends string>(list: readonly { value: T; label: string }[], v: T) =>
+  list.find((c) => c.value === v)?.label ?? v;
+
+/** Whether two settings differ in anything a version stores. */
+export function settingsChanged(a: BoardSettings, b: BoardSettings): boolean {
+  return a.background !== b.background || a.edit !== b.edit;
+}
+
+/** The version note for a settings change: what changed, in words ("Board settings: Grid"). */
+export function settingsNote(before: BoardSettings, after: BoardSettings): string {
+  const parts: string[] = [];
+  if (before.background !== after.background) {
+    parts.push(`background ${labelOf(BACKGROUND_CHOICES, after.background).toLowerCase()}`);
+  }
+  if (before.edit !== after.edit) {
+    parts.push(after.edit === "editors" ? "editors only" : "commenters and editors");
+  }
+  return parts.length ? `Board settings: ${parts.join(", ")}` : "Board settings";
+}
+
+/**
+ * The body of `PUT /artifacts/:ref` that saves new settings: board.json as Plinth stores it (the
+ * settings only, no starting blocks), the version the dialog read as `base_version`, and a note.
+ */
+export function settingsBody(
+  before: BoardSettings,
+  after: BoardSettings,
+  baseVersion: number,
+): { content: string; base_version: number; note: string } {
+  return {
+    content: boardSettingsText(after),
+    base_version: baseVersion,
+    note: settingsNote(before, after),
+  };
+}
+
+/** What the dialog says after a save was refused because a newer version exists. */
+export function conflictNotice(version: number): string {
+  return `v${version} changed the board settings. Here they are now.`;
+}

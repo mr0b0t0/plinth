@@ -1960,10 +1960,22 @@ its page without a new version each time, and agents add and move blocks with
 - **Export.** PNG (drawn on a canvas at 2x, at most 8,192 px a side and 32 megapixels) and SVG
   (built from the board, text as text nodes, no scripts, links or embedded content), made in the
   viewer's browser and downloaded from the frame.
-- **The editor.** Edit settings opens the source editor on `board.json` (JSON, with the same checks
-  as the Worker and a preview). The editor preview draws only the draft's own starting blocks under
-  a banner and makes no shared-data or room call (the payload's `preview`, set only by the app;
-  it narrows what Plinth's renderer does and no server decision reads it).
+- **Board settings.** The board's page never shows `board.json`. Owners and editors change the two
+  settings from **Board settings** in the board's ⋯ menu: a dialog with two groups of choices, the
+  background (dots, grid or plain) and who can change the board (commenters and editors, or
+  editors only), and no text field. It reads the current version, and Save sends board.json built
+  by the app from the two values (`{"v":1,"background":…,"edit":…}`) with `PUT
+  /api/v1/artifacts/:ref`, that version as `base_version` and a note naming what changed, so the
+  change is a new version under the person's name, which owners and editors can restore from
+  History. When a newer version was published meanwhile, the save is refused (409, `conflict`):
+  the dialog then shows that version's settings and says so ("v5 changed the board settings. Here
+  they are now."), and nothing is saved until the person saves again. The board's page links to no
+  source editor.
+- **The editor.** The source editor, reached from the dashboard's Edit, still opens `board.json`
+  (JSON, with the same checks as the Worker and a preview). The editor preview draws only the
+  draft's own starting blocks under a banner and makes no shared-data or room call (the payload's
+  `preview`, set only by the app; it narrows what Plinth's renderer does and no server decision
+  reads it).
 - **Availability.** A whiteboard needs shared data on (`ALLOW_SHARED_DATA`) and origin isolation:
   otherwise publishing one is refused with `feature_disabled`, and `GET /api/v1/config` says so in
   `artifact_types` (`{ id, available }` for every type). Live cursors also need rooms

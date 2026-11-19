@@ -7,6 +7,7 @@ import {
   BAR_CONTROLS,
   CAPABILITY_MENU_ITEMS,
   MENU_ITEMS,
+  STAGE_DIALOGS,
   STRIP_ITEMS,
   TYPE_MENU_ITEMS,
 } from "./stageItems.tsx";
@@ -18,6 +19,12 @@ describe("viewer item lists", () => {
       expect(new Set(ids).size).toBe(ids.length);
     }
     expect(MENU_ITEMS.length).toBeGreaterThan(0);
+  });
+
+  it("give every stage dialog its own id", () => {
+    const ids = STAGE_DIALOGS.map((d) => d.id);
+    expect(ids).toContain("board-settings");
+    expect(new Set(ids).size).toBe(ids.length);
   });
 
   it("key per-type and per-capability menu items by known values only", () => {
