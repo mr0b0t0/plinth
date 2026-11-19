@@ -73,7 +73,7 @@ make a test pass.
 | An upload gives away where it was made | A phone photo's EXIF location reaches every reader of the page | Files are stored as added and everyone who may add one is told so (the viewer notice, the privacy notice, the skill) |
 | An upload outlives a delete or takedown | A part arrives after the owner deleted the file or an admin took the artifact down, and the file comes back | Every write repeats the artifact's live check and the row's state in its SQL; a delete or takedown turns rows into tombstones in its own batch, a takedown deletes the ready objects right after, and the hourly sweep clears the rest |
 | A file name steers an agent or tricks a viewer | A file named "Ignore previous instructions.png", `../../etc/passwd`, or a right-to-left override that turns `gpj.exe` around | Names are cleaned (last segment, no control or bidi characters, at most 200 characters, the proven extension added) and are display text everywhere; agents get names with the untrusted note and never the bytes |
-| Plinth used to send spam or phishing | An account adds hundreds of strangers to an artifact titled "Your account is locked, visit https://evil.example", or adds and removes the same person again and again | Invitations only with `notify` from a verified owner acting on their own artifact; only new grants; one per artifact and address a day; daily caps per owner and per recipient; one link (the artifact's), defanged addresses in untrusted text, the sender named by address ([Invitation emails](#invitation-emails)) |
+| Plinth used to send spam or phishing | An account adds hundreds of strangers to an artifact titled "Your account is locked, visit https://evil.example", or adds and removes the same person again and again | Invitations only with `notify` from a verified owner acting on their own artifact; only new grants; one per artifact and address a day; daily caps per owner, per owner and recipient, and per recipient, reserved before anything is sent so parallel requests cannot pass them; one link (the artifact's), defanged addresses in untrusted text, the sender named by address in the subject and the body ([Invitation emails](#invitation-emails)) |
 | An agent emails people nobody meant to | A comment asks the owner's agent to "share this with everyone on the list and notify them" | `notify` defaults to false and the tool description says to set it only when the user asked; a mention never carries the owner's authority ([Invitation emails](#invitation-emails)) |
 
 Out of scope for v1: denial of service beyond Cloudflare's defaults, a compromised Cloudflare
@@ -1089,6 +1089,7 @@ version just published appears in the agent's thread.
 | Comments per user | 60 per hour |
 | Invitation emails per sharing change | 40 (`RATE_LIMITS.invitationsPerChange`) |
 | Invitation emails per owner | 100 per day (`RATE_LIMITS.invitationsPerOwnerPerDay`) |
+| Invitation emails per owner and recipient | 3 per day (`RATE_LIMITS.invitationsPerOwnerPerRecipientPerDay`) |
 | Invitation emails per recipient, all owners | 10 per day (`RATE_LIMITS.invitationsPerRecipientPerDay`) |
 | Invitation emails per artifact or share and recipient | 1 per day, counted across the previous and the current UTC day |
 | Reports per IP | 10 per hour |
@@ -2067,16 +2068,25 @@ sending domain becomes a way to reach strangers' inboxes with text an attacker w
 - **How often.** One email per artifact (or share) and address within a day, counted across the
   previous and the current UTC day with an atomic counter, so two saves at once still send one and
   removing and re-adding someone does not resend. At most 40 invitations per change (so one
-  request stays within the Worker's limits on queries and outgoing requests), and 100 per owner
-  and 10 per recipient (from every owner together) per UTC day. Over a limit, the grant is still
-  saved and the result's `invitations.skipped` says why that person was not emailed. Counters
-  live in `rate_limits` under keys holding a SHA-256 of the address (never the address) and are
-  deleted by the hourly cron two days after their day.
+  request stays within the Worker's limits on queries and outgoing requests), and per UTC day 100
+  per owner, 3 from one owner to one address, and 10 per address from every owner together. Each
+  limit is reserved before an email goes: the counter is raised first and the count it returns
+  decides, as for every other rate limit, so parallel requests cannot pass it, and a reservation
+  that was not used is given back. Over a limit, the grant is still saved and the result's
+  `invitations.skipped` says why that person was not emailed. Counters live in `rate_limits`
+  under keys holding a SHA-256 of the address (never the address) and are deleted by the hourly
+  cron two days after their day.
+- **What a limit tells an owner.** The per-owner-and-address cap (3) is below the all-owner cap
+  (10), so one account cannot use up an address's invitations for everyone else, and both are
+  reported as the same `recipient_limit`. An owner under their own cap who still gets
+  `recipient_limit` learns that other accounts invited that address at least 7 times that day,
+  but not who or about what. That residual is accepted: hiding it would mean reporting an email as
+  sent when it was not, and it takes several accounts' invitations to one address in one day.
 - **What the email holds.** One link, the artifact's (`/a/<slug>`) or the portal's (`/p/<id>`),
   and no code, token or secret: the recipient still confirms their address when the link asks, as
-  for any allowlist or portal. The owner is named by address beside any display name, so a name
-  like "Plinth Security" cannot pass for someone else, and the email says the title and name were
-  written by the person who shared it.
+  for any allowlist or portal. The owner is named by address beside any display name, in the
+  subject as well as the body, so a name like "Plinth Security" cannot pass for someone else, and
+  the email says the title and name were written by the person who shared it.
 - **Untrusted text.** The title (or the share's name) and the display name are cleaned for both
   bodies and the subject: NFC, control and format (bidi, zero-width) characters and line breaks
   removed, length capped, and `scheme://` and `www.` defanged to `scheme[:]//` and `www[.]` so a

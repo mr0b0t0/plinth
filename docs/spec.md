@@ -1894,17 +1894,22 @@ when the user told it to.
 - **Bounds.** At most one invitation per artifact (or share) and address within a day, counted
   across the previous and the current UTC day, so removing and re-adding someone does not email
   them again. At most `RATE_LIMITS.invitationsPerChange` (40) invitations per change,
-  `RATE_LIMITS.invitationsPerOwnerPerDay` (100) per owner and
+  `RATE_LIMITS.invitationsPerOwnerPerDay` (100) per owner,
+  `RATE_LIMITS.invitationsPerOwnerPerRecipientPerDay` (3) from one owner to one address and
   `RATE_LIMITS.invitationsPerRecipientPerDay` (10) per address, from every owner together, per UTC
-  day. The counters sit in `rate_limits` under keys holding a hash of the address, never the
-  address, are read in one query and written in one batch whatever the number of people, and the
-  hourly cron deletes them two days after their day. Nothing else is stored.
+  day. Each limit is reserved before an email goes (the counter is raised, then checked, and what
+  was not used is given back), so parallel changes cannot pass it. The counters sit in
+  `rate_limits` under keys holding a hash of the address, never the address, are read and written
+  in a fixed number of statements whatever the number of people, and the hourly cron deletes them
+  two days after their day. Nothing else is stored.
 - **What the result says.** With `notify: true`, the result adds `invitations`: `emailed` (the
   addresses handed to the email provider) and `skipped` (`{ email, reason }`, with `reason` one of
   `owner_unverified`, `taken_down`, `already_emailed`, `change_limit`, `owner_limit`,
-  `recipient_limit`). Without it, the result is exactly as before. A skipped invitation never fails the change: the grants are
+  `recipient_limit`, which covers both per-address limits). Without it, the result is exactly as
+  before. A skipped invitation never fails the change: the grants are
   saved either way. The app names the people it did not email, and why, in a toast.
-- **The email.** Subject `<owner name or email> shared "<title>" with you`; the body names the
+- **The email.** Subject `<owner name> (<owner email>) shared "<title>" with you`, or the email
+  alone when the owner has no display name; the body names the
   owner by display name and address, the title (for a category, the name its people see, never the
   category's own name), the role in plain words, the one link (`/a/<slug>`, or the portal
   `/p/<id>` for a category share), a line saying the title and name were written by the person who
@@ -2194,7 +2199,7 @@ options.
   only to the artifact's owner and, summed over the instance, to admins.
 - **Invitation emails are bounded.** Plinth emails someone only when the owner (or the owner's
   agent, told by the user) adds them with `notify`, from a verified owner, once per artifact and
-  address a day, within daily caps per owner and per recipient. The email has one link and no
+  address a day, within daily caps per owner, per owner and recipient, and per recipient. The email has one link and no
   secret, and its untrusted title and name are cleaned and escaped
   ([Invitation emails](#invitation-emails-decided-2026-11-19)).
 - **Quotas and rate limits.** Each account is limited to 100 artifacts by default, set by an

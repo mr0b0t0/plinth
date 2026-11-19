@@ -364,7 +364,8 @@ to turn them on or off. See [ci.md](ci.md).
 - **Invitation emails.** When an owner adds people with **Notify people** ticked (or an agent passes
   `notify: true`), each new person gets one email through `EMAIL_PROVIDER`, from `EMAIL_FROM`:
   who shared what, their role and the link. There is no setting of its own. One change sends at
-  most 40, each owner at most 100 a day and each address receives at most 10 a day, so plan your
+  most 40, each owner at most 100 a day (3 of them to any one address) and each address receives
+  at most 10 a day, so plan your
   provider's daily quota
   with sign-in emails and invitations together. With `EMAIL_PROVIDER=console` they go to the Worker
   log like sign-in codes. Their counters (hashed addresses) sit in `rate_limits` and the hourly

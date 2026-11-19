@@ -296,6 +296,131 @@ describe("invitation emails: the sharing list", () => {
   });
 });
 
+const counterOf = async (key: string) =>
+  (
+    await env.DB.prepare("SELECT count FROM rate_limits WHERE key = ?1 AND window_start = ?2")
+      .bind(key, windowStart())
+      .first<{ count: number }>()
+  )?.count ?? 0;
+
+describe("invitation emails: limits hold under parallel changes", () => {
+  it("parallel changes never pass the owner's daily limit, and give back what they did not use", async () => {
+    const o = await owner();
+    const start = RATE_LIMITS.invitationsPerOwnerPerDay - 40;
+    await env.DB.prepare("INSERT INTO rate_limits (key, window_start, count) VALUES (?1, ?2, ?3)")
+      .bind(`invite:owner:${o.user.id}`, windowStart(), start)
+      .run();
+    const arts = await Promise.all([1, 2, 3, 4].map((i) => artifactOf(o, `Plan ${i}`)));
+    const lists = arts.map((_, i) =>
+      Array.from({ length: RATE_LIMITS.invitationsPerChange }, (_, j) => ({
+        email: uniqueEmail(`par${i}-${j}-`),
+        role: "viewer",
+      })),
+    );
+    const bodies = await Promise.all(
+      arts.map(async (a, i) => json(await putSharing(o, a.id, lists[i] ?? [], { notify: true }))),
+    );
+    const emailed = bodies.flatMap((b) => b.invitations.emailed as string[]);
+    expect(emailed).toHaveLength(RATE_LIMITS.invitationsPerOwnerPerDay - start);
+    for (const b of bodies) {
+      const reasons = new Set((b.invitations.skipped as { reason: string }[]).map((x) => x.reason));
+      for (const r of reasons) expect(r).toBe("owner_limit");
+    }
+    expect(await counterOf(`invite:owner:${o.user.id}`)).toBe(
+      RATE_LIMITS.invitationsPerOwnerPerDay,
+    );
+    // Someone who was not emailed gets their recipient counters back.
+    const notSent = lists.flat().find((p) => !emailed.includes(p.email));
+    expect(notSent).toBeDefined();
+    expect(await counterOf(`invite:to:${await addressHash(notSent?.email ?? "")}`)).toBe(0);
+    expect(await outboxFor(notSent?.email ?? "")).toHaveLength(0);
+  });
+
+  it("parallel changes from many owners never pass one address's daily limit", async () => {
+    const victim = uniqueEmail("victim");
+    const left = 2;
+    await env.DB.prepare("INSERT INTO rate_limits (key, window_start, count) VALUES (?1, ?2, ?3)")
+      .bind(
+        `invite:to:${await addressHash(victim)}`,
+        windowStart(),
+        RATE_LIMITS.invitationsPerRecipientPerDay - left,
+      )
+      .run();
+    const owners = await Promise.all([1, 2, 3, 4, 5, 6].map(() => owner()));
+    const arts = await Promise.all(owners.map((o) => artifactOf(o)));
+    const bodies = await Promise.all(
+      owners.map(async (o, i) =>
+        json(
+          await putSharing(o, arts[i]?.id ?? "", [{ email: victim, role: "viewer" }], {
+            notify: true,
+          }),
+        ),
+      ),
+    );
+    const emailed = bodies.filter((b) => b.invitations.emailed.includes(victim));
+    expect(emailed).toHaveLength(left);
+    for (const b of bodies) {
+      if (!b.invitations.emailed.includes(victim)) {
+        expect(b.invitations.skipped).toEqual([{ email: victim, reason: "recipient_limit" }]);
+      }
+    }
+    expect(await outboxFor(victim)).toHaveLength(left);
+    expect(await counterOf(`invite:to:${await addressHash(victim)}`)).toBe(
+      RATE_LIMITS.invitationsPerRecipientPerDay,
+    );
+    // The owners who sent nothing get their owner counters back.
+    const owned = await Promise.all(owners.map((o) => counterOf(`invite:owner:${o.user.id}`)));
+    expect(owned.reduce((x, y) => x + y, 0)).toBe(left);
+  });
+
+  it("one owner emails one address at most invitationsPerOwnerPerRecipientPerDay times a day", async () => {
+    const o = await owner();
+    const bo = uniqueEmail("bo");
+    const n = RATE_LIMITS.invitationsPerOwnerPerRecipientPerDay + 3;
+    const arts = await Promise.all(Array.from({ length: n }, (_, i) => artifactOf(o, `Doc ${i}`)));
+    const bodies = await Promise.all(
+      arts.map(async (a) =>
+        json(await putSharing(o, a.id, [{ email: bo, role: "viewer" }], { notify: true })),
+      ),
+    );
+    const sent = bodies.filter((b) => b.invitations.emailed.includes(bo));
+    expect(sent).toHaveLength(RATE_LIMITS.invitationsPerOwnerPerRecipientPerDay);
+    for (const b of bodies) {
+      if (!b.invitations.emailed.includes(bo)) {
+        expect(b.invitations.skipped).toEqual([{ email: bo, reason: "recipient_limit" }]);
+      }
+    }
+    expect(await outboxFor(bo)).toHaveLength(RATE_LIMITS.invitationsPerOwnerPerRecipientPerDay);
+    // Below the all-owner limit, so another owner can still invite the same address.
+    expect(RATE_LIMITS.invitationsPerOwnerPerRecipientPerDay).toBeLessThan(
+      RATE_LIMITS.invitationsPerRecipientPerDay,
+    );
+    const other = await owner();
+    const b = await artifactOf(other);
+    const res = await json(
+      await putSharing(other, b.id, [{ email: bo, role: "viewer" }], { notify: true }),
+    );
+    expect(res.invitations).toEqual({ emailed: [bo], skipped: [] });
+  });
+
+  it("two parallel saves adding the same person to one artifact send one email", async () => {
+    const o = await owner();
+    const a = await artifactOf(o);
+    const bo = uniqueEmail("bo");
+    const bodies = await Promise.all(
+      [1, 2, 3].map(async () =>
+        json(await putSharing(o, a.id, [{ email: bo, role: "viewer" }], { notify: true })),
+      ),
+    );
+    const sent = bodies.filter((b) => b.invitations?.emailed.includes(bo));
+    expect(sent).toHaveLength(1);
+    expect(await outboxFor(bo)).toHaveLength(1);
+    // The losers give their reservations back: one email, one count.
+    expect(await counterOf(`invite:to:${await addressHash(bo)}`)).toBe(1);
+    expect(await counterOf(`invite:owner:${o.user.id}`)).toBe(1);
+  });
+});
+
 describe("invitation emails: set_visibility", () => {
   it("REST PUT /visibility emails people the allowlist adds when asked", async () => {
     const o = await owner();
@@ -447,9 +572,12 @@ describe("invitation emails: the message", () => {
     expect(m.text.split("\n")[0]).toMatch(/^ada@example\.org shared "Plan Bcc: x@y long/);
   });
 
-  it("subject names the owner by display name when they have one", () => {
+  it("subject names the owner by display name and address when they have a name", () => {
     const m = invitationEmail({ ...base, ownerName: "Ada Lovelace", role: "editor" });
-    expect(m.subject).toBe('Ada Lovelace shared "Plan" with you');
+    expect(m.subject).toBe('Ada Lovelace (ada@example.org) shared "Plan" with you');
+    // A name chosen to look like the instance never stands alone in the subject.
+    const fake = invitationEmail({ ...base, ownerName: "Plinth Security" });
+    expect(fake.subject).toBe('Plinth Security (ada@example.org) shared "Plan" with you');
     expect(m.text).toContain("Ada Lovelace (ada@example.org) shared");
     expect(m.text).toContain("publish new versions of it");
   });

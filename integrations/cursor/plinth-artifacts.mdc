@@ -1144,7 +1144,10 @@ Plinth can email the people you give access to a link, on the person's behalf. I
 unless asked, and you ask only when the person told you to ("share it with Bo and let him know").
 
 - Add them with `set_visibility` and `notify: true`: `{ id, visibility: "allowlist", emails:
-  [...], notify: true }`. Over REST, `PUT /api/v1/artifacts/:ref/sharing` takes `notify` with the
+  [...], notify: true }`. `emails` replaces the whole viewer list, so it must name everyone who
+  should keep access, not only the people to notify: anyone left out loses access. If you do not
+  know who already has it, ask the person, or have them add people in the app's People section
+  with **Notify people** ticked. Over REST, `PUT /api/v1/artifacts/:ref/sharing` takes `notify` with the
   full grant list. `publish_artifact`'s `emails` never emails anyone, and people it adds already
   have access, so to notify people on a new artifact, publish it without `emails` and then call
   `set_visibility`.
@@ -1153,7 +1156,8 @@ unless asked, and you ask only when the person told you to ("share it with Bo an
   Without `notify` (the default), nobody is emailed.
 - The result's `invitations` says who was emailed (`emailed`) and who was not and why (`skipped`:
   `owner_unverified`, `taken_down`, `already_emailed`, `change_limit` (40 per call),
-  `owner_limit`, `recipient_limit`). The access was granted either way; tell the person whom to
+  `owner_limit`, `recipient_limit`, which also covers 3 a day from one owner to one address). The
+  access was granted either way; tell the person whom to
   send the link to themselves.
 - The email names the person who shared it, the title, the role and the link, and nothing else to
   copy: the recipient still confirms their address when they open it.

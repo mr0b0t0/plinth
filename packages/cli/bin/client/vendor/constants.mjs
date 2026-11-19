@@ -330,6 +330,11 @@ export const RATE_LIMITS = {
   invitationsPerChange: 40,
   /** Invitation emails one address may receive, from every owner together. */
   invitationsPerRecipientPerDay: 10,
+  /**
+   * Invitation emails one owner may send one address, below invitationsPerRecipientPerDay, so one
+   * account cannot use up an address's daily invitations for everyone else.
+   */
+  invitationsPerOwnerPerRecipientPerDay: 3,
 };
 
 export const DEFAULTS = {

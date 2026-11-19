@@ -7,8 +7,8 @@ import { RATE_LIMITS } from "./constants.ts";
  * Why a person added with `notify` was not emailed. `owner_unverified`: the owner's address is not
  * verified; `taken_down`: the artifact is taken down, so the link would not open; `already_emailed`:
  * this person was emailed about the same artifact or share within the last day; `change_limit`,
- * `owner_limit` and `recipient_limit`: RATE_LIMITS.invitationsPerChange, invitationsPerOwnerPerDay
- * or invitationsPerRecipientPerDay.
+ * `owner_limit` and `recipient_limit`: RATE_LIMITS.invitationsPerChange, invitationsPerOwnerPerDay,
+ * or invitationsPerOwnerPerRecipientPerDay or invitationsPerRecipientPerDay (one reason for both).
  */
 export const INVITATION_SKIP_REASONS = [
   "owner_unverified",
@@ -45,7 +45,7 @@ export function invitationSkipText(reason: InvitationSkipReason): string {
     case "owner_limit":
       return "You reached today's limit of invitation emails. Send them the link yourself.";
     case "recipient_limit":
-      return "That address got too many invitations today. Send them the link yourself.";
+      return "That address cannot get more invitations today. Send them the link yourself.";
   }
 }
 

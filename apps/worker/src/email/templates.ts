@@ -100,7 +100,9 @@ export function invitationEmail(opts: {
   const title = emailText(opts.title, LIMITS.maxTitleLength) || "Untitled";
   const subjectTitle = emailText(opts.title, 80) || "Untitled";
   const who = name ? `${name} (${opts.ownerEmail})` : opts.ownerEmail;
-  const subject = `${name || opts.ownerEmail} shared "${subjectTitle}" with you`;
+  // The subject names the owner by address too, so a display name cannot pass for someone else
+  // in an inbox list either.
+  const subject = `${who} shared "${subjectTitle}" with you`;
   const role = ROLE_SENTENCE[opts.kind][opts.role];
   const confirm = `If ${PRODUCT_NAME} asks who you are when you open it, confirm this email address with the code it sends you then.`;
   const authored = `The title${name ? " and the name" : ""} above were written by the person who shared it, not by ${PRODUCT_NAME}.`;
