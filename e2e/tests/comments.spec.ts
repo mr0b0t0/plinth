@@ -69,8 +69,12 @@ test("an editor pins a mention, the owner's agent completes it, the panel shows 
   await panel.getByRole("button", { name: "Pin to an element" }).click();
   await expect(panel.getByText("Click an element in the artifact (Esc to cancel)")).toBeVisible();
   await shot(page, info, "picking");
-  await frame.locator("h1").click();
-  await expect(panel.getByText("Pinned to")).toBeVisible();
+  // Pick mode reaches the frame by postMessage, so a click straight after the hint can land
+  // before the frame listens; click again until the pin takes, as a person would.
+  await expect(async () => {
+    await frame.locator("h1").click();
+    await expect(panel.getByText("Pinned to")).toBeVisible({ timeout: 1_000 });
+  }).toPass({ timeout: 10_000 });
   await expect(panel.getByText("Launch plan", { exact: false }).first()).toBeVisible();
 
   const box = panel.getByRole("textbox", { name: "New comment" });
