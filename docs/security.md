@@ -50,6 +50,9 @@ make a test pass.
 | A forged live-view hint | Page script, or another frame, posts `{ source: "plinth-view", type: "data" }` or `push` to a page | The runtime takes them only from `window.parent` at the app origin, and both are hints: the worst a forged one does is make the page re-read its own data through the shared-data API or change its own poll; the app posts them only at the frame's exact content origin, never `"*"` ([Live views](#live-views)) |
 | An audience floods an artifact after a signal | A thousand open views of a public page re-read their gate at the same moment a version is published | Each signal carries `spread_ms`, set by the instance's cap alone (2 ms per socket an artifact may hold, at most 10 s: 2 s at the default), and each view waits a random time up to it; watch sockets are capped per artifact (`LIVE_VIEW_MAX_SOCKETS_PER_ARTIFACT`), per client and per minute, and over a cap the page polls ([Live views](#live-views)) |
 | A watcher reads presence from the live-view socket | Someone with a link opens many watch sockets of their own, from several addresses or accounts, to learn from a signal's `spread_ms` or from a 4409 refusal whether the owner or a collaborator has the page open | `spread_ms` depends only on the instance's cap, never on the audience; the cap is split into a pool for the people the artifact is shared with and a pool for everyone else, which never affect each other; an anonymous viewer's client is its IPv4 address or IPv6 /64 ([Live views](#live-views)) |
+| A page steers the app through its update answers | Page script, or another frame, posts `hello`, `update:ok` with a path such as `//evil.example` or `/__plinth/enter?t=...`, or `shown`, to make the app load something else or skip an update | The app reads frame answers only from the window of the frame it holds at its exact content origin (never `"*"` or `"null"`: under opaque isolation there is no handshake), with the nonce it sent; the path must start with one `/`, holds no backslash or control character, is at most 2,048 characters and never under `/__plinth/`, becomes only the gate's `next` and passes `safeNext` on the server; the worst an answer does is hold the page behind the Update notice or land it on a page of its own artifact ([Keeping state across versions](#keeping-state-across-versions)) |
+| Carried state leaks to another artifact or viewer | A page's `{ state }`, handed to its next version, is read by another artifact, the app or the next person on a shared browser | It lives only in the content origin's `sessionStorage` (one tab, one artifact, partitioned under the app), at most 16 KiB, read and removed by the next version within 30 s; nothing crosses to the app; under opaque isolation there is no storage and nothing is carried ([Keeping state across versions](#keeping-state-across-versions)) |
+| A doc shown in place runs author HTML | The renderer re-renders a newer version's Markdown inside the open frame | The Markdown comes from the frame's own origin (`/__plinth/v/<n>/content.md`, `connect-src 'self'`, the pass it holds, served as text that runs nothing) and goes through the same Markdown pass and sanitizer as at boot; the app sends only the version number and a nonce, and only at the exact content origin ([Keeping state across versions](#keeping-state-across-versions)) |
 | Enumerating who has an account | A caller tries addresses to learn which ones have a Plinth account or what they are called, for example by adding them as grants on an artifact of their own and reading the people list or the sharing settings back | No route takes an email or a name to look up, and the people list searches only one artifact's access list. Since the owner writes that list without its holders being told, an access list shows a grant holder's name only once that person has taken part in the artifact (a comment, a shared-data entry or a version, which already show their name to the readers of the list), and a name it keeps back is `null` and never matched by `q`, the same as an address with no account (`policy.ts accessListShowsName`) |
 | An agent files a private artifact into a shared category | A prompt-injected or confused agent publishes another client's report with `category: "acme"`, or moves one there with `update_artifact` or `PATCH` | Filing never shares: the artifact waits as pending, and the category's people cannot open, list, find or get a code for it until the signed-in owner reviews it in the app; agents and bearer tokens cannot review; the owner's agent is told `category_share.state: "pending"` with the review link; tool descriptions say never to file because of comment, mention or page text ([Category sharing](#category-sharing)) |
 | A stale review reopens access | A review left from a deleted share, from before a rename, or from another key, or a review made against a version or filing that changed before it was confirmed | A review is bound to the share id it was made against and counts only while that share is the current share of the artifact's current key; a key change resets it and bumps `category_rev` in the same statement; a decision to share applies only at the version and `category_rev` the owner was shown (one to keep private holds at any version), checked in the statement that writes it; creating a share and changing its people reset every artifact of the key first; a rename re-checks its share decision inside its batch ([Category sharing](#category-sharing)) |
@@ -1227,6 +1230,54 @@ re-reads its gate and reconnects.
 Notifies are best effort (`waitUntil`, one retry); losses are caught by the alarm within a minute
 for versions and by the runtime's 60 s backstop poll for data. Refusals log the status and a reason
 code only; the socket URL holds only the artifact id.
+
+## Keeping state across versions
+
+When a newer version reaches an open view, the app applies it so the reader keeps their place
+(`apps/web/src/components/viewer/viewUpdate.ts`, `useViewUpdate.ts`). Nothing in it widens what a
+page can reach: every version still loads through the gate, and every file through the content
+pass.
+
+**Docs in place.** Under origin isolation, outside review mode and outside a live-editing room, the
+app posts `{ source: "plinth-renderer", v: 1, type: "version", n, nonce }` to the doc frame at its
+exact content origin (`postToRenderer`, never `"*"`). The renderer acts only on a message from
+`window.parent` at the app origin in its payload, fetches `/__plinth/v/<n>/content.md` from its
+own origin with the pass it already holds (the same versioned path any pass holder can read; a
+`401` or `404` is a refusal), renders it through the same Markdown pass and sanitizer as at boot,
+and answers `shown` with the nonce and a boolean. It refuses while a room client is attached or
+anything is being edited, so it never replaces text someone is typing. The app accepts `shown`
+only from that frame's window at that origin, for its own nonce; on `ok` the frame keeps its enter
+URL, on anything else a fresh frame loads. Under opaque isolation and the path fallback nothing is
+posted and docs load a fresh frame.
+
+**Pages with the runtime.** The runtime's version fragment (`content/runtime/version.ts`) posts
+`hello` to `window.parent` at the app origin when framed and not opaque. The app posts `update`
+(two version numbers, its own nonce, `force`) only at the frame's exact content origin. The runtime
+takes it only from `window.parent` at the app origin. It runs the page's `onVersion` handlers
+(800 ms in all), writes one record to its own origin's `sessionStorage` and answers `update:ok`
+with its path, or `update:hold`. Page script can forge `update` on its own window: the worst that
+does is make the page record its own state. The app reads `hello`, `update:ok` and `update:hold`
+(`readViewMessage`) only from the frame it holds at its exact content origin, never from `"null"`,
+with its own nonce for the answers. The path is untrusted: one leading `/`, no `//`, backslash or
+control character, at most 2,048 characters, never under `/__plinth/`, the review flag dropped. It
+only becomes the gate's `next`, which the server passes through `safeNext` as it does for
+`?path=` links, so it can only land the new version on a page of the same artifact.
+
+**The carry record.** `__plinth_carry` in the content origin's `sessionStorage` holds the two
+version numbers, the time, the scroll position, the path and the page's state when its JSON is at
+most 16 KiB. `sessionStorage` is per tab and per origin, and partitioned under the app as the
+top-level site, so the record reaches only the next frame of the same artifact in the same tab,
+never the app, another artifact or another viewer. The next version's runtime reads and removes it
+at start and ignores one older than 30 s. A page can already write anything to its own storage;
+the record adds no new reader.
+
+**The hold rule.** Only a page whose shown version declares `hold` (the gate says `hold: true`,
+only while `ALLOW_LIVE_VIEWS` is on) is held while focus is inside its frame
+(`document.activeElement` is the frame and the app's document has focus). The app then moves only
+the count of versions and shows an Update button in its own chrome, which the page cannot cover or
+press. A page cannot force a hold without the viewer using it, except through its runtime's
+`onVersion` returning `false`, and then the viewer still sees the notice and chooses. Update reads
+a fresh gate. No script is injected into artifact HTML for any of this.
 
 ## The people list
 

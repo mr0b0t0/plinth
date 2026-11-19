@@ -705,6 +705,13 @@ function responseSchemas(): Record<string, Json> {
         type: "boolean",
         description: "Owners may share a category with people here (ALLOW_CATEGORY_SHARING)",
       },
+      live_views: {
+        type: "boolean",
+        description:
+          "Open views apply new versions while keeping the reader's state here (ALLOW_LIVE_VIEWS): " +
+          "docs update in place, pages with the runtime carry their state, pages that declare " +
+          "`hold` wait while the viewer uses them. Absent or false: a new version replaces the page",
+      },
     }),
     LoginResult: obj({
       ok: { const: true },
@@ -756,8 +763,15 @@ function responseSchemas(): Record<string, Json> {
                 "Live views: open GET /view/{id}/watch to learn of new versions and shared-data " +
                 "changes as they happen. Absent: poll the gate",
             },
+            hold: {
+              const: true,
+              description:
+                "The current version declares `hold` (HTML only, ALLOW_LIVE_VIEWS on): while the " +
+                "viewer is using the page (focus inside its frame), a newer version waits behind " +
+                "an Update button instead of replacing it",
+            },
           },
-          ["data", "live", "people", "page_comments", "voice", "watch"],
+          ["data", "live", "people", "page_comments", "voice", "watch", "hold"],
         ),
         obj({ status: { const: "password_required" }, artifact: obj(viewStub) }),
         obj({ status: { const: "email_required" }, artifact: obj(viewStub) }),

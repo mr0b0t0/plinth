@@ -3,8 +3,8 @@
 // channel, are pinned. A change that means to alter that script updates the pin here, on purpose:
 // display names and the people fragment (who is viewing) did. Page comments and dictation added the
 // app channel and their own fragments after them; the channel is also tested on its own, and the
-// dictation fragment in runtime-dictation.test.ts. Live views add theirs last (live-view tests in
-// runtime-behaviour.test.ts).
+// dictation fragment in runtime-dictation.test.ts. Live views add theirs last: pushed data
+// (runtime-behaviour.test.ts) and new versions with carried state (runtime-version.test.ts).
 import { describe, expect, it } from "vitest";
 import { COMMENTS_FRAGMENT } from "../src/content/runtime/comments.ts";
 import { DATA_FRAGMENT } from "../src/content/runtime/data.ts";
@@ -13,6 +13,7 @@ import type { RuntimeFragment } from "../src/content/runtime/fragment.ts";
 import { LIVE_FRAGMENT } from "../src/content/runtime/live.ts";
 import { PEOPLE_FRAGMENT } from "../src/content/runtime/people.ts";
 import { ROOM_FRAGMENT } from "../src/content/runtime/room.ts";
+import { VERSION_FRAGMENT } from "../src/content/runtime/version.ts";
 import { assembleRuntime, RUNTIME_FRAGMENTS, runtimeScript } from "../src/content/runtime.ts";
 import { config } from "./helpers.ts";
 
@@ -106,11 +107,18 @@ describe("runtime fragments", () => {
       "comments",
       "dictation",
       "live",
+      "version",
     ]);
     const served = runtimeScript(config());
     expect(assembleRuntime(config())).toBe(served);
     expect(served).toBe(
-      assembleRuntime(config(), [...BEFORE, COMMENTS_FRAGMENT, DICTATION_FRAGMENT, LIVE_FRAGMENT]),
+      assembleRuntime(config(), [
+        ...BEFORE,
+        COMMENTS_FRAGMENT,
+        DICTATION_FRAGMENT,
+        LIVE_FRAGMENT,
+        VERSION_FRAGMENT,
+      ]),
     );
     // Memoized per app origin, which page comments and dictation embed.
     expect(runtimeScript(config())).toBe(served);

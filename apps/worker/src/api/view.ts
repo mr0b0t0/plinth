@@ -186,6 +186,7 @@ export const GATE_PARTS: readonly GatePart[] = [
     return voice ? { voice } : undefined;
   },
   async ({ ctx, a, d }) => (gateWatch(ctx, a, d) ? { watch: true as const } : undefined),
+  async ({ ctx, a }) => ((await holdDeclared(ctx, a)) ? { hold: true as const } : undefined),
 ];
 
 // ---------- live views ----------
@@ -202,6 +203,20 @@ function gateWatch(ctx: Ctx, a: ArtifactRow, d: Extract<Decision, { allow: true 
     sharedData: sharedDataActive(ctx.config),
     type: a.type,
   }).watch;
+}
+
+// ---------- live views: applying a new version ----------
+
+/**
+ * Whether a newer version waits while the viewer is using the page (docs/spec.md "Live views", the
+ * hold rule): an HTML artifact whose current version declares `hold`, while ALLOW_LIVE_VIEWS is on.
+ * The switch alone counts, not the ROOMS binding: the app learns of versions by polling too. The
+ * current version's declaration is the shown one's, since only a page that follows the current
+ * version is ever replaced.
+ */
+async function holdDeclared(ctx: Ctx, a: ArtifactRow): Promise<boolean> {
+  if (!ctx.config.allowLiveViews || a.type !== "html") return false;
+  return (await currentCapsOnce(ctx, a))?.hold === true;
 }
 
 // ---------- comments from the page ----------
@@ -224,12 +239,17 @@ async function readCurrentCaps(ctx: Ctx, a: ArtifactRow) {
  */
 async function pageCommentsDeclared(ctx: Ctx, a: ArtifactRow): Promise<boolean> {
   if (a.type !== "html") return false;
+  return (await currentCapsOnce(ctx, a))?.comments === true;
+}
+
+/** The current version's declaration, read once per gate (the row object is the key). */
+function currentCapsOnce(ctx: Ctx, a: ArtifactRow): ReturnType<typeof readCurrentCaps> {
   let caps = currentCaps.get(a);
   if (!caps) {
     caps = readCurrentCaps(ctx, a);
     currentCaps.set(a, caps);
   }
-  return (await caps)?.comments === true;
+  return caps;
 }
 
 /**

@@ -3030,7 +3030,7 @@
             "type": "array",
             "items": {
               "type": "string",
-              "enum": ["data", "viewer", "room", "people", "comments", "dictation"]
+              "enum": ["data", "viewer", "room", "people", "comments", "dictation", "hold"]
             },
             "description": "What the returned version declares (shared data, viewer identity)"
           },
@@ -3169,7 +3169,7 @@
             "type": "array",
             "items": {
               "type": "string",
-              "enum": ["data", "viewer", "room", "people", "comments", "dictation"]
+              "enum": ["data", "viewer", "room", "people", "comments", "dictation", "hold"]
             },
             "description": "What the returned version declares (shared data, viewer identity)"
           },
@@ -3308,7 +3308,7 @@
             "type": "array",
             "items": {
               "type": "string",
-              "enum": ["data", "viewer", "room", "people", "comments", "dictation"]
+              "enum": ["data", "viewer", "room", "people", "comments", "dictation", "hold"]
             },
             "description": "What the returned version declares (shared data, viewer identity)"
           },
@@ -3447,7 +3447,7 @@
             "type": "array",
             "items": {
               "type": "string",
-              "enum": ["data", "viewer", "room", "people", "comments", "dictation"]
+              "enum": ["data", "viewer", "room", "people", "comments", "dictation", "hold"]
             },
             "description": "What the returned version declares (shared data, viewer identity)"
           },
@@ -3586,7 +3586,7 @@
             "type": "array",
             "items": {
               "type": "string",
-              "enum": ["data", "viewer", "room", "people", "comments", "dictation"]
+              "enum": ["data", "viewer", "room", "people", "comments", "dictation", "hold"]
             },
             "description": "What the returned version declares (shared data, viewer identity)"
           },
@@ -4375,6 +4375,10 @@
           "category_sharing": {
             "type": "boolean",
             "description": "Owners may share a category with people here (ALLOW_CATEGORY_SHARING)"
+          },
+          "live_views": {
+            "type": "boolean",
+            "description": "Open views apply new versions while keeping the reader's state here (ALLOW_LIVE_VIEWS): docs update in place, pages with the runtime carry their state, pages that declare `hold` wait while the viewer uses them. Absent or false: a new version replaces the page"
           }
         },
         "required": [
@@ -4394,7 +4398,8 @@
           "cdn_allowlist",
           "upload_ticket_ttl_s",
           "dictation",
-          "category_sharing"
+          "category_sharing",
+          "live_views"
         ]
       },
       "LoginResult": {
@@ -4492,6 +4497,10 @@
               "watch": {
                 "const": true,
                 "description": "Live views: open GET /view/{id}/watch to learn of new versions and shared-data changes as they happen. Absent: poll the gate"
+              },
+              "hold": {
+                "const": true,
+                "description": "The current version declares `hold` (HTML only, ALLOW_LIVE_VIEWS on): while the viewer is using the page (focus inside its frame), a newer version waits behind an Update button instead of replacing it"
               }
             },
             "required": ["status", "artifact", "enter_url", "role"]
@@ -4835,7 +4844,7 @@
             "type": "array",
             "items": {
               "type": "string",
-              "enum": ["data", "viewer", "room", "people", "comments", "dictation"]
+              "enum": ["data", "viewer", "room", "people", "comments", "dictation", "hold"]
             }
           },
           "identified": {
@@ -4926,7 +4935,7 @@
             "type": "array",
             "items": {
               "type": "string",
-              "enum": ["data", "viewer", "room", "people", "comments", "dictation"]
+              "enum": ["data", "viewer", "room", "people", "comments", "dictation", "hold"]
             }
           },
           "available": {

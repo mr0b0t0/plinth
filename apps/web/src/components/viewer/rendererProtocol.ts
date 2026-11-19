@@ -8,9 +8,13 @@
 //   app -> frame: goto { slide }           a deck shows slide N (slidesProtocol.ts)
 //   app -> frame: view { mode }            a deck switches view: deck, presenter or overview
 //   app -> frame: export { format, nonce } a deck builds its .pptx and downloads it in the frame
+//   app -> frame: version { n, nonce }     a doc shows version n in place (live views), keeping the
+//                                          reader's place; exact origin only
 //   frame -> app: live { ...status }       numbers, booleans and co-editor emails; never text
 //   frame -> app: save                     Cmd/Ctrl+S inside the frame
 //   frame -> app: draft { nonce, text }    the answer to collect, solo mode only
+//   frame -> app: shown { n, nonce, ok }   the answer to version: shown in place, or not (the app
+//                                          then loads a fresh frame)
 //
 // The renderer acts on a message only when event.source is its parent and event.origin is the app
 // origin. Print carries no data, so under opaque isolation and in the path fallback (frames whose
@@ -176,7 +180,8 @@ export interface LiveFrameStatus {
 export type FrameMessage =
   | { type: "live"; status: LiveFrameStatus }
   | { type: "save" }
-  | { type: "draft"; nonce: string; text: string };
+  | { type: "draft"; nonce: string; text: string }
+  | { type: "shown"; n: number; nonce: string; ok: boolean };
 
 export const NONCE_RE = /^[A-Za-z0-9_-]{16,64}$/;
 const MAX_EDITORS = 50;
@@ -212,6 +217,28 @@ export function editTargetOrigin(
   return t === "*" ? null : t;
 }
 
+// ---------- live views: a doc shows a newer version in place ----------
+
+export interface VersionMessage {
+  source: typeof RENDERER_MESSAGE_SOURCE;
+  v: typeof RENDERER_PROTOCOL_VERSION;
+  type: "version";
+  /** The version to show: the renderer fetches its source from /__plinth/v/<n>/. */
+  n: number;
+  /** The app's own random nonce, echoed in the frame's `shown` answer. */
+  nonce: string;
+}
+
+export function versionMessage(n: number, nonce: string): VersionMessage {
+  return {
+    source: RENDERER_MESSAGE_SOURCE,
+    v: RENDERER_PROTOCOL_VERSION,
+    type: "version",
+    n,
+    nonce,
+  };
+}
+
 /** Every app -> frame message kind, in the order they were added. */
 // biome-ignore format: one kind per line, so each feature adds its own line
 export const APP_MESSAGE_KINDS = [
@@ -221,6 +248,7 @@ export const APP_MESSAGE_KINDS = [
   "goto",
   "view",
   "export",
+  "version",
 ] as const;
 export type AppMessageKind = (typeof APP_MESSAGE_KINDS)[number];
 
@@ -231,13 +259,17 @@ export type AppToFrameMessage =
   | CollectMessage
   | GotoMessage
   | ViewMessage
-  | ExportMessage;
+  | ExportMessage
+  | VersionMessage;
 
-/** Post an editing message to the frame's window at the exact origin. False when it cannot. */
+/**
+ * Post an editing or version message to the frame's window at the exact origin, never "*". False
+ * when it cannot.
+ */
 export function postToRenderer(
   frame: HTMLIFrameElement | null,
   targetOrigin: string | null,
-  message: EditMessage | CollectMessage,
+  message: EditMessage | CollectMessage | VersionMessage,
 ): boolean {
   const win = frame?.contentWindow;
   if (!win || !targetOrigin || targetOrigin === "*") return false;
@@ -290,6 +322,8 @@ interface ReadOptions {
   solo: boolean;
   nonce: string | null;
   maxDocBytes?: number;
+  /** The nonce of the `version` message the app is waiting on; `shown` is read only for it. */
+  shown?: string | null;
 }
 
 /** Each frame -> app kind's validator: the message, or null when any field is wrong. */
@@ -311,6 +345,10 @@ const FRAME_READERS: {
     const max = opts.maxDocBytes ?? LIMITS.maxDocBytes;
     if (m.text.length > max || new TextEncoder().encode(m.text).byteLength > max) return null;
     return { type: "draft", nonce: m.nonce, text: m.text };
+  },
+  shown(m, opts) {
+    if (!opts.shown || m.nonce !== opts.shown || !isInt(m.n, 1) || !isBool(m.ok)) return null;
+    return { type: "shown", n: m.n, nonce: m.nonce, ok: m.ok };
   },
 };
 
@@ -340,6 +378,7 @@ export function readFrameMessage(
     solo: boolean;
     nonce: string | null;
     maxDocBytes?: number;
+    shown?: string | null;
   },
 ): FrameMessage | null {
   const win = opts.frame?.contentWindow;

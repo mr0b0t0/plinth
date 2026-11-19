@@ -72,8 +72,8 @@ function legacyParse(html: string): Capabilities | null {
     if (roomOpen.length >= ROOM_LIMITS.maxOpenTopics) break;
     if ((t === ROOM_OPEN_ALL || ROOM_TOPIC_RE.test(t)) && !roomOpen.includes(t)) roomOpen.push(t);
   }
-  // `people`, `comments` and `dictation` came after the registry: a page without them (the whole
-  // corpus) reads as false.
+  // `people`, `comments`, `dictation` and `hold` came after the registry: a page without them (the
+  // whole corpus) reads as false.
   return {
     data,
     viewer: known.has("viewer"),
@@ -83,6 +83,7 @@ function legacyParse(html: string): Capabilities | null {
     people: false,
     comments: false,
     dictation: false,
+    hold: false,
   };
 }
 
@@ -120,6 +121,7 @@ function legacyRead(json: string): Capabilities | null {
     people: false,
     comments: false,
     dictation: false,
+    hold: false,
   };
 }
 
@@ -174,6 +176,7 @@ describe("the declaration registry", () => {
       "people",
       "comments",
       "dictation",
+      "hold",
     ]);
   });
 
