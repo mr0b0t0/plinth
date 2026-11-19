@@ -1,6 +1,6 @@
-// The doc socket client: the gen and rev rules, resync, unflushed text and its re-take after a
+// The live draft socket client: the gen and rev rules, resync, unflushed text and its re-take after a
 // reconnect, backoff, the hidden-tab rule and the solo fallback when the room never answers.
-import { liveDocServerFrameSchema } from "@plinth/shared";
+import { applySheetStruct, liveDocServerFrameSchema } from "@plinth/shared";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   type ClientLease,
@@ -345,6 +345,77 @@ describe("locateBlock", () => {
   });
 });
 
+describe("LiveDocClient: a sheet's struct frames", () => {
+  const SHEET = [
+    '{"plinth":"sheet","v":1,"columns":[{"name":"A","type":"text"},{"name":"B","type":"number"}]}',
+    '["x",1]',
+    '["=B2",2]',
+  ].join("\n");
+
+  function sheetClient() {
+    const l = listener();
+    const denied: string[] = [];
+    l.structDenied = (r, by) => denied.push(`${r}:${by ?? ""}`);
+    const c = new LiveDocClient({
+      win: window,
+      listener: l,
+      connect: (u, p) => new FakeSocket(u, p),
+      random: () => 0,
+      applyStruct: applySheetStruct,
+    });
+    return { c, l, denied };
+  }
+
+  it("sends a struct at the current rev and applies the room's, unflushed until written", () => {
+    const { c } = sheetClient();
+    c.start();
+    welcome(sock(), SHEET);
+    const op = { op: "insert_rows", before: 2, count: 1 } as const;
+    expect(c.struct(op)).toBe(true);
+    expect(sock().last()).toEqual({ t: "struct", rev: 3, op });
+    expect(c.unflushed).toBe(true);
+    sock().frame({ t: "struct", gen: "g1", rev: 4, op, by: "s1" });
+    expect(c.rev).toBe(4);
+    expect(c.lines.slice(1)).toEqual(["[]", '["x",1]', '["=B3",2]']);
+    expect(c.lastByYou).toBe(true);
+    expect(c.unflushed).toBe(true);
+    sock().frame({ t: "flushed", rev: 4 });
+    expect(c.unflushed).toBe(false);
+    c.stop();
+  });
+
+  it("resyncs on a gap, another gen, a lease it still sees, or without an applier", () => {
+    const { c } = sheetClient();
+    c.start();
+    welcome(sock(), SHEET);
+    const op = { op: "delete_rows", from: 2, count: 1 };
+    sock().frame({ t: "struct", gen: "g1", rev: 9, op, by: "s2" });
+    expect(sock().last()).toEqual({ t: "sync" });
+    expect(c.rev).toBe(3);
+    c.stop();
+    // A doc's client has no applier: any struct frame asks for the draft again.
+    client.start();
+    welcome(sock(), "# Doc");
+    sock().frame({ t: "struct", gen: "g1", rev: 4, op, by: "s2" });
+    expect(sock().last()).toEqual({ t: "sync" });
+    expect(client.text).toBe("# Doc");
+    expect(client.struct({ op: "insert_rows", before: 2, count: 1 })).toBe(false);
+  });
+
+  it("tells the editor when its struct was refused, only for its own", () => {
+    const { c, denied } = sheetClient();
+    c.start();
+    welcome(sock(), SHEET);
+    sock().frame({ t: "struct_denied", reason: "held", by: "bo@example.org" });
+    expect(denied).toEqual([]);
+    c.struct({ op: "delete_columns", from: "B", count: 1 });
+    sock().frame({ t: "struct_denied", reason: "held", by: "bo@example.org" });
+    expect(denied).toEqual(["held:bo@example.org"]);
+    expect(c.unflushed).toBe(false);
+    c.stop();
+  });
+});
+
 describe("readServerFrame", () => {
   const FRAMES: Record<string, unknown>[] = [
     {
@@ -374,6 +445,25 @@ describe("readServerFrame", () => {
     { t: "conflict", version: 4 },
     { t: "status", dirty: true, editors: ["a@b.c"], last_edit_at: null, last_by_you: false },
     { t: "error", code: "draft_limit" },
+    { t: "struct", gen: "g", rev: 4, op: { op: "insert_rows", before: 2, count: 1 }, by: "s" },
+    { t: "struct", gen: "g", rev: 4, op: { op: "delete_rows", from: 3, count: 2 }, by: "s" },
+    {
+      t: "struct",
+      gen: "g",
+      rev: 4,
+      op: {
+        op: "insert_columns",
+        before: "B",
+        columns: [
+          { name: "Price", type: "number", format: { style: "currency", currency: "EUR" } },
+          { name: "Stage", type: "select", options: ["a", "b"], width: 120 },
+        ],
+      },
+      by: "s",
+    },
+    { t: "struct", gen: "g", rev: 4, op: { op: "delete_columns", from: "C", count: 1 }, by: "s" },
+    { t: "struct_denied", reason: "held", by: "a@b.c" },
+    { t: "struct_denied", reason: "stale" },
   ];
 
   it("accepts every well-formed frame, as the shared schema does", () => {
@@ -400,5 +490,39 @@ describe("readServerFrame", () => {
     }
     expect(readServerFrame({ t: "nope" })).toBeNull();
     expect(readServerFrame("op")).toBeNull();
+  });
+
+  it("never accepts a struct op the shared schema refuses", () => {
+    const bad: unknown[] = [-1, 0, 1.5, "1", "c", null, true, {}, [], "x".repeat(300)];
+    for (const f of FRAMES.filter((x) => x.t === "struct")) {
+      const op = f.op as Record<string, unknown>;
+      for (const key of [...Object.keys(op), "values"]) {
+        for (const value of bad) {
+          const m = { ...f, op: { ...op, [key]: value } };
+          if (readServerFrame(m)) {
+            expect(
+              liveDocServerFrameSchema.safeParse(m).success,
+              `${op.op}.${key}=${JSON.stringify(value)}`,
+            ).toBe(true);
+          }
+        }
+      }
+    }
+    const cols = FRAMES.find((x) => (x.op as { op?: string } | undefined)?.op === "insert_columns");
+    const withColumn = (c: unknown) => ({
+      ...cols,
+      op: { op: "insert_columns", before: "B", columns: [c] },
+    });
+    for (const c of [
+      { name: "" },
+      { name: "x", type: "money" },
+      { name: "x", colour: "red" },
+      { name: "x", format: { style: "currency", currency: "eur" } },
+      { name: "x", options: [] },
+      { name: "x", width: 10 },
+    ]) {
+      expect(readServerFrame(withColumn(c)), JSON.stringify(c)).toBeNull();
+      expect(liveDocServerFrameSchema.safeParse(withColumn(c)).success).toBe(false);
+    }
   });
 });

@@ -22,9 +22,9 @@ import {
   type TypedPayload,
 } from "@plinth/shared";
 import type { LiveFrameStatus } from "../../components/viewer/rendererProtocol.ts";
+import { LiveDocClient } from "../common/live.ts";
 import { type DocBackend, DocEditor, LocalDoc } from "./edit.ts";
 import { showVersion } from "./follow.ts";
-import { LiveDocClient } from "./live.ts";
 import { renderMarkdown } from "./markdown.ts";
 import { sanitizeHtml } from "./sanitize.ts";
 
