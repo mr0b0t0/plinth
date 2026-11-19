@@ -523,6 +523,20 @@ export async function setMyCategory(
       reason: "no_grant",
     });
   }
+  // The grant must be the account's own. A viewer email confirmed in this browser opens the
+  // artifact here, but the dashboard lists it, and prunePersonalCategories keeps the row, only for
+  // a grant the account's email holds; a row saved on the other address would vanish unseen.
+  const account = await decideFor({ ...ctx, viewerEmail: null }, artifact, "view");
+  if (!seesPersonalCategory(p, account.allow ? account.role : null)) {
+    throw new ApiError(
+      "forbidden",
+      "This artifact is shared with another address, not your account's",
+      {
+        reason: "no_grant",
+        next: "Ask the owner to share it with your account's email to file it",
+      },
+    );
+  }
   const DB = ctx.env.DB;
   if (raw === null) {
     await DB.prepare("DELETE FROM personal_categories WHERE user_id = ?1 AND artifact_id = ?2")

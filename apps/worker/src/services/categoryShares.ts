@@ -294,6 +294,10 @@ export async function backfillCategoryKeys(ctx: Ctx, ownerId: string): Promise<v
   }
 }
 
+/**
+ * The share's counts. A taken-down artifact is never pending: no review applies to it (APPLY
+ * refuses it), so counting it would leave a review banner the owner cannot clear.
+ */
 async function countsOf(
   d1: D1Database,
   share: CategoryShareRow,
@@ -303,7 +307,8 @@ async function countsOf(
       `SELECT
          sum(CASE WHEN category_review = 'shared' AND category_review_share = ?3 THEN 1 ELSE 0 END) AS shared,
          sum(CASE WHEN category_review = 'private' AND category_review_share = ?3 THEN 1 ELSE 0 END) AS private,
-         sum(CASE WHEN category_review_share IS ?3 THEN 0 ELSE 1 END) AS pending
+         sum(CASE WHEN category_review_share IS NOT ?3 AND taken_down_at IS NULL THEN 1 ELSE 0 END)
+           AS pending
          FROM artifacts WHERE owner_id = ?1 AND category_key = ?2 AND deleted_at IS NULL`,
     )
     .bind(share.ownerId, share.categoryKey, share.id)
@@ -457,8 +462,11 @@ async function checkReview(ctx: Ctx, userId: string, items: ReviewItem[]): Promi
 /**
  * APPLY(decision): the guarded statement every review goes through. It re-states every fact the
  * owner approved: same artifact, same owner, still live and not taken down, still in the share's
- * current key (read from the share row inside the transaction), the same version and the same
- * category_rev. ?1 decision, ?2 share id, ?3 owner, ?4 the review items as JSON.
+ * current key (read from the share row inside the transaction) and, to share, the same version
+ * and the same category_rev. Keeping an artifact private only takes access away, so it holds
+ * whatever version the artifact reached meanwhile: a publish between opening the dialog and
+ * saving it can never leave the artifact shared. ?1 decision, ?2 share id, ?3 owner, ?4 the
+ * review items as JSON.
  */
 function applyReview(
   d1: D1Database,
@@ -467,6 +475,11 @@ function applyReview(
   ownerId: string,
   items: string,
 ): D1PreparedStatement {
+  const seen =
+    decision === "shared"
+      ? `AND json_extract(j.value, '$.version') = artifacts.current_version
+                         AND json_extract(j.value, '$.category_rev') = artifacts.category_rev`
+      : "";
   return d1
     .prepare(
       `UPDATE artifacts SET category_review = ?1, category_review_share = ?2
@@ -474,8 +487,7 @@ function applyReview(
           AND category_key = (SELECT category_key FROM category_shares WHERE id = ?2 AND owner_id = ?3)
           AND EXISTS (SELECT 1 FROM json_each(?4) j
                        WHERE json_extract(j.value, '$.id') = artifacts.id
-                         AND json_extract(j.value, '$.version') = artifacts.current_version
-                         AND json_extract(j.value, '$.category_rev') = artifacts.category_rev
+                         ${seen}
                          AND json_extract(j.value, '$.decision') = ?1)
        RETURNING id`,
     )
@@ -567,6 +579,13 @@ async function reviewOutcome(
   return { shared: shared.size, private: priv.size, skipped };
 }
 
+const tooManyShares = () =>
+  new ApiError(
+    "quota_exceeded",
+    `You can share at most ${LIMITS.maxCategorySharesPerOwner} categories`,
+    { next: "Stop sharing a category you no longer need first" },
+  );
+
 /**
  * POST /category-shares: share one of the owner's categories with people, with the owner's review
  * of every artifact the dialog showed, in one batch: insert the share and its grants, reset every
@@ -597,13 +616,7 @@ export async function createShare(
   )
     .bind(userId)
     .first<{ n: number }>();
-  if ((shares?.n ?? 0) >= LIMITS.maxCategorySharesPerOwner) {
-    throw new ApiError(
-      "quota_exceeded",
-      `You can share at most ${LIMITS.maxCategorySharesPerOwner} categories`,
-      { next: "Stop sharing a category you no longer need first" },
-    );
-  }
+  if ((shares?.n ?? 0) >= LIMITS.maxCategorySharesPerOwner) throw tooManyShares();
   const people = cleanPeople(input.people, email);
   await checkReview(ctx, userId, input.review);
   // The owner's most-used spelling of the key is the share's name.
@@ -614,21 +627,27 @@ export async function createShare(
   const DB = ctx.env.DB;
   const items = JSON.stringify(input.review);
   let results: D1Result[];
+  // The cap is checked again inside the INSERT, so parallel creates cannot pass it together. When
+  // the INSERT adds nothing, every later statement finds no share row and changes nothing.
+  const made = "EXISTS (SELECT 1 FROM category_shares WHERE id = ?1 AND owner_id = ?2)";
   try {
     results = await DB.batch([
       DB.prepare(
         `INSERT INTO category_shares (id, owner_id, category_key, name, title, created_at, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6)`,
-      ).bind(id, userId, key, shareName, title, now),
+         SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?6
+          WHERE (SELECT count(*) FROM category_shares WHERE owner_id = ?2) < ?7`,
+      ).bind(id, userId, key, shareName, title, now, LIMITS.maxCategorySharesPerOwner),
       DB.prepare(
         `INSERT INTO category_grants (share_id, email, role, created_at)
-         SELECT ?1, json_extract(value, '$.email'), json_extract(value, '$.role'), ?2
-           FROM json_each(?3)`,
-      ).bind(id, now, JSON.stringify(people)),
+         SELECT ?1, json_extract(value, '$.email'), json_extract(value, '$.role'), ?3
+           FROM json_each(?4) WHERE ${made}`,
+      ).bind(id, userId, now, JSON.stringify(people)),
       resetReviews(DB, id, userId),
       applyReview(DB, "shared", id, userId, items),
       applyReview(DB, "private", id, userId, items),
-      bumpShareRev(DB, userId),
+      DB.prepare(
+        `UPDATE users SET category_share_rev = category_share_rev + 1 WHERE id = ?2 AND ${made}`,
+      ).bind(id, userId),
     ]);
   } catch (e) {
     if (isUniqueViolation(e)) {
@@ -639,6 +658,7 @@ export async function createShare(
     }
     throw e;
   }
+  if ((results[0]?.meta.changes ?? 0) === 0) throw tooManyShares();
   const share = await ownShare(ctx, userId, id);
   const review = await reviewOutcome(
     ctx,

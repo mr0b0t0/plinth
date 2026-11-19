@@ -103,15 +103,20 @@ async function portalRows(ctx: Ctx, share: ShareSql): Promise<ArtifactRow[]> {
   return results.flatMap((r) => byId.get(r.id) ?? []);
 }
 
-/** GET /portals: the collections shared with the caller (a session or a confirmed viewer). */
+/**
+ * GET /portals: the collections shared with the caller (a session or a confirmed viewer). The SQL
+ * finds the shares whose grants hold the caller's emails; each one is then listed only if
+ * policy.ts decidePortal lets the caller open it with that grant, as GET /portals/:id decides.
+ */
 export async function listPortals(ctx: Ctx): Promise<PortalSummary[]> {
-  const p = ctx.principal;
-  if (!ctx.config.allowCategorySharing || (p.kind !== "user" && p.kind !== "viewer")) return [];
+  if (!ctx.config.allowCategorySharing) return [];
   const { emails } = grantEmails(ctx);
   if (emails.length === 0) return [];
   const marks = emails.map((_, i) => `?${i + 1}`).join(", ");
   const { results } = await ctx.env.DB.prepare(
-    `SELECT s.id AS id, s.title AS title, u.name AS owner_name,
+    `SELECT s.id AS id, s.title AS title, s.owner_id AS owner_id, u.name AS owner_name,
+            (SELECT max(CASE g.role WHEN 'commenter' THEN 2 ELSE 1 END) FROM category_grants g
+              WHERE g.share_id = s.id AND g.email IN (${marks})) AS rank,
             (SELECT count(*) FROM artifacts a
               WHERE a.owner_id = s.owner_id AND a.category_key = s.category_key
                 AND a.category_review = 'shared' AND a.category_review_share = s.id
@@ -122,13 +127,25 @@ export async function listPortals(ctx: Ctx): Promise<PortalSummary[]> {
       ORDER BY s.title`,
   )
     .bind(...emails)
-    .all<PortalSummary>();
-  return results.map((r) => ({
-    id: r.id,
-    title: r.title,
-    owner_name: r.owner_name,
-    count: Math.min(r.count, LIMITS.maxPortalItems),
-  }));
+    .all<PortalSummary & { owner_id: string; rank: number | null }>();
+  return results.flatMap((r) => {
+    const role: CategoryRole | null = r.rank === 2 ? "commenter" : r.rank === 1 ? "viewer" : null;
+    const d = decidePortal(
+      ctx.principal,
+      { ownerId: r.owner_id },
+      role,
+      ctx.config.allowCategorySharing,
+    );
+    if (!d.allow) return [];
+    return [
+      {
+        id: r.id,
+        title: r.title,
+        owner_name: r.owner_name,
+        count: Math.min(r.count, LIMITS.maxPortalItems),
+      },
+    ];
+  });
 }
 
 /**

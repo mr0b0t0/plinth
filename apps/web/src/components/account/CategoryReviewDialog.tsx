@@ -1,6 +1,6 @@
 // The review of a shared category's waiting artifacts (docs/spec.md "Category sharing and personal
 // categories"): every artifact filed under a shared category, by an agent or by the owner, waits
-// here until the owner shares it or keeps it private. The decision names the version and the
+// here until the owner shares it or keeps it private. A share names the version and the
 // category_rev the owner was shown, so a change made meanwhile is skipped, never shared unseen.
 import {
   API,
@@ -87,7 +87,7 @@ export function CategoryReviewDialog({
         method: "POST",
         body: { items },
       });
-      const skipped = skippedText(res);
+      const skipped = skippedText(res, items);
       if (skipped) {
         setNote(skipped);
         setReload((n) => n + 1);

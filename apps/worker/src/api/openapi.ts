@@ -1418,7 +1418,8 @@ function categorySharingOperations(): Operation[] {
     "The signed-in owner only (session, CSRF and exact Origin); agents and bearer tokens get 403, and no MCP tool does this.";
   const review =
     "Each review item names the artifact, the current_version and category_rev you were shown, and shared or private; " +
-    "an item whose artifact changed meanwhile is skipped, never applied.";
+    "a shared item whose artifact changed meanwhile is skipped, never applied. A private item holds at any version, " +
+    "and is skipped only when the artifact left the category (moved, deleted or taken down).";
   return [
     {
       method: "put",
@@ -1427,7 +1428,8 @@ function categorySharingOperations(): Operation[] {
       summary: "Your own category for an artifact shared with you",
       description:
         "Seen by you only, in the app; never the owner's category, never on your own artifacts. " +
-        "`category: null` clears it. Session only: bearer tokens get 403.",
+        "`category: null` clears it. Session only: bearer tokens get 403. The role must be held by your " +
+        "account's own email; a viewer email confirmed in this browser gives 403 `no_grant`.",
       tag: "Artifacts",
       auth: "user",
       body: "MyCategoryInput",

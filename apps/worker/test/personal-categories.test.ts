@@ -2,9 +2,13 @@
 // collaborator files an artifact shared with them under a category of their own, seen by them only
 // and set in the app only. The row goes when they lose access or the artifact goes.
 import { env } from "cloudflare:workers";
+import { COOKIES } from "@plinth/shared";
 import { describe, expect, it } from "vitest";
+import { sessions } from "../src/db/schema.ts";
+import { hashToken, newToken } from "../src/lib/crypto.ts";
+import { isoIn, nowIso } from "../src/lib/time.ts";
 import { filed, owner, person, send, shareCategory } from "./category-helpers.ts";
-import { call, json, publish } from "./helpers.ts";
+import { call, db, json, publish, uniqueEmail } from "./helpers.ts";
 import { grant } from "./room-helpers.ts";
 
 const setMine = (ref: string, headers: Record<string, string>, category: string | null) =>
@@ -123,6 +127,36 @@ describe("PUT /artifacts/:ref/my-category", () => {
     await send("DELETE", `/api/v1/category-shares/${made.share.id}`, o.session);
     const left = await rows(a.id);
     expect(left).toEqual([{ user_id: both.user.id, category: "Both" }]);
+  });
+
+  it("needs a grant held by the account's own email, not a viewer email confirmed in the browser", async () => {
+    const o = await owner();
+    const a = await filed(o, "Owner's own", "Shared with another address");
+    const c = await person();
+    const other = uniqueEmail("other-address");
+    await grant(a.id, other, "viewer");
+    // c is signed in and confirmed `other` by code in the same browser: the artifact opens.
+    const value = newToken("v_");
+    await db()
+      .insert(sessions)
+      .values({
+        id: await hashToken(value),
+        kind: "viewer",
+        viewerEmail: other,
+        expiresAt: isoIn(3600_000),
+        createdAt: nowIso(),
+      })
+      .run();
+    const both = { ...c.session, Cookie: `${c.session.Cookie}; ${COOKIES.viewer}=${value}` };
+    expect((await json(await call(`/api/v1/view/${a.slug}`, { headers: both }))).status).toBe("ok");
+    // The dashboard would never list it for c, and a prune would drop the row: refused.
+    const r = await setMine(a.id, both, "Clients");
+    expect(r.status).toBe(403);
+    expect((await json(r)).error.details).toMatchObject({ reason: "no_grant" });
+    expect(await rows(a.id)).toEqual([]);
+    // With the grant on the account's own email it is filed.
+    await grant(a.id, c.email, "viewer");
+    expect((await setMine(a.id, both, "Clients")).status).toBe(200);
   });
 });
 

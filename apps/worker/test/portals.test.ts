@@ -92,6 +92,18 @@ describe("GET /portals and /portals/:id", () => {
     expect(off.status).toBe(404);
   });
 
+  it("the list agrees with decidePortal: a grantee's agent and the switch off list nothing", async () => {
+    const { c, shareId } = await portalSetup();
+    const listed = async (headers: Record<string, string>, vars = {}) =>
+      (await json(await send("GET", "/api/v1/portals", headers, undefined, vars))).items as {
+        id: string;
+      }[];
+    expect((await listed(c.session)).map((i) => i.id)).toEqual([shareId]);
+    // The grantee's own token holds the same email, but decidePortal refuses agents.
+    expect(await listed(c.auth)).toEqual([]);
+    expect(await listed(c.session, { ALLOW_CATEGORY_SHARING: "false" })).toEqual([]);
+  });
+
   it("leaves out taken-down, deleted and unpublished artifacts", async () => {
     const { o, c, shared, shareId } = await portalSetup();
     await env.DB.prepare("UPDATE artifacts SET taken_down_at = ?1 WHERE id = ?2")

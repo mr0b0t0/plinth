@@ -294,12 +294,15 @@ export interface SummaryExtra {
   myCategory?: string | null;
 }
 
-/** The owner's view of an artifact's place in its category's share (null: not shared). */
+/**
+ * The owner's view of an artifact's place in its category's share (null: not shared). A taken-down
+ * artifact has none: no review applies to it and no grantee can open it, so it never waits.
+ */
 export function shareStateOf(
-  a: Pick<ArtifactRow, "categoryKey" | "categoryReview" | "categoryReviewShare">,
+  a: Pick<ArtifactRow, "categoryKey" | "categoryReview" | "categoryReviewShare" | "takenDownAt">,
   shareId: string | null | undefined,
 ): "shared" | "pending" | "private" | null {
-  if (!shareId || a.categoryKey === null) return null;
+  if (!shareId || a.categoryKey === null || a.takenDownAt) return null;
   return a.categoryReviewShare === shareId && a.categoryReview ? a.categoryReview : "pending";
 }
 

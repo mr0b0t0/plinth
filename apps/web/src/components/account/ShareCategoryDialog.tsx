@@ -60,13 +60,38 @@ export function peopleText(n: number): string {
   return `${n} ${n === 1 ? "person" : "people"}`;
 }
 
-/** What the skipped items of a review say to the owner. */
-export function skippedText(review: CategoryReviewResult | null): string | null {
-  const n = review?.skipped.length ?? 0;
-  if (!n) return null;
-  return `${n === 1 ? "One artifact" : `${n} artifacts`} changed since you opened this, so ${
-    n === 1 ? "it was" : "they were"
-  } not shared. Review again.`;
+const artifactsText = (n: number) => (n === 1 ? "One artifact" : `${n} artifacts`);
+
+/**
+ * What the skipped items of a review say to the owner. Keeping an artifact private holds whatever
+ * version it reached, so only a share is skipped for a change; a private decision is skipped only
+ * when the artifact left the category (moved, deleted or taken down).
+ */
+export function skippedText(
+  review: CategoryReviewResult | null,
+  sent: readonly { id: string; decision: "shared" | "private" }[],
+): string | null {
+  const skipped = review?.skipped ?? [];
+  if (skipped.length === 0) return null;
+  const kept = new Set(sent.filter((i) => i.decision === "private").map((i) => i.id));
+  const left = skipped.filter((s) => kept.has(s.id)).length;
+  const changed = skipped.length - left;
+  const parts: string[] = [];
+  if (changed > 0) {
+    parts.push(
+      `${artifactsText(changed)} changed since you opened this, so ${
+        changed === 1 ? "it was" : "they were"
+      } not shared. Review again.`,
+    );
+  }
+  if (left > 0) {
+    parts.push(
+      `${artifactsText(left)} left this category since you opened this (moved, deleted or taken down), so ${
+        left === 1 ? "it is" : "they are"
+      } not shared here.`,
+    );
+  }
+  return parts.join(" ");
 }
 
 type Load =
@@ -163,9 +188,13 @@ export function ShareCategoryDialog({
     setEmailError(null);
   };
 
-  const finish = (res: CategoryShareWriteResult | CategoryReviewResult | null, id: string) => {
+  const finish = (
+    res: CategoryShareWriteResult | CategoryReviewResult | null,
+    id: string,
+    sent: ReturnType<typeof reviewItems>,
+  ) => {
     const review = res && "share" in res ? res.review : res;
-    const skipped = skippedText(review);
+    const skipped = skippedText(review, sent);
     if (skipped) {
       setNote(skipped);
       setReload((n) => n + 1);
@@ -192,7 +221,7 @@ export function ShareCategoryDialog({
           method: "POST",
           body: { category, title: title.trim(), people, review },
         });
-        finish(res, res.share.id);
+        finish(res, res.share.id, review);
         return;
       }
       const id = share.id;
@@ -202,7 +231,7 @@ export function ShareCategoryDialog({
           method: "PATCH",
           body: { ...(titleChanged ? { title: title.trim() } : {}), people, review },
         });
-        finish(res, id);
+        finish(res, id, review);
         return;
       }
       if (titleChanged) {
@@ -222,7 +251,7 @@ export function ShareCategoryDialog({
           body: { items: changed },
         });
       }
-      finish(res, id);
+      finish(res, id, changed);
     } catch (e) {
       setBusy(false);
       setError(e instanceof ApiRequestError ? e.message : "Could not reach Plinth. Try again.");

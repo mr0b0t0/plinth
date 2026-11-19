@@ -1967,7 +1967,7 @@
       "put": {
         "operationId": "setMyCategory",
         "summary": "Your own category for an artifact shared with you",
-        "description": "Seen by you only, in the app; never the owner's category, never on your own artifacts. `category: null` clears it. Session only: bearer tokens get 403.",
+        "description": "Seen by you only, in the app; never the owner's category, never on your own artifacts. `category: null` clears it. Session only: bearer tokens get 403. The role must be held by your account's own email; a viewer email confirmed in this browser gives 403 `no_grant`.",
         "tags": ["Artifacts"],
         "parameters": [
           {
@@ -2022,7 +2022,7 @@
       "post": {
         "operationId": "createCategoryShare",
         "summary": "Share one of your categories with people",
-        "description": "The signed-in owner only (session, CSRF and exact Origin); agents and bearer tokens get 403, and no MCP tool does this. Filing an artifact under a shared category never shares it: only this review does. Every artifact of the category not reviewed as shared in this request stays private or pending. Each review item names the artifact, the current_version and category_rev you were shown, and shared or private; an item whose artifact changed meanwhile is skipped, never applied. 409 when the category is already shared.",
+        "description": "The signed-in owner only (session, CSRF and exact Origin); agents and bearer tokens get 403, and no MCP tool does this. Filing an artifact under a shared category never shares it: only this review does. Every artifact of the category not reviewed as shared in this request stays private or pending. Each review item names the artifact, the current_version and category_rev you were shown, and shared or private; a shared item whose artifact changed meanwhile is skipped, never applied. A private item holds at any version, and is skipped only when the artifact left the category (moved, deleted or taken down). 409 when the category is already shared.",
         "tags": ["Sharing"],
         "requestBody": {
           "required": true,
@@ -2117,7 +2117,7 @@
       "patch": {
         "operationId": "updateCategoryShare",
         "summary": "Change a category share's title or people",
-        "description": "The signed-in owner only (session, CSRF and exact Origin); agents and bearer tokens get 403, and no MCP tool does this. `review` is required with `people` (400 review_required): changing who sees a category re-confirms what they see. Each review item names the artifact, the current_version and category_rev you were shown, and shared or private; an item whose artifact changed meanwhile is skipped, never applied.",
+        "description": "The signed-in owner only (session, CSRF and exact Origin); agents and bearer tokens get 403, and no MCP tool does this. `review` is required with `people` (400 review_required): changing who sees a category re-confirms what they see. Each review item names the artifact, the current_version and category_rev you were shown, and shared or private; a shared item whose artifact changed meanwhile is skipped, never applied. A private item holds at any version, and is skipped only when the artifact left the category (moved, deleted or taken down).",
         "tags": ["Sharing"],
         "parameters": [
           {
@@ -2179,7 +2179,7 @@
       "post": {
         "operationId": "reviewCategoryShare",
         "summary": "Share or keep private, per artifact of a shared category",
-        "description": "The signed-in owner only (session, CSRF and exact Origin); agents and bearer tokens get 403, and no MCP tool does this. Each review item names the artifact, the current_version and category_rev you were shown, and shared or private; an item whose artifact changed meanwhile is skipped, never applied.",
+        "description": "The signed-in owner only (session, CSRF and exact Origin); agents and bearer tokens get 403, and no MCP tool does this. Each review item names the artifact, the current_version and category_rev you were shown, and shared or private; a shared item whose artifact changed meanwhile is skipped, never applied. A private item holds at any version, and is skipped only when the artifact left the category (moved, deleted or taken down).",
         "tags": ["Sharing"],
         "parameters": [
           {

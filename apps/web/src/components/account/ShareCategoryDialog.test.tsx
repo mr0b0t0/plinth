@@ -6,7 +6,7 @@ import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { json, stubApi } from "../viewer/test-utils.ts";
-import { reviewItems, ShareCategoryDialog } from "./ShareCategoryDialog.tsx";
+import { reviewItems, ShareCategoryDialog, skippedText } from "./ShareCategoryDialog.tsx";
 
 const row = (id: string, over: Partial<CategoryShareArtifact> = {}): CategoryShareArtifact => ({
   id,
@@ -47,6 +47,31 @@ describe("reviewItems", () => {
       { id: "a", version: 2, category_rev: 1, decision: "shared" },
       { id: "b", version: 2, category_rev: 1, decision: "private" },
     ]);
+  });
+});
+
+describe("skippedText", () => {
+  const sent = [
+    { id: "a", decision: "shared" as const },
+    { id: "b", decision: "private" as const },
+  ];
+  it("says nothing without skipped items", () => {
+    expect(skippedText({ shared: 1, private: 1, skipped: [] }, sent)).toBeNull();
+    expect(skippedText(null, sent)).toBeNull();
+  });
+  it("a skipped share was not shared; a skipped private decision left the category", () => {
+    expect(
+      skippedText({ shared: 0, private: 1, skipped: [{ id: "a", reason: "changed" }] }, sent),
+    ).toBe("One artifact changed since you opened this, so it was not shared. Review again.");
+    const left = skippedText(
+      { shared: 1, private: 0, skipped: [{ id: "b", reason: "moved" }] },
+      sent,
+    );
+    expect(left).toBe(
+      "One artifact left this category since you opened this (moved, deleted or taken down), so it is not shared here.",
+    );
+    // Never "changed ... not shared" for an artifact the owner kept private.
+    expect(left).not.toMatch(/changed since you opened this/);
   });
 });
 

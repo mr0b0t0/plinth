@@ -201,7 +201,8 @@ issue #42, migration `0013_category_sharing.sql`) add three tables and five colu
 | `login_codes.share_id` | share id or NULL | A portal's email code (`artifact_id` NULL), bound to the share; cascades from it |
 | `personal_categories` | user_id, artifact_id, category, created_at, updated_at | A collaborator's own category for an artifact shared with them. Key (user_id, artifact_id). Cascades from `users` and `artifacts`; deleted with the artifact and on takedown, and when its person no longer holds a grant on the artifact |
 
-Setting: `ALLOW_CATEGORY_SHARING` (on). Fixed: 100 shares per owner, 200 people per share, a title
+Setting: `ALLOW_CATEGORY_SHARING` (on). Fixed: 100 shares per owner (checked in the statement that
+inserts the share), 200 people per share, a title
 of at most 200 characters, review items up to the owner's artifact limit, 500 artifacts per portal.
 
 **Dictation** ([below](#voice-dictation-and-text-to-speech-decided-2026-11-19), no migration) adds one
@@ -1131,7 +1132,9 @@ under categories of their own, and an owner shares a whole category with people,
 a **portal**, listing what the owner chose to show them.
 
 **Personal categories.** A person with a role on an artifact other than owner (viewer, commenter,
-editor, directly or through a shared category) files it under a category of their own with
+editor, directly or through a shared category, held by their account's own email: a viewer email
+confirmed in the browser opens the artifact but gives 403 `no_grant` here, as the dashboard lists
+only what the account's email holds) files it under a category of their own with
 `PUT /api/v1/artifacts/:ref/my-category` (`{ category }`, `null` clears it). It is stored per person
 and artifact (`personal_categories`), validated and normalised as the owner's category is, and
 snapped onto the person's own names (their personal ones and their own artifacts' categories, one
@@ -1158,9 +1161,12 @@ filed there (by `publish_artifact`, `start_upload`, `update_artifact`, `PUT`, `P
 the owner in the app) starts `pending`, and the category's people cannot open it, list it, find it
 on the portal or get an allowlist code for it until the owner reviews it. A review names, per
 artifact, the `current_version` and `category_rev` the owner was shown and `shared` or `private`;
-it applies only while the artifact is still the owner's, live, not taken down, in the share's
-current key, at that version and that `category_rev`, all checked in the statement that writes it.
-An item that changed meanwhile is skipped (`moved`, `changed` or `gone`) and stays as it was.
+it applies only while the artifact is still the owner's, live, not taken down and in the share's
+current key, and a `shared` decision also only at that version and that `category_rev`, all
+checked in the statement that writes it. A `private` decision only takes access away, so it holds
+whatever version the artifact reached meanwhile. An item that changed meanwhile is skipped
+(`moved`, `changed` or `gone`) and stays as it was. A taken-down artifact is never pending: no
+review applies to it, so the share's `counts.pending` and the owner's `category_share` leave it out.
 Creating a share and changing its people reset every artifact of the key first, then apply the
 review, in one transaction, so no earlier decision survives into a new share or a new set of
 people. A review counts only while it was made against the share that is the current share of the
@@ -1205,7 +1211,8 @@ single-use six-digit code hashed with the share bound into it (useless on an art
 and the reverse), and the grant checked again after the code is used. Success starts the viewer
 session (`plinth_viewer`), which names no artifact, so each listed artifact then opens without a
 second code; the owner's own address signs the owner in. The email names who shared it, never the
-title or the category. `GET /api/v1/portals` lists the shares that hold the caller's email.
+title or the category. `GET /api/v1/portals` lists the shares that hold the caller's email and
+that `decidePortal` lets the caller open, as `GET /api/v1/portals/:id` decides.
 
 **Owner-only results.** The owner's own `publish_artifact`, `update_artifact`, `start_upload` (mint
 and bundle) and upload status results carry `category_share: { state, review_url? }` when the

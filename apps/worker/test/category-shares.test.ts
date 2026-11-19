@@ -204,6 +204,50 @@ describe("category shares: input", () => {
     expect((await json(r)).error.code).toBe("quota_exceeded");
   });
 
+  it("parallel creates cannot pass the share limit together", async () => {
+    const o = await owner();
+    const names = ["P1", "P2", "P3", "P4", "P5"];
+    for (const n of names) await filed(o, n);
+    const now = new Date().toISOString();
+    const stmts = Array.from({ length: LIMITS.maxCategorySharesPerOwner - 1 }, (_, i) =>
+      env.DB.prepare(
+        "INSERT INTO category_shares (id, owner_id, category_key, name, title, created_at, updated_at) VALUES (?1, ?2, ?3, ?3, ?3, ?4, ?4)",
+      ).bind(`race${o.user.id.slice(0, 8)}${i}`, o.user.id, `filler ${i}`, now),
+    );
+    await env.DB.batch(stmts);
+    const rev = async () =>
+      (
+        await env.DB.prepare("SELECT category_share_rev AS r FROM users WHERE id = ?1")
+          .bind(o.user.id)
+          .first<{ r: number }>()
+      )?.r;
+    const before = await rev();
+    const all = await Promise.all(
+      names.map((category) =>
+        send("POST", "/api/v1/category-shares", o.session, {
+          category,
+          people: [{ email: uniqueEmail("race"), role: "viewer" }],
+          review: [],
+        }),
+      ),
+    );
+    const statuses = all.map((r) => r.status).sort();
+    expect(statuses).toEqual([201, 403, 403, 403, 403]);
+    for (const r of all.filter((x) => x.status === 403)) {
+      expect((await json(r)).error.code).toBe("quota_exceeded");
+    }
+    const n = await env.DB.prepare("SELECT count(*) AS n FROM category_shares WHERE owner_id = ?1")
+      .bind(o.user.id)
+      .first<{ n: number }>();
+    expect(n?.n).toBe(LIMITS.maxCategorySharesPerOwner);
+    // A refused create leaves no grants behind and does not move the owner's share counter.
+    const orphans = await env.DB.prepare(
+      "SELECT count(*) AS n FROM category_grants g LEFT JOIN category_shares s ON s.id = g.share_id WHERE s.id IS NULL",
+    ).first<{ n: number }>();
+    expect(orphans?.n).toBe(0);
+    expect(await rev()).toBe((before ?? 0) + 1);
+  });
+
   it("caps review items at the owner's artifact limit and refuses an id twice", async () => {
     const o = await owner();
     const a = await filed(o, "Acme");
@@ -300,6 +344,53 @@ describe("category shares: the review", () => {
       }),
     );
     expect(out.skipped).toEqual([{ id: a.id, reason: "gone" }]);
+  });
+
+  it("keeping a shared artifact private holds although it was published again meanwhile", async () => {
+    const o = await owner();
+    const a = await filed(o, "Acme", "Unshare me");
+    const c = await person();
+    const made = await shareCategory(o, "Acme", [{ email: c.email, role: "viewer" }]);
+    expect(await gateStatus(a.slug, c.session)).toBe("ok");
+    // The owner opens the dialog (v1), the agent publishes v2, the owner unticks and saves.
+    const rows = (await shareDetail(o, made.share.id)).artifacts;
+    const v2 = await send("PUT", `/api/v1/artifacts/${a.id}`, o.auth, {
+      html: "<!doctype html><p>v2</p>",
+    });
+    expect(v2.status).toBe(200);
+    const r = await send("POST", `/api/v1/category-shares/${made.share.id}/review`, o.session, {
+      items: reviewOf(rows, () => false),
+    });
+    expect(await json(r)).toEqual({ shared: 0, private: 1, skipped: [] });
+    expect((await categoryRow(a.id))?.category_review).toBe("private");
+    expect(await gateStatus(a.slug, c.session)).not.toBe("ok");
+    const portal = await json(await send("GET", `/api/v1/portals/${made.share.id}`, c.session));
+    expect(portal.items).toEqual([]);
+  });
+
+  it("a taken-down artifact never waits for review", async () => {
+    const o = await owner();
+    await filed(o, "Acme", "Shared");
+    const made = await shareCategory(o, "Acme", []);
+    const late = await filed(o, "Acme", "Filed later, then taken down");
+    const counts = async () =>
+      (await json(await send("GET", "/api/v1/category-shares", o.session))).items[0].counts;
+    expect(await counts()).toEqual({ shared: 1, pending: 1, private: 0 });
+    await env.DB.prepare("UPDATE artifacts SET taken_down_at = ?1 WHERE id = ?2")
+      .bind(new Date().toISOString(), late.id)
+      .run();
+    expect(await counts()).toEqual({ shared: 1, pending: 0, private: 0 });
+    // The owner's row keeps its "Taken down" badge and loses "Waiting for review".
+    const list = await json(await call("/api/v1/artifacts", { headers: o.session }));
+    expect(list.items.find((i: { id: string }) => i.id === late.id)).toMatchObject({
+      taken_down: true,
+      category_share: null,
+    });
+    expect((await shareDetail(o, made.share.id)).counts).toEqual({
+      shared: 1,
+      pending: 0,
+      private: 0,
+    });
   });
 
   it("reset: a stale review from a deleted share and a filing after the dialog loaded are pending", async () => {
