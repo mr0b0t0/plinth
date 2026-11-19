@@ -26,7 +26,8 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   whatever its password holds), Oracle's `user/password@host`, `sqlplus user/password`, fields such
   as `DB_PASSWORD=`, key prefixes and long random runs. A stamp's link is an `http://` or
   `https://` URL only, and loses any user name, password, query and fragment (a link whose password
-  holds an unencoded `/`, `?`, `#` or `@` is refused); links to records (a Linear issue, a Jira board, a Notion page, a
+  holds an unencoded `/`, `?`, `#` or `@`, or that holds a `user:password@host` or
+  `user/password@host` after its host, is refused); links to records (a Linear issue, a Jira board, a Notion page, a
   Google Sheet or Drive file, a GitHub commit, an Airtable view, a Salesforce or Stripe record)
   pass. Works with no page declaration and under opaque isolation (figures inline). Migration
   `0015_data_sources.sql`.

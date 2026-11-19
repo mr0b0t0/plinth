@@ -2205,9 +2205,14 @@ dropped, and the host must be dot-separated labels or an IPv6 address in bracket
 an unencoded `/`, `?`, `#` or `@` (`https://admin:pa/ss@db`) runs past the host, and then the user
 info cannot be told from the host and path, so stripping it would keep part of the password. Such
 a link is refused instead: an `@` after the authority is refused when the text before it holds a
-`:` or an `@`. After a plain host an `@` in the path is a handle or a package scope
-(`https://medium.com/@acme`, `https://www.npmjs.com/package/@types/node`) and passes; with a port
-(`https://host:8443/@acme`) it is refused, because it reads the same as `admin:8443/x@db`. What is
+`:` or an `@`. That holds for every `@` after the authority, not only the first, so a handle
+earlier in the path does not let a later password through (`https://medium.com/@acme/admin:pw@db`
+is refused). Oracle's `user/password@host` anywhere after the scheme is refused too
+(`https://x.example/scott/tiger@db.example.com/ORCL`), by the same structural rule as in recipes,
+which also refuses a link with an e-mail address after a `/` in its path or query. After a plain
+host a lone `@` in the path is a handle or a package scope (`https://medium.com/@acme`,
+`https://www.npmjs.com/package/@types/node`) and passes; with a port (`https://host:8443/@acme`) it
+is refused, because it reads the same as `admin:8443/x@db`. What is
 kept then takes the key and token checks above, path segment by path segment (a `DB_PASSWORD=` in
 the path is refused). Whitespace, control and invisible characters are refused. `source_connection`
 is an audit value with no foreign key and never reaches a page.

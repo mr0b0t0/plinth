@@ -501,6 +501,24 @@ describe("sanitizeSourceRef", () => {
       expect(sanitizeSourceRef(url), url).toEqual({ ok: true, ref: url });
       expect(looksLikeSecret(url), url).toBe(true);
     }
+    // Every "@" after the authority is checked, not only the first: a handle or a package scope
+    // earlier in the path does not let a later user:password@host or user/password@host through.
+    const pw = ["S3cr", "3t!"].join("");
+    const tiger = ["ti", "ger"].join("");
+    for (const input of [
+      `https://medium.com/@acme/postgres://admin:${pw}@db.internal:5432/prod`,
+      `https://medium.com/@acme/admin:${pw}@db.internal`,
+      `https://www.npmjs.com/package/@types/x/admin:${pw}@[::1]:5432`,
+      `https://host.example/@x/sqlplus/scott/${tiger}@orcl`,
+      `https://mastodon.social/@acme/@bob/admin:${pw}@db.internal`,
+      `https://medium.com/@acme#admin:${pw}@db.internal`,
+      `https://x.example/scott/${tiger}@db.example.com:1521/ORCL`,
+      `https://scott/${tiger}@db.example.com/ORCL`,
+      `https://x.example/a/scott/${tiger}@10.0.0.5/ORCL`,
+    ]) {
+      const r = sanitizeSourceRef(input);
+      expect(r, input).toMatchObject({ ok: false, problem: /credential/ });
+    }
   });
 
   it("refuses a bare user:password@host, and keeps an address or a user without a password", () => {

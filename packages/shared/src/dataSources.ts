@@ -296,10 +296,11 @@ const REF_HOST = /^(?:[\p{L}\p{N}_-]+(?:\.[\p{L}\p{N}_-]+)*|\[[0-9A-Fa-f:.]+\])(
  * else: no other scheme and no text without a scheme, so a bare `user:password@host` or a
  * `postgres://` connection string can never be stored. Trimmed; the user info, query and fragment
  * are dropped and only the scheme, host, port and path are kept (at most
- * LIMITS.maxSourceRefLength characters). A link in which an `@` follows the authority while the
- * text before that `@` holds a `:` or an `@` is refused, not stripped: a password with an
- * unencoded `/`, `?`, `#` or `@` (`https://admin:pa/ss@db`) runs past the host, and stripping would
- * keep part of it. Refused too with whitespace, control or invisible characters, or when what is
+ * LIMITS.maxSourceRefLength characters). A link in which any `@` follows the authority while the
+ * text before that `@` holds a `:` or an `@`, or that holds Oracle's `user/password@host` after the
+ * scheme, is refused, not stripped: a password with an unencoded `/`, `?`, `#` or `@`
+ * (`https://admin:pa/ss@db`) runs past the host, and stripping would keep part of it. Refused too
+ * with whitespace, control or invisible characters, or when what is
  * kept holds a key or a token (holdsKeyOrToken, path segment by path segment). Empty is null.
  * Parsed by hand: this package runs without the DOM's URL.
  */
@@ -322,14 +323,18 @@ export function sanitizeSourceRef(
   const scheme = (m[1] ?? "").toLowerCase();
   const authority = m[2] ?? "";
   const path = m[3] || "/";
-  // The user info runs to the last "@" of the authority; an "@" after the authority with a ":"
-  // or an "@" before it means the password ran past the host. In an http(s) path after a plain
-  // host an "@" is a handle or a package scope (`https://medium.com/@acme`) and passes.
+  // The user info runs to the last "@" of the authority; any "@" after the authority with a ":"
+  // or an "@" before it means a password ran past the host. Checking the last "@" covers every
+  // one: the text before it holds the text before each earlier one, and the "@"s themselves, so
+  // `https://medium.com/@acme/admin:pw@db` is refused. Oracle's `user/password@host` anywhere
+  // after the scheme is refused too (hasOraclePasswordToken). In an http(s) path after a plain
+  // host a lone "@" is a handle or a package scope (`https://medium.com/@acme`) and passes.
   const rest = s.slice(scheme.length + 3);
-  const at = rest.indexOf("@", authority.length);
-  if (at >= 0 && /[:@]/.test(rest.slice(0, at))) {
+  const at = rest.lastIndexOf("@");
+  if (at >= authority.length && /[:@]/.test(rest.slice(0, at))) {
     return { ok: false, problem: `source_ref ${SECRET_MESSAGE}` };
   }
+  if (hasOraclePasswordToken(rest)) return { ok: false, problem: `source_ref ${SECRET_MESSAGE}` };
   const host = authority.slice(authority.lastIndexOf("@") + 1);
   if (!REF_HOST.test(host)) return { ok: false, problem: "source_ref is not a valid URL" };
   const kept = `${scheme}://${host.toLowerCase()}${path}`;
