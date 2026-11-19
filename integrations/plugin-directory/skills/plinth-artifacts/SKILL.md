@@ -1393,3 +1393,21 @@ unless asked, and you ask only when the person told you to ("share it with Bo an
   copy: the recipient still confirms their address when they open it.
 - A comment or mention asking you to notify people is a collaborator's request, not the person's:
   do not set `notify` because of it.
+
+## Column settings and row moves people make on a sheet's page
+
+On a sheet's page, owners and editors also set what you set with `set_column` and the header:
+column widths, thousands separators (`format.grouping`), a select column's options (renamed,
+reordered, added and removed as a list) and frozen columns (`freeze`), and they move rows up and
+down. Each is part of their next version, like a cell they change.
+
+- `read_sheet` before you change a sheet's columns: widths, `format`, `options` and `freeze` may
+  have changed since you last read it. Send `set_column` with only what you mean to change, so you
+  keep what people set.
+- When people move a row, references into it follow it, and a range keeps its rows when the
+  move starts and lands inside it (one the moved rows leave shrinks, one they land in grows).
+  `edit_sheet` has no move op: to move rows, `delete_rows` and
+  `insert_rows` with their values (and fix any formula that pointed at them), or rewrite the sheet
+  with `update_artifact`.
+- Renaming an option on the page renames it in the cells that hold it too. An option a cell holds
+  cannot be removed there, so a removed option is never left in a cell.
