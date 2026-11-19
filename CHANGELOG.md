@@ -10,6 +10,8 @@ Add a line under **Unreleased** in the pull request that makes a change people w
 
 ## Unreleased
 
+- **A Cursor plugin.** `integrations/plugin-cursor` packages the Plinth server and skill in Cursor's
+  plugin layout, for the Cursor Marketplace and cursor.directory.
 - **A build for OpenAI's plugin directory.** `integrations/plugin-openai` is the folder to ZIP for
   ChatGPT and Codex: the portable manifest with its listing block, the hosted server, the icon and
   the skill, with no hooks and no Claude Code passages.
