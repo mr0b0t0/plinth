@@ -363,12 +363,12 @@ test("a doc renders from its embedded content, with its image, and previews in t
 
 /** The artifact's open total, as its owner's agent reads it. */
 async function opens(token: string, slug: string): Promise<number> {
-  const res = await fetch(`${OPAQUE_APP_ORIGIN}/api/v1/artifacts/${slug}/views`, {
+  const res = await fetch(`${OPAQUE_APP_ORIGIN}/api/v1/artifacts/${slug}/stats`, {
     headers: { Authorization: `Bearer ${token}` },
   });
-  const body = (await res.json()) as { total: number };
+  const body = (await res.json()) as { totals: { all_time_opens: number } };
   expect(res.status, JSON.stringify(body)).toBe(200);
-  return body.total;
+  return body.totals.all_time_opens;
 }
 
 test("an open is counted once per browser, and a reload is not", async ({ browser }) => {

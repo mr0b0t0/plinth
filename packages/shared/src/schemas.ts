@@ -246,6 +246,10 @@ export const verifyLoginCodeInput = z.object({
   code: z.string().regex(/^\d{6}$/, "Six digits"),
 });
 export const verifyMagicLinkInput = z.object({ token: z.string().min(10).max(200) });
+export const reviewLoginInput = z.object({
+  email: emailSchema,
+  password: z.string().min(1).max(256),
+});
 export const updateProfileInput = z.object({
   // No "@": a display name must not look like an email address (or an agent mention) to agents
   // reading comment authors.
@@ -342,4 +346,13 @@ export const reportDecisionInput = z.object({
 /** GET /api/v1/admin/stats?days=: the trend window in UTC days. */
 export const adminStatsQuerySchema = z.object({
   days: z.enum(["7", "30", "90"]).default("30"),
+});
+/** GET /api/v1/artifacts/:ref/stats?days=: the owner's window in UTC days. */
+export const artifactStatsQuerySchema = z.object({
+  days: z.enum(["7", "30", "90", "365"]).default("30"),
+});
+/** get_artifact_stats: one artifact's stats with an id, the caller's summary without. */
+export const getArtifactStatsInput = z.object({
+  id: artifactRefSchema.optional(),
+  days: z.union([z.literal(7), z.literal(30), z.literal(90), z.literal(365)]).optional(),
 });

@@ -108,6 +108,7 @@ export function ViewerStage({
   const historyHref = route(APP_ROUTES.history, { slug });
   const reportHref = route(APP_ROUTES.report, { slug });
   const settingsHref = route(APP_ROUTES.settings, { slug });
+  const statsHref = route(APP_ROUTES.artifactStats, { slug });
 
   // The open-thread count on the Comments toggle. The panel reports it while open; while closed
   // it is read once (and again after the panel closes). Failures just hide the number.
