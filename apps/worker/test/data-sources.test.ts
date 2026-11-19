@@ -7,7 +7,16 @@ import { env } from "cloudflare:workers";
 import { CSRF_HEADER } from "@plinth/shared";
 import { describe, expect, it } from "vitest";
 import { openApiDocument } from "../src/api/openapi.ts";
+import { TOKEN_PREFIX } from "../src/auth/principal.ts";
 import { contentCsp } from "../src/content/csp.ts";
+import type { Db } from "../src/db/client.ts";
+import { agentConnections, oauthGrants } from "../src/db/schema.ts";
+import { hashToken, newId, newToken } from "../src/lib/crypto.ts";
+import { isoIn, nowIso } from "../src/lib/time.ts";
+import { revokeToken } from "../src/oauth/service.ts";
+import type { Principal } from "../src/policy.ts";
+import { revokeConnection } from "../src/services/connections.ts";
+import { setDataSources } from "../src/services/dataSources.ts";
 import {
   DASHBOARD,
   dashboard,
@@ -18,7 +27,21 @@ import {
   setSources,
   writeOne,
 } from "./data-sources-helpers.ts";
-import { APP, config, contentOrigin, createToken, mcpClient, tool } from "./helpers.ts";
+import {
+  APP,
+  agentPrincipal,
+  call,
+  config,
+  contentOrigin,
+  createToken,
+  db,
+  mcpClient,
+  personCtxFor,
+  serviceCtxFor,
+  tool,
+} from "./helpers.ts";
+
+const REDIRECT = "http://127.0.0.1:43123/callback";
 
 const now = () => new Date().toISOString();
 
@@ -283,6 +306,189 @@ describe("a pinned connection that goes away", () => {
     const c = await confirm(d.id, d.owner.session, view[0].config_hash);
     expect(c.body).toMatchObject({ status: "active", pin_lost_at: null });
   });
+
+  /** An OAuth connection of the dashboard's owner, with a grant its tokens resolve to. */
+  async function oauthConnection(userId: string) {
+    const clientId = newId();
+    const connectionId = newId();
+    const t = {
+      access: newToken(TOKEN_PREFIX.access),
+      refresh: newToken(TOKEN_PREFIX.refresh),
+      rotated: newToken(TOKEN_PREFIX.refresh),
+      code: newToken("plinth_code_"),
+    };
+    await env.DB.prepare(
+      "INSERT INTO oauth_clients (id, client_name, redirect_uris, created_at) VALUES (?1, 'Claude', ?2, ?3)",
+    )
+      .bind(clientId, JSON.stringify([REDIRECT]), nowIso())
+      .run();
+    await db()
+      .insert(agentConnections)
+      .values({
+        id: connectionId,
+        userId,
+        label: "Claude",
+        clientType: "claude",
+        kind: "oauth",
+        scopes: "artifacts:read artifacts:write",
+        oauthClientId: clientId,
+        createdAt: nowIso(),
+      })
+      .run();
+    await db()
+      .insert(oauthGrants)
+      .values({
+        id: newId(),
+        clientId,
+        userId,
+        connectionId,
+        codeHash: await hashToken(t.code),
+        codeUsedAt: nowIso(),
+        redirectUri: REDIRECT,
+        scope: "artifacts:read artifacts:write",
+        accessTokenHash: await hashToken(t.access),
+        accessExpiresAt: isoIn(3600_000),
+        refreshTokenHash: await hashToken(t.refresh),
+        previousRefreshTokenHash: await hashToken(t.rotated),
+        refreshExpiresAt: isoIn(3600_000),
+        createdAt: nowIso(),
+      })
+      .run();
+    return { clientId, connectionId, ...t, auth: { Authorization: `Bearer ${t.access}` } };
+  }
+
+  async function pinRow(id: string) {
+    return env.DB.prepare(
+      "SELECT target_connection, pin_lost_at, config_hash, confirmed_hash FROM data_sources WHERE artifact_id = ?1",
+    )
+      .bind(id)
+      .first<Record<string, string | null>>();
+  }
+
+  const form = (path: string, params: Record<string, string>) =>
+    call(path, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams(params).toString(),
+    });
+
+  it("revoking an OAuth grant unpins too: /oauth/revoke, a replayed refresh token, a replayed code", async () => {
+    const paths: [string, (o: Awaited<ReturnType<typeof oauthConnection>>) => Promise<Response>][] =
+      [
+        ["revoke", (o) => form("/oauth/revoke", { token: o.access, client_id: o.clientId })],
+        [
+          "refresh reuse",
+          (o) =>
+            form("/oauth/token", {
+              grant_type: "refresh_token",
+              refresh_token: o.rotated,
+              client_id: o.clientId,
+            }),
+        ],
+        [
+          "code reuse",
+          (o) =>
+            form("/oauth/token", {
+              grant_type: "authorization_code",
+              code: o.code,
+              code_verifier: "v".repeat(43),
+              redirect_uri: REDIRECT,
+              client_id: o.clientId,
+            }),
+        ],
+      ];
+    for (const [name, revoke] of paths) {
+      const d = await dashboard();
+      const o = await oauthConnection(d.owner.userId);
+      const set = await setSources(d.id, o.auth, [{ ...LINEAR, pin_connection: true }]);
+      expect(set.status, name).toBe(200);
+      expect(set.body.sources[0].target.connection_id, name).toBe(o.connectionId);
+      expect((await confirm(d.id, d.owner.session, set.body.sources[0].config_hash)).status).toBe(
+        200,
+      );
+      await revoke(o);
+      const conn = await env.DB.prepare("SELECT revoked_at FROM agent_connections WHERE id = ?1")
+        .bind(o.connectionId)
+        .first<{ revoked_at: string | null }>();
+      expect(conn?.revoked_at, name).toBeTruthy();
+      const row = await pinRow(d.id);
+      expect(row?.target_connection, name).toBeNull();
+      expect(row?.pin_lost_at, name).toBeTruthy();
+      expect(row?.config_hash, name).not.toBe(row?.confirmed_hash);
+    }
+  });
+
+  it("a pin set while its connection is being revoked never outlives the revocation", async () => {
+    // The set commits after the revocation: the set's own check lifts the pin.
+    const d = await dashboard();
+    const ownerPrincipal = {
+      ...agentPrincipal({
+        user: { id: d.owner.userId, email: d.owner.email },
+        connectionId: d.owner.connectionId,
+      }),
+      clientType: "claude" as const,
+    };
+    await env.DB.prepare("UPDATE agent_connections SET revoked_at = ?2 WHERE id = ?1")
+      .bind(d.owner.connectionId, nowIso())
+      .run();
+    const late = await setDataSources(serviceCtxFor(ownerPrincipal), {
+      id: d.id,
+      sources: [{ ...LINEAR, pin_connection: true }],
+    });
+    expect(late.sources[0]?.target?.connection_id).toBeNull();
+    expect(late.sources[0]?.pin_lost_at).toBeTruthy();
+    expect((await pinRow(d.id))?.target_connection).toBeNull();
+
+    // The set commits between the revocation's read of the pinned rows and its batch: the
+    // revocation's check after its batch lifts it, on both revocation paths.
+    const racing = (real: Db, pinNow: () => Promise<unknown>): Db => {
+      let raced = false;
+      return new Proxy(real, {
+        get(target, key) {
+          if (key === "batch") {
+            return async (qs: Parameters<Db["batch"]>[0]) => {
+              if (!raced) {
+                raced = true;
+                await pinNow();
+              }
+              return target.batch(qs);
+            };
+          }
+          const v = Reflect.get(target, key, target);
+          return typeof v === "function" ? v.bind(target) : v;
+        },
+      });
+    };
+    const d2 = await dashboard();
+    const pin = (dash: typeof d2, p: Principal) => () =>
+      setDataSources(serviceCtxFor(p), {
+        id: dash.id,
+        sources: [{ ...LINEAR, pin_connection: true }],
+      });
+    const p2 = agentPrincipal({
+      user: { id: d2.owner.userId, email: d2.owner.email },
+      connectionId: d2.owner.connectionId,
+    });
+    const ctx = personCtxFor({ id: d2.owner.userId, email: d2.owner.email });
+    await revokeConnection({ ...ctx, db: racing(ctx.db, pin(d2, p2)) }, d2.owner.connectionId);
+    let row = await pinRow(d2.id);
+    expect(row?.target_connection).toBeNull();
+    expect(row?.pin_lost_at).toBeTruthy();
+
+    const d3 = await dashboard();
+    const o = await oauthConnection(d3.owner.userId);
+    const p3 = {
+      ...agentPrincipal({
+        user: { id: d3.owner.userId, email: d3.owner.email },
+        connectionId: o.connectionId,
+      }),
+      clientType: "claude" as const,
+    };
+    await revokeToken(racing(db(), pin(d3, p3)), new URLSearchParams({ token: o.access }));
+    row = await pinRow(d3.id);
+    expect(row?.target_connection).toBeNull();
+    expect(row?.pin_lost_at).toBeTruthy();
+  });
 });
 
 describe("the viewer gate", () => {
@@ -336,6 +542,103 @@ describe("the viewer gate", () => {
     ]);
     expect(JSON.stringify(gate)).not.toContain(LINEAR.recipe);
     expect(JSON.stringify(gate)).not.toMatch(/config_hash|target/);
+  });
+
+  it("gives each source's age from the stamps still stored, so losing the freshest one makes it older", async () => {
+    const d = await dashboard();
+    const editor = await d.as("editor");
+    await setSources(d.id, d.owner.auth, [LINEAR]);
+    const old = new Date(Date.now() - 3 * 24 * 3600 * 1000).toISOString();
+    for (const docId of ["a", "b"]) {
+      await writeOne(d.id, d.owner.auth, {
+        doc_id: docId,
+        data: { n: 1 },
+        source: { id: "linear", fetched_at: old },
+      });
+    }
+    const fresh = now();
+    for (const docId of ["c", "e"]) {
+      await writeOne(d.id, d.owner.auth, {
+        doc_id: docId,
+        data: { n: 1 },
+        source: { id: "linear", fetched_at: fresh },
+      });
+    }
+    expect((await gateOf(d.id, d.owner.session)).sources[0]).toMatchObject({
+      fetched: 4,
+      last_fetched_at: fresh,
+    });
+    // An editor changes c from their agent without a source (the stamp clears), and the owner's
+    // agent deletes e: both figures fetched just now are gone.
+    const revC = (await rest(`/artifacts/${d.id}/data/issues/c`, d.owner.auth)).body.doc.rev;
+    await writeOne(d.id, editor.auth, { doc_id: "c", data: { n: 2 }, if_rev: revC });
+    const revE = (await rest(`/artifacts/${d.id}/data/issues/e`, d.owner.auth)).body.doc.rev;
+    const del = await rest(`/artifacts/${d.id}/data`, d.owner.auth, "POST", {
+      ops: [{ op: "delete", collection: "issues", doc_id: "e", if_rev: revE }],
+    });
+    expect(del.body.results[0].ok, JSON.stringify(del.body)).toBe(true);
+    expect((await gateOf(d.id, d.owner.session)).sources[0]).toMatchObject({
+      fetched: 2,
+      by_agent: 1,
+      last_fetched_at: old,
+    });
+    // Once no stamp is left, no age is given.
+    for (const docId of ["a", "b"]) {
+      const rev = (await rest(`/artifacts/${d.id}/data/issues/${docId}`, d.owner.auth)).body.doc
+        .rev;
+      await writeOne(d.id, d.owner.auth, { doc_id: docId, data: { n: 3 }, if_rev: rev });
+    }
+    expect((await gateOf(d.id, d.owner.session)).sources[0]).toMatchObject({
+      fetched: 0,
+      last_fetched_at: null,
+    });
+  });
+
+  it("credits figures to the label and connector their stamps carry, not to a renamed source", async () => {
+    const d = await dashboard();
+    const crm = { ...LINEAR, id: "crm", label: "Deals", connector: "HubSpot" };
+    await setSources(d.id, d.owner.auth, [crm]);
+    const at = now();
+    for (const docId of ["a", "b"]) {
+      await writeOne(d.id, d.owner.auth, {
+        doc_id: docId,
+        data: { n: 1 },
+        source: { id: "crm", fetched_at: at },
+      });
+    }
+    // Same id and collection, another connector: the documents still say HubSpot.
+    await setSources(d.id, d.owner.auth, [{ ...crm, connector: "Salesforce" }]);
+    let gate = await gateOf(d.id, d.owner.session);
+    expect(gate.sources).toEqual([
+      {
+        id: "crm",
+        label: "Deals",
+        connector: "Salesforce",
+        collection: "issues",
+        status: "awaiting_confirmation",
+        last_fetched_at: null,
+        fetched: 0,
+        by_person: 0,
+        by_agent: 0,
+        earlier: [{ label: "Deals", connector: "HubSpot", fetched: 2, last_fetched_at: at }],
+      },
+    ]);
+    // A document stamped under the new connector counts as Salesforce; the other stays HubSpot.
+    const rev = (await rest(`/artifacts/${d.id}/data/issues/a`, d.owner.auth)).body.doc.rev;
+    const later = now();
+    await writeOne(d.id, d.owner.auth, {
+      doc_id: "a",
+      data: { n: 2 },
+      if_rev: rev,
+      source: { id: "crm", fetched_at: later },
+    });
+    gate = await gateOf(d.id, d.owner.session);
+    expect(gate.sources[0]).toMatchObject({
+      connector: "Salesforce",
+      fetched: 1,
+      last_fetched_at: later,
+      earlier: [{ connector: "HubSpot", fetched: 1, last_fetched_at: at }],
+    });
   });
 
   it("is there whatever the page declares, and under opaque isolation; absent without sources", async () => {

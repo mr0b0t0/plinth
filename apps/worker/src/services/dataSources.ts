@@ -11,6 +11,7 @@ import {
   type DataOp,
   type DataSourceInfo,
   type DataSourceInput,
+  type EarlierStamps,
   LIMITS,
   normalizeRecipe,
   normalizeSourceText,
@@ -27,7 +28,7 @@ import {
 import { and, eq, inArray } from "drizzle-orm";
 import { appUrl } from "../config.ts";
 import type { Db } from "../db/client.ts";
-import { type ArtifactRow, dataRefreshTasks, dataSources } from "../db/schema.ts";
+import { type ArtifactRow, agentConnections, dataRefreshTasks, dataSources } from "../db/schema.ts";
 import { sha256Hex } from "../lib/crypto.ts";
 import { ApiError, notFound } from "../lib/errors.ts";
 import { nowIso } from "../lib/time.ts";
@@ -184,8 +185,12 @@ export async function summarySources(
 /**
  * The viewer bar's sources (ViewGate `sources`), for everyone who may open the page: one indexed
  * read of the artifact's sources and, only when it has some, one aggregate over their collections,
- * counted from the stamps the server stored. Never the recipe, the target or the hash. Undefined
- * when the artifact has no source.
+ * counted from the stamps the server stored. Each document is credited to what its own stamp says
+ * (the label and connector copied onto it when it was written), so renaming a source never moves
+ * earlier figures under its new name; and each age is the newest fetched_at among the documents
+ * counted, so deleting or overwriting the freshest one never leaves the line claiming the rest are
+ * newer than they are. Never the recipe, the target or the hash. Undefined when the artifact has
+ * no source.
  */
 export async function gateSources(
   d1: D1Database,
@@ -195,38 +200,75 @@ export async function gateSources(
   if (rows.length === 0) return undefined;
   const { results } = await d1
     .prepare(
-      `SELECT collection, source_id,
+      `SELECT collection, source_id, source_label, source_connector,
               (source_id IS NULL AND updated_via IN ('page', 'app')) AS person,
-              count(*) AS n
+              count(*) AS n, max(fetched_at) AS newest
          FROM artifact_docs
         WHERE artifact_id = ?1
           AND collection IN (SELECT collection FROM data_sources WHERE artifact_id = ?1)
-        GROUP BY collection, source_id, person`,
+        GROUP BY collection, source_id, source_label, source_connector, person`,
     )
     .bind(artifactId)
-    .all<{ collection: string; source_id: string | null; person: number; n: number }>();
+    .all<{
+      collection: string;
+      source_id: string | null;
+      source_label: string | null;
+      source_connector: string | null;
+      person: number;
+      n: number;
+      newest: string | null;
+    }>();
   return rows.map((r) => {
     let fetched = 0;
+    let newest: string | null = null;
     let byPerson = 0;
     let byAgent = 0;
+    const earlier = new Map<string, EarlierStamps>();
     for (const g of results) {
       if (g.collection !== r.collection) continue;
-      if (g.source_id === r.source_id) fetched += g.n;
-      else if (g.source_id === null && g.person) byPerson += g.n;
-      else if (g.source_id === null) byAgent += g.n;
+      if (g.source_id === null) {
+        if (g.person) byPerson += g.n;
+        else byAgent += g.n;
+        continue;
+      }
+      if (g.source_id !== r.source_id) continue;
+      const label = g.source_label ?? "";
+      const connector = g.source_connector ?? "";
+      if (label === r.label && connector === r.connector) {
+        fetched += g.n;
+        newest = newerTime(g.newest, newest);
+        continue;
+      }
+      const key = JSON.stringify([label, connector]);
+      const e = earlier.get(key) ?? { label, connector, fetched: 0, last_fetched_at: null };
+      e.fetched += g.n;
+      e.last_fetched_at = newerTime(g.newest, e.last_fetched_at);
+      earlier.set(key, e);
     }
-    return {
+    const out: ViewSource = {
       id: r.source_id,
       label: r.label,
       connector: r.connector,
       collection: r.collection,
       status: statusOf(r),
-      last_fetched_at: r.last_fetched_at,
+      last_fetched_at: newest,
       fetched,
       by_person: byPerson,
       by_agent: byAgent,
     };
+    if (earlier.size > 0) {
+      const t = (e: EarlierStamps) => e.last_fetched_at ?? "";
+      out.earlier = [...earlier.values()].sort((a, b) =>
+        t(a) === t(b) ? 0 : t(a) > t(b) ? -1 : 1,
+      );
+    }
+    return out;
   });
+}
+
+/** The later of two stored ISO times (the same format, so they compare as text). */
+function newerTime(a: string | null, b: string | null): string | null {
+  return a && (!b || a > b) ? a : b;
 }
 
 // ---------- set, remove, confirm ----------
@@ -346,6 +388,10 @@ export async function setDataSources(
     );
   }
   await d1.batch(statements);
+  // The connection may have been revoked while this request ran, after its revocation read the
+  // pinned rows: then the pin just written is lifted here, and the source waits with pin_lost_at.
+  const pinned = entries.find((e) => e.config.target_connection)?.config.target_connection;
+  if (pinned) await unpinIfRevoked(ctx.db, pinned);
   const rows = await rowsOf(d1, artifact.id);
   const sources = await infosOf(d1, rows, ctx.principal, role);
   const awaiting = sources.filter((s) => s.status === "awaiting_confirmation").map((s) => s.id);
@@ -515,6 +561,26 @@ export async function recordFetched(
 }
 
 // ---------- a pinned connection that goes away ----------
+
+/**
+ * Run after a batch that pins a source to a connection (setDataSources) and after a batch that
+ * revokes one (revokeConnection, the OAuth grant revocation): when the connection is revoked,
+ * unpin every source still pinned to it. A revocation batch reads the pinned rows before it
+ * commits, and a set could pin the connection in between; whichever of the two commits second
+ * then sees both writes here, so no source stays pinned to a revoked connection without
+ * pin_lost_at. Two reads when nothing is left to do.
+ */
+export async function unpinIfRevoked(db: Db, connectionId: string, now = nowIso()): Promise<void> {
+  const conn = await db
+    .select({ revokedAt: agentConnections.revokedAt })
+    .from(agentConnections)
+    .where(eq(agentConnections.id, connectionId))
+    .get();
+  // A deleted connection's pins were cleared by ON DELETE SET NULL; a live one keeps them.
+  if (!conn?.revokedAt) return;
+  const [first, ...rest] = await unpinConnectionQueries(db, connectionId, now);
+  if (first) await db.batch([first, ...rest]);
+}
 
 /**
  * Queries for the batch that revokes a connection (services/connections.ts revokeConnection, and

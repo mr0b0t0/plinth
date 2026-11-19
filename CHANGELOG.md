@@ -17,10 +17,12 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   source an agent sets or changes waits until the owner reads its recipe and confirms it in the
   Share dialog (agents cannot confirm); revoking a connection a source was pinned to makes it wait
   again. Every reader sees each stamped figure's source and age (`doc.source`, and the runtime's
-  `plinth.cite` badges), and one line under the bar, counted by the server, says which figures were
-  fetched by an agent of the owner and how many were last changed by a person. A page can declare
+  `plinth.cite` badges), and one line under the bar, counted by the server from the stamps each
+  document carries, says which figures were fetched by an agent of the owner, from which system
+  and how long ago, and how many were last changed by a person. A page can declare
   `plinth-data-sourced` collections that only the owner and editors write. Credential-like text is
-  refused in recipes and stamps. Works with no page declaration and under opaque isolation (figures
+  refused in recipes and stamps; links to records (a Linear issue, a Jira board, a Notion page)
+  pass. Works with no page declaration and under opaque isolation (figures
   inline). Migration `0015_data_sources.sql`.
 - **Follow the presenter in a deck.** An owner or editor can turn on **Lead viewers** in a deck's
   controls or presenter view, and the people the deck is shared with who have it open follow their

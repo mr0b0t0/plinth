@@ -18,7 +18,7 @@ import { nowIso } from "../lib/time.ts";
 import type { Principal } from "../policy.ts";
 import { decideFor, requireArtifact } from "./artifacts.ts";
 import type { Ctx } from "./context.ts";
-import { unpinConnectionQueries } from "./dataSources.ts";
+import { unpinConnectionQueries, unpinIfRevoked } from "./dataSources.ts";
 
 /** A service context whose principal is a signed-in person (api/connections.ts checks it). */
 export type PersonCtx = Ctx & { principal: Extract<Principal, { kind: "user" }> };
@@ -186,5 +186,7 @@ export async function revokeConnection(ctx: PersonCtx, id: string): Promise<Conn
     // Data sources pinned to it wait for the owner again (services/dataSources.ts).
     ...(await unpinConnectionQueries(ctx.db, row.id, now)),
   ]);
+  // A source pinned after the read above and before the batch committed.
+  await unpinIfRevoked(ctx.db, row.id, now);
   return oneInfo(ctx, { ...row, revokedAt: row.revokedAt ?? now });
 }

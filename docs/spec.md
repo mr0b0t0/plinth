@@ -2018,8 +2018,9 @@ where they came from.
   `collection` its figures go to, and whose agents it belongs to (a client type, or one pinned
   connection). Labels and connectors are at most 60 characters. Control and invisible characters
   are refused, and so is anything that looks like a credential (a bearer header, a known token
-  prefix, a JWT, a secret-named query parameter, a long hex or key-like run): a recipe describes a
-  query and never needs one. Only the owner reads the recipe, the target and the confirmation hash;
+  prefix, a JWT, a secret-named query parameter, 40 or more hex characters, or 40 or more key-like
+  characters that mix upper case, lower case and digits and do not read as words and identifiers,
+  so a link to a record passes): a recipe describes a query and never needs one. Only the owner reads the recipe, the target and the confirmation hash;
   editors see what a source is and its state.
 - **Setting a source never confirms it.** The owner's agent sets the whole list with
   `set_data_sources` (or `PUT /api/v1/artifacts/:ref/sources`); the signed-in owner may too, naming
@@ -2035,7 +2036,9 @@ where they came from.
   (`/a/<slug>?sources=review`, which opens the Share dialog), and the owner's viewer bar says how
   many sources wait. A source pinned to a connection that is revoked loses its pin in the same
   batch, records when (`pin_lost_at`), and waits for the owner again instead of moving to any
-  connection of its type; the Share dialog says so.
+  connection of its type; the Share dialog says so. A set that pins a connection and a revocation
+  of it that run at the same time each check again after they commit, so the pin never outlives
+  the revocation.
 - **Stamps on documents.** A `write_artifact_data` set may carry `source: { id, ref?, fetched_at }`.
   Only the owner's agent stamps (policy `sourcedWrite`: any other writer gets `source_owner_only`);
   the source must exist on the artifact and name the op's collection; `fetched_at` may be at most
@@ -2062,11 +2065,16 @@ where they came from.
   can draw any badge it likes, so the badges are a convenience, never proof.
 - **The bar line.** For an artifact with sources the gate adds `sources`, counted by the server
   from the stamps it stored, whatever the page declares and in every isolation mode: per source,
-  how many documents in its collection it stamped, and how many unstamped ones were last changed
-  from the page or app (a person) or by an agent without a source. The app turns it into one line
-  under the bar ("Figures from Linear (14 figures, fetched 12 minutes ago) were written by an agent
-  of the owner. 2 were last changed by a person, not fetched."). The frame cannot touch it; it is
-  the statement that counts. Never the recipe, the target or the hash.
+  how many documents in its collection it stamped under its current label and connector and the
+  newest `fetched_at` among them (`last_fetched_at`; null when none is left), the documents it
+  stamped under an earlier label or connector grouped as their stamps say (`earlier`, absent when
+  there are none), and how many unstamped ones were last changed from the page or app (a person)
+  or by an agent without a source. Deleting or overwriting the freshest figure makes the line
+  older, and renaming a source never moves earlier figures under its new name. The app turns it
+  into one line under the bar ("Figures from Linear (14 figures, fetched 12 minutes ago) were
+  written by an agent of the owner. 2 were last changed by a person, not fetched."), naming each
+  group of stamps by its own connector with its own count and age. The frame cannot touch it; it
+  is the statement that counts. Never the recipe, the target or the hash.
 - **Opaque isolation.** Pages have no shared data there, so nothing is stamped. Sources, the
   confirmation and the bar line still work: the owner's agent publishes the figures inline in a new
   version, and `plinth.cite` works on inline objects (`{ source: { label, connector, fetched_at }

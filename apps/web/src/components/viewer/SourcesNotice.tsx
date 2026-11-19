@@ -23,19 +23,30 @@ export function sourcesNoticeText(
 ): string | null {
   if (!sources || sources.length === 0) return null;
   const parts: string[] = [];
-  const fetched = sources.filter((s) => s.fetched > 0);
-  const empty = sources.filter((s) => s.fetched === 0);
-  if (fetched.length > 0) {
-    const each = fetched.map((s) => {
-      const age = s.last_fetched_at ? `, fetched ${relativeTime(s.last_fetched_at, now)}` : "";
-      return `${s.connector} (${figures(s.fetched)}${age})`;
+  // One entry per group of stamps, each with its own count and age: a source's current stamps,
+  // then those it wrote under an earlier label or connector, named as their stamps say.
+  const groups: { connector: string; fetched: number; at: string | null }[] = [];
+  for (const s of sources) {
+    if (s.fetched > 0)
+      groups.push({ connector: s.connector, fetched: s.fetched, at: s.last_fetched_at });
+    for (const e of s.earlier ?? []) {
+      if (e.fetched > 0)
+        groups.push({ connector: e.connector, fetched: e.fetched, at: e.last_fetched_at });
+    }
+  }
+  const named = new Set(groups.map((g) => g.connector));
+  const empty = sources.filter((s) => s.fetched === 0 && !named.has(s.connector));
+  if (groups.length > 0) {
+    const each = groups.map((g) => {
+      const age = g.at ? `, fetched ${relativeTime(g.at, now)}` : "";
+      return `${g.connector} (${figures(g.fetched)}${age})`;
     });
     parts.push(`Figures from ${joinAnd(each)} were written by an agent of the owner.`);
   }
   if (empty.length > 0) {
     const names = joinAnd([...new Set(empty.map((s) => s.connector))]);
     parts.push(
-      fetched.length > 0
+      groups.length > 0
         ? `None are stored as fetched from ${names}.`
         : `This page says its figures come from ${names}, but none are stored as fetched: what it shows comes from the page itself.`,
     );

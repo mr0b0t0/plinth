@@ -80,6 +80,43 @@ describe("sourcesNoticeText", () => {
       sourcesNoticeText([src(), src({ id: "s", connector: "Stripe", fetched: 0 })], NOW),
     ).toContain("None are stored as fetched from Stripe.");
   });
+
+  it("names figures a source stamped before it was renamed as their stamps say, each with its own age", () => {
+    const hubspot = {
+      label: "Deals",
+      connector: "HubSpot",
+      fetched: 14,
+      last_fetched_at: "2026-11-16T12:00:00.000Z",
+    };
+    const renamed = src({
+      id: "crm",
+      label: "Deals",
+      connector: "Salesforce",
+      fetched: 0,
+      last_fetched_at: null,
+      earlier: [hubspot],
+    });
+    expect(sourcesNoticeText([renamed], NOW)).toBe(
+      "Figures from HubSpot (14 figures, fetched 3 days ago) were written by an agent of the owner. None are stored as fetched from Salesforce.",
+    );
+    expect(
+      sourcesNoticeText(
+        [{ ...renamed, fetched: 2, last_fetched_at: "2026-11-19T11:48:00.000Z" }],
+        NOW,
+      ),
+    ).toBe(
+      "Figures from Salesforce (2 figures, fetched 12 minutes ago) and HubSpot (14 figures, fetched 3 days ago) were written by an agent of the owner.",
+    );
+    // A new label on the same connector: the connector is named, not said to be missing.
+    expect(
+      sourcesNoticeText(
+        [{ ...renamed, connector: "HubSpot", earlier: [{ ...hubspot, label: "Old" }] }],
+        NOW,
+      ),
+    ).toBe(
+      "Figures from HubSpot (14 figures, fetched 3 days ago) were written by an agent of the owner.",
+    );
+  });
 });
 
 describe("SourcesNotice", () => {

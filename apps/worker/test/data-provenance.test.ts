@@ -238,6 +238,24 @@ describe("stamping", () => {
       expect(r.error?.code, ref).toBe("invalid_input");
     }
   });
+
+  it("a ref may point at the record in the tracker: long paths and page ids are not credentials", async () => {
+    const d = await dashboard();
+    await setSources(d.id, d.owner.auth, [LINEAR]);
+    for (const [i, ref] of [
+      "https://linear.app/acme/issue/ENG-123/fix-the-login-redirect-on-mobile",
+      "https://acme.atlassian.net/jira/software/projects/ENG/boards/12",
+      "https://www.notion.so/acme/Q4-Roadmap-2a1b3c4d5e6f7a8b9c0d1e2f3a4b5c6d",
+    ].entries()) {
+      const r = await writeOne(d.id, d.owner.auth, {
+        doc_id: `r${i}`,
+        data: { n: i },
+        source: { id: "linear", ref, fetched_at: now() },
+      });
+      expect(r.ok, `${ref}: ${JSON.stringify(r)}`).toBe(true);
+      expect((await stampRow(d.id, "issues", `r${i}`))?.source_ref).toBe(ref);
+    }
+  });
 });
 
 describe("how readers see it", () => {

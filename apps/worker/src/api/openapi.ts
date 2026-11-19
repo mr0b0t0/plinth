@@ -3053,20 +3053,53 @@ function dataSourcesSchemas(): Record<string, Json> {
       description: "A data source in list_artifact_data's summary: never its recipe",
     },
     ViewSource: {
+      ...obj(
+        {
+          ...common,
+          last_fetched_at: nullable("string", {
+            format: "date-time",
+            description:
+              "The newest fetched_at among the documents counted in fetched, from their stamps; " +
+              "null when none is stored",
+          }),
+          fetched: int({
+            minimum: 0,
+            description:
+              "Documents in its collection stamped with it under its current label and connector",
+          }),
+          earlier: {
+            type: "array",
+            items: ref("EarlierStamps"),
+            description:
+              "Documents it stamped under an earlier label or connector, as their stamps say, " +
+              "newest first; absent when there are none",
+          },
+          by_person: int({
+            minimum: 0,
+            description: "Unstamped documents in its collection last changed from the page or app",
+          }),
+          by_agent: int({
+            minimum: 0,
+            description: "Unstamped documents in its collection last changed by an agent",
+          }),
+        },
+        ["earlier"],
+      ),
+      description:
+        "What the viewer bar tells everyone about a data source, from the stamps the server stored",
+    },
+    EarlierStamps: {
       ...obj({
-        ...common,
-        fetched: int({ minimum: 0, description: "Documents in its collection stamped with it" }),
-        by_person: int({
-          minimum: 0,
-          description: "Unstamped documents in its collection last changed from the page or app",
-        }),
-        by_agent: int({
-          minimum: 0,
-          description: "Unstamped documents in its collection last changed by an agent",
+        label: str({ description: UNTRUSTED_SOURCE_TEXT }),
+        connector: str({ description: UNTRUSTED_SOURCE_TEXT }),
+        fetched: int({ minimum: 0 }),
+        last_fetched_at: nullable("string", {
+          format: "date-time",
+          description: "The newest fetched_at among those documents",
         }),
       }),
       description:
-        "What the viewer bar tells everyone about a data source, from the stamps the server stored",
+        "Documents a source stamped under a label and connector it no longer has, as their stamps say",
     },
     AgentDocSource: {
       ...obj({

@@ -38,11 +38,34 @@ export function normalizeRecipe(s: string): string {
 }
 
 /**
+ * A piece of a long run that reads as a word or an identifier, not as random characters: a word
+ * (capitalised or camel case), an upper-case code with digits (`ENG`, `Q4`, `2026`) or lower-case
+ * letters and digits (`v2`, a Notion page id). Written without nested quantifiers that could
+ * backtrack.
+ */
+const WORDLIKE_PIECE = /^(?:[A-Z]?[a-z]+(?:[A-Z][a-z]+)*|[A-Z0-9]+|[a-z0-9]+)$/;
+
+/**
+ * A long run of key-like characters is taken for a credential when it mixes upper case, lower
+ * case and digits, unless every piece between its separators (`-`, `_`, `/`, `+`, `=`) reads as
+ * a word or an identifier. So a URL path such as `/acme/issue/ENG-123/fix-the-login-redirect` or
+ * a Notion page name passes, and a random key, with or without the odd separator, does not.
+ */
+function keyLikeRun(run: string): boolean {
+  if (!(/[A-Z]/.test(run) && /[a-z]/.test(run) && /[0-9]/.test(run))) return false;
+  return !run
+    .split(/[-_/+=]+/)
+    .filter((piece) => piece.length > 0)
+    .every((piece) => WORDLIKE_PIECE.test(piece));
+}
+
+/**
  * Text that looks like it holds a credential: a bearer header, a well-known token prefix (OpenAI
  * and Anthropic `sk-`, GitHub `ghp_` and `gho_`, Slack `xox?-`, AWS `AKIA`, Plinth's own
- * `plinth_`), a JWT, a URL query parameter named like a secret, a run of 32 or more hex
- * characters (a SHA-256, an API key), or a run of 40 or more base64url characters mixing upper
- * case, lower case and digits. Recipes describe queries; they never need any of these.
+ * `plinth_`), a JWT, a URL query parameter named like a secret, a run of 40 or more hex
+ * characters (a SHA-1 or SHA-256, an API key), or a run of 40 or more base64 or base64url
+ * characters that mixes upper case, lower case and digits and does not read as words and
+ * identifiers (keyLikeRun). Recipes describe queries; they never need any of these.
  */
 export function looksLikeSecret(text: string): boolean {
   if (/\bbearer\s+\S/i.test(text)) return true;
@@ -50,9 +73,9 @@ export function looksLikeSecret(text: string): boolean {
   if (/eyJ[A-Za-z0-9_-]*\.eyJ[A-Za-z0-9_-]*\./.test(text)) return true;
   if (/[?&;](?:token|key|secret|sig|signature|access_token|api_key|apikey|password)=/i.test(text))
     return true;
-  if (/[0-9a-fA-F]{32,}/.test(text)) return true;
+  if (/[0-9a-fA-F]{40,}/.test(text)) return true;
   for (const run of text.match(/[A-Za-z0-9_+/=-]{40,}/g) ?? []) {
-    if (/[A-Z]/.test(run) && /[a-z]/.test(run) && /[0-9]/.test(run)) return true;
+    if (keyLikeRun(run)) return true;
   }
   return false;
 }
@@ -289,11 +312,34 @@ export interface ViewSource {
   connector: string;
   collection: string;
   status: SourceStatus;
+  /**
+   * The newest fetched_at among the documents counted in `fetched`, read from their stamps (not
+   * the source's own last_fetched_at, which a deleted or overwritten document cannot lower), or
+   * null when none is stored.
+   */
   last_fetched_at: string | null;
-  /** Documents in its collection stamped with this source. */
+  /**
+   * Documents in its collection stamped with this source under its current label and connector.
+   * Each stamp carries the label and connector it was written with, so a document stamped before
+   * the source was renamed is counted in `earlier`, with what its stamp says.
+   */
   fetched: number;
+  /**
+   * Documents stamped with this source's id under an earlier label or connector, grouped by what
+   * their stamps say, newest first. Absent when there are none.
+   */
+  earlier?: EarlierStamps[];
   /** Documents in its collection without a stamp, last changed from the page or the app. */
   by_person: number;
   /** Documents in its collection without a stamp, last changed by an agent. */
   by_agent: number;
+}
+
+/** Documents a source stamped under a label and connector it no longer has (ViewSource `earlier`). */
+export interface EarlierStamps {
+  label: string;
+  connector: string;
+  fetched: number;
+  /** The newest fetched_at among those documents. */
+  last_fetched_at: string | null;
 }

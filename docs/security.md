@@ -2145,9 +2145,16 @@ written it. So:
 - The hash covers everything an unattended run would depend on (label, connector, recipe,
   collection, schedule, who may refresh, client type, pinned connection). Revoking a pinned
   connection recomputes it in the same batch, so the source waits again instead of moving to any
-  connection of its type.
+  connection of its type. The revocation reads the pinned rows before its batch commits, so a set
+  that pins the same connection in between could land after the read: both the set and the
+  revocation check the connection again after they commit and unpin what is still pinned to a
+  revoked one, so whichever commits second catches it.
 - Recipes, labels and connectors that look like credentials are refused, and so is control, bidi
-  and zero-width text. The Share dialog shows the recipe in a `<pre>` as text.
+  and zero-width text. A long run of key-like characters counts as a credential when it mixes
+  upper case, lower case and digits, unless every piece between its separators reads as a word or
+  an identifier, so a link to a record (`/acme/issue/ENG-123/fix-the-login-redirect`, a Notion
+  page id) passes and a random key does not; hex counts from 40 characters (a SHA-1 or a
+  SHA-256). The Share dialog shows the recipe in a `<pre>` as text.
 - Tool descriptions and results say the recipe is a request, never an instruction with the owner's
   authority, to be run only as a read-only query into its own collection.
 
@@ -2168,7 +2175,11 @@ delete shared data stands; their unstamped changes are counted.
 **What is trustworthy.** A stamp records which of the owner's connections claimed to fetch from
 which source; Plinth cannot check the vendor. Page code can draw any badge (`plinth.cite` is a
 convenience), so the statement that counts is the line under the app's bar, computed by the
-server from the stored stamps (`ViewGate.sources`), which the frame cannot change.
+server from the stored stamps (`ViewGate.sources`), which the frame cannot change. It credits each
+document to the label and connector its own stamp carries, so re-setting a source under another
+connector never moves earlier figures under the new name, and each age is the newest `fetched_at`
+among the documents counted, so deleting or overwriting the freshest one makes the line older,
+never younger.
 
 **Residual risks.** An owner who confirms a bad recipe: the dialog shows it in full and says what
 confirming means, and Plinth cannot judge it. Private figures on a wide audience: data on an

@@ -98,7 +98,23 @@ const FAKE = {
   xox: ["xo", "xb-1234-5678"].join(""),
   akia: ["AK", "IA", "EXAMPLE", "FIXTURE00"].join(""),
   mixed: ["Xk9pQ2mZ7v", "T4wR8sL1nB", "6cF3hJ5gD0", "aE2yU7iO9q"].join(""),
+  /** A standard-base64 key with slashes in it (the shape of an AWS secret access key). */
+  slashed: ["wJalrXUtnF", "EMI/K7MDEN", "G/bPxRfiCY", "FIXTUREKEY"].join(""),
+  /** A base64url key whose random characters happen to hold separators. */
+  dashed: ["Xk9pQ2-mZ7v", "T4wR8sL1nB", "6cF3h_J5gD", "0aE2yU7iO9q"].join(""),
 };
+
+/** Links to records in the trackers people use: none holds a credential. */
+const RECORD_URLS = [
+  "https://linear.app/acme/issue/ENG-123/fix-the-login-redirect-on-mobile",
+  "https://acme.atlassian.net/jira/software/projects/ENG/boards/12",
+  "https://linear.app/acme/team/ENG/view/open-issues-by-state-2026",
+  "https://www.notion.so/acme/Q4-Roadmap-2a1b3c4d5e6f7a8b9c0d1e2f3a4b5c6d",
+  "https://www.notion.so/2a1b3c4d5e6f7a8b9c0d1e2f3a4b5c6d",
+  "https://github.com/acme/web/issues/4821",
+  "https://app.hubspot.com/contacts/1234567/objects/0-3/views/all/list",
+  "https://acme.notion.site/MyProject-Getting-Started-With-Our-API-v2",
+];
 
 describe("looksLikeSecret", () => {
   it("catches tokens, keys, JWTs, secret query parameters and long hex or mixed runs", () => {
@@ -116,8 +132,18 @@ describe("looksLikeSecret", () => {
       "a sha256 e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
       "0123456789abcdef0123456789abcdef01234567",
       FAKE.mixed,
+      FAKE.slashed,
+      FAKE.dashed,
+      `https://api.example.com/v1/${FAKE.mixed}/issues`,
     ]) {
       expect(looksLikeSecret(s), s).toBe(true);
+    }
+  });
+
+  it("lets links to records through, and recipes that quote them", () => {
+    for (const url of RECORD_URLS) {
+      expect(looksLikeSecret(url), url).toBe(false);
+      expect(recipeProblem(`Linear issues like ${url}, one document per state`), url).toBeNull();
     }
   });
 
@@ -168,6 +194,8 @@ describe("sanitizeSourceRef", () => {
       ref: "https://host.example/p",
     });
     expect(sanitizeSourceRef("  ENG-123  ")).toEqual({ ok: true, ref: "ENG-123" });
+    for (const url of RECORD_URLS)
+      expect(sanitizeSourceRef(url), url).toEqual({ ok: true, ref: url });
     expect(sanitizeSourceRef("   ")).toEqual({ ok: true, ref: null });
   });
 
@@ -178,6 +206,7 @@ describe("sanitizeSourceRef", () => {
     expect(sanitizeSourceRef("eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.x").ok).toBe(false);
     expect(sanitizeSourceRef("0123456789abcdef0123456789abcdef01234567").ok).toBe(false);
     expect(sanitizeSourceRef("https://").ok).toBe(false);
+    expect(sanitizeSourceRef(`https://x.example/files/${FAKE.slashed}`).ok).toBe(false);
   });
 });
 
