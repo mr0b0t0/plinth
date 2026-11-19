@@ -8,7 +8,7 @@
 import { LIMITS } from "../constants.ts";
 import { utf8Bytes } from "../pageComments.ts";
 import { colLetter } from "./address.ts";
-import { parseCsv } from "./csv.ts";
+import { readCsv } from "./csv.ts";
 import {
   type Cell,
   isSheetLinkUrl,
@@ -23,7 +23,7 @@ import { XLFN_FUNCTIONS } from "./formula/arity.ts";
 import { parseFormula } from "./formula/parser.ts";
 import { isoDateSerial, MIN_DATE_SERIAL, numberFromText, serialIso } from "./formula/values.ts";
 import { platform } from "./platform.ts";
-import { type RawCell, readXlsx, SheetImportError } from "./xlsxRead.ts";
+import { checkSheetBytes, type RawCell, readXlsx, SheetImportError } from "./xlsxRead.ts";
 
 export { SheetImportError } from "./xlsxRead.ts";
 
@@ -164,16 +164,25 @@ export function sheetFromCsv(text: string): Sheet {
       `A CSV import is at most ${Math.round(LIMITS.maxSheetImportBytes / (1024 * 1024))} MB`,
     );
   }
-  const table = parseCsv(text);
+  // Rows past the limit are counted, never built, and the cells are counted before any value is
+  // made from them: a long or wide file is a refusal, not a Worker out of memory.
+  const { rows: table, rowCount } = readCsv(text, LIMITS.maxSheetRows);
   if (table.length === 0) throw new SheetImportError("The CSV is empty");
+  if (rowCount > LIMITS.maxSheetRows) {
+    throw new SheetImportError(
+      `A sheet holds at most ${LIMITS.maxSheetRows} rows; this file has ${rowCount}`,
+    );
+  }
   const [head, ...rest] = table as [string[], ...string[][]];
-  const data = rest
-    .filter((r) => !(r.length === 1 && r[0] === ""))
-    .map((r) => {
-      const out = r.map(csvValue);
-      while (out.length > 0 && out[out.length - 1] === null) out.pop();
-      return out;
-    });
+  const records = rest.filter((r) => !(r.length === 1 && r[0] === ""));
+  let bytes = 0;
+  for (const r of records) for (const s of r) if (s !== "") bytes += 2;
+  checkSheetBytes(bytes);
+  const data = records.map((r) => {
+    const out = r.map(csvValue);
+    while (out.length > 0 && out[out.length - 1] === null) out.pop();
+    return out;
+  });
   return build(head, data);
 }
 
@@ -206,10 +215,12 @@ const SYMBOLS: Record<string, string> = {
 export function numberFormatOf(code: string): SheetNumberFormat | "date" | undefined {
   if (code.startsWith("#")) return BUILT_IN[Number(code.slice(1))];
   const firstSection = code.split(";")[0] ?? "";
-  const bracket = /\[\$([^\]-]*)(?:-[^\]]*)?\]/.exec(firstSection);
+  // A bracket's contents exclude [ as well as ], so no search runs past the next bracket: the
+  // patterns stay linear in the code's length.
+  const bracket = /\[\$([^[\]-]*)(?:-[^[\]]*)?\]/.exec(firstSection);
   const bare = firstSection
     .replace(/"[^"]*"/g, "")
-    .replace(/\[[^\]]*\]/g, "")
+    .replace(/\[[^[\]]*\]/g, "")
     .replace(/\\./g, "");
   if (/[dy]/i.test(bare) || /m{3,}/i.test(bare)) return "date";
   const decimals = /\.([0#]+)/.exec(bare)?.[1]?.length;
@@ -222,7 +233,7 @@ export function numberFormatOf(code: string): SheetNumberFormat | "date" | undef
     currency = /^[A-Z]{3}$/.test(sym) ? sym : SYMBOLS[sym];
   }
   if (!currency) {
-    const unbracketed = firstSection.replace(/\[[^\]]*\]/g, "");
+    const unbracketed = firstSection.replace(/\[[^[\]]*\]/g, "");
     const sym = Object.keys(SYMBOLS).find((s) => unbracketed.includes(s));
     if (sym) currency = SYMBOLS[sym];
   }
@@ -233,7 +244,20 @@ export function numberFormatOf(code: string): SheetNumberFormat | "date" | undef
   return undefined;
 }
 
-function xlsxValue(c: RawCell, styles: string[]): In {
+/** A cell style's column format, worked out once per format code however many cells use it. */
+type FormatOf = (style: number) => SheetNumberFormat | "date" | undefined;
+
+function formatsOf(styles: string[]): FormatOf {
+  const seen = new Map<string, SheetNumberFormat | "date" | undefined>();
+  return (style) => {
+    const code = styles[style];
+    if (code === undefined) return undefined;
+    if (!seen.has(code)) seen.set(code, numberFormatOf(code));
+    return seen.get(code);
+  };
+}
+
+function xlsxValue(c: RawCell, formatOf: FormatOf): In {
   if (c === null) return null;
   switch (c.t) {
     case "s":
@@ -243,16 +267,15 @@ function xlsxValue(c: RawCell, styles: string[]): In {
     case "e":
       return { t: "s", v: c.v };
     case "n": {
-      const code = styles[c.style];
-      const fmt = code === undefined ? undefined : numberFormatOf(code);
+      const fmt = formatOf(c.style);
       return fmt ? { t: "n", v: c.v, fmt } : { t: "n", v: c.v };
     }
     case "f": {
-      const cached = xlsxValue(c.cached, styles);
+      const cached = xlsxValue(c.cached, formatOf);
       const src = c.f.replace(/_xlfn\.([A-Z.]+)\(/g, (m, name: string) =>
         XLFN_FUNCTIONS.has(name) ? `${name}(` : m,
       );
-      return parseFormula(src).ok && src.length < LIMITS.maxSheetFormulaChars
+      return src.length < LIMITS.maxSheetFormulaChars && parseFormula(src).ok
         ? { t: "f", f: src, cached }
         : cached;
     }
@@ -286,12 +309,15 @@ export function sheetFromXlsx(bytes: Uint8Array): Sheet {
     );
   }
   const data: In[][] = [];
+  const formatOf = formatsOf(raw.styles);
   for (let r = 1; r < raw.rows.length; r++) {
     const row = raw.rows[r] ?? [];
     const out: In[] = [];
-    for (let c = 0; c < row.length; c++) out.push(xlsxValue(row[c] ?? null, raw.styles));
+    for (let c = 0; c < row.length; c++) out.push(xlsxValue(row[c] ?? null, formatOf));
     while (out.length > 0 && out[out.length - 1] === null) out.pop();
     data.push(out);
+    // Each raw row is let go once converted, so the two copies of a large sheet never coexist.
+    raw.rows[r] = [];
   }
   while (data.length > 0 && (data[data.length - 1] as In[]).length === 0) data.pop();
   return build(names, data, raw.widths, raw.freezeCols);

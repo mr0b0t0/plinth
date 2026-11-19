@@ -1179,6 +1179,12 @@ not edited on its page yet.
   value is used, and number formats, column widths and frozen columns carry over where they map.
   Rows are bounded as they are read: a worksheet row or cell reference below row 10,001 is
   refused before anything is built, and a blank row the file leaves out stays an empty row.
+  Cells are bounded the same way: each cell with a value counts at least two bytes of JSON lines
+  (and a data row's text its length), and a file past 1 MB by that count is refused before its
+  table is built; a CSV's rows past 10,000 are counted, not kept. Column widths come from at most
+  100 `<col>` ranges and only for columns A to CV, a number format code longer than Excel's 255
+  characters reads as General, and XML whose tag, comment, CDATA section or processing
+  instruction never ends is refused as damaged.
   The import is checked like any sheet and stored as JSON lines. The source editor's "Import CSV or
   .xlsx" converts a file the same way in the browser and puts it in the draft; nothing is sent
   until Save. The CLI publishes one `.csv` or `.xlsx` file as a new sheet, or the next version of
@@ -1585,7 +1591,7 @@ Sheets run on the same Worker allowances:
 | Operation | Worker requests | Worker CPU | D1 rows |
 | --- | --- | --- | --- |
 | Publish or update a sheet | as any update | linear in its size: one `JSON.parse` per row and one parse per formula, never an evaluation (a 1 MB sheet takes tens of milliseconds) | as an update |
-| CSV or .xlsx import | as the publish | linear in the file (an .xlsx decompresses at most 24 MB of XML) | as the publish |
+| CSV or .xlsx import | as the publish | linear in the file (an .xlsx decompresses at most 24 MB of XML, about 2 MB at a time; memory stays near the parts' text and the cells a 1 MB sheet can hold) | as the publish |
 | `read_sheet` | 1 | at most `SHEET_EVAL_BUDGET` formula steps (200,000 by default, a few milliseconds) | as `get_artifact` |
 | `edit_sheet` | 1 | the ops, then a publish's validation | as an update |
 | Viewing and downloads | as any typed page | none: the browser computes and builds the files | none |

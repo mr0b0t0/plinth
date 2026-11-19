@@ -51,12 +51,47 @@ export function toCsv(sheet: Sheet, ev: SheetEvaluation): string {
  * breaks. A last empty line is dropped.
  */
 export function parseCsv(input: string): string[][] {
+  return readCsv(input, Number.POSITIVE_INFINITY).rows;
+}
+
+/**
+ * parseCsv for an import, bounded by `maxRows`: it keeps the first record and at most `maxRows`
+ * non-blank records after it (a blank record is one empty field, a line with nothing on it), and
+ * past that only counts records without building their fields, so a long file costs no memory
+ * beyond the rows a sheet can hold. `rowCount` is every non-blank record after the first.
+ */
+export function readCsv(input: string, maxRows: number): { rows: string[][]; rowCount: number } {
   const text = input.startsWith("﻿") ? input.slice(1) : input;
   const delim = detectDelimiter(text);
   const rows: string[][] = [];
+  let rowCount = 0;
+  let first = true;
+  let keep = true;
   let row: string[] = [];
   let field = "";
+  // The field's length, counted while fields are no longer kept, and whether the record so far
+  // holds any character or delimiter (a record without either is blank).
+  let fieldLen = 0;
+  let filled = false;
   let quoted = false;
+  const add = (s: string) => {
+    if (keep) field += s;
+    fieldLen += s.length;
+    filled = true;
+  };
+  const endField = () => {
+    if (keep) row.push(field);
+    field = "";
+    fieldLen = 0;
+  };
+  const endRecord = () => {
+    endField();
+    if (first) first = false;
+    else if (filled && ++rowCount > maxRows) keep = false;
+    if (keep) rows.push(row);
+    row = [];
+    filled = false;
+  };
   let i = 0;
   const n = text.length;
   while (i < n) {
@@ -64,7 +99,7 @@ export function parseCsv(input: string): string[][] {
     if (quoted) {
       if (ch === '"') {
         if (text[i + 1] === '"') {
-          field += '"';
+          add('"');
           i += 2;
           continue;
         }
@@ -72,33 +107,27 @@ export function parseCsv(input: string): string[][] {
         i++;
         continue;
       }
-      field += ch;
+      add(ch);
       i++;
       continue;
     }
-    if (ch === '"' && field === "") {
+    if (ch === '"' && fieldLen === 0) {
       quoted = true;
       i++;
     } else if (ch === delim) {
-      row.push(field);
-      field = "";
+      endField();
+      filled = true;
       i++;
     } else if (ch === "\r" || ch === "\n") {
-      row.push(field);
-      rows.push(row);
-      row = [];
-      field = "";
+      endRecord();
       i += ch === "\r" && text[i + 1] === "\n" ? 2 : 1;
     } else {
-      field += ch;
+      add(ch);
       i++;
     }
   }
-  if (field !== "" || row.length > 0) {
-    row.push(field);
-    rows.push(row);
-  }
-  return rows;
+  if (filled) endRecord();
+  return { rows, rowCount };
 }
 
 function detectDelimiter(text: string): string {

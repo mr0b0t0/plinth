@@ -1,9 +1,11 @@
 // Reading an .xlsx file for an import: its ZIP container, the few SpreadsheetML parts a first
 // worksheet needs (workbook, relationships, shared strings, styles, the sheet) and a small XML
 // scanner. Bounded: the file is at most LIMITS.maxSheetImportBytes, the parts read are inflated
-// up to LIMITS.maxSheetImportInflatedBytes in all (a ZIP bomb stops there), encrypted and ZIP64
-// archives are refused, and the XML scanner refuses a DOCTYPE and expands only the five named
-// entities and numeric character references. Nothing in the file is ever run: formulas are kept
+// up to LIMITS.maxSheetImportInflatedBytes in all, a small slice at a time (a ZIP bomb stops
+// there), encrypted and ZIP64 archives are refused, and the XML scanner, linear in its input,
+// refuses a DOCTYPE and expands only the five named entities and numeric character references.
+// Rows, columns and cells are counted as they are read, so a small file cannot build a table the
+// sheet limits would refuse. Nothing in the file is ever run: formulas are kept
 // only when they parse as sheet formulas (the allowlist), otherwise their cached value is used.
 import { Inflate } from "fflate";
 import { LIMITS } from "../constants.ts";
@@ -68,6 +70,24 @@ function zipEntries(b: Uint8Array): Map<string, ZipEntry> {
   return out;
 }
 
+// Compressed bytes fed to the inflater at a time. One push inflates all it is given before it
+// hands anything back, and DEFLATE expands at most 1,032 times, so a slice this size gives at most
+// about 2 MB per step: the inflated cap is checked every 2 MB, never after a whole part.
+const INFLATE_SLICE = 2 * 1024;
+
+/**
+ * Inflates raw DEFLATE `data` a slice at a time, calling `onChunk` with each piece as it comes. A
+ * throw from `onChunk` stops it there: a ZIP bomb is refused after the cap, not after it inflates.
+ */
+export function inflateInSlices(data: Uint8Array, onChunk: (chunk: Uint8Array) => void): void {
+  const inf = new Inflate((chunk) => onChunk(chunk));
+  if (data.length === 0) inf.push(data, true);
+  for (let o = 0; o < data.length; o += INFLATE_SLICE) {
+    const end = Math.min(data.length, o + INFLATE_SLICE);
+    inf.push(data.subarray(o, end), end === data.length);
+  }
+}
+
 class Reader {
   private inflated = 0;
   private readonly entries: Map<string, ZipEntry>;
@@ -96,17 +116,19 @@ class Reader {
     if (data.length !== e.compressed)
       throw new SheetImportError(`The .xlsx part ${name} is cut short`);
     const cap = LIMITS.maxSheetImportInflatedBytes;
-    const chunks: Uint8Array[] = [];
+    // Each inflated chunk is decoded as it arrives and let go, so a large part is held once as
+    // text, not also as its chunks and a joined copy of them.
+    const decoder = new platform.TextDecoder();
+    const pieces: string[] = [];
     if (e.method === 0) {
       this.count(data.length, cap);
-      chunks.push(data);
+      pieces.push(decoder.decode(data, { stream: true }));
     } else if (e.method === 8) {
-      const inf = new Inflate((chunk) => {
-        this.count(chunk.length, cap);
-        chunks.push(chunk);
-      });
       try {
-        inf.push(data, true);
+        inflateInSlices(data, (chunk) => {
+          this.count(chunk.length, cap);
+          pieces.push(decoder.decode(chunk, { stream: true }));
+        });
       } catch (err) {
         if (err instanceof SheetImportError) throw err;
         throw new SheetImportError(`The .xlsx part ${name} could not be decompressed`);
@@ -116,13 +138,8 @@ class Reader {
         `The .xlsx part ${name} uses a compression this import does not read`,
       );
     }
-    const all = new Uint8Array(chunks.reduce((n, c) => n + c.length, 0));
-    let o = 0;
-    for (const c of chunks) {
-      all.set(c, o);
-      o += c.length;
-    }
-    return new platform.TextDecoder().decode(all);
+    pieces.push(decoder.decode());
+    return pieces.join("");
   }
 
   private count(n: number, cap: number): void {
@@ -143,51 +160,144 @@ export interface XmlHandler {
   text(s: string): void;
 }
 
-const ENTITY = /&(?:(lt|gt|amp|quot|apos)|#(\d{1,7})|#x([0-9A-Fa-f]{1,6}));/g;
-const NAMED: Record<string, string> = { lt: "<", gt: ">", amp: "&", quot: '"', apos: "'" };
-
-/** Text with the five named entities and character references expanded; nothing else. */
-export function xmlDecode(s: string): string {
-  if (!s.includes("&")) return s;
-  return s.replace(ENTITY, (m, named?: string, dec?: string, hex?: string) => {
-    if (named) return NAMED[named] as string;
-    const cp = dec ? Number(dec) : Number.parseInt(hex as string, 16);
-    return cp > 0 && cp <= 0x10ffff ? String.fromCodePoint(cp) : m;
-  });
+/** What `&name;` stands for: one of the five named entities or a character reference. */
+function entity(name: string): string | null {
+  switch (name) {
+    case "lt":
+      return "<";
+    case "gt":
+      return ">";
+    case "amp":
+      return "&";
+    case "quot":
+      return '"';
+    case "apos":
+      return "'";
+  }
+  let cp = Number.NaN;
+  if (/^#x[0-9A-Fa-f]{1,6}$/.test(name)) cp = Number.parseInt(name.slice(2), 16);
+  else if (/^#\d{1,7}$/.test(name)) cp = Number(name.slice(1));
+  return cp > 0 && cp <= 0x10ffff ? String.fromCodePoint(cp) : null;
 }
 
-const TOKEN =
-  /<(\/?)([A-Za-z_][\w.:-]*)((?:\s+[\w.:-]+\s*=\s*(?:"[^"]*"|'[^']*'))*)\s*(\/?)>|<!\[CDATA\[([\s\S]*?)\]\]>|<!--[\s\S]*?-->|<\?[\s\S]*?\?>|<!/g;
+// The longest entity name is 8 characters (#x10FFFF), so a ; is looked for no further than this.
+const ENTITY_SPAN = 10;
+
+/**
+ * Text with the five named entities and character references expanded; nothing else. A loop,
+ * not a replace with a callback: memory stays near the text's own size however many entities it
+ * holds (a replace kept every match, and 23 MB of "&amp;" ran a heap of 512 MB out).
+ */
+export function xmlDecode(s: string): string {
+  let amp = s.indexOf("&");
+  if (amp < 0) return s;
+  let done = "";
+  const parts: string[] = [];
+  let last = 0;
+  while (amp >= 0) {
+    let semi = -1;
+    for (let i = amp + 1; i < s.length && i <= amp + ENTITY_SPAN; i++) {
+      if (s[i] === ";") {
+        semi = i;
+        break;
+      }
+    }
+    const rep = semi < 0 ? null : entity(s.slice(amp + 1, semi));
+    if (rep === null) {
+      amp = s.indexOf("&", amp + 1);
+      continue;
+    }
+    parts.push(s.slice(last, amp), rep);
+    last = semi + 1;
+    if (parts.length >= 4096) {
+      done += parts.join("");
+      parts.length = 0;
+    }
+    amp = s.indexOf("&", last);
+  }
+  return done + parts.join("") + s.slice(last);
+}
+
+// One tag, matched against exactly the text from its < to its closing > (found first, outside
+// quotes), so the pattern never scans past the tag: the scan stays linear in the part's length.
+const TAG = /^<(\/?)([A-Za-z_][\w.:-]*)((?:\s+[\w.:-]+\s*=\s*(?:"[^"]*"|'[^']*'))*)\s*(\/?)>$/;
+const NAME_START = /^[A-Za-z_]$/;
 const ATTR = /([\w.:-]+)\s*=\s*(?:"([^"]*)"|'([^']*)')/g;
 const local = (name: string) => name.slice(name.indexOf(":") + 1);
 
-/** Scan XML, calling the handler with local names (prefixes dropped). Refuses a DOCTYPE. */
+function notWellFormed(): never {
+  throw new SheetImportError("The .xlsx file's XML is damaged");
+}
+
+/** The index just past `close`, searched from `from`; refuses XML that never closes it. */
+function closeAt(xml: string, close: string, from: number): number {
+  const i = xml.indexOf(close, from);
+  if (i < 0) notWellFormed();
+  return i + close.length;
+}
+
+/** The index just past the > that ends the tag opening at `from`, outside quoted values. */
+function tagEnd(xml: string, from: number): number {
+  let quote = "";
+  for (let i = from + 1; i < xml.length; i++) {
+    const ch = xml[i];
+    if (quote) {
+      if (ch === quote) quote = "";
+    } else if (ch === '"' || ch === "'") quote = ch;
+    else if (ch === ">") return i + 1;
+  }
+  return notWellFormed();
+}
+
+/**
+ * Scan XML, calling the handler with local names (prefixes dropped). Refuses a DOCTYPE, and XML
+ * whose tag, comment, CDATA section or processing instruction never ends. Every construct is
+ * found with indexOf or one pass to its end, and the next search starts after it, so the work is
+ * linear in the length of the XML whatever it holds.
+ */
 export function scanXml(xml: string, h: XmlHandler): void {
-  TOKEN.lastIndex = 0;
   let last = 0;
-  for (let m = TOKEN.exec(xml); m; m = TOKEN.exec(xml)) {
-    if (m.index > last) h.text(xmlDecode(xml.slice(last, m.index)));
-    last = TOKEN.lastIndex;
-    if (m[0] === "<!")
+  let pos = xml.indexOf("<");
+  while (pos >= 0) {
+    const next = xml[pos + 1] ?? "";
+    let end: number;
+    let cdata: string | null = null;
+    let tag: RegExpExecArray | null = null;
+    if (next === "?") end = closeAt(xml, "?>", pos + 2);
+    else if (xml.startsWith("<!--", pos)) end = closeAt(xml, "-->", pos + 4);
+    else if (xml.startsWith("<![CDATA[", pos)) {
+      end = closeAt(xml, "]]>", pos + 9);
+      cdata = xml.slice(pos + 9, end - 3);
+    } else if (next === "!") {
       throw new SheetImportError("The .xlsx file holds a DOCTYPE, which this import refuses");
-    if (m[2] === undefined) {
-      if (m[5] !== undefined) h.text(m[5]);
+    } else if (next === "/" || NAME_START.test(next)) {
+      end = tagEnd(xml, pos);
+      tag = TAG.exec(xml.slice(pos, end));
+      if (!tag) notWellFormed();
+    } else {
+      // A < that starts no markup stays text, as before.
+      pos = xml.indexOf("<", pos + 1);
       continue;
     }
-    const name = local(m[2]);
-    if (m[1] === "/") {
+    if (pos > last) h.text(xmlDecode(xml.slice(last, pos)));
+    last = end;
+    pos = xml.indexOf("<", end);
+    if (cdata !== null) h.text(cdata);
+    if (!tag) continue;
+    const name = local(tag[2] as string);
+    if (tag[1] === "/") {
       h.close(name);
       continue;
     }
     const attrs: Record<string, string> = Object.create(null);
-    if (m[3]) {
+    if (tag[3]) {
       ATTR.lastIndex = 0;
-      for (let a = ATTR.exec(m[3]); a; a = ATTR.exec(m[3])) {
+      for (let a = ATTR.exec(tag[3]); a; a = ATTR.exec(tag[3])) {
         attrs[local(a[1] as string)] = xmlDecode(a[2] ?? a[3] ?? "");
       }
     }
-    h.open(name, attrs, m[4] === "/");
-    if (m[4] === "/") h.close(name);
+    h.open(name, attrs, tag[4] === "/");
+    if (tag[4] === "/") h.close(name);
   }
   if (last < xml.length) h.text(xmlDecode(xml.slice(last)));
 }
@@ -289,6 +399,8 @@ function sharedStrings(r: Reader): string[] {
   return out;
 }
 
+const MAX_FORMAT_CODE = 255;
+
 function styleFormats(r: Reader): string[] {
   const xml = r.text("xl/styles.xml");
   if (!xml) return [];
@@ -297,9 +409,11 @@ function styleFormats(r: Reader): string[] {
   let inCellXfs = false;
   scanXml(xml, {
     open(name, a) {
-      if (name === "numFmt" && a.numFmtId !== undefined)
-        custom.set(Number(a.numFmtId), a.formatCode ?? "");
-      else if (name === "cellXfs") inCellXfs = true;
+      // A code longer than Excel's own limit of 255 characters is read as General.
+      if (name === "numFmt" && a.numFmtId !== undefined) {
+        const code = a.formatCode ?? "";
+        custom.set(Number(a.numFmtId), code.length > MAX_FORMAT_CODE ? "" : code);
+      } else if (name === "cellXfs") inCellXfs = true;
       else if (name === "xf" && inCellXfs) {
         const id = Number(a.numFmtId ?? "0");
         xfs.push(custom.get(id) ?? `#${id}`);
@@ -332,6 +446,22 @@ function checkRow(rowNum: number): void {
   }
 }
 
+/**
+ * Refuses an import once `bytes`, its estimated JSON lines, passes the sheet limit. A cell with a
+ * value costs at least two bytes there (the value and a comma or bracket) and a data row's text at
+ * least its length, so a refusal here is a file whose sheet would be refused anyway, found before
+ * its cells fill memory (10,001 rows of 100 cells fit the row and column bounds). Only an empty
+ * string or a formula with no valid source and no cached value, which spreadsheet apps do not
+ * write, is counted though it ends up blank.
+ */
+export function checkSheetBytes(bytes: number): void {
+  if (bytes > LIMITS.maxSheetBytes) {
+    throw new SheetImportError(
+      `A sheet is at most ${LIMITS.maxSheetBytes / (1024 * 1024)} MB; this file holds more cells than that`,
+    );
+  }
+}
+
 /** The first worksheet's cells, column widths and frozen columns, as typed raw values. */
 export function readXlsx(bytes: Uint8Array): RawSheet {
   if (bytes.byteLength > LIMITS.maxSheetImportBytes) {
@@ -356,16 +486,22 @@ export function readXlsx(bytes: Uint8Array): RawSheet {
   let inline: string | null = null;
   let field: "f" | "v" | "t" | null = null;
   let nextCol = 0;
+  let colRanges = 0;
+  let jsonBytes = 0;
   scanXml(xml, {
     open(name, a) {
       switch (name) {
         case "col": {
-          const min = Number(a.min ?? "0");
-          const max = Math.min(Number(a.max ?? "0"), min + LIMITS.maxSheetColumns);
+          // Only the columns a sheet holds (1 to maxSheetColumns) get a width, from at most that
+          // many <col> ranges: Excel writes them in order without overlap, so more is no file
+          // worth reading, and the work and the map stay bounded whatever min, max and count say.
+          const min = Number(a.min ?? "");
+          const max = Math.min(Number(a.max ?? ""), LIMITS.maxSheetColumns);
           const w = Number(a.width ?? "");
-          if (Number.isFinite(w) && w > 0) {
-            for (let c = min; c <= max; c++) widths.set(c - 1, Math.round(w * 7 + 5));
-          }
+          if (!Number.isInteger(min) || min < 1 || !Number.isInteger(max) || max < min) break;
+          if (!Number.isFinite(w) || w <= 0 || colRanges >= LIMITS.maxSheetColumns) break;
+          colRanges++;
+          for (let c = min; c <= max; c++) widths.set(c - 1, Math.round(w * 7 + 5));
           break;
         }
         case "pane":
@@ -430,6 +566,8 @@ export function readXlsx(bytes: Uint8Array): RawSheet {
       const value = rawValue(cell, v, inline, strings);
       const out: RawCell = f && !fShared ? { t: "f", f, cached: value } : value;
       if (out !== null) {
+        jsonBytes += 2 + (rowNum > 1 && (out.t === "s" || out.t === "e") ? out.v.length : 0);
+        checkSheetBytes(jsonBytes);
         let row = rows[rowNum - 1];
         if (!row) {
           row = [];

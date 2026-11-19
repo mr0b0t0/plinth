@@ -7,7 +7,7 @@ interface PlatformUrl {
 
 interface Platform {
   URL: new (s: string) => PlatformUrl;
-  TextDecoder: new () => { decode(b: Uint8Array): string };
+  TextDecoder: new () => { decode(b?: Uint8Array, options?: { stream?: boolean }): string };
   atob(s: string): string;
 }
 

@@ -46,7 +46,7 @@ make a test pass.
 | Enumerating who has an account | A caller tries addresses to learn which ones have a Plinth account or what they are called, for example by adding them as grants on an artifact of their own and reading the people list or the sharing settings back | No route takes an email or a name to look up, and the people list searches only one artifact's access list. Since the owner writes that list without its holders being told, an access list shows a grant holder's name only once that person has taken part in the artifact (a comment, a shared-data entry or a version, which already show their name to the readers of the list), and a name it keeps back is `null` and never matched by `q`, the same as an address with no account (`policy.ts accessListShowsName`) |
 | A sheet's cell becomes markup or script | A cell, column name or title holds `<img onerror>`, `</script>` or a `javascript:` link | Strict publish parser and link rule; `jsonForScript` in the shell; the renderer uses `textContent` only and re-checks links; the strict shell CSP ([Sheets](#sheets)) |
 | A downloaded sheet attacks the spreadsheet app | A CSV cell `=cmd\|' /C calc'!A0` or an .xlsx formula calling HYPERLINK or WEBSERVICE runs when the file is opened | CSV text starting with `=`, `+`, `-`, `@`, tab or CR gets a leading `'`; .xlsx text is inline strings and its formulas come only from the function allowlist, with no external links or macros ([Sheets](#sheets)) |
-| A sheet exhausts the Worker or the browser | Formulas that reference each other in a long chain or a cycle, `REPT` of huge text, a 1 MB sheet of formulas, or a ZIP bomb sent as an .xlsx import | An explicit stack and cycle detection (`#CYCLE!`), a step budget on both sides (`#LIMIT!`), text capped and charged by length, publish parses but never evaluates, and imports capped at 2 MB in and 24 MB inflated ([Sheets](#sheets)) |
+| A sheet exhausts the Worker or the browser | Formulas that reference each other in a long chain or a cycle, `REPT` of huge text, a 1 MB sheet of formulas, or a ZIP bomb, XML that makes a scanner backtrack, or a small file of very many cells sent as an import | An explicit stack and cycle detection (`#CYCLE!`), a step budget on both sides (`#LIMIT!`), text capped and charged by length, publish parses but never evaluates, and imports capped at 2 MB in and 24 MB inflated, inflated in small steps, scanned in linear time, and refused once their cells pass what 1 MB holds ([Sheets](#sheets)) |
 
 Out of scope for v1: denial of service beyond Cloudflare's defaults, a compromised Cloudflare
 account, and malicious instance operators.
@@ -550,11 +550,23 @@ What else is new:
   file into JSON lines (`packages/shared/src/sheet/import.ts`), in the Worker for MCP and REST and in
   the browser for the editor's import. An .xlsx is at most 2 MB; its ZIP is read from the central
   directory, encrypted and ZIP64 archives are refused, and its parts are inflated with fflate up to
-  24 MB in all, so a ZIP bomb stops there. Its XML is read by a small scanner that refuses a
-  DOCTYPE and expands only the five named entities and character references, so no external
-  entity is ever resolved. Row numbers are bounded as they are read: a `<row r>` or a cell
-  reference (`<c r="A50000000">`) past row 10,001 is refused at once, so a tiny file cannot make a
-  huge sparse table, and the row and column counts are checked before any work that grows with
+  24 MB in all, 2 KB of compressed input at a time (at most about 2 MB out per step, since DEFLATE
+  expands at most 1,032 times), so a ZIP bomb stops at the cap instead of after it has inflated.
+  Its XML is read by a small scanner that refuses a DOCTYPE and expands only the five named
+  entities and character references, so no external entity is ever resolved. The scanner is
+  linear in the part's length whatever it holds: it finds each construct's end with `indexOf` or
+  one pass, starts the next search after it, matches a tag's pattern only against the tag's own
+  text, refuses markup that never ends, and expands entities with a loop rather than a replace
+  that keeps every match. Number format codes are read with patterns that never search past the
+  next bracket, once per code, and a code longer than 255 characters reads as General. Row
+  numbers are bounded as they are read: a `<row r>` or a cell reference (`<c r="A50000000">`) past
+  row 10,001 is refused at once, so a tiny file cannot make a huge sparse table, and the row and
+  column counts are checked before any work that grows with them. Cells are counted as they are
+  read, at least two bytes of JSON lines each (and a data row's text its length), and a file past
+  1 MB by that count is refused before its table is built, since 10,001 rows of 100 cells fit the
+  row and column bounds but not the 128 MB a Worker has. `<col>` widths are read only for columns
+  1 to 100 and from at most 100 ranges, whatever `min` and `max` say. A CSV keeps at most 10,000
+  rows under its header and only counts the rest, and counts its cells before it makes values of
   them. A CSV never makes a formula; an .xlsx formula is kept only when it
   parses as a sheet formula (the allowlist), otherwise its cached value is used. The result passes
   the same publish checks as any sheet.

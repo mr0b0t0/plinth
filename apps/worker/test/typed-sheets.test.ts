@@ -236,6 +236,41 @@ describe("sheets over REST", () => {
     );
   });
 
+  it("refuses an import that would spin or fill memory as invalid input, never a 500", async () => {
+    const a = await agent();
+    const book = (sheet: string) => {
+      const zip = storedZip({
+        "xl/workbook.xml": '<workbook><sheets><sheet name="S" r:id="rId1"/></sheets></workbook>',
+        "xl/_rels/workbook.xml.rels":
+          '<Relationships><Relationship Id="rId1" Target="worksheets/sheet1.xml"/></Relationships>',
+        "xl/worksheets/sheet1.xml": sheet,
+      });
+      let bin = "";
+      for (const b of zip) bin += String.fromCharCode(b);
+      return btoa(bin);
+    };
+    // A <col> past 2^53 used to loop forever; it now gives no width and the sheet imports.
+    const huge = await publishSheet(a.auth, {
+      content: book(
+        '<worksheet><cols><col min="9007199254740992" max="9007199254741200" width="10"/></cols><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>H</t></is></c></row></sheetData></worksheet>',
+      ),
+      content_format: "xlsx",
+    });
+    expect(huge.res.status).toBe(201);
+    const pi = await publishSheet(a.auth, {
+      content: book(`<worksheet><sheetData>${"<?".repeat(20_000)}`),
+      content_format: "xlsx",
+    });
+    expect(pi.res.status).toBe(400);
+    expect(errorOf(pi).message).toMatch(/XML is damaged/);
+    const wide = await publishSheet(a.auth, {
+      content: Array.from({ length: 6_000 }, () => Array(100).fill("1").join(",")).join("\n"),
+      content_format: "csv",
+    });
+    expect(wide.res.status).toBe(400);
+    expect(errorOf(wide).message).toMatch(/at most 1 MB; this file holds more cells/);
+  });
+
   it("updates with content and base_version, refuses a stale base, and restores", async () => {
     const a = await agent();
     const { body: p } = await publishSheet(a.auth);
