@@ -18,7 +18,7 @@ import {
 } from "../src/index.ts";
 
 // ---------- the code before the registry, verbatim in behaviour ----------
-// (`dictation`, added after the registry, is false in every declaration the old code knew.)
+// (`dictation` and `files`, added after the registry, are false in every declaration the old code knew.)
 
 const META_TAG_RE = /<meta\b((?:[^>"']|"[^"]*"|'[^']*')*)>/gi;
 const ATTR_RE = /([^\s"'=<>/]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?/g;
@@ -83,6 +83,7 @@ function legacyParse(html: string): Capabilities | null {
     people: false,
     comments: false,
     dictation: false,
+    files: false,
   };
 }
 
@@ -120,6 +121,7 @@ function legacyRead(json: string): Capabilities | null {
     people: false,
     comments: false,
     dictation: false,
+    files: false,
   };
 }
 
@@ -174,6 +176,7 @@ describe("the declaration registry", () => {
       "people",
       "comments",
       "dictation",
+      "files",
     ]);
   });
 

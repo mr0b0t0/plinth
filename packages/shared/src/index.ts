@@ -9,6 +9,7 @@ export * from "./designSystem.ts";
 export * from "./designSystemSchema.ts";
 export * from "./displayName.ts";
 export * from "./errors.ts";
+export * from "./files.ts";
 export * from "./harnesses.ts";
 export * from "./liveDoc.ts";
 export * from "./liveView.ts";

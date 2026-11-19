@@ -28,6 +28,11 @@
 // GET /__plinth/api/v1/room (live rooms, #36) shares checks 1 to 4, then branches to roomInfo()
 // in content/room.ts, which has its own availability, artifact, pass and policy steps: a page
 // that declares only `room` has no shared data, and rooms may be on where shared data is off.
+//
+// /__plinth/api/v1/files... (files people add to a page) share checks 1 to 4 and 6 (each with its
+// own JSON body reader: a small create body, or a part's {"data":"<base64>"} decoded as it streams),
+// then take their own steps in content/files-api.ts: files are not shared data, and a page may
+// declare `files` alone.
 import { waitUntil } from "cloudflare:workers";
 import {
   CONTENT_DATA_HEADER,
@@ -58,6 +63,20 @@ import {
   unavailableReason,
 } from "../services/data.ts";
 import { applyContentHeaders } from "./csp.ts";
+import {
+  filePartRoute,
+  fileRoute,
+  filesChangesRoute,
+  filesRoute,
+  filesSessionRoute,
+  matchFile,
+  matchFilePart,
+  matchFiles,
+  matchFilesChanges,
+  matchFilesSession,
+  readBase64PartBody,
+  readCreateBody,
+} from "./files-api.ts";
 import { getPersonRoute, listPeopleRoute } from "./people.ts";
 import { roomInfo } from "./room.ts";
 import type { HostRoute } from "./serve.ts";
@@ -73,7 +92,12 @@ const putBody = z.strictObject({
   if_rev: z.number().int().min(0).optional(),
 });
 
-function respond(config: Config, status: number, body: unknown, extra?: Record<string, string>) {
+export function respond(
+  config: Config,
+  status: number,
+  body: unknown,
+  extra?: Record<string, string>,
+) {
   const headers = new Headers(extra);
   applyContentHeaders(config, headers);
   headers.set("Content-Type", "application/json; charset=utf-8");
@@ -120,7 +144,7 @@ function checkCaller(request: Request, config: Config, artifactId: string): void
 }
 
 /** Check 6: a JSON body, refused past `cap` bytes whether or not a length was sent. */
-async function readJsonBody(request: Request, cap: number): Promise<unknown> {
+export async function readJsonBody(request: Request, cap: number): Promise<unknown> {
   const type = (request.headers.get("content-type") ?? "").split(";")[0]?.trim().toLowerCase();
   if (type !== "application/json") {
     throw new ApiError("invalid_input", "Send a JSON body with Content-Type: application/json");
@@ -158,7 +182,7 @@ async function readJsonBody(request: Request, cap: number): Promise<unknown> {
   }
 }
 
-function parseBody<T>(schema: z.ZodType<T>, raw: unknown): T {
+export function parseBody<T>(schema: z.ZodType<T>, raw: unknown): T {
   const r = schema.safeParse(raw);
   if (!r.success) {
     const issue = r.error.issues[0];
@@ -176,7 +200,7 @@ function intParam(v: string | null, name: string, min: number, max: number): num
 }
 
 /** Check 7: the artifact and its current version's declaration, in one query. */
-async function loadTarget(env: Bindings, artifactId: string) {
+export async function loadTarget(env: Bindings, artifactId: string) {
   const row = await env.DB.prepare(
     `SELECT a.id, a.owner_id, a.access_epoch, a.taken_down_at, v.capabilities
        FROM artifacts a
@@ -246,6 +270,13 @@ interface RouteBase {
   example: string;
   /** Refuse a request without an Origin header, even a read (check 4 always refuses a wrong one). */
   requireOrigin?: boolean;
+  /**
+   * Check 6 for an `own` route's POST and PUT bodies: its own JSON reader (still JSON only and
+   * size-capped while reading). Without one, the shared-data reader and cap.
+   */
+  readBody?: (request: Request, config: Config) => Promise<unknown>;
+  /** A body that passes check 6 for this route, for the test that serves every route. */
+  exampleBody?: string;
 }
 
 /**
@@ -334,6 +365,51 @@ export const DATA_API_ROUTES: readonly DataApiRoute[] = [
     pipeline: "data",
     handler: async (c) => respond(c.config, 200, await getPersonRoute(c)),
   },
+  // Files people add to a page (content/files-api.ts): their own steps after checks 1 to 4 and 6.
+  {
+    kind: "fileSession",
+    match: matchFilesSession,
+    methods: ["GET"],
+    example: "files/session",
+    pipeline: "own",
+    handler: filesSessionRoute,
+  },
+  {
+    kind: "fileChanges",
+    match: matchFilesChanges,
+    methods: ["GET"],
+    example: "files/changes",
+    pipeline: "own",
+    handler: filesChangesRoute,
+  },
+  {
+    kind: "files",
+    match: matchFiles,
+    methods: ["GET", "POST"],
+    example: "files",
+    pipeline: "own",
+    readBody: readCreateBody,
+    exampleBody: JSON.stringify({ name: "a.png", type: "image/png", size: 1 }),
+    handler: filesRoute,
+  },
+  {
+    kind: "file",
+    match: matchFile,
+    methods: ["GET", "DELETE"],
+    example: "files/0123456789abcdefghij",
+    pipeline: "own",
+    handler: fileRoute,
+  },
+  {
+    kind: "filePart",
+    match: matchFilePart,
+    methods: ["PUT"],
+    example: "files/0123456789abcdefghij/parts/1",
+    pipeline: "own",
+    readBody: (request) => readBase64PartBody(request),
+    exampleBody: JSON.stringify({ data: "AAAA" }),
+    handler: filePartRoute,
+  },
 ];
 
 function matchRoute(path: string): { route: DataApiRoute; params: Record<string, string> } | null {
@@ -395,7 +471,7 @@ async function docRoute(c: DataRouteCtx): Promise<Response> {
  * content host's dispatch keeps its signature. Outside a request (never in production), the
  * promise simply runs on.
  */
-function afterResponse(p: Promise<unknown>): void {
+export function afterResponse(p: Promise<unknown>): void {
   try {
     waitUntil(p);
   } catch {
@@ -446,7 +522,9 @@ async function handle(
   if (route.pipeline === "own") {
     let body: unknown;
     if (method === "POST" || method === "PUT") {
-      body = await readJsonBody(request, config.data.maxDocBytes + 1024);
+      body = route.readBody
+        ? await route.readBody(request, config)
+        : await readJsonBody(request, config.data.maxDocBytes + 1024);
     }
     return route.handler({ request, env, config, artifactId, params, body });
   }

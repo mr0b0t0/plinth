@@ -93,6 +93,9 @@ export const API = {
   dataCollection: "/artifacts/:ref/data/:collection", // GET a page
   dataDoc: "/artifacts/:ref/data/:collection/:doc", // GET one document
   people: "/artifacts/:ref/people", // GET everyone with access (owner or editor), ?q=
+  // files people add to a page (mirror list_artifact_files and delete_artifact_file)
+  files: "/artifacts/:ref/files", // GET a page of files, DELETE all (signed-in owner)
+  file: "/artifacts/:ref/files/:file", // DELETE one file (owner or editor)
   // on-page doc editing (signed-in owners and editors only; never agents, never MCP)
   live: "/artifacts/:ref/live", // GET LiveInfo
   liveDraft: "/artifacts/:ref/live/draft", // GET the draft text (review), DELETE ?rev=n discards

@@ -48,9 +48,9 @@ describe("/__plinth/runtime.js", () => {
     ].filter((v): v is string => typeof v === "string" && v.length > 0);
     for (const v of values) expect(rest, v).not.toContain(v);
     expect(rest).not.toMatch(/https?:\/\//);
-    // Shared data, the live room, page comments and dictation together; still one small static
-    // file.
-    expect(RUNTIME_SCRIPT.length).toBeLessThan(48 * 1024);
+    // Shared data, the live room, page comments, dictation and files together; still one small
+    // static file.
+    expect(RUNTIME_SCRIPT.length).toBeLessThan(64 * 1024);
   });
 
   it("speaks the API it is served next to", () => {

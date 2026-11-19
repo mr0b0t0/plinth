@@ -30,6 +30,9 @@ export const MCP_TOOL_SUMMARIES = {
     "Used by Plinth's in-chat preview (MCP Apps hosts) for a short-lived link to show a version; agents never need it.",
   get_design_system:
     "Read a design system's tokens, CSS, guidelines and components to build another artifact with it.",
+  list_artifact_files:
+    "List the files people uploaded from a page (names, types, sizes, uploaders); never the bytes.",
+  delete_artifact_file: "Delete one file people uploaded from a page (owner or editor).",
 } as const;
 
 export type McpToolName = keyof typeof MCP_TOOL_SUMMARIES;
@@ -61,9 +64,10 @@ const writes = (
 /**
  * MCP tool annotations (hints for clients and directories), one per tool. Writes never delete an
  * artifact or a version: publish, update and restore add a version anyone can revert, so they are
- * not destructive. set_visibility (replaces the viewer allowlist) and write_artifact_data (shared
- * data is not versioned; ops can delete documents) are. Every tool acts only on this Plinth
- * instance, so none is open-world.
+ * not destructive. set_visibility (replaces the viewer allowlist), write_artifact_data (shared
+ * data is not versioned; ops can delete documents) and delete_artifact_file (files people added
+ * are not versioned either) are. Every tool acts only on this Plinth instance, so none is
+ * open-world.
  */
 export const MCP_TOOL_ANNOTATIONS: Record<McpToolName, ToolAnnotations> = {
   publish_artifact: writes("Publish artifact"),
@@ -83,4 +87,6 @@ export const MCP_TOOL_ANNOTATIONS: Record<McpToolName, ToolAnnotations> = {
   start_upload: writes("Start upload"),
   preview_artifact: reads("Preview artifact"),
   get_design_system: reads("Get design system"),
+  list_artifact_files: reads("List artifact files"),
+  delete_artifact_file: writes("Delete artifact file", { destructive: true, idempotent: true }),
 };

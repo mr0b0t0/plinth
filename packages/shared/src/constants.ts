@@ -392,6 +392,7 @@ export const CAPABILITY_TOKENS = [
   { token: "people", declares: false, needs: ["data", "viewer"], stored: "declared" },
   { token: "comments", declares: true, needs: [], stored: "declared" },
   { token: "dictation", declares: true, needs: [], stored: "declared" },
+  { token: "files", declares: true, needs: [], stored: "declared" },
 ] as const satisfies readonly {
   token: string;
   declares: boolean;

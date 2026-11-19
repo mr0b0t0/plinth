@@ -135,7 +135,7 @@ describe("data API route table", () => {
     const { id, cookie } = await setup();
     for (const route of DATA_API_ROUTES) {
       for (const method of route.methods) {
-        const res = await request(id, cookie, route.example, method);
+        const res = await request(id, cookie, route.example, method, {}, route.exampleBody);
         // Not refused by a caller check, the method or the body: the handler ran.
         expect([200, 201, 204, 404, 409], `${route.kind} ${method}`).toContain(res.status);
         noCors(res, `${route.kind} ${method}`);

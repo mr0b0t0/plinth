@@ -239,6 +239,8 @@ describe("a page that declares only comments", () => {
       "/__plinth/types/",
       // A design's board loader (type-design), behind the content pass.
       "/__plinth/frames/",
+      // Files people add to a page (viewer uploads), behind the content pass.
+      "/__plinth/files/",
     ]);
     const { p } = await owned();
     const { p: other } = await owned(PLAIN);

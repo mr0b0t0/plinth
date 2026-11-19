@@ -260,7 +260,7 @@ describe("createVersion stores capabilities", () => {
     expect(old?.capabilities).toBeNull();
     expect(versionCapabilities(old ?? null)).toBeNull();
     // Rows stored without the room fields (every row without `room`) read as no room, and rows
-    // without `comments` or `dictation` as no page comments and no dictation.
+    // without `comments`, `dictation` or `files` as no page comments, no dictation and no files.
     expect(versionCapabilities(current ?? null)).toEqual({
       data: true,
       viewer: true,
@@ -270,6 +270,7 @@ describe("createVersion stores capabilities", () => {
       people: false,
       comments: false,
       dictation: false,
+      files: false,
     });
     expect(versionCapabilities(null)).toBeNull();
     // Malformed stored values read as nothing declared, never as a crash.
@@ -286,6 +287,7 @@ describe("createVersion stores capabilities", () => {
       people: false,
       comments: false,
       dictation: false,
+      files: false,
     });
     // A room declaration, alone or with data; topics that break the rule are dropped.
     expect(
@@ -302,6 +304,7 @@ describe("createVersion stores capabilities", () => {
       people: false,
       comments: false,
       dictation: false,
+      files: false,
     });
     expect(
       versionCapabilities({ capabilities: '{"data":false,"viewer":false,"room":"yes"}' }),
@@ -320,6 +323,7 @@ describe("createVersion stores capabilities", () => {
       people: false,
       comments: false,
       dictation: false,
+      files: false,
     });
   });
 });

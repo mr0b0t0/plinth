@@ -4,6 +4,8 @@ import {
   CONTENT_ISOLATION_MODES,
   type ContentIsolation,
   DEFAULTS,
+  FILE_BOUNDS,
+  FILE_DEFAULTS,
   type InstanceLimits,
   LIMITS,
   LIVE_BOUNDS,
@@ -163,6 +165,14 @@ export interface Config {
   allowLiveViews: boolean;
   /** Live-view limits (LIVE_VIEW_* env vars). */
   liveViews: LiveViewLimits;
+  /**
+   * ALLOW_FILES (default off): pages that declare `files` let identified viewers upload raster
+   * images, PDFs, video and audio, which people with access can see. Only in effect with origin
+   * isolation; see filesActive.
+   */
+  allowFiles: boolean;
+  /** Limits on files people add to pages (FILES_* env vars). */
+  files: FileLimits;
   /** OPERATOR_*: who runs this instance, for its legal pages. null when none is published. */
   operator: {
     name: string;
@@ -200,6 +210,23 @@ export interface RoomLimits {
 export interface LiveViewLimits {
   /** LIVE_VIEW_MAX_SOCKETS_PER_ARTIFACT: watch sockets on one artifact, apart from room sockets. */
   maxSocketsPerArtifact: number;
+}
+
+export interface FileLimits {
+  /** FILES_MAX_FILE_BYTES: one file, 1 MiB to 100 MiB. */
+  maxFileBytes: number;
+  /** FILES_MAX_PER_ARTIFACT: files (ready or uploading) on one artifact. */
+  maxFilesPerArtifact: number;
+  /** FILES_MAX_BYTES_PER_ARTIFACT: bytes of files on one artifact. */
+  maxBytesPerArtifact: number;
+  /** FILES_MAX_BYTES_PER_UPLOADER: one person's files on one artifact (the owner is exempt). */
+  maxBytesPerUploader: number;
+  /** FILES_MAX_BYTES_PER_USER: files across all of an owner's live artifacts. */
+  maxBytesPerUser: number;
+  /** FILES_UPLOADS_PER_UPLOADER_PER_HOUR: uploads one person starts on one artifact. */
+  uploadsPerUploaderPerHour: number;
+  /** FILES_UPLOADS_PER_ARTIFACT_PER_HOUR: uploads everyone starts on one artifact. */
+  uploadsPerArtifactPerHour: number;
 }
 
 export interface LiveEditSettings {
@@ -402,6 +429,8 @@ export function parseConfig(env: Record<string, unknown>): Config {
         ...LIVE_VIEW_BOUNDS.maxSocketsPerArtifact,
       ),
     },
+    allowFiles: bool(env.ALLOW_FILES),
+    files: parseFileLimits(env),
     operator: parseOperator(env),
   };
   validate(config);
@@ -525,6 +554,69 @@ function parseLiveEditSettings(env: Record<string, unknown>): LiveEditSettings {
   };
 }
 
+function parseFileLimits(env: Record<string, unknown>): FileLimits {
+  const d = FILE_DEFAULTS;
+  const b = FILE_BOUNDS;
+  const atLeast = (name: string, fallback: number, min: number) => {
+    const raw = str(env[name]);
+    if (raw === "") return fallback;
+    const n = /^\d+$/.test(raw) ? Number(raw) : Number.NaN;
+    if (!Number.isSafeInteger(n) || n < min) {
+      throw new ConfigError(`${name} must be an integer of at least ${min}`);
+    }
+    return n;
+  };
+  const maxFileBytes = boundedInt(env, "FILES_MAX_FILE_BYTES", d.maxFileBytes, ...b.maxFileBytes);
+  const maxBytesPerArtifact = atLeast(
+    "FILES_MAX_BYTES_PER_ARTIFACT",
+    Math.max(d.maxBytesPerArtifact, maxFileBytes),
+    1,
+  );
+  if (maxBytesPerArtifact < maxFileBytes) {
+    throw new ConfigError("FILES_MAX_BYTES_PER_ARTIFACT must be at least FILES_MAX_FILE_BYTES");
+  }
+  const maxBytesPerUploader = atLeast(
+    "FILES_MAX_BYTES_PER_UPLOADER",
+    Math.min(Math.max(d.maxBytesPerUploader, maxFileBytes), maxBytesPerArtifact),
+    1,
+  );
+  if (maxBytesPerUploader < maxFileBytes || maxBytesPerUploader > maxBytesPerArtifact) {
+    throw new ConfigError(
+      "FILES_MAX_BYTES_PER_UPLOADER must be from FILES_MAX_FILE_BYTES to FILES_MAX_BYTES_PER_ARTIFACT",
+    );
+  }
+  const maxBytesPerUser = atLeast(
+    "FILES_MAX_BYTES_PER_USER",
+    Math.max(d.maxBytesPerUser, maxBytesPerArtifact),
+    1,
+  );
+  if (maxBytesPerUser < maxBytesPerArtifact) {
+    throw new ConfigError("FILES_MAX_BYTES_PER_USER must be at least FILES_MAX_BYTES_PER_ARTIFACT");
+  }
+  return {
+    maxFileBytes,
+    maxFilesPerArtifact: boundedInt(
+      env,
+      "FILES_MAX_PER_ARTIFACT",
+      d.maxFilesPerArtifact,
+      ...b.maxFilesPerArtifact,
+    ),
+    maxBytesPerArtifact,
+    maxBytesPerUploader,
+    maxBytesPerUser,
+    uploadsPerUploaderPerHour: atLeast(
+      "FILES_UPLOADS_PER_UPLOADER_PER_HOUR",
+      d.uploadsPerUploaderPerHour,
+      1,
+    ),
+    uploadsPerArtifactPerHour: atLeast(
+      "FILES_UPLOADS_PER_ARTIFACT_PER_HOUR",
+      d.uploadsPerArtifactPerHour,
+      1,
+    ),
+  };
+}
+
 function validateSharedData(d: SharedDataLimits): void {
   if (d.maxDocBytes < 1024 || d.maxDocBytes > 65536) {
     throw new ConfigError("DATA_MAX_DOC_BYTES must be between 1024 and 65536");
@@ -602,6 +694,16 @@ export function liveViewsActive(c: Pick<Config, "allowLiveViews">, env: Optional
   return c.allowLiveViews && env.ROOMS !== undefined;
 }
 
+/**
+ * Files people add to a page are in effect: ALLOW_FILES is on and each artifact is its own origin.
+ * Under opaque isolation (the path fallback included, which config forces to opaque) a page has no
+ * cookies, so nobody could be identified to upload and files are off there; that is not a
+ * configuration error.
+ */
+export function filesActive(c: Pick<Config, "allowFiles" | "contentIsolation">): boolean {
+  return c.allowFiles && c.contentIsolation === "origin";
+}
+
 /** Something on the page that reads the identity claim, and whether it is switched on. */
 export interface IdentityReader {
   name: string;
@@ -615,12 +717,13 @@ export interface IdentityReader {
 export const IDENTITY_READERS: readonly IdentityReader[] = [
   { name: "shared data", active: (c) => c.allowSharedData },
   { name: "live rooms", active: roomsActive },
+  { name: "files", active: (c) => c.allowFiles },
 ];
 
 /**
  * Whether the gate seals an identity claim into identified viewers' content passes: only with
- * origin isolation, and only while something on the page reads it (IDENTITY_READERS: shared data
- * or rooms).
+ * origin isolation, and only while something on the page reads it (IDENTITY_READERS: shared data,
+ * rooms or files).
  */
 export function identityClaimsActive(c: Config, env: OptionalBindings): boolean {
   return c.contentIsolation === "origin" && IDENTITY_READERS.some((r) => r.active(c, env));

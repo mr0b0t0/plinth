@@ -121,6 +121,8 @@ describe("generated Worker configs carry the flag and the cron", () => {
     assert.equal(repoCfg.vars.ALLOW_DICTATION, "false");
     // Category sharing ships on.
     assert.equal(repoCfg.vars.ALLOW_CATEGORY_SHARING, "true");
+    // Files people add to a page ship off.
+    assert.equal(repoCfg.vars.ALLOW_FILES, "false");
   });
 
   it("the CLI's runtime/wrangler.base.json (packages/cli/scripts/bundle.mjs)", () => {
@@ -339,6 +341,7 @@ await setupInstance(raw, {
         PLINTH_ALLOW_LIVE_EDITING: "false",
         PLINTH_ALLOW_DICTATION: "true",
         PLINTH_ALLOW_CATEGORY_SHARING: "false",
+        PLINTH_ALLOW_FILES: "true",
       },
       encoding: "utf8",
     });
@@ -348,6 +351,7 @@ await setupInstance(raw, {
     assert.equal(offCfg.vars.ALLOW_LIVE_EDITING, "false");
     assert.equal(offCfg.vars.ALLOW_DICTATION, "true");
     assert.equal(offCfg.vars.ALLOW_CATEGORY_SHARING, "false");
+    assert.equal(offCfg.vars.ALLOW_FILES, "true");
     assertRooms(offCfg, "docker (rooms off)", { vars: false });
   });
 

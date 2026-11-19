@@ -75,8 +75,10 @@ make a test pass.
   metadata, an exact `Origin` on writes and JSON bodies; keep all four. The room upgrade at
   `/__plinth/room/` requires an exact `Origin` (absent or `null` refused), same-origin fetch
   metadata when sent, the `plinth.room.v1` subprotocol and the content cookie at the current epoch
-  with an identity claim; keep all four. The live-view socket at `/api/v1/view/:ref/watch` on the
-  app host requires an exact app `Origin` (absent or `null` refused), same-origin fetch metadata
+  with an identity claim; keep all four. File uploads go through `/__plinth/api/` like any other
+  write (all four, JSON bodies included). `/__plinth/files/` is read-only and serves only types the
+  server proved from the bytes, never markup, with `nosniff`, `script-src 'none'` and `sandbox`;
+  keep all three. The live-view socket at `/api/v1/view/:ref/watch` on the app host requires an exact app `Origin` (absent or `null` refused), same-origin fetch metadata
   when sent, the `plinth.view.v1` subprotocol and no bearer token, takes the gate's view decision,
   and carries only version numbers and change signals; keep all five.
 - **Every artifact response carries a CSP**, built from the configurable CDN allowlist. Network
@@ -108,8 +110,9 @@ make a test pass.
 - Agents push; the platform never pulls from Claude or ChatGPT accounts.
 - Artifacts are static HTML plus assets, with no per-artifact server code. The only server
   behaviour a page can reach is Plinth's fixed shared-data service at `/__plinth/api/` and its live
-  room at `/__plinth/room/`, which a page opts into. Only the owner and people the artifact is
-  shared with can write from the page, and only the owner's and editors' agents over MCP or REST.
+  room at `/__plinth/room/` and the files it stored at `/__plinth/files/`, which a page opts into.
+  Only the owner and people the artifact is shared with can write from the page, and only the
+  owner's and editors' agents over MCP or REST.
 - Filing an artifact under a shared category never shares it: only the signed-in owner's review,
   bound to that share, adds an artifact to a category share. A collaborator's own category for an
   artifact shared with them is seen and set by that person only, in the app.

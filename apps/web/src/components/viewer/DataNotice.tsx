@@ -62,10 +62,25 @@ export function peopleNoticeText(gate: NoticeGate): string | null {
   return parts.length > 0 ? parts.join(" ") : null;
 }
 
+/**
+ * Files people add to the page (`files`): that it keeps them, who sees them and who sees who added
+ * them. A viewer who cannot add files is told the page only shows them.
+ */
+export function filesNoticeText(gate: NoticeGate): string | null {
+  const f = gate.files;
+  if (!f) return null;
+  if (!f.available) return "Files people add are not available on this server.";
+  if (!f.can_upload) return "This page shows files added by people it is shared with.";
+  return f.uploaders_shown
+    ? "This page keeps files people add. People with access can see them and who added them."
+    : "This page keeps files people add. People with access can see them; the owner and editors can see who added them.";
+}
+
 /** The notice's lines, in the order they are read out. One line function per line. */
 export const DATA_NOTICE_LINES: readonly NoticeLine[] = [
   (gate) => dataNoticeText(gate.data),
   peopleNoticeText,
+  filesNoticeText,
 ];
 
 /** The whole notice for a gate, or null when no line has anything to say. */

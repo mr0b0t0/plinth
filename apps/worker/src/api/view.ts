@@ -11,6 +11,7 @@ import {
   typeDef,
   type ViewGate,
   type ViewGateData,
+  type ViewGateFiles,
   type ViewGateLive,
   type ViewGatePeople,
   type ViewGateVoice,
@@ -24,6 +25,7 @@ import { resolveViewerSession } from "../auth/principal.ts";
 import {
   contentOrigin,
   dictationActive,
+  filesActive,
   identityClaimsActive,
   liveEditMode,
   liveViewsActive,
@@ -42,6 +44,7 @@ import {
   liveViewAccess,
   type Principal,
   pageDataAccess,
+  pageFileAccess,
   peopleListOffered,
 } from "../policy.ts";
 import { decideFor, findArtifact, grantFor, versionCapabilities } from "../services/artifacts.ts";
@@ -186,7 +189,46 @@ export const GATE_PARTS: readonly GatePart[] = [
     return voice ? { voice } : undefined;
   },
   async ({ ctx, a, d }) => (gateWatch(ctx, a, d) ? { watch: true as const } : undefined),
+  async ({ ctx, a, identity }) => {
+    const files = await gateFiles(ctx, a, identity);
+    return files ? { files } : undefined;
+  },
 ];
+
+// ---------- files people add to a page ----------
+
+/**
+ * What the viewer is told about the files people add to the page: only for an HTML artifact whose
+ * current version declares `files`, while ALLOW_FILES is on. Whether this viewer may upload is
+ * decided by policy.ts pageFileAccess, as the content host decides it.
+ */
+async function gateFiles(
+  ctx: Ctx,
+  a: ArtifactRow,
+  identity: ViewerIdentity | undefined,
+): Promise<ViewGateFiles | undefined> {
+  if (!ctx.config.allowFiles || a.type !== "html") return undefined;
+  let caps = currentCaps.get(a);
+  if (!caps) {
+    caps = readCurrentCaps(ctx, a);
+    currentCaps.set(a, caps);
+  }
+  const declared = await caps;
+  if (declared?.files !== true) return undefined;
+  const available = filesActive(ctx.config);
+  const claim =
+    identity && available
+      ? {
+          ...identity,
+          viewerId: await viewerIdFor(ctx.config.tokenSigningKey, a.id, identity.email),
+        }
+      : null;
+  return {
+    available,
+    can_upload: pageFileAccess(claim, declared, available).upload,
+    uploaders_shown: declared.viewer === true,
+  };
+}
 
 // ---------- live views ----------
 

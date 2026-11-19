@@ -467,6 +467,11 @@ export interface AppConfig {
    * absent reads as off.
    */
   category_sharing?: boolean;
+  /**
+   * Pages may keep files people add (ALLOW_FILES, with origin isolation). The Worker always sends
+   * it; absent reads as off.
+   */
+  files?: boolean;
 }
 
 export interface OperatorInfo {
@@ -512,6 +517,11 @@ export type ViewGate =
        * and of shared-data changes, as they happen. Absent: poll as before.
        */
       watch?: true;
+      /**
+       * Files people add to the page: present only when the current version of an HTML page
+       * declares `files` and ALLOW_FILES is on.
+       */
+      files?: ViewGateFiles;
     }
   | { status: "password_required"; artifact: ViewArtifactStub }
   | { status: "email_required"; artifact: ViewArtifactStub }
@@ -603,6 +613,16 @@ export interface ViewGateData {
 }
 
 /** What the viewer is told about names and the people list (docs/spec.md "Who is viewing"). */
+/** What the viewer is told about the files people add to the page (docs/spec.md). */
+export interface ViewGateFiles {
+  /** Files work here now (ALLOW_FILES with origin isolation). */
+  available: boolean;
+  /** This viewer may upload: an identified viewer (the owner, or a grant, signed in or by code). */
+  can_upload: boolean;
+  /** The page declares `viewer`, so identified readers see who uploaded each file. */
+  uploaders_shown: boolean;
+}
+
 export interface ViewGatePeople {
   /**
    * The viewer's display name, which the page sees and shows wherever it sees their email (the
@@ -670,6 +690,10 @@ export interface AdminStats {
     connections_by_client: Record<ClientType, number>;
     views: number;
     open_reports: number;
+    /** Files people added to live pages. The Worker always sends it. */
+    files?: number;
+    /** Their bytes, apart from storage_bytes (the owner's quota). */
+    file_bytes?: number;
   };
   window: {
     new_users: number;

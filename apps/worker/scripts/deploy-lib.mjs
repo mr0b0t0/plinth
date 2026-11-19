@@ -163,6 +163,14 @@ export function runtimeBase(repoCfg) {
         "ALLOW_CATEGORY_SHARING",
         "ALLOW_LIVE_VIEWS",
         "LIVE_VIEW_MAX_SOCKETS_PER_ARTIFACT",
+        "ALLOW_FILES",
+        "FILES_MAX_FILE_BYTES",
+        "FILES_MAX_PER_ARTIFACT",
+        "FILES_MAX_BYTES_PER_ARTIFACT",
+        "FILES_MAX_BYTES_PER_UPLOADER",
+        "FILES_MAX_BYTES_PER_USER",
+        "FILES_UPLOADS_PER_UPLOADER_PER_HOUR",
+        "FILES_UPLOADS_PER_ARTIFACT_PER_HOUR",
       ]
         .filter((k) => k in (repoCfg.vars ?? {}))
         .map((k) => [k, repoCfg.vars[k]]),

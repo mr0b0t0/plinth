@@ -24,6 +24,7 @@ import { serveBoardLoader } from "./boardLoader.ts";
 import { injectBridge, serveBridgeScript } from "./bridge.ts";
 import { applyContentHeaders, type ContentCspOptions } from "./csp.ts";
 import { serveDataApi } from "./data-api.ts";
+import { serveFile } from "./files.ts";
 import { servePreviewLoader } from "./preview.ts";
 import { roomSocketSource, serveRoomUpgrade } from "./room.ts";
 import { serveRuntimeScript } from "./runtime.ts";
@@ -381,7 +382,21 @@ export const RESERVED_PATHS: readonly ReservedPath[] = [
   { path: `${CONTENT_RESERVED_PREFIX}types/`, stage: "static", serve: serveRenderer },
   // A type's framed page, a design's board loader (content/boardLoader.ts): behind the pass.
   { path: TYPE_FRAMES_PREFIX, stage: "pass", serve: serveTypeFrame },
+  // Files people add to a page (content/files.ts): read-only bytes behind the pass.
+  { path: `${CONTENT_RESERVED_PREFIX}files/`, stage: "pass", serve: serveFileRow },
 ];
+
+/** A file people added to the page, for a request with this artifact's content pass. */
+function serveFileRow(
+  request: Request,
+  env: Bindings,
+  config: Config,
+  route: ContentRoute,
+  gate?: PassGate,
+): Response | Promise<Response> {
+  if (!gate) return text(config, 404, "Not found");
+  return serveFile(request, env, config, route.path, gate);
+}
 
 function serveBridge(_r: Request, _e: Bindings, config: Config): Response {
   return serveBridgeScript(config);
@@ -729,6 +744,8 @@ export function appPageFor(config: Config, artifactId: string, path: string, url
   const version = /^\/__plinth\/v\/(\d{1,9})\/?$/.exec(path);
   if (version) return `${page}/v/${version[1]}`;
   if (path === "/" || path === "" || path === "/index.html") return page;
+  // A pasted link to a file people added opens the page it belongs to, never a frame on the file.
+  if (path.startsWith(`${CONTENT_RESERVED_PREFIX}files/`)) return page;
   const search = new URLSearchParams(url.search);
   search.delete(REVIEW_MODE_PARAM);
   const rest = search.toString();

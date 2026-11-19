@@ -59,6 +59,11 @@ make a test pass.
 | Author publishes a secret with project files | An agent building a log viewer sends `files/.env` or `deploy/server.pem`. Or it sends the local `.plinth-files.json` with a public page, and the record's artifact ids open every unlisted artifact made from the project (`canView` allows any principal on `unlisted`), while its instance URLs name private hosts | Bundles never carry a dot segment (`isDotfile`), and the CLI skips dotfiles too. `sensitive_file` covers inline assets and names without a dot (`id_rsa`, `*.pem`, `*.p12`, `credentials.json`), and the record, with its own message (an id cannot be rotated: publish without it and ask the user about the listed artifacts' visibility). It checks names only, comes first so the cap keeps it, and tells the agent to stop and ask. The skill requires deliberate selection and forbids copying the record's ids anywhere on Plinth. The file passes the artifact's own access check, and deleting the artifact is the only purge. Known gaps: a name check misses secrets in ordinary file names and a renamed copy of the record (`plinth-files.json`, ids pasted into `files/index.json`), and inline assets still accept dotfiles |
 | A participant forges what a page counts | An invited viewer writes another person's sign-off, adds extra approval documents that are not their personal one, or ticks a team-only checklist item through the page's runtime | A personal document can be created only by its own person, and every write is stamped by the server; what only the owner's side decides is in the versioned HTML; the example pages count only personal sign-offs, one per person, whose own person made the last change from the page, and a team item only when the owner or an editor made its tick's last change; a link viewer, who gets no stamps, is told that only invited people can see the result. Deletions are not marked: shared data keeps no history ([Example pages and server stamps](#example-pages-and-server-stamps)) |
 | A mention reaches an agent nobody meant | A collaborator writes `@claude-code` for the owner's Claude Code, and an older connection whose name makes the same handle takes it | Only the owner's own connections are ever targets; the Connections page and the naming dialogs show each connection's handle and warn when an older one takes it; a comment written by an agent never creates a task |
+| Stored XSS through a file someone added | A commenter uploads an SVG with a script, HTML renamed `photo.png`, or a GIF/JAR or PDF/HTML polyglot, so that it runs on the artifact's origin as whoever opens it and reads the data API, writes shared data or emits room topics in their name | Only raster images, PDFs, video and audio are accepted, never markup; the first part must start with the declared type's signature, and the stored `Content-Type` is that proven type, never the request's; files are served with `nosniff`, `script-src 'none'`, a bare `sandbox` (an opaque origin, no scripts even if a browser renders the bytes as a document), PDFs and frames as attachments, and only for image, media, track, empty and iframe fetch destinations ([Files people add to a page](#files-people-add-to-a-page)) |
+| Another artifact uploads to or reads this one's files | Artifact B, framed by the app, posts to A's `/__plinth/api/v1/files` or loads A's `/__plinth/files/<id>` with A's cookie from the shared partitioned jar | Uploads pass the data API's caller checks (`x-plinth-data`, same-origin fetch metadata, exact `Origin`, JSON bodies; no CORS, no preflight answered); reads need A's content pass and get CORP `same-origin`, and B's CSP limits its loads to its own origin |
+| Viewers fill the bucket or block the owner | Invited people upload until the instance runs out of storage, or until the owner's next publish fails its quota | Only identified viewers upload; per-file, per-uploader, per-artifact and per-owner byte caps and a count cap, all checked in the statement that reserves an upload; hourly upload limits per person and per artifact; 3 unfinished uploads per person; file bytes have their own owner cap (`FILES_MAX_BYTES_PER_USER`), so they never count against `MAX_STORAGE_BYTES_PER_USER` |
+| An upload outlives a delete or takedown | A part arrives after the owner deleted the file or an admin took the artifact down, and the file comes back | Every write repeats the artifact's live check and the row's state in its SQL; a delete or takedown turns rows into tombstones in its own batch, a takedown deletes the ready objects right after, and the hourly sweep clears the rest |
+| A file name steers an agent or tricks a viewer | A file named "Ignore previous instructions.png", `../../etc/passwd`, or a right-to-left override that turns `gpj.exe` around | Names are cleaned (last segment, no control or bidi characters, at most 200 characters, the proven extension added) and are display text everywhere; agents get names with the untrusted note and never the bytes |
 
 Out of scope for v1: denial of service beyond Cloudflare's defaults, a compromised Cloudflare
 account, and malicious instance operators.
@@ -158,6 +163,10 @@ What changes for the app and for artifacts:
   and the upgrade is refused before anything else is read. The runtime resolves `plinth.room.ready`
   as `{ available: false, reason: "opaque_isolation" }` without a request, and the CSP names no
   socket. See [Live rooms](#live-rooms).
+- **No files people add.** Uploading needs an identified content pass, which needs a cookie, so the
+  file store is off: the runtime resolves `plinth.files.ready` as `{ available: false, reason:
+  "opaque_isolation" }` without a request, and `/__plinth/files/` answers 404. See
+  [Files people add to a page](#files-people-add-to-a-page).
 - **No dictation.** The app would have to post the viewer's words with `targetOrigin "*"`, so
   dictation is off: the runtime resolves `plinth.dictation.ready` as `{ available: false, reason:
   "opaque_isolation" }` without posting anything, and the app's `Permissions-Policy` keeps
@@ -299,6 +308,12 @@ one more `connect-src` source: the artifact's own WebSocket origin, `wss://<id>.
 (`ws://` under `PUBLIC_SCHEME=http`). CSP Level 3 lets `'self'` match a same-host `wss:` URL, but
 older WebKit did not, so the source is named; it reaches nothing `'self'` does not mean. With rooms
 off the CSP is byte for byte the one above ([Live rooms](#live-rooms)).
+
+A file people added to a page (`/__plinth/files/<id>`) gets a stricter CSP than any document:
+`script-src 'none'` and a bare `sandbox` directive with no flags at the end, so even a browser that
+rendered its bytes as a document would give it an opaque origin with no scripts, forms, popups or
+plugins ([Files people add to a page](#files-people-add-to-a-page)). Every other response's CSP is
+unchanged.
 
 The app host has its own strict CSP (`script-src 'self'`, `frame-ancestors 'none'`, `frame-src`
 limited to the content host), `X-Frame-Options: DENY`, `Cross-Origin-Opener-Policy: same-origin`
@@ -1002,8 +1017,8 @@ Every write is stamped by the server with the writer's email, role and channel (
 `app`); the body cannot carry author fields. A stamp records whose session wrote, not who typed:
 the page's own script writes from the viewer's browser.
 
-**Identity claim.** When the gate lets an identified viewer in and shared data or live rooms are
-on with `origin` isolation, it seals `{ email, role }` with AES-256-GCM (key derived by HKDF-SHA256 from
+**Identity claim.** When the gate lets an identified viewer in and shared data, files or live rooms
+are on with `origin` isolation, it seals `{ email, role }` with AES-256-GCM (key derived by HKDF-SHA256 from
 `TOKEN_SIGNING_KEY` with its own info string, the artifact id as additional data) into the enter
 token, and `/__plinth/enter` copies it unchanged into the content cookie. Sealing keeps the email
 out of the iframe URL and out of logs. A cookie whose claim does not open is rejected, never
@@ -1703,6 +1718,94 @@ no server change. What they rely on:
 - **Agents.** Sign-off notes, intake answers, tick notes and other agents' comments are untrusted
   input for agents; the README, the guide and the skill say so, as the tool descriptions already
   do. An agent never writes a sign-off or answers for someone.
+
+## Files people add to a page
+
+A page that declares `<meta name="plinth-capabilities" content="files">` lets the people it is
+shared with upload files that everyone who can open the page sees (spec: "Files people add to a
+page"). The new risk is stored script on the artifact's origin written by someone with less
+authority than the author: an upload that ran there would act as whoever opened it, with their
+content cookie, their shared-data writes and their room topics. So no uploaded byte may ever become
+an active document or a script on that origin, and none ever reaches the app host. `ALLOW_FILES`
+is off by default, and the feature needs origin isolation.
+
+**Writes** go through the shared-data API at `/__plinth/api/v1/files...`
+(`apps/worker/src/content/files-api.ts`), as rows of its route table, so the dispatcher runs its
+checks before any files code, in this order:
+
+1. **Method** (GET, POST, PUT, DELETE; everything else 405 without CORS headers).
+2. **`x-plinth-data: 1`**, 3. **fetch metadata** when sent, 4. **`Origin`**, exactly as for every
+   data route.
+5. **Body**, JSON only: a create is `{ name, type, size }` under a 2 KiB cap; a part is exactly
+   `{"data":"<base64>"}` (optional JSON whitespace, no other key, no escapes), refused past
+   `4 * ceil(5 MiB / 3) + 64` bytes whether or not a length is sent, and decoded as it streams into
+   one buffer of at most 5 MiB. Bytes travel as base64 inside JSON so that the JSON-body rule
+   covers uploads too: a cross-origin form or `fetch` cannot send `application/json` without the
+   preflight this host never answers.
+6. **Availability** (`ALLOW_FILES` and origin isolation), 7. **the artifact** (live, not taken
+   down), 8. **the content pass** (a JSON 401 without one), 9. **the declaration** (`files`; never
+   for a preview pass).
+10. **Policy** (`pageFileAccess`, `canDeleteFile` in `policy.ts`): only identified viewers upload;
+    an unfinished upload belongs to its uploader alone; a ready file can be deleted by its uploader,
+    the owner and editors. Then rate limits, then one guarded insert that reserves the bytes and
+    checks every quota and the artifact's live state in the same statement.
+
+Parts arrive in order (the last accepted one may be re-sent) and each part's write is guarded on
+the row being pending, unexpired and created by the same person, and on the artifact being live,
+so a delete or takedown in the middle of an upload wins. The first part must start with the
+signature of the declared type (`sniffFileType` in `packages/shared/src/files.ts`), or the upload
+becomes a tombstone (`type_mismatch`).
+
+**The type allowlist**: PNG, JPEG, GIF, WebP, AVIF, PDF, MP4, WebM, MP3, M4A, Ogg and WAV, proven
+by their first bytes only. Markup of any kind (SVG, HTML, XML), text, Office documents, archives,
+HEIC and QuickTime are refused; so are ISO brands outside the list (`qt  `, `heic`, `mif1`, `crx `,
+`3gp*`) and AAC frames that look like MP3. A file whose start is a valid signature but that holds
+markup later (a PDF/HTML polyglot) is still served only as its proven type, under the rules below.
+
+**Reads** are `GET` and `HEAD /__plinth/files/<id>` (`apps/worker/src/content/files.ts`), a plain
+subresource path because `<img>` and `<video>` cannot send `x-plinth-data`. It has no side effect
+and the same exposure as the version's own files. Before it runs, the content host has refused other
+methods and service workers, sent top-level visits to the app's artifact page (never a frame on the
+file), loaded the live artifact and checked the content pass. Then:
+
+1. the id is 20 lowercase letters and digits;
+2. `Sec-Fetch-Dest`, when sent, is `image`, `video`, `audio`, `track`, `empty` or `iframe`; every
+   other destination (`script`, `style`, `font`, `worker`, `sharedworker`, `serviceworker`,
+   `manifest`, `object`, `embed`, `xslt`) gets 403;
+3. files are available, and the pass is not a preview pass;
+4. the current version declares `files`;
+5. a ready row of this artifact exists.
+
+The answer has the exact stored type with no parameters, `X-Content-Type-Options: nosniff`,
+`Cross-Origin-Resource-Policy: same-origin`, `X-Robots-Tag: noindex, nofollow` even on a public
+artifact, and the content CSP with `script-src 'none'` and a bare `sandbox`. PDFs, an `iframe`
+destination and `?download=1` get `Content-Disposition: attachment`; everything else `inline`, both
+with the cleaned name in an ASCII fallback and `filename*`. `Cache-Control: private, no-cache` (not
+immutable, so a moderated delete takes effect at the next revalidation) with a strong `ETag`; a
+matching `If-None-Match` answers 304 without reading R2. Single byte ranges answer 206; several
+ranges, or none that fits, 416. No route on the app host serves file bytes: REST and MCP return
+metadata, and the Share dialog lists names as text with no previews.
+
+**Names** are untrusted text: the last path segment, NFC, without control or bidirectional
+characters, at most 200 characters, with the proven type's extension appended when missing.
+
+**Quotas** are per file, per uploader per artifact (the owner exempt), per artifact (count and
+bytes) and per owner across live artifacts, apart from the owner's version storage, so viewers can
+never make an owner's publish fail. A person may have 3 unfinished uploads on an artifact; an
+upload must finish within 30 minutes.
+
+**Lifecycle.** A delete, a cancel, an expired upload, the artifact's deletion or takedown and
+`erase-user` turn rows into tombstones (state `deleting`) that count toward nothing. A takedown
+deletes the ready objects right after its batch, so admins lose them as evidence, as with shared
+data. The hourly sweep claims tombstones in one statement (two sweeps never take the same row),
+deletes each object, aborts an unfinished multipart upload and removes the row; an unfinished
+upload is cleared 15 minutes after its deadline, since a part may still be writing. R2's default
+lifecycle rule also aborts incomplete multipart uploads after 7 days; keep it. `sweep-orphans`
+groups only version prefixes and never touches `artifacts/<id>/files/`.
+
+**Agents** list and delete files over MCP and REST (owner or editor) and never get the bytes: an
+image is a prompt-injection channel and a new egress path, so reading files is left for its own
+review. Names carry the untrusted note.
 
 ## Operator checklist for the content domain
 

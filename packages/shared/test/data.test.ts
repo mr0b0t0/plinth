@@ -17,8 +17,15 @@ import {
   writeArtifactDataInput,
 } from "../src/index.ts";
 
-/** No room, and (later tokens) no people list, no page comments and no dictation. */
-const NO_ROOM = { room: false, roomOpen: [], people: false, comments: false, dictation: false };
+/** No room, and (later tokens) no people list, no page comments, no dictation and no files. */
+const NO_ROOM = {
+  room: false,
+  roomOpen: [],
+  people: false,
+  comments: false,
+  dictation: false,
+  files: false,
+};
 const caps = (content: string) => `<meta name="plinth-capabilities" content="${content}">`;
 
 describe("parseCapabilities", () => {
@@ -51,13 +58,13 @@ describe("parseCapabilities", () => {
   });
 
   it("ignores unknown tokens and returns null when no known one is left", () => {
-    expect(parseCapabilities(caps("camera data  files"))).toEqual({
+    expect(parseCapabilities(caps("camera data  uploads"))).toEqual({
       data: true,
       viewer: false,
       shared: [],
       ...NO_ROOM,
     });
-    expect(parseCapabilities(caps("camera files"))).toBeNull();
+    expect(parseCapabilities(caps("camera uploads"))).toBeNull();
     expect(parseCapabilities(caps(""))).toBeNull();
   });
 
@@ -144,6 +151,7 @@ describe("parseCapabilities: rooms", () => {
       people: false,
       comments: false,
       dictation: false,
+      files: false,
     });
     expect(parseCapabilities(caps("viewer room"))).toMatchObject({ data: false, viewer: true });
     expect(parseCapabilities(caps("data viewer room"))).toMatchObject({
@@ -210,6 +218,7 @@ describe("data constants", () => {
       "people",
       "comments",
       "dictation",
+      "files",
     ]);
     expect(DEFAULTS.data).toEqual({
       maxDocsPerArtifact: 1000,

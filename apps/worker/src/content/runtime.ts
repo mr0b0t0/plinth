@@ -45,6 +45,18 @@
 //              stop() -> Promise; onPartial(fn({ text })), onFinal(fn({ text })), onState(fn({
 //              state, reason })) -> off. Nothing is posted until ready is read or start() called.
 //
+//   files      files people add to the page (runtime/files.ts, pages that declare `files`):
+//              ready Promise<{ available, reason, canUpload, accept, limits: { maxFileBytes,
+//              maxFiles, maxBytes, maxBytesPerUploader, partBytes }, usage: { files, bytes,
+//              mineBytes } }>, never rejects (reason null | "opaque_isolation" | "disabled" |
+//              "not_declared" | "preview" | "expired" | "network"); upload(blob, { name,
+//              onProgress(sent, total), signal }) -> File; list({ limit, cursor, mine }) -> { files,
+//              nextCursor }; all({ mine }); get(id) -> File | null; delete(id); url(id, { download
+//              }); download(id); onSnapshot(onFiles, onError, { intervalMs, mine }) -> off. A File
+//              is { id, name, type, size, url, mine, createdAt, uploadedBy? { email, role, via } };
+//              its name is untrusted text. Errors add unsupported_type, type_mismatch and aborted.
+//              Nothing is fetched until ready is read or a method is called.
+//
 // Under opaque isolation the page's origin is "null": ready resolves unavailable without any
 // request, and db calls reject with "unavailable". A 401 means the content pass expired: listeners
 // get "expired" as their terminal error and a "plinth:expired" event fires on window. The room
@@ -58,6 +70,7 @@ import { COMMENTS_FRAGMENT } from "./runtime/comments.ts";
 import { CORE_HEAD, CORE_TAIL } from "./runtime/core.ts";
 import { DATA_FRAGMENT } from "./runtime/data.ts";
 import { DICTATION_FRAGMENT } from "./runtime/dictation.ts";
+import { FILES_FRAGMENT } from "./runtime/files.ts";
 import type { RuntimeContext, RuntimeFragment } from "./runtime/fragment.ts";
 import { LIVE_FRAGMENT } from "./runtime/live.ts";
 import { PEOPLE_FRAGMENT } from "./runtime/people.ts";
@@ -75,6 +88,7 @@ export const RUNTIME_FRAGMENTS: readonly RuntimeFragment[] = [
   COMMENTS_FRAGMENT,
   DICTATION_FRAGMENT,
   LIVE_FRAGMENT,
+  FILES_FRAGMENT,
 ];
 
 /** Assemble the script from `fragments`, with the app channel when one of them uses it. */

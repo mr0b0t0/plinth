@@ -3,6 +3,7 @@ import {
   type AdminStats,
   API,
   API_PREFIX,
+  type ArtifactFilesList,
   type ArtifactViews,
   COOKIES,
   CSRF_HEADER,
@@ -110,6 +111,28 @@ export function getDataSummary(ref: string, signal?: AbortSignal): Promise<DataS
 /** Delete every shared data document of an artifact (signed-in owner; CSRF header). */
 export function deleteAllData(ref: string): Promise<{ deleted: number }> {
   return api<{ deleted: number }>(route(API.data, { ref }), { method: "DELETE" });
+}
+
+// ---------- files people add to a page (owner view in the share dialog) ----------
+
+/** One page of the files people uploaded from a page (owner and editors). Metadata only. */
+export function getArtifactFiles(
+  ref: string,
+  signal?: AbortSignal,
+  cursor?: string,
+): Promise<ArtifactFilesList> {
+  const q = cursor ? `?cursor=${encodeURIComponent(cursor)}` : "";
+  return api<ArtifactFilesList>(`${route(API.files, { ref })}${q}`, { signal });
+}
+
+/** Delete one file people uploaded (owner or editor; CSRF header). */
+export function deleteArtifactFile(ref: string, file: string): Promise<{ deleted: string }> {
+  return api<{ deleted: string }>(route(API.file, { ref, file }), { method: "DELETE" });
+}
+
+/** Delete every file people uploaded to a page (signed-in owner; CSRF header). */
+export function deleteAllFiles(ref: string): Promise<{ files: number }> {
+  return api<{ files: number }>(route(API.files, { ref }), { method: "DELETE" });
 }
 
 // ---------- open counts and admin stats ----------

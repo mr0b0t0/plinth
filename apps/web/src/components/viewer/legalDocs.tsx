@@ -30,7 +30,12 @@ export interface LegalDoc {
 /** The instance settings the pages use. */
 export type LegalConfig = Pick<
   AppConfig,
-  "operator" | "email_provider" | "max_artifacts_per_user" | "dictation" | "category_sharing"
+  | "operator"
+  | "email_provider"
+  | "max_artifacts_per_user"
+  | "dictation"
+  | "category_sharing"
+  | "files"
 >;
 
 const EMAIL_SERVICE: Record<AppConfig["email_provider"], string | null> = {
@@ -192,6 +197,16 @@ function privacy(op: OperatorInfo, cfg: LegalConfig): LegalDoc {
               one, to the page, its owner and the agents the owner connects. Only people the owner
               invited can enter anything.
             </li>
+            {cfg.files && (
+              <li>
+                <strong>Files people add to pages</strong>: some pages let the people they are
+                shared with add files: images, PDFs, video and audio. We store each file with the
+                email address and role of the person who added it and the time. Everyone who can
+                open the page can see its files; the page's owner, its editors and the agents they
+                connect can see who added each one. Agents see each file's name, type, size and who
+                added it, never its contents. Only people the owner invited can add files.
+              </li>
+            )}
             {cfg.dictation && (
               <li>
                 <strong>Dictation</strong>: some pages let you dictate instead of typing. Dictation
@@ -283,6 +298,13 @@ function privacy(op: OperatorInfo, cfg: LegalConfig): LegalDoc {
               What people enter on shared pages: until the page's owner clears it or deletes the
               page.
             </li>
+            {cfg.files && (
+              <li>
+                Files people add to pages: until the person who added a file, the page's owner or an
+                editor deletes it, or the page is deleted or taken down. An upload not finished
+                within 30 minutes is deleted.
+              </li>
+            )}
             <li>How often a page was opened: until the page's stored copy is erased.</li>
             <li>
               Unsaved page drafts: until saved or discarded, or 30 days after the last change.
@@ -302,10 +324,11 @@ function privacy(op: OperatorInfo, cfg: LegalConfig): LegalDoc {
           <p>
             Only the cookies the service needs to work: your sign-in, protection against forged
             requests, proof that you entered an artifact's password or confirmed your email, and a
-            viewing cookie for each artifact you open. On a page that saves what its viewers enter,
-            that cookie also says who you are, so the page cannot pretend to be someone else. The
-            viewing cookie also notes whether your open of that page was already counted, so opening
-            it again within 12 hours is not counted twice; it adds nothing else about you.
+            viewing cookie for each artifact you open. On a page that saves what its viewers enter
+            {cfg.files ? " or keeps the files they add" : ""}, that cookie also says who you are, so
+            the page cannot pretend to be someone else. The viewing cookie also notes whether your
+            open of that page was already counted, so opening it again within 12 hours is not
+            counted twice; it adds nothing else about you.
           </p>
         ),
       },
@@ -324,7 +347,7 @@ function privacy(op: OperatorInfo, cfg: LegalConfig): LegalDoc {
   };
 }
 
-function acceptableUse(op: OperatorInfo | null): LegalDoc {
+function acceptableUse(op: OperatorInfo | null, cfg: LegalConfig): LegalDoc {
   return {
     title: "Acceptable use policy",
     summary: "What may not be published on this Plinth service, and what happens if it is.",
@@ -346,6 +369,13 @@ function acceptableUse(op: OperatorInfo | null): LegalDoc {
               copyright, trademarks or other rights.
             </li>
             <li>Spam, redirect pages, or hosting files that are not part of an artifact.</li>
+            {cfg.files && (
+              <li>
+                Adding files to a page that break any of these rules or that you have no right to
+                share, and pages that ask people to add passwords, payment details or identity
+                documents as files.
+              </li>
+            )}
             <li>
               Trying to break the isolation between artifacts, get around limits, or disrupt the
               service.
@@ -375,6 +405,9 @@ function acceptableUse(op: OperatorInfo | null): LegalDoc {
             ) : null}
             . We review every report and may take an artifact down or limit or suspend an account,
             telling its owner why.
+            {cfg.files
+              ? " Taking an artifact down also deletes the files people added to it. The page's owner and editors can delete any file added to their page."
+              : ""}
           </p>
         ),
       },
@@ -384,7 +417,7 @@ function acceptableUse(op: OperatorInfo | null): LegalDoc {
 
 /** The legal pages this instance publishes. Terms and privacy only exist with an operator. */
 export function legalDoc(id: LegalDocId, cfg: LegalConfig): LegalDoc | null {
-  if (id === "acceptable-use") return acceptableUse(cfg.operator);
+  if (id === "acceptable-use") return acceptableUse(cfg.operator, cfg);
   if (!cfg.operator) return null;
   return id === "terms" ? terms(cfg.operator, cfg) : privacy(cfg.operator, cfg);
 }

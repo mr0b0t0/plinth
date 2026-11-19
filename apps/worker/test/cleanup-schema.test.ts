@@ -113,6 +113,8 @@ async function sha256(s: string): Promise<string> {
 const ADDED_USER_STEPS = new Set([
   // Category sharing (0013): the address on other people's category shares.
   "category_grants",
+  // Files people add to a page (0014): their uploads on other people's pages.
+  "artifact_files",
 ]);
 
 describe("erase statements (golden)", () => {
