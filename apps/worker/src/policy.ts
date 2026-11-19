@@ -101,7 +101,22 @@ export type Decision =
   | { allow: true; role: EffectiveRole | null }
   | { allow: false; reason: DenyReason; role: EffectiveRole | null };
 
-const READ_ACTIONS: ReadonlySet<ArtifactAction> = new Set(["view", "report", "data_read", "views"]);
+/** The scope an agent needs for each artifact action, one per line. */
+const ACTION_SCOPES: Record<ArtifactAction, Scope> = {
+  view: "artifacts:read",
+  comment: "artifacts:write",
+  mention: "artifacts:write",
+  edit: "artifacts:write",
+  restore: "artifacts:write",
+  manage: "artifacts:write",
+  delete: "artifacts:write",
+  report: "artifacts:read",
+  data_read: "artifacts:read",
+  data_write: "artifacts:write",
+  data_clear: "artifacts:write",
+  views: "artifacts:read",
+  live_edit: "artifacts:write",
+};
 
 export function principalEmail(p: Principal): string | null {
   return p.kind === "anonymous" ? null : p.email;
@@ -113,7 +128,7 @@ export function principalUserId(p: Principal): string | null {
 
 /** The scope an agent needs for an artifact action. */
 export function scopeFor(action: ArtifactAction): Scope {
-  return READ_ACTIONS.has(action) ? "artifacts:read" : "artifacts:write";
+  return ACTION_SCOPES[action];
 }
 
 /** Effective role, ignoring visibility: owner, a granted role, or null. */

@@ -109,8 +109,9 @@ export async function computeGate(
     .where(eq(users.id, a.ownerId))
     .get();
   const identity = await identityFor(ctx, a, d);
-  const data = await gateData(ctx, a, identity);
-  const live = await gateLive(ctx, a, d, opts);
+  // Each part adds its own optional fields, in list order, after the fields every gate has.
+  const parts: GateFields = {};
+  for (const part of GATE_PARTS) Object.assign(parts, await part({ ctx, a, d, opts, identity }));
   return {
     status: "ok",
     artifact: {
@@ -123,10 +124,42 @@ export async function computeGate(
     },
     enter_url: await issueEnterUrl(ctx.config, a, next, identity, { countView, opener }),
     role: d.role,
-    ...(data ? { data } : {}),
-    ...(live ? { live } : {}),
+    ...parts,
   };
 }
+
+type OkGate = Extract<ViewGate, { status: "ok" }>;
+
+/** The optional fields of an ok gate: each comes from one gate part. */
+type GateFields = Partial<Omit<OkGate, "status" | "artifact" | "enter_url" | "role">>;
+
+/** What every gate part gets: the allowed decision, the request's options and the identity. */
+export interface GatePartInput {
+  ctx: Ctx;
+  a: ArtifactRow;
+  d: Extract<Decision, { allow: true }>;
+  opts: GateOptions;
+  identity: ViewerIdentity | undefined;
+}
+
+/** One gate part: its own optional fields of an ok gate, or nothing. */
+export type GatePart = (input: GatePartInput) => Promise<GateFields | undefined>;
+
+/**
+ * The parts of an ok gate, one per line, run in this order. A feature adds its part (a sibling
+ * optional field such as `comments` or `files`) and its line here; it never changes another
+ * part's output.
+ */
+export const GATE_PARTS: readonly GatePart[] = [
+  async ({ ctx, a, identity }) => {
+    const data = await gateData(ctx, a, identity);
+    return data ? { data } : undefined;
+  },
+  async ({ ctx, a, d, opts }) => {
+    const live = await gateLive(ctx, a, d, opts);
+    return live ? { live } : undefined;
+  },
+];
 
 /**
  * The identity sealed into the enter token for shared data and rooms: only for identified viewers

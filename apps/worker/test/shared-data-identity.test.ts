@@ -34,6 +34,7 @@ import {
   publish,
   uniqueEmail,
 } from "./helpers.ts";
+import { everyIdentityReaderOff } from "./identity-readers.ts";
 
 const SECRET = "test-token-signing-key-0123456789abcdef012345";
 const DECLARED = `<!doctype html><title>Poll</title>
@@ -398,9 +399,7 @@ describe("identity claim: nobody else gets one", () => {
       await claimIn(await computeGate(ctxFor(p, { allowSharedData: false }), artifact.id)),
     ).not.toBeNull();
     expect(
-      await claimIn(
-        await computeGate(ctxFor(p, { allowSharedData: false, allowRooms: false }), artifact.id),
-      ),
+      await claimIn(await computeGate(ctxFor(p, everyIdentityReaderOff().config), artifact.id)),
     ).toBeNull();
     const opaque = await computeGate(ctxFor(p, { contentIsolation: "opaque" }), artifact.id);
     expect(opaque.status).toBe("ok");

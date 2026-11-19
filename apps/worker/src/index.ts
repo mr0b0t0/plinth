@@ -147,6 +147,19 @@ app.on(["GET", "HEAD"], "*", (c) => serveSpa(c));
 
 app.all("*", (c) => c.json(new ApiError("not_found", "Not found").toBody(), 404));
 
+/** The hourly cron's tasks, one per line, run one after the other. A feature adds its task here. */
+const SCHEDULED_TASKS: readonly ((env: Bindings, at: number) => Promise<unknown>)[] = [
+  (env, at) => sweepStagingAttempts(env, at),
+  (env, at) => pruneUploadTickets(env.DB, at),
+  // Once a day, in the 03 UTC run, unless VIEW_LOG_RETENTION_DAYS is invalid.
+  async (env, at) => {
+    const keepDays = viewRetentionDays(env);
+    if (new Date(at).getUTCHours() === 3 && keepDays !== null)
+      await foldOpens(env.DB, keepDays, at);
+  },
+  (env, at) => pruneLiveDrafts(env.DB, liveRetentionDays(env), at),
+];
+
 export default {
   async fetch(request: Request, env: Bindings, ctx: ExecutionContext): Promise<Response> {
     let config: ReturnType<typeof getConfig>;
@@ -197,11 +210,6 @@ export default {
     env: Bindings,
     _ctx: ExecutionContext,
   ): Promise<void> {
-    await sweepStagingAttempts(env, controller.scheduledTime);
-    await pruneUploadTickets(env.DB, controller.scheduledTime);
-    const keepDays = viewRetentionDays(env);
-    if (new Date(controller.scheduledTime).getUTCHours() === 3 && keepDays !== null)
-      await foldOpens(env.DB, keepDays, controller.scheduledTime);
-    await pruneLiveDrafts(env.DB, liveRetentionDays(env), controller.scheduledTime);
+    for (const task of SCHEDULED_TASKS) await task(env, controller.scheduledTime);
   },
 } satisfies ExportedHandler<Bindings>;

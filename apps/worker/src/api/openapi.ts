@@ -25,6 +25,7 @@ import {
   liveCheckpointInput,
   MENTION_STATES,
   oauthConsentInput,
+  PUBLISH_WARNING_CODES,
   publishArtifactInput,
   REPORT_STATES,
   ROLES,
@@ -318,15 +319,7 @@ function responseSchemas(): Record<string, Json> {
     PublishResult: obj(publishResult, ["category"]),
     PublishWarning: obj(
       {
-        code: enumOf([
-          "missing_file",
-          "root_absolute",
-          "blocked_host",
-          "insecure_url",
-          "opaque_module",
-          "not_scanned",
-          "live_draft",
-        ]),
+        code: enumOf(PUBLISH_WARNING_CODES),
         file: str({ description: "The version file the reference is in" }),
         ref: str({ description: "The reference as written (truncated)" }),
         host: str(),

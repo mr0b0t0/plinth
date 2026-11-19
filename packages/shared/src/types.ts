@@ -8,6 +8,7 @@ import type {
   DataCapability,
   EffectiveRole,
   MentionState,
+  PublishWarningCode,
   ReportState,
   Role,
   Visibility,
@@ -119,15 +120,6 @@ export interface PublishResult {
   /** The stored (snapped) category, present only when this call set one. Never on a restore. */
   category?: string;
 }
-
-export type PublishWarningCode =
-  | "missing_file"
-  | "root_absolute"
-  | "blocked_host"
-  | "insecure_url"
-  | "opaque_module"
-  | "not_scanned"
-  | "live_draft";
 
 /** One publish warning. Never blocks a publish. Text echoed from files is truncated and escaped. */
 export interface PublishWarning {
