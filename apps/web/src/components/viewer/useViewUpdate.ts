@@ -3,12 +3,15 @@
 // apply it (viewUpdate.ts planUpdate) and runs that:
 // - in-place (docs): asks the doc renderer to show the version (`version`), and on its `shown`
 //   answer keeps the frame and its enter URL, so nothing reloads; otherwise, or after 5 s, swaps.
+// - hold (HTML that declares `hold`, focus in the frame, with or without the runtime): only the
+//   count of versions moves on and the stage offers "vN is available · Update".
 // - ask (HTML with the runtime): posts `update` at the exact content origin; on `update:ok` the new
 //   version lands where the page was (one more gate read with `next`), on `update:hold` it waits;
-//   with no answer in 1 s it waits while focus is in a frame that declares `hold`, else swaps.
-// - hold (HTML that declares `hold`, focus in the frame): only the count of versions moves on and
-//   the stage offers "vN is available · Update".
+//   a page that declares `hold` and got focus while the app waited is held either way; with no
+//   answer in 1 s it swaps.
 // - swap: the fresh gate replaces the frame, as before.
+// After every wait the hook looks again: a frame paused meanwhile (a doc edited on its page) is
+// kept, as the "keep" plan keeps it, instead of being replaced under the person editing it.
 // Every frame answer is checked for the frame's window, its exact origin and the app's nonce, and
 // only ever chooses among things the page could cause anyway: a hold, or a path in its artifact.
 import {
@@ -162,6 +165,20 @@ export function useViewUpdate(o: {
     handlers?.count({ ...gate, artifact: { ...gate.artifact, current_version: to } });
   }, []);
 
+  /**
+   * Whether the frame was paused or pinned meanwhile (a doc being edited on its page, a deck
+   * presented): then only the count moves on, as the version watch does for a paused frame, and
+   * true is returned.
+   */
+  const kept = useCallback((pending: OkGate) => {
+    const { gate, handlers, pinned, pause } = latest.current;
+    if (!pinned && pause === null) return false;
+    const next = nextGate(gate, pending, pinned, pause);
+    if (next) handlers?.count(next);
+    else handlers?.drop();
+    return true;
+  }, []);
+
   /** Apply `pending`, landing on `path` inside the artifact when the page reported one. */
   const applyAt = useCallback(async (pending: OkGate, path: string | null) => {
     const handlers = latest.current.handlers;
@@ -197,13 +214,10 @@ export function useViewUpdate(o: {
         holdDeclared: shown.hold === true,
       });
       switch (plan.kind) {
-        case "keep": {
+        case "keep":
           // Paused since the watch looked: do what it does for a paused frame.
-          const kept = nextGate(shown, pending, s.pinned, s.pause);
-          if (kept) handlers.count(kept);
-          else handlers.drop();
+          kept(pending);
           return;
-        }
         case "swap":
           setHeld(null);
           return handlers.apply(pending);
@@ -217,21 +231,27 @@ export function useViewUpdate(o: {
           }
           const m = await reply;
           if (!current) return;
-          setHeld(null);
           const now = latest.current;
-          // Shown in place: the frame stays, with its enter URL, so nothing reloads.
+          // Shown in place: the frame stays, with its enter URL, so nothing reloads. The frame
+          // shows `to` now, so this holds even if editing began right after it answered.
           if (m?.type === "shown" && m.ok && m.n === to) {
+            setHeld(null);
             return now.handlers?.apply({ ...pending, enter_url: now.gate.enter_url });
           }
+          // Refused: editing may have begun while the renderer fetched. Then the frame stays.
+          if (kept(pending)) return;
+          setHeld(null);
           return now.handlers?.apply(pending);
         }
         case "ask": {
           const m = await askRuntime(shown.artifact.version, to, false);
           if (!current) return;
+          if (kept(pending)) return;
           if (m?.type === "update:hold") return hold(pending);
-          if (m?.type === "update:ok") return applyAt(pending, m.path);
+          // The hold rule wins over the runtime's answer: its carry has no unsaved input in it.
           const now = latest.current;
           if (now.gate.hold === true && frameHasFocus(now.frame)) return hold(pending);
+          if (m?.type === "update:ok") return applyAt(pending, m.path);
           setHeld(null);
           return now.handlers?.apply(pending);
         }
@@ -241,7 +261,7 @@ export function useViewUpdate(o: {
     return () => {
       current = false;
     };
-  }, [pending, askRuntime, applyAt, hold, waitFor]);
+  }, [pending, askRuntime, applyAt, hold, kept, waitFor]);
 
   // A held version that is no longer newer than what is on view (a reload showed it) is done.
   const shownVersion = o.gate.artifact.version;

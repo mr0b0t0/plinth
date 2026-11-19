@@ -511,9 +511,9 @@ When a new version reaches an open view, a doc updates in place (the reader keep
 and a page that loads `/__plinth/runtime.js` keeps its scroll position and where it was inside the
 artifact. Hand anything else to the next version with `plinth.onVersion(() => ({ state }))` (JSON,
 at most 16 KiB) and read it back once as `plinth.carried`; return `false` only while the viewer has
-unsaved input, and the page waits behind an Update notice. A page without the runtime where people
-type can declare `hold` in `plinth-capabilities`: while focus is in it, a new version waits for
-the viewer's Update. Every other page is replaced at once, as before
+unsaved input, and the page waits behind an Update notice. A page where people type, with or
+without the runtime, can declare `hold` in `plinth-capabilities`: while focus is in it, a new
+version waits for the viewer's Update. Every other page is replaced at once, as before
 ([spec](spec.md#live-views-decided-2026-11-19),
 [security](security.md#keeping-state-across-versions)). With `ALLOW_LIVE_VIEWS=false` every new
 version reloads the frame.

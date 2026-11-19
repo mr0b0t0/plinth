@@ -45,13 +45,22 @@ function boot(
     },
   };
   const url = new URL(opts.path ?? "/", "http://art.content.localhost:8787");
+  const location = { pathname: url.pathname, search: url.search, hash: url.hash };
+  const replaced: string[] = [];
   const win: Json = {
     addEventListener(type: string, fn: (e: unknown) => void) {
       listeners.set(type, [...(listeners.get(type) ?? []), fn]);
     },
     dispatchEvent: () => true,
     sessionStorage: storage,
-    location: { pathname: url.pathname, search: url.search, hash: url.hash },
+    location,
+    history: {
+      state: null,
+      replaceState(_state: unknown, _title: string, to: string) {
+        replaced.push(to);
+        location.hash = to;
+      },
+    },
     scrollX: opts.scroll?.x ?? 0,
     scrollY: opts.scroll?.y ?? 0,
     scrollTo(x: number, y: number) {
@@ -102,7 +111,7 @@ function boot(
     }
     return view().find(([m]) => m.type !== "hello");
   };
-  return { win, parent, posted, view, fire, fromApp, answer, storage, scrolled };
+  return { win, parent, posted, view, fire, fromApp, answer, storage, scrolled, replaced };
 }
 
 const update = (over: Json = {}) => ({
@@ -128,27 +137,50 @@ describe("runtime: new versions", () => {
     expect(typeof opaque.win.plinth.onVersion(() => undefined)).toBe("function");
   });
 
-  it("records scroll and place, and answers update:ok with the path", async () => {
-    const p = boot({ path: "/guide.html?tab=2#step-3", scroll: { x: 0, y: 640 } });
+  it("records scroll and place, and answers update:ok with the path but never the hash", async () => {
+    const p = boot({ path: "/guide.html?tab=2#q=salary%20of%20Jane", scroll: { x: 0, y: 640 } });
     p.fromApp(update());
     const [msg, target] = (await p.answer()) ?? [];
     expect(target).toBe(APP);
+    // The path becomes the gate's `next` in request URLs: the fragment stays in this browser.
     expect(msg).toEqual({
       source: "plinth-view",
       v: 1,
       type: "update:ok",
       nonce: NONCE,
-      path: "/guide.html?tab=2#step-3",
+      path: "/guide.html?tab=2",
     });
     const rec = JSON.parse(p.storage.getItem(KEY) as string);
     expect(rec).toMatchObject({
       from: 1,
       to: 2,
       scroll: { x: 0, y: 640 },
-      path: "/guide.html?tab=2#step-3",
+      path: "/guide.html?tab=2",
+      hash: "#q=salary%20of%20Jane",
       state: null,
     });
     expect(Math.abs(Date.now() - rec.at)).toBeLessThan(5000);
+  });
+
+  it("puts the hash back on the next version, before the page's scripts, on the same page only", async () => {
+    const p = boot({ path: "/#/route/7" });
+    p.fromApp(update());
+    expect((await p.answer())?.[0]).toMatchObject({ type: "update:ok", path: "/" });
+    const rec = p.storage.getItem(KEY) as string;
+
+    // The next version lands on the root: the hash route is restored without a navigation.
+    const next = boot({ storage: memoryStorage({ [KEY]: rec }), path: "/index.html" });
+    expect(next.replaced).toEqual(["#/route/7"]);
+    expect(next.win.location.hash).toBe("#/route/7");
+
+    // Landed somewhere else, or already has a hash of its own: left alone.
+    expect(boot({ storage: memoryStorage({ [KEY]: rec }), path: "/other.html" }).replaced).toEqual(
+      [],
+    );
+    expect(boot({ storage: memoryStorage({ [KEY]: rec }), path: "/#mine" }).replaced).toEqual([]);
+    // Not a fragment: never handed to replaceState.
+    const odd = JSON.stringify({ ...JSON.parse(rec), hash: "//evil.example/" });
+    expect(boot({ storage: memoryStorage({ [KEY]: odd }) }).replaced).toEqual([]);
   });
 
   it("holds when a handler returns false, unless the viewer forced it", async () => {

@@ -256,8 +256,11 @@ export function boot(win: Window): () => void {
   let following: Promise<void> = Promise.resolve();
   const follow = (n: number, nonce: string) => {
     following = following.then(async () => {
-      if (editing && !editing.idle()) return answer({ type: "shown", n, nonce, ok: false });
-      const text = await showVersion(win, root, n, payload.path);
+      const idle = () => !editing || editing.idle();
+      if (!idle()) return answer({ type: "shown", n, nonce, ok: false });
+      // Edit may be turned on while the text is fetched: showVersion asks `idle` again before it
+      // replaces anything, so an editor opened meanwhile is never torn down.
+      const text = await showVersion(win, root, n, payload.path, idle);
       if (text === null) return answer({ type: "shown", n, nonce, ok: false });
       // Editing starts from the version on screen: drop the idle editor, which held the old text.
       editing?.stop();

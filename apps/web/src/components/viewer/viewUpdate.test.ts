@@ -53,6 +53,14 @@ describe("planUpdate", () => {
     expect(plan({ runtimeHello: true, review: true })).toBe("ask");
     expect(plan({ runtimeHello: true, isolation: "opaque" })).toBe("swap");
     expect(plan({ runtimeHello: true, pathFallback: true })).toBe("swap");
+    // Declaring hold without focus in the frame: still asked.
+    expect(plan({ runtimeHello: true, holdDeclared: true })).toBe("ask");
+  });
+
+  it("holds a page that declares hold and has focus even when its runtime said hello", () => {
+    // The runtime's carry keeps scroll and handed-over state, not what the viewer is typing.
+    expect(plan({ runtimeHello: true, holdDeclared: true, frameFocused: true })).toBe("hold");
+    expect(plan({ runtimeHello: true, holdDeclared: false, frameFocused: true })).toBe("ask");
   });
 
   it("holds only a page that declares hold, and only while focus is in its frame", () => {
@@ -75,11 +83,13 @@ describe("planUpdate", () => {
 
 describe("carryPath", () => {
   it("keeps a path inside the artifact, and lands on the root otherwise", () => {
-    expect(carryPath("/guide.html?tab=2#step-3")).toBe("/guide.html?tab=2#step-3");
-    expect(carryPath("/#/route/7")).toBe("/#/route/7");
+    // Never the hash: `next` goes into request URLs, and a fragment stays in the browser.
+    expect(carryPath("/guide.html?tab=2#step-3")).toBe("/guide.html?tab=2");
+    expect(carryPath("/guide.html#q=salary%20of%20Jane")).toBe("/guide.html");
+    expect(carryPath("/#/route/7")).toBeNull();
     expect(carryPath("/")).toBeNull();
     expect(carryPath("/index.html")).toBeNull();
-    expect(carryPath("/a?plinth-review=1&x=1#h")).toBe("/a?x=1#h");
+    expect(carryPath("/a?plinth-review=1&x=1#h")).toBe("/a?x=1");
     for (const bad of [
       "",
       "//evil.example/x",
@@ -122,7 +132,7 @@ describe("readViewMessage", () => {
     expect(read(msg({ type: "update:ok", nonce: NONCE, path: "/p#x" }))).toEqual({
       type: "update:ok",
       nonce: NONCE,
-      path: "/p#x",
+      path: "/p",
     });
     expect(read(msg({ type: "update:hold", nonce: NONCE }))).toEqual({
       type: "update:hold",

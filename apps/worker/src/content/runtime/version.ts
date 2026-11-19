@@ -13,14 +13,18 @@
 // Messages, on the app channel (runtime/app.ts), source "plinth-view", v 1:
 //   page -> app  { type: "hello" }                       once, when framed: this frame can answer
 //   app -> page  { type: "update", from, to, nonce, force }
-//   page -> app  { type: "update:ok", nonce, path }      carry recorded; path = where the page is
+//   page -> app  { type: "update:ok", nonce, path }      carry recorded; path = where the page is,
+//                                                        without the hash (it stays in the record)
 //   page -> app  { type: "update:hold", nonce }          a handler returned false (never when force)
 //
 // The carry record lives in this content origin's sessionStorage (`__plinth_carry`): one tab, one
 // artifact, never the app, another artifact or another viewer. It holds { from, to, at, scroll,
-// path, state }, state only when its JSON is at most 16 KiB. The next version's runtime reads and
-// removes it at start, before the page's own scripts after the runtime tag run, ignores it when
-// older than 30 s, and scrolls to the recorded place after `load` and one animation frame.
+// path, hash, state }, state only when its JSON is at most 16 KiB. The next version's runtime reads
+// and removes it at start, before the page's own scripts after the runtime tag run, ignores it when
+// older than 30 s, puts the hash back (history.replaceState, no navigation) when it landed on the
+// same path and has no hash of its own, and scrolls to the recorded place after `load` and one
+// animation frame. The hash never goes to the app: it becomes part of no request URL, so state a
+// page keeps in its fragment stays in the viewer's browser.
 // Page script can forge an `update` on its own window: the worst it does is make the page record
 // its own state. Under opaque isolation (origin "null") there is no storage and none of this runs.
 import type { RuntimeFragment } from "./fragment.ts";
@@ -54,13 +58,41 @@ export const VERSION_FRAGMENT: RuntimeFragment = {
     return typeof n === "number" && isFinite(n) ? n : 0;
   }
 
+  // Where the page is, without the hash: this is what the app is told and puts in request URLs.
   function pagePath() {
     try {
       var l = window.location;
-      return l.pathname + l.search + l.hash;
+      return l.pathname + l.search;
     } catch (e) {
       return null;
     }
+  }
+
+  function pageHash() {
+    try {
+      var h = window.location.hash;
+      return typeof h === "string" && h.length > 1 ? h : null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function samePath(a, b) {
+    var root = function (p) {
+      return p === "/index.html" ? "/" : p;
+    };
+    return typeof a === "string" && typeof b === "string" && root(a) === root(b);
+  }
+
+  // The fragment the page had, back on the same page (before the page's own scripts read it).
+  function restoreHash(rec) {
+    var h = rec.hash;
+    if (typeof h !== "string" || h.length < 2 || h.length > 2048 || h.charAt(0) !== "#") return;
+    if (pageHash() !== null || !samePath(rec.path, pagePath())) return;
+    try {
+      var hist = window.history;
+      if (hist && typeof hist.replaceState === "function") hist.replaceState(hist.state, "", h);
+    } catch (e) {}
   }
 
   function restoreScroll(x, y) {
@@ -97,6 +129,7 @@ export const VERSION_FRAGMENT: RuntimeFragment = {
     var age = Date.now() - rec.at;
     if (!(age >= 0 && age <= CARRY_MAX_AGE_MS)) return null;
     if (!versionInt(rec.from) || !versionInt(rec.to)) return null;
+    restoreHash(rec);
     if (rec.scroll && typeof rec.scroll === "object") {
       var x = finiteOr0(rec.scroll.x);
       var y = finiteOr0(rec.scroll.y);
@@ -125,6 +158,7 @@ export const VERSION_FRAGMENT: RuntimeFragment = {
       at: Date.now(),
       scroll: { x: finiteOr0(window.scrollX), y: finiteOr0(window.scrollY) },
       path: pagePath(),
+      hash: pageHash(),
       state: carryState(state),
     };
     try {

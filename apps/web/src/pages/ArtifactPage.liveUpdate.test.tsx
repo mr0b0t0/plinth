@@ -7,7 +7,7 @@ import type { AppConfig, ViewArtifact, ViewGate } from "@plinth/shared";
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { CONFIG, json, stubApi } from "../components/viewer/test-utils.ts";
+import { CONFIG, json, ME, stubApi } from "../components/viewer/test-utils.ts";
 import { VERSION_POLL_MS } from "../components/viewer/useVersionWatch.ts";
 
 async function loadPage() {
@@ -33,10 +33,19 @@ const ARTIFACT: ViewArtifact = {
 type OkGate = Extract<ViewGate, { status: "ok" }>;
 
 /** A server whose current version moves when the test says; every gate read is recorded. */
-function server(opts: { config?: AppConfig; type?: ViewArtifact["type"]; hold?: boolean } = {}) {
+function server(
+  opts: {
+    config?: AppConfig;
+    type?: ViewArtifact["type"];
+    hold?: boolean;
+    /** A signed-in editor who can edit the doc solo on its page. */
+    editor?: boolean;
+  } = {},
+) {
   const state = { current: 3, reads: [] as string[] };
   stubApi({
     config: opts.config ?? LIVE,
+    me: opts.editor ? ME : null,
     handle: (c) => {
       if (!c.path.startsWith("/view/garden-plan")) return undefined;
       state.reads.push(c.path);
@@ -49,7 +58,8 @@ function server(opts: { config?: AppConfig; type?: ViewArtifact["type"]; hold?: 
           version: state.current,
         },
         enter_url: ENTER(state.reads.length),
-        role: null,
+        role: opts.editor ? "editor" : null,
+        ...(opts.editor ? { live: { mode: "solo" as const, draft: null } } : {}),
         ...(opts.hold ? { hold: true as const } : {}),
       };
       return json(gate);
@@ -82,6 +92,23 @@ function sentOf(sent: [Record<string, unknown>, string][], type: string) {
     return found[0];
   });
 }
+
+/** The doc renderer's status while the viewer edits solo with unsaved changes. */
+const DIRTY = {
+  type: "live",
+  connected: false,
+  failed: false,
+  editing: true,
+  holding: false,
+  dirty: true,
+  unflushed: false,
+  rev: 0,
+  base_version: 0,
+  conflict_version: null,
+  last_by_you: false,
+  last_edit_at: null,
+  editors: [],
+};
 
 /** Put focus inside `frame`, as when the viewer is typing in the page. */
 function focusInto(frame: HTMLIFrameElement) {
@@ -197,6 +224,35 @@ describe("ArtifactPage: applying a newer version (live views)", () => {
     expect(await screen.findByText("Updated to v4")).toBeTruthy();
   });
 
+  it("keeps a doc's frame when editing began while its renderer fetched the version", async () => {
+    const s = server({ type: "doc", editor: true });
+    const ArtifactPage = await loadPage();
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    render(<ArtifactPage params={{ slug: "garden-plan" }} />);
+    const frame = (await screen.findByTitle("Garden plan, version 3")) as HTMLIFrameElement;
+    const { sent, fromFrame } = frameWindow(frame);
+    s.current = 4;
+    await vi.advanceTimersByTimeAsync(VERSION_POLL_MS);
+    const ask = await sentOf(sent, "version");
+    // Before the renderer answers, the viewer edits and the page has unsaved changes.
+    await user.click(screen.getByRole("button", { name: "Edit" }));
+    fromFrame({ source: "plinth-renderer", v: 1, ...DIRTY });
+    const n = s.reads.length;
+    // The renderer refuses: it never replaces a draft. The frame must stay too.
+    fromFrame({
+      source: "plinth-renderer",
+      v: 1,
+      type: "shown",
+      n: 4,
+      nonce: ask.nonce,
+      ok: false,
+    });
+    await vi.advanceTimersByTimeAsync(50);
+    expect(screen.getByTitle("Garden plan, version 3")).toBe(frame);
+    expect(screen.queryByTitle("Garden plan, version 4")).toBeNull();
+    expect(s.reads.length).toBe(n);
+  });
+
   it("swaps a doc whose renderer could not show the version, or did not answer", async () => {
     const s = server({ type: "doc" });
     const ArtifactPage = await loadPage();
@@ -244,13 +300,58 @@ describe("ArtifactPage: applying a newer version (live views)", () => {
       v: 1,
       type: "update:ok",
       nonce,
-      path: "/guide.html#step-3",
+      path: "/guide.html?tab=2#q=salary%20of%20Jane",
     });
     expect(await screen.findByTitle("Garden plan, version 4")).toBeTruthy();
-    // One more gate read, with the page's place as `next`.
+    // One more gate read, with the page's place as `next`, never its hash: the request URL (and
+    // the enter URL the server builds from it) must not carry what the page keeps in its fragment.
     expect(s.reads.at(-1)).toBe(
-      `/view/garden-plan?next=${encodeURIComponent("/guide.html#step-3")}`,
+      `/view/garden-plan?next=${encodeURIComponent("/guide.html?tab=2")}`,
     );
+    expect(s.reads.join(" ")).not.toContain("salary");
+  });
+
+  it("holds a page that declares hold and loads the runtime while focus is in its frame", async () => {
+    const s = server({ hold: true });
+    const ArtifactPage = await loadPage();
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    render(<ArtifactPage params={{ slug: "garden-plan" }} />);
+    const frame = (await screen.findByTitle("Garden plan, version 3")) as HTMLIFrameElement;
+    const { sent, fromFrame } = frameWindow(frame);
+    fromFrame({ source: "plinth-view", v: 1, type: "hello" });
+    focusInto(frame);
+
+    s.current = 4;
+    await vi.advanceTimersByTimeAsync(VERSION_POLL_MS);
+    expect((await screen.findByText(/is available/)).textContent).toContain("v4 is available");
+    // The runtime is not asked (an update:ok would replace what the viewer is typing).
+    expect(sent.filter(([m]) => m.type === "update")).toEqual([]);
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(screen.queryByTitle("Garden plan, version 4")).toBeNull();
+    expect(screen.getByTitle("Garden plan, version 3")).toBe(frame);
+
+    // Update asks the runtime with force, so it records its state, then loads v4.
+    await user.click(screen.getByRole("button", { name: "Update" }));
+    const forced = await sentOf(sent, "update");
+    expect(forced).toMatchObject({ from: 3, to: 4, force: true });
+    fromFrame({ source: "plinth-view", v: 1, type: "update:ok", nonce: forced.nonce as string });
+    expect(await screen.findByTitle("Garden plan, version 4")).toBeTruthy();
+  });
+
+  it("holds a page that declares hold when focus came into its frame while the runtime answered", async () => {
+    const s = server({ hold: true });
+    const ArtifactPage = await loadPage();
+    render(<ArtifactPage params={{ slug: "garden-plan" }} />);
+    const frame = (await screen.findByTitle("Garden plan, version 3")) as HTMLIFrameElement;
+    const { sent, fromFrame } = frameWindow(frame);
+    fromFrame({ source: "plinth-view", v: 1, type: "hello" });
+    s.current = 4;
+    await vi.advanceTimersByTimeAsync(VERSION_POLL_MS);
+    const ask = await sentOf(sent, "update");
+    focusInto(frame);
+    fromFrame({ source: "plinth-view", v: 1, type: "update:ok", nonce: ask.nonce as string });
+    expect((await screen.findByText(/is available/)).textContent).toContain("v4 is available");
+    expect(screen.queryByTitle("Garden plan, version 4")).toBeNull();
   });
 
   it("holds when the page's runtime asks, and forces the update when the viewer chooses it", async () => {

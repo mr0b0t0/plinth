@@ -63,12 +63,27 @@ describe("the reader's place", () => {
     // h1, p, h2#middle, p, p, h2#end, p: the viewport top sits inside "one".
     layout((_, i) => [-400, -300, -120, -10, 30, 80, 120][i] ?? 0);
     const place = readingPlace(window, root());
-    expect(place).toEqual({ heading: "middle", skip: 2, offset: 30 });
+    expect(place).toEqual({ heading: "middle", skip: 2, index: 4, offset: 30 });
     // After the re-render "Middle" gained a paragraph: the same block (two after it) is found,
     // and the window scrolls so it is where it was.
     layout((_, i) => [-400, -300, -120, -40, 60, 190][i] ?? 0);
     restorePlace(window, root(), place as NonNullable<typeof place>);
     expect(scrollBy).toHaveBeenCalledWith(0, 30);
+  });
+
+  it("keeps the block index when its heading was renamed, instead of counting from the top", () => {
+    const blocks = Array.from({ length: 12 }, (_, i) => `p${i}`).join("\n\n");
+    mountRendered(`# Top\n\nintro\n\n## Results\n\n${blocks}`);
+    expect(root().children[2]?.id).toBe("results");
+    // h1, p, h2#results, p0..p11: the viewport top sits at p9, block 12, ten after the heading.
+    layout((_, i) => (i - 12) * 50 + 15);
+    const place = readingPlace(window, root());
+    expect(place).toEqual({ heading: "results", skip: 10, index: 12, offset: 15 });
+    // The heading became "Findings": no "results" any more, so block 12 is the place, not block 10.
+    mountRendered(`# Top\n\nintro\n\n## Findings\n\n${blocks}`);
+    layout((_, i) => (i - 12) * 50 + 115);
+    restorePlace(window, root(), place as NonNullable<typeof place>);
+    expect(scrollBy).toHaveBeenCalledWith(0, 100);
   });
 
   it("is nothing to keep at the top of the page", () => {
@@ -190,6 +205,29 @@ describe("boot: version messages from the app", () => {
     await settle();
     expect(answers("shown")).toEqual([{ ...base, type: "shown", n: 2, nonce: NONCE, ok: false }]);
     expect(h1()).toBe("One");
+  });
+
+  it("keeps an editor opened while the version was being fetched, and answers ok: false", async () => {
+    mountShell("one");
+    let arrive: (r: Response) => void = () => undefined;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => new Promise<Response>((r) => (arrive = r))),
+    );
+    stop = boot(window);
+    post({ ...base, type: "version", n: 2, nonce: NONCE });
+    await settle();
+    // The viewer turns on editing before the new version's text arrives.
+    post({ ...base, type: "edit", on: true });
+    await settle();
+    expect(root().classList.contains("plinth-doc--editing")).toBe(true);
+    arrive(new Response("two"));
+    await settle();
+    expect(answers("shown")).toEqual([{ ...base, type: "shown", n: 2, nonce: NONCE, ok: false }]);
+    expect(root().classList.contains("plinth-doc--editing")).toBe(true);
+    expect(root().textContent).not.toContain("two");
+    post({ ...base, type: "collect", nonce: NONCE });
+    expect(answers("draft").at(-1)).toEqual({ ...base, type: "draft", nonce: NONCE, text: "one" });
   });
 
   it("is refused while editing, and solo editing afterwards starts from the version on screen", async () => {
