@@ -152,7 +152,7 @@ export async function prepareBoardSource(ctx: Ctx, p: PrepareInput): Promise<Pre
 }
 
 /** Why a starting board was not written. */
-export type SeedSkipped = "forbidden" | "not_empty" | "quota" | "gone" | "rate_limited";
+export type SeedSkipped = "forbidden" | "not_empty" | "quota" | "gone" | "rate_limited" | "error";
 
 const SKIP_MESSAGES: Record<SeedSkipped, string> = {
   forbidden:
@@ -162,6 +162,8 @@ const SKIP_MESSAGES: Record<SeedSkipped, string> = {
   quota:
     "The version is published, but its starting board was not written: the board's shared data is full",
   gone: "The version is published, but its starting board was not written: the board is gone",
+  error:
+    "The version is published, but its starting board could not be written. Read the board with list_artifact_data and add what is missing with write_artifact_data",
   rate_limited:
     "The version is published, but its starting board was not written: too many changes to this board's data in the last hour. Add the blocks later with write_artifact_data",
 };
@@ -258,7 +260,7 @@ export async function seedBoard(
   } catch (e) {
     // The version is committed whatever happens here; the seed is best effort past its checks.
     console.error("board seed failed:", e instanceof Error ? e.name : "unknown");
-    return notSeeded(result, "gone");
+    return notSeeded(result, "error");
   }
 }
 
