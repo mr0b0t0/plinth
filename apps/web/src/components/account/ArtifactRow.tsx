@@ -353,15 +353,17 @@ export function ArtifactCard({ artifact: a, now, you, onFile }: ArtifactCardProp
           <span className="pl-dash__version" title={versionsText(a.version_count)}>
             <span className="visually-hidden">Version </span>v{a.current_version}
           </span>
-          {shownCategory(a) && (
-            <CategoryBadge name={shownCategory(a) as string} own={a.role !== "owner"} />
-          )}
           <span className="pl-dash__dot" aria-hidden="true">
             ·
           </span>
           <Owner artifact={a} you={you} />
           <Updated iso={a.updated_at} now={now} />
         </span>
+        {shownCategory(a) && (
+          <span className="pl-dash__card-category">
+            <CategoryBadge name={shownCategory(a) as string} own={a.role !== "owner"} />
+          </span>
+        )}
       </div>
       <RowMenu artifact={a} onFile={onFile} />
     </li>
