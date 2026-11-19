@@ -1089,3 +1089,66 @@ describe("the docked cell editor (phone width)", () => {
     expect(menu()?.classList.contains("plinth-sheet__menu--sheet")).toBe(true);
   });
 });
+
+describe("the settings and menus open where they are for", () => {
+  it("opens the column settings under their header, outside the grid, with the actions last", () => {
+    solo();
+    cell("C2").focus();
+    columnItem("Column settings…").click();
+    const p = panel();
+    expect(p.parentElement).toBe(document.body);
+    expect(document.querySelector(".plinth-sheet__page")?.contains(p)).toBe(false);
+    const actions = p.lastElementChild as HTMLElement;
+    expect(actions.classList.contains("plinth-sheet__panel-actions")).toBe(true);
+    expect([...actions.children].map((b) => b.textContent)).toEqual(["Cancel", "Apply"]);
+    const types = p.querySelector("select") as HTMLSelectElement;
+    expect([...types.options].map((o) => o.textContent)).toEqual([
+      "Text",
+      "Number",
+      "Date",
+      "Checkbox",
+      "Dropdown",
+      "Link",
+    ]);
+    expect(types.value).toBe("number");
+  });
+
+  it("adds an option with Enter, with no Add button", () => {
+    solo();
+    cell("E2").focus();
+    columnItem("Column settings…").click();
+    expect(panel().querySelector('button[aria-label="Add option"]')).toBeNull();
+    expect([...panel().querySelectorAll("button")].map((b) => b.textContent)).not.toContain("Add");
+  });
+
+  it("marks the row a row's menu is for, and selects it, while the menu is open", () => {
+    solo();
+    cell("B3").focus();
+    const tr = cell("A2").parentElement as HTMLTableRowElement;
+    (tr.cells[0] as HTMLElement).click();
+    expect(tr.classList.contains("plinth-sheet__row--target")).toBe(true);
+    expect(selectedCell()).toBe(cell("B2"));
+    key(item("Insert row above"), "Escape");
+    expect(menu()).toBeNull();
+    expect(tr.classList.contains("plinth-sheet__row--target")).toBe(false);
+  });
+
+  it("names the row or the column on the sheets at phone width", () => {
+    solo({ dock: true });
+    (cell("A3").parentElement as HTMLTableRowElement).cells[0]?.click();
+    expect(menu()?.querySelector(".plinth-sheet__sheet-title")?.textContent).toBe("Row 3");
+    key(item("Insert row above"), "Escape");
+    columnItem("Column settings…").click();
+    expect(panel().classList.contains("plinth-sheet__panel--sheet")).toBe(true);
+    expect(panel().querySelector(".plinth-sheet__sheet-title")?.textContent).toBe("Column A");
+  });
+
+  it("shows a header's menu button for the selected cell's column", () => {
+    solo();
+    cell("B2").focus();
+    expect(cell("B1").classList.contains("plinth-sheet__name--current")).toBe(true);
+    cell("C3").focus();
+    expect(cell("B1").classList.contains("plinth-sheet__name--current")).toBe(false);
+    expect(cell("C1").classList.contains("plinth-sheet__name--current")).toBe(true);
+  });
+});

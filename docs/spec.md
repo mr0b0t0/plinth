@@ -2539,14 +2539,21 @@ and the whole-draft review is the only way on (below).
   renames it. Numbers are typed in the viewer's locale, with its decimal separator; a percent column
   takes 12.5 for 12.5%. Rows and columns change from their menus, the one way in: a row's
   number, or Alt+Down in one of its cells, opens the row's menu (insert above or below, move up or
-  down, delete); a column header's menu button, or Alt+Down on the header, opens the column's (its
-  settings, "Freeze up to this column" and "Unfreeze columns", insert left or right, delete, and
-  "Insert row" while the sheet has no rows, which have no number to open a menu from).
+  down, delete), under the row and beside the row numbers, with the row marked and selected while
+  it is open; a column header's menu button, or Alt+Down on the header, opens the column's under
+  its header (its settings, "Freeze up to this column" and "Unfreeze columns", insert left or
+  right, delete, and "Insert row" while the sheet has no rows, which have no number to open a menu
+  from). The header's menu button lies over the end of the name and shows only on hover, on focus,
+  for the selected cell's column and while its menu is open, so the headers look as they do
+  outside edit mode until the menu is wanted.
   Alt+Shift+Up and Alt+Shift+Down move the selected row too, and the move is announced ("Row 4
   moved to row 3"); rows move in the sheet's own order, so not while a sort is on. The column
-  settings set the name, type, number format, currency, decimals, thousands separators (on unless
-  turned off) and a select column's options, as a list: rename one in place, move it up or down,
-  remove it, or add one (at most 100, of at most 100 characters each). An option a cell holds cannot be removed (the settings name the
+  settings open under the column's header, with Cancel and Apply last, and set the name, type
+  (Text, Number, Date, Checkbox, Dropdown for `select`, Link for `url`), number format, currency,
+  decimals, thousands separators (on unless turned off) and a select column's options, as a list:
+  rename one in place, move it up or down (its arrows show on hover or focus), remove it with ×,
+  or type one in "New option" and press Enter to add it (text left there is added on Apply too; at
+  most 100, of at most 100 characters each). An option a cell holds cannot be removed (the settings name the
   cell); renaming one that cells hold renames it in those cells too, in one change of the whole
   sheet under a lease on every line, up to what one edit frame carries. A width (40 to 800
   pixels) changes by dragging the header's edge, or with Alt+Left and Alt+Right on the header in
@@ -2570,8 +2577,11 @@ and the whole-draft review is the only way on (below).
   shows.
 - **At phone width** (a frame 640 pixels wide or less) an open cell's field is docked at the
   bottom of the page with the column's name, the cell's address and Done, and the page keeps the
-  cell in view above it; the row and column menus are sheets across the bottom, the column
-  settings are one column with Apply and Cancel last, and touch targets are at least 44 pixels.
+  cell in view above it; the row and column menus and the column settings are sheets across the
+  bottom, titled with the row or the column ("Row 6", "Column C"), the settings with Cancel and
+  Apply pinned under fields that scroll, and touch targets are at least 44 pixels. A cell that is
+  focused or opened is scrolled sideways clear of the frozen columns, its start first when it is
+  wider than the space beside them.
 - **Keyboard and screen readers.** The cells are a grid (`role="grid"` with `aria-rowcount`,
   `aria-colcount`, row and column indexes, and `aria-readonly` outside edit mode) with one tab
   stop, the selected cell (a header's stop is its sort button). The arrows, Home and End move among

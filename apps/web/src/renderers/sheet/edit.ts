@@ -72,6 +72,15 @@ export const MAX_OPTION_CHARS = 100;
 export const DOCK_QUERY = "(max-width: 640px)";
 const STALE_RETRIES = 3;
 const RULES = liveRules("sheet");
+/** What the column settings call each column type. */
+const TYPE_LABELS: Record<SheetColumnType, string> = {
+  text: "Text",
+  number: "Number",
+  date: "Date",
+  checkbox: "Checkbox",
+  select: "Dropdown",
+  url: "Link",
+};
 
 /** The live draft of a sheet: a LiveBackend that also takes rows and columns. */
 export interface SheetBackend extends LiveBackend {
@@ -467,6 +476,8 @@ export class SheetEditor {
     button: HTMLElement | null;
     back: HTMLElement | null;
     still: () => boolean;
+    /** Takes away what marks the menu's row while it is open. */
+    done: () => void;
   } | null = null;
   /** The frame's polite live region (row moves, widths, freezing). */
   private announcer: HTMLElement | null = null;
@@ -1383,6 +1394,7 @@ export class SheetEditor {
     // The page keeps the cell above the docked panel in view.
     this.doc.documentElement.style.setProperty("--sheet-dock-h", `${dock.offsetHeight || 120}px`);
     o.td.scrollIntoView?.({ block: "nearest", inline: "nearest" });
+    this.grid?.reveal(o.row, o.col);
   }
 
   private closeDock(): void {
@@ -1394,11 +1406,18 @@ export class SheetEditor {
 
   // ---------- rows and columns ----------
 
-  /** The column settings, when open, stay in the slot between the formula bar and the cells. */
+  /**
+   * The column settings, when open, float under their column's header (a sheet across the bottom
+   * at phone width), and follow it when the grid scrolls or is rebuilt.
+   */
   private mountPanel(): void {
-    const g = this.grid;
-    if (g && this.panel && this.panel.parentNode !== g.slot) g.slot.append(this.panel);
+    const p = this.panel;
+    const head = this.panelAt ? this.grid?.cell(1, this.panelAt.col) : null;
+    if (!p || !head || p.classList.contains("plinth-sheet__panel--sheet")) return;
+    this.float(p, head, "below");
   }
+
+  private readonly onPanelMove = () => this.mountPanel();
 
   /** Send a struct; `again` aims it at the same rows or column if the room says it is stale. */
   private struct(op: SheetStructOp, again: SentStruct["again"]): boolean {
@@ -1732,7 +1751,16 @@ export class SheetEditor {
       const h = this.header();
       return h?.columns[col]?.name === c.name && (h.freeze?.cols ?? 0) === frozen;
     };
-    this.openMenu(from, `Column ${colLetter(col)}, ${c.name}`, items, back, button, still);
+    this.openMenu({
+      // Under the header, where its settings open too.
+      anchor: this.grid?.cell(1, col) ?? from,
+      label: `Column ${colLetter(col)}, ${c.name}`,
+      title: `Column ${colLetter(col)}`,
+      items,
+      back,
+      button,
+      still,
+    });
   }
 
   /** A row's menu, from its number or Alt+Down in one of its cells. */
@@ -1783,28 +1811,52 @@ export class SheetEditor {
     ];
     const line = this.backend.lines[row - 1];
     const still = () => this.backend.lines[row - 1] === line;
-    this.openMenu(from, `Row ${row}`, items, g.cell(row, col) ?? from, null, still);
+    // The row the menu acts on is the one selected and marked while it is open.
+    select();
+    const tr = (g.cell(row, col)?.parentElement ?? null) as HTMLTableRowElement | null;
+    tr?.classList.add("plinth-sheet__row--target");
+    this.openMenu({
+      anchor: (tr?.cells[0] as HTMLElement | undefined) ?? from,
+      side: "right",
+      label: `Row ${row}`,
+      title: `Row ${row}`,
+      items,
+      back: g.cell(row, col) ?? from,
+      button: null,
+      still,
+      done: () => tr?.classList.remove("plinth-sheet__row--target"),
+    });
   }
 
   /**
-   * A menu of buttons (role="menu"): next to what opened it, or a full-width sheet at phone width.
-   * The arrows, Home and End move between its items, Escape closes it and goes back, and Tab or
-   * a click elsewhere closes it.
+   * A menu of buttons (role="menu"): under what opened it (a column's) or beside it (a row's), or
+   * a full-width sheet titled with the row or column at phone width. The arrows, Home and End move
+   * between its items, Escape closes it and goes back, and Tab or a click elsewhere closes it.
    */
-  private openMenu(
-    anchor: HTMLElement,
-    label: string,
-    items: readonly MenuItem[],
-    back: HTMLElement | null,
-    button: HTMLElement | null,
-    still: () => boolean,
-  ): void {
+  private openMenu(m: {
+    anchor: HTMLElement;
+    side?: "below" | "right";
+    label: string;
+    title: string;
+    items: readonly MenuItem[];
+    back: HTMLElement | null;
+    button: HTMLElement | null;
+    still: () => boolean;
+    done?: () => void;
+  }): void {
+    const { anchor, label, items, back, button, still } = m;
     this.closeMenu(false);
     const d = this.doc;
     const menu = d.createElement("div");
     menu.className = "plinth-sheet__menu";
     menu.setAttribute("role", "menu");
     menu.setAttribute("aria-label", label);
+    // Shown at phone width only, where the sheet covers what it is for; the label names it.
+    const title = d.createElement("div");
+    title.className = "plinth-sheet__sheet-title";
+    title.setAttribute("aria-hidden", "true");
+    title.textContent = m.title;
+    menu.append(title);
     const buttons: HTMLButtonElement[] = [];
     items.forEach((it, i) => {
       const b = d.createElement("button");
@@ -1858,18 +1910,36 @@ export class SheetEditor {
       e.preventDefault();
       buttons[to]?.focus();
     });
-    if (this.narrow()) menu.classList.add("plinth-sheet__menu--sheet");
-    else {
-      const r = anchor.getBoundingClientRect();
-      const width = this.win.innerWidth || d.documentElement.clientWidth || 0;
-      menu.style.top = `${Math.round(r.bottom + 2)}px`;
-      menu.style.left = `${Math.max(8, Math.round(Math.min(r.left, width - 248)))}px`;
-    }
+    const sheet = this.narrow();
+    if (sheet) menu.classList.add("plinth-sheet__menu--sheet");
     d.body.append(menu);
+    if (!sheet) this.float(menu, anchor, m.side ?? "below");
     button?.setAttribute("aria-expanded", "true");
-    this.menu = { el: menu, button, back, still };
+    this.menu = { el: menu, button, back, still, done: m.done ?? (() => {}) };
     d.addEventListener("pointerdown", this.onOutside, true);
     buttons[0]?.focus();
+  }
+
+  /**
+   * Put a floating menu or the column settings under what they are for: under a column's header,
+   * or under a row and right of its number, so the row and the numbers stay in view. Above it
+   * when there is no room below, and given a scroll inside when there is none either.
+   */
+  private float(el: HTMLElement, anchor: HTMLElement, side: "below" | "right"): void {
+    const d = this.doc;
+    const r = anchor.getBoundingClientRect();
+    const width = this.win.innerWidth || d.documentElement.clientWidth || 0;
+    const height = this.win.innerHeight || d.documentElement.clientHeight || 0;
+    const w = el.offsetWidth || 240;
+    let top = r.bottom + 2;
+    let left = side === "right" ? r.right + 2 : r.left;
+    left = Math.max(8, Math.min(left, width - w - 8));
+    el.style.maxHeight = "";
+    const h = el.offsetHeight;
+    if (height > 0 && top + h > height - 8 && r.top - 2 - h >= 8) top = r.top - 2 - h;
+    if (height > 0) el.style.maxHeight = `${Math.max(120, height - 8 - top)}px`;
+    el.style.top = `${Math.round(top)}px`;
+    el.style.left = `${Math.round(left)}px`;
   }
 
   private readonly onOutside = (e: Event) => {
@@ -1882,6 +1952,7 @@ export class SheetEditor {
     this.menu = null;
     this.doc.removeEventListener("pointerdown", this.onOutside, true);
     m.el.remove();
+    m.done();
     m.button?.setAttribute("aria-expanded", "false");
     // A rebuild meanwhile (someone else's width or row) replaced the cell focus went back to.
     if (goBack) {
@@ -1893,6 +1964,10 @@ export class SheetEditor {
   // ---------- column settings ----------
 
   private closePanel(): void {
+    if (this.panel) {
+      this.doc.removeEventListener("scroll", this.onPanelMove, true);
+      this.win.removeEventListener("resize", this.onPanelMove);
+    }
     this.panel?.remove();
     this.panel = null;
     this.panelAt = null;
@@ -1915,6 +1990,7 @@ export class SheetEditor {
       if (at !== p.col) {
         p.col = at;
         p.relabel();
+        this.mountPanel();
       }
     } else if (p.gone === null) {
       p.gone = this.panelGone(p, header);
@@ -1958,13 +2034,21 @@ export class SheetEditor {
     if (this.narrow()) form.classList.add("plinth-sheet__panel--sheet");
     const label = (at: number) => `Column ${colLetter(at)} settings`;
     form.setAttribute("aria-label", label(col));
-    const field = (labelText: string, input: HTMLElement) => {
+    // Shown at phone width only, where the sheet covers the column it is for.
+    const title = d.createElement("div");
+    title.className = "plinth-sheet__sheet-title";
+    title.setAttribute("aria-hidden", "true");
+    title.textContent = `Column ${colLetter(col)}`;
+    // The fields scroll when they do not fit; the actions stay last, in view.
+    const body = d.createElement("div");
+    body.className = "plinth-sheet__panel-body";
+    const field = (labelText: string, input: HTMLElement, into: HTMLElement = body) => {
       const label = d.createElement("label");
       label.className = "plinth-sheet__panel-field";
       const span = d.createElement("span");
       span.textContent = labelText;
       label.append(span, input);
-      form.append(label);
+      into.append(label);
       return label;
     };
     const name = d.createElement("input");
@@ -1975,17 +2059,17 @@ export class SheetEditor {
     for (const t of SHEET_COLUMN_TYPES) {
       const o = d.createElement("option");
       o.value = t;
-      o.textContent = t;
+      o.textContent = TYPE_LABELS[t];
       type.append(o);
     }
     type.value = c.type;
     field("Type", type);
     const style = d.createElement("select");
     for (const [v, t] of [
-      ["", "automatic"],
-      ["plain", "plain"],
-      ["percent", "percent"],
-      ["currency", "currency"],
+      ["", "Automatic"],
+      ["plain", "Plain"],
+      ["percent", "Percent"],
+      ["currency", "Currency"],
     ] as const) {
       const o = d.createElement("option");
       o.value = v;
@@ -1994,38 +2078,45 @@ export class SheetEditor {
     }
     style.value = c.format?.style ?? "";
     const styleRow = field("Number format", style);
+    // Currency and decimals side by side, then the separators on a line of their own.
+    const pair = d.createElement("div");
+    pair.className = "plinth-sheet__panel-pair";
+    body.append(pair);
     const currency = d.createElement("input");
     currency.value = c.format?.currency ?? "EUR";
     currency.maxLength = 3;
     currency.size = 4;
-    const currencyRow = field("Currency", currency);
+    const currencyRow = field("Currency", currency, pair);
     const decimals = d.createElement("input");
     decimals.type = "number";
     decimals.min = "0";
     decimals.max = "10";
     decimals.value = c.format?.decimals !== undefined ? String(c.format.decimals) : "";
-    const decimalsRow = field("Decimals", decimals);
+    const decimalsRow = field("Decimals", decimals, pair);
     const grouping = d.createElement("input");
     grouping.type = "checkbox";
     grouping.checked = c.format?.grouping !== false;
     const groupingRow = field("Thousands separators", grouping);
     groupingRow.classList.add("plinth-sheet__panel-field--check");
     const options = this.optionList(c.options ?? []);
-    form.append(options.el);
+    body.append(options.el);
     const sync = () => {
       const num = type.value === "number";
       styleRow.hidden = !num;
       decimalsRow.hidden = !num || style.value === "";
       groupingRow.hidden = !num || style.value === "";
       currencyRow.hidden = !num || style.value !== "currency";
+      pair.hidden = decimalsRow.hidden && currencyRow.hidden;
       options.el.hidden = type.value !== "select";
+      // The settings grow or shrink with the type: keep them where they fit.
+      this.mountPanel();
     };
     type.addEventListener("change", sync);
     style.addEventListener("change", sync);
     sync();
     const apply = d.createElement("button");
     apply.type = "submit";
-    apply.className = "plinth-sheet__btn";
+    apply.className = "plinth-sheet__btn plinth-sheet__btn--primary";
     apply.textContent = "Apply";
     const cancel = d.createElement("button");
     cancel.type = "button";
@@ -2051,8 +2142,8 @@ export class SheetEditor {
     });
     const actions = d.createElement("div");
     actions.className = "plinth-sheet__panel-actions";
-    actions.append(apply, cancel);
-    form.append(actions);
+    actions.append(cancel, apply);
+    form.append(title, body, actions);
     form.addEventListener("submit", (e) => {
       e.preventDefault();
       // Apply pressed again while the change waits for its lease: that one is still coming.
@@ -2164,16 +2255,22 @@ export class SheetEditor {
       count: header.columns.length,
       gone: null,
       relabel: () => {
-        if (this.panelAt) form.setAttribute("aria-label", label(this.panelAt.col));
+        if (!this.panelAt) return;
+        form.setAttribute("aria-label", label(this.panelAt.col));
+        title.textContent = `Column ${colLetter(this.panelAt.col)}`;
       },
     };
-    g.slot.append(form);
-    name.focus();
+    d.body.append(form);
+    this.mountPanel();
+    d.addEventListener("scroll", this.onPanelMove, true);
+    this.win.addEventListener("resize", this.onPanelMove);
+    name.focus({ preventScroll: true });
   }
 
   /**
-   * A select column's options as a list: each one a field to rename it, with Move up, Move down
-   * and Remove, then a field and a button to add one (at most 100, of at most 100 characters).
+   * A select column's options as a list: each one a field to rename it, with Move up and Move down
+   * (shown on hover or focus) and Remove, then a field where Enter adds one (at most 100, of at
+   * most 100 characters; what is left in it is added on Apply too).
    */
   private optionList(initial: readonly string[]): { el: HTMLElement; entries(): OptionEntry[] } {
     const d = this.doc;
@@ -2192,15 +2289,11 @@ export class SheetEditor {
     addInput.maxLength = MAX_OPTION_CHARS;
     addInput.placeholder = "New option";
     addInput.setAttribute("aria-label", "New option");
-    const add = d.createElement("button");
-    add.type = "button";
-    add.className = "plinth-sheet__btn";
-    add.textContent = "Add";
-    add.setAttribute("aria-label", "Add option");
+    addInput.enterKeyHint = "enter";
     const small = (text: string, label: string, run: () => void, off: boolean) => {
       const b = d.createElement("button");
       b.type = "button";
-      b.className = "plinth-sheet__btn plinth-sheet__btn--small";
+      b.className = "plinth-sheet__ghost";
       b.textContent = text;
       b.setAttribute("aria-label", label);
       b.disabled = off;
@@ -2222,6 +2315,8 @@ export class SheetEditor {
           i === rows.length - 1,
         );
         const remove = small("×", `Remove ${shown()}`, () => drop(i), false);
+        up.classList.add("plinth-sheet__ghost--move");
+        down.classList.add("plinth-sheet__ghost--move");
         r.input.oninput = () => {
           up.setAttribute("aria-label", `Move ${shown()} up`);
           down.setAttribute("aria-label", `Move ${shown()} down`);
@@ -2236,7 +2331,6 @@ export class SheetEditor {
       });
       list.replaceChildren(...items);
       const full = rows.length >= MAX_OPTIONS;
-      add.disabled = full;
       addInput.disabled = full;
       addInput.placeholder = full ? `At most ${MAX_OPTIONS} options` : "New option";
     };
@@ -2263,7 +2357,6 @@ export class SheetEditor {
       draw();
       addInput.focus();
     };
-    add.addEventListener("click", push);
     addInput.addEventListener("keydown", (e) => {
       if (e.key === "Enter") {
         // Enter adds the option; it does not apply the whole panel.
@@ -2273,7 +2366,7 @@ export class SheetEditor {
     });
     const adder = d.createElement("div");
     adder.className = "plinth-sheet__options-add";
-    adder.append(addInput, add);
+    adder.append(addInput);
     box.append(legend, list, adder);
     draw();
     return {

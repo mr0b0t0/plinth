@@ -214,6 +214,8 @@ body {
   flex: 1 1 auto;
   min-height: 0;
   overflow: auto;
+  /* A cell scrolled into view clears the sticky header rows (the left side is set per grid). */
+  scroll-padding-top: calc(var(--sheet-letters-h) + var(--sheet-row-h));
 }
 
 .plinth-sheet__grid {
@@ -380,40 +382,69 @@ body {
 
 /* ---------- on-page editing ---------- */
 
-.plinth-sheet__slot:empty {
-  display: none;
-}
-
 .plinth-sheet__btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
 }
 
+/* The column settings: a popover under the column's header (a sheet at phone width). */
 .plinth-sheet__panel {
+  position: fixed;
+  z-index: 20;
   display: flex;
-  flex-wrap: wrap;
-  align-items: flex-end;
-  gap: 8px 16px;
-  padding: 8px 16px;
-  border-bottom: 1px solid var(--sheet-rule);
-  background: var(--sheet-head-bg);
+  flex-direction: column;
+  width: 288px;
+  max-width: calc(100vw - 16px);
+  border: 1px solid var(--sheet-rule-strong);
+  border-radius: 8px;
+  background: var(--sheet-bg);
+  color: var(--sheet-fg);
+  box-shadow: 0 6px 24px rgb(0 0 0 / 0.18);
+}
+
+.plinth-sheet__panel-body {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 12px 12px 4px;
 }
 
 .plinth-sheet__panel-field {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 4px;
+  min-width: 0;
   color: var(--sheet-muted);
+  font-size: 13px;
+}
+
+.plinth-sheet__panel-pair {
+  display: flex;
+  gap: 8px;
+}
+
+.plinth-sheet__panel-pair > .plinth-sheet__panel-field {
+  flex: 1 1 0;
+}
+
+.plinth-sheet__panel-pair[hidden] {
+  display: none;
 }
 
 .plinth-sheet__panel-field[hidden] {
   display: none;
 }
 
-.plinth-sheet__panel input,
+.plinth-sheet__panel input:not([type="checkbox"]),
 .plinth-sheet__panel select,
 .plinth-sheet__panel textarea {
-  padding: 4px 6px;
+  width: 100%;
+  min-width: 0;
+  height: 32px;
+  padding: 4px 8px;
   border: 1px solid var(--sheet-rule-strong);
   border-radius: 6px;
   background: var(--sheet-bg);
@@ -423,12 +454,37 @@ body {
 
 .plinth-sheet__panel-actions {
   display: flex;
-  gap: 6px;
+  flex: none;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 8px 12px 12px;
 }
 
-.plinth-sheet__options-list,
-.plinth-sheet__options-add {
-  max-width: 420px;
+.plinth-sheet__btn--primary {
+  border-color: var(--sheet-fg);
+  background: var(--sheet-fg);
+  color: var(--sheet-bg);
+}
+
+.plinth-sheet__btn--primary:hover {
+  background: var(--sheet-head-fg);
+}
+
+/* A short muted title on the sheets at phone width, which cover what they are for. */
+.plinth-sheet__sheet-title {
+  display: none;
+}
+
+.plinth-sheet__menu--sheet > .plinth-sheet__sheet-title,
+.plinth-sheet__panel--sheet > .plinth-sheet__sheet-title {
+  display: block;
+  padding: 4px 12px 6px;
+  color: var(--sheet-muted);
+  font-size: 13px;
+}
+
+.plinth-sheet__panel--sheet > .plinth-sheet__sheet-title {
+  padding: 12px 16px 0;
 }
 
 .plinth-sheet__page--editing .plinth-sheet__cell {
@@ -533,25 +589,60 @@ body {
 
 /* ---------- the header's controls in edit mode: the column menu and the width handle ---------- */
 
+/* Laid over the header's right end, so a name shows as in view mode until the menu is wanted:
+   on hover, on focus, for the selected cell's column, and while its menu is open. */
 .plinth-sheet__colmenu {
-  flex: none;
-  width: 24px;
+  position: absolute;
+  top: 0;
+  right: 6px;
+  bottom: 0;
+  width: 20px;
   padding: 0;
   border: 0;
-  background: transparent;
+  border-radius: 4px;
+  background: var(--sheet-head-bg);
   color: var(--sheet-muted);
   font: inherit;
   cursor: pointer;
+  visibility: hidden;
+}
+
+.plinth-sheet__selected .plinth-sheet__colmenu {
+  background: linear-gradient(var(--sheet-select), var(--sheet-select)), var(--sheet-head-bg);
+}
+
+.plinth-sheet__colmenu[aria-expanded="true"] {
+  background: var(--sheet-btn-hover);
+  color: var(--sheet-fg);
+}
+
+@media (hover: hover) {
+  .plinth-sheet__colmenu:hover {
+    background: var(--sheet-btn-hover);
+    color: var(--sheet-fg);
+  }
+}
+
+.plinth-sheet__name--current .plinth-sheet__colmenu,
+.plinth-sheet__name:focus-within .plinth-sheet__colmenu,
+.plinth-sheet__colmenu[aria-expanded="true"] {
+  visibility: visible;
+}
+
+/* Where the button stays shown, the name makes room for it; a hover only lays it over the name. */
+.plinth-sheet__page--editing .plinth-sheet__name--current .plinth-sheet__sort,
+.plinth-sheet__page--editing .plinth-sheet__name:focus-within .plinth-sheet__sort {
+  padding-right: 20px;
+}
+
+@media (hover: hover) {
+  .plinth-sheet__name:hover .plinth-sheet__colmenu {
+    visibility: visible;
+  }
 }
 
 .plinth-sheet__colmenu::before {
   content: "\25BE";
-}
-
-.plinth-sheet__colmenu:hover,
-.plinth-sheet__colmenu[aria-expanded="true"] {
-  background: var(--sheet-btn-hover);
-  color: var(--sheet-fg);
 }
 
 .plinth-sheet__resize {
@@ -577,6 +668,7 @@ body {
   flex-direction: column;
   min-width: 220px;
   max-width: calc(100vw - 16px);
+  overflow-y: auto;
   padding: 4px;
   border: 1px solid var(--sheet-rule-strong);
   border-radius: 8px;
@@ -628,7 +720,23 @@ body {
   flex-direction: row-reverse;
   justify-content: flex-end;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
+  min-height: 24px;
+  color: var(--sheet-fg);
+}
+
+.plinth-sheet__panel-field--check > input {
+  margin: 0;
+}
+
+/* The row a row's menu acts on, while it is open. */
+.plinth-sheet__row--target td {
+  background-image: linear-gradient(var(--sheet-select), var(--sheet-select));
+}
+
+.plinth-sheet__grid .plinth-sheet__row--target .plinth-sheet__rownum {
+  box-shadow: inset 3px 0 0 var(--sheet-accent);
+  color: var(--sheet-fg);
 }
 
 .plinth-sheet__options {
@@ -646,14 +754,9 @@ body {
   display: none;
 }
 
-/* A select column's options take their own line, under the fields and the actions. */
-.plinth-sheet__panel .plinth-sheet__options {
-  order: 1;
-  flex: 1 1 100%;
-}
-
 .plinth-sheet__options legend {
-  padding: 0 0 2px;
+  padding: 0 0 4px;
+  font-size: 13px;
 }
 
 .plinth-sheet__options-list {
@@ -679,9 +782,62 @@ body {
   min-width: 0;
 }
 
-.plinth-sheet__btn--small {
-  min-width: 28px;
-  padding: 2px 6px;
+/* The options read as a list: a field's edge shows on hover and focus. */
+.plinth-sheet__panel .plinth-sheet__option input {
+  border-color: transparent;
+  background: transparent;
+}
+
+.plinth-sheet__panel .plinth-sheet__option input:focus {
+  border-color: var(--sheet-rule-strong);
+}
+
+@media (hover: hover) {
+  .plinth-sheet__panel .plinth-sheet__option input:hover {
+    border-color: var(--sheet-rule-strong);
+  }
+}
+
+/* An option's Move up, Move down and Remove: quiet, the moves shown on hover or focus. */
+.plinth-sheet__ghost {
+  flex: none;
+  width: 24px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--sheet-muted);
+  font: inherit;
+  cursor: pointer;
+}
+
+.plinth-sheet__ghost:hover {
+  background: var(--sheet-btn-hover);
+  color: var(--sheet-fg);
+}
+
+.plinth-sheet__ghost:focus-visible {
+  outline: 2px solid var(--sheet-accent);
+  outline-offset: -2px;
+}
+
+.plinth-sheet__ghost--move {
+  opacity: 0;
+}
+
+.plinth-sheet__ghost:disabled {
+  visibility: hidden;
+}
+
+.plinth-sheet__option:focus-within .plinth-sheet__ghost--move {
+  opacity: 1;
+}
+
+@media (hover: hover) {
+  .plinth-sheet__option:hover .plinth-sheet__ghost--move {
+    opacity: 1;
+  }
 }
 
 /* ---------- the docked cell editor (phone width) ---------- */
@@ -751,6 +907,7 @@ body {
 
 body.plinth-sheet--docked .plinth-sheet__scroll {
   padding-bottom: var(--sheet-dock-h, 120px);
+  scroll-padding-bottom: var(--sheet-dock-h, 120px);
 }
 
 body.plinth-sheet--docked .plinth-sheet__notice {
@@ -770,43 +927,63 @@ body.plinth-sheet--docked .plinth-sheet__notice {
   border: 0;
 }
 
+/* At phone width the settings are a sheet across the bottom, the actions pinned under the fields,
+   which scroll. */
+.plinth-sheet__panel--sheet {
+  top: auto;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  width: auto;
+  max-width: none;
+  max-height: 85vh;
+  border-radius: 12px 12px 0 0;
+}
+
+@supports (height: 100dvh) {
+  .plinth-sheet__panel--sheet {
+    max-height: 85dvh;
+  }
+}
+
+.plinth-sheet__panel--sheet .plinth-sheet__panel-body {
+  padding: 8px 16px 4px;
+}
+
+.plinth-sheet__panel--sheet .plinth-sheet__panel-actions {
+  padding: 8px 16px calc(12px + env(safe-area-inset-bottom, 0px));
+  border-top: 1px solid var(--sheet-rule);
+}
+
+.plinth-sheet__panel--sheet .plinth-sheet__panel-actions > .plinth-sheet__btn {
+  flex: 1 1 0;
+}
+
 @media (pointer: coarse) {
   .plinth-sheet__panel .plinth-sheet__btn,
   .plinth-sheet__menu-item {
     min-height: 44px;
   }
 
-  .plinth-sheet__colmenu {
+  .plinth-sheet__panel input:not([type="checkbox"]),
+  .plinth-sheet__panel select {
+    height: 40px;
+    font-size: 16px;
+  }
+
+  .plinth-sheet__ghost {
     width: 36px;
-  }
-}
-
-@media (max-width: 640px) {
-  /* One column that scrolls, the actions last and full width. */
-  .plinth-sheet__panel {
-    flex-direction: column;
-    flex-wrap: nowrap;
-    align-items: stretch;
-    max-height: 60vh;
-    overflow-y: auto;
+    height: 40px;
   }
 
-  .plinth-sheet__panel .plinth-sheet__options {
-    order: 0;
-    flex: none;
+  .plinth-sheet__colmenu {
+    right: 4px;
+    width: 32px;
   }
 
-  .plinth-sheet__options-list,
-  .plinth-sheet__options-add {
-    max-width: none;
-  }
-
-  .plinth-sheet__panel-actions {
-    order: 2;
-  }
-
-  .plinth-sheet__panel-actions > .plinth-sheet__btn {
-    flex: 1 1 0;
+  .plinth-sheet__page--editing .plinth-sheet__name--current .plinth-sheet__sort,
+  .plinth-sheet__page--editing .plinth-sheet__name:focus-within .plinth-sheet__sort {
+    padding-right: 30px;
   }
 }
 
@@ -838,7 +1015,7 @@ body.plinth-sheet--docked .plinth-sheet__notice {
 
   .plinth-sheet__bar > :not(.plinth-sheet__title),
   .plinth-sheet__fx,
-  .plinth-sheet__slot,
+  .plinth-sheet__panel,
   .plinth-sheet__notice,
   .plinth-sheet__holder,
   .plinth-sheet__tool,

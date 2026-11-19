@@ -11,10 +11,12 @@
 //
 // On-page editing (#36, edit.ts) keeps the grid and changes what it shows: update() repaints the
 // cells whose computed value changed when the rows and columns are the same (a rebuild otherwise,
-// with the view carried over), setHolders() marks the rows other people hold with their email,
-// and the column settings sit in the slot between the formula bar and the cells. In
-// edit mode the editor also puts its own controls in each column header (setHeaderTools: the
-// column menu button and the width handle) and previews a width while it changes (setWidth).
+// with the view carried over), and setHolders() marks the rows other people hold with their email.
+// In edit mode the editor also puts its own controls in each column header (setHeaderTools: the
+// column menu button, shown on hover, focus or the selected cell's column, and the width handle)
+// and previews a width while it changes (setWidth). The scroll container keeps the sticky header
+// rows and the frozen columns out of the area a cell scrolls into (scroll-padding), so a cell that
+// takes the focus or opens is never left under them.
 //
 // Keyboard and screen readers: the table is a grid (role="grid", aria-rowcount, aria-colcount,
 // row and column indexes, aria-readonly outside edit mode) with one cell in the tab order, the
@@ -53,8 +55,6 @@ export interface Grid {
   el: HTMLElement;
   /** The cells' table, for the editor's listeners. */
   table: HTMLTableElement;
-  /** Between the formula bar and the cells: the editor's column settings go here. */
-  slot: HTMLElement;
   /** The toolbar's filter field (a rebuild gives the focus back to the new one). */
   filterInput: HTMLInputElement;
   select(row: number, col: number): void;
@@ -88,6 +88,8 @@ export interface Grid {
   width(col: number): number;
   /** The focus to the selected cell (after a rebuild took it away). */
   focusSelected(): void;
+  /** Scroll a cell sideways into view clear of the row numbers and frozen columns, start first. */
+  reveal(row: number, col: number): void;
   /** Sort, filter, scroll and selection, to carry over to a rebuilt grid. */
   view(): GridView;
   restore(v: GridView): void;
@@ -262,8 +264,14 @@ export function buildGrid(
     colEls.push(col);
     colgroup.append(col);
   }
+  /** Where the row numbers and the frozen columns end, from the scroll container's left. */
+  let frozenEdge = ROW_NUMBER_WIDTH;
   const sizeTable = () => {
     table.style.width = `${widths.reduce((t, w) => t + w, ROW_NUMBER_WIDTH)}px`;
+    // A cell scrolled into view (focused, opened) clears the row numbers and the frozen columns.
+    frozenEdge = ROW_NUMBER_WIDTH;
+    for (let c = 0; c < freeze; c++) frozenEdge += widths[c] as number;
+    scroll.style.scrollPaddingLeft = `${frozenEdge}px`;
   };
   sizeTable();
   table.append(colgroup);
@@ -296,6 +304,8 @@ export function buildGrid(
   const byAddress = new Map<string, HTMLElement>();
   let tools: ((col: number, column: SheetColumn) => HTMLElement[]) | null = null;
   let selected: HTMLElement | null = null;
+  /** The selected cell's column header, which shows its menu button in edit mode. */
+  let currentHead: HTMLElement | null = null;
   /** A header cell's contents: its sort button, then the editor's controls in edit mode. */
   const fillHeader = (th: HTMLElement, c: SheetColumn, i: number) => {
     const wrap = el(doc, "div", "plinth-sheet__name-wrap");
@@ -423,7 +433,6 @@ export function buildGrid(
     el: root,
     table,
     filterInput,
-    slot: el(doc, "div", "plinth-sheet__slot"),
     selected: () => ({ row: selRow, col: selCol }),
     cell: (row, col) => byAddress.get(a1(row, col)) ?? null,
     select(row, col) {
@@ -437,6 +446,12 @@ export function buildGrid(
       selRow = row;
       selCol = col;
       cell.classList.add("plinth-sheet__selected");
+      const head = headers[col] ?? null;
+      if (head !== currentHead) {
+        currentHead?.classList.remove("plinth-sheet__name--current");
+        head?.classList.add("plinth-sheet__name--current");
+        currentHead = head;
+      }
       fxAddr.textContent = a1(row, col);
       fxRaw.textContent =
         row === 1 ? (cols[col]?.name ?? "") : rawText((current.rows[row - 2] ?? [])[col] ?? null);
@@ -563,6 +578,18 @@ export function buildGrid(
     focusSelected() {
       if (selected) stop(selected).focus();
     },
+    reveal(row, col) {
+      const cell = byAddress.get(a1(row, col));
+      // A frozen column is always in view.
+      if (!cell || col < freeze) return;
+      const box = scroll.getBoundingClientRect();
+      const r = cell.getBoundingClientRect();
+      const left = r.left - box.left;
+      const right = r.right - box.left;
+      const width = scroll.clientWidth;
+      if (left < frozenEdge) scroll.scrollLeft -= frozenEdge - left;
+      else if (right > width) scroll.scrollLeft += Math.min(right - width, left - frozenEdge);
+    },
     view: () => ({
       sort,
       filter: filterValue,
@@ -618,7 +645,11 @@ export function buildGrid(
   };
   table.addEventListener("focusin", (e) => {
     const at = addressOf((e.target as Element).closest?.("td, th") ?? null);
-    if (at) grid.select(at[0], at[1]);
+    if (!at) return;
+    grid.select(at[0], at[1]);
+    // After the browser's own scroll for the focus, which can leave a wide cell under the frozen
+    // columns.
+    queueMicrotask(() => grid.reveal(at[0], at[1]));
   });
   table.addEventListener("click", (e) => {
     const td = (e.target as Element).closest?.("td");
@@ -650,7 +681,7 @@ export function buildGrid(
     }
   });
 
-  root.append(bar, fx, grid.slot, scroll);
+  root.append(bar, fx, scroll);
   if (rows.length > 0) grid.select(2, 0);
   else grid.select(1, 0);
   return grid;

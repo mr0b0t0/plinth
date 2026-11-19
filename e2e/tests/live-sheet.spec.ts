@@ -280,8 +280,12 @@ test("an agent's edit_sheet during the page edits is never merged: the review pu
   expect(after.body.current_version).toBe(4);
 });
 
-/** Choose an item of a column's menu, opened from its header's button. */
+/**
+ * Choose an item of a column's menu, opened from its header's button, which shows once the
+ * header has the focus (or the pointer, or the selected cell is in its column).
+ */
 async function columnMenu(page: Page, a: string, item: string) {
+  await cell(page, a).locator(".plinth-sheet__sort").focus();
   await cell(page, a).locator(".plinth-sheet__colmenu").click();
   const menu = frameOf(page).getByRole("menu");
   await expect(menu).toBeVisible();
@@ -344,7 +348,8 @@ test("column settings, widths, freezing, options and row moves on the page publi
   await columnMenu(page, "D1", "Column settings…");
   await settings.getByLabel("Option 2").fill("shipped");
   await settings.getByLabel("New option").fill("later");
-  await settings.getByRole("button", { name: "Add option" }).click();
+  await settings.getByLabel("New option").press("Enter");
+  await expect(settings.getByLabel("Option 3")).toHaveValue("later");
   await settings.getByRole("button", { name: "Apply" }).click();
   await expect(cell(page, "D3")).toHaveText("shipped");
 
