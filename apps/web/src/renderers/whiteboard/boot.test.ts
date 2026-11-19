@@ -3,7 +3,7 @@
 // so; without the runtime, or with shared data unavailable, the board is empty, read-only and says
 // why; live, it draws the snapshots and follows the room's answer. The runtime is captured before
 // anything else, so an element the page adds later cannot stand in for it.
-import { TYPE_REGISTRY, typedShellHtml } from "@plinth/shared";
+import { BOARD_LIMITS, boardDocError, TYPE_REGISTRY, typedShellHtml } from "@plinth/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { boot, PREVIEW_TEXT } from "./boot.ts";
 
@@ -206,6 +206,33 @@ describe("whiteboard boot", () => {
     expect(button("Add note")?.disabled).toBe(false);
     expect(document.documentElement.dataset.room).toBe("open");
     expect(ready()).toBe("ok");
+  });
+
+  it("adds a block in front, at most at the largest z, when a block is already there", async () => {
+    const stub = stubRuntime(
+      { available: true, reason: null, canWrite: true },
+      {
+        blocks: [
+          {
+            id: "top",
+            data: { kind: "note", x: 0, y: 0, w: 200, h: 140, text: "", z: BOARD_LIMITS.maxZ },
+            rev: 3,
+          },
+        ],
+        arrows: [],
+      },
+    );
+    mount('{"v":1}');
+    boot(window);
+    await flush();
+    await flush();
+    button("Add note")?.click();
+    await flush();
+    const blocks = stub.collection.mock.results[0]?.value as { add: ReturnType<typeof vi.fn> };
+    expect(blocks.add).toHaveBeenCalledOnce();
+    const data = blocks.add.mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(data.z).toBe(BOARD_LIMITS.maxZ);
+    expect(boardDocError("blocks", data)).toBeNull();
   });
 
   it("keeps the runtime it captured, whatever the page adds afterwards", async () => {

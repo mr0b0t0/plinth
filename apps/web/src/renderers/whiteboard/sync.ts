@@ -1,10 +1,12 @@
 // Writing the board to shared data through the page runtime. Every change is a whole block or
-// arrow written at the rev it was read at (ifRev), so nobody's write is lost silently: on a
-// conflict the latest copy is read and the change applied on top of it, up to four times. One
-// write per block is in flight at a time, and later changes to it are folded into the next one.
-// A refusal the viewer cannot fix (read_only, forbidden) turns the board read-only.
-import type { BoardArrow, BoardBlock } from "@plinth/shared";
-import type { BoardModel } from "./model.ts";
+// arrow written at the rev it was read at (ifRev), so nobody's write is lost silently. A block
+// save carries only the fields the viewer changed: on a conflict the latest copy is read and those
+// fields are put on top of it, up to four times, and a field someone else changed meanwhile keeps
+// their value (the viewer is told). One write per block is in flight at a time, and later changes
+// to it are folded into the next one. A refusal the viewer cannot fix (read_only, forbidden) turns
+// the board read-only.
+import { type BoardArrow, type BoardBlock, cleanBlock } from "@plinth/shared";
+import type { BoardModel, Entry } from "./model.ts";
 import type { RuntimeCollection, RuntimeError } from "./runtime.ts";
 
 export interface SyncDeps {
@@ -28,6 +30,13 @@ const ATTEMPTS = 4;
 const MAX_BACKOFF_MS = 30_000;
 
 export const READ_ONLY_TEXT = "You can view this board but not change it.";
+export const KEPT_THEIRS_TEXT =
+  "Someone else changed this block at the same time. Their change was kept.";
+
+/** The fields of a block one change sets. */
+export type BlockPatch = Partial<BoardBlock>;
+
+const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
 
 export function errorText(e: RuntimeError | undefined): string {
   switch (e?.code) {
@@ -55,8 +64,11 @@ export interface Undo {
 }
 
 export class BoardSync {
-  private readonly queued = new Map<string, BoardBlock>();
+  /** The fields waiting for the next write of each block. */
+  private readonly queued = new Map<string, BlockPatch>();
   private readonly running = new Map<string, Promise<boolean>>();
+  /** The server's copy of each block being saved, at its rev: what the next write starts from. */
+  private readonly known = new Map<string, Entry<BoardBlock>>();
   private stopped = false;
 
   constructor(private readonly d: SyncDeps) {}
@@ -77,26 +89,40 @@ export class BoardSync {
   }
 
   /**
-   * Save a block's new data: shown at once, written behind. While a write of this block runs, the
-   * newest data waits and goes next, so a drag that ends during a save makes one more write, not
-   * many. Resolves true once the server has the data (or newer).
+   * Save the fields a viewer changed on a block: shown at once, written behind. `before` holds
+   * those fields as they were when the change began, for a change already drawn into the model (a
+   * drag); it defaults to the model's values. While a write of this block runs, the newest fields
+   * wait and go next, so a drag that ends during a save makes one more write, not many. Resolves
+   * true once the server has the change, or a newer copy that kept someone else's value instead
+   * (and the viewer was told).
    */
-  saveBlock(id: string, data: BoardBlock): Promise<boolean> {
+  saveBlock(id: string, patch: BlockPatch, before?: BlockPatch): Promise<boolean> {
     const m = this.d.model;
     const cur = m.blocks.get(id);
     if (!cur || this.stopped) return Promise.resolve(false);
-    m.blocks.set(id, { data, rev: cur.rev });
+    if (!this.known.has(id)) {
+      // What the server holds: the model's copy, with the fields a drag already moved put back.
+      const was: Record<string, unknown> = {};
+      for (const k of Object.keys(patch) as (keyof BoardBlock)[]) {
+        was[k] = before && k in before ? before[k] : cur.data[k];
+      }
+      this.known.set(id, { data: { ...cur.data, ...was } as BoardBlock, rev: cur.rev });
+    }
+    m.blocks.set(id, { data: { ...cur.data, ...patch }, rev: cur.rev });
     this.d.changed();
-    this.queued.set(id, data);
+    this.queued.set(id, { ...this.queued.get(id), ...patch });
     let running = this.running.get(id);
     if (!running) {
-      running = this.drain(id).finally(() => this.running.delete(id));
+      running = this.drain(id).finally(() => {
+        this.running.delete(id);
+        this.known.delete(id);
+      });
       this.running.set(id, running);
     }
     return running;
   }
 
-  /** Write this block's newest queued data until none is left. */
+  /** Write this block's newest queued fields until none are left. */
   private async drain(id: string): Promise<boolean> {
     let ok = false;
     for (let next = this.queued.get(id); next; next = this.queued.get(id)) {
@@ -110,14 +136,19 @@ export class BoardSync {
     return ok;
   }
 
-  private async write(id: string, data: BoardBlock): Promise<boolean> {
+  private async write(id: string, change: BlockPatch): Promise<boolean> {
     const m = this.d.model;
+    let patch = change;
     let backedOff = false;
     for (let attempt = 0; attempt < ATTEMPTS; attempt++) {
-      const cur = m.blocks.get(id);
-      if (!cur) return false;
+      const base = this.known.get(id);
+      if (!base || !m.blocks.has(id)) return false;
+      // Everything this change set was someone else's to keep: the board shows theirs.
+      if (Object.keys(patch).length === 0) return true;
+      const data: BoardBlock = { ...base.data, ...patch };
       try {
-        const doc = await this.d.blocks.set(id, data, { ifRev: cur.rev });
+        const doc = await this.d.blocks.set(id, data, { ifRev: base.rev });
+        this.known.set(id, { data, rev: doc.rev });
         // Keep what the viewer did since (a queued change goes next), at the new rev.
         m.blocks.set(id, { data: m.blocks.get(id)?.data ?? data, rev: doc.rev });
         this.d.emit("block.saved", { id });
@@ -132,7 +163,7 @@ export class BoardSync {
           continue;
         }
         if (code(e) !== "conflict") return this.fail(e);
-        // Someone else saved it: read theirs, then put this change on top of it.
+        // Someone else saved it: read theirs, then put this change's fields on top of it.
         const fresh = await this.d.blocks.get(id).catch(() => undefined);
         if (fresh === null) {
           m.remove("blocks", id);
@@ -140,11 +171,45 @@ export class BoardSync {
           this.d.say("Someone deleted this block.");
           return false;
         }
-        if (fresh) m.blocks.set(id, { data: m.blocks.get(id)?.data ?? data, rev: fresh.rev });
+        if (fresh) {
+          const theirs = cleanBlock(fresh.data) ?? base.data;
+          patch = this.rebase(id, patch, base.data, theirs, fresh.rev);
+        }
       }
     }
     this.d.say("Someone else kept changing this block. Try again.");
     return false;
+  }
+
+  /**
+   * Take a newer server copy as the base. A field this change, or the change queued behind it,
+   * sets that the other writer changed too keeps their value: the viewer made it without seeing
+   * theirs. The rest stays. Returns what is left of this change.
+   */
+  private rebase(
+    id: string,
+    patch: BlockPatch,
+    was: BoardBlock,
+    theirs: BoardBlock,
+    rev: number,
+  ): BlockPatch {
+    const left: BlockPatch = { ...patch };
+    const queued = this.queued.get(id);
+    let kept = false;
+    const keys = new Set([...Object.keys(patch), ...Object.keys(queued ?? {})]);
+    for (const k of keys as Set<keyof BoardBlock>) {
+      const mine = k in patch ? patch[k] : queued?.[k];
+      if (same(theirs[k], was[k]) || same(theirs[k], mine)) continue;
+      kept = true;
+      delete left[k];
+      if (queued) delete queued[k];
+    }
+    if (queued && Object.keys(queued).length === 0) this.queued.delete(id);
+    this.known.set(id, { data: theirs, rev });
+    this.d.model.blocks.set(id, { data: { ...theirs, ...left, ...queued }, rev });
+    this.d.changed();
+    if (kept) this.d.say(KEPT_THEIRS_TEXT);
+    return left;
   }
 
   /** A new block; resolves to its id, or null when the server refused it. */

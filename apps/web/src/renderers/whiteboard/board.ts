@@ -60,7 +60,17 @@ export interface BoardOptions {
 
 type Drag =
   | { kind: "pan"; pointer: number; x: number; y: number }
-  | { kind: "move"; pointer: number; id: string; dx: number; dy: number; moved: boolean }
+  | {
+      kind: "move";
+      pointer: number;
+      id: string;
+      dx: number;
+      dy: number;
+      moved: boolean;
+      /** Where the block was when the drag began. */
+      bx: number;
+      by: number;
+    }
   | { kind: "resize"; pointer: number; id: string; x0: number; y0: number; w0: number; h0: number };
 
 export class Board {
@@ -236,7 +246,7 @@ export class Board {
       w,
       h,
       text: "",
-      z: this.model.topZ() + 1,
+      z: this.model.nextZ(),
       ...(kind === "note" || kind === "rect" || kind === "ellipse" ? { color: this.color } : {}),
     };
     const id = await this.sync.addBlock(data);
@@ -245,10 +255,10 @@ export class Board {
     this.startEditing(id);
   }
 
-  private save(id: string, patch: Partial<BoardBlock>): void {
-    const cur = this.model.blocks.get(id);
-    if (!cur || this.readOnly || !this.sync) return;
-    void this.sync.saveBlock(id, { ...cur.data, ...patch });
+  /** Save the fields a change set; `before` holds them as they were, for a drag already drawn. */
+  private save(id: string, patch: Partial<BoardBlock>, before?: Partial<BoardBlock>): void {
+    if (!this.model.blocks.has(id) || this.readOnly || !this.sync) return;
+    void this.sync.saveBlock(id, patch, before);
   }
 
   async deleteSelected(): Promise<void> {
@@ -452,6 +462,8 @@ export class Board {
           dx: at.x - b.x,
           dy: at.y - b.y,
           moved: false,
+          bx: b.x,
+          by: b.y,
         };
       }
       e.preventDefault();
@@ -533,8 +545,8 @@ export class Board {
     if (drag.kind === "move") {
       if (!drag.moved) return;
       this.live?.moved();
-      this.save(drag.id, { x: cur.x, y: cur.y });
-    } else this.save(drag.id, { w: cur.w, h: cur.h });
+      this.save(drag.id, { x: cur.x, y: cur.y }, { x: drag.bx, y: drag.by });
+    } else this.save(drag.id, { w: cur.w, h: cur.h }, { w: drag.w0, h: drag.h0 });
   }
 
   private onKey(e: KeyboardEvent): void {
