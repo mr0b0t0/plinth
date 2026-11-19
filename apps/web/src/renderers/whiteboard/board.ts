@@ -26,7 +26,7 @@ import {
 import type { Live } from "./live.ts";
 import { BoardModel, type DocIn, type Entry } from "./model.ts";
 import type { RuntimePeer } from "./runtime.ts";
-import type { BoardSync } from "./sync.ts";
+import { type BoardSync, KEPT_THEIRS_TEXT, USE_MINE_LABEL } from "./sync.ts";
 import {
   applyCamera,
   buildView,
@@ -95,6 +95,8 @@ export class Board {
    * changes the block, or a snapshot arrives.
    */
   private readonly peerMoves = new Map<string, { x: number; y: number; rev: number }>();
+  /** The stored text and rev of the block being edited, as the edit began: what it saves over. */
+  private editStart: { text: string; rev: number } | null = null;
   private drag: Drag | null = null;
   private pinch: Map<number, { x: number; y: number }> = new Map();
   private pinchDist = 0;
@@ -268,11 +270,19 @@ export class Board {
     this.startEditing(id);
   }
 
-  /** Save the fields a change set; `before` holds them as they were, for a drag already drawn. */
-  private save(id: string, patch: Partial<BoardBlock>, before?: Partial<BoardBlock>): void {
+  /**
+   * Save the fields a change set; `before` holds them as they were, for a drag already drawn, and
+   * `since` the rev a change that began earlier (a text edit) was made over.
+   */
+  private save(
+    id: string,
+    patch: Partial<BoardBlock>,
+    before?: Partial<BoardBlock>,
+    since?: number,
+  ): void {
     if (!this.model.blocks.has(id) || this.readOnly || !this.sync) return;
     this.peerMoves.delete(id);
-    void this.sync.saveBlock(id, patch, before);
+    void this.sync.saveBlock(id, patch, before, since);
   }
 
   /** A block as this viewer sees it: the stored copy, where a peer is dragging it. */
@@ -311,10 +321,12 @@ export class Board {
   startEditing(id: string): void {
     if (this.readOnly || this.editing === id) return;
     const el = this.view.blocks.get(id);
-    const b = this.model.blocks.get(id)?.data;
-    if (!el || !b) return;
+    const entry = this.model.blocks.get(id);
+    const b = entry?.data;
+    if (!el || !entry || !b) return;
     this.finishEditing(true);
     this.editing = id;
+    this.editStart = { text: b.text, rev: entry.rev };
     const ta = this.doc.createElement("textarea");
     ta.className = "wb-edit";
     ta.value = b.text;
@@ -340,16 +352,30 @@ export class Board {
     this.redraw();
   }
 
+  /**
+   * End a text edit, saving it when `keep`. The text is written over the copy the edit began
+   * from: a peer's text saved since is never overwritten. Theirs stays, and the viewer is told and
+   * offered to put theirs back.
+   */
   finishEditing(keep: boolean): void {
     const id = this.editing;
-    if (!id) return;
+    const start = this.editStart;
+    if (!id || !start) return;
     const el = this.view.blocks.get(id);
     const ta = el?.querySelector("textarea");
     this.editing = null;
+    this.editStart = null;
     const text = ta ? [...ta.value].slice(0, BOARD_LIMITS.maxText).join("") : null;
     ta?.remove();
     const cur = this.model.blocks.get(id)?.data;
-    if (keep && text !== null && cur && text !== cur.text) this.save(id, { text });
+    if (keep && text !== null && cur && text !== start.text && text !== cur.text) {
+      if (cur.text !== start.text) {
+        // A peer's text reached the model during the edit (a conflict on another save of it).
+        this.say(KEPT_THEIRS_TEXT, { label: USE_MINE_LABEL, run: () => this.save(id, { text }) });
+      } else this.save(id, { text }, { text: start.text }, start.rev);
+    }
+    // A peer's save that came in during the edit: read now, or after the save just started.
+    this.sync?.release(id);
     this.redraw();
   }
 
@@ -578,6 +604,14 @@ export class Board {
   /** Whether this viewer is dragging or resizing a block (its model copy holds the gesture). */
   gesturing(id: string): boolean {
     return this.drag !== null && this.drag.kind !== "pan" && this.drag.id === id;
+  }
+
+  /**
+   * Whether this viewer holds a block: dragging or resizing it, or editing its text. A peer's save
+   * of it is read once that ends (BoardSync's `busy`).
+   */
+  holds(id: string): boolean {
+    return this.gesturing(id) || this.editing === id;
   }
 
   private onKey(e: KeyboardEvent): void {

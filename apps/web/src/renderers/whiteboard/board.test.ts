@@ -2,12 +2,14 @@
 // server's and what a save starts from. So a viewer who edits a block's text while someone else
 // drags it writes only the text, and the drop that follows keeps the move. The mirror case: a
 // block this viewer is dragging or resizing is not read again when a peer saves it (it is read
-// once the gesture ends), so the drop puts the gesture on top of the peer's change.
+// once the gesture ends), so the drop puts the gesture on top of the peer's change. A text edit is
+// held the same way and written at the rev it began from, so a peer's text saved during it is kept
+// and the editor is offered theirs back, never written over without a word.
 import { type BoardBlock, parseBoardSettings } from "@plinth/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Board } from "./board.ts";
 import type { RuntimeCollection, RuntimeDoc } from "./runtime.ts";
-import { BoardSync } from "./sync.ts";
+import { BoardSync, KEPT_THEIRS_TEXT, USE_MINE_LABEL } from "./sync.ts";
 
 const blk = (x: number, text = ""): BoardBlock => ({
   kind: "note",
@@ -76,7 +78,7 @@ function viewer(blocks: Coll) {
     readOnly: () => board.setReadOnly(true),
     say,
     emit: () => {},
-    busy: (id) => board.gesturing(id),
+    busy: (id) => board.holds(id),
     wait: async () => {},
   });
   board.setReadOnly(false);
@@ -248,6 +250,77 @@ describe("Board and a peer's save during this viewer's gesture", () => {
     expect(await saving).toBe(true);
     await vi.waitFor(() =>
       expect(b.board.model.blocks.get("a")).toEqual({ data: blk(40, "B"), rev: 20 }),
+    );
+  });
+});
+
+/** Start editing block "a" on a viewer's board and type into it, without finishing. */
+function type(v: { board: Board; root: HTMLElement }, text: string) {
+  v.board.startEditing("a");
+  const ta = v.root.querySelector("textarea");
+  if (!ta) throw new Error("no editor");
+  ta.value = text;
+}
+
+describe("Board and a peer's save during this viewer's text edit", () => {
+  it("keeps a peer's text saved during the edit, says so, and offers the editor's back", async () => {
+    const { blocks, a, b } = pair();
+    // A opens the block's text and types; B saves new text for it; A's board hears of it.
+    type(a, "from A");
+    expect(await b.board.sync?.saveBlock("a", { text: "from B" })).toBe(true);
+    await a.board.sync?.refetch("blocks", "a");
+    // A finishes: the write is at the rev the edit began from, so B's save is a conflict.
+    a.board.finishEditing(true);
+    await vi.waitFor(() => expect(a.board.sync?.saving("a")).toBe(false));
+    expect(blocks.sets.slice(1).map((c) => c.ifRev)).toEqual([3]);
+    expect(blocks.docs.get("a")?.data).toEqual(blk(0, "from B"));
+    expect(a.say).toHaveBeenCalledWith(
+      KEPT_THEIRS_TEXT,
+      expect.objectContaining({ label: USE_MINE_LABEL }),
+    );
+    await vi.waitFor(() => expect(a.board.model.blocks.get("a")?.data).toEqual(blk(0, "from B")));
+    // A chooses to put theirs back: written over B's text, at its rev.
+    a.say.mock.calls[0]?.[1]?.run();
+    await vi.waitFor(() => expect(blocks.docs.get("a")?.data).toEqual(blk(0, "from A")));
+    expect(blocks.sets.at(-1)?.ifRev).toBe(11);
+  });
+
+  it("puts the edited text on top of a peer's change to another field", async () => {
+    const { blocks, a, b } = pair();
+    type(a, "from A");
+    expect(await b.board.sync?.saveBlock("a", { color: "blue" })).toBe(true);
+    await a.board.sync?.refetch("blocks", "a");
+    a.board.finishEditing(true);
+    await vi.waitFor(() => expect(a.board.sync?.saving("a")).toBe(false));
+    expect(blocks.docs.get("a")?.data).toEqual({ ...blk(0, "from A"), color: "blue" });
+    expect(a.say).not.toHaveBeenCalled();
+  });
+
+  it("does not write over a peer's text that reached the board during the edit", () => {
+    const { blocks, a } = pair();
+    type(a, "from A");
+    // Another save of this block conflicted meanwhile and brought B's text into the model.
+    blocks.docs.set("a", { id: "a", data: blk(0, "from B"), rev: 20 });
+    a.board.model.blocks.set("a", { data: blk(0, "from B"), rev: 20 });
+    a.board.finishEditing(true);
+    expect(blocks.sets).toHaveLength(0);
+    const msg = a.root.querySelector(".wb-msg");
+    expect(msg?.textContent).toContain(KEPT_THEIRS_TEXT);
+    const use = msg?.querySelector("button");
+    expect(use?.textContent).toBe(USE_MINE_LABEL);
+    use?.click();
+    expect(blocks.sets).toEqual([{ data: blk(0, "from A"), ifRev: 20 }]);
+  });
+
+  it("reads a peer's save it held during the edit once the edit is dropped", async () => {
+    const { a, b } = pair();
+    type(a, "from A");
+    expect(await b.board.sync?.saveBlock("a", { text: "from B" })).toBe(true);
+    await a.board.sync?.refetch("blocks", "a");
+    expect(a.board.model.blocks.get("a")?.rev).toBe(3);
+    a.board.finishEditing(false);
+    await vi.waitFor(() =>
+      expect(a.board.model.blocks.get("a")).toEqual({ data: blk(0, "from B"), rev: 11 }),
     );
   });
 });

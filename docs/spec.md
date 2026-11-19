@@ -1736,7 +1736,9 @@ its page without a new version each time, and agents add and move blocks with
   who is here, peers' selections and a block moving while it is dragged go through the room; a
   peer's drag is only drawn until they drop it, and no other viewer's save writes it. A block
   the viewer is dragging, resizing or saving is read again only once that is over, so a peer's
-  save never takes a drop back to where the block started. A
+  save never takes a drop back to where the block started. Text is written at the rev its edit
+  began from: a peer's text saved during the edit is kept, and the viewer is told and offered a
+  "Use mine" button that writes theirs over it. A
   viewer, or a commenter on an `editors` board, gets a read-only board that still follows the
   others live and shows their cursor. Without the room (rooms off, link viewers) the board saves
   and follows on the shared-data poll. Block text is only ever drawn as text.
