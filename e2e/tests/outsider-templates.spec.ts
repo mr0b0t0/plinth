@@ -46,6 +46,17 @@ async function openAs(browser: Browser, email: string, url: string, base?: Page)
   return page;
 }
 
+/**
+ * An invited person. In the light project the first approver confirms by emailed code, with no
+ * account, as an outside participant does. Everyone else is signed in by the seed endpoint: the
+ * e2e Worker counts every code request in one hourly bucket (no client IP in development), which
+ * the other specs already use most of, and a grant is matched by email either way.
+ */
+async function invitee(browser: Browser, url: string, email: string, byCode = false) {
+  if (byCode && test.info().project.name === "light") return confirmByCode(browser, url, email);
+  return openAs(browser, email, url);
+}
+
 async function reopen(page: Page): Promise<Frame> {
   await page.reload();
   return readyFrame(page);
@@ -95,7 +106,7 @@ test("approval sign-off: two outside approvers, a new revision, moderation and a
     const art = await publishFor(client, "Approval: Website redesign proposal", APPROVAL, [a, b]);
 
     // A confirms by code (no account) and approves with a note.
-    const pageA = await confirmByCode(browser, art.url, a);
+    const pageA = await invitee(browser, art.url, a, true);
     pages.push(pageA);
     await readyFrame(pageA);
     const fa = inFrame(pageA);
@@ -108,7 +119,7 @@ test("approval sign-off: two outside approvers, a new revision, moderation and a
     await expect(fa.locator("#list li").first()).toContainText(a);
 
     // B cannot request changes without saying what; then does.
-    const pageB = await confirmByCode(browser, art.url, b);
+    const pageB = await invitee(browser, art.url, b);
     pages.push(pageB);
     await readyFrame(pageB);
     const fb = inFrame(pageB);
@@ -222,7 +233,7 @@ test("client intake: answers by code, the owner's responses, new questions, clos
   try {
     const art = await publishFor(client, "Project intake: Acme", INTAKE, [visitor]);
 
-    const pc = await confirmByCode(browser, art.url, visitor);
+    const pc = await invitee(browser, art.url, visitor);
     pages.push(pc);
     const frame = await readyFrame(pc);
     const fc = inFrame(pc);
@@ -325,7 +336,7 @@ test("client checklist: client ticks count, team ticks need the team, items chan
   try {
     const art = await publishFor(client, "Launch checklist: Acme", CHECKLIST, [visitor]);
 
-    const pc = await confirmByCode(browser, art.url, visitor);
+    const pc = await invitee(browser, art.url, visitor);
     pages.push(pc);
     const frame = await readyFrame(pc);
     const fc = inFrame(pc);
