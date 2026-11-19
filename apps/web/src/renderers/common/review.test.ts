@@ -368,6 +368,41 @@ describe("the review session", () => {
     });
   });
 
+  it("solo: a copy the app kept from before a reload is reviewed and published as that copy", async () => {
+    // The frame holds a copy of the shown version (edit mode was toggled), not the kept one.
+    const { s, post } = session(null, BASE);
+    await s.open({ type: "review", nonce: NONCE, n: 6, base: 5, files: FILES, text: MINE });
+    expect(s.isOpen).toBe(true);
+    expect(panes()[0]?.textContent).toContain("First, by a person.");
+    button("Publish mine")?.click();
+    expect(post).toHaveBeenCalledWith({
+      type: "resolved",
+      nonce: NONCE,
+      outcome: "publish",
+      text: MINE,
+    });
+    // Without a copy of its own, too; and a kept copy the type cannot hold is never reviewed.
+    const second = session(null, null);
+    await second.s.open({ type: "review", nonce: NONCE, n: 6, base: 5, files: FILES, text: MINE });
+    expect(second.s.isOpen).toBe(true);
+    second.s.choose("cancelled");
+    const third = session(null, null);
+    await third.s.open({
+      type: "review",
+      nonce: NONCE,
+      n: 6,
+      base: 5,
+      files: FILES,
+      text: "<!doctype html><p>x</p>",
+    });
+    expect(third.s.isOpen).toBe(false);
+    expect(third.post).toHaveBeenCalledWith({
+      type: "resolved",
+      nonce: NONCE,
+      outcome: "cancelled",
+    });
+  });
+
   it("reads review messages field by field", () => {
     const m = { source: "plinth-renderer", v: 1, nonce: NONCE };
     expect(readEditMessage({ ...m, type: "review" })).toEqual({ type: "review", nonce: NONCE });
@@ -375,10 +410,16 @@ describe("the review session", () => {
       n: 6,
       base: 5,
     });
+    expect(
+      readEditMessage({ ...m, type: "review", n: 6, base: 5, files: FILES, text: MINE }),
+    ).toMatchObject({ n: 6, base: 5, text: MINE });
     for (const bad of [
       { ...m, type: "review", n: 6 },
       { ...m, type: "review", n: 5, base: 5, files: FILES },
       { ...m, type: "review", n: 6, base: 5, files: { ...FILES, more: -1 } },
+      { ...m, type: "review", text: MINE },
+      { ...m, type: "review", n: 6, base: 5, files: FILES, text: 7 },
+      { ...m, type: "review", n: 6, base: 5, files: FILES, text: "x".repeat(2 * 1024 * 1024) },
       { ...m, type: "reviewed", result: "maybe" },
       { ...m, type: "review", nonce: "short" },
     ]) {

@@ -2,8 +2,11 @@
 // (the doc and the sheet): reading the app's editing messages, posting with the frame key, and the
 // whole-draft review session, which opens the review (review.ts) on the room's frozen draft or on
 // the solo copy, posts the person's choice to the app, and closes the review with what happened.
+// A solo `review` may carry `text`: the copy the app's tab kept from before a reload, which this
+// frame never held. The review then shows and publishes that copy instead of the frame's own.
 import {
   type FileChangeSummary,
+  LIMITS,
   type LiveTypeRules,
   RENDERER_MESSAGE_SOURCE,
   RENDERER_PROTOCOL_VERSION,
@@ -23,10 +26,14 @@ export type EditAppMessage =
       n?: number;
       base?: number;
       files?: FileChangeSummary;
+      /** Solo only: the copy the app kept from before a reload, reviewed instead of the frame's. */
+      text?: string;
     }
   | { type: "reviewed"; nonce: string; result: ReviewResult };
 
 export const NONCE_RE = /^[A-Za-z0-9_-]{16,64}$/;
+/** The longest kept copy a `review` may carry, in UTF-16 units; the type's rules check it exactly. */
+const MAX_REVIEW_TEXT = Math.max(LIMITS.maxDocBytes, LIMITS.maxSheetBytes);
 const RESULTS = new Set(["busy", "resolved", "conflict", "failed", "done"]);
 const FILE_KINDS = new Set(["added", "removed", "replaced", "same"]);
 const isVersion = (v: unknown): v is number =>
@@ -79,11 +86,22 @@ export function readEditMessage(data: unknown): EditAppMessage | null {
   if (typeof m.nonce !== "string" || !NONCE_RE.test(m.nonce)) return null;
   if (m.type === "collect") return { type: "collect", nonce: m.nonce };
   if (m.type === "review") {
-    const solo = m.n !== undefined || m.base !== undefined || m.files !== undefined;
+    const solo =
+      m.n !== undefined || m.base !== undefined || m.files !== undefined || m.text !== undefined;
     if (!solo) return { type: "review", nonce: m.nonce };
     const files = readFiles(m.files);
     if (!isVersion(m.n) || !isVersion(m.base) || m.base >= m.n || !files) return null;
-    return { type: "review", nonce: m.nonce, n: m.n, base: m.base, files };
+    if (m.text !== undefined && (typeof m.text !== "string" || m.text.length > MAX_REVIEW_TEXT)) {
+      return null;
+    }
+    return {
+      type: "review",
+      nonce: m.nonce,
+      n: m.n,
+      base: m.base,
+      files,
+      ...(typeof m.text === "string" ? { text: m.text } : {}),
+    };
   }
   if (m.type === "reviewed" && RESULTS.has(m.result as string)) {
     return { type: "reviewed", nonce: m.nonce, result: m.result as ReviewResult };
@@ -130,6 +148,8 @@ export interface ReviewSessionHost {
 /** The whole-draft review of one frame: the app's `review`, the person's choice, what closed it. */
 export class ReviewSession {
   private nonce: string | null = null;
+  /** Solo: the kept copy the app sent with `review`, reviewed instead of the frame's own. */
+  private kept: string | null = null;
 
   constructor(
     private readonly review: DraftReview,
@@ -163,7 +183,7 @@ export class ReviewSession {
       });
       return;
     }
-    const text = this.host.soloText();
+    const text = this.kept ?? this.host.soloText();
     if (outcome === "publish" && text !== null) {
       this.host.post({ type: "resolved", nonce, outcome, text, ...(note ? { note } : {}) });
     } else if (outcome === "discard") {
@@ -173,7 +193,8 @@ export class ReviewSession {
 
   /** The app's `review`: open on the room's frozen draft, or (solo) on the version it names. */
   async open(m: Extract<EditAppMessage, { type: "review" }>): Promise<void> {
-    const c = this.host.room();
+    this.kept = null;
+    const c = m.text === undefined ? this.host.room() : null;
     if (c) {
       if (c.conflictVersion === null || !c.ready) {
         this.host.post({ type: "resolved", nonce: m.nonce, outcome: "cancelled" });
@@ -191,11 +212,18 @@ export class ReviewSession {
       });
       return;
     }
-    const text = this.host.soloText();
+    // A kept copy is checked as the room checks a whole draft: one the type cannot hold is not
+    // reviewed (the app keeps it, and can still drop it).
+    const kept =
+      m.text !== undefined && !this.host.rules.tooLarge(m.text) && this.host.rules.valid(m.text)
+        ? m.text
+        : null;
+    const text = m.text !== undefined ? kept : this.host.soloText();
     if (text === null || m.n === undefined || m.base === undefined) {
       this.host.post({ type: "resolved", nonce: m.nonce, outcome: "cancelled" });
       return;
     }
+    this.kept = kept;
     this.nonce = m.nonce;
     await this.review.open({
       mode: "solo",

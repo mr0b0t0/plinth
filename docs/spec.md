@@ -702,8 +702,10 @@ page shows the strip and makes the REST calls, and renders no content.
   files as `files_from_version`; the tab keeps a copy, and after a reload offers to publish it or
   discard it; a Publish refused because a newer version is current opens the same review, the app
   naming the version and its file changes from the two versions' file lists, and Publish mine sends
-  the frame's own copy); under opaque isolation and the path fallback there is no editing on the
-  page, and docs and sheets are edited in the source editor only. `ALLOW_LIVE_EDITING=false` turns
+  the frame's own copy; for the copy kept from before a reload, which the frame never held, the app
+  sends that copy with the review, and Publish mine and Discard mine act on it); under opaque
+  isolation and the path fallback there is no editing on the page, and docs and sheets are edited
+  in the source editor only. `ALLOW_LIVE_EDITING=false` turns
   it off. `GET /api/v1/config` says which applies (`inline_editing`: `room`, `solo` or null).
 - **On the page.** An Edit toggle in the artifact bar (the menu's source editor item becomes "Edit
   source") turns edit mode on; a strip under the bar says what is happening ("Draft saved",
@@ -724,8 +726,10 @@ page shows the strip and makes the REST calls, and renders no content.
 - **What crosses the frame boundary.** In room mode no draft or version text reaches the app page:
   the frame reads the base version and vN from its own origin (`/__plinth/v/<n>/`) and the draft
   from the room. In solo mode the frame hands the app its copy only to publish it, as a string the
-  app never renders. The app tells the frame which version and files to review (solo only), and
-  what came of a choice (`reviewed`: busy, resolved, conflict, failed or done).
+  app never renders. The app tells the frame which version and files to review (solo only), with
+  the copy the tab kept from before a reload when that is what is reviewed (the frame's own text,
+  handed back to the same frame origin, which checks it with the type's rules), and what came of a
+  choice (`reviewed`: busy, resolved, conflict, failed or done).
 - **REST.** `GET /api/v1/artifacts/:ref/live`, `POST .../live/checkpoint` (with
   `conflict_version` for Publish mine; no draft text is accepted) and `DELETE
   .../live/draft?rev=n` (discard; with `&conflict_version=n` for Discard mine), for the signed-in

@@ -6,9 +6,11 @@
 //   app -> frame: edit { on, base? }       on-page editing on or off (#36); `base` (solo only) is
 //                                          the version shown, whose files the draft is drawn with
 //   app -> frame: collect { nonce }        solo mode only: send me the edited text
-//   app -> frame: review { nonce, n?, base?, files? }
+//   app -> frame: review { nonce, n?, base?, files?, text? }
 //                                          open the whole-draft review; n, base and files (the
-//                                          app's fileChanges of the two versions) in solo only
+//                                          app's fileChanges of the two versions) in solo only;
+//                                          text (solo only) is the copy this tab kept from before
+//                                          a reload, reviewed instead of the frame's own
 //   app -> frame: reviewed { nonce, result }
 //                                          what came of the review's choice: busy, resolved,
 //                                          conflict, failed or done
@@ -38,7 +40,8 @@
 // under origin isolation: they go to the window of the frame the app holds at the artifact's exact
 // content origin, and the app accepts the frame's answers only from that window and that origin.
 // Only Plinth's renderer runs on a doc origin (script-src 'self'), so a message that passes both
-// checks comes from it. Draft text crosses only frame -> app, and only in solo mode.
+// checks comes from it. Draft text crosses only in solo mode: frame -> app to publish it, and
+// app -> frame only as the copy the same frame origin handed this tab before a reload, in `review`.
 //
 // The frame key: for an owner or editor who may edit on the page, the app opens each frame at
 // enter_url + "#plinth-k=<key>" with a fresh random key (withFrameKey). The renderer takes the key
@@ -237,6 +240,11 @@ export interface ReviewMessage {
   base?: number;
   /** Solo only: what n changed in the files since base (the app's fileChanges of the two). */
   files?: FileChangeSummary;
+  /**
+   * Solo only: the copy this tab kept from before a reload (the frame's own draft then, from
+   * sessionStorage), which the frame reviews instead of a copy of its own.
+   */
+  text?: string;
 }
 
 /** What came of the review's choice, for the frame: its buttons and whether it closes. */
@@ -319,7 +327,7 @@ export function editMessage(on: boolean, base?: number): EditMessage {
 
 export function reviewMessage(
   nonce: string,
-  solo?: { n: number; base: number; files: FileChangeSummary },
+  solo?: { n: number; base: number; files: FileChangeSummary; text?: string },
 ): ReviewMessage {
   return {
     source: RENDERER_MESSAGE_SOURCE,

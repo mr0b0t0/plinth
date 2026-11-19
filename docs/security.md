@@ -2537,7 +2537,11 @@ cookie, CSP, sandbox flag or setting was added, and the content host still sends
   (`/__plinth/v/<n>/`, a same-origin request with the content cookie). In solo mode the frame
   hands its copy to the app only to publish it, as a string the app sends to `PUT` and never
   renders. The app tells the frame the version and the file changes to review (solo only: paths,
-  kinds and sizes, from the two versions' file lists) and what came of a choice; co-editor emails
+  kinds and sizes, from the two versions' file lists) and what came of a choice; when the solo
+  review is of the copy the tab kept from before a reload, the review message carries that copy to
+  the frame at the artifact's exact content origin. It is text the same renderer handed the app
+  earlier, kept in the app origin's `sessionStorage` under the artifact's id; the frame checks it
+  with the type's rules before it renders it read-only, and Publish mine sends the app's own copy; co-editor emails
   and their places ("row 12", built by the renderer from lease positions, never content) become
   text nodes. No route returns draft text: `GET live/draft` is gone, and the checkpoint refuses any
   text from the app.
@@ -2579,7 +2583,8 @@ cookie, CSP, sandbox flag or setting was added, and the content host still sends
 - **Forged choices.** A `resolved` message is read only from the frame the app holds, with its
   key, for the nonce of the review the app opened, with field checks (a room choice names a
   version and a revision and no text; a solo one carries the frame's own text within the type's
-  size). Even then the server decides, under the policy of any Publish or discard (`live_edit`,
+  size, and for the review of a kept copy the app publishes the copy it sent, not the text that
+  comes back). Even then the server decides, under the policy of any Publish or discard (`live_edit`,
   `edit`), against the room's own state.
 - **Renderers stay free of HTML parsing.** The review is built with `createElement` and
   `textContent`; each side is drawn by the type's renderer through its sanitizer, the same as the

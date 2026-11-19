@@ -6,6 +6,7 @@
 import { CSRF_HEADER, type ViewGate } from "@plinth/shared";
 import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { savePageDraft } from "../editor/draft.ts";
 import type { LiveFrameStatus } from "./rendererProtocol.ts";
 import { apiError, CONFIG, json, stubApi } from "./test-utils.ts";
 import { AUTOSAVE_FALLBACK_MS, CHOOSING_BUSY, useLiveEdit } from "./useLiveEdit.ts";
@@ -646,6 +647,70 @@ describe("useLiveEdit", () => {
       files_from_version: 3,
     });
     expect(second.result.current.restore).toBeNull();
+    expect(sessionStorage.length).toBe(0);
+  });
+
+  it("solo: a kept copy refused because a newer version is current is reviewed as that copy", async () => {
+    savePageDraft("art1", 3, "# Kept");
+    let refuse = true;
+    const onReload = vi.fn();
+    const { calls } = stubApi({
+      handle: (c) => {
+        if (c.method === "PUT") {
+          if (refuse) {
+            refuse = false;
+            return conflict409(4, "");
+          }
+          return json({ id: "art1", version: 5, type: "doc", warnings: [] });
+        }
+        if (/\/versions\/\d$/.test(c.path)) return json({ type: "doc", content: "", assets: [] });
+        return undefined;
+      },
+    });
+    const later = gate("solo");
+    later.artifact = { ...later.artifact, version: 4, current_version: 4 };
+    const { result } = hook(later, onReload);
+    expect(result.current.restore).toMatchObject({ text: "# Kept", base: 3 });
+    // Not in edit mode: the frame holds no copy of its own, so the review gets the kept one.
+    await act(() => result.current.saveRestore());
+    await waitFor(() => expect(sentToFrame("review")).toHaveLength(1));
+    const [review, target] = sentToFrame("review")[0] ?? [];
+    expect(target).toBe(ORIGIN);
+    expect(review).toMatchObject({ n: 4, base: 3, text: "# Kept" });
+    expect(result.current.review).toMatchObject({ base: 3, current: 4, mode: "solo" });
+    expect(result.current.restore).toMatchObject({ text: "# Kept" });
+    // Publish mine publishes the kept copy, whatever text the frame sends back.
+    fromFrame({ type: "resolved", nonce: review.nonce, outcome: "publish", text: "# Other" });
+    await waitFor(() => expect(sentToFrame("reviewed").at(-1)?.[0].result).toBe("done"));
+    expect(calls.filter((c) => c.method === "PUT").at(-1)?.body).toEqual({
+      content: "# Kept",
+      base_version: 4,
+      files_from_version: 3,
+      note: "Edited on the page. Replaces the changes in v4.",
+    });
+    expect(result.current.restore).toBeNull();
+    expect(sessionStorage.length).toBe(0);
+    expect(onReload).toHaveBeenCalled();
+  });
+
+  it("solo: Discard mine in the review of a kept copy drops the copy", async () => {
+    savePageDraft("art1", 3, "# Kept");
+    stubApi({
+      handle: (c) => {
+        if (c.method === "PUT") return conflict409(4, "");
+        if (/\/versions\/\d$/.test(c.path)) return json({ type: "doc", content: "", assets: [] });
+        return undefined;
+      },
+    });
+    const later = gate("solo");
+    later.artifact = { ...later.artifact, version: 4, current_version: 4 };
+    const { result } = hook(later);
+    await act(() => result.current.saveRestore());
+    await waitFor(() => expect(sentToFrame("review")).toHaveLength(1));
+    const nonce = sentToFrame("review")[0]?.[0].nonce as string;
+    fromFrame({ type: "resolved", nonce, outcome: "discard" });
+    expect(result.current.restore).toBeNull();
+    expect(result.current.review).toBeNull();
     expect(sessionStorage.length).toBe(0);
   });
 

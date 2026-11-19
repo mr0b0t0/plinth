@@ -12,7 +12,8 @@
 // - "solo": origin isolation without rooms (or a room that never answered). The frame edits its
 //   own copy; Publish asks it for the text (collect with a nonce) and publishes it with PUT, the
 //   shown version as base_version and that version's files (files_from_version). A copy goes to
-//   sessionStorage every 5 s, so a reload can offer to publish it.
+//   sessionStorage every 5 s, so a reload can offer to publish it. The frame never held that
+//   copy, so when a newer version refuses it, the review message carries it to the frame.
 // Opaque isolation and the path fallback have no on-page editing (no gate.live).
 //
 // A version published while the page changes were not combined with it freezes them: the frame
@@ -197,6 +198,8 @@ export function useLiveEdit({
   const savingRef = useRef(false);
   const reviewRef = useRef<LiveReview | null>(null);
   reviewRef.current = review;
+  /** Solo: the kept copy a review is of (saveRestore), which its "Publish mine" publishes. */
+  const keptReview = useRef<{ nonce: string; text: string } | null>(null);
 
   // ---------- errors ----------
 
@@ -257,10 +260,11 @@ export function useLiveEdit({
   /**
    * Solo mode: a Publish was refused because version n is current now. The frame reviews its own
    * copy beside n; the app says which files n changed since the base, from the two versions'
-   * file lists (it reads only their `assets`).
+   * file lists (it reads only their `assets`). For a copy this tab kept from before a reload
+   * (`kept`), the frame never held it: the review carries it, and the choice publishes it.
    */
   const soloReview = useCallback(
-    async (base: number, details: unknown) => {
+    async (base: number, details: unknown, kept?: string) => {
       const n =
         typeof (details as { current_version?: unknown } | undefined)?.current_version === "number"
           ? (details as { current_version: number }).current_version
@@ -273,10 +277,12 @@ export function useLiveEdit({
         ]);
         const files = summarizeFileChanges(fileChanges(b.assets, v.assets));
         const nonce = newNonce();
-        if (!postToRenderer(frame, target, reviewMessage(nonce, { n, base, files }))) {
+        const solo = { n, base, files, ...(kept !== undefined ? { text: kept } : {}) };
+        if (!postToRenderer(frame, target, reviewMessage(nonce, solo))) {
           toast("The page is not ready. Try again in a moment.");
           return;
         }
+        keptReview.current = kept !== undefined ? { nonce, text: kept } : null;
         setReview({ nonce, base, current: n, mode: "solo" });
       } catch (e) {
         fail(e);
@@ -548,8 +554,10 @@ export function useLiveEdit({
       latest.current.onReload();
       return;
     }
-    if (m.text === undefined) return;
-    const text = m.text;
+    // A kept copy's review publishes the copy the app sent, whatever the frame sends back.
+    const kept = keptReview.current?.nonce === r.nonce ? keptReview.current.text : undefined;
+    const text = kept ?? m.text;
+    if (text === undefined) return;
     void (async () => {
       savingRef.current = true;
       setSaving(true);
@@ -560,7 +568,7 @@ export function useLiveEdit({
           if (newer !== null && newer > r.current) {
             // Another version is current now: the review opens again on the whole range.
             done("conflict");
-            void soloReviewRef.current(r.base, e.details);
+            void soloReviewRef.current(r.base, e.details, kept);
           } else done("failed");
         });
         if (ok) {
@@ -656,7 +664,12 @@ export function useLiveEdit({
 
   const saveRestore = useCallback(async () => {
     if (!restore) return;
-    await publishSolo(restore.text, restore.base, restore.base);
+    const { text, base } = restore;
+    // Refused because a newer version is current: the frame reviews this copy, not its own (it
+    // holds none, or one of the version it shows).
+    await publishSolo(text, base, base, undefined, (e) => {
+      void soloReviewRef.current(base, e.details, text);
+    });
   }, [restore, publishSolo]);
 
   const dropRestore = useCallback(() => {
