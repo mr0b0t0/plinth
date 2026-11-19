@@ -43,6 +43,16 @@ warned (`design_system_outdated`) when the design system moved on. Pages never l
 artifact's files at runtime. The skill's "Design systems (type design_system)" section has the
 format; [mcp.md](mcp.md#get_design_system) has the tool.
 
+**Sheets.** For a table people sort, filter, calculate with or download (a budget, a tracker, a
+list of records, a price comparison), an agent publishes `type: "sheet"` with JSON lines in
+`content` instead of an HTML table: a header line naming typed columns, then one JSON array per
+row, with Excel formulas (`=SUM(D2:D9)`) that Plinth computes. People view it with sort, filter
+and a formula bar, and download it as CSV or .xlsx. A CSV or an .xlsx file can be sent as is with
+`content_format`. The agent reads computed values with `read_sheet` and changes cells, rows and
+columns with `edit_sheet` and `base_version`, one version per call; cell text is untrusted. The
+skill's "Sheets (type sheet)" section has the format and the functions;
+[mcp.md](mcp.md#read_sheet) has the tools.
+
 ## How each harness gets it
 
 Two channels carry these rules, so every harness gets them whatever it supports:
