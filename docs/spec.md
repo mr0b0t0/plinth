@@ -2718,9 +2718,15 @@ pages and designs come only from agents.
   and the note "Replaced from <file name>". The new version keeps the link, the sharing and the
   comments. When a newer version was published since, the save is refused (409) and the dialog
   asks again against it ("v6 was published by Ana since you chose the file. Replace v6 too?"), or
-  the person cancels. While the sheet has unpublished changes on its page or someone is editing it
-  there, the item is off and says "Publish or discard the unpublished changes first", so a
-  replacement never races a shared draft. After a replace the page shows the new version.
+  the person cancels. A file chosen after that is confirmed against the newer version. While the
+  sheet has unpublished changes on its page or someone is editing it there, the item is off and
+  says "Publish or discard the unpublished changes first", and the dialog checks the same again
+  when Replace is pressed. A draft someone starts after that press is never overwritten: one with
+  changes is frozen for review against the new version, as for any version published meanwhile
+  ("Versions from elsewhere" under Sheets), and one without moves to it. An
+  editor confirmed by code without an account sees the item off with "Sign in to replace it with
+  a file", since publishing a version needs an account; the dialog tells them the same if the
+  save is refused for that reason. After a replace the page shows the new version.
 - **Where editing on the page is off** (`ALLOW_LIVE_EDITING=false`, opaque isolation, the path
   fallback): New offers only Import, and an imported sheet opens on its page. Import and "Replace
   with a file…" are ordinary app requests and work in every isolation mode.

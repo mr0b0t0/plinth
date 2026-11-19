@@ -103,7 +103,7 @@ make a test pass.
 | A request looks sent to an agent that cannot take it | Ask an agent names Claude while the owner's only Claude token was revoked, is limited to one artifact or lacks `mentions`, so the person waits on a request no agent will ever see | `request_to` is checked against the owner's connections that could claim it (`takesRequests`), and refused with `no_agent` before anything is written; the gate lists only those client types ([Ask an agent](#ask-an-agent)) |
 | A forged `ask` from the frame | A document the frame navigated to, or another window, posts `ask` to open the Ask dialog with an anchor of its choosing | In edit mode `ask` is an editing message: the frame window, the exact content origin and the frame key are checked, and the anchor must be a structural key (`PAGE_ANCHOR_KEY_RE`) and short plain text; at worst it prefills a dialog the person must still write and post ([Ask an agent](#ask-an-agent)) |
 | A request carries the owner's authority it does not have | A commenter's Ask an agent request says "share this with everyone", or the owner's own request is quoted back to the agent by a commenter | A request is an ordinary mention: untrusted text, described as such in `list_mentions` and the untrusted note; only `comment_author_role`, derived by the server, says whether the owner sent it ([Ask an agent](#ask-an-agent)) |
-| A spreadsheet file attacks the app, or a replacement lands under someone's work | A crafted .xlsx or CSV picked for Import or "Replace with a file…" exhausts or runs something in the app; a replacement is saved over a version an agent or an editor published since the file was chosen, or over unpublished page changes | The app sends the file as it is and never parses it: the Worker's bounded importer converts and checks it, and its refusal comes back as text; the replacement carries `base_version` (a newer version gets 409 and a second confirmation) and is off while page changes exist or someone edits on the page ([New and Import](#new-and-import)) |
+| A spreadsheet file attacks the app, or a replacement lands under someone's work | A crafted .xlsx or CSV picked for Import or "Replace with a file…" exhausts or runs something in the app; a replacement is saved over a version an agent or an editor published since the file was chosen, or over unpublished page changes | The app sends the file as it is and never parses it: the Worker's bounded importer converts and checks it, and its refusal comes back as text; the replacement carries `base_version` (a newer version gets 409 and a second confirmation) and is off while page changes exist or someone edits on the page, checked again on Replace; a draft started later is frozen for review against the new version ([New and Import](#new-and-import)) |
 
 Out of scope for v1: denial of service beyond Cloudflare's defaults, a compromised Cloudflare
 account, and malicious instance operators.
@@ -2683,8 +2683,17 @@ flag, env var or MCP tool was added.
   update. A new artifact is private (allowlist) until its owner shares it.
 - **No silent overwrite.** "Replace with a file…" sends the version on screen as `base_version`,
   so a version published since the file was chosen is refused with 409 and the person is asked
-  again, naming that version. The item is off while the sheet has unpublished page changes or
-  someone is editing it on the page, so a replacement never lands under a shared draft.
+  again, naming that version; a file chosen after that is confirmed against the newer version.
+  The item is off while the sheet has unpublished page changes or someone is editing it on the
+  page, and the dialog checks the same again when Replace is pressed. This is a courtesy in the
+  app, not a lock: the Worker takes any save with a current `base_version`. A draft someone starts
+  after the press is not overwritten either: one with changes is frozen for review against the new
+  version, as for any version published meanwhile ([Inline editing](#inline-editing)), and one
+  without moves to it.
+- **An account publishes.** A version is stamped with the account that made it, so an editor
+  confirmed by code without an account cannot publish one: the Worker refuses the save (401), the
+  item is off with "Sign in to replace it with a file" when the gate says `sign_in`, and the dialog
+  says to sign in instead of offering a file picker.
 - **Files are read on the server only.** The app sends a picked file as it is (CSV and TSV as
   text, an .xlsx as base64) and never parses it: the bounded importer of
   [Sheets](#sheets) converts and checks it, and its refusal reaches the app as a sentence and cell

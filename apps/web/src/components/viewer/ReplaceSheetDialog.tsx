@@ -4,11 +4,15 @@
 // it, and the save names the version on screen as `base_version`: when someone published a newer
 // version since, the Worker refuses it (409) and the dialog asks again against that version, so
 // nothing is overwritten unseen. Any other refusal shows the Worker's sentence and the cells it
-// names. Owners and editors only; the API checks the role again.
+// names. Owners and editors only; the API checks the role again. A person confirmed by code
+// without an account is told to sign in instead: a version needs an account. Replace waits while
+// unpublished page changes exist or someone edits on the page (`blocked`), checked again on the
+// press, and a draft started after the press meets the room's "published meanwhile" review.
 import { FileArrowUpIcon } from "@phosphor-icons/react";
 import { API, type PublishResult, route, type VersionInfo } from "@plinth/shared";
 import { useEffect, useRef, useState } from "react";
 import { ApiRequestError, api } from "../../lib/api.ts";
+import { useSession } from "../../lib/session.ts";
 import {
   type ImportProblem,
   importProblem,
@@ -16,13 +20,23 @@ import {
   SPREADSHEET_ACCEPT,
   type SpreadsheetFormat,
 } from "../account/newArtifact.ts";
-import { Button, Dialog, useToast } from "../ui/index.ts";
+import { Button, ButtonLink, Dialog, useToast } from "../ui/index.ts";
 import "../account/account.css";
 
 export interface ReplaceSheetDialogProps {
   artifactId: string;
   /** The version on screen: the file replaces it, and the save is refused if it is not current. */
   version: number;
+  /**
+   * Why Replace must wait now (unpublished page changes, or someone editing on the page), or
+   * null. Read again when Replace is pressed, so a draft started while the dialog was open stops
+   * the save.
+   */
+  blocked?: string | null;
+  /** The sign-in link, shown instead of the picker to a person without an account. */
+  signInHref: string;
+  /** The gate says this person was confirmed by code and must sign in to edit. */
+  mustSignIn?: boolean;
   onClose: () => void;
   /** After the file was published as `version`. */
   onReplaced: (version: number) => void;
@@ -37,7 +51,12 @@ type Step =
   | { kind: "pick" }
   | ({ kind: "confirm"; base: number } & Picked)
   | ({ kind: "conflict"; base: number; by: string | null } & Picked)
-  | ({ kind: "problem"; file: string } & ImportProblem);
+  | ({ kind: "problem"; file: string } & ImportProblem)
+  | { kind: "sign_in" };
+
+/** What a person confirmed by code without an account is told: a version needs an account. */
+export const SIGN_IN_TEXT =
+  "Sign in to replace this sheet with a file. Publishing a version needs an account.";
 
 /** The version note of a replacement. */
 export const replacedNote = (file: string) => `Replaced from ${file}`;
@@ -62,13 +81,23 @@ function currentOf(e: unknown): number | null {
 export function ReplaceSheetDialog({
   artifactId,
   version,
+  blocked = null,
+  signInHref,
+  mustSignIn = false,
   onClose,
   onReplaced,
 }: ReplaceSheetDialogProps) {
   const toast = useToast();
+  const session = useSession();
+  // Confirmed by code (no account): the Worker refuses the save, so say so before a file is picked.
+  const noAccount = mustSignIn || (!session.loading && session.me === null);
   const input = useRef<HTMLInputElement>(null);
   const [step, setStep] = useState<Step>({ kind: "pick" });
   const [saving, setSaving] = useState(false);
+  // The newest version known to be current: the one on screen, or a newer one a 409 named. A file
+  // picked after a conflict is confirmed against it, never against the stale `version`.
+  const known = useRef(version);
+  known.current = Math.max(known.current, version);
   // Results that arrive after the dialog closed change nothing (StrictMode runs the effect twice).
   const alive = useRef(false);
   useEffect(() => {
@@ -83,7 +112,7 @@ export function ReplaceSheetDialog({
   const onFile = async (file: File) => {
     try {
       const sent = await readSpreadsheet(file);
-      if (alive.current) setStep({ kind: "confirm", base: version, file: file.name, sent });
+      if (alive.current) setStep({ kind: "confirm", base: known.current, file: file.name, sent });
     } catch (e) {
       if (alive.current) setStep({ kind: "problem", file: file.name, ...importProblem(e) });
     }
@@ -100,7 +129,7 @@ export function ReplaceSheetDialog({
   };
 
   const replace = async (s: Extract<Step, { kind: "confirm" | "conflict" }>) => {
-    if (saving) return;
+    if (saving || blocked) return;
     setSaving(true);
     try {
       const r = await api<PublishResult>(route(API.artifact, { ref: artifactId }), {
@@ -113,7 +142,10 @@ export function ReplaceSheetDialog({
     } catch (e) {
       if (!alive.current) return;
       const current = currentOf(e);
-      if (current !== null && current > s.base) {
+      if (e instanceof ApiRequestError && e.status === 401) {
+        setStep({ kind: "sign_in" });
+      } else if (current !== null && current > s.base) {
+        known.current = Math.max(known.current, current);
         const by = await publisherOf(current);
         if (alive.current) setStep({ ...s, kind: "conflict", base: current, by });
       } else {
@@ -152,21 +184,33 @@ export function ReplaceSheetDialog({
     </Button>
   );
 
-  const footer =
-    step.kind === "confirm" || step.kind === "conflict" ? (
-      <>
-        {cancel}
-        {another}
-        <Button variant="primary" loading={saving} onClick={() => void replace(step)}>
-          {step.kind === "conflict" ? `Replace v${step.base}` : "Replace"}
-        </Button>
-      </>
-    ) : (
-      <>
-        {cancel}
-        {another}
-      </>
-    );
+  const signIn = noAccount || step.kind === "sign_in";
+  const footer = signIn ? (
+    <>
+      {cancel}
+      <ButtonLink to={signInHref} variant="primary">
+        Sign in
+      </ButtonLink>
+    </>
+  ) : step.kind === "confirm" || step.kind === "conflict" ? (
+    <>
+      {cancel}
+      {another}
+      <Button
+        variant="primary"
+        loading={saving}
+        disabled={blocked !== null}
+        onClick={() => void replace(step)}
+      >
+        {step.kind === "conflict" ? `Replace v${step.base}` : "Replace"}
+      </Button>
+    </>
+  ) : (
+    <>
+      {cancel}
+      {another}
+    </>
+  );
 
   return (
     <Dialog
@@ -176,12 +220,16 @@ export function ReplaceSheetDialog({
       description="Pick a .xlsx, .csv or .tsv file of at most 2 MB. Its first row names the columns, and it becomes this sheet's next version."
       footer={footer}
     >
-      {picker}
+      {!signIn && picker}
       <div role="status" className="pl-replace-sheet__status">
-        {step.kind === "confirm" && <p>{confirmText(step.file, step.base)}</p>}
-        {step.kind === "conflict" && <p>{conflictText(step.base, step.by)}</p>}
+        {signIn && <p>{SIGN_IN_TEXT}</p>}
+        {!signIn && step.kind === "confirm" && <p>{confirmText(step.file, step.base)}</p>}
+        {!signIn && step.kind === "conflict" && <p>{conflictText(step.base, step.by)}</p>}
+        {!signIn && blocked !== null && (step.kind === "confirm" || step.kind === "conflict") && (
+          <p>{blocked}</p>
+        )}
       </div>
-      {step.kind === "problem" && (
+      {!signIn && step.kind === "problem" && (
         <div role="alert" className="pl-replace-sheet__problem">
           <p>{`${step.file} could not be used: ${step.message}`}</p>
           {step.issues.length > 0 && (
