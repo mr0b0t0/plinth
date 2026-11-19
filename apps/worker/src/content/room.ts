@@ -29,6 +29,7 @@
 // tells the page's runtime whether it may join, before it opens a socket.
 import {
   type ArtifactType,
+  hasPageCapabilities,
   ROOM_LIMITS,
   ROOM_PATH_PREFIX,
   ROOM_PROTOCOL,
@@ -129,7 +130,7 @@ export async function roomInfo(
   }
   if (pass.preview) return { available: false, reason: "preview" };
   if (pass.capture || !pass.claim) return { available: false, reason: "not_identified" };
-  if (target.type !== "html" || target.caps?.room !== true) {
+  if (!hasPageCapabilities(typeDef(target.type)) || target.caps?.room !== true) {
     return { available: false, reason: "not_declared" };
   }
   const access = roomAccess(pass.claim, target.caps, "page", {
@@ -234,7 +235,7 @@ async function upgrade(
   // (ALLOW_LIVE_EDITING).
   const fits =
     kind === "page"
-      ? target.type === "html" && target.caps?.room === true
+      ? hasPageCapabilities(typeDef(target.type)) && target.caps?.room === true
       : typeDef(target.type)?.liveEdit === true && liveEditMode(config, env) === "room";
   if (!fits) return refuse(config, 404, "not_declared");
   // 9. Policy.

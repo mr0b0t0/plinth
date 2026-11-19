@@ -129,7 +129,7 @@ describe("slides over REST", () => {
       "type slides takes Markdown in content, not html",
     );
     expect(errorOf(await publish(a.auth, { content: "# x" })).message).toBe(
-      'content is for typed artifacts: pass type "doc", "slides", "design_system" or "design", or send html',
+      'content is for typed artifacts: pass type "doc", "slides", "design_system", "design" or "whiteboard", or send html',
     );
     expect(
       errorOf(await publishDeck(a.auth, { content: "<!doctype html><html><body>x</body></html>" }))

@@ -73,7 +73,8 @@ export const contentSchema = z
       'for type "slides", the deck\'s Markdown with a line --- between slides (stored as slides.md); ' +
       'for type "design_system", the design system JSON (stored as system.json); ' +
       'for type "design", shared <head> tags then artboards, each starting with a line ' +
-      '<!-- artboard name="Home" size="iphone" --> (stored as design.html). ' +
+      '<!-- artboard name="Home" size="iphone" --> (stored as design.html); ' +
+      'for type "whiteboard", board JSON: settings, plus a starting blocks and arrows list on a new board (the settings are stored as board.json, the blocks and arrows in shared data). ' +
       "Not for html artifacts, which send html.",
   );
 export const artifactTypeSchema = z
@@ -85,7 +86,8 @@ export const artifactTypeSchema = z
       '"design_system": design tokens, guidelines and components as JSON in content ' +
       "(format plinth.design-system/1), which Plinth renders as a reference site. " +
       '"design": artboards (app screens, posters, social posts, ads) as HTML in content, which ' +
-      "Plinth renders on a canvas, each artboard alone at its exact size. Fixed at publish.",
+      "Plinth renders on a canvas, each artboard alone at its exact size. " +
+      '"whiteboard": a board of notes, shapes and arrows that people edit together, sent as board JSON in content; its blocks live in shared data. Fixed at publish.',
   );
 export const noteSchema = z.string().trim().max(LIMITS.maxNoteLength);
 export const passwordSchema = z

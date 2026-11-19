@@ -15,6 +15,7 @@ import {
   liveViewsActive,
   roomsActive,
 } from "../config.ts";
+import { roomOpenTopics } from "../policy.ts";
 import { versionCapabilities } from "../services/artifacts.ts";
 
 export type RoomOp = "revoke" | "gone" | "redeclare";
@@ -28,13 +29,17 @@ interface NotifyCtx {
 /**
  * What a version declares about rooms, as one comparable value: null when it declares no room.
  * Two versions with the same value admit the same sockets with the same rights, so a new version
- * alone causes no reconnects.
+ * alone causes no reconnects. The open topics are the effective ones (policy.ts roomOpenTopics),
+ * so a whiteboard's settings version that lets only editors change it differs from the one
+ * before, and its sockets reconnect with their new rights as soon as it commits.
  */
 export function roomDeclaration(
-  caps: Pick<Capabilities, "room" | "viewer" | "roomOpen"> | null,
+  caps:
+    | (Pick<Capabilities, "room" | "viewer" | "roomOpen"> & Pick<Partial<Capabilities>, "writers">)
+    | null,
 ): string | null {
   if (caps?.room !== true) return null;
-  return JSON.stringify({ viewer: caps.viewer, open: [...new Set(caps.roomOpen)].sort() });
+  return JSON.stringify({ viewer: caps.viewer, open: [...new Set(roomOpenTopics(caps))].sort() });
 }
 
 /** The artifact's type, epoch and the declarations of its current and previous versions. */
@@ -110,7 +115,8 @@ export function notifyRoom(ctx: NotifyCtx, artifactId: string, op: RoomOp): void
 }
 
 /**
- * After version `n` of an HTML artifact committed: page sockets reconnect only when what the
+ * After version `n` of an HTML page or a whiteboard committed (a type with page capabilities, its
+ * restores included): page sockets reconnect only when what the
  * version declares about rooms differs from version n - 1.
  */
 export function notifyVersion(

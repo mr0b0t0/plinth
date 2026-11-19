@@ -139,7 +139,9 @@ const editSource: MenuItem = (c) =>
   canEdit(c.gate.role)
     ? [
         {
-          label: c.live.available ? "Edit source" : "Edit",
+          label: c.live.available
+            ? "Edit source"
+            : (typeDef(c.gate.artifact.type)?.editLabel ?? "Edit"),
           icon: c.live.available ? CodeIcon : PencilSimpleIcon,
           href: c.hrefs.edit,
         },

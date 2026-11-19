@@ -147,13 +147,13 @@ describe("doc artifacts over REST", () => {
     await expectInvalid(
       await publish(a.auth, { content: "# x" }),
       "content",
-      'content is for typed artifacts: pass type "doc", "slides", "design_system" or "design", or send html',
+      'content is for typed artifacts: pass type "doc", "slides", "design_system", "design" or "whiteboard", or send html',
       "html",
     );
     await expectInvalid(
       await publish(a.auth, { type: "html", content: "# x", html: undefined }),
       "content",
-      'content is for typed artifacts: pass type "doc", "slides", "design_system" or "design", or send html',
+      'content is for typed artifacts: pass type "doc", "slides", "design_system", "design" or "whiteboard", or send html',
       "html",
     );
     await expectInvalid(

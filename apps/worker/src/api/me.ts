@@ -1,16 +1,19 @@
 import {
   type AppConfig,
+  ARTIFACT_TYPES,
   type BoundMe,
   type Me,
   type MeConnection,
   normalizeDisplayName,
+  pageDataOf,
   REPO_URL,
   TTL,
+  TYPE_REGISTRY,
   updateProfileInput,
 } from "@plinth/shared";
 import { and, eq, isNull, sql } from "drizzle-orm";
 import { Hono } from "hono";
-import { dictationActive, instanceLimits } from "../config.ts";
+import { dictationActive, instanceLimits, sharedDataActive } from "../config.ts";
 import { artifacts, users } from "../db/schema.ts";
 import { ApiError, unauthorized } from "../lib/errors.ts";
 import { boundArtifactOf } from "../policy.ts";
@@ -46,6 +49,11 @@ meApi.get("/config", (c) => {
     upload_ticket_ttl_s: TTL.uploadTicketMs / 1000,
     dictation: dictationActive(config),
     category_sharing: config.allowCategorySharing,
+    // A type with fixed page capabilities (a whiteboard) keeps its board in shared data.
+    artifact_types: ARTIFACT_TYPES.map((id) => ({
+      id,
+      available: pageDataOf(TYPE_REGISTRY[id]) !== "fixed" || sharedDataActive(config),
+    })),
   };
   const res = c.json(body);
   ensureCsrfCookie(c, res.headers);

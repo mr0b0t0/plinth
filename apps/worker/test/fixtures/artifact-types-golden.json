@@ -9,7 +9,7 @@
     "publish html with content": {
       "error": {
         "code": "invalid_input",
-        "message": "content is for typed artifacts: pass type \"doc\", \"slides\", \"design_system\" or \"design\", or send html",
+        "message": "content is for typed artifacts: pass type \"doc\", \"slides\", \"design_system\", \"design\" or \"whiteboard\", or send html",
         "details": {
           "type": "html",
           "field": "content"

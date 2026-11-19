@@ -44,6 +44,7 @@ export const PUBLISH_WARNING_CODES = [
   "design_system_outdated",
   "blocked_feature",
   "sensitive_file",
+  "board_not_seeded",
 ] as const;
 export type PublishWarningCode = (typeof PUBLISH_WARNING_CODES)[number];
 
@@ -242,6 +243,11 @@ export const LIMITS = {
     /** Errors parseDesignSystem reports, at most. */
     maxErrors: 50,
   },
+  /**
+   * Bytes of JSON (board.json) a publish or update of a whiteboard may send: its settings and, on
+   * a new or empty board, its starting blocks and arrows (packages/shared/src/whiteboard.ts).
+   */
+  maxBoardBytes: 512 * KB,
 } as const;
 
 export const TTL = {

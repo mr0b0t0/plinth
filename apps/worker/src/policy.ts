@@ -8,14 +8,17 @@ import {
   type ClientType,
   type DictationAccess,
   type EffectiveRole,
+  hasPageCapabilities,
   isPersonalDocId,
   type LiveViewPool,
+  pageDataOf,
   type Role,
   type RoomDocRight,
   type RoomEmitRight,
   type RoomKind,
   type Scope,
   TYPE_REGISTRY,
+  typeDef,
   type Visibility,
 } from "@plinth/shared";
 
@@ -297,19 +300,22 @@ export interface PageClaim {
 }
 
 /**
- * What a page may do with its artifact's shared data. `enabled` is sharedDataActive(config).
- * Anyone with a content pass may read once the current version declares `data`; only identified
- * viewers write; authors and the viewer's email are visible only to identified viewers on a page
- * that also declares `viewer`.
+ * What a page may do with its artifact's shared data. `enabled` is sharedDataActive(config);
+ * `type` the artifact's stored type. Anyone with a content pass may read once the current version
+ * declares `data`; identified viewers at or above the write floor write (pageWriteFloor: any
+ * identified viewer on an HTML page, commenters or editors on a whiteboard); authors and the
+ * viewer's email are visible to identified viewers on a page that also declares `viewer`.
  */
 export function pageDataAccess(
   claim: PageClaim | null,
   caps: Capabilities | null,
   enabled: boolean,
+  type: string,
 ): { read: boolean; write: boolean; seeIdentity: boolean } {
   const read = enabled && caps?.data === true;
-  const write = read && claim !== null;
-  return { read, write, seeIdentity: write && caps?.viewer === true };
+  const identified = read && claim !== null;
+  const write = identified && meetsFloor(claim.role, pageWriteFloor(type, caps));
+  return { read, write, seeIdentity: identified && caps?.viewer === true };
 }
 
 /**
@@ -367,8 +373,9 @@ const NO_ROOM: RoomAccess = {
  * May this viewer join the artifact's room, and what may they do there? `active` is
  * roomsActive(config, env); `caps` the current version's declaration; `type` the artifact's type.
  * Only identified viewers join (no anonymous link viewers in v1). A page room needs an HTML
- * artifact that declares `room`: everyone identified joins and sets presence; owners and editors
- * emit any topic, commenters only the page's open topics, and viewers never emit (as Claude's
+ * artifact that declares `room`, or a whiteboard (fixed capabilities): everyone identified joins
+ * and sets presence; owners and editors emit any topic, commenters only the page's open topics
+ * (none on a whiteboard only editors may change: pageWriteFloor), and viewers never emit (as Claude's
  * artifact `room` capability, which never lets a plain viewer emit). Identities show only with
  * `viewer`. A doc socket is Plinth's own editing channel for types with liveEdit: owners and
  * editors only, who see each other's emails; signed-in ones write, ones confirmed by code watch.
@@ -392,11 +399,17 @@ export function roomAccess(
       doc: claim.account === true ? "write" : "watch",
     };
   }
-  if (ctx.type !== "html" || caps?.room !== true) return NO_ROOM;
+  if (!hasPageCapabilities(typeDef(ctx.type)) || caps?.room !== true) return NO_ROOM;
+  // A whiteboard whose settings let only editors change it gives commenters nothing to emit.
+  const floor = pageWriteFloor(ctx.type, caps);
   return {
     join: true,
-    emit: editor ? "all" : claim.role === "commenter" ? "open" : "none",
-    openTopics: [...caps.roomOpen],
+    emit: editor
+      ? "all"
+      : claim.role === "commenter" && meetsFloor("commenter", floor)
+        ? "open"
+        : "none",
+    openTopics: roomOpenTopics(caps),
     seeIdentity: caps.viewer === true,
     doc: "none",
   };
@@ -647,9 +660,9 @@ export function seesPersonalCategory(p: Principal, role: EffectiveRole | null): 
  * env); `sharedData` is sharedDataActive(config); `caps` the current version's declaration. Anyone
  * who may open the artifact may watch (anonymous link viewers included: a watch socket joins no
  * room, sees no peers and carries no identity), never an agent, which publishes and never pulls.
- * Data signals follow pageDataAccess's read rule: an HTML page whose current version declares
- * `data`, with shared data active. The gate and the handshake both ask this, so the decision lives
- * here.
+ * Data signals follow pageDataAccess's read rule: an HTML page (or a whiteboard) whose current
+ * version declares `data`, with shared data active. The gate and the handshake both ask this, so
+ * the decision lives here.
  */
 export function liveViewAccess(
   p: Principal,
@@ -658,7 +671,8 @@ export function liveViewAccess(
   o: { active: boolean; sharedData: boolean; type: ArtifactType },
 ): { watch: boolean; data: boolean } {
   const watch = o.active && d.allow && p.kind !== "agent";
-  return { watch, data: watch && o.type === "html" && caps?.data === true && o.sharedData };
+  const page = hasPageCapabilities(typeDef(o.type));
+  return { watch, data: watch && page && caps?.data === true && o.sharedData };
 }
 
 /**
@@ -671,4 +685,41 @@ export function liveViewAccess(
  */
 export function liveViewPool(d: Extract<Decision, { allow: true }>): LiveViewPool {
   return d.role === null ? "open" : "member";
+}
+
+// ---------- whiteboards: the write floor on fixed capabilities ----------
+
+const EFFECTIVE_RANK: Record<EffectiveRole, number> = {
+  viewer: 0,
+  commenter: 1,
+  editor: 2,
+  owner: 3,
+};
+
+/**
+ * The lowest role that may write shared data from the page, or emit a board's open topics. A type
+ * whose page declares its own capabilities (an HTML page) keeps the rule it always had: any
+ * identified viewer. Every other type fails closed: the stored `writers` (set by the server for a
+ * whiteboard, read back by versionCapabilities), or "commenter" when it is missing or unknown. An
+ * unknown type (a newer Worker's row after a rollback) counts as fixed.
+ */
+export function pageWriteFloor(type: string, caps: Capabilities | null): EffectiveRole {
+  const w = caps?.writers;
+  if (w === "commenter" || w === "editor") return w;
+  const def = typeDef(type);
+  return def && pageDataOf(def) === "declared" ? "viewer" : "commenter";
+}
+
+/** Whether `role` is at or above `floor` (viewer < commenter < editor < owner). */
+export function meetsFloor(role: EffectiveRole, floor: EffectiveRole): boolean {
+  return EFFECTIVE_RANK[role] >= EFFECTIVE_RANK[floor];
+}
+
+/**
+ * The open topics a page room grants commenters: the declared ones, or none when only editors may
+ * write (a whiteboard whose settings say "editors"). rooms/notify.ts roomDeclaration compares
+ * these, so a version that changes them reconnects the room's sockets at once.
+ */
+export function roomOpenTopics(caps: Pick<Capabilities, "roomOpen" | "writers"> | null): string[] {
+  return !caps || caps.writers === "editor" ? [] : [...caps.roomOpen];
 }
