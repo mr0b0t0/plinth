@@ -48,13 +48,13 @@ describe("EditBar", () => {
     );
     // A version (or a range of them) published meanwhile waits for review.
     expect(editStatus(props({ phase: "conflict" }))).toBe(
-      "A newer version was published while you edited. Review it to go on.",
+      "A newer version was published while you edited",
     );
     expect(editStatus(props({ phase: "conflict", conflictVersion: 5 }))).toBe(
-      "v5 was published while you edited. Review it to go on.",
+      "v5 was published while you edited",
     );
     expect(editStatus(props({ phase: "conflict", conflictVersion: 7 }))).toBe(
-      "v5 to v7 were published while you edited. Review them to go on.",
+      "v5 to v7 were published while you edited",
     );
   });
 
@@ -119,12 +119,18 @@ describe("EditBar", () => {
     expect(p.onPublish).toHaveBeenCalledWith("Fix typos");
   });
 
-  it("offers Review changes instead of Publish while a version waits for review", async () => {
+  it("offers only Review changes, not Publish or the menu, while a version waits for review", async () => {
     const p = props({ dirty: true, phase: "conflict" });
-    render(<EditBar {...p} />);
+    const { rerender } = render(<EditBar {...p} />);
     expect(screen.queryByRole("button", { name: "Publish" })).toBeNull();
+    // The review holds both choices, so the strip's menu (and its Discard) is not offered too.
+    expect(screen.queryByRole("button", { name: "More editing actions" })).toBeNull();
     await userEvent.click(screen.getByRole("button", { name: "Review changes" }));
     expect(p.onReview).toHaveBeenCalled();
+    // While the review is open in the frame, the strip does not offer it again.
+    rerender(<EditBar {...p} reviewing />);
+    expect(screen.queryByRole("button", { name: "Review changes" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Done" })).toBeTruthy();
   });
 
   it("turns Publish off, with the reason, for a draft that cannot be a version yet", () => {
@@ -156,7 +162,6 @@ describe("LiveDraftNotice", () => {
   });
   const handlers = () => ({
     onSave: vi.fn(),
-    onContinue: vi.fn(),
     onDiscard: vi.fn(),
     onReview: vi.fn(),
   });
@@ -185,16 +190,16 @@ describe("LiveDraftNotice", () => {
     );
   });
 
-  it("names who left unpublished changes and when, with publish, continue and discard", async () => {
+  it("names who left unpublished changes and when, with publish and discard", async () => {
     const h = handlers();
     render(<LiveDraftNotice draft={DRAFT} status={null} now={NOW} {...h} />);
     expect(screen.getByRole("note").textContent).toContain(
       "Unpublished changes on the page by bo@example.org, 3 h ago",
     );
     await userEvent.click(screen.getByRole("button", { name: "Publish" }));
-    await userEvent.click(screen.getByRole("button", { name: "Continue editing" }));
     expect(h.onSave).toHaveBeenCalled();
-    expect(h.onContinue).toHaveBeenCalled();
+    // Editing starts from the bar's Edit toggle, not from this line.
+    expect(screen.queryByRole("button", { name: "Continue editing" })).toBeNull();
   });
 
   it("asks before discarding someone's page changes, and only discards on confirm", async () => {
@@ -229,13 +234,9 @@ describe("LiveDraftNotice", () => {
       expect(b.disabled).toBe(true);
       expect(b.getAttribute("aria-describedby")).toBe(reason.id);
     }
-    // Continuing to edit stays possible.
-    expect(
-      (screen.getByRole("button", { name: "Continue editing" }) as HTMLButtonElement).disabled,
-    ).toBe(false);
   });
 
-  it("says who is editing with Join, and a conflict with Review changes", async () => {
+  it("says who is editing, and a conflict with Review changes", async () => {
     const h = handlers();
     const { rerender } = render(
       <LiveDraftNotice
@@ -245,27 +246,15 @@ describe("LiveDraftNotice", () => {
       />,
     );
     expect(screen.getByRole("note").textContent).toContain("bo@example.org is editing");
-    await userEvent.click(screen.getByRole("button", { name: "Join" }));
-    expect(h.onContinue).toHaveBeenCalled();
+    expect(screen.queryByRole("button")).toBeNull();
     rerender(
       <LiveDraftNotice draft={null} status={status({ dirty: true, conflict_version: 5 })} {...h} />,
     );
     expect(screen.getByRole("note").textContent).toContain(
-      "v5 changed the same paragraphs as the unpublished changes on the page",
+      "v5 was published over unpublished changes",
     );
     await userEvent.click(screen.getByRole("button", { name: "Review changes" }));
     expect(h.onReview).toHaveBeenCalled();
-    rerender(
-      <LiveDraftNotice
-        draft={null}
-        status={status({ dirty: true, conflict_version: 5 })}
-        merges={false}
-        {...h}
-      />,
-    );
-    expect(screen.getByRole("note").textContent).toContain(
-      "v5 was published while there were unpublished changes on the page. Review them to go on.",
-    );
   });
 
   it("gives a code-confirmed editor no editing actions", () => {

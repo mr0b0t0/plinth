@@ -60,10 +60,9 @@ html.plinth-reviewing body {
   line-height: 1.3;
 }
 
-.plinth-review__intro {
-  margin: 0;
-  max-width: 48rem;
-  color: var(--review-muted);
+/* Focus moves to the heading when the review opens, for screen readers; it is not a control. */
+.plinth-review__heading:focus {
+  outline: none;
 }
 
 .plinth-review__switch {
@@ -114,16 +113,6 @@ html.plinth-reviewing body {
   font-size: 1rem;
 }
 
-.plinth-review__changes-title,
-.plinth-review__files-title {
-  margin: 0.25rem 0;
-  font-size: 0.875rem;
-}
-
-.plinth-review__files-title {
-  color: var(--review-muted);
-}
-
 .plinth-review__list {
   margin: 0;
   padding: 0;
@@ -152,6 +141,15 @@ html.plinth-reviewing body {
 }
 
 .plinth-review__values {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  color: var(--review-muted);
+}
+
+.plinth-review__files {
+  margin-top: 0.25rem;
   color: var(--review-muted);
 }
 
@@ -174,8 +172,15 @@ html.plinth-reviewing body {
   height: 100%;
 }
 
-.plinth-review__body .plinth-sheet__bar {
+/* A sheet's side is read-only: no title bar, formula bar or selected cell. */
+.plinth-review__body .plinth-sheet__bar,
+.plinth-review__body .plinth-sheet__fx {
   display: none;
+}
+
+.plinth-review__body .plinth-sheet__selected {
+  box-shadow: none;
+  background-image: none;
 }
 
 .plinth-review__choices {
@@ -183,15 +188,6 @@ html.plinth-reviewing body {
   flex-wrap: wrap;
   align-items: center;
   gap: 0.5rem 0.75rem;
-}
-
-.plinth-review__why {
-  flex: 1 0 100%;
-  order: 10;
-  margin: 0;
-  max-width: 48rem;
-  color: var(--review-muted);
-  font-size: 0.875rem;
 }
 
 .plinth-review__primary,
@@ -224,40 +220,9 @@ html.plinth-reviewing body {
 }
 
 .plinth-review button:focus-visible,
-.plinth-review__body:focus-visible,
-.plinth-review__note-input:focus-visible {
+.plinth-review__body:focus-visible {
   outline: 2px solid var(--review-focus);
   outline-offset: 2px;
-}
-
-.plinth-review__note {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: end;
-  gap: 0.5rem;
-  flex: 1 0 100%;
-}
-
-.plinth-review__note[hidden] {
-  display: none;
-}
-
-.plinth-review__note-label {
-  display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
-  flex: 1 1 16rem;
-  font-size: 0.875rem;
-}
-
-.plinth-review__note-input {
-  min-height: 44px;
-  padding: 0.25rem 0.5rem;
-  border: 1px solid var(--review-border);
-  border-radius: 6px;
-  background: var(--review-bg);
-  color: var(--review-fg);
-  font: inherit;
 }
 
 .plinth-review__reason {

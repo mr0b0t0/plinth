@@ -211,7 +211,7 @@ test("an agent's version is merged under the page edits, or frozen for review wh
     await client.close();
   }
   const bar = page.getByRole("region", { name: "Editing on the page" });
-  await expect(bar).toContainText("v3 was published while you edited. Review it to go on.", {
+  await expect(bar).toContainText("v3 was published while you edited", {
     timeout: 10_000,
   });
   // The review opens in the page itself: both docs rendered, and what each changed.
@@ -221,21 +221,23 @@ test("an agent's version is merged under the page edits, or frozen for review wh
   await expect(review.getByRole("heading", { level: 2 })).toHaveText(
     "v3 was published while you were editing",
   );
-  const mine = review.getByRole("region", { name: "Your page changes" });
-  await expect(mine).toContainText("Your page changes, since v2");
+  // While the review is open, the strip does not offer it again.
+  await expect(bar.getByRole("button", { name: "Review changes" })).toHaveCount(0);
+  const mine = review.getByRole("region", { name: "Your changes" });
+  await expect(mine.getByRole("list", { name: "Changes" })).toContainText("Paragraph changed");
   await expect(mine).toContainText("First paragraph. Mine.");
-  await expect(mine).toContainText("No files changed");
   const theirs = review.getByRole("region", { name: "v3" });
   const toV3 = review.getByRole("radio", { name: "v3" });
   if (await toV3.isVisible()) await toV3.click();
   await expect(theirs).toContainText("First, rewritten by the agent.");
-  await expect(theirs).toContainText("What v3 changed, since v2");
+  await expect(theirs.getByRole("list", { name: "Changes" })).toContainText("Paragraph changed");
   // No source is shown: no Markdown field, and no editor.
   await expect(review.locator("textarea, .monaco-editor")).toHaveCount(0);
   // Discard mine asks first, naming what would be lost; Cancel keeps the page changes.
   await review.getByRole("button", { name: "Discard mine" }).click();
   const ask = frameOf(page).getByRole("alertdialog", { name: "Discard the page changes?" });
-  await expect(ask).toContainText("They are not kept anywhere. The page will show v3.");
+  await expect(ask).toContainText("will be lost");
+  await expect(ask).toContainText("The page will show v3 for everyone editing.");
   await ask.getByRole("button", { name: "Cancel" }).click();
   await review.getByRole("button", { name: "Publish mine", exact: true }).click();
   await expect
@@ -283,7 +285,7 @@ test("a review open in two browsers: one choice takes effect, and the other revi
     expect(r.isError, r.text).toBe(false);
     for (const p of [page, other]) {
       const bar = p.getByRole("region", { name: "Editing on the page" });
-      await expect(bar).toContainText(`v${base + 1} was published while you edited.`, {
+      await expect(bar).toContainText(`v${base + 1} was published while you edited`, {
         timeout: 10_000,
       });
       await bar.getByRole("button", { name: "Review changes" }).click();
@@ -309,7 +311,10 @@ test("a review open in two browsers: one choice takes effect, and the other revi
     await clash(3, "two");
     await frameOf(other).getByRole("button", { name: "Discard mine" }).click();
     await Promise.all([
-      frameOf(other).getByRole("button", { name: "Discard the page changes" }).click(),
+      frameOf(other)
+        .getByRole("alertdialog")
+        .getByRole("button", { name: "Discard", exact: true })
+        .click(),
       frameOf(page).getByRole("button", { name: "Publish mine", exact: true }).click(),
     ]);
     for (const p of [page, other]) {

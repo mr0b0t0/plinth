@@ -204,7 +204,7 @@ test("an agent's edit_sheet during the page edits is never merged: the review pu
   // The agent changes the row right below the page's edit: still never merged.
   await type("B2", "4");
   await agentSets("B3", 6, 1);
-  await expect(bar).toContainText("v2 was published while you edited. Review it to go on.", {
+  await expect(bar).toContainText("v2 was published while you edited", {
     timeout: 10_000,
   });
   await bar.getByRole("button", { name: "Review changes" }).click();
@@ -213,7 +213,7 @@ test("an agent's edit_sheet during the page edits is never merged: the review pu
   await expect(review.getByRole("heading", { level: 2 })).toHaveText(
     "v2 was published while you were editing",
   );
-  const mine = review.getByRole("region", { name: "Your page changes" });
+  const mine = review.getByRole("region", { name: "Your changes" });
   await expect(mine).toContainText("B2 changed");
   await expect(mine).toContainText("3 → 4");
   await expect(mine.locator("table")).toBeVisible();
@@ -224,11 +224,12 @@ test("an agent's edit_sheet during the page edits is never merged: the review pu
     await expect(mine).toBeHidden();
   }
   await expect(review.getByRole("region", { name: "v2" })).toContainText("B3 changed");
-  await expect(review.getByRole("region", { name: "v2" })).toContainText("No files changed");
+  // Neither side changed a file, so neither lists any.
+  await expect(review.locator(".plinth-review__files")).toHaveCount(0);
   // Cancel keeps the draft frozen, and the review opens again.
   await review.getByRole("button", { name: "Cancel" }).click();
   await expect(review).toHaveCount(0);
-  await expect(bar).toContainText("Review it to go on.");
+  await expect(bar.getByRole("button", { name: "Review changes" })).toBeVisible();
   await bar.getByRole("button", { name: "Review changes" }).click();
 
   // Publish mine: the page edits become v3 as they are; v2 stays in the history.
@@ -247,19 +248,19 @@ test("an agent's edit_sheet during the page edits is never merged: the review pu
   // Editing resumes on v3. Discard mine asks first, naming what would be lost.
   await type("B2", "7");
   await agentSets("B4", 9, 3);
-  await expect(bar).toContainText("v4 was published while you edited.", { timeout: 10_000 });
+  await expect(bar).toContainText("v4 was published while you edited", { timeout: 10_000 });
   await bar.getByRole("button", { name: "Review changes" }).click();
   const second = frameOf(page).getByRole("region", { name: "Review v4 and the page changes" });
   await second.getByRole("button", { name: "Discard mine" }).click();
   const confirm = frameOf(page).getByRole("alertdialog", { name: "Discard the page changes?" });
   await expect(confirm).toContainText("This change will be lost:");
   await expect(confirm).toContainText("B2 changed");
-  await expect(confirm).toContainText("The page will show v4.");
+  await expect(confirm).toContainText("The page will show v4 for everyone editing.");
   // Clicked with the pointer left resting on any notification first: no toast covers the
   // review's choices, at phone width either, and a resting pointer does not keep one for good.
   const toast = await page.locator(".pl-toast").first().boundingBox();
   if (toast) await page.mouse.move(toast.x + toast.width / 2, toast.y + toast.height / 2);
-  await confirm.getByRole("button", { name: "Discard the page changes" }).click();
+  await confirm.getByRole("button", { name: "Discard", exact: true }).click();
   await expect(frameOf(page).locator(".plinth-review__announce")).toHaveText(
     "The page changes were discarded. The page shows v4.",
     { timeout: 10_000 },

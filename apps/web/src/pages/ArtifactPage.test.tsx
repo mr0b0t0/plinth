@@ -570,7 +570,9 @@ describe("ArtifactPage: editing a doc on its page (#36)", () => {
     expect(screen.getByRole("button", { name: "Comments" }).getAttribute("aria-pressed")).toBe(
       "true",
     );
-    await user.click(screen.getByRole("button", { name: "Continue editing" }));
+    // The notice offers no way into editing of its own: the bar's Edit toggle is the one way in.
+    expect(screen.queryByRole("button", { name: "Continue editing" })).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Edit" }));
     // Editing and review mode exclude each other: the panel closes.
     await waitFor(() =>
       expect(screen.getByRole("button", { name: "Comments" }).getAttribute("aria-pressed")).toBe(
@@ -578,7 +580,7 @@ describe("ArtifactPage: editing a doc on its page (#36)", () => {
       ),
     );
     expect(screen.getByRole("button", { name: "Edit" }).getAttribute("aria-pressed")).toBe("true");
-    // The notice that held focus is gone: focus is in the edit bar, not on the body.
+    // Focus is in the edit bar, not on the body.
     await waitFor(() =>
       expect(document.activeElement).toBe(
         screen.getByRole("region", { name: "Editing on the page" }),

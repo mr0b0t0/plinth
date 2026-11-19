@@ -2,7 +2,8 @@
 // is going on (announced politely), who else is editing and where, Publish (the one primary
 // action, Cmd/Ctrl+S), "Publish with a note…" and "Discard unpublished changes" (behind a confirm)
 // in the overflow menu, and Done. While a version published meanwhile waits for review, Publish
-// gives way to "Review changes", which opens the whole-draft review in the frame.
+// and the overflow menu give way to "Review changes", which opens the whole-draft review in the
+// frame (the review holds the two choices), and which the strip hides while that review is open.
 import {
   DotsThreeIcon,
   PencilSimpleIcon,
@@ -40,6 +41,8 @@ export interface EditBarProps {
   onDiscard: () => void;
   onDone: () => void;
   onReview?: () => void;
+  /** The whole-draft review is open in the frame: "Review changes" is not shown. */
+  reviewing?: boolean;
   /** The strip's accessible name (the design page shows several at once). */
   label?: string;
   /** The strip itself, focusable, so focus can move to it when editing starts. */
@@ -51,11 +54,11 @@ export function editStatus(p: EditBarProps): string {
   if (p.saving) return "Publishing…";
   if (p.phase === "conflict") {
     const n = p.conflictVersion;
-    if (!n) return "A newer version was published while you edited. Review it to go on.";
+    if (!n) return "A newer version was published while you edited";
     const from = Math.min(p.version + 1, n);
     return from < n
-      ? `${versionRange(from, n)} were published while you edited. Review them to go on.`
-      : `v${n} was published while you edited. Review it to go on.`;
+      ? `${versionRange(from, n)} were published while you edited`
+      : `v${n} was published while you edited`;
   }
   if (p.newerVersion) return `v${p.newerVersion} was published while you were editing`;
   if (p.mode === "room" && p.connecting) return "Connecting…";
@@ -127,47 +130,52 @@ export function EditBar(props: EditBarProps) {
         </span>
       )}
       <span className="pl-editbar__actions">
-        {conflict && onReview ? (
-          <Button variant="primary" size="sm" onClick={onReview}>
-            Review changes
-          </Button>
+        {conflict ? (
+          onReview &&
+          !props.reviewing && (
+            <Button variant="primary" size="sm" onClick={onReview}>
+              Review changes
+            </Button>
+          )
         ) : (
-          <Button
-            variant="primary"
-            size="sm"
-            icon={UploadSimpleIcon}
-            loading={saving}
-            disabled={!dirty || !publishable}
-            aria-keyshortcuts="Meta+S Control+S"
-            {...(reason ? { "aria-describedby": reasonId } : {})}
-            // The label hides under the spinner while publishing; the name stays.
-            aria-label="Publish"
-            onClick={() => onPublish()}
-          >
-            Publish
-          </Button>
+          <>
+            <Button
+              variant="primary"
+              size="sm"
+              icon={UploadSimpleIcon}
+              loading={saving}
+              disabled={!dirty || !publishable}
+              aria-keyshortcuts="Meta+S Control+S"
+              {...(reason ? { "aria-describedby": reasonId } : {})}
+              // The label hides under the spinner while publishing; the name stays.
+              aria-label="Publish"
+              onClick={() => onPublish()}
+            >
+              Publish
+            </Button>
+            <Menu
+              label="More editing actions"
+              icon={DotsThreeIcon}
+              iconOnly
+              variant="ghost"
+              size="sm"
+              align="end"
+              items={[
+                {
+                  label: "Publish with a note…",
+                  disabled: !dirty || !publishable,
+                  onSelect: () => setNoteOpen(true),
+                },
+                {
+                  label: "Discard unpublished changes",
+                  danger: true,
+                  disabled: !dirty,
+                  onSelect: () => setConfirmDiscard(true),
+                },
+              ]}
+            />
+          </>
         )}
-        <Menu
-          label="More editing actions"
-          icon={DotsThreeIcon}
-          iconOnly
-          variant="ghost"
-          size="sm"
-          align="end"
-          items={[
-            {
-              label: "Publish with a note…",
-              disabled: !dirty || conflict || !publishable,
-              onSelect: () => setNoteOpen(true),
-            },
-            {
-              label: "Discard unpublished changes",
-              danger: true,
-              disabled: !dirty,
-              onSelect: () => setConfirmDiscard(true),
-            },
-          ]}
-        />
         <Button variant="secondary" size="sm" onClick={onDone} disabled={saving}>
           Done
         </Button>
@@ -176,7 +184,6 @@ export function EditBar(props: EditBarProps) {
         open={noteOpen}
         onClose={() => setNoteOpen(false)}
         title="Publish with a note"
-        description="A short note helps people find this version in the history."
         size="sm"
         footer={
           <>
@@ -209,8 +216,8 @@ export function EditBar(props: EditBarProps) {
         title="Discard unpublished changes?"
         description={
           props.mode === "room"
-            ? "The page goes back to the current version, for everyone editing it. Published versions are not touched."
-            : "The page goes back to the current version. Published versions are not touched."
+            ? "The page goes back to the published version for everyone editing it."
+            : "The page goes back to the published version."
         }
         confirmLabel="Discard changes"
         danger

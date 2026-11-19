@@ -3,12 +3,13 @@
 // were not combined with it: a doc's that overlap (#49), and every sheet's (never merged). It
 // shows both whole sides rendered side by side (one at a time, with a switch, at phone width),
 // each read-only by the type's own renderer and against the files it would publish: the page
-// changes against their base version's files, vN against vN's. Above them are two change lists
-// from the shared describers (what the page changes did since the base, and what vN did since the
-// base), each with its files part. Then exactly two choices, and Cancel:
+// changes against their base version's files, vN against vN's. Above each is its change list from
+// the shared describers (what the page changes did since the base, and what vN did since the
+// base, with vN's files when it changed any). Then exactly two choices, and Cancel:
 // - "Publish mine": the page changes become the next version, with the files they were made with,
 //   over vN, which stays in History;
 // - "Discard mine": after a confirmation that names what will be lost, the page goes back to vN.
+// Short labels only: the heading says what happened, and the two panes show the rest.
 // The renderer only asks: it posts the choice to the app (`resolved`), which makes the REST call;
 // the room decides, under its checkpoint lock, and closes every open review with its `reset`.
 //
@@ -65,25 +66,12 @@ export interface ReviewState {
   editors: readonly string[];
 }
 
-/** The review's sentences, by range (exported for tests and the app's matching words). */
+/** The review's words, by range (exported for tests and the app's matching words). */
 export const REVIEW_WORDS = {
   heading: (from: number, to: number) =>
     `${versionRange(from, to)} ${from >= to ? "was" : "were"} published while you were editing`,
-  intro: (from: number, to: number) =>
-    from >= to
-      ? `Your page changes were not combined with it. Choose which one to keep. The other stays available: v${to} in History, or your changes until you discard them.`
-      : `Your page changes were not combined with them. Choose which to keep. The others stay available: ${versionRange(from, to)} in History, or your changes until you discard them.`,
-  mine: (base: number) => `Your page changes (not published, based on v${base})`,
-  theirs: (from: number, to: number) =>
-    from >= to ? `v${to}` : `v${to}, the latest of ${versionRange(from, to)}`,
-  mineList: (base: number) => `Your page changes, since v${base}`,
-  theirList: (from: number, to: number, base: number) =>
-    `What ${versionRange(from, to)} changed, since v${base}`,
-  publish: (from: number, to: number, base: number) =>
-    from >= to
-      ? `Your page changes become v${to + 1}, with the files they were made with (from v${base}). v${to}'s text and file changes, listed above, will not be in v${to + 1}. v${to} stays in History and can be restored.`
-      : `Your page changes become v${to + 1}, with the files they were made with (from v${base}). The text and file changes of ${versionRange(from, to)}, listed above, will not be in v${to + 1}. ${versionRange(from, to)} stay in History, and each can be restored.`,
-  discard: (to: number) => `Back to v${to}. Asks first.`,
+  mine: "Your changes",
+  theirs: (to: number) => `v${to}`,
   busy: "Another editor is choosing right now",
   label: (from: number, to: number) => `Review ${versionRange(from, to)} and the page changes`,
 } as const;
@@ -115,14 +103,12 @@ export function discardDescription(
         ? `This change will be lost: ${what}.`
         : `These ${list?.truncated ? `${n}+` : n} changes will be lost: ${what}.`;
   }
-  let text = `${lost} They are not kept anywhere. The page will show v${to}.`;
-  if (mode === "room") {
-    text +=
-      editors.length > 0
-        ? ` This drops the unpublished changes of everyone editing (${editors.slice(0, 5).join(", ")}${editors.length > 5 ? ", and others" : ""}).`
-        : " This drops the unpublished changes of everyone editing.";
-  }
-  return text;
+  if (mode === "solo") return `${lost} The page will show v${to}.`;
+  const who =
+    editors.length > 0
+      ? ` (${editors.slice(0, 5).join(", ")}${editors.length > 5 ? ", and others" : ""})`
+      : "";
+  return `${lost} The page will show v${to} for everyone editing${who}.`;
 }
 
 /** "chart.png replaced" style lines for vN's files part, and how many more there are. */
@@ -155,6 +141,7 @@ export class DraftReview {
   private state: ReviewState | null = null;
   private announcer: HTMLElement | null = null;
   private buttons: HTMLButtonElement[] = [];
+  private publishButton: HTMLButtonElement | null = null;
   private reason: HTMLElement | null = null;
   private busyTimer: ReturnType<typeof setTimeout> | null = null;
   private pending: ReviewOutcome | null = null;
@@ -236,7 +223,6 @@ export class DraftReview {
     root.dataset.show = "mine";
     const heading = el(d, "h2", "plinth-review__heading", REVIEW_WORDS.heading(from, to));
     heading.tabIndex = -1;
-    const intro = el(d, "p", "plinth-review__intro", REVIEW_WORDS.intro(from, to));
 
     // ---- the phone switch ----
     const sw = el(d, "div", "plinth-review__switch");
@@ -272,17 +258,16 @@ export class DraftReview {
     const pane = (
       side: "mine" | "theirs",
       label: string,
-      listTitle: string,
       list: ChangeList | null,
-      files: { lines: string[]; more: number } | "none",
+      files: { lines: string[]; more: number },
       text: string | null,
       version: number,
     ) => {
       const s = el(d, "section", "plinth-review__pane");
       s.dataset.side = side;
-      s.setAttribute("aria-label", side === "mine" ? "Your page changes" : `v${to}`);
+      s.setAttribute("aria-label", label);
       s.append(el(d, "h3", "plinth-review__label", label));
-      s.append(this.changes(listTitle, list, files, goTo));
+      s.append(this.changes(list, files, goTo));
       const body = el(d, "div", "plinth-review__body");
       body.tabIndex = 0;
       body.setAttribute("aria-label", label);
@@ -302,24 +287,9 @@ export class DraftReview {
       return s;
     };
     panes.append(
-      pane(
-        "mine",
-        REVIEW_WORDS.mine(state.base),
-        REVIEW_WORDS.mineList(state.base),
-        this.mineList,
-        "none",
-        state.draft,
-        state.base,
-      ),
-      pane(
-        "theirs",
-        REVIEW_WORDS.theirs(from, to),
-        REVIEW_WORDS.theirList(from, to, state.base),
-        theirList,
-        fileLines(state.files),
-        theirs,
-        to,
-      ),
+      // Page changes never change files, so only vN's side can list any.
+      pane("mine", REVIEW_WORDS.mine, this.mineList, fileLines(null), state.draft, state.base),
+      pane("theirs", REVIEW_WORDS.theirs(to), theirList, fileLines(state.files), theirs, to),
     );
     // The two sides scroll together.
     let syncing = false;
@@ -340,39 +310,12 @@ export class DraftReview {
     const choices = el(d, "div", "plinth-review__choices");
     choices.setAttribute("role", "group");
     choices.setAttribute("aria-label", "Keep one");
-    const publishWhy = el(d, "p", "plinth-review__why", REVIEW_WORDS.publish(from, to, state.base));
-    publishWhy.id = nextId("publish");
     const unpublishable = this.setup.rules.unpublishable(state.draft);
     const publish = el(d, "button", "plinth-review__primary", "Publish mine");
     publish.type = "button";
-    publish.setAttribute("aria-describedby", publishWhy.id);
     publish.addEventListener("click", () => this.choose("publish"));
-    const withNote = el(d, "button", "plinth-review__secondary", "Publish mine with a note…");
-    withNote.type = "button";
-    const noteForm = el(d, "form", "plinth-review__note");
-    noteForm.hidden = true;
-    const noteLabel = el(d, "label", "plinth-review__note-label", "Note");
-    const noteInput = el(d, "input", "plinth-review__note-input");
-    noteInput.type = "text";
-    noteInput.maxLength = 500;
-    noteInput.autocomplete = "off";
-    noteLabel.append(noteInput);
-    const noteSubmit = el(d, "button", "plinth-review__primary", "Publish mine");
-    noteSubmit.type = "submit";
-    noteForm.append(noteLabel, noteSubmit);
-    withNote.addEventListener("click", () => {
-      noteForm.hidden = false;
-      noteInput.focus();
-    });
-    noteForm.addEventListener("submit", (e) => {
-      e.preventDefault();
-      this.choose("publish", noteInput.value.trim() || undefined);
-    });
-    const discardWhy = el(d, "p", "plinth-review__why", REVIEW_WORDS.discard(to));
-    discardWhy.id = nextId("discard");
     const discard = el(d, "button", "plinth-review__danger", "Discard mine");
     discard.type = "button";
-    discard.setAttribute("aria-describedby", discardWhy.id);
     discard.addEventListener("click", () => this.openConfirm(discard));
     const cancel = el(d, "button", "plinth-review__secondary", "Cancel");
     cancel.type = "button";
@@ -384,14 +327,16 @@ export class DraftReview {
     reason.setAttribute("role", "status");
     if (unpublishable) {
       publish.disabled = true;
-      withNote.disabled = true;
       reason.textContent = "These page changes can't be published yet.";
+      reason.id = nextId("reason");
+      publish.setAttribute("aria-describedby", reason.id);
     }
-    choices.append(publish, withNote, publishWhy, noteForm, discard, discardWhy, cancel, reason);
-    this.buttons = [publish, withNote, noteSubmit, discard];
+    choices.append(publish, discard, cancel, reason);
+    this.buttons = [publish, discard];
+    this.publishButton = publish;
     this.reason = reason;
 
-    root.append(heading, intro, sw, panes, choices);
+    root.append(heading, sw, panes, choices);
     root.addEventListener("keydown", (e) => {
       if (e.key === "Escape" && !this.confirm) {
         e.stopPropagation();
@@ -405,25 +350,22 @@ export class DraftReview {
     heading.focus();
   }
 
-  /** One side's change list, with its files part. Items are buttons that bring both panes there. */
+  /** One side's change list, and its files when it changed any. Items are buttons that bring both
+   * panes there. */
   private changes(
-    title: string,
     list: ChangeList | null,
-    files: { lines: string[]; more: number } | "none",
+    files: { lines: string[]; more: number },
     goTo: (item: ChangeItem) => void,
   ): HTMLElement {
     const d = this.doc;
     const s = el(d, "div", "plinth-review__changes");
-    const h = el(d, "h4", "plinth-review__changes-title", title);
-    h.id = nextId("list");
-    s.setAttribute("aria-labelledby", h.id);
-    s.append(h);
     if (!list) {
       s.append(el(d, "p", "plinth-review__none", "These changes could not be listed."));
     } else if (list.items.length === 0) {
       s.append(el(d, "p", "plinth-review__none", "No changes."));
     } else {
       const ul = el(d, "ul", "plinth-review__list");
+      ul.setAttribute("aria-label", "Changes");
       for (const item of list.items) {
         const li = el(d, "li", "plinth-review__item");
         li.dataset.kind = item.kind;
@@ -446,15 +388,9 @@ export class DraftReview {
       if (list.truncated) ul.append(el(d, "li", "plinth-review__item", "and more"));
       s.append(ul);
     }
-    const fh = el(d, "h5", "plinth-review__files-title", "Files");
-    fh.id = nextId("files");
-    const fs = el(d, "div", "plinth-review__files");
-    fs.setAttribute("aria-labelledby", fh.id);
-    fs.append(fh);
-    if (files === "none" || (files.lines.length === 0 && files.more === 0)) {
-      fs.append(el(d, "p", "plinth-review__none", "No files changed"));
-    } else {
-      const ul = el(d, "ul", "plinth-review__list");
+    if (files.lines.length > 0 || files.more > 0) {
+      const ul = el(d, "ul", "plinth-review__list plinth-review__files");
+      ul.setAttribute("aria-label", "Files");
       for (const line of files.lines) ul.append(el(d, "li", "plinth-review__item", line));
       if (files.more > 0) {
         ul.append(
@@ -466,9 +402,8 @@ export class DraftReview {
           ),
         );
       }
-      fs.append(ul);
+      s.append(ul);
     }
-    s.append(fs);
     return s;
   }
 
@@ -481,8 +416,8 @@ export class DraftReview {
 
   private setButtons(on: boolean, reason: string): void {
     const unpublishable = this.state ? this.setup.rules.unpublishable(this.state.draft) : null;
-    for (const [i, b] of this.buttons.entries())
-      b.disabled = !on || (i < 3 && unpublishable !== null);
+    for (const b of this.buttons)
+      b.disabled = !on || (b === this.publishButton && unpublishable !== null);
     if (this.reason) this.reason.textContent = reason;
   }
 
@@ -542,7 +477,7 @@ export class DraftReview {
     box.setAttribute("aria-describedby", p.id);
     const no = el(d, "button", "plinth-review__secondary", "Cancel");
     no.type = "button";
-    const yes = el(d, "button", "plinth-review__danger", "Discard the page changes");
+    const yes = el(d, "button", "plinth-review__danger", "Discard");
     yes.type = "button";
     const done = () => {
       this.closeConfirm();

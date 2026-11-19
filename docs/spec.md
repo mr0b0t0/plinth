@@ -654,32 +654,29 @@ page shows the strip and makes the REST calls, and renders no content.
     freezes it.
 
   A frozen draft takes no edits (leases end; edits and structural changes are refused), idle
-  autosave and Done do not publish it, and the strip says "v6 was published while you edited.
-  Review it to go on." (for several versions since the draft's base: "v6 to v7 were published
-  while you edited. Review them to go on."). Nothing is overwritten either way. `get_artifact`
-  tells agents a draft exists (metadata only), and `update_artifact` and `edit_sheet` warn
-  `live_draft`.
-- **The whole-draft review.** "Review changes" opens the review inside the frame. It shows the
-  page changes and the newest version side by side (one at a time, with a "Mine" and "v6" switch,
-  at phone width), each drawn read-only by the type's own renderer against the files it would
-  publish: the page changes against the base version's files, vN against vN's. Above them are two
-  plain-language change lists from the History's describers ([Comparing
-  versions](#comparing-versions-decided-2026-11-19)), "Your page changes, since v5" and "What v6
-  changed, since v5", each with a "Files" part: the page changes' always says "No files changed";
-  vN's names each file added, removed or replaced, at most 50 of each kind, then "and N more
-  files". Pressing an item brings both sides to the place it names. The versions reviewed are
-  every version since the draft's base, and the heading, the lists, the descriptions and the
-  version note name the whole range ("v6 to v7"). Exactly two choices, and Cancel:
+  autosave and Done do not publish it, and the strip says "v6 was published while you edited"
+  (for several versions since the draft's base: "v6 to v7 were published while you edited"), with
+  "Review changes" in place of Publish and its menu (the review holds both choices) and Done.
+  Nothing is overwritten either way. `get_artifact` tells agents a draft exists (metadata only),
+  and `update_artifact` and `edit_sheet` warn `live_draft`.
+- **The whole-draft review.** "Review changes" opens the review inside the frame (the strip does
+  not offer it again while it is open). Under the heading ("v6 was published while you were
+  editing") it shows "Your changes" and "v6" side by side (one at a time, with a "Mine" and "v6"
+  switch, at phone width), each drawn read-only by the type's own renderer against the files it
+  would publish: the page changes against the base version's files, vN against vN's. Each side
+  starts with its plain-language change list since the draft's base, from the History's
+  describers ([Comparing versions](#comparing-versions-decided-2026-11-19)). vN's side also names
+  each file it added, removed or replaced, at most 50 of each kind, then "and N more files"; page
+  changes never change files, so their side lists none. Pressing an item brings both sides to the
+  place it names. The versions reviewed are every version since the draft's base; the heading and
+  the version note name the whole range ("v6 to v7"), and the newer side is the newest version.
+  The review has no explanatory paragraphs: exactly two choices, and Cancel:
   - **Publish mine**: the room's own frozen draft, byte for byte, becomes the next version on top
-    of vN, with the files of the draft's base version ("Your page changes become v7, with the files
-    they were made with (from v5). v6's text and file changes, listed above, will not be in v7."),
-    and the note "Edited on the page. Replaces the changes in v6." (or "… in v6 to v7."), after the
-    editor's own note when they wrote one ("Publish mine with a note…"). vN stays in History and
-    can be restored.
+    of vN, with the files of the draft's base version, and the note "Edited on the page. Replaces
+    the changes in v6." (or "… in v6 to v7."). vN stays in History and can be restored.
   - **Discard mine** asks first, naming what will be lost ("These 7 changes will be lost: …, and 4
-    more. They are not kept anywhere. The page will show v6."; in room mode it adds that it drops
-    the unpublished changes of everyone editing, by name), then returns the page to vN for
-    everyone.
+    more. The page will show v6."; in room mode "… for everyone editing", by name), then returns
+    the page to vN for everyone.
   - **Cancel** closes the review; the draft stays frozen and kept.
 
   Both choices, every Publish and the strip's "Discard unpublished changes" take the room's
@@ -714,7 +711,8 @@ page shows the strip and makes the REST calls, and renders no content.
   and "Discard unpublished changes", and Done. A doc's block opens as a plain text field holding
   its Markdown; blocks other people hold show their email and their text as it arrives. Esc at the
   top level of edit mode moves focus to the strip. Owners and editors who are not editing see one
-  line when unpublished changes exist, when someone is editing, or when a version needs review.
+  line when unpublished changes exist (with Publish and Discard), when someone is editing, or when
+  a version needs review (with Review changes); editing itself starts only from the Edit toggle.
   Edit mode and comment review mode exclude each other. While the review is open, app
   notifications keep clear of its choices, and no notification ever covers a dialog's controls.
 - **The frame key.** For an owner or editor who may edit on the page, the app opens each frame

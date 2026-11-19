@@ -1,6 +1,7 @@
 // One line above a doc or a sheet for its owners and editors while they are not editing it on the
 // page (#36): someone left unpublished changes on the page, someone is editing right now, or a
-// version published meanwhile waits for review beside the unpublished changes. Viewers and
+// version published meanwhile waits for review beside the unpublished changes. Editing starts from
+// the bar's Edit toggle, the one way in, so the line offers no button for it. Viewers and
 // commenters never get here: the gate gives them no `live`, so they see versions only.
 import { WarningIcon } from "@phosphor-icons/react";
 import type { LiveDraftInfo } from "@plinth/shared";
@@ -24,12 +25,9 @@ export interface LiveDraftNoticeProps {
    * connected), or null when it can. Those two actions are disabled with this as the reason.
    */
   unavailable?: string | null;
-  /** False for a type whose page edits are never merged (a sheet). Default true (a doc). */
-  merges?: boolean;
   /** For tests. */
   now?: number;
   onSave: () => void;
-  onContinue: () => void;
   onDiscard: () => void;
   onReview: () => void;
   onSaveRestore?: () => void;
@@ -54,7 +52,7 @@ export function noticeKind(
 const draftAuthor = (d: LiveDraftInfo | null) => d?.updated_by_email ?? null;
 
 export function LiveDraftNotice(props: LiveDraftNoticeProps) {
-  const { draft, status, restore, signIn, onSave, onContinue, onDiscard, onReview } = props;
+  const { draft, status, restore, signIn, onSave, onDiscard, onReview } = props;
   const kind = noticeKind(props);
   const [confirmDiscard, setConfirmDiscard] = useState(false);
   const reasonId = useId();
@@ -65,10 +63,7 @@ export function LiveDraftNotice(props: LiveDraftNoticeProps) {
   let buttons: ReactNode = null;
   if (kind === "conflict") {
     const n = (status?.connected ? status.conflict_version : draft?.conflict_version) as number;
-    text =
-      props.merges === false
-        ? `v${n} was published while there were unpublished changes on the page. Review them to go on.`
-        : `v${n} changed the same paragraphs as the unpublished changes on the page`;
+    text = `v${n} was published over unpublished changes`;
     if (actions) {
       buttons = (
         <Button size="sm" variant="secondary" onClick={onReview}>
@@ -79,13 +74,6 @@ export function LiveDraftNotice(props: LiveDraftNoticeProps) {
   } else if (kind === "editing") {
     const who = status?.editors.find((e) => e.block)?.email ?? "Someone";
     text = `${who} is editing`;
-    if (actions) {
-      buttons = (
-        <Button size="sm" variant="secondary" onClick={onContinue}>
-          Join
-        </Button>
-      );
-    }
   } else if (kind === "draft") {
     const by = draft?.updated_by_email;
     const when = timeAgo(draft?.updated_at, props.now);
@@ -96,9 +84,6 @@ export function LiveDraftNotice(props: LiveDraftNoticeProps) {
         <>
           <Button size="sm" variant="secondary" onClick={onSave} disabled={!!blocked} {...why}>
             Publish
-          </Button>
-          <Button size="sm" variant="ghost" onClick={onContinue}>
-            Continue editing
           </Button>
           <Button
             size="sm"
@@ -146,7 +131,7 @@ export function LiveDraftNotice(props: LiveDraftNoticeProps) {
           onDiscard();
         }}
         title="Discard the unpublished changes?"
-        description={`The page goes back to the current version, for everyone editing it.${draftAuthor(draft) ? ` The changes by ${draftAuthor(draft)} are not kept anywhere.` : ""} Published versions are not touched.`}
+        description={`The page goes back to the published version for everyone editing it.${draftAuthor(draft) ? ` The changes by ${draftAuthor(draft)} are not kept anywhere.` : ""}`}
         confirmLabel="Discard changes"
         danger
       />

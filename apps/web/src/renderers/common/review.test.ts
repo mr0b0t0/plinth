@@ -11,7 +11,7 @@ import { ReviewSession, readEditMessage } from "./editSession.ts";
 import { fileUrl, pinFiles, pinnedSrc } from "./files.ts";
 import { takeFrameKey } from "./frameKey.ts";
 import type { LiveDocClient } from "./live.ts";
-import { DraftReview, discardDescription, REVIEW_WORDS, type ReviewPane } from "./review.ts";
+import { DraftReview, discardDescription, type ReviewPane } from "./review.ts";
 
 const RULES = liveRules("doc");
 if (!RULES) throw new Error("no doc rules");
@@ -76,10 +76,10 @@ describe("the whole-draft review", () => {
     );
     expect(document.activeElement).toBe(region().querySelector("h2"));
     const [mine, theirs] = panes();
-    expect(mine?.querySelector("h3")?.textContent).toBe(
-      "Your page changes (not published, based on v5)",
-    );
+    expect(mine?.querySelector("h3")?.textContent).toBe("Your changes");
     expect(theirs?.querySelector("h3")?.textContent).toBe("v6");
+    // Short labels only: no explanatory paragraph under the heading.
+    expect(region().querySelector(".plinth-review__intro, .plinth-review__why")).toBeNull();
     // The draft against v5's files, v6 against v6's.
     expect(mine?.querySelector(".plinth-review__body img")?.getAttribute("src")).toBe(
       "/__plinth/v/5/chart.png",
@@ -93,13 +93,14 @@ describe("the whole-draft review", () => {
     expect(region().querySelector("textarea, [contenteditable]")).toBeNull();
   });
 
-  it("lists both sides' changes, with the files part: none for the page changes", async () => {
+  it("lists both sides' changes, with vN's files: none listed for the page changes", async () => {
     const { review } = setup();
     await review.open({ mode: "room", base: 5, n: 6, files: FILES, draft: MINE, editors: [] });
     const [mine, theirs] = panes();
-    expect(mine?.querySelector("h4")?.textContent).toBe("Your page changes, since v5");
-    expect(theirs?.querySelector("h4")?.textContent).toBe("What v6 changed, since v5");
-    expect(mine?.querySelector(".plinth-review__files")?.textContent).toContain("No files changed");
+    expect(mine?.querySelector('[aria-label="Changes"]')).not.toBeNull();
+    expect(theirs?.querySelector('[aria-label="Changes"]')).not.toBeNull();
+    // Page changes never change files, so the page changes' side lists none.
+    expect(mine?.querySelector(".plinth-review__files")).toBeNull();
     const files = theirs?.querySelector(".plinth-review__files")?.textContent ?? "";
     expect(files).toContain("fonts/geist.woff2 added");
     expect(files).toContain("chart.png replaced");
@@ -108,30 +109,23 @@ describe("the whole-draft review", () => {
     expect(mine?.querySelector(".plinth-review__item-button")?.textContent).toMatch(/changed/);
   });
 
-  it("names a range in the heading, the list, the Publish description and the confirmation", async () => {
+  it("names a range in the heading and the region, and the newest version on its side", async () => {
     const { review } = setup();
     await review.open({ mode: "room", base: 5, n: 7, files: null, draft: MINE, editors: [] });
     expect(region().querySelector("h2")?.textContent).toBe(
       "v6 to v7 were published while you were editing",
     );
-    expect(panes()[1]?.querySelector("h3")?.textContent).toBe("v7, the latest of v6 to v7");
-    expect(panes()[1]?.querySelector("h4")?.textContent).toBe("What v6 to v7 changed, since v5");
-    const why = document.getElementById(
-      button("Publish mine")?.getAttribute("aria-describedby") ?? "",
-    );
-    expect(why?.textContent).toBe(REVIEW_WORDS.publish(6, 7, 5));
-    expect(why?.textContent).toContain("The text and file changes of v6 to v7");
-    expect(why?.textContent).toContain("become v8");
+    expect(region().getAttribute("aria-label")).toBe("Review v6 to v7 and the page changes");
+    expect(panes()[1]?.querySelector("h3")?.textContent).toBe("v7");
   });
 
-  it("Publish mine asks the app with the note; the buttons go off until the answer", async () => {
+  it("Publish mine asks the app; the buttons go off until the answer", async () => {
     const { review, choose } = setup();
     await review.open({ mode: "room", base: 5, n: 6, files: null, draft: MINE, editors: [] });
-    button("Publish mine with a note…")?.click();
-    const input = document.querySelector(".plinth-review__note-input") as HTMLInputElement;
-    input.value = "Counted again";
-    (document.querySelector(".plinth-review__note") as HTMLFormElement).requestSubmit();
-    expect(choose).toHaveBeenCalledWith("publish", "Counted again");
+    // Exactly two choices and Cancel: no separate "with a note" path.
+    expect(button("Publish mine with a note…")).toBeUndefined();
+    button("Publish mine")?.click();
+    expect(choose).toHaveBeenCalledWith("publish", undefined);
     expect(button("Discard mine")?.disabled).toBe(true);
     expect(review.chosen).toBe("publish");
     // Another editor's choice holds the lock: the buttons stay off, with the reason.
@@ -168,12 +162,9 @@ describe("the whole-draft review", () => {
     const dialog = document.querySelector('[role="alertdialog"]') as HTMLElement;
     expect(dialog.getAttribute("aria-modal")).toBe("true");
     expect(dialog.textContent).toContain("Discard the page changes?");
-    expect(dialog.textContent).toMatch(
-      /This change will be lost: .+\. They are not kept anywhere\./,
-    );
-    expect(dialog.textContent).toContain("The page will show v6.");
+    expect(dialog.textContent).toMatch(/This change will be lost: .+\./);
     expect(dialog.textContent).toContain(
-      "This drops the unpublished changes of everyone editing (ana@example.org, ben@example.org).",
+      "The page will show v6 for everyone editing (ana@example.org, ben@example.org).",
     );
     // Focus starts on Cancel.
     expect(document.activeElement?.textContent).toBe("Cancel");
@@ -181,7 +172,7 @@ describe("the whole-draft review", () => {
     expect(choose).not.toHaveBeenCalled();
     expect(document.querySelector('[role="alertdialog"]')).toBeNull();
     button("Discard mine")?.click();
-    button("Discard the page changes")?.click();
+    button("Discard")?.click();
     expect(choose).toHaveBeenCalledWith("discard", undefined);
   });
 
@@ -192,10 +183,10 @@ describe("the whole-draft review", () => {
       what: "Title changed",
     }));
     expect(discardDescription({ items, truncated: false }, 6, "solo", [])).toBe(
-      "These 7 changes will be lost: Slide 1: Title changed, Slide 2: Title changed, Slide 3: Title changed, and 4 more. They are not kept anywhere. The page will show v6.",
+      "These 7 changes will be lost: Slide 1: Title changed, Slide 2: Title changed, Slide 3: Title changed, and 4 more. The page will show v6.",
     );
     expect(discardDescription({ items: [], truncated: false }, 7, "room", [])).toBe(
-      "The page changes will be lost. They are not kept anywhere. The page will show v7. This drops the unpublished changes of everyone editing.",
+      "The page changes will be lost. The page will show v7 for everyone editing.",
     );
   });
 
@@ -299,7 +290,7 @@ describe("the review session", () => {
 
     await s.open({ type: "review", nonce: NONCE });
     button("Discard mine")?.click();
-    button("Discard the page changes")?.click();
+    button("Discard")?.click();
     s.version("reset", 6, { why: "discarded", was: 6 });
     expect(document.querySelector(".plinth-review__announce")?.textContent).toBe(
       "The page changes were discarded. The page shows v6.",

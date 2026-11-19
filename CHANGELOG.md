@@ -16,7 +16,8 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   "v6 to v7") side by side, each with its own images, with what each changed, files included, and
   two choices. **Publish mine** publishes the changes as they are, with the files they were made
   with, as the next version (the other stays in History); **Discard mine** asks first, naming what
-  will be lost. Both are safe against another editor choosing at the same moment: exactly one takes
+  will be lost. The strip offers only **Review changes** and **Done** while a version waits, and
+  the line shown to people who are not editing no longer repeats the Edit toggle. Both are safe against another editor choosing at the same moment: exactly one takes
   effect, and every other open review closes saying what happened. No source is shown. Changes
   the tab kept from before a reload are reviewed the same way when a newer version is current.
 - **Publish on the page.** The edit strip says **Publish**, **Publish with a note…** and

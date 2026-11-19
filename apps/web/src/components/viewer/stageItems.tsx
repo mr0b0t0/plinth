@@ -480,6 +480,7 @@ const editBar: StageNode = ({ editing, live, gate, refs, actions }) =>
       onDiscard={() => void live.discard()}
       onDone={actions.finishEditing}
       onReview={() => void live.openReview()}
+      reviewing={live.reviewing}
     />
   );
 
@@ -491,7 +492,6 @@ const liveDraftNotice: StageNode = ({ editing, live, gate, actions }) =>
       status={live.status}
       restore={live.restore}
       signIn={live.signIn}
-      merges={live.merges}
       unavailable={
         live.roomReady
           ? null
@@ -502,7 +502,6 @@ const liveDraftNotice: StageNode = ({ editing, live, gate, actions }) =>
       onSave={() => {
         void live.publish().then(actions.refocusAfterNotice);
       }}
-      onContinue={actions.startEditing}
       onDiscard={() => {
         void live.discard().then(actions.refocusAfterNotice);
       }}

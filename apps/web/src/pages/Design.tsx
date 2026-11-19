@@ -1365,13 +1365,13 @@ function LiveEditSpecimens() {
     onDone: noop,
     onReview: noop,
   };
-  const notice = { onSave: noop, onContinue: noop, onDiscard: noop, onReview: noop };
+  const notice = { onSave: noop, onDiscard: noop, onReview: noop };
   const hoursAgo = new Date(Date.now() - 3 * 3600_000).toISOString();
   return (
     <>
       <Specimen
         title="Edit bar"
-        note="Under the artifact bar while a doc or a sheet is edited on its page. Publish is the one ink primary; bronze marks the live state. While a version waits for review, Review changes takes its place and opens the review in the page itself."
+        note="Under the artifact bar while a doc or a sheet is edited on its page. Publish is the one ink primary; bronze marks the live state. While a version waits for review, Review changes is the only action besides Done."
       >
         <div className="ds-stack">
           {EDIT_STATES.map(([label, over]) => (
