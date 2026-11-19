@@ -53,6 +53,13 @@ export declare function userKeysSql(email: string): string;
 export declare function artifactKeysSql(ref: string): string;
 export declare function eraseUserSql(email: string): string;
 export declare function eraseArtifactSql(ref: string): string;
+export interface EraseStep {
+  table: string;
+  sql: (subject: string) => string;
+}
+export declare const ERASE_USER_STEPS: readonly EraseStep[];
+export declare const ERASE_USER_KEPT: Readonly<Record<string, string>>;
+export declare const ERASE_ARTIFACT_STEPS: readonly EraseStep[];
 export declare function resultSets(stdout: string): Record<string, unknown>[][];
 export declare function keysFromRows(
   rows: { prefix: string | null; manifest: string | null }[],

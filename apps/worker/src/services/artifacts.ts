@@ -10,9 +10,8 @@ import {
   type Capabilities,
   type EffectiveRole,
   type PublishResult,
-  ROOM_OPEN_ALL,
-  ROOM_TOPIC_RE,
   type Role,
+  readStoredCapabilities,
   type VersionInfo,
   type Visibility,
 } from "@plinth/shared";
@@ -44,7 +43,6 @@ import {
 } from "../policy.ts";
 import { notifyRoom } from "../rooms/notify.ts";
 import { requireTypeDef, resolveSource } from "./artifactTypes.ts";
-import { claimArtifactAttempts } from "./attempts.ts";
 import {
   matchingSpellings,
   ownerCategories,
@@ -52,8 +50,8 @@ import {
   requireCategoryRight,
   resolveCategory,
 } from "./categories.ts";
+import { artifactWipe } from "./cleanup.ts";
 import type { Ctx } from "./context.ts";
-import { wipeArtifactData } from "./data.ts";
 import { readLiveDraftMeta } from "./live.ts";
 import {
   commitVersion,
@@ -277,33 +275,16 @@ export async function summaryFor(
 
 // ---------- shared data capabilities (docs/spec.md "Shared data and viewer identity") ----------
 
-/** A version row's declared capabilities. Null when none, or when the stored value is malformed. */
+/**
+ * A version row's declared capabilities, with the registry's defaults for fields the row does not
+ * hold (rows stored before rooms, and declarations without `room`, have no room fields). Null when
+ * none, or when the stored value is malformed (shared readStoredCapabilities).
+ */
 export function versionCapabilities(
   row: Pick<VersionRow, "capabilities"> | null | undefined,
 ): Capabilities | null {
   if (!row?.capabilities) return null;
-  let v: unknown;
-  try {
-    v = JSON.parse(row.capabilities);
-  } catch {
-    return null;
-  }
-  if (typeof v !== "object" || v === null) return null;
-  const { data, viewer, shared, room, roomOpen } = v as Record<string, unknown>;
-  if (typeof data !== "boolean" || typeof viewer !== "boolean") return null;
-  // Rows stored before rooms, and declarations without `room`, have no room fields.
-  const hasRoom = room === true;
-  // `viewer` alone declares nothing (shared parseCapabilities).
-  if (!data && !hasRoom) return null;
-  const names = Array.isArray(shared) ? shared.filter((n) => typeof n === "string") : [];
-  const topics =
-    hasRoom && Array.isArray(roomOpen)
-      ? roomOpen.filter(
-          (t): t is string =>
-            typeof t === "string" && (t === ROOM_OPEN_ALL || ROOM_TOPIC_RE.test(t)),
-        )
-      : [];
-  return { data, viewer, shared: names, room: hasRoom, roomOpen: topics };
+  return readStoredCapabilities(row.capabilities);
 }
 
 export async function getVersionRow(
@@ -790,16 +771,12 @@ export async function renameArtifact(
  */
 export async function deleteArtifact(ctx: Ctx, ref: string): Promise<void> {
   const { artifact } = await requireArtifact(ctx, ref, "delete");
+  // The row stays, soft-deleted; what must not outlive it goes in the same batch (cleanup.ts).
   await ctx.env.DB.batch([
     ctx.env.DB.prepare(
       "UPDATE artifacts SET deleted_at = ?1, access_epoch = access_epoch + 1 WHERE id = ?2",
     ).bind(nowIso(), artifact.id),
-    ...wipeArtifactData(ctx.env.DB, artifact.id),
-    // Unsaved page edits go with it; the room's guarded flush can never bring them back.
-    ctx.env.DB.prepare("DELETE FROM live_drafts WHERE artifact_id = ?1").bind(artifact.id),
-    // Its attempt rows become tombstones: their objects are under the root deleted next, and the
-    // sweep deletes what a still-running attempt puts after that.
-    claimArtifactAttempts(ctx.env.DB, artifact.id, Date.now()),
+    ...artifactWipe(ctx.env.DB, artifact.id, Date.now()).statements,
   ]);
   ctx.waitUntil(deletePrefix(ctx.env.FILES, `artifacts/${artifact.id}/`));
   notifyRoom(ctx, artifact.id, "gone");

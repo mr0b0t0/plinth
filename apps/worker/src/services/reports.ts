@@ -14,9 +14,9 @@ import { nowIso } from "../lib/time.ts";
 import { isAdmin, type Principal, principalEmail } from "../policy.ts";
 import { notifyRoom } from "../rooms/notify.ts";
 import { requireArtifact } from "./artifacts.ts";
-import { claimArtifactAttempts, clearClaimedAttempts } from "./attempts.ts";
+import { clearClaimedAttempts } from "./attempts.ts";
+import { artifactWipe } from "./cleanup.ts";
 import type { Ctx } from "./context.ts";
-import { wipeArtifactData } from "./data.ts";
 
 export interface ReportInput {
   reason: string;
@@ -172,26 +172,23 @@ export async function decideReport(
     });
   }
   if (state === "actioned") {
-    // One batch: the takedown, the wipe of the artifact's shared data, the claim of its staging
-    // attempts (none can commit from then on) and the close of its other open reports. The
-    // attempts' objects go after it, best effort: a row whose cleanup fails stays claimed for the
-    // hourly sweep. The versions' own files stay for review.
-    const wipe = wipeArtifactData(ctx.env.DB, report.artifact_id);
+    // One batch: the takedown, the artifact's wipe (cleanup.ts: its shared data, its unsaved page
+    // edits and the claim of its staging attempts, so none can commit from then on) and the close
+    // of its other open reports. The attempts' objects go after it, best effort: a row whose
+    // cleanup fails stays claimed for the hourly sweep. The versions' own files stay for review.
+    const wipe = artifactWipe(ctx.env.DB, report.artifact_id, Date.parse(now));
     const results = await ctx.env.DB.batch([
       ctx.env.DB.prepare(
         `UPDATE artifacts SET taken_down_at = coalesce(taken_down_at, ?1),
            access_epoch = access_epoch + 1, updated_at = ?1 WHERE id = ?2`,
       ).bind(now, report.artifact_id),
-      ...wipe,
-      claimArtifactAttempts(ctx.env.DB, report.artifact_id, Date.parse(now)),
-      // Unsaved page edits go too; the room's guarded flush can never bring them back.
-      ctx.env.DB.prepare("DELETE FROM live_drafts WHERE artifact_id = ?1").bind(report.artifact_id),
+      ...wipe.statements,
       ctx.env.DB.prepare(
         `UPDATE reports SET state = 'actioned', decided_at = ?1, decided_by = ?2
           WHERE artifact_id = ?3 AND state = 'open'`,
       ).bind(now, admin.userId, report.artifact_id),
     ]);
-    await clearClaimedAttempts(ctx.env, results[1 + wipe.length]);
+    await clearClaimedAttempts(ctx.env, results[1 + wipe.claimAt]);
     notifyRoom(ctx, report.artifact_id, "gone");
   }
   return { ...report, state };

@@ -2,8 +2,10 @@
 // and no configuration, so it is served without a content cookie.
 import { describe, expect, it } from "vitest";
 import { contentCsp } from "../src/content/csp.ts";
-import { RUNTIME_SCRIPT } from "../src/content/runtime.ts";
+import { runtimeScript } from "../src/content/runtime.ts";
 import { agent, call, config, contentOrigin, publish } from "./helpers.ts";
+
+const RUNTIME_SCRIPT = runtimeScript(config());
 
 describe("/__plinth/runtime.js", () => {
   it("is served without a cookie, as JavaScript with the content headers", async () => {

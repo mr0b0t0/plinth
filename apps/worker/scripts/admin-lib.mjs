@@ -301,24 +301,68 @@ export function versionPrefixesSql(ref) {
  * last statement returns the erased user, so the CLI can tell whether one matched.
  */
 export function eraseUserSql(email) {
-  return [
-    `UPDATE staging_attempts SET started_at = ${TOMBSTONE_SQL} WHERE artifact_id IN (SELECT a.id FROM artifacts a JOIN users u ON u.id = a.owner_id WHERE u.email = '${email}')`,
-    `DELETE FROM comments WHERE author_user_id IN (SELECT id FROM users WHERE email = '${email}')`,
-    `DELETE FROM access_grants WHERE email = '${email}'`,
-    `DELETE FROM login_codes WHERE email = '${email}'`,
-    `DELETE FROM sessions WHERE viewer_email = '${email}'`,
-    `DELETE FROM rate_limits WHERE instr(key, '${email}') > 0`,
-    `UPDATE reports SET reporter_email = NULL WHERE reporter_email = '${email}'`,
-    // Shared data on other people's artifacts (their own artifacts' data cascades with them).
-    `DELETE FROM artifact_docs WHERE created_by_email = '${email}'`,
-    `UPDATE artifact_docs SET updated_by_email = NULL, updated_by_role = NULL, updated_by_label = NULL WHERE updated_by_email = '${email}'`,
-    // Unsaved page edits on other people's docs keep their text, not who made them.
-    `UPDATE live_drafts SET updated_by_user = NULL WHERE updated_by_user IN (SELECT id FROM users WHERE email = '${email}')`,
-    // Their opens of other people's artifacts stay counted, as nobody (their own go by cascade).
-    `UPDATE artifact_opens SET viewer_kind = 'unknown', user_id = NULL, email = NULL, visitor = NULL, role = NULL WHERE email = '${email}' OR user_id IN (SELECT id FROM users WHERE email = '${email}')`,
-    `DELETE FROM users WHERE email = '${email}' RETURNING id`,
-  ].join("; ");
+  return ERASE_USER_STEPS.map((s) => s.sql(email)).join("; ");
 }
+
+/**
+ * The statements of eraseUserSql, one per line, in order: each names the table it changes. A
+ * feature whose table holds a person's id or address adds its step before the last one, unless a
+ * foreign key to users already cascades or sets it null (a schema test checks every table).
+ */
+export const ERASE_USER_STEPS = [
+  {
+    table: "staging_attempts",
+    sql: (email) =>
+      `UPDATE staging_attempts SET started_at = ${TOMBSTONE_SQL} WHERE artifact_id IN (SELECT a.id FROM artifacts a JOIN users u ON u.id = a.owner_id WHERE u.email = '${email}')`,
+  },
+  {
+    table: "comments",
+    sql: (email) =>
+      `DELETE FROM comments WHERE author_user_id IN (SELECT id FROM users WHERE email = '${email}')`,
+  },
+  { table: "access_grants", sql: (email) => `DELETE FROM access_grants WHERE email = '${email}'` },
+  { table: "login_codes", sql: (email) => `DELETE FROM login_codes WHERE email = '${email}'` },
+  { table: "sessions", sql: (email) => `DELETE FROM sessions WHERE viewer_email = '${email}'` },
+  {
+    table: "rate_limits",
+    sql: (email) => `DELETE FROM rate_limits WHERE instr(key, '${email}') > 0`,
+  },
+  {
+    table: "reports",
+    sql: (email) => `UPDATE reports SET reporter_email = NULL WHERE reporter_email = '${email}'`,
+  },
+  // Shared data on other people's artifacts (their own artifacts' data cascades with them).
+  {
+    table: "artifact_docs",
+    sql: (email) => `DELETE FROM artifact_docs WHERE created_by_email = '${email}'`,
+  },
+  {
+    table: "artifact_docs",
+    sql: (email) =>
+      `UPDATE artifact_docs SET updated_by_email = NULL, updated_by_role = NULL, updated_by_label = NULL WHERE updated_by_email = '${email}'`,
+  },
+  // Unsaved page edits on other people's docs keep their text, not who made them.
+  {
+    table: "live_drafts",
+    sql: (email) =>
+      `UPDATE live_drafts SET updated_by_user = NULL WHERE updated_by_user IN (SELECT id FROM users WHERE email = '${email}')`,
+  },
+  // Their opens of other people's artifacts stay counted, as nobody (their own go by cascade).
+  {
+    table: "artifact_opens",
+    sql: (email) =>
+      `UPDATE artifact_opens SET viewer_kind = 'unknown', user_id = NULL, email = NULL, visitor = NULL, role = NULL WHERE email = '${email}' OR user_id IN (SELECT id FROM users WHERE email = '${email}')`,
+  },
+  { table: "users", sql: (email) => `DELETE FROM users WHERE email = '${email}' RETURNING id` },
+];
+
+/**
+ * Tables with a person's address that erase-user leaves alone, and why. Everything else with an
+ * address or a user id has a step above or a foreign key to users that cascades or sets null.
+ */
+export const ERASE_USER_KEPT = {
+  dev_outbox: "development only: the console email provider's outbox, never written in production",
+};
 
 /**
  * Erase one artifact; its versions, grants, comments, tasks, reports and update tickets cascade.
@@ -327,12 +371,29 @@ export function eraseUserSql(email) {
  * become tombstones, as in eraseUserSql. The last statement's rows say what was erased.
  */
 export function eraseArtifactSql(ref) {
-  return [
-    `UPDATE staging_attempts SET started_at = ${TOMBSTONE_SQL} WHERE artifact_id IN (SELECT id FROM artifacts WHERE id = '${ref}' OR slug = '${ref}')`,
-    `DELETE FROM upload_tickets WHERE result_artifact_id IN (SELECT id FROM artifacts WHERE id = '${ref}' OR slug = '${ref}')`,
-    `DELETE FROM artifacts WHERE id = '${ref}' OR slug = '${ref}' RETURNING id`,
-  ].join("; ");
+  return ERASE_ARTIFACT_STEPS.map((s) => s.sql(ref)).join("; ");
 }
+
+/**
+ * The statements of eraseArtifactSql, one per line, in order. A feature whose table names an
+ * artifact without a foreign key that cascades adds its step before the last one.
+ */
+export const ERASE_ARTIFACT_STEPS = [
+  {
+    table: "staging_attempts",
+    sql: (ref) =>
+      `UPDATE staging_attempts SET started_at = ${TOMBSTONE_SQL} WHERE artifact_id IN (SELECT id FROM artifacts WHERE id = '${ref}' OR slug = '${ref}')`,
+  },
+  {
+    table: "upload_tickets",
+    sql: (ref) =>
+      `DELETE FROM upload_tickets WHERE result_artifact_id IN (SELECT id FROM artifacts WHERE id = '${ref}' OR slug = '${ref}')`,
+  },
+  {
+    table: "artifacts",
+    sql: (ref) => `DELETE FROM artifacts WHERE id = '${ref}' OR slug = '${ref}' RETURNING id`,
+  },
+];
 
 /**
  * The R2 bucket the wrangler config binds as FILES (`r2_buckets` of the config wrangler resolved
