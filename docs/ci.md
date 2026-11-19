@@ -18,9 +18,10 @@ and nothing else: it cannot create artifacts, open or change any other artifact,
 restore or delete, or read comments, shared data and view counts. If it leaks, the most it can do
 is publish a version, which anyone with edit rights can revert.
 
-1. Open the artifact in Plinth, then **Settings**, then **Publish from CI**.
-2. Choose **Create a token for this artifact**. Copy the token: it is shown once. The dialog also
-   shows the workflow step with the artifact's id filled in.
+1. In Plinth, open **Connections**, then **Advanced: personal access tokens for scripts and CI**,
+   then **New token**.
+2. Name it, tick **Limit to one artifact** and choose the artifact. Copy the token: it is shown
+   once. The dialog also shows the workflow step with the artifact's id filled in.
 
 The owner and editors of an artifact can make such a token. The Connections page lists it as
 "Only <title>" and revokes it like any other token. Deleting the artifact revokes it, and removing
@@ -76,8 +77,8 @@ jobs:
         run: echo "Report: $REPORT_URL"
 ```
 
-- `k3x9mq2v7d8p4t6w1n5r` stands for your artifact's id; the **Publish from CI** dialog shows this
-  step with it filled in.
+- `k3x9mq2v7d8p4t6w1n5r` stands for your artifact's id; the New token dialog shows this step with
+  it filled in.
 - `concurrency` keeps two runs from publishing at once. If they still race, the second stops
   with a conflict instead of overwriting the first (below).
 - `actions/checkout` gives scheduled and manual runs a commit subject for the version note.

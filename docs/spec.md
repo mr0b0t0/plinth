@@ -731,9 +731,10 @@ keeps every run. Guide: `docs/ci.md`.
   for the workflow too: `docs/ci.md` passes them to scripts through `env:`. The token is masked and
   reaches the client only in its environment, never in argv, outputs or the summary.
 - **Tokens limited to one artifact** ([Auth and permissions](#auth-and-permissions)) are the
-  recommended credential: the artifact's Settings page has **Publish from CI**, which makes one and
-  shows the workflow step with the id filled in. The Connections page can make one too ("Limit to
-  one artifact"), and lists a bound token as "Only <title>".
+  recommended credential: the Connections page's New token dialog makes one ("Limit to one
+  artifact", then the artifact) and then shows the workflow step with the id filled in. The page
+  lists a bound token as "Only <title>" with no client badge, and the sidebar's agents leave it
+  out.
 - **Other CI and cron** use the CLI with an exact version (`npx @mr0b0t0/plinth@<version>
   publish`), with `PLINTH_TOKEN` (and `PLINTH_URL`) from the environment.
 

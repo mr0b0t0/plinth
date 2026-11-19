@@ -184,6 +184,7 @@ describe("Connections: tokens limited to one artifact", () => {
       conn({
         id: "c2",
         label: "CI: Coverage",
+        client_type: "other",
         kind: "token",
         scopes: ["artifacts:read", "artifacts:write"],
         artifact: { id: "k3x9mq2v7d8p4t6w1n5r", slug: "coverage", title: "Coverage <b>report</b>" },
@@ -202,5 +203,27 @@ describe("Connections: tokens limited to one artifact", () => {
     expect(link.getAttribute("href")).toBe("/a/coverage");
     expect(link.closest("p")?.textContent).toBe("Only Coverage <b>report</b>");
     expect(screen.getByText("Only an artifact you can no longer open")).toBeTruthy();
+    // No client badge: a limited token answers no mentions.
+    const item = link.closest("li") as HTMLElement;
+    expect(within(item).queryByText("Other client")).toBeNull();
+  });
+
+  it("leaves them out of the sidebar's agents", async () => {
+    backend([
+      conn({}),
+      conn({
+        id: "c2",
+        label: "CI: Coverage",
+        kind: "token",
+        scopes: ["artifacts:read", "artifacts:write"],
+        artifact: { id: "k3x9mq2v7d8p4t6w1n5r", slug: "coverage", title: "Coverage" },
+      }),
+    ]);
+    const Connections = await loadPage();
+    render(<Connections />);
+    const agents = (await screen.findByRole("heading", { name: "Agents" })).closest("section");
+    expect(agents).toBeTruthy();
+    await within(agents as HTMLElement).findByRole("link", { name: /Work Claude/ });
+    expect(within(agents as HTMLElement).queryByRole("link", { name: /CI: Coverage/ })).toBeNull();
   });
 });

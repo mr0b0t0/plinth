@@ -2,17 +2,14 @@ import {
   ACTION_REF,
   type ArtifactSummary,
   type ConnectionInfo,
-  ciShellCommand,
   ciWorkflowSnippet,
   HOSTED_ORIGIN,
 } from "@plinth/shared";
-import { cleanup, render, screen, within } from "@testing-library/react";
+import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { clearToasts, Toaster } from "../ui/index.ts";
 import { json, stubApi } from "../viewer/test-utils.ts";
 import { NewTokenDialog } from "./NewTokenDialog.tsx";
-import { CiSection } from "./SettingsSections.tsx";
 
 const ID = "k3x9mq2v7d8p4t6w1n5r";
 const TOKEN = "plinth_pat_ExampleExampleExampleExample0123";
@@ -78,37 +75,36 @@ function backend(items: ArtifactSummary[] = []) {
   return { ...s, posted };
 }
 
+const renderDialog = () =>
+  render(<NewTokenDialog open onClose={() => undefined} onCreated={() => undefined} />);
+
 afterEach(() => {
   cleanup();
-  clearToasts();
   vi.unstubAllGlobals();
 });
 
-describe("Publish from CI", () => {
-  it("makes a token limited to the artifact and shows the workflow step", async () => {
-    const b = backend();
+describe("New token: Limit to one artifact", () => {
+  it("lists what you own or edit, limits the scopes and shows the workflow step", async () => {
+    const b = backend([
+      summary(),
+      summary({ id: "viewonly000000000000", title: "Not mine", role: "viewer" }),
+    ]);
     const user = userEvent.setup();
-    render(
-      <>
-        <CiSection artifact={summary()} />
-        <Toaster />
-      </>,
-    );
-    expect(screen.getByRole("heading", { name: "Publish from CI" })).toBeTruthy();
-    await user.click(screen.getByRole("button", { name: "Create a token for this artifact" }));
-    const dialog = screen.getByRole("dialog");
-    expect((within(dialog).getByLabelText("Name") as HTMLInputElement).value).toBe(
-      "CI: Coverage report",
-    );
-    // Only read and write are offered; read is always on.
-    expect(within(dialog).queryByRole("checkbox", { name: /Answer mentions/ })).toBeNull();
-    const read = within(dialog).getByRole("checkbox", {
-      name: /Read artifacts/,
-    }) as HTMLInputElement;
-    expect(read.checked).toBe(true);
-    expect(read.disabled).toBe(true);
-    expect(within(dialog).queryByRole("checkbox", { name: /Limit to one artifact/ })).toBeNull();
-    await user.click(within(dialog).getByRole("button", { name: "Create token" }));
+    renderDialog();
+    expect(b.calls.some((c) => c.path === "/artifacts")).toBe(false);
+    await user.type(screen.getByLabelText("Name"), "CI: Coverage report");
+    await user.click(screen.getByRole("checkbox", { name: "Limit to one artifact" }));
+    const select = (await screen.findByLabelText("Artifact")) as HTMLSelectElement;
+    await screen.findByRole("option", { name: "Coverage report" });
+    expect(screen.queryByRole("option", { name: "Not mine" })).toBeNull();
+    // A limited token answers no mentions: no client, no mention permission.
+    expect(screen.queryByLabelText("Client")).toBeNull();
+    expect(screen.queryByRole("checkbox", { name: /Answer mentions/ })).toBeNull();
+    // Without a choice it asks for one.
+    await user.click(screen.getByRole("button", { name: "Create token" }));
+    expect(screen.getByText("Choose an artifact.")).toBeTruthy();
+    await user.selectOptions(select, ID);
+    await user.click(screen.getByRole("button", { name: "Create token" }));
 
     expect(((await screen.findByLabelText("Token")) as HTMLTextAreaElement).value).toBe(TOKEN);
     expect(b.posted[0]).toEqual({
@@ -123,52 +119,30 @@ describe("Publish from CI", () => {
     expect(text).toContain(`id: ${ID}`);
     expect(text).toContain(`url: ${window.location.origin}`);
     expect(text).toContain("secrets.PLINTH_TOKEN");
-    expect(text).toContain(ciShellCommand({ id: ID, appOrigin: window.location.origin }));
   });
 
   it("a read-only token for the artifact sends artifacts:read alone", async () => {
-    const b = backend();
+    const b = backend([summary()]);
     const user = userEvent.setup();
-    render(
-      <NewTokenDialog
-        open
-        artifact={{ id: ID, slug: "coverage", title: "Coverage report" }}
-        onClose={() => undefined}
-        onCreated={() => undefined}
-      />,
-    );
-    await user.click(screen.getByRole("checkbox", { name: /Publish and manage/ }));
+    renderDialog();
+    await user.type(screen.getByLabelText("Name"), "Reader");
+    await user.click(screen.getByRole("checkbox", { name: "Limit to one artifact" }));
+    await screen.findByRole("option", { name: "Coverage report" });
+    await user.selectOptions(screen.getByLabelText("Artifact"), ID);
+    await user.click(screen.getByRole("checkbox", { name: "Publish new versions" }));
     await user.click(screen.getByRole("button", { name: "Create token" }));
     await screen.findByLabelText("Token");
     expect(b.posted[0]).toMatchObject({ scopes: ["artifacts:read"], artifact: ID });
   });
 
-  it("New token: Limit to one artifact lists what you own or edit, and limits the scopes", async () => {
-    const b = backend([
-      summary(),
-      summary({ id: "viewonly000000000000", title: "Not mine", role: "viewer" }),
-    ]);
+  it("an account-wide token shows no workflow step", async () => {
+    backend();
     const user = userEvent.setup();
-    render(<NewTokenDialog open onClose={() => undefined} onCreated={() => undefined} />);
-    expect(b.calls.some((c) => c.path === "/artifacts")).toBe(false);
-    await user.type(screen.getByLabelText("Name"), "Nightly");
-    await user.click(screen.getByRole("checkbox", { name: /Limit to one artifact/ }));
-    const select = (await screen.findByLabelText("Artifact")) as HTMLSelectElement;
-    await screen.findByRole("option", { name: "Coverage report" });
-    expect(screen.queryByRole("option", { name: "Not mine" })).toBeNull();
-    expect(screen.queryByRole("checkbox", { name: /Answer mentions/ })).toBeNull();
-    // Without a choice it asks for one.
-    await user.click(screen.getByRole("button", { name: "Create token" }));
-    expect(screen.getByText(/Choose the artifact/)).toBeTruthy();
-    await user.selectOptions(select, ID);
+    renderDialog();
+    await user.type(screen.getByLabelText("Name"), "Laptop");
     await user.click(screen.getByRole("button", { name: "Create token" }));
     await screen.findByLabelText("Token");
-    expect(b.posted[0]).toEqual({
-      label: "Nightly",
-      client_type: "other",
-      scopes: ["artifacts:read", "artifacts:write"],
-      artifact: ID,
-    });
+    expect(document.body.textContent).not.toContain(ACTION_REF);
   });
 
   it("the workflow step leaves url out on the hosted instance", () => {

@@ -13,7 +13,7 @@ Add a line under **Unreleased** in the pull request that makes a change people w
 - **Publish from CI.** A GitHub Action, `mr0b0t0/plinth/publish@v0.6.0`, publishes a build folder
   or one HTML or Markdown file as the next version of an artifact on every run, with the commit in
   the version note and the links in the job summary. A token can now be limited to one artifact
-  (the artifact's Settings, **Publish from CI**): it reads that artifact and publishes new versions
+  (**Limit to one artifact** in the New token dialog): it reads that artifact and publishes new versions
   of it, nothing else (not even the owner's or other people's email addresses), and deleting the
   artifact revokes it. `plinth publish` takes a single
   `.html` or `.md` file, uses a token's artifact when `--id` is left out, and with `--json` prints

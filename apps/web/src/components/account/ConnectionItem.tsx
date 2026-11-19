@@ -55,9 +55,12 @@ export function ConnectionItem({ connection: c, now, onChanged }: ConnectionItem
           <Badge icon={KindIcon} tone="neutral">
             {c.kind === "oauth" ? "OAuth" : "Token"}
           </Badge>
-          <Badge tone="neutral" srPrefix="Client:">
-            {CLIENT_TYPE_LABEL[c.client_type]}
-          </Badge>
+          {/* A token limited to one artifact answers no mentions: its client says nothing. */}
+          {!c.artifact && (
+            <Badge tone="neutral" srPrefix="Client:">
+              {CLIENT_TYPE_LABEL[c.client_type]}
+            </Badge>
+          )}
           {revoked && <Badge tone="danger">Revoked</Badge>}
         </div>
         <p className="pl-acct-conn__scopes">

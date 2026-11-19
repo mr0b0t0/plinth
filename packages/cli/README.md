@@ -167,8 +167,8 @@ instance in `PLINTH_URL` (or the hosted one when that is unset) and never saved.
 `--url`, `--name` or `--home` for another instance stops with exit code 2, and a local instance
 picked without a flag is used without it.
 
-**CI.** A `PLINTH_TOKEN` limited to one artifact (made on the artifact's Settings page, under
-**Publish from CI**) can only read that artifact and publish new versions of it. Without `--id`,
+**CI.** A `PLINTH_TOKEN` limited to one artifact (**Limit to one artifact** in the New token
+dialog on the Connections page) can only read that artifact and publish new versions of it. Without `--id`,
 `publish` updates that artifact (`--title` and `--category` are ignored, and the command says so),
 and `whoami` prints `limited to <slug> ("<title>")`. GitHub Actions, GitLab CI and cron:
 [docs/ci.md](https://github.com/mr0b0t0/plinth/blob/main/docs/ci.md).

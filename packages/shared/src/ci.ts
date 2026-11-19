@@ -31,11 +31,3 @@ export function ciWorkflowSnippet(opts: { id: string; appOrigin: string; path?: 
     ...(origin === HOSTED_ORIGIN ? [] : [`    url: ${origin}`]),
   ].join("\n");
 }
-
-/** The same publish from GitLab CI, a cron job or any shell, with PLINTH_TOKEN in the environment. */
-export function ciShellCommand(opts: { id: string; appOrigin: string; path?: string }): string {
-  if (!ARTIFACT_ID_RE.test(opts.id)) throw new Error("Not an artifact id");
-  const origin = opts.appOrigin.replace(/\/+$/, "");
-  const env = origin === HOSTED_ORIGIN ? "" : `PLINTH_URL=${origin} `;
-  return `${env}npx --yes @mr0b0t0/plinth@${CI_CLI_VERSION} publish ${opts.path ?? "dist"} --id ${opts.id}`;
-}

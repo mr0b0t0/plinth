@@ -1,12 +1,11 @@
-// The sections of /a/:slug/settings: title, category, who can open it, people, publishing from CI,
-// delete. Owner only (the Worker checks that on every call; the page only hides what would fail).
-import { KeyIcon, TrashIcon, UserPlusIcon } from "@phosphor-icons/react";
+// The sections of /a/:slug/settings: title, category, who can open it, people, delete. Owner only (the
+// Worker checks that on every call; the page only hides what would fail).
+import { TrashIcon, UserPlusIcon } from "@phosphor-icons/react";
 import {
   API,
   APP_ROUTES,
   type ArtifactSummary,
   type CategoryCount,
-  CI_DOCS_URL,
   categoryKey,
   categoryProblem,
   LIMITS,
@@ -38,7 +37,6 @@ import { ChoiceList } from "./ChoiceList.tsx";
 import { CopyField } from "./CopyField.tsx";
 import { versionsText } from "./format.ts";
 import { addGrant, type GrantDraft, removeGrant, setGrantRole } from "./grants.ts";
-import { NewTokenDialog } from "./NewTokenDialog.tsx";
 import { Note } from "./Note.tsx";
 
 const ACCESS_NOTE =
@@ -562,47 +560,6 @@ export function PeopleSection({
       <p className="type-small text-muted">
         Changes apply at once. Anyone who has it open now will need to open the link again.
       </p>
-    </Section>
-  );
-}
-
-// ---------- Publish from CI ----------
-
-/**
- * A token limited to this artifact, for a CI pipeline: it can read the artifact and publish new
- * versions of it, nothing else. The dialog shows the token once, with the workflow step.
- */
-export function CiSection({ artifact }: { artifact: ArtifactSummary }) {
-  const toast = useToast();
-  const [open, setOpen] = useState(false);
-  return (
-    <Section
-      id="settings-ci"
-      title="Publish from CI"
-      description={
-        <>
-          Publish a new version from GitHub Actions, GitLab CI or a cron job each time a build runs,
-          with a token that can only read this artifact and publish new versions of it.{" "}
-          <a href={CI_DOCS_URL} target="_blank" rel="noreferrer">
-            How it works
-          </a>
-        </>
-      }
-    >
-      <div>
-        <Button icon={KeyIcon} onClick={() => setOpen(true)}>
-          Create a token for this artifact
-        </Button>
-      </div>
-      <p className="type-small text-muted">
-        Tokens you made are listed, and revoked, on the Connections page.
-      </p>
-      <NewTokenDialog
-        open={open}
-        artifact={{ id: artifact.id, slug: artifact.slug, title: artifact.title }}
-        onClose={() => setOpen(false)}
-        onCreated={() => toast.success("Token created", "Copy it now: it is shown once.")}
-      />
     </Section>
   );
 }
