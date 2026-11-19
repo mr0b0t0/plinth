@@ -50,6 +50,9 @@ export const DEV_VARS: Record<string, string> = {
   // Live views (docs/spec.md "Live views"): pushed versions and data changes over the app's watch
   // socket, on both servers (it needs only the ROOMS binding, not origin isolation).
   ALLOW_LIVE_VIEWS: "true",
+  // Files people add to a page (docs/spec.md "Files people add to a page"), off by default on real
+  // instances. On the opaque server it has no effect: files need origin isolation.
+  ALLOW_FILES: "true",
   // Fresh for every run; never committed, never reused.
   SESSION_SECRET: randomBytes(48).toString("base64url"),
   TOKEN_SIGNING_KEY: randomBytes(48).toString("base64url"),
