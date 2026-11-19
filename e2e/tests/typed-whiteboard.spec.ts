@@ -186,24 +186,37 @@ test("a shared board: cursors, a live drag that saves, viewers read-only, editor
       base_version: current.data.version,
     });
     expect(updated.isError, updated.text).toBe(false);
-    await expect(c.frame.locator("html")).toHaveAttribute("data-readonly", "true", {
+    // Each open page follows the new version at a moment of its own, into a new frame, so from
+    // here on the checks find each person's current board instead of the frame they opened.
+    const cBoard = c.page.frameLocator(CURRENT_FRAME);
+    const oBoard = o.page.frameLocator(CURRENT_FRAME);
+    await expect(cBoard.locator("html")).toHaveAttribute("data-readonly", "true", {
       timeout: 15_000,
     });
-    await expect(c.frame.locator("html")).toHaveAttribute("data-room", "open", {
+    await expect(cBoard.locator("html")).toHaveAttribute("data-room", "open", {
       timeout: 15_000,
     });
-    await expect(c.frame.getByRole("button", { name: "Add note" })).toBeDisabled();
-    expect(await write(c.frame, "PUT", "/data/blocks/agent-note", { data: block })).toBe(403);
-    // Their presence still shows for the owner.
-    const cArea = await c.page.locator(CURRENT_FRAME).boundingBox();
-    if (!cArea) throw new Error("no frame");
-    await c.page.mouse.move(cArea.x + cArea.width - 60, cArea.y + cArea.height - 60);
-    await c.page.mouse.move(cArea.x + cArea.width - 50, cArea.y + cArea.height - 50, { steps: 3 });
-    await expect(o.frame.locator(".wb-cursor span").filter({ hasText: guest })).toHaveCount(1, {
-      timeout: 10_000,
-    });
+    await expect(cBoard.getByRole("button", { name: "Add note" })).toBeDisabled();
+    expect(
+      await write(await boardFrame(c.page), "PUT", "/data/blocks/agent-note", { data: block }),
+    ).toBe(403);
+    // Their presence still shows for the owner. The pointer moves again on each try, since a
+    // board that has just followed the new version has not sent a cursor yet.
+    let nudge = 0;
+    await expect(async () => {
+      const cArea = await c.page.locator(CURRENT_FRAME).boundingBox();
+      if (!cArea) throw new Error("no frame");
+      nudge = (nudge + 1) % 10;
+      await c.page.mouse.move(cArea.x + cArea.width - 60 - nudge, cArea.y + cArea.height - 60);
+      await c.page.mouse.move(cArea.x + cArea.width - 50 - nudge, cArea.y + cArea.height - 50, {
+        steps: 3,
+      });
+      await expect(oBoard.locator(".wb-cursor span").filter({ hasText: guest })).toHaveCount(1, {
+        timeout: 2_000,
+      });
+    }).toPass({ timeout: 20_000 });
     // The owner still edits.
-    await expect(o.frame.getByRole("button", { name: "Add note" })).toBeEnabled();
+    await expect(oBoard.getByRole("button", { name: "Add note" })).toBeEnabled();
   } finally {
     await client.close();
     await c.page.context().close();
