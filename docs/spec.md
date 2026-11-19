@@ -1556,13 +1556,19 @@ note. Everyone who can open the page sees them. No file can ever run as a page o
   each file. It is stored in `versions.capabilities` only when declared, so every other
   declaration is stored as before. The current version's declaration governs, for old version URLs
   too: dropping `files` turns the page API and the file URLs off (404) and keeps the files, which
-  come back when a later version declares it again. Only HTML pages.
+  come back when a later version declares it again; meanwhile the owner still sees them in the Share
+  dialog and can delete them there. Only HTML pages.
 - **Who uploads, reads and deletes.** Identified viewers upload: the owner and people with a grant
-  of any role, signed in or confirmed by code. Anyone with a content pass for the page reads,
-  anonymous link viewers and Plinth's thumbnail browser included; an in-chat preview never does. A
-  ready file can be deleted by its uploader, the owner and editors; an unfinished upload only by its
-  uploader, and to anyone else it does not exist. `pageFileAccess` and `canDeleteFile` in
-  `policy.ts` decide, and the SQL of each write repeats the condition.
+  of any role, signed in or confirmed by code. Anyone with a view pass for the page reads,
+  anonymous link viewers included. An in-chat preview and Plinth's thumbnail browser never do (for
+  them `ready` says `preview`), so no upload ever ends up in a thumbnail or a link preview, which
+  outlive a deleted file. A ready file can be deleted by its uploader, the owner and editors; an
+  unfinished upload only by its uploader, who alone sends its parts, and to anyone else it does not
+  exist. `pageFileAccess`, `canSendFilePart` and `canDeleteFile` in `policy.ts` decide, for the
+  page API and the file URLs alike, and the SQL of each write repeats the condition.
+- **Contents.** A file is stored exactly as added: the details saved inside it (a photo's location,
+  device and time, a document's author) reach everyone who can open the page. The notice under the
+  viewer bar tells everyone who may add a file, and the privacy notice says so.
 - **Types.** PNG, JPEG, GIF, WebP and AVIF images, PDF, MP4 and WebM video, MP3, M4A, Ogg and WAV
   audio. Never SVG, HTML, XML or other text, Office documents, archives, HEIC or QuickTime. A page
   names the type when it starts an upload, and the first part must start with that type's signature,
@@ -1583,9 +1589,11 @@ note. Everyone who can open the page sees them. No file can ever run as a page o
   `POST files` (`{ name, type, size }`, at most 2 KiB), `PUT files/<id>/parts/<n>` and
   `DELETE files/<id>`. Bytes travel as base64 in parts of exactly 5 MiB (R2's multipart minimum;
   the last part is shorter), each body exactly `{"data":"<base64>"}`, decoded as it streams in.
-  Parts arrive in order, and the last accepted part may be sent again. While files are unavailable
-  the session answers `{ available: false, reason }` and every other files route 404 with the
-  reason.
+  A body is read only after availability, the artifact, the content pass and the declaration, and a
+  part only for its uploader within the part limits. Parts arrive in order, and the last accepted
+  part may be sent again: it is answered from what was recorded and never stored again. While files
+  are unavailable the session answers `{ available: false, reason }` and every other files route
+  404 with the reason.
 - **Serving.** `GET /__plinth/files/<id>` on the artifact's own origin, behind the content pass,
   for a fetch destination of `image`, `video`, `audio`, `track`, `empty` or `iframe` (scripts,
   styles, fonts, workers, objects and manifests get 403; a top-level visit goes to the artifact's
@@ -1604,9 +1612,11 @@ note. Everyone who can open the page sees them. No file can ever run as a page o
   `FILES_MAX_BYTES_PER_UPLOADER` (64 MiB per person per artifact; the owner is exempt),
   `FILES_MAX_BYTES_PER_USER` (1 GiB across an owner's live artifacts, apart from their version
   storage, so uploads never make a publish fail), `FILES_UPLOADS_PER_UPLOADER_PER_HOUR` (60) and
-  `FILES_UPLOADS_PER_ARTIFACT_PER_HOUR` (300). Fixed: 3 unfinished uploads per person per artifact,
-  30 minutes to finish one, 100 files per list page. Every quota is checked in the statement that
-  reserves an upload's bytes.
+  `FILES_UPLOADS_PER_ARTIFACT_PER_HOUR` (300). Part requests per hour, per person and per artifact:
+  the upload limit times the parts of a largest file times 4 (a send and three retries). Fixed: 3
+  unfinished uploads per person per artifact, 30 minutes to finish one, 100 files per list page.
+  Every quota is checked in the statement that reserves an upload's bytes, after the owner's
+  uploads past their deadline stop counting in the same batch.
 - **Lifecycle.** Files are not versioned and are kept across new versions and restores. A delete, a
   cancel, an upload past its deadline, the artifact's deletion or takedown, and `erase-user` turn
   rows into tombstones that count toward nothing. A takedown deletes the ready files at once (as it

@@ -204,7 +204,10 @@ function privacy(op: OperatorInfo, cfg: LegalConfig): LegalDoc {
                 email address and role of the person who added it and the time. Everyone who can
                 open the page can see its files; the page's owner, its editors and the agents they
                 connect can see who added each one. Agents see each file's name, type, size and who
-                added it, never its contents. Only people the owner invited can add files.
+                added it, never its contents. Only people the owner invited can add files. A file is
+                kept exactly as added, with any details saved inside it, such as where and when a
+                photo was taken, and everyone who can open the page can read them. Files never
+                appear in a page's thumbnail or link preview.
               </li>
             )}
             {cfg.dictation && (

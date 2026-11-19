@@ -675,20 +675,45 @@ export function liveViewPool(d: Extract<Decision, { allow: true }>): LiveViewPoo
 
 // ---------- files people add to a page (content host, content cookie) ----------
 
+/** What a content pass is for: a normal view, Plinth's thumbnail capture, or an in-chat preview. */
+export type FilePassKind = "view" | "capture" | "preview";
+
 /**
  * What a page may do with its artifact's files. `enabled` is filesActive(config). Anyone with a
- * content pass may read once the current version declares `files`; only identified viewers (the
- * owner, or a person with a grant who signed in or confirmed by code) upload; who uploaded each
- * file is visible only to identified viewers on a page that also declares `viewer`.
+ * view pass may read once the current version declares `files`. A thumbnail capture never reads
+ * them, so no upload ends up in a thumbnail or a link preview that outlives the file, and an
+ * in-chat preview never does either. Only identified viewers (the owner, or a person with a grant
+ * who signed in or confirmed by code) upload; who uploaded each file is visible only to identified
+ * viewers on a page that also declares `viewer`. The page API (content/files-api.ts), the bytes at
+ * /__plinth/files/ (content/files.ts) and the gate (api/view.ts) all decide with this.
  */
 export function pageFileAccess(
   claim: PageClaim | null,
   caps: Capabilities | null,
   enabled: boolean,
+  pass: FilePassKind,
 ): { read: boolean; upload: boolean; seeIdentity: boolean } {
-  const read = enabled && caps?.files === true;
+  const read = enabled && caps?.files === true && pass === "view";
   const upload = read && claim !== null;
   return { read, upload, seeIdentity: upload && caps?.viewer === true };
+}
+
+/**
+ * May this writer send a part of this upload? Only the person who started it, while it is still
+ * arriving; to anyone else it does not exist (`not_found`). A null writer is read-only. The guarded
+ * part write repeats the condition in SQL.
+ */
+export function canSendFilePart(
+  writer: PageClaim | null,
+  file: { state: "pending" | "ready" | "deleting"; creatorEmail: string | null },
+): { allow: true } | { allow: false; reason: "read_only" | "not_found" } {
+  if (!writer) return { allow: false, reason: "read_only" };
+  if (file.state !== "pending" || file.creatorEmail === null) {
+    return { allow: false, reason: "not_found" };
+  }
+  return file.creatorEmail === writer.email
+    ? { allow: true }
+    : { allow: false, reason: "not_found" };
 }
 
 /**

@@ -62,18 +62,24 @@ export function peopleNoticeText(gate: NoticeGate): string | null {
   return parts.length > 0 ? parts.join(" ") : null;
 }
 
+/** Told to everyone who may add a file: files are stored as they are, details inside included. */
+export const FILES_METADATA_NOTE =
+  "Files are kept as added, with any details saved inside them, such as where and when a photo was taken.";
+
 /**
- * Files people add to the page (`files`): that it keeps them, who sees them and who sees who added
- * them. A viewer who cannot add files is told the page only shows them.
+ * Files people add to the page (`files`): that it keeps them, who sees them, who sees who added
+ * them, and that the details saved inside a file go with it. A viewer who cannot add files is told
+ * the page only shows them.
  */
 export function filesNoticeText(gate: NoticeGate): string | null {
   const f = gate.files;
   if (!f) return null;
   if (!f.available) return "Files people add are not available on this server.";
   if (!f.can_upload) return "This page shows files added by people it is shared with.";
-  return f.uploaders_shown
+  const who = f.uploaders_shown
     ? "This page keeps files people add. People with access can see them and who added them."
     : "This page keeps files people add. People with access can see them; the owner and editors can see who added them.";
+  return `${who} ${FILES_METADATA_NOTE}`;
 }
 
 /** The notice's lines, in the order they are read out. One line function per line. */

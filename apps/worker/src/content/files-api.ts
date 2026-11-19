@@ -1,15 +1,18 @@
 // The files routes of the shared-data API (docs/spec.md "Files people add to a page"), under
 // /__plinth/api/v1/files. They are rows of DATA_API_ROUTES (content/data-api.ts) with their own
 // steps, as the live room's is: the dispatcher runs checks 1 to 4 (method, x-plinth-data, fetch
-// metadata, exact Origin on writes) and check 6 (a JSON body, through the route's own reader,
-// size-capped while reading) before any handler here, so no file route can skip them. Then, in
-// this order, keeping the data API's numbering:
+// metadata, exact Origin on writes) and the JSON type of check 6 before any handler here, so no
+// file route can skip them. Then, in this order, keeping the data API's numbering:
 //   5. availability: ALLOW_FILES with origin isolation (filesActive);
 //   7. the artifact, with its current version's declaration;
 //   8. the content pass for it at its current epoch: a JSON 401, never the gate redirect;
-//   9. the declaration (`files`), never for an in-chat preview;
-//  10. policy (policy.ts pageFileAccess, canDeleteFile, through services/files.ts), rate limits,
-//      quotas and the guarded write.
+//   9. the declaration (`files`), for a view pass only: never an in-chat preview or a thumbnail
+//      capture;
+//   6. only now the body, through the route's own reader (JSON only, size-capped while reading),
+//      and for a part only an uploader's, within the part rate limits: an instance with files off
+//      or a caller without a pass never costs a part's read and decode;
+//  10. policy (policy.ts pageFileAccess, canSendFilePart, canDeleteFile, through
+//      services/files.ts), rate limits, quotas and the guarded write.
 // While files are unavailable (off, opaque isolation, not declared, a preview), the session
 // answers 200 `{ available: false, reason }` and every other files route 404 with the reason.
 //
@@ -36,9 +39,11 @@ import {
   filesSession,
   filesUnavailableReason,
   getReadyFile,
+  limitParts,
   listFiles,
   maybeSweepFiles,
   putPart,
+  requireUploader,
   toPageFile,
 } from "../services/files.ts";
 import {
@@ -49,6 +54,7 @@ import {
   readJsonBody,
   respond,
 } from "./data-api.ts";
+import { passKindOf } from "./files.ts";
 import { readContentPass } from "./serve.ts";
 
 // ---------- route matching ----------
@@ -255,10 +261,13 @@ async function filesCaller(c: OwnRouteCtx): Promise<Caller | FilesUnavailableRea
     });
   }
   const { target } = loaded;
-  const reason = pass.preview ? "preview" : filesUnavailableReason(c.config, target.caps);
+  // An in-chat preview and Plinth's thumbnail capture never use files (policy.ts pageFileAccess):
+  // both read as a preview to the page.
+  const kind = passKindOf(pass);
+  const reason = kind !== "view" ? "preview" : filesUnavailableReason(c.config, target.caps);
   if (reason) return reason;
   const { claim } = pass;
-  const access = pageFileAccess(claim, target.caps, filesActive(c.config));
+  const access = pageFileAccess(claim, target.caps, filesActive(c.config), kind);
   if (!access.read) return "not_declared";
   return { target, claim, access, writer: access.upload ? claim : null };
 }
@@ -303,7 +312,7 @@ export async function filesChangesRoute(c: OwnRouteCtx): Promise<Response> {
 export async function filesRoute(c: OwnRouteCtx): Promise<Response> {
   return withCaller(c, async (k) => {
     if (c.request.method === "POST") {
-      const input = parseBody(createFileInput, c.body);
+      const input = parseBody(createFileInput, await c.readBody());
       const { created } = await createUpload(c.env, c.config, k.target, k.writer, input);
       maybeSweepFiles(c.env, afterResponse);
       return respond(c.config, 201, created);
@@ -338,7 +347,10 @@ export async function fileRoute(c: OwnRouteCtx): Promise<Response> {
 
 export async function filePartRoute(c: OwnRouteCtx): Promise<Response> {
   return withCaller(c, async (k) => {
-    const bytes = c.body as Uint8Array;
+    // Only an uploader's part is read, and within its own part rate limits.
+    const w = requireUploader(k.writer);
+    await limitParts(c.env.DB, c.config, k.target.id, w.email);
+    const bytes = (await c.readBody()) as Uint8Array;
     const r = await putPart(
       c.env,
       k.target,

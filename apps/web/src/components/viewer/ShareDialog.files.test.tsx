@@ -1,6 +1,7 @@
 // The share dialog's Files block: the owner sees the files people uploaded (names as text, no
-// previews), deletes one, or deletes them all after a confirmation. Nobody else loads them, and a
-// page that does not declare `files` never asks.
+// previews), deletes one, or deletes them all after a confirmation. Nobody else loads them. A page
+// that does not declare `files` shows the block only while it still has files a version that
+// declared them left behind.
 import { type ArtifactFilesList, CSRF_HEADER, type DataSummary } from "@plinth/shared";
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -97,14 +98,29 @@ describe("ShareDialog files", () => {
     expect(screen.getByRole("button", { name: `Delete ${evil}` })).toBeTruthy();
   });
 
-  it("never asks for files when the page does not declare them, or for other people", async () => {
+  it("shows nothing for a page that has no files and does not declare them, and never asks for other people", async () => {
     const { calls } = stubApi({
+      handle: (c) => {
+        if (c.path === "/artifacts/s1/data") return json(summary(["data"]));
+        if (c.path === "/artifacts/s1/files") return json(list([]));
+        return undefined;
+      },
+    });
+    renderDialog();
+    await waitFor(() => expect(calls.some((c) => c.path === "/artifacts/s1/files")).toBe(true));
+    await waitFor(() => expect(calls.some((c) => c.path === "/artifacts/s1/data")).toBe(true));
+    expect(screen.queryByText(/Uploaded files:/)).toBeNull();
+    expect(screen.queryByText(/Could not load the uploaded files/)).toBeNull();
+    cleanup();
+
+    // Nor when the list cannot load.
+    stubApi({
       handle: (c) => (c.path === "/artifacts/s1/data" ? json(summary(["data"])) : undefined),
     });
     renderDialog();
-    await waitFor(() => expect(calls.some((c) => c.path === "/artifacts/s1/data")).toBe(true));
-    expect(screen.queryByText(/Uploaded files:/)).toBeNull();
-    expect(calls.some((c) => c.path.startsWith("/artifacts/s1/files"))).toBe(false);
+    await screen.findByRole("dialog", { name: "Share this artifact" });
+    await new Promise((r) => setTimeout(r, 20));
+    expect(screen.queryByText(/Could not load the uploaded files/)).toBeNull();
     cleanup();
 
     const other = stubApi({ handle: () => json(summary(["files"])) });
@@ -112,6 +128,36 @@ describe("ShareDialog files", () => {
     await screen.findByRole("dialog", { name: "Share this artifact" });
     expect(other.calls.some((c) => c.path.startsWith("/artifacts/s1/files"))).toBe(false);
     expect(other.calls.some((c) => c.path === "/artifacts/s1/data")).toBe(false);
+  });
+
+  it("still shows the files of a page whose current version dropped `files`, so the owner can delete them", async () => {
+    let files = [file("a".repeat(20), "one.png"), file("b".repeat(20), "two.png")];
+    const { calls } = stubApi({
+      handle: (c) => {
+        if (c.path === "/artifacts/s1/data") return json(summary(["data"]));
+        if (c.path !== "/artifacts/s1/files") return undefined;
+        if (c.method === "DELETE") {
+          const n = files.length;
+          files = [];
+          return json({ files: n });
+        }
+        return json(list(files));
+      },
+    });
+    const user = userEvent.setup();
+    renderDialog();
+    expect((await screen.findByText(/Uploaded files:/)).textContent).toBe(
+      "Uploaded files: 2 files, 4.1 KB",
+    );
+    await user.click(screen.getByRole("button", { name: "Delete all uploaded files" }));
+    await user.click(await screen.findByRole("button", { name: "Delete 2 files" }));
+    await waitFor(() =>
+      expect(calls.some((c) => c.method === "DELETE" && c.path === "/artifacts/s1/files")).toBe(
+        true,
+      ),
+    );
+    // Once they are gone, a page that does not declare `files` shows no block at all.
+    await waitFor(() => expect(screen.queryByText(/Uploaded files:/)).toBeNull());
   });
 
   it("deletes one file with the CSRF header and shows the list again", async () => {

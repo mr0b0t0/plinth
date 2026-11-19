@@ -13,8 +13,10 @@ Add a line under **Unreleased** in the pull request that makes a change people w
 - **Files people add to a page.** A page that declares `files` lets the people it is shared with
   add images, PDFs, video and audio (`plinth.files.upload`), which everyone who can open the page
   sees; the owner and editors can delete any of them, and the owner can delete them all from the
-  Share dialog. Files are proven by their first bytes (never SVG, HTML or text), served from the
-  artifact's own origin with `script-src 'none'` and a bare `sandbox`, and never from the app.
+  Share dialog, also after a version stops declaring `files`. Files are proven by their first bytes
+  (never SVG, HTML or text), served from the artifact's own origin with `script-src 'none'` and a
+  bare `sandbox`, never from the app and never into thumbnails or link previews. People who may add
+  a file are told that the details saved inside it go with it.
   Agents list and delete them with `list_artifact_files` and `delete_artifact_file`, without the
   bytes. Off by default: `ALLOW_FILES` turns it on (origin isolation only), with `FILES_*` limits
   apart from the owners' storage quota. Migration `0014_artifact_files.sql`.

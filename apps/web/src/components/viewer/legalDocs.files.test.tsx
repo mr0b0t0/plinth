@@ -13,6 +13,8 @@ describe("privacy notice and acceptable use: files people add to pages", () => {
     expect(on).toContain("Files people add to pages");
     expect(on).toContain("email address and role of the person who added it");
     expect(on).toContain("never its contents");
+    expect(on).toContain("with any details saved inside it, such as where and when");
+    expect(on).toContain("Files never");
     expect(on).toContain("An upload not finished");
     expect(on).toContain(" or keeps the files they add");
     const off = withFiles("privacy", false);

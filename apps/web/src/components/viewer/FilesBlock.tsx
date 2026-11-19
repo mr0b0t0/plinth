@@ -116,7 +116,8 @@ export function FilesBlock({
   deleteError: string | null;
   onDeleteAll: () => void;
 }) {
-  if (state.status === "error") {
+  // A page that never declared `files` says nothing, not even when its list could not load.
+  if (state.status === "error" && declared) {
     return (
       <p className="pl-field__error" role="alert">
         <WarningCircleIcon aria-hidden="true" />
@@ -124,7 +125,7 @@ export function FilesBlock({
       </p>
     );
   }
-  const l = state.list;
+  const l = state.status === "error" ? null : state.list;
   if (!l || (l.usage.files === 0 && !declared)) return null;
   return (
     <section className="pl-share-data" aria-label="Uploaded files">

@@ -199,7 +199,7 @@ describe("files API: availability and who may upload", () => {
     expect(none.status).toBe(401);
   });
 
-  it("lets identified viewers upload; anonymous link viewers and capture passes only read", async () => {
+  it("lets identified viewers upload; anonymous link viewers only read; a thumbnail capture gets nothing", async () => {
     const { id, ownerP } = await setup(FILES_PAGE_UNLISTED, "unlisted");
     const s = await json(await filesApi(id, "/session", { cookie: ownerP.cookie }));
     expect(s).toMatchObject({ available: true, can_upload: true, usage: { files: 0, bytes: 0 } });
@@ -218,13 +218,17 @@ describe("files API: availability and who may upload", () => {
 
     const c = config();
     const name = contentCookieName(c, new URL(contentOrigin(id)));
+    // A capture reads as a preview: no upload ever ends up in a thumbnail or a link preview.
     const capture = `${name}=${await signContentCookie(c, id, await epochOf(id), undefined, "capture")}`;
-    expect(await json(await filesApi(id, "/session", { cookie: capture }))).toMatchObject({
-      available: true,
-      can_upload: false,
+    expect(await json(await filesApi(id, "/session", { cookie: capture }))).toEqual({
+      available: false,
+      reason: "preview",
     });
+    const captured = await filesApi(id, "", { cookie: capture });
+    expect(captured.status).toBe(404);
+    expect((await errOf(captured)).details).toEqual({ reason: "preview" });
     expect((await create(id, capture, { name: "a.png", type: "image/png", size: 10 })).status).toBe(
-      403,
+      404,
     );
 
     // Every role with a grant uploads.
@@ -561,5 +565,213 @@ describe("files API: changes", () => {
     expect(await seq()).toBeGreaterThan(s1);
     const session = await json(await filesApi(id, "/session", { cookie: ownerP.cookie }));
     expect(session.seq).toBe(await seq());
+  });
+});
+
+describe("files API: unfinished uploads past their deadline", () => {
+  const expire = (ids: readonly string[]) =>
+    env.DB.batch(
+      ids.map((f) =>
+        env.DB.prepare("UPDATE artifact_files SET expires_at = ?2 WHERE id = ?1").bind(
+          f,
+          Date.now() - 1,
+        ),
+      ),
+    );
+
+  it("stop counting toward the pending cap and the totals at the next upload, with no sweep", async () => {
+    const { id } = await setup();
+    const viewer = await person(id, "viewer");
+    const start = () => create(id, viewer.cookie, { name: "a.png", type: "image/png", size: 1000 });
+    const ids: string[] = [];
+    for (let i = 0; i < 3; i++) {
+      const r = await start();
+      expect(r.status).toBe(201);
+      ids.push((await json(r)).file.id as string);
+    }
+    const blocked = await start();
+    expect(blocked.status).toBe(403);
+    expect((await errOf(blocked)).details).toEqual({ limit: "pending" });
+    // The tab closed, so nothing cancelled them, and their deadline passed.
+    await expire(ids);
+    const fourth = await start();
+    expect(fourth.status).toBe(201);
+    expect(await usage(id)).toMatchObject({ files: 1, bytes: 1000 });
+    for (const f of ids) expect((await fileRow(f))?.state).toBe("deleting");
+  });
+
+  it("free the owner's file bytes on their other artifacts too", async () => {
+    const vars = {
+      ...ON,
+      FILES_MAX_FILE_BYTES: String(1024 * 1024),
+      FILES_MAX_BYTES_PER_ARTIFACT: String(1024 * 1024),
+      FILES_MAX_BYTES_PER_UPLOADER: String(1024 * 1024),
+      FILES_MAX_BYTES_PER_USER: String(1024 * 1024),
+    };
+    const { owner, id, ownerP } = await setup();
+    const first = await filesApi(id, "", {
+      cookie: ownerP.cookie,
+      body: { name: "a.png", type: "image/png", size: 1024 * 1024 },
+      vars,
+    });
+    expect(first.status).toBe(201);
+    const { body } = await publish(owner.auth, { html: FILES_ONLY, visibility: "allowlist" });
+    const second = body.id as string;
+    const cookie = await cookieFor(second, (await browserSession(owner.user.id)).headers);
+    const again = () =>
+      filesApi(second, "", {
+        cookie,
+        body: { name: "b.png", type: "image/png", size: 10 },
+        vars,
+      });
+    expect((await errOf(await again())).details.limit).toBe("user_bytes");
+    await expire([(await json(first)).file.id as string]);
+    expect((await again()).status).toBe(201);
+  });
+});
+
+describe("files API: part bodies", () => {
+  /** A part body that counts what was read from it: `{"data":"AAAA…` past the part cap. */
+  const counted = () => {
+    let read = 0;
+    const head = new TextEncoder().encode('{"data":"');
+    const chunk = new TextEncoder().encode("A".repeat(1024 * 1024));
+    const stream = new ReadableStream<Uint8Array>(
+      {
+        pull(c) {
+          if (read > 7 * 1024 * 1024) return c.close();
+          const next = read === 0 ? head : chunk;
+          read += next.byteLength;
+          c.enqueue(next);
+        },
+      },
+      { highWaterMark: 0 },
+    );
+    return { body: stream as unknown as string, read: () => read };
+  };
+
+  it("are never read while files are off, without a pass, without the declaration, or for a reader who cannot upload", async () => {
+    const { id, ownerP } = await setup(FILES_PAGE_UNLISTED, "unlisted");
+    const data = await setup(DATA_ONLY);
+    const fid = "0123456789abcdefghij";
+    const anon = await cookieFor(id);
+    const cases: [string, string, string | null, Record<string, string>, number][] = [
+      ["files off", id, ownerP.cookie, { ALLOW_FILES: "false" }, 404],
+      ["opaque isolation", id, ownerP.cookie, { CONTENT_ISOLATION: "opaque" }, 404],
+      ["no pass", id, null, {}, 401],
+      ["not declared", data.id, data.ownerP.cookie, {}, 404],
+      ["an anonymous link viewer", id, anon, {}, 403],
+    ];
+    for (const [what, artifact, cookie, vars, status] of cases) {
+      const b = counted();
+      const res = await filesApi(artifact, `/${fid}/parts/1`, {
+        method: "PUT",
+        cookie,
+        body: b.body,
+        vars,
+      });
+      expect(res.status, what).toBe(status);
+      noCors(res);
+      expect(b.read(), what).toBe(0);
+    }
+    // The JSON type is still checked before anything else.
+    const form = await filesApi(id, `/${fid}/parts/1`, {
+      method: "PUT",
+      body: "data=1",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      vars: { ALLOW_FILES: "false" },
+    });
+    expect(form.status).toBe(400);
+  });
+
+  it(
+    "answer a re-sent part from the row, never writing it to R2 again",
+    async () => {
+      const { id, ownerP } = await setup();
+      const size = FILE_LIMITS.partBytes + 100;
+      const bytes = mp4(size);
+      const writes: number[] = [];
+      const FILES = new Proxy(env.FILES, {
+        get(t, k) {
+          if (k === "resumeMultipartUpload") {
+            return (key: string, uploadId: string) => {
+              const mp = t.resumeMultipartUpload(key, uploadId);
+              return new Proxy(mp, {
+                get(m, j) {
+                  if (j === "uploadPart") {
+                    return (n: number, value: Uint8Array) => {
+                      writes.push(n);
+                      return m.uploadPart(n, value);
+                    };
+                  }
+                  const v = Reflect.get(m, j);
+                  return typeof v === "function" ? v.bind(m) : v;
+                },
+              });
+            };
+          }
+          const v = Reflect.get(t, k);
+          return typeof v === "function" ? v.bind(t) : v;
+        },
+      });
+      const vars = { FILES } as unknown as Record<string, string>;
+      const created = await json(
+        await filesApi(id, "", {
+          cookie: ownerP.cookie,
+          body: { name: "clip.mp4", type: "video/mp4", size },
+          vars,
+        }),
+      );
+      const fid = created.file.id as string;
+      const part = (n: number) =>
+        filesApi(id, `/${fid}/parts/${n}`, {
+          method: "PUT",
+          cookie: ownerP.cookie,
+          body: {
+            data: b64(bytes.subarray((n - 1) * FILE_LIMITS.partBytes, n * FILE_LIMITS.partBytes)),
+          },
+          vars,
+        });
+      for (let i = 0; i < 4; i++) {
+        expect(await json(await part(1))).toEqual({ parts_done: 1, parts: 2 });
+      }
+      expect(writes).toEqual([1]);
+      const last = await json(await part(2));
+      expect(last).toMatchObject({ parts_done: 2, parts: 2, file: { id: fid, size } });
+      expect(writes).toEqual([1, 2]);
+      const obj = await env.FILES.get((await fileRow(fid))?.r2_key as string);
+      expect(new Uint8Array(await (obj as R2ObjectBody).arrayBuffer())).toEqual(bytes);
+    },
+    BIG_BUNDLE_TIMEOUT_MS,
+  );
+
+  it("are limited per person per hour, before the body is read", async () => {
+    const { id, ownerP } = await setup();
+    // One upload an hour, of files of one part: four part requests (a send and three retries).
+    const vars = {
+      ...ON,
+      FILES_UPLOADS_PER_UPLOADER_PER_HOUR: "1",
+      FILES_MAX_FILE_BYTES: String(1024 * 1024),
+      FILES_MAX_BYTES_PER_UPLOADER: String(1024 * 1024),
+    };
+    const bytes = png(300);
+    const created = await json(
+      await filesApi(id, "", {
+        cookie: ownerP.cookie,
+        body: { name: "a.png", type: "image/png", size: 300 },
+        vars,
+      }),
+    );
+    const fid = created.file.id as string;
+    const put = (body: unknown) =>
+      filesApi(id, `/${fid}/parts/1`, { method: "PUT", cookie: ownerP.cookie, body, vars });
+    for (let i = 0; i < FILE_LIMITS.sendsPerPart; i++) {
+      expect((await put({ data: b64(bytes) })).status).toBe(200);
+    }
+    const b = counted();
+    const limited = await put(b.body);
+    expect(limited.status).toBe(429);
+    expect(Number(limited.headers.get("retry-after"))).toBeGreaterThan(0);
+    expect(b.read()).toBe(0);
   });
 });

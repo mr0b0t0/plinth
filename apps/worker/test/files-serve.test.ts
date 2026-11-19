@@ -216,7 +216,7 @@ describe("files read path: 404 and 401", () => {
     expect((await fileGet(id, f.id, { cookie: ownerP.cookie })).status).toBe(200);
   });
 
-  it("answers 404 after a takedown, 401 inside a frame without a pass, and 404 to a preview pass", async () => {
+  it("answers 404 after a takedown, 401 inside a frame without a pass, and 404 to a preview or capture pass", async () => {
     const { id, ownerP } = await setup();
     const f = await upload(id, ownerP, png(), "image/png");
     const noPass = await fileGet(id, f.id, { headers: { "sec-fetch-dest": "iframe" } });
@@ -225,9 +225,9 @@ describe("files read path: 404 and 401", () => {
     const name = contentCookieName(c, new URL(contentOrigin(id)));
     const preview = await signContentCookie(c, id, await epochOf(id), undefined, "preview", 1);
     expect((await fileGet(id, f.id, { cookie: `${name}=${preview}` })).status).toBe(404);
-    // A capture pass reads files, so thumbnails show the page's images.
+    // A thumbnail capture never reads files: a thumbnail and a link preview outlive a deleted file.
     const capture = await signContentCookie(c, id, await epochOf(id), undefined, "capture");
-    expect((await fileGet(id, f.id, { cookie: `${name}=${capture}` })).status).toBe(200);
+    expect((await fileGet(id, f.id, { cookie: `${name}=${capture}` })).status).toBe(404);
     await takeDown(id);
     expect((await fileGet(id, f.id, { cookie: ownerP.cookie })).status).toBe(404);
   });

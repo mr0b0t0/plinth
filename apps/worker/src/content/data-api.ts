@@ -32,7 +32,9 @@
 // /__plinth/api/v1/files... (files people add to a page) share checks 1 to 4 and 6 (each with its
 // own JSON body reader: a small create body, or a part's {"data":"<base64>"} decoded as it streams),
 // then take their own steps in content/files-api.ts: files are not shared data, and a page may
-// declare `files` alone.
+// declare `files` alone. The dispatcher checks the JSON type before any of them; the body itself is
+// read only after their availability, artifact, pass and declaration steps, so an instance with
+// files off, or a caller without a pass, never costs a part's read and decode.
 import { waitUntil } from "cloudflare:workers";
 import {
   CONTENT_DATA_HEADER,
@@ -143,6 +145,14 @@ function checkCaller(request: Request, config: Config, artifactId: string): void
   }
 }
 
+/** Check 6's first half for an `own` route, before any of its steps: the JSON type, headers only. */
+function requireJsonType(request: Request): void {
+  const type = (request.headers.get("content-type") ?? "").split(";")[0]?.trim().toLowerCase();
+  if (type !== "application/json") {
+    throw new ApiError("invalid_input", "Send a JSON body with Content-Type: application/json");
+  }
+}
+
 /** Check 6: a JSON body, refused past `cap` bytes whether or not a length was sent. */
 export async function readJsonBody(request: Request, cap: number): Promise<unknown> {
   const type = (request.headers.get("content-type") ?? "").split(";")[0]?.trim().toLowerCase();
@@ -250,15 +260,18 @@ export interface DataRouteCtx {
   views: (rows: readonly StoredDoc[]) => Promise<PageDoc[]>;
 }
 
-/** What a handler with its own steps gets, after checks 1 to 4 (and 6) passed. */
+/** What a handler with its own steps gets, after checks 1 to 4 (and 6's JSON type) passed. */
 export interface OwnRouteCtx {
   request: Request;
   env: Bindings;
   config: Config;
   artifactId: string;
   params: Record<string, string>;
-  /** The parsed JSON body (check 6) for POST and PUT, else undefined. */
-  body: unknown;
+  /**
+   * The body (check 6) for POST and PUT through the route's own reader, else undefined: read once,
+   * when the handler asks, after its own availability, artifact and pass steps.
+   */
+  readBody: () => Promise<unknown>;
 }
 
 interface RouteBase {
@@ -272,7 +285,8 @@ interface RouteBase {
   requireOrigin?: boolean;
   /**
    * Check 6 for an `own` route's POST and PUT bodies: its own JSON reader (still JSON only and
-   * size-capped while reading). Without one, the shared-data reader and cap.
+   * size-capped while reading), run when the handler calls `readBody`. Without one, the
+   * shared-data reader and cap.
    */
   readBody?: (request: Request, config: Config) => Promise<unknown>;
   /** A body that passes check 6 for this route, for the test that serves every route. */
@@ -518,15 +532,23 @@ async function handle(
     throw refuse("Cross-origin requests are refused");
   }
 
-  // A route with its own steps after the caller checks (the live room, content/room.ts).
+  // A route with its own steps after the caller checks (the live room, content/room.ts; files,
+  // content/files-api.ts). Check 6 for its body: the JSON type here, before any handler, and the
+  // body itself only through readBody (JSON only, size-capped while reading), which the handler
+  // calls once its own availability, artifact and pass steps passed, so a caller that may not
+  // write costs no body read.
   if (route.pipeline === "own") {
-    let body: unknown;
-    if (method === "POST" || method === "PUT") {
-      body = route.readBody
-        ? await route.readBody(request, config)
-        : await readJsonBody(request, config.data.maxDocBytes + 1024);
-    }
-    return route.handler({ request, env, config, artifactId, params, body });
+    const hasBody = method === "POST" || method === "PUT";
+    if (hasBody) requireJsonType(request);
+    let read: Promise<unknown> | null = null;
+    const readBody = (): Promise<unknown> => {
+      if (!hasBody) return Promise.resolve(undefined);
+      read ??= route.readBody
+        ? route.readBody(request, config)
+        : readJsonBody(request, config.data.maxDocBytes + 1024);
+      return read;
+    };
+    return route.handler({ request, env, config, artifactId, params, readBody });
   }
 
   // 5. Availability, before any cookie: under opaque isolation there are none.

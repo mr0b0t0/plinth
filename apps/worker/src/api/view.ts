@@ -225,7 +225,7 @@ async function gateFiles(
       : null;
   return {
     available,
-    can_upload: pageFileAccess(claim, declared, available).upload,
+    can_upload: pageFileAccess(claim, declared, available, "view").upload,
     uploaders_shown: declared.viewer === true,
   };
 }

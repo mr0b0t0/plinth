@@ -13,17 +13,20 @@ const data: ViewGateData = {
   identified: true,
   can_write: true,
 };
-const KEEPS =
-  "This page keeps files people add. People with access can see them; the owner and editors can see who added them.";
+const DETAILS =
+  "Files are kept as added, with any details saved inside them, such as where and when a photo was taken.";
+const KEEPS = `This page keeps files people add. People with access can see them; the owner and editors can see who added them. ${DETAILS}`;
 
 describe("DataNotice: files", () => {
-  it("tells an identified viewer the page keeps what they add, and who sees who added it", () => {
+  it("tells an identified viewer the page keeps what they add, who sees who added it, and that details inside a file go with it", () => {
     expect(
       filesNoticeText({ files: { available: true, can_upload: true, uploaders_shown: false } }),
     ).toBe(KEEPS);
     expect(
       filesNoticeText({ files: { available: true, can_upload: true, uploaders_shown: true } }),
-    ).toBe("This page keeps files people add. People with access can see them and who added them.");
+    ).toBe(
+      `This page keeps files people add. People with access can see them and who added them. ${DETAILS}`,
+    );
   });
 
   it("tells an anonymous reader the page only shows files", () => {

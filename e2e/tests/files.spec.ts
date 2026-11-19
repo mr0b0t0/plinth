@@ -72,7 +72,7 @@ test("people add photos and video to a page, the owner moderates, a takedown rem
     await readyFrame(page);
     await expect(inFrame(page).locator("body")).toHaveAttribute("data-can-upload", "true");
     await expect(notice(page)).toHaveText(
-      "This page keeps files people add. People with access can see them and who added them.",
+      "This page keeps files people add. People with access can see them and who added them. Files are kept as added, with any details saved inside them, such as where and when a photo was taken.",
     );
 
     // 2. The invited viewer, signed in, adds a photo; it renders inside the frame. (Signed in

@@ -60,9 +60,11 @@ export function ShareDialog({ open, onClose, link, slug, visibility, isOwner }: 
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const docs = data.summary?.usage.docs ?? 0;
-  // The files block loads only for a page that declares `files` (the summary says so).
+  // The files block loads for the owner whether or not the current version declares `files`: a
+  // version that dropped it keeps the files, and this is where the owner deletes them. It shows
+  // only while the page declares `files` or still has some.
   const filesDeclared = data.summary?.capabilities.includes("files") === true;
-  const files = useArtifactFiles(open && isOwner && filesDeclared, slug);
+  const files = useArtifactFiles(open && isOwner, slug);
   const [confirmingFiles, setConfirmingFiles] = useState(false);
   const [deletingFiles, setDeletingFiles] = useState(false);
   const [filesError, setFilesError] = useState<string | null>(null);
@@ -163,7 +165,7 @@ export function ShareDialog({ open, onClose, link, slug, visibility, isOwner }: 
               }}
             />
           )}
-          {isOwner && filesDeclared && (
+          {isOwner && (
             <FilesBlock
               state={files}
               slug={slug}

@@ -34,7 +34,7 @@ import { base64url, fromBase64url, newId, viewerIdFor } from "../lib/crypto.ts";
 import { ApiError } from "../lib/errors.ts";
 import { hit } from "../lib/ratelimit.ts";
 import { nowIso } from "../lib/time.ts";
-import { canDeleteFile, type PageClaim, pageFileAccess } from "../policy.ts";
+import { canDeleteFile, canSendFilePart, type PageClaim, pageFileAccess } from "../policy.ts";
 
 /** The artifact whose files are used, with its current version's declaration. */
 export interface FilesTarget {
@@ -167,7 +167,8 @@ export async function filesSession(
 ): Promise<FilesSession> {
   const reason = filesUnavailableReason(config, target.caps);
   if (reason) return { available: false, reason };
-  const access = pageFileAccess(claim, target.caps, filesActive(config));
+  // Only a view pass reaches the session with files available (content/files-api.ts).
+  const access = pageFileAccess(claim, target.caps, filesActive(config), "view");
   const usage = await fileUsageOf(d1, target.id);
   return {
     available: true,
@@ -336,16 +337,14 @@ export async function agentFileList(
 const ARTIFACT_LIVE_SQL = `EXISTS (SELECT 1 FROM artifacts WHERE id = ?2
   AND deleted_at IS NULL AND taken_down_at IS NULL)`;
 
-function requireUploader(writer: FileWriter | null): FileWriter {
+/** The uploader, or `read_only` for a caller who may only read. */
+export function requireUploader(writer: FileWriter | null): FileWriter {
   if (writer) return writer;
   throw denied("read_only");
 }
 
-async function limitUploads(d1: D1Database, config: Config, artifactId: string, email: string) {
-  for (const [key, limit] of [
-    [`files:u:${artifactId}:${email}`, config.files.uploadsPerUploaderPerHour],
-    [`files:u:${artifactId}:all`, config.files.uploadsPerArtifactPerHour],
-  ] as const) {
+async function limitHits(d1: D1Database, limits: readonly (readonly [string, number])[]) {
+  for (const [key, limit] of limits) {
     const r = await hit(d1, key, limit, HOUR_S);
     if (!r.allowed) {
       throw new ApiError("rate_limited", "Too many uploads, try again later", {
@@ -355,6 +354,48 @@ async function limitUploads(d1: D1Database, config: Config, artifactId: string, 
   }
 }
 
+async function limitUploads(d1: D1Database, config: Config, artifactId: string, email: string) {
+  await limitHits(d1, [
+    [`files:u:${artifactId}:${email}`, config.files.uploadsPerUploaderPerHour],
+    [`files:u:${artifactId}:all`, config.files.uploadsPerArtifactPerHour],
+  ]);
+}
+
+/**
+ * The part rate limits, checked before a part's body is read: per person and per artifact, the
+ * upload limit times the parts of the largest file times FILE_LIMITS.sendsPerPart (a send and the
+ * runtime's retries). Re-sending a part forever would otherwise cost a body read and decode each
+ * time, with no quota touched.
+ */
+export async function limitParts(
+  d1: D1Database,
+  config: Config,
+  artifactId: string,
+  email: string,
+): Promise<void> {
+  const perUpload = partCount(config.files.maxFileBytes) * FILE_LIMITS.sendsPerPart;
+  await limitHits(d1, [
+    [`files:p:${artifactId}:${email}`, config.files.uploadsPerUploaderPerHour * perUpload],
+    [`files:p:${artifactId}:all`, config.files.uploadsPerArtifactPerHour * perUpload],
+  ]);
+}
+
+/**
+ * Uploads of this owner's artifacts past their deadline become tombstones (the trigger frees their
+ * quota), so an upload a closed tab left behind stops counting at once, before the sweep clears its
+ * bytes, also on instances with no cron. Run in the same batch as the insert that reserves a new
+ * upload.
+ */
+function expireStaleUploads(d1: D1Database, ownerId: string, now: number): D1PreparedStatement {
+  return d1
+    .prepare(
+      `UPDATE artifact_files SET state = 'deleting', claimed_at = NULL
+        WHERE state = 'pending' AND expires_at <= ?2
+          AND artifact_id IN (SELECT id FROM artifacts WHERE owner_id = ?1)`,
+    )
+    .bind(ownerId, now);
+}
+
 /** Which quota stopped a guarded insert. */
 async function whyNotCreated(
   d1: D1Database,
@@ -362,6 +403,7 @@ async function whyNotCreated(
   target: FilesTarget,
   writer: FileWriter,
   size: number,
+  now: number,
 ): Promise<FileQuotaLimit | "gone"> {
   const r = await d1
     .prepare(
@@ -370,9 +412,9 @@ async function whyNotCreated(
               coalesce((SELECT files FROM artifact_file_usage WHERE artifact_id = ?1), 0) AS files,
               coalesce((SELECT bytes FROM artifact_file_usage WHERE artifact_id = ?1), 0) AS bytes,
               (SELECT count(*) FROM artifact_files WHERE artifact_id = ?1 AND created_by_email = ?2
-                 AND state = 'pending') AS pending`,
+                 AND state = 'pending' AND expires_at > ?3) AS pending`,
     )
-    .bind(target.id, writer.email)
+    .bind(target.id, writer.email, now)
     .first<{ live: number; files: number; bytes: number; pending: number }>();
   if (!r?.live) return "gone";
   if (r.files >= config.files.maxFilesPerArtifact) return "files";
@@ -427,7 +469,9 @@ export async function createUpload(
   const id = newId();
   const key = fileObjectKey(target.id, id);
   const parts = partCount(input.size);
-  const row = await env.DB.prepare(
+  // One batch: uploads of this owner's artifacts past their deadline stop counting, then the
+  // guarded insert checks every quota against what is left.
+  const insert = env.DB.prepare(
     `INSERT INTO artifact_files (id, artifact_id, r2_key, name, content_type, size_bytes, state,
        parts, created_by_email, created_by_role, created_via, created_at, expires_at)
      SELECT ?1, ?2, ?3, ?4, ?5, ?6, 'pending', ?7, ?8, ?9, 'page', ?10, ?11
@@ -440,31 +484,35 @@ export async function createUpload(
         AND (?9 = 'owner' OR (SELECT coalesce(sum(size_bytes), 0) FROM artifact_files
               WHERE artifact_id = ?2 AND created_by_email = ?8 AND state != 'deleting') + ?6 <= ?16)
         AND (SELECT count(*) FROM artifact_files WHERE artifact_id = ?2 AND created_by_email = ?8
-              AND state = 'pending') < ?17
+              AND state = 'pending' AND expires_at > ?18) < ?17
      RETURNING *`,
-  )
-    .bind(
-      id,
-      target.id,
-      key,
-      sanitizeFileName(input.name, type),
-      type,
-      input.size,
-      parts,
-      w.email,
-      w.role,
-      nowIso(),
-      now + FILE_LIMITS.uploadMs,
-      config.files.maxFilesPerArtifact,
-      config.files.maxBytesPerArtifact,
-      target.ownerId,
-      config.files.maxBytesPerUser,
-      config.files.maxBytesPerUploader,
-      FILE_LIMITS.maxPendingPerUploader,
-    )
-    .first<StoredFile>();
+  ).bind(
+    id,
+    target.id,
+    key,
+    sanitizeFileName(input.name, type),
+    type,
+    input.size,
+    parts,
+    w.email,
+    w.role,
+    nowIso(),
+    now + FILE_LIMITS.uploadMs,
+    config.files.maxFilesPerArtifact,
+    config.files.maxBytesPerArtifact,
+    target.ownerId,
+    config.files.maxBytesPerUser,
+    config.files.maxBytesPerUploader,
+    FILE_LIMITS.maxPendingPerUploader,
+    now,
+  );
+  const [, inserted] = await env.DB.batch<StoredFile>([
+    expireStaleUploads(env.DB, target.ownerId, now),
+    insert,
+  ]);
+  const row = inserted?.results[0];
   if (!row) {
-    const why = await whyNotCreated(env.DB, config, target, w, input.size);
+    const why = await whyNotCreated(env.DB, config, target, w, input.size, now);
     if (why === "gone") throw new ApiError("not_found", "Not found");
     throw quota(why);
   }
@@ -504,9 +552,10 @@ async function tombstone(d1: D1Database, artifactId: string, id: string) {
 
 /**
  * Receive part `n` of an upload (PUT /__plinth/api/v1/files/<id>/parts/<n>): parts arrive in
- * order, and the last accepted one may be sent again (its answer was lost). The first part must
- * start with the signature of the declared type, or the upload is cancelled. The last part
- * completes the upload and makes the file ready.
+ * order, and the last accepted one may be sent again (its answer was lost); it is answered from
+ * the row, never written to R2 again. The first part must start with the signature of the declared
+ * type, or the upload is cancelled. The last part completes the upload and makes the file ready.
+ * Who may send is policy.ts canSendFilePart, repeated in the SQL of each guarded write.
  */
 export async function putPart(
   env: Pick<Bindings, "DB" | "FILES">,
@@ -520,13 +569,14 @@ export async function putPart(
 ): Promise<PartResult> {
   const w = requireUploader(writer);
   const row = await getRow(env.DB, target.id, id);
-  // Another person's upload is indistinguishable from none.
-  if (!row || row.created_by_email !== w.email) throw fileNotFound();
-  if (row.state === "ready" && n === row.parts) {
+  if (!row) throw fileNotFound();
+  if (row.state === "ready" && n === row.parts && row.created_by_email === w.email) {
     // The final part sent again after its answer was lost: the same answer.
     return { parts_done: row.parts, parts: row.parts, file: toPageFile(row, w, seeIdentity) };
   }
-  if (row.state !== "pending" || row.expires_at <= now) throw fileNotFound();
+  // Only its uploader sends parts, while it is arriving; to anyone else it is not there.
+  const may = canSendFilePart(w, { state: row.state, creatorEmail: row.created_by_email });
+  if (!may.allow || row.expires_at <= now) throw fileNotFound();
   if (!Number.isInteger(n) || n < 1 || n > row.parts) {
     throw new ApiError("invalid_input", `Part: 1 to ${row.parts}`);
   }
@@ -536,29 +586,37 @@ export async function putPart(
   if (bytes.byteLength !== partLength(row.size_bytes, n)) {
     throw invalid(`Part ${n} must be ${partLength(row.size_bytes, n)} bytes`);
   }
-  if (n === 1 && sniffFileType(bytes.subarray(0, SNIFF_BYTES)) !== row.content_type) {
-    await tombstone(env.DB, target.id, id);
-    throw invalid("The file's contents do not match its type", "type_mismatch");
+  // A part already recorded (its answer was lost) is not written again: only the last part's
+  // completion is retried, below.
+  let recorded: { parts_done: number; part_etags: string | null } | null = {
+    parts_done: row.parts_done,
+    part_etags: row.part_etags,
+  };
+  if (n === row.parts_done + 1) {
+    if (n === 1 && sniffFileType(bytes.subarray(0, SNIFF_BYTES)) !== row.content_type) {
+      await tombstone(env.DB, target.id, id);
+      throw invalid("The file's contents do not match its type", "type_mismatch");
+    }
+    let etag: string | null = null;
+    if (row.parts === 1) {
+      await env.FILES.put(row.r2_key, bytes, { httpMetadata: { contentType: row.content_type } });
+    } else {
+      if (!row.multipart_id) throw fileNotFound();
+      const mp = env.FILES.resumeMultipartUpload(row.r2_key, row.multipart_id);
+      etag = (await mp.uploadPart(n, bytes)).etag;
+    }
+    recorded = await env.DB.prepare(
+      `UPDATE artifact_files
+          SET parts_done = ?3,
+              part_etags = CASE WHEN ?4 IS NULL THEN part_etags
+                ELSE json_set(coalesce(part_etags, '[]'), '$[' || CAST(?3 - 1 AS INTEGER) || ']', ?4) END
+        WHERE id = ?1 AND artifact_id = ?2 AND state = 'pending' AND expires_at > ?5
+          AND created_by_email = ?6 AND parts_done IN (?3 - 1, ?3) AND ${ARTIFACT_LIVE_SQL}
+        RETURNING parts_done, part_etags`,
+    )
+      .bind(id, target.id, n, etag, now, w.email)
+      .first<{ parts_done: number; part_etags: string | null }>();
   }
-  let etag: string | null = null;
-  if (row.parts === 1) {
-    await env.FILES.put(row.r2_key, bytes, { httpMetadata: { contentType: row.content_type } });
-  } else {
-    if (!row.multipart_id) throw fileNotFound();
-    const mp = env.FILES.resumeMultipartUpload(row.r2_key, row.multipart_id);
-    etag = (await mp.uploadPart(n, bytes)).etag;
-  }
-  const recorded = await env.DB.prepare(
-    `UPDATE artifact_files
-        SET parts_done = ?3,
-            part_etags = CASE WHEN ?4 IS NULL THEN part_etags
-              ELSE json_set(coalesce(part_etags, '[]'), '$[' || CAST(?3 - 1 AS INTEGER) || ']', ?4) END
-      WHERE id = ?1 AND artifact_id = ?2 AND state = 'pending' AND expires_at > ?5
-        AND parts_done IN (?3 - 1, ?3) AND ${ARTIFACT_LIVE_SQL}
-      RETURNING parts_done, part_etags`,
-  )
-    .bind(id, target.id, n, etag, now)
-    .first<{ parts_done: number; part_etags: string | null }>();
   // Deleted, taken down or expired meanwhile: the sweep owns whatever was written.
   if (!recorded) throw fileNotFound();
   if (n < row.parts) return { parts_done: recorded.parts_done, parts: row.parts };
@@ -566,16 +624,23 @@ export async function putPart(
   if (row.parts > 1 && row.multipart_id) {
     const etags = JSON.parse(recorded.part_etags ?? "[]") as string[];
     const mp = env.FILES.resumeMultipartUpload(row.r2_key, row.multipart_id);
-    await mp.complete(etags.map((e, i) => ({ partNumber: i + 1, etag: e })));
+    try {
+      await mp.complete(etags.map((e, i) => ({ partNumber: i + 1, etag: e })));
+    } catch (e) {
+      // A retry after a completion whose answer was lost: the object is already whole.
+      const head = await env.FILES.head(row.r2_key);
+      if (!head || head.size !== row.size_bytes) throw e;
+    }
   }
   const ready = await env.DB.prepare(
     `UPDATE artifact_files
         SET state = 'ready', parts_done = parts, part_etags = NULL, multipart_id = NULL,
             completed_at = ?3
-      WHERE id = ?1 AND artifact_id = ?2 AND state = 'pending' AND ${ARTIFACT_LIVE_SQL}
+      WHERE id = ?1 AND artifact_id = ?2 AND state = 'pending' AND created_by_email = ?4
+        AND parts_done = parts AND ${ARTIFACT_LIVE_SQL}
       RETURNING *`,
   )
-    .bind(id, target.id, nowIso())
+    .bind(id, target.id, nowIso(), w.email)
     .first<StoredFile>();
   if (!ready) {
     // A retry of this same part may have finished it first.
@@ -753,14 +818,21 @@ export async function sweepArtifactFiles(
   opts: { limit?: number } = {},
 ): Promise<{ expired: number; cleared: number }> {
   const limit = opts.limit ?? 50;
-  const expired = await env.DB.prepare(
-    `UPDATE artifact_files SET state = 'deleting', claimed_at = NULL
-      WHERE id IN (SELECT id FROM artifact_files WHERE state = 'pending' AND expires_at < ?1
-                    LIMIT ?2)
-      RETURNING id`,
-  )
-    .bind(nowMs, limit)
-    .all<{ id: string }>();
+  // Expiring is one cheap update per batch, so it goes on until none is left (bounded), and every
+  // upload past its deadline stops counting in one run, however many there are.
+  let expired = 0;
+  for (let round = 0; round < EXPIRE_ROUNDS; round++) {
+    const { results: batch } = await env.DB.prepare(
+      `UPDATE artifact_files SET state = 'deleting', claimed_at = NULL
+        WHERE id IN (SELECT id FROM artifact_files WHERE state = 'pending' AND expires_at <= ?1
+                      LIMIT ?2)
+        RETURNING id`,
+    )
+      .bind(nowMs, limit)
+      .all<{ id: string }>();
+    expired += batch.length;
+    if (batch.length < limit) break;
+  }
   const { results } = await env.DB.prepare(
     `UPDATE artifact_files SET claimed_at = ?1
       WHERE id IN (SELECT id FROM artifact_files
@@ -773,8 +845,11 @@ export async function sweepArtifactFiles(
     .bind(nowMs, FILE_LIMITS.tombstoneGraceMs, FILE_LIMITS.reclaimMs, limit)
     .all<{ id: string; r2_key: string; multipart_id: string | null }>();
   for (const r of results) await clearObject(env, r.id, r.r2_key, r.multipart_id);
-  return { expired: expired.results.length, cleared: results.length };
+  return { expired, cleared: results.length };
 }
+
+/** Batches of `limit` uploads one sweep may expire. */
+const EXPIRE_ROUNDS = 20;
 
 let lastOpportunisticSweep = 0;
 

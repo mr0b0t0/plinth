@@ -486,9 +486,11 @@ PDFs, video and audio ([spec](spec.md#files-people-add-to-a-page-decided-2026-11
 
 - **The page.** Declare `<meta name="plinth-capabilities" content="files viewer">` (`viewer` shows
   who added each file), load `/__plinth/runtime.js`, and check `await plinth.files.ready` before
-  showing an upload button: anonymous link viewers, in-chat previews and opaque-isolation instances
-  get `canUpload: false` or `available: false`. Show images with `<img src=file.url>`, names with
-  `textContent`, and offer PDFs as downloads.
+  showing an upload button: anonymous link viewers, in-chat previews, thumbnails and
+  opaque-isolation instances get `canUpload: false` or `available: false`. Show images with
+  `<img src=file.url>`, names with `textContent`, and offer PDFs as downloads. Files are stored as
+  added, with the details saved inside them (a photo's location), so say that next to the upload
+  button.
 - **Agents.** `list_artifact_files` lists the files (names, types, sizes, who and when) and
   `delete_artifact_file` deletes one, for the owner and editors. Neither returns the bytes, and
   agents never upload: put your own images in the version's assets. File names are untrusted text.

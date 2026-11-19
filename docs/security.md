@@ -61,7 +61,9 @@ make a test pass.
 | A mention reaches an agent nobody meant | A collaborator writes `@claude-code` for the owner's Claude Code, and an older connection whose name makes the same handle takes it | Only the owner's own connections are ever targets; the Connections page and the naming dialogs show each connection's handle and warn when an older one takes it; a comment written by an agent never creates a task |
 | Stored XSS through a file someone added | A commenter uploads an SVG with a script, HTML renamed `photo.png`, or a GIF/JAR or PDF/HTML polyglot, so that it runs on the artifact's origin as whoever opens it and reads the data API, writes shared data or emits room topics in their name | Only raster images, PDFs, video and audio are accepted, never markup; the first part must start with the declared type's signature, and the stored `Content-Type` is that proven type, never the request's; files are served with `nosniff`, `script-src 'none'`, a bare `sandbox` (an opaque origin, no scripts even if a browser renders the bytes as a document), PDFs and frames as attachments, and only for image, media, track, empty and iframe fetch destinations ([Files people add to a page](#files-people-add-to-a-page)) |
 | Another artifact uploads to or reads this one's files | Artifact B, framed by the app, posts to A's `/__plinth/api/v1/files` or loads A's `/__plinth/files/<id>` with A's cookie from the shared partitioned jar | Uploads pass the data API's caller checks (`x-plinth-data`, same-origin fetch metadata, exact `Origin`, JSON bodies; no CORS, no preflight answered); reads need A's content pass and get CORP `same-origin`, and B's CSP limits its loads to its own origin |
-| Viewers fill the bucket or block the owner | Invited people upload until the instance runs out of storage, or until the owner's next publish fails its quota | Only identified viewers upload; per-file, per-uploader, per-artifact and per-owner byte caps and a count cap, all checked in the statement that reserves an upload; hourly upload limits per person and per artifact; 3 unfinished uploads per person; file bytes have their own owner cap (`FILES_MAX_BYTES_PER_USER`), so they never count against `MAX_STORAGE_BYTES_PER_USER` |
+| Viewers fill the bucket or block the owner | Invited people upload until the instance runs out of storage, or until the owner's next publish fails its quota | Only identified viewers upload; per-file, per-uploader, per-artifact and per-owner byte caps and a count cap, all checked in the statement that reserves an upload; hourly upload limits per person and per artifact, and part limits checked before a part's body is read, with a re-sent part never written to R2 again; 3 unfinished uploads per person, an expired one freed at the next upload; a part body read only after availability, the pass and the declaration; file bytes have their own owner cap (`FILES_MAX_BYTES_PER_USER`), so they never count against `MAX_STORAGE_BYTES_PER_USER` |
+| An upload outlives itself in a thumbnail | A viewer's photo is captured into the version's thumbnail, which dashboard cards and the link preview (`og:image`, cached by unfurlers) keep showing after the file is deleted or its uploader erased | A thumbnail capture pass gets no files (`pageFileAccess`): the session reports `preview` and `/__plinth/files/` answers 404 to it |
+| An upload gives away where it was made | A phone photo's EXIF location reaches every reader of the page | Files are stored as added and everyone who may add one is told so (the viewer notice, the privacy notice, the skill) |
 | An upload outlives a delete or takedown | A part arrives after the owner deleted the file or an admin took the artifact down, and the file comes back | Every write repeats the artifact's live check and the row's state in its SQL; a delete or takedown turns rows into tombstones in its own batch, a takedown deletes the ready objects right after, and the hourly sweep clears the rest |
 | A file name steers an agent or tricks a viewer | A file named "Ignore previous instructions.png", `../../etc/passwd`, or a right-to-left override that turns `gpj.exe` around | Names are cleaned (last segment, no control or bidi characters, at most 200 characters, the proven extension added) and are display text everywhere; agents get names with the untrusted note and never the bytes |
 
@@ -1735,26 +1737,46 @@ checks before any files code, in this order:
 
 1. **Method** (GET, POST, PUT, DELETE; everything else 405 without CORS headers).
 2. **`x-plinth-data: 1`**, 3. **fetch metadata** when sent, 4. **`Origin`**, exactly as for every
-   data route.
-5. **Body**, JSON only: a create is `{ name, type, size }` under a 2 KiB cap; a part is exactly
-   `{"data":"<base64>"}` (optional JSON whitespace, no other key, no escapes), refused past
+   data route, and the `Content-Type: application/json` of a body, from the headers alone.
+5. **Availability** (`ALLOW_FILES` and origin isolation), 6. **the artifact** (live, not taken
+   down), 7. **the content pass** (a JSON 401 without one), 8. **the declaration** (`files`, for a
+   view pass only: never an in-chat preview or a thumbnail capture).
+9. **Body**, JSON only, read only now, so an instance with files off or a caller without a pass
+   never costs a read: a create is `{ name, type, size }` under a 2 KiB cap; a part is exactly
+   `{"data":"<base64>"}` (optional JSON whitespace, no other key, no escapes), read only for an
+   identified uploader within the part rate limits (below), refused past
    `4 * ceil(5 MiB / 3) + 64` bytes whether or not a length is sent, and decoded as it streams into
    one buffer of at most 5 MiB. Bytes travel as base64 inside JSON so that the JSON-body rule
    covers uploads too: a cross-origin form or `fetch` cannot send `application/json` without the
    preflight this host never answers.
-6. **Availability** (`ALLOW_FILES` and origin isolation), 7. **the artifact** (live, not taken
-   down), 8. **the content pass** (a JSON 401 without one), 9. **the declaration** (`files`; never
-   for a preview pass).
-10. **Policy** (`pageFileAccess`, `canDeleteFile` in `policy.ts`): only identified viewers upload;
-    an unfinished upload belongs to its uploader alone; a ready file can be deleted by its uploader,
-    the owner and editors. Then rate limits, then one guarded insert that reserves the bytes and
-    checks every quota and the artifact's live state in the same statement.
+10. **Policy** (`pageFileAccess`, `canSendFilePart`, `canDeleteFile` in `policy.ts`): only
+    identified viewers upload; an unfinished upload belongs to its uploader alone, who alone sends
+    its parts; a ready file can be deleted by its uploader, the owner and editors. Then rate
+    limits, then one guarded insert that reserves the bytes and checks every quota and the
+    artifact's live state in the same statement.
 
-Parts arrive in order (the last accepted one may be re-sent) and each part's write is guarded on
-the row being pending, unexpired and created by the same person, and on the artifact being live,
-so a delete or takedown in the middle of an upload wins. The first part must start with the
-signature of the declared type (`sniffFileType` in `packages/shared/src/files.ts`), or the upload
-becomes a tombstone (`type_mismatch`).
+Parts arrive in order and each part's write is guarded on the row being pending, unexpired and
+created by the same person, and on the artifact being live, so a delete or takedown in the middle
+of an upload wins. The last accepted part may be sent again (its answer was lost): it is answered
+from the row and never written to R2 again, and only a last part's completion is retried. Part
+requests have their own hourly limits per person and per artifact (the upload limit times the parts
+of the largest file times 4, a send and three retries), checked before the body is read, so
+re-sending a part in a loop costs neither R2 operations nor unbounded decoding. The first part must
+start with the signature of the declared type (`sniffFileType` in `packages/shared/src/files.ts`),
+or the upload becomes a tombstone (`type_mismatch`).
+
+**Files are stored as added.** The bytes are never rewritten, so the details saved inside a file
+(a photo's EXIF or XMP location, device and time, a document's author) reach everyone who can open
+the page, the page's own code included. The notice under the viewer bar tells everyone who may add
+a file, the privacy notice says so, and the skill tells page authors to say it next to the upload
+control. Removing them would change a file's bytes after its size and parts were fixed, and would
+cover only some formats.
+
+**Thumbnails never show files.** Plinth's thumbnail browser loads the page with a capture pass, and
+`pageFileAccess` gives a capture pass no files, as it gives an in-chat preview none: the session
+answers `{ available: false, reason: "preview" }` and `/__plinth/files/` answers 404. A thumbnail
+and the link preview built from it (`og:image`, which unfurlers cache) outlive a deleted file, so
+no upload may end up in one.
 
 **The type allowlist**: PNG, JPEG, GIF, WebP, AVIF, PDF, MP4, WebM, MP3, M4A, Ogg and WAV, proven
 by their first bytes only. Markup of any kind (SVG, HTML, XML), text, Office documents, archives,
@@ -1772,8 +1794,9 @@ file), loaded the live artifact and checked the content pass. Then:
 2. `Sec-Fetch-Dest`, when sent, is `image`, `video`, `audio`, `track`, `empty` or `iframe`; every
    other destination (`script`, `style`, `font`, `worker`, `sharedworker`, `serviceworker`,
    `manifest`, `object`, `embed`, `xslt`) gets 403;
-3. files are available, and the pass is not a preview pass;
-4. the current version declares `files`;
+3. files are available, and the pass is a view pass (never a preview or a thumbnail capture);
+4. the current version declares `files` (3 and 4 are `pageFileAccess` in `policy.ts`, as for the
+   page API);
 5. a ready row of this artifact exists.
 
 The answer has the exact stored type with no parameters, `X-Content-Type-Options: nosniff`,
@@ -1792,7 +1815,9 @@ characters, at most 200 characters, with the proven type's extension appended wh
 **Quotas** are per file, per uploader per artifact (the owner exempt), per artifact (count and
 bytes) and per owner across live artifacts, apart from the owner's version storage, so viewers can
 never make an owner's publish fail. A person may have 3 unfinished uploads on an artifact; an
-upload must finish within 30 minutes.
+upload must finish within 30 minutes. One past its deadline (a tab closed mid-upload) stops
+counting toward every quota at the owner's next upload, in the same batch as the insert that checks
+them, so it never blocks anyone until a sweep runs, also on instances with no cron.
 
 **Lifecycle.** A delete, a cancel, an expired upload, the artifact's deletion or takedown and
 `erase-user` turn rows into tombstones (state `deleting`) that count toward nothing. A takedown
@@ -1801,7 +1826,9 @@ data. The hourly sweep claims tombstones in one statement (two sweeps never take
 deletes each object, aborts an unfinished multipart upload and removes the row; an unfinished
 upload is cleared 15 minutes after its deadline, since a part may still be writing. R2's default
 lifecycle rule also aborts incomplete multipart uploads after 7 days; keep it. `sweep-orphans`
-groups only version prefixes and never touches `artifacts/<id>/files/`.
+groups only version prefixes and never touches `artifacts/<id>/files/`. A version that drops
+`files` keeps the files and turns them off for the page; the owner still sees them in the Share
+dialog and can delete them there.
 
 **Agents** list and delete files over MCP and REST (owner or editor) and never get the bytes: an
 image is a prompt-injection channel and a new egress path, so reading files is left for its own

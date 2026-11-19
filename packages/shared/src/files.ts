@@ -35,6 +35,11 @@ export const FILE_LIMITS = {
   reclaimMs: 10 * 60 * 1000,
   /** Bytes of a create request's JSON body. */
   createBodyBytes: 2048,
+  /**
+   * Part requests allowed per part of the largest file an hour, per person and per artifact, on
+   * top of the upload rate limits: one send and the runtime's three retries.
+   */
+  sendsPerPart: 4,
 } as const;
 
 /** The env-var caps (FILES_*), with their defaults. */

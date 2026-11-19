@@ -1,4 +1,5 @@
-// policy.ts for files people add to a page: pageFileAccess and canDeleteFile truth tables, the
+// policy.ts for files people add to a page: pageFileAccess, canSendFilePart and canDeleteFile truth
+// tables, the
 // strict sandbox CSP for file responses, the FILES_* settings, and the identity claim with files
 // as its only reader.
 import type { Capabilities, EffectiveRole } from "@plinth/shared";
@@ -6,7 +7,7 @@ import { FILE_DEFAULTS } from "@plinth/shared";
 import { describe, expect, it } from "vitest";
 import { filesActive, identityClaimsActive, parseConfig } from "../src/config.ts";
 import { contentCsp, OPAQUE_SANDBOX } from "../src/content/csp.ts";
-import { canDeleteFile, type PageClaim, pageFileAccess } from "../src/policy.ts";
+import { canDeleteFile, canSendFilePart, type PageClaim, pageFileAccess } from "../src/policy.ts";
 import { config } from "./helpers.ts";
 import { everyIdentityReaderOff } from "./identity-readers.ts";
 
@@ -30,19 +31,19 @@ const claim = (role: EffectiveRole, email = `${role}@example.org`): PageClaim =>
 });
 
 describe("pageFileAccess", () => {
-  it("reads with any pass once declared and on; uploads only when identified", () => {
-    expect(pageFileAccess(null, caps(), true)).toEqual({
+  it("reads with any view pass once declared and on; uploads only when identified", () => {
+    expect(pageFileAccess(null, caps(), true, "view")).toEqual({
       read: true,
       upload: false,
       seeIdentity: false,
     });
     for (const role of ["owner", "editor", "commenter", "viewer"] as const) {
-      expect(pageFileAccess(claim(role), caps(), true), role).toEqual({
+      expect(pageFileAccess(claim(role), caps(), true, "view"), role).toEqual({
         read: true,
         upload: true,
         seeIdentity: false,
       });
-      expect(pageFileAccess(claim(role), caps({ viewer: true }), true), role).toEqual({
+      expect(pageFileAccess(claim(role), caps({ viewer: true }), true, "view"), role).toEqual({
         read: true,
         upload: true,
         seeIdentity: true,
@@ -52,9 +53,54 @@ describe("pageFileAccess", () => {
 
   it("allows nothing while off, without the declaration, or with none", () => {
     const none = { read: false, upload: false, seeIdentity: false };
-    expect(pageFileAccess(claim("owner"), caps(), false)).toEqual(none);
-    expect(pageFileAccess(claim("owner"), caps({ files: false, data: true }), true)).toEqual(none);
-    expect(pageFileAccess(claim("owner"), null, true)).toEqual(none);
+    expect(pageFileAccess(claim("owner"), caps(), false, "view")).toEqual(none);
+    expect(
+      pageFileAccess(claim("owner"), caps({ files: false, data: true }), true, "view"),
+    ).toEqual(none);
+    expect(pageFileAccess(claim("owner"), null, true, "view")).toEqual(none);
+  });
+
+  it("gives a thumbnail capture and an in-chat preview nothing, so no upload reaches a thumbnail", () => {
+    const none = { read: false, upload: false, seeIdentity: false };
+    for (const pass of ["capture", "preview"] as const) {
+      expect(pageFileAccess(null, caps({ viewer: true }), true, pass), pass).toEqual(none);
+    }
+  });
+});
+
+describe("canSendFilePart", () => {
+  const row = (state: "pending" | "ready" | "deleting", creatorEmail: string | null) => ({
+    state,
+    creatorEmail,
+  });
+
+  it("lets only the person who started an upload send its parts, while it is arriving", () => {
+    const a = claim("viewer", "a@example.org");
+    expect(canSendFilePart(a, row("pending", "a@example.org"))).toEqual({ allow: true });
+    for (const state of ["ready", "deleting"] as const) {
+      expect(canSendFilePart(a, row(state, "a@example.org")), state).toEqual({
+        allow: false,
+        reason: "not_found",
+      });
+    }
+  });
+
+  it("hides another person's upload, the owner's and editors' too, and refuses readers", () => {
+    for (const role of ["owner", "editor", "commenter", "viewer"] as const) {
+      expect(canSendFilePart(claim(role), row("pending", "a@example.org")), role).toEqual({
+        allow: false,
+        reason: "not_found",
+      });
+    }
+    // An erased person's upload has no uploader left.
+    expect(canSendFilePart(claim("owner"), row("pending", null))).toEqual({
+      allow: false,
+      reason: "not_found",
+    });
+    expect(canSendFilePart(null, row("pending", "a@example.org"))).toEqual({
+      allow: false,
+      reason: "read_only",
+    });
   });
 });
 

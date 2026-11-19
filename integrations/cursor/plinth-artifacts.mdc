@@ -1015,9 +1015,10 @@ Add `data` too if the page also keeps entries.
 
 - `const f = await window.plinth?.files.ready` never rejects: `{ available, reason, canUpload,
   accept, limits, usage }`. Show the upload control only when `available && canUpload`; anonymous
-  link viewers get `canUpload: false`, and in-chat previews and opaque-isolation instances get
-  `available: false` (`reason`: `disabled`, `opaque_isolation`, `not_declared`, `preview`,
-  `expired`, `network`). Keep the page useful without it.
+  link viewers get `canUpload: false`, and in-chat previews, Plinth's thumbnail capture and
+  opaque-isolation instances get `available: false` (`reason`: `disabled`, `opaque_isolation`,
+  `not_declared`, `preview`, `expired`, `network`). Keep the page useful without it: thumbnails
+  never show uploaded files.
 - Upload from `<input type="file" accept="image/png,image/jpeg,application/pdf">` (only types in
   `accept`): `const file = await plinth.files.upload(input.files[0], { onProgress: (sent, total)
   => ... })`. Pass an `AbortController`'s `signal` to offer Cancel. Errors are a `PlinthError` with
@@ -1036,5 +1037,7 @@ Add `data` too if the page also keeps entries.
 - Limits: 20 MiB a file by default (`limits.maxFileBytes`), and caps per person, per page and per
   owner; uploads must finish within 30 minutes.
 - Never ask people to upload identity documents, passwords, keys or payment details.
+- Files are stored exactly as added, so everyone who can open the page can read the details saved
+  inside them, such as where and when a photo was taken. Say so next to the upload control.
 - Agents never upload: put your own images in the version's `assets`. `list_artifact_files` shows
   what people added (never the bytes) and `delete_artifact_file` deletes one when the person asks.

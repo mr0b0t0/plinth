@@ -9,20 +9,28 @@
 //   1. the id (FILE_ID_RE);
 //   2. Sec-Fetch-Dest, when sent: image, video, audio, track, empty, or iframe (answered as an
 //      attachment); never script, style, font, worker, manifest, object or embed;
-//   3. availability (ALLOW_FILES with origin isolation), never for an in-chat preview pass;
-//   4. the current version declares `files`;
+//   3. availability (ALLOW_FILES with origin isolation), for a view pass only: never for a
+//      thumbnail capture (a thumbnail and a link preview outlive a deleted file) or an in-chat
+//      preview;
+//   4. the current version declares `files` (3 and 4: policy.ts pageFileAccess);
 //   5. a ready row of this artifact.
 // Every answer carries the content headers; a file's answer adds `script-src 'none'` and a bare
 // `sandbox` (no flags) to its CSP, the exact server-proven Content-Type, nosniff and CORP
 // same-origin, so the bytes can never run as a document or a script on the artifact's origin.
 import { contentDisposition, FILE_ID_RE } from "@plinth/shared";
 import { type Bindings, type Config, filesActive } from "../config.ts";
+import { type FilePassKind, pageFileAccess } from "../policy.ts";
 import { versionCapabilities } from "../services/artifacts.ts";
 import { fileObjectKey, getReadyFile } from "../services/files.ts";
 import { applyContentHeaders, type ContentCspOptions } from "./csp.ts";
 import type { PassGate } from "./serve.ts";
 
 export const FILES_PREFIX = "/__plinth/files/";
+
+/** The kind of a content pass, as policy.ts pageFileAccess takes it. */
+export function passKindOf(pass: { capture: boolean; preview: boolean }): FilePassKind {
+  return pass.preview ? "preview" : pass.capture ? "capture" : "view";
+}
 
 /** Fetch destinations a file may be loaded as. Everything else (scripts, styles, fonts...) is 403. */
 const ALLOWED_DESTS = new Set(["image", "video", "audio", "track", "empty", "iframe"]);
@@ -72,16 +80,18 @@ export async function serveFile(
   // 2. How the file is being loaded.
   const dest = request.headers.get("sec-fetch-dest");
   if (dest !== null && !ALLOWED_DESTS.has(dest)) return fail(403, "Not allowed");
-  // 3. Availability. An in-chat preview never reads files.
-  if (!filesActive(config) || gate.pass.preview) return fail(404, "Not found");
-  // 4. The current version's declaration governs, for old version URLs too.
+  // 3 and 4. Availability, the kind of pass (a thumbnail capture or an in-chat preview never reads
+  // files) and the current version's declaration, which governs old version URLs too: policy.ts.
+  if (!filesActive(config)) return fail(404, "Not found");
   const { artifact } = gate;
   const version = await env.DB.prepare(
     "SELECT capabilities FROM versions WHERE artifact_id = ?1 AND number = ?2",
   )
     .bind(artifact.id, artifact.currentVersion)
     .first<{ capabilities: string | null }>();
-  if (versionCapabilities(version)?.files !== true) return fail(404, "Not found");
+  const caps = versionCapabilities(version);
+  const access = pageFileAccess(gate.pass.claim, caps, filesActive(config), passKindOf(gate.pass));
+  if (!access.read) return fail(404, "Not found");
   // 5. A ready file of this artifact.
   const row = await getReadyFile(env.DB, artifact.id, id);
   if (!row) return fail(404, "Not found");
