@@ -62,6 +62,8 @@ const WORKER_VARS = [
   // Live views (docs/docker.md#settings): open pages follow new versions over a socket on the app
   // host, through the same ROOMS binding.
   "ALLOW_LIVE_VIEWS",
+  // Following the presenter in a deck (docs/docker.md#settings), through the same live rooms.
+  "ALLOW_SLIDES_FOLLOW",
 ];
 
 // `plinth init` flags and the variables that set them, to name the variable in its errors.

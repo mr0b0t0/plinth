@@ -75,6 +75,8 @@ export class Presenter {
       exit: () => void;
       clock?: PresenterClock;
       measure?: Measure;
+      /** More controls for the bar, before Exit (a presenter's Lead viewers toggle). */
+      bar?: readonly HTMLElement[];
     },
   ) {
     const clock = this.clock;
@@ -111,7 +113,16 @@ export class Presenter {
     const exit = el(doc, "button", "plinth-slides__btn", "Exit presenter view");
     exit.type = "button";
     exit.addEventListener("click", () => this.o.exit());
-    bar.append(this.timer, this.pauseBtn, reset, this.clockEl, this.counter, this.warning, exit);
+    bar.append(
+      this.timer,
+      this.pauseBtn,
+      reset,
+      this.clockEl,
+      this.counter,
+      this.warning,
+      ...(this.o.bar ?? []),
+      exit,
+    );
 
     this.el.append(this.current, side, bar);
   }

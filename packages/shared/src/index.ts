@@ -20,6 +20,7 @@ export * from "./room.ts";
 export * from "./routes.ts";
 export * from "./schemas.ts";
 export * from "./slides.ts";
+export * from "./slidesRoom.ts";
 export * from "./text.ts";
 export * from "./types.ts";
 export * from "./voice.ts";

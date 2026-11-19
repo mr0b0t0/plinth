@@ -50,6 +50,9 @@ export const DEV_VARS: Record<string, string> = {
   // Live views (docs/spec.md "Live views"): pushed versions and data changes over the app's watch
   // socket, on both servers (it needs only the ROOMS binding, not origin isolation).
   ALLOW_LIVE_VIEWS: "true",
+  // Following the presenter in a deck (docs/spec.md "Slides"), on by default. On the opaque server
+  // it has no effect: it runs over live rooms, which need origin isolation.
+  ALLOW_SLIDES_FOLLOW: "true",
   // Fresh for every run; never committed, never reused.
   SESSION_SECRET: randomBytes(48).toString("base64url"),
   TOKEN_SIGNING_KEY: randomBytes(48).toString("base64url"),

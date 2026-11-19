@@ -163,6 +163,12 @@ export interface Config {
   allowLiveViews: boolean;
   /** Live-view limits (LIVE_VIEW_* env vars). */
   liveViews: LiveViewLimits;
+  /**
+   * ALLOW_SLIDES_FOLLOW (default on): an owner or editor may lead the identified viewers who have a
+   * deck open, who follow the presenter's slide. Only in effect where live rooms are; see
+   * slidesFollowActive.
+   */
+  allowSlidesFollow: boolean;
   /** OPERATOR_*: who runs this instance, for its legal pages. null when none is published. */
   operator: {
     name: string;
@@ -402,6 +408,7 @@ export function parseConfig(env: Record<string, unknown>): Config {
         ...LIVE_VIEW_BOUNDS.maxSocketsPerArtifact,
       ),
     },
+    allowSlidesFollow: boolDefaultOn(env.ALLOW_SLIDES_FOLLOW),
     operator: parseOperator(env),
   };
   validate(config);
@@ -600,6 +607,18 @@ export function dictationActive(c: Pick<Config, "allowDictation" | "contentIsola
  */
 export function liveViewsActive(c: Pick<Config, "allowLiveViews">, env: OptionalBindings): boolean {
   return c.allowLiveViews && env.ROOMS !== undefined;
+}
+
+/**
+ * Following the presenter is in effect: ALLOW_SLIDES_FOLLOW is on and live rooms are active (the
+ * `slides` socket is a room socket, so it needs ALLOW_ROOMS, the ROOMS binding and origin
+ * isolation). Off is not a configuration error: decks then page alone, as before.
+ */
+export function slidesFollowActive(
+  c: Pick<Config, "allowSlidesFollow" | "allowRooms" | "contentIsolation">,
+  env: OptionalBindings,
+): boolean {
+  return c.allowSlidesFollow && roomsActive(c, env);
 }
 
 /** Something on the page that reads the identity claim, and whether it is switched on. */

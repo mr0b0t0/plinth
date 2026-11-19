@@ -74,6 +74,13 @@ export interface ArtifactTypeDef {
    */
   opaqueFrames?: boolean;
   /**
+   * Owners and editors may lead identified viewers through the deck over the room's own `slides`
+   * channel (follow the presenter): the shell's payload gets `follow`. Only types whose page is
+   * Plinth's own renderer, whose frame can be trusted to send only slide numbers. Absent means
+   * false.
+   */
+  follow?: boolean;
+  /**
    * Files the viewer can download, each built inside the frame by the renderer from what it shows
    * (a deck's .pptx). Absent means none. Print and PDF are not listed: every renderer prints.
    */
@@ -173,6 +180,13 @@ export interface TypedPayload {
    * renderer shows every slide stacked. Absent otherwise, so every other shell is unchanged.
    */
   view?: "overview";
+  /**
+   * Set only for a type with `follow`, for an identified viewer on the current version while rooms
+   * and following are active: the renderer opens the `slides` socket, as a presenter (`present`,
+   * owners and editors) or to follow one (`watch`). Absent otherwise, so every other shell is
+   * unchanged.
+   */
+  follow?: "present" | "watch";
 }
 
 const SCRIPT_UNSAFE: Record<string, string> = {
@@ -216,6 +230,7 @@ export function typedShellHtml(
     appOrigin: string;
     live?: "room";
     view?: "overview";
+    follow?: "present" | "watch";
   },
 ): string {
   if (!def.renderer) throw new Error(`Type ${def.id} has no renderer`);
@@ -228,6 +243,7 @@ export function typedShellHtml(
     text: o.text,
     ...(o.live ? { live: o.live } : {}),
     ...(o.view ? { view: o.view } : {}),
+    ...(o.follow ? { follow: o.follow } : {}),
   };
   return (
     '<!doctype html><html lang="en"><head>' +
