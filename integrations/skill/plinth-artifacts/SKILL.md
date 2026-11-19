@@ -1002,8 +1002,10 @@ Where the instance has live views, an open view keeps what it can when your new 
 - **Docs** (type doc) update in place: no reload, and the reader stays at the heading they were
   reading. Nothing to do.
 - **A page that loads `/__plinth/runtime.js`** keeps its scroll position and where it was inside
-  the artifact (sub-page, query, hash). To keep more, hand JSON (at most 16 KiB) to the next
-  version, and read it back once at start:
+  the artifact (sub-page, query, hash). A sub-page the new version has no file for (a renamed
+  page, or a `history.pushState` route) lands on its root, at the top, still with the state it
+  handed over; route with the hash (`#/settings`) to keep the place. To keep more, hand JSON (at
+  most 16 KiB) to the next version, and read it back once at start:
 
   ```js
   plinth.onVersion(() => ({ state: { draft: input.value, tab: currentTab } }));

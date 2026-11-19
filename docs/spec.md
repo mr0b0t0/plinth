@@ -1390,12 +1390,14 @@ the app applies it so the reader keeps their place where it can:
   handlers (800 ms for all of them), writes one record (`from`, `to`, the time, scroll, path, and
   the page's `{ state }` when its JSON is at most 16 KiB) to its own origin's `sessionStorage` and
   answers `update:ok` with its path, without the hash. The app re-reads its gate with that path as
-  `next` (the server passes it through `safeNext`) and loads the new version there. The hash never
+  `next` and `carried=1` (the server passes it through `safeNext`) and loads the new version there;
+  when the new version has no file at that path (a `pushState` route, a page renamed or removed), the
+  gate lands it on the root instead of the content host's "Not found". The hash never
   goes into a request URL: it stays in the record, and the new version's runtime puts it back with
   `history.replaceState` when it landed on the same path with no hash of its own. The new version's
   runtime reads and removes the record at start, before the page's own scripts after the runtime
   tag, exposes it once as `plinth.carried` (`{ from, to, state }`, or null), ignores one older than
-  30 s, and restores the scroll position after `load`. A handler that returns `false` asks to hold:
+  30 s, and restores the scroll position after `load` when it landed on the same path. A handler that returns `false` asks to hold:
   the app keeps the page and shows the Update notice (below), and Update posts `force: true`, which
   records the state anyway. No answer in 1 s: the app decides as for a page without the runtime.
   Opaque isolation has no runtime handshake.

@@ -30,6 +30,7 @@ import {
   roomsActive,
   sharedDataActive,
 } from "../config.ts";
+import { resolveFilePath } from "../content/serve.ts";
 import { issueEnterUrl, safeNext, type ViewerIdentity } from "../content/tokens.ts";
 import { type ArtifactRow, users, versions } from "../db/schema.ts";
 import { appCookieName, secureFlag, serializeCookie } from "../lib/cookies.ts";
@@ -48,6 +49,7 @@ import { decideFor, findArtifact, grantFor, versionCapabilities } from "../servi
 import type { Ctx } from "../services/context.ts";
 import { readLiveDraftInfo } from "../services/live.ts";
 import { sessionCookie } from "../services/sessions.ts";
+import { parseManifest } from "../services/storage.ts";
 import { namesByEmail } from "../services/users.ts";
 import { requestViewerCode, verifyViewerCode } from "../services/viewers.ts";
 import { countsAsView } from "../services/views.ts";
@@ -68,6 +70,11 @@ export interface GateOptions {
   review?: boolean;
   /** A path inside the artifact to land on (from a direct content link). */
   next?: string;
+  /**
+   * `next` is a place carried from an older version (live views, the runtime's `update:ok`): when
+   * the current version has no file there, land on the root instead.
+   */
+  carried?: boolean;
 }
 
 /** Compute the gate for the current principal. Issues a one-time enter URL when allowed. */
@@ -108,6 +115,7 @@ export async function computeGate(
     : version === a.currentVersion && !opts.version
       ? "/"
       : `/__plinth/v/${version}/`;
+  if (opts.carried && opts.next && !(await currentServes(ctx, a, next))) next = "/";
   // A page that declares `comments` anchors its own comments and never loads in review mode, so
   // the bridge is never injected next to it, whatever the app asked for.
   const review = opts.review === true && !(await pageCommentsDeclared(ctx, a));
@@ -217,6 +225,24 @@ function gateWatch(ctx: Ctx, a: ArtifactRow, d: Extract<Decision, { allow: true 
 async function holdDeclared(ctx: Ctx, a: ArtifactRow): Promise<boolean> {
   if (!ctx.config.allowLiveViews || a.type !== "html") return false;
   return (await currentCapsOnce(ctx, a))?.hold === true;
+}
+
+/**
+ * Whether the content host serves a file of the current version at `next` (a path from
+ * `safeNext`), by the same rules it uses (serve.ts): a typed artifact's own page, or a path the
+ * manifest lists. A place carried from an older version that the current one lacks (a client-side
+ * route, a page renamed or removed) would land on the content host's "Not found".
+ */
+async function currentServes(ctx: Ctx, a: ArtifactRow, next: string): Promise<boolean> {
+  const rel = resolveFilePath(next.split(/[?#]/, 1)[0] ?? "");
+  if (rel === null) return false;
+  if (typeDef(a.type)?.renderer && rel === "index.html") return true;
+  const row = await ctx.db
+    .select({ manifest: versions.manifest })
+    .from(versions)
+    .where(and(eq(versions.artifactId, a.id), eq(versions.number, a.currentVersion)))
+    .get();
+  return row ? parseManifest(row.manifest).some((e) => e.path === rel) : false;
 }
 
 // ---------- comments from the page ----------
@@ -459,6 +485,7 @@ function gateOptions(q: (k: string) => string | undefined): GateOptions {
     version: Number.isInteger(v) && v > 0 ? v : undefined,
     review: q("review") === "1",
     next: q("next"),
+    carried: q("carried") === "1",
   };
 }
 

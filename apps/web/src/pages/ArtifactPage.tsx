@@ -118,8 +118,9 @@ export default function ArtifactPage({ params }: { params: Record<string, string
     },
     drop: () => setPending(null),
     fetchGate: async (to) => {
+      // The place comes from the older version: the gate lands on the root if this one lacks it.
       const fresh = await api<ViewGate>(
-        to ? gatePath("view", slug, { ...query, next: to }) : latest.current.path,
+        to ? gatePath("view", slug, { ...query, next: to, carried: true }) : latest.current.path,
       );
       return fresh.status === "ok" ? fresh : null;
     },

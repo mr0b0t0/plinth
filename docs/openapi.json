@@ -1097,6 +1097,13 @@
             "name": "next",
             "schema": { "type": "string" },
             "description": "Path inside the artifact to land on"
+          },
+          {
+            "in": "query",
+            "required": false,
+            "name": "carried",
+            "schema": { "type": "string", "enum": ["1"] },
+            "description": "`next` is a place carried from an older version (live views): land on the root when the current version has no file there"
           }
         ],
         "responses": {

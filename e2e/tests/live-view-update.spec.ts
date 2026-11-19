@@ -130,6 +130,43 @@ test("a page with the runtime keeps its query as it was, and gets its hash back"
   expect(await shown.evaluate(() => location.hash)).toBe("#step-3");
 });
 
+test("a page on a sub-page the new version lacks lands on the new version's root", async ({
+  page,
+}) => {
+  const { token } = await seedToken(uniqueEmail("runtime-gone"));
+  const art = await publishArtifact(page.request, token, {
+    html: RUNTIME_PAGE("First"),
+    assets: [{ path: "about.html", content: RUNTIME_PAGE("About") }],
+  });
+  await page.goto(`/a/${art.slug}`);
+  const current = page.frameLocator(CURRENT_FRAME);
+  await expect(current.locator("h1")).toHaveText("First");
+  const frame = await shownFrame(page);
+  await frame.evaluate(() => {
+    location.href = "/about.html";
+  });
+  await expect(current.locator("h1")).toHaveText("About");
+  await current.locator("#draft").fill("kept anyway");
+
+  // v2 renames about.html: the place the page reports is gone, so the frame lands on v2's root,
+  // not on the content host's "Not found", and the state still crosses.
+  await update(
+    token,
+    art.id,
+    {
+      html: RUNTIME_PAGE("Second"),
+      assets: [{ path: "team.html", content: RUNTIME_PAGE("Team") }],
+    },
+    1,
+  );
+  await expect(page.getByText("Updated to v2")).toBeVisible({ timeout: 10_000 });
+  const next = page.frameLocator('iframe[title$="version 2"]');
+  await expect(next.locator("h1")).toHaveText("Second");
+  await expect(next.locator("#carried")).toHaveText("from v1: kept anyway");
+  const shown = await shownFrame(page, 'iframe[title$="version 2"]');
+  expect(await shown.evaluate(() => location.pathname)).toBe("/");
+});
+
 const HOLD_PAGE = (title: string) => `<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="plinth-capabilities" content="hold"><title>Form</title></head><body>
 <h1>${title}</h1><label>Answer <input id="answer"></label></body></html>`;

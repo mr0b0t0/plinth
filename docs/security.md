@@ -1262,6 +1262,8 @@ from `"null"`, with its own nonce for the answers. The path is untrusted: one le
 backslash or control character, at most 2,048 characters, never under `/__plinth/`, the review flag
 and the hash dropped. It only becomes the gate's `next`, which the server passes through `safeNext`
 as it does for `?path=` links, so it can only land the new version on a page of the same artifact.
+The app asks with `carried=1`, and the gate then lands a path the current version has no file at
+(resolved as the content host resolves it, against that version's own manifest) on the root.
 
 **The carry record.** `__plinth_carry` in the content origin's `sessionStorage` holds the two
 version numbers, the time, the scroll position, the path, the hash and the page's state when its

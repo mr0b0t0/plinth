@@ -2175,6 +2175,13 @@ function operations(): Operation[] {
             "`comments`, which anchors its own comments",
         },
         { name: "next", schema: str(), description: "Path inside the artifact to land on" },
+        {
+          name: "carried",
+          schema: enumOf(["1"]),
+          description:
+            "`next` is a place carried from an older version (live views): land on the root " +
+            "when the current version has no file there",
+        },
       ],
       ok: [200, "ViewGate"],
     },

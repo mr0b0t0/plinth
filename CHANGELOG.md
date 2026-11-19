@@ -12,11 +12,12 @@ Add a line under **Unreleased** in the pull request that makes a change people w
 
 - **Open pages keep their place when a new version arrives.** A doc updates in place: the frame is
   not reloaded and the heading you were reading stays where it was. A page that loads
-  `/__plinth/runtime.js` keeps its scroll position and where it was inside the artifact, and can
-  hand state to the next version with `plinth.onVersion` (read back as `plinth.carried`). A page
-  that declares `hold` (`<meta name="plinth-capabilities" content="hold">`) is not replaced while
-  you are using it: the bar says "v5 is available · Update" instead. Every other page is replaced at
-  once, as before. Follows `ALLOW_LIVE_VIEWS`; off, every update reloads the frame as before.
+  `/__plinth/runtime.js` keeps its scroll position and where it was inside the artifact (a
+  sub-page the new version no longer has opens at its root instead), and can hand state to the
+  next version with `plinth.onVersion` (read back as `plinth.carried`). A page that declares `hold`
+  (`<meta name="plinth-capabilities" content="hold">`) is not replaced while you are using it: the
+  bar says "v5 is available · Update" instead. Every other page is replaced at once, as before.
+  Follows `ALLOW_LIVE_VIEWS`; off, every update reloads the frame as before.
 - **Your own categories for artifacts shared with you, and sharing a whole category.** On the
   dashboard, "Move to category…" now files an artifact someone shared with you under a category of
   your own, which only you see; the Category menu covers yours under Shared (#42). Owners can share

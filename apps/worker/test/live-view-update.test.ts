@@ -161,3 +161,63 @@ describe("a doc's versioned source", () => {
     expect(none.headers.get("access-control-allow-origin")).toBeNull();
   });
 });
+
+describe("a carried place", () => {
+  const landing = (g: Record<string, unknown>) =>
+    new URL(g.enter_url as string).searchParams.get("next");
+  const carried = (next: string) => `?next=${encodeURIComponent(next)}&carried=1`;
+  const page = (title: string) => `<!doctype html><title>${title}</title><p>${title}</p>`;
+
+  it("lands on the root when the current version has no file at the carried path", async () => {
+    const a = await agent();
+    const { body } = await publish(a.auth, {
+      html: page("Home"),
+      assets: [
+        { path: "about.html", content: page("About") },
+        { path: "guide/index.html", content: page("Guide") },
+      ],
+    });
+    const id = body.id as string;
+    const { headers } = await browserSession(a.user.id);
+    // A file the version has keeps the path, its query and its hash, byte for byte.
+    expect(landing(await gate(headers, id, carried("/about.html?q=a%20b&tab")))).toBe(
+      "/about.html?q=a%20b&tab",
+    );
+    expect(landing(await gate(headers, id, carried("/guide/")))).toBe("/guide/");
+    expect(landing(await gate(headers, id, carried("/?step=3")))).toBe("/?step=3");
+    // A client-side route (no such file), a directory without its slash, a reserved path, a
+    // version link: the root, never the content host's "Not found".
+    for (const path of ["/settings", "/settings?tab=2", "/guide", "/__plinth/v/1/", "/a/../b"]) {
+      expect(landing(await gate(headers, id, carried(path))), path).toBe("/");
+    }
+    // A direct content link (no carry) still lands where it asked, as before.
+    expect(landing(await gate(headers, id, "?next=%2Fsettings"))).toBe("/settings");
+
+    // v2 renames about.html: the place carried from v1 is gone, the renamed page is there.
+    const put = await call(`/api/v1/artifacts/${id}`, {
+      method: "PUT",
+      headers: { ...a.auth, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        html: page("Home 2"),
+        assets: [{ path: "team.html", content: page("Team") }],
+        base_version: 1,
+      }),
+    });
+    expect(put.status).toBe(200);
+    expect(landing(await gate(headers, id, carried("/about.html")))).toBe("/");
+    expect(landing(await gate(headers, id, carried("/team.html#crew")))).toBe("/team.html#crew");
+    // Review mode adds its flag after the fallback.
+    const review = await gate(headers, id, `${carried("/about.html")}&review=1`);
+    expect(landing(review)).toBe("/?plinth-review=1");
+  });
+
+  it("keeps a doc's own page, and lands its missing files on the root", async () => {
+    const a = await agent();
+    const { body } = await publish(a.auth, { type: "doc", content: "# Notes\n", html: undefined });
+    const id = body.id as string;
+    const { headers } = await browserSession(a.user.id);
+    expect(landing(await gate(headers, id, carried("/#notes")))).toBe("/#notes");
+    expect(landing(await gate(headers, id, carried("/content.md")))).toBe("/content.md");
+    expect(landing(await gate(headers, id, carried("/other.md")))).toBe("/");
+  });
+});

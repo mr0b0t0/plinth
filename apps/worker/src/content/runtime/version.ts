@@ -22,8 +22,9 @@
 // path, hash, state }, state only when its JSON is at most 16 KiB. The next version's runtime reads
 // and removes it at start, before the page's own scripts after the runtime tag run, ignores it when
 // older than 30 s, puts the hash back (history.replaceState, no navigation) when it landed on the
-// same path and has no hash of its own, and scrolls to the recorded place after `load` and one
-// animation frame. The hash never goes to the app: it becomes part of no request URL, so state a
+// same path and has no hash of its own, and, on the same path, scrolls to the recorded place after
+// `load` and one animation frame. The gate lands a path the new version lacks on its root
+// (`carried=1`); state still crosses, the scroll does not. The hash never goes to the app: it becomes part of no request URL, so state a
 // page keeps in its fragment stays in the viewer's browser.
 // Page script can forge an `update` on its own window: the worst it does is make the page record
 // its own state. Under opaque isolation (origin "null") there is no storage and none of this runs.
@@ -130,7 +131,8 @@ export const VERSION_FRAGMENT: RuntimeFragment = {
     if (!(age >= 0 && age <= CARRY_MAX_AGE_MS)) return null;
     if (!versionInt(rec.from) || !versionInt(rec.to)) return null;
     restoreHash(rec);
-    if (rec.scroll && typeof rec.scroll === "object") {
+    // Only on the same page: a place the new version lacks lands on its root, at the top.
+    if (rec.scroll && typeof rec.scroll === "object" && samePath(rec.path, pagePath())) {
       var x = finiteOr0(rec.scroll.x);
       var y = finiteOr0(rec.scroll.y);
       if (x !== 0 || y !== 0) restoreScroll(x, y);

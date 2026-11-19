@@ -305,8 +305,9 @@ describe("ArtifactPage: applying a newer version (live views)", () => {
     expect(await screen.findByTitle("Garden plan, version 4")).toBeTruthy();
     // One more gate read, with the page's place as `next`, never its hash: the request URL (and
     // the enter URL the server builds from it) must not carry what the page keeps in its fragment.
+    // `carried=1`: the server lands it on the root if version 4 has no file there.
     expect(s.reads.at(-1)).toBe(
-      `/view/garden-plan?next=${encodeURIComponent("/guide.html?tab=2")}`,
+      `/view/garden-plan?next=${encodeURIComponent("/guide.html?tab=2")}&carried=1`,
     );
     expect(s.reads.join(" ")).not.toContain("salary");
   });

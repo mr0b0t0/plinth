@@ -230,6 +230,29 @@ describe("runtime: new versions", () => {
     expect(boot({ storage: p.storage }).win.plinth.carried).toBeNull();
   });
 
+  it("restores the scroll only on the same page; state crosses either way", async () => {
+    const p = boot({ path: "/about.html?tab=2", scroll: { x: 0, y: 900 } });
+    p.win.plinth.onVersion(() => ({ state: { draft: "kept" } }));
+    p.fromApp(update());
+    expect((await p.answer())?.[0]).toMatchObject({ type: "update:ok", path: "/about.html?tab=2" });
+    const rec = p.storage.getItem(KEY) as string;
+    // The new version lacks about.html, so the gate landed it on the root: at the top.
+    const root = boot({
+      storage: memoryStorage({ [KEY]: rec }),
+      path: "/",
+      readyState: "complete",
+    });
+    expect(root.win.plinth.carried).toEqual({ from: 1, to: 2, state: { draft: "kept" } });
+    expect(root.scrolled).toEqual([]);
+    // Back on the same page, the scroll comes back.
+    const same = boot({
+      storage: memoryStorage({ [KEY]: rec }),
+      path: "/about.html?tab=2",
+      readyState: "complete",
+    });
+    expect(same.scrolled).toEqual([[0, 900]]);
+  });
+
   it("drops state over 16 KiB or not JSON, and keeps the rest of the record", async () => {
     const p = boot();
     p.win.plinth.onVersion(() => ({ state: "x".repeat(16 * 1024 + 1) }));
@@ -266,7 +289,7 @@ describe("runtime: new versions", () => {
     }
     // A fresh one, after load: the scroll is restored at once.
     const fresh = memoryStorage({
-      [KEY]: JSON.stringify({ from: 3, to: 4, at: Date.now(), scroll: { x: 5, y: 7 } }),
+      [KEY]: JSON.stringify({ from: 3, to: 4, at: Date.now(), scroll: { x: 5, y: 7 }, path: "/" }),
     });
     const q = boot({ storage: fresh, readyState: "complete" });
     expect(q.win.plinth.carried).toEqual({ from: 3, to: 4, state: null });
