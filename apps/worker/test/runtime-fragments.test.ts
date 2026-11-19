@@ -1,8 +1,13 @@
 // /__plinth/runtime.js is assembled from fragments (content/runtime/). The assembly replaced one
-// static string without a behaviour change, so the served bytes are pinned to the script on main
-// before the split; and the app channel, which no fragment uses yet, is tested on its own.
+// static string without a behaviour change, so the data and room fragments are pinned to the
+// script on main before the split; the app channel is tested on its own with a probe fragment.
+// Dictation (runtime/dictation.ts) is the first fragment that uses the app channel, so the served
+// script now carries it and the app origin; that part is pinned in runtime-dictation.test.ts.
 import { describe, expect, it } from "vitest";
+import { DATA_FRAGMENT } from "../src/content/runtime/data.ts";
+import { DICTATION_FRAGMENT } from "../src/content/runtime/dictation.ts";
 import type { RuntimeFragment } from "../src/content/runtime/fragment.ts";
+import { ROOM_FRAGMENT } from "../src/content/runtime/room.ts";
 import { assembleRuntime, RUNTIME_FRAGMENTS, runtimeScript } from "../src/content/runtime.ts";
 import { config } from "./helpers.ts";
 
@@ -33,7 +38,9 @@ const probe: RuntimeFragment = {
 `,
 };
 
-const WITH_PROBE = [...RUNTIME_FRAGMENTS, probe];
+/** The fragments before dictation: the bytes of the script on main. */
+const BASE = [DATA_FRAGMENT, ROOM_FRAGMENT];
+const WITH_PROBE = [...BASE, probe];
 
 /** Evaluate a script with an opaque origin (no session fetch) and capture window listeners. */
 function boot(script: string, opts: { framed: boolean }) {
@@ -77,20 +84,28 @@ function boot(script: string, opts: { framed: boolean }) {
 }
 
 describe("runtime fragments", () => {
-  it("serves the same bytes as the script before the fragments, on every instance", async () => {
+  it("assembles the data and room fragments into the script before the fragments", async () => {
+    const base = assembleRuntime(config(), BASE);
+    expect(base.length).toBe(GOLDEN_LENGTH);
+    expect(await sha256(base)).toBe(GOLDEN_SHA256);
+    // Without a fragment that uses the app channel, no configuration value is in the script.
+    expect(base).not.toContain("APP_ORIGIN");
+    expect(assembleRuntime({ appOrigin: APP }, BASE)).toBe(base);
+  });
+
+  it("serves data, room and dictation, with the app channel, memoized per app origin", () => {
+    expect(RUNTIME_FRAGMENTS).toEqual([DATA_FRAGMENT, ROOM_FRAGMENT, DICTATION_FRAGMENT]);
     const served = runtimeScript(config());
-    expect(served.length).toBe(GOLDEN_LENGTH);
-    expect(await sha256(served)).toBe(GOLDEN_SHA256);
-    // No listed fragment uses the app channel yet, so no configuration value is in the script.
-    expect(served).not.toContain("APP_ORIGIN");
-    expect(runtimeScript({ appOrigin: APP })).toBe(served);
     expect(assembleRuntime(config())).toBe(served);
-    // Memoized per app origin.
+    expect(served).toBe(assembleRuntime(config(), [...BASE, DICTATION_FRAGMENT]));
+    expect(served).toContain(`var APP_ORIGIN = ${JSON.stringify(config().appOrigin)};`);
+    // Memoized per app origin; another instance gets its own origin.
     expect(runtimeScript(config())).toBe(served);
+    expect(runtimeScript({ appOrigin: APP })).toContain(`var APP_ORIGIN = "${APP}";`);
   });
 
   it("places the app channel after the core head and before the other fragments", () => {
-    const plain = assembleRuntime({ appOrigin: APP });
+    const plain = assembleRuntime({ appOrigin: APP }, BASE);
     const withChannel = assembleRuntime({ appOrigin: APP }, WITH_PROBE);
     expect(withChannel).toContain(`var APP_ORIGIN = ${JSON.stringify(APP)};`);
     const at = withChannel.indexOf("// ---------- app channel");
@@ -149,7 +164,7 @@ describe("runtime fragments", () => {
   });
 
   it("adds no message listener when no fragment uses the app channel", () => {
-    const { listeners } = boot(runtimeScript({ appOrigin: APP }), { framed: true });
+    const { listeners } = boot(assembleRuntime({ appOrigin: APP }, BASE), { framed: true });
     expect(listeners.has("message")).toBe(false);
   });
 });

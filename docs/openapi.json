@@ -2418,7 +2418,7 @@
           },
           "capabilities": {
             "type": "array",
-            "items": { "type": "string", "enum": ["data", "viewer", "room"] },
+            "items": { "type": "string", "enum": ["data", "viewer", "room", "dictation"] },
             "description": "What the returned version declares (shared data, viewer identity)"
           },
           "data_usage": {
@@ -2542,7 +2542,7 @@
           },
           "capabilities": {
             "type": "array",
-            "items": { "type": "string", "enum": ["data", "viewer", "room"] },
+            "items": { "type": "string", "enum": ["data", "viewer", "room", "dictation"] },
             "description": "What the returned version declares (shared data, viewer identity)"
           },
           "data_usage": {
@@ -2686,7 +2686,8 @@
               "insecure_url",
               "opaque_module",
               "not_scanned",
-              "live_draft"
+              "live_draft",
+              "blocked_feature"
             ]
           },
           "file": { "type": "string", "description": "The version file the reference is in" },
@@ -3182,6 +3183,10 @@
           "upload_ticket_ttl_s": {
             "type": "integer",
             "description": "How long an upload ticket stays valid"
+          },
+          "dictation": {
+            "type": "boolean",
+            "description": "Dictation is offered here (ALLOW_DICTATION with origin isolation): pages that declare `dictation` may receive words the viewer speaks, recognized by the app"
           }
         },
         "required": [
@@ -3199,7 +3204,8 @@
           "source_url",
           "limits",
           "cdn_allowlist",
-          "upload_ticket_ttl_s"
+          "upload_ticket_ttl_s",
+          "dictation"
         ]
       },
       "LoginResult": {
@@ -3287,7 +3293,8 @@
                 ]
               },
               "data": { "$ref": "#/components/schemas/ViewGateData" },
-              "live": { "$ref": "#/components/schemas/ViewGateLive" }
+              "live": { "$ref": "#/components/schemas/ViewGateLive" },
+              "voice": { "$ref": "#/components/schemas/ViewGateVoice" }
             },
             "required": ["status", "artifact", "enter_url", "role"]
           },
@@ -3628,7 +3635,7 @@
           },
           "capabilities": {
             "type": "array",
-            "items": { "type": "string", "enum": ["data", "viewer", "room"] }
+            "items": { "type": "string", "enum": ["data", "viewer", "room", "dictation"] }
           },
           "identified": {
             "type": "boolean",
@@ -3712,7 +3719,7 @@
         "properties": {
           "capabilities": {
             "type": "array",
-            "items": { "type": "string", "enum": ["data", "viewer", "room"] }
+            "items": { "type": "string", "enum": ["data", "viewer", "room", "dictation"] }
           },
           "available": {
             "type": "boolean",
@@ -3908,6 +3915,36 @@
         },
         "required": ["mode", "draft"],
         "description": "On-page editing of a doc: owners and editors on the current version, while live editing is on with origin isolation. sign_in: confirmed by code without an account (watch only)"
+      },
+      "ViewGateVoice": {
+        "type": "object",
+        "properties": {
+          "dictation": {
+            "type": "object",
+            "properties": {
+              "available": { "type": "boolean" },
+              "reason": {
+                "oneOf": [
+                  {
+                    "type": "string",
+                    "enum": [
+                      "disabled",
+                      "opaque_isolation",
+                      "not_declared",
+                      "not_identified",
+                      "unsupported",
+                      "no_host"
+                    ]
+                  },
+                  { "type": "null" }
+                ]
+              }
+            },
+            "required": ["available", "reason"]
+          }
+        },
+        "required": ["dictation"],
+        "description": "Present on `ok` only when the current version of an HTML page declares `dictation` and ALLOW_DICTATION is on: whether this viewer may dictate into the page (identified viewers only, origin isolation only). The app runs the recognizer; the page never gets the microphone"
       },
       "LiveInfo": {
         "type": "object",

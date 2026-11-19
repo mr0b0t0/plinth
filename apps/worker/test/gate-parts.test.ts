@@ -1,6 +1,7 @@
 // The viewer gate is assembled from gate parts (api/view.ts GATE_PARTS). The wire shape is the
-// same as before the parts: the fields every ok gate has, in order, then `data`, then `live`, each
-// only when its part has something to say.
+// same as before the parts: the fields every ok gate has, in order, then `data`, then `live`, then
+// `voice` (dictation, gate-voice in dictation.test.ts), each only when its part has something to
+// say.
 import { describe, expect, it } from "vitest";
 import { GATE_PARTS } from "../src/api/view.ts";
 import { agent, browserSession, call, json, publish } from "./helpers.ts";
@@ -27,8 +28,8 @@ const ARTIFACT_KEYS = [
 ];
 
 describe("gate parts", () => {
-  it("runs the data part, then the live part", () => {
-    expect(GATE_PARTS.length).toBe(2);
+  it("runs the data part, then the live part, then the voice part", () => {
+    expect(GATE_PARTS.length).toBe(3);
   });
 
   it("a page that declares nothing: only the fields every gate has", async () => {

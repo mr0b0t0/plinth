@@ -27,6 +27,7 @@ export const PUBLISH_WARNING_CODES = [
   "opaque_module",
   "not_scanned",
   "live_draft",
+  "blocked_feature",
 ];
 
 /** Token scopes. A personal access token or OAuth grant carries a space-separated subset. */
@@ -262,11 +263,14 @@ export const CONTENT_DATA_HEADER = "x-plinth-data";
  * - `stored`: `always` keys are in every stored declaration; `declared` keys only when the token
  *   is declared, so a declaration without it is stored byte for byte as before the token existed.
  * `room` is the live room (presence and broadcast, packages/shared/src/room.ts), not shared data.
+ * `dictation` lets the page receive words the viewer dictates (packages/shared/src/voice.ts): not
+ * shared data, not a room, and never the microphone.
  */
 export const CAPABILITY_TOKENS = [
   { token: "data", declares: true, needs: [], stored: "always" },
   { token: "viewer", declares: false, needs: [], stored: "always" },
   { token: "room", declares: true, needs: [], stored: "declared" },
+  { token: "dictation", declares: true, needs: [], stored: "declared" },
 ];
 
 export const DATA_CAPABILITIES = CAPABILITY_TOKENS.map((t) => t.token);

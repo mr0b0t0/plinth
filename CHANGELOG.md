@@ -10,6 +10,14 @@ Add a line under **Unreleased** in the pull request that makes a change people w
 
 ## Unreleased
 
+- **Dictation, run by Plinth, for pages that ask for it.** A page that declares `dictation` can
+  take the words a viewer speaks (`plinth.dictation`): Plinth's app runs the browser's speech
+  recognizer after the viewer's click and consent, shows "Listening" with a Stop the page cannot
+  hide, and passes the page only words. Artifact frames still never get the microphone. Off unless
+  an operator sets `ALLOW_DICTATION=true`; origin isolation only, and only for people the page is
+  shared with. Text to speech (`speechSynthesis`) works in every page as before, now documented,
+  and a page that calls `getUserMedia` or `SpeechRecognition` itself gets a `blocked_feature`
+  publish warning.
 - **The Claude Code plugin remembers your instance.** It asks which Plinth instance to use when you
   enable it (the hosted one by default), keeps the answer, and its mention watcher follows it, so a
   self-hosted or local instance no longer needs `PLINTH_URL` exported every time Claude Code starts.

@@ -11,7 +11,7 @@ export const LEGAL_DOC_IDS = ["terms", "privacy", "acceptable-use"] as const;
 export type LegalDocId = (typeof LEGAL_DOC_IDS)[number];
 
 /** When the text of these pages last changed. Update it with any change to the wording. */
-export const LEGAL_UPDATED = "18 November 2026";
+export const LEGAL_UPDATED = "19 November 2026";
 
 export const isLegalDocId = (v: string): v is LegalDocId =>
   (LEGAL_DOC_IDS as readonly string[]).includes(v);
@@ -28,7 +28,10 @@ export interface LegalDoc {
 }
 
 /** The instance settings the pages use. */
-export type LegalConfig = Pick<AppConfig, "operator" | "email_provider" | "max_artifacts_per_user">;
+export type LegalConfig = Pick<
+  AppConfig,
+  "operator" | "email_provider" | "max_artifacts_per_user" | "dictation"
+>;
 
 const EMAIL_SERVICE: Record<AppConfig["email_provider"], string | null> = {
   sendgrid: "Twilio SendGrid",
@@ -183,6 +186,17 @@ function privacy(op: OperatorInfo, cfg: LegalConfig): LegalDoc {
               your email address, your role and the time, and show them to the page, its owner and
               the agents the owner connects. Only people the owner invited can enter anything.
             </li>
+            {cfg.dictation && (
+              <li>
+                <strong>Dictation</strong>: some pages let you dictate instead of typing. Dictation
+                starts only when you choose to start it, and only after you allow it for that page.
+                Your browser turns your speech into text using its own speech service: Chrome sends
+                the audio to Google, Edge to Microsoft and Safari to Apple, under their own terms,
+                unless the browser does it on your device. We do not receive or keep the audio. The
+                words go to the page you are dictating into. If the page saves them, we keep them as
+                that page's shared data, as described above.
+              </li>
+            )}
             <li>
               <strong>Sharing settings</strong>: the email addresses you give access to, and a
               scrambled (hashed) password if you set one.

@@ -140,6 +140,13 @@ export interface Config {
   allowLiveEditing: boolean;
   /** Live editing timings (LIVE_* env vars). */
   live: LiveEditSettings;
+  /**
+   * ALLOW_DICTATION (default off): pages that declare `dictation` may receive words the viewer
+   * speaks. The app (never the artifact) runs the browser's speech recognizer. Only in effect with
+   * origin isolation (not opaque, not the path fallback); see dictationActive. Off keeps the app's
+   * Permissions-Policy at microphone=().
+   */
+  allowDictation: boolean;
   /** OPERATOR_*: who runs this instance, for its legal pages. null when none is published. */
   operator: {
     name: string;
@@ -363,6 +370,7 @@ export function parseConfig(env: Record<string, unknown>): Config {
     rooms: parseRoomLimits(env),
     allowLiveEditing: boolDefaultOn(env.ALLOW_LIVE_EDITING),
     live: parseLiveEditSettings(env),
+    allowDictation: bool(env.ALLOW_DICTATION),
     operator: parseOperator(env),
   };
   validate(config);
@@ -539,6 +547,17 @@ export function liveEditMode(
 ): "room" | "solo" | null {
   if (!c.allowLiveEditing || c.contentIsolation !== "origin") return null;
   return roomsActive(c, env) ? "room" : "solo";
+}
+
+/**
+ * Dictation is in effect: ALLOW_DICTATION is on and each artifact is its own origin. Under opaque
+ * isolation (the path fallback included, which config forces to opaque) the app could post the
+ * viewer's words only with targetOrigin "*", to a frame that may have navigated, so it is off
+ * there; that is not a configuration error. Only then does the app's Permissions-Policy allow the
+ * microphone, and only for the app's own origin.
+ */
+export function dictationActive(c: Pick<Config, "allowDictation" | "contentIsolation">): boolean {
+  return c.allowDictation && c.contentIsolation === "origin";
 }
 
 /** Something on the page that reads the identity claim, and whether it is switched on. */

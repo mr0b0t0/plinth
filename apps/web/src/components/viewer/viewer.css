@@ -105,6 +105,34 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* Dictation: app chrome the page cannot cover, shown at every width while listening. */
+.pl-viewer__listening {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: var(--space-1-5);
+}
+.pl-viewer__listening.is-on {
+  padding: 0 0 0 var(--space-2);
+  border-radius: var(--radius-full);
+  background: var(--color-danger-soft);
+}
+.pl-viewer__listening-label {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1-5);
+  color: var(--color-danger);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  white-space: nowrap;
+}
+.pl-viewer__listening-dot {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: var(--radius-full);
+  background: var(--color-danger);
+}
+
 /* A quiet line when an older version is on view. */
 .pl-viewer__notice {
   padding: var(--space-1-5) var(--page-pad);

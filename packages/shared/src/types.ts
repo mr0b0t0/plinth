@@ -15,6 +15,7 @@ import type {
 } from "./constants.ts";
 import type { LiveMode } from "./liveDoc.ts";
 import type { Anchor } from "./schemas.ts";
+import type { DictationAccess } from "./voice.ts";
 
 export interface Author {
   kind: "user" | "connection";
@@ -354,6 +355,11 @@ export interface AppConfig {
   cdn_allowlist: string[];
   /** How long an upload ticket from start_upload stays valid, in seconds. */
   upload_ticket_ttl_s: number;
+  /**
+   * Dictation is offered on this instance (ALLOW_DICTATION, with origin isolation): pages that
+   * declare `dictation` may receive words the viewer speaks, recognized by the app.
+   */
+  dictation: boolean;
 }
 
 export interface OperatorInfo {
@@ -382,11 +388,21 @@ export type ViewGate =
        * editing is on under origin isolation. Absent otherwise.
        */
       live?: ViewGateLive;
+      /** Dictation for this page: present only when the current version declares `dictation`. */
+      voice?: ViewGateVoice;
     }
   | { status: "password_required"; artifact: ViewArtifactStub }
   | { status: "email_required"; artifact: ViewArtifactStub }
   | { status: "not_found" }
   | { status: "taken_down"; artifact: ViewArtifactStub };
+
+/**
+ * Dictation on this page (GET /view/:ref), decided by policy.ts dictationAccess. The app enforces
+ * it: it runs the recognizer and posts only words to the frame, which never gets the microphone.
+ */
+export interface ViewGateVoice {
+  dictation: DictationAccess;
+}
 
 /** How an owner or editor may edit this doc on its page (GET /view/:ref). */
 export interface ViewGateLive {

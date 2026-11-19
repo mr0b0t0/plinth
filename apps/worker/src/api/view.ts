@@ -9,6 +9,7 @@ import {
   type ViewGate,
   type ViewGateData,
   type ViewGateLive,
+  type ViewGateVoice,
   viewerCodeInput,
   viewerEmailInput,
   viewerPasswordInput,
@@ -18,6 +19,7 @@ import { Hono } from "hono";
 import { resolveViewerSession } from "../auth/principal.ts";
 import {
   contentOrigin,
+  dictationActive,
   identityClaimsActive,
   liveEditMode,
   roomsActive,
@@ -29,7 +31,7 @@ import { appCookieName, secureFlag, serializeCookie } from "../lib/cookies.ts";
 import { signToken, verifyPassword, viewerIdFor } from "../lib/crypto.ts";
 import { ApiError } from "../lib/errors.ts";
 import { hit } from "../lib/ratelimit.ts";
-import { type Decision, type Principal, pageDataAccess } from "../policy.ts";
+import { type Decision, dictationAccess, type Principal, pageDataAccess } from "../policy.ts";
 import { decideFor, findArtifact, grantFor, versionCapabilities } from "../services/artifacts.ts";
 import type { Ctx } from "../services/context.ts";
 import { readLiveDraftInfo } from "../services/live.ts";
@@ -157,6 +159,10 @@ export const GATE_PARTS: readonly GatePart[] = [
     const live = await gateLive(ctx, a, d, opts);
     return live ? { live } : undefined;
   },
+  async ({ ctx, a, d }) => {
+    const voice = await gateVoice(ctx, a, d);
+    return voice ? { voice } : undefined;
+  },
 ];
 
 /**
@@ -251,6 +257,40 @@ async function gateData(
     // The viewer is told which email the page sees (their own, or the one holding the grant).
     ...(claim && caps?.viewer && caps.data ? { email: claim.email } : {}),
     ...(roomEmail ? { room_email: roomEmail } : {}),
+  };
+}
+
+/**
+ * Dictation on the page (docs/spec.md "Voice: dictation and text to speech"): only when the current
+ * version of an HTML page declares `dictation`, whichever version is being opened, and only while
+ * ALLOW_DICTATION is on (off, nothing is read and the app answers `disabled` from its config).
+ * Identified means the owner or a grant holder, signed in or confirmed by code: the same people
+ * who write shared data or join a room. Anonymous link viewers and admins without a role are not.
+ */
+async function gateVoice(
+  ctx: Ctx,
+  a: ArtifactRow,
+  d: Extract<Decision, { allow: true }>,
+): Promise<ViewGateVoice | undefined> {
+  if (!ctx.config.allowDictation || a.type !== "html") return undefined;
+  const row = await ctx.db
+    .select({ capabilities: versions.capabilities })
+    .from(versions)
+    .where(and(eq(versions.artifactId, a.id), eq(versions.number, a.currentVersion)))
+    .get();
+  const caps = versionCapabilities(row);
+  if (caps?.dictation !== true) return undefined;
+  const p = ctx.principal;
+  const identity =
+    d.role !== null && (p.kind === "user" || p.kind === "viewer")
+      ? { email: p.email, role: d.role }
+      : null;
+  return {
+    dictation: dictationAccess(identity, caps, {
+      active: dictationActive(ctx.config),
+      isolation: ctx.config.contentIsolation,
+      type: a.type,
+    }),
   };
 }
 

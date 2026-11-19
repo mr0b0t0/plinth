@@ -14,6 +14,7 @@ import {
   DotsThreeIcon,
   FlagIcon,
   GearSixIcon,
+  MicrophoneSlashIcon,
   MoonIcon,
   PencilSimpleIcon,
   PrinterIcon,
@@ -26,9 +27,11 @@ import { Link } from "../../lib/router.tsx";
 import { THEME_NAMES, type Theme } from "../../lib/theme.ts";
 import { Button, buttonClassName, Menu, type MenuEntry, Tooltip } from "../ui/index.ts";
 import { DataNotice } from "./DataNotice.tsx";
+import { DictationControl } from "./DictationControl.tsx";
 import { EditBar } from "./EditBar.tsx";
 import { LiveDraftNotice } from "./LiveDraftNotice.tsx";
 import { postPrint, rendererTargetOrigin } from "./rendererProtocol.ts";
+import type { Dictation } from "./useDictation.ts";
 import type { LiveEdit } from "./useLiveEdit.ts";
 
 type OkGate = Extract<ViewGate, { status: "ok" }>;
@@ -47,6 +50,8 @@ export interface StageContext {
   /** On-page editing (#36). */
   live: LiveEdit;
   editing: boolean;
+  /** Dictation run by the app, for a page that declares it. */
+  dictation: Dictation;
   hrefs: {
     current: string;
     edit: string;
@@ -156,6 +161,18 @@ const capabilityItems: MenuItem = (c) =>
     (CAPABILITY_MENU_ITEMS[cap] ?? []).flatMap((item) => item(c)),
   );
 
+/** While the viewer allowed dictation on this page: take it back, which also stops listening. */
+const dictationConsent: MenuItem = (c) =>
+  c.dictation.declared && c.dictation.allowed
+    ? [
+        {
+          label: "Dictation on this page: allowed. Turn off",
+          icon: MicrophoneSlashIcon,
+          onSelect: c.dictation.turnOff,
+        },
+      ]
+    : [];
+
 /** Owners and editors do not report their own work; the footer link stays for all. */
 const report: MenuItem = (c) =>
   canEdit(c.gate.role) ? [] : [{ label: "Report", icon: FlagIcon, href: c.hrefs.report }];
@@ -179,6 +196,7 @@ export const MENU_ITEMS: readonly MenuItem[] = [
   settings,
   typeItems,
   capabilityItems,
+  dictationConsent,
   report,
   separator,
   switchTheme,
@@ -286,6 +304,7 @@ const actionsMenu: StageNode = (c) => (
 
 /** The controls on the right of the bar, left to right. One control per line. */
 export const BAR_CONTROLS: readonly StageItem[] = [
+  { id: "dictation", render: (c) => <DictationControl dictation={c.dictation} /> },
   { id: "history", render: historyLink },
   { id: "edit", render: editToggle },
   { id: "sign-in-to-edit", render: signInToEdit },

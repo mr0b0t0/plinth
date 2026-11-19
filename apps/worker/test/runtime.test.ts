@@ -1,5 +1,6 @@
 // /__plinth/runtime.js: the static script that gives pages window.plinth. It holds no artifact data
-// and no configuration, so it is served without a content cookie.
+// and no secrets, so it is served without a content cookie. Its one configuration value is the
+// public app origin, embedded once as a JSON string for dictation's app channel.
 import { describe, expect, it } from "vitest";
 import { contentCsp } from "../src/content/csp.ts";
 import { runtimeScript } from "../src/content/runtime.ts";
@@ -31,20 +32,23 @@ describe("/__plinth/runtime.js", () => {
     expect(post.status).toBe(405);
   });
 
-  it("contains no secret or configuration value", () => {
+  it("contains no secret, and no configuration value but the app origin", () => {
     const c = config();
-    const values = [
+    const secrets = [
       c.tokenSigningKey,
       c.sessionSecret,
-      c.appOrigin,
-      c.appHost,
-      c.contentHost,
-      "localhost",
       "test-session-secret",
       "test-token-signing-key",
     ].filter((v): v is string => typeof v === "string" && v.length > 0);
-    for (const v of values) expect(RUNTIME_SCRIPT, v).not.toContain(v);
-    expect(RUNTIME_SCRIPT).not.toMatch(/https?:\/\//);
+    for (const v of secrets) expect(RUNTIME_SCRIPT, v).not.toContain(v);
+    // The app origin, once, as a JSON string (dictation's app channel); no other host or URL.
+    const line = `var APP_ORIGIN = ${JSON.stringify(c.appOrigin)};`;
+    expect(RUNTIME_SCRIPT.split(line).length).toBe(2);
+    const rest = RUNTIME_SCRIPT.replace(line, "");
+    for (const v of [c.appOrigin, c.appHost, c.contentHost, "localhost"]) {
+      expect(rest, v).not.toContain(v);
+    }
+    expect(rest).not.toMatch(/https?:\/\//);
     // Shared data and the live room together; still one small static file.
     expect(RUNTIME_SCRIPT.length).toBeLessThan(32 * 1024);
   });

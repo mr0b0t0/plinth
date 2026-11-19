@@ -30,6 +30,20 @@ export interface ScanInput {
 
 type Directive = keyof ContentSources | "navigate" | "any";
 
+/** What a file's scan noticed besides references. */
+interface ScanFlags {
+  /** A module script, crossorigin link or dynamic import (fails under opaque isolation). */
+  opaque: boolean;
+  /** Uses of the microphone APIs a frame can never have (MICROPHONE_WORDS), in scripts. */
+  microphone: number;
+}
+
+/**
+ * Identifiers that reach the microphone from page script. Plinth frames never get the microphone
+ * (the app's and the content host's Permissions-Policy), so these calls fail for every viewer.
+ */
+const MICROPHONE_WORDS = new Set(["getUserMedia", "SpeechRecognition", "webkitSpeechRecognition"]);
+
 interface Ref {
   url: string;
   directive: Directive;
@@ -37,6 +51,8 @@ interface Ref {
 
 const ROOT_ABSOLUTE =
   "loads the current version's file even when an older version is viewed, and fails under the path fallback. Build with relative URLs (Vite base: './')";
+const BLOCKED_MICROPHONE =
+  "Plinth frames never get the microphone, so this call fails for every viewer. For speech to text, declare dictation and use plinth.dictation (when the instance offers it); otherwise let people type";
 const OPAQUE =
   "This instance runs opaque isolation: module scripts, crossorigin links and web fonts load with Origin: null and fail. Build a classic bundle (Vite: build.modulePreload false and an iife/legacy output)";
 
@@ -75,13 +91,21 @@ export function scanPublish(input: ScanInput): PublishWarning[] {
     budget -= f.bytes.byteLength;
     const text = decoder.decode(f.bytes);
     const found: Ref[] = [];
-    const flags = { opaque: false };
+    const flags: ScanFlags = { opaque: false, microphone: 0 };
     if (kind === "html") scanHtml(text, found, flags);
     else if (kind === "css") scanCss(text, found, flags, "img");
     else scanJs(text, found, flags);
     checkRefs(f.path, found, input, out);
     if (flags.opaque && input.isolation === "opaque") {
       out.push({ code: "opaque_module", file: f.path, message: OPAQUE });
+    }
+    if (flags.microphone > 0) {
+      out.push({
+        code: "blocked_feature",
+        file: f.path,
+        count: flags.microphone,
+        message: BLOCKED_MICROPHONE,
+      });
     }
   }
   const reused = input.reused ?? [];
@@ -322,7 +346,7 @@ function indexOfCi(s: string, needle: string, from: number): number {
   return -1;
 }
 
-function scanHtml(s: string, refs: Ref[], flags: { opaque: boolean }): void {
+function scanHtml(s: string, refs: Ref[], flags: ScanFlags): void {
   let i = 0;
   const n = s.length;
   while (i < n) {
@@ -412,12 +436,7 @@ function decodeEntities(v: string): string {
     .join(">");
 }
 
-function onTag(
-  tag: string,
-  attrs: Map<string, string>,
-  refs: Ref[],
-  flags: { opaque: boolean },
-): void {
+function onTag(tag: string, attrs: Map<string, string>, refs: Ref[], flags: ScanFlags): void {
   const src = attrs.get("src");
   if (tag === "script") {
     const type = lower(attrs.get("type") ?? "");
@@ -493,12 +512,7 @@ function onTag(
 
 // ---------- CSS ----------
 
-function scanCss(
-  s: string,
-  refs: Ref[],
-  flags: { opaque: boolean },
-  urlDirective: Directive,
-): void {
+function scanCss(s: string, refs: Ref[], flags: ScanFlags, urlDirective: Directive): void {
   const n = s.length;
   let i = 0;
   // Depth of braces and the depth at which an @font-face block opened (-1: not inside one).
@@ -745,7 +759,7 @@ function isFileSpecifier(v: string): boolean {
   );
 }
 
-function scanJs(s: string, refs: Ref[], flags: { opaque: boolean }): void {
+function scanJs(s: string, refs: Ref[], flags: ScanFlags): void {
   // A small state machine over the token stream:
   // import "x" | import ... from "x" | export ... from "x" | import("x") | new URL("x", import.meta.url)
   let state:
@@ -761,6 +775,7 @@ function scanJs(s: string, refs: Ref[], flags: { opaque: boolean }): void {
   let prev: JsToken | null = null;
   let pendingUrl = "";
   for (const t of jsTokens(s)) {
+    if (t.kind === "word" && MICROPHONE_WORDS.has(t.value)) flags.microphone++;
     const afterDot = prev?.kind === "punct" && prev.value === ".";
     switch (state) {
       case "import":
