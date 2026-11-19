@@ -111,6 +111,12 @@
   background: var(--ds-panel);
 }
 
+.ds-nav a[aria-current] {
+  background: var(--ds-panel);
+  color: var(--doc-heading);
+  font-weight: 600;
+}
+
 .ds-nav a:focus-visible,
 .ds-token__var:focus-visible,
 .ds-code summary:focus-visible {
@@ -253,7 +259,8 @@
   color: var(--doc-muted);
 }
 
-/* Samples: each one shows a token's value; light and dark samples sit on their own ground. */
+/* Samples: each one shows a token's value. A light and dark pair sits on each theme's ground; a
+   single sample (the same in both themes) sits on the reader's. */
 
 .ds-sample {
   flex: 1 1 0;
@@ -261,6 +268,11 @@
   min-height: 48px;
   border: 1px solid var(--doc-border);
   border-radius: 8px;
+  background: var(--doc-bg);
+  color: var(--doc-fg);
+}
+
+.ds-sample[data-theme="light"] {
   background: #ffffff;
   color: #1f2328;
 }
@@ -280,6 +292,11 @@
   display: flex;
   align-items: center;
   padding: 8px 10px;
+}
+
+.ds-sample__text {
+  display: block;
+  min-width: 0;
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
@@ -396,25 +413,24 @@
 }
 
 .ds-error {
-  max-width: 72ch;
-  margin: 0 auto;
+  margin: 0;
+  color: var(--doc-muted);
 }
 
-.ds-error h1 {
-  font-size: 1.5rem;
-}
-
-.ds-problems code {
-  font-weight: 600;
-}
-
-/* Headings the author wrote sit under the site's own section headings. */
+/* Headings the author wrote sit under the site's own section headings, which carry the only rules
+   and no "#" anchors, so the page has one heading style and every rule spans the column. */
 .ds-prose.plinth-doc h1 {
   font-size: 1.25rem;
 }
 
 .ds-prose.plinth-doc h2 {
+  padding-bottom: 0;
+  border-bottom: 0;
   font-size: 1.1rem;
+}
+
+.ds-prose .plinth-doc__anchor {
+  display: none;
 }
 
 @media (max-width: 760px) {
@@ -423,15 +439,27 @@
     gap: 16px;
   }
 
+  /* The navigation is one row that scrolls sideways, components after their label. */
   .ds-nav {
-    position: static;
+    position: relative;
+    top: auto;
     max-height: none;
+    margin: 0 -16px;
+    padding: 0 16px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;
+  }
+
+  .ds-nav::-webkit-scrollbar {
+    display: none;
   }
 
   .ds-nav ul {
     display: flex;
-    flex-wrap: wrap;
-    gap: 4px;
+    align-items: center;
+    gap: 2px;
+    white-space: nowrap;
   }
 
   .ds-nav__group,
@@ -440,7 +468,10 @@
   }
 
   .ds-nav__label {
-    display: none;
+    margin: 0 0 0 6px;
+    padding: 5px 8px 5px 14px;
+    border-left: 1px solid var(--doc-rule);
+    line-height: 1.6;
   }
 
   /* Each token stacks: samples, then its name and variable, then its value. */

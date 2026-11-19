@@ -127,16 +127,29 @@ export function groupOf(t: DsToken): Group {
   }
 }
 
-/** The visual sample of one token in one theme. Values are set through CSSOM properties. */
-function sample(doc: Document, t: DsToken, value: string, theme: PreviewTheme): HTMLElement {
-  const s = el(doc, "div", { class: `ds-sample ds-sample--${groupOf(t)}`, "data-theme": theme });
+/**
+ * The visual sample of one token. Values are set through CSSOM properties. A sample with a theme
+ * sits on that theme's ground (a light and dark pair); one without follows the reader's scheme.
+ */
+function sample(doc: Document, t: DsToken, value: string, theme: PreviewTheme | null): HTMLElement {
+  const attrs: Attrs = { class: `ds-sample ds-sample--${groupOf(t)}` };
+  if (theme) attrs["data-theme"] = theme;
+  const s = el(doc, "div", attrs);
   const style = s.style;
   switch (groupOf(t)) {
     case "color":
       style.setProperty("--ds-sample", value);
       break;
     case "type": {
-      s.textContent = "The quick brown fox jumps over the lazy dog";
+      // A block child carries the ellipsis: text-overflow does nothing on a flex container.
+      s.append(
+        el(
+          doc,
+          "span",
+          { class: "ds-sample__text" },
+          "The quick brown fox jumps over the lazy dog",
+        ),
+      );
       if (t.type === "typography") style.font = value;
       else if (t.type === "fontFamily") style.fontFamily = value;
       else style.fontWeight = value;
@@ -167,13 +180,15 @@ function sample(doc: Document, t: DsToken, value: string, theme: PreviewTheme): 
 }
 
 /**
- * One token: its samples, path, variable and value. A token whose dark value differs gets a dark
- * sample and value beside the light ones; one that is the same in both shows once.
+ * One token: its samples, path, variable and value. A token whose dark value differs gets a light
+ * and a dark sample, each on its theme's ground; one that is the same in both shows once, on the
+ * reader's.
  */
 function tokenRow(doc: Document, t: DsToken): HTMLElement {
   const row = el(doc, "tr", { class: "ds-token", "data-path": t.path });
-  const pair = el(doc, "div", { class: "ds-token__pair" }, sample(doc, t, t.value, "light"));
-  if (t.dark !== null) pair.append(sample(doc, t, t.dark, "dark"));
+  const pair = el(doc, "div", { class: "ds-token__pair" });
+  if (t.dark === null) pair.append(sample(doc, t, t.value, null));
+  else pair.append(sample(doc, t, t.value, "light"), sample(doc, t, t.dark, "dark"));
   const info = el(
     doc,
     "td",
@@ -404,20 +419,15 @@ export function renderSite(
   );
 }
 
-/** The error state: the stored JSON does not parse. Each problem is text. */
-export function renderProblems(
-  doc: Document,
-  problems: { path: string; message: string }[],
-): HTMLElement {
-  const list = el(doc, "ul", { class: "ds-problems" });
-  for (const p of problems) {
-    list.append(el(doc, "li", {}, el(doc, "code", {}, p.path || "(root)"), ` ${p.message}`));
-  }
+/**
+ * The error state: the JSON does not parse. One short line, as the doc type's: the editor lists the
+ * problems above the source, and the Worker returns them to the agent that tried to publish.
+ */
+export function renderProblems(doc: Document): HTMLElement {
   return el(
     doc,
-    "div",
+    "p",
     { class: "ds-error", role: "alert" },
-    el(doc, "h1", {}, "This design system could not be shown"),
-    list,
+    "This design system could not be shown.",
   );
 }

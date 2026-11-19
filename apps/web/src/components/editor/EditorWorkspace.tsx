@@ -134,9 +134,14 @@ export default function EditorWorkspace({
   // A typed format's own problems (a design system's JSON): Save waits until there are none.
   const problems = useMemo(() => sourceProblems(def.id, html), [def, html]);
   const invalid = problems.length > 0;
+  // While the draft has problems (listed above the editor), the preview keeps its last valid
+  // render instead of repeating them.
+  const lastValid = useRef(html);
+  if (!invalid) lastValid.current = html;
+  const shown = invalid ? lastValid.current : html;
   const preview = useMemo(
-    () => previewDocument(def, { id, title: artifact.title, text: html, config }),
-    [def, id, artifact.title, html, config],
+    () => previewDocument(def, { id, title: artifact.title, text: shown, config }),
+    [def, id, artifact.title, shown, config],
   );
 
   // Refs for handlers that must see the newest values (keyboard shortcut, async saves).

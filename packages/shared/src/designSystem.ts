@@ -232,12 +232,14 @@ const isAlias = (v: unknown): v is string => typeof v === "string" && ALIAS_RE.t
 const aliasTarget = (v: string): string => ALIAS_RE.exec(v)?.[1] ?? "";
 const fmtNumber = (n: number) => String(n);
 
-/** Why a string may not reach CSS, or null when it may. */
+/**
+ * Why a string may not reach CSS, or null when it may. Each reason is one short line: the editor
+ * lists them above the source, and the skill and docs/spec.md give the full value grammar.
+ */
 export function cssValueProblem(s: string): string | null {
   if (s.length > L.maxValueLength) return `is longer than ${L.maxValueLength} characters`;
   if (s.trim() === "") return "is empty";
-  if (CSS_VALUE_BAD.test(s))
-    return "may not contain ; { } < > \\ @ quotes or line breaks (it goes into other pages' CSS)";
+  if (CSS_VALUE_BAD.test(s)) return "has a character CSS can't use";
   if (CSS_VALUE_BAD_WORDS.test(s)) return "may not contain url(, expression( or comments";
   return null;
 }
@@ -314,18 +316,15 @@ const CSS_STRING_URL_FN = /image-set\(|(?<![\w-])(?:image|src|cross-fade|element
  * a <style> element, from escaping its way past them, and from naming another host at all.
  */
 function cssBlockProblem(s: string): string | null {
-  if (s.includes("<")) return "may not contain <, so it can never end a <style> element";
-  if (s.includes("\\")) return "may not contain \\ (CSS escapes): write the characters themselves";
-  if (/@import/i.test(s))
-    return "may not use @import: put the rules in this block, and fonts in fonts[]";
-  if (CSS_STRING_URL_FN.test(s))
-    return "may not use image-set(), image(), src(), cross-fade(), element() or expression(): use url() with a relative path";
+  if (s.includes("<")) return "may not contain <";
+  if (s.includes("\\")) return "may not contain \\";
+  if (/@import/i.test(s)) return "may not use @import: fonts go in fonts[]";
+  if (CSS_STRING_URL_FN.test(s)) return "may load images only with url()";
   const urls = cssUrlArgs(s);
-  if (urls === null)
-    return 'holds a url() that is not plain: write url(path) or url("path") with no quotes, parentheses or spaces inside';
+  if (urls === null) return "has a url() that is not a plain path";
   for (const u of urls) {
     if (!(isPlainRelativeUrl(u) || FRAGMENT_RE.test(u) || DATA_RASTER_RE.test(u))) {
-      return `may only use url() with a relative path to this design system's own files, a #fragment or a raster data: image, not ${JSON.stringify(u.slice(0, 80))} (other pages' CSP blocks other hosts, and fonts go in fonts[])`;
+      return `may use url() only for this design system's own files, not ${JSON.stringify(u.slice(0, 40))}`;
     }
   }
   return null;

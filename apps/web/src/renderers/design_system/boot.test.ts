@@ -1,5 +1,5 @@
 // The design system renderer's entry and site: it boots from the JSON block the shell embeds,
-// renders every section, shows readable problems for JSON it cannot use, and puts every author
+// renders every section, shows one short line for JSON it cannot use, and puts every author
 // string on the page as text.
 import { jsonForScript, TYPE_REGISTRY, typedShellHtml } from "@plinth/shared";
 import { afterEach, describe, expect, it } from "vitest";
@@ -140,6 +140,54 @@ describe("boot", () => {
       "Alias of color.brand.500",
     );
     expect(rows[4]?.querySelector(".ds-token__deprecated")?.textContent).toBe("Deprecated Use fg");
+    // A pair sits on each theme's ground; a token that is the same in both, on the reader's.
+    expect(samples.map((s) => s.getAttribute("data-theme"))).toEqual(["light", "dark"]);
+    const brand = rows[0]?.querySelectorAll(".ds-sample") ?? [];
+    expect(brand).toHaveLength(1);
+    expect(brand[0]?.hasAttribute("data-theme")).toBe(false);
+  });
+
+  it("shows a type specimen in a block that can end in an ellipsis", () => {
+    mountShell(JSON.stringify(FIXTURE));
+    stop = boot(window);
+    const specimen = root().querySelector('.ds-token[data-path="font.body"] .ds-sample--type');
+    expect(specimen?.hasAttribute("data-theme")).toBe(false);
+    expect(specimen?.children).toHaveLength(1);
+    expect(specimen?.firstElementChild?.className).toBe("ds-sample__text");
+  });
+
+  it("marks the navigation link of the section in view", () => {
+    type Report = (entries: { target: Element; isIntersecting: boolean }[]) => void;
+    const seen: Element[] = [];
+    const observer: { report: Report } = { report: () => undefined };
+    const report: Report = (entries) => observer.report(entries);
+    const original = window.IntersectionObserver;
+    window.IntersectionObserver = class {
+      constructor(cb: Report) {
+        observer.report = cb;
+      }
+      observe(el: Element) {
+        seen.push(el);
+      }
+      disconnect() {}
+    } as unknown as typeof IntersectionObserver;
+    try {
+      mountShell(JSON.stringify(FIXTURE));
+      stop = boot(window);
+      const current = () =>
+        [...root().querySelectorAll(".ds-nav a[aria-current]")].map((a) => a.textContent);
+      expect(seen.map((s) => s.getAttribute("data-hash"))).toContain("components/button");
+      const at = (hash: string) => seen.find((s) => s.getAttribute("data-hash") === hash);
+      report([{ target: at("overview") as Element, isIntersecting: true }]);
+      expect(current()).toEqual(["Overview"]);
+      report([
+        { target: at("overview") as Element, isIntersecting: false },
+        { target: at("components/button") as Element, isIntersecting: true },
+      ]);
+      expect(current()).toEqual(["Button"]);
+    } finally {
+      window.IntersectionObserver = original;
+    }
   });
 
   it("renders each component's examples in preview frames, with its HTML and CSS behind disclosures", () => {
@@ -243,16 +291,13 @@ describe("boot", () => {
     expect(root().textContent).toContain(evil);
   });
 
-  it("shows the problems and sets data-ready=error for JSON it cannot use", () => {
+  it("shows one short line and sets data-ready=error for JSON it cannot use", () => {
     mountShell(JSON.stringify({ ...FIXTURE, format: "plinth.design-system/9" }));
     stop = boot(window);
     expect(document.documentElement.getAttribute("data-ready")).toBe("error");
-    expect(root().querySelector(".ds-error h1")?.textContent).toBe(
-      "This design system could not be shown",
-    );
-    expect(root().querySelector(".ds-problems li")?.textContent).toBe(
-      'format must be "plinth.design-system/1"',
-    );
+    // The editor lists the problems above the source; the page does not repeat them.
+    expect(root().textContent).toBe("This design system could not be shown.");
+    expect(root().querySelectorAll("h1, ul")).toHaveLength(0);
   });
 
   it("refuses a payload for another type or that is not JSON", () => {

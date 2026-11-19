@@ -623,7 +623,7 @@ describe("the CSS injection guard", () => {
           ds.css = css;
         }),
         "css",
-        /url\(\) with a relative path/,
+        /url\(\) only for this design system.s own files/,
       );
     }
     refusedAt(
@@ -648,7 +648,7 @@ describe("the CSS injection guard", () => {
           ds.css = css;
         }),
         "css",
-        /not plain/,
+        /not a plain path/,
       );
     }
     for (const css of [
@@ -662,7 +662,7 @@ describe("the CSS injection guard", () => {
           ds.css = css;
         }),
         "css",
-        /image-set\(\)/,
+        /images only with url\(\)/,
       );
     }
   });
