@@ -179,7 +179,13 @@ export default function ArtifactStats({ params }: { params: Record<string, strin
           action={<Button onClick={() => setReload((n) => n + 1)}>Try again</Button>}
         />
       ) : (
-        <StatsView stats={state.stats} days={days} onDays={setDays} />
+        <StatsView
+          stats={state.stats}
+          days={days}
+          onDays={setDays}
+          // The stats on screen are for another window until the new range arrives.
+          updating={state.stats.days !== days}
+        />
       )}
     </AppShell>
   );
@@ -189,10 +195,12 @@ function StatsView({
   stats,
   days,
   onDays,
+  updating,
 }: {
   stats: ArtifactStatsData;
   days: StatsRange;
   onDays: (d: string) => void;
+  updating: boolean;
 }) {
   const t = stats.totals;
   const period = `last ${stats.days} days`;
@@ -209,71 +217,80 @@ function StatsView({
           size="sm"
         />
       </div>
-      {!stats.enabled && (
-        <Note className="pl-ostats__note">
-          This instance does not record opens (VIEW_COUNTS is off), so nothing new is added here.
-        </Note>
-      )}
-      {t.all_time_opens === 0 ? (
-        <EmptyState
-          headingLevel={2}
-          title="No opens yet"
-          description="When someone other than you opens this artifact, you will see who it was and when."
-        />
-      ) : (
-        <>
-          <h2 className="visually-hidden">Totals</h2>
-          <dl className="pl-stat-grid">
-            <Tile
-              label={`Opens, ${period}`}
-              value={formatCount(t.opens)}
-              caption={`${formatCount(t.anonymous_opens)} anonymous`}
-            />
-            <Tile
-              label={`Viewers, ${period}`}
-              value={formatCount(t.viewers)}
-              caption="People and anonymous visitors"
-            />
-            <Tile label="People" value={formatCount(t.people)} caption="Signed in or by email" />
-            <Tile
-              label="Anonymous visitors"
-              value={formatCount(t.anonymous_visitors)}
-              caption="Approximate: one per browser"
-            />
-            <Tile
-              label="Opens in all"
-              value={formatCount(t.all_time_opens)}
-              caption={t.since ? `Since ${formatDay(t.since)}` : undefined}
-            />
-          </dl>
-          <h2 className="pl-stats__section-title">Per day, {period}</h2>
-          <div className="pl-stats__charts">
-            <TrendChart
-              title="Opens per day"
-              unit={["open", "opens"]}
-              days={series}
-              series={[{ label: "Opens", values: stats.series.map((d) => d.opens) }]}
-            />
-            <TrendChart
-              title="Viewers per day"
-              unit={["viewer", "viewers"]}
-              days={series}
-              series={[{ label: "Viewers", values: stats.series.map((d) => d.viewers) }]}
-            />
-          </div>
-          <h2 className="pl-stats__section-title">People, {period}</h2>
-          <PeopleTable stats={stats} />
-          <h2 className="pl-stats__section-title">Versions, {period}</h2>
-          <VersionsTable stats={stats} />
-        </>
-      )}
-      <p className="pl-stats__footnote">
-        Counts opens by people other than you: once per browser every 12 hours, and again after you
-        change who can open the page. Names and emails are shown for people signed in to Plinth and
-        for viewers who confirmed their email; anyone else counts as an anonymous visitor, one per
-        browser, so that figure is approximate. Days are UTC. Each open is kept with who made it for{" "}
-        {formatCount(stats.retention_days)} days, and after that only counted.
+      <p className="visually-hidden pl-ostats__live" role="status">
+        {updating ? "Updating stats" : ""}
       </p>
+      <div
+        className={updating ? "pl-ostats__body pl-ostats__body--updating" : "pl-ostats__body"}
+        aria-busy={updating || undefined}
+      >
+        {!stats.enabled && (
+          <Note className="pl-ostats__note">
+            This instance does not record opens (VIEW_COUNTS is off), so nothing new is added here.
+          </Note>
+        )}
+        {t.all_time_opens === 0 ? (
+          <EmptyState
+            headingLevel={2}
+            title="No opens yet"
+            description="When someone other than you opens this artifact, you will see who it was and when."
+          />
+        ) : (
+          <>
+            <h2 className="visually-hidden">Totals</h2>
+            <dl className="pl-stat-grid">
+              <Tile
+                label={`Opens, ${period}`}
+                value={formatCount(t.opens)}
+                caption={`${formatCount(t.anonymous_opens)} anonymous`}
+              />
+              <Tile
+                label={`Viewers, ${period}`}
+                value={formatCount(t.viewers)}
+                caption="People and anonymous visitors"
+              />
+              <Tile label="People" value={formatCount(t.people)} caption="Signed in or by email" />
+              <Tile
+                label="Anonymous visitors"
+                value={formatCount(t.anonymous_visitors)}
+                caption="Approximate: one per browser"
+              />
+              <Tile
+                label="Opens in all"
+                value={formatCount(t.all_time_opens)}
+                caption={t.since ? `Since ${formatDay(t.since)}` : undefined}
+              />
+            </dl>
+            <h2 className="pl-stats__section-title">Per day, {period}</h2>
+            <div className="pl-stats__charts">
+              <TrendChart
+                title="Opens per day"
+                unit={["open", "opens"]}
+                days={series}
+                series={[{ label: "Opens", values: stats.series.map((d) => d.opens) }]}
+              />
+              <TrendChart
+                title="Viewers per day"
+                unit={["viewer", "viewers"]}
+                days={series}
+                series={[{ label: "Viewers", values: stats.series.map((d) => d.viewers) }]}
+              />
+            </div>
+            <h2 className="pl-stats__section-title">People, {period}</h2>
+            <PeopleTable stats={stats} />
+            <h2 className="pl-stats__section-title">Versions, {period}</h2>
+            <VersionsTable stats={stats} />
+          </>
+        )}
+        <p className="pl-stats__footnote">
+          Counts opens by people other than you: once per browser every 12 hours, and again after
+          you change who can open the page. Names and emails are shown for people signed in to
+          Plinth and for viewers who confirmed their email; anyone else counts as an anonymous
+          visitor, one per browser, so that figure is approximate. Days are UTC. Each open is kept
+          with who made it for {formatCount(stats.retention_days)} days, and after that only
+          counted.
+        </p>
+      </div>
     </>
   );
 }

@@ -81,7 +81,9 @@ function stats(days: ArtifactStats["days"] = 30, over: Partial<ArtifactStats> = 
   };
 }
 
-function handler(opts: { artifact?: ArtifactSummary; stats?: (days: number) => Response } = {}) {
+function handler(
+  opts: { artifact?: ArtifactSummary; stats?: (days: number) => Response | Promise<Response> } = {},
+) {
   return stubApi({
     me: ME,
     handle: (c) => {
@@ -180,6 +182,30 @@ describe("ArtifactStats", () => {
     await screen.findByText("Opens, last 365 days", { selector: "dt" });
     expect(calls.some((c) => c.path === "/artifacts/art1/stats?days=365")).toBe(true);
     expect(window.location.search).toBe("?days=365");
+  });
+
+  it("dims the shown window and says it is updating while another range loads", async () => {
+    let release: (r: Response) => void = () => {};
+    const held = new Promise<Response>((r) => {
+      release = r;
+    });
+    handler({
+      stats: (days) => (days === 365 ? held : json(stats(days as ArtifactStats["days"]))),
+    });
+    const Page = await loadPage();
+    const user = userEvent.setup();
+    const { container } = render(<Page params={{ slug: "plan" }} />);
+    await screen.findByText("Opens, last 30 days", { selector: "dt" });
+    expect(container.querySelector(".pl-ostats__live")?.textContent).toBe("");
+    await user.click(screen.getByRole("radio", { name: "365 days" }));
+    expect(await screen.findByText("Updating stats")).toBeTruthy();
+    // The previous window stays readable, marked busy, until the new one arrives.
+    expect(screen.getByText("Opens, last 30 days", { selector: "dt" })).toBeTruthy();
+    expect(container.querySelector(".pl-ostats__body")?.getAttribute("aria-busy")).toBe("true");
+    release(json(stats(365)));
+    await screen.findByText("Opens, last 365 days", { selector: "dt" });
+    expect(container.querySelector(".pl-ostats__live")?.textContent).toBe("");
+    expect(container.querySelector(".pl-ostats__body")?.getAttribute("aria-busy")).toBeNull();
   });
 
   it("starts from ?days=", async () => {
