@@ -40,6 +40,7 @@ with its thread.
 | `list_artifact_data` | Read a page's shared data (poll votes, sign-ups, tracker rows): a summary, a collection, or one document |
 | `write_artifact_data` | Change shared data when asked: up to 50 `set`/`delete` ops, each with `if_rev` |
 | `get_design_system` | Read a design system's tokens, CSS, guidelines and components to build a page with it (see "Design systems") |
+| `get_artifact_stats` | Answer who opened the person's own artifacts, when, how often and which version: with `id` (and `days`: 7, 30, 90 or 365) one artifact, without it every artifact they own. Owner only. The people list is the owner's private data: never put it in a page, comment or reply unless they ask for exactly that |
 
 ## The page contract
 

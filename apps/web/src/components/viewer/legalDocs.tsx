@@ -11,7 +11,7 @@ export const LEGAL_DOC_IDS = ["terms", "privacy", "acceptable-use"] as const;
 export type LegalDocId = (typeof LEGAL_DOC_IDS)[number];
 
 /** When the text of these pages last changed. Update it with any change to the wording. */
-export const LEGAL_UPDATED = "18 November 2026";
+export const LEGAL_UPDATED = "19 November 2026";
 
 export const isLegalDocId = (v: string): v is LegalDocId =>
   (LEGAL_DOC_IDS as readonly string[]).includes(v);
@@ -27,8 +27,17 @@ export interface LegalDoc {
   sections: LegalSection[];
 }
 
+/** Days an open is kept with who made it when the instance does not say (VIEW_LOG_RETENTION_DAYS). */
+export const DEFAULT_VIEW_LOG_RETENTION_DAYS = 365;
+
 /** The instance settings the pages use. */
-export type LegalConfig = Pick<AppConfig, "operator" | "email_provider" | "max_artifacts_per_user">;
+export type LegalConfig = Pick<
+  AppConfig,
+  "operator" | "email_provider" | "max_artifacts_per_user"
+> & {
+  /** VIEW_LOG_RETENTION_DAYS; DEFAULT_VIEW_LOG_RETENTION_DAYS when absent. */
+  view_log_retention_days?: number;
+};
 
 const EMAIL_SERVICE: Record<AppConfig["email_provider"], string | null> = {
   sendgrid: "Twilio SendGrid",
@@ -152,6 +161,7 @@ function terms(op: OperatorInfo, cfg: LegalConfig): LegalDoc {
 
 function privacy(op: OperatorInfo, cfg: LegalConfig): LegalDoc {
   const emailService = EMAIL_SERVICE[cfg.email_provider];
+  const openDays = cfg.view_log_retention_days ?? DEFAULT_VIEW_LOG_RETENTION_DAYS;
   return {
     title: "Privacy notice",
     summary: "What personal data this Plinth service keeps, why, and what you can ask for.",
@@ -199,11 +209,13 @@ function privacy(op: OperatorInfo, cfg: LegalConfig): LegalDoc {
               they gave one.
             </li>
             <li>
-              <strong>How often pages are opened</strong>: one number per page per day, counting
-              opens by people other than the page's owner. Nothing about who opened a page is kept
-              with it: no email address, IP address or browser details. The page's owner sees these
-              numbers for their own pages, and the people who run this service see totals across all
-              pages, never page by page.
+              <strong>Who opened a page</strong>: when someone other than its owner opens a page, we
+              record when, which version, and who it was: the name and email address of people
+              signed in to this service, and the email address of viewers who confirmed it with a
+              code. Anyone else is recorded only by a random id in their viewing cookie, so the
+              owner sees an approximate number of anonymous visitors, never who they are. No IP
+              address or browser details are kept with an open. The page's owner sees this for their
+              own pages, and the people who run this service see only totals across all pages.
             </li>
             <li>
               <strong>Unsaved page edits</strong>: when you edit a document on its page, we keep the
@@ -224,9 +236,9 @@ function privacy(op: OperatorInfo, cfg: LegalConfig): LegalDoc {
           <p>
             To run the service you asked for, to keep it secure and free of abuse (our legitimate
             interest), and to handle reports of illegal content as the law requires. We do not sell
-            your data, show ads, or use third-party analytics or tracking cookies. The open counts
-            above are kept by the service itself, to show owners how often their pages are opened
-            and us how the service is used.
+            your data, show ads, or use third-party analytics or tracking cookies. Opens are
+            recorded by the service itself, to show owners who opened their pages and us how the
+            service is used.
           </p>
         ),
       },
@@ -251,7 +263,10 @@ function privacy(op: OperatorInfo, cfg: LegalConfig): LegalDoc {
               What people enter on shared pages: until the page's owner clears it or deletes the
               page.
             </li>
-            <li>How often a page was opened: until the page's stored copy is erased.</li>
+            <li>
+              Who opened a page: {openDays} days, then only the number of opens, until the page's
+              stored copy is erased. Erasing a person also removes who they were from these records.
+            </li>
             <li>
               Unsaved page drafts: until saved or discarded, or 30 days after the last change.
             </li>
@@ -272,8 +287,9 @@ function privacy(op: OperatorInfo, cfg: LegalConfig): LegalDoc {
             requests, proof that you entered an artifact's password or confirmed your email, and a
             viewing cookie for each artifact you open. On a page that saves what its viewers enter,
             that cookie also says who you are, so the page cannot pretend to be someone else. The
-            viewing cookie also notes whether your open of that page was already counted, so opening
-            it again within 12 hours is not counted twice; it adds nothing else about you.
+            viewing cookie also holds a random visitor id, so opening the page again within 12 hours
+            is not counted twice and anonymous visitors can be counted. It lasts up to 30 days and
+            adds nothing else about you.
           </p>
         ),
       },
