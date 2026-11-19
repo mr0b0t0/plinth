@@ -56,6 +56,9 @@ export const DEV_VARS: Record<string, string> = {
   // Files people add to a page (docs/spec.md "Files people add to a page"), off by default on real
   // instances. On the opaque server it has no effect: files need origin isolation.
   ALLOW_FILES: "true",
+  // Pages that hand work to the owner's agent (docs/spec.md "Page requests"), off by default on
+  // real instances. On the opaque server it has no effect: page requests need origin isolation.
+  ALLOW_PAGE_REQUESTS: "true",
   // Fresh for every run; never committed, never reused.
   SESSION_SECRET: randomBytes(48).toString("base64url"),
   TOKEN_SIGNING_KEY: randomBytes(48).toString("base64url"),
