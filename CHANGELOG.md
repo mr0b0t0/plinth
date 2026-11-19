@@ -19,13 +19,39 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   `.html` or `.md` file, uses a token's artifact when `--id` is left out, and with `--json` prints
   a JSON object on failure too, and prints `live_draft` as a note that needs no action. GitLab CI
   and cron: `docs/ci.md` (#51).
+- **Artifact stats: see who opened your artifacts.** Each artifact's Stats page (`/a/<slug>/stats`,
+  linked from its menu and the Share dialog) shows opens and viewers over 7, 30, 90 or 365 days,
+  the people who opened it (name and email for people signed in and allowlisted viewers, with the
+  version they last saw), opens per version and an approximate count of anonymous visitors. Agents read the same with the `get_artifact_stats` MCP
+  tool, `GET /api/v1/artifacts/:ref/stats` and `GET /api/v1/stats/artifacts` (owner only). This
+  replaces the open counts in the Share dialog and `GET /api/v1/artifacts/:ref/views`, which is
+  gone. Opens are kept with who made them for `VIEW_LOG_RETENTION_DAYS` (default 365), then only
+  counted; `VIEW_COUNTS=off` still stops recording. Apply migration `0020_artifact_opens.sql`
+  before deploying: it keeps the existing daily counts as opens with no viewer. Plugin 0.17.0.
+- **A Cursor plugin.** `integrations/plugin-cursor` packages the Plinth server and skill in Cursor's
+  plugin layout, for the Cursor Marketplace and cursor.directory.
+- **A build for OpenAI's plugin directory.** `integrations/plugin-openai` is the folder to ZIP for
+  ChatGPT and Codex: the portable manifest with its listing block, the hosted server, the icon and
+  the skill, with no hooks and no Claude Code passages.
+- **The plugin directory build connects to the hosted instance again.** Anthropic's plugin directory
+  refused the 0.15.0 build because its server URL used the Plinth instance option, so the directory
+  build has a fixed `https://plinth.aconite.io/mcp` server and no option. With that build, add a
+  self-hosted instance as its own server, or install the full plugin from this repository's
+  marketplace, which keeps the option. Plugin 0.16.0.
+- **OpenAI domain verification.** Set `OPENAI_APPS_CHALLENGE` to the token OpenAI's plugin portal
+  shows, and the instance serves it at `/.well-known/openai-apps-challenge`. Unset, the path stays
+  404.
 - **The Claude Code plugin remembers your instance.** It asks which Plinth instance to use when you
   enable it (the hosted one by default), keeps the answer, and its mention watcher follows it, so a
   self-hosted or local instance no longer needs `PLINTH_URL` exported every time Claude Code starts.
   From a terminal: `claude plugin install plinth@plinth --config instance_url=<origin>`; later,
-  `/plugin configure plinth@plinth`. `PLINTH_URL` still works and wins. The directory build has the
-  option too, and the Connect panel, `/llms.txt` and `plinth connect` print the right command for
-  each instance. Plugin 0.15.0.
+  `/plugin configure plinth@plinth`. `PLINTH_URL` still works and wins. The Connect panel, `/llms.txt`
+  and `plinth connect` print the right command for each instance. Plugin 0.15.0.
+- **Review account sign-in.** An operator can give one ordinary account a password, for a
+  directory's reviewers who cannot receive sign-in emails: set `REVIEW_LOGIN_EMAIL` and the secret
+  `REVIEW_LOGIN_PASSWORD_HASH` (from `apps/worker/scripts/review-login-hash.mjs`). It signs in at
+  `/login/review`, linked from the sign-in page, and locks after repeated wrong passwords. Off
+  unless both are set; never an admin account ([security.md](docs/security.md#review-account-sign-in)).
 - **Plinth shows up properly in Codex.** The plugin now carries Codex's listing block (name,
   short description, icon, starter prompts, links), so Codex and Codex plugin directories show it
   with its own icon and description. Plugin 0.13.0.

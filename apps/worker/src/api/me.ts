@@ -43,6 +43,8 @@ meApi.get("/config", (c) => {
     limits: instanceLimits(config),
     cdn_allowlist: [...config.cdnAllowlist],
     upload_ticket_ttl_s: TTL.uploadTicketMs / 1000,
+    review_login: config.reviewLogin !== null,
+    view_log_retention_days: config.viewLogRetentionDays,
   };
   const res = c.json(body);
   ensureCsrfCookie(c, res.headers);

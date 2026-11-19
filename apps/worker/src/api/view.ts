@@ -35,7 +35,7 @@ import type { Ctx } from "../services/context.ts";
 import { readLiveDraftInfo } from "../services/live.ts";
 import { sessionCookie } from "../services/sessions.ts";
 import { requestViewerCode, verifyViewerCode } from "../services/viewers.ts";
-import { countsAsView } from "../services/views.ts";
+import { countsAsView, openerFor } from "../services/views.ts";
 import {
   type AppContext,
   type AppEnv,
@@ -93,8 +93,10 @@ export async function computeGate(
     : version === a.currentVersion && !opts.version
       ? "/"
       : `/__plinth/v/${version}/`;
-  // Decided here, recorded by the content host when the token is redeemed (services/views.ts).
+  // Decided here, recorded by the content host when the token is redeemed (services/views.ts),
+  // with who is opening sealed beside the flag.
   const countView = countsAsView(ctx, d, opts, next);
+  const opener = countView ? openerFor(ctx.principal, d.role, a.visibility) : undefined;
   if (opts.review) {
     // The flag goes in the query, before any fragment.
     const hashAt = next.indexOf("#");
@@ -120,7 +122,7 @@ export async function computeGate(
       visibility: a.visibility,
       owner_name: owner?.name ?? null,
     },
-    enter_url: await issueEnterUrl(ctx.config, a, next, identity, { countView }),
+    enter_url: await issueEnterUrl(ctx.config, a, next, identity, { countView, opener }),
     role: d.role,
     ...parts,
   };

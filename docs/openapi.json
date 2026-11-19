@@ -177,6 +177,38 @@
         ]
       }
     },
+    "/auth/review-login": {
+      "post": {
+        "operationId": "reviewLogin",
+        "summary": "Sign in to the review account with its password",
+        "description": "Exists only when REVIEW_LOGIN_EMAIL and REVIEW_LOGIN_PASSWORD_HASH are set; 404 everywhere else. Signs in that one ordinary account, for a directory's reviewers, and sets the session cookie like the other sign-ins. Locks for the rest of the hour after repeated wrong passwords.",
+        "tags": ["Auth"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": { "schema": { "$ref": "#/components/schemas/ReviewLoginInput" } }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/LoginResult" } }
+            }
+          },
+          "400": { "$ref": "#/components/responses/E400" },
+          "403": { "$ref": "#/components/responses/E403" },
+          "404": { "$ref": "#/components/responses/E404" },
+          "429": { "$ref": "#/components/responses/E429" },
+          "default": { "$ref": "#/components/responses/Error" }
+        },
+        "security": [
+          { "csrfHeader": [] },
+          { "bearerAuth": [] },
+          { "sessionCookie": [], "csrfHeader": [] }
+        ]
+      }
+    },
     "/auth/logout": {
       "post": {
         "operationId": "logout",
@@ -1498,11 +1530,11 @@
         "security": [{ "sessionCookie": [] }]
       }
     },
-    "/artifacts/{ref}/views": {
+    "/artifacts/{ref}/stats": {
       "get": {
-        "operationId": "getArtifactViews",
-        "summary": "How often other people opened an artifact (owner only)",
-        "description": "Owner only. Daily open counts; no viewer data. An open is one browser opening the live page it had not opened in the last 12 hours, or since its sharing last changed; the owner, agents, previews and history never count.",
+        "operationId": "getArtifactStats",
+        "summary": "Who opened an artifact, when, how often and which version (owner only)",
+        "description": "Owner only. An open is one browser opening the live page it had not opened in the last 12 hours, or since its sharing last changed; the owner, agents, previews and history never count. People signed in, and allowlisted emails confirmed by code, are named; everyone else is an approximate anonymous visitor.",
         "tags": ["Artifacts"],
         "parameters": [
           {
@@ -1511,18 +1543,48 @@
             "name": "ref",
             "schema": { "type": "string", "minLength": 1, "maxLength": 80 },
             "description": "Artifact id or slug"
+          },
+          {
+            "in": "query",
+            "required": false,
+            "name": "days",
+            "schema": { "type": "string", "enum": ["7", "30", "90", "365"], "default": "30" },
+            "description": "Window in UTC days"
           }
         ],
         "responses": {
           "200": {
             "description": "Success",
             "content": {
-              "application/json": { "schema": { "$ref": "#/components/schemas/ArtifactViews" } }
+              "application/json": { "schema": { "$ref": "#/components/schemas/ArtifactStats" } }
+            }
+          },
+          "400": { "$ref": "#/components/responses/E400" },
+          "401": { "$ref": "#/components/responses/E401" },
+          "403": { "$ref": "#/components/responses/E403" },
+          "404": { "$ref": "#/components/responses/E404" },
+          "default": { "$ref": "#/components/responses/Error" }
+        },
+        "security": [{ "bearerAuth": ["artifacts:read"] }, { "sessionCookie": [] }]
+      }
+    },
+    "/stats/artifacts": {
+      "get": {
+        "operationId": "getArtifactStatsSummary",
+        "summary": "Opens across the caller's own artifacts",
+        "description": "The caller's artifacts that are not deleted or taken down, with opens and viewers over 7 and 30 days, all-time opens and the last open.",
+        "tags": ["Artifacts"],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ArtifactStatsSummary" }
+              }
             }
           },
           "401": { "$ref": "#/components/responses/E401" },
           "403": { "$ref": "#/components/responses/E403" },
-          "404": { "$ref": "#/components/responses/E404" },
           "default": { "$ref": "#/components/responses/Error" }
         },
         "security": [{ "bearerAuth": ["artifacts:read"] }, { "sessionCookie": [] }]
@@ -2067,6 +2129,14 @@
         "type": "object",
         "properties": { "token": { "type": "string", "minLength": 10, "maxLength": 200 } },
         "required": ["token"]
+      },
+      "ReviewLoginInput": {
+        "type": "object",
+        "properties": {
+          "email": { "type": "string", "maxLength": 254 },
+          "password": { "type": "string", "minLength": 1, "maxLength": 256 }
+        },
+        "required": ["email", "password"]
       },
       "UpdateProfileInput": {
         "type": "object",
@@ -3253,6 +3323,14 @@
           "upload_ticket_ttl_s": {
             "type": "integer",
             "description": "How long an upload ticket stays valid"
+          },
+          "review_login": {
+            "type": "boolean",
+            "description": "The review account's password sign-in (REVIEW_LOGIN_EMAIL and REVIEW_LOGIN_PASSWORD_HASH) is on"
+          },
+          "view_log_retention_days": {
+            "type": "integer",
+            "description": "VIEW_LOG_RETENTION_DAYS: how long each counted open is kept with who made it"
           }
         },
         "required": [
@@ -3270,7 +3348,9 @@
           "source_url",
           "limits",
           "cdn_allowlist",
-          "upload_ticket_ttl_s"
+          "upload_ticket_ttl_s",
+          "review_login",
+          "view_log_retention_days"
         ]
       },
       "LoginResult": {
@@ -3464,7 +3544,7 @@
             "type": "integer",
             "description": "Versions published by an agent connection"
           },
-          "views": { "type": "integer", "description": "Opens (see ArtifactViews)" },
+          "views": { "type": "integer", "description": "Counted opens (see ArtifactStats)" },
           "artifacts_viewed": { "type": "integer", "description": "Artifacts opened at least once" }
         },
         "required": [
@@ -3576,35 +3656,175 @@
         },
         "required": ["generated_at", "days", "view_counts", "totals", "window", "series"]
       },
-      "ArtifactViews": {
+      "ArtifactStats": {
         "type": "object",
         "properties": {
           "enabled": {
             "type": "boolean",
-            "description": "Whether this instance counts opens (VIEW_COUNTS)"
+            "description": "Whether this instance records opens (VIEW_COUNTS)"
           },
-          "total": { "type": "integer", "description": "Opens counted since `since`" },
-          "since": {
-            "type": ["string", "null"],
-            "format": "date",
-            "description": "The first UTC day with a counted open, or null. Opens before this instance began counting are not known."
+          "days": { "type": "integer", "enum": [7, 30, 90, 365] },
+          "retention_days": {
+            "type": "integer",
+            "description": "VIEW_LOG_RETENTION_DAYS: older opens keep only their count"
           },
-          "last_7": { "type": "integer" },
-          "last_30": { "type": "integer" },
-          "days": {
+          "current_version": { "type": "integer" },
+          "totals": {
+            "type": "object",
+            "properties": {
+              "opens": { "type": "integer", "description": "Counted opens in the window" },
+              "viewers": {
+                "type": "integer",
+                "description": "Distinct people plus distinct anonymous visitors"
+              },
+              "people": {
+                "type": "integer",
+                "description": "Distinct identified people (accounts and confirmed emails)"
+              },
+              "anonymous_visitors": {
+                "type": "integer",
+                "description": "Distinct anonymous browsers, approximate (a random id in the content cookie)"
+              },
+              "anonymous_opens": { "type": "integer" },
+              "all_time_opens": {
+                "type": "integer",
+                "description": "Every counted open, including folded ones"
+              },
+              "since": {
+                "type": ["string", "null"],
+                "format": "date",
+                "description": "The first UTC day with a counted open, or null"
+              }
+            },
+            "required": [
+              "opens",
+              "viewers",
+              "people",
+              "anonymous_visitors",
+              "anonymous_opens",
+              "all_time_opens",
+              "since"
+            ]
+          },
+          "series": {
             "type": "array",
             "items": {
               "type": "object",
               "properties": {
                 "day": { "type": "string", "format": "date" },
-                "views": { "type": "integer" }
+                "opens": { "type": "integer" },
+                "viewers": { "type": "integer" }
               },
-              "required": ["day", "views"]
+              "required": ["day", "opens", "viewers"]
             },
-            "description": "The last 30 UTC days, oldest first"
+            "description": "One entry per UTC day of the window, oldest first"
+          },
+          "people": {
+            "type": "array",
+            "description": "Last opened first, at most 500. The owner's private data",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": ["string", "null"],
+                  "description": "UNTRUSTED: the account's display name"
+                },
+                "email": { "type": "string" },
+                "kind": { "type": "string", "enum": ["user", "email"] },
+                "role": {
+                  "type": ["string", "null"],
+                  "enum": ["editor", "commenter", "viewer", "public", "link", "password", null]
+                },
+                "first_opened_at": { "type": "string", "format": "date-time" },
+                "last_opened_at": { "type": "string", "format": "date-time" },
+                "opens": { "type": "integer" },
+                "last_version_seen": { "type": ["integer", "null"] }
+              },
+              "required": [
+                "name",
+                "email",
+                "kind",
+                "role",
+                "first_opened_at",
+                "last_opened_at",
+                "opens",
+                "last_version_seen"
+              ]
+            }
+          },
+          "people_total": { "type": "integer" },
+          "versions": {
+            "type": "array",
+            "description": "Newest first; opens counted before versions were recorded are left out",
+            "items": {
+              "type": "object",
+              "properties": {
+                "version": { "type": "integer" },
+                "opens": { "type": "integer" },
+                "viewers": { "type": "integer" }
+              },
+              "required": ["version", "opens", "viewers"]
+            }
           }
         },
-        "required": ["enabled", "total", "since", "last_7", "last_30", "days"]
+        "required": [
+          "enabled",
+          "days",
+          "retention_days",
+          "current_version",
+          "totals",
+          "series",
+          "people",
+          "people_total",
+          "versions"
+        ]
+      },
+      "ArtifactStatsSummary": {
+        "type": "object",
+        "properties": {
+          "enabled": { "type": "boolean" },
+          "retention_days": { "type": "integer" },
+          "generated_at": { "type": "string", "format": "date-time" },
+          "items": {
+            "type": "array",
+            "description": "The caller's live artifacts, most recently opened first",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": { "type": "string" },
+                "slug": { "type": "string" },
+                "title": { "type": "string", "description": "UNTRUSTED" },
+                "type": { "type": "string", "enum": ["html", "doc"] },
+                "visibility": {
+                  "type": "string",
+                  "enum": ["public", "unlisted", "password", "allowlist"]
+                },
+                "current_version": { "type": "integer" },
+                "opens_7d": { "type": "integer" },
+                "opens_30d": { "type": "integer" },
+                "viewers_7d": { "type": "integer" },
+                "viewers_30d": { "type": "integer" },
+                "all_time_opens": { "type": "integer" },
+                "last_opened_at": { "type": ["string", "null"], "format": "date-time" }
+              },
+              "required": [
+                "id",
+                "slug",
+                "title",
+                "type",
+                "visibility",
+                "current_version",
+                "opens_7d",
+                "opens_30d",
+                "viewers_7d",
+                "viewers_30d",
+                "all_time_opens",
+                "last_opened_at"
+              ]
+            }
+          }
+        },
+        "required": ["enabled", "retention_days", "generated_at", "items"]
       },
       "DevOutbox": {
         "type": "object",
