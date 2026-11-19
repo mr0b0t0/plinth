@@ -4,7 +4,8 @@
 // before it asked). The request is an ordinary comment with `request_to`, posted against the
 // version being edited, or, with "Publish my changes first" (off by default), against the version
 // that Publish makes. When that Publish does not succeed, nothing is posted: the dialog says why
-// and offers to post without publishing.
+// and offers to post without publishing. It matches the request composer: the same "Pointing at"
+// chip, and the agent choice beside Send (Cancel · Claude | Codex · Send).
 import {
   API,
   type ClientType,
@@ -15,9 +16,9 @@ import {
 } from "@plinth/shared";
 import { type FormEvent, useEffect, useId, useRef, useState } from "react";
 import { ApiRequestError, api } from "../../lib/api.ts";
-import { ChoiceList } from "../account/ChoiceList.tsx";
-import { askTargetInText, askTargetName } from "../comments/askTargets.ts";
-import { excerpt } from "../comments/model.ts";
+import { askTargetInText } from "../comments/askTargets.ts";
+import { AgentChoice, askSendLabel, PointingChip } from "../comments/Composer.tsx";
+import "../comments/comments.css";
 import { Button, Checkbox, Dialog, showToast, Textarea } from "../ui/index.ts";
 // Types only: askAgent.tsx imports this file.
 import type { AskAnchor } from "./askAgent.tsx";
@@ -64,12 +65,14 @@ export function AskDialog({
   artifactId,
   targets: initialTargets,
   owner,
-  anchor,
+  anchor: initialAnchor,
   live,
   version,
   onClose,
 }: AskDialogProps) {
   const formId = useId();
+  // The place it is about; "Stop pointing" makes it about the whole page.
+  const [anchor, setAnchor] = useState(initialAnchor);
   const [targets, setTargets] = useState(initialTargets);
   const [to, setTo] = useState<ClientType | null>(initialTargets[0] ?? null);
   const [body, setBody] = useState("");
@@ -88,8 +91,8 @@ export function AskDialog({
 
   const dirty = live.status?.dirty === true;
   const others = live.mode === "room" && (live.status?.editors.length ?? 0) > 0;
-  const firstHint = `The agent works from v${version}. Your unpublished changes are not in it unless you publish first.${
-    others ? " This also publishes the others' unpublished changes." : ""
+  const firstHint = `Otherwise the agent works from v${version}.${
+    others ? " This also publishes the others' changes." : ""
   }`;
 
   const refreshTargets = async () => {
@@ -132,9 +135,7 @@ export function AskDialog({
         },
       });
       showToast({
-        title: target
-          ? `Request sent to ${askTargetInText(target, owner)}. It is in Comments`
-          : "Posted as a comment. It is in Comments",
+        title: target ? `Request sent to ${askTargetInText(target, owner)}` : "Posted as a comment",
         tone: "success",
       });
       onClose();
@@ -158,17 +159,19 @@ export function AskDialog({
       open
       onClose={onClose}
       title="Ask an agent"
-      description={
-        anchor
-          ? "Describe the change. The request goes to the owner's agent, pointing at this place."
-          : "Describe the change. The request goes to the owner's agent."
-      }
       footer={
-        unpublished ? (
-          <>
-            <Button variant="ghost" onClick={onClose}>
-              Cancel
-            </Button>
+        <>
+          <Button variant="ghost" onClick={onClose}>
+            Cancel
+          </Button>
+          <AgentChoice
+            className="pl-ask__to"
+            targets={targets}
+            to={to}
+            onTo={setTo}
+            owner={owner}
+          />
+          {unpublished ? (
             <Button
               variant="primary"
               loading={sending}
@@ -176,12 +179,7 @@ export function AskDialog({
             >
               Post without publishing
             </Button>
-          </>
-        ) : (
-          <>
-            <Button variant="ghost" onClick={onClose}>
-              Cancel
-            </Button>
+          ) : (
             <Button
               variant="primary"
               type="submit"
@@ -189,21 +187,20 @@ export function AskDialog({
               loading={sending}
               disabled={!body.trim()}
             >
-              {targets.length > 0 ? "Send request" : "Post as a comment"}
+              {askSendLabel({ targets, to, owner })}
             </Button>
-          </>
-        )
+          )}
+        </>
       }
     >
       <form id={formId} onSubmit={submit} noValidate className="pl-ask">
         {anchor && (
-          <p className="pl-ask__anchor">
-            About: <q>{excerpt(anchor.text || anchor.key, 60)}</q>
-          </p>
+          <PointingChip text={anchor.text || anchor.key} onRemove={() => setAnchor(null)} />
         )}
         <Textarea
           label="What should change?"
-          hint="Describe the change. Ctrl or ⌘ + Enter sends."
+          hideLabel
+          placeholder="Describe the change…"
           value={body}
           rows={4}
           maxLength={LIMITS.maxCommentLength}
@@ -215,24 +212,6 @@ export function AskDialog({
             }
           }}
         />
-        {targets.length > 0 && to ? (
-          <ChoiceList<ClientType>
-            legend="Send to"
-            name="ask-agent-target"
-            value={to}
-            onChange={setTo}
-            choices={targets.map((t) => ({
-              value: t,
-              label: askTargetName(t, owner),
-              description: owner ? "Your connected agent" : "The owner's connected agent",
-            }))}
-          />
-        ) : (
-          <p className="pl-ask__note">
-            The owner has no agent connected to take requests yet. Your request will be posted as a
-            comment.
-          </p>
-        )}
         {dirty && (
           <Checkbox
             label="Publish my changes first"
@@ -243,7 +222,7 @@ export function AskDialog({
         )}
         {unpublished && (
           <p className="pl-ask__error" role="alert">
-            Your changes were not published, so nothing was posted. {unpublished}
+            Nothing was sent. {unpublished}
           </p>
         )}
         {error && (

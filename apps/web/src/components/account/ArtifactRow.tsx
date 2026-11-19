@@ -8,7 +8,6 @@ import {
   GearIcon,
   LinkSimpleIcon,
   PencilSimpleIcon,
-  RobotIcon,
   UsersThreeIcon,
 } from "@phosphor-icons/react";
 import { APP_ROUTES, type ArtifactSummary, route, typeDef, type Visibility } from "@plinth/shared";
@@ -37,16 +36,6 @@ export function shownCategory(a: ArtifactSummary): string | null {
   return a.role === "owner" ? a.category : (a.my_category ?? null);
 }
 
-/**
- * The card offers Ask an agent (docs/spec.md "Ask an agent") to whoever may ask on the page: for a
- * type people change by asking an agent (`edit: "ask"`), to the owner, editors and commenters, and
- * on every type to commenters, who never edit. Viewers get none; the page's gate decides again.
- */
-export function cardOffersAsk(a: Pick<ArtifactSummary, "role" | "type">): boolean {
-  if (a.role === "commenter") return true;
-  return (a.role === "owner" || a.role === "editor") && typeDef(a.type)?.edit === "ask";
-}
-
 export function artifactMenu(
   a: ArtifactSummary,
   onCopy: (url: string) => void,
@@ -59,13 +48,6 @@ export function artifactMenu(
   ];
   if (a.role === "owner" || a.role === "editor") {
     items.push({ label: "Edit", icon: PencilSimpleIcon, href: route(APP_ROUTES.editor, slug) });
-  }
-  if (cardOffersAsk(a)) {
-    items.push({
-      label: "Ask an agent",
-      icon: RobotIcon,
-      href: `${route(APP_ROUTES.artifact, slug)}?ask`,
-    });
   }
   items.push({
     label: "History",

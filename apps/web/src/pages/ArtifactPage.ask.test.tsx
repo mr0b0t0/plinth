@@ -1,7 +1,8 @@
 // Ask an agent on the artifact page (docs/spec.md "Ask an agent"): the bar's Edit slot for pages and
 // designs and where editing on the page is off, the ⋯ item for commenters, request mode in the
-// comments panel with the agent choice and `request_to`, `?ask` and the `?edit` notices, and the
-// Ask dialog in edit mode, which keeps edit mode, the frame and the closed comments panel.
+// comments panel with the agent choice and `request_to`, nothing at all when no agent can take a
+// request, `?edit`, and the Ask dialog in edit mode, which keeps edit mode, the frame and the
+// closed comments panel.
 import type { ViewArtifact, ViewGate } from "@plinth/shared";
 import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -110,22 +111,23 @@ describe("Ask an agent: not editing", () => {
 
     await user.click(screen.getByRole("button", { name: "Ask an agent" }));
     const panel = await screen.findByRole("region", { name: "Comments" });
-    const form = within(panel).getByRole("form", { name: "Ask an agent to change this page" });
+    const form = within(panel).getByRole("form", { name: "Ask an agent" });
     // One review-mode reload for the pick.
     await waitFor(() => expect(s.views()).toBe(2));
     expect(within(form).getByRole("button", { name: "Point at something" })).toBeTruthy();
+    // One heading and one close button: closing the panel ends the request. No @mention hint.
+    expect(within(panel).getAllByRole("button", { name: /^Close|instead$/ })).toHaveLength(1);
+    expect(within(panel).queryByText(/mention @claude/)).toBeNull();
     const claude = within(form).getByRole("radio", { name: "Claude" }) as HTMLInputElement;
     expect(claude.checked).toBe(true);
     expect(within(form).getByRole("radio", { name: /My other agent/ })).toBeTruthy();
     await user.type(within(form).getByRole("textbox", { name: "What should change?" }), "Bigger");
-    await user.click(within(form).getByRole("button", { name: "Send request" }));
+    await user.click(within(form).getByRole("button", { name: "Send" }));
     await waitFor(() => expect(s.posted).toHaveLength(1));
     expect(s.posted[0]).toEqual({ body: "Bigger", version_number: 3, request_to: "claude" });
     // The composer is a plain comment again.
     await waitFor(() =>
-      expect(
-        within(panel).queryByRole("form", { name: "Ask an agent to change this page" }),
-      ).toBeNull(),
+      expect(within(panel).queryByRole("form", { name: "Ask an agent" })).toBeNull(),
     );
   });
 
@@ -137,9 +139,7 @@ describe("Ask an agent: not editing", () => {
     await screen.findByTitle("Garden plan, version 3");
     await user.click(screen.getByRole("button", { name: "Ask an agent" }));
     let panel = await screen.findByRole("region", { name: "Comments" });
-    expect(
-      within(panel).getByRole("form", { name: "Ask an agent to change this page" }),
-    ).toBeTruthy();
+    expect(within(panel).getByRole("form", { name: "Ask an agent" })).toBeTruthy();
     // Closed without sending anything.
     await user.click(within(panel).getByRole("button", { name: "Close comments" }));
     await waitFor(() => expect(screen.queryByRole("region", { name: "Comments" })).toBeNull());
@@ -147,9 +147,7 @@ describe("Ask an agent: not editing", () => {
     await user.click(screen.getAllByRole("button", { name: "Comments" })[0] as HTMLElement);
     panel = await screen.findByRole("region", { name: "Comments" });
     const box = await within(panel).findByRole("textbox");
-    expect(
-      within(panel).queryByRole("form", { name: "Ask an agent to change this page" }),
-    ).toBeNull();
+    expect(within(panel).queryByRole("form", { name: "Ask an agent" })).toBeNull();
     expect(within(panel).queryByRole("radio", { name: "Claude" })).toBeNull();
     await user.type(box, "Nice");
     await user.click(within(panel).getByRole("button", { name: /^(Post|Comment|Send)/ }));
@@ -161,9 +159,7 @@ describe("Ask an agent: not editing", () => {
     await waitFor(() => expect(screen.queryByRole("region", { name: "Comments" })).toBeNull());
     await user.click(screen.getByRole("button", { name: "Ask an agent" }));
     panel = await screen.findByRole("region", { name: "Comments" });
-    expect(
-      await within(panel).findByRole("form", { name: "Ask an agent to change this page" }),
-    ).toBeTruthy();
+    expect(await within(panel).findByRole("form", { name: "Ask an agent" })).toBeTruthy();
   });
 
   it("offers commenters a ⋯ item, never the bar, and posts to the agent they pick", async () => {
@@ -176,10 +172,10 @@ describe("Ask an agent: not editing", () => {
     await user.click(screen.getByRole("button", { name: "Artifact actions" }));
     await user.click(screen.getByRole("menuitem", { name: "Ask an agent" }));
     const panel = await screen.findByRole("region", { name: "Comments" });
-    const form = within(panel).getByRole("form", { name: "Ask an agent to change this page" });
+    const form = within(panel).getByRole("form", { name: "Ask an agent" });
     await user.click(within(form).getByRole("radio", { name: "The owner's other agent" }));
     await user.type(within(form).getByRole("textbox", { name: "What should change?" }), "Fix");
-    await user.click(within(form).getByRole("button", { name: "Send request" }));
+    await user.click(within(form).getByRole("button", { name: "Send" }));
     await waitFor(() => expect(s.posted[0]).toMatchObject({ request_to: "other" }));
   });
 
@@ -194,22 +190,21 @@ describe("Ask an agent: not editing", () => {
     expect(screen.queryByRole("menuitem", { name: "Ask an agent" })).toBeNull();
   });
 
-  it("posts a plain comment when the owner has no agent that takes requests", async () => {
-    const s = stub(gateOf({ role: "commenter", ask: { targets: [] } }));
-    const ArtifactPage = await loadPage();
+  it("is not offered when the owner has no agent that takes requests", async () => {
+    stub(gateOf({ role: "commenter", ask: { targets: [] } }));
+    let ArtifactPage = await loadPage();
     const user = userEvent.setup();
     render(<ArtifactPage params={{ slug: "garden-plan" }} />);
     await screen.findByTitle("Garden plan, version 3");
     await user.click(screen.getByRole("button", { name: "Artifact actions" }));
-    await user.click(screen.getByRole("menuitem", { name: "Ask an agent" }));
-    const panel = await screen.findByRole("region", { name: "Comments" });
-    expect(
-      within(panel).getByText(/The owner has no agent connected to take requests yet/),
-    ).toBeTruthy();
-    expect(within(panel).queryByRole("group", { name: "Send to" })).toBeNull();
-    await user.type(within(panel).getByRole("textbox", { name: "What should change?" }), "Hi");
-    await user.click(within(panel).getByRole("button", { name: "Post as a comment" }));
-    await waitFor(() => expect(s.posted[0]).toEqual({ body: "Hi", version_number: 3 }));
+    expect(screen.queryByRole("menuitem", { name: "Ask an agent" })).toBeNull();
+    cleanup();
+
+    stub(gateOf({ ask: { targets: [] } }));
+    ArtifactPage = await loadPage();
+    render(<ArtifactPage params={{ slug: "garden-plan" }} />);
+    await screen.findByTitle("Garden plan, version 3");
+    expect(screen.queryByRole("button", { name: "Ask an agent" })).toBeNull();
   });
 
   it("reads the agents again when the one picked was disconnected (no_agent)", async () => {
@@ -238,34 +233,21 @@ describe("Ask an agent: not editing", () => {
     const panel = await screen.findByRole("region", { name: "Comments" });
     targets = ["codex"];
     await user.type(within(panel).getByRole("textbox", { name: "What should change?" }), "Do");
-    await user.click(within(panel).getByRole("button", { name: "Send request" }));
+    await user.click(within(panel).getByRole("button", { name: "Send" }));
     expect(
       await within(panel).findByText(
         "That agent was disconnected. Pick another, or post as a comment.",
       ),
     ).toBeTruthy();
-    await waitFor(() => expect(within(panel).queryByRole("radio", { name: "Claude" })).toBeNull());
-    expect((within(panel).getByRole("radio", { name: "Codex" }) as HTMLInputElement).checked).toBe(
-      true,
-    );
+    // One agent left: no choice, and the button names it.
+    expect(await within(panel).findByRole("button", { name: "Send to Codex" })).toBeTruthy();
+    expect(within(panel).queryByRole("radio", { name: "Claude" })).toBeNull();
     // The description is kept for another try.
     expect(
       (within(panel).getByRole("textbox", { name: "What should change?" }) as HTMLTextAreaElement)
         .value,
     ).toBe("Do");
     expect(s.posted).toHaveLength(0);
-  });
-
-  it("opens request mode from ?ask, once, and drops it from the address", async () => {
-    window.history.replaceState(null, "", "/a/garden-plan?ask");
-    stub(gateOf({ role: "commenter" }));
-    const ArtifactPage = await loadPage();
-    render(<ArtifactPage params={{ slug: "garden-plan" }} />);
-    const panel = await screen.findByRole("region", { name: "Comments" });
-    expect(
-      within(panel).getByRole("form", { name: "Ask an agent to change this page" }),
-    ).toBeTruthy();
-    expect(window.location.search).toBe("");
   });
 });
 
@@ -286,43 +268,22 @@ describe("Ask an agent where editing on the page is off", () => {
     );
   });
 
-  it("?edit shows why, with Ask an agent, as a status", async () => {
-    window.history.replaceState(null, "", "/a/garden-plan?edit");
-    stub(off("disabled"));
-    const ArtifactPage = await loadPage();
-    const user = userEvent.setup();
-    render(<ArtifactPage params={{ slug: "garden-plan" }} />);
-    const text = await screen.findByText(
-      "Editing on the page is turned off on this Plinth instance. Ask an agent to make the change.",
-    );
-    expect(text.closest('[role="status"]')).toBeTruthy();
-    expect(window.location.search).toBe("");
-    const strip = text.closest('[role="status"]') as HTMLElement;
-    await user.click(within(strip).getByRole("button", { name: "Ask an agent" }));
-    const panel = await screen.findByRole("region", { name: "Comments" });
-    expect(
-      within(panel).getByRole("form", { name: "Ask an agent to change this page" }),
-    ).toBeTruthy();
-  });
-
-  it("?edit tells a commenter only owners and editors edit, and does nothing for a viewer", async () => {
-    window.history.replaceState(null, "", "/a/garden-plan?edit");
-    stub(gateOf({ artifact: DOC, role: "commenter" }));
-    let ArtifactPage = await loadPage();
-    render(<ArtifactPage params={{ slug: "garden-plan" }} />);
-    expect(
-      await screen.findByText(
-        "Only the owner and editors can edit this page. You can ask an agent to change it.",
-      ),
-    ).toBeTruthy();
-    cleanup();
-
-    window.history.replaceState(null, "", "/a/garden-plan?edit");
-    stub(gateOf({ artifact: DOC, role: "viewer", ask: undefined }));
-    ArtifactPage = await loadPage();
-    render(<ArtifactPage params={{ slug: "garden-plan" }} />);
-    await screen.findByTitle("Plan, version 3");
-    expect(screen.queryByText(/ask an agent/i)).toBeNull();
+  it("?edit adds no notice where this person cannot edit, and is dropped from the address", async () => {
+    for (const gate of [
+      off("disabled"),
+      gateOf({ artifact: DOC, role: "commenter" }),
+      gateOf({ artifact: DOC, role: "viewer", ask: undefined }),
+    ]) {
+      window.history.replaceState(null, "", "/a/garden-plan?edit");
+      stub(gate);
+      const ArtifactPage = await loadPage();
+      render(<ArtifactPage params={{ slug: "garden-plan" }} />);
+      await screen.findByTitle("Plan, version 3");
+      await waitFor(() => expect(window.location.search).toBe(""));
+      expect(screen.queryByRole("status", { name: /edit/i })).toBeNull();
+      expect(screen.queryByText(/can edit this page|Ask an agent to make the change/)).toBeNull();
+      cleanup();
+    }
   });
 
   it("?edit focuses Sign in to edit for an editor confirmed by code", async () => {
@@ -407,9 +368,9 @@ describe("Ask an agent in edit mode: the Ask dialog", () => {
       name: /Publish my changes first/,
     }) as HTMLInputElement;
     expect(first.checked).toBe(false);
-    expect(within(dialog).getByText(/The agent works from v3/)).toBeTruthy();
+    expect(within(dialog).getByText("Otherwise the agent works from v3.")).toBeTruthy();
     await user.type(within(dialog).getByRole("textbox", { name: "What should change?" }), "Tidy");
-    await user.click(within(dialog).getByRole("button", { name: "Send request" }));
+    await user.click(within(dialog).getByRole("button", { name: "Send" }));
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "Ask an agent" })).toBeNull());
     expect(s.posted).toEqual([{ body: "Tidy", version_number: 3, request_to: "claude" }]);
     expect(screen.getByRole("button", { name: "Edit" }).getAttribute("aria-pressed")).toBe("true");
@@ -434,7 +395,7 @@ describe("Ask an agent in edit mode: the Ask dialog", () => {
     const dialog = await screen.findByRole("dialog", { name: "Ask an agent" });
     await user.click(within(dialog).getByRole("checkbox", { name: /Publish my changes first/ }));
     await user.type(within(dialog).getByRole("textbox", { name: "What should change?" }), "Next");
-    await user.click(within(dialog).getByRole("button", { name: "Send request" }));
+    await user.click(within(dialog).getByRole("button", { name: "Send" }));
     await waitFor(() => expect(s.posted).toHaveLength(1));
     const order = s.calls
       .filter((c) => c.method === "POST")
@@ -463,7 +424,7 @@ describe("Ask an agent in edit mode: the Ask dialog", () => {
     const dialog = await screen.findByRole("dialog", { name: "Ask an agent" });
     await user.click(within(dialog).getByRole("checkbox", { name: /Publish my changes first/ }));
     await user.type(within(dialog).getByRole("textbox", { name: "What should change?" }), "Next");
-    await user.click(within(dialog).getByRole("button", { name: "Send request" }));
+    await user.click(within(dialog).getByRole("button", { name: "Send" }));
     expect(
       await within(dialog).findByText(/v4 was published while you edited. Review it to go on./),
     ).toBeTruthy();
@@ -486,8 +447,9 @@ describe("Ask an agent in edit mode: the Ask dialog", () => {
     post({ type: "ask", anchor: { key: "slide-3:image-1", text: "Slide 3, image 1" } });
     const dialog = await screen.findByRole("dialog", { name: "Ask an agent" });
     expect(within(dialog).getByText("Slide 3, image 1")).toBeTruthy();
+    expect(within(dialog).getByText(/Pointing at/)).toBeTruthy();
     await user.type(within(dialog).getByRole("textbox", { name: "What should change?" }), "Swap");
-    await user.click(within(dialog).getByRole("button", { name: "Send request" }));
+    await user.click(within(dialog).getByRole("button", { name: "Send" }));
     await waitFor(() => expect(s.posted).toHaveLength(1));
     expect(s.posted[0]).toMatchObject({
       anchor: { kind: "page", key: "slide-3:image-1", text: "Slide 3, image 1" },
@@ -503,5 +465,17 @@ describe("Ask an agent in edit mode: the Ask dialog", () => {
       await new Promise((r) => setTimeout(r, 20));
     });
     expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("Stop pointing makes the request about the whole page", async () => {
+    const { s, user, post } = await editing();
+    post({ type: "ask", anchor: { key: "slide-3:image-1", text: "Slide 3, image 1" } });
+    const dialog = await screen.findByRole("dialog", { name: "Ask an agent" });
+    await user.click(within(dialog).getByRole("button", { name: "Stop pointing" }));
+    expect(within(dialog).queryByText(/Pointing at/)).toBeNull();
+    await user.type(within(dialog).getByRole("textbox", { name: "What should change?" }), "Tidy");
+    await user.click(within(dialog).getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(s.posted).toHaveLength(1));
+    expect(s.posted[0]).not.toHaveProperty("anchor");
   });
 });

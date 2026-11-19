@@ -113,30 +113,6 @@ describe("categories", () => {
       expect(labels(role).some((e) => e.label === "Move to category…")).toBe(false);
     }
   });
-
-  it("offers Ask an agent on pages and designs to owners, editors and commenters, on every type to commenters, never to viewers", () => {
-    const ask = (type: ArtifactSummary["type"], role: ArtifactSummary["role"]) =>
-      artifactMenu(summary({ type, role }), () => undefined).find(
-        (e) => e.type !== "separator" && e.label === "Ask an agent",
-      );
-    for (const type of ["html", "design"] as const) {
-      for (const role of ["owner", "editor", "commenter"] as const) {
-        expect(ask(type, role)).toMatchObject({ href: "/a/plan?ask" });
-      }
-      expect(ask(type, "viewer")).toBeUndefined();
-    }
-    for (const type of ["doc", "sheet", "whiteboard"] as const) {
-      expect(ask(type, "commenter")).toMatchObject({ href: "/a/plan?ask" });
-      expect(ask(type, "owner")).toBeUndefined();
-      expect(ask(type, "editor")).toBeUndefined();
-      expect(ask(type, "viewer")).toBeUndefined();
-    }
-    // The card's Edit still opens the source editor for owners and editors.
-    const edit = artifactMenu(summary({ type: "html", role: "owner" }), () => undefined).find(
-      (e) => e.type !== "separator" && e.label === "Edit",
-    );
-    expect(edit).toMatchObject({ href: "/a/plan/edit" });
-  });
 });
 
 describe("ArtifactCard thumbnail", () => {

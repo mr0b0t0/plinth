@@ -2,8 +2,8 @@
 // design board, describes the change and picks the owner's agent; the request is an ordinary
 // mention (`request_to`), which that agent lists, claims and answers with a version, and the
 // thread shows it done. Also: a request to an owner whose only agent is neither Claude nor Codex,
-// the dashboard card's item, and the Ask dialog in edit mode, which publishes first only when
-// asked. The opaque-isolation case is in ask-agent-opaque.spec.ts.
+// and the Ask dialog in edit mode, which publishes first only when asked. The opaque-isolation
+// case is in ask-agent-opaque.spec.ts.
 import { expect, type Page, test } from "@playwright/test";
 import { apiGet, apiPut, publishArtifact, uniqueEmail } from "../support/api.ts";
 import { seedSession, seedToken } from "../support/db.ts";
@@ -51,7 +51,7 @@ async function openAsk(page: Page) {
 /** The request composer in the comments panel, once the frame has reloaded in review mode. */
 async function requestForm(page: Page) {
   const panel = page.getByRole("region", { name: "Comments" });
-  const form = panel.getByRole("form", { name: "Ask an agent to change this page" });
+  const form = panel.getByRole("form", { name: "Ask an agent" });
   await expect(form).toBeVisible();
   await expect(page.frameLocator(CURRENT_FRAME).locator("script[data-plinth-bridge]")).toHaveCount(
     1,
@@ -88,8 +88,9 @@ test("a commenter points at a heading and asks Claude; the owner's Claude claims
   await page.getByRole("button", { name: "Artifact actions" }).click();
   await page.getByRole("menuitem", { name: "Ask an agent" }).click();
   const { panel, form } = await requestForm(page);
-  // Only the client type is shown, never the connection's label.
-  await expect(form.getByRole("radio", { name: "Claude" })).toBeChecked();
+  // Only the client type is shown, never the connection's label; one agent needs no choice.
+  await expect(form.getByRole("button", { name: "Send to Claude" })).toBeVisible();
+  await expect(form.getByRole("group", { name: "Send to" })).toHaveCount(0);
   await expect(panel).not.toContainText("Work Claude");
 
   await form.getByRole("button", { name: "Point at something" }).click();
@@ -99,7 +100,7 @@ test("a commenter points at a heading and asks Claude; the owner's Claude claims
     await expect(form.getByText("Pointing at")).toBeVisible({ timeout: 1_000 });
   }).toPass({ timeout: 10_000 });
   await form.getByRole("textbox", { name: "What should change?" }).fill("Make the heading red");
-  await form.getByRole("button", { name: "Send request" }).click();
+  await form.getByRole("button", { name: "Send to Claude" }).click();
 
   const thread = panel.locator("article").filter({ hasText: "Make the heading red" });
   await expect(thread.locator('[data-state="pending"]')).toContainText("@claude");
@@ -166,7 +167,7 @@ test("the owner asks about a design board from the bar, and the request names th
     // A design takes Ask an agent in the Edit slot; the source editor stays in the ⋯ menu.
     await openAsk(page);
     const { panel, form } = await requestForm(page);
-    await expect(form.getByRole("radio", { name: "Codex" })).toBeChecked();
+    await expect(form.getByRole("button", { name: "Send to Codex" })).toBeVisible();
     await form.getByRole("button", { name: "Point at something" }).click();
     const shell = await (await page.locator(CURRENT_FRAME).elementHandle())?.contentFrame();
     if (!shell) throw new Error("no shell frame");
@@ -174,7 +175,7 @@ test("the owner asks about a design board from the bar, and the request names th
     await shell.locator("#__plinth-board-post").click();
     await expect(form.getByText("Pointing at")).toBeVisible();
     await form.getByRole("textbox", { name: "What should change?" }).fill("Bigger headline");
-    await form.getByRole("button", { name: "Send request" }).click();
+    await form.getByRole("button", { name: "Send to Codex" }).click();
     await expect(panel.locator("article").filter({ hasText: "Bigger headline" })).toBeVisible();
 
     const listed = await tool<{ items: MentionItem[] }>(client, "list_mentions", {});
@@ -194,13 +195,12 @@ test("an owner whose only agent is another client sends to it, and that connecti
   const { token } = await seedToken(owner, { label: "ChatGPT", clientType: "other" });
   const art = await publishArtifact(page.request, token, { title: "Launch plan", html: PAGE_HTML });
   await seedSession(page.context(), owner);
-  await page.goto(`/a/${art.slug}?ask`);
+  await page.goto(`/a/${art.slug}`);
+  await expect(page.frameLocator(CURRENT_FRAME).locator("h1")).toBeVisible({ timeout: 15_000 });
+  await openAsk(page);
   const { form, panel } = await requestForm(page);
-  // `?ask` is used once.
-  expect(new URL(page.url()).search).toBe("");
-  await expect(form.getByRole("radio", { name: /My other agent/ })).toBeChecked();
   await form.getByRole("textbox", { name: "What should change?" }).fill("Add a footer");
-  await form.getByRole("button", { name: "Send request" }).click();
+  await form.getByRole("button", { name: "Send to your other agent" }).click();
   const thread = panel.locator("article").filter({ hasText: "Add a footer" });
   await expect(thread.locator('[data-state="pending"]')).toContainText("The owner's other agent");
 
@@ -215,24 +215,6 @@ test("an owner whose only agent is another client sends to it, and that connecti
   } finally {
     await client.close();
   }
-});
-
-test("the dashboard card offers Ask an agent on a page, and it opens request mode", async ({
-  page,
-}) => {
-  test.setTimeout(60_000);
-  const owner = uniqueEmail("ask-card");
-  const { token } = await seedToken(owner, { clientType: "claude" });
-  const art = await publishArtifact(page.request, token, {
-    title: "Card ask page",
-    html: PAGE_HTML,
-  });
-  await seedSession(page.context(), owner);
-  await page.goto("/dashboard");
-  await page.getByRole("button", { name: "Actions for Card ask page" }).first().click();
-  await page.getByRole("menuitem", { name: "Ask an agent" }).click();
-  await expect(page).toHaveURL(new RegExp(`/a/${art.slug}`));
-  await requestForm(page);
 });
 
 test("in edit mode the Ask dialog keeps editing, and publishes first only when asked", async ({
@@ -275,9 +257,9 @@ test("in edit mode the Ask dialog keeps editing, and publishes first only when a
   await expect(first).not.toBeChecked();
   await first.check();
   await dialog.getByRole("textbox", { name: "What should change?" }).fill("Add a summary");
-  await dialog.getByRole("button", { name: "Send request" }).click();
+  await dialog.getByRole("button", { name: "Send to Claude" }).click();
   await expect(dialog).toHaveCount(0);
-  await expect(page.getByText("Request sent to Claude. It is in Comments")).toBeVisible();
+  await expect(page.getByText("Request sent to Claude")).toBeVisible();
 
   // Still editing the same frame, the comments panel closed, and the changes are v2.
   await expect(bar).toBeVisible();

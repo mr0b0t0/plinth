@@ -458,10 +458,6 @@ export function CommentsPanel({
     }
     requestAnimationFrame(() => composerRef.current?.focus());
   }, [request?.n]);
-  const leaveRequest = () => {
-    setRequesting(false);
-    requestAnimationFrame(() => composerRef.current?.focus());
-  };
 
   // ---------- writes ----------
 
@@ -647,7 +643,7 @@ export function CommentsPanel({
               art={<EmptyPlinth size={64} />}
               title={emptyText[filter]}
               description={
-                filter === "open" && threads.length === 0 && !blocked
+                filter === "open" && threads.length === 0 && !blocked && !requesting
                   ? pageOwnsAnchors
                     ? "Start the conversation below, or mention @claude or @codex to ask the owner's agent for a change."
                     : "Start the conversation below. Pin a comment to an element, or mention @claude or @codex to ask the owner's agent for a change."
@@ -703,7 +699,6 @@ export function CommentsPanel({
                       to: requestTo,
                       onTo: setRequestTo,
                       owner: ask.owner,
-                      onLeave: leaveRequest,
                     }
                   : undefined
               }

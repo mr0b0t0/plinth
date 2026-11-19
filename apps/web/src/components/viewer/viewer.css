@@ -737,27 +737,20 @@
   margin: 0;
 }
 
-/* Ask an agent: the Ask dialog in edit mode (AskDialog.tsx) and the `?edit` notice. */
+/* Ask an agent: the Ask dialog in edit mode (AskDialog.tsx). */
 .pl-ask {
   display: grid;
+  /* One column that may shrink: a long "Pointing at" chip ellipsizes instead of widening the sheet. */
+  grid-template-columns: minmax(0, 1fr);
   gap: var(--space-4);
 }
-.pl-ask__anchor,
-.pl-ask__note {
-  margin: 0;
-  color: var(--color-ink-muted);
-  font-size: var(--text-sm);
-  overflow-wrap: anywhere;
-}
-.pl-ask__anchor q {
-  color: var(--color-ink);
+/* The agent choice in the footer, between Cancel and Send, as in the request composer. */
+.pl-dialog__footer > .pl-ask__to {
+  flex: none;
+  align-self: center;
 }
 .pl-ask__error {
   margin: 0;
   color: var(--color-danger);
   font-size: var(--text-sm);
-}
-.pl-livenotice--ask {
-  border-left: 2px solid var(--color-accent);
-  color: var(--color-ink);
 }
