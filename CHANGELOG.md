@@ -92,6 +92,11 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   the files added, removed or replaced. The two versions are still rendered side by side below the
   list, one at a time with a Before and After switch on a phone. Older links with `view=source`
   open the same page. Agents still read and write source as before.
+- **Board settings for whiteboards.** Owners and editors change a board's background (dots, grid
+  or plain) and who can change it (commenters and editors, or editors only) from **Board settings**
+  in the board's ⋯ menu, in a small dialog with two choices. Each save is a new version; if someone
+  published a newer one meanwhile, the dialog shows its settings instead of overwriting them. It
+  replaces "Edit settings", which opened the board's JSON in the source editor.
 - **Follow the presenter in a deck.** An owner or editor can turn on **Lead viewers** in a deck's
   controls or presenter view, and the people the deck is shared with who have it open follow their
   slide, with a "Following the presenter" note; paging by hand pauses it until they choose "Back to

@@ -4,8 +4,9 @@
 //
 // A feature adds its own item function (in its own file) and one line in the list where it
 // belongs. Items for one artifact type go in TYPE_MENU_ITEMS, items for one declared capability in
-// CAPABILITY_MENU_ITEMS. Order in a list is the order on screen. Layout and behaviour of the stage
-// itself (the frame, the hold rule) stay in ViewerStage.
+// CAPABILITY_MENU_ITEMS. Order in a list is the order on screen. A menu item that opens a dialog
+// adds the dialog to STAGE_DIALOGS and opens it by id (actions.openDialog). Layout and behaviour
+// of the stage itself (the frame, the hold rule) stay in ViewerStage.
 
 import {
   ChatCircleIcon,
@@ -35,6 +36,7 @@ import type { ReactNode, RefObject } from "react";
 import { Link } from "../../lib/router.tsx";
 import { THEME_NAMES, type Theme } from "../../lib/theme.ts";
 import { Button, buttonClassName, Menu, type MenuEntry, Tooltip } from "../ui/index.ts";
+import { boardSettings, boardSettingsDialog } from "./boardSettingsItems.tsx";
 import { DataNotice } from "./DataNotice.tsx";
 import { DictationControl } from "./DictationControl.tsx";
 import { downloadDesign } from "./designItems.ts";
@@ -103,6 +105,8 @@ export interface StageContext {
     reload: () => void;
     /** A design: open the PNG and PDF export dialog (designItems.ts). */
     openExport: () => void;
+    /** Open the dialog with this id from STAGE_DIALOGS (one at a time). */
+    openDialog: (id: string) => void;
   };
 }
 
@@ -114,6 +118,11 @@ export type StageNode = (c: StageContext) => ReactNode;
 export interface StageItem {
   id: string;
   render: StageNode;
+}
+/** A dialog the stage holds: rendered only while open, `close` closes it. */
+export interface StageDialog {
+  id: string;
+  render: (c: StageContext, close: () => void) => ReactNode;
 }
 
 // ---------- the ⋯ menu ----------
@@ -142,13 +151,14 @@ const compactSignInToEdit: MenuItem = (c) =>
     ? [{ label: "Sign in to edit", icon: PencilSimpleIcon, href: c.hrefs.signIn }]
     : [];
 
+/** Types whose people never open the source editor from the page (a board: Board settings). */
+const NO_SOURCE_EDIT: ReadonlySet<ArtifactType> = new Set(["whiteboard"]);
+
 const editSource: MenuItem = (c) =>
-  canEdit(c.gate.role)
+  canEdit(c.gate.role) && !NO_SOURCE_EDIT.has(c.gate.artifact.type)
     ? [
         {
-          label: c.live.available
-            ? "Edit source"
-            : (typeDef(c.gate.artifact.type)?.editLabel ?? "Edit"),
+          label: c.live.available ? "Edit source" : "Edit",
           icon: c.live.available ? CodeIcon : PencilSimpleIcon,
           href: c.hrefs.edit,
         },
@@ -222,6 +232,7 @@ export const TYPE_MENU_ITEMS: Partial<Record<ArtifactType, readonly MenuItem[]>>
   design_system: [copyForAgent],
   design: [printTyped, downloadDesign],
   sheet: [downloadSheet, printTyped],
+  whiteboard: [boardSettings],
 };
 
 /** Menu items for a page that declares one capability, in order, after the type's items. */
@@ -280,6 +291,9 @@ export const MENU_ITEMS: readonly MenuItem[] = [
 export function menuEntries(c: StageContext): MenuEntry[] {
   return MENU_ITEMS.flatMap((item) => item(c));
 }
+
+/** The dialogs a menu item may open, by id. One dialog per line. */
+export const STAGE_DIALOGS: readonly StageDialog[] = [boardSettingsDialog];
 
 // ---------- the bar's controls ----------
 

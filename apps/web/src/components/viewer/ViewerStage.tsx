@@ -27,7 +27,13 @@ import { ExportDialog } from "./ExportDialog.tsx";
 import { contentOriginOf, shareLink } from "./gate.ts";
 import { ShareDialog } from "./ShareDialog.tsx";
 import { StageFrame } from "./StageFrame.tsx";
-import { BAR_CONTROLS, STRIP_ITEMS, type StageContext, type StageItem } from "./stageItems.tsx";
+import {
+  BAR_CONTROLS,
+  STAGE_DIALOGS,
+  STRIP_ITEMS,
+  type StageContext,
+  type StageItem,
+} from "./stageItems.tsx";
 import { useDictation } from "./useDictation.ts";
 import { useLiveEdit } from "./useLiveEdit.ts";
 import { useLiveDataRelay } from "./useLiveView.ts";
@@ -133,6 +139,8 @@ export function ViewerStage({
   }, []);
   // A design's PNG and PDF export dialog (designItems.ts offers it).
   const [exportOpen, setExportOpen] = useState(false);
+  // The STAGE_DIALOGS entry open now, by id (Board settings), or null.
+  const [dialog, setDialog] = useState<string | null>(null);
   const [frame, setFrame] = useState<HTMLIFrameElement | null>(null);
   const [openCount, setOpenCount] = useState<number | null>(null);
   // The comments, for a page that declares `comments` (its threads and pins); the panel keeps
@@ -176,7 +184,7 @@ export function ViewerStage({
     contentOrigin,
     opaque: config?.content_isolation === "opaque",
     items: commentItems,
-    blocked: shareOpen,
+    blocked: shareOpen || dialog !== null,
     commentsOpen,
     openComments: onToggleComments,
   });
@@ -315,6 +323,7 @@ export function ViewerStage({
       refocusAfterNotice: () => refocusIfLost(focusEditEntry),
       reload: () => onReload?.(),
       openExport: () => setExportOpen(true),
+      openDialog: setDialog,
     },
   };
 
@@ -443,6 +452,12 @@ export function ViewerStage({
             onTakeLatest={() => void live.takeLatest()}
           />
         </Suspense>
+      )}
+      {STAGE_DIALOGS.map(
+        (d) =>
+          d.id === dialog && (
+            <Fragment key={d.id}>{d.render(stage, () => setDialog(null))}</Fragment>
+          ),
       )}
       <DictationConsent request={dictation.consent} />
       <ShareDialog

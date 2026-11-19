@@ -100,8 +100,6 @@ export interface ArtifactTypeDef {
   assets?: false;
   /** False: no bundle upload (start_upload); the source goes inline. Absent means allowed. */
   upload?: false;
-  /** The viewer menu's label for the source editor, where "Edit" would mislead (a board). */
-  editLabel?: string;
 }
 
 /**

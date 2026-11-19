@@ -1217,6 +1217,9 @@ what is missing with `write_artifact_data`.
 - **Delete** a block with a `delete` op at its `rev`, and its arrows with it.
 - **Settings** (`edit`, `background`) change with `update_artifact`, `content` and `base_version`.
   It takes blocks only while the board has none (`board_not_empty` otherwise).
+- **People change the settings too**, from Board settings on the board's page, and each change is
+  a new version. Read the current version with `get_artifact` before you change them, and on
+  `conflict` read it again: keep what a person chose unless you were asked to change it.
 - People change the board between your reads: change only what you were asked to.
 
 ## Design exports (PNG and PDF)
