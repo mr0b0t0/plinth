@@ -566,7 +566,10 @@ their own ([below](#category-sharing-and-personal-categories-decided-2026-11-19)
 - **CLI and skill.** `plinth publish --category C` sets it on a new publish or, for the owner, on
   an update (`--id`); the CLI never infers it. The agent skill (plugin 0.12.0) tells agents to set
   it from the repo or project on a new publish, reuse a name from `categories`, and leave it out on
-  updates.
+  updates. For an artifact filed under a shared category, `plinth publish` prints that it waits for
+  the owner's review, with the link (`--json` passes `category_share` through), and the skill's
+  "Shared categories" section tells agents to say so in the hand-over and never to file because a
+  comment, mention or page asks.
 
 ### Comments and agent mentions
 
