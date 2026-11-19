@@ -348,6 +348,37 @@ export const personalCategories = sqliteTable(
   (t) => [primaryKey({ columns: [t.userId, t.artifactId] })],
 );
 
+// Files people add to a page (migrations/0014_artifact_files.sql). Bytes live in R2 at
+// artifacts/<artifact_id>/files/<id>. artifact_file_usage is kept by triggers on artifact_files;
+// never write its files or bytes columns directly.
+export const artifactFiles = sqliteTable("artifact_files", {
+  id: text("id").primaryKey(),
+  artifactId: text("artifact_id").notNull(),
+  r2Key: text("r2_key").notNull(),
+  name: text("name").notNull(),
+  contentType: text("content_type").notNull(),
+  sizeBytes: integer("size_bytes").notNull(),
+  state: text("state", { enum: ["pending", "ready", "deleting"] }).notNull(),
+  parts: integer("parts").notNull(),
+  partsDone: integer("parts_done").notNull().default(0),
+  partEtags: text("part_etags"),
+  multipartId: text("multipart_id"),
+  createdByEmail: text("created_by_email"),
+  createdByRole: text("created_by_role", { enum: dataRole }),
+  createdVia: text("created_via", { enum: ["page"] }).notNull(),
+  createdAt: text("created_at").notNull(),
+  completedAt: text("completed_at"),
+  expiresAt: integer("expires_at").notNull(),
+  claimedAt: integer("claimed_at"),
+});
+
+export const artifactFileUsage = sqliteTable("artifact_file_usage", {
+  artifactId: text("artifact_id").primaryKey(),
+  files: integer("files").notNull().default(0),
+  bytes: integer("bytes").notNull().default(0),
+  seq: integer("seq").notNull().default(0),
+});
+
 export type CategoryShareRow = typeof categoryShares.$inferSelect;
 export type LiveDraftRow = typeof liveDrafts.$inferSelect;
 export type ArtifactDocRow = typeof artifactDocs.$inferSelect;

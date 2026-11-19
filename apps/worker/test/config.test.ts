@@ -23,7 +23,7 @@ import {
   sharedDataActive,
   uploadTicketsPerHour,
 } from "../src/config.ts";
-import { everyIdentityReaderOff } from "./identity-readers.ts";
+import { everyIdentityReaderOff, everyIdentityReaderOn } from "./identity-readers.ts";
 
 const base = {
   ENVIRONMENT: "production",
@@ -642,7 +642,9 @@ describe("room and live editing settings", () => {
     for (const r of IDENTITY_READERS) {
       expect(r.active(viaVars, binding), r.name).toBe(false);
       expect(r.active(viaConfig, binding), r.name).toBe(false);
-      expect(r.active(parseConfig(base), binding), r.name).toBe(true);
+      expect(r.active(parseConfig({ ...base, ...everyIdentityReaderOn() }), binding), r.name).toBe(
+        true,
+      );
     }
     expect(new Set(IDENTITY_READERS.map((r) => r.name)).size).toBe(IDENTITY_READERS.length);
   });

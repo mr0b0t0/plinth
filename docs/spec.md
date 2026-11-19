@@ -39,8 +39,9 @@ account.
 
 - Per-artifact server code. Artifacts are static HTML plus assets; the only server behaviour a
   page can reach is Plinth's fixed shared-data service (see
-  [Shared data and viewer identity](#shared-data-and-viewer-identity)) and its live room at
-  `/__plinth/room/` (see [Live rooms](#live-rooms)).
+  [Shared data and viewer identity](#shared-data-and-viewer-identity)), its live room at
+  `/__plinth/room/` (see [Live rooms](#live-rooms)) and the files it stored at `/__plinth/files/`
+  (see [Files people add to a page](#files-people-add-to-a-page-decided-2026-11-19)).
 - Character-level co-editing (OT or CRDT), and live editing of HTML artifacts' text (pages build
   their own multiplayer with [live rooms](#live-rooms)).
 - On-page editing of HTML artifacts and designs (docs are edited on the page; HTML and designs in
@@ -237,6 +238,15 @@ field to the stored declaration, `versions.capabilities.hold`, written only when
 to show a version in place, 16 KiB of carried state, read within 30 s. Carried state lives in the
 viewer's browser (the content origin's `sessionStorage`), not in D1.
 
+**Files people add to a page** ([below](#files-people-add-to-a-page-decided-2026-11-19), migration `0014_artifact_files.sql`) add two tables,
+and one field to the stored declaration, `versions.capabilities.files`, written only when the page
+declares `files` (a row without it reads as no files):
+
+| Table | Columns | Notes |
+| --- | --- | --- |
+| `artifact_files` | id, artifact_id, r2_key, name, content_type, size_bytes, state (`pending`, `ready`, `deleting`), parts, parts_done, part_etags, multipart_id, created_by_email/role, created_via (`page`), created_at, completed_at, expires_at, claimed_at | One file people uploaded from the page. Its bytes are at `artifacts/<artifact_id>/files/<id>` in R2, under the artifact's root. `content_type` is one of the twelve types the server proves from the bytes (CHECK); `name` is cleaned display text. A `deleting` row is a tombstone that counts toward nothing until the sweep clears its object. Cascades from `artifacts`; `erase-user` tombstones a person's uploads on other people's pages and clears their name and address |
+| `artifact_file_usage` | artifact_id, files, bytes, seq | Exact totals per artifact (pending and ready rows) kept by SQLite triggers on `artifact_files`, for one-row quota checks. `seq` moves when a file becomes ready or goes, and is what pages poll. Deleted with the artifact and on takedown |
+
 ## Auth and permissions
 
 There are three separate kinds of auth, and each has its own mechanism.
@@ -304,6 +314,8 @@ One remote MCP server over streamable HTTP at `/mcp`. All tools act as the conne
 | `get_design_system(id, version?, include?, components?)` | Read a design system (type `design_system`) the user can open, to build another artifact with it: tokens resolved to values, one CSS block of custom properties for light and dark, Google Fonts links, guidelines and component examples. Read-only; every text field is untrusted |
 | `read_sheet(id, version?, range?, values?, limit_cells?)` | Read a sheet's columns and the cells of an A1 range, formulas with their computed values (within `SHEET_EVAL_BUDGET`). Read-only, the `view` action; cell text is untrusted |
 | `edit_sheet(id, base_version, ops, note?)` | Change a sheet's cells, rows and columns (owner or editor): the ops apply to `base_version` and publish one new version, or nothing. See [Sheets](#sheets-decided-2026-11-19) |
+| `list_artifact_files(id, limit?, cursor?)` | The files people uploaded from a page (owner or editor): id, name, type, size, state, who uploaded each and when, with usage and limits. Metadata only, never the bytes; names are untrusted |
+| `delete_artifact_file(id, file_id)` | Delete one ready file people uploaded (owner or editor). Files are not versioned |
 | `preview_artifact(id, version?)` | App-only (MCP Apps `visibility: ["app"]`, read-only): a single-use, 60-second link that shows one version the caller can view in an MCP host's frame. Called by Plinth's preview page, not by agents |
 
 **In-chat previews (decided 2026-11-16).** `publish_artifact`, `update_artifact` and
@@ -663,8 +675,8 @@ Decided 2026-11-14 (issue #1). Design:
   `TOKEN_SIGNING_KEY`) into the enter token, and the content host copies it into the per-artifact
   content cookie (`__Host-` prefixed, so a sibling artifact cannot toss in someone else's; a
   request whose valid passes disagree on who is viewing has none). Only identified viewers get a
-  claim, and only while shared data or [live rooms](#live-rooms) are active; everyone else is
-  anonymous to the page.
+  claim, and only while shared data, [files](#files-people-add-to-a-page-decided-2026-11-19) or [live rooms](#live-rooms) are active;
+  everyone else is anonymous to the page.
   `window.plinth.viewer` is `{ id, email, role }` or null; `email` is set only when the page
   declares `viewer`, and `id` is opaque and different on every artifact. The app tells the viewer
   in one line under the bar what the page saves and whether it can see who they are.
@@ -1771,6 +1783,93 @@ not edited on its page yet.
   multiple worksheets, charts, conditional formatting, merged cells, cell styles and server-side
   exports are not planned.
 
+### Files people add to a page (decided 2026-11-19)
+
+A page can let the people it is shared with add files: a screenshot, a PDF, a short video, a voice
+note. Everyone who can open the page sees them. No file can ever run as a page or a script.
+
+- **Declaration.** `files` in `<meta name="plinth-capabilities">`, with `/__plinth/runtime.js`. On
+  its own it declares the file store, with no shared data and no room; `viewer` adds who uploaded
+  each file. It is stored in `versions.capabilities` only when declared, so every other
+  declaration is stored as before. The current version's declaration governs, for old version URLs
+  too: dropping `files` turns the page API and the file URLs off (404) and keeps the files, which
+  come back when a later version declares it again; meanwhile the owner still sees them in the Share
+  dialog and can delete them there. Only HTML pages.
+- **Who uploads, reads and deletes.** Identified viewers upload: the owner and people with a grant
+  of any role, signed in or confirmed by code. Anyone with a view pass for the page reads,
+  anonymous link viewers included. An in-chat preview and Plinth's thumbnail browser never do (for
+  them `ready` says `preview`), so no upload ever ends up in a thumbnail or a link preview, which
+  outlive a deleted file. A ready file can be deleted by its uploader, the owner and editors; an
+  unfinished upload only by its uploader, who alone sends its parts, and to anyone else it does not
+  exist. `pageFileAccess`, `canSendFilePart` and `canDeleteFile` in `policy.ts` decide, for the
+  page API and the file URLs alike, and the SQL of each write repeats the condition.
+- **Contents.** A file is stored exactly as added: the details saved inside it (a photo's location,
+  device and time, a document's author) reach everyone who can open the page. The notice under the
+  viewer bar tells everyone who may add a file, and the privacy notice says so.
+- **Types.** PNG, JPEG, GIF, WebP and AVIF images, PDF, MP4 and WebM video, MP3, M4A, Ogg and WAV
+  audio. Never SVG, HTML, XML or other text, Office documents, archives, HEIC or QuickTime. A page
+  names the type when it starts an upload, and the first part must start with that type's signature,
+  or the upload is cancelled (`type_mismatch`). Brands such as `qt  `, `heic`, `mif1` and `3gp`
+  are refused.
+- **Page API.** `window.plinth.files`: `ready` (`{ available, reason, canUpload, accept, limits,
+  usage }`, never rejects; `reason` is `opaque_isolation`, `disabled`, `not_declared`, `preview`,
+  `expired` or `network`), `upload(file, { name, onProgress, signal })`, `list({ limit, cursor,
+  mine })`, `all({ mine })`, `get(id)`, `delete(id)`, `url(id, { download })`, `download(id)` and
+  `onSnapshot(onFiles, onError, { intervalMs, mine })`. A file is `{ id, name, type, size, url,
+  mine, createdAt, uploadedBy? }`; `uploadedBy` (`{ email, role, via }`) only on a page that
+  declares `viewer`, for an identified reader. Nothing is fetched until the page reads `ready` or
+  calls a method. Errors add `unsupported_type`, `type_mismatch` and `aborted` to the shared-data
+  codes, and `quota_exceeded` carries the `limit` that was reached.
+- **Transport.** Under the shared-data API, `/__plinth/api/v1/files...`, behind its caller checks
+  (`x-plinth-data`, same-origin fetch metadata, an exact `Origin` on writes, JSON bodies):
+  `GET files/session`, `GET files/changes`, `GET files` (oldest first), `GET files/<id>`,
+  `POST files` (`{ name, type, size }`, at most 2 KiB), `PUT files/<id>/parts/<n>` and
+  `DELETE files/<id>`. Bytes travel as base64 in parts of exactly 5 MiB (R2's multipart minimum;
+  the last part is shorter), each body exactly `{"data":"<base64>"}`, decoded as it streams in.
+  A body is read only after availability, the artifact, the content pass and the declaration, and a
+  part only for its uploader within the part limits. Parts arrive in order, and the last accepted
+  part may be sent again: it is answered from what was recorded and never stored again. While files
+  are unavailable the session answers `{ available: false, reason }` and every other files route
+  404 with the reason.
+- **Serving.** `GET /__plinth/files/<id>` on the artifact's own origin, behind the content pass,
+  for a fetch destination of `image`, `video`, `audio`, `track`, `empty` or `iframe` (scripts,
+  styles, fonts, workers, objects and manifests get 403; a top-level visit goes to the artifact's
+  page). The answer carries the exact stored type, `nosniff`, CORP `same-origin`, `noindex` even on
+  a public artifact, and the content CSP with `script-src 'none'` and a bare `sandbox`. PDFs, frames
+  and `?download=1` are attachments: sandboxed frames cannot show a PDF, so a page renders one with
+  pdf.js from a fetched blob. `Cache-Control: private, no-cache` with a strong `ETag`, so a deleted
+  file stops showing at the next revalidation, and single byte ranges for video seeking. No route
+  on the app host ever serves a file's bytes.
+- **Names.** The last path segment, without control or bidirectional characters, at most 200
+  characters, with the proven type's extension added when it is missing (`evil.html` becomes
+  `evil.html.png`). Sent in `Content-Disposition` with an ASCII fallback and `filename*`. A name is
+  untrusted display text everywhere: on the page, in the app and for agents.
+- **Limits** (env vars): `ALLOW_FILES` (off), `FILES_MAX_FILE_BYTES` (20 MiB, 1 to 100 MiB),
+  `FILES_MAX_PER_ARTIFACT` (500, 1 to 10,000), `FILES_MAX_BYTES_PER_ARTIFACT` (256 MiB),
+  `FILES_MAX_BYTES_PER_UPLOADER` (64 MiB per person per artifact; the owner is exempt),
+  `FILES_MAX_BYTES_PER_USER` (1 GiB across an owner's live artifacts, apart from their version
+  storage, so uploads never make a publish fail), `FILES_UPLOADS_PER_UPLOADER_PER_HOUR` (60) and
+  `FILES_UPLOADS_PER_ARTIFACT_PER_HOUR` (300). Part requests per hour, per person and per artifact:
+  the upload limit times the parts of a largest file times 4 (a send and three retries). Fixed: 3
+  unfinished uploads per person per artifact, 30 minutes to finish one, 100 files per list page.
+  Every quota is checked in the statement that reserves an upload's bytes, after the owner's
+  uploads past their deadline stop counting in the same batch.
+- **Lifecycle.** Files are not versioned and are kept across new versions and restores. A delete, a
+  cancel, an upload past its deadline, the artifact's deletion or takedown, and `erase-user` turn
+  rows into tombstones that count toward nothing. A takedown deletes the ready files at once (as it
+  wipes shared data); the hourly cron, and on instances without one an upload now and then, deletes
+  the rest, an unfinished upload 15 minutes after its deadline. The owner deletes one file or all
+  of them from the Share dialog.
+- **Agents.** `list_artifact_files` and `delete_artifact_file` (MCP), and REST under
+  `/api/v1/artifacts/:ref/files`, for owners and editors: metadata only, with names marked
+  untrusted. Deleting every file is the signed-in owner's alone, in the app. Agents never upload
+  (they publish versions, whose assets carry their own files) and never read file bytes.
+  `get_artifact` lists `files` among the declared capabilities.
+- **Availability.** Only with origin isolation: under opaque isolation and the path fallback there
+  are no cookies, so `ready` resolves `{ available: false, reason: "opaque_isolation" }` without a
+  request. The notice under the viewer bar tells each person that the page keeps files people add,
+  and who can see who added them.
+
 ### Big builds and reuse by hash
 
 Decided 2026-11-15. Agents publish built sites (a Vite or similar `dist/` folder with hundreds of
@@ -2037,6 +2136,12 @@ options.
   the user chose in the session; a mention from any role never makes the owner's agent read one,
   and `sensitive_file` flags secret-looking names among the files a request sent
   ([Project files for a page](#project-files-for-a-page-decided-2026-11-19)).
+- **Files people add never run.** Only raster images, PDFs, video and audio whose first bytes prove
+  their type are stored, never markup. They are served from the artifact's own origin with that
+  type, `nosniff`, `script-src 'none'`, a bare `sandbox` and CORP `same-origin`, and never from the
+  app host. Uploads pass the shared-data API's caller checks with JSON bodies, only identified
+  viewers upload, the quotas are apart from the owner's storage, and a takedown deletes the files
+  ([Files people add to a page](#files-people-add-to-a-page-decided-2026-11-19)).
 - **Open counts are aggregates.** One number per artifact per UTC day, never who opened it, shown
   only to the artifact's owner and, summed over the instance, to admins.
 - **Quotas and rate limits.** Each account is limited to 100 artifacts by default, set by an
@@ -2193,6 +2298,20 @@ Sheets run on the same Worker allowances:
 
 On the free plan's 10 ms of CPU per request, the largest sheets may need a lower
 `SHEET_EVAL_BUDGET`, and an operator on Workers Paid can raise it to 20,000,000.
+
+Files people add to a page run on the same Worker and D1 allowances, plus R2 (Class A operations:
+1M a month free, then $4.50 per million; Class B: 10M a month free, then $0.36 per million):
+
+| Operation | Worker requests | D1 rows read | D1 rows written | R2 operations |
+| --- | --- | --- | --- | --- |
+| Small file (one part) | 2 | about 8 | about 5 (2 rate-limit rows, the file, its ready update, usage by trigger) | 1 Class A |
+| File in n parts | n + 1 | about 4 per part | about 2 per part | n + 2 Class A |
+| File view | 1 | about 4 | 0 | 1 Class B, none for a 304 |
+| `onSnapshot` poll | 1 per 15 s per visible tab | 1 | 0 | 0 |
+| Delete, or the sweep clearing one tombstone | 1, or 0 | about 2 | about 2 | 1 Class A |
+
+Stored files are R2 storage like versions ($0.015 per GB-month past 10 GB), counted apart from the
+owner's quota under `FILES_MAX_BYTES_PER_USER`.
 
 Not included: push-mode agent calls, which bill to the user's API key or a paid plan. Vercel was
 considered and set aside: its free plan is non-commercial only, so the floor is about $20 per month

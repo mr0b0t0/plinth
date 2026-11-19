@@ -10,7 +10,7 @@ import {
 } from "@plinth/shared";
 import { and, eq, isNull, sql } from "drizzle-orm";
 import { Hono } from "hono";
-import { dictationActive, instanceLimits } from "../config.ts";
+import { dictationActive, filesActive, instanceLimits } from "../config.ts";
 import { artifacts, users } from "../db/schema.ts";
 import { ApiError, unauthorized } from "../lib/errors.ts";
 import { boundArtifactOf } from "../policy.ts";
@@ -47,6 +47,7 @@ meApi.get("/config", (c) => {
     dictation: dictationActive(config),
     category_sharing: config.allowCategorySharing,
     live_views: config.allowLiveViews,
+    files: filesActive(config),
   };
   const res = c.json(body);
   ensureCsrfCookie(c, res.headers);

@@ -66,6 +66,8 @@ const WORKER_VARS = [
   "SHEET_EVAL_BUDGET",
   // Following the presenter in a deck (docs/docker.md#settings), through the same live rooms.
   "ALLOW_SLIDES_FOLLOW",
+  // Files people add to a page (docs/docker.md#settings); off unless set to "true".
+  "ALLOW_FILES",
 ];
 
 // `plinth init` flags and the variables that set them, to name the variable in its errors.

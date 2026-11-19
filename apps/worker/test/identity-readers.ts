@@ -12,10 +12,22 @@ export function everyIdentityReaderOff(): {
     vars: {
       ALLOW_SHARED_DATA: "false",
       ALLOW_ROOMS: "false",
+      ALLOW_FILES: "false",
     },
     config: {
       allowSharedData: false,
       allowRooms: false,
+      allowFiles: false,
     },
+  };
+}
+
+/**
+ * The switches of identity readers that ship off (ALLOW_FILES), turned on, as env vars for
+ * parseConfig: with them, every reader is active on the test base config.
+ */
+export function everyIdentityReaderOn(): Record<string, string> {
+  return {
+    ALLOW_FILES: "true",
   };
 }

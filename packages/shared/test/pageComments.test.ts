@@ -29,6 +29,7 @@ describe("the comments declaration", () => {
       comments: true,
       dictation: false,
       hold: false,
+      files: false,
     });
     expect(parseCapabilities(caps("data comments"))).toMatchObject({ data: true, comments: true });
     expect(parseCapabilities(caps("room comments"))).toMatchObject({ room: true, comments: true });
@@ -75,6 +76,7 @@ describe("the comments declaration", () => {
       comments: true,
       dictation: false,
       hold: false,
+      files: false,
     });
     expect(readStoredCapabilities('{"data":true,"viewer":true,"shared":[]}')?.comments).toBe(false);
     // Only `true` counts.

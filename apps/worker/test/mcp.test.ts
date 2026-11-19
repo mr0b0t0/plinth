@@ -43,6 +43,8 @@ describe("MCP endpoint", () => {
     expect(names).toEqual(
       [
         "claim_mention",
+        "delete_artifact_file",
+        "list_artifact_files",
         "get_artifact",
         "get_design_system",
         "list_artifact_data",
@@ -84,9 +86,13 @@ describe("MCP endpoint", () => {
       expect(typeof ann?.readOnlyHint, t.name).toBe("boolean");
       expect(typeof ann?.destructiveHint, t.name).toBe("boolean");
     }
-    // Writes that only add a version stay non-destructive; the two that can remove data are not.
+    // Writes that only add a version stay non-destructive; the three that can remove data are not.
     const destructive = tools.filter((t) => t.annotations?.destructiveHint).map((t) => t.name);
-    expect(destructive.sort()).toEqual(["set_visibility", "write_artifact_data"]);
+    expect(destructive.sort()).toEqual([
+      "delete_artifact_file",
+      "set_visibility",
+      "write_artifact_data",
+    ]);
   });
 
   it("start_upload says where its requests may come from; publish and update point to it", async () => {

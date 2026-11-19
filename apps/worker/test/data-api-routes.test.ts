@@ -9,14 +9,18 @@ import worker from "../src/index.ts";
 import { agent, browserSession, contentOrigin, enterContent, publish } from "./helpers.ts";
 
 const PAGE = `<!doctype html><title>Routes</title>
-<meta name="plinth-capabilities" content="data viewer room people">
+<meta name="plinth-capabilities" content="data viewer room people files">
 <meta name="plinth-data-shared" content="tasks"><p>routes</p>`;
+
+// Every feature behind a route is on, so each route reaches the step that reads its body: files
+// (off by default) read a body only once their own availability, artifact and pass steps passed.
+const ALL_ON = { ALLOW_FILES: "true" };
 
 async function run(url: string, init: RequestInit): Promise<Response> {
   const ctx = createExecutionContext();
   const res = await worker.fetch(
     new Request(url, { redirect: "manual", ...init }),
-    env as never,
+    { ...env, ...ALL_ON } as never,
     ctx,
   );
   await waitOnExecutionContext(ctx);
@@ -135,7 +139,7 @@ describe("data API route table", () => {
     const { id, cookie } = await setup();
     for (const route of DATA_API_ROUTES) {
       for (const method of route.methods) {
-        const res = await request(id, cookie, route.example, method);
+        const res = await request(id, cookie, route.example, method, {}, route.exampleBody);
         // Not refused by a caller check, the method or the body: the handler ran.
         expect([200, 201, 204, 404, 409], `${route.kind} ${method}`).toContain(res.status);
         noCors(res, `${route.kind} ${method}`);

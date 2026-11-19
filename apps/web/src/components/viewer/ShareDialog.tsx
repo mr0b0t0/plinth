@@ -1,6 +1,6 @@
 // Share: the artifact's app link to copy, what the link opens for whoever gets it, and (for the
-// owner) the way to the sharing settings, the page's shared data (how much, and delete all) and how
-// often other people opened it.
+// owner) the way to the sharing settings, the page's shared data (how much, and delete all), the
+// files people uploaded to it (FilesBlock.tsx) and how often other people opened it.
 import { CopyIcon, GearSixIcon, TrashIcon, WarningCircleIcon } from "@phosphor-icons/react";
 import {
   APP_ROUTES,
@@ -10,7 +10,13 @@ import {
   type Visibility,
 } from "@plinth/shared";
 import { useEffect, useRef, useState } from "react";
-import { ApiRequestError, deleteAllData, getArtifactViews, getDataSummary } from "../../lib/api.ts";
+import {
+  ApiRequestError,
+  deleteAllData,
+  deleteAllFiles,
+  getArtifactViews,
+  getDataSummary,
+} from "../../lib/api.ts";
 import { formatBytes } from "../history/format.ts";
 import {
   Button,
@@ -22,6 +28,7 @@ import {
   useToast,
   VISIBILITY_META,
 } from "../ui/index.ts";
+import { FilesBlock, filesCount, useArtifactFiles } from "./FilesBlock.tsx";
 import "./viewer.css";
 
 export interface ShareDialogProps {
@@ -53,13 +60,39 @@ export function ShareDialog({ open, onClose, link, slug, visibility, isOwner }: 
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const docs = data.summary?.usage.docs ?? 0;
+  // The files block loads for the owner whether or not the current version declares `files`: a
+  // version that dropped it keeps the files, and this is where the owner deletes them. It shows
+  // only while the page declares `files` or still has some.
+  const filesDeclared = data.summary?.capabilities.includes("files") === true;
+  const files = useArtifactFiles(open && isOwner, slug);
+  const [confirmingFiles, setConfirmingFiles] = useState(false);
+  const [deletingFiles, setDeletingFiles] = useState(false);
+  const [filesError, setFilesError] = useState<string | null>(null);
+  const fileTotal = files.list?.usage.files ?? 0;
 
   // Closing the dialog from outside drops a pending confirmation and an old error.
   useEffect(() => {
     if (open) return;
     setConfirming(false);
     setDeleteError(null);
+    setConfirmingFiles(false);
+    setFilesError(null);
   }, [open]);
+
+  const deleteFiles = async () => {
+    setDeletingFiles(true);
+    setFilesError(null);
+    try {
+      await deleteAllFiles(slug);
+      toast.success("Uploaded files deleted");
+      files.reload();
+    } catch (err) {
+      setFilesError(err instanceof Error ? err.message : "Try again.");
+    } finally {
+      setDeletingFiles(false);
+      setConfirmingFiles(false);
+    }
+  };
 
   // The confirmation replaces the share dialog while it is open (one modal at a time), and the
   // share dialog comes back when it closes.
@@ -90,7 +123,7 @@ export function ShareDialog({ open, onClose, link, slug, visibility, isOwner }: 
   return (
     <>
       <Dialog
-        open={open && !confirming}
+        open={open && !confirming && !confirmingFiles}
         onClose={onClose}
         title="Share this artifact"
         description={`${meta.label}: ${meta.description}`}
@@ -132,6 +165,18 @@ export function ShareDialog({ open, onClose, link, slug, visibility, isOwner }: 
               }}
             />
           )}
+          {isOwner && (
+            <FilesBlock
+              state={files}
+              slug={slug}
+              declared={filesDeclared}
+              deleteError={filesError}
+              onDeleteAll={() => {
+                setFilesError(null);
+                setConfirmingFiles(true);
+              }}
+            />
+          )}
         </Stack>
       </Dialog>
       <ConfirmDialog
@@ -143,6 +188,16 @@ export function ShareDialog({ open, onClose, link, slug, visibility, isOwner }: 
         title="Delete all shared data?"
         description={`This deletes ${entries(docs)} saved by people using this page. It cannot be undone; the page keeps working and starts empty.`}
         confirmLabel={`Delete ${entries(docs)}`}
+      />
+      <ConfirmDialog
+        open={open && confirmingFiles}
+        onClose={() => !deletingFiles && setConfirmingFiles(false)}
+        onConfirm={deleteFiles}
+        loading={deletingFiles}
+        danger
+        title="Delete all uploaded files?"
+        description={`This deletes ${filesCount(fileTotal)} people uploaded to this page. It cannot be undone; the page keeps working and starts with no files.`}
+        confirmLabel={`Delete ${filesCount(fileTotal)}`}
       />
     </>
   );

@@ -235,6 +235,7 @@ it starts the instance as it is.
 | `PLINTH_ALLOW_LIVE_VIEWS` | `true` | Live views: open pages follow new versions and shared-data changes over a WebSocket on the app host, through the same `ROOMS` binding, and keep the reader's state across versions; `"false"` turns them off and pages poll and reload the frame for each version |
 | `PLINTH_ALLOW_DICTATION` | `false` | Dictation run by the app for pages that declare it; `"true"` turns it on (origin isolation only) |
 | `PLINTH_ALLOW_SLIDES_FOLLOW` | `true` | Following the presenter in a deck, over the same live rooms; `"false"` turns it off |
+| `PLINTH_ALLOW_FILES` | `false` | Files people add to a page that declares `files`; `"true"` turns it on (origin isolation only). The `FILES_*` limits keep their defaults |
 | `PLINTH_ALLOW_CATEGORY_SHARING` | `true` | Owners may share a category with people (a portal page lists what the owner reviewed into it); `"false"` turns it off |
 | `PLINTH_SHEET_EVAL_BUDGET` | `200000` | Formula steps one `read_sheet` call may spend, `10000` to `20000000` ([self-hosting.md](self-hosting.md#settings)) |
 | `PLINTH_LISTEN` | `0.0.0.0`; `127.0.0.1` with the tunnel | The address the Worker listens on inside the container |

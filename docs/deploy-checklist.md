@@ -226,6 +226,27 @@ the speech recognition, and Plinth only passes words from the app to the page.
   dialog with a screen reader. Check that the privacy notice on `/legal/privacy` shows its
   Dictation paragraph.
 
+### Files people add to a page
+
+Files need no new binding: the bytes go to the `FILES` bucket every config already binds, under
+`artifacts/<id>/files/`, and migration `0014_artifact_files.sql` adds their tables.
+
+- **Off switch.** `ALLOW_FILES` is off unless set to `"true"`. Off, pages that declare `files` get
+  `ready` with `available: false`, `reason: "disabled"`, and `/__plinth/files/` answers 404; files
+  already uploaded stay until they are deleted.
+- **Isolation.** Files need `CONTENT_ISOLATION=origin`. Under `opaque` and the staging path fallback
+  they are off, whatever the setting says.
+- **Storage.** Uploads add R2 storage and operations apart from the owners' version quota, up to
+  `FILES_MAX_BYTES_PER_USER` per owner ([spec.md](spec.md#costs)). Keep R2's default lifecycle rule
+  that aborts incomplete multipart uploads after 7 days: it catches an upload whose sweep never
+  ran. The hourly cron deletes deleted, cancelled and expired uploads.
+- **Moderation.** Files are a new kind of user content: the report link and a takedown cover them,
+  and a takedown deletes them. Owners and editors can delete any file from the Share dialog.
+- **Before turning it on.** Upload a PNG, a PDF and an MP4 from a page in desktop Chrome, Firefox
+  and Safari, and in Safari on iOS; check that an SVG and an HTML file are refused, that the video
+  seeks, that the PDF downloads, and that `/legal/privacy` and `/legal/acceptable-use` show their
+  lines on files.
+
 ### Creating the resources
 
 The setup script creates the D1 database and the R2 bucket and writes the Worker config with every
@@ -466,9 +487,13 @@ These need accounts, money or legal judgement, so no script does them.
     it is on, the privacy notice says that the browser's speech service hears the audio and that
     Plinth never receives it. An operator with a privacy notice of their own should say the same
     before turning it on.
-15. Turn on GitHub private vulnerability reporting for the repository (see
+15. Files people add to a page are off unless `ALLOW_FILES` is set to `"true"`
+    ([Files people add to a page](#files-people-add-to-a-page)). While it is on, the privacy notice
+    says what is kept with each file and for how long, and the acceptable use policy covers what may
+    be uploaded. An operator with documents of their own should say the same before turning it on.
+16. Turn on GitHub private vulnerability reporting for the repository (see
     [security.md](security.md)).
-16. Watch the first days with `wrangler tail` and the Cloudflare analytics for the Worker, D1 and
+17. Watch the first days with `wrangler tail` and the Cloudflare analytics for the Worker, D1 and
     Durable Objects.
 
 ## 6. Upgrading and rolling back

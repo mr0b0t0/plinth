@@ -69,7 +69,17 @@ export function statTiles(s: AdminStats): Tile[] {
         `${formatCount(t.versions)} versions kept on live pages`,
       ]),
     },
-    { label: "Storage", value: formatBytes(t.storage_bytes) },
+    {
+      label: "Storage",
+      value: formatBytes(t.storage_bytes),
+      ...(t.files
+        ? {
+            caption: `and ${formatBytes(t.file_bytes ?? 0)} in ${formatCount(t.files)} ${
+              t.files === 1 ? "file" : "files"
+            } people added to pages`,
+          }
+        : {}),
+    },
     {
       label: "Shared data entries",
       value: formatCount(t.data_docs),

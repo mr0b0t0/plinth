@@ -51,6 +51,7 @@ export async function instanceStats(ctx: Ctx, days: 7 | 30 | 90): Promise<AdminS
     newUsers,
     newArtifacts,
     publishes,
+    files,
   ] = await db.batch<Row>([
     q("SELECT count(*) AS n, coalesce(sum(created_at >= ?1), 0) AS fresh FROM users", startIso),
     q(
@@ -101,6 +102,12 @@ export async function instanceStats(ctx: Ctx, days: 7 | 30 | 90): Promise<AdminS
               coalesce(sum(created_by_connection IS NOT NULL), 0) AS agent
          FROM versions WHERE created_at >= ?1 GROUP BY d`,
       startIso,
+    ),
+    // Files people added to live pages (pending and ready; tombstones count nothing).
+    q(
+      `SELECT coalesce(sum(u.files), 0) AS n, coalesce(sum(u.bytes), 0) AS bytes
+         FROM artifact_file_usage u JOIN artifacts a ON a.id = u.artifact_id
+        WHERE a.deleted_at IS NULL`,
     ),
   ]);
 
@@ -175,6 +182,8 @@ export async function instanceStats(ctx: Ctx, days: 7 | 30 | 90): Promise<AdminS
       connections_by_client: connectionsByClient,
       views: num(first(allViews).n),
       open_reports: num(first(openReports).n),
+      files: num(first(files).n),
+      file_bytes: num(first(files).bytes),
     },
     window: {
       new_users: num(u.fresh),

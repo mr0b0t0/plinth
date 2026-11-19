@@ -49,6 +49,7 @@ describe("the hold declaration", () => {
       comments: false,
       dictation: false,
       hold: true,
+      files: false,
     });
     const stored = serializeCapabilities(c as Capabilities);
     expect(stored).toBe('{"data":false,"viewer":false,"shared":[],"hold":true}');

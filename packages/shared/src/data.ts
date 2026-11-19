@@ -44,6 +44,11 @@ export interface Capabilities {
    * Update button instead of replacing it (docs/spec.md "Live views"). Not shared data, no API.
    */
   hold: boolean;
+  /**
+   * Files people add from the page (`plinth.files`): raster images, PDFs, video and audio kept in
+   * the artifact's own store. Not shared data; `viewer` adds who uploaded each file.
+   */
+  files: boolean;
 }
 
 export const CAPABILITIES_META = "plinth-capabilities";
@@ -114,6 +119,7 @@ export const DECLARATION_FIELDS: readonly DeclarationField[] = [
   { kind: "token", key: "comments" },
   { kind: "token", key: "dictation" },
   { kind: "token", key: "hold" },
+  { kind: "token", key: "files" },
 ];
 
 const TOKEN_INFO = new Map<string, (typeof CAPABILITY_TOKENS)[number]>(
@@ -177,10 +183,10 @@ function tokens(content: string): string[] {
  * Every meta tag is read, so a registered meta after the others is never missed. Unknown tokens
  * are ignored, and so are list entries that break their rule; at most each list's `max` are kept
  * (LIMITS.maxDataShared, ROOM_LIMITS.maxOpenTopics). Returns null unless `data`, `room`,
- * `comments`, `dictation` or `hold` is declared: the viewer is learned through the data API or the
- * room, so `viewer` alone declares nothing, and neither does a list alone. Shared names count only
- * with `data`, open topics only with `room`. A page that declares only `comments`, `dictation` or
- * `hold` has no store and no room.
+ * `comments`, `dictation`, `hold` or `files` is declared: the viewer is learned through the data API
+ * or the room, so `viewer` alone declares nothing, and neither does a list alone. Shared names
+ * count only with `data`, open topics only with `room`. A page that declares only `comments`,
+ * `dictation`, `hold` or `files` has no document store and no room.
  */
 export function parseCapabilities(html: string): Capabilities | null {
   if (!/plinth-/i.test(html)) return null;

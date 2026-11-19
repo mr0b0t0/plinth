@@ -422,6 +422,7 @@ export const CAPABILITY_TOKENS = [
   { token: "comments", declares: true, needs: [], stored: "declared" },
   { token: "dictation", declares: true, needs: [], stored: "declared" },
   { token: "hold", declares: true, needs: [], stored: "declared" },
+  { token: "files", declares: true, needs: [], stored: "declared" },
 ];
 
 export const DATA_CAPABILITIES = CAPABILITY_TOKENS.map((t) => t.token);

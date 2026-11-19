@@ -23,6 +23,7 @@ import { registerCommentTools } from "./tools/comments.ts";
 import type { ToolRegistrar } from "./tools/context.ts";
 import { registerDataTools } from "./tools/data.ts";
 import { registerDesignSystemTools } from "./tools/designSystems.ts";
+import { registerFileTools } from "./tools/files.ts";
 import { registerPreviewTools } from "./tools/preview.ts";
 import { registerSheetTools } from "./tools/sheets.ts";
 import { registerUploadTools } from "./tools/uploads.ts";
@@ -42,6 +43,7 @@ export const MCP_TOOL_FILES: readonly ToolRegistrar[] = [
   registerPreviewTools,
   registerDesignSystemTools,
   registerSheetTools,
+  registerFileTools,
 ];
 
 export function buildMcpServer(ctx: Ctx): McpServer {

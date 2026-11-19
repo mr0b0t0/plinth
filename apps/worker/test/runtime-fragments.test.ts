@@ -4,11 +4,13 @@
 // display names and the people fragment (who is viewing) did. Page comments and dictation added the
 // app channel and their own fragments after them; the channel is also tested on its own, and the
 // dictation fragment in runtime-dictation.test.ts. Live views add theirs last: pushed data
-// (runtime-behaviour.test.ts) and new versions with carried state (runtime-version.test.ts).
+// (runtime-behaviour.test.ts) and new versions with carried state (runtime-version.test.ts),
+// then files people add to a page theirs (runtime-files.test.ts).
 import { describe, expect, it } from "vitest";
 import { COMMENTS_FRAGMENT } from "../src/content/runtime/comments.ts";
 import { DATA_FRAGMENT } from "../src/content/runtime/data.ts";
 import { DICTATION_FRAGMENT } from "../src/content/runtime/dictation.ts";
+import { FILES_FRAGMENT } from "../src/content/runtime/files.ts";
 import type { RuntimeFragment } from "../src/content/runtime/fragment.ts";
 import { LIVE_FRAGMENT } from "../src/content/runtime/live.ts";
 import { PEOPLE_FRAGMENT } from "../src/content/runtime/people.ts";
@@ -108,6 +110,7 @@ describe("runtime fragments", () => {
       "dictation",
       "live",
       "version",
+      "files",
     ]);
     const served = runtimeScript(config());
     expect(assembleRuntime(config())).toBe(served);
@@ -118,6 +121,7 @@ describe("runtime fragments", () => {
         DICTATION_FRAGMENT,
         LIVE_FRAGMENT,
         VERSION_FRAGMENT,
+        FILES_FRAGMENT,
       ]),
     );
     // Memoized per app origin, which page comments and dictation embed.

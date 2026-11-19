@@ -698,3 +698,63 @@ export function slidesRoomAccess(claim: PageClaim, type: ArtifactType): RoomAcce
     slides: editor ? "present" : "watch",
   };
 }
+
+// ---------- files people add to a page (content host, content cookie) ----------
+
+/** What a content pass is for: a normal view, Plinth's thumbnail capture, or an in-chat preview. */
+export type FilePassKind = "view" | "capture" | "preview";
+
+/**
+ * What a page may do with its artifact's files. `enabled` is filesActive(config). Anyone with a
+ * view pass may read once the current version declares `files`. A thumbnail capture never reads
+ * them, so no upload ends up in a thumbnail or a link preview that outlives the file, and an
+ * in-chat preview never does either. Only identified viewers (the owner, or a person with a grant
+ * who signed in or confirmed by code) upload; who uploaded each file is visible only to identified
+ * viewers on a page that also declares `viewer`. The page API (content/files-api.ts), the bytes at
+ * /__plinth/files/ (content/files.ts) and the gate (api/view.ts) all decide with this.
+ */
+export function pageFileAccess(
+  claim: PageClaim | null,
+  caps: Capabilities | null,
+  enabled: boolean,
+  pass: FilePassKind,
+): { read: boolean; upload: boolean; seeIdentity: boolean } {
+  const read = enabled && caps?.files === true && pass === "view";
+  const upload = read && claim !== null;
+  return { read, upload, seeIdentity: upload && caps?.viewer === true };
+}
+
+/**
+ * May this writer send a part of this upload? Only the person who started it, while it is still
+ * arriving; to anyone else it does not exist (`not_found`). A null writer is read-only. The guarded
+ * part write repeats the condition in SQL.
+ */
+export function canSendFilePart(
+  writer: PageClaim | null,
+  file: { state: "pending" | "ready" | "deleting"; creatorEmail: string | null },
+): { allow: true } | { allow: false; reason: "read_only" | "not_found" } {
+  if (!writer) return { allow: false, reason: "read_only" };
+  if (file.state !== "pending" || file.creatorEmail === null) {
+    return { allow: false, reason: "not_found" };
+  }
+  return file.creatorEmail === writer.email
+    ? { allow: true }
+    : { allow: false, reason: "not_found" };
+}
+
+/**
+ * May this writer delete (or cancel) this file? A pending upload: only its uploader. A ready file:
+ * its uploader, the owner and editors (moderation). A null writer (an anonymous link viewer) is
+ * read-only. The guarded delete repeats the condition in SQL.
+ */
+export function canDeleteFile(
+  writer: PageClaim | null,
+  file: { state: "pending" | "ready"; creatorEmail: string | null },
+): { allow: true } | { allow: false; reason: "read_only" | "forbidden" } {
+  if (!writer) return { allow: false, reason: "read_only" };
+  if (file.creatorEmail !== null && file.creatorEmail === writer.email) return { allow: true };
+  if (file.state === "ready" && (writer.role === "owner" || writer.role === "editor")) {
+    return { allow: true };
+  }
+  return { allow: false, reason: "forbidden" };
+}

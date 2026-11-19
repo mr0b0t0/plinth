@@ -53,6 +53,9 @@ export const DEV_VARS: Record<string, string> = {
   // Following the presenter in a deck (docs/spec.md "Slides"), on by default. On the opaque server
   // it has no effect: it runs over live rooms, which need origin isolation.
   ALLOW_SLIDES_FOLLOW: "true",
+  // Files people add to a page (docs/spec.md "Files people add to a page"), off by default on real
+  // instances. On the opaque server it has no effect: files need origin isolation.
+  ALLOW_FILES: "true",
   // Fresh for every run; never committed, never reused.
   SESSION_SECRET: randomBytes(48).toString("base64url"),
   TOKEN_SIGNING_KEY: randomBytes(48).toString("base64url"),

@@ -25,6 +25,16 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   (`<meta name="plinth-capabilities" content="hold">`) is not replaced while you are using it: the
   bar says "v5 is available · Update" instead. Every other page is replaced at once, as before.
   Follows `ALLOW_LIVE_VIEWS`; off, every update reloads the frame as before.
+- **Files people add to a page.** A page that declares `files` lets the people it is shared with
+  add images, PDFs, video and audio (`plinth.files.upload`), which everyone who can open the page
+  sees; the owner and editors can delete any of them, and the owner can delete them all from the
+  Share dialog, also after a version stops declaring `files`. Files are proven by their first bytes
+  (never SVG, HTML or text), served from the artifact's own origin with `script-src 'none'` and a
+  bare `sandbox`, never from the app and never into thumbnails or link previews. People who may add
+  a file are told that the details saved inside it go with it.
+  Agents list and delete them with `list_artifact_files` and `delete_artifact_file`, without the
+  bytes. Off by default: `ALLOW_FILES` turns it on (origin isolation only), with `FILES_*` limits
+  apart from the owners' storage quota. Migration `0014_artifact_files.sql`.
 - **Your own categories for artifacts shared with you, and sharing a whole category.** On the
   dashboard, "Move to category…" now files an artifact someone shared with you under a category of
   your own, which only you see; the Category menu covers yours under Shared (#42). Owners can share

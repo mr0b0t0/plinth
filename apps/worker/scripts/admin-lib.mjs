@@ -386,6 +386,14 @@ export const ERASE_USER_STEPS = [
     sql: (email) =>
       `UPDATE artifact_docs SET updated_by_email = NULL, updated_by_role = NULL, updated_by_label = NULL WHERE updated_by_email = '${email}'`,
   },
+  // Files they added to other people's pages (0014_artifact_files): tombstones without their name
+  // or address, whose objects the Worker's hourly sweep deletes. Their own artifacts' files go
+  // with each artifact's root and rows.
+  {
+    table: "artifact_files",
+    sql: (email) =>
+      `UPDATE artifact_files SET state = 'deleting', claimed_at = NULL, name = '', created_by_email = NULL, created_by_role = NULL WHERE created_by_email = '${email}'`,
+  },
   // Unsaved page edits on other people's docs keep their text, not who made them.
   {
     table: "live_drafts",
