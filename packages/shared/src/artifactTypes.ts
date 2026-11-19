@@ -8,6 +8,7 @@
 // one line in ARTIFACT_TYPES, one line in TYPE_REGISTRY, its Worker hooks
 // (apps/worker/src/services/artifactTypes/<id>.ts) and, for a type with a renderer, a renderer
 // directory (apps/web/src/renderers/<id>/main.ts); no wire change.
+import { designSystem } from "./artifactTypes/design_system.ts";
 import { doc } from "./artifactTypes/doc.ts";
 import { html } from "./artifactTypes/html.ts";
 import { escapeHtml } from "./markdown.ts";
@@ -17,11 +18,12 @@ import { escapeHtml } from "./markdown.ts";
 export const ARTIFACT_TYPES = [
   "html",
   "doc",
+  "design_system",
 ] as const;
 export type ArtifactType = (typeof ARTIFACT_TYPES)[number];
 
 /** The languages the source editor holds. The web app has a Monaco setup for each one. */
-export type EditorLanguage = "html" | "markdown";
+export type EditorLanguage = "html" | "markdown" | "json";
 
 export interface ArtifactTypeDef {
   id: ArtifactType;
@@ -59,6 +61,7 @@ export type TypeModule<K extends ArtifactType> = ArtifactTypeDef & { readonly id
 export const TYPE_REGISTRY: { readonly [K in ArtifactType]: TypeModule<K> } = {
   html,
   doc,
+  design_system: designSystem,
 };
 
 /**

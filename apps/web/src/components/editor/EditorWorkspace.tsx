@@ -48,6 +48,7 @@ import type { EditorInitial, VersionText } from "./initial.ts";
 import { PreviewFrame } from "./PreviewFrame.tsx";
 import { utf8Bytes } from "./previewProtocol.ts";
 import { SplitPane, type SplitView } from "./SplitPane.tsx";
+import { sourceProblems } from "./sourceChecks.ts";
 import "./editor.css";
 
 /** Keep the draft in sessionStorage this long after the last change. */
@@ -130,14 +131,17 @@ export default function EditorWorkspace({
   const dirty = html !== base.html;
   // UTF-8 bytes, as the Worker counts them.
   const tooLarge = useMemo(() => utf8Bytes(html) > def.maxSourceBytes, [html, def]);
+  // A typed format's own problems (a design system's JSON): Save waits until there are none.
+  const problems = useMemo(() => sourceProblems(def.id, html), [def, html]);
+  const invalid = problems.length > 0;
   const preview = useMemo(
     () => previewDocument(def, { id, title: artifact.title, text: html, config }),
     [def, id, artifact.title, html, config],
   );
 
   // Refs for handlers that must see the newest values (keyboard shortcut, async saves).
-  const latest = useRef({ html, note, base, mode, dirty, active, tooLarge });
-  latest.current = { html, note, base, mode, dirty, active, tooLarge };
+  const latest = useRef({ html, note, base, mode, dirty, active, tooLarge, invalid });
+  latest.current = { html, note, base, mode, dirty, active, tooLarge, invalid };
   const savingRef = useRef(false);
 
   // Keep the draft in this tab so a reload does not lose it.
@@ -268,6 +272,14 @@ export default function EditorWorkspace({
         });
         return;
       }
+      if (s.invalid) {
+        toast.toast({
+          title: `Fix the ${label} first`,
+          description: "The problems under the editor say what to change.",
+          tone: "warning",
+        });
+        return;
+      }
       if (s.dirty) void save();
     };
     window.addEventListener("keydown", onKeyDown, true);
@@ -333,7 +345,7 @@ export default function EditorWorkspace({
   };
 
   const shortcut = isMac() ? "⌘S" : "Ctrl+S";
-  const canSave = dirty && mode !== "conflict" && !tooLarge;
+  const canSave = dirty && mode !== "conflict" && !tooLarge && !invalid;
 
   return (
     <div className="pl-editor" hidden={!active}>
@@ -402,6 +414,24 @@ export default function EditorWorkspace({
             The {label} is larger than {megabytes(def.maxSourceBytes)}, the most a {def.id} can
             hold, so it cannot be saved. Shorten it to save.
           </p>
+        </div>
+      )}
+      {invalid && (
+        <div className="pl-editor__notice pl-editor__problems" role="status" aria-live="polite">
+          <InfoIcon aria-hidden="true" />
+          <div>
+            <p>
+              The {label} has {problems.length === 1 ? "a problem" : `${problems.length} problems`}.
+              Fix {problems.length === 1 ? "it" : "them"} to save.
+            </p>
+            <ul>
+              {problems.slice(0, 5).map((p) => (
+                <li key={`${p.path} ${p.message}`}>
+                  <code>{p.path || "(root)"}</code> {p.message}
+                </li>
+              ))}
+            </ul>
+          </div>
         </div>
       )}
       {mode === "edit" && newer !== null && (

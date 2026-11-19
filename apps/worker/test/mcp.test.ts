@@ -40,6 +40,7 @@ describe("MCP endpoint", () => {
       [
         "claim_mention",
         "get_artifact",
+        "get_design_system",
         "list_artifact_data",
         "list_artifacts",
         "list_comments",

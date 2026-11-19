@@ -68,14 +68,17 @@ export const contentSchema = z
   .string()
   .min(1)
   .describe(
-    'The source of a typed artifact: for type "doc", the Markdown document (stored as content.md). ' +
+    'The source of a typed artifact: for type "doc", the Markdown document (stored as content.md); ' +
+      'for type "design_system", the design system JSON (stored as system.json). ' +
       "Not for html artifacts, which send html.",
   );
 export const artifactTypeSchema = z
   .enum(ARTIFACT_TYPES)
   .describe(
     '"html" (default): a hand-written page sent as html. "doc": a Markdown document sent as ' +
-      "content, which Plinth renders as a finished page. Fixed at publish.",
+      "content, which Plinth renders as a finished page. " +
+      '"design_system": design tokens, guidelines and components as JSON in content ' +
+      "(format plinth.design-system/1), which Plinth renders as a reference site. Fixed at publish.",
   );
 export const noteSchema = z.string().trim().max(LIMITS.maxNoteLength);
 export const passwordSchema = z
@@ -200,7 +203,37 @@ export const listArtifactsInput = z.object({
       "At most this many items, most recent first (default and maximum 500). 0 returns no items, only " +
         "categories: the cheap way to read your category names before you publish.",
     ),
+  /** Only artifacts of this type (design_system lists the design systems the caller can use). */
+  type: z
+    .enum(ARTIFACT_TYPES)
+    .optional()
+    .describe(
+      "Only artifacts of this type, e.g. design_system for the design systems you can use.",
+    ),
 });
+
+/** get_design_system and GET /artifacts/:ref/design-system. */
+export const DESIGN_SYSTEM_PARTS = ["tokens", "css", "guidelines", "components"] as const;
+export type DesignSystemPart = (typeof DESIGN_SYSTEM_PARTS)[number];
+
+export const getDesignSystemInput = z.object({
+  id: artifactRefSchema,
+  version: versionNumberSchema.optional(),
+  include: z
+    .array(z.enum(DESIGN_SYSTEM_PARTS))
+    .min(1)
+    .optional()
+    .describe(
+      "Only these parts (default all). css also returns font_links and fonts; components returns " +
+        "component_css too.",
+    ),
+  components: z
+    .array(z.string().regex(/^[a-z][a-z0-9-]{0,47}$/))
+    .max(50)
+    .optional()
+    .describe("Only these component ids (default all)."),
+});
+export type GetDesignSystemInput = z.input<typeof getDesignSystemInput>;
 
 export const listVersionsInput = z.object({ id: artifactRefSchema });
 

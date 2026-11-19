@@ -10,6 +10,14 @@ Add a line under **Unreleased** in the pull request that makes a change people w
 
 ## Unreleased
 
+- **Design systems.** Publish tokens, guidelines and components as a design system (`type:
+  "design_system"`, JSON in `system.json`): Plinth shows it as a reference site with color, type,
+  spacing and shadow samples and live component previews in light and dark. Agents read one with
+  the new `get_design_system` tool (or `GET /api/v1/artifacts/:ref/design-system`), copy its CSS
+  into the pages they build, and get a `design_system_outdated` warning when a page was built on
+  an older version. `list_artifacts` takes `type` to find them. The editor checks the JSON as you
+  type.
+
 - **Comments from the page.** A page that declares `comments` can open the comment composer on a
   spot of its own (a point on a canvas, a slide, a node in a diagram) with `plinth.comments`, draw
   its own markers for the threads and tell Plinth where to put its pins. The person still writes
