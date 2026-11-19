@@ -199,6 +199,11 @@ describe("setting sources", () => {
       { recipe: "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.x" },
       { recipe: "GET https://api.example.com/x?api_key=1" },
       { recipe: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" },
+      { label: "DB_PASSWORD=hunter2" },
+      { connector: "X_API_KEY=abc123" },
+      { label: "admin:p(a)ss@db.internal" },
+      { connector: "admin:pw@[::1]:5432" },
+      { recipe: "SELECT count(*) FROM orders; connect with admin:p<a>ss@db_host" },
     ]) {
       const r = await setSources(d.id, d.owner.auth, [{ ...LINEAR, ...bad }]);
       expect(r.status, JSON.stringify(bad)).toBe(400);

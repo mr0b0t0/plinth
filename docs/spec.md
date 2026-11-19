@@ -2019,9 +2019,11 @@ where they came from.
   connection). Labels and connectors are at most 60 characters. Control and invisible characters
   are refused, and so is anything that looks like a credential (an `Authorization` or `X-Api-Key`
   header, a known token or key prefix such as `sk-`, `ghp_`, `glpat-`, `AIza`, `rk_live_` or
-  `xoxb-`, a field such as `api_key=` or `password:`, a JWT, a secret-named query or fragment
-  parameter such as `?client_secret=` or `#access_token=`, a URL or a bare `user:password@host`
-  with a password (a `/` in it included when a host follows the `@`), Oracle's
+  `xoxb-`, a field such as `api_key=`, `password:` or `DB_PASSWORD=` (the name may follow any
+  character that is not a letter or a digit), a JWT, a secret-named query or fragment parameter
+  such as `?client_secret=` or `#access_token=`, any token with a `:` after its first character
+  and a later `@` (every `user:password@host`, with a scheme or without, whatever the password
+  holds; `mailto:a@b` and `github:owner/repo@v1` are refused with them), Oracle's
   `user/password@host` or an Oracle login with its password such as `sqlplus scott/tiger@orcl`,
   32 or more hex characters, or 40 or more key-like characters that mix upper
   case, lower case and digits and do not read as words and identifiers, where each segment of a
@@ -2051,12 +2053,14 @@ where they came from.
 - **Stamps on documents.** A `write_artifact_data` set may carry `source: { id, ref?, fetched_at }`.
   Only the owner's agent stamps (policy `sourcedWrite`: any other writer gets `source_owner_only`);
   the source must exist on the artifact and name the op's collection; `fetched_at` may be at most
-  5 minutes ahead of the server and 30 days old; `ref` is an optional pointer to the records (a URL
-  of any scheme keeps only its scheme, host and path, so a user name and password, a query and a
-  fragment are dropped; at most 300 characters; refused when it looks like a credential, a bare
-  `user:password@host` (`admin:pa/ss@db:5432`) and Oracle's `user/password@host` included, and when an `@` follows the authority and the text before it
-  holds a `:` or an `@`, or the scheme is not http(s), since a password with an unencoded `/`,
-  `?`, `#` or `@` runs past the host).
+  5 minutes ahead of the server and 30 days old; `ref` is an optional link to the records, one
+  absolute `http://` or `https://` URL and nothing else, since every reader sees it: any other
+  scheme and any text without a scheme are refused, so a bare `user:password@host` or a
+  `postgres://` connection string is never stored. The link keeps only its scheme, host, port and
+  path (user info, query and fragment dropped; at most 300 characters), and is refused when an `@`
+  follows the authority and the text before it holds a `:` or an `@` (a password with an unencoded
+  `/`, `?`, `#` or `@` runs past the host), with whitespace or invisible characters, or when what
+  is kept holds a key or a token.
   The server copies the source's label and connector onto the document and records the stamping
   connection, so removing or renaming a source never changes what an earlier figure claims, and
   raises the source's `last_fetched_at`. Stamping needs no confirmation: it records the owner's own

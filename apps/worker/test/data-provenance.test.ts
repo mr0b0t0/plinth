@@ -229,6 +229,13 @@ describe("stamping", () => {
       `${"gh"}p_0123456789abcdef`,
       "eyJa.eyJb.c",
       "0123456789abcdef0123456789abcdef01234567",
+      // Every reader sees a ref: only an http(s) link is stored, so a connection string whose
+      // password holds characters a pattern might stop at never is.
+      "admin:p(a)ss@db.internal",
+      "admin:pw@[::1]:5432/prod",
+      "scott/ti'ger@db_1.internal:1521/ORCL",
+      "postgres://db.example.com/sales",
+      "ENG-123",
     ]) {
       r = await writeOne(d.id, d.owner.auth, {
         doc_id: "e6",

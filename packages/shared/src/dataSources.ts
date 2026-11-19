@@ -81,12 +81,27 @@ const TOKEN_PREFIX =
   /(?:^|[^A-Za-z0-9])(?:sk-|gh[pousr]_|github_pat_|glpat-|xox[abprse]-|AKIA|ASIA[0-9A-Z]{16}|AIza[0-9A-Za-z_-]{35}|[sr]k_(?:live|test)_|whsec_|plinth_)/;
 /** Anthropic and OpenAI key prefixes in any case (`SK-ant-`); a bare `SK-` is a Jira key. */
 const TOKEN_PREFIX_ANY_CASE = /(?:^|[^A-Za-z0-9])sk-(?:ant|proj|svcacct|admin)-/i;
+/**
+ * Where a credential word starts: the start of the text or any character that is not a letter or
+ * a digit. `_` and `-` count, so `DB_PASSWORD=`, `db-password:` and `X_API_KEY=` are caught, which
+ * a `\b` word boundary misses after an `_`.
+ */
+const WORD_START = "(?:^|[^A-Za-z0-9])";
+/** A bearer token: `Bearer abc`. */
+const BEARER = new RegExp(String.raw`${WORD_START}bearer\s+\S`, "i");
 /** A header that carries a credential: `Authorization:` (Basic, Bearer or any) or `X-Api-Key`. */
-const CREDENTIAL_HEADER =
-  /\b(?:proxy-)?authorization\s*:|\bx-(?:api-key|api-token|auth-token|access-token)\b/i;
-/** A credential written as a field: `api_key=…`, `client_secret: …`, `password=…`. */
-const CREDENTIAL_FIELD =
-  /\b(?:api[-_]?key|api[-_]?token|access[-_]?token|auth[-_]?token|client[-_]?secret|secret[-_]?key|password|passwd)\s*[:=]\s*\S/i;
+const CREDENTIAL_HEADER = new RegExp(
+  String.raw`${WORD_START}(?:(?:proxy[-_])?authorization\s*:|x[-_](?:api[-_]key|api[-_]token|auth[-_]token|access[-_]token)(?![A-Za-z0-9]))`,
+  "i",
+);
+/**
+ * A credential written as a field: `api_key=…`, `client_secret: …`, `DB_PASSWORD=…`, and a JSON
+ * or YAML key in quotes (`"db_password": "…"`).
+ */
+const CREDENTIAL_FIELD = new RegExp(
+  String.raw`${WORD_START}(?:api[-_]?key|api[-_]?token|access[-_]?token|auth[-_]?token|client[-_]?secret|secret[-_]?key|password|passwd)["']?\s*[:=]\s*\S`,
+  "i",
+);
 /**
  * A query or fragment parameter named like a secret, with or without a prefix: `?token=`,
  * `?client_secret=`, `#access_token=`, `&X-Amz-Signature=`. Each prefix piece ends with a
@@ -95,49 +110,59 @@ const CREDENTIAL_FIELD =
 const SECRET_PARAM =
   /[?&;#](?:[A-Za-z0-9]+[_.-])*(?:token|key|secret|sig|signature|password|passwd|pwd|apikey|accesstoken|credential|auth)=/i;
 /**
- * A URL whose user info holds a password: `postgres://admin:pw@host`, `redis://:pw@host`. The
- * password may hold an unencoded `/`, `?` or `#`, as pasted connection strings often do
- * (`postgres://admin:pa/ss@host`), so any `:` between the `://` and the first `@` counts. The user
- * part cannot hold `:`, so the match never backtracks. A port followed by an `@` in the path
- * (`https://host:8443/@handle`) is refused too: it reads the same as `admin:8443/x@host`.
+ * A token (text between whitespace) of the form `<non-space>:<non-space>@`: a `:` after its first
+ * character and a later `@` with at least one character between them. That is the shape of every
+ * `user:password@host`, with or without a scheme (`postgres://admin:pw@db`,
+ * `admin:p(a)ss@db.internal`, `admin:pw@[::1]:5432`, `jdbc:oracle:thin:scott/tiger@//db`),
+ * whatever characters the password holds: the check finds a `:` and an `@` by position, so no
+ * character in the password can end it early. It also refuses some text without a password
+ * (`mailto:sales@example.com`, `github:owner/repo@v1`, a URL with an `@` in its path), which a
+ * recipe, a label or a connector never needs.
  */
-const URL_PASSWORD = /\b[a-z][a-z0-9+.-]*:\/\/[^\s@:]*:[^\s@]*@/i;
+function hasUserPasswordToken(text: string): boolean {
+  for (const token of text.split(/\s+/u)) {
+    const colon = token.indexOf(":", 1);
+    if (colon >= 0 && token.indexOf("@", colon + 2) >= 0) return true;
+  }
+  return false;
+}
+
 /**
- * A bare `user:password@host`, without a scheme. The user part cannot hold `:`, so the match
- * never backtracks; `mailto:person@host` is an address, not a password (looksLikeSecret).
+ * What follows the `@` of a pasted connection string: `//host`, a host with a port, an IPv6
+ * address in brackets, an IPv4 address, `localhost`, or a dotted host whose last label is letters
+ * (`db.internal`, `db_1.example.com`). A ref or a version (`@v4`, `@v1.2.3`, `@main`) is none of
+ * these, so `actions/checkout@v4` passes.
  */
-const BARE_PASSWORD = /(?:^|[\s"'(<[,;=])([^\s"'()<>[\],;=/@:]+):[^\s"'()<>[\]/@]+@[A-Za-z0-9-]/g;
+const HOST_AFTER_AT =
+  /^(?:\/\/|(?:[A-Za-z0-9_-]+\.)*[A-Za-z0-9_-]+:\d{1,5}(?![A-Za-z0-9])|\[[0-9A-Fa-f:.]+\]|\d{1,3}(?:\.\d{1,3}){3}(?![A-Za-z0-9.])|localhost(?![A-Za-z0-9.-])|(?:[A-Za-z0-9_-]+\.)+[A-Za-z]{2,}(?![A-Za-z0-9.-]))/;
+
 /**
- * What follows the `@` of a pasted connection string: `//host`, a host with a port, an IPv4
- * address, `localhost`, or a dotted host whose last label is letters (`db.internal`). A ref or a
- * version (`@v1`, `@v1.2.3`, `@main`) is none of these, so `github:owner/repo@v1` passes.
+ * Oracle's `user/password@host` (EZConnect): a token with a `/` after its first character and a
+ * later `@`, with at least one character between them, that a host follows (HOST_AFTER_AT). Found
+ * by position like hasUserPasswordToken, so the password may hold any character.
  */
-const HOST_AFTER_AT = String.raw`(?:\/\/|(?:[A-Za-z0-9-]+\.)*[A-Za-z0-9-]+:\d{1,5}(?![A-Za-z0-9])|\d{1,3}(?:\.\d{1,3}){3}(?![A-Za-z0-9.])|localhost(?![A-Za-z0-9.-])|(?:[A-Za-z0-9-]+\.)+[A-Za-z]{2,}(?![A-Za-z0-9.-]))`;
-/**
- * A bare `user:password@host` whose password holds a `/` (`admin:pa/ss@db.internal:5432/prod`,
- * `jdbc:oracle:thin:scott/tiger@//db:1521/ORCL`). A `/` is allowed only when a host follows the
- * `@` (HOST_AFTER_AT); a password never starts with `//`, which is a URL's (URL_PASSWORD), and
- * never ends with `:` (`jdbc:oracle:thin:@//db` holds none). `mailto:` is excluded as for
- * BARE_PASSWORD.
- */
-const BARE_PASSWORD_SLASHED = new RegExp(
-  String.raw`(?:^|[\s"'(<[,;=])([^\s"'()<>[\],;=/@:]+):(?!\/\/)[^\s"'()<>[\]@]*[^\s"'()<>[\]@:]@${HOST_AFTER_AT}`,
-  "g",
-);
-/** Oracle's `user/password@host` (EZConnect), when a host follows the `@` (HOST_AFTER_AT). */
-const ORACLE_PASSWORD = new RegExp(
-  String.raw`(?:^|[\s"'(<[,;=])[^\s"'()<>[\],;=/@:]+\/[^\s"'()<>[\]@]+@${HOST_AFTER_AT}`,
-);
+function hasOraclePasswordToken(text: string): boolean {
+  for (const token of text.split(/\s+/u)) {
+    const slash = token.indexOf("/", 1);
+    if (slash < 0) continue;
+    for (let at = token.indexOf("@", slash + 2); at >= 0; at = token.indexOf("@", at + 1)) {
+      if (HOST_AFTER_AT.test(token.slice(at + 1))) return true;
+    }
+  }
+  return false;
+}
+
 /**
  * An Oracle login with its password, whatever follows: a command-line tool's
  * `user/password[@alias]` (`sqlplus -s scott/tiger@orcl`, `rman target sys/pw@db`, `expdp
  * scott/tiger`), `userid=user/password`, and SQL*Plus `CONNECT user/password` ending at `@`, `;`
- * or the line's end. `sqlplus /nolog`, `sqlplus / as sysdba` and `rman target /` hold none.
+ * or the line's end. The password may start with any character but a space or an `@`. `sqlplus
+ * /nolog`, `sqlplus / as sysdba` and `rman target /` hold none.
  */
 const ORACLE_LOGIN = [
-  /\b(?:sqlplus|sqlldr|expdp|impdp|rman|dgmgrl)(?:\s+-\S+)*\s+(?:(?:target|catalog|auxiliary)\s*=?\s*)?["']?[^\s"'/@=-][^\s"'/@=]*\/[^\s"'@]/i,
-  /\buserid\s*=\s*["']?[^\s"'/@=]+\/[^\s"'@]/i,
-  /\bconn(?:ect)?\s+["']?[^\s"'/@=]+\/[^\s"'@;]+["']?(?=[@;]|[ \t]*$)/im,
+  /\b(?:sqlplus|sqlldr|expdp|impdp|rman|dgmgrl)(?:\s+-\S+)*\s+(?:(?:target|catalog|auxiliary)\s*=?\s*)?["']?[^\s"'/@=-][^\s"'/@=]*\/[^\s@]/i,
+  /\buserid\s*=\s*["']?[^\s"'/@=]+\/[^\s@]/i,
+  /\bconn(?:ect)?\s+["']?[^\s"'/@=]+\/[^\s@;]+(?=[@;]|[ \t]*$)/im,
 ];
 
 // Each id may be followed by the punctuation of the sentence the link sits in ("…/edit).").
@@ -182,33 +207,24 @@ function withoutRecordIds(text: string): string {
 }
 
 /**
- * Text that looks like it holds a credential: a bearer header or any `Authorization:` header,
- * `X-Api-Key`, a well-known token prefix (TOKEN_PREFIX), a field such as `api_key=` or
- * `password:`, a JWT, a query or fragment parameter named like a secret, a URL with a password
- * (any `:` between its `://` and its first `@`, URL_PASSWORD), a bare `user:password@host` (whose
- * password may hold a `/` when a host follows the `@`) or Oracle's `user/password@host`, an
- * Oracle login with its password (`sqlplus scott/tiger@orcl`, ORACLE_LOGIN), a run of 32 or more
- * hex characters, or a run of 40 or more
- * base64 or base64url characters that mixes upper case, lower case and digits and does not read
- * as words and identifiers (keyLikeRun). In a URL's host and path each segment between slashes is
- * a run of its own, so a link to a record whose segments are short opaque ids (Airtable,
- * Salesforce, Stripe) passes; elsewhere `/` joins the run. In their own links, the ids of Google
- * Docs and Drive, full commit SHAs on GitHub and GitLab, and Notion page and view ids are not runs
- * (withoutRecordIds). Recipes describe queries and labels and connectors name things: none of them
- * ever needs any of these.
+ * Text that holds a key, a token or a signed parameter: a bearer header or any `Authorization:`
+ * header, `X-Api-Key`, a well-known token prefix (TOKEN_PREFIX), a field such as `api_key=`,
+ * `password:` or `DB_PASSWORD=`, a JWT, a query or fragment parameter named like a secret, a run
+ * of 32 or more hex characters, or a run of 40 or more base64 or base64url characters that mixes
+ * upper case, lower case and digits and does not read as words and identifiers (keyLikeRun). In a
+ * URL's host and path each segment between slashes is a run of its own, so a link to a record
+ * whose segments are short opaque ids (Airtable, Salesforce, Stripe) passes; elsewhere `/` joins
+ * the run. In their own links, the ids of Google Docs and Drive, full commit SHAs on GitHub and
+ * GitLab, and Notion page and view ids are not runs (withoutRecordIds). The user-and-password
+ * shapes are looksLikeSecret's; a source_ref, always an http(s) link with its user info dropped,
+ * takes only this check.
  */
-export function looksLikeSecret(text: string): boolean {
-  if (/\bbearer\s+\S/i.test(text)) return true;
+function holdsKeyOrToken(text: string): boolean {
+  if (BEARER.test(text)) return true;
   if (TOKEN_PREFIX.test(text) || TOKEN_PREFIX_ANY_CASE.test(text)) return true;
   if (CREDENTIAL_HEADER.test(text) || CREDENTIAL_FIELD.test(text)) return true;
   if (/eyJ[A-Za-z0-9_-]*\.eyJ[A-Za-z0-9_-]*\./.test(text)) return true;
-  if (SECRET_PARAM.test(text) || URL_PASSWORD.test(text)) return true;
-  for (const re of [BARE_PASSWORD, BARE_PASSWORD_SLASHED]) {
-    for (const m of text.matchAll(re)) {
-      if ((m[1] ?? "").toLowerCase() !== "mailto") return true;
-    }
-  }
-  if (ORACLE_PASSWORD.test(text) || ORACLE_LOGIN.some((re) => re.test(text))) return true;
+  if (SECRET_PARAM.test(text)) return true;
   const runs = withoutRecordIds(text);
   if (HEX_RUN.test(runs)) return true;
   for (const url of runs.match(URL_UP_TO_QUERY) ?? []) {
@@ -218,6 +234,20 @@ export function looksLikeSecret(text: string): boolean {
     if (keyLikeRun(run)) return true;
   }
   return false;
+}
+
+/**
+ * Text that looks like it holds a credential, as recipes, labels and connectors are checked: a
+ * key, a token or a signed parameter (holdsKeyOrToken), any token of the form
+ * `<non-space>:<non-space>@` (hasUserPasswordToken: every `user:password@host`, with a scheme or
+ * without, whatever its password holds), Oracle's `user/password@host` (hasOraclePasswordToken),
+ * or an Oracle login with its password (`sqlplus scott/tiger@orcl`, ORACLE_LOGIN). Recipes describe
+ * queries and labels and connectors name things: none of them ever needs any of these.
+ */
+export function looksLikeSecret(text: string): boolean {
+  if (holdsKeyOrToken(text)) return true;
+  if (hasUserPasswordToken(text) || hasOraclePasswordToken(text)) return true;
+  return ORACLE_LOGIN.some((re) => re.test(text));
 }
 
 const SECRET_MESSAGE =
@@ -255,50 +285,59 @@ export function recipeProblem(s: string): string | null {
 }
 
 /**
- * A document's source_ref as stored, or why it is refused. Trimmed; a URL of any scheme
- * (`https://`, `postgres://`, `mongodb+srv://`, `redis://`) keeps only its scheme, host and path
- * (user name, password, query and fragment are dropped); any other text is kept as it is, and a
- * bare `user:password@host`, `user:pa/ss@host:port` or Oracle `user/password@host` is refused
- * (looksLikeSecret). A URL whose user info runs past the
- * host, because its password holds an unencoded `/`, `?`, `#` or `@`, is refused, not stripped. Empty is null. Refused past
- * LIMITS.maxSourceRefLength, with control or invisible characters, or when it looks like it holds
- * a credential. Every reader of the page may see it, anonymous link viewers included.
+ * A host with an optional port, as a source_ref keeps it: dot-separated labels of letters,
+ * digits, `_` and `-` (any script), or an IPv6 address in brackets.
+ */
+const REF_HOST = /^(?:[\p{L}\p{N}_-]+(?:\.[\p{L}\p{N}_-]+)*|\[[0-9A-Fa-f:.]+\])(?::\d{1,5})?$/u;
+
+/**
+ * A document's source_ref as stored, or why it is refused. Every reader of the page sees it,
+ * anonymous link viewers included, so it is one absolute `http://` or `https://` link and nothing
+ * else: no other scheme and no text without a scheme, so a bare `user:password@host` or a
+ * `postgres://` connection string can never be stored. Trimmed; the user info, query and fragment
+ * are dropped and only the scheme, host, port and path are kept (at most
+ * LIMITS.maxSourceRefLength characters). A link in which an `@` follows the authority while the
+ * text before that `@` holds a `:` or an `@` is refused, not stripped: a password with an
+ * unencoded `/`, `?`, `#` or `@` (`https://admin:pa/ss@db`) runs past the host, and stripping would
+ * keep part of it. Refused too with whitespace, control or invisible characters, or when what is
+ * kept holds a key or a token (holdsKeyOrToken, path segment by path segment). Empty is null.
+ * Parsed by hand: this package runs without the DOM's URL.
  */
 export function sanitizeSourceRef(
   ref: string,
 ): { ok: true; ref: string | null } | { ok: false; problem: string } {
-  let s = ref.trim();
+  const s = ref.trim();
   if (s.length === 0) return { ok: true, ref: null };
-  const scheme = /^([a-z][a-z0-9+.-]*):\/\//i.exec(s);
-  if (scheme) {
-    // A password with an unencoded "/", "?", "#" or "@" runs past the authority, so the user
-    // info cannot be told apart from the host and path: refuse it rather than strip a part. An
-    // "@" after the authority is refused when the text before it holds a ":" or an "@", and for
-    // any scheme but http(s); in an http(s) path after a plain host it is a handle or a package
-    // scope (`https://medium.com/@acme`, `https://www.npmjs.com/package/@types/node`).
-    const rest = s.slice(scheme[0].length);
-    const authority = /^[^/?#]*/.exec(rest)?.[0] ?? "";
-    const at = rest.indexOf("@", authority.length);
-    if (at >= 0) {
-      const before = rest.slice(0, at);
-      if (!/^https?$/i.test(scheme[1] ?? "") || before.includes(":") || before.includes("@")) {
-        return { ok: false, problem: `source_ref ${SECRET_MESSAGE}` };
-      }
-    }
-    // Scheme, then user info (up to the last "@" before the path), host and path; the query and
-    // the fragment are dropped. Parsed by hand: this package runs without the DOM's URL.
-    const m = /^([a-z][a-z0-9+.-]*):\/\/(?:[^/?#]*@)?([^/?#@]*)([^?#]*)/i.exec(s);
-    if (!m || (!m[2] && !m[3])) return { ok: false, problem: "source_ref is not a valid URL" };
-    s = `${(m[1] ?? "").toLowerCase()}://${(m[2] ?? "").toLowerCase()}${m[3] || "/"}`;
-  }
-  if (s.length > LIMITS.maxSourceRefLength) {
-    return { ok: false, problem: `source_ref is at most ${LIMITS.maxSourceRefLength} characters` };
-  }
   if (REFUSED_CHARS.test(s)) {
     return { ok: false, problem: "source_ref cannot contain control or invisible characters" };
   }
-  if (looksLikeSecret(s)) return { ok: false, problem: `source_ref ${SECRET_MESSAGE}` };
-  return { ok: true, ref: s };
+  const m = /^(https?):\/\/([^/?#]*)([^?#]*)/i.exec(s);
+  if (!m || /\s/u.test(s)) {
+    return {
+      ok: false,
+      problem:
+        "source_ref must be one http:// or https:// link to the records, without credentials",
+    };
+  }
+  const scheme = (m[1] ?? "").toLowerCase();
+  const authority = m[2] ?? "";
+  const path = m[3] || "/";
+  // The user info runs to the last "@" of the authority; an "@" after the authority with a ":"
+  // or an "@" before it means the password ran past the host. In an http(s) path after a plain
+  // host an "@" is a handle or a package scope (`https://medium.com/@acme`) and passes.
+  const rest = s.slice(scheme.length + 3);
+  const at = rest.indexOf("@", authority.length);
+  if (at >= 0 && /[:@]/.test(rest.slice(0, at))) {
+    return { ok: false, problem: `source_ref ${SECRET_MESSAGE}` };
+  }
+  const host = authority.slice(authority.lastIndexOf("@") + 1);
+  if (!REF_HOST.test(host)) return { ok: false, problem: "source_ref is not a valid URL" };
+  const kept = `${scheme}://${host.toLowerCase()}${path}`;
+  if (kept.length > LIMITS.maxSourceRefLength) {
+    return { ok: false, problem: `source_ref is at most ${LIMITS.maxSourceRefLength} characters` };
+  }
+  if (holdsKeyOrToken(kept)) return { ok: false, problem: `source_ref ${SECRET_MESSAGE}` };
+  return { ok: true, ref: kept };
 }
 
 // ---------- the confirmed config ----------

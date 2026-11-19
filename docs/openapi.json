@@ -5833,7 +5833,7 @@
                           "description": "The id of one of this artifact's data sources (set_data_sources)"
                         },
                         "ref": {
-                          "description": "Where the figures come from: a record id, a query name or a URL without credentials (query, fragment and user info are dropped; at most 300 characters after that)",
+                          "description": "Where the figures come from: one http:// or https:// link to the records, without credentials (user info, query and fragment are dropped; at most 300 characters after that). Every reader sees it; any other text or scheme is refused",
                           "type": "string",
                           "maxLength": 2000
                         },

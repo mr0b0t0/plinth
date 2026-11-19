@@ -305,44 +305,159 @@ describe("sanitizeSourceRef", () => {
       ok: true,
       ref: "https://host.example/p",
     });
-    expect(sanitizeSourceRef("  ENG-123  ")).toEqual({ ok: true, ref: "ENG-123" });
+    expect(sanitizeSourceRef("  https://linear.app/acme/issue/ENG-123  ")).toEqual({
+      ok: true,
+      ref: "https://linear.app/acme/issue/ENG-123",
+    });
+    expect(sanitizeSourceRef("http://[::1]:8080/a?x=1")).toEqual({
+      ok: true,
+      ref: "http://[::1]:8080/a",
+    });
     for (const url of RECORD_URLS)
       expect(sanitizeSourceRef(url), url).toEqual({ ok: true, ref: url });
     expect(sanitizeSourceRef("   ")).toEqual({ ok: true, ref: null });
   });
 
   it("refuses long, invisible or secret-looking refs", () => {
-    expect(sanitizeSourceRef("x".repeat(301)).ok).toBe(false);
-    expect(sanitizeSourceRef("a​b").ok).toBe(false);
-    expect(sanitizeSourceRef(FAKE.ghp.slice(6)).ok).toBe(false);
-    expect(sanitizeSourceRef("eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.x").ok).toBe(false);
-    expect(sanitizeSourceRef("0123456789abcdef0123456789abcdef01234567").ok).toBe(false);
+    const long = `https://x.example/${"q".repeat(300 - "https://x.example/".length)}`;
+    expect(sanitizeSourceRef(long)).toEqual({ ok: true, ref: long });
+    expect(sanitizeSourceRef(`${long}b`).ok).toBe(false);
+    // Only what is kept counts: a long query is dropped first.
+    expect(sanitizeSourceRef(`${long}?q=${"z".repeat(500)}`).ok).toBe(true);
+    expect(sanitizeSourceRef("https://x.example/a​b").ok).toBe(false);
+    expect(sanitizeSourceRef(`https://x.example/${FAKE.ghp.slice(6)}`).ok).toBe(false);
+    expect(sanitizeSourceRef("https://x.example/eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.x").ok).toBe(
+      false,
+    );
+    expect(sanitizeSourceRef("https://x.example/0123456789abcdef0123456789abcdef01234567").ok).toBe(
+      false,
+    );
     expect(sanitizeSourceRef("https://").ok).toBe(false);
+    expect(sanitizeSourceRef("https:///a").ok).toBe(false);
     // A key in one path segment is still a run of its own; outside a URL, `/` joins the run.
     expect(sanitizeSourceRef(`https://x.example/files/${FAKE.mixed}`).ok).toBe(false);
     expect(sanitizeSourceRef(`https://x.example/files/${FAKE.dashed}/view`).ok).toBe(false);
     expect(sanitizeSourceRef(`airtable:${FAKE.slashed}`).ok).toBe(false);
   });
 
-  it("drops the user name and password of a URL of any scheme", () => {
+  it("drops the user name and password of an http(s) link", () => {
     const pw = ["hun", "ter2"].join("");
     for (const [input, kept] of [
-      [
-        `postgres://admin:${pw}@db.example.com:5432/sales?sslmode=require`,
-        "postgres://db.example.com:5432/sales",
-      ],
-      [
-        `mongodb+srv://u:${pw}@cluster0.example.net/app?retryWrites=true`,
-        "mongodb+srv://cluster0.example.net/app",
-      ],
-      [`redis://:${pw}@cache.example.com:6379/0`, "redis://cache.example.com:6379/0"],
-      [`ssh://git@github.com/acme/web.git`, "ssh://github.com/acme/web.git"],
       [`HTTPS://admin:${pw}@X.Example/a#f`, "https://x.example/a"],
-      ["file:///reports/q4.csv", "file:///reports/q4.csv"],
+      [`http://admin:${pw}@db.example.com:8080/sales?x=1`, "http://db.example.com:8080/sales"],
+      [`https://git@github.com/acme/web`, "https://github.com/acme/web"],
     ]) {
       expect(sanitizeSourceRef(input as string), input).toEqual({ ok: true, ref: kept });
     }
-    expect(sanitizeSourceRef(`postgres://admin:${pw}@`).ok).toBe(false);
+    expect(sanitizeSourceRef(`https://admin:${pw}@`).ok).toBe(false);
+  });
+
+  it("is an http(s) link or nothing: other schemes and text without a scheme are refused", () => {
+    const pw = ["hun", "ter2"].join("");
+    for (const ref of [
+      `postgres://admin:${pw}@db.example.com:5432/sales?sslmode=require`,
+      "postgres://db.example.com:5432/sales",
+      `mongodb+srv://u:${pw}@cluster0.example.net/app`,
+      `redis://:${pw}@cache.example.com:6379/0`,
+      "ssh://git@github.com/acme/web.git",
+      "file:///reports/q4.csv",
+      "ftp://files.example.com/q4.csv",
+      "javascript:alert(1)",
+      "data:text/html,hi",
+      "//linear.app/acme",
+      "linear.app/acme/issue/ENG-123",
+      "ENG-123",
+      "Open issues query",
+      "github:owner/repo@v1",
+      "https://linear.app/acme issue",
+      " https://linear.app/a\thttps://x.example/b",
+    ]) {
+      expect(sanitizeSourceRef(ref), ref).toMatchObject({ ok: false });
+    }
+    expect(sanitizeSourceRef("ENG-123")).toMatchObject({ problem: /http:\/\/ or https:\/\// });
+  });
+
+  it("never stores a password, whatever characters it holds or wherever it sits", () => {
+    // Every shape the reviewers listed: a password holding ( ) ' " [ ] < > & ; #, IPv6 hosts,
+    // hosts with underscores, env-style names and connection strings without a scheme.
+    const passwords = ["p(a)ss", "p)a(ss", "p'ss", 'p"ss', "p[a]ss", "p<a>ss", "p&ss", "p;ss"];
+    const hosts = ["db.internal", "[::1]:5432", "[2001:db8::1]", "db_host", "db_1.internal:5432"];
+    for (const pw of [...passwords, "p#ss", "pa/ss", "p@ss", "p:ss", "p?ss"]) {
+      for (const host of hosts) {
+        const bare = `admin:${pw}@${host}`;
+        for (const ref of [bare, `postgres://${bare}/prod`, `jdbc:postgresql://${bare}/prod`]) {
+          expect(sanitizeSourceRef(ref), ref).toMatchObject({ ok: false });
+        }
+        // In an http(s) link the user info is dropped, or the link is refused when the password
+        // ran past the host; what is kept never holds the password.
+        const r = sanitizeSourceRef(`https://${bare}/prod`);
+        if (r.ok) expect(r.ref, bare).not.toContain(pw);
+        // Recipes, labels and connectors refuse the token whole.
+        expect(looksLikeSecret(bare), bare).toBe(true);
+        expect(recipeProblem(`Count orders in ${bare} nightly`), bare).toMatch(/credential/);
+        expect(sourceTextProblem(bare, "label"), bare).toMatch(/credential/);
+        expect(sourceTextProblem(`(${bare})`, "connector"), bare).toMatch(/credential/);
+      }
+    }
+    for (const pw of passwords) {
+      expect(sanitizeSourceRef(`https://admin:${pw}@db.internal/x`)).toEqual({
+        ok: true,
+        ref: "https://db.internal/x",
+      });
+    }
+    for (const field of [
+      "DB_PASSWORD=hunter2",
+      "db-password: hunter2",
+      "X_API_KEY=abc123",
+      "MY_API_TOKEN=abc",
+      "STRIPE_CLIENT_SECRET=abc",
+      "PG_PASSWD=x",
+      "HTTP_AUTHORIZATION: x",
+      "x_api_key: abc",
+      "export DB_PASSWORD='p(a)ss'",
+      '{"db_password":"x"}',
+    ]) {
+      expect(looksLikeSecret(field), field).toBe(true);
+      expect(recipeProblem(`Run with ${field}`), field).toMatch(/credential/);
+      expect(sourceTextProblem(field, "label"), field).toMatch(/credential/);
+      expect(sourceTextProblem(field, "connector"), field).toMatch(/credential/);
+      expect(sanitizeSourceRef(field), field).toMatchObject({ ok: false });
+      expect(sanitizeSourceRef(`https://x.example/${field}`), field).toMatchObject({ ok: false });
+    }
+  });
+
+  it("lets record links and ordinary names through", () => {
+    const gid = ["1BxiMVs0XRA5nFMd", "KvBdBZjgmUUqptlb", "s74OgvE2upms"].join("");
+    const sha = "9fceb02d0ae598e95dc970b74767f19372d61af8";
+    for (const url of [
+      "https://airtable.com/appAbC123dEf456Gh/tblXyZ789aBc012De/viwQwE345rTy678Ui",
+      "https://dashboard.stripe.com/payments/pi_3NxYzABCdefGHIjkl0123456",
+      `https://docs.google.com/spreadsheets/d/${gid}/edit`,
+      `https://github.com/acme/web/commit/${sha}`,
+    ]) {
+      expect(sanitizeSourceRef(url), url).toEqual({ ok: true, ref: url });
+      expect(recipeProblem(`Read ${url} and count the rows`), url).toBeNull();
+    }
+    for (const name of [
+      "Open issues",
+      "Linear",
+      "Google Sheets",
+      "Stripe",
+      "GitHub",
+      "Airtable",
+      "Paid invoices: EUR",
+      "Deploys at 10:30 UTC",
+      "Owner: ana@example.com",
+      "Revenue (EUR, ex-VAT)",
+      "Password resets",
+      "Passwords reset this week",
+      "API keys issued",
+      "actions/checkout@v4",
+    ]) {
+      expect(sourceTextProblem(name, "label"), name).toBeNull();
+      expect(sourceTextProblem(name, "connector"), name).toBeNull();
+      expect(recipeProblem(`Count ${name} by week`), name).toBeNull();
+    }
   });
 
   it("refuses a URL whose password holds an unencoded '/', '?', '#' or '@'", () => {
@@ -367,19 +482,24 @@ describe("sanitizeSourceRef", () => {
       expect(looksLikeSecret(`Fetch from ${input} each morning`), input).toBe(true);
       expect(recipeProblem(`Fetch from ${input} each morning`), input).toMatch(/credential/);
     }
-    // A user name alone that runs past the host: refused for a scheme other than http(s).
-    expect(sanitizeSourceRef("postgres://ad/min@db.example.com/x")).toMatchObject({ ok: false });
-    expect(sanitizeSourceRef("postgres://admin:pw@ss/x@db.example.com/y")).toMatchObject({
-      ok: false,
-    });
-    // An "@" in an http(s) path after a plain host is a handle or a package scope.
+    for (const input of [
+      "https://admin:12/ss@x.example/a",
+      "https://admin:12#ss@x.example/a",
+      "https://admin:12?ss@x.example/a",
+      "https://x.example:8443/@acme",
+      "https://x.example/a:b@c",
+    ]) {
+      expect(sanitizeSourceRef(input), input).toMatchObject({ ok: false });
+    }
+    // An "@" in an http(s) path after a plain host is a handle or a package scope: kept as a
+    // ref. Recipes, labels and connectors refuse any `x:y@z` token, so they refuse it there.
     for (const url of [
       "https://medium.com/@acme/q4-numbers-5f2a",
       "https://www.npmjs.com/package/@types/node",
       "https://mastodon.social/@acme",
     ]) {
       expect(sanitizeSourceRef(url), url).toEqual({ ok: true, ref: url });
-      expect(looksLikeSecret(url), url).toBe(false);
+      expect(looksLikeSecret(url), url).toBe(true);
     }
   });
 
@@ -391,14 +511,18 @@ describe("sanitizeSourceRef", () => {
     }
     expect(looksLikeSecret(`postgres://admin:${pw}@db.example.com/sales`)).toBe(true);
     expect(looksLikeSecret(`redis://:${pw}@cache.example.com`)).toBe(true);
+    expect(looksLikeSecret(`postgres://admin:${pw}@ then the host`)).toBe(true);
     for (const ok of [
-      "mailto:sales@example.com",
       "sales@example.com",
       "git@github.com:acme/web.git",
-      "ssh://git@github.com/acme/web.git",
       "Owner: ana@example.com",
+      "npm:@types/node",
     ]) {
       expect(looksLikeSecret(ok), ok).toBe(false);
+    }
+    // The `x:y@z` rule is structural, so these hold no password and are refused all the same.
+    for (const shape of ["mailto:sales@example.com", "ssh://git@github.com/acme/web.git"]) {
+      expect(looksLikeSecret(shape), shape).toBe(true);
     }
   });
 
@@ -434,14 +558,10 @@ describe("sanitizeSourceRef", () => {
     }
     // A ref, a version or a package after the "@", and Oracle logins without a password, pass.
     for (const ok of [
-      "github:owner/repo@v1",
-      "github:owner/repo@v1.2.3",
-      "github:acme/web@main",
       "actions/checkout@v4",
+      "actions/checkout@v4.2.1",
       "acme/web@main",
       "npm:@types/node",
-      "https://medium.com/@acme.blog",
-      "jdbc:oracle:thin:@//db.example.com:1521/ORCL",
       "sqlplus /nolog",
       "sqlplus / as sysdba",
       "sqlplus scott@orcl",
@@ -451,10 +571,25 @@ describe("sanitizeSourceRef", () => {
     ]) {
       expect(looksLikeSecret(ok), ok).toBe(false);
     }
-    expect(sanitizeSourceRef("github:owner/repo@v1")).toEqual({
-      ok: true,
-      ref: "github:owner/repo@v1",
-    });
+    // With a `:` before the `@` they take the `x:y@z` rule, password or not.
+    for (const shape of [
+      "github:owner/repo@v1",
+      "github:acme/web@main",
+      "jdbc:oracle:thin:@//db.example.com:1521/ORCL",
+      "https://medium.com/@acme.blog",
+    ]) {
+      expect(looksLikeSecret(shape), shape).toBe(true);
+    }
+    expect(sanitizeSourceRef("github:owner/repo@v1")).toMatchObject({ ok: false });
+    // Oracle's user/password@host whatever the password holds, IPv6 and underscore hosts too.
+    for (const pw of ["ti(g)er", "ti'ger", 'ti"ger', "ti[g]er", "ti<g>er", "ti&ger", "ti;ger"]) {
+      for (const host of ["db.example.com:1521/ORCL", "[::1]:1521/ORCL", "db_1.internal/ORCL"]) {
+        const ref = `scott/${pw}@${host}`;
+        expect(looksLikeSecret(ref), ref).toBe(true);
+        expect(sanitizeSourceRef(ref), ref).toMatchObject({ ok: false });
+      }
+      expect(looksLikeSecret(`sqlplus scott/${pw}@orcl`), pw).toBe(true);
+    }
   });
 
   it("checks a URL path segment by segment, and the text around it as before", () => {

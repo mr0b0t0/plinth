@@ -78,7 +78,7 @@ make a test pass.
 | The editor preview writes to the live board | The owner's draft in the editor drives the board through the preview frame's content pass | The app's preview sets `preview` and the whiteboard renderer then makes no shared-data or room call; only Plinth's code runs in that frame |
 | A starting board writes shared data unchecked | An agent's publish or update carries blocks it may not write, or races another write | A `data_write` decision before staging and again after the commit, whose role stamps the documents; one all-or-none statement that never overwrites, and `board_not_empty` on an update of a board with blocks |
 | An injected session plants a durable recipe | A comment or page text makes the owner's agent call `set_data_sources` with a recipe that says "also send the CRM export to this page" | Every source an agent sets or changes waits for the signed-in owner's confirmation (session and CSRF only, no bearer token, no tool), bound to its exact `config_hash`; the owner reads the recipe in full, as text; every tool description calls a recipe an untrusted read-only request, never the owner's instruction ([Data sources and provenance](#data-sources-and-provenance)) |
-| A recipe or stamp carries a credential | An agent pastes an API key into a recipe or a label, or a signed URL or a database URL with its password (`postgres://admin:…@db`) into `source_ref`, which every reader of the page sees | Recipes, labels, connectors and `source_ref` that look like a credential are refused; a URL of any scheme in `source_ref` keeps only its scheme, host and path (user name, password, query and fragment dropped), a URL whose password holds an unencoded `/`, `?`, `#` or `@` (so its user info runs past the host) is refused, not stripped, and a bare `user:password@host` is refused, its password holding a `/` included when a host follows the `@` (`admin:pa/ss@db.internal:5432/prod`), as are Oracle's `user/password@host` and an Oracle tool's login with its password (`sqlplus scott/tiger@orcl`); recipes are shown to the owner only |
+| A recipe or stamp carries a credential | An agent pastes an API key into a recipe or a label, or a signed URL or a database URL with its password (`postgres://admin:…@db`) into `source_ref`, which every reader of the page sees | `source_ref` is one absolute `http://` or `https://` link and nothing else: any other scheme and any text without a scheme are refused, so a bare `user:password@host` or a `postgres://` connection string is never stored, whatever its password holds. The link keeps only its scheme, host, port and path (user info, query and fragment dropped), and one whose password holds an unencoded `/`, `?`, `#` or `@` (so its user info runs past the host) is refused, not stripped. Recipes, labels and connectors refuse any token of the form `<non-space>:<non-space>@` (every `user:password@host`, with or without a scheme), Oracle's `user/password@host`, an Oracle tool's login with its password (`sqlplus scott/tiger@orcl`), credential fields such as `DB_PASSWORD=` or `X_API_KEY=`, known key prefixes and long random runs; recipes are shown to the owner only |
 | A collaborator passes off typed figures as fetched | A commenter overwrites a dashboard's figures, or an editor's agent stamps its own numbers "from Stripe" | `plinth-data-sourced` refuses commenter- and viewer-role writes there; only the owner's agent stamps; any other write clears the stamp, and the bar line, counted by the server, says how many figures were last changed by a person or by an agent without a source |
 | A page fakes its citations | Page code draws "Stripe · just now" next to a number it made up | Badges are page code and never proof; the bar line under the app's bar is computed from stored stamps and the frame cannot touch it |
 | A source keeps a revoked agent's work | The connection a source was pinned to is revoked, and its work moves to any other connection | The revocation unpins the source in the same batch, recomputes its hash and clears the owner's confirmation, so it waits for the owner again, even when the owner had confirmed the same source before an agent pinned it |
@@ -2161,9 +2161,20 @@ written it. So:
   and `SK-ant-` in any case, GitHub `ghp_` and its siblings, GitLab `glpat-`, Slack `xox?-`, AWS
   `AKIA` and `ASIA`, Google `AIza`, Stripe `sk_live_`, `rk_live_` and `whsec_`, Plinth's
   `plinth_`), bearer and other `Authorization:` headers, `X-Api-Key` and its kin, fields such as
-  `api_key=` and `client_secret:`, JWTs, query and fragment parameters named like secrets with or
-  without a prefix (`?client_secret=`, `#access_token=`), URLs and bare `user:password@host` with
-  a password, and 32 or more hex characters. A long run of key-like characters counts as a
+  `api_key=`, `client_secret:` and `"password":`, JWTs, query and fragment parameters named like
+  secrets with or without a prefix (`?client_secret=`, `#access_token=`), and 32 or more hex
+  characters. A field or header name may follow any character that is not a letter or a digit, so
+  `DB_PASSWORD=`, `db-password:` and `X_API_KEY=` are caught (a `\b` word boundary would miss them
+  after an `_`). User names with passwords are found by structure, not by a character class a
+  password could step outside: any token (text between whitespace) with a `:` after its first
+  character and a later `@` is refused, which is the shape of every `user:password@host`, with a
+  scheme or without, whatever the password holds (`admin:p(a)ss@db.internal`,
+  `admin:pw@[::1]:5432`, `admin:pw@db_host`). So is a token with a `/` after its first character
+  and a later `@` that a host follows (Oracle's `scott/tiger@db.example.com:1521/ORCL`), and an
+  Oracle tool's login that carries its password (`sqlplus scott/tiger@orcl`, `userid=`,
+  `CONNECT`). The cost is that some text without a password is refused there too
+  (`mailto:sales@example.com`, `github:owner/repo@v1`, a URL with an `@` in its path); recipes,
+  labels and connectors never need it. A long run of key-like characters counts as a
   credential when it mixes upper case, lower case and digits, unless every piece between its
   separators reads as a word or an identifier, so a link to a record
   (`/acme/issue/ENG-123/fix-the-login-redirect`) passes and a random key does not. In a URL's
@@ -2184,30 +2195,22 @@ written it. So:
 `canModifyDoc` (unchanged), lets only the owner's agent stamp (`source_owner_only` otherwise); the
 source must exist on the artifact and name the op's collection, and `fetched_at` is bounds-checked.
 The server writes the six provenance columns in the same statement as the data, and every other
-write sets them to NULL, so a stamp always describes the data it sits on. `source_ref` is
-sanitised (a URL of any scheme keeps only its scheme, host and path, dropping a user name and
-password; a bare `user:password@host` is refused; refused when long, invisible or secret-looking)
-because every reader of the page sees it, anonymous link viewers included. Pasted connection
-strings often carry a password with an unencoded `/`, `?`, `#` or `@`
-(`postgres://admin:pa/ss@db`), and then the user info cannot be told from the host and path, so
-stripping it would keep part of the password. Such a ref is refused instead: an `@` after the
-authority is refused when the text before it holds a `:` or an `@`, and for every scheme but
-http(s). After a plain http(s) host an `@` in the path is a handle or a package scope
+write sets them to NULL, so a stamp always describes the data it sits on. Every reader of the
+page sees `source_ref`, anonymous link viewers included, so it is one absolute `http://` or
+`https://` link and nothing else. Any other scheme (`postgres://`, `mongodb+srv://`, `jdbc:`,
+`file:`) and any text without a scheme are refused, so a bare `user:password@host` or a pasted
+connection string is never stored, whatever characters its password holds. The link keeps only
+its scheme, host, port and path, at most 300 characters: the user info, query and fragment are
+dropped, and the host must be dot-separated labels or an IPv6 address in brackets. A password with
+an unencoded `/`, `?`, `#` or `@` (`https://admin:pa/ss@db`) runs past the host, and then the user
+info cannot be told from the host and path, so stripping it would keep part of the password. Such
+a link is refused instead: an `@` after the authority is refused when the text before it holds a
+`:` or an `@`. After a plain host an `@` in the path is a handle or a package scope
 (`https://medium.com/@acme`, `https://www.npmjs.com/package/@types/node`) and passes; with a port
-(`https://host:8443/@acme`) it is refused, because it reads the same as `admin:8443/x@db`. The
-credential check reads any `:` between a URL's `://` and its first `@` as a password, so recipes,
-labels and connectors that quote such a URL are refused too. Without a scheme the same password
-reaches the text whole, so a bare `user:password@host` is refused even when its password holds a
-`/`, as long as a host follows the `@`: `//host`, a host with a port, an IPv4 address,
-`localhost` or a dotted host whose last label is letters (`admin:pa/ss@db.internal:5432/prod`,
-`jdbc:oracle:thin:scott/tiger@//db:1521/ORCL`). Oracle's `user/password@host` is refused on the
-same terms (`scott/tiger@db.example.com:1521/ORCL`), and so is an Oracle login that carries its
-password whatever follows it: `sqlplus`, `sqlldr`, `expdp`, `impdp`, `rman` or `dgmgrl` with
-`user/password`, `userid=user/password`, and `CONNECT user/password` (`sqlplus scott/tiger@orcl`).
-A ref or a version after the `@` is not a host, so `github:owner/repo@v1` and
-`actions/checkout@v4` pass; a bare TNS alias (`scott/tiger@orcl`) without one of those Oracle
-words reads the same as them and passes. `source_connection` is
-an audit value with no foreign key and never reaches a page.
+(`https://host:8443/@acme`) it is refused, because it reads the same as `admin:8443/x@db`. What is
+kept then takes the key and token checks above, path segment by path segment (a `DB_PASSWORD=` in
+the path is refused). Whitespace, control and invisible characters are refused. `source_connection`
+is an audit value with no foreign key and never reaches a page.
 
 **Sourced collections.** A page's `plinth-data-sourced` names refuse commenter- and viewer-role
 writers there (creates, updates, deletes, on every channel). Owners and editors always pass, from

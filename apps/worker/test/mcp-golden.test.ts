@@ -23,6 +23,8 @@
 // Data sources add set_data_sources, the source field of write_artifact_data's set op and its
 // sentence, the source sentences of list_artifact_data and get_artifact, a DATA_UNTRUSTED_NOTE and
 // an UNTRUSTED_NOTE sentence, and the instructions' sentence on live data from the user's systems.
+// A stamp's ref then became an http(s) link only, which changed its description and the ref
+// clause of write_artifact_data's source sentence.
 import { describe, expect, it } from "vitest";
 import { PREVIEW_RESOURCE_URI } from "../src/mcp/preview.ts";
 import { agent, mcpClient } from "./helpers.ts";
@@ -83,7 +85,7 @@ describe("MCP surface (golden)", () => {
   it("origin isolation", async () => {
     expect(await surface(OFF)).toEqual({
       names: NAMES,
-      tools: "0b58e712526d90e56451188f7b91ab3772879f7bdcfcd66002d9ccf9ae0212d9",
+      tools: "c71f8d78e51b347d4d1cfc0bc09f9b6da88212de1e0f01fa3b7edd9f1932a155",
       resources: RESOURCES,
       preview: "fd84092d5ecc5a28f494373097e8a3b6e27065d5ef6928f3e124c634f8cf6f47",
       instructions: INSTRUCTIONS,
@@ -93,7 +95,7 @@ describe("MCP surface (golden)", () => {
   it("opaque isolation", async () => {
     expect(await surface({ ...OFF, CONTENT_ISOLATION: "opaque" })).toEqual({
       names: NAMES,
-      tools: "1fb3967922cadfa73fe219f130bfaa94bde3d3d7674d0bd0c175bcd6f6dd069f",
+      tools: "ea06f3f4e9665c71da19f5d3199f80ece1cd41101b7833de7d7562d7d5724a98",
       resources: RESOURCES,
       preview: "257bbf5bb47164c389849fffa7fc1dd46e6e7c20e4ef616b4bffefb53a8fd08b",
       instructions: INSTRUCTIONS,
@@ -105,7 +107,7 @@ describe("MCP surface (golden)", () => {
       await surface({ ...OFF, STAGING_CONTENT_FALLBACK: "true", CONTENT_ISOLATION: "opaque" }),
     ).toEqual({
       names: NAMES,
-      tools: "c2cabe9412f3e694e802d9dafa3d75b9f659d3007fcffac014f37d3812d81c89",
+      tools: "b41af238ba60d6cf0d56e4a85a7cbf4ce9ff5649e4734f00c7742983c755453c",
       resources: RESOURCES,
       preview: "257bbf5bb47164c389849fffa7fc1dd46e6e7c20e4ef616b4bffefb53a8fd08b",
       instructions: INSTRUCTIONS,
@@ -115,7 +117,7 @@ describe("MCP surface (golden)", () => {
   it("category sharing on (the default): the share note and the instructions' sentence", async () => {
     expect(await surface()).toEqual({
       names: NAMES,
-      tools: "6b8130f7111baff31c86716c501038236e5cf238daceb2d405f29b642c6035bc",
+      tools: "1d5081967acc4ce71dc3b83dccc913e25dbc6eba01b79e542642c9a852a8763b",
       resources: RESOURCES,
       preview: "fd84092d5ecc5a28f494373097e8a3b6e27065d5ef6928f3e124c634f8cf6f47",
       instructions: "e2d5f6bbdab1d3580ad5b54b7a5002ee31e2cd0371a132dda22445c837bbb3ea",

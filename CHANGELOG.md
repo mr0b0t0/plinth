@@ -22,10 +22,11 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   and how long ago, and how many were last changed by a person; figures from a source the owner
   has not confirmed, or from one since removed, are named as such. A page can declare
   `plinth-data-sourced` collections that only the owner and editors write. Credential-like text is
-  refused in recipes, labels, connectors and stamps, and a stamp's link loses any user name and
-  password whatever its scheme (a link whose password holds an unencoded `/`, `?`, `#` or `@` is
-  refused, and so are a bare `user:pa/ss@host:port`, Oracle's `user/password@host` and
-  `sqlplus user/password`); links to records (a Linear issue, a Jira board, a Notion page, a
+  refused in recipes, labels, connectors and stamps: any `x:y@z` token (every `user:password@host`,
+  whatever its password holds), Oracle's `user/password@host`, `sqlplus user/password`, fields such
+  as `DB_PASSWORD=`, key prefixes and long random runs. A stamp's link is an `http://` or
+  `https://` URL only, and loses any user name, password, query and fragment (a link whose password
+  holds an unencoded `/`, `?`, `#` or `@` is refused); links to records (a Linear issue, a Jira board, a Notion page, a
   Google Sheet or Drive file, a GitHub commit, an Airtable view, a Salesforce or Stripe record)
   pass. Works with no page declaration and under opaque isolation (figures inline). Migration
   `0015_data_sources.sql`.

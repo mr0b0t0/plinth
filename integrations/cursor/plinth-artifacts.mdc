@@ -1221,10 +1221,12 @@ connectors and push the figures.
    ```
 
    Only the owner's agent stamps. `fetched_at` is when you fetched (not in the future, at most 30
-   days old). `ref` is optional and every reader sees it: a record id or a URL without credentials
-   (its user name, password, query and fragment are dropped, and `user:password@host` is refused,
-   as are Oracle's `user/password@host`, `sqlplus user/password` and a URL whose password holds
-   an unencoded `/`, `?`, `#` or `@`).
+   days old). `ref` is optional and every reader sees it: one `http://` or `https://` link to the
+   records, never a record id alone, a connection string or any other scheme (those are refused).
+   Its user name, password, query and fragment are dropped, and a link whose password holds an
+   unencoded `/`, `?`, `#` or `@` is refused. Recipes, labels and connectors refuse any `x:y@z`
+   token (so every `user:password@host`, and `mailto:` too), Oracle's `user/password@host`,
+   `sqlplus user/password` and fields such as `DB_PASSWORD=`.
 4. **Tell the user to confirm** each new or changed source at `confirm_url`: it waits until they
    read the recipe in Plinth and confirm it. You cannot confirm, and re-setting an unchanged source
    keeps it confirmed. Until then the line under Plinth's bar says the figures come from a source

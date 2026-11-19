@@ -463,8 +463,9 @@ export const docSourceInput = z
       .max(2000)
       .optional()
       .describe(
-        "Where the figures come from: a record id, a query name or a URL without credentials " +
-          "(query, fragment and user info are dropped; at most 300 characters after that)",
+        "Where the figures come from: one http:// or https:// link to the records, without " +
+          "credentials (user info, query and fragment are dropped; at most 300 characters after " +
+          "that). Every reader sees it; any other text or scheme is refused",
       ),
     fetched_at: z
       .string()

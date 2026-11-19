@@ -333,8 +333,8 @@ export const SOURCE_WRITE_NOTE =
   "A set may carry source {id, ref?, fetched_at} (the owner's agent only, refused as " +
   "source_owner_only otherwise): id names one of the artifact's data sources (set_data_sources) whose " +
   "collection is the op's, fetched_at is when you fetched (not in the future, at most 30 days old), " +
-  "and ref an optional pointer to the records without credentials (a URL keeps only its origin and " +
-  "path). Every reader of the page sees the stamp. A set without source clears an earlier stamp. In a " +
+  "and ref an optional http:// or https:// link to the records without credentials (it keeps only " +
+  "its origin and path; any other text or scheme is refused). Every reader of the page sees the stamp. A set without source clears an earlier stamp. In a " +
   "collection the page declares in plinth-data-sourced, only the owner and editors write. ";
 
 /** The server instructions' sentence about live data from the user's own systems. */
