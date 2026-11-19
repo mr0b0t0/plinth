@@ -94,8 +94,14 @@ const CREDENTIAL_FIELD =
  */
 const SECRET_PARAM =
   /[?&;#](?:[A-Za-z0-9]+[_.-])*(?:token|key|secret|sig|signature|password|passwd|pwd|apikey|accesstoken|credential|auth)=/i;
-/** A URL whose user info holds a password: `postgres://admin:pw@host`, `redis://:pw@host`. */
-const URL_PASSWORD = /\b[a-z][a-z0-9+.-]*:\/\/[^\s/?#@:]*:[^\s/?#@]*@/i;
+/**
+ * A URL whose user info holds a password: `postgres://admin:pw@host`, `redis://:pw@host`. The
+ * password may hold an unencoded `/`, `?` or `#`, as pasted connection strings often do
+ * (`postgres://admin:pa/ss@host`), so any `:` between the `://` and the first `@` counts. The user
+ * part cannot hold `:`, so the match never backtracks. A port followed by an `@` in the path
+ * (`https://host:8443/@handle`) is refused too: it reads the same as `admin:8443/x@host`.
+ */
+const URL_PASSWORD = /\b[a-z][a-z0-9+.-]*:\/\/[^\s@:]*:[^\s@]*@/i;
 /**
  * A bare `user:password@host`, without a scheme. The user part cannot hold `:`, so the match
  * never backtracks; `mailto:person@host` is an address, not a password (looksLikeSecret).
@@ -146,8 +152,8 @@ function withoutRecordIds(text: string): string {
 /**
  * Text that looks like it holds a credential: a bearer header or any `Authorization:` header,
  * `X-Api-Key`, a well-known token prefix (TOKEN_PREFIX), a field such as `api_key=` or
- * `password:`, a JWT, a query or fragment parameter named like a secret, a URL or a bare
- * `user:password@host` with a password, a run of 32 or more hex characters, or a run of 40 or more
+ * `password:`, a JWT, a query or fragment parameter named like a secret, a URL with a password
+ * (any `:` between its `://` and its first `@`, URL_PASSWORD) or a bare `user:password@host`, a run of 32 or more hex characters, or a run of 40 or more
  * base64 or base64url characters that mixes upper case, lower case and digits and does not read
  * as words and identifiers (keyLikeRun). In a URL's host and path each segment between slashes is
  * a run of its own, so a link to a record whose segments are short opaque ids (Airtable,
@@ -214,7 +220,8 @@ export function recipeProblem(s: string): string | null {
  * A document's source_ref as stored, or why it is refused. Trimmed; a URL of any scheme
  * (`https://`, `postgres://`, `mongodb+srv://`, `redis://`) keeps only its scheme, host and path
  * (user name, password, query and fragment are dropped); any other text is kept as it is, and a
- * bare `user:password@host` is refused (looksLikeSecret). Empty is null. Refused past
+ * bare `user:password@host` is refused (looksLikeSecret). A URL whose user info runs past the
+ * host, because its password holds an unencoded `/`, `?`, `#` or `@`, is refused, not stripped. Empty is null. Refused past
  * LIMITS.maxSourceRefLength, with control or invisible characters, or when it looks like it holds
  * a credential. Every reader of the page may see it, anonymous link viewers included.
  */
@@ -223,7 +230,22 @@ export function sanitizeSourceRef(
 ): { ok: true; ref: string | null } | { ok: false; problem: string } {
   let s = ref.trim();
   if (s.length === 0) return { ok: true, ref: null };
-  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(s)) {
+  const scheme = /^([a-z][a-z0-9+.-]*):\/\//i.exec(s);
+  if (scheme) {
+    // A password with an unencoded "/", "?", "#" or "@" runs past the authority, so the user
+    // info cannot be told apart from the host and path: refuse it rather than strip a part. An
+    // "@" after the authority is refused when the text before it holds a ":" or an "@", and for
+    // any scheme but http(s); in an http(s) path after a plain host it is a handle or a package
+    // scope (`https://medium.com/@acme`, `https://www.npmjs.com/package/@types/node`).
+    const rest = s.slice(scheme[0].length);
+    const authority = /^[^/?#]*/.exec(rest)?.[0] ?? "";
+    const at = rest.indexOf("@", authority.length);
+    if (at >= 0) {
+      const before = rest.slice(0, at);
+      if (!/^https?$/i.test(scheme[1] ?? "") || before.includes(":") || before.includes("@")) {
+        return { ok: false, problem: `source_ref ${SECRET_MESSAGE}` };
+      }
+    }
     // Scheme, then user info (up to the last "@" before the path), host and path; the query and
     // the fragment are dropped. Parsed by hand: this package runs without the DOM's URL.
     const m = /^([a-z][a-z0-9+.-]*):\/\/(?:[^/?#]*@)?([^/?#@]*)([^?#]*)/i.exec(s);

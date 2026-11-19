@@ -2052,7 +2052,9 @@ where they came from.
   5 minutes ahead of the server and 30 days old; `ref` is an optional pointer to the records (a URL
   of any scheme keeps only its scheme, host and path, so a user name and password, a query and a
   fragment are dropped; at most 300 characters; refused when it looks like a credential, a bare
-  `user:password@host` included).
+  `user:password@host` included, and when an `@` follows the authority and the text before it
+  holds a `:` or an `@`, or the scheme is not http(s), since a password with an unencoded `/`,
+  `?`, `#` or `@` runs past the host).
   The server copies the source's label and connector onto the document and records the stamping
   connection, so removing or renaming a source never changes what an earlier figure claims, and
   raises the source's `last_fetched_at`. Stamping needs no confirmation: it records the owner's own

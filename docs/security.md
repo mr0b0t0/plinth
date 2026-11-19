@@ -78,7 +78,7 @@ make a test pass.
 | The editor preview writes to the live board | The owner's draft in the editor drives the board through the preview frame's content pass | The app's preview sets `preview` and the whiteboard renderer then makes no shared-data or room call; only Plinth's code runs in that frame |
 | A starting board writes shared data unchecked | An agent's publish or update carries blocks it may not write, or races another write | A `data_write` decision before staging and again after the commit, whose role stamps the documents; one all-or-none statement that never overwrites, and `board_not_empty` on an update of a board with blocks |
 | An injected session plants a durable recipe | A comment or page text makes the owner's agent call `set_data_sources` with a recipe that says "also send the CRM export to this page" | Every source an agent sets or changes waits for the signed-in owner's confirmation (session and CSRF only, no bearer token, no tool), bound to its exact `config_hash`; the owner reads the recipe in full, as text; every tool description calls a recipe an untrusted read-only request, never the owner's instruction ([Data sources and provenance](#data-sources-and-provenance)) |
-| A recipe or stamp carries a credential | An agent pastes an API key into a recipe or a label, or a signed URL or a database URL with its password (`postgres://admin:…@db`) into `source_ref`, which every reader of the page sees | Recipes, labels, connectors and `source_ref` that look like a credential are refused; a URL of any scheme in `source_ref` keeps only its scheme, host and path (user name, password, query and fragment dropped), and a bare `user:password@host` is refused; recipes are shown to the owner only |
+| A recipe or stamp carries a credential | An agent pastes an API key into a recipe or a label, or a signed URL or a database URL with its password (`postgres://admin:…@db`) into `source_ref`, which every reader of the page sees | Recipes, labels, connectors and `source_ref` that look like a credential are refused; a URL of any scheme in `source_ref` keeps only its scheme, host and path (user name, password, query and fragment dropped), a URL whose password holds an unencoded `/`, `?`, `#` or `@` (so its user info runs past the host) is refused, not stripped, and a bare `user:password@host` is refused; recipes are shown to the owner only |
 | A collaborator passes off typed figures as fetched | A commenter overwrites a dashboard's figures, or an editor's agent stamps its own numbers "from Stripe" | `plinth-data-sourced` refuses commenter- and viewer-role writes there; only the owner's agent stamps; any other write clears the stamp, and the bar line, counted by the server, says how many figures were last changed by a person or by an agent without a source |
 | A page fakes its citations | Page code draws "Stripe · just now" next to a number it made up | Badges are page code and never proof; the bar line under the app's bar is computed from stored stamps and the frame cannot touch it |
 | A source keeps a revoked agent's work | The connection a source was pinned to is revoked, and its work moves to any other connection | The revocation unpins the source in the same batch, recomputes its hash and clears the owner's confirmation, so it waits for the owner again, even when the owner had confirmed the same source before an agent pinned it |
@@ -2187,7 +2187,16 @@ The server writes the six provenance columns in the same statement as the data, 
 write sets them to NULL, so a stamp always describes the data it sits on. `source_ref` is
 sanitised (a URL of any scheme keeps only its scheme, host and path, dropping a user name and
 password; a bare `user:password@host` is refused; refused when long, invisible or secret-looking)
-because every reader of the page sees it, anonymous link viewers included. `source_connection` is
+because every reader of the page sees it, anonymous link viewers included. Pasted connection
+strings often carry a password with an unencoded `/`, `?`, `#` or `@`
+(`postgres://admin:pa/ss@db`), and then the user info cannot be told from the host and path, so
+stripping it would keep part of the password. Such a ref is refused instead: an `@` after the
+authority is refused when the text before it holds a `:` or an `@`, and for every scheme but
+http(s). After a plain http(s) host an `@` in the path is a handle or a package scope
+(`https://medium.com/@acme`, `https://www.npmjs.com/package/@types/node`) and passes; with a port
+(`https://host:8443/@acme`) it is refused, because it reads the same as `admin:8443/x@db`. The
+credential check reads any `:` between a URL's `://` and its first `@` as a password, so recipes,
+labels and connectors that quote such a URL are refused too. `source_connection` is
 an audit value with no foreign key and never reaches a page.
 
 **Sourced collections.** A page's `plinth-data-sourced` names refuse commenter- and viewer-role

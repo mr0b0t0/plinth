@@ -345,6 +345,44 @@ describe("sanitizeSourceRef", () => {
     expect(sanitizeSourceRef(`postgres://admin:${pw}@`).ok).toBe(false);
   });
 
+  it("refuses a URL whose password holds an unencoded '/', '?', '#' or '@'", () => {
+    // Pasted DSNs often carry these unencoded; the user info then runs past the host.
+    for (const input of [
+      "postgres://admin:pa/ss@db.example.com/prod",
+      "postgres://admin:pa#ss@db.example.com/prod",
+      "postgres://admin:pa?ss@db.example.com/prod",
+      "postgres://admin:hun#ter2@db.example.com/x",
+      "postgres://admin:hunter?2@db.example.com/x",
+      "postgres://admin:ab/cd@db.example.com/x",
+      "postgres://admin:1234/5@db.example.com/x",
+      "postgres://admin:#ss@db.example.com/x",
+      "redis://:pa/ss@cache.example.com:6379/0",
+      "https://admin:pa/ss@x.example/a",
+      "https://admin:p@ss/x@db.example.com/y",
+      "https://ad/min:pw@x.example/a",
+      "mongodb+srv://u:p?w#d@cluster0.example.net/app",
+    ]) {
+      expect(sanitizeSourceRef(input), input).toMatchObject({ ok: false });
+      expect(looksLikeSecret(input), input).toBe(true);
+      expect(looksLikeSecret(`Fetch from ${input} each morning`), input).toBe(true);
+      expect(recipeProblem(`Fetch from ${input} each morning`), input).toMatch(/credential/);
+    }
+    // A user name alone that runs past the host: refused for a scheme other than http(s).
+    expect(sanitizeSourceRef("postgres://ad/min@db.example.com/x")).toMatchObject({ ok: false });
+    expect(sanitizeSourceRef("postgres://admin:pw@ss/x@db.example.com/y")).toMatchObject({
+      ok: false,
+    });
+    // An "@" in an http(s) path after a plain host is a handle or a package scope.
+    for (const url of [
+      "https://medium.com/@acme/q4-numbers-5f2a",
+      "https://www.npmjs.com/package/@types/node",
+      "https://mastodon.social/@acme",
+    ]) {
+      expect(sanitizeSourceRef(url), url).toEqual({ ok: true, ref: url });
+      expect(looksLikeSecret(url), url).toBe(false);
+    }
+  });
+
   it("refuses a bare user:password@host, and keeps an address or a user without a password", () => {
     const pw = ["hun", "ter2"].join("");
     for (const ref of [`admin:${pw}@db.example.com`, `see admin:${pw}@db.example.com:5432`]) {
