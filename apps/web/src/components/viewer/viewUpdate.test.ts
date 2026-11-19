@@ -90,6 +90,8 @@ describe("carryPath", () => {
     expect(carryPath("/")).toBeNull();
     expect(carryPath("/index.html")).toBeNull();
     expect(carryPath("/a?plinth-review=1&x=1#h")).toBe("/a?x=1");
+    expect(carryPath("/a?plinth-review=1")).toBe("/a");
+    expect(carryPath("/?plinth-review")).toBeNull();
     for (const bad of [
       "",
       "//evil.example/x",
@@ -107,6 +109,23 @@ describe("carryPath", () => {
     ]) {
       expect(carryPath(bad)).toBeNull();
     }
+  });
+
+  it("keeps the query exactly as the page had it", () => {
+    // The runtime puts the hash back only when the page lands on the very path it recorded, and a
+    // page reads its own location.search: re-serializing the query as form data breaks both.
+    for (const kept of [
+      "/guide.html?q=a%20b",
+      "/guide.html?tab",
+      "/guide.html?p=/x/y",
+      "/?/products/7",
+      "/g.html?a=1&&b=%2B+c",
+    ]) {
+      expect(carryPath(kept)).toBe(kept);
+      expect(carryPath(`${kept}#step-3`)).toBe(kept);
+    }
+    expect(carryPath("/guide.html?q=a%20b&plinth-review=1&tab")).toBe("/guide.html?q=a%20b&tab");
+    expect(carryPath("/?/products/7&plinth-review=1")).toBe("/?/products/7");
   });
 });
 

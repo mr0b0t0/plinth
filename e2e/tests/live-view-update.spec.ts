@@ -110,6 +110,26 @@ test("a page with the runtime hands its state and scroll to the next version", a
   await expect.poll(() => shown.evaluate(() => Math.round(window.scrollY))).toBe(600);
 });
 
+test("a page with the runtime keeps its query as it was, and gets its hash back", async ({
+  page,
+}) => {
+  const { token } = await seedToken(uniqueEmail("runtime-place"));
+  const art = await publishArtifact(page.request, token, { html: RUNTIME_PAGE("First") });
+  await page.goto(`/a/${art.slug}`);
+  await expect(page.frameLocator(CURRENT_FRAME).locator("h1")).toHaveText("First");
+  const frame = await shownFrame(page);
+  // A query that form-data serialization would rewrite (%20 to +, a bare name to "name=").
+  const place = "/?q=a%20b&tab&p=/x/y";
+  await frame.evaluate((p) => history.replaceState(null, "", `${p}#step-3`), place);
+
+  await update(token, art.id, { html: RUNTIME_PAGE("Second") }, 1);
+  await expect(page.getByText("Updated to v2")).toBeVisible({ timeout: 10_000 });
+  await expect(page.frameLocator('iframe[title$="version 2"]').locator("h1")).toHaveText("Second");
+  const shown = await shownFrame(page, 'iframe[title$="version 2"]');
+  expect(await shown.evaluate(() => location.pathname + location.search)).toBe(place);
+  expect(await shown.evaluate(() => location.hash)).toBe("#step-3");
+});
+
 const HOLD_PAGE = (title: string) => `<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="plinth-capabilities" content="hold"><title>Form</title></head><body>
 <h1>${title}</h1><label>Answer <input id="answer"></label></body></html>`;

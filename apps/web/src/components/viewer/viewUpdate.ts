@@ -84,8 +84,8 @@ export function updateMessage(o: {
 /**
  * A path the frame reports, made safe to hand to the gate as `next`, or null for the artifact's
  * root. Untrusted: it must start with one "/", hold no backslash or control character and be at
- * most 2048 characters; Plinth's own paths (/__plinth/...) and the review flag are dropped. The
- * hash is dropped too: `next` goes into request URLs (the gate read, the enter URL), and a page's
+ * most 2048 characters; Plinth's own paths (/__plinth/...) and the review flag are dropped, and the
+ * rest of the query is kept exactly as the page had it. The hash is dropped too:`next` goes into request URLs (the gate read, the enter URL), and a page's
  * fragment never leaves the viewer's browser (the runtime keeps it in its carry record). The
  * server passes `next` through safeNext again.
  */
@@ -103,9 +103,22 @@ export function carryPath(raw: unknown): string | null {
   }
   if (u.origin !== "https://path.invalid") return null;
   if (u.pathname.startsWith("/__plinth/")) return null;
-  u.searchParams.delete(REVIEW_MODE_PARAM);
-  const out = `${u.pathname}${u.search}`;
+  const out = `${u.pathname}${withoutReviewFlag(u.search)}`;
   return out === "/" || out === "/index.html" ? null : out;
+}
+
+/**
+ * `search` without the review flag, every other pair byte for byte. Never through URLSearchParams
+ * serialization: it rewrites the whole query as form data (`%20` to `+`, `?tab` to `?tab=`,
+ * `?/route` to `?%2Froute=`), so the page would land on a query it never had and the runtime would
+ * not put its hash back (it compares the recorded path with the one it landed on).
+ */
+function withoutReviewFlag(search: string): string {
+  if (search.length < 2) return "";
+  const pairs = search.slice(1).split("&");
+  const kept = pairs.filter((pair) => !new URLSearchParams(pair).has(REVIEW_MODE_PARAM));
+  if (kept.length === pairs.length) return search;
+  return kept.length > 0 ? `?${kept.join("&")}` : "";
 }
 
 /**
