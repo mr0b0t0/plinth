@@ -284,6 +284,58 @@ describe("boot", () => {
     key(f, "s");
     (document.querySelector('.plinth-slides__frame[data-n="2"]') as HTMLElement).click();
     expect(root().getAttribute("data-mode")).toBe("overview");
+    // The controls and the app's view messages keep it too, and the app is told the view it shows.
+    for (const b of Array.from(document.querySelectorAll(".plinth-slides__controls button"))) {
+      (b as HTMLElement).click();
+    }
+    expect(root().getAttribute("data-mode")).toBe("overview");
+    for (const mode of ["deck", "presenter"]) {
+      appMessage(f, msg({ type: "view", mode }));
+      expect(root().getAttribute("data-mode")).toBe("overview");
+      expect(posts(f).at(-1)).toEqual([msg({ type: "view", mode: "overview" }), APP]);
+    }
+  });
+
+  it("tells the app every view it changes to, by key, control or message", () => {
+    mount();
+    const f = framed();
+    stop = boot(f.win);
+    const views = () =>
+      posts(f)
+        .map(([m]) => m as { type: string; mode?: string })
+        .filter((m) => m.type === "view")
+        .map((m) => m.mode);
+    key(f, "s");
+    key(f, "Escape");
+    key(f, "o");
+    key(f, "o");
+    (document.querySelector('[aria-label="Presenter view"]') as HTMLElement).click();
+    const exit = Array.from(document.querySelectorAll(".plinth-slides__presenter button")).find(
+      (x) => x.textContent === "Exit presenter view",
+    ) as HTMLElement;
+    exit.click();
+    appMessage(f, msg({ type: "view", mode: "presenter" }));
+    // The view it already shows: nothing to report.
+    appMessage(f, msg({ type: "view", mode: "presenter" }));
+    expect(views()).toEqual([
+      "presenter",
+      "deck",
+      "overview",
+      "deck",
+      "presenter",
+      "deck",
+      "presenter",
+    ]);
+    for (const [m, origin] of posts(f)) {
+      expect(origin).toBe(APP);
+      expect(Object.keys(m as object).sort()).toEqual(
+        (m as { type: string }).type === "view"
+          ? ["mode", "source", "type", "v"]
+          : (m as { type: string }).type === "fullscreen"
+            ? ["source", "type", "v"]
+            : ["count", "slide", "source", "type", "v"],
+      );
+    }
   });
 
   it("shows the overview on a phone in portrait", () => {

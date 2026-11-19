@@ -1,12 +1,16 @@
 // The renderer protocol (version 1) as the slides frame speaks it. The app may ask for a slide, a
-// view or a print; the frame tells the app where it is and when the person pressed `f`. Every
-// message carries only a slide number, a count, a mode name or a boolean, never deck text.
+// view or a print; the frame tells the app where it is, which view it shows and when the person
+// pressed `f`. Every message carries only a slide number, a count, a mode name or a boolean, never
+// deck text.
 //
 //   app -> frame: goto { slide }             show slide N (clamped to the deck)
 //   app -> frame: view { mode }              "deck", "presenter" or "overview"
 //   app -> frame: print { notes? }           print the deck, or the handout with notes
 //   frame -> app: ready { slide, count }     after boot
 //   frame -> app: position { slide, count }  after every change
+//   frame -> app: view { mode }              the view it now shows, after every change (its own
+//                                            keys and controls too), and in answer to a view it
+//                                            did not take (review mode keeps the overview)
 //   frame -> app: fullscreen                 the person pressed f
 import { isSlideNumber, RENDERER_MESSAGE_SOURCE, RENDERER_PROTOCOL_VERSION } from "@plinth/shared";
 import type { DeckMode } from "./nav.ts";
@@ -46,6 +50,7 @@ export function fromApp(
 export type SlidesFrameMessage =
   | { type: "ready"; slide: number; count: number }
   | { type: "position"; slide: number; count: number }
+  | { type: "view"; mode: DeckMode }
   | { type: "fullscreen" };
 
 /** Posts to the app page, at the exact app origin only. */

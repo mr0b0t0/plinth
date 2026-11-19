@@ -200,13 +200,20 @@ export function boot(win: Window, opts: BootOptions = {}): () => void {
     }
   };
 
+  // The app keeps its own idea of the view (the presenter strip, the version pause), so every change
+  // is reported, whichever key, control or message made it.
+  const reportView = () => postToApp(win, appOrigin, { type: "view", mode });
+
   function pick(next: DeckMode) {
     auto = false;
-    if (next === mode) return;
+    // Review mode and the editor preview keep every slide in the DOM (comment pins anchor to them),
+    // whatever asks for another view.
+    if (fixedOverview || next === mode) return;
     mode = next;
     render();
     if (mode === "overview") revealSlide(doc, deck.current);
     root?.focus({ preventScroll: true });
+    reportView();
   }
 
   deck.onChange((n) => {
@@ -248,8 +255,11 @@ export function boot(win: Window, opts: BootOptions = {}): () => void {
     const m = readSlidesAppMessage(e.data);
     if (!m) return;
     if (m.type === "goto") deck.go(m.slide);
-    else if (m.type === "view") pick(m.mode);
-    else print(m.notes);
+    else if (m.type === "view") {
+      pick(m.mode);
+      // A view the frame did not take: the app learns the one it shows.
+      if (mode !== m.mode) reportView();
+    } else print(m.notes);
   };
   const onResize = () => {
     if (auto) {
@@ -257,6 +267,7 @@ export function boot(win: Window, opts: BootOptions = {}): () => void {
       if (want !== mode) {
         mode = want;
         render();
+        reportView();
         return;
       }
     }

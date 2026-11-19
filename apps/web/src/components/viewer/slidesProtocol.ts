@@ -1,13 +1,14 @@
 // What a deck's frame tells the app (renderer protocol version 1, frame -> app), and the one check
-// that a message came from it. A deck reports only numbers: where it is (ready, position) and that
-// the person pressed f (fullscreen). These messages never carry deck text.
+// that a message came from it. A deck reports only numbers and view names: where it is (ready,
+// position), which view it shows (view) and that the person pressed f (fullscreen). These messages
+// never carry deck text.
 //
 // The doc renderer's editing messages are accepted only at the exact content origin. A deck's are
 // also accepted from an opaque frame (origin "null", under CONTENT_ISOLATION=opaque and the path
 // fallback), identified by its window (frameGuard.ts acceptFrom). That is acceptable because only
 // Plinth's renderer runs on a deck's origin (script-src 'self', and a deck's files run no script),
-// and the worst a forged message could do is move the app's slide number or ask for full screen,
-// which the browser grants only with the person's own activation.
+// and the worst a forged message could do is move the app's slide number, switch its presenter
+// strip, or ask for full screen, which the browser grants only with the person's own activation.
 import {
   isSlideNumber,
   RENDERER_MESSAGE_SOURCE,
@@ -16,9 +17,14 @@ import {
 } from "@plinth/shared";
 import { acceptFrom } from "../comments/frameGuard.ts";
 
+/** The views a deck's frame shows. */
+export type DeckView = "deck" | "presenter" | "overview";
+const DECK_VIEWS: readonly unknown[] = ["deck", "presenter", "overview"] satisfies DeckView[];
+
 export type SlidesFrameMessage =
   | { type: "ready"; slide: number; count: number }
   | { type: "position"; slide: number; count: number }
+  | { type: "view"; mode: DeckView }
   | { type: "fullscreen" };
 
 type Kind = SlidesFrameMessage["type"];
@@ -37,6 +43,7 @@ const READERS: {
     isSlideNumber(m.slide) && isSlideNumber(m.count) && m.slide <= m.count
       ? { type: "position", slide: m.slide, count: m.count }
       : null,
+  view: (m) => (DECK_VIEWS.includes(m.mode) ? { type: "view", mode: m.mode as DeckView } : null),
   fullscreen: () => ({ type: "fullscreen" }),
 };
 

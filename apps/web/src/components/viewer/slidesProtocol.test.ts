@@ -32,10 +32,10 @@ const read = (
 
 describe("readSlidesFrameMessage", () => {
   it("lists the deck's frame kinds", () => {
-    expect([...SLIDES_FRAME_KINDS]).toEqual(["ready", "position", "fullscreen"]);
+    expect([...SLIDES_FRAME_KINDS]).toEqual(["ready", "position", "view", "fullscreen"]);
   });
 
-  it("accepts ready, position and fullscreen from the frame at the exact content origin", () => {
+  it("accepts ready, position, view and fullscreen from the frame at the exact content origin", () => {
     const pos = {
       source: win,
       origin: ORIGIN,
@@ -48,6 +48,9 @@ describe("readSlidesFrameMessage", () => {
       count: 1,
     });
     expect(read({ ...pos, data: data({ type: "fullscreen" }) })).toEqual({ type: "fullscreen" });
+    for (const mode of ["deck", "presenter", "overview"]) {
+      expect(read({ ...pos, data: data({ type: "view", mode }) })).toEqual({ type: "view", mode });
+    }
   });
 
   it("under opaque isolation accepts only origin null from the frame's window", () => {
@@ -76,6 +79,9 @@ describe("readSlidesFrameMessage", () => {
       { type: "position", slide: 0, count: 5 },
       { type: "position", slide: "2", count: 5 },
       { type: "ready", slide: 1, count: 501 },
+      { type: "view", mode: "audience" },
+      { type: "view", mode: "toString" },
+      { type: "view" },
       { type: "live" },
       { type: "toString" },
       { type: "__proto__" },

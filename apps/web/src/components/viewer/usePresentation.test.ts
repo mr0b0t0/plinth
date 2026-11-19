@@ -125,6 +125,121 @@ describe("usePresentation", () => {
     );
   });
 
+  it("follows the view the frame reports: its s key in, its Escape or Exit out", () => {
+    const one = fakeFrame();
+    const { result, rerender } = renderHook(
+      ({ frame }) =>
+        usePresentation({
+          gate: gate(),
+          frame,
+          contentOrigin: ORIGIN,
+          config: CONFIG,
+          slug: "talk",
+        }),
+      { initialProps: { frame: one.frame } },
+    );
+    fromFrame(one.contentWindow, { type: "ready", slide: 1, count: 6 });
+    // The presenter pressed s in the frame.
+    fromFrame(one.contentWindow, { type: "view", mode: "presenter" });
+    expect(result.current.mode).toBe("presenter");
+    expect(result.current.pause).toBe("present");
+    // A newer version's frame comes back in presenter view.
+    const two = fakeFrame();
+    rerender({ frame: two.frame });
+    fromFrame(two.contentWindow, { type: "ready", slide: 1, count: 6 });
+    expect(two.contentWindow.postMessage).toHaveBeenCalledWith(
+      { source: "plinth-renderer", v: 1, type: "view", mode: "presenter" },
+      ORIGIN,
+    );
+    // Escape in the frame leaves presenter view.
+    fromFrame(two.contentWindow, { type: "view", mode: "deck" });
+    expect(result.current.mode).toBe("off");
+    expect(result.current.pause).toBeNull();
+    // A forged view from another window changes nothing.
+    fromFrame({} as Window, { type: "view", mode: "presenter" });
+    fromFrame(two.contentWindow, { type: "view", mode: "presenter" }, "http://evil.example");
+    expect(result.current.mode).toBe("off");
+  });
+
+  it("leaves presenter view when the frame refuses it or exits it, and lets the audience go", () => {
+    vi.spyOn(window, "open").mockImplementation(() => null);
+    const closed = vi.fn();
+    vi.stubGlobal(
+      "BroadcastChannel",
+      class {
+        onmessage = null;
+        postMessage() {}
+        close() {
+          closed();
+        }
+      },
+    );
+    const f = fakeFrame();
+    const { result } = renderHook(() =>
+      usePresentation({
+        gate: gate(),
+        frame: f.frame,
+        contentOrigin: ORIGIN,
+        config: CONFIG,
+        slug: "talk",
+      }),
+    );
+    act(() => result.current.presenterView());
+    act(() => result.current.openAudience());
+    // The frame's own Exit presenter view button.
+    fromFrame(f.contentWindow, { type: "view", mode: "deck" });
+    expect(result.current.mode).toBe("off");
+    expect(closed).toHaveBeenCalled();
+    // Review mode keeps the overview and says so.
+    act(() => result.current.presenterView());
+    fromFrame(f.contentWindow, { type: "view", mode: "overview" });
+    expect(result.current.mode).toBe("off");
+    vi.unstubAllGlobals();
+  });
+
+  it("Present keeps presenter view when presenter view is on", async () => {
+    const f = fakeFrame();
+    const requestFullscreen = vi.fn(() => Promise.resolve());
+    Object.assign(f.frame, { requestFullscreen, focus: vi.fn() });
+    const { result } = renderHook(() =>
+      usePresentation({
+        gate: gate(),
+        frame: f.frame,
+        contentOrigin: ORIGIN,
+        config: CONFIG,
+        slug: "talk",
+      }),
+    );
+    await act(async () => result.current.present());
+    expect(f.contentWindow.postMessage).toHaveBeenLastCalledWith(
+      { source: "plinth-renderer", v: 1, type: "view", mode: "deck" },
+      ORIGIN,
+    );
+    act(() => result.current.presenterView());
+    f.contentWindow.postMessage.mockClear();
+    await act(async () => result.current.present());
+    expect(requestFullscreen).toHaveBeenCalledTimes(2);
+    expect(f.contentWindow.postMessage).not.toHaveBeenCalled();
+    expect(result.current.mode).toBe("presenter");
+  });
+
+  it("an audience window ignores its own frame's view", () => {
+    window.history.replaceState(null, "", `/a/talk#present=audience&pair=${"p".repeat(16)}`);
+    const f = fakeFrame();
+    const { result } = renderHook(() =>
+      usePresentation({
+        gate: gate(),
+        frame: f.frame,
+        contentOrigin: ORIGIN,
+        config: CONFIG,
+        slug: "talk",
+      }),
+    );
+    expect(result.current.mode).toBe("audience");
+    fromFrame(f.contentWindow, { type: "view", mode: "presenter" });
+    expect(result.current.mode).toBe("audience");
+  });
+
   it("posts to * under opaque isolation and accepts the frame's null origin", () => {
     const f = fakeFrame();
     const { result } = renderHook(() =>

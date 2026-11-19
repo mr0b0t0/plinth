@@ -76,7 +76,23 @@ const COLUMN_RE = /^\|\|\|[ \t]*$/;
 const FENCE_RE = /^ {0,3}(`{3,}|~{3,})/;
 const NOTE_RE = /^(?:Note|Notes):/;
 const ESCAPED_NOTE_RE = /^\\(Notes?:)/;
-const SETTING_RE = /^([A-Za-z][A-Za-z0-9_-]*):[ \t]*(.*?)[ \t]*$/;
+const SETTING_KEY_RE = /^[A-Za-z][A-Za-z0-9_-]*:/;
+// Characters a value may not hold (what `.` does not match): a setting is one line.
+const LINE_BREAK_RE = /[\n\r\u2028\u2029]/;
+
+/**
+ * A trimmed front matter line as `key: value`, or null. Without a regex that backtracks: front
+ * matter lines can be as long as the deck, so this stays linear in the line.
+ */
+function readSetting(trimmed: string): { key: string; value: string } | null {
+  const k = SETTING_KEY_RE.exec(trimmed);
+  if (!k) return null;
+  let i = k[0].length;
+  while (trimmed[i] === " " || trimmed[i] === "\t") i++;
+  const value = trimmed.slice(i);
+  if (LINE_BREAK_RE.test(value)) return null;
+  return { key: k[0].slice(0, -1), value };
+}
 
 /** Tracks fenced code blocks line by line (CommonMark: closed by the same character, as long). */
 class Fences {
@@ -117,9 +133,9 @@ function readSettings(lines: string[], first: number, problems: DeckProblem[]): 
     const raw = lines[i] ?? "";
     if (raw.trim() === "") continue;
     const line = first + i;
-    const m = SETTING_RE.exec(raw.trim());
-    const key = m?.[1] ?? "";
-    const value = m?.[2] ?? "";
+    const m = readSetting(raw.trim());
+    const key = m?.key ?? "";
+    const value = m?.value ?? "";
     if (key === "aspect") {
       if (value === "16:9" || value === "4:3") s.aspect = value;
       else problems.push(settingProblem(line, `aspect is 16:9 or 4:3, not "${clip(value)}"`));
@@ -161,7 +177,7 @@ function frontMatterEnd(lines: string[]): number {
   for (let i = 1; i <= last; i++) {
     const l = lines[i] ?? "";
     if (SEPARATOR_RE.test(l)) return i > 1 ? i : -1;
-    if (l.trim() !== "" && !SETTING_RE.test(l.trim())) return -1;
+    if (l.trim() !== "" && !readSetting(l.trim())) return -1;
   }
   return -1;
 }
@@ -306,32 +322,100 @@ export function parseDeck(text: string): ParsedDeck {
 }
 
 /**
- * The relative image paths a deck's Markdown references outside code (`![alt](path)`), in order,
- * once each, without a leading "./" and before any "?" or "#". Absolute URLs, data: URLs,
- * fragments and root-absolute paths are left out.
+ * The relative image paths a deck's Markdown references outside code (`![alt](path)` or
+ * `![alt](<path>)`), in order, once each, as files of the version: before any "?" or "#",
+ * percent-decoded and with "." and ".." segments resolved from the deck's root, as the browser
+ * resolves them. Absolute URLs, data: URLs, fragments and root-absolute paths are left out; a path
+ * that climbs above the root is kept as written, so it is reported as missing.
+ *
+ * It runs on every deck publish over text up to LIMITS.maxSlidesBytes, so it is linear in the text:
+ * one pass per line with no backtracking regex.
  */
 export function deckImagePaths(text: string): string[] {
   const out = new Set<string>();
   const fences = new Fences();
-  const re = /!\[[^\]\n]*\]\(\s*<?([^\s)>]+)/g;
   for (const line of text.replace(/\r\n?/g, "\n").split("\n")) {
     const wasInside = fences.inside;
     if (fences.step(line) || wasInside) continue;
     // Inline code spans are not images.
-    const plain = line.replace(/`[^`]*`/g, "");
-    for (const m of plain.matchAll(re)) {
-      let p = m[1] ?? "";
-      if (/^[a-z][a-z0-9+.-]*:/i.test(p) || p.startsWith("/") || p.startsWith("#")) continue;
-      p = p.replace(/[?#].*$/, "").replace(/^(\.\/)+/, "");
-      try {
-        p = decodeURIComponent(p);
-      } catch {
-        // Keep the path as written.
-      }
+    for (const raw of imageDestinations(line.replace(/`[^`]*`/g, ""))) {
+      const p = imageFile(raw);
       if (p) out.add(p);
     }
   }
   return [...out];
+}
+
+const isSpaceChar = (c: string | undefined) => c !== undefined && /\s/.test(c);
+
+/**
+ * The destinations of `![alt](dest` in one line, in order. The alt runs to the first "]"; an
+ * angle-bracket destination runs to its ">" (spaces allowed), any other to the first space or ")".
+ * Every "![" before the same "]" shares that alt's end and destination, so the search resumes after
+ * it, and the next ">" is found once and reused: each character is looked at a bounded number of
+ * times however many "![" the line holds.
+ */
+function imageDestinations(line: string): string[] {
+  const found: string[] = [];
+  let angle = -1; // index of the next ">" at or after the search point, or line.length for none
+  let i = line.indexOf("![");
+  while (i >= 0) {
+    const close = line.indexOf("]", i + 2);
+    if (close < 0) break;
+    if (line[close + 1] !== "(") {
+      i = line.indexOf("![", close + 1);
+      continue;
+    }
+    let d = close + 2;
+    while (isSpaceChar(line[d])) d++;
+    let dest = "";
+    let after = d;
+    if (line[d] === "<") {
+      if (angle < d + 1) {
+        const at = line.indexOf(">", d + 1);
+        angle = at < 0 ? line.length : at;
+      }
+      if (angle >= line.length) {
+        i = line.indexOf("![", close + 1);
+        continue;
+      }
+      dest = line.slice(d + 1, angle);
+      after = angle + 1;
+    } else {
+      let e = d;
+      while (e < line.length && line[e] !== ")" && !isSpaceChar(line[e])) e++;
+      dest = line.slice(d, e);
+      after = e;
+    }
+    if (dest !== "" && !dest.includes("<")) found.push(dest);
+    i = line.indexOf("![", after);
+  }
+  return found;
+}
+
+/** A destination as a file path of the version, or "" when it names no file of it. */
+function imageFile(dest: string): string {
+  let p = dest.trim();
+  if (p === "" || /^[a-z][a-z0-9+.-]*:/i.test(p) || p.startsWith("/") || p.startsWith("#"))
+    return "";
+  const q = p.search(/[?#]/);
+  if (q >= 0) p = p.slice(0, q);
+  try {
+    p = decodeURIComponent(p);
+  } catch {
+    // Keep the path as written.
+  }
+  const parts: string[] = [];
+  for (const seg of p.split("/")) {
+    if (seg === "" || seg === ".") continue;
+    if (seg === "..") {
+      if (parts.length === 0) return p;
+      parts.pop();
+      continue;
+    }
+    parts.push(seg);
+  }
+  return parts.join("/");
 }
 
 /** Whether `n` is a slide number a message may carry: an integer from 1 to LIMITS.maxSlides. */

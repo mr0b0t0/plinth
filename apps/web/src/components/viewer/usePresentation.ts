@@ -7,6 +7,10 @@
 // The slide is kept in the app URL's fragment (#slide=N), written with history.replaceState and
 // never sent to the server, so a reload or a shared link opens the same slide. A new frame (a newer
 // version, review mode) reports `ready` and is sent back to that slide.
+//
+// The frame can change view on its own (its `s` key and Presenter control, Escape, its Exit button)
+// and reports every change with `view`, so `mode`, the strip, the version pause and the audience
+// window follow what is on screen, whoever switched it.
 import { APP_ROUTES, type AppConfig, route, typeDef, type ViewGate } from "@plinth/shared";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { showToast } from "../ui/index.ts";
@@ -97,6 +101,19 @@ export function usePresentation(o: PresentationOptions): Presentation {
   targetRef.current = target;
   const channel = useRef<PresentChannel | null>(null);
 
+  /** Sets the mode now, so messages that arrive before the next render see it. */
+  const changeMode = useCallback((next: PresentMode) => {
+    modeRef.current = next;
+    setMode(next);
+  }, []);
+
+  /** Presenter view is over (the strip's Exit, or the frame left it): the audience is let go. */
+  const leavePresenter = useCallback(() => {
+    channel.current?.close();
+    channel.current = null;
+    changeMode("off");
+  }, [changeMode]);
+
   const goto = useCallback((n: number) => {
     postToDeck(frameRef.current, targetRef.current, gotoMessage(n));
   }, []);
@@ -107,7 +124,10 @@ export function usePresentation(o: PresentationOptions): Presentation {
     f.requestFullscreen().then(
       () => {
         f.focus();
-        postToDeck(f, targetRef.current, viewMessage("deck"));
+        // Presenter view full screen stays presenter view; any other view becomes the deck.
+        if (modeRef.current !== "presenter") {
+          postToDeck(f, targetRef.current, viewMessage("deck"));
+        }
       },
       () => afterFail?.(),
     );
@@ -121,6 +141,16 @@ export function usePresentation(o: PresentationOptions): Presentation {
       if (!m) return;
       if (m.type === "fullscreen") {
         requestFullscreen(() => showToast({ title: "Use Present in the bar" }));
+        return;
+      }
+      if (m.type === "view") {
+        // An audience window follows its presenter window whatever its own frame shows.
+        if (modeRef.current === "audience") return;
+        if (m.mode === "presenter") {
+          if (modeRef.current !== "presenter") changeMode("presenter");
+        } else if (modeRef.current === "presenter") {
+          leavePresenter();
+        }
         return;
       }
       setCount(m.count);
@@ -145,7 +175,17 @@ export function usePresentation(o: PresentationOptions): Presentation {
     };
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);
-  }, [available, frame, contentOrigin, opaque, type, goto, requestFullscreen]);
+  }, [
+    available,
+    frame,
+    contentOrigin,
+    opaque,
+    type,
+    goto,
+    requestFullscreen,
+    changeMode,
+    leavePresenter,
+  ]);
 
   useEffect(() => {
     if (!available) return;
@@ -182,18 +222,16 @@ export function usePresentation(o: PresentationOptions): Presentation {
   const presenterView = useCallback(() => {
     if (!available) return;
     postToDeck(frameRef.current, targetRef.current, viewMessage("presenter"));
-    setMode("presenter");
-  }, [available]);
+    changeMode("presenter");
+  }, [available, changeMode]);
 
   const exit = useCallback(() => {
     if (modeRef.current === "presenter") {
       postToDeck(frameRef.current, targetRef.current, viewMessage("deck"));
-      channel.current?.close();
-      channel.current = null;
+      leavePresenter();
     }
     if (document.fullscreenElement) void document.exitFullscreen?.().catch(() => undefined);
-    setMode((m) => (m === "audience" ? m : "off"));
-  }, []);
+  }, [leavePresenter]);
 
   const openAudience = useCallback(() => {
     if (!available) return;

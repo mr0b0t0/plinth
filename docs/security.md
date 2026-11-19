@@ -373,8 +373,8 @@ What is new:
   ids are prefixed per slide (`s<n>-`), and copies of a slide (presenter view, the handout) carry
   no ids at all.
 - **Numbers only between the app and the frame.** The app sends `goto { slide }`, `view { mode }`
-  and `print { notes }`; the frame sends `ready` and `position` (a slide and a count) and
-  `fullscreen`. Slides are integers from 1 to 500 on both ends; nothing carries deck text. The
+  and `print { notes }`; the frame sends `ready` and `position` (a slide and a count), `view { mode }`
+  (the view it switched to) and `fullscreen`. Slides are integers from 1 to 500 on both ends; nothing carries deck text. The
   renderer acts only on messages whose `event.source` is its parent and whose origin is the exact
   app origin, and posts only to the app origin.
 - **Opaque frames are identified by window.** The app accepts a deck's messages only from the
@@ -382,14 +382,18 @@ What is new:
   `"null"` under opaque isolation and the path fallback (`frameGuard.ts acceptFrom`), and only for a
   type with `present`. It posts to `"*"` there, which reveals nothing the frame does not have. Only
   Plinth's renderer runs on a deck's origin, and the worst a forged message could do is move the
-  app's slide number or ask for full screen, which the browser grants only with the person's own
-  activation.
+  app's slide number, show or hide its presenter strip (and so hold or release a newer version's
+  swap), or ask for full screen, which the browser grants only with the person's own activation.
 - **Full screen without a frame permission.** Present calls `requestFullscreen()` on the app's own
   `<iframe>` element from the button's click. No `allow="fullscreen"` attribute is added, so an
   HTML artifact cannot make itself full screen; a deck's `f` key only asks the app.
 - **The audience window.** Two app windows pair over `BroadcastChannel("plinth-present:<id>:<pair>")`
   on the app origin, so only the same browser can join. The pair id in the URL fragment is not a
   credential; messages are validated and carry only slide numbers.
+- **Deck text is scanned in linear time.** The deck parser and the image references behind
+  `missing_file` run on every deck publish over up to 1 MB of Markdown, so they read each line with
+  plain scans and anchored patterns that cannot backtrack: a deck of one long line of `![` or of
+  spaces costs about as much as any other deck of that size.
 - **The slide in the URL.** `#slide=N` lives in the app URL's fragment, written with
   `history.replaceState`: it never reaches the server or a log.
 - **Speaker notes are not secret.** They are in the stored source and the rendered page for anyone

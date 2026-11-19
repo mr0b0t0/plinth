@@ -119,6 +119,19 @@ describe("parseDeck: front matter", () => {
     expect(d.problems[3]?.message).toContain('"color"');
   });
 
+  it("trims values and reads a long settings line in linear time", () => {
+    expect(parseDeck("---\naspect: \t4:3 \t\nfooter:   Hi  there\n---\n# A").settings).toEqual({
+      ...DEFAULT_DECK_SETTINGS,
+      aspect: "4:3",
+      footer: "Hi  there",
+    });
+    // Spaces inside a value made the old pattern backtrack: 160 KB took 20 s.
+    const t = Date.now();
+    const d = parseDeck(`---\naspect: x${" ".repeat(500_000)}y\n---\n# A`);
+    expect(Date.now() - t).toBeLessThan(1000);
+    expect(d.problems.map((p) => p.code)).toEqual(["slides_setting"]);
+  });
+
   it("keeps the aspect canvases fixed", () => {
     expect(SLIDE_ASPECTS).toEqual({
       "16:9": { width: 1280, height: 720 },
@@ -193,6 +206,37 @@ describe("deckImagePaths", () => {
       "![j](<spaced%20name.png>)",
     ].join("\n");
     expect(deckImagePaths(text)).toEqual(["chart.png", "img/x.png", "spaced name.png"]);
+  });
+
+  it("reads an angle-bracket destination to its > and resolves . and .. segments", () => {
+    const text = [
+      '![chart](<my chart.png>) ![t](<x y.png> "Title") ![c](img/../c.png)',
+      "![d](./a/./b/../d.png) ![e](a//e.png) ![up](../above.png) ![bad](<no-close.png",
+    ].join("\n");
+    expect(deckImagePaths(text)).toEqual([
+      "my chart.png",
+      "x y.png",
+      "c.png",
+      "a/d.png",
+      "a/e.png",
+      "../above.png",
+    ]);
+  });
+
+  it("stays linear on one long line of image openers", () => {
+    // Each was quadratic before: a few hundred KB took minutes.
+    const lines = [
+      "![".repeat(400_000),
+      `${"![".repeat(200_000)}](${" ".repeat(200_000)}<`,
+      "![a](<".repeat(130_000),
+      "![](".repeat(200_000),
+      "![a]".repeat(160_000),
+    ];
+    for (const line of lines) {
+      const t = Date.now();
+      deckImagePaths(`# x\n${line}`);
+      expect(Date.now() - t).toBeLessThan(1000);
+    }
   });
 });
 

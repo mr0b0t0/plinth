@@ -650,9 +650,13 @@ source editor work as for docs. A deck is not edited on its page.
   never sent to the server), so a reload or a shared link opens the same slide, and a newer
   version's frame is sent back to it.
 - **Presenting.** Present (in the bar) puts the app's own frame full screen; the frame gets no
-  fullscreen permission of its own. Presenter view (in the menu, or `s`) shows, inside the frame,
+  fullscreen permission of its own, and presenter view stays presenter view when it goes full
+  screen. Presenter view (in the menu, or `s`) shows, inside the frame,
   the current slide, the next one, the notes, an elapsed timer with pause and reset, the clock and
-  the slide count. "Audience window" opens a second app window that follows the presenter's slide
+  the slide count. The frame tells the app each view it switches to, so the app's presenter strip,
+  the paused version swap and the audience window follow the deck however presenter view was
+  opened or left (the menu, the strip's Exit, `s`, Escape or the frame's own controls). Review mode
+  keeps the overview whatever asks for another view. "Audience window" opens a second app window that follows the presenter's slide
   through a `BroadcastChannel` on the app origin in the same browser, in every isolation mode; only
   slide numbers cross it. While the deck is full screen or in presenter view, a newer version does
   not replace the frame: the strip says it was published and Show loads it on the same slide, and
@@ -668,7 +672,7 @@ source editor work as for docs. A deck is not edited on its page.
   block. A deck with no slide or more than 500 is refused with a fix-it message.
 - **Security.** Deck Markdown and notes are rendered only on the artifact's content origin. The app
   and the frame exchange only slide numbers, counts, view names and booleans (renderer protocol
-  version 1: `goto`, `view` and `print { notes }` from the app; `ready`, `position` and
+  version 1: `goto`, `view` and `print { notes }` from the app; `ready`, `position`, `view` and
   `fullscreen` from the frame); see [docs/security.md](security.md#typed-artifacts).
 - **Not in this slice.** `.pptx` export and following a presenter over a live room come later;
   transitions, builds, custom themes and fonts, math, diagrams and video are not planned for
@@ -739,7 +743,9 @@ files) and big pages without merging chunks, and an update stores only what chan
   scripts, `crossorigin` links and fonts, which fail under `CONTENT_ISOLATION=opaque`) and
   `slides_setting`, `slide_empty` and `slide_dense` (a deck's ignored setting or column marker, an
   empty slide, a slide that will be shrunk to fit; a deck's `missing_file` names an image its
-  Markdown shows that the version does not hold) and
+  Markdown shows that the version does not hold, its path resolved as the browser does: before any
+  `?` or `#`, percent-decoded, `.` and `..` segments applied, an `<angle bracket>` destination read
+  whole) and
   `not_scanned` (a note, not something to fix: the reference check reads at most 2 MB per file and
   8 MB per publish, so every big build gets it; an inline update also gets it for text files reused
   by `{path, sha256}` or carried forward, whose bytes were not sent and so were not re-checked). The result's `stored` reports files, `written`,

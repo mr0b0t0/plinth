@@ -295,6 +295,16 @@ test.describe("a published deck", () => {
 
         await strip.getByRole("button", { name: "Exit" }).click();
         await expect.poll(() => modeOf(frame)).toBe("deck");
+        await expect(strip).toBeHidden();
+
+        // The frame's own s key and Escape switch the app's presenter strip too.
+        await focusDeck(page);
+        await page.keyboard.press("s");
+        await expect.poll(() => modeOf(frame)).toBe("presenter");
+        await expect(strip).toBeVisible();
+        await page.keyboard.press("Escape");
+        await expect.poll(() => modeOf(frame)).toBe("deck");
+        await expect(strip).toBeHidden();
       } finally {
         await client.close();
       }
