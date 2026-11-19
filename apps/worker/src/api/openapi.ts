@@ -520,6 +520,15 @@ function responseSchemas(): Record<string, Json> {
         description: "The bearer connection making the call; null for a signed-in person",
       },
     }),
+    BoundMe: obj({
+      id: str({ description: "The token's person" }),
+      connection: ref("MeConnection"),
+    }),
+    MeOrBound: {
+      oneOf: [ref("Me"), ref("BoundMe")],
+      description:
+        "The account (Me), or, for a token limited to one artifact, only the person's id and the connection (BoundMe)",
+    },
     MeConnection: obj({
       id: nullable("string", { description: "null for the single-user ADMIN_TOKEN" }),
       label: str(),
@@ -1085,7 +1094,7 @@ function operations(): Operation[] {
       summary: "The calling user",
       tag: "Account",
       auth: "agent",
-      ok: [200, "Me"],
+      ok: [200, "MeOrBound"],
       errors: [401],
     },
     {

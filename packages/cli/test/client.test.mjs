@@ -1356,6 +1356,31 @@ describe("plinth publish for CI: one file, bound tokens, --json failures", () =>
     assert.equal(JSON.parse(u.stdout).version, 2);
   });
 
+  it("names the file a page or document needs when the source does not match (--id)", async () => {
+    reset();
+    const page = fake.seed({ "index.html": "<p>one</p>" });
+    const from = fake.state.requests.length;
+    const md = oneFile("notes.md", "# Notes\n");
+    const r = await plinth(["publish", md, "--id", page.id, "--json"], { extraEnv: asPat() });
+    assert.equal(r.code, 1, r.stderr);
+    const out = JSON.parse(r.stdout);
+    assert.equal(out.outcome, "error");
+    assert.equal(
+      out.message,
+      `${page.id} is a page; publish a .html file (or a folder with index.html at its top)`,
+    );
+    const folder = build({ "other.html": "<p>x</p>" });
+    const f = await plinth(["publish", folder, "--id", page.id], { extraEnv: asPat() });
+    assert.equal(f.code, 1, f.stderr);
+    assert.match(
+      f.stderr,
+      new RegExp(`${page.id} is a page; the folder needs index\\.html at its top`),
+    );
+    assert.doesNotMatch(f.stderr, /before initialization/);
+    // Only the reads: nothing was sent.
+    assert.ok(since(from).every((q) => q.method === "GET"));
+  });
+
   it("refuses another extension (exit 2) and a file reached through a link", async () => {
     reset();
     const txt = oneFile("x.txt", "hello");
@@ -1439,6 +1464,8 @@ describe("plinth publish for CI: one file, bound tokens, --json failures", () =>
       const who = await plinth(["whoami"], { extraEnv: asPat() });
       assert.equal(who.code, 0, who.stderr);
       assert.match(who.stdout, new RegExp(`limited to ${a.slug} \\("Coverage"\\)`));
+      assert.match(who.stdout, /^A token on /);
+      assert.doesNotMatch(who.stdout, /undefined/);
 
       fake.state.boundArtifact = null;
       const gone = await plinth(["publish", dir], { extraEnv: asPat() });

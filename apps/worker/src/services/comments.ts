@@ -194,7 +194,7 @@ export async function requireComment(
 
 /** All comments on an artifact, threaded: each root (oldest first) followed by its replies. */
 export async function listComments(ctx: Ctx, ref: string): Promise<CommentInfo[]> {
-  const { artifact, role } = await requireArtifact(ctx, ref, "view");
+  const { artifact, role } = await requireArtifact(ctx, ref, "comments_read");
   const rows = await loadComments(ctx, eq(comments.artifactId, artifact.id));
   const tasks = await tasksFor(
     ctx,
@@ -296,8 +296,9 @@ export async function insertComment(
  *   turn into a request that looks like it came from the owner.
  * - "@claude" and "@codex" target the owner's connections of that client type.
  * - "@<handle>" targets the artifact owner's non-revoked connection whose label normalizes to that
- *   handle (mentionHandle). Agent names win over a label with the same handle; if several labels
- *   share a handle, the oldest connection is the target. Never another user's connections.
+ *   handle (mentionHandle), leaving out tokens limited to one artifact (they never hold
+ *   mentions). Agent names win over a label with the same handle; if several labels share a
+ *   handle, the oldest connection is the target. Never another user's connections.
  * - Anything else stays plain text.
  */
 async function mentionTasksFor(
@@ -328,7 +329,12 @@ async function mentionTasksFor(
         .select({ id: agentConnections.id, label: agentConnections.label })
         .from(agentConnections)
         .where(
-          and(eq(agentConnections.userId, artifact.ownerId), isNull(agentConnections.revokedAt)),
+          and(
+            eq(agentConnections.userId, artifact.ownerId),
+            isNull(agentConnections.revokedAt),
+            // A token limited to one artifact never holds mentions, so it could never claim one.
+            isNull(agentConnections.artifactId),
+          ),
         )
         .orderBy(asc(agentConnections.createdAt), sql`${agentConnections}.rowid`)
         .all()

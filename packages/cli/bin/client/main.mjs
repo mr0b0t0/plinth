@@ -263,9 +263,11 @@ export async function main(argv, io = {}) {
           ? `, limited to ${c.artifact.slug} ("${c.artifact.title}")`
           : ", limited to an artifact it can no longer open"
         : "";
+      // A bound token's /me carries no account fields (no email): name the token instead.
+      const who = typeof me.email === "string" ? me.email : "A token";
       stdout(
         printable(
-          `${me.email} on ${resolved.origin} (${resolved.envToken ? "PLINTH_TOKEN" : `signed in as ${CLI_CLIENT_NAME}`})${limit}`,
+          `${who} on ${resolved.origin} (${resolved.envToken ? "PLINTH_TOKEN" : `signed in as ${CLI_CLIENT_NAME}`})${limit}`,
         ),
       );
       return EXIT.ok;

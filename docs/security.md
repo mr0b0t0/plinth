@@ -381,23 +381,28 @@ owner (`policy.seesOwnerMetadata`, applied in the one function that builds artif
 
 A personal access token may be **limited to one artifact** (`agent_connections.artifact_id`, for
 CI). The policy carries it on the agent principal (`boundArtifactId`, rebuilt from the live
-connection row on every request and when an upload ticket is redeemed), and `decide` checks it
-right after `deleted` and **before** the scope: any other artifact is `not_found` for every action
-and every scope set, so a bound token cannot learn which ids or slugs exist (a missing one answers
-the same 404). On its own artifact only `view` and `edit` pass, and they still need the person's
-current role and the token's scope, so a takedown, a delete or removing the person's grant stops
-the token too; every other action there is denied with `token_bound` (403, which reveals nothing:
-the token may view that artifact). Calls that are not about one artifact go through the policy
-too: `mayCreateArtifacts` refuses `publish_artifact`, `POST /artifacts`, `start_upload` and
-`POST /uploads` without an id, and the redeem of a publish ticket; `list_artifacts` returns at most
-the bound artifact, after `decide(view)`, with no categories (a category filter returns nothing);
-`GET /categories` returns none; the category is hidden by `seesOwnerMetadata(principal, role)` and
-`data_usage` by `decide(data_read)`; `canActOnMention` refuses a bound token (which never holds
-`mentions`). The Connections list and `GET /me` name the bound artifact only where `decide(view)`
-allows it for the person now. A binding only narrows: the column is never updated, deleting or
-taking down the artifact revokes its tokens, erasing it removes them by cascade (never
-`SET NULL`), and a CHECK refuses it on an OAuth connection. Only the artifact's owner or an editor
-(`edit`) can make one; strangers get 404.
+connection row on every request and when an upload ticket is redeemed), and `decide` checks it right
+after `deleted` and **before** the scope: any other artifact is `not_found` for every action and
+every scope set, so a bound token cannot learn which ids or slugs exist (a missing one answers the
+same 404). On its own artifact only `view` and `edit` pass, and they still need the person's current
+role and the token's scope, so a takedown, a delete or removing the person's grant stops the token
+too; every other action there is denied with `token_bound` (403) only when the token may view that
+artifact now, so it reveals nothing; otherwise the action gets the answer viewing gets (404 once the
+person's grant is gone, `taken_down` after a takedown). Reading the comment threads is its own
+action (`comments_read`, the same rule as `view` for everyone else), so a bound token never sees
+comment bodies, commenters' emails or mention tasks. Calls that are not about one artifact go
+through the policy too: `mayCreateArtifacts` refuses `publish_artifact`, `POST /artifacts`,
+`start_upload` and `POST /uploads` without an id, and the redeem of a publish ticket;
+`list_artifacts` returns at most the bound artifact, after `decide(view)`, with no categories (a
+category filter returns nothing); `GET /categories` returns none; the category is hidden by
+`seesOwnerMetadata(principal, role)` and `data_usage` by `decide(data_read)`; `canActOnMention`
+refuses a bound token (which never holds `mentions`), and an `@<label>` mention never targets one.
+`GET /me` answers a bound token with the person's id and the connection only: no email, name,
+artifact count or limit, or admin flag. The Connections list and `GET /me` name the bound artifact
+only where `decide(view)` allows it for the person now. A binding only narrows: the column is never
+updated, deleting or taking down the artifact revokes its tokens, erasing it removes them by cascade
+(never `SET NULL`), and a CHECK refuses it on an OAuth connection. Only the artifact's owner or an
+editor (`edit`) can make one; strangers get 404.
 
 An artifact's open counts ([spec](spec.md#admin-stats-and-view-counts)) are behind their own
 policy action, `views`: the owner only, a read action for agents (`artifacts:read`). Anyone who

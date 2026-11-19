@@ -137,7 +137,7 @@ is safe.
 | `category` | empty | Category of a new artifact (ignored on updates; change it on the Settings page) |
 | `note` | empty | The version note. Empty: the commit subject and short SHA. `-`: no note |
 | `link-run` | `false` | Append this run's URL to the note |
-| `base-version` | empty | Publish only if the artifact is still at this version |
+| `base-version` | empty | Publish only if the artifact is still at this version. Needs an artifact to update (`id`, or a token limited to one): without one the step fails with exit code 2 and creates nothing |
 | `include-maps` | `false` | Also send source maps |
 | `dry-run` | `false` | Check the build and report what would be sent; publish nothing |
 | `fail-on-warnings` | `false` | Fail the step when the publish reports warnings (it is still published) |
@@ -225,7 +225,7 @@ limited to one artifact, `--id` may be left out.
 | Exit code | Action `outcome` | Meaning |
 | --- | --- | --- |
 | 0 | `published`, `nothing_to_publish`, `already_published`, `dry_run` | Done. With `base-version`, a build that matches the current version (or the one after it, published by an earlier run whose answer was lost) sends nothing |
-| 1 | `error`, `unknown` | Failed. `unknown`: the build was sent but the answer was lost; run it again, it never publishes twice |
+| 1 | `error`, `unknown` | Failed. `unknown`: the build was sent but the answer was lost, so it may have been published. Re-run with `base-version` set to the version the build was sent against (the summary names it): the re-run sends nothing if the build landed and stops with a conflict if someone else published first. A re-run without `base-version` publishes the build again, and one without `id` creates another artifact |
 | 2 | `error` | A usage problem: a bad input, a path that is not a build folder or an `.html` or `.md` file, or an `id` other than the token's artifact |
 | 3 | `conflict` | Someone published a newer version while this run was sending. Never retried |
 

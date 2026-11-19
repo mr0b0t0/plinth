@@ -8,7 +8,7 @@ import { eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import { eraseUserSql } from "../scripts/admin-lib.mjs";
 import { resolveBearer } from "../src/auth/principal.ts";
-import { agentConnections } from "../src/db/schema.ts";
+import { agentConnections, mentionTasks } from "../src/db/schema.ts";
 import worker from "../src/index.ts";
 import { tar } from "./fixtures/bundles/tar.ts";
 import {
@@ -16,6 +16,7 @@ import {
   browserSession,
   call,
   config,
+  createToken,
   createUser,
   db,
   json,
@@ -249,6 +250,12 @@ describe("using a token limited to one artifact", () => {
     bound(await req("POST", `/artifacts/${id}/versions/1/restore`, t.auth, {}), "restore");
     bound(await req("DELETE", `/artifacts/${id}`, t.auth), "delete");
     bound(await req("POST", `/artifacts/${id}/comments`, t.auth, { body: "hi" }), "comment");
+    // Reading the threads too: they carry every commenter's email and the mention tasks.
+    const posted = await req("POST", `/artifacts/${id}/comments`, h, { body: "A note" });
+    expect(posted.status).toBe(201);
+    const threads = await req("GET", `/artifacts/${id}/comments`, t.auth);
+    bound(threads, "comments read");
+    expect(JSON.stringify(threads.body)).not.toContain("A note");
     bound(await req("GET", `/artifacts/${id}/data`, t.auth), "data read");
     bound(
       await req("POST", `/artifacts/${id}/data`, t.auth, {
@@ -311,6 +318,7 @@ describe("using a token limited to one artifact", () => {
       ["set_visibility", { id, visibility: "unlisted" }],
       ["restore_version", { id, version: 1 }],
       ["list_artifact_data", { id }],
+      ["list_comments", { id }],
       [
         "write_artifact_data",
         { id, ops: [{ op: "delete", collection: "votes", doc_id: "a", if_rev: 1 }] },
@@ -377,17 +385,49 @@ describe("using a token limited to one artifact", () => {
     expect(res.status).toBe(401);
   });
 
+  it("is never the target of an @<label> mention, even when it is the oldest with that label", async () => {
+    const { owner, h, id, other } = await setup();
+    const t = await boundToken(h, id);
+    const wide = await createToken(owner.user.id, { label: "CI: report" });
+    const posted = await req("POST", `/artifacts/${other.id}/comments`, h, {
+      body: "@ci-report fix the chart",
+    });
+    expect(posted.status).toBe(201);
+    const tasks = await db()
+      .select()
+      .from(mentionTasks)
+      .where(eq(mentionTasks.commentId, posted.body.id))
+      .all();
+    expect(tasks.map((x) => x.targetConnection)).toEqual([wide.connectionId]);
+    // Alone with that label, a bound token makes no task at all (it could never claim it).
+    await db()
+      .update(agentConnections)
+      .set({ revokedAt: new Date().toISOString() })
+      .where(eq(agentConnections.id, wide.connectionId))
+      .run();
+    const again = await req("POST", `/artifacts/${id}/comments`, h, { body: "@ci-report hi" });
+    expect(again.status).toBe(201);
+    expect(again.body.mentions).toEqual([]);
+    expect(t.connectionId).not.toBe(wide.connectionId);
+  });
+
   it("GET /me names the connection and its artifact", async () => {
     const { owner, h, id, slug } = await setup();
     const t = await boundToken(h, id);
     const me = await req("GET", "/me", t.auth);
-    expect(me.body.connection).toEqual({
-      id: t.connectionId,
-      label: "CI: report",
-      bound: true,
-      artifact: { id, slug, title: "Coverage report" },
+    // Only the connection and the person's id: no email, name, counts or admin flag.
+    expect(me.body).toEqual({
+      id: owner.user.id,
+      connection: {
+        id: t.connectionId,
+        label: "CI: report",
+        bound: true,
+        artifact: { id, slug, title: "Coverage report" },
+      },
     });
+    expect(JSON.stringify(me.body)).not.toContain(owner.user.email);
     const wide = await req("GET", "/me", owner.auth);
+    expect(wide.body).toMatchObject({ email: owner.user.email, is_admin: false });
     expect(wide.body.connection).toMatchObject({
       label: "Test token",
       bound: false,
@@ -409,6 +449,19 @@ describe("the end of a token limited to one artifact", () => {
     await req("PUT", `/artifacts/${id}/sharing`, h, { grants: [] });
     expect((await req("GET", `/artifacts/${id}`, t.auth)).status).toBe(404);
     expect((await req("PUT", `/artifacts/${id}`, t.auth, { html: "<p>x</p>" })).status).toBe(404);
+    // Every other action answers the same 404, never a token_bound that says the artifact is live.
+    for (const [method, path, body] of [
+      ["DELETE", `/artifacts/${id}`, undefined],
+      ["PUT", `/artifacts/${id}/visibility`, { visibility: "unlisted" }],
+      ["POST", `/artifacts/${id}/comments`, { body: "hi" }],
+      ["GET", `/artifacts/${id}/comments`, undefined],
+      ["GET", `/artifacts/${id}/data`, undefined],
+      ["GET", `/artifacts/${id}/views`, undefined],
+    ] as const) {
+      const r = await req(method, path, t.auth, body);
+      expect(r.status, `${method} ${path}`).toBe(404);
+      expect(JSON.stringify(r.body), `${method} ${path}`).not.toContain("token_bound");
+    }
     const me = await req("GET", "/me", t.auth);
     expect(me.body.connection).toMatchObject({ bound: true, artifact: null });
   });

@@ -127,20 +127,43 @@ export function defaultNote(inputs, env, readEvent, gitSubject) {
   return cut(subject, MAX_NOTE_LENGTH - [...suffix].length) + suffix;
 }
 
-/** The CLI's arguments for this step. `id` is the artifact to update, or "" for a new one. */
+/** The refusal for base-version with nothing to update: a new artifact has no version to check. */
+export const BASE_VERSION_NEEDS_ID =
+  "The base-version input applies to an update: set the id input (or use a token limited to the artifact). Nothing was sent.";
+
+/**
+ * The CLI's arguments for this step. `id` is the artifact to update, or "" for a new one.
+ * base-version is passed even without an id, so the CLI refuses it (exit 2) rather than creating
+ * an artifact the step said to publish only at that version.
+ */
 export function buildArgv(inputs, id, note) {
   const argv = ["publish", inputs.path, "--json"];
   if (id) {
     argv.push("--id", id);
     if (note !== null) argv.push("--note", note);
-    if (inputs.baseVersion) argv.push("--base-version", inputs.baseVersion);
   } else {
     if (inputs.title) argv.push("--title", inputs.title);
     if (inputs.category) argv.push("--category", inputs.category);
   }
+  if (inputs.baseVersion) argv.push("--base-version", inputs.baseVersion);
   if (inputs.includeMaps) argv.push("--include-maps");
   if (inputs.dryRun) argv.push("--dry-run");
   return argv;
+}
+
+/**
+ * What to do after an `unknown` outcome. Only a re-run with base-version is safe: it sends nothing
+ * if this build landed, and stops with a conflict if someone else published first. A re-run
+ * without it publishes the build again, or, with no id, creates a second artifact.
+ */
+export function unknownAdvice(json, baseStated) {
+  const lost = "The answer was lost after the build was sent, so this run may have published it.";
+  const base = Number.isInteger(json?.base_version) ? json.base_version : null;
+  if (base !== null && baseStated)
+    return `${lost} Re-run the job: with base-version set it sends nothing if v${base + 1} is this build, and stops with a conflict if someone else published first.`;
+  if (base !== null)
+    return `${lost} Set base-version to ${base} on this step, then re-run: it sends nothing if v${base + 1} is this build. A re-run without base-version publishes it again.`;
+  return `${lost} Check the artifacts list before re-running: a re-run without id creates another new artifact if this one was created.`;
 }
 
 /** The outcome for a CLI exit code and its --json object. */
@@ -242,7 +265,7 @@ function size(n) {
  * escapeMarkdown; URLs are only the ones formatOutputs built. No token, email or connection label
  * (anyone who can read the repository's Actions sees it).
  */
-export function renderSummary({ code, json, outputs, created, message }) {
+export function renderSummary({ code, json, outputs, created, message, baseStated = false }) {
   const out = Object.fromEntries(outputs);
   const lines = [];
   const outcome = out.outcome;
@@ -291,11 +314,7 @@ export function renderSummary({ code, json, outputs, created, message }) {
       `Someone published ${now} while this run was sending. Re-run the job.`,
     );
   } else if (outcome === "unknown") {
-    lines.push(
-      "### Plinth: outcome unknown",
-      "",
-      "The answer was lost after the build was sent. Re-run the job: it does not publish twice.",
-    );
+    lines.push("### Plinth: outcome unknown", "", escapeMarkdown(unknownAdvice(json, baseStated)));
   } else {
     lines.push(
       "### Plinth: not published",

@@ -12,6 +12,7 @@ import {
   decide,
   mayCreateArtifacts,
   type Principal,
+  scopeFor,
   seesOwnerMetadata,
 } from "../src/policy.ts";
 
@@ -33,6 +34,7 @@ const ACTIONS = Object.keys({
   data_clear: true,
   views: true,
   live_edit: true,
+  comments_read: true,
 } satisfies Record<ArtifactAction, true>) as ArtifactAction[];
 
 const ALL = ["artifacts:read", "artifacts:write", "mentions"] as const;
@@ -144,16 +146,58 @@ describe("policy: a token bound to one artifact", () => {
       allow: false,
       reason: "taken_down",
     });
-    // The owner's own manage on a taken-down artifact is still not the token's.
+    // The owner's own manage on a taken-down artifact is still not the token's; it answers as
+    // view does (taken_down), never with a token_bound that view would not give.
     expect(decide(boundAgent(), "manage", art({ takenDown: true }), access())).toMatchObject({
       allow: false,
-      reason: "token_bound",
+      reason: "taken_down",
     });
     expect(decide(boundAgent(), "view", art({ deleted: true }), access())).toEqual({
       allow: false,
       reason: "not_found",
       role: null,
     });
+  });
+
+  it("once its person cannot view the artifact, every action answers as view does, never token_bound", () => {
+    const other = { userId: "u-other", email: "other@example.com" };
+    for (const action of ACTIONS) {
+      const d = decide(boundAgent(ALL, other), action, art(), access());
+      expect(d, action).toEqual(decide(boundAgent(ALL, other), "view", art(), access()));
+      expect(d.allow, action).toBe(false);
+      if (!d.allow) expect(d.reason, action).not.toBe("token_bound");
+    }
+    // With the grant still there, the same actions are token_bound (they reveal nothing then).
+    expect(
+      decide(boundAgent(ALL, other), "delete", art(), access({ grantRole: "editor" })),
+    ).toEqual({ allow: false, reason: "token_bound", role: "editor" });
+  });
+
+  it("comments_read: refused for a bound token, the same as view for everyone else", () => {
+    expect(scopeFor("comments_read")).toBe("artifacts:read");
+    expect(decide(boundAgent(ALL), "comments_read", art(), access())).toEqual({
+      allow: false,
+      reason: "token_bound",
+      role: "owner",
+    });
+    const wide: Principal = {
+      ...(boundAgent(ALL) as Extract<Principal, { kind: "agent" }>),
+      boundArtifactId: null,
+    };
+    const user: Principal = { kind: "user", userId: "u-x", email: "x@example.com", isAdmin: false };
+    const anon: Principal = { kind: "anonymous" };
+    for (const p of [wide, user, anon]) {
+      for (const visibility of ["public", "unlisted", "allowlist", "password"] as const) {
+        for (const grantRole of [null, "viewer", "commenter"] as const) {
+          const facts = art({ visibility, hasPassword: visibility === "password" });
+          const acc = access({ grantRole });
+          expect(
+            decide(p, "comments_read", facts, acc),
+            `${p.kind} ${visibility} ${grantRole}`,
+          ).toEqual(decide(p, "view", facts, acc));
+        }
+      }
+    }
   });
 
   it("the helpers: boundArtifactOf, mayCreateArtifacts, seesOwnerMetadata, canActOnMention", () => {

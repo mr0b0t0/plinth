@@ -51,7 +51,9 @@
         "responses": {
           "200": {
             "description": "Success",
-            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Me" } } }
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/MeOrBound" } }
+            }
           },
           "401": { "$ref": "#/components/responses/E401" },
           "default": { "$ref": "#/components/responses/Error" }
@@ -3157,6 +3159,21 @@
           "is_admin",
           "connection"
         ]
+      },
+      "BoundMe": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string", "description": "The token's person" },
+          "connection": { "$ref": "#/components/schemas/MeConnection" }
+        },
+        "required": ["id", "connection"]
+      },
+      "MeOrBound": {
+        "oneOf": [
+          { "$ref": "#/components/schemas/Me" },
+          { "$ref": "#/components/schemas/BoundMe" }
+        ],
+        "description": "The account (Me), or, for a token limited to one artifact, only the person's id and the connection (BoundMe)"
       },
       "MeConnection": {
         "type": "object",

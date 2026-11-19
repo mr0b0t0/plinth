@@ -67,7 +67,12 @@ export type ArtifactAction =
    * Read, save or discard a doc's live page draft (#36): an owner or editor who is signed in.
    * Agents never (they push versions), and a viewer confirmed by code must sign in first.
    */
-  | "live_edit";
+  | "live_edit"
+  /**
+   * Read the comment threads (bodies, authors' emails, mention tasks): as view, except that a
+   * token bound to one artifact never may.
+   */
+  | "comments_read";
 
 export interface ArtifactFacts {
   id: string;
@@ -121,6 +126,7 @@ const ACTION_SCOPES: Record<ArtifactAction, Scope> = {
   data_clear: "artifacts:write",
   views: "artifacts:read",
   live_edit: "artifacts:write",
+  comments_read: "artifacts:read",
 };
 
 export function principalEmail(p: Principal): string | null {
@@ -165,7 +171,12 @@ export function decide(
     // Any other artifact does not exist for this token, whatever the action or the token's
     // scopes, so a bound token cannot probe which ids or slugs exist (a missing one is 404 too).
     if (artifact.id !== bound) return deny("not_found");
-    if (!BOUND_ACTIONS.has(action)) return deny("token_bound", roleOf(p, artifact, access));
+    if (!BOUND_ACTIONS.has(action)) {
+      // token_bound only where the token may view the artifact now, so the 403 tells it nothing
+      // that viewing would not; otherwise (its person lost access, a takedown) the view answer.
+      const v = decide(p, "view", artifact, access);
+      return v.allow ? deny("token_bound", v.role) : v;
+    }
   }
   if (p.kind === "agent" && !p.scopes.has(scopeFor(action))) return deny("scope");
 
@@ -183,6 +194,7 @@ export function decide(
   switch (action) {
     case "view":
     case "report":
+    case "comments_read":
       return canView(p, artifact, access, role, isAdmin);
     case "comment":
     case "mention": {

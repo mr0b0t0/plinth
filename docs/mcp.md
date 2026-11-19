@@ -197,11 +197,11 @@ page (**Publish from CI**), or tick **Limit to one artifact** in the New token d
 holds `artifacts:read` and may hold `artifacts:write`, never `mentions`. It can read and update
 only that artifact: `get_artifact`, `list_versions`, `update_artifact` and `start_upload` with its
 id work as for any token; every other artifact answers `not_found`, and `publish_artifact`,
-`start_upload` without id, `set_visibility`, `restore_version`, a category, comments and shared
-data are refused with `forbidden` and `reason: "token_bound"`. `list_artifacts` returns only that
-artifact, and no categories. `GET /api/v1/me` says so: `connection.bound` is true and
-`connection.artifact` names it. Publishing from GitHub Actions, GitLab CI or cron:
-[ci.md](ci.md).
+`start_upload` without id, `set_visibility`, `restore_version`, a category, comments
+(`list_comments` too) and shared data are refused with `forbidden` and `reason: "token_bound"`.
+`list_artifacts` returns only that artifact, and no categories. `GET /api/v1/me` says so, with no
+account fields: `connection.bound` is true and `connection.artifact` names it. Publishing from
+GitHub Actions, GitLab CI or cron: [ci.md](ci.md).
 
 ## Tools
 

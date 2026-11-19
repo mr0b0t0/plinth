@@ -484,6 +484,6 @@ as `${{ }}` inside a script: they carry the artifact's title, which is untrusted
 
 If `plinth whoami` (or `GET /api/v1/me`, `connection.bound`) says the token is limited to one
 artifact, it can only read that artifact and publish new versions of it: update that one, and
-never try to publish a new artifact, share, restore or change its category with it. Those calls
-are refused with `forbidden` and `reason: "token_bound"`, and every other artifact answers
-`not_found`. Tell the person to use the app (or a token without that limit) for those.
+never try to publish a new artifact, share, restore, read or answer its comments or change its
+category with it. Those calls are refused with `forbidden` and `reason: "token_bound"`, and
+every other artifact answers `not_found`. Tell the person to use the app (or a token without that limit) for those.

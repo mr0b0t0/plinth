@@ -367,6 +367,69 @@ describe("the GitHub Action", () => {
     }
   });
 
+  it("base-version without an id is refused (exit 2) and creates nothing", async () => {
+    const from = fake.state.requests.length;
+    const r = await action({ path: build({ "index.html": "<p>1</p>" }), "base-version": "7" });
+    assert.equal(r.code, 2, r.stdout);
+    assert.ok(
+      r.lines.some((l) =>
+        l.startsWith("::error title=Plinth::The base-version input applies to an update"),
+      ),
+    );
+    assert.equal(r.outputs.outcome, "error");
+    assert.deepEqual(
+      fake.state.requests
+        .slice(from)
+        .filter((q) => q.method !== "GET")
+        .map((q) => `${q.method} ${q.path}`),
+      [],
+    );
+  });
+
+  it("an unknown outcome names the safe re-run (base-version), and that re-run publishes nothing twice", async () => {
+    const a = fake.seed({ "index.html": "<p>1</p>" });
+    const dir = build({ "index.html": "<p>2</p>" });
+    fake.state.dropPut = "after";
+    fake.state.armReadFail = true;
+    let r;
+    try {
+      r = await action({ path: dir, id: a.id });
+    } finally {
+      fake.state.armReadFail = false;
+      fake.state.artifactReadFail = 0;
+    }
+    assert.equal(r.code, 1, r.stdout);
+    assert.equal(r.outputs.outcome, "unknown");
+    assert.equal(a.versions.length, 2);
+    assert.doesNotMatch(r.summary, /does not publish twice/);
+    assert.match(r.summary, /Set base-version to 1 on this step, then re-run/);
+    assert.match(r.summary, /A re-run without base-version publishes it again/);
+    assert.ok(r.lines.some((l) => /^::error title=Plinth::.*Set base-version to 1/.test(l)));
+
+    // The re-run the summary names sends nothing: v2 is this build.
+    const again = await action({ path: dir, id: a.id, "base-version": "1" });
+    assert.equal(again.code, 0, again.stdout);
+    assert.equal(again.outputs.outcome, "already_published");
+    assert.equal(a.versions.length, 2);
+
+    // With base-version already set, the summary says a plain re-run is safe.
+    const b = fake.seed({ "index.html": "<p>1</p>" });
+    fake.state.dropPut = "after";
+    fake.state.armReadFail = true;
+    let s;
+    try {
+      s = await action({ path: dir, id: b.id, "base-version": "1" });
+    } finally {
+      fake.state.armReadFail = false;
+      fake.state.artifactReadFail = 0;
+    }
+    assert.equal(s.outputs.outcome, "unknown");
+    assert.match(
+      s.summary,
+      /Re-run the job: with base-version set it sends nothing if v2 is this build/,
+    );
+  });
+
   it("a rejected token is named before anything is sent", async () => {
     const r = await action({
       path: build({ "index.html": "<p>1</p>" }),
@@ -423,6 +486,14 @@ describe("the Action's helpers", () => {
       "--json",
       "--title",
       "T",
+    ]);
+    // Without an id, base-version still reaches the CLI, which refuses it (exit 2).
+    assert.deepEqual(buildArgv({ ...i, baseVersion: "7" }, "", null), [
+      "publish",
+      "dist",
+      "--json",
+      "--base-version",
+      "7",
     ]);
     assert.deepEqual(buildArgv({ ...i, baseVersion: "3", includeMaps: true }, "abc", "n"), [
       "publish",

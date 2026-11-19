@@ -194,14 +194,16 @@ CI.
 
 A personal access token can be limited to one artifact (for CI: [Publishing from
 CI](#publishing-from-ci-decided-2026-11-19)). It always holds `artifacts:read` and may hold
-`artifacts:write`, never `mentions`. It may view that artifact (as its person may, with the
-person's current rights) and publish new versions of it, and nothing else: no new artifacts, no
-other artifact (404 for every action, whatever its scopes), no sharing, title, category, restore,
-delete, comments, shared data, view counts or mentions (403 `token_bound` on its own artifact).
-It does not see the artifact's category, its shared-data usage or the owner's category names; it
-does see the version list and `live_draft` metadata, as an editor's agent does. Only the artifact's
-owner or an editor can make one. The limit never widens; deleting or taking down the artifact
-revokes it, and removing the person's grant stops it.
+`artifacts:write`, never `mentions`. It may view that artifact (as its person may, with the person's
+current rights) and publish new versions of it, and nothing else: no new artifacts, no other
+artifact (404 for every action, whatever its scopes), no sharing, title, category, restore, delete,
+comments (reading or writing them), shared data, view counts or mentions (403 `token_bound` on its
+own artifact while it may view it; once its person may not, every action answers as viewing does).
+It is never the target of an `@<label>` mention. It does not see the artifact's category, its
+shared-data usage or the owner's category names; it does see the version list and `live_draft`
+metadata, as an editor's agent does. Only the artifact's owner or an editor can make one. The limit
+never widens; deleting or taking down the artifact revokes it, and removing the person's grant stops
+it.
 
 **Viewers.** Set per artifact:
 
@@ -296,10 +298,12 @@ names, and `POST /api/v1/categories/rename` renames, merges or clears one (signe
 token to it; every `ConnectionInfo` carries `artifact` (`{ id, slug, title }` for a bound token,
 with slug and title null once the person may no longer view it; null otherwise), and
 `GET /api/v1/me` returns `connection` for a bearer caller (`{ id, label, bound, artifact }`; the
-artifact only while the person may view it) and null for a session. Size limits: 5 MB of HTML (1 MB of Markdown for a
-doc), and per version a total size and a file count set by the operator with `MAX_VERSION_BYTES`
-(default 50 MB, at most 64 MB) and `MAX_ASSETS_PER_VERSION` (default 511, at most 900). A JSON
-request body may be up to 40 MB. `GET /api/v1/config` returns the instance's limits.
+artifact only while the person may view it) and null for a session; for a token limited to one
+artifact it returns only `id` (the person's) and `connection`, none of the account fields. Size
+limits: 5 MB of HTML (1 MB of Markdown for a doc), and per version a total size and a file count
+set by the operator with `MAX_VERSION_BYTES` (default 50 MB, at most 64 MB) and
+`MAX_ASSETS_PER_VERSION` (default 511, at most 900). A JSON request body may be up to 40 MB.
+`GET /api/v1/config` returns the instance's limits.
 
 **Typed outputs (decided 2026-11-14).** The first type is `doc`: an agent sends Markdown in
 `content` and Plinth renders it as a finished page (reading typography, heading anchors, tables,
@@ -659,7 +663,12 @@ keeps every run. Guide: `docs/ci.md`.
   published run with warnings into 1.
 - **Which artifact.** `id`, else the artifact the token is limited to, else a new private
   artifact (the summary then says to add `id:`). A token limited to one artifact with an `id` that
-  names another artifact fails with exit 2 before anything is sent.
+  names another artifact fails with exit 2 before anything is sent, and so does `base-version`
+  with no artifact to update.
+- **Outcome unknown.** When the answer to a sent build is lost, the summary and the error name the
+  safe re-run: with `base-version` set to the version the build was sent against, which sends
+  nothing if the build landed. It never says a plain re-run is safe: without `base-version` a
+  re-run publishes the build again, and without `id` it creates another artifact.
 - **Version note.** By default `<commit subject> (<short sha>)` (the push's head commit, else the
   pull request title, else the checkout's last commit, else `<workflow> #<run number>`), at most
   500 characters, keeping the SHA. `note: "-"` sends none. `link-run: true` appends the run's URL;

@@ -332,6 +332,15 @@ export interface Me {
   connection: MeConnection | null;
 }
 
+/**
+ * GET /me for a token limited to one artifact: the person's id and the connection only, none of
+ * the account fields of Me.
+ */
+export interface BoundMe {
+  id: string;
+  connection: MeConnection;
+}
+
 export interface MeConnection {
   /** null for the single-user ADMIN_TOKEN. */
   id: string | null;

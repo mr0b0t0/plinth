@@ -391,13 +391,14 @@ export async function startFakePlinth(options = {}) {
       if (!who) return apiError(res, 401, "unauthorized", "Invalid, expired or revoked token");
       if (p === "/api/v1/me") {
         const b = state.boundArtifact;
-        return send(res, 200, {
-          id: "u1",
-          email: who.email,
-          ...(b === undefined
-            ? {}
-            : { connection: { id: "c1", label: "CI", bound: true, artifact: b ?? null } }),
-        });
+        // As the Worker: a bound token gets only the person's id and the connection.
+        return send(
+          res,
+          200,
+          b === undefined
+            ? { id: "u1", email: who.email }
+            : { id: "u1", connection: { id: "c1", label: "CI", bound: true, artifact: b ?? null } },
+        );
       }
       if (p === "/api/v1/uploads" && req.method === "POST") {
         const input = JSON.parse((await body(req)).toString() || "{}");

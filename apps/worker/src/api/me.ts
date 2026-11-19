@@ -1,5 +1,6 @@
 import {
   type AppConfig,
+  type BoundMe,
   type Me,
   type MeConnection,
   REPO_URL,
@@ -70,6 +71,14 @@ async function meResponse(c: AppContext) {
   if (p.kind !== "user" && p.kind !== "agent") throw unauthorized();
   const user = await getUserById(c.get("db"), p.userId);
   if (!user) throw unauthorized();
+  if (boundArtifactOf(p) !== null) {
+    // A token limited to one artifact reads that artifact and nothing else: not its person's
+    // email, name, artifact count, limit or admin flag (docs/security.md).
+    const connection = await meConnection(c);
+    if (!connection) throw unauthorized();
+    const bound: BoundMe = { id: user.id, connection };
+    return c.json(bound);
+  }
   const count = await c
     .get("db")
     .select({ n: sql<number>`count(*)` })

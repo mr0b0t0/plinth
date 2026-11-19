@@ -15,6 +15,7 @@ import { main as clientMain, userAgentFor } from "../packages/cli/bin/client/mai
 import { resolveOrigin } from "../packages/cli/bin/client/origin.mjs";
 import { bindingOf } from "../packages/cli/bin/client/publish.mjs";
 import {
+  BASE_VERSION_NEEDS_ID,
   buildArgv,
   defaultNote,
   escapeData,
@@ -23,6 +24,7 @@ import {
   readInputs,
   renderSummary,
   stopToken,
+  unknownAdvice,
   writeOutputFile,
 } from "./lib.mjs";
 
@@ -100,6 +102,8 @@ async function publishStep(inputs) {
       if (inputs.title || inputs.category)
         console.log("The title and category inputs are ignored: they apply to a new artifact.");
     }
+    if (!id && inputs.baseVersion)
+      return { code: EXIT.usage, origin, message: BASE_VERSION_NEEDS_ID };
     const note = id ? defaultNote(inputs, process.env, readEvent, gitSubject) : null;
     let stdout = "";
     const code = await clientMain(buildArgv(inputs, id, note), {
@@ -121,7 +125,7 @@ async function publishStep(inputs) {
       typeof json?.message === "string"
         ? json.message
         : json?.published === "unknown"
-          ? "The answer was lost after the build was sent; the outcome is unknown. Re-run the job."
+          ? unknownAdvice(json, Boolean(inputs.baseVersion))
           : code === 0
             ? null
             : `The publish failed (exit ${code})`;
@@ -195,6 +199,7 @@ export async function run() {
         outputs,
         created: result.created,
         message: result.message,
+        baseStated: Boolean(inputs.baseVersion),
       }),
     );
   }

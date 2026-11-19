@@ -780,10 +780,10 @@ export async function publish(dir, givenOpts, ctx) {
       if (current !== base) throw conflictError(staleBase(ref, base)(current), current);
     }
     const current = new Map((detail.assets ?? []).map((a) => [a.path, a.sha256]));
-    const source = files.find((f) => f.path === sourcePath);
+    const sourceFile = files.find((f) => f.path === sourcePath);
     const assets = files.filter((f) => f.path !== sourcePath);
     const changed = assets.filter((f) => !current.get(f.path) || current.get(f.path) !== f.sha256);
-    const inlineBytes = source.size + changed.reduce((n, f) => n + f.size, 0);
+    const inlineBytes = sourceFile.size + changed.reduce((n, f) => n + f.size, 0);
     const inline = inlineBytes <= INLINE_UPDATE_MAX_BYTES;
     if (opts["dry-run"]) {
       ctx.stdout(
@@ -794,7 +794,7 @@ export async function publish(dir, givenOpts, ctx) {
     const note = opts.note !== undefined ? { note: opts.note } : {};
     try {
       if (inline) {
-        const sourceText = utf8Text(source, readFileSync(source.abs));
+        const sourceText = utf8Text(sourceFile, readFileSync(sourceFile.abs));
         const withContent = new Set(changed.map((f) => f.path));
         const body = () => ({
           [type === "doc" ? "content" : "html"]: sourceText,
