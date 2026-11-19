@@ -15,7 +15,8 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   slides with automatic layouts and text that shrinks to fit. Page through with the keyboard,
   clicks or swipes, link to a slide (`#slide=4`), present full screen, open a presenter view with
   the notes, the next slide and a timer (and an audience window that follows it), and print or save
-  as PDF with or without the notes. Update the plugin for the agent's slides rules.
+  as PDF with or without the notes. Update the plugin for the agent's slides rules. The Plinth CLI
+  publishes a folder with `slides.md` at its top as a deck (`plinth publish`, `plinth upload`).
 
 - **The Claude Code plugin remembers your instance.** It asks which Plinth instance to use when you
   enable it (the hosted one by default), keeps the answer, and its mention watcher follows it, so a

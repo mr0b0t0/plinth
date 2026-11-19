@@ -394,6 +394,10 @@ What is new:
   `missing_file` run on every deck publish over up to 1 MB of Markdown, so they read each line with
   plain scans and anchored patterns that cannot backtrack: a deck of one long line of `![` or of
   spaces costs about as much as any other deck of that size.
+- **Warnings quote deck text escaped.** A `slides_setting` warning quotes at most 40 characters of
+  the deck with control characters (C0 and DEL) written as `\uXXXX`, and the Worker passes every
+  deck warning through the same `echo()` as the other publish warnings, so a value such as an
+  escape sequence never reaches an agent's terminal or a log raw.
 - **The slide in the URL.** `#slide=N` lives in the app URL's fragment, written with
   `history.replaceState`: it never reaches the server or a log.
 - **Speaker notes are not secret.** They are in the stored source and the rendered page for anyone

@@ -165,9 +165,19 @@ function readSettings(lines: string[], first: number, problems: DeckProblem[]): 
   return s;
 }
 
-/** At most 40 characters of text from the deck, for a message. */
+/**
+ * At most 40 characters of text from the deck, for a message. Control characters (C0 and DEL)
+ * are written as \uXXXX, as the Worker's publish warnings echo a caller's text, so deck text never
+ * reaches a terminal or a log as raw escape sequences through a message.
+ */
 function clip(s: string): string {
-  return s.length > 40 ? `${s.slice(0, 40)}…` : s;
+  const chars = [...s];
+  let out = "";
+  for (const ch of chars.slice(0, 40)) {
+    const c = ch.codePointAt(0) ?? 0;
+    out += c < 0x20 || c === 0x7f ? `\\u${c.toString(16).padStart(4, "0")}` : ch;
+  }
+  return chars.length > 40 ? `${out}…` : out;
 }
 
 /** Where front matter ends (the closing `---` line index), or -1 when line 0 does not open it. */

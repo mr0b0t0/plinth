@@ -132,7 +132,7 @@ export function ViewerStage({
   });
   const editing = live.editing;
   // Presenting a deck: the slide, full screen, presenter view and its audience window.
-  const present = usePresentation({ gate, frame, contentOrigin, config, slug });
+  const present = usePresentation({ gate, frame, contentOrigin, config, slug, pinned });
   const pause: WatchPause = live.pause ?? present.pause;
   useEffect(() => {
     onPauseChange?.(pause);

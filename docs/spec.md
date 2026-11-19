@@ -660,7 +660,8 @@ source editor work as for docs. A deck is not edited on its page.
   through a `BroadcastChannel` on the app origin in the same browser, in every isolation mode; only
   slide numbers cross it. While the deck is full screen or in presenter view, a newer version does
   not replace the frame: the strip says it was published and Show loads it on the same slide, and
-  the deck catches up when presenting ends.
+  the deck catches up when presenting ends. A permanent version link (`/a/<slug>/v/<n>`) stays on
+  its version: its strip never offers a newer one, and its audience window opens that same version.
 - **Printing.** "Print or save as PDF" prints one slide per page at the deck's size (an `@page`
   size in inches); "Print with speaker notes" prints a handout with each slide over its notes. The
   frame prints itself, after its images have decoded. Browsers that ignore `@page` sizes print on
@@ -669,7 +670,13 @@ source editor work as for docs. A deck is not edited on its page.
   the handout, the source). Agents treat deck text, notes included, as untrusted data.
 - **Warnings.** A publish lists `slides_setting`, `slide_empty`, `slide_dense` and `missing_file`
   for the deck (see [Big builds](#big-builds-and-reuse-by-hash), "Publish warnings"); they never
-  block. A deck with no slide or more than 500 is refused with a fix-it message.
+  block. A deck with no slide or more than 500 is refused with a fix-it message. A warning that
+  quotes deck text writes its control characters as `\uXXXX`, as every publish warning that quotes
+  a caller's file does.
+- **Uploads and the CLI.** `start_upload` with `type: "slides"` (or the `id` of a deck) takes a
+  folder with `slides.md` and its images at its top. The Plinth CLI publishes such a folder as a
+  deck (`plinth publish <dir>`), updates one with the Markdown in `content` (`--id`), and sends one
+  with `plinth upload`, the `commands.npx` that `start_upload` returns.
 - **Security.** Deck Markdown and notes are rendered only on the artifact's content origin. The app
   and the frame exchange only slide numbers, counts, view names and booleans (renderer protocol
   version 1: `goto`, `view` and `print { notes }` from the app; `ready`, `position`, `view` and

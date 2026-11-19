@@ -39,6 +39,11 @@ export type PresentMode = "off" | "presenter" | "audience";
 export interface Presentation {
   /** The artifact is a deck. Everything else is inert when false. */
   available: boolean;
+  /**
+   * The deck was opened through a permanent version link (/a/:slug/v/:n): it never moves to a
+   * newer version, and its audience window opens the same version.
+   */
+  pinned: boolean;
   slide: number | null;
   count: number | null;
   mode: PresentMode;
@@ -59,11 +64,20 @@ export interface PresentationOptions {
   contentOrigin: string;
   config: AppConfig | null;
   slug: string;
+  /** Opened through a permanent version link; the gate's version is the one on view. */
+  pinned?: boolean;
 }
 
-/** The URL of an audience window for `pair`. */
-export function audienceHref(slug: string, pair: string): string {
-  return `${route(APP_ROUTES.artifact, { slug })}#present=audience&pair=${pair}`;
+/**
+ * The URL of an audience window for `pair`: the artifact's current version, or `version` itself
+ * when the presenter is on a permanent version link, so both windows show the same deck.
+ */
+export function audienceHref(slug: string, pair: string, version?: number): string {
+  const path =
+    version === undefined
+      ? route(APP_ROUTES.artifact, { slug })
+      : route(APP_ROUTES.artifactVersion, { slug, n: version });
+  return `${path}#present=audience&pair=${pair}`;
 }
 
 function writeSlide(slide: number): void {
@@ -78,6 +92,8 @@ function writeSlide(slide: number): void {
 
 export function usePresentation(o: PresentationOptions): Presentation {
   const { gate, frame, contentOrigin, config, slug } = o;
+  const pinned = o.pinned === true;
+  const pinnedVersion = pinned ? gate.artifact.version : undefined;
   const artifactId = gate.artifact.id;
   const type = gate.artifact.type;
   const available = typeDef(type)?.present === true;
@@ -242,8 +258,8 @@ export function usePresentation(o: PresentationOptions): Presentation {
         channel.current?.post({ v: 1, type: "slide", slide: wanted.current });
       }
     });
-    window.open(audienceHref(slug, pair), "_blank", "noopener");
-  }, [available, artifactId, slug]);
+    window.open(audienceHref(slug, pair, pinnedVersion), "_blank", "noopener");
+  }, [available, artifactId, slug, pinnedVersion]);
 
   const print = useCallback((notes: boolean) => {
     postPrint(frameRef.current, targetRef.current, notes);
@@ -252,6 +268,7 @@ export function usePresentation(o: PresentationOptions): Presentation {
   const presenting = available && (fullscreen || mode === "presenter");
   return {
     available,
+    pinned,
     slide,
     count,
     mode,

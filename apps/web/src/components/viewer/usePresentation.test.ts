@@ -280,6 +280,31 @@ describe("usePresentation", () => {
     expect(audienceHref("talk", "p".repeat(16))).toBe(
       `/a/talk#present=audience&pair=${"p".repeat(16)}`,
     );
+    expect(result.current.pinned).toBe(false);
+  });
+
+  it("opens the audience window on the same version from a permanent version link", () => {
+    const open = vi.spyOn(window, "open").mockImplementation(() => null);
+    const f = fakeFrame();
+    const g = gate();
+    g.artifact = { ...g.artifact, version: 2, current_version: 5 };
+    const { result } = renderHook(() =>
+      usePresentation({
+        gate: g,
+        frame: f.frame,
+        contentOrigin: ORIGIN,
+        config: CONFIG,
+        slug: "talk",
+        pinned: true,
+      }),
+    );
+    expect(result.current.pinned).toBe(true);
+    act(() => result.current.openAudience());
+    const [url] = open.mock.calls[0] ?? [];
+    expect(String(url)).toMatch(/^\/a\/talk\/v\/2#present=audience&pair=[A-Za-z0-9_-]{16,64}$/);
+    expect(audienceHref("talk", "p".repeat(16), 2)).toBe(
+      `/a/talk/v/2#present=audience&pair=${"p".repeat(16)}`,
+    );
   });
 
   it("does nothing for an artifact that is not a deck", () => {

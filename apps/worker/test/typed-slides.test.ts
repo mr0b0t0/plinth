@@ -203,6 +203,20 @@ describe("slides over REST", () => {
     expect(clean.body.warnings).toEqual([]);
   });
 
+  it("quotes deck text in a warning with its control characters escaped", async () => {
+    const a = await agent();
+    const deck = "---\naspect: \u001b]8;;https://x.example\u0007\ntheme: \u007fdark\n---\n# A";
+    const { res, body } = await publishDeck(a.auth, { content: deck });
+    expect(res.status).toBe(201);
+    expect(body.warnings.map((w: { message: string }) => w.message)).toEqual([
+      'aspect is 16:9 or 4:3, not "\\u001b]8;;https://x.example\\u0007"',
+      'theme is auto, light or dark, not "\\u007fdark"',
+    ]);
+    const raw = (s: string) =>
+      [...s].some((ch) => (ch.codePointAt(0) ?? 0) < 0x20 || ch.codePointAt(0) === 0x7f);
+    for (const w of body.warnings) expect(raw(w.message)).toBe(false);
+  });
+
   it("updates with content and base_version, refuses a stale base, and restores v1 as v3", async () => {
     const a = await agent();
     const { body: p } = await publishDeck(a.auth);

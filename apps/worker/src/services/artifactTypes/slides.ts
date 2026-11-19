@@ -19,7 +19,9 @@ export function deckWarnings(
   const out: PublishWarning[] = parseDeck(text).problems.map((p) => ({
     code: p.code,
     file,
-    message: p.message,
+    // The parser already escapes the deck text it quotes; echo() keeps every warning that quotes
+    // a caller's file on the same rule.
+    message: echo(p.message),
   }));
   for (const path of deckImagePaths(text)) {
     if (manifestPaths.has(path)) continue;

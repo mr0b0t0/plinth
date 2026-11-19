@@ -373,8 +373,8 @@ commands, next }`:
 - `content_isolation` is `opaque` on instances that serve artifacts with an opaque origin, where
   module scripts fail ([below](#opaque-sandbox-instances)).
 
-Replace `<folder>` in `commands.curl` with the build folder (the one with `index.html`, or a doc's
-`content.md`, at its top) and run it with a timeout of at least 10 minutes. The command changes
+Replace `<folder>` in `commands.curl` with the build folder (the one with `index.html`, a doc's
+`content.md` or a deck's `slides.md` at its top) and run it with a timeout of at least 10 minutes. The command changes
 into that folder itself. It prints the publish result as JSON, plus
 `bundle: { entries, skipped, stripped_prefix }`. If every file sits under one top directory that
 holds the entry file, that directory is removed from the paths. Dotfiles are skipped.
@@ -403,7 +403,7 @@ the upload token works on no other route. Errors carry a `reason`:
 | `upload_exhausted` | 5 attempts used |
 | `upload_running` | Another upload of yours is in progress; wait for it. `receiving_until` and `retry_after` say when its lease ends at the latest |
 | `upload_too_slow` | The bundle took longer than its 10-minute receiving lease to arrive; send it again (the upload keeps its remaining attempts) |
-| `no_entry_file` | No `index.html` (or `content.md`) at the top: point `<folder>` at the build folder that has it at its top |
+| `no_entry_file` | No `index.html` (or `content.md`, `slides.md`) at the top: point `<folder>` at the build folder that has it at its top |
 
 A conflict (someone published after `base_version`) ends the upload; `details.next` says which
 version is current.

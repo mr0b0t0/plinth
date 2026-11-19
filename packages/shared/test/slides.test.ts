@@ -119,6 +119,24 @@ describe("parseDeck: front matter", () => {
     expect(d.problems[3]?.message).toContain('"color"');
   });
 
+  it("writes control characters in the text it quotes as \\uXXXX, never raw", () => {
+    const d = parseDeck(
+      "---\naspect: \u001b]8;;https://x.example\u0007a\ntheme: \u007fdark\npaginate: y\u0000s\n---\n# A",
+    );
+    const messages = d.problems.map((p) => p.message);
+    expect(messages).toEqual([
+      'aspect is 16:9 or 4:3, not "\\u001b]8;;https://x.example\\u0007a"',
+      'theme is auto, light or dark, not "\\u007fdark"',
+      'paginate is true or false, not "y\\u0000s"',
+    ]);
+    const raw = (s: string) =>
+      [...s].some((ch) => (ch.codePointAt(0) ?? 0) < 0x20 || ch.codePointAt(0) === 0x7f);
+    for (const m of messages) expect(raw(m)).toBe(false);
+    // Still at most 40 characters of the deck, counted by code point.
+    const long = parseDeck(`---\ntheme: ${"😀".repeat(50)}\n---\n# A`).problems[0]?.message;
+    expect(long).toBe(`theme is auto, light or dark, not "${"😀".repeat(40)}…"`);
+  });
+
   it("trims values and reads a long settings line in linear time", () => {
     expect(parseDeck("---\naspect: \t4:3 \t\nfooter:   Hi  there\n---\n# A").settings).toEqual({
       ...DEFAULT_DECK_SETTINGS,

@@ -25,7 +25,9 @@ export function PresentStrip({ present, version, currentVersion, onShowNewer }: 
     );
   }
   if (present.mode !== "presenter") return null;
-  const newer = currentVersion > version;
+  // A permanent version link stays on its version: Show would only reload it (the older-version
+  // notice above links to the current one).
+  const newer = !present.pinned && currentVersion > version;
   return (
     <section className="pl-viewer__notice pl-viewer__present" aria-label="Presenter view">
       <PresentationIcon size={14} aria-hidden="true" />
