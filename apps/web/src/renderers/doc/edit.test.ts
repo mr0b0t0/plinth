@@ -585,6 +585,15 @@ describe("DocEditor: the block menu", () => {
     expect(root.querySelectorAll("ul").length).toBe(2);
   });
 
+  it("a Move that takes a list down next to a list of its marker writes it with a free one", () => {
+    const { local } = setup("- a\n\nmid\n\n- b");
+    click(root.querySelector("p") as Element);
+    menu("Move up");
+    expect(local.text).toBe("mid\n\n* a\n\n- b");
+    expect(root.querySelectorAll("ul").length).toBe(2);
+    expect(root.querySelector("ul p")).toBeNull();
+  });
+
   it("refuses a Delete that would run the blocks around it together, and says why", () => {
     // Without the paragraph, the indented line would continue the list item.
     const { local } = setup("- a\n\nmid\n\n    code");
@@ -628,6 +637,26 @@ describe("DocEditor: the block menu", () => {
     vi.spyOn(local, "edit").mockReturnValue(false);
     click(root.querySelector("p") as Element);
     menu("Divider", "Insert below");
+    expect(local.text).toBe("one\n\ntwo\n\nthree");
+    expect(editor.openEditor).toBeNull();
+    expect(local.mine).toBeNull();
+    expect(document.querySelector('[role="status"]')?.textContent).toContain("Not connected");
+  });
+
+  it("an Insert table whose edit is not sent opens no other block", () => {
+    const { local, editor } = setup("one\n\ntwo\n\nthree");
+    vi.spyOn(local, "edit").mockReturnValue(false);
+    click(root.querySelector("p") as Element);
+    const button = [...document.querySelectorAll<HTMLElement>(".plinth-doc__menu-button")].at(-1);
+    click(button as Element);
+    const inputs = document.querySelectorAll<HTMLInputElement>(".plinth-doc__menu-table input");
+    (inputs[0] as HTMLInputElement).value = "1";
+    (inputs[1] as HTMLInputElement).value = "2";
+    click(
+      [...document.querySelectorAll(".plinth-doc__menu-item")].find(
+        (b) => b.textContent === "Insert table",
+      ) as Element,
+    );
     expect(local.text).toBe("one\n\ntwo\n\nthree");
     expect(editor.openEditor).toBeNull();
     expect(local.mine).toBeNull();
