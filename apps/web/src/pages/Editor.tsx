@@ -61,9 +61,12 @@ async function load(slug: string): Promise<Load> {
   }
 }
 
-/** A doc's unsaved page edits, or null (none, not a doc, or on-page editing is off here). */
+/**
+ * A doc's unsaved page edits, or null (none, a type without on-page editing, or on-page editing
+ * is off here).
+ */
 async function pageEdits(artifact: ArtifactDetail): Promise<LiveDraftInfo | null> {
-  if (artifact.type !== "doc") return null;
+  if (!sourceOf(artifact).def.liveEdit) return null;
   try {
     const info = await liveInfo(artifact.id);
     return info.draft?.dirty ? info.draft : null;

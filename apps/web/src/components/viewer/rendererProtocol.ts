@@ -16,6 +16,11 @@
 // content origin, and the app accepts the frame's answers only from that window and that origin.
 // Only Plinth's renderer runs on a doc origin (script-src 'self'), so a message that passes both
 // checks comes from it. Draft text crosses only frame -> app, and only in solo mode.
+//
+// Every kind is a row in a table: APP_MESSAGE_KINDS for app -> frame, FRAME_READERS for
+// frame -> app (each kind's validator). A new kind is additive and keeps version 1: a row, its
+// builder or reader, and its handler in matchFrameMessage, which the compiler asks for. Bridge
+// messages (highlight, pick:*) are a different protocol and never become renderer messages.
 import {
   type AppConfig,
   LIMITS,
@@ -131,6 +136,18 @@ export function editTargetOrigin(
   return t === "*" ? null : t;
 }
 
+/** Every app -> frame message kind, in the order they were added. */
+// biome-ignore format: one kind per line, so each feature adds its own line
+export const APP_MESSAGE_KINDS = [
+  "print",
+  "edit",
+  "collect",
+] as const;
+export type AppMessageKind = (typeof APP_MESSAGE_KINDS)[number];
+
+/** Every app -> frame message. Each kind has one interface and one builder above. */
+export type AppToFrameMessage = PrintMessage | EditMessage | CollectMessage;
+
 /** Post an editing message to the frame's window at the exact origin. False when it cannot. */
 export function postToRenderer(
   frame: HTMLIFrameElement | null,
@@ -182,6 +199,49 @@ function readStatus(m: Record<string, unknown>): LiveFrameStatus | null {
   };
 }
 
+export type FrameMessageKind = FrameMessage["type"];
+
+interface ReadOptions {
+  solo: boolean;
+  nonce: string | null;
+  maxDocBytes?: number;
+}
+
+/** Each frame -> app kind's validator: the message, or null when any field is wrong. */
+const FRAME_READERS: {
+  readonly [K in FrameMessageKind]: (
+    m: Record<string, unknown>,
+    opts: ReadOptions,
+  ) => Extract<FrameMessage, { type: K }> | null;
+} = {
+  live(m) {
+    const status = readStatus(m);
+    return status ? { type: "live", status } : null;
+  },
+  save: () => ({ type: "save" }),
+  draft(m, opts) {
+    if (!opts.solo || !opts.nonce || m.nonce !== opts.nonce || typeof m.text !== "string") {
+      return null;
+    }
+    const max = opts.maxDocBytes ?? LIMITS.maxDocBytes;
+    if (m.text.length > max || new TextEncoder().encode(m.text).byteLength > max) return null;
+    return { type: "draft", nonce: m.nonce, text: m.text };
+  },
+};
+
+/** Every frame -> app message kind, in table order. */
+export const FRAME_MESSAGE_KINDS = Object.keys(FRAME_READERS) as readonly FrameMessageKind[];
+
+/** One handler per frame -> app kind: a kind without a handler is a type error. */
+export type FrameMessageHandlers<R> = {
+  readonly [K in FrameMessageKind]: (m: Extract<FrameMessage, { type: K }>) => R;
+};
+
+/** Run the handler for a validated frame message's kind. */
+export function matchFrameMessage<R>(m: FrameMessage, handlers: FrameMessageHandlers<R>): R {
+  return (handlers[m.type] as (m: FrameMessage) => R)(m);
+}
+
 /**
  * A message from the doc frame, validated, or null. It must come from `frame`'s window at exactly
  * `contentOrigin`; draft text is accepted only in solo mode, only for the nonce the app is waiting
@@ -205,18 +265,6 @@ export function readFrameMessage(
   const m = e.data as Record<string, unknown> | null;
   if (typeof m !== "object" || m === null) return null;
   if (m.source !== RENDERER_MESSAGE_SOURCE || m.v !== RENDERER_PROTOCOL_VERSION) return null;
-  if (m.type === "save") return { type: "save" };
-  if (m.type === "live") {
-    const status = readStatus(m);
-    return status ? { type: "live", status } : null;
-  }
-  if (m.type === "draft") {
-    if (!opts.solo || !opts.nonce || m.nonce !== opts.nonce || typeof m.text !== "string") {
-      return null;
-    }
-    const max = opts.maxDocBytes ?? LIMITS.maxDocBytes;
-    if (m.text.length > max || new TextEncoder().encode(m.text).byteLength > max) return null;
-    return { type: "draft", nonce: m.nonce, text: m.text };
-  }
-  return null;
+  if (typeof m.type !== "string" || !Object.hasOwn(FRAME_READERS, m.type)) return null;
+  return FRAME_READERS[m.type as FrameMessageKind](m, opts);
 }

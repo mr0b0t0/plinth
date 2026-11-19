@@ -42,6 +42,7 @@ import {
   editMessage,
   editTargetOrigin,
   type LiveFrameStatus,
+  matchFrameMessage,
   newNonce,
   postToRenderer,
   readFrameMessage,
@@ -164,30 +165,34 @@ export function useLiveEdit({
         maxDocBytes: config?.limits.max_doc_bytes,
       });
       if (!m) return;
-      if (m.type === "live") {
-        const prev = latest.current.status;
-        const next = m.status;
-        if (
-          prev &&
-          next.connected &&
-          next.base_version > prev.base_version &&
-          prev.base_version > 0 &&
-          next.dirty &&
-          !savingRef.current
-        ) {
-          setRebasedVersion(next.base_version);
-          showToast({
-            title: `v${next.base_version} was published. Your page edits were kept on top of it.`,
-          });
-        }
-        setStatus(next);
-      } else if (m.type === "save") {
-        void saveRef.current();
-      } else if (m.type === "draft" && collecting.current?.nonce === m.nonce) {
-        const c = collecting.current;
-        collecting.current = null;
-        c.resolve(m.text);
-      }
+      matchFrameMessage(m, {
+        live({ status: next }) {
+          const prev = latest.current.status;
+          if (
+            prev &&
+            next.connected &&
+            next.base_version > prev.base_version &&
+            prev.base_version > 0 &&
+            next.dirty &&
+            !savingRef.current
+          ) {
+            setRebasedVersion(next.base_version);
+            showToast({
+              title: `v${next.base_version} was published. Your page edits were kept on top of it.`,
+            });
+          }
+          setStatus(next);
+        },
+        save() {
+          void saveRef.current();
+        },
+        draft({ nonce, text }) {
+          const c = collecting.current;
+          if (c?.nonce !== nonce) return;
+          collecting.current = null;
+          c.resolve(text);
+        },
+      });
     };
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);

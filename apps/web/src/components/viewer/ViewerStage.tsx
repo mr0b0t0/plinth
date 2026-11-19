@@ -3,52 +3,28 @@
 // an optional comments panel, and a one-line banner naming the platform with a report link
 // (required on every artifact page) and, unless the operator turned it off (SHOW_SOURCE_LINK), a
 // link to Plinth's source. The banner is app chrome: nothing is ever added to the artifact itself.
+//
+// The ⋯ menu, the controls on the right of the bar and the strip under it are item lists
+// (stageItems.tsx): this component holds the state and hands every item one StageContext.
 
-import {
-  ChartLineUpIcon,
-  ChatCircleIcon,
-  ClockCounterClockwiseIcon,
-  CodeIcon,
-  DotsThreeIcon,
-  FileIcon,
-  FlagIcon,
-  GearSixIcon,
-  MoonIcon,
-  PencilSimpleIcon,
-  PrinterIcon,
-  ShareNetworkIcon,
-  SunIcon,
-} from "@phosphor-icons/react";
+import { FileIcon } from "@phosphor-icons/react";
 import { API, APP_ROUTES, type CommentInfo, route, type ViewGate } from "@plinth/shared";
-import { lazy, Suspense, useEffect, useRef, useState } from "react";
+import { Fragment, lazy, Suspense, useEffect, useRef, useState } from "react";
 import { api } from "../../lib/api.ts";
 import { Link } from "../../lib/router.tsx";
 import { useSession } from "../../lib/session.ts";
-import { THEME_NAMES, useTheme } from "../../lib/theme.ts";
+import { useTheme } from "../../lib/theme.ts";
 import { CommentsPanel } from "../artifact/CommentsPanel.tsx";
 import { VersionPicker } from "../artifact/VersionPicker.tsx";
 import { useMediaQuery } from "../editor/useMediaQuery.ts";
 import { LogoMark } from "../Logo.tsx";
 import { SkipLink } from "../layout/AppShell.tsx";
 import { LegalLinks } from "../layout/LegalLinks.tsx";
-import {
-  Button,
-  buttonClassName,
-  IconProvider,
-  Menu,
-  type MenuEntry,
-  Skeleton,
-  Toaster,
-  Tooltip,
-  VISIBILITY_META,
-} from "../ui/index.ts";
-import { DataNotice } from "./DataNotice.tsx";
-import { EditBar } from "./EditBar.tsx";
+import { IconProvider, Skeleton, Toaster, VISIBILITY_META } from "../ui/index.ts";
 import { contentOriginOf, shareLink } from "./gate.ts";
-import { LiveDraftNotice } from "./LiveDraftNotice.tsx";
-import { postPrint, rendererTargetOrigin } from "./rendererProtocol.ts";
 import { ShareDialog } from "./ShareDialog.tsx";
 import { StageFrame } from "./StageFrame.tsx";
+import { BAR_CONTROLS, STRIP_ITEMS, type StageContext, type StageItem } from "./stageItems.tsx";
 import { useLiveEdit } from "./useLiveEdit.ts";
 import type { WatchPause } from "./useVersionWatch.ts";
 import "./viewer.css";
@@ -81,8 +57,12 @@ export interface ViewerStageProps {
   onPauseChange?: (pause: WatchPause) => void;
 }
 
-/** Who may open the editor. The editor page and the API check again. */
-export const canEdit = (role: OkGate["role"]) => role === "owner" || role === "editor";
+export { canEdit } from "./stageItems.tsx";
+
+/** Each item's element, in list order, keyed by the item's id. */
+function renderItems(items: readonly StageItem[], c: StageContext) {
+  return items.map((item) => <Fragment key={item.id}>{item.render(c)}</Fragment>);
+}
 
 /** Open threads in a comments list. */
 export function openThreadCount(items: CommentInfo[]): number {
@@ -116,7 +96,6 @@ export function ViewerStage({
   const compact = useMediaQuery(VIEWER_COMPACT_QUERY);
   const { artifact, role } = gate;
   const isOwner = role === "owner";
-  const older = artifact.version < artifact.current_version;
   const appOrigin = config?.app_origin ?? window.location.origin;
   const link = shareLink(appOrigin, artifact.slug, pinned ? artifact.version : undefined);
   const contentOrigin = contentOriginOf(gate.enter_url, artifact.id, config);
@@ -142,8 +121,6 @@ export function ViewerStage({
       .catch(() => undefined);
     return () => ctrl.abort();
   }, [artifact.id, slug, commentsOpen]);
-
-  const counted = openCount !== null && openCount > 0;
 
   // On-page editing of a doc (#36): owners and editors on the current version only.
   const live = useLiveEdit({
@@ -206,60 +183,40 @@ export function ViewerStage({
   };
   const signInHref = `${APP_ROUTES.login}?next=${encodeURIComponent(currentHref)}`;
 
-  const menuItems: MenuEntry[] = [
-    ...(compact
-      ? [
-          { label: "Share", icon: ShareNetworkIcon, onSelect: () => setShareOpen(true) },
-          { label: "History", icon: ClockCounterClockwiseIcon, href: historyHref },
-        ]
-      : []),
-    ...(compact && live.available && !live.signIn
-      ? [
-          {
-            label: editing ? "Done editing" : "Edit on the page",
-            icon: PencilSimpleIcon,
-            onSelect: toggleEditing,
-          },
-        ]
-      : []),
-    ...(compact && live.available && live.signIn
-      ? [{ label: "Sign in to edit", icon: PencilSimpleIcon, href: signInHref }]
-      : []),
-    ...(canEdit(role)
-      ? [
-          {
-            label: live.available ? "Edit source" : "Edit",
-            icon: live.available ? CodeIcon : PencilSimpleIcon,
-            href: editHref,
-          },
-        ]
-      : []),
-    ...(isOwner
-      ? [
-          { label: "Settings", icon: GearSixIcon, href: settingsHref },
-          { label: "Stats", icon: ChartLineUpIcon, href: statsHref },
-        ]
-      : []),
-    // A doc prints itself: the renderer in the frame calls its own print(), so the browser prints
-    // the document (or saves it as PDF), not this page around it.
-    ...(artifact.type === "doc"
-      ? [
-          {
-            label: "Print or save as PDF",
-            icon: PrinterIcon,
-            onSelect: () => postPrint(frame, rendererTargetOrigin(config, contentOrigin)),
-          },
-        ]
-      : []),
-    // Owners and editors do not report their own work; the footer link stays for all.
-    ...(canEdit(role) ? [] : [{ label: "Report", icon: FlagIcon, href: reportHref }]),
-    { type: "separator" },
-    {
-      label: `Switch to ${THEME_NAMES[nextTheme]}`,
-      icon: nextTheme === "dark" ? MoonIcon : SunIcon,
-      onSelect: () => setTheme(nextTheme),
+  const stage: StageContext = {
+    gate,
+    config,
+    compact,
+    frame,
+    contentOrigin,
+    live,
+    editing,
+    hrefs: {
+      current: currentHref,
+      edit: editHref,
+      history: historyHref,
+      report: reportHref,
+      settings: settingsHref,
+      stats: statsHref,
+      signIn: signInHref,
     },
-  ];
+    comments: {
+      open: commentsOpen,
+      count: openCount,
+      toggleRef,
+      close: closeComments,
+      toggle: () => void toggleComments(),
+    },
+    refs: { edit: editRef, bar: barRef },
+    theme: { next: nextTheme, set: setTheme },
+    actions: {
+      openShare: () => setShareOpen(true),
+      toggleEditing,
+      startEditing,
+      finishEditing: () => void finishEditing(),
+      refocusAfterNotice: () => refocusIfLost(focusEditEntry),
+    },
+  };
 
   return (
     <IconProvider>
@@ -306,134 +263,10 @@ export function ViewerStage({
               {ACCESS_PILL[artifact.visibility]}
             </span>
           )}
-          <div className="pl-viewer__actions">
-            {!compact && (
-              <Tooltip content="History" placement="bottom">
-                <Link
-                  to={historyHref}
-                  aria-label="History"
-                  className={buttonClassName({ variant: "ghost", iconOnly: true })}
-                >
-                  <span className="pl-button__content">
-                    <ClockCounterClockwiseIcon size={16} aria-hidden="true" />
-                  </span>
-                </Link>
-              </Tooltip>
-            )}
-            {live.available && !compact && !live.signIn && (
-              <Tooltip content={editing ? "Done editing" : "Edit on the page"} placement="bottom">
-                <Button
-                  ref={editRef}
-                  variant="ghost"
-                  icon={PencilSimpleIcon}
-                  aria-label="Edit"
-                  aria-pressed={editing}
-                  className="pl-viewer__edit"
-                  onClick={toggleEditing}
-                />
-              </Tooltip>
-            )}
-            {live.available && !compact && live.signIn && (
-              <Tooltip content="Sign in to edit" placement="bottom">
-                <Link
-                  to={signInHref}
-                  aria-label="Sign in to edit"
-                  className={buttonClassName({ variant: "ghost", iconOnly: true })}
-                >
-                  <span className="pl-button__content">
-                    <PencilSimpleIcon size={16} aria-hidden="true" />
-                  </span>
-                </Link>
-              </Tooltip>
-            )}
-            {/* The count sits beside the button, not in it, so the button's name stays exactly its
-                visible label (WCAG 2.5.3); the panel announces the numbers. */}
-            <span className="pl-viewer__comments-wrap">
-              <Button
-                ref={toggleRef}
-                variant="ghost"
-                icon={ChatCircleIcon}
-                aria-label="Comments"
-                aria-pressed={commentsOpen}
-                className={`pl-viewer__comments${counted ? " pl-viewer__comments--counted" : ""}`}
-                onClick={commentsOpen ? closeComments : () => void toggleComments()}
-              />
-              {counted && (
-                <span className="pl-viewer__count" aria-hidden="true">
-                  {openCount}
-                </span>
-              )}
-            </span>
-            {!compact && (
-              <Button variant="primary" onClick={() => setShareOpen(true)}>
-                Share
-              </Button>
-            )}
-            <Menu
-              label="Artifact actions"
-              icon={DotsThreeIcon}
-              iconOnly
-              variant="ghost"
-              align="end"
-              items={menuItems}
-            />
-          </div>
+          <div className="pl-viewer__actions">{renderItems(BAR_CONTROLS, stage)}</div>
         </header>
         <main id="main" tabIndex={-1} className="pl-viewer__stage">
-          {older && (
-            <p className="pl-viewer__notice">
-              You are viewing <span className="type-num">v{artifact.version}</span>
-              <span aria-hidden="true"> · </span>
-              <Link to={currentHref}>Go to current</Link>
-              <span className="visually-hidden"> (v{artifact.current_version})</span>
-            </p>
-          )}
-          <DataNotice data={gate.data} />
-          {editing && live.mode && (
-            <EditBar
-              focusRef={barRef}
-              phase={live.phase}
-              mode={live.mode}
-              version={live.status?.base_version || artifact.version}
-              connected={live.status?.connected ?? false}
-              connecting={live.status === null}
-              dirty={live.status?.dirty ?? false}
-              saving={live.saving}
-              savedVersion={live.savedVersion}
-              rebasedVersion={live.rebasedVersion}
-              newerVersion={live.newerVersion}
-              editors={live.status?.editors ?? []}
-              onSave={(note) => void live.save(note)}
-              onDiscard={() => void live.discard()}
-              onDone={() => void finishEditing()}
-              onReview={() => void live.review()}
-            />
-          )}
-          {live.available && !editing && (
-            <LiveDraftNotice
-              draft={gate.live?.draft ?? null}
-              status={live.status}
-              restore={live.restore}
-              signIn={live.signIn}
-              unavailable={
-                live.roomReady
-                  ? null
-                  : live.mode === "room" && live.status === null
-                    ? "Connecting to the live draft…"
-                    : "Live editing is unavailable right now."
-              }
-              onSave={() => {
-                void live.save().then(() => refocusIfLost(focusEditEntry));
-              }}
-              onContinue={startEditing}
-              onDiscard={() => {
-                void live.discard().then(() => refocusIfLost(focusEditEntry));
-              }}
-              onReview={() => void live.review()}
-              onSaveRestore={() => void live.saveRestore()}
-              onDropRestore={live.dropRestore}
-            />
-          )}
+          {renderItems(STRIP_ITEMS, stage)}
           <div className="pl-viewer__room">
             <div className="pl-viewer__frame-wrap">
               <StageFrame
