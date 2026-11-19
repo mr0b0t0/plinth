@@ -259,7 +259,8 @@ describe("createVersion stores capabilities", () => {
     const current = rows.find((r) => r.artifactId === id && r.number === 1);
     expect(old?.capabilities).toBeNull();
     expect(versionCapabilities(old ?? null)).toBeNull();
-    // Rows stored without the room fields (every row without `room`) read as no room.
+    // Rows stored without the room fields (every row without `room`) read as no room, and rows
+    // without `comments` as no page comments.
     expect(versionCapabilities(current ?? null)).toEqual({
       data: true,
       viewer: true,
@@ -267,6 +268,7 @@ describe("createVersion stores capabilities", () => {
       room: false,
       roomOpen: [],
       people: false,
+      comments: false,
     });
     expect(versionCapabilities(null)).toBeNull();
     // Malformed stored values read as nothing declared, never as a crash.
@@ -281,6 +283,7 @@ describe("createVersion stores capabilities", () => {
       room: false,
       roomOpen: [],
       people: false,
+      comments: false,
     });
     // A room declaration, alone or with data; topics that break the rule are dropped.
     expect(
@@ -295,6 +298,7 @@ describe("createVersion stores capabilities", () => {
       room: true,
       roomOpen: ["cursor", "*"],
       people: false,
+      comments: false,
     });
     expect(
       versionCapabilities({ capabilities: '{"data":false,"viewer":false,"room":"yes"}' }),
@@ -304,6 +308,14 @@ describe("createVersion stores capabilities", () => {
       versionCapabilities({
         capabilities: '{"data":true,"viewer":false,"shared":[],"roomOpen":["cursor"]}',
       }),
-    ).toEqual({ data: true, viewer: false, shared: [], room: false, roomOpen: [], people: false });
+    ).toEqual({
+      data: true,
+      viewer: false,
+      shared: [],
+      room: false,
+      roomOpen: [],
+      people: false,
+      comments: false,
+    });
   });
 });

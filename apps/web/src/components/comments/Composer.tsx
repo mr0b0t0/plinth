@@ -1,6 +1,7 @@
-// New comment: Markdown text, optional pin to an element (picked through the bridge), send.
+// New comment: Markdown text, optional pin (an element picked through the bridge, or a spot the
+// page placed itself through plinth.comments), send.
 import { MapPinIcon, PaperPlaneRightIcon, XIcon } from "@phosphor-icons/react";
-import { LIMITS } from "@plinth/shared";
+import { isPageAnchor, LIMITS, type PageAnchor } from "@plinth/shared";
 import type { RefObject } from "react";
 import { Button, ICON_SIZE, IconButton } from "../ui/index.ts";
 import type { PickedAnchor } from "./bridge.ts";
@@ -10,17 +11,36 @@ import { excerpt } from "./model.ts";
 export interface ComposerProps {
   value: string;
   onChange: (v: string) => void;
-  anchor: PickedAnchor | null;
+  anchor: PickedAnchor | PageAnchor | null;
   onRemoveAnchor: () => void;
   picking: boolean;
   /** The bridge can be reached (a frame and a content origin are known). */
   canPin: boolean;
-  onStartPick: () => void;
+  /** Pick an element. Absent when the page anchors its own comments: no pick button then. */
+  onStartPick?: () => void;
   onCancelPick: () => void;
   onSubmit: () => void;
   sending: boolean;
   error?: string;
   textareaRef: RefObject<HTMLTextAreaElement | null>;
+}
+
+/** The chip's words. Anchor text is untrusted: it is only ever rendered as text. */
+function chipText(anchor: PickedAnchor | PageAnchor) {
+  if (isPageAnchor(anchor)) {
+    return (
+      <>
+        Placed by the page: <q>{excerpt(anchor.text || anchor.key, 40)}</q>
+      </>
+    );
+  }
+  return anchor.text?.trim() ? (
+    <>
+      Pinned to <q>{excerpt(anchor.text, 40)}</q>
+    </>
+  ) : (
+    "Pinned to an element"
+  );
 }
 
 export function Composer({
@@ -57,15 +77,7 @@ export function Composer({
       ) : anchor ? (
         <div className="cm-anchor-chip">
           <MapPinIcon size={ICON_SIZE.sm} aria-hidden="true" />
-          <span className="cm-anchor-chip__text">
-            {anchor.text?.trim() ? (
-              <>
-                Pinned to <q>{excerpt(anchor.text, 40)}</q>
-              </>
-            ) : (
-              "Pinned to an element"
-            )}
-          </span>
+          <span className="cm-anchor-chip__text">{chipText(anchor)}</span>
           <IconButton size="sm" icon={XIcon} label="Remove pin" onClick={onRemoveAnchor} />
         </div>
       ) : null}
@@ -85,7 +97,7 @@ export function Composer({
         />
       </div>
       <div className="cm-actions" hidden={picking}>
-        {!anchor && (
+        {!anchor && onStartPick && (
           <Button
             size="sm"
             variant="ghost"

@@ -10,6 +10,7 @@ export * from "./liveDoc.ts";
 export * from "./markdown.ts";
 export * from "./mentions.ts";
 export * from "./merge3.ts";
+export * from "./pageComments.ts";
 export * from "./room.ts";
 export * from "./routes.ts";
 export * from "./schemas.ts";

@@ -9,6 +9,7 @@ import {
   type EffectiveRole,
   LIMITS,
 } from "./constants.ts";
+import { utf8Bytes } from "./pageComments.ts";
 import { ROOM_LIMITS, ROOM_OPEN_ALL, ROOM_OPEN_META, ROOM_TOPIC_RE } from "./room.ts";
 import { artifactRefSchema } from "./schemas.ts";
 
@@ -31,6 +32,8 @@ export interface Capabilities {
    * Counts only with `data` and `viewer`.
    */
   people: boolean;
+  /** The page may open the comment composer with its own anchors (`plinth.comments`). */
+  comments: boolean;
 }
 
 export const CAPABILITIES_META = "plinth-capabilities";
@@ -98,6 +101,7 @@ export const DECLARATION_FIELDS: readonly DeclarationField[] = [
     checkOnRead: true,
   },
   { kind: "token", key: "people" },
+  { kind: "token", key: "comments" },
 ];
 
 const TOKEN_INFO = new Map<string, (typeof CAPABILITY_TOKENS)[number]>(
@@ -160,10 +164,10 @@ function tokens(content: string): string[] {
  * order and quote style, names compared case-insensitively, tags inside HTML comments ignored.
  * Every meta tag is read, so a registered meta after the others is never missed. Unknown tokens
  * are ignored, and so are list entries that break their rule; at most each list's `max` are kept
- * (LIMITS.maxDataShared, ROOM_LIMITS.maxOpenTopics). Returns null unless `data` or `room` is
- * declared: the viewer is learned through the data API or the room, so `viewer` alone declares
- * nothing, and neither does a list alone. Shared names count only with `data`, open topics only
- * with `room`.
+ * (LIMITS.maxDataShared, ROOM_LIMITS.maxOpenTopics). Returns null unless `data`, `room` or
+ * `comments` is declared: the viewer is learned through the data API or the room, so `viewer`
+ * alone declares nothing, and neither does a list alone. Shared names count only with `data`,
+ * open topics only with `room`.
  */
 export function parseCapabilities(html: string): Capabilities | null {
   if (!/plinth-/i.test(html)) return null;
@@ -281,20 +285,7 @@ export const dataDocIdSchema = z
 
 /** UTF-8 length of a string, without TextEncoder (this package targets plain ES2023). */
 export function utf8Length(s: string): number {
-  let n = 0;
-  for (let i = 0; i < s.length; i++) {
-    const c = s.charCodeAt(i);
-    if (c < 0x80) n += 1;
-    else if (c < 0x800) n += 2;
-    else if (c >= 0xd800 && c <= 0xdbff && i + 1 < s.length) {
-      const d = s.charCodeAt(i + 1);
-      if (d >= 0xdc00 && d <= 0xdfff) {
-        n += 4;
-        i++;
-      } else n += 3;
-    } else n += 3;
-  }
-  return n;
+  return utf8Bytes(s);
 }
 
 /** UTF-8 bytes of a document's JSON, as stored. */

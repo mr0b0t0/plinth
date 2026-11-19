@@ -10,6 +10,14 @@ Add a line under **Unreleased** in the pull request that makes a change people w
 
 ## Unreleased
 
+- **Comments from the page.** A page that declares `comments` can open the comment composer on a
+  spot of its own (a point on a canvas, a slide, a node in a diagram) with `plinth.comments`, draw
+  its own markers for the threads and tell Plinth where to put its pins. The person still writes
+  and posts every comment, and the page never sees comment text. Opening comments on such a page no
+  longer reloads it. Agents see these anchors as `kind: "page"` in `list_comments` and mention
+  tasks. Example: `docs/examples/canvas-comments.html`.
+- **Comment pins stay on their spot when selected.** A selected or hovered pin was drawn a little
+  off its anchor; it now grows in place.
 - **Who is viewing: names and the people list.** Set your name from the account menu ("Your
   name…"); pages that show who is viewing now show it beside your email, on `plinth.viewer`, on
   the entries you write and in live rooms. A page that declares `data viewer people` lets its

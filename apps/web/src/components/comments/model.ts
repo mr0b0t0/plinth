@@ -1,5 +1,6 @@
 // Pure helpers for the comments panel: threads, filters, pin numbers, dates, @ suggestions.
-import type { CommentInfo } from "@plinth/shared";
+import { type Anchor, type CommentInfo, isPageAnchor, PAGE_COMMENT_LIMITS } from "@plinth/shared";
+import type { PageThreadItem } from "./pageChannel.ts";
 
 export type CommentFilter = "open" | "resolved" | "all";
 
@@ -43,11 +44,54 @@ export function filterThreads(threads: Thread[], filter: CommentFilter): Thread[
   return threads.filter((t) => t.root.status === filter);
 }
 
-/** Anchors to highlight in the frame: open, anchored threads. */
+/** The selector of an element anchor, or null (no anchor, or a page anchor). */
+export function anchorSelector(anchor: Anchor | null | undefined): string | null {
+  return anchor && !isPageAnchor(anchor) && anchor.selector ? anchor.selector : null;
+}
+
+/** Anchors to highlight in the frame: open threads anchored to an element. */
 export function highlightAnchors(threads: Thread[]): { id: string; selector: string }[] {
-  return threads
-    .filter((t) => t.root.status === "open" && t.root.anchor?.selector)
-    .map((t) => ({ id: t.root.id, selector: t.root.anchor?.selector ?? "" }));
+  return threads.flatMap((t) => {
+    const selector = t.root.status === "open" ? anchorSelector(t.root.anchor) : null;
+    return selector ? [{ id: t.root.id, selector }] : [];
+  });
+}
+
+/**
+ * What the page is told about the threads (comments from the page, pageChannel.ts): anchored
+ * roots with their pin, status and anchor, oldest first, at most PAGE_COMMENT_LIMITS.maxThreads.
+ * Under opaque isolation this is posted with "*", so it holds only what the framed document may
+ * see anyway: no comment text, author, email, role or mention state, no page-anchor label and no
+ * element-anchor text excerpt. Page anchors keep the page's own key, coordinates and data.
+ */
+export function pageThreadItems(threads: Thread[]): PageThreadItem[] {
+  const out: PageThreadItem[] = [];
+  for (const t of threads) {
+    const a = t.root.anchor;
+    if (!a || t.pin === null) continue;
+    if (out.length >= PAGE_COMMENT_LIMITS.maxThreads) break;
+    const base = { id: t.root.id, pin: t.pin, status: t.root.status };
+    if (isPageAnchor(a)) {
+      out.push({
+        ...base,
+        anchor: {
+          kind: "page",
+          key: a.key,
+          ...(a.x !== undefined ? { x: a.x } : {}),
+          ...(a.y !== undefined ? { y: a.y } : {}),
+          ...(a.data !== undefined ? { data: a.data } : {}),
+        },
+      });
+    } else if (a.selector) {
+      out.push({ ...base, anchor: { kind: "element", selector: a.selector } });
+    }
+  }
+  return out;
+}
+
+/** The words for an anchor: its label, else a page anchor's key, else "an element". */
+export function anchorLabel(anchor: Anchor | null | undefined): string {
+  return excerpt(anchor?.text || (isPageAnchor(anchor) ? anchor.key : ""));
 }
 
 const UNITS: [Intl.RelativeTimeFormatUnit, number][] = [

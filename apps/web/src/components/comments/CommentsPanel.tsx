@@ -1,9 +1,17 @@
 // The comments panel on the artifact page: threads, replies, resolve, Markdown, anchoring through
-// the review-mode bridge, pins over the frame, and mention task status. The API decides every
+// the review-mode bridge (or, for a page that declares `comments`, anchors the page places itself
+// through usePageComments), pins over the frame, and mention task status. The API decides every
 // permission; the panel shows what the comments list says the caller may do, and still reacts to
 // 401 / 403 on writes.
 import { ArrowClockwiseIcon, XIcon } from "@phosphor-icons/react";
-import { API, APP_ROUTES, type CommentInfo, route } from "@plinth/shared";
+import {
+  API,
+  APP_ROUTES,
+  type CommentInfo,
+  isPageAnchor,
+  type PageAnchor,
+  route,
+} from "@plinth/shared";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ApiRequestError, api } from "../../lib/api.ts";
 import { Link, useLocation } from "../../lib/router.tsx";
@@ -28,6 +36,7 @@ import "./comments.css";
 import { buildThreads, type CommentFilter, filterThreads, highlightAnchors } from "./model.ts";
 import { PinLayer } from "./PinLayer.tsx";
 import { Thread } from "./Thread.tsx";
+import type { PageCompose, PageComposeResult } from "./usePageComments.ts";
 
 export interface CommentsPanelProps {
   artifactId: string;
@@ -45,6 +54,28 @@ export interface CommentsPanelProps {
   onClose: () => void;
   /** Told the number of open threads whenever the list loads (for the toggle's count). */
   onOpenCountChange?: (n: number) => void;
+  /**
+   * The page declares `comments` (gate.page_comments): it anchors its own comments. No bridge is
+   * connected (none is injected) and there is no "Pin to an element"; pins come from the page.
+   */
+  pageOwnsAnchors?: boolean;
+  /** The page's latest accepted compose request (usePageComments). */
+  pageCompose?: PageCompose | null;
+  /** Answer a page compose request: posted, closed (chip removed, panel closed) or busy. */
+  onPageComposeSettled?: (req: string, result: PageComposeResult) => void;
+  /** Where the page says its anchored threads are. */
+  pagePositions?: Map<string, PinPosition>;
+  /** Told the comments whenever the list loads (the page hears about anchored threads). */
+  onItemsChange?: (items: CommentInfo[]) => void;
+  /** Told the thread the person picked in the panel or by its pin. */
+  onActiveChange?: (id: string) => void;
+  /** The page asked to show a thread; `n` changes for every request. */
+  pageOpen?: { id: string; n: number } | null;
+  /**
+   * A page request opened the panel: focus stays where it was when the panel mounts, as for every
+   * page request (the person clicks or tabs into the panel).
+   */
+  openedByPage?: boolean;
 }
 
 /** How often to look for new comments and mention progress while the panel is open. */
@@ -60,6 +91,19 @@ const FILTERS: { value: CommentFilter; label: string }[] = [
 
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 
+/** The anchor as the comments API takes it: a page anchor as validated, or an element. */
+function anchorBody(anchor: PickedAnchor | PageAnchor) {
+  if (isPageAnchor(anchor)) return anchor;
+  return {
+    selector: anchor.selector,
+    ...(anchor.text ? { text: anchor.text } : {}),
+    x: anchor.x,
+    y: anchor.y,
+  };
+}
+
+const NO_POSITIONS = new Map<string, PinPosition>();
+
 export function CommentsPanel({
   artifactId,
   slug,
@@ -69,6 +113,14 @@ export function CommentsPanel({
   opaque = false,
   onClose,
   onOpenCountChange,
+  pageOwnsAnchors = false,
+  pageCompose = null,
+  onPageComposeSettled,
+  pagePositions,
+  onItemsChange,
+  onActiveChange,
+  pageOpen = null,
+  openedByPage = false,
 }: CommentsPanelProps) {
   const { pathname, search } = useLocation();
   const [items, setItems] = useState<CommentInfo[] | null>(null);
@@ -78,7 +130,7 @@ export function CommentsPanel({
   const [activeId, setActiveId] = useState<string | null>(null);
   const [positions, setPositions] = useState<Map<string, PinPosition>>(() => new Map());
   const [picking, setPicking] = useState(false);
-  const [anchor, setAnchor] = useState<PickedAnchor | null>(null);
+  const [anchor, setAnchor] = useState<PickedAnchor | PageAnchor | null>(null);
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
   const [composeError, setComposeError] = useState<string | undefined>();
@@ -92,7 +144,9 @@ export function CommentsPanel({
   const seenRef = useRef<Set<string> | null>(null);
   const loadingRef = useRef(false);
   const pickingRef = useRef(false);
-  const focusThreadRef = useRef<string | null>(null);
+  // The thread to scroll to once it is rendered, and whether focus moves to it (not for a page's
+  // request to show it).
+  const focusThreadRef = useRef<{ id: string; focus: boolean } | null>(null);
   pickingRef.current = picking;
 
   const ref = artifactId || slug;
@@ -108,6 +162,11 @@ export function CommentsPanel({
   useEffect(() => {
     if (items) onCountRef.current?.(openCount);
   }, [items, openCount]);
+  const onItemsRef = useRef(onItemsChange);
+  onItemsRef.current = onItemsChange;
+  useEffect(() => {
+    if (items) onItemsRef.current?.(items);
+  }, [items]);
   const anchors = useMemo(() => highlightAnchors(threads), [threads]);
   const anchorsKey = JSON.stringify(anchors);
   const anchorsRef = useRef(anchors);
@@ -179,7 +238,8 @@ export function CommentsPanel({
   // ---------- bridge ----------
 
   useEffect(() => {
-    if (!frame || !contentOrigin) return;
+    // A page that anchors its own comments has no bridge (the gate never asks for review mode).
+    if (!frame || !contentOrigin || pageOwnsAnchors) return;
     const handlers = {
       onMessage(msg: FrameMessage) {
         if (msg.type === "ready") {
@@ -208,7 +268,7 @@ export function CommentsPanel({
       client.destroy();
       if (bridgeRef.current === client) bridgeRef.current = null;
     };
-  }, [frame, contentOrigin, opaque]);
+  }, [frame, contentOrigin, opaque, pageOwnsAnchors]);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: anchorsKey stands for anchors
   useEffect(() => {
@@ -240,7 +300,10 @@ export function CommentsPanel({
 
   // ---------- focus ----------
 
+  // The panel takes focus when the person opened it, never when a page request did.
+  const openedByPageRef = useRef(openedByPage);
   useEffect(() => {
+    if (openedByPageRef.current) return;
     const el = headingRef.current;
     try {
       el?.focus({ preventScroll: true });
@@ -252,12 +315,15 @@ export function CommentsPanel({
   // After a pin click, scroll to its thread and move focus there once it is rendered.
   // biome-ignore lint/correctness/useExhaustiveDependencies: runs after the list re-renders
   useEffect(() => {
-    const id = focusThreadRef.current;
-    if (!id) return;
-    const el = panelRef.current?.querySelector<HTMLElement>(`[data-thread-id="${CSS.escape(id)}"]`);
+    const target = focusThreadRef.current;
+    if (!target) return;
+    const el = panelRef.current?.querySelector<HTMLElement>(
+      `[data-thread-id="${CSS.escape(target.id)}"]`,
+    );
     if (!el) return;
     focusThreadRef.current = null;
     el.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    if (!target.focus) return;
     try {
       el.focus({ preventScroll: true });
     } catch {
@@ -265,10 +331,86 @@ export function CommentsPanel({
     }
   }, [visible, activeId]);
 
+  // The person picked a thread (in the list or by its pin): the page may pan to it
+  // (usePageComments sends `focus`), every time, even when it was already the active one.
+  const onActiveRef = useRef(onActiveChange);
+  onActiveRef.current = onActiveChange;
+  const activate = useCallback((id: string) => {
+    setActiveId(id);
+    onActiveRef.current?.(id);
+  }, []);
+
   const onPinClick = (id: string) => {
     if (!visible.some((t) => t.root.id === id)) setFilter("open");
-    focusThreadRef.current = id;
-    setActiveId(id);
+    focusThreadRef.current = { id, focus: true };
+    activate(id);
+  };
+
+  // ---------- comments from the page ----------
+
+  // The page asked to show a thread: show it whatever the filter, then as a pin click, except that
+  // focus stays where it was. A request that opened the panel arrives before the list has loaded,
+  // so it waits for the list (once).
+  const pageOpenDoneRef = useRef<number | null>(null);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: one run per request (`n`) and list
+  useEffect(() => {
+    if (!pageOpen || items === null || pageOpenDoneRef.current === pageOpen.n) return;
+    pageOpenDoneRef.current = pageOpen.n;
+    const t = threads.find((x) => x.root.id === pageOpen.id);
+    if (!t) return;
+    setFilter((f) => (f === "all" || f === t.root.status ? f : "all"));
+    focusThreadRef.current = { id: pageOpen.id, focus: false };
+    activate(pageOpen.id);
+  }, [pageOpen?.n, items === null]);
+
+  // A page compose request whose anchor (or unanchored composer) the panel holds, answered once.
+  const pageReqRef = useRef<string | null>(null);
+  const onSettledRef = useRef(onPageComposeSettled);
+  onSettledRef.current = onPageComposeSettled;
+  const settlePage = useCallback((result: PageComposeResult) => {
+    const req = pageReqRef.current;
+    if (!req) return;
+    pageReqRef.current = null;
+    onSettledRef.current?.(req, result);
+  }, []);
+  const draftRef = useRef(draft);
+  draftRef.current = draft;
+  // Whether this person can comment is never told to the page, not even by timing: a request
+  // from someone who cannot comment (the panel says "Sign in to comment") is held like any other,
+  // and ends `closed` when the panel closes or a later request replaces it, as for a commenter
+  // who has not written anything. Only writing (`busy`) or posting (`posted`) tells it more.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: one run per request (`req`)
+  useEffect(() => {
+    if (!pageCompose || pageReqRef.current === pageCompose.req) return;
+    const { req } = pageCompose;
+    // Someone is writing a comment: the page changes nothing.
+    if (draftRef.current.trim()) {
+      onSettledRef.current?.(req, { status: "busy" });
+      return;
+    }
+    // An earlier page request that nobody wrote for yet is replaced.
+    settlePage({ status: "closed" });
+    pageReqRef.current = req;
+    setPicking(false);
+    setAnchor(pageCompose.anchor);
+    // Focus stays where it was: the person clicks or tabs into the composer. Moving it there
+    // while someone types in the page would send the rest of their keystrokes (and a Ctrl+Enter)
+    // into a comment they never meant to write. Screen readers hear that the page asked.
+    announce("The page asked for a comment.");
+  }, [pageCompose?.req]);
+  // Closing the panel ends it too. Deferred, so the effect re-run of React's strict mode (a
+  // cleanup and a run again, on the same panel) does not end a request the panel still holds.
+  const unmountRef = useRef<number | undefined>(undefined);
+  useEffect(() => {
+    window.clearTimeout(unmountRef.current);
+    return () => {
+      unmountRef.current = window.setTimeout(() => settlePage({ status: "closed" }), 0);
+    };
+  }, [settlePage]);
+  const removeAnchor = () => {
+    setAnchor(null);
+    settlePage({ status: "closed" });
+    composerRef.current?.focus();
   };
 
   // ---------- writes ----------
@@ -309,22 +451,14 @@ export function CommentsPanel({
         body: {
           body,
           version_number: version,
-          ...(anchor
-            ? {
-                anchor: {
-                  selector: anchor.selector,
-                  ...(anchor.text ? { text: anchor.text } : {}),
-                  x: anchor.x,
-                  y: anchor.y,
-                },
-              }
-            : {}),
+          ...(anchor ? { anchor: anchorBody(anchor) } : {}),
         },
       });
       setDraft("");
       setAnchor(null);
+      settlePage({ status: "posted", id: created.id });
       if (filter === "resolved") setFilter("open");
-      focusThreadRef.current = created.id;
+      focusThreadRef.current = { id: created.id, focus: true };
       setActiveId(created.id);
       afterWrite(created);
       announce(`Comment posted.${mentionSummary(created)}`);
@@ -444,7 +578,9 @@ export function CommentsPanel({
               title={emptyText[filter]}
               description={
                 filter === "open" && threads.length === 0 && !blocked
-                  ? "Start the conversation below. Pin a comment to an element, or mention @claude or @codex to ask the owner's agent for a change."
+                  ? pageOwnsAnchors
+                    ? "Start the conversation below, or mention @claude or @codex to ask the owner's agent for a change."
+                    : "Start the conversation below. Pin a comment to an element, or mention @claude or @codex to ask the owner's agent for a change."
                   : undefined
               }
             />
@@ -458,7 +594,7 @@ export function CommentsPanel({
                     version={version}
                     active={t.root.id === activeId}
                     readOnly={blocked !== null}
-                    onActivate={setActiveId}
+                    onActivate={activate}
                     onReply={reply}
                     onSetStatus={setStatus}
                   />
@@ -480,13 +616,10 @@ export function CommentsPanel({
               value={draft}
               onChange={setDraft}
               anchor={anchor}
-              onRemoveAnchor={() => {
-                setAnchor(null);
-                composerRef.current?.focus();
-              }}
+              onRemoveAnchor={removeAnchor}
               picking={picking}
               canPin={!!frame && !!contentOrigin}
-              onStartPick={startPick}
+              onStartPick={pageOwnsAnchors ? undefined : startPick}
               onCancelPick={cancelPick}
               onSubmit={() => void submit()}
               sending={sending}
@@ -503,7 +636,7 @@ export function CommentsPanel({
       <PinLayer
         frame={frame}
         threads={threads}
-        positions={positions}
+        positions={pageOwnsAnchors ? (pagePositions ?? NO_POSITIONS) : positions}
         activeId={activeId}
         panelRef={panelRef}
         onPinClick={onPinClick}

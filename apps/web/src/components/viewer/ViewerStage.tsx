@@ -16,6 +16,7 @@ import { useSession } from "../../lib/session.ts";
 import { useTheme } from "../../lib/theme.ts";
 import { CommentsPanel } from "../artifact/CommentsPanel.tsx";
 import { VersionPicker } from "../artifact/VersionPicker.tsx";
+import { useStagePageComments } from "../comments/usePageComments.ts";
 import { useMediaQuery } from "../editor/useMediaQuery.ts";
 import { LogoMark } from "../Logo.tsx";
 import { SkipLink } from "../layout/AppShell.tsx";
@@ -93,6 +94,9 @@ export function ViewerStage({
   const [shareOpen, setShareOpen] = useState(false);
   const [frame, setFrame] = useState<HTMLIFrameElement | null>(null);
   const [openCount, setOpenCount] = useState<number | null>(null);
+  // The comments, for a page that declares `comments` (its threads and pins); the panel keeps
+  // them current while open.
+  const [commentItems, setCommentItems] = useState<CommentInfo[] | null>(null);
   const compact = useMediaQuery(VIEWER_COMPACT_QUERY);
   const { artifact, role } = gate;
   const isOwner = role === "owner";
@@ -116,10 +120,25 @@ export function ViewerStage({
     api<{ items: CommentInfo[] }>(route(API.comments, { ref: artifact.id || slug }), {
       signal: ctrl.signal,
     })
-      .then((res) => setOpenCount(openThreadCount(res.items)))
+      .then((res) => {
+        setOpenCount(openThreadCount(res.items));
+        setCommentItems(res.items);
+      })
       .catch(() => undefined);
     return () => ctrl.abort();
   }, [artifact.id, slug, commentsOpen]);
+
+  // Comments from the page: it may open the composer with its own anchors (gate.page_comments).
+  const pageComments = useStagePageComments({
+    gate,
+    frame,
+    contentOrigin,
+    opaque: config?.content_isolation === "opaque",
+    items: commentItems,
+    blocked: shareOpen,
+    commentsOpen,
+    openComments: onToggleComments,
+  });
 
   // On-page editing of a doc (#36): owners and editors on the current version only.
   const live = useLiveEdit({
@@ -286,6 +305,8 @@ export function ViewerStage({
                   opaque={config?.content_isolation === "opaque"}
                   onClose={closeComments}
                   onOpenCountChange={setOpenCount}
+                  onItemsChange={setCommentItems}
+                  {...pageComments}
                 />
               </div>
             )}
