@@ -85,6 +85,8 @@ function legacyParse(html: string): Capabilities | null {
     dictation: false,
     hold: false,
     files: false,
+    requests: false,
+    requestsTo: [],
   };
 }
 
@@ -124,6 +126,8 @@ function legacyRead(json: string): Capabilities | null {
     dictation: false,
     hold: false,
     files: false,
+    requests: false,
+    requestsTo: [],
   };
 }
 
@@ -180,6 +184,7 @@ describe("the declaration registry", () => {
       "dictation",
       "hold",
       "files",
+      "requests",
     ]);
   });
 

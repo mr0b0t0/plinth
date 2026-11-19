@@ -247,6 +247,26 @@ Files need no new binding: the bytes go to the `FILES` bucket every config alrea
   seeks, that the PDF downloads, and that `/legal/privacy` and `/legal/acceptable-use` show their
   lines on files.
 
+### Page requests
+
+Page requests need no new binding: a request is a comment with one mention task, and migration
+`0016_page_requests.sql` adds two columns and an index to `comments`.
+
+- **Off switch.** `ALLOW_PAGE_REQUESTS` is off unless set to `"true"`. Off, pages that declare
+  `requests` get `ready` with `available: false`, `reason: "disabled"` (the runtime has no
+  `plinth.requests` at all), and requests already filed stay in the queue and in Comments.
+- **Isolation.** Page requests need `CONTENT_ISOLATION=origin`. Under `opaque` and the staging path
+  fallback they are off, whatever the setting says.
+- **Identity claims.** On, the gate seals the viewer identity claim for identified viewers even
+  where shared data, files and rooms are off.
+- **Moderation.** Requests are comments: owners and editors dismiss them in Comments, requesters
+  withdraw them, the report link and a takedown cover the artifact, and `erase-user` deletes a
+  person's requests.
+- **Before turning it on.** Publish `docs/examples/ask-agent.html`, share it with a commenter, file
+  a request as them, answer it with an agent (`claim_mention`, then `reply_comment`), and check
+  that the page shows the answer and no one's name or address, that a viewer-role person cannot
+  file, and that `/legal/privacy` shows its sentence on requests a page sends.
+
 ### Creating the resources
 
 The setup script creates the D1 database and the R2 bucket and writes the Worker config with every
@@ -491,7 +511,11 @@ These need accounts, money or legal judgement, so no script does them.
     ([Files people add to a page](#files-people-add-to-a-page)). While it is on, the privacy notice
     says what is kept with each file and for how long, and the acceptable use policy covers what may
     be uploaded. An operator with documents of their own should say the same before turning it on.
-16. Turn on GitHub private vulnerability reporting for the repository (see
+16. Page requests are off unless `ALLOW_PAGE_REQUESTS` is set to `"true"`
+    ([Page requests](#page-requests)). While it is on, the privacy notice says that requests a page
+    sends are stored under the viewer's email like a comment. An operator with a privacy notice of
+    their own should say the same before turning it on.
+17. Turn on GitHub private vulnerability reporting for the repository (see
     [security.md](security.md)).
 17. Watch the first days with `wrangler tail` and the Cloudflare analytics for the Worker, D1 and
     Durable Objects.

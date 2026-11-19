@@ -1,7 +1,7 @@
 // Words and numbers for the account pages: dates, quota, client types, scopes and mention handles.
 import {
   type ClientType,
-  MENTION_AGENT_NAMES,
+  mentionAgentType,
   mentionHandle,
   parseMentions,
   type Scope,
@@ -184,7 +184,7 @@ export function mentionReach(
   const handle = mentionHandle(label);
   // The server matches what parseMentions reads out of "@handle"; anything else is unreachable.
   if (!handle || parseMentions(`@${handle}`)[0] !== handle) return { kind: "none" };
-  const agentType = MENTION_AGENT_NAMES[handle];
+  const agentType = mentionAgentType(handle);
   if (agentType) return { kind: "agent_name", handle, reached: agentType === self.client_type };
   const created = self.created_at;
   let first: MentionCandidate | undefined;
@@ -203,7 +203,7 @@ export function mentionReachText(reach: MentionReach): string {
     case "handle":
       return `Collaborators reach it by writing @${reach.handle} in a comment.`;
     case "agent_name": {
-      const type = CLIENT_TYPE_LABEL[MENTION_AGENT_NAMES[reach.handle] ?? "other"];
+      const type = CLIENT_TYPE_LABEL[mentionAgentType(reach.handle) ?? "other"];
       return reach.reached
         ? `Collaborators reach it with @${reach.handle}, together with your other ${type} connections.`
         : `@${reach.handle} always means your ${type} connections, so this name does not reach it. Pick another name.`;

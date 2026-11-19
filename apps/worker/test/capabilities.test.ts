@@ -41,6 +41,8 @@ describe("versionCapabilities", () => {
         dictation: false,
         hold: false,
         files: false,
+        requests: false,
+        requestsTo: [],
       });
     },
   );

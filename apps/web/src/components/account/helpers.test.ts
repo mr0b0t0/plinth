@@ -187,6 +187,15 @@ describe("mentionReach", () => {
     );
   });
 
+  it("a name on Object.prototype is an ordinary handle, not an agent name", () => {
+    for (const label of ["constructor", "toString", "hasOwnProperty"]) {
+      expect(mentionReach(label, [], self), label).toEqual({
+        kind: "handle",
+        handle: label.toLowerCase(),
+      });
+    }
+  });
+
   it("agent names always mean the client type", () => {
     expect(mentionReach("Claude", [], { ...self, client_type: "claude" })).toEqual({
       kind: "agent_name",

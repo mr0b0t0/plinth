@@ -15,6 +15,7 @@ import {
   type ViewGateFiles,
   type ViewGateLive,
   type ViewGatePeople,
+  type ViewGateRequests,
   type ViewGateVoice,
   viewerCodeInput,
   viewerEmailInput,
@@ -30,6 +31,7 @@ import {
   identityClaimsActive,
   liveEditMode,
   liveViewsActive,
+  pageRequestsActive,
   roomsActive,
   sharedDataActive,
 } from "../config.ts";
@@ -47,6 +49,7 @@ import {
   type Principal,
   pageDataAccess,
   pageFileAccess,
+  pageRequestAccess,
   peopleListOffered,
 } from "../policy.ts";
 import { decideFor, findArtifact, grantFor, versionCapabilities } from "../services/artifacts.ts";
@@ -210,7 +213,35 @@ export const GATE_PARTS: readonly GatePart[] = [
     const sources = await gateSources(ctx.env.DB, a.id);
     return sources ? { sources } : undefined;
   },
+  async ({ ctx, a, identity }) => {
+    const requests = await gateRequests(ctx, a, identity);
+    return requests ? { requests } : undefined;
+  },
 ];
+
+// ---------- page requests ----------
+
+/**
+ * Tell the viewer the page can file requests in their name, and as which email: only while page
+ * requests are active, on an HTML artifact whose current version declares `requests`, for a viewer
+ * the gate sealed an identity for. Whether they may file is policy.ts pageRequestAccess, as the
+ * content host decides it. The email goes to the app, never to the framed page.
+ */
+async function gateRequests(
+  ctx: Ctx,
+  a: ArtifactRow,
+  identity: ViewerIdentity | undefined,
+): Promise<ViewGateRequests | undefined> {
+  if (!identity || !pageRequestsActive(ctx.config) || a.type !== "html") return undefined;
+  const declared = await currentCapsOnce(ctx, a);
+  if (declared?.requests !== true) return undefined;
+  const claim = {
+    ...identity,
+    viewerId: await viewerIdFor(ctx.config.tokenSigningKey, a.id, identity.email),
+  };
+  const access = pageRequestAccess(claim, declared, { active: true, type: a.type, pass: "view" });
+  return { can_file: access.file, email: identity.email };
+}
 
 // ---------- files people add to a page ----------
 

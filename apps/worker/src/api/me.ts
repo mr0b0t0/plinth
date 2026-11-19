@@ -5,6 +5,7 @@ import {
   type Me,
   type MeConnection,
   normalizeDisplayName,
+  PAGE_REQUEST_LIMITS,
   pageDataOf,
   REPO_URL,
   TTL,
@@ -18,6 +19,7 @@ import {
   dictationActive,
   filesActive,
   instanceLimits,
+  pageRequestsActive,
   sharedDataActive,
 } from "../config.ts";
 import { artifacts, users } from "../db/schema.ts";
@@ -63,6 +65,15 @@ meApi.get("/config", (c) => {
       available: pageDataOf(TYPE_REGISTRY[id]) !== "fixed" || sharedDataActive(config),
     })),
     design_export: designExportActive(config, c.env),
+    page_requests: {
+      enabled: pageRequestsActive(config),
+      per_viewer_per_hour: config.pageRequests.perViewerPerHour,
+      per_artifact_per_hour: config.pageRequests.perArtifactPerHour,
+      max_open_per_artifact: config.pageRequests.maxOpenPerArtifact,
+      max_open_per_requester: PAGE_REQUEST_LIMITS.maxOpenPerRequester,
+      max_body_chars: PAGE_REQUEST_LIMITS.maxBodyChars,
+      max_data_bytes: PAGE_REQUEST_LIMITS.maxDataBytes,
+    },
   };
   const res = c.json(body);
   ensureCsrfCookie(c, res.headers);

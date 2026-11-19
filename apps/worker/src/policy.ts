@@ -877,3 +877,117 @@ export function sourcedWrite(input: {
   }
   return { allow: true };
 }
+
+// ---------- page requests (docs/spec.md "Page requests") ----------
+
+/** Roles that hold "mention" (decide): the page-request filing right. A test pins it to decide. */
+export function holdsMentionRight(role: EffectiveRole | null): boolean {
+  return role === "owner" || role === "editor" || role === "commenter";
+}
+
+/**
+ * The emails a caller holds on a request: the principal's own and, for a browser (never an agent),
+ * the allowlist email it confirmed by code (app-host viewer cookie). The same set grantFor ranks,
+ * so the email the gate seals into a page claim is always one of these.
+ */
+export function callerEmails(p: Principal, viewerEmail: string | null | undefined): string[] {
+  const out: string[] = [];
+  const own = principalEmail(p);
+  if (own) out.push(own);
+  if (viewerEmail && p.kind !== "agent" && viewerEmail !== own) out.push(viewerEmail);
+  return out;
+}
+
+export interface PageRequestAccess {
+  /** May file a new request (identified, with the mention right). */
+  file: boolean;
+  /** May list requests at all; which rows is pageSeesRequest's per-row decision. */
+  readOwn: boolean;
+}
+
+/**
+ * What a page may do with page requests. `active` is pageRequestsActive(config). The artifact must
+ * be HTML, its current version must declare `requests`, and the pass must be a view pass that
+ * carries a claim: an in-chat preview and Plinth's thumbnail capture never file or list. Filing
+ * needs the mention right; an identified viewer-role person lists their own (an empty list unless
+ * they filed while holding a stronger role). Which rows a page sees is pageSeesRequest's decision.
+ */
+export function pageRequestAccess(
+  claim: PageClaim | null,
+  caps: Capabilities | null,
+  ctx: { active: boolean; type: ArtifactType; pass: FilePassKind },
+): PageRequestAccess {
+  if (
+    !ctx.active ||
+    ctx.type !== "html" ||
+    ctx.pass !== "view" ||
+    caps?.requests !== true ||
+    !claim
+  ) {
+    return { file: false, readOwn: false };
+  }
+  return { file: holdsMentionRight(claim.role), readOwn: true };
+}
+
+/**
+ * Per row: may this page (this claim, on this artifact) see this comment as one of its requests?
+ * Only a root page request on the same artifact whose stamped requester email is the claim's. The
+ * service's SQL mirrors this; this function has the final word.
+ */
+export function pageSeesRequest(
+  access: PageRequestAccess,
+  claim: PageClaim | null,
+  artifactId: string,
+  row: {
+    artifactId: string;
+    parentId: string | null;
+    kind: "comment" | "page_request";
+    authorEmail: string | null;
+  },
+): boolean {
+  return (
+    access.readOwn &&
+    claim !== null &&
+    row.kind === "page_request" &&
+    row.parentId === null &&
+    row.artifactId === artifactId &&
+    row.authorEmail !== null &&
+    row.authorEmail === claim.email
+  );
+}
+
+/**
+ * Per row: may the requester's page see this reply in its request's thread? Only answers written
+ * by an agent connection of the artifact's owner, the same principals that already write the
+ * page's source and shared data. Replies typed by people never reach the page, and no reply's
+ * author is ever sent to it.
+ */
+export function pageSeesAnswer(
+  ownerId: string,
+  reply: { authorConnection: string | null; authorUserId: string | null },
+): boolean {
+  return reply.authorConnection !== null && reply.authorUserId === ownerId;
+}
+
+/**
+ * Who may see, reply into, resolve or reopen a page-request thread in the app or over MCP and
+ * REST: the owner, editors, and the person who filed it, matched against every email the caller
+ * holds (callerEmails). Everyone else gets "not found", as for a missing comment.
+ */
+export function canSeePageRequest(
+  role: EffectiveRole | null,
+  emails: readonly string[],
+  requesterEmail: string | null,
+): boolean {
+  if (role === "owner" || role === "editor") return true;
+  return requesterEmail !== null && emails.includes(requesterEmail);
+}
+
+/** Thread visibility for any comment root: a plain comment thread follows the artifact's "view". */
+export function canSeeThread(
+  role: EffectiveRole | null,
+  emails: readonly string[],
+  root: { kind: "comment" | "page_request"; authorEmail: string | null },
+): boolean {
+  return root.kind !== "page_request" || canSeePageRequest(role, emails, root.authorEmail);
+}

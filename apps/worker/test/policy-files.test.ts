@@ -22,6 +22,8 @@ const caps = (over: Partial<Capabilities> = {}): Capabilities => ({
   dictation: false,
   hold: false,
   files: true,
+  requests: false,
+  requestsTo: [],
   ...over,
 });
 

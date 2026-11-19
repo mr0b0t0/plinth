@@ -19,7 +19,7 @@ export const MCP_TOOL_SUMMARIES = {
   set_visibility: "Change who can view an artifact (owner only).",
   list_comments: "Read every comment thread on an artifact.",
   resolve_comment: "Resolve a comment thread, or reopen it.",
-  list_mentions: "Requests addressed to this agent from comments (@mentions).",
+  list_mentions: "Requests addressed to this agent from comments and pages.",
   claim_mention: "Lock a pending mention task so only one agent acts on it.",
   reply_comment: "Reply in a comment thread; completes a mention task this agent claimed.",
   list_artifact_data: "Read a page's shared data (polls, sign-ups, trackers): summary, documents.",

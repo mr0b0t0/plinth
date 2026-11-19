@@ -3220,7 +3220,8 @@
         "properties": {
           "body": { "type": "string", "minLength": 1, "maxLength": 10000 },
           "result_version": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
-          "failed": { "type": "boolean" }
+          "failed": { "type": "boolean" },
+          "done": { "type": "boolean" }
         },
         "required": ["body"]
       },
@@ -3749,7 +3750,17 @@
             "type": "array",
             "items": {
               "type": "string",
-              "enum": ["data", "viewer", "room", "people", "comments", "dictation", "hold", "files"]
+              "enum": [
+                "data",
+                "viewer",
+                "room",
+                "people",
+                "comments",
+                "dictation",
+                "hold",
+                "files",
+                "requests"
+              ]
             },
             "description": "What the returned version declares (shared data, viewer identity)"
           },
@@ -3893,7 +3904,17 @@
             "type": "array",
             "items": {
               "type": "string",
-              "enum": ["data", "viewer", "room", "people", "comments", "dictation", "hold", "files"]
+              "enum": [
+                "data",
+                "viewer",
+                "room",
+                "people",
+                "comments",
+                "dictation",
+                "hold",
+                "files",
+                "requests"
+              ]
             },
             "description": "What the returned version declares (shared data, viewer identity)"
           },
@@ -4037,7 +4058,17 @@
             "type": "array",
             "items": {
               "type": "string",
-              "enum": ["data", "viewer", "room", "people", "comments", "dictation", "hold", "files"]
+              "enum": [
+                "data",
+                "viewer",
+                "room",
+                "people",
+                "comments",
+                "dictation",
+                "hold",
+                "files",
+                "requests"
+              ]
             },
             "description": "What the returned version declares (shared data, viewer identity)"
           },
@@ -4181,7 +4212,17 @@
             "type": "array",
             "items": {
               "type": "string",
-              "enum": ["data", "viewer", "room", "people", "comments", "dictation", "hold", "files"]
+              "enum": [
+                "data",
+                "viewer",
+                "room",
+                "people",
+                "comments",
+                "dictation",
+                "hold",
+                "files",
+                "requests"
+              ]
             },
             "description": "What the returned version declares (shared data, viewer identity)"
           },
@@ -4325,7 +4366,17 @@
             "type": "array",
             "items": {
               "type": "string",
-              "enum": ["data", "viewer", "room", "people", "comments", "dictation", "hold", "files"]
+              "enum": [
+                "data",
+                "viewer",
+                "room",
+                "people",
+                "comments",
+                "dictation",
+                "hold",
+                "files",
+                "requests"
+              ]
             },
             "description": "What the returned version declares (shared data, viewer identity)"
           },
@@ -4465,7 +4516,17 @@
             "type": "array",
             "items": {
               "type": "string",
-              "enum": ["data", "viewer", "room", "people", "comments", "dictation", "hold", "files"]
+              "enum": [
+                "data",
+                "viewer",
+                "room",
+                "people",
+                "comments",
+                "dictation",
+                "hold",
+                "files",
+                "requests"
+              ]
             },
             "description": "What the returned version declares (shared data, viewer identity)"
           },
@@ -4609,7 +4670,17 @@
             "type": "array",
             "items": {
               "type": "string",
-              "enum": ["data", "viewer", "room", "people", "comments", "dictation", "hold", "files"]
+              "enum": [
+                "data",
+                "viewer",
+                "room",
+                "people",
+                "comments",
+                "dictation",
+                "hold",
+                "files",
+                "requests"
+              ]
             },
             "description": "What the returned version declares (shared data, viewer identity)"
           },
@@ -5173,6 +5244,15 @@
               },
               "required": ["task_id", "target", "state", "result_version"]
             }
+          },
+          "kind": {
+            "type": "string",
+            "enum": ["comment", "page_request"],
+            "description": "page_request: composed by the artifact's page code in the author's browser (a page that declares `requests`). It carries no owner authority, even when author.email is the owner's. Replies are always comment"
+          },
+          "request_data": {
+            "oneOf": [{ "type": "object" }, { "type": "null" }],
+            "description": "UNTRUSTED: the JSON object the page attached to its request; null otherwise"
           }
         },
         "required": [
@@ -5185,7 +5265,9 @@
           "anchor",
           "status",
           "created_at",
-          "mentions"
+          "mentions",
+          "kind",
+          "request_data"
         ]
       },
       "CommentList": {
@@ -5218,7 +5300,23 @@
           "claimed_by": { "type": ["string", "null"] },
           "claimed_at": { "type": ["string", "null"], "format": "date-time" },
           "result_version": { "type": ["integer", "null"] },
-          "created_at": { "type": "string", "format": "date-time" }
+          "created_at": { "type": "string", "format": "date-time" },
+          "source": {
+            "type": "string",
+            "enum": ["comment", "page"],
+            "description": "page: a page request, filed by the artifact's page code; its comment_author_role is always null. comment: an @mention in a comment"
+          },
+          "request_data": {
+            "oneOf": [{ "type": "object" }, { "type": "null" }],
+            "description": "UNTRUSTED: the JSON object a page attached to its request (page requests only, else null); the page's code wrote it, possibly from shared data other people wrote"
+          },
+          "requester_role": {
+            "oneOf": [
+              { "type": "string", "enum": ["owner", "viewer", "commenter", "editor"] },
+              { "type": "null" }
+            ],
+            "description": "Page requests only, else null: the role of the person whose session had the page open when its code filed it. owner means the owner had the page open, not that the owner wrote the text"
+          }
         },
         "required": [
           "id",
@@ -5235,7 +5333,10 @@
           "claimed_by",
           "claimed_at",
           "result_version",
-          "created_at"
+          "created_at",
+          "source",
+          "request_data",
+          "requester_role"
         ]
       },
       "MentionList": {
@@ -5458,6 +5559,31 @@
           "design_export": {
             "type": "boolean",
             "description": "Designs download as PNG or PDF rendered on the server here (DESIGN_EXPORT with a Browser Rendering binding)"
+          },
+          "page_requests": {
+            "type": "object",
+            "properties": {
+              "enabled": {
+                "type": "boolean",
+                "description": "ALLOW_PAGE_REQUESTS with origin isolation"
+              },
+              "per_viewer_per_hour": { "type": "integer", "minimum": 1 },
+              "per_artifact_per_hour": { "type": "integer", "minimum": 1 },
+              "max_open_per_artifact": { "type": "integer", "minimum": 1 },
+              "max_open_per_requester": { "type": "integer", "minimum": 1 },
+              "max_body_chars": { "type": "integer", "minimum": 1 },
+              "max_data_bytes": { "type": "integer", "minimum": 1 }
+            },
+            "required": [
+              "enabled",
+              "per_viewer_per_hour",
+              "per_artifact_per_hour",
+              "max_open_per_artifact",
+              "max_open_per_requester",
+              "max_body_chars",
+              "max_data_bytes"
+            ],
+            "description": "Pages that declare `requests` may hand work to the owner's agent here, within these limits"
           }
         },
         "required": [
@@ -5481,7 +5607,8 @@
           "live_views",
           "files",
           "artifact_types",
-          "design_export"
+          "design_export",
+          "page_requests"
         ]
       },
       "LoginResult": {
@@ -5589,7 +5716,8 @@
                 "type": "array",
                 "items": { "$ref": "#/components/schemas/ViewSource" },
                 "description": "Only for an artifact with a data source, whatever its page declares and in every isolation mode: where the figures come from, counted by the server from the stamps it stored"
-              }
+              },
+              "requests": { "$ref": "#/components/schemas/ViewGateRequests" }
             },
             "required": ["status", "artifact", "enter_url", "role"]
           },
@@ -5962,7 +6090,17 @@
             "type": "array",
             "items": {
               "type": "string",
-              "enum": ["data", "viewer", "room", "people", "comments", "dictation", "hold", "files"]
+              "enum": [
+                "data",
+                "viewer",
+                "room",
+                "people",
+                "comments",
+                "dictation",
+                "hold",
+                "files",
+                "requests"
+              ]
             }
           },
           "identified": {
@@ -6054,7 +6192,17 @@
             "type": "array",
             "items": {
               "type": "string",
-              "enum": ["data", "viewer", "room", "people", "comments", "dictation", "hold", "files"]
+              "enum": [
+                "data",
+                "viewer",
+                "room",
+                "people",
+                "comments",
+                "dictation",
+                "hold",
+                "files",
+                "requests"
+              ]
             }
           },
           "available": {
@@ -7167,6 +7315,22 @@
         },
         "required": ["available", "can_upload", "uploaders_shown"],
         "description": "Present on `ok` only when the current version of an HTML page declares `files` and ALLOW_FILES is on: what the viewer is told about the files people add to it"
+      },
+      "ViewGateRequests": {
+        "type": "object",
+        "properties": {
+          "can_file": {
+            "type": "boolean",
+            "description": "This viewer may file requests: the owner, an editor or a commenter"
+          },
+          "email": {
+            "type": "string",
+            "format": "email",
+            "description": "The email requests are filed under: the one sealed into the content pass"
+          }
+        },
+        "required": ["can_file", "email"],
+        "description": "Present on `ok` only while page requests are on (ALLOW_PAGE_REQUESTS, origin isolation), on an HTML page whose current version declares `requests`, for an identified viewer"
       },
       "DesignExportOptions": {
         "type": "object",

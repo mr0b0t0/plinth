@@ -27,6 +27,8 @@ commentsApi.get(API.comments, async (c) => {
     items,
     can_comment: !!decision?.allow,
     signed_in: ctx.principal.kind !== "anonymous",
+    // The owner and editors dismiss page requests; anyone else who sees one filed it (withdraw).
+    can_moderate: decision?.role === "owner" || decision?.role === "editor",
   });
 });
 

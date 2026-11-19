@@ -340,6 +340,8 @@ export function boardCapabilities(s: BoardSettings): Capabilities {
     dictation: false,
     hold: false,
     files: false,
+    requests: false,
+    requestsTo: [],
     writers: commenters ? "commenter" : "editor",
   };
 }

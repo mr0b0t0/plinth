@@ -459,6 +459,11 @@ export const replyCommentInput = z.object({
   result_version: versionNumberSchema.optional(),
   /** Mark the claimed task failed instead of done (e.g. the request could not be fulfilled). */
   failed: z.boolean().optional(),
+  /**
+   * Mark the claimed task done without a new version: you answered, or changed shared data. At
+   * most one of result_version, failed and done.
+   */
+  done: z.boolean().optional(),
 });
 
 // ---------- App-only REST bodies ----------

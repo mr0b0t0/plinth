@@ -75,8 +75,8 @@ export function buildMcpServer(ctx: Ctx): McpServer {
         "Results list warnings; fix them before handing over the link (not_scanned and live_draft need no action). " +
         `${SENSITIVE_INSTRUCTION} ` +
         "For feedback, read threads with list_comments, answer with reply_comment and close " +
-        "them with resolve_comment; requests addressed to you arrive through list_mentions and " +
-        `claim_mention. ${BOUND_TOKEN_NOTE} ${UNTRUSTED_NOTE} ${TYPES_NOTE} ${PLUGIN_NOTE}`,
+        "them with resolve_comment; requests addressed to you (from comments or from pages) arrive " +
+        `through list_mentions and claim_mention. ${BOUND_TOKEN_NOTE} ${UNTRUSTED_NOTE} ${TYPES_NOTE} ${PLUGIN_NOTE}`,
     },
   );
 

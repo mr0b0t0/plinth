@@ -9,12 +9,13 @@ import worker from "../src/index.ts";
 import { agent, browserSession, contentOrigin, enterContent, publish } from "./helpers.ts";
 
 const PAGE = `<!doctype html><title>Routes</title>
-<meta name="plinth-capabilities" content="data viewer room people files">
+<meta name="plinth-capabilities" content="data viewer room people files requests">
 <meta name="plinth-data-shared" content="tasks"><p>routes</p>`;
 
 // Every feature behind a route is on, so each route reaches the step that reads its body: files
-// (off by default) read a body only once their own availability, artifact and pass steps passed.
-const ALL_ON = { ALLOW_FILES: "true" };
+// and page requests (off by default) read a body only once their own availability, artifact and
+// pass steps passed.
+const ALL_ON = { ALLOW_FILES: "true", ALLOW_PAGE_REQUESTS: "true" };
 
 async function run(url: string, init: RequestInit): Promise<Response> {
   const ctx = createExecutionContext();
@@ -106,7 +107,7 @@ describe("data API route table", () => {
           );
           noCors(res, label);
         }
-        if (route.requireOrigin) {
+        if (route.requireOrigin || route.requireOriginOn?.includes(method)) {
           const res = await request(id, cookie, route.example, method, { origin: null });
           expect(res.status, `${route.kind} ${method}: no Origin`).toBe(403);
         }

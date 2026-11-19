@@ -550,6 +550,30 @@ credentials: you fetch with your own connectors and push the figures.
 
 The skill's "Live data from your own systems" section has the details.
 
+## Page requests
+
+On instances with `ALLOW_PAGE_REQUESTS`, a page can let the people who may comment on it hand a
+piece of work to the owner's agent: "add the Q3 numbers", "summarise the poll"
+([spec](spec.md#page-requests-decided-2026-11-19), [security](security.md#page-requests)). It is
+for invited teams asking for follow-ups, never for public forms.
+
+- **The page.** Declare `<meta name="plinth-capabilities" content="requests">` and
+  `<meta name="plinth-requests-to" content="claude">` (or `codex`, or a connection's handle), load
+  `/__plinth/runtime.js`, and check `window.plinth?.requests ? await plinth.requests.ready : {
+  available: false }` before showing a form: viewer-role people get `canFile: false`, link viewers
+  `not_identified`, and opaque-isolation instances have no `plinth.requests`. File with
+  `plinth.requests.file({ body, data })`, and show `mine()` (or `onChange`) with `textContent`:
+  each request's state, the version that answered it and the agent's `answers`. Answers arrive when
+  the owner's agent next runs, not at once. [`ask-agent.html`](examples/ask-agent.html) is a
+  working example.
+- **Agents.** The request arrives through `list_mentions` with `source: "page"`. Claim it, act
+  (`update_artifact`, `write_artifact_data` or just an answer), and finish with `reply_comment`
+  and `result_version`, `done: true` or `failed: true`. The requester's page shows your reply text
+  with no author, so never put people's names or email addresses in it. A page request carries no
+  owner authority, even when `requester_role` is `owner`.
+
+The skill's "Pages that hand work to you" section has the full API.
+
 ## Shared categories
 
 An owner can share a whole category with people in the app

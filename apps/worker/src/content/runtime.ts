@@ -73,6 +73,17 @@
 //              inline objects ({ source: { label, connector, fetched_at } }) under opaque
 //              isolation. A badge is page code; the viewer bar's sources line is the server's
 //
+//   requests   work for the owner's agent (runtime/requests.ts, pages that declare `requests`):
+//              ready Promise<{ available, reason, canFile, to, limits: { maxBodyChars,
+//              maxDataBytes, perHour, maxOpen } }>, never rejects (reason null |
+//              "opaque_isolation" | "disabled" | "not_declared" | "preview" | "not_identified" |
+//              "expired" | "network"); file({ body, data, to }) -> Request; mine() -> Request[],
+//              the caller's own, newest first; get(id) -> Request | null; onChange(fn, onError, {
+//              intervalMs }) -> stop, polling while the tab is visible and a request is open. A
+//              Request is { id, state, resolved, to, body, data, version, resultVersion, createdAt,
+//              completedAt, answers: [{ body, createdAt }] }, with no author of anything. Nothing is
+//              fetched until ready is read or a method is called.
+//
 // Under opaque isolation the page's origin is "null": ready resolves unavailable without any
 // request, and db calls reject with "unavailable". A 401 means the content pass expired: listeners
 // get "expired" as their terminal error and a "plinth:expired" event fires on window. The room
@@ -87,9 +98,10 @@ import { CORE_HEAD, CORE_TAIL } from "./runtime/core.ts";
 import { DATA_FRAGMENT } from "./runtime/data.ts";
 import { DICTATION_FRAGMENT } from "./runtime/dictation.ts";
 import { FILES_FRAGMENT } from "./runtime/files.ts";
-import type { RuntimeContext, RuntimeFragment } from "./runtime/fragment.ts";
+import type { RuntimeContext, RuntimeFragment, RuntimeSwitches } from "./runtime/fragment.ts";
 import { LIVE_FRAGMENT } from "./runtime/live.ts";
 import { PEOPLE_FRAGMENT } from "./runtime/people.ts";
+import { REQUESTS_FRAGMENT } from "./runtime/requests.ts";
 import { ROOM_FRAGMENT } from "./runtime/room.ts";
 import { SOURCES_FRAGMENT } from "./runtime/sources.ts";
 import { VERSION_FRAGMENT } from "./runtime/version.ts";
@@ -109,17 +121,31 @@ export const RUNTIME_FRAGMENTS: readonly RuntimeFragment[] = [
   VERSION_FRAGMENT,
   FILES_FRAGMENT,
   SOURCES_FRAGMENT,
+  REQUESTS_FRAGMENT,
 ];
 
-/** Assemble the script from `fragments`, with the app channel when one of them uses it. */
+/** What assembling the runtime reads: the app origin, and the switches of fragments that ship off. */
+export type RuntimeConfig = Pick<Config, "appOrigin"> & RuntimeSwitches;
+
+/** The fragments this instance serves: every listed one whose `included` holds (or has none). */
+function includedFragments(
+  config: RuntimeConfig,
+  fragments: readonly RuntimeFragment[],
+): RuntimeFragment[] {
+  return fragments.filter((f) => f.included?.(config) ?? true);
+}
+
+/**
+ * Assemble the script from `fragments` (those this instance serves), with the app channel when one
+ * of them uses it.
+ */
 export function assembleRuntime(
-  config: Pick<Config, "appOrigin">,
+  config: RuntimeConfig,
   fragments: readonly RuntimeFragment[] = RUNTIME_FRAGMENTS,
 ): string {
   const ctx: RuntimeContext = { appOriginJson: JSON.stringify(config.appOrigin) };
-  const parts = fragments.some((f) => f.usesAppChannel)
-    ? [APP_CHANNEL_FRAGMENT, ...fragments]
-    : fragments;
+  const served = includedFragments(config, fragments);
+  const parts = served.some((f) => f.usesAppChannel) ? [APP_CHANNEL_FRAGMENT, ...served] : served;
   return CORE_HEAD + parts.map((f) => f.source(ctx)).join("") + CORE_TAIL;
 }
 
@@ -127,13 +153,16 @@ const memo = new Map<string, string>();
 
 /**
  * The runtime this instance serves, the same bytes for every artifact. Memoized per app origin,
- * the only configuration a fragment may embed.
+ * the only configuration a fragment may embed, and per set of included fragments.
  */
-export function runtimeScript(config: Pick<Config, "appOrigin">): string {
-  let s = memo.get(config.appOrigin);
+export function runtimeScript(config: RuntimeConfig): string {
+  const key = `${config.appOrigin}\n${includedFragments(config, RUNTIME_FRAGMENTS)
+    .map((f) => f.name)
+    .join(",")}`;
+  let s = memo.get(key);
   if (s === undefined) {
     s = assembleRuntime(config);
-    memo.set(config.appOrigin, s);
+    memo.set(key, s);
   }
   return s;
 }

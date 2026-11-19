@@ -113,6 +113,14 @@ export const MENTION_AGENT_NAMES: Record<string, ClientType> = {
   codex: "codex",
 };
 
+/**
+ * The client type a mention name stands for, or null. An own-key lookup, so a name such as
+ * "constructor" or "toString" is never mistaken for an agent name through Object.prototype.
+ */
+export function mentionAgentType(name: string): ClientType | null {
+  return Object.hasOwn(MENTION_AGENT_NAMES, name) ? (MENTION_AGENT_NAMES[name] ?? null) : null;
+}
+
 const KB = 1024;
 const MB = 1024 * KB;
 
@@ -478,6 +486,7 @@ export const CAPABILITY_TOKENS = [
   { token: "dictation", declares: true, needs: [], stored: "declared" },
   { token: "hold", declares: true, needs: [], stored: "declared" },
   { token: "files", declares: true, needs: [], stored: "declared" },
+  { token: "requests", declares: true, needs: [], stored: "declared" },
 ] as const satisfies readonly {
   token: string;
   declares: boolean;
@@ -485,6 +494,11 @@ export const CAPABILITY_TOKENS = [
   stored: "always" | "declared";
 }[];
 export type DataCapability = (typeof CAPABILITY_TOKENS)[number]["token"];
+
+/** The meta naming a page's default request target (docs/spec.md "Page requests"). */
+export const REQUESTS_TO_META = "plinth-requests-to";
+/** A request target: `claude`, `codex` or a connection handle, as mentionHandle() normalises labels. */
+export const PAGE_REQUEST_TO_RE = /^[a-z0-9][a-z0-9_.-]{0,79}$/;
 export const DATA_CAPABILITIES: readonly DataCapability[] = CAPABILITY_TOKENS.map((t) => t.token);
 
 /** Query parameter that turns on review mode (comment anchoring bridge) on a content host. */

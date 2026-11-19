@@ -213,6 +213,8 @@ describe("fixed capabilities and writers", () => {
       dictation: false,
       hold: false,
       files: false,
+      requests: false,
+      requestsTo: [],
       writers: "commenter",
     });
     expect(boardCapabilities({ v: 1, background: "plain", edit: "editors" })).toMatchObject({

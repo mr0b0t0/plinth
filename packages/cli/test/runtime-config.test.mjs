@@ -127,6 +127,10 @@ describe("generated Worker configs carry the flag and the cron", () => {
     assert.equal(runtimeBase(repoCfg).vars.SHEET_EVAL_BUDGET, "200000");
     // Files people add to a page ship off.
     assert.equal(repoCfg.vars.ALLOW_FILES, "false");
+    // Page requests ship off, and the CLI's base copies the switch and its limits.
+    assert.equal(repoCfg.vars.ALLOW_PAGE_REQUESTS, "false");
+    assert.equal(runtimeBase(repoCfg).vars.ALLOW_PAGE_REQUESTS, "false");
+    assert.equal(runtimeBase(repoCfg).vars.PAGE_REQUESTS_MAX_OPEN_PER_ARTIFACT, "25");
   });
 
   it("the CLI's runtime/wrangler.base.json (packages/cli/scripts/bundle.mjs)", () => {
@@ -346,6 +350,7 @@ await setupInstance(raw, {
         PLINTH_ALLOW_DICTATION: "true",
         PLINTH_ALLOW_CATEGORY_SHARING: "false",
         PLINTH_ALLOW_FILES: "true",
+        PLINTH_ALLOW_PAGE_REQUESTS: "true",
       },
       encoding: "utf8",
     });
@@ -356,6 +361,7 @@ await setupInstance(raw, {
     assert.equal(offCfg.vars.ALLOW_DICTATION, "true");
     assert.equal(offCfg.vars.ALLOW_CATEGORY_SHARING, "false");
     assert.equal(offCfg.vars.ALLOW_FILES, "true");
+    assert.equal(offCfg.vars.ALLOW_PAGE_REQUESTS, "true");
     assertRooms(offCfg, "docker (rooms off)", { vars: false });
   });
 

@@ -14,6 +14,7 @@ available. The end-to-end tests publish every file here and check that contract
 | [`whiteboard.html`](whiteboard.html) | A team moves sticky notes together, with live cursors | `data viewer room`, shared `notes links` |
 | [`canvas-comments.html`](canvas-comments.html) | People comment on spots of a sketch | `comments` |
 | [`live-dashboard.html`](live-dashboard.html) | Figures from the owner's own systems, each with where it came from and how old it is | `data viewer`, sourced `issues` |
+| [`ask-agent.html`](ask-agent.html) | Readers of a report ask the owner's agent for follow-ups, and see its answers | `requests`, to `claude` |
 
 The first three are built for people outside the owner's team: a client or an approver who has no
 Plinth account and confirms their email by code.
@@ -202,6 +203,16 @@ cursors and dragging through the page's room. See
 
 [`canvas-comments.html`](canvas-comments.html) opens Plinth's comment composer on a spot of a
 canvas. See [Comments from the page](../agents.md#comments-from-the-page).
+
+## Asking the owner's agent
+
+[`ask-agent.html`](ask-agent.html) is a report whose readers ask the owner's agent for follow-ups.
+A commenter or editor types a request; it waits in the agent's queue (`list_mentions`, with
+`source: "page"`) until the agent runs, and the page then shows its state, the version that
+answered it and the agent's answer. Each reader sees only their own requests. It needs an instance
+with `ALLOW_PAGE_REQUESTS` on; elsewhere the report shows and the form stays off. Invite the readers
+who may ask as commenters: the viewer role can read the report but not ask. See
+[Page requests](../agents.md#page-requests).
 
 ## Writing a new example
 
