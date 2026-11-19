@@ -127,6 +127,54 @@ const ERRORS: Record<string, string> = {
   unavailable: "Live editing is unavailable right now. Your text is kept on this page.",
 };
 
+/**
+ * A rebuild (new columns, a width, a row count) replaces the grid, which takes the focus out of
+ * the page. This notes where it was and returns how to give it back afterwards, or null when the
+ * grid did not have it. A control that outlives the rebuild (the column settings, the strip, an
+ * open cell's field) gets it again, caret and all; the filter's field gives it to the new filter;
+ * a cell gives it to the selected cell. Anything else (a download button) leaves it where it fell:
+ * never on a cell, where the next key would start editing it.
+ */
+function keptFocus(doc: Document, grid: Grid): ((next: Grid) => void) | null {
+  const was = doc.activeElement as HTMLElement | null;
+  if (!was || !grid.el.contains(was)) return null;
+  const inCell = grid.table.contains(was);
+  const inFilter = was === grid.filterInput;
+  const caret = caretOf(was);
+  return (next) => {
+    const now = doc.activeElement;
+    // Something already took the focus again (the editor's own code): leave it.
+    if (now !== null && now !== doc.body) return;
+    const to = was.isConnected ? was : inFilter ? next.filterInput : null;
+    if (to) {
+      to.focus({ preventScroll: true });
+      if (caret) setCaret(to, caret);
+    } else if (inCell) next.focusSelected();
+  };
+}
+
+type Caret = { start: number; end: number; dir: "forward" | "backward" | "none" };
+
+/** A text field's selection, or null for anything else (or a field type without one). */
+function caretOf(el: HTMLElement): Caret | null {
+  const f = el as Partial<HTMLInputElement>;
+  if (typeof f.setSelectionRange !== "function") return null;
+  try {
+    if (f.selectionStart == null || f.selectionEnd == null) return null;
+    return { start: f.selectionStart, end: f.selectionEnd, dir: f.selectionDirection ?? "none" };
+  } catch {
+    return null;
+  }
+}
+
+function setCaret(el: HTMLElement, c: Caret): void {
+  try {
+    (el as HTMLInputElement).setSelectionRange(c.start, c.end, c.dir);
+  } catch {
+    // A field type without a selection: the focus alone.
+  }
+}
+
 /** Renders the sheet and starts listening. Returns a function that stops listening. */
 export function boot(win: Window, opts: BootOptions = {}): () => void {
   const doc = win.document;
@@ -180,15 +228,13 @@ export function boot(win: Window, opts: BootOptions = {}): () => void {
     if (!grid.update(sheet, ev)) {
       const view = grid.view();
       const editing = grid.el.classList.contains("plinth-sheet__page--editing");
-      // A rebuild (new columns, a width, a row count) keeps the focus on the selected cell.
-      const focused = grid.el.contains(doc.activeElement);
+      const focus = keptFocus(doc, grid);
       grid = build();
       grid.el.classList.toggle("plinth-sheet__page--editing", editing);
       root.replaceChildren(grid.el);
       grid.restore(view);
       editor?.attach(grid);
-      const now = doc.activeElement;
-      if (focused && (now === null || now === doc.body)) grid.focusSelected();
+      focus?.(grid);
     } else editor?.render();
     mark();
   };

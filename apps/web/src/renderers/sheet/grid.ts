@@ -55,6 +55,8 @@ export interface Grid {
   table: HTMLTableElement;
   /** Between the formula bar and the cells: the editor's strip goes here. */
   slot: HTMLElement;
+  /** The toolbar's filter field (a rebuild gives the focus back to the new one). */
+  filterInput: HTMLInputElement;
   select(row: number, col: number): void;
   /** The selected cell's A1 row and column. */
   selected(): { row: number; col: number };
@@ -420,6 +422,7 @@ export function buildGrid(
   const grid: Grid = {
     el: root,
     table,
+    filterInput,
     slot: el(doc, "div", "plinth-sheet__slot"),
     selected: () => ({ row: selRow, col: selCol }),
     cell: (row, col) => byAddress.get(a1(row, col)) ?? null,

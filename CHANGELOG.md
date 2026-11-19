@@ -19,7 +19,8 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   remove from; renaming an option renames it in the cells that hold it. At phone width a cell
   opens in an editor docked at the bottom of the page, with the column's name and Done. The grid
   is now a proper grid for keyboards and screen readers: one tab stop, the arrows, Home and End,
-  and cells someone else is editing say so.
+  and cells someone else is editing say so. When someone else's change redraws the grid, the
+  focus stays where you were typing (the column settings, the filter or a cell).
 - **Review a newer version in the page itself.** When a version is published while people have
   unpublished changes on a doc or a sheet that are not combined with it, **Review changes** opens
   the review inside the page: their changes and the new version (or every version since, named as

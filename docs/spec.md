@@ -2573,7 +2573,11 @@ and the whole-draft review is the only way on (below).
   menu closes, saying the sheet changed, when someone else's change puts another row or column at
   the number it names (or changes that row, or what is frozen), so it never acts on one it does
   not name. A row move is announced and
-  its row selected once the room says it applied this frame's move.
+  its row selected once the room says it applied this frame's move. When someone else's change
+  redraws the grid (new columns, a width, a row count), the focus stays where it was: in the
+  column settings, the strip or an open cell's field with its selection, in the filter with its
+  text, or on the selected cell when a cell had it. It never moves onto a cell from anywhere else,
+  since a key typed in a selected cell starts editing it.
 - **Live views.** A sheet edited on its page keeps its frame as a doc does
   ([Live views](#live-views-decided-2026-11-19)).
 ### Comparing versions (decided 2026-11-19)

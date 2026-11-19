@@ -690,6 +690,74 @@ describe("while someone else changes the sheet", () => {
     expect(text("D1")).toContain("Price");
   });
 
+  /** Someone else appends a row: the shape changes, so the grid is built again. */
+  const appended = (ws: FakeSocket, rev: number) =>
+    ws.frame({
+      t: "struct",
+      gen: "g1",
+      rev,
+      op: { op: "insert_rows", before: 5, count: 1 },
+      by: "s2",
+    });
+
+  it("a rebuild leaves the focus in the column settings, so a key goes there, not to a cell", async () => {
+    const { ws } = roomed();
+    cell("B2").focus();
+    button("Column settings").click();
+    const name = labelled(panel(), "Name");
+    expect(document.activeElement).toBe(name);
+    name.value = "Quant";
+    name.setSelectionRange(2, 4);
+    appended(ws, 4);
+    await tick();
+    expect(cell("A5")).not.toBeNull();
+    expect(document.activeElement).toBe(name);
+    expect([name.selectionStart, name.selectionEnd]).toEqual([2, 4]);
+    key(document.activeElement as Element, "Z");
+    expect(ws.sent.filter((m) => m.t === "lease")).toEqual([]);
+    expect(field()).toBeNull();
+    expect(name.value).toBe("Quant");
+  });
+
+  it("a rebuild leaves the focus in the filter, with what it holds", async () => {
+    const { ws } = roomed();
+    cell("B2").focus();
+    const filter = document.querySelector(".plinth-sheet__filter-input") as HTMLInputElement;
+    filter.focus();
+    filter.value = "Ap";
+    filter.dispatchEvent(new Event("input"));
+    appended(ws, 4);
+    await tick();
+    const now = document.querySelector(".plinth-sheet__filter-input") as HTMLInputElement;
+    expect(now).not.toBe(filter);
+    expect(document.activeElement).toBe(now);
+    expect([now.value, now.selectionStart, now.selectionEnd]).toEqual(["Ap", 2, 2]);
+    key(document.activeElement as Element, "Z");
+    expect(ws.sent.filter((m) => m.t === "lease")).toEqual([]);
+    expect(field()).toBeNull();
+  });
+
+  it("a rebuild keeps the focus on the selected cell when a cell had it", async () => {
+    const { ws } = roomed();
+    cell("B2").focus();
+    appended(ws, 4);
+    await tick();
+    expect(document.activeElement).toBe(cell("B2"));
+  });
+
+  it("a rebuild while elsewhere in the page leaves the focus off the cells", async () => {
+    const { ws } = roomed();
+    cell("B2").focus();
+    const csv = document.querySelector('[data-format="csv"]') as HTMLButtonElement;
+    csv.focus();
+    appended(ws, 4);
+    await tick();
+    expect(document.activeElement).not.toBe(cell("B2"));
+    key(document.activeElement as Element, "Z");
+    expect(ws.sent.filter((m) => m.t === "lease")).toEqual([]);
+    expect(field()).toBeNull();
+  });
+
   it("a width the keys had not sent yet is still written when edit mode ends", async () => {
     const { f, ws } = roomed();
     key(sortOf("B1"), "ArrowRight", { altKey: true });
