@@ -14,7 +14,7 @@
 // sheet type: read_sheet and edit_sheet, the publish, update and get_artifact notes, the content
 // and content_format descriptions, the untrusted note's sheet sentence and the instructions'
 // sheet sentence; live sheets: the live_draft sentences of the publish notes and get_artifact name
-// sheets as well as docs).
+// sheets as well as docs, and say a sheet's page edits are always reviewed, never merged).
 // Category sharing adds its note to publish_artifact, update_artifact, start_upload and
 // list_artifacts and a sentence to the instructions, only while ALLOW_CATEGORY_SHARING is on: the
 // pins below hold with the switch off, and "category sharing on" pins the surface with it on.
@@ -78,7 +78,7 @@ describe("MCP surface (golden)", () => {
   it("origin isolation", async () => {
     expect(await surface(OFF)).toEqual({
       names: NAMES,
-      tools: "bde7aa581335f85ba6bf97829b4fc8ed63f3e090222bb995f8fe2be62c65e8c3",
+      tools: "ce513422b8ffc9e009ed9cbbfe8ef09bc96e385b221ab894ea00d604f8c60380",
       resources: RESOURCES,
       preview: "fd84092d5ecc5a28f494373097e8a3b6e27065d5ef6928f3e124c634f8cf6f47",
       instructions: INSTRUCTIONS,
@@ -88,7 +88,7 @@ describe("MCP surface (golden)", () => {
   it("opaque isolation", async () => {
     expect(await surface({ ...OFF, CONTENT_ISOLATION: "opaque" })).toEqual({
       names: NAMES,
-      tools: "06a650d3abb4cb24fa259fbd82b6a9e8a2440ecd4ae35fbd7a36369a41535abb",
+      tools: "86cf60ae16e73c72e3a3e29efacf48f17bab9768c0ce2a70910f220f74c566c5",
       resources: RESOURCES,
       preview: "257bbf5bb47164c389849fffa7fc1dd46e6e7c20e4ef616b4bffefb53a8fd08b",
       instructions: INSTRUCTIONS,
@@ -100,7 +100,7 @@ describe("MCP surface (golden)", () => {
       await surface({ ...OFF, STAGING_CONTENT_FALLBACK: "true", CONTENT_ISOLATION: "opaque" }),
     ).toEqual({
       names: NAMES,
-      tools: "9da08ea2b0e6a6c7bd12c8d5adff41d7d3ec332a304b2518ba50ba59acb1b68e",
+      tools: "99af5448b2611c905bebe190a1f3c8686d5842014021e3a5e555dc707c7794d9",
       resources: RESOURCES,
       preview: "257bbf5bb47164c389849fffa7fc1dd46e6e7c20e4ef616b4bffefb53a8fd08b",
       instructions: INSTRUCTIONS,
@@ -110,7 +110,7 @@ describe("MCP surface (golden)", () => {
   it("category sharing on (the default): the share note and the instructions' sentence", async () => {
     expect(await surface()).toEqual({
       names: NAMES,
-      tools: "dece4836caa82b4c167da9ec066cf3d6e78c9ecc4e5ccfa31f250d6f1dace394",
+      tools: "abe10186d20227a47f30468d93c28df9202e21cfb5a68cdcd0b5fb1c430aa575",
       resources: RESOURCES,
       preview: "fd84092d5ecc5a28f494373097e8a3b6e27065d5ef6928f3e124c634f8cf6f47",
       instructions: "df1a711af52dbc58eee1cf273d573e79b88dc258514b170c9f0f3cd57a6d892b",

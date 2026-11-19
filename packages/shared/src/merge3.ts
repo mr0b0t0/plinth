@@ -5,15 +5,6 @@
 // taken once; changes that overlap or touch (adjacent lines, or an insert at the edge of another
 // change) and differ are a conflict. A diff of more than `maxEdits` line edits is a conflict too.
 //
-// With `rows` (a sheet, where each line is one row), changes that only touch merge: a row
-// changed on one side next to a row changed on the other keeps both, and so do an insert and a
-// change beside it. Rows inserted at the same place on both sides still conflict unless they are
-// the same, and changes that overlap still do.
-//
-// A line merge knows nothing of what the lines mean. A type whose lines refer to each other by
-// position (a sheet's formulas and columns) passes `refuse`, which sees both sides' hunks and turns
-// a clean line merge into a review (`refused`).
-//
 // The diff is Myers' O((N+M)D) algorithm in its linear-space form (the middle snake, divide and
 // conquer), on lines interned to integers, after trimming the common prefix and suffix.
 import { LIVE_DOC } from "./liveDoc.ts";
@@ -46,23 +37,11 @@ export type Merge3Result =
   | { clean: true; text: string; work: number }
   | {
       clean: false;
-      /**
-       * `too_large`: a diff had more than maxEdits edits, so nothing was compared. `refused`: the
-       * lines merged, but `refuse` said the result would not mean what either side meant.
-       */
-      reason: "conflict" | "too_large" | "refused";
+      /** `too_large`: a diff had more than maxEdits edits, so nothing was compared. */
+      reason: "conflict" | "too_large";
       conflicts: Merge3Conflict[];
       work: number;
     };
-
-/** What `refuse` sees: the three texts' lines and how each side changed the base. */
-export interface Merge3Sides {
-  base: readonly string[];
-  ours: readonly string[];
-  theirs: readonly string[];
-  oursHunks: readonly LineHunk[];
-  theirsHunks: readonly LineHunk[];
-}
 
 interface DiffState {
   a: Int32Array;
@@ -263,17 +242,6 @@ function sameLines(x: readonly string[], y: readonly string[]): boolean {
 }
 
 /**
- * Whether a hunk belongs to the cluster that ends at base line `end`: it overlaps it or, for
- * text, touches it. For rows, touching joins only an insert at the same place as another insert.
- */
-function joins(h: Tagged, cluster: readonly Tagged[], end: number, rows: boolean): boolean {
-  if (h.aStart < end) return true;
-  if (h.aStart > end) return false;
-  if (!rows) return true;
-  return h.aStart === h.aEnd && cluster.some((c) => c.aStart === c.aEnd && c.aStart === end);
-}
-
-/**
  * Merge two edits of the same base text, line by line. `ours` is the live draft, `theirs` the
  * version published meanwhile. Texts are split on "\n" and joined back the same way, so a
  * trailing newline is a line like any other.
@@ -282,12 +250,7 @@ export function merge3(
   base: string,
   ours: string,
   theirs: string,
-  opts: {
-    maxEdits?: number;
-    rows?: boolean;
-    /** Asked about a merge whose lines merged cleanly (both sides changed): true makes it `refused`. */
-    refuse?: ((sides: Merge3Sides) => boolean) | undefined;
-  } = {},
+  opts: { maxEdits?: number } = {},
 ): Merge3Result {
   if (ours === theirs || theirs === base) return { clean: true, text: ours, work: 0 };
   if (ours === base) return { clean: true, text: theirs, work: 0 };
@@ -322,7 +285,7 @@ export function merge3(
     let start = first.aStart;
     let end = first.aEnd;
     i++;
-    while (i < all.length && joins(all[i] as Tagged, cluster, end, opts.rows === true)) {
+    while (i < all.length && (all[i] as Tagged).aStart <= end) {
       const h = all[i] as Tagged;
       cluster.push(h);
       start = Math.min(start, h.aStart);
@@ -342,7 +305,5 @@ export function merge3(
   }
   for (let k = pos; k < b.length; k++) out.push(b[k] as string);
   if (conflicts.length > 0) return { clean: false, reason: "conflict", conflicts, work };
-  const sides = { base: b, ours: o, theirs: t, oursHunks: dOurs.hunks, theirsHunks: dTheirs.hunks };
-  if (opts.refuse?.(sides)) return { clean: false, reason: "refused", conflicts: [], work };
   return { clean: true, text: out.join("\n"), work };
 }

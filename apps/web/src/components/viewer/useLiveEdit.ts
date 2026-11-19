@@ -22,6 +22,8 @@ import {
   type ArtifactDetail,
   type LiveCheckpointResult,
   type LiveInfo,
+  liveReplacesNote,
+  liveRules,
   type PublishResult,
   route,
   sourceOf,
@@ -63,9 +65,17 @@ export interface LiveConflict {
   /** The version that changed the same lines (or, solo, the one now current). */
   current: number;
   currentText: string;
+  /**
+   * The text of `base`, for a type that is never merged (a sheet): its review lists what each
+   * side changed since then.
+   */
+  baseText?: string;
   /** Room mode: the draft revision and base the resolution is checked against. */
   rev?: number;
 }
+
+/** The note a version of page edits carries when the editor gave none (as the server's). */
+export const LIVE_NOTE = "Edited on the page";
 
 /** How often solo edits are copied to sessionStorage while dirty. */
 export const SOLO_KEEP_MS = 5000;
@@ -86,6 +96,12 @@ export interface UseLiveEditOptions {
 export interface LiveEdit {
   /** On-page editing exists for this person here (owner or editor, origin isolation). */
   available: boolean;
+  /**
+   * A version published meanwhile is merged under the page edits when that is clean (a doc).
+   * False for a sheet: the page edits are never merged, and the review offers exactly two
+   * choices, publish them as they are or discard them.
+   */
+  merges: boolean;
   /** Confirmed by code without an account: they must sign in to edit. */
   signIn: boolean;
   mode: "room" | "solo" | null;
@@ -130,6 +146,7 @@ export function useLiveEdit({
   const { artifact } = gate;
   const id = artifact.id;
   const def = typeDef(artifact.type);
+  const merges = liveRules(artifact.type)?.merge !== false;
   // What the person edits, in messages ("doc", "sheet"), and how much the frame may hand back.
   const noun = (def?.badge ?? "doc").toLowerCase();
   const maxBytes =
@@ -293,19 +310,23 @@ export function useLiveEdit({
         toast("Nothing to review: the page edits merged cleanly.", "neutral");
         return;
       }
-      const currentText = await versionText(d.conflict_version);
+      const [currentText, baseText] = await Promise.all([
+        versionText(d.conflict_version),
+        merges ? undefined : versionText(d.base_version),
+      ]);
       setConflict({
         draft: d.text,
         base: d.base_version,
         current: d.conflict_version,
         currentText,
+        ...(baseText !== undefined ? { baseText } : {}),
         rev: d.rev,
       });
     } catch (e) {
       setReviewing(false);
       fail(e);
     }
-  }, [id, versionText, fail, collect]);
+  }, [id, versionText, fail, collect, merges]);
 
   const soloConflict = useCallback(
     async (draft: string, base: number, details: unknown) => {
@@ -314,14 +335,23 @@ export function useLiveEdit({
           ? (details as { current_version: number }).current_version
           : latest.current.gate.artifact.current_version;
       try {
-        const currentText = await versionText(n);
-        setConflict({ draft, base, current: n, currentText });
+        const [currentText, baseText] = await Promise.all([
+          versionText(n),
+          merges ? undefined : versionText(base),
+        ]);
+        setConflict({
+          draft,
+          base,
+          current: n,
+          currentText,
+          ...(baseText !== undefined ? { baseText } : {}),
+        });
         setReviewing(true);
       } catch (e) {
         fail(e);
       }
     },
-    [versionText, fail],
+    [versionText, fail, merges],
   );
 
   const soloConflictRef = useRef(soloConflict);
@@ -487,7 +517,10 @@ export function useLiveEdit({
     const c = conflict;
     if (!c) return;
     if (latest.current.mode === "solo" || c.rev === undefined) {
-      const r = await publishSolo(c.draft, c.current);
+      // A sheet's page edits replace the version published meanwhile, and the note says so (as
+      // the room's checkpoint does).
+      const note = merges ? undefined : liveReplacesNote(LIVE_NOTE, c.current);
+      const r = await publishSolo(c.draft, c.current, note);
       if (r) closeReview();
       return;
     }
@@ -507,7 +540,7 @@ export function useLiveEdit({
     } finally {
       setSaving(false);
     }
-  }, [conflict, id, publishSolo, closeReview, failResolve]);
+  }, [conflict, id, publishSolo, closeReview, failResolve, merges]);
 
   const takeLatest = useCallback(async () => {
     const c = conflict;
@@ -640,6 +673,7 @@ export function useLiveEdit({
 
   return {
     available,
+    merges,
     signIn,
     mode,
     editing,

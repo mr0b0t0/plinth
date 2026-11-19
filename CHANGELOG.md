@@ -15,12 +15,13 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   Tab move on, Escape puts it back, a checkbox toggles with Space, and pasting cells from a
   spreadsheet fills the rows they cover. A strip inserts and deletes rows and columns and changes a
   column's name, type and format. The others editing see each change as it is typed, and rows
-  someone holds show their email. Save version (or a pause) makes the next version, as for docs; a
-  version an agent publishes meanwhile is merged under the page edits row by row, or reviewed when
-  both changed the same row, or when one side changed the columns or moved rows under the other's
-  cells or formulas (including a row deleted and another added, and rows moved among blank ones). When two people change rows at once, each change lands on the row it was made on, or
-  is dropped with a note when that row is gone. Numbers are typed in your locale. Follows
-  `ALLOW_LIVE_EDITING`.
+  someone holds show their email. Save version (or a pause) makes the next version, as for docs.
+  A version published meanwhile (by an agent, the CLI, REST or a restore) is never merged into the
+  page edits: editing pauses, and the editors review both sheets side by side, with what each
+  changed, and choose **Publish mine** (the page edits become the next version, and the other stays
+  in the history) or **Discard mine** (after a confirmation that lists what will be lost). When two
+  people change rows at once, each change lands on the row it was made on, or is dropped with a
+  note when that row is gone. Numbers are typed in your locale. Follows `ALLOW_LIVE_EDITING`.
 - **Follow the presenter in a deck.** An owner or editor can turn on **Lead viewers** in a deck's
   controls or presenter view, and the people the deck is shared with who have it open follow their
   slide, with a "Following the presenter" note; paging by hand pauses it until they choose "Back to

@@ -594,4 +594,98 @@ describe("useLiveEdit", () => {
     expect(result.current.restore).toBeNull();
     expect(sessionStorage.getItem("plinth-draft:page-edit:art1")).toBeNull();
   });
+
+  // A sheet's page edits are never merged: the review reads the base too (for its change lists),
+  // and its two choices publish the draft as it is or go back to the version published meanwhile.
+  const sheetGate = (mode: "room" | "solo") => {
+    const g = gate(mode);
+    g.artifact = { ...g.artifact, type: "sheet" };
+    return g;
+  };
+  const sheetVersion = (path: string) => {
+    const m = /^\/artifacts\/art1\/versions\/(\d+)$/.exec(path);
+    return m
+      ? json({ type: "sheet", content: `sheet v${m[1]}`, source_path: "sheet.jsonl" })
+      : null;
+  };
+
+  it("a sheet: never merges, reads the base for the review, and Publish mine sends the draft as it is", async () => {
+    const { calls } = stubApi({
+      handle: (c) => {
+        if (c.path.endsWith("/live")) return json(INFO);
+        if (c.path.endsWith("/live/draft")) {
+          return json({ text: "sheet mine", base_version: 3, rev: 7, conflict_version: 4 });
+        }
+        if (c.path.endsWith("/live/checkpoint")) {
+          return json({ saved: true, version: { version: 5 }, live: { rev: 8, dirty: false } });
+        }
+        return sheetVersion(c.path) ?? undefined;
+      },
+    });
+    const { result } = hook(sheetGate("room"));
+    expect(result.current.merges).toBe(false);
+    act(() => result.current.start());
+    fromFrame({ type: "live", ...STATUS, conflict_version: 4 });
+    await act(() => result.current.review());
+    await waitFor(() => expect(result.current.conflict).not.toBeNull());
+    expect(result.current.conflict).toEqual({
+      draft: "sheet mine",
+      base: 3,
+      current: 4,
+      currentText: "sheet v4",
+      baseText: "sheet v3",
+      rev: 7,
+    });
+    await act(() => result.current.keepMine());
+    expect(calls.filter((c) => c.method === "POST").at(-1)?.body).toEqual({
+      base_version: 3,
+      rev: 7,
+      reason: "save",
+      resolved_text: "sheet mine",
+      conflict_version: 4,
+    });
+    expect(result.current.conflict).toBeNull();
+    expect(hook(gate("room")).result.current.merges).toBe(true);
+  });
+
+  it("a sheet, solo: Publish mine says in the note which version it replaces", async () => {
+    let puts = 0;
+    const { calls } = stubApi({
+      handle: (c) => {
+        if (c.method === "PUT") {
+          puts++;
+          if (puts === 1) {
+            return json(
+              { error: { code: "conflict", message: "Stale", details: { current_version: 4 } } },
+              409,
+            );
+          }
+          return json({ id: "art1", version: 5, type: "sheet", warnings: [] });
+        }
+        return sheetVersion(c.path) ?? undefined;
+      },
+    });
+    const { result } = hook(sheetGate("solo"));
+    act(() => result.current.start());
+    fromFrame({ type: "live", ...STATUS, connected: false });
+    let saving: Promise<void> = Promise.resolve();
+    act(() => {
+      saving = result.current.save();
+    });
+    const nonce = sentToFrame("collect").at(-1)?.[0].nonce as string;
+    fromFrame({ type: "draft", nonce, text: "sheet mine" });
+    await act(() => saving);
+    await waitFor(() => expect(result.current.conflict).not.toBeNull());
+    expect(result.current.conflict).toMatchObject({
+      baseText: "sheet v3",
+      currentText: "sheet v4",
+    });
+    await act(() => result.current.keepMine());
+    expect(calls.filter((c) => c.method === "PUT").at(-1)?.body).toEqual({
+      content: "sheet mine",
+      base_version: 4,
+      note: "Edited on the page. Replaces the changes in v4.",
+    });
+    expect(result.current.conflict).toBeNull();
+  });
 });

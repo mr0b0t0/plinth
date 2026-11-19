@@ -1748,7 +1748,10 @@ function liveOperations(): Operation[] {
         `${who} The version is published with the draft's base_version, so a stale draft is ` +
         "refused (409) and nothing is overwritten. A draft equal to its base writes nothing. " +
         "resolved_text is accepted only while the draft is in conflict, with the conflict_version " +
-        "the editor reviewed (409 when the draft now conflicts with a newer version).",
+        "the editor reviewed (409 when the draft now conflicts with a newer version). A sheet's " +
+        "draft is never merged: its resolved_text must be the draft itself, saved on top of the " +
+        "conflicting version, or that version's text, which drops the draft (400 not_a_choice " +
+        "otherwise, 409 when rev is not the draft's).",
       tag: "Live editing",
       auth: "user",
       body: "LiveCheckpointInput",

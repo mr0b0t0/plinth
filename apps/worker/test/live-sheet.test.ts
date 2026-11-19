@@ -2,8 +2,8 @@
 // docs, with the sheet's rules. A row lease and its edit; a row line the sheet cannot hold (or not
 // in its canonical spelling) refused with `invalid` and not applied; a header that keeps its
 // columns; struct frames applied once and the same on every socket, refused while someone else
-// holds a lease; an agent's edit_sheet version merged row by row under the draft, or frozen for
-// review when the merged sheet is not valid; and a checkpoint that saves the draft as it is.
+// holds a lease; a version published meanwhile (edit_sheet, PUT, a restore) never merged: the
+// draft freezes, and the review's two choices publish it as it is or discard it.
 import { env } from "cloudflare:workers";
 import { applySheetStruct, splitLines } from "@plinth/shared";
 import { describe, expect, it } from "vitest";
@@ -207,172 +207,256 @@ describe("sheet socket: rows and columns (struct)", () => {
 });
 
 describe("sheet socket: versions published from outside", () => {
-  const editSheet = (id: string, auth: Record<string, string>, body: Record<string, unknown>) =>
-    run(`${APP}/api/v1/artifacts/${id}/sheet/edits`, {
-      method: "POST",
-      headers: { ...auth, "Content-Type": "application/json" },
-      body: JSON.stringify(body),
+  // A sheet's draft is never merged with a version published meanwhile (an agent, the CLI, REST
+  // or a restore): it freezes, and the editors publish it as it is or discard it.
+  const call = (
+    id: string,
+    headers: Record<string, string>,
+    path: string,
+    init: { method?: string; body?: unknown } = {},
+  ) =>
+    run(`${APP}/api/v1/artifacts/${id}${path}`, {
+      method: init.method ?? (init.body === undefined ? "GET" : "POST"),
+      headers: {
+        ...headers,
+        ...(init.body !== undefined ? { "Content-Type": "application/json" } : {}),
+      },
+      ...(init.body !== undefined ? { body: JSON.stringify(init.body) } : {}),
     });
+  const editSheet = (id: string, auth: Record<string, string>, body: Record<string, unknown>) =>
+    call(id, auth, "/sheet/edits", { body });
+  const checkpoint = (id: string, headers: Record<string, string>, body: Record<string, unknown>) =>
+    call(id, headers, "/live/checkpoint", { body });
+  const content = async (id: string, auth: Record<string, string>, n: number) =>
+    (await json(await call(id, auth, `/versions/${n}`))).content as string;
+  const V2 = SHEET.replace('["Pears",5]', '["Pears",7]');
 
-  it("an agent's edit_sheet version is merged row by row under the draft, and a checkpoint saves it", async () => {
-    const { owner, id, ownerP } = await sheetSetup(SHEET);
-    const a = await connectDoc(id, ownerP.cookie);
-    await editRow(a, 1, '["Apples",4,true]', 0);
-    const res = await editSheet(id, owner.auth, {
+  /** The page edits row 1 (Apples) to `rowEdit`; an agent sets B3 with edit_sheet: frozen at v2. */
+  async function frozen(rowEdit: string) {
+    const s = await sheetSetup(SHEET);
+    const a = await connectDoc(s.id, s.ownerP.cookie);
+    await editRow(a, 1, rowEdit, 0);
+    const res = await editSheet(s.id, s.owner.auth, {
       base_version: 1,
       ops: [{ op: "set", at: "B3", values: [[7]] }],
     });
     expect(res.status).toBe(201);
     expect((await json(res)).warnings).toContainEqual(
-      expect.objectContaining({ code: "live_draft", file: "sheet.jsonl" }),
+      expect.objectContaining({
+        code: "live_draft",
+        file: "sheet.jsonl",
+        message: expect.stringContaining("choose to publish them in its place or discard them"),
+      }),
     );
-    const rebased = await a.nextOf("rebased");
-    expect(rebased).toMatchObject({ version: 2, rev: 2 });
-    const merged = SHEET.replace('["Apples",3,true]', '["Apples",4,true]').replace(
-      '["Pears",5]',
-      '["Pears",7]',
-    );
-    expect(await readText(a, rebased.gen)).toBe(merged);
-    const h = ownerP.session.headers;
-    const saved = await run(`${APP}/api/v1/artifacts/${id}/live/checkpoint`, {
-      method: "POST",
-      headers: { ...h, "Content-Type": "application/json" },
-      body: JSON.stringify({ base_version: 2, rev: 2, reason: "save" }),
+    expect(await a.nextOf("conflict")).toEqual({ t: "conflict", version: 2 });
+    return { ...s, a, draft: SHEET.replace('["Apples",3,true]', rowEdit) };
+  }
+
+  it("an agent's edit_sheet on other rows during a live edit freezes the draft; nothing is merged", async () => {
+    const { id, ownerP, owner, a, draft } = await frozen('["Apples",4,true]');
+    expect(await stubFor(id).docPeek(id)).toMatchObject({
+      base_version: 1,
+      conflict_version: 2,
+      text: draft,
     });
-    expect(saved.status).toBe(200);
-    expect(await json(saved)).toMatchObject({ saved: true, version: { version: 3 } });
-    expect((await versionRow(id, 3))?.note).toBe("Edited on the page");
-    const detail = await json(await run(`${APP}/api/v1/artifacts/${id}`, { headers: owner.auth }));
-    // Stored byte for byte: the draft is already the canonical form.
-    expect(detail.content).toBe(merged);
+    expect(await content(id, owner.auth, 2)).toBe(V2);
+    // Editing stops until a choice: no lease, no struct, and no ordinary save.
+    expect(await lease(a, 2, 3, 1)).toEqual({ t: "lease_denied", reason: "frozen" });
+    expect(await struct(a, { op: "insert_rows", before: 2, count: 1 }, 1)).toEqual({
+      t: "struct_denied",
+      reason: "frozen",
+    });
+    const h = ownerP.session.headers;
+    const refused = await checkpoint(id, h, { base_version: 1, rev: 1, reason: "save" });
+    expect(refused.status).toBe(409);
+    expect((await json(refused)).error).toMatchObject({
+      message: "v2 was published while you edited. Review it.",
+      details: { reason: "live_conflict", current_version: 2 },
+    });
+    // The review reads the whole draft.
+    expect(await json(await call(id, h, "/live/draft"))).toEqual({
+      text: draft,
+      base_version: 1,
+      rev: 1,
+      conflict_version: 2,
+    });
     a.ws.close(1000);
   });
 
-  it("rows or columns an agent moves under the page's formulas or cells are frozen for review", async () => {
-    // The page puts a formula on Plums' row; the agent inserts a row above Pears, which would
-    // leave the formula pointing at the wrong row although the lines merge cleanly.
-    const rows = await sheetSetup(SHEET);
-    const a = await connectDoc(rows.id, rows.ownerP.cookie);
-    await editRow(a, 3, '["Plums","=B3*2"]', 0);
-    const res = await editSheet(rows.id, rows.owner.auth, {
+  it("the reviewers' cases are frozen too: rows moved in a run of blank rows, or a row inserted while the other side edits", async () => {
+    // Blank rows above a total. The page deletes a blank row and inserts one before the total
+    // (the row count stays the same); the agent fills a blank row meanwhile.
+    const blank = [HEADER, '["Apples",3,true]', "[]", "[]", "[]", '["Total","=B5"]'].join("\n");
+    const one = await sheetSetup(blank);
+    const a = await connectDoc(one.id, one.ownerP.cookie);
+    expect(await struct(a, { op: "delete_rows", from: 3, count: 1 }, 0)).toMatchObject({ rev: 1 });
+    expect(await struct(a, { op: "insert_rows", before: 5, count: 1 }, 1)).toMatchObject({
+      rev: 2,
+    });
+    const res = await editSheet(one.id, one.owner.auth, {
       base_version: 1,
-      ops: [{ op: "insert_rows", before: 3, count: 1 }],
+      ops: [{ op: "set", at: "A4", values: [["Pears", 5]] }],
     });
     expect(res.status).toBe(201);
     expect(await a.nextOf("conflict")).toEqual({ t: "conflict", version: 2 });
-    expect(await stubFor(rows.id).docPeek(rows.id)).toMatchObject({ conflict_version: 2 });
     a.ws.close(1000);
 
-    // The page sets Plums' Paid; the agent inserts a column before C, which leaves Plums' short
-    // line as it was, so the merged true would sit in the new column.
-    const cols = await sheetSetup(SHEET);
-    const b = await connectDoc(cols.id, cols.ownerP.cookie);
-    await editRow(b, 3, '["Plums",null,true]', 0);
-    const res2 = await editSheet(cols.id, cols.owner.auth, {
+    // The page edits Plums while the agent inserts a row above Pears.
+    const two = await sheetSetup(SHEET);
+    const b = await connectDoc(two.id, two.ownerP.cookie);
+    await editRow(b, 3, '["Plums",9]', 0);
+    const res2 = await editSheet(two.id, two.owner.auth, {
       base_version: 1,
-      ops: [{ op: "insert_columns", before: "C", columns: [{ name: "Ok", type: "checkbox" }] }],
+      ops: [{ op: "insert_rows", before: 3, count: 1 }],
     });
     expect(res2.status).toBe(201);
     expect(await b.nextOf("conflict")).toEqual({ t: "conflict", version: 2 });
     b.ws.close(1000);
 
-    // Two blank rows above a total: the page fills row 4 while the agent inserts a row before
-    // row 3. The line diff puts the new blank row after the blank run, so the filled row would
-    // stay row 4 while the total, rewritten to B5, read the blank row below it.
-    const blank = [HEADER, '["Apples",3,true]', "[]", "[]", '["Total","=B4"]'];
-    const blanks = await sheetSetup(blank.join("\n"));
-    const c = await connectDoc(blanks.id, blanks.ownerP.cookie);
-    await editRow(c, 3, '["Pears",5]', 0);
-    const res3 = await editSheet(blanks.id, blanks.owner.auth, {
+    // The mirror: the page inserts a row while the agent edits a cell far from it.
+    const three = await sheetSetup(SHEET);
+    const c = await connectDoc(three.id, three.ownerP.cookie);
+    const insert = { op: "insert_rows", before: 2, count: 1 } as const;
+    expect(await struct(c, insert, 0)).toMatchObject({ rev: 1 });
+    const res3 = await editSheet(three.id, three.owner.auth, {
       base_version: 1,
-      ops: [{ op: "insert_rows", before: 3, count: 1 }],
+      ops: [{ op: "set", at: "B4", values: [[1]] }],
     });
     expect(res3.status).toBe(201);
     expect(await c.nextOf("conflict")).toEqual({ t: "conflict", version: 2 });
+    expect(await peek(three.id)).toBe(applySheetStruct(splitLines(SHEET), insert)?.join("\n"));
     c.ws.close(1000);
   });
 
-  it("a merge the sheet cannot hold is frozen for review, like an overlap", async () => {
-    const { owner, id, ownerP } = await sheetSetup(SHEET);
-    const a = await connectDoc(id, ownerP.cookie);
-    // The page puts a number in the empty Qty of Plums; the agent makes Qty a checkbox column and
-    // fixes the rows it sees. Different lines, so the lines merge, but Plums' 2 is no checkbox
-    // (and a column's type changed, which is reviewed on its own).
-    await editRow(a, 3, '["Plums",2]', 0);
-    const res = await editSheet(id, owner.auth, {
+  it("Publish mine: the draft becomes v3 on top of v2, v2 stays in the history, and editing resumes", async () => {
+    const { id, ownerP, owner, a, draft } = await frozen('["Apples",4,true]');
+    const saved = await checkpoint(id, ownerP.session.headers, {
       base_version: 1,
-      ops: [
-        { op: "set_column", column: "B", type: "checkbox" },
-        { op: "set", at: "B2", values: [[true], [false]] },
-        { op: "set", at: "B5", values: [[null]] },
-      ],
+      rev: 1,
+      reason: "save",
+      resolved_text: draft,
+      conflict_version: 2,
     });
-    expect(res.status).toBe(201);
-    expect(await a.nextOf("conflict")).toEqual({ t: "conflict", version: 2 });
-    const peeked = await stubFor(id).docPeek(id);
-    expect(peeked).toMatchObject({ base_version: 1, conflict_version: 2 });
-    expect(peeked?.text).toBe(SHEET.replace('["Plums"]', '["Plums",2]'));
+    expect(saved.status).toBe(200);
+    expect(await json(saved)).toMatchObject({ saved: true, version: { version: 3 } });
+    const v3 = await versionRow(id, 3);
+    expect(v3?.note).toBe("Edited on the page. Replaces the changes in v2.");
+    expect(await content(id, owner.auth, 3)).toBe(draft);
+    expect(await content(id, owner.auth, 2)).toBe(V2);
+    const reset = await a.nextOf("reset");
+    expect(reset.version).toBe(3);
+    expect(await stubFor(id).docPeek(id)).toMatchObject({
+      base_version: 3,
+      conflict_version: null,
+    });
+    // Editing resumes on v3.
+    expect(await lease(a, 2, 3, reset.rev)).toMatchObject({ t: "leased" });
     a.ws.close(1000);
 
-    // The same columns with other options: the lines merge and no column changed its name or
-    // type, but the page's "done" is no longer an option, so the merged sheet is not valid.
-    const header =
-      '{"plinth":"sheet","v":1,"columns":[{"name":"Item","type":"text"},{"name":"State","type":"select","options":["open","done"]}]}';
-    const select = [header, '["Apples","done"]', '["Pears","open"]', '["Plums"]'].join("\n");
-    const s = await sheetSetup(select);
-    const b = await connectDoc(s.id, s.ownerP.cookie);
-    await editRow(b, 3, '["Plums","done"]', 0);
-    const res2 = await editSheet(s.id, s.owner.auth, {
+    // The editor's own note comes first.
+    const b = await frozen('["Apples",5,true]');
+    const noted = await checkpoint(b.id, b.ownerP.session.headers, {
       base_version: 1,
-      ops: [
-        { op: "set_column", column: "B", options: ["open", "closed"] },
-        { op: "set", at: "B2", values: [["closed"]] },
-      ],
+      rev: 1,
+      reason: "save",
+      note: "Counted again.",
+      resolved_text: b.draft,
+      conflict_version: 2,
     });
-    expect(res2.status).toBe(201);
-    expect(await b.nextOf("conflict")).toEqual({ t: "conflict", version: 2 });
-    expect((await stubFor(s.id).docPeek(s.id))?.text).toBe(
-      select.replace('["Plums"]', '["Plums","done"]'),
-    );
-    b.ws.close(1000);
+    expect(noted.status).toBe(200);
+    expect((await versionRow(b.id, 3))?.note).toBe("Counted again. Replaces the changes in v2.");
+    b.a.ws.close(1000);
   });
 
-  it("a column deleted and another inserted, or the last row deleted, is frozen for review", async () => {
-    // The page sets Plums' Paid on its short line; the agent deletes Qty and adds a column after
-    // Paid. Still three columns and Plums' line is unchanged, so the merged true would sit in Note.
-    const cols = await sheetSetup(SHEET);
-    const a = await connectDoc(cols.id, cols.ownerP.cookie);
-    await editRow(a, 3, '["Plums",null,true]', 0);
-    const res = await editSheet(cols.id, cols.owner.auth, {
-      base_version: 1,
-      ops: [
-        { op: "delete_columns", from: "B" },
-        { op: "insert_columns", before: "C", columns: [{ name: "Note", type: "text" }] },
-      ],
-    });
-    expect(res.status).toBe(201);
-    expect(await a.nextOf("conflict")).toEqual({ t: "conflict", version: 2 });
+  it("Discard mine: the page goes back to v2 for everyone, and no version is written", async () => {
+    const { id, ownerP, a } = await frozen('["Apples",4,true]');
+    const res = await call(id, ownerP.session.headers, "/live/draft?rev=1", { method: "DELETE" });
+    expect(res.status).toBe(204);
+    const reset = await a.nextOf("reset");
+    expect(reset.version).toBe(2);
+    expect(await readText(a, reset.gen)).toBe(V2);
+    expect(await versionRow(id, 3)).toBeNull();
     a.ws.close(1000);
 
-    // The page deletes the Total row, the last one; the agent appends a check of the total. Merged,
-    // the check would sit on row 5 and point at itself.
-    const rows = await sheetSetup(SHEET);
-    const b = await connectDoc(rows.id, rows.ownerP.cookie);
-    expect(await struct(b, { op: "delete_rows", from: 5, count: 1 }, 0)).toMatchObject({
-      t: "struct",
-      rev: 1,
-    });
-    // A lease released flushes the draft now rather than after the pause.
-    const held = await lease(b, 1, 2, 1);
-    if (held.t !== "leased") throw new Error(`lease ${held.t}`);
-    b.send({ t: "release", lease: held.lease });
-    await b.nextOf("flushed");
-    const res2 = await editSheet(rows.id, rows.owner.auth, {
+    // Choosing v2's text in the review does the same.
+    const b = await frozen('["Apples",4,true]');
+    const took = await checkpoint(b.id, b.ownerP.session.headers, {
       base_version: 1,
-      ops: [{ op: "append_rows", values: [["Check", "=B5*2"]] }],
+      rev: 1,
+      reason: "save",
+      resolved_text: V2,
+      conflict_version: 2,
     });
-    expect(res2.status).toBe(201);
-    expect(await b.nextOf("conflict")).toEqual({ t: "conflict", version: 2 });
-    b.ws.close(1000);
+    expect(await json(took)).toEqual({ saved: false, reason: "unchanged" });
+    expect(await versionRow(b.id, 3)).toBeNull();
+    expect(await stubFor(b.id).docPeek(b.id)).toMatchObject({ base_version: 2, text: V2 });
+    b.a.ws.close(1000);
+  });
+
+  it("nothing in between is saved, nor a draft other than the one reviewed: the draft stays frozen", async () => {
+    const { id, ownerP, a, draft } = await frozen('["Apples",4,true]');
+    const h = ownerP.session.headers;
+    // The two combined, as a line merge would have saved them.
+    const mixed = await checkpoint(id, h, {
+      base_version: 1,
+      rev: 1,
+      reason: "save",
+      resolved_text: draft.replace('["Pears",5]', '["Pears",7]'),
+      conflict_version: 2,
+    });
+    expect(mixed.status).toBe(400);
+    expect((await json(mixed)).error.details.reason).toBe("not_a_choice");
+    // A review of another revision of the draft is sent back to review.
+    const stale = await checkpoint(id, h, {
+      base_version: 1,
+      rev: 0,
+      reason: "save",
+      resolved_text: draft,
+      conflict_version: 2,
+    });
+    expect(stale.status).toBe(409);
+    expect((await json(stale)).error.details.reason).toBe("live_conflict");
+    expect(await versionRow(id, 3)).toBeNull();
+    expect(await stubFor(id).docPeek(id)).toMatchObject({
+      base_version: 1,
+      conflict_version: 2,
+      text: draft,
+    });
+    a.ws.close(1000);
+  });
+
+  it("a version equal to the draft ends it, and one equal to its base needs no review", async () => {
+    // The agent publishes exactly the page edits: nothing is unpublished any more.
+    const s = await sheetSetup(SHEET);
+    const a = await connectDoc(s.id, s.ownerP.cookie);
+    const draft = SHEET.replace('["Apples",3,true]', '["Apples",4,true]');
+    await editRow(a, 1, '["Apples",4,true]', 0);
+    const res = await call(s.id, s.owner.auth, "", {
+      method: "PUT",
+      body: { content: draft, base_version: 1 },
+    });
+    expect(res.status).toBe(200);
+    expect((await a.nextOf("rebased")).version).toBe(2);
+    expect(await stubFor(s.id).docPeek(s.id)).toMatchObject({
+      base_version: 2,
+      conflict_version: null,
+      text: draft,
+    });
+    a.ws.close(1000);
+
+    // Frozen against v2, then v1 is restored as v3: v3 is the draft's base, so the draft is whole
+    // on top of it and editing resumes, its lines as they were.
+    const f = await frozen('["Apples",4,true]');
+    const restored = await call(f.id, f.owner.auth, "/versions/1/restore", { body: {} });
+    expect(restored.status).toBe(201);
+    const back = await f.a.nextOf("rebased");
+    expect(back.version).toBe(3);
+    expect(await readText(f.a, back.gen)).toBe(f.draft);
+    expect(await stubFor(f.id).docPeek(f.id)).toMatchObject({
+      base_version: 3,
+      conflict_version: null,
+      text: f.draft,
+    });
+    f.a.ws.close(1000);
   });
 });

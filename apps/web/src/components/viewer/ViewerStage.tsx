@@ -37,6 +37,7 @@ import "./viewer.css";
 
 // The review of overlapping page edits uses Monaco's diff: a chunk of its own, loaded on demand.
 const LiveConflictDialog = lazy(() => import("./LiveConflictDialog.tsx"));
+const LiveSheetReview = lazy(() => import("./LiveSheetReview.tsx"));
 
 type OkGate = Extract<ViewGate, { status: "ok" }>;
 
@@ -395,7 +396,19 @@ export function ViewerStage({
           </nav>
         </footer>
       </div>
-      {live.reviewing && live.conflict && (
+      {live.reviewing && live.conflict && !live.merges && (
+        <Suspense fallback={null}>
+          <LiveSheetReview
+            conflict={live.conflict}
+            saving={live.saving}
+            mode={live.mode === "room" && live.conflict.rev !== undefined ? "room" : "solo"}
+            onClose={live.closeReview}
+            onPublishMine={() => void live.keepMine()}
+            onDiscardMine={() => void live.takeLatest()}
+          />
+        </Suspense>
+      )}
+      {live.reviewing && live.conflict && live.merges && (
         <Suspense fallback={null}>
           <LiveConflictDialog
             conflict={live.conflict}

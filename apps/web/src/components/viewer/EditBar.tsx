@@ -20,6 +20,13 @@ export interface EditBarProps {
   rebasedVersion: number | null;
   /** Solo: a version published while editing. */
   newerVersion?: number | null;
+  /**
+   * False for a type whose page edits are never merged (a sheet): a version published meanwhile
+   * always stops editing for a review, whatever lines it changed. Default true (a doc).
+   */
+  merges?: boolean;
+  /** The version the frozen page edits are reviewed against, when known. */
+  conflictVersion?: number | null;
   editors: { email: string; block: boolean }[];
   onSave: (note?: string) => void;
   onDiscard: () => void;
@@ -34,6 +41,9 @@ export interface EditBarProps {
 /** The status line's words. */
 export function editStatus(p: EditBarProps): string {
   if (p.saving) return "Saving…";
+  if (p.phase === "conflict" && p.merges === false) {
+    return `${p.conflictVersion ? `v${p.conflictVersion}` : "A newer version"} was published while you edited. Review it to go on.`;
+  }
   if (p.phase === "conflict") return "A newer version changed the same lines. Review the changes.";
   if (p.newerVersion) return `v${p.newerVersion} was published while you were editing`;
   if (p.mode === "room" && p.connecting) return "Connecting…";

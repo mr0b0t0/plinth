@@ -73,7 +73,7 @@ make a test pass.
 | An upload gives away where it was made | A phone photo's EXIF location reaches every reader of the page | Files are stored as added and everyone who may add one is told so (the viewer notice, the privacy notice, the skill) |
 | An upload outlives a delete or takedown | A part arrives after the owner deleted the file or an admin took the artifact down, and the file comes back | Every write repeats the artifact's live check and the row's state in its SQL; a delete or takedown turns rows into tombstones in its own batch, a takedown deletes the ready objects right after, and the hourly sweep clears the rest |
 | A file name steers an agent or tricks a viewer | A file named "Ignore previous instructions.png", `../../etc/passwd`, or a right-to-left override that turns `gpj.exe` around | Names are cleaned (last segment, no control or bidi characters, at most 200 characters, the proven extension added) and are display text everywhere; agents get names with the untrusted note and never the bytes |
-| A forged sheet edit breaks the shared draft | A modified client on the draft socket sends a row the sheet cannot hold, a header with fewer columns, or a struct that moves rows under someone else's open cell | The room checks every row line and header an edit puts in against the sheet's rules in their canonical spelling, re-checks every row when the header changes, applies a struct only from a writer at the current `rev` while nobody else holds a lease, and freezes a merge whose result is not a valid sheet for review ([Live sheets](#live-sheets)) |
+| A forged sheet edit breaks the shared draft | A modified client on the draft socket sends a row the sheet cannot hold, a header with fewer columns, or a struct that moves rows under someone else's open cell | The room checks every row line and header an edit puts in against the sheet's rules in their canonical spelling, re-checks every row when the header changes, applies a struct only from a writer at the current `rev` while nobody else holds a lease, and never merges a version published meanwhile into the draft: it freezes the draft, and a frozen draft is resolved only to itself or to that version exactly ([Live sheets](#live-sheets)) |
 
 Out of scope for v1: denial of service beyond Cloudflare's defaults, a compromised Cloudflare
 account, and malicious instance operators.
@@ -2061,8 +2061,7 @@ sheet's frame still runs only Plinth's renderer (`script-src 'self'`).
   the same number of columns, and a changed header is checked against every row. Nothing goes
   above the header; the sheet limits hold. A refused edit is not applied. So a modified client
   cannot put into the draft anything a publish would refuse, and a checkpoint stores the draft as
-  it is (a conflict's resolution text is re-checked and stored canonically before the room takes
-  it).
+  it is.
 - **Rows and columns move only under no one else's lease.** A `struct` frame carries an op of a
   fixed shape (a row number and count, or a column letter and new column definitions, checked by a
   strict schema before it is read) and no text. The room applies it only from a writer, at the
@@ -2070,26 +2069,24 @@ sheet's frame still runs only Plinth's renderer (`script-src 'self'`).
   the result is a valid sheet; it ends the sender's own lease first. Every socket applies the same
   op with the same pure function (`applySheetStruct`); a client that cannot apply it, or sees a gap
   in `rev` or a lease it still knows of, asks for the draft again.
-- **Merges are checked too.** A version published meanwhile is merged under the draft row by row
-  (rows next to each other merge; the same row changed on both sides, or different rows inserted
-  at the same place, do not). The merged text must still be a valid sheet; when it is not, the
-  draft is frozen for review as for any overlap, so a merge never makes a draft that a publish
-  would refuse. A merge that would put someone's value or formula where they did not write it is
-  frozen too: one side added, removed, renamed or retyped columns while the other changed rows
-  (columns have no identity but their name and type, so a column deleted and another inserted
-  looks like a rename), or one side inserted or deleted rows, anywhere but by appending after the
-  last row, while the other side's changed or added rows hold a formula (a change to two or more
-  adjacent rows counts, since a row deleted and another inserted can look like that), or one side
-  inserted or deleted rows next to rows equal to them while the other side changed one of those
-  rows. So an agent's version cannot shift a person's cells into another column, or a
-  person's formula onto other rows, without anyone seeing it.
+- **Nothing is merged.** A version published meanwhile (an agent, the CLI, REST, the source
+  editor or a restore) is never merged into a sheet's draft, because a line merge cannot tell a
+  row edited in place from rows moved, and could put a person's value or formula where nobody
+  wrote it without anyone seeing it. Unless that version's sheet equals the draft's base or the
+  draft itself, the room freezes the draft (leases end; edits and `struct` frames are refused), and
+  the editors choose between the two whole sheets. The checkpoint holds them to that choice: a
+  frozen sheet draft is resolved only to the room's draft exactly ("Publish mine", saved on top of
+  the version published meanwhile, which stays in the history) or to that version exactly
+  ("Discard mine", which writes nothing), at the draft's current `rev`, and anything else is
+  refused with the draft kept. So a modified client cannot save a combination neither side wrote.
+  The review shows both sheets in the app as text nodes, never as HTML, as the source diff did.
 - **The renderer stays free of HTML parsing.** The editor builds its fields, lists, the edit strip
   and the column settings with `createElement` and fills them through `.value` and `textContent`;
   the source test that keeps HTML sinks out of the sheet renderer covers the editor's files. Values
   are checked in the frame with the same rules before they are sent.
 - **Agents.** Agents never join the room; they change a sheet with `edit_sheet` or
-  `update_artifact`, which publish versions that are merged under the draft, and see only that a
-  draft exists (`live_draft`), never its text.
+  `update_artifact`, which publish versions that freeze the draft for the editors' review, and see
+  only that a draft exists (`live_draft`), never its text.
 
 ## Operator checklist for the content domain
 

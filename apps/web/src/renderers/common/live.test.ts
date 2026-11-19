@@ -1,6 +1,6 @@
 // The live draft socket client: the gen and rev rules, resync, unflushed text and its re-take after a
 // reconnect, backoff, the hidden-tab rule and the solo fallback when the room never answers.
-import { applySheetStruct, liveDocServerFrameSchema } from "@plinth/shared";
+import { applySheetStruct, LIMITS, liveDocServerFrameSchema } from "@plinth/shared";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   type ClientLease,
@@ -195,6 +195,20 @@ describe("LiveDocClient", () => {
     sock().frame({ t: "flushed", rev: 4 });
     expect(client.unflushed).toBe(false);
     expect(client.durableText).toBe("a1\na2\na3");
+  });
+
+  it("refuses an edit larger than one frame: sends nothing, says too_large, and returns false", () => {
+    client.start();
+    welcome(sock(), "a\n\nb");
+    sock().frame({ t: "leased", lease: "mine", start: 0, end: 1, holder: "s1", by: YOU.email });
+    const before = sock().sent.length;
+    expect(client.edit("x".repeat(LIMITS.liveDocFrameBytes))).toBe(false);
+    expect(sock().sent.length).toBe(before);
+    expect(L.calls).toContain("error:too_large");
+    expect(client.unflushed).toBe(false);
+    // The lease stays, and an edit that fits goes out.
+    expect(client.edit("a!")).toBe(true);
+    expect(sock().last()).toMatchObject({ t: "edit", lease: "mine", text: "a!" });
   });
 
   it("loses its lease on a new gen after a reconnect, keeping the durable text to re-take", () => {

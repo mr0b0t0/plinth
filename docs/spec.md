@@ -1876,11 +1876,13 @@ note. Everyone who can open the page sees them. No file can ever run as a page o
 
 Owners and editors edit a sheet right on its page, live with each other, exactly as they edit a doc
 ([Editing](#editing)): the same Edit toggle, strip, Save version, Discard and Done, the same
-checkpoints, autosave, conflict review and modes ("room" with live rooms, "solo" under origin
+checkpoints, autosave and modes ("room" with live rooms, "solo" under origin
 isolation without rooms, none under opaque isolation or the path fallback), the same policy action
 `live_edit`, the same `ALLOW_LIVE_EDITING` switch and the same `LIVE_*` settings. Nothing new is
 stored and no setting is added: the draft is a `live_drafts` row like a doc's, and the room's draft
-channel (`/__plinth/room/v1/doc`) serves every type whose registry row has `liveEdit`.
+channel (`/__plinth/room/v1/doc`) serves every type whose registry row has `liveEdit`. One thing
+differs: unlike a doc's, a sheet's draft is never merged with a version published meanwhile, and
+its review has exactly two choices (below).
 
 - **A row is a line.** The draft is the sheet's canonical JSON lines (see
   [Sheets](#sheets-decided-2026-11-19)): line 1 is the header (row 1), and row *r* is line *r*. A
@@ -1900,26 +1902,26 @@ channel (`/__plinth/room/v1/doc`) serves every type whose registry row has `live
   otherwise) and only when the result is a valid sheet; the sender's own lease ends first. Every
   socket then applies the same op to the same lines with the same pure function
   (`applySheetStruct`), which moves formula references as `edit_sheet` does.
-- **Versions from elsewhere.** An agent's version (`edit_sheet`, `update_artifact`), the source
-  editor or a restore is merged under the draft row by row: rows changed on different sides are
-  both kept, even when they are next to each other. The same row changed differently on both
-  sides, different rows inserted at the same place on both sides, or a merge whose result is not a
-  valid sheet (a row the page changed that no longer fits a header the version changed) freezes the
-  draft for review, and the review shows the two versions' JSON lines side by side. So does a
-  merge in which one side moved what the other side's changes depend on, because a line merge
-  cannot move them along: one side added, removed, renamed or retyped columns while the other
-  changed rows (a row whose trailing cells are empty keeps its line, so a cell set there would land
-  in another column, and a column deleted and another inserted looks like a rename), or one side
-  inserted or deleted rows, anywhere but by appending after the last row, while the other side's
-  changed or added rows hold a formula (its references would point at other rows). A change to two
-  or more adjacent rows counts as moving rows here, because a row deleted and another inserted,
-  with every row between them rewritten by the formula shift, looks like rows changed in place.
-  Rows inserted or deleted next to rows equal to them (blank rows, typically) are reviewed too
-  when the other side changed or added a row among those equal rows, since a line merge cannot
-  tell which of them moved and would put that row one row off. Column widths,
-  number formats, select options and frozen columns merge. `edit_sheet` and
-  `update_artifact` warn `live_draft`, and `get_artifact` and `read_sheet` report the draft's
-  metadata to owners' and editors' agents.
+- **Versions from elsewhere.** A sheet's draft is never merged with a version published meanwhile
+  (an agent's `edit_sheet` or `update_artifact`, the CLI, REST, the source editor or a restore).
+  Rows and formulas refer to each other by position, and a line merge cannot tell a row edited in
+  place from one deleted and another inserted, so it could put a value or a formula reference where
+  neither side wrote it. When such a version vN lands, the room freezes the draft: leases end,
+  edits and `struct` frames are refused (`frozen`), and the strip says "vN was published while you
+  edited. Review it to go on." Two cases need no review: a version whose sheet equals the draft's
+  base (it changed only the title, or restored the same content) moves the base under the draft's
+  lines as they are, and a version equal to the draft ends it. The review shows the draft and vN
+  side by side as read-only grids (one at a time, with a "Mine" and "vN" switch, at phone width),
+  with what each changed since the draft's base ("B7: 12 → 14", "Row 10 added (Pears)"), and
+  exactly two choices. **Publish mine** saves the draft as it is as vN+1, on top of vN, with the
+  note "Edited on the page. Replaces the changes in vN." (the editor's own note first); vN stays in
+  the history and can be restored. **Discard mine** asks first, naming what will be lost (and, in
+  room mode, that it drops everyone's unpublished page edits), then returns the page to vN for
+  everyone. Cancel closes the review and keeps the draft frozen. The checkpoint enforces this: a
+  frozen sheet draft is resolved only to the room's draft exactly or to vN exactly, at the draft's
+  current `rev`. People editing the same draft together through the room are not affected.
+  `edit_sheet` and `update_artifact` warn `live_draft`, and `get_artifact` and `read_sheet` report
+  the draft's metadata to owners' and editors' agents.
 - **On the page.** In edit mode Enter, F2, a double-click or typing opens the selected cell as a
   field (a list for a select column, a date picker for a date column, a text field otherwise or for
   a formula); Enter, Tab and the up and down arrows commit and move; Escape puts the row back as it

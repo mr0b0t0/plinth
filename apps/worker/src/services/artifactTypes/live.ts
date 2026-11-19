@@ -1,7 +1,8 @@
 // The afterCommit hook of every type people edit on its page (docs and sheets, #36): a new version
-// is merged under the live draft in the artifact's room (rooms/doc.ts), or frozen for review, and
-// the agent that published it is told so once, with nothing to do.
-import type { PublishResult } from "@plinth/shared";
+// is merged under a doc's live draft in the artifact's room (rooms/doc.ts), or frozen for review;
+// a sheet's draft is never merged, only frozen for review. The agent that published it is told so
+// once, with nothing to do.
+import { liveRules, type PublishResult } from "@plinth/shared";
 import { notifyDocVersion } from "../../rooms/notify.ts";
 import type { CommittedVersion, TypeHooks } from "../artifactTypes.ts";
 import type { Ctx } from "../context.ts";
@@ -12,6 +13,7 @@ async function withLiveDraftWarning(
   result: PublishResult,
   file: string,
   noun: string,
+  merges: boolean,
 ): Promise<PublishResult> {
   let row: unknown = null;
   try {
@@ -31,7 +33,11 @@ async function withLiveDraftWarning(
         file,
         message:
           `People are editing this ${noun} on its page. Your version is published; their unsaved ` +
-          "edits are merged onto it or reviewed by them. Nothing was overwritten. No action needed.",
+          (merges
+            ? "edits are merged onto it or reviewed by them. "
+            : "edits are kept, and they review them beside your version and choose to publish " +
+              "them in its place or discard them. ") +
+          "Nothing was overwritten. No action needed.",
       },
     ],
   };
@@ -41,13 +47,20 @@ async function withLiveDraftWarning(
 export function liveAfterCommit(noun: string): NonNullable<TypeHooks["afterCommit"]> {
   return async (ctx: Ctx, v: CommittedVersion) => {
     if (!v.update) return v.result;
-    // The live draft is merged onto the new version, or frozen for review (rooms/doc.ts).
+    // A doc's live draft is merged onto the new version, or frozen for review; a sheet's is
+    // frozen for review (rooms/doc.ts).
     try {
       notifyDocVersion(ctx, v.result.id, v.result.version, v.sourceSha256);
     } catch {
       // Best effort; loading the draft rebases it onto the current version.
     }
     if (v.liveCheckpoint || v.restored) return v.result;
-    return withLiveDraftWarning(ctx, v.result, v.def.sourcePath, noun);
+    return withLiveDraftWarning(
+      ctx,
+      v.result,
+      v.def.sourcePath,
+      noun,
+      liveRules(v.def.id)?.merge !== false,
+    );
   };
 }

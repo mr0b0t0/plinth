@@ -13,6 +13,7 @@ import {
   type LiveDraftMeta,
   type LiveDraftText,
   type LiveInfo,
+  liveReplacesNote,
   liveRules,
   TYPE_REGISTRY,
   typeDef,
@@ -202,6 +203,11 @@ export async function liveCheckpoint(
   }
   let text = snap.text;
   let base = snap.base_version;
+  // A doc's draft is merged with a version published meanwhile when that is clean; a sheet's
+  // never is (liveTypes.ts), so its review has exactly two choices.
+  const merges = liveRules(a.type)?.merge !== false;
+  /** A sheet's page edits published whole over this version (it stays in the history). */
+  let replaced: number | null = null;
   if (input.resolved_text !== undefined) {
     if (snap.conflict_version === null) {
       await abort();
@@ -233,7 +239,31 @@ export async function liveCheckpoint(
       await abort();
       throw e;
     }
-    if (text === (await versionText(ctx, a, base))) {
+    const published = await versionText(ctx, a, base);
+    if (!merges) {
+      // A type that never merges (a sheet) is resolved whole, against the draft the editor
+      // reviewed: the page edits as they are ("Publish mine"), or the version published meanwhile
+      // ("Discard mine"). Nothing in between is saved.
+      if (input.rev !== snap.rev) {
+        await abort();
+        throw new ApiError("conflict", "The page edits changed meanwhile. Review them again.", {
+          current_version: snap.conflict_version,
+          reason: "live_conflict",
+        });
+      }
+      if (text !== snap.text && text !== published) {
+        await abort();
+        throw new ApiError(
+          "invalid_input",
+          "Publish the page edits as they are, or discard them for the published version",
+          { reason: "not_a_choice" },
+        );
+      }
+      // The page edits published as they are over the version published meanwhile: the note
+      // says what the new version leaves out (that version stays in the history).
+      if (text === snap.text) replaced = base;
+    }
+    if (text === published) {
       // Resolved to the published version exactly: the draft goes, and no version is written.
       try {
         await stub.docAbort(snap.lock);
@@ -255,10 +285,13 @@ export async function liveCheckpoint(
     if (!held) return { saved: false, reason: "busy" };
   } else if (snap.conflict_version !== null) {
     await abort();
-    throw new ApiError("conflict", `v${snap.conflict_version} changed the same lines. Review it.`, {
-      current_version: snap.conflict_version,
-      reason: "live_conflict",
-    });
+    throw new ApiError(
+      "conflict",
+      merges
+        ? `v${snap.conflict_version} changed the same lines. Review it.`
+        : `v${snap.conflict_version} was published while you edited. Review it.`,
+      { current_version: snap.conflict_version, reason: "live_conflict" },
+    );
   } else if (snap.unchanged) {
     await abort();
     return { saved: false, reason: "unchanged" };
@@ -270,9 +303,10 @@ export async function liveCheckpoint(
       return { saved: false, reason: "too_soon", ...(wait > 0 ? { retry_in_s: wait } : {}) };
     }
   }
-  const note =
+  const own =
     (input.note?.trim() || LIVE_NOTE) +
     (input.reason === "idle" && !input.note ? " (autosaved)" : "");
+  const note = replaced !== null ? liveReplacesNote(own, replaced) : own;
   let version: Awaited<ReturnType<typeof updateArtifact>>;
   try {
     version = await updateArtifact(ctx, {
@@ -284,7 +318,7 @@ export async function liveCheckpoint(
     });
   } catch (e) {
     await abort();
-    throw await staleRoom(stub, a.id, base, e);
+    throw await staleRoom(stub, a.id, base, e, merges);
   }
   let live = { rev: snap.rev, dirty: false };
   for (let attempt = 0; attempt < 2; attempt++) {
@@ -309,6 +343,7 @@ async function staleRoom(
   artifactId: string,
   base: number,
   e: unknown,
+  merges = true,
 ): Promise<unknown> {
   const current = (
     e instanceof ApiError && e.code === "conflict"
@@ -326,7 +361,9 @@ async function staleRoom(
   if (after?.conflict_version != null) {
     return new ApiError(
       "conflict",
-      `v${after.conflict_version} changed the same lines. Review it.`,
+      merges
+        ? `v${after.conflict_version} changed the same lines. Review it.`
+        : `v${after.conflict_version} was published while you edited. Review it.`,
       {
         current_version: after.conflict_version,
         reason: "live_conflict",

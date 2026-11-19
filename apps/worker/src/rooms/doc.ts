@@ -19,7 +19,8 @@
 // Every type with liveEdit has a draft here (docs and sheets): the type's rules (liveTypes.ts)
 // check each edit and each merge, so a sheet's draft is always valid canonical JSON lines. A
 // sheet's rows and columns move with `struct`, applied here and on every socket by the same pure
-// function, only while nobody else holds a lease.
+// function, only while nobody else holds a lease. A sheet's draft is never merged: a version
+// published under it freezes it, and the editors publish it as it is or discard it.
 import {
   type ArtifactTypeDef,
   applyLineEdit,
@@ -35,6 +36,7 @@ import {
   type LiveDocServerFrame,
   type LiveTypeRules,
   liveRules,
+  type Merge3Result,
   merge3,
   rangesOverlap,
   type SheetStructOp,
@@ -675,14 +677,16 @@ export class LiveDoc {
       this.status(doc);
       return;
     }
-    const m = merge3(doc.baseText, ours, theirs, {
-      maxEdits: LIVE_DOC.maxMergeEdits,
-      rows: doc.rules.rows,
-      refuse: doc.rules.refuseMerge,
-    });
-    // A clean merge the type cannot hold (a sheet row that no longer fits a header the other side
-    // changed) is reviewed like an overlap, and so is one the type refuses (a sheet's columns or
-    // rows moved on one side under cells or formulas the other side wrote).
+    // A type that never merges (a sheet) is frozen for review whenever the version changed the
+    // source under the draft, and nothing is combined. Only a version whose source is byte for
+    // byte the draft's base (a title change), or the draft itself, moves the base under the
+    // draft's lines as they are.
+    const m: Merge3Result = doc.rules.merge
+      ? merge3(doc.baseText, ours, theirs, { maxEdits: LIVE_DOC.maxMergeEdits })
+      : theirs === doc.baseText || theirs === ours
+        ? { clean: true, text: ours, work: 0 }
+        : { clean: false, reason: "conflict", conflicts: [], work: 0 };
+    // A clean merge the type cannot hold is reviewed like an overlap.
     if (m.clean && !doc.rules.tooLarge(m.text) && doc.rules.valid(m.text)) {
       doc.lines = splitLines(m.text);
       doc.baseText = theirs;
