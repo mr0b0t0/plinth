@@ -1,4 +1,5 @@
-// One agent connection: label, client, kind, permissions, dates; rename and revoke.
+// One agent connection: label, client, kind, permissions, how a comment mentions it, dates;
+// rename and revoke.
 import { KeyIcon, PlugsConnectedIcon } from "@phosphor-icons/react";
 import { API, APP_ROUTES, type ConnectionInfo, LIMITS, route } from "@plinth/shared";
 import { type FormEvent, useState } from "react";
@@ -11,6 +12,9 @@ import {
   formatDate,
   formatDateTime,
   formatRelative,
+  type MentionReach,
+  mentionReach,
+  mentionReachText,
   scopeLabel,
 } from "./format.ts";
 
@@ -18,15 +22,30 @@ export interface ConnectionItemProps {
   connection: ConnectionInfo;
   now: number;
   onChanged: (next: ConnectionInfo) => void;
+  /** Every connection on the page, so the mention line can tell when an older one takes the handle. */
+  connections?: readonly ConnectionInfo[];
 }
 
-export function ConnectionItem({ connection: c, now, onChanged }: ConnectionItemProps) {
+/** The reach sentences that mean "a comment will not get to this connection". */
+const unreachable = (r: MentionReach) =>
+  r.kind === "shadowed" ||
+  r.kind === "none" ||
+  r.kind === "no_mentions" ||
+  (r.kind === "agent_name" && !r.reached);
+
+export function ConnectionItem({
+  connection: c,
+  now,
+  onChanged,
+  connections = [],
+}: ConnectionItemProps) {
   const toast = useToast();
   const [renaming, setRenaming] = useState(false);
   const [revoking, setRevoking] = useState(false);
   const [busy, setBusy] = useState(false);
   const revoked = c.revoked_at !== null;
   const KindIcon = c.kind === "oauth" ? PlugsConnectedIcon : KeyIcon;
+  const reach = revoked ? null : mentionReach(c.label, connections, c);
 
   const revoke = async () => {
     setBusy(true);
@@ -60,6 +79,17 @@ export function ConnectionItem({ connection: c, now, onChanged }: ConnectionItem
           </Badge>
           {revoked && <Badge tone="danger">Revoked</Badge>}
         </div>
+        {reach && (
+          <p className="pl-acct-conn__mention" data-warn={unreachable(reach) || undefined}>
+            {reach.kind === "handle" ? (
+              <>
+                Mention as <code>@{reach.handle}</code>
+              </>
+            ) : (
+              mentionReachText(reach)
+            )}
+          </p>
+        )}
         <p className="pl-acct-conn__scopes">
           <span className="visually-hidden">Permissions: </span>
           {c.scopes.map((s) => (
@@ -123,6 +153,7 @@ export function ConnectionItem({ connection: c, now, onChanged }: ConnectionItem
       {renaming && (
         <RenameDialog
           connection={c}
+          connections={connections}
           onClose={() => setRenaming(false)}
           onRenamed={(next) => {
             onChanged(next);
@@ -137,10 +168,12 @@ export function ConnectionItem({ connection: c, now, onChanged }: ConnectionItem
 
 function RenameDialog({
   connection,
+  connections,
   onClose,
   onRenamed,
 }: {
   connection: ConnectionInfo;
+  connections: readonly ConnectionInfo[];
   onClose: () => void;
   onRenamed: (c: ConnectionInfo) => void;
 }) {
@@ -190,7 +223,11 @@ function RenameDialog({
           value={label}
           maxLength={LIMITS.maxLabelLength}
           error={error ?? undefined}
-          hint="Collaborators can mention it with @ and this name in comments."
+          hint={
+            label.trim()
+              ? mentionReachText(mentionReach(label, connections, connection))
+              : "Collaborators mention it by this name in comments."
+          }
           onChange={(e) => {
             setLabel(e.target.value);
             setError(null);

@@ -185,7 +185,13 @@ export default function Connections() {
           ) : (
             <ul className="pl-acct-list">
               {active.map((c) => (
-                <ConnectionItem key={c.id} connection={c} now={now} onChanged={update} />
+                <ConnectionItem
+                  key={c.id}
+                  connection={c}
+                  connections={items}
+                  now={now}
+                  onChanged={update}
+                />
               ))}
             </ul>
           )}
@@ -220,6 +226,7 @@ export default function Connections() {
 
       <NewTokenDialog
         open={creating}
+        connections={items}
         onClose={() => setCreating(false)}
         onCreated={(created) => {
           setState((s) =>

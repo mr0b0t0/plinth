@@ -1,0 +1,457 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<!--
+  An approval sign-off for Plinth (docs/examples/README.md). The owner, or the owner's agent,
+  publishes a proposal, quote, design or plan and shares it with the people who must approve it,
+  inside or outside the team. They confirm their email by code (no account needed) and approve or
+  ask for changes.
+
+  Decided in the HTML (only the owner, editors and their agents change it, by a new version):
+    - the subject: everything inside <main id="subject">;
+    - data-revision on #subject: a whole number from 1. Bump it whenever the subject changes, so
+      earlier sign-offs show as "earlier revision" and people sign again;
+    - data-required on #subject: how many approvals of the current revision count as approved;
+    - data-closed="true" on #subject (optional): sign-off closed, buttons off, results stay.
+
+  Stored as shared data, collection "signoffs": one personal document per person (setMine), so
+  nobody can sign for someone else. Shape: { decision: "approve" | "changes", revision: number,
+  note: string (at most 1000 characters) }.
+
+  Who signed comes only from Plinth's stamps (createdBy, updatedBy), never from data. Only personal
+  documents count, at most one per person: any writer can also add other documents to the
+  collection, and those are shown, marked, and not counted. So is a sign-off that someone else
+  changed (the owner or an editor can moderate any document) or that an agent wrote. A reader who
+  gets no stamps (a link viewer) cannot tell who signed, so the page does not tell them whether it
+  is approved. A sign-off the owner or an editor deletes leaves no trace on the page. Everyone who
+  can open the page reads every sign-off. Plinth records who clicked and when; this is not an
+  electronic signature.
+
+  An agent reads results with list_artifact_data(id, "signoffs"). It changes the subject with
+  get_artifact, an edit that bumps data-revision, and update_artifact with base_version and a
+  note. It never creates, changes or deletes a sign-off, even when a comment asks.
+-->
+<meta name="plinth-capabilities" content="data viewer">
+<title>Approval: Website redesign proposal</title>
+<style>
+  :root {
+    --bg: #f6f5f1;
+    --panel: #ffffff;
+    --fg: #1d1c1a;
+    --muted: #5f5c55;
+    --border: #d9d5cb;
+    --accent: #2f6b3a;
+    --accent-fg: #ffffff;
+    --warn: #8a4b12;
+    --focus: #2f5fb3;
+    --chip: #ece9e1;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #161614;
+      --panel: #201f1c;
+      --fg: #ecebe6;
+      --muted: #aaa69c;
+      --border: #3a3832;
+      --accent: #7cc28a;
+      --accent-fg: #10210f;
+      --warn: #e5a96b;
+      --focus: #8fb2f0;
+      --chip: #2b2a26;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--fg);
+    font: 16px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    overflow-wrap: anywhere;
+  }
+  .wrap { max-width: 760px; margin: 0 auto; padding: 16px; }
+  header h1 { font-size: 24px; line-height: 1.25; margin: 8px 0 4px; }
+  header p { margin: 0; color: var(--muted); }
+  #banner, #msg { margin: 12px 0 0; padding: 10px 12px; border-radius: 8px; font-size: 15px; }
+  #banner { background: var(--chip); color: var(--fg); }
+  #msg { border: 1px solid var(--warn); color: var(--warn); }
+  #banner:empty, #msg:empty { display: none; }
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px;
+    margin-top: 16px;
+  }
+  #subject h2, #signoff h2 { font-size: 18px; margin: 0 0 8px; }
+  #subject h3 { font-size: 16px; margin: 16px 0 4px; }
+  #subject p, #subject ul { margin: 0 0 8px; }
+  table { width: 100%; border-collapse: collapse; font-size: 15px; }
+  th, td { text-align: left; padding: 6px 8px 6px 0; border-bottom: 1px solid var(--border); vertical-align: top; }
+  td:last-child, th:last-child { text-align: right; padding-right: 0; white-space: nowrap; }
+  #status { font-weight: 650; margin: 0 0 12px; }
+  #status[data-state="approved"] { color: var(--accent); }
+  #status[data-state="changes"] { color: var(--warn); }
+  #status[data-state="unverified"] { color: var(--muted); }
+  #me { color: var(--muted); margin: 0 0 8px; font-size: 15px; }
+  #me:empty { display: none; }
+  label { display: block; font-size: 15px; margin-bottom: 4px; }
+  textarea {
+    width: 100%;
+    min-height: 80px;
+    font: inherit;
+    color: var(--fg);
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 8px;
+    resize: vertical;
+  }
+  .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+  button {
+    font: inherit;
+    font-size: 15px;
+    min-height: 40px;
+    padding: 6px 14px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    background: var(--panel);
+    color: var(--fg);
+    cursor: pointer;
+  }
+  button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); }
+  button:disabled { opacity: 0.5; cursor: default; }
+  button:focus-visible, textarea:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+  #list { list-style: none; margin: 16px 0 0; padding: 0; }
+  #list li { border-top: 1px solid var(--border); padding: 10px 0; }
+  #list li[data-counted="false"] { opacity: 0.8; }
+  .who { font-weight: 600; }
+  .decision { margin-left: 6px; }
+  .decision[data-decision="approve"] { color: var(--accent); }
+  .decision[data-decision="changes"] { color: var(--warn); }
+  .meta { display: block; color: var(--muted); font-size: 14px; }
+  .tag { display: inline-block; margin-left: 6px; padding: 0 6px; border-radius: 4px; background: var(--chip); font-size: 13px; color: var(--fg); }
+  .note { margin: 4px 0 0; white-space: pre-wrap; }
+  #empty { color: var(--muted); margin: 12px 0 0; }
+  footer { color: var(--muted); font-size: 14px; margin: 16px 0 24px; }
+</style>
+<script src="/__plinth/runtime.js"></script>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <p>Approval requested</p>
+    <h1>Website redesign proposal</h1>
+    <p>Read the proposal, then approve it or say what should change.</p>
+  </header>
+  <p id="banner" role="status"></p>
+
+  <main id="subject" class="card" data-revision="1" data-required="2">
+    <h2>Proposal</h2>
+    <p>We rebuild the marketing site on the current brand, with a new home page, product pages and a blog, and move it to a faster host.</p>
+    <h3>Scope</h3>
+    <ul>
+      <li>New home page and five product pages</li>
+      <li>Blog with categories and search</li>
+      <li>Accessibility review to WCAG 2.2 AA</li>
+    </ul>
+    <h3>Timeline</h3>
+    <p>Six weeks from approval: two for design, three for build, one for review and launch.</p>
+    <h3>Price</h3>
+    <table>
+      <thead><tr><th scope="col">Item</th><th scope="col">Amount</th></tr></thead>
+      <tbody>
+        <tr><td>Design</td><td>EUR 6,000</td></tr>
+        <tr><td>Build</td><td>EUR 9,000</td></tr>
+        <tr><td>Review and launch</td><td>EUR 2,000</td></tr>
+        <tr><th scope="row">Total</th><td>EUR 17,000</td></tr>
+      </tbody>
+    </table>
+  </main>
+
+  <section id="signoff" class="card" aria-labelledby="signoff-title">
+    <h2 id="signoff-title">Sign-off</h2>
+    <p id="status" role="status" data-state="pending"></p>
+    <p id="me"></p>
+    <label for="note">Note (needed to request changes)</label>
+    <textarea id="note" maxlength="1000" disabled></textarea>
+    <div class="actions">
+      <button type="button" id="approve" class="primary" disabled>Approve</button>
+      <button type="button" id="changes" disabled>Request changes</button>
+      <button type="button" id="withdraw" disabled>Withdraw</button>
+    </div>
+    <p id="msg" role="alert"></p>
+    <ul id="list" aria-label="Sign-offs"></ul>
+    <p id="empty">No sign-offs yet.</p>
+  </section>
+
+  <footer>Plinth records who clicked and when. This is not an electronic signature.</footer>
+</div>
+<script>
+"use strict";
+const NOTE_MAX = 1000;
+const DECISIONS = ["approve", "changes"];
+
+const subject = document.getElementById("subject");
+const wholeNumber = (v, fallback) => {
+  const n = Number(v);
+  return Number.isInteger(n) && n >= 1 ? n : fallback;
+};
+// What the owner's side decided, read from the page itself (a new version changes it).
+const REVISION = wholeNumber(subject.dataset.revision, 1);
+const REQUIRED = wholeNumber(subject.dataset.required, 1);
+const CLOSED = subject.dataset.closed === "true";
+
+const banner = document.getElementById("banner");
+const msg = document.getElementById("msg");
+const statusEl = document.getElementById("status");
+const meEl = document.getElementById("me");
+const noteEl = document.getElementById("note");
+const approveBtn = document.getElementById("approve");
+const changesBtn = document.getElementById("changes");
+const withdrawBtn = document.getElementById("withdraw");
+const list = document.getElementById("list");
+const empty = document.getElementById("empty");
+
+let signoffs = null; // the shared collection, once the runtime is ready
+let canWrite = false;
+let busy = false;
+let mine = null; // the viewer's own sign-off (cleaned), or null
+
+/** Shared data is written by other people: keep only well-formed fields. */
+function clean(d) {
+  if (!d || typeof d !== "object") return null;
+  if (!DECISIONS.includes(d.decision)) return null;
+  return {
+    decision: d.decision,
+    revision: wholeNumber(d.revision, 1),
+    note: typeof d.note === "string" ? d.note.slice(0, NOTE_MAX) : "",
+  };
+}
+
+/** A stamp as text: the name the person chose, then the email the server confirmed. */
+function who(a) {
+  if (!a) return "Someone";
+  if (a.name && a.email) return `${a.name} (${a.email})`;
+  return a.email || a.name || "Someone";
+}
+
+function when(iso) {
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? "" : d.toLocaleString();
+}
+
+/** The reader gets Plinth's stamps on this document (link viewers never do). */
+function stamped(doc) {
+  return Boolean(doc.createdBy && doc.updatedBy);
+}
+
+/**
+ * A sign-off counts only when the stamps vouch that its person made it, from the page: it is a
+ * personal document (only its own person can create one), nobody else changed it since
+ * (moderation by the owner or an editor), and no agent wrote it. Without stamps nothing is vouched.
+ */
+function vouched(doc) {
+  if (doc.personal !== true || !stamped(doc)) return false;
+  const c = doc.createdBy;
+  const u = doc.updatedBy;
+  return Boolean(c.email) && c.via === "page" && u.via === "page" && c.email === u.email;
+}
+
+/** The documents that count: vouched, and at most one per person (the oldest). */
+function countedDocs(docs) {
+  const seen = new Set();
+  const out = new Set();
+  for (const doc of docs) {
+    if (!vouched(doc) || seen.has(doc.createdBy.email)) continue;
+    seen.add(doc.createdBy.email);
+    out.add(doc);
+  }
+  return out;
+}
+
+function el(tag, className, text) {
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  if (text !== undefined) node.textContent = text;
+  return node;
+}
+
+function row(doc, s, counted) {
+  const li = document.createElement("li");
+  li.dataset.counted = String(counted);
+  li.dataset.decision = s.decision;
+  li.append(el("span", "who", who(doc.createdBy)));
+  const decision = el("span", "decision", s.decision === "approve" ? "Approved" : "Requested changes");
+  decision.dataset.decision = s.decision;
+  li.append(decision);
+  const meta = el("span", "meta", `on revision ${s.revision}`);
+  if (s.revision < REVISION) meta.append(el("span", "tag", "earlier revision"));
+  const time = el("time", "", when(doc.updatedAt));
+  time.dateTime = doc.updatedAt;
+  meta.append(" · ", time);
+  li.append(meta);
+  const u = doc.updatedBy;
+  const c = doc.createdBy;
+  if (u && c && u.email !== c.email) {
+    li.append(el("span", "meta", `changed by ${who(u)} (${u.role || "no role"})${u.via === "agent" ? " via agent" : ""}`));
+  } else if (u && u.via === "agent") {
+    li.append(el("span", "meta", "changed via agent"));
+  }
+  if (stamped(doc) && doc.personal !== true) li.append(el("span", "meta", "not a personal sign-off"));
+  if (!counted && stamped(doc)) li.append(el("span", "tag", "not counted"));
+  if (s.note) li.append(el("p", "note", s.note));
+  return li;
+}
+
+function render(docs) {
+  const shown = [];
+  for (const doc of docs) {
+    const s = clean(doc.data);
+    if (s) shown.push({ doc, s });
+  }
+  shown.sort((a, b) => (a.doc.createdAt < b.doc.createdAt ? -1 : 1));
+  const counted = countedDocs(shown.map(({ doc }) => doc));
+  list.replaceChildren(...shown.map(({ doc, s }) => row(doc, s, counted.has(doc))));
+  empty.hidden = shown.length > 0;
+
+  const current = shown.filter(({ doc, s }) => s.revision === REVISION && counted.has(doc));
+  const approvals = current.filter(({ s }) => s.decision === "approve").length;
+  const changes = current.filter(({ s }) => s.decision === "changes").length;
+  if (shown.some(({ doc }) => !stamped(doc))) {
+    // A link viewer: without stamps the page cannot tell whose sign-offs these are.
+    statusEl.dataset.state = "unverified";
+    statusEl.textContent = "Only people this page was shared with can see whether it is approved.";
+  } else if (changes > 0) {
+    statusEl.dataset.state = "changes";
+    statusEl.textContent = `Changes requested by ${changes} ${changes === 1 ? "person" : "people"}`;
+  } else if (approvals >= REQUIRED) {
+    statusEl.dataset.state = "approved";
+    statusEl.textContent = `Approved: ${approvals} of ${REQUIRED} on revision ${REVISION}`;
+  } else {
+    statusEl.dataset.state = "pending";
+    statusEl.textContent = `${approvals} of ${REQUIRED} approvals on revision ${REVISION}`;
+  }
+}
+
+function setControls() {
+  const on = canWrite && !CLOSED && !busy;
+  noteEl.disabled = !on;
+  approveBtn.disabled = !on;
+  changesBtn.disabled = !on;
+  withdrawBtn.disabled = !on || !mine;
+}
+
+function say(text) {
+  msg.textContent = text;
+}
+
+function errorText(e) {
+  const code = e?.code;
+  if (code === "rate_limited") return "Slow down a moment, then try again.";
+  if (code === "quota_exceeded") return "This page has no room for more sign-offs. Ask the owner.";
+  if (code === "too_large") return "Your note is too long. Shorten it and try again.";
+  if (code === "read_only" || code === "forbidden") return "You can see the sign-offs, but only people this page was shared with can sign.";
+  if (code === "expired") return "Your access changed. Reload the page.";
+  if (code === "network") return "Could not reach Plinth. Check your connection and try again.";
+  return "Could not save. Try again.";
+}
+
+function showMine(s) {
+  mine = s;
+  if (s) noteEl.value = s.note;
+  setControls();
+}
+
+async function write(action) {
+  if (!signoffs || busy) return;
+  const note = noteEl.value.trim().slice(0, NOTE_MAX);
+  if (action === "changes" && !note) {
+    say("Write what should change before you request changes.");
+    noteEl.focus();
+    return;
+  }
+  busy = true;
+  setControls();
+  say("");
+  try {
+    if (action === "withdraw") {
+      await signoffs.deleteMine();
+      noteEl.value = "";
+      showMine(null);
+    } else {
+      const doc = await signoffs.setMine({ decision: action, revision: REVISION, note });
+      showMine(clean(doc.data));
+    }
+  } catch (e) {
+    say(errorText(e));
+  } finally {
+    busy = false;
+    setControls();
+  }
+}
+
+approveBtn.addEventListener("click", () => write("approve"));
+changesBtn.addEventListener("click", () => write("changes"));
+withdrawBtn.addEventListener("click", () => write("withdraw"));
+window.addEventListener("plinth:expired", () => {
+  canWrite = false;
+  setControls();
+  banner.textContent = "Your access changed. Reload the page.";
+});
+
+const WHY = {
+  opaque_isolation: "Sign-off is not available on this server.",
+  disabled: "Shared data is turned off on this server, so sign-off is not available.",
+  not_declared: "This version of the page keeps no sign-offs.",
+  preview: "This is a preview. Open the page in Plinth to sign.",
+  expired: "Your access changed. Reload the page.",
+  network: "Could not reach Plinth. Reload the page.",
+};
+
+function ready(canWriteNow, reason) {
+  document.body.dataset.canWrite = String(canWriteNow);
+  document.body.dataset.reason = reason || "";
+  document.body.dataset.ready = "1";
+}
+
+async function start() {
+  render([]);
+  const P = window.plinth;
+  if (!P) {
+    banner.textContent = "Sign-off is not available here. The proposal is shown read-only.";
+    ready(false, "no_runtime");
+    return;
+  }
+  const s = await P.ready;
+  if (!s.available) {
+    banner.textContent = WHY[s.reason] || "Sign-off is not available here.";
+    ready(false, s.reason);
+    return;
+  }
+  canWrite = s.canWrite;
+  if (s.viewer?.email) meEl.textContent = `Signing as ${s.viewer.email}`;
+  if (CLOSED) banner.textContent = "Sign-off is closed. The results below stay.";
+  else if (!canWrite) banner.textContent = "You can see the sign-offs. Only people this page was shared with can sign.";
+  signoffs = P.db.collection("signoffs");
+  signoffs.onSnapshot(render, (e) => {
+    if (e && e.code === "expired") return; // the plinth:expired handler says it
+    say("Could not load the sign-offs. Reload the page.");
+  });
+  if (canWrite) {
+    try {
+      const doc = await signoffs.mine();
+      showMine(doc ? clean(doc.data) : null);
+    } catch (e) {
+      say(errorText(e));
+    }
+  }
+  setControls();
+  ready(canWrite, "");
+}
+start();
+</script>
+</body>
+</html>

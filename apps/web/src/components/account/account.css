@@ -273,6 +273,14 @@
   font-size: var(--text-xs);
   color: var(--color-ink-muted);
 }
+.pl-acct-conn__mention {
+  font-size: var(--text-xs);
+  color: var(--color-ink-muted);
+  overflow-wrap: anywhere;
+}
+.pl-acct-conn__mention[data-warn] {
+  color: var(--color-warning);
+}
 .pl-acct-conn__scope {
   position: relative;
   padding-left: var(--space-3);

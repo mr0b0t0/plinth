@@ -1490,6 +1490,50 @@ live read, and the feature adds no tool, route, env var or stored state.
   The MCP tool descriptions, the server instructions, the plinth-artifacts skill and the mention
   watcher's announcement say so.
 
+### Pages for people outside the team, and several agents on one artifact (decided 2026-11-19)
+
+No new server behaviour: patterns, example pages and the mention handle in the app, on top of
+[shared data](#shared-data-and-viewer-identity) and
+[comments and agent mentions](#comments-and-agent-mentions). Guides:
+`docs/examples/README.md` and `docs/agents.md` ("Pages for people outside the team", "Several
+agents on one artifact").
+
+- **Examples.** `docs/examples/` holds finished pages for invited people, including people outside
+  the owner's team who confirm their email by code: an approval sign-off
+  (`approval-signoff.html`), a client intake form (`intake-form.html`) and a client checklist
+  (`client-checklist.html`), all `data viewer` (the checklist adds shared `ticks` and `notes`),
+  plus a whiteboard (with a room) and a canvas that takes comments. They keep what only the owner's
+  side decides in the HTML (the subject and its revision, the required approvals, the questions,
+  the items, "closed"), which changes only by a new version, and what participants contribute in
+  shared data (personal `signoffs` and `intake` documents, `ticks` and `notes` keyed by item id),
+  whose server stamps say who wrote it. The pages count only what the stamps vouch for: only
+  personal sign-offs count, one per person; a sign-off someone else changed or an agent wrote, and
+  a team item ticked by anyone but the owner or an editor, are shown and not counted; a link
+  viewer, who gets no stamps, is told that only invited people can see the result. A deleted entry
+  leaves no mark, since shared data keeps no history. The server's write rules are unchanged; the
+  pages decide only what to count. A
+  sign-off is a record of who clicked and when, not an electronic signature. Intake is one page
+  per client, because everyone who can open a page reads all of its data.
+- **The example contract.** Every file in `docs/examples/` publishes without warnings, renders in
+  light and dark and at 360 px without a horizontal scroll, renders stored values as text, makes no
+  request to another host, never posts a form natively, still renders when the runtime does not
+  load, and sets `body[data-ready="1"]` once settled. An end-to-end test checks each file.
+- **Mentions with several agents.** `@claude` and `@codex` make one task that every live
+  connection of the owner with that client type lists; the first `claim_mention` wins. `@<handle>`
+  reaches the owner's live connection, not limited to one artifact, whose label normalises to that
+  handle (`mentionHandle`: lowercase, spaces to `-`, other characters dropped; the oldest
+  connection on a tie; `claude` and `codex` always mean the client types). Comments written by an
+  agent never create tasks, so agents do not hand work to each other: a person mentions the next
+  one. Collaborators' own agents act with their own role and are never mention targets. Every
+  version, comment and data write names the connection that made it.
+- **The handle in the app.** The Connections page shows each connection's handle under its name
+  ("Mention as `@claude-code`"), and the rename, new-token and consent dialogs show it live for the
+  name being typed. They warn when the name cannot be reached: an older live connection has the
+  same handle, the handle is `claude` or `codex` on a connection of another client type, the name
+  has no letter or digit to start a handle with, the token lacks the `mentions` scope, or it is
+  limited to one artifact. Only the owner sees these pages, and only their own labels; the comment
+  composer's suggestions for collaborators stay `@claude` and `@codex`.
+
 ### Big builds and reuse by hash
 
 Decided 2026-11-15. Agents publish built sites (a Vite or similar `dist/` folder with hundreds of
@@ -1550,7 +1594,8 @@ files) and big pages without merging chunks, and an update stores only what chan
   reused file counts once.
 - **Publish warnings.** Every publish, update and bundle result lists `warnings` (advisory, never
   blocking, at most 50): `missing_file` (a relative reference not in the version),
-  `root_absolute` (`/assets/x.js`, which loads the current version's file from an old version),
+  `root_absolute` (`/assets/x.js`, which loads the current version's file from an old version;
+  never for Plinth's own `/__plinth/` paths, such as the runtime script),
   `blocked_host` (outside the CSP's allowlist), `insecure_url` (`http:`), `opaque_module` (module
   scripts, `crossorigin` links and fonts, which fail under `CONTENT_ISOLATION=opaque`; in a
   design's artboards, on every instance, only those that load the design's own files) and

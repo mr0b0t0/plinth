@@ -62,6 +62,19 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   record, lists `sensitive_file` first, so the agent stops and asks before handing over the link.
   It checks names only, never blocks, and is not reported for files carried forward, reused by
   hash or restored.
+- **Pages for clients and approvers, and several agents on one artifact.** Three finished example
+  pages for people outside your team, who confirm their email by code with no account: an approval
+  sign-off, a client intake form and a client checklist (`docs/examples/`). What your side decides
+  stays in the page's versions; what they contribute is shared data stamped with who wrote it, and
+  the pages count only what those stamps vouch for. A new guide covers Claude, Codex, Gemini CLI,
+  Cursor and scripts working on one artifact: which mention reaches which agent, hand-offs,
+  conflicts and who did what. The Connections page now shows the handle each connection is
+  mentioned by (`Claude Code` is `@claude-code`) and warns when a name cannot be reached; the
+  rename, new-token and consent dialogs show it as you type. Update the plugin for the skill's new
+  sections.
+
+- **No `root_absolute` warning for Plinth's runtime.** A page that loads `/__plinth/runtime.js`
+  (shared data, rooms, page comments, dictation) no longer gets a publish warning it could not fix.
 
 - **Dictation, run by Plinth, for pages that ask for it.** A page that declares `dictation` can
   take the words a viewer speaks (`plinth.dictation`): Plinth's app runs the browser's speech

@@ -9,6 +9,7 @@ import {
   CI_DOCS_URL,
   CLIENT_TYPES,
   type ClientType,
+  type ConnectionInfo,
   type CreatedToken,
   ciShellCommand,
   ciWorkflowSnippet,
@@ -20,7 +21,7 @@ import { type FormEvent, useEffect, useRef, useState } from "react";
 import { ApiRequestError, api } from "../../lib/api.ts";
 import { Button, Checkbox, Dialog, Input, Select, Stack } from "../ui/index.ts";
 import { CopyBlock, CopyField } from "./CopyField.tsx";
-import { CLIENT_TYPE_LABEL, SCOPE_META } from "./format.ts";
+import { CLIENT_TYPE_LABEL, mentionReach, mentionReachText, SCOPE_META } from "./format.ts";
 import { Note } from "./Note.tsx";
 
 /** The artifact a new token is limited to. */
@@ -37,6 +38,8 @@ export interface NewTokenDialogProps {
   onCreated: (created: CreatedToken) => void;
   /** Limit the token to this artifact (the Settings page's "Publish from CI"). */
   artifact?: TokenArtifact;
+  /** The person's connections, so the name hint can say which handle a comment uses. */
+  connections?: readonly ConnectionInfo[];
 }
 
 /** The scopes a token limited to one artifact may hold: read always, write optional. */
@@ -47,10 +50,21 @@ export function ciLabel(title: string): string {
   return [...`CI: ${title}`].slice(0, LIMITS.maxLabelLength).join("");
 }
 
-export function NewTokenDialog({ open, onClose, onCreated, artifact }: NewTokenDialogProps) {
+export function NewTokenDialog({
+  open,
+  onClose,
+  onCreated,
+  artifact,
+  connections,
+}: NewTokenDialogProps) {
   // Remount the body each time it opens, so nothing from a previous token survives.
   return open ? (
-    <TokenDialogBody onClose={onClose} onCreated={onCreated} artifact={artifact} />
+    <TokenDialogBody
+      onClose={onClose}
+      onCreated={onCreated}
+      artifact={artifact}
+      connections={connections}
+    />
   ) : null;
 }
 
@@ -82,7 +96,12 @@ function useEditableArtifacts(load: boolean): Editable {
   return state;
 }
 
-function TokenDialogBody({ onClose, onCreated, artifact }: Omit<NewTokenDialogProps, "open">) {
+function TokenDialogBody({
+  onClose,
+  onCreated,
+  artifact,
+  connections = [],
+}: Omit<NewTokenDialogProps, "open">) {
   const fixed = artifact !== undefined;
   const [limited, setLimited] = useState(fixed);
   const editable = useEditableArtifacts(limited && !fixed);
@@ -246,7 +265,13 @@ function TokenDialogBody({ onClose, onCreated, artifact }: Omit<NewTokenDialogPr
         <Input
           ref={labelRef}
           label="Name"
-          hint="Shown on this page and in the version history of what it publishes."
+          hint={
+            label.trim() && !bound
+              ? `Shown on this page and in the version history of what it publishes. ${mentionReachText(
+                  mentionReach(label, connections, { client_type: clientType, scopes: chosen }),
+                )}`
+              : "Shown on this page and in the version history of what it publishes."
+          }
           value={label}
           maxLength={LIMITS.maxLabelLength}
           error={labelError ?? undefined}
@@ -304,8 +329,8 @@ function TokenDialogBody({ onClose, onCreated, artifact }: Omit<NewTokenDialogPr
             bound
               ? "A token limited to one artifact does not answer mentions."
               : clientType === "other"
-                ? "Collaborators can reach it by mentioning this token's name in comments."
-                : `Collaborators can reach it with @${clientType} in comments.`
+                ? "Collaborators can reach it only by its name, as the hint under Name shows."
+                : `Collaborators can reach it with @${clientType} in comments, and by its name.`
           }
         />
         <fieldset

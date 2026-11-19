@@ -13,6 +13,7 @@
 // request sent and whose name usually holds secrets (SENSITIVE_PATH_RULES), or the local project
 // files record. It reads names, never bytes, and comes first so the cap never hides it.
 import {
+  CONTENT_RESERVED_PREFIX,
   LIMITS,
   PROJECT_FILES_RECORD,
   type PublishWarning,
@@ -371,6 +372,9 @@ function checkRefs(file: string, refs: Ref[], input: ScanInput, out: PublishWarn
       checkHost(file, raw, hostOf(raw.slice(2)), r.directive, input, out);
       continue;
     }
+    // Plinth's own reserved paths (/__plinth/runtime.js, the data API) are the same for every
+    // version and are meant to be written root-absolute; a page that loads them is not at fault.
+    if (raw.startsWith(CONTENT_RESERVED_PREFIX)) continue;
     if (raw.startsWith("/")) {
       rootAbsolute += 1;
       if (!firstRoot) firstRoot = raw;
