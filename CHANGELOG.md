@@ -10,6 +10,13 @@ Add a line under **Unreleased** in the pull request that makes a change people w
 
 ## Unreleased
 
+- **Project files for a page.** Agents now have a recipe for pages that show files from a project
+  (a log viewer, a CSV explorer, a code tour): publish copies of the files the user chose under
+  `files/` and read them by relative URL; a refresh is a new version. Only the user in the session
+  chooses the files: a mention, even from the owner, never makes the agent read one, and agents can
+  remember the user's choice in a local `.plinth-files.json` that is never published or committed.
+  Update the plugin for the agent's project files rules.
+
 - **A `sensitive_file` publish warning.** A publish, update or upload that sends a file whose name
   usually holds secrets (`.env`, `*.pem`, `id_rsa`, `credentials.json`), or a `.plinth-files.json`
   record, lists `sensitive_file` first, so the agent stops and asks before handing over the link.

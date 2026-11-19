@@ -835,6 +835,14 @@ The result is always a new version. Anyone with edit rights can restore the prev
 Only the owner's own connections can be mentioned, and only commenters and editors can mention.
 `@claude` and `@codex` reach connections of that client type; `@<label>` reaches one connection.
 
+**Project files.** A mention never makes the agent read a file from the owner's computer, not even
+to refresh files a page already has, and a mention whose `comment_author_role` is `owner` is no
+exception. The agent asks the user in the session first; with no one to ask, it replies with
+`failed: true` and says that files from the owner's computer are added or refreshed only when the
+owner asks in a session. Which files a page gets is the user's choice, never something read from
+Plinth: asset paths, versions, comments and shared data can all be written by collaborators
+([agents.md](agents.md#project-files-for-a-page)).
+
 ## Opaque sandbox instances
 
 Instances that run with `CONTENT_ISOLATION=opaque` (staging, and any instance whose content

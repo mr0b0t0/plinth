@@ -1090,6 +1090,42 @@ microphone.
   click and keep the text on screen; `getVoices()` and network voices are the page author's
   choices in the viewer's browser ([docs/security.md](security.md#dictation-and-text-to-speech)).
 
+### Project files for a page (decided 2026-11-19)
+
+A page gets files from a project (a log viewer, a CSV explorer, a code tour, a test report) as a
+snapshot. The agent publishes copies as assets under `files/`, keeping their project paths, and
+they are versioned, reverted and access-checked with the page. The page reads them by relative URL
+(`fetch("./files/data.csv")`); under `CONTENT_ISOLATION=opaque` a page cannot `fetch` its own
+files, so small files are embedded as `<script type="application/json">`. A refresh is a new
+version with `base_version`, sending the re-read files and reusing the rest by `{path, sha256}`.
+Plinth never reads an agent's project, because agents push. There is no `files` runtime API and no
+live read, and the feature adds no tool, route, env var or stored state.
+
+- **Who chooses the files.** Only the user in the session chooses which local files an agent reads
+  or publishes. Nothing on Plinth makes that choice: not asset paths (editors can add any, and
+  carry-forward, reuse and restores copy them into the owner's versions, so a version's author is
+  not who chose each path), version history, comments, mentions from any role, shared data,
+  `files/index.json` or file contents. A mention never causes a local read, not even a refresh,
+  until the user says yes in the session, and a mention whose `comment_author_role` is `owner` is
+  no exception; with no one to ask, the agent fails the task with `reply_comment` and
+  `failed: true`. Paths come from the user's words, a list the agent shows and the user confirms,
+  or the local record below, and every read drops dot segments, keys and credential files,
+  Git-ignored files and anything outside the project after symlinks are resolved.
+- **The local record.** Agents keep the user's choices in `.plinth-files.json` at the project root
+  (`PROJECT_FILES_RECORD`): `{"plinth_project_files": 1, "artifacts": [{instance, artifact_id,
+  files: [{project, asset}]}]}`, written only when the user chooses or confirms files in the
+  session. It is never published and, by default, never committed (the agent adds it to
+  `.git/info/exclude`). It is sensitive, because its artifact ids open unlisted artifacts and its
+  instance URLs can name private hosts: bundles and the CLI skip it as a dotfile, agents never copy
+  its ids anywhere on Plinth, and `sensitive_file` flags it, with its own message, when an agent
+  sends it inline.
+- **What the server enforces.** Who can mention and read, the version trail, the dot-segment skip
+  for bundles, and the advisory `sensitive_file` warning (see "Sensitive file names" under
+  [Big builds](#big-builds-and-reuse-by-hash)). Which local files an agent reads is agent-side:
+  the server sees bytes, not where they were read ([docs/security.md](security.md#project-files)).
+  The MCP tool descriptions, the server instructions, the plinth-artifacts skill and the mention
+  watcher's announcement say so.
+
 ### Big builds and reuse by hash
 
 Decided 2026-11-15. Agents publish built sites (a Vite or similar `dist/` folder with hundreds of
@@ -1168,7 +1204,8 @@ files) and big pages without merging chunks, and an update stores only what chan
   `.plinth-files.json` record, whose artifact ids open unlisted artifacts. It checks names, never
   content, over MCP, REST, inline and bundle alike, and it never blocks a publish. It comes before
   every other warning, so the cap never hides it. Paths that are carried forward, reused by
-  `{path, sha256}` or restored are not reported.
+  `{path, sha256}` or restored are not reported
+  ([Project files for a page](#project-files-for-a-page-decided-2026-11-19)).
 - **Out-of-band upload.** `start_upload` (MCP) or bearer-only `POST /api/v1/uploads` mints a
   ticket: single use, 30 minutes, at most 5 attempts, bound to its connection (or, in single-user
   mode, to the hash of `ADMIN_TOKEN`), to one target, and for an update to the base version the
@@ -1338,6 +1375,10 @@ options.
   keeps a microphone grant for the app's origin, so delegating it to one frame would give it to
   every artifact. With `ALLOW_DICTATION`, the app runs the recognizer after the viewer's click in
   the page and their consent, shows a Stop the page cannot cover, and posts only words.
+- **Nothing on Plinth chooses the user's local files.** Project files reach a page only as copies
+  the user chose in the session; a mention from any role never makes the owner's agent read one,
+  and `sensitive_file` flags secret-looking names among the files a request sent
+  ([Project files for a page](#project-files-for-a-page-decided-2026-11-19)).
 - **Open counts are aggregates.** One number per artifact per UTC day, never who opened it, shown
   only to the artifact's owner and, summed over the instance, to admins.
 - **Quotas and rate limits.** Each account is limited to 100 artifacts by default, set by an
