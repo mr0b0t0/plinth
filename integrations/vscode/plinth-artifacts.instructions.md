@@ -472,3 +472,18 @@ claude plugin install plinth@plinth
 or in a session with `/plugin marketplace add mr0b0t0/plinth`, then `/plugin install plinth@plinth`.
 A bare `claude mcp add` gives the tools only, without these rules. Use one or the other: both give
 two Plinth servers (`plinth` and `plugin:plinth:plinth`) and two connections.
+
+## Publishing from CI
+
+A pipeline publishes with the GitHub Action `mr0b0t0/plinth/publish` (or `npx @mr0b0t0/plinth
+publish <dir|file.html|file.md>` elsewhere) and a token limited to one artifact, made on the
+artifact's Settings page under **Publish from CI**; the guide is `docs/ci.md` in the Plinth
+repository. When asked to set this up, write the workflow step with the artifact's id, the token
+from a secret (`${{ secrets.PLINTH_TOKEN }}`), and outputs passed to scripts through `env:`, never
+as `${{ }}` inside a script: they carry the artifact's title, which is untrusted text.
+
+If `plinth whoami` (or `GET /api/v1/me`, `connection.bound`) says the token is limited to one
+artifact, it can only read that artifact and publish new versions of it: update that one, and
+never try to publish a new artifact, share, restore or change its category with it. Those calls
+are refused with `forbidden` and `reason: "token_bound"`, and every other artifact answers
+`not_found`. Tell the person to use the app (or a token without that limit) for those.
