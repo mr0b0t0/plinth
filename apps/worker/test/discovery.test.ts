@@ -10,6 +10,7 @@ import { describe, expect, it } from "vitest";
 import { version as cliVersion } from "../../../packages/cli/package.json";
 import { appCsp } from "../src/app/headers.ts";
 import { cliPublishReleased, orRunCliPublish } from "../src/app/version.ts";
+import { parseConfig } from "../src/config.ts";
 import { artifacts } from "../src/db/schema.ts";
 import worker from "../src/index.ts";
 import { MCP_TOOL_SUMMARIES } from "../src/mcp/server.ts";
@@ -528,6 +529,38 @@ describe("Discovery documents", () => {
       expect(text.split("\n")).toContain(line);
     }
     expect(text).toContain(`# Agents: ${APP}/llms.txt`);
+  });
+
+  it("serves the OpenAI domain challenge only where the operator set one", async () => {
+    const off = await run("/.well-known/openai-apps-challenge");
+    expect(off.status).toBe(404);
+    expect(await off.text()).not.toContain('<div id="root">');
+
+    const vars = { OPENAI_APPS_CHALLENGE: "  oai-challenge_Token.123  " };
+    const on = await run("/.well-known/openai-apps-challenge", {}, vars);
+    expect(on.status).toBe(200);
+    // The token alone: trimmed, no newline, never cached, never framed or run as a page.
+    expect(await on.text()).toBe("oai-challenge_Token.123");
+    expect(on.headers.get("content-type")).toBe("text/plain; charset=utf-8");
+    expect(on.headers.get("cache-control")).toBe("no-store");
+    expect(on.headers.get("content-security-policy")).toBe(appCsp(config()));
+    expect(on.headers.get("access-control-allow-origin")).toBeNull();
+
+    // Never on an artifact's content origin.
+    const content = await run(
+      "http://art123.content.localhost:8787/.well-known/openai-apps-challenge",
+      {},
+      vars,
+    );
+    expect(await content.text()).not.toContain("oai-challenge_Token.123");
+  });
+
+  it("refuses an OpenAI challenge token that is not one printable word", () => {
+    for (const bad of ["two words", "line\nbreak", "é", "x".repeat(513)]) {
+      expect(() => parseConfig({ ...env, OPENAI_APPS_CHALLENGE: bad } as never), bad).toThrow(
+        /OPENAI_APPS_CHALLENGE/,
+      );
+    }
   });
 
   it("unknown well-known paths and missing files are 404, not the SPA", async () => {

@@ -80,7 +80,8 @@ Agents fetch artifact links as text, so the app host answers them without runnin
   already gets from the content host.
 - `/llms.txt`, `/robots.txt`, the MCP server card (`/mcp/server-card`, also at
   `/.well-known/mcp.json` and `/.well-known/mcp/server-card.json`) and `/.well-known/ai-catalog.json`
-  carry only configuration. Unknown `/.well-known/` paths and missing files answer `404`, never
+  carry only configuration, and so does `/.well-known/openai-apps-challenge` (the operator's
+  `OPENAI_APPS_CHALLENGE` token, `no-store`, 404 when unset). Unknown `/.well-known/` paths and missing files answer `404`, never
   the SPA.
 - None of these ever include open counts.
 

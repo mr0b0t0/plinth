@@ -265,8 +265,9 @@ and `404` from the source endpoint, identical in every case. `/a/...` pages send
 `X-Robots-Tag: noindex, nofollow` except a public artifact on an instance with public visibility
 on. The app host also serves `/llms.txt` (built from config, with every MCP tool), an MCP Server
 Card (SEP-2127) at `/mcp/server-card` (also at `/.well-known/mcp.json` and
-`/.well-known/mcp/server-card.json`, listed in `/.well-known/ai-catalog.json`) and `/robots.txt`;
-other `/.well-known/` paths and missing files answer `404` instead of the SPA. Guide:
+`/.well-known/mcp/server-card.json`, listed in `/.well-known/ai-catalog.json`) and `/robots.txt`,
+plus `/.well-known/openai-apps-challenge` (OpenAI's domain verification token as plain text) when
+`OPENAI_APPS_CHALLENGE` is set; other `/.well-known/` paths and missing files answer `404` instead of the SPA. Guide:
 `docs/agents.md#agent-discovery`; design:
 `docs/superpowers/specs/2026-11-14-agent-discovery-design.md`.
 

@@ -41,6 +41,7 @@ export interface OptionalBindings {
 export interface OptionalVars {
   VIEW_COUNTS?: string;
   REVIEW_LOGIN_EMAIL?: string;
+  OPENAI_APPS_CHALLENGE?: string;
 }
 
 export type Bindings = Omit<Env, "ROOMS"> & Secrets & OptionalBindings & OptionalVars;
@@ -158,6 +159,11 @@ export interface Config {
     email: string;
     hosting: string;
   } | null;
+  /**
+   * OPENAI_APPS_CHALLENGE: the domain verification token OpenAI's plugin portal shows for this MCP
+   * server, served as plain text at /.well-known/openai-apps-challenge. Unset: that path is 404.
+   */
+  openaiAppsChallenge: string | null;
 }
 
 export interface SharedDataLimits {
@@ -298,6 +304,20 @@ function parseOperator(env: Record<string, unknown>): Config["operator"] {
   };
 }
 
+// A verification token is one printable ASCII word; anything else is a paste mistake.
+const CHALLENGE_RE = /^[\x21-\x7e]{1,512}$/;
+
+function parseChallenge(env: Record<string, unknown>): string | null {
+  const token = str(env.OPENAI_APPS_CHALLENGE);
+  if (!token) return null;
+  if (!CHALLENGE_RE.test(token)) {
+    throw new ConfigError(
+      "OPENAI_APPS_CHALLENGE must be the token alone: printable ASCII, no spaces, at most 512 characters",
+    );
+  }
+  return token;
+}
+
 export function parseConfig(env: Record<string, unknown>): Config {
   const environment = str(env.ENVIRONMENT) || "production";
   if (!["development", "staging", "production"].includes(environment)) {
@@ -396,6 +416,7 @@ export function parseConfig(env: Record<string, unknown>): Config {
     live: parseLiveEditSettings(env),
     reviewLogin: parseReviewLogin(env),
     operator: parseOperator(env),
+    openaiAppsChallenge: parseChallenge(env),
   };
   validate(config);
   return config;
