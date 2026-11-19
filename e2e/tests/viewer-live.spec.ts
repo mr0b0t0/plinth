@@ -45,6 +45,9 @@ test("closing and reopening comments does not reload the artifact again", async 
 test("a version published by an agent replaces the one on view", async ({ page }) => {
   const { token } = await seedToken(uniqueEmail("owner"));
   const art = await publishArtifact(page.request, token, { html: page1("First draft") });
+  // The gate poll, without the live-view socket (live-view.spec.ts covers the pushed path, which
+  // would show the version and its toast before the clock moves).
+  await page.routeWebSocket(/\/api\/v1\/view\/[a-z0-9]+\/watch$/, (ws) => ws.close({ code: 4409 }));
   await page.clock.install();
   await page.goto(`/a/${art.slug}`);
   await expect(page.frameLocator("iframe").first().locator("h1")).toHaveText("First draft");
