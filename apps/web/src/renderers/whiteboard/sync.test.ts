@@ -1,11 +1,12 @@
-// Writing the board: a conflict re-reads and writes on top, a block has one write in flight with
-// later changes folded into the next, a delete can be undone (as new documents, ifRev 0), a rate
-// limit waits once, and a refusal the viewer cannot fix turns the board read-only.
+// Writing the board: a conflict re-reads and puts only the fields this change set on top (a field
+// the other writer changed too keeps theirs, and the viewer is told), a block has one write in
+// flight with later changes folded into the next, a delete can be undone (as new documents, ifRev
+// 0), a rate limit waits once, and a refusal the viewer cannot fix turns the board read-only.
 import type { BoardBlock } from "@plinth/shared";
 import { describe, expect, it, vi } from "vitest";
 import { BoardModel } from "./model.ts";
 import type { RuntimeCollection, RuntimeDoc } from "./runtime.ts";
-import { BoardSync, READ_ONLY_TEXT } from "./sync.ts";
+import { BoardSync, KEPT_THEIRS_TEXT, READ_ONLY_TEXT } from "./sync.ts";
 
 const blk = (x: number): BoardBlock => ({ kind: "note", x, y: 0, w: 100, h: 80, text: "" });
 
@@ -81,16 +82,66 @@ function setup() {
 }
 
 describe("BoardSync", () => {
-  it("writes at the rev it read, and after a conflict re-reads and writes on top", async () => {
+  it("writes at the rev it read, and after a conflict puts its fields on the newer copy", async () => {
     const { sync, blocks, model, put, deps } = setup();
-    put("a", blk(0), 3);
-    // Someone else saved it in the meantime.
-    blocks.docs.set("a", { id: "a", data: blk(50), rev: 7 });
-    expect(await sync.saveBlock("a", blk(10))).toBe(true);
+    put("a", { ...blk(0), text: "A1" }, 3);
+    // An agent changed the text in the meantime.
+    blocks.docs.set("a", { id: "a", data: { ...blk(0), text: "A2" }, rev: 7 });
+    expect(await sync.saveBlock("a", { x: 10 })).toBe(true);
     const sets = blocks.calls.filter((c) => c.op === "set");
     expect(sets.map((c) => c.ifRev)).toEqual([3, 7]);
-    expect(model.blocks.get("a")).toEqual({ data: blk(10), rev: blocks.rev });
+    // The move is kept and so is their text.
+    expect(blocks.docs.get("a")?.data).toEqual({ ...blk(10), text: "A2" });
+    expect(model.blocks.get("a")).toEqual({ data: { ...blk(10), text: "A2" }, rev: blocks.rev });
     expect(deps.emit).toHaveBeenCalledWith("block.saved", { id: "a" });
+    expect(deps.say).not.toHaveBeenCalled();
+  });
+
+  it("keeps the other writer's value for a field both changed, and says so", async () => {
+    const { sync, blocks, model, put, deps } = setup();
+    put("a", { ...blk(0), color: "yellow" }, 3);
+    blocks.docs.set("a", { id: "a", data: { ...blk(50), color: "yellow" }, rev: 7 });
+    // This viewer moved it and coloured it; the other writer moved it too.
+    expect(await sync.saveBlock("a", { x: 10, color: "blue" })).toBe(true);
+    expect(blocks.docs.get("a")?.data).toEqual({ ...blk(50), color: "blue" });
+    expect(model.blocks.get("a")?.data).toEqual({ ...blk(50), color: "blue" });
+    expect(deps.say).toHaveBeenCalledWith(KEPT_THEIRS_TEXT);
+  });
+
+  it("writes nothing more when everything it changed was changed by someone else", async () => {
+    const { sync, blocks, model, put, deps } = setup();
+    put("a", blk(0), 3);
+    blocks.docs.set("a", { id: "a", data: blk(50), rev: 7 });
+    expect(await sync.saveBlock("a", { x: 10 })).toBe(true);
+    expect(blocks.calls.filter((c) => c.op === "set")).toHaveLength(1);
+    expect(blocks.docs.get("a")).toEqual({ id: "a", data: blk(50), rev: 7 });
+    expect(model.blocks.get("a")).toEqual({ data: blk(50), rev: 7 });
+    expect(deps.say).toHaveBeenCalledWith(KEPT_THEIRS_TEXT);
+  });
+
+  it("compares a drag with where the block was before it, not where it was dropped", async () => {
+    const { sync, blocks, model, put, deps } = setup();
+    put("a", { ...blk(0), text: "A1" }, 3);
+    blocks.docs.set("a", { id: "a", data: { ...blk(0), text: "A2" }, rev: 7 });
+    // The board has already drawn the drag into the model when it saves.
+    const e = model.blocks.get("a");
+    if (e) e.data = { ...e.data, x: 10 };
+    expect(await sync.saveBlock("a", { x: 10 }, { x: 0 })).toBe(true);
+    expect(blocks.docs.get("a")?.data).toEqual({ ...blk(10), text: "A2" });
+    expect(deps.say).not.toHaveBeenCalled();
+  });
+
+  it("drops a queued change to a field the other writer changed, and writes the rest", async () => {
+    const { sync, blocks, put, deps } = setup();
+    put("a", blk(0), 3);
+    blocks.docs.set("a", { id: "a", data: { ...blk(50), text: "theirs" }, rev: 7 });
+    const first = sync.saveBlock("a", { x: 10 });
+    void sync.saveBlock("a", { x: 20, text: "mine", color: "blue" });
+    expect(await first).toBe(true);
+    // Their x and text stand; the colour, which they did not change, is written on top.
+    expect(blocks.docs.get("a")?.data).toEqual({ ...blk(50), text: "theirs", color: "blue" });
+    expect(blocks.calls.filter((c) => c.op === "set").map((c) => c.ifRev)).toEqual([3, 7]);
+    expect(deps.say).toHaveBeenCalledWith(KEPT_THEIRS_TEXT);
   });
 
   it("gives up after four conflicts", async () => {
@@ -98,7 +149,7 @@ describe("BoardSync", () => {
     put("a", blk(0), 3);
     blocks.fail = (op) =>
       op === "set" ? Object.assign(new Error("c"), { code: "conflict" }) : null;
-    expect(await sync.saveBlock("a", blk(1))).toBe(false);
+    expect(await sync.saveBlock("a", { x: 1 })).toBe(false);
     expect(blocks.calls.filter((c) => c.op === "set")).toHaveLength(4);
     expect(deps.say).toHaveBeenCalledWith("Someone else kept changing this block. Try again.");
   });
@@ -106,9 +157,9 @@ describe("BoardSync", () => {
   it("keeps one write in flight per block and folds later changes into the next", async () => {
     const { sync, blocks, put, model } = setup();
     put("a", blk(0), 3);
-    const first = sync.saveBlock("a", blk(1));
-    const second = sync.saveBlock("a", blk(2));
-    const third = sync.saveBlock("a", blk(3));
+    const first = sync.saveBlock("a", { x: 1 });
+    const second = sync.saveBlock("a", { x: 2 });
+    const third = sync.saveBlock("a", { x: 3 });
     expect(first).toBe(second);
     await Promise.all([first, second, third]);
     const sets = blocks.calls.filter((c) => c.op === "set");
@@ -144,7 +195,7 @@ describe("BoardSync", () => {
       limited = false;
       return Object.assign(new Error("slow"), { code: "rate_limited", retryAfter: 2 });
     };
-    expect(await sync.saveBlock("a", blk(1))).toBe(true);
+    expect(await sync.saveBlock("a", { x: 1 })).toBe(true);
     expect(deps.wait).toHaveBeenCalledWith(2000);
     expect(deps.say).toHaveBeenCalledWith(expect.stringMatching(/^Slow down/));
   });
@@ -153,11 +204,11 @@ describe("BoardSync", () => {
     const { sync, blocks, put, deps } = setup();
     put("a", blk(0), 3);
     blocks.fail = () => Object.assign(new Error("ro"), { code: "read_only" });
-    expect(await sync.saveBlock("a", blk(1))).toBe(false);
+    expect(await sync.saveBlock("a", { x: 1 })).toBe(false);
     expect(deps.readOnly).toHaveBeenCalledOnce();
     expect(deps.say).toHaveBeenCalledWith(READ_ONLY_TEXT);
     blocks.fail = null;
-    expect(await sync.saveBlock("a", blk(2))).toBe(false);
+    expect(await sync.saveBlock("a", { x: 2 })).toBe(false);
     expect(await sync.addBlock(blk(3))).toBeNull();
     expect(blocks.calls.filter((c) => c.op === "set")).toHaveLength(1);
   });

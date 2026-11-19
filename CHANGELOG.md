@@ -14,7 +14,9 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   people edit together (`type: "whiteboard"`). The board lives in the artifact's shared data, so
   everyone it lets edit (commenters by default, or editors only) moves, resizes, writes on,
   colours, connects and deletes blocks on the page, with live cursors and drags; viewers follow
-  read-only. Pan and zoom with the mouse, a trackpad, touch or the keyboard, and export the board
+  read-only. When two people (or a person and an agent) change one block at once, each keeps the
+  fields they changed; where both changed the same one, the first save stands and the other person
+  is told. Pan and zoom with the mouse, a trackpad, touch or the keyboard, and export the board
   as PNG or SVG. A version holds only the board's settings (`board.json`), and a new board can
   start with a list of blocks and arrows, written once into its shared data. Agents read the board
   with `list_artifact_data` and add or move blocks with `write_artifact_data`. Needs shared data

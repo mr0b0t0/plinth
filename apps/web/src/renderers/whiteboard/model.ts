@@ -2,6 +2,7 @@
 // Pure: no DOM. Every document is passed through the shared lenient readers (cleanBlock,
 // cleanArrow), so whatever a stored row holds, what is drawn is in bounds and well formed.
 import {
+  BOARD_LIMITS,
   type BoardArrow,
   type BoardBlock,
   cleanArrow,
@@ -86,6 +87,14 @@ export class BoardModel {
     let z = 0;
     for (const b of this.blocks.values()) z = Math.max(z, b.data.z ?? 0);
     return z;
+  }
+
+  /**
+   * The z for a new block: in front of every other, but never past the largest z a block may have
+   * (a block already there ties with it and the id breaks the tie).
+   */
+  nextZ(): number {
+    return Math.min(BOARD_LIMITS.maxZ, this.topZ() + 1);
   }
 
   /** The box around every block, or null for an empty board. */

@@ -1610,7 +1610,9 @@ its page without a new version each time, and agents add and move blocks with
   building any DOM. It pans, zooms (10% to 400%: drag, wheel, pinch, `+`, `-`, `0` to fit), adds
   notes, text, boxes and ellipses, moves, resizes, edits (double click or Enter), colours,
   connects and deletes blocks (with an undo), and moves a focused block with the arrow keys (Shift
-  for bigger steps). Writes go at the rev they read, retried on top of a newer copy. Live cursors,
+  for bigger steps). Writes go at the rev they read. On a conflict the renderer reads the newer
+  copy and puts on it only the fields the viewer changed (a move, a size, the text, a colour); a
+  field the other writer changed too keeps their value, and the viewer is told. Live cursors,
   who is here, peers' selections and a block moving while it is dragged go through the room. A
   viewer, or a commenter on an `editors` board, gets a read-only board that still follows the
   others live and shows their cursor. Without the room (rooms off, link viewers) the board saves
