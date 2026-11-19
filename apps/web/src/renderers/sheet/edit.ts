@@ -239,11 +239,25 @@ function sameColumns(a: string | undefined, b: string | undefined): boolean {
   return !!x && !!y && x.length === y.length && x.every((c, i) => c.name === y[i]?.name);
 }
 
-/** Where a column (its whole definition) is in a header now, nearest `near` first; -1 if gone. */
-function findColumn(header: SheetHeader, was: SheetColumn, near: number): number {
-  const want = JSON.stringify(was);
-  if (JSON.stringify(header.columns[near]) === want) return near;
-  const at = header.columns.flatMap((c, i) => (JSON.stringify(c) === want ? [i] : []));
+/**
+ * Where a column (its whole definition) is in a header now, nearest `near` first; -1 if gone.
+ * With `anyWidth`, a column whose width alone changed is still the same column: the column
+ * settings keep or set the width themselves, so a width dragged meanwhile is no conflict there.
+ */
+function findColumn(
+  header: SheetHeader,
+  was: SheetColumn,
+  near: number,
+  opts: { anyWidth?: boolean } = {},
+): number {
+  const key = (c: SheetColumn | undefined): string | undefined => {
+    if (!c || !opts.anyWidth) return JSON.stringify(c);
+    const { width: _width, ...rest } = c;
+    return JSON.stringify(rest);
+  };
+  const want = key(was);
+  if (key(header.columns[near]) === want) return near;
+  const at = header.columns.flatMap((c, i) => (key(c) === want ? [i] : []));
   return at.length === 1 ? (at[0] as number) : -1;
 }
 
@@ -1660,13 +1674,14 @@ export class SheetEditor {
     col: number,
     was: SheetColumn,
     change: (c: SheetColumn) => SheetColumn,
-    opts: { said?: string } = {},
+    opts: { said?: string; anyWidth?: boolean } = {},
   ): void {
+    const { anyWidth, ...rest } = opts;
     this.write(
       { start: 0, end: 1 },
       (lines) => {
         const now = sheetHeaderLine(lines[0]);
-        const at = now ? findColumn(now, was, col) : -1;
+        const at = now ? findColumn(now, was, col, { anyWidth }) : -1;
         if (!now || at < 0) return { error: "The column changed meanwhile. Try again." };
         const line = headerWith(now, at, change);
         if (typeof line !== "string") return line;
@@ -1674,7 +1689,7 @@ export class SheetEditor {
         if (problem) return { error: `Some cells do not fit: ${problem}` };
         return [line];
       },
-      opts,
+      rest,
     );
   }
 
@@ -2074,7 +2089,7 @@ export class SheetEditor {
             return { error: "The sheet changed meanwhile. Try again." };
           }
           const h = sheetHeaderLine(now[0]);
-          const at = h ? findColumn(h, c, col) : -1;
+          const at = h ? findColumn(h, c, col, { anyWidth: true }) : -1;
           if (!h || at < 0) return { error: "The column changed meanwhile. Try again." };
           const line = headerWith(h, at, change);
           if (typeof line !== "string") return line;
@@ -2105,7 +2120,7 @@ export class SheetEditor {
         return;
       }
       this.closePanel();
-      this.writeColumn(col, c, change, { said });
+      this.writeColumn(col, c, change, { said, anyWidth: true });
     });
     this.panel = form;
     g.slot.append(form);

@@ -509,6 +509,110 @@ describe("column widths", () => {
     submit(panel());
     expect((await header(f)).columns[0]).toEqual({ name: "Item", type: "text" });
   });
+
+  it("changed while the column settings are open: Apply keeps that width", async () => {
+    vi.useFakeTimers();
+    const f = solo();
+    cell("B2").focus();
+    button("Column settings").click();
+    labelled(panel(), "Name").value = "Quantity";
+    key(sortOf("B1"), "ArrowRight", { altKey: true });
+    vi.advanceTimersByTime(500);
+    expect((await header(f)).columns[1].width).toBe(128);
+    submit(panel());
+    expect(notice()).not.toContain("changed meanwhile");
+    expect((await header(f)).columns[1]).toEqual({ name: "Quantity", type: "number", width: 128 });
+  });
+
+  it("changed while the column settings are open: a width typed there wins", async () => {
+    vi.useFakeTimers();
+    const f = solo();
+    cell("B2").focus();
+    button("Column settings").click();
+    labelled(panel(), "Name").value = "Quantity";
+    labelled(panel(), "Width in pixels").value = "300";
+    key(sortOf("B1"), "ArrowRight", { altKey: true });
+    vi.advanceTimersByTime(500);
+    submit(panel());
+    expect((await header(f)).columns[1]).toEqual({ name: "Quantity", type: "number", width: 300 });
+  });
+
+  it("changed while the column settings are open: renamed options still reach the cells", async () => {
+    vi.useFakeTimers();
+    const f = solo();
+    cell("E2").focus();
+    button("Column settings").click();
+    (panel().querySelectorAll(".plinth-sheet__option input")[1] as HTMLInputElement).value = "Done";
+    key(sortOf("E1"), "ArrowRight", { altKey: true });
+    vi.advanceTimersByTime(500);
+    submit(panel());
+    expect(notice()).not.toContain("changed meanwhile");
+    const draft = await collected(f);
+    expect(JSON.parse(draft[0] as string).columns[4]).toEqual({
+      name: "Stage",
+      type: "select",
+      width: 128,
+      options: ["new", "Done"],
+    });
+    expect(draft[2]).toBe('["Pears",5,0.5,false,"Done"]');
+  });
+
+  /** Someone else changes the header to these columns, through their own lease. */
+  const theirs = (ws: FakeSocket, columns: unknown[], rev: number) => {
+    ws.frame({ t: "leased", lease: "l9", start: 0, end: 1, holder: "s2", by: "bo@example.org" });
+    ws.frame({
+      t: "op",
+      gen: "g1",
+      rev,
+      lease: "l9",
+      start: 0,
+      del: 1,
+      ins: JSON.stringify({ plinth: "sheet", v: 1, columns }),
+      by: "s2",
+      seq: 1,
+    });
+    ws.frame({ t: "released", lease: "l9" });
+  };
+
+  it("in the room: a width someone else set while the settings were open is kept", async () => {
+    const { ws } = roomed();
+    cell("B2").focus();
+    button("Column settings").click();
+    labelled(panel(), "Name").value = "Quantity";
+    theirs(
+      ws,
+      COLUMNS.map((c, i) => (i === 1 ? { ...c, width: 200 } : c)),
+      4,
+    );
+    await tick();
+    submit(panel());
+    expect(ws.sent.at(-1)).toEqual({ t: "lease", rev: 4, start: 0, end: 1 });
+    ws.frame({ t: "leased", lease: "l1", start: 0, end: 1, holder: "s1", by: "ada@example.org" });
+    expect(notice()).not.toContain("changed meanwhile");
+    const edit = ws.sent.find((m) => m.t === "edit") as { text: string } | undefined;
+    expect(JSON.parse(edit?.text ?? "{}").columns[1]).toEqual({
+      name: "Quantity",
+      type: "number",
+      width: 200,
+    });
+  });
+
+  it("in the room: a rename someone else made while the settings were open still refuses", async () => {
+    const { ws } = roomed();
+    cell("B2").focus();
+    button("Column settings").click();
+    labelled(panel(), "Name").value = "Quantity";
+    theirs(
+      ws,
+      COLUMNS.map((c, i) => (i === 1 ? { ...c, name: "Units" } : c)),
+      4,
+    );
+    await tick();
+    submit(panel());
+    ws.frame({ t: "leased", lease: "l1", start: 0, end: 1, holder: "s1", by: "ada@example.org" });
+    expect(notice()).toContain("The column changed meanwhile");
+    expect(ws.sent.filter((m) => m.t === "edit")).toEqual([]);
+  });
 });
 
 describe("number grouping", () => {

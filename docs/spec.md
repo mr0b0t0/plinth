@@ -2558,6 +2558,9 @@ and the whole-draft review is the only way on (below).
   came first) is asked for again on the same row or column where it is now, found by the row's
   line or the column's definition under the same columns, and dropped with "The sheet changed
   meanwhile" when it is gone; a write is made from the row as it is when the lease is granted.
+  The column settings find their column by its definition apart from its width, so a width
+  changed while they are open (dragged, set with the keys or by someone else) is no conflict:
+  Apply keeps that width unless the Width field was changed, and then sets the one typed there.
   Rows other people hold show their email, and their typing arrives as it is typed. Sort and filter stay the viewer's own while editing; downloads give what the page
   shows.
 - **At phone width** (a frame 640 pixels wide or less) an open cell's field is docked at the
