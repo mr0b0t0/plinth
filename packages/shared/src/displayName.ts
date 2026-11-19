@@ -9,6 +9,16 @@ import { REFUSED_CHARS } from "./text.ts";
 
 const REFUSED_ALL = new RegExp(REFUSED_CHARS.source, "gu");
 
+/**
+ * Every character whose compatibility form (NFKC) is "@": the ASCII sign, SMALL COMMERCIAL AT
+ * (U+FE6B) and FULLWIDTH COMMERCIAL AT (U+FF20). NFC keeps the last two, and they render as "@",
+ * so a name holding one could pass for an email address. Names are not NFKC-normalised instead,
+ * because that would rewrite other characters people choose (ligatures, superscripts, fullwidth
+ * letters).
+ */
+const AT_SIGN = /[@\uFE6B\uFF20]/u;
+const AT_SIGN_ALL = new RegExp(AT_SIGN.source, "gu");
+
 /** Stored form: NFC, every whitespace run (line breaks and separators included) -> one space, trimmed. */
 export function normalizeDisplayName(s: string): string {
   return s.normalize("NFC").replace(/\s+/gu, " ").trim();
@@ -16,28 +26,28 @@ export function normalizeDisplayName(s: string): string {
 
 /**
  * Why a (normalised) name is refused on write, or null: longer than LIMITS.maxDisplayNameLength,
- * containing "@" (it must not look like an email address or an agent mention), or containing
- * control or format (invisible, bidi) characters. Empty is allowed: it clears the name.
+ * containing "@" or a character that renders as one (it must not look like an email address or an
+ * agent mention), or containing control or format (invisible, bidi) characters. Empty is allowed: it clears the name.
  */
 export function displayNameProblem(s: string): string | null {
   if (s.length > LIMITS.maxDisplayNameLength) {
     return `A name is at most ${LIMITS.maxDisplayNameLength} characters`;
   }
-  if (s.includes("@")) return "A name cannot contain @";
+  if (AT_SIGN.test(s)) return "A name cannot contain @";
   if (REFUSED_CHARS.test(s)) return "A name cannot contain control or invisible characters";
   return null;
 }
 
 /**
- * The name as a page, a room or an agent sees it: normalised, refused characters and "@" dropped,
- * cut to LIMITS.maxPageDisplayNameLength code points (never inside a surrogate pair); null when
- * nothing is left. Applied on every read, so names stored before these rules are cleaned too.
+ * The name as a page, a room or an agent sees it: normalised, refused characters and every "@"
+ * (AT_SIGN) dropped, cut to LIMITS.maxPageDisplayNameLength code points (never inside a surrogate
+ * pair); null when nothing is left. Applied on every read, so names stored before these rules are cleaned too.
  */
 export function pageDisplayName(raw: string | null | undefined): string | null {
   if (typeof raw !== "string") return null;
   // Whitespace first (line breaks and tabs become spaces), then the rest is dropped.
   const cleaned = normalizeDisplayName(
-    normalizeDisplayName(raw).replace(REFUSED_ALL, "").replaceAll("@", ""),
+    normalizeDisplayName(raw).replace(REFUSED_ALL, "").replace(AT_SIGN_ALL, ""),
   );
   const cut = Array.from(cleaned).slice(0, LIMITS.maxPageDisplayNameLength).join("").trim();
   return cut === "" ? null : cut;

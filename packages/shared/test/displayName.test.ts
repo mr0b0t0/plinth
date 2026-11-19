@@ -36,6 +36,26 @@ describe("display names", () => {
     expect(categoryProblem("An​a")).toMatch(/invisible/);
   });
 
+  it("refuse on write, and drop on read, every character whose compatibility form is @", () => {
+    // U+FE6B and U+FF20 survive NFC and render as "@": "boss\uFF20company.com" reads as an address.
+    const atSigns: string[] = [];
+    for (let cp = 0; cp <= 0x10ffff; cp++) {
+      if (cp >= 0xd800 && cp <= 0xdfff) continue;
+      const ch = String.fromCodePoint(cp);
+      if (ch.normalize("NFKC").includes("@")) atSigns.push(ch);
+    }
+    expect(atSigns).toEqual(["@", "\uFE6B", "\uFF20"]);
+    for (const at of atSigns) {
+      const forged = `boss${at}company.com`;
+      expect(normalizeDisplayName(forged), JSON.stringify(at)).toBe(forged);
+      expect(displayNameProblem(forged), JSON.stringify(at)).toMatch(/@/);
+      expect(updateProfileInput.safeParse({ name: forged }).success, JSON.stringify(at)).toBe(
+        false,
+      );
+      expect(pageDisplayName(forged), JSON.stringify(at)).toBe("bosscompany.com");
+    }
+  });
+
   it("updateProfileInput applies the rules and stays a plain string schema", () => {
     expect(updateProfileInput.safeParse({ name: "  Ana  " })).toMatchObject({
       success: true,

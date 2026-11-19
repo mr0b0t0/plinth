@@ -44,7 +44,15 @@ describe("PATCH /me: display name rules", () => {
     // NFC: a decomposed é is stored composed.
     await setName(u.id, "José");
     expect(await stored(u.id)).toBe("José");
-    for (const bad of ["ana@example.com", "Ana‮Owner", "An​a", "Ana\u0007", "x".repeat(101)]) {
+    for (const bad of [
+      "ana@example.com",
+      "ana\uFF20example.com",
+      "ana\uFE6Bexample.com",
+      "Ana‮Owner",
+      "An​a",
+      "Ana\u0007",
+      "x".repeat(101),
+    ]) {
       const res = await setName(u.id, bad);
       expect(res.status, JSON.stringify(bad)).toBe(400);
     }
@@ -120,6 +128,11 @@ describe("names on the page", () => {
     await storeRawName(ownerP.userId, "‮Ana​ Owner@home\u0007");
     expect((await json(await api(id, "/session", { cookie: ownerP.cookie }))).viewer.name).toBe(
       "Ana Ownerhome",
+    );
+    // Characters that render as "@" go too, so a stored name cannot pass for an address.
+    await storeRawName(ownerP.userId, "boss\uFF20company\uFE6Bcom");
+    expect((await json(await api(id, "/session", { cookie: ownerP.cookie }))).viewer.name).toBe(
+      "bosscompanycom",
     );
     await storeRawName(ownerP.userId, "\u{1F600}".repeat(70));
     const long = (await json(await api(id, "/session", { cookie: ownerP.cookie }))).viewer.name;

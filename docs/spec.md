@@ -623,9 +623,10 @@ never a directory.
 
 - **Display names.** `users.name` is the person's display name, set in the app ("Your name…" in
   the account menu) or with `PATCH /api/v1/me`. On write it is stored NFC with whitespace runs
-  collapsed and trimmed, at most 100 characters, with no `@` and no control, format (bidi,
+  collapsed and trimmed, at most 100 characters, with no `@`, no character whose compatibility
+  (NFKC) form is `@` (U+FE6B, U+FF20, which render as one) and no control, format (bidi,
   zero-width) or separator characters; an empty name clears it. Pages, rooms and agents get it
-  cleaned on every read (refused characters and `@` dropped, at most 64 code points, `null` when
+  cleaned on every read (refused characters and every form of `@` dropped, at most 64 code points, `null` when
   nothing is left), so names stored before these rules comply too. People confirmed by code
   without an account have no name. A name is display text, never authority: `role` stays
   server-derived beside it.
@@ -890,12 +891,13 @@ options.
   `Origin`, JSON bodies, no CORS), because every framed artifact shares one partitioned cookie jar.
   Only identified viewers write, stamps come from the server, quotas and write rate limits apply,
   and agents treat every document as untrusted input. Details in `docs/security.md`.
-- **Names are display text; the people list is the access list.** Display names have no `@` and
-  no control or invisible characters, and never stand for a role. A page sees them only where it
-  sees an email. Only the owner and editors (and their agents) list who has access, on a page that
-  declares `people`, and every identified viewer is told; there is no visit log and no directory
-  search. An access list names a grant holder only once they have taken part in the artifact, so
-  the addresses an owner adds never reveal which have an account.
+- **Names are display text; the people list is the access list.** Display names have no `@` (nor
+  the small and fullwidth forms that render as one) and no control or invisible characters, and
+  never stand for a role. A page sees them only where it sees an email. Only the owner and editors
+  (and their agents) list who has access, on a page that declares `people`, and every identified
+  viewer is told; there is no visit log and no directory search. An access list names a grant
+  holder only once they have taken part in the artifact, so the addresses an owner adds never
+  reveal which have an account.
 - **Tokens.** Stored hashed, shown once, revocable per connection, with last-used timestamps.
 - **Open counts are aggregates.** One number per artifact per UTC day, never who opened it, shown
   only to the artifact's owner and, summed over the instance, to admins.
