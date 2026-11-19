@@ -17,6 +17,7 @@ import {
   type CategoryShareSummary,
   type CategoryShareWriteResult,
   categoryKey,
+  type InvitationReport,
   LIMITS,
   normalizeCategory,
   type ReviewSkipReason,
@@ -31,6 +32,7 @@ import { type CategoryGrantFacts, mayManageCategoryShares } from "../policy.ts";
 import { notifyRoom } from "../rooms/notify.ts";
 import { matchingSpellings, prunePersonalCategories } from "./categories.ts";
 import type { Ctx } from "./context.ts";
+import { newInvitees, sendInvitations } from "./invitations.ts";
 import { artifactLimitFor, getUserById } from "./users.ts";
 
 export interface ReviewItem {
@@ -598,6 +600,8 @@ export async function createShare(
     title?: string;
     people: CategoryPerson[];
     review: ReviewItem[];
+    /** Email the people (docs/spec.md "Invitation emails"). Default false. */
+    notify?: boolean;
   },
 ): Promise<CategoryShareWriteResult> {
   const { userId, email } = requireShareOwner(ctx);
@@ -667,7 +671,9 @@ export async function createShare(
     returnedIds(results[3]),
     returnedIds(results[4]),
   );
-  return { share: await summaryOf(ctx, share), review };
+  const invitations = await inviteSharePeople(ctx, share, input.notify, [], people);
+  const out = { share: await summaryOf(ctx, share), review };
+  return invitations ? { ...out, invitations } : out;
 }
 
 /**
@@ -679,7 +685,13 @@ export async function createShare(
 export async function updateShare(
   ctx: Ctx,
   id: string,
-  input: { title?: string; people?: CategoryPerson[]; review?: ReviewItem[] },
+  input: {
+    title?: string;
+    people?: CategoryPerson[];
+    review?: ReviewItem[];
+    /** Email the people this adds (docs/spec.md "Invitation emails"). Default false. */
+    notify?: boolean;
+  },
 ): Promise<CategoryShareWriteResult> {
   const { userId, email } = requireShareOwner(ctx);
   if (input.people !== undefined && input.review === undefined) {
@@ -717,6 +729,8 @@ export async function updateShare(
   const people = cleanPeople(input.people, email);
   const review = input.review ?? [];
   await checkReview(ctx, userId, review);
+  // Who held a grant before, so that only people this change adds are emailed (`notify`).
+  const before = input.notify ? (await peopleOf(DB, id)).map((p) => p.email) : [];
   const items = JSON.stringify(review);
   const owned = "EXISTS (SELECT 1 FROM category_shares WHERE id = ?1 AND owner_id = ?2)";
   const results = await DB.batch([
@@ -750,7 +764,29 @@ export async function updateShare(
     returnedIds(results[4]),
     returnedIds(results[5]),
   );
-  return { share: await summaryOf(ctx, await ownShare(ctx, userId, id)), review: outcome };
+  const fresh = await ownShare(ctx, userId, id);
+  const invitations = await inviteSharePeople(ctx, fresh, input.notify, before, people);
+  const out = { share: await summaryOf(ctx, fresh), review: outcome };
+  return invitations ? { ...out, invitations } : out;
+}
+
+/** Invitation emails for the people a share's change added, when it asked to `notify`. */
+async function inviteSharePeople(
+  ctx: Ctx,
+  share: CategoryShareRow,
+  notify: boolean | undefined,
+  before: readonly string[],
+  people: readonly CategoryPerson[],
+): Promise<InvitationReport | undefined> {
+  if (!notify) return undefined;
+  const owner = await getUserById(ctx.db, share.ownerId);
+  return sendInvitations(ctx, {
+    notify,
+    owner,
+    // The people see the share's title, never the category's name.
+    target: { kind: "category", id: share.id, title: share.title },
+    invitees: newInvitees(before, people, owner?.email ?? null),
+  });
 }
 
 /**

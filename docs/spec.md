@@ -358,7 +358,7 @@ One remote MCP server over streamable HTTP at `/mcp`. All tools act as the conne
 | `list_artifacts(query?, category?, type?, limit?)` | List the user's artifacts and their own category names (`limit: 0` returns only the names). `type` filters by artifact type, for example `design_system` |
 | `list_versions(id)` | Version history with notes and authors |
 | `restore_version(id, version)` | Make an old version current by publishing it as a new one |
-| `set_visibility(id, visibility, emails?, password?)` | Change who can view |
+| `set_visibility(id, visibility, emails?, password?, notify?)` | Change who can view. `notify: true` emails the people `emails` adds ([Invitation emails](#invitation-emails-decided-2026-11-19)) |
 | `list_mentions(state?)` | Pending requests addressed to this agent |
 | `claim_mention(task_id)` | Lock a request so two agents do not both act on it |
 | `reply_comment(comment_id, body, result_version?, done?, failed?)` | Answer in the thread and complete the claimed task: `result_version` (done with a version), `done` (done without one) or `failed`, at most one. On a page request, the requester's page shows the reply text, with no author |
@@ -2288,6 +2288,60 @@ anyone signed in.
   setting turns this off apart from single-user mode: an instance that lets an address sign in
   lets it sign in by either code.
 
+### Invitation emails (decided 2026-11-19)
+
+When an owner gives someone access, Plinth can email that person the link, so the owner does not
+have to send it themselves. It never emails anyone unless the request asks, and an agent asks only
+when the user told it to.
+
+- **When.** A sharing change emails the people it adds when it carries `notify: true`:
+  `PUT /api/v1/artifacts/:ref/sharing` (`{ grants, notify? }`), `set_visibility` over MCP and
+  `PUT /api/v1/artifacts/:ref/visibility` (the people `emails` adds), and a category share's
+  `POST /api/v1/category-shares` and `PATCH /api/v1/category-shares/:id` with people. `notify`
+  defaults to `false` everywhere. In the app, the People section of an artifact's settings and the
+  Share category dialog have a **Notify people** box, ticked by default: adding a person then sends
+  `notify: true` (role changes, removals and Undo never do). `publish_artifact`'s `emails` never
+  emails anyone; an agent that should notify people publishes without `emails` and adds them with
+  `set_visibility`.
+- **Who is emailed.** Only a new grant: an address that held no grant on the artifact (or the
+  share) before the change. Re-saving a list, changing a role or adding someone who already had
+  access emails nobody, and the owner's own address is never emailed. The decision is
+  `policy.ts mayEmailInvitations`: the request asked, the caller is the owner acting on their own
+  artifact or share (the signed-in owner or the owner's own agent), the owner's address is verified,
+  and the artifact is not taken down.
+- **Bounds.** At most one invitation per artifact (or share) and address within a day, counted
+  across the previous and the current UTC day, so removing and re-adding someone does not email
+  them again. At most `RATE_LIMITS.invitationsPerChange` (40) invitations per change,
+  `RATE_LIMITS.invitationsPerOwnerPerDay` (100) per owner,
+  `RATE_LIMITS.invitationsPerOwnerPerRecipientPerDay` (3) from one owner to one address and
+  `RATE_LIMITS.invitationsPerRecipientPerDay` (10) per address, from every owner together, per UTC
+  day. Each limit is reserved before an email goes (the counter is raised, then checked, and what
+  was not used is given back), so parallel changes cannot pass it. The counters sit in
+  `rate_limits` under keys holding a hash of the address, never the address, are read and written
+  in a fixed number of statements whatever the number of people, and the hourly cron deletes them
+  two days after their day. Nothing else is stored.
+- **What the result says.** With `notify: true`, the result adds `invitations`: `emailed` (the
+  addresses handed to the email provider) and `skipped` (`{ email, reason }`, with `reason` one of
+  `owner_unverified`, `taken_down`, `already_emailed`, `change_limit`, `owner_limit`,
+  `recipient_limit`, which covers both per-address limits). Without it, the result is exactly as
+  before. A skipped invitation never fails the change: the grants are
+  saved either way. The app names the people it did not email, and why, in a toast.
+- **The email.** Subject `<owner name> (<owner email>) shared "<title>" with you`, or the email
+  alone when the owner has no display name; the body names the
+  owner by display name and address, the title (for a category, the name its people see, never the
+  category's own name), the role in plain words, the one link (`/a/<slug>`, or the portal
+  `/p/<id>` for a category share), a line saying the title and name were written by the person who
+  shared it, and why the recipient got it. It carries no code, token or other secret: the person
+  still confirms their address when the link asks, and that code signs them in where the address
+  may sign in ([Invitees get an account](#invitees-get-an-account-decided-2026-11-19)). Titles and names are untrusted: control and
+  format characters and line breaks are removed, they are shortened, anything that reads as a web
+  address is defanged (`https[:]//`, `www[.]`), and the HTML part escapes every value and has one
+  link, the artifact's. It goes through the instance's email provider (`EMAIL_PROVIDER`; the
+  console provider in development) after the response, and a provider failure is logged without
+  the address, the title or the message.
+- **No setting.** Invitations go through the email provider sign-in already uses, so there is no
+  new environment variable.
+
 ### Big builds and reuse by hash
 
 Decided 2026-11-15. Agents publish built sites (a Vite or similar `dist/` folder with hundreds of
@@ -2580,6 +2634,11 @@ options.
   no owner authority ([Page requests](#page-requests-decided-2026-11-19)).
 - **Open counts are aggregates.** One number per artifact per UTC day, never who opened it, shown
   only to the artifact's owner and, summed over the instance, to admins.
+- **Invitation emails are bounded.** Plinth emails someone only when the owner (or the owner's
+  agent, told by the user) adds them with `notify`, from a verified owner, once per artifact and
+  address a day, within daily caps per owner, per owner and recipient, and per recipient. The email has one link and no
+  secret, and its untrusted title and name are cleaned and escaped
+  ([Invitation emails](#invitation-emails-decided-2026-11-19)).
 - **Quotas and rate limits.** Each account is limited to 100 artifacts by default, set by an
   environment variable with a per-account override. Storage and publishes per hour are capped too.
   Rate limits on password attempts and email codes.

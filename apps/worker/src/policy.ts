@@ -991,3 +991,32 @@ export function canSeeThread(
 ): boolean {
   return root.kind !== "page_request" || canSeePageRequest(role, emails, root.authorEmail);
 }
+
+// ---------- invitation emails (docs/spec.md "Invitation emails") ----------
+
+/**
+ * May this sharing change email the people it adds? Only when the request asked (`notify`, which
+ * agents leave false unless the user asked), only for the owner acting on their own artifact or
+ * share (the signed-in owner or the owner's own agent; never an editor, a viewer or an admin acting
+ * on someone else's), only while the owner's address is verified, and never for a taken-down
+ * artifact. Who among the people is emailed (only new grants, never the owner's own address, the
+ * de-dupe and the rate limits) is the invitations service's part.
+ */
+export function mayEmailInvitations(f: {
+  notify: boolean;
+  principal: Principal;
+  ownerId: string;
+  ownerVerified: boolean;
+  takenDown: boolean;
+}):
+  | { allow: true }
+  | { allow: false; reason: "not_requested" | "not_owner" | "owner_unverified" | "taken_down" } {
+  if (!f.notify) return { allow: false, reason: "not_requested" };
+  const p = f.principal;
+  if ((p.kind !== "user" && p.kind !== "agent") || p.userId !== f.ownerId) {
+    return { allow: false, reason: "not_owner" };
+  }
+  if (!f.ownerVerified) return { allow: false, reason: "owner_unverified" };
+  if (f.takenDown) return { allow: false, reason: "taken_down" };
+  return { allow: true };
+}

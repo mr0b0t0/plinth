@@ -32,6 +32,7 @@ import {
   FILE_LIMITS,
   FILE_TYPE_LIST,
   grantsReplaceInput,
+  INVITATION_SKIP_REASONS,
   LIMITS,
   liveCheckpointInput,
   MENTION_STATES,
@@ -544,30 +545,34 @@ function responseSchemas(): Record<string, Json> {
       }),
     }),
     VersionList: paged("VersionInfo"),
-    SharingSettings: obj({
-      visibility,
-      has_password: { type: "boolean" },
-      grants: {
-        type: "array",
-        items: obj({
-          email: str({ format: "email" }),
-          role: enumOf(ROLES),
-          created_at: dateTime,
-          name: nullable("string", {
-            description:
-              "The display name of the account with this email, once its holder has commented, " +
-              "written shared data or published a version on this artifact; null otherwise, so " +
-              "adding an address never says whether it has an account",
+    SharingSettings: obj(
+      {
+        visibility,
+        has_password: { type: "boolean" },
+        grants: {
+          type: "array",
+          items: obj({
+            email: str({ format: "email" }),
+            role: enumOf(ROLES),
+            created_at: dateTime,
+            name: nullable("string", {
+              description:
+                "The display name of the account with this email, once its holder has commented, " +
+                "written shared data or published a version on this artifact; null otherwise, so " +
+                "adding an address never says whether it has an account",
+            }),
           }),
-        }),
+        },
+        public_allowed: { type: "boolean" },
+        category_share: {
+          oneOf: [ref("SharingCategoryShare"), { type: "null" }],
+          description:
+            "The share of this artifact's category, when it has one: who else sees it through the category once it is shared",
+        },
+        invitations: ref("InvitationReport"),
       },
-      public_allowed: { type: "boolean" },
-      category_share: {
-        oneOf: [ref("SharingCategoryShare"), { type: "null" }],
-        description:
-          "The share of this artifact's category, when it has one: who else sees it through the category once it is shared",
-      },
-    }),
+      ["invitations"],
+    ),
     Anchor: fromZod(anchorSchema),
     CommentInfo: obj({
       id: str(),
@@ -1624,10 +1629,14 @@ function categorySharingSchemas(): Record<string, Json> {
         items: ref("CategoryShareArtifact"),
       },
     }),
-    CategoryShareWriteResult: obj({
-      share: ref("CategoryShareSummary"),
-      review: { oneOf: [ref("CategoryReviewResult"), { type: "null" }] },
-    }),
+    CategoryShareWriteResult: obj(
+      {
+        share: ref("CategoryShareSummary"),
+        review: { oneOf: [ref("CategoryReviewResult"), { type: "null" }] },
+        invitations: ref("InvitationReport"),
+      },
+      ["invitations"],
+    ),
     PortalSummary: obj({
       id: str(),
       title: str(),
@@ -2382,13 +2391,15 @@ function operations(): Operation[] {
       summary: "Change who can view (owner only)",
       description:
         "`emails` replaces the viewer allowlist; collaborator roles are kept. `password` is " +
-        "required for password visibility unless one is already set.",
+        "required for password visibility unless one is already set. With `notify: true`, " +
+        "each address `emails` newly adds is emailed a link (`invitations` says who); agents " +
+        "set it only when the user asked.",
       tag: "Artifacts",
       auth: "agent",
       scope: "artifacts:write",
       mcpTool: "set_visibility",
       body: "SetVisibilityInput",
-      ok: [200, "ArtifactSummary"],
+      ok: [200, "VisibilityResult"],
       errors: [400, 401, 403, 404],
     },
     {
@@ -2407,6 +2418,10 @@ function operations(): Operation[] {
       path: API.sharing,
       operationId: "replaceGrants",
       summary: "Replace the allowlist and collaborator roles (owner only)",
+      description:
+        "With `notify: true`, each person who held no grant before is emailed a link and their " +
+        "role on the owner's behalf (`invitations` says who); the app's Notify people box sends " +
+        "it, agents set it only when the user asked. Default false.",
       tag: "Sharing",
       auth: "agent",
       scope: "artifacts:write",
@@ -2908,6 +2923,7 @@ export function openApiDocument(config: Pick<Config, "appOrigin">): Json {
         ...filesSchemas(),
         ...designExportSchemas(),
         ...dataSourcesSchemas(),
+        ...invitationSchemas(),
       }),
       responses: errorResponses,
       securitySchemes: {
@@ -3362,4 +3378,34 @@ function dataSourcesOperations(): Operation[] {
       errors: [400, 401, 403, 404, 409],
     },
   ];
+}
+
+// ---------- Invitation emails (docs/spec.md "Invitation emails") ----------
+
+function invitationSchemas(): Record<string, Json> {
+  return {
+    InvitationReport: {
+      ...obj({
+        emailed: {
+          type: "array",
+          items: str({ format: "email" }),
+          description: "Handed to the email provider",
+        },
+        skipped: {
+          type: "array",
+          items: obj({ email: str({ format: "email" }), reason: enumOf(INVITATION_SKIP_REASONS) }),
+          description: "People the change added who were not emailed, and why",
+        },
+      }),
+      description:
+        "Present only when the request asked to `notify`. People who already had access are in " +
+        "neither list: only a new grant is announced",
+    },
+    VisibilityResult: {
+      allOf: [
+        ref("ArtifactSummary"),
+        obj({ invitations: ref("InvitationReport") }, ["invitations"]),
+      ],
+    },
+  };
 }

@@ -353,3 +353,12 @@ export const SOURCES_INSTRUCTION =
   "A dashboard can show figures from the user's own systems: fetch them with your own connectors, " +
   "write them with write_artifact_data and source, and describe the fetch with set_data_sources; " +
   "the user confirms each source in Plinth.";
+
+/**
+ * What set_visibility says about invitation emails (docs/spec.md "Invitation emails"): agents
+ * never email people unless the user asked.
+ */
+export const INVITATION_NOTE =
+  "With notify: true, Plinth emails each person the emails list newly adds a link to the " +
+  "artifact on the user's behalf (people who already had access get nothing). Set it only when " +
+  "the user asked you to notify them; by default nobody is emailed. ";
