@@ -26,3 +26,4 @@ export * from "./slidesRoom.ts";
 export * from "./text.ts";
 export * from "./types.ts";
 export * from "./voice.ts";
+export * from "./whiteboard.ts";

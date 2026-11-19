@@ -155,6 +155,12 @@ export interface PublishResult {
    * so a new filing is `pending` until the owner reviews it in the app (`review_url`).
    */
   category_share?: CategoryShareResult;
+  /**
+   * A whiteboard publish or update that carried a starting board: how many blocks and arrows were
+   * written to its shared data. Absent otherwise, and when the board was not seeded (the result
+   * then has the warning board_not_seeded).
+   */
+  board?: { blocks: number; arrows: number };
 }
 
 /** Where an artifact stands in its shared category, for its owner's own results. */
@@ -483,6 +489,11 @@ export interface AppConfig {
    * it; absent reads as off.
    */
   files?: boolean;
+  /**
+   * Every artifact type, and whether this instance publishes it now: a whiteboard needs shared
+   * data on and origin isolation. The Worker always sends it; absent reads as every type available.
+   */
+  artifact_types?: { id: ArtifactType; available: boolean }[];
 }
 
 export interface OperatorInfo {

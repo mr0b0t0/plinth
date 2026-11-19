@@ -30,6 +30,7 @@
 // tells the page's runtime whether it may join, before it opens a socket.
 import {
   type ArtifactType,
+  hasPageCapabilities,
   ROOM_KINDS,
   ROOM_LIMITS,
   ROOM_PATH_PREFIX,
@@ -138,7 +139,7 @@ export async function roomInfo(
   }
   if (pass.preview) return { available: false, reason: "preview" };
   if (pass.capture || !pass.claim) return { available: false, reason: "not_identified" };
-  if (target.type !== "html" || target.caps?.room !== true) {
+  if (!hasPageCapabilities(typeDef(target.type)) || target.caps?.room !== true) {
     return { available: false, reason: "not_declared" };
   }
   const access = roomAccess(pass.claim, target.caps, "page", {
@@ -190,7 +191,7 @@ function kindOf(path: string): RoomKind | null {
 function fitsKind(kind: RoomKind, target: RoomTarget, config: Config, env: Bindings): boolean {
   switch (kind) {
     case "page":
-      return target.type === "html" && target.caps?.room === true;
+      return hasPageCapabilities(typeDef(target.type)) && target.caps?.room === true;
     case "doc":
       return typeDef(target.type)?.liveEdit === true && liveEditMode(config, env) === "room";
     case "slides":

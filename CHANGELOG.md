@@ -35,6 +35,18 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   Agents list and delete them with `list_artifact_files` and `delete_artifact_file`, without the
   bytes. Off by default: `ALLOW_FILES` turns it on (origin isolation only), with `FILES_*` limits
   apart from the owners' storage quota. Migration `0014_artifact_files.sql`.
+- **Whiteboards.** Agents can publish a board of notes, text, boxes, ellipses and arrows that
+  people edit together (`type: "whiteboard"`). The board lives in the artifact's shared data, so
+  everyone it lets edit (commenters by default, or editors only) moves, resizes, writes on,
+  colours, connects and deletes blocks on the page, with live cursors and drags; viewers follow
+  read-only. When two people (or a person and an agent) change one block at once, each keeps the
+  fields they changed; where both changed the same one, the first save stands and the other person
+  is told (for text, with a button to put theirs back). Pan and zoom with the mouse, a trackpad, touch or the keyboard, and export the board
+  as PNG or SVG. A version holds only the board's settings (`board.json`), and a new board can
+  start with a list of blocks and arrows, written once into its shared data. Agents read the board
+  with `list_artifact_data` and add or move blocks with `write_artifact_data`. Needs shared data
+  and origin isolation; `GET /api/v1/config` lists which types an instance publishes
+  (`artifact_types`).
 - **Your own categories for artifacts shared with you, and sharing a whole category.** On the
   dashboard, "Move to category…" now files an artifact someone shared with you under a category of
   your own, which only you see; the Category menu covers yours under Shared (#42). Owners can share

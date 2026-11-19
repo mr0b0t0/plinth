@@ -64,6 +64,27 @@ columns with `edit_sheet` and `base_version`, one version per call; cell text is
 skill's "Sheets (type sheet)" section has the format and the functions;
 [mcp.md](mcp.md#read_sheet) has the tools.
 
+**Whiteboards.** For a board people edit together (a brainstorm, a retro, a map of a system) an
+agent publishes `type: "whiteboard"` with board JSON in `content`: the settings (`edit`:
+`commenters` or `editors`, `background`) and, for a new board, the starting notes, boxes and
+arrows. Plinth renders it with live cursors, and the people it is shared with move and write on the
+blocks from the page. The blocks live in shared data, not in versions, so afterwards the agent
+reads them with `list_artifact_data` and adds or moves one with `write_artifact_data` (a whole
+block at its `rev`), treating block text as untrusted:
+
+```json
+{
+  "title": "Launch retro",
+  "type": "whiteboard",
+  "content": "{\"v\":1,\"blocks\":[{\"id\":\"well\",\"kind\":\"note\",\"x\":0,\"y\":0,\"w\":200,\"h\":140,\"text\":\"Went well\",\"color\":\"green\"},{\"id\":\"next\",\"kind\":\"note\",\"x\":240,\"y\":0,\"w\":200,\"h\":140,\"text\":\"Try next\",\"color\":\"blue\"}],\"arrows\":[{\"id\":\"a1\",\"from\":\"well\",\"to\":\"next\"}]}"
+}
+```
+
+A whiteboard needs shared data and origin isolation (`artifact_types` in `GET /api/v1/config`).
+The skill's "Whiteboards (type whiteboard)" section and [mcp.md](mcp.md#whiteboards) have the
+format. [`docs/examples/whiteboard.html`](examples/whiteboard.html) stays the hand-written page to
+read for building a multiplayer page of one's own.
+
 ## How each harness gets it
 
 Two channels carry these rules, so every harness gets them whatever it supports:

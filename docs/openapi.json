@@ -417,7 +417,7 @@
             "name": "type",
             "schema": {
               "type": "string",
-              "enum": ["html", "doc", "slides", "design_system", "design", "sheet"]
+              "enum": ["html", "doc", "slides", "design_system", "design", "sheet", "whiteboard"]
             },
             "description": "Only artifacts of this type (design_system: the design systems you can use)"
           }
@@ -2639,14 +2639,14 @@
           "type": {
             "default": "html",
             "type": "string",
-            "enum": ["html", "doc", "slides", "design_system", "design", "sheet"],
-            "description": "\"html\" (default): a hand-written page sent as html. \"doc\": a Markdown document sent as content, which Plinth renders as a finished page. \"slides\": a Markdown deck sent as content, which Plinth renders as a presentation. \"design_system\": design tokens, guidelines and components as JSON in content (format plinth.design-system/1), which Plinth renders as a reference site. \"design\": artboards (app screens, posters, social posts, ads) as HTML in content, which Plinth renders on a canvas, each artboard alone at its exact size. \"sheet\": a table as JSON lines in content, which Plinth renders as a spreadsheet with formulas, sort, filter and CSV and .xlsx downloads. Fixed at publish."
+            "enum": ["html", "doc", "slides", "design_system", "design", "sheet", "whiteboard"],
+            "description": "\"html\" (default): a hand-written page sent as html. \"doc\": a Markdown document sent as content, which Plinth renders as a finished page. \"slides\": a Markdown deck sent as content, which Plinth renders as a presentation. \"design_system\": design tokens, guidelines and components as JSON in content (format plinth.design-system/1), which Plinth renders as a reference site. \"design\": artboards (app screens, posters, social posts, ads) as HTML in content, which Plinth renders on a canvas, each artboard alone at its exact size. \"sheet\": a table as JSON lines in content, which Plinth renders as a spreadsheet with formulas, sort, filter and CSV and .xlsx downloads. \"whiteboard\": a board of notes, shapes and arrows that people edit together, sent as board JSON in content; its blocks live in shared data. Fixed at publish."
           },
           "html": { "type": "string", "minLength": 1, "description": "Complete HTML document" },
           "content": {
             "type": "string",
             "minLength": 1,
-            "description": "The source of a typed artifact: for type \"doc\", the Markdown document (stored as content.md); for type \"slides\", the deck's Markdown with a line --- between slides (stored as slides.md); for type \"design_system\", the design system JSON (stored as system.json); for type \"design\", shared <head> tags then artboards, each starting with a line <!-- artboard name=\"Home\" size=\"iphone\" --> (stored as design.html); for type \"sheet\", the sheet's JSON lines (stored as sheet.jsonl), or a CSV or a base64 .xlsx with content_format. Not for html artifacts, which send html."
+            "description": "The source of a typed artifact: for type \"doc\", the Markdown document (stored as content.md); for type \"slides\", the deck's Markdown with a line --- between slides (stored as slides.md); for type \"design_system\", the design system JSON (stored as system.json); for type \"design\", shared <head> tags then artboards, each starting with a line <!-- artboard name=\"Home\" size=\"iphone\" --> (stored as design.html); for type \"sheet\", the sheet's JSON lines (stored as sheet.jsonl), or a CSV or a base64 .xlsx with content_format; for type \"whiteboard\", board JSON: settings, plus a starting blocks and arrows list on a new board (the settings are stored as board.json, the blocks and arrows in shared data). Not for html artifacts, which send html."
           },
           "content_format": {
             "type": "string",
@@ -2707,7 +2707,7 @@
           "content": {
             "type": "string",
             "minLength": 1,
-            "description": "The source of a typed artifact: for type \"doc\", the Markdown document (stored as content.md); for type \"slides\", the deck's Markdown with a line --- between slides (stored as slides.md); for type \"design_system\", the design system JSON (stored as system.json); for type \"design\", shared <head> tags then artboards, each starting with a line <!-- artboard name=\"Home\" size=\"iphone\" --> (stored as design.html); for type \"sheet\", the sheet's JSON lines (stored as sheet.jsonl), or a CSV or a base64 .xlsx with content_format. Not for html artifacts, which send html."
+            "description": "The source of a typed artifact: for type \"doc\", the Markdown document (stored as content.md); for type \"slides\", the deck's Markdown with a line --- between slides (stored as slides.md); for type \"design_system\", the design system JSON (stored as system.json); for type \"design\", shared <head> tags then artboards, each starting with a line <!-- artboard name=\"Home\" size=\"iphone\" --> (stored as design.html); for type \"sheet\", the sheet's JSON lines (stored as sheet.jsonl), or a CSV or a base64 .xlsx with content_format; for type \"whiteboard\", board JSON: settings, plus a starting blocks and arrows list on a new board (the settings are stored as board.json, the blocks and arrows in shared data). Not for html artifacts, which send html."
           },
           "content_format": {
             "type": "string",
@@ -2997,8 +2997,8 @@
           },
           "type": {
             "type": "string",
-            "enum": ["html", "doc", "slides", "design_system", "design", "sheet"],
-            "description": "\"html\" (default): a hand-written page sent as html. \"doc\": a Markdown document sent as content, which Plinth renders as a finished page. \"slides\": a Markdown deck sent as content, which Plinth renders as a presentation. \"design_system\": design tokens, guidelines and components as JSON in content (format plinth.design-system/1), which Plinth renders as a reference site. \"design\": artboards (app screens, posters, social posts, ads) as HTML in content, which Plinth renders on a canvas, each artboard alone at its exact size. \"sheet\": a table as JSON lines in content, which Plinth renders as a spreadsheet with formulas, sort, filter and CSV and .xlsx downloads. Fixed at publish."
+            "enum": ["html", "doc", "slides", "design_system", "design", "sheet", "whiteboard"],
+            "description": "\"html\" (default): a hand-written page sent as html. \"doc\": a Markdown document sent as content, which Plinth renders as a finished page. \"slides\": a Markdown deck sent as content, which Plinth renders as a presentation. \"design_system\": design tokens, guidelines and components as JSON in content (format plinth.design-system/1), which Plinth renders as a reference site. \"design\": artboards (app screens, posters, social posts, ads) as HTML in content, which Plinth renders on a canvas, each artboard alone at its exact size. \"sheet\": a table as JSON lines in content, which Plinth renders as a spreadsheet with formulas, sort, filter and CSV and .xlsx downloads. \"whiteboard\": a board of notes, shapes and arrows that people edit together, sent as board JSON in content; its blocks live in shared data. Fixed at publish."
           },
           "title": { "type": "string", "minLength": 1, "maxLength": 200 },
           "base_version": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
@@ -3289,8 +3289,8 @@
       },
       "ArtifactType": {
         "type": "string",
-        "enum": ["html", "doc", "slides", "design_system", "design", "sheet"],
-        "description": "\"html\": a hand-written page (source index.html). \"doc\": a Markdown document (source content.md) that Plinth renders. \"slides\": a Markdown deck (source slides.md) that Plinth renders. \"design_system\": design tokens, guidelines and components as JSON (source system.json) that Plinth renders as a reference site and get_design_system compiles. \"design\": artboards (app screens, posters, social posts, ads) as HTML (source design.html) that Plinth renders on a canvas, each artboard alone at its exact size. \"sheet\": a table as JSON lines (source sheet.jsonl) that Plinth renders as a spreadsheet and read_sheet evaluates. Fixed at publish."
+        "enum": ["html", "doc", "slides", "design_system", "design", "sheet", "whiteboard"],
+        "description": "\"html\": a hand-written page (source index.html). \"doc\": a Markdown document (source content.md) that Plinth renders. \"slides\": a Markdown deck (source slides.md) that Plinth renders. \"design_system\": design tokens, guidelines and components as JSON (source system.json) that Plinth renders as a reference site and get_design_system compiles. \"design\": artboards (app screens, posters, social posts, ads) as HTML (source design.html) that Plinth renders on a canvas, each artboard alone at its exact size. \"sheet\": a table as JSON lines (source sheet.jsonl) that Plinth renders as a spreadsheet and read_sheet evaluates. \"whiteboard\": a board of notes, shapes and arrows, its settings as JSON (source board.json) that Plinth renders as a live board, its blocks and arrows kept in shared data. Fixed at publish."
       },
       "ArtifactSummary": {
         "type": "object",
@@ -3382,7 +3382,8 @@
           { "$ref": "#/components/schemas/SlidesArtifactDetail" },
           { "$ref": "#/components/schemas/DesignSystemArtifactDetail" },
           { "$ref": "#/components/schemas/DesignArtifactDetail" },
-          { "$ref": "#/components/schemas/SheetArtifactDetail" }
+          { "$ref": "#/components/schemas/SheetArtifactDetail" },
+          { "$ref": "#/components/schemas/WhiteboardArtifactDetail" }
         ],
         "discriminator": {
           "propertyName": "type",
@@ -3392,7 +3393,8 @@
             "slides": "#/components/schemas/SlidesArtifactDetail",
             "design_system": "#/components/schemas/DesignSystemArtifactDetail",
             "design": "#/components/schemas/DesignArtifactDetail",
-            "sheet": "#/components/schemas/SheetArtifactDetail"
+            "sheet": "#/components/schemas/SheetArtifactDetail",
+            "whiteboard": "#/components/schemas/WhiteboardArtifactDetail"
           }
         }
       },
@@ -4230,6 +4232,145 @@
           "data_usage"
         ]
       },
+      "WhiteboardArtifactDetail": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z0-9]{20}$",
+            "description": "Also the artifact's content subdomain"
+          },
+          "slug": { "type": "string" },
+          "title": { "type": "string" },
+          "type": {
+            "type": "string",
+            "enum": ["whiteboard"],
+            "description": "Whiteboard: always \"whiteboard\""
+          },
+          "visibility": {
+            "type": "string",
+            "enum": ["public", "unlisted", "password", "allowlist"]
+          },
+          "current_version": { "type": "integer", "minimum": 1 },
+          "version_count": { "type": "integer", "minimum": 1 },
+          "created_at": { "type": "string", "format": "date-time" },
+          "updated_at": { "type": "string", "format": "date-time" },
+          "url": {
+            "type": "string",
+            "format": "uri",
+            "description": "App page: <APP_HOST>/a/<slug>"
+          },
+          "content_url": {
+            "type": "string",
+            "format": "uri",
+            "description": "Artifact origin on the content host. Needs a viewer token unless entered"
+          },
+          "owner": {
+            "type": "object",
+            "properties": {
+              "id": { "type": "string" },
+              "email": { "type": "string", "format": "email" },
+              "name": { "type": ["string", "null"] }
+            },
+            "required": ["id", "email", "name"]
+          },
+          "role": { "type": "string", "enum": ["owner", "viewer", "commenter", "editor"] },
+          "taken_down": { "type": "boolean" },
+          "thumbnail_url": {
+            "type": ["string", "null"],
+            "format": "uri",
+            "description": "The current version's thumbnail (JPEG, same access as the artifact); null when the instance takes none. May answer 404 until the first capture lands"
+          },
+          "category": {
+            "type": ["string", "null"],
+            "maxLength": 60,
+            "description": "The owner's category; null unless you own the artifact. Untrusted text."
+          },
+          "category_share": {
+            "type": ["string", "null"],
+            "description": "Owner only: where the artifact stands in its shared category (pending until you review it in the app); null when its category is not shared, and for everyone but the owner",
+            "enum": ["shared", "pending", "private", null]
+          },
+          "my_category": {
+            "type": ["string", "null"],
+            "maxLength": 60,
+            "description": "Your own category for an artifact shared with you, set in the app; null on your own artifacts and for bearer tokens. Untrusted text."
+          },
+          "version": { "type": "integer", "minimum": 1, "description": "The version returned" },
+          "source_path": {
+            "type": "string",
+            "enum": ["board.json"],
+            "description": "The version file holding the source"
+          },
+          "content": {
+            "type": "string",
+            "description": "UNTRUSTED board JSON, written by the artifact's authors"
+          },
+          "assets": {
+            "type": "array",
+            "description": "The version's other files; never index.html or board.json",
+            "items": {
+              "type": "object",
+              "properties": {
+                "path": { "type": "string" },
+                "size_bytes": { "type": "integer" },
+                "content_type": { "type": "string" },
+                "sha256": {
+                  "type": ["string", "null"],
+                  "pattern": "^[0-9a-f]{64}$",
+                  "description": "Lowercase hex SHA-256, computed by the server; null for files stored before reuse by hash"
+                }
+              },
+              "required": ["path", "size_bytes", "content_type", "sha256"]
+            }
+          },
+          "capabilities": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": ["data", "viewer", "room", "people", "comments", "dictation", "hold", "files"]
+            },
+            "description": "What the returned version declares (shared data, viewer identity)"
+          },
+          "data_usage": {
+            "oneOf": [
+              {
+                "type": "object",
+                "properties": { "docs": { "type": "integer" }, "bytes": { "type": "integer" } },
+                "required": ["docs", "bytes"]
+              },
+              { "type": "null" }
+            ],
+            "description": "Shared data totals; null when there is none or the caller cannot read it"
+          }
+        },
+        "required": [
+          "id",
+          "slug",
+          "title",
+          "type",
+          "visibility",
+          "current_version",
+          "version_count",
+          "created_at",
+          "updated_at",
+          "url",
+          "content_url",
+          "owner",
+          "role",
+          "taken_down",
+          "thumbnail_url",
+          "category",
+          "category_share",
+          "my_category",
+          "version",
+          "source_path",
+          "content",
+          "assets",
+          "capabilities",
+          "data_usage"
+        ]
+      },
       "ArtifactList": {
         "type": "object",
         "properties": {
@@ -4324,7 +4465,16 @@
             "maxLength": 60,
             "description": "The category stored (snapped onto your existing spelling); present only when this call set one. Untrusted text."
           },
-          "category_share": { "$ref": "#/components/schemas/CategoryShareResult" }
+          "category_share": { "$ref": "#/components/schemas/CategoryShareResult" },
+          "board": {
+            "type": "object",
+            "properties": {
+              "blocks": { "type": "integer", "minimum": 0 },
+              "arrows": { "type": "integer", "minimum": 0 }
+            },
+            "required": ["blocks", "arrows"],
+            "description": "A whiteboard publish or update that carried a starting board: the blocks and arrows written to its shared data. Absent otherwise, and when the warning board_not_seeded says they were not written"
+          }
         },
         "required": [
           "id",
@@ -4361,7 +4511,8 @@
               "design_system_unavailable",
               "design_system_outdated",
               "blocked_feature",
-              "sensitive_file"
+              "sensitive_file",
+              "board_not_seeded"
             ]
           },
           "file": { "type": "string", "description": "The version file the reference is in" },
@@ -4575,6 +4726,15 @@
             "description": "The category stored (snapped onto your existing spelling); present only when this call set one. Untrusted text."
           },
           "category_share": { "$ref": "#/components/schemas/CategoryShareResult" },
+          "board": {
+            "type": "object",
+            "properties": {
+              "blocks": { "type": "integer", "minimum": 0 },
+              "arrows": { "type": "integer", "minimum": 0 }
+            },
+            "required": ["blocks", "arrows"],
+            "description": "A whiteboard publish or update that carried a starting board: the blocks and arrows written to its shared data. Absent otherwise, and when the warning board_not_seeded says they were not written"
+          },
           "bundle": {
             "type": "object",
             "properties": {
@@ -4996,6 +5156,18 @@
           "files": {
             "type": "boolean",
             "description": "Pages that declare `files` may keep files people add here (ALLOW_FILES with origin isolation)"
+          },
+          "artifact_types": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": { "$ref": "#/components/schemas/ArtifactType" },
+                "available": { "type": "boolean" }
+              },
+              "required": ["id", "available"]
+            },
+            "description": "Every artifact type, and whether this instance publishes it now: a whiteboard needs shared data on (ALLOW_SHARED_DATA) and origin isolation"
           }
         },
         "required": [
@@ -5017,7 +5189,8 @@
           "dictation",
           "category_sharing",
           "live_views",
-          "files"
+          "files",
+          "artifact_types"
         ]
       },
       "LoginResult": {

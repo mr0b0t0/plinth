@@ -49,17 +49,29 @@ export interface Capabilities {
    * the artifact's own store. Not shared data; `viewer` adds who uploaded each file.
    */
   files: boolean;
+  /**
+   * Set by the server for a type whose capabilities are fixed (a whiteboard's, from its settings),
+   * never read from HTML: the lowest role that may write shared data and emit open topics from the
+   * page. Policy (policy.ts pageWriteFloor) treats a missing or unknown value on such a type as
+   * "commenter", never as "any viewer". Absent on every HTML declaration.
+   */
+  writers?: PageWriters;
 }
+
+/** The roles a server-set write floor may name (Capabilities.writers). */
+export const PAGE_WRITERS = ["commenter", "editor"] as const;
+export type PageWriters = (typeof PAGE_WRITERS)[number];
 
 export const CAPABILITIES_META = "plinth-capabilities";
 export const DATA_SHARED_META = "plinth-data-shared";
 
 type TokenKey = {
-  [K in keyof Capabilities]: Capabilities[K] extends boolean ? K : never;
+  [K in keyof Capabilities]-?: Capabilities[K] extends boolean ? K : never;
 }[keyof Capabilities];
 type ListKey = {
-  [K in keyof Capabilities]: Capabilities[K] extends string[] ? K : never;
+  [K in keyof Capabilities]-?: Capabilities[K] extends string[] ? K : never;
 }[keyof Capabilities];
+type ServerKey = Exclude<keyof Capabilities, TokenKey | ListKey>;
 
 /** A capability token (constants.ts CAPABILITY_TOKENS) at its place in the stored JSON. */
 interface TokenField {
@@ -83,7 +95,18 @@ interface ListField {
   checkOnRead: boolean;
 }
 
-export type DeclarationField = TokenField | ListField;
+/**
+ * A field the server sets for a type with fixed capabilities (artifactTypes.ts pageData "fixed"),
+ * never parsed from a page: stored only when set, and read back only when `accept` takes the
+ * stored value (anything else is dropped, and policy applies its fail-closed default).
+ */
+interface ServerField {
+  kind: "server";
+  key: ServerKey;
+  accept: (value: unknown) => boolean;
+}
+
+export type DeclarationField = TokenField | ListField | ServerField;
 
 /**
  * The declaration registry: every field of Capabilities, one per line, in the order the stored
@@ -120,6 +143,11 @@ export const DECLARATION_FIELDS: readonly DeclarationField[] = [
   { kind: "token", key: "dictation" },
   { kind: "token", key: "hold" },
   { kind: "token", key: "files" },
+  {
+    kind: "server",
+    key: "writers",
+    accept: (v) => (PAGE_WRITERS as readonly unknown[]).includes(v),
+  },
 ];
 
 const TOKEN_INFO = new Map<string, (typeof CAPABILITY_TOKENS)[number]>(
@@ -132,6 +160,7 @@ function tokenInfo(token: DataCapability): (typeof CAPABILITY_TOKENS)[number] {
 
 /** Whether a field is in the stored JSON of this declaration. */
 function isStored(f: DeclarationField, c: Capabilities): boolean {
+  if (f.kind === "server") return c[f.key] !== undefined;
   if (f.kind === "token") return tokenInfo(f.key).stored === "always" || c[f.key] === true;
   return f.stored === "always" || c[f.stored] === true;
 }
@@ -205,6 +234,8 @@ export function parseCapabilities(html: string): Capabilities | null {
   if (!declaresSomething(counted)) return null;
   const out: Record<string, boolean | string[]> = {};
   for (const f of DECLARATION_FIELDS) {
+    // A server-set field is never read from a page.
+    if (f.kind === "server") continue;
     if (f.kind === "token") {
       out[f.key] = counted.has(f.key);
       continue;
@@ -254,8 +285,13 @@ export function readStoredCapabilities(json: string): Capabilities | null {
   }
   const counted = countedTokens(declared);
   if (!declaresSomething(counted)) return null;
-  const out: Record<string, boolean | string[]> = {};
+  const out: Record<string, boolean | string | string[]> = {};
   for (const f of DECLARATION_FIELDS) {
+    if (f.kind === "server") {
+      const value = row[f.key];
+      if (f.accept(value)) out[f.key] = value as string;
+      continue;
+    }
     if (f.kind === "token") {
       out[f.key] = counted.has(f.key);
       continue;

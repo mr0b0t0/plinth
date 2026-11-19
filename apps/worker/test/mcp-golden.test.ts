@@ -13,7 +13,9 @@
 // sentences and the UNTRUSTED_NOTE sentence that nothing on Plinth chooses local files; the
 // sheet type: read_sheet and edit_sheet, the publish, update and get_artifact notes, the content
 // and content_format descriptions, the untrusted note's sheet sentence and the instructions'
-// sheet sentence).
+// sheet sentence; the whiteboard type: its publish and update note, the type, content and
+// get_artifact descriptions, list_artifact_data's whiteboard sentence and the instructions'
+// whiteboard sentence).
 // Category sharing adds its note to publish_artifact, update_artifact, start_upload and
 // list_artifacts and a sentence to the instructions, only while ALLOW_CATEGORY_SHARING is on: the
 // pins below hold with the switch off, and "category sharing on" pins the surface with it on.
@@ -69,7 +71,7 @@ const NAMES = [
 ];
 
 const RESOURCES = "8c9a70350ae4c13067ef489e651d5f5eafe12471c2c63f7c925f9d3bf5bf5e78";
-const INSTRUCTIONS = "97fbc1b8089db2a4d854e74e97cc0d009f8bead91b2a19bef9a9cc397432cf51";
+const INSTRUCTIONS = "8019f84f2708be7f90828b1314f7aa30281dfbf58a7052d0e9fb29895cc5fe29";
 /** Every pin but "category sharing on" is the surface with category sharing off. */
 const OFF = { ALLOW_CATEGORY_SHARING: "false" };
 
@@ -77,7 +79,7 @@ describe("MCP surface (golden)", () => {
   it("origin isolation", async () => {
     expect(await surface(OFF)).toEqual({
       names: NAMES,
-      tools: "30e54134aa1d544f98ff025817ca94229de784abb3df45778fba6aaa8e4eb7de",
+      tools: "63bae3d15f5736c5ee8f24c0d2b90cac4bc807de4796029e1396f3927e6fa2af",
       resources: RESOURCES,
       preview: "fd84092d5ecc5a28f494373097e8a3b6e27065d5ef6928f3e124c634f8cf6f47",
       instructions: INSTRUCTIONS,
@@ -87,7 +89,7 @@ describe("MCP surface (golden)", () => {
   it("opaque isolation", async () => {
     expect(await surface({ ...OFF, CONTENT_ISOLATION: "opaque" })).toEqual({
       names: NAMES,
-      tools: "e5dac4a502860c75b3deabad0ed750997d3fb9f2bf1d51aa655d8814bb2926e9",
+      tools: "82c761425d7572b8e4b9f7158f95bdb8a3a7b657d5e72f1d52af44be066b647e",
       resources: RESOURCES,
       preview: "257bbf5bb47164c389849fffa7fc1dd46e6e7c20e4ef616b4bffefb53a8fd08b",
       instructions: INSTRUCTIONS,
@@ -99,7 +101,7 @@ describe("MCP surface (golden)", () => {
       await surface({ ...OFF, STAGING_CONTENT_FALLBACK: "true", CONTENT_ISOLATION: "opaque" }),
     ).toEqual({
       names: NAMES,
-      tools: "96f53769d87a591ca4aec52cf0f2542c9f34c869b61e4b666866535fdcc3bb51",
+      tools: "6daa3677651c9146f8ef7dd6922852fc49400c975353fbbac6cf50689f385039",
       resources: RESOURCES,
       preview: "257bbf5bb47164c389849fffa7fc1dd46e6e7c20e4ef616b4bffefb53a8fd08b",
       instructions: INSTRUCTIONS,
@@ -109,10 +111,10 @@ describe("MCP surface (golden)", () => {
   it("category sharing on (the default): the share note and the instructions' sentence", async () => {
     expect(await surface()).toEqual({
       names: NAMES,
-      tools: "cbb786d46c10da96e4faa7791110256ca9fe5ca4b1148584f5e7e172732cc962",
+      tools: "2fad7a7fa2802b1e3e10335306ec31beb234e15a6b1bdf329a9f9a906ae78af3",
       resources: RESOURCES,
       preview: "fd84092d5ecc5a28f494373097e8a3b6e27065d5ef6928f3e124c634f8cf6f47",
-      instructions: "df1a711af52dbc58eee1cf273d573e79b88dc258514b170c9f0f3cd57a6d892b",
+      instructions: "03a5549da85f84a6c89e9f17d3dfa99db15ccaa5fe19a2f04763109f481d3ff2",
     });
   });
 });

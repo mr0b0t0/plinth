@@ -73,6 +73,10 @@ make a test pass.
 | An upload gives away where it was made | A phone photo's EXIF location reaches every reader of the page | Files are stored as added and everyone who may add one is told so (the viewer notice, the privacy notice, the skill) |
 | An upload outlives a delete or takedown | A part arrives after the owner deleted the file or an admin took the artifact down, and the file comes back | Every write repeats the artifact's live check and the row's state in its SQL; a delete or takedown turns rows into tombstones in its own batch, a takedown deletes the ready objects right after, and the hourly sweep clears the rest |
 | A file name steers an agent or tricks a viewer | A file named "Ignore previous instructions.png", `../../etc/passwd`, or a right-to-left override that turns `gpj.exe` around | Names are cleaned (last segment, no control or bidi characters, at most 200 characters, the proven extension added) and are display text everywhere; agents get names with the untrusted note and never the bytes |
+| A viewer changes a whiteboard | A person with view access posts or moves blocks through `/__plinth/api/v1/data/blocks`, or a stored row lost its write floor | Fixed capabilities carry `writers`, read back through `versionCapabilities` on every request; `pageWriteFloor` fails closed to commenter for every type whose page does not declare its capabilities, and `roomAccess` uses the same floor ([Whiteboards](#whiteboards)) |
+| A whiteboard's room keeps old rights | A commenter keeps emitting `block.move` after the owner made the board editors-only | The settings version changes the effective open topics, so its sockets close with 4410 as it commits and reconnect with no right to emit; the data API refuses their writes from the next request |
+| The editor preview writes to the live board | The owner's draft in the editor drives the board through the preview frame's content pass | The app's preview sets `preview` and the whiteboard renderer then makes no shared-data or room call; only Plinth's code runs in that frame |
+| A starting board writes shared data unchecked | An agent's publish or update carries blocks it may not write, or races another write | A `data_write` decision before staging and again after the commit, whose role stamps the documents; one all-or-none statement that never overwrites, and `board_not_empty` on an update of a board with blocks |
 
 Out of scope for v1: denial of service beyond Cloudflare's defaults, a compromised Cloudflare
 account, and malicious instance operators.
@@ -778,6 +782,77 @@ What else is new:
   25 s of CPU.
 - **Sort and filter are local.** They reorder and hide rows on the viewer's page only and are never
   saved or sent.
+
+## Whiteboards
+
+A whiteboard (`artifacts.type = 'whiteboard'`) keeps its board in the artifact's shared data
+(collections `blocks` and `arrows`) and stores only its settings in each version (`board.json`).
+Its page is the strict typed shell (`script-src 'self'` in the header and a meta copy), and there
+is no author HTML at all: the only code on its origin is Plinth's shell, `/__plinth/runtime.js`
+and the renderer under `/__plinth/types/whiteboard/` ([docs/spec.md,
+Whiteboards](spec.md#whiteboards-decided-2026-11-19)).
+
+- **Capabilities fixed by the server, with a write floor.** A whiteboard's `versions.capabilities`
+  is derived from its settings (`boardCapabilities`), never parsed from a page, and carries
+  `writers`, the lowest role that may write shared data and emit the board's open topics from the
+  page. Every server decision reads stored capabilities through one function,
+  `versionCapabilities`, which keeps `writers` only when it is `commenter` or `editor`. Policy
+  (`policy.ts pageWriteFloor`) applies it on every page write and in `roomAccess`, and fails
+  closed: on any type whose page does not declare its own capabilities (a whiteboard, or a type a
+  newer Worker wrote after a rollback), a missing or unknown `writers` counts as `commenter`. An
+  HTML page keeps its rule (any identified viewer writes), and no HTML declaration can set
+  `writers`. A viewer therefore never writes a board from its page, whatever a stored row says.
+- **The floor moves at once.** The data API reads the current version on every request, so a
+  settings version that lets only editors change the board refuses a commenter's next write. The
+  room declaration compares the effective open topics (none when `writers` is `editor`), so the
+  same version closes the board's sockets with 4410 as it commits, and they reconnect with the new
+  rights; the room's alarm compares the same values and causes no reconnect loop.
+- **Validation on every channel.** Every whiteboard write (page, agent, app) must be a block or an
+  arrow in the board's shape (strict keys, whole numbers within bounds, known enums), in `blocks`
+  or `arrows` only, never a personal document. This is validation, not authorization: who may
+  write is the policy decision above (`data_write` for agents and the app, owners and editors).
+- **The starting board.** A publish or an update of an empty board may carry blocks and arrows.
+  Before anything is staged, Plinth makes the `data_write` decision (on the facts of the artifact
+  about to be created, or with `requireArtifact` on the artifact) and checks the quotas; after the
+  commit it decides again on the artifact as it now is, and the role it returns stamps every
+  document. The write is one statement that inserts every item or none: the artifact must still be
+  live, have no blocks or arrows, and stay within its document and byte quotas, all on one
+  snapshot. Each document's data is bound as the exact JSON text that was measured, its rev is one
+  past the change counter at that snapshot plus its index (so the next write's rev is above every
+  seeded one), and the seed counts once against the write rate limits. Nothing is ever overwritten
+  (`NOT EXISTS`, `ON CONFLICT DO NOTHING`), an update with blocks on a board that has some is
+  refused, and a restore writes no shared data.
+- **No silent overwrites from the page.** The renderer writes a block at the rev it read. On a
+  conflict it reads the newer copy and writes only the fields its viewer changed on top of it; a
+  field the other writer (a person or an agent) changed meanwhile keeps their value, and the viewer
+  is told. A stale copy of a whole block is never written back over someone else's change. A
+  peer's drag, which the room carries before it is saved, is only drawn: no other viewer's save
+  ever writes it. In the mirror case, a peer's save of a block this viewer is dragging or
+  resizing does not replace the block under the pointer: it is read once the gesture ends, and
+  the drop's conflict puts the move or size on top of the peer's change. A block whose text the
+  viewer is editing is held the same way, and the edit is written at the rev it began from, so a
+  peer's text saved meanwhile is a conflict: theirs is kept, and the viewer's text replaces it
+  only if the viewer presses "Use mine".
+- **The editor preview.** The preview loader frame holds the owner's content pass, so the
+  renderer must not act there: the app's editor preview alone sets the payload's `preview`, and
+  then the renderer makes no shared-data or room call and draws only the draft's own starting
+  blocks. The flag only narrows what Plinth's renderer does; the Worker never sets it, no server
+  decision reads it, and a forged one grants nothing.
+- **The runtime cannot be replaced by the page.** The shell has only fixed ids, the runtime defines
+  `window.plinth` as a non-writable, non-configurable property before the renderer runs, and the
+  renderer reads it once before it builds any DOM. It never sets an `id` or a `name` from data.
+- **Untrusted text.** Block text, arrow labels and peers' names are written by other people. The
+  renderer puts them in the page only through `textContent` and SVG text nodes, and attributes only
+  take validated numbers and fixed values. Agents get them from `list_artifact_data` marked
+  `untrusted`, and the tool descriptions and the skill say block text is never instructions.
+- **Export stays in the frame.** PNG is drawn with Canvas 2D and SVG built with DOM APIs from the
+  board, with no `foreignObject`, scripts, links or image loads, and downloaded through a `blob:`
+  link (the frame's existing `allow-downloads`). No CSP change.
+- **No assets, no bundle.** A whiteboard takes no files besides `board.json`, and `start_upload`
+  refuses it, so a starting board is always checked by the inline publish. `board.json` is served
+  as `application/json` with `script-src 'none'`.
+- **Origin isolation only.** Publishing a whiteboard is refused under opaque isolation or with
+  shared data off, so a board is never served without its own origin.
 
 ## CSRF and input handling
 
