@@ -1299,21 +1299,33 @@ const EDIT_STATES: [string, Partial<EditBarProps>][] = [
   ["Editing", {}],
   ["Connecting", { connecting: true, connected: false }],
   [
-    "Unsaved changes, with co-editors",
+    "Draft saved, with co-editors",
     {
       dirty: true,
+      flushed: true,
       phase: "dirty",
       editors: [
-        { email: "bo@example.org", block: true },
+        { email: "bo@example.org", block: true, where: "row 12" },
         { email: "cy@example.org", block: false },
       ],
     },
   ],
-  ["Saving", { dirty: true, saving: true, phase: "saving" }],
-  ["Saved", { savedVersion: 5 }],
-  ["A version merged under the edits", { dirty: true, rebasedVersion: 5 }],
+  ["Saving the draft", { dirty: true, flushed: false, phase: "dirty" }],
+  ["Publishing", { dirty: true, saving: true, phase: "saving" }],
+  ["Published", { savedVersion: 5 }],
+  ["A version merged under the changes", { dirty: true, rebasedVersion: 5 }],
   ["Not connected", { dirty: true, connected: false }],
-  ["Conflict", { dirty: true, phase: "conflict" }],
+  ["A version to review", { dirty: true, phase: "conflict", conflictVersion: 5 }],
+  ["Versions to review", { dirty: true, phase: "conflict", conflictVersion: 6 }],
+  [
+    "Cannot be published yet",
+    {
+      dirty: true,
+      phase: "dirty",
+      publishable: false,
+      unpublishableReason: "These page changes can't be published yet.",
+    },
+  ],
   [
     "Solo, a newer version published",
     { mode: "solo", dirty: true, phase: "solo", newerVersion: 5 },
@@ -1333,9 +1345,10 @@ const LIVE_STATUS: LiveFrameStatus = {
   last_by_you: false,
   last_edit_at: null,
   editors: [],
+  publishable: true,
 };
 
-/** On-page doc editing (#36): the edit strip and the unsaved-edits line in every state. */
+/** On-page editing (#36): the edit strip and the unpublished-changes line in every state. */
 function LiveEditSpecimens() {
   const bar: EditBarProps = {
     phase: "editing",
@@ -1347,7 +1360,7 @@ function LiveEditSpecimens() {
     savedVersion: null,
     rebasedVersion: null,
     editors: [],
-    onSave: noop,
+    onPublish: noop,
     onDiscard: noop,
     onDone: noop,
     onReview: noop,
@@ -1358,7 +1371,7 @@ function LiveEditSpecimens() {
     <>
       <Specimen
         title="Edit bar"
-        note="Under the artifact bar while a doc is edited on its page. Save version is the one ink primary; bronze marks the live state."
+        note="Under the artifact bar while a doc or a sheet is edited on its page. Publish is the one ink primary; bronze marks the live state. While a version waits for review, Review changes takes its place and opens the review in the page itself."
       >
         <div className="ds-stack">
           {EDIT_STATES.map(([label, over]) => (
@@ -1370,7 +1383,7 @@ function LiveEditSpecimens() {
         </div>
       </Specimen>
       <Specimen
-        title="Unsaved page edits"
+        title="Unpublished changes on the page"
         note="One line for owners and editors who are not editing. Viewers and commenters never see it."
       >
         <div className="ds-stack">

@@ -17,7 +17,7 @@ const props = (over: Partial<EditBarProps> = {}): EditBarProps => ({
   savedVersion: null,
   rebasedVersion: null,
   editors: [],
-  onSave: vi.fn(),
+  onPublish: vi.fn(),
   onDiscard: vi.fn(),
   onDone: vi.fn(),
   onReview: vi.fn(),
@@ -27,14 +27,18 @@ const props = (over: Partial<EditBarProps> = {}): EditBarProps => ({
 describe("EditBar", () => {
   it("says what is happening, most urgent first", () => {
     expect(editStatus(props())).toBe("Editing v4");
-    expect(editStatus(props({ dirty: true }))).toBe("Unsaved changes");
-    expect(editStatus(props({ dirty: true, saving: true }))).toBe("Saving…");
-    expect(editStatus(props({ savedVersion: 5 }))).toBe("Saved as v5");
+    expect(editStatus(props({ dirty: true }))).toBe("Draft saved");
+    expect(editStatus(props({ dirty: true, flushed: false }))).toBe("Saving draft…");
+    expect(editStatus(props({ dirty: true, saving: true }))).toBe("Publishing…");
+    expect(editStatus(props({ savedVersion: 5 }))).toBe("Published as v5");
     expect(editStatus(props({ dirty: true, rebasedVersion: 5 }))).toBe(
-      "v5 was published; your edits were kept",
+      "v5 was published; your changes were kept",
     );
     expect(editStatus(props({ connected: false, dirty: true }))).toBe(
-      "Not connected, your edits are kept",
+      "Not connected, your changes are kept",
+    );
+    expect(editStatus(props({ mode: "solo", dirty: true }))).toBe(
+      "Unpublished changes, kept in this tab",
     );
     expect(editStatus(props({ connected: false, connecting: true }))).toBe("Connecting…");
     // Solo has no socket: being "not connected" is normal there.
@@ -42,25 +46,35 @@ describe("EditBar", () => {
     expect(editStatus(props({ mode: "solo", newerVersion: 5 }))).toBe(
       "v5 was published while you were editing",
     );
-    // A sheet's page edits are never merged: any version published meanwhile stops editing.
+    // A version (or a range of them) published meanwhile waits for review.
     expect(editStatus(props({ phase: "conflict" }))).toBe(
-      "A newer version changed the same lines. Review the changes.",
+      "A newer version was published while you edited. Review it to go on.",
     );
-    expect(editStatus(props({ phase: "conflict", merges: false, conflictVersion: 6 }))).toBe(
-      "v6 was published while you edited. Review it to go on.",
+    expect(editStatus(props({ phase: "conflict", conflictVersion: 5 }))).toBe(
+      "v5 was published while you edited. Review it to go on.",
+    );
+    expect(editStatus(props({ phase: "conflict", conflictVersion: 7 }))).toBe(
+      "v5 to v7 were published while you edited. Review them to go on.",
     );
   });
 
-  it("announces the status politely and offers Save version with its shortcut", async () => {
-    const p = props({ dirty: true, editors: [{ email: "bo@example.org", block: true }] });
+  it("announces the status politely and offers Publish with its shortcut", async () => {
+    const p = props({
+      dirty: true,
+      editors: [
+        { email: "bo@example.org", block: true, where: "row 12" },
+        { email: "cy@example.org", block: true },
+      ],
+    });
     render(<EditBar {...p} />);
-    const status = screen.getByText("Unsaved changes");
+    const status = screen.getByText("Draft saved");
     expect(status.getAttribute("aria-live")).toBe("polite");
-    expect(screen.getByText("bo@example.org").textContent).toContain("(editing)");
-    const save = screen.getByRole("button", { name: "Save version" });
-    expect(save.getAttribute("aria-keyshortcuts")).toBe("Meta+S Control+S");
-    await userEvent.click(save);
-    expect(p.onSave).toHaveBeenCalledTimes(1);
+    expect(screen.getByText(/bo@example\.org/).textContent).toBe("bo@example.org (editing row 12)");
+    expect(screen.getByText(/cy@example\.org/).textContent).toBe("cy@example.org (editing)");
+    const publish = screen.getByRole("button", { name: "Publish" });
+    expect(publish.getAttribute("aria-keyshortcuts")).toBe("Meta+S Control+S");
+    await userEvent.click(publish);
+    expect(p.onPublish).toHaveBeenCalledTimes(1);
     await userEvent.click(screen.getByRole("button", { name: "Done" }));
     expect(p.onDone).toHaveBeenCalledTimes(1);
   });
@@ -70,45 +84,56 @@ describe("EditBar", () => {
     const user = userEvent.setup();
     render(<EditBar {...p} />);
     await user.click(screen.getByRole("button", { name: "More editing actions" }));
-    await user.click(screen.getByRole("menuitem", { name: "Discard unsaved changes" }));
-    const dialog = await screen.findByRole("alertdialog", { name: "Discard unsaved changes?" });
-    expect(dialog).toBeTruthy();
+    await user.click(screen.getByRole("menuitem", { name: "Discard unpublished changes" }));
+    const dialog = await screen.findByRole("alertdialog", {
+      name: "Discard unpublished changes?",
+    });
+    expect(dialog.textContent).toContain("for everyone editing it");
     await user.click(screen.getByRole("button", { name: "Cancel" }));
     expect(p.onDiscard).not.toHaveBeenCalled();
     await user.click(screen.getByRole("button", { name: "More editing actions" }));
-    await user.click(screen.getByRole("menuitem", { name: "Discard unsaved changes" }));
+    await user.click(screen.getByRole("menuitem", { name: "Discard unpublished changes" }));
     await user.click(await screen.findByRole("button", { name: "Discard changes" }));
     expect(p.onDiscard).toHaveBeenCalledTimes(1);
   });
 
-  it("saves with a note from the menu", async () => {
+  it("publishes with a note from the menu", async () => {
     const p = props({ dirty: true });
     const user = userEvent.setup();
     render(<EditBar {...p} />);
     await user.click(screen.getByRole("button", { name: "More editing actions" }));
-    await user.click(screen.getByRole("menuitem", { name: "Save with a note…" }));
+    await user.click(screen.getByRole("menuitem", { name: "Publish with a note…" }));
     await user.type(await screen.findByLabelText("Note"), "Tidy the intro");
-    const dialog = screen.getByRole("dialog", { name: "Save version" });
+    const dialog = screen.getByRole("dialog", { name: "Publish with a note" });
     await user.click(dialog.querySelector(".pl-dialog__footer button:last-child") ?? dialog);
-    expect(p.onSave).toHaveBeenCalledWith("Tidy the intro");
+    expect(p.onPublish).toHaveBeenCalledWith("Tidy the intro");
   });
 
-  it("Enter in the note field saves with the note", async () => {
+  it("Enter in the note field publishes with the note", async () => {
     const p = props({ dirty: true });
     const user = userEvent.setup();
     render(<EditBar {...p} />);
     await user.click(screen.getByRole("button", { name: "More editing actions" }));
-    await user.click(screen.getByRole("menuitem", { name: "Save with a note…" }));
+    await user.click(screen.getByRole("menuitem", { name: "Publish with a note…" }));
     await user.type(await screen.findByLabelText("Note"), "Fix typos{Enter}");
-    expect(p.onSave).toHaveBeenCalledWith("Fix typos");
+    expect(p.onPublish).toHaveBeenCalledWith("Fix typos");
   });
 
-  it("offers Review changes instead of Save while frozen by a conflict", async () => {
+  it("offers Review changes instead of Publish while a version waits for review", async () => {
     const p = props({ dirty: true, phase: "conflict" });
     render(<EditBar {...p} />);
-    expect(screen.queryByRole("button", { name: "Save version" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Publish" })).toBeNull();
     await userEvent.click(screen.getByRole("button", { name: "Review changes" }));
     expect(p.onReview).toHaveBeenCalled();
+  });
+
+  it("turns Publish off, with the reason, for a draft that cannot be a version yet", () => {
+    const p = props({ dirty: true, publishable: false, unpublishableReason: "Nothing to show." });
+    render(<EditBar {...p} />);
+    const publish = screen.getByRole("button", { name: "Publish" }) as HTMLButtonElement;
+    expect(publish.disabled).toBe(true);
+    const reason = screen.getByText("Nothing to show.");
+    expect(publish.getAttribute("aria-describedby")).toBe(reason.id);
   });
 });
 
@@ -126,6 +151,7 @@ describe("LiveDraftNotice", () => {
     last_by_you: false,
     last_edit_at: null,
     editors: [],
+    publishable: true,
     ...over,
   });
   const handlers = () => ({
@@ -159,35 +185,35 @@ describe("LiveDraftNotice", () => {
     );
   });
 
-  it("names who left unsaved edits and when, with save, continue and discard", async () => {
+  it("names who left unpublished changes and when, with publish, continue and discard", async () => {
     const h = handlers();
     render(<LiveDraftNotice draft={DRAFT} status={null} now={NOW} {...h} />);
     expect(screen.getByRole("note").textContent).toContain(
-      "Unsaved page edits by bo@example.org, 3 h ago",
+      "Unpublished changes on the page by bo@example.org, 3 h ago",
     );
-    await userEvent.click(screen.getByRole("button", { name: "Save as version" }));
+    await userEvent.click(screen.getByRole("button", { name: "Publish" }));
     await userEvent.click(screen.getByRole("button", { name: "Continue editing" }));
     expect(h.onSave).toHaveBeenCalled();
     expect(h.onContinue).toHaveBeenCalled();
   });
 
-  it("asks before discarding someone's page edits, and only discards on confirm", async () => {
+  it("asks before discarding someone's page changes, and only discards on confirm", async () => {
     const h = handlers();
     const user = userEvent.setup();
     render(<LiveDraftNotice draft={DRAFT} status={null} now={NOW} {...h} />);
     await user.click(screen.getByRole("button", { name: "Discard" }));
     const dialog = await screen.findByRole("alertdialog", {
-      name: "Discard the unsaved page edits?",
+      name: "Discard the unpublished changes?",
     });
-    expect(dialog.textContent).toContain("The edits by bo@example.org are not kept anywhere.");
+    expect(dialog.textContent).toContain("The changes by bo@example.org are not kept anywhere.");
     await user.click(screen.getByRole("button", { name: "Cancel" }));
     expect(h.onDiscard).not.toHaveBeenCalled();
     await user.click(screen.getByRole("button", { name: "Discard" }));
-    await user.click(await screen.findByRole("button", { name: "Discard page edits" }));
+    await user.click(await screen.findByRole("button", { name: "Discard changes" }));
     expect(h.onDiscard).toHaveBeenCalledTimes(1);
   });
 
-  it("disables saving and discarding with the reason while the live draft is out of reach", () => {
+  it("disables publishing and discarding with the reason while the live draft is out of reach", () => {
     const h = handlers();
     render(
       <LiveDraftNotice
@@ -198,7 +224,7 @@ describe("LiveDraftNotice", () => {
       />,
     );
     const reason = screen.getByText("Live editing is unavailable right now.");
-    for (const name of ["Save as version", "Discard"]) {
+    for (const name of ["Publish", "Discard"]) {
       const b = screen.getByRole("button", { name }) as HTMLButtonElement;
       expect(b.disabled).toBe(true);
       expect(b.getAttribute("aria-describedby")).toBe(reason.id);
@@ -225,7 +251,7 @@ describe("LiveDraftNotice", () => {
       <LiveDraftNotice draft={null} status={status({ dirty: true, conflict_version: 5 })} {...h} />,
     );
     expect(screen.getByRole("note").textContent).toContain(
-      "v5 changed the same paragraphs as the unsaved page edits",
+      "v5 changed the same paragraphs as the unpublished changes on the page",
     );
     await userEvent.click(screen.getByRole("button", { name: "Review changes" }));
     expect(h.onReview).toHaveBeenCalled();
@@ -238,7 +264,7 @@ describe("LiveDraftNotice", () => {
       />,
     );
     expect(screen.getByRole("note").textContent).toContain(
-      "v5 was published over the unsaved page edits. Review them to go on.",
+      "v5 was published while there were unpublished changes on the page. Review them to go on.",
     );
   });
 

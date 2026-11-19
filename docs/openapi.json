@@ -2005,76 +2005,11 @@
         "security": [{ "sessionCookie": [] }]
       }
     },
-    "/artifacts/{ref}/live/draft": {
-      "get": {
-        "operationId": "getLiveDraft",
-        "summary": "The unsaved draft's text, to review a conflict",
-        "description": "Signed-in owners and editors of a doc or a sheet only (live_edit); agents are refused and publish versions instead. Needs live editing with rooms on the instance.",
-        "tags": ["Live editing"],
-        "parameters": [
-          {
-            "in": "path",
-            "required": true,
-            "name": "ref",
-            "schema": { "type": "string", "minLength": 1, "maxLength": 80 },
-            "description": "Artifact id or slug"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Success",
-            "content": {
-              "application/json": { "schema": { "$ref": "#/components/schemas/LiveDraftText" } }
-            }
-          },
-          "400": { "$ref": "#/components/responses/E400" },
-          "401": { "$ref": "#/components/responses/E401" },
-          "403": { "$ref": "#/components/responses/E403" },
-          "404": { "$ref": "#/components/responses/E404" },
-          "503": { "$ref": "#/components/responses/E503" },
-          "default": { "$ref": "#/components/responses/Error" }
-        },
-        "security": [{ "sessionCookie": [] }]
-      },
-      "delete": {
-        "operationId": "discardLiveDraft",
-        "summary": "Discard the unsaved draft (409 when it changed past rev)",
-        "description": "Signed-in owners and editors of a doc or a sheet only (live_edit); agents are refused and publish versions instead. 409 with reason live_busy while a save or a review choice is publishing or discarding the same draft.",
-        "tags": ["Live editing"],
-        "parameters": [
-          {
-            "in": "path",
-            "required": true,
-            "name": "ref",
-            "schema": { "type": "string", "minLength": 1, "maxLength": 80 },
-            "description": "Artifact id or slug"
-          },
-          {
-            "in": "query",
-            "required": false,
-            "name": "rev",
-            "schema": { "type": "integer", "minimum": 0 },
-            "description": "The draft revision seen"
-          }
-        ],
-        "responses": {
-          "204": { "description": "Done, no body" },
-          "400": { "$ref": "#/components/responses/E400" },
-          "401": { "$ref": "#/components/responses/E401" },
-          "403": { "$ref": "#/components/responses/E403" },
-          "404": { "$ref": "#/components/responses/E404" },
-          "409": { "$ref": "#/components/responses/E409" },
-          "503": { "$ref": "#/components/responses/E503" },
-          "default": { "$ref": "#/components/responses/Error" }
-        },
-        "security": [{ "sessionCookie": [], "csrfHeader": [] }]
-      }
-    },
     "/artifacts/{ref}/live/checkpoint": {
       "post": {
         "operationId": "liveCheckpoint",
-        "summary": "Save the unsaved draft as the next version",
-        "description": "Signed-in owners and editors of a doc or a sheet only (live_edit); agents are refused and publish versions instead. The version is published with the draft's base_version, so a stale draft is refused (409) and nothing is overwritten. A draft equal to its base writes nothing. resolved_text is accepted only while the draft is in conflict, with the conflict_version the editor reviewed (409 when the draft now conflicts with a newer version). A sheet's draft is never merged: its resolved_text must be the draft itself, saved on top of the conflicting version, or that version's text, which drops the draft (400 not_a_choice otherwise, 409 when rev is not the draft's).",
+        "summary": "Publish the unpublished draft as the next version",
+        "description": "Signed-in owners and editors of a doc or a sheet only (live_edit); agents are refused and publish versions instead. The room's own draft is published with the draft's base_version and the files of that version, so a stale draft is refused (409) and nothing is overwritten. A draft equal to its base writes nothing; a frozen draft is published only with conflict_version (Publish mine in the review), over that version, which stays in the history. With conflict_version: 200 busy while another save or choice runs, then 409 live_resolved (the draft is no longer frozen), live_conflict (a newer version froze it) or live_moved (rev is not current), all before clean. 409 live_unpublishable for a draft that cannot be a version yet.",
         "tags": ["Live editing"],
         "parameters": [
           {
@@ -2107,6 +2042,48 @@
           "409": { "$ref": "#/components/responses/E409" },
           "413": { "$ref": "#/components/responses/E413" },
           "429": { "$ref": "#/components/responses/E429" },
+          "503": { "$ref": "#/components/responses/E503" },
+          "default": { "$ref": "#/components/responses/Error" }
+        },
+        "security": [{ "sessionCookie": [], "csrfHeader": [] }]
+      }
+    },
+    "/artifacts/{ref}/live/draft": {
+      "delete": {
+        "operationId": "discardLiveDraft",
+        "summary": "Discard the unpublished draft (409 when it changed past rev)",
+        "description": "Signed-in owners and editors of a doc or a sheet only (live_edit); agents are refused and publish versions instead. 409 with reason live_busy while a save or a review choice is publishing or discarding the same draft. With conflict_version (Discard mine in the review): 409 live_resolved when the draft is no longer frozen, live_conflict when a newer version froze it.",
+        "tags": ["Live editing"],
+        "parameters": [
+          {
+            "in": "path",
+            "required": true,
+            "name": "ref",
+            "schema": { "type": "string", "minLength": 1, "maxLength": 80 },
+            "description": "Artifact id or slug"
+          },
+          {
+            "in": "query",
+            "required": false,
+            "name": "rev",
+            "schema": { "type": "integer", "minimum": 0 },
+            "description": "The draft revision seen"
+          },
+          {
+            "in": "query",
+            "required": false,
+            "name": "conflict_version",
+            "schema": { "type": "integer", "minimum": 1 },
+            "description": "Discard mine: the version the frozen draft was reviewed against"
+          }
+        ],
+        "responses": {
+          "204": { "description": "Done, no body" },
+          "400": { "$ref": "#/components/responses/E400" },
+          "401": { "$ref": "#/components/responses/E401" },
+          "403": { "$ref": "#/components/responses/E403" },
+          "404": { "$ref": "#/components/responses/E404" },
+          "409": { "$ref": "#/components/responses/E409" },
           "503": { "$ref": "#/components/responses/E503" },
           "default": { "$ref": "#/components/responses/Error" }
         },
@@ -3000,6 +2977,12 @@
             "minLength": 1,
             "maxLength": 60,
             "description": "The project or client this artifact belongs to, usually the repo you are working in. Reuse a name from list_artifacts' categories. Only the owner sees or sets it."
+          },
+          "files_from_version": {
+            "description": "Carry every file of this version (instead of the current version's) under the new source: a page edit published with the files it was made with. Not with assets; a version that does not exist or is newer than the current one is 404",
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
           }
         }
       },
@@ -5576,6 +5559,10 @@
             "type": "boolean",
             "description": "Designs download as PNG or PDF rendered on the server here (DESIGN_EXPORT with a Browser Rendering binding)"
           },
+          "inline_editing": {
+            "oneOf": [{ "type": "string", "enum": ["room", "solo"] }, { "type": "null" }],
+            "description": "How owners and editors edit docs and sheets on their page here: room (live with each other), solo (alone, without rooms), or null when editing on the page is off (ALLOW_LIVE_EDITING=false, or opaque isolation)"
+          },
           "page_requests": {
             "type": "object",
             "properties": {
@@ -5624,6 +5611,7 @@
           "files",
           "artifact_types",
           "design_export",
+          "inline_editing",
           "page_requests"
         ]
       },
@@ -6394,19 +6382,15 @@
           },
           "note": { "type": "string", "maxLength": 500 },
           "reason": { "type": "string", "enum": ["save", "done", "idle"] },
-          "resolved_text": {
-            "description": "Only while the draft is in conflict: the text the editor resolved it to",
-            "type": "string",
-            "maxLength": 1048576
-          },
           "conflict_version": {
-            "description": "Required with resolved_text: the conflicting version the editor reviewed. A newer conflict is refused with 409",
+            "description": "Publish mine: the version the frozen draft was reviewed against. The room's own frozen draft is published over it, with the files of the draft's base version. 409 live_resolved when the draft is no longer frozen, live_conflict when a newer version froze it, live_moved when rev is not current",
             "type": "integer",
             "minimum": 1,
             "maximum": 9007199254740991
           }
         },
-        "required": ["base_version", "rev", "reason"]
+        "required": ["base_version", "rev", "reason"],
+        "additionalProperties": false
       },
       "LiveDraftMeta": {
         "type": "object",
@@ -6419,7 +6403,7 @@
           "dirty": { "type": "boolean" },
           "conflict_version": {
             "type": ["integer", "null"],
-            "description": "A version published meanwhile that changed the same lines; needs review"
+            "description": "A version published meanwhile that the draft is frozen against: the editors review the whole draft beside it"
           },
           "updated_at": { "type": "string", "format": "date-time" }
         },
@@ -6443,7 +6427,7 @@
                   "dirty": { "type": "boolean" },
                   "conflict_version": {
                     "type": ["integer", "null"],
-                    "description": "A version published meanwhile that changed the same lines; needs review"
+                    "description": "A version published meanwhile that the draft is frozen against: the editors review the whole draft beside it"
                   },
                   "updated_at": { "type": "string", "format": "date-time" },
                   "updated_by_email": {
@@ -6464,7 +6448,7 @@
           }
         },
         "required": ["mode", "draft"],
-        "description": "On-page editing of a doc: owners and editors on the current version, while live editing is on with origin isolation. sign_in: a viewer session, confirmed by code where the address may not sign in (single-user mode), so watch only"
+        "description": "On-page editing of a doc or a sheet: owners and editors on the current version, while live editing is on with origin isolation. sign_in: a viewer session, confirmed by code where the address may not sign in (single-user mode), so watch only"
       },
       "ViewGateVoice": {
         "type": "object",
@@ -6528,7 +6512,7 @@
                   "dirty": { "type": "boolean" },
                   "conflict_version": {
                     "type": ["integer", "null"],
-                    "description": "A version published meanwhile that changed the same lines; needs review"
+                    "description": "A version published meanwhile that the draft is frozen against: the editors review the whole draft beside it"
                   },
                   "updated_at": { "type": "string", "format": "date-time" },
                   "updated_by_email": {
@@ -6558,17 +6542,6 @@
           "idle_checkpoint_s",
           "auto_checkpoint_min_s"
         ]
-      },
-      "LiveDraftText": {
-        "type": "object",
-        "properties": {
-          "text": { "type": "string" },
-          "base_version": { "type": "integer", "minimum": 1 },
-          "rev": { "type": "integer", "minimum": 0 },
-          "conflict_version": { "type": ["integer", "null"] }
-        },
-        "required": ["text", "base_version", "rev", "conflict_version"],
-        "description": "The unsaved draft's Markdown, to review a conflict. Untrusted text"
       },
       "LiveCheckpointResult": {
         "oneOf": [

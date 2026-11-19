@@ -9,6 +9,7 @@ import {
   type DictationAccess,
   type EffectiveRole,
   hasPageCapabilities,
+  isLiveType,
   isPersonalDocId,
   type LiveViewPool,
   pageDataOf,
@@ -415,7 +416,7 @@ export function roomAccess(
   if (kind === "slides") return slidesRoomAccess(claim, ctx.type);
   const editor = claim.role === "owner" || claim.role === "editor";
   if (kind === "doc") {
-    if (!TYPE_REGISTRY[ctx.type]?.liveEdit || !editor) return NO_ROOM;
+    if (!isLiveType(TYPE_REGISTRY[ctx.type]) || !editor) return NO_ROOM;
     return {
       join: true,
       emit: "none",

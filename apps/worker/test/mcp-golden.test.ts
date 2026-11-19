@@ -90,7 +90,7 @@ describe("MCP surface (golden)", () => {
   it("origin isolation", async () => {
     expect(await surface(OFF)).toEqual({
       names: NAMES,
-      tools: "0e4d1a7742d01460aa2edddecc10866cb182dbe2f53a60aff424413eb13b362b",
+      tools: "ee727bb077349c73f790fcadfca41c1d26879f87684be43dca4e20ebd621dd03",
       resources: RESOURCES,
       preview: "fd84092d5ecc5a28f494373097e8a3b6e27065d5ef6928f3e124c634f8cf6f47",
       instructions: INSTRUCTIONS,
@@ -100,7 +100,7 @@ describe("MCP surface (golden)", () => {
   it("opaque isolation", async () => {
     expect(await surface({ ...OFF, CONTENT_ISOLATION: "opaque" })).toEqual({
       names: NAMES,
-      tools: "9095153ca25e2389111f66f9edd6ab68dd1f70d9476bc4d86a597d6e3fdbadc0",
+      tools: "2423eccaea73ec89b57ac692b8d20a148d0642663b46864dcade9e4120757587",
       resources: RESOURCES,
       preview: "257bbf5bb47164c389849fffa7fc1dd46e6e7c20e4ef616b4bffefb53a8fd08b",
       instructions: INSTRUCTIONS,
@@ -112,7 +112,7 @@ describe("MCP surface (golden)", () => {
       await surface({ ...OFF, STAGING_CONTENT_FALLBACK: "true", CONTENT_ISOLATION: "opaque" }),
     ).toEqual({
       names: NAMES,
-      tools: "1670b22faff557f1f36653fd88ac7bf38e87dc089aeba23b522885bc27397227",
+      tools: "9360c921e63a7e1de4abbb3fce456bd519eb988d6729dff5e74b5eaff8729d65",
       resources: RESOURCES,
       preview: "257bbf5bb47164c389849fffa7fc1dd46e6e7c20e4ef616b4bffefb53a8fd08b",
       instructions: INSTRUCTIONS,
@@ -122,7 +122,7 @@ describe("MCP surface (golden)", () => {
   it("category sharing on (the default): the share note and the instructions' sentence", async () => {
     expect(await surface()).toEqual({
       names: NAMES,
-      tools: "97914b2bcbaa98c20d203e1c902f4e26de337b082db2814ec9a0c3d4d5390f16",
+      tools: "0f8273ad746c3a99b3a97b0777ac35845a9e7daa339acec0c27ca2b911ea26cc",
       resources: RESOURCES,
       preview: "fd84092d5ecc5a28f494373097e8a3b6e27065d5ef6928f3e124c634f8cf6f47",
       instructions: "141a818ae8521ca40c082d6d4134028015b5205ce2b46642b82dc9a0da6e78db",

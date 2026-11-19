@@ -15,8 +15,8 @@
 // (liveTypes.ts). Rows and columns are inserted and deleted with one more frame, `struct`, that
 // both sides apply with the same pure function (applySheetStruct), so no text is resent.
 import { z } from "zod";
+import { FILE_SUMMARY_LIMITS } from "./changes/files.ts";
 import { LIMITS } from "./constants.ts";
-import { liveDocTooLarge } from "./liveTypes.ts";
 import { sheetColumnInputSchema } from "./schemas.ts";
 
 // The line and lease helpers live in liveLines.ts, the per-type rules in liveTypes.ts (neither
@@ -129,6 +129,12 @@ export const sheetStructOpSchema = z.discriminatedUnion("op", [
     .strict(),
 ]);
 
+/**
+ * Every live type's structural op, as a struct frame carries it (today a sheet's). The room checks
+ * the op's kind against the artifact's type (LiveTypeRules.struct.kinds) before it applies it.
+ */
+export const liveStructOpSchema = sheetStructOpSchema;
+
 /** What the renderer sends. The raw frame is checked against LIMITS.liveDocFrameBytes first. */
 export const liveDocClientFrameSchema = z.discriminatedUnion("t", [
   z
@@ -144,7 +150,7 @@ export const liveDocClientFrameSchema = z.discriminatedUnion("t", [
   z.object({ t: z.literal("takeover"), lease: leaseId }),
   z.object({ t: z.literal("sync") }),
   /** A sheet's rows or columns, at the draft's current rev, while nobody else holds a lease. */
-  z.object({ t: z.literal("struct"), rev: count, op: sheetStructOpSchema }),
+  z.object({ t: z.literal("struct"), rev: count, op: liveStructOpSchema }),
 ]);
 export type LiveDocClientFrame = z.infer<typeof liveDocClientFrameSchema>;
 
@@ -159,6 +165,25 @@ export const LIVE_DOC_ERROR_CODES = [
 export type LiveDocErrorCode = (typeof LIVE_DOC_ERROR_CODES)[number];
 
 const leaseView = z.object({ id: leaseId, start: line, end: line, by: email });
+
+const fileChange = z.object({
+  path: z.string().max(FILE_SUMMARY_LIMITS.maxPathChars * 2),
+  kind: z.enum(["added", "removed", "replaced", "same"]),
+  before: count.optional(),
+  after: count.optional(),
+});
+
+/**
+ * The files a version published meanwhile changed since the draft's base (summarizeFileChanges):
+ * what the review lists under "Files". At most FILE_SUMMARY_LIMITS.maxPaths of each kind.
+ */
+export const liveFilesSchema = z.object({
+  added: z.array(fileChange).max(FILE_SUMMARY_LIMITS.maxPaths),
+  removed: z.array(fileChange).max(FILE_SUMMARY_LIMITS.maxPaths),
+  replaced: z.array(fileChange).max(FILE_SUMMARY_LIMITS.maxPaths),
+  more: count,
+  same: count,
+});
 
 /** What the room sends on a doc socket. The renderer validates every frame. */
 export const liveDocServerFrameSchema = z.discriminatedUnion("t", [
@@ -176,6 +201,8 @@ export const liveDocServerFrameSchema = z.discriminatedUnion("t", [
     peers: z
       .array(z.object({ id: z.string().max(64), email, lease: leaseId.nullable() }))
       .max(1000),
+    /** While the draft is frozen: the files conflict_version changed since base_version. */
+    files: liveFilesSchema.optional(),
   }),
   z.object({
     t: z.literal("text"),
@@ -232,9 +259,20 @@ export const liveDocServerFrameSchema = z.discriminatedUnion("t", [
   }),
   z.object({ t: z.literal("flushed"), rev: count }),
   z.object({ t: z.literal("saved"), version, rev: count }),
-  z.object({ t: z.literal("reset"), version, gen, rev: count }),
+  /**
+   * The draft was replaced by `version`. `why` when an editor's choice in the review (or the
+   * strip's discard) did it: "published" (the page changes became `version`) or "discarded".
+   */
+  z.object({
+    t: z.literal("reset"),
+    version,
+    gen,
+    rev: count,
+    why: z.enum(["published", "discarded"]).optional(),
+  }),
   z.object({ t: z.literal("rebased"), version, gen, rev: count }),
-  z.object({ t: z.literal("conflict"), version }),
+  /** The draft is frozen against `version`, which changed `files` since the draft's base. */
+  z.object({ t: z.literal("conflict"), version, files: liveFilesSchema.optional() }),
   z.object({
     t: z.literal("status"),
     dirty: z.boolean(),
@@ -251,34 +289,33 @@ export type LiveDocServerFrame = z.infer<typeof liveDocServerFrameSchema>;
 
 // ---------- REST inputs (app host, /api/v1/artifacts/:ref/live...) ----------
 
-/** Markdown that fits a doc: LIMITS.maxDocBytes of UTF-8 and LIMITS.maxLiveDocLines lines. */
-const docText = z
-  .string()
-  .max(LIMITS.maxDocBytes)
-  .refine(
-    (s) => !liveDocTooLarge(s),
-    `Over ${LIMITS.maxDocBytes} bytes or ${LIMITS.maxLiveDocLines} lines`,
-  );
-
 /** POST /api/v1/artifacts/:ref/live/checkpoint */
-export const liveCheckpointInput = z.object({
-  base_version: version.describe("The version the draft is based on, as the page last saw it"),
-  rev: count.describe("The draft revision the page last saw"),
-  note: z.string().max(LIMITS.maxNoteLength).optional(),
-  reason: z.enum(["save", "done", "idle"]),
-  resolved_text: docText
-    .optional()
-    .describe("Only while the draft is in conflict: the text the editor resolved it to"),
-  conflict_version: version
-    .optional()
-    .describe(
-      "Required with resolved_text: the conflicting version the editor reviewed. A newer conflict is refused with 409",
-    ),
-});
+export const liveCheckpointInput = z
+  .object({
+    base_version: version.describe("The version the draft is based on, as the page last saw it"),
+    rev: count.describe("The draft revision the page last saw"),
+    note: z.string().max(LIMITS.maxNoteLength).optional(),
+    reason: z.enum(["save", "done", "idle"]),
+    conflict_version: version
+      .optional()
+      .describe(
+        "Publish mine: the version the frozen draft was reviewed against. The room's own frozen draft is published over it, with the files of the draft's base version. 409 live_resolved when the draft is no longer frozen, live_conflict when a newer version froze it, live_moved when rev is not current",
+      ),
+  })
+  // No draft text comes from the app (the room publishes its own), so an unknown field is refused.
+  .strict();
 export type LiveCheckpointInput = z.infer<typeof liveCheckpointInput>;
 
 /** DELETE /api/v1/artifacts/:ref/live/draft?rev=n */
 export const liveDiscardQuery = z.object({
   rev: z.coerce.number().int().min(0).describe("The draft revision the editor chose to discard"),
+  conflict_version: z.coerce
+    .number()
+    .int()
+    .min(1)
+    .optional()
+    .describe(
+      "Discard mine: the version the frozen draft was reviewed against. 409 live_resolved when the draft is no longer frozen, live_conflict when a newer version froze it",
+    ),
 });
 export type LiveDiscardQuery = z.infer<typeof liveDiscardQuery>;

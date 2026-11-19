@@ -8,8 +8,8 @@
 // (stageItems.tsx): this component holds the state and hands every item one StageContext.
 
 import { FileIcon } from "@phosphor-icons/react";
-import { API, APP_ROUTES, type CommentInfo, route, typeDef, type ViewGate } from "@plinth/shared";
-import { Fragment, lazy, Suspense, useEffect, useRef, useState } from "react";
+import { API, APP_ROUTES, type CommentInfo, route, type ViewGate } from "@plinth/shared";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../../lib/api.ts";
 import { Link } from "../../lib/router.tsx";
 import { useSession } from "../../lib/session.ts";
@@ -25,6 +25,7 @@ import { IconProvider, Skeleton, Toaster, VISIBILITY_META } from "../ui/index.ts
 import { DictationConsent } from "./DictationConsent.tsx";
 import { ExportDialog } from "./ExportDialog.tsx";
 import { contentOriginOf, shareLink } from "./gate.ts";
+import { newFrameKey, withFrameKey } from "./rendererProtocol.ts";
 import { ShareDialog } from "./ShareDialog.tsx";
 import { StageFrame } from "./StageFrame.tsx";
 import {
@@ -41,10 +42,6 @@ import { usePresentation } from "./usePresentation.ts";
 import type { WatchPause } from "./useVersionWatch.ts";
 import { type UpdateHandlers, useViewUpdate } from "./useViewUpdate.ts";
 import "./viewer.css";
-
-// The review of overlapping page edits uses Monaco's diff: a chunk of its own, loaded on demand.
-const LiveConflictDialog = lazy(() => import("./LiveConflictDialog.tsx"));
-const LiveSheetReview = lazy(() => import("./LiveSheetReview.tsx"));
 
 type OkGate = Extract<ViewGate, { status: "ok" }>;
 
@@ -190,12 +187,25 @@ export function ViewerStage({
   });
 
   // On-page editing of a doc or a sheet (#36): owners and editors on the current version only.
+  // Their frame gets a fresh key in its address on every load (rendererProtocol.ts withFrameKey),
+  // and the app accepts its editing messages only with that key.
+  // One key per frame load: a new enter_url is a new load, a refreshed gate for the same frame is
+  // not.
+  const editable = gate.live !== undefined;
+  const frameKey = useMemo(
+    () => (editable && gate.enter_url ? newFrameKey() : null),
+    [editable, gate.enter_url],
+  );
+  const frameSrc = frameKey ? withFrameKey(gate.enter_url, frameKey) : gate.enter_url;
+  const barRef = useRef<HTMLElement>(null);
   const live = useLiveEdit({
     gate,
     frame,
     contentOrigin,
     config,
+    frameKey,
     onReload: onReload ?? (() => undefined),
+    onLeave: () => barRef.current?.focus(),
   });
   const editing = live.editing;
   // Presenting a deck: the slide, full screen, presenter view and its audience window.
@@ -256,8 +266,13 @@ export function ViewerStage({
   };
 
   const editRef = useRef<HTMLButtonElement>(null);
-  const barRef = useRef<HTMLElement>(null);
   const headerRef = useRef<HTMLElement>(null);
+  // While the frame shows the whole-draft review, toasts keep clear of its choices.
+  useEffect(() => {
+    if (!live.reviewing) return;
+    document.body.classList.add("pl-reviewing");
+    return () => document.body.classList.remove("pl-reviewing");
+  }, [live.reviewing]);
   // Where focus goes when editing ends, or when the control that had it went away: the Edit
   // toggle, or at phone width (no toggle) the actions menu that holds "Edit on the page".
   const focusEditEntry = () => {
@@ -380,7 +395,7 @@ export function ViewerStage({
             <div className="pl-viewer__frame-wrap">
               <StageFrame
                 ref={setFrame}
-                src={gate.enter_url}
+                src={frameSrc}
                 title={`${artifact.title}, version ${artifact.version}`}
                 isolation={config?.content_isolation}
                 loadingLabel={`Loading version ${artifact.version}`}
@@ -426,33 +441,6 @@ export function ViewerStage({
           </nav>
         </footer>
       </div>
-      {live.reviewing && live.conflict && !live.merges && (
-        <Suspense fallback={null}>
-          <LiveSheetReview
-            conflict={live.conflict}
-            saving={live.saving}
-            mode={live.mode === "room" && live.conflict.rev !== undefined ? "room" : "solo"}
-            onClose={live.closeReview}
-            onPublishMine={() => void live.keepMine()}
-            onDiscardMine={() => void live.takeLatest()}
-          />
-        </Suspense>
-      )}
-      {live.reviewing && live.conflict && live.merges && (
-        <Suspense fallback={null}>
-          <LiveConflictDialog
-            conflict={live.conflict}
-            artifactId={artifact.id}
-            saving={live.saving}
-            mode={live.mode === "room" && live.conflict.rev !== undefined ? "room" : "solo"}
-            language={typeDef(artifact.type)?.editor.language ?? "markdown"}
-            sourceLabel={typeDef(artifact.type)?.sourceLabel ?? "Markdown"}
-            onClose={live.closeReview}
-            onKeepMine={() => void live.keepMine()}
-            onTakeLatest={() => void live.takeLatest()}
-          />
-        </Suspense>
-      )}
       {STAGE_DIALOGS.map(
         (d) =>
           d.id === dialog && (

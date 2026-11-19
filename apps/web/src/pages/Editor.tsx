@@ -6,6 +6,7 @@ import {
   API,
   APP_ROUTES,
   type ArtifactDetail,
+  isLiveType,
   type LiveDraftInfo,
   liveRules,
   route,
@@ -67,7 +68,7 @@ async function load(slug: string): Promise<Load> {
  * is off here).
  */
 async function pageEdits(artifact: ArtifactDetail): Promise<LiveDraftInfo | null> {
-  if (!sourceOf(artifact).def.liveEdit) return null;
+  if (!isLiveType(sourceOf(artifact).def)) return null;
   try {
     const info = await liveInfo(artifact.id);
     return info.draft?.dirty ? info.draft : null;
@@ -141,8 +142,8 @@ export default function Editor({ params }: { params: Record<string, string> }) {
           <p className="pl-editor-page__live" role="note">
             There are unsaved page edits based on v{state.pageEdits.base_version}. Saving here
             publishes a new version;{" "}
-            {liveRules(state.artifact.type)?.merge === false
-              ? "their edits are kept, and they choose to publish them in its place or discard them."
+            {liveRules(state.artifact.type)?.merge === "review"
+              ? "their edits are not merged with it: they review it beside theirs and keep one."
               : "their edits are merged onto it, or reviewed if they overlap."}
           </p>
         )}

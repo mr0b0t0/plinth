@@ -1,11 +1,14 @@
-// useLiveEdit: the app side of on-page doc editing (#36). The frame is a real iframe whose window
-// stands in for the doc renderer; its messages are dispatched with that window as their source.
+// useLiveEdit: the app side of on-page editing (#36). The frame is a real iframe whose window
+// stands in for the renderer; its messages are dispatched with that window as their source and
+// carry the frame's key. The whole-draft review runs in the frame: the app only asks it to open
+// (`review`), acts on the person's choice (`resolved`) and answers with what came of it
+// (`reviewed`). No draft or version text reaches the app in room mode.
 import { CSRF_HEADER, type ViewGate } from "@plinth/shared";
 import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { LiveFrameStatus } from "./rendererProtocol.ts";
 import { apiError, CONFIG, json, stubApi } from "./test-utils.ts";
-import { AUTOSAVE_FALLBACK_MS, useLiveEdit } from "./useLiveEdit.ts";
+import { AUTOSAVE_FALLBACK_MS, CHOOSING_BUSY, useLiveEdit } from "./useLiveEdit.ts";
 
 const toasts = vi.hoisted(() => [] as string[]);
 vi.mock("../ui/index.ts", async (orig) => {
@@ -21,6 +24,7 @@ vi.mock("../ui/index.ts", async (orig) => {
 
 type OkGate = Extract<ViewGate, { status: "ok" }>;
 const ORIGIN = "http://art1.content.localhost:8787";
+const KEY = "K".repeat(43);
 
 const gate = (mode: "room" | "solo", over: Partial<OkGate> = {}): OkGate => ({
   status: "ok",
@@ -53,6 +57,7 @@ const STATUS: LiveFrameStatus = {
   last_by_you: true,
   last_edit_at: null,
   editors: [],
+  publishable: true,
 };
 
 let frame: HTMLIFrameElement;
@@ -75,11 +80,11 @@ afterEach(() => {
   sessionStorage.clear();
 });
 
-/** The frame posts a message to the app. */
-function fromFrame(data: Record<string, unknown>, origin = ORIGIN) {
+/** The frame posts a message to the app, with its key unless `key` says otherwise. */
+function fromFrame(data: Record<string, unknown>, origin = ORIGIN, key: string | null = KEY) {
   act(() => {
     const e = new MessageEvent("message", {
-      data: { source: "plinth-renderer", v: 1, ...data },
+      data: { source: "plinth-renderer", v: 1, ...(key ? { key } : {}), ...data },
       origin,
     });
     Object.defineProperty(e, "source", { value: frameWin });
@@ -99,14 +104,25 @@ const INFO = {
   auto_checkpoint_min_s: 600,
 };
 
-function hook(g: OkGate, onReload = vi.fn()) {
+function hook(g: OkGate, onReload = vi.fn(), extra: { onLeave?: () => void } = {}) {
   return renderHook(() =>
-    useLiveEdit({ gate: g, frame, contentOrigin: ORIGIN, config: CONFIG, onReload }),
+    useLiveEdit({
+      gate: g,
+      frame,
+      contentOrigin: ORIGIN,
+      config: CONFIG,
+      frameKey: KEY,
+      onReload,
+      ...extra,
+    }),
   );
 }
 
+const conflict409 = (n: number, reason = "live_conflict", message = `v${n} was published.`) =>
+  json({ error: { code: "conflict", message, details: { current_version: n, reason } } }, 409);
+
 describe("useLiveEdit", () => {
-  it("tells the frame to edit at its exact origin, and follows its status", async () => {
+  it("tells the frame to edit at its exact origin, and follows its status, only with its key", async () => {
     stubApi({ handle: (c) => (c.path.endsWith("/live") ? json(INFO) : undefined) });
     const { result } = hook(gate("room"));
     expect(result.current.available).toBe(true);
@@ -121,8 +137,10 @@ describe("useLiveEdit", () => {
     expect(result.current.status?.rev).toBe(7);
     expect(result.current.phase).toBe("dirty");
     expect(result.current.pause).toBe("follow");
-    // A message from another origin changes nothing.
+    // A message from another origin, without the key, or with another key changes nothing.
     fromFrame({ type: "live", ...STATUS, rev: 99 }, "http://evil.example");
+    fromFrame({ type: "live", ...STATUS, rev: 98 }, ORIGIN, null);
+    fromFrame({ type: "live", ...STATUS, rev: 97 }, ORIGIN, "x".repeat(43));
     expect(result.current.status?.rev).toBe(7);
   });
 
@@ -134,6 +152,7 @@ describe("useLiveEdit", () => {
         frame,
         contentOrigin: ORIGIN,
         config: { ...CONFIG, content_isolation: "opaque" },
+        frameKey: null,
         onReload: vi.fn(),
       }),
     );
@@ -182,9 +201,19 @@ describe("useLiveEdit", () => {
     });
     expect(posts()).toHaveLength(2);
     expect(posts()[1]?.body).toMatchObject({ rev: 9, reason: "idle" });
+    // A frozen draft, or one that cannot be a version yet, is never autosaved.
+    fromFrame({ type: "live", ...STATUS, rev: 10, conflict_version: 4 });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(200_000);
+    });
+    fromFrame({ type: "live", ...STATUS, rev: 11, publishable: false });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(200_000);
+    });
+    expect(posts()).toHaveLength(2);
   });
 
-  it("saves with the frame's base and rev, and handles 429, 503, 403 and 401", async () => {
+  it("publishes with the frame's base and rev, and handles 429, 503, 403 and 401", async () => {
     let answer: Response = json({
       saved: true,
       version: { version: 4 },
@@ -201,7 +230,7 @@ describe("useLiveEdit", () => {
     const { result } = hook(gate("room"), onReload);
     act(() => result.current.start());
     fromFrame({ type: "live", ...STATUS });
-    await act(() => result.current.save("Tidy intro"));
+    await act(() => result.current.publish("Tidy intro"));
     const post = calls.find((c) => c.method === "POST");
     expect(post?.body).toEqual({ base_version: 3, rev: 7, reason: "save", note: "Tidy intro" });
     // A cookie request: the CSRF header goes with it.
@@ -209,76 +238,139 @@ describe("useLiveEdit", () => {
     expect(result.current.savedVersion).toBe(4);
 
     answer = apiError(429, "rate_limited");
-    await act(() => result.current.save());
-    expect(toasts.at(-1)).toBe("Hourly version limit reached. Your edits stay as a draft.");
+    await act(() => result.current.publish());
+    expect(toasts.at(-1)).toBe("Hourly version limit reached. Your changes stay as a draft.");
     answer = apiError(503, "unavailable");
-    await act(() => result.current.save());
-    expect(toasts.at(-1)).toBe("Live editing is unavailable. Your edits are kept.");
+    await act(() => result.current.publish());
+    expect(toasts.at(-1)).toBe("Live editing is unavailable. Your changes are kept.");
     answer = apiError(403, "forbidden");
-    await act(() => result.current.save());
+    await act(() => result.current.publish());
     expect(toasts.at(-1)).toBe("You can no longer edit this doc.");
     answer = apiError(401, "unauthorized");
-    await act(() => result.current.save());
+    await act(() => result.current.publish());
+    expect(toasts.at(-1)).toBe("Sign in again to publish. Your changes are kept.");
     expect(onReload).toHaveBeenCalled();
   });
 
-  it("opens the review on a 409 live conflict, and resolves with resolved_text", async () => {
-    let checkpoints = 0;
+  it("a 409 live conflict opens the review in the frame; no text is fetched", async () => {
     const { calls } = stubApi({
       handle: (c) => {
         if (c.path.endsWith("/live")) return json(INFO);
-        if (c.path.endsWith("/live/checkpoint")) {
-          checkpoints++;
-          if (checkpoints === 1) {
-            return json(
-              {
-                error: {
-                  code: "conflict",
-                  message: "v4 changed the same lines.",
-                  details: { current_version: 4, reason: "live_conflict" },
-                },
-              },
-              409,
-            );
-          }
-          return json({ saved: true, version: { version: 5 }, live: { rev: 8, dirty: false } });
-        }
-        if (c.path.endsWith("/live/draft")) {
-          return json({ text: "# Mine", base_version: 3, rev: 7, conflict_version: 4 });
-        }
-        if (c.path === "/artifacts/art1/versions/4") {
-          return json({ type: "doc", content: "# Theirs", source_path: "content.md" });
-        }
+        if (c.path.endsWith("/live/checkpoint")) return conflict409(4);
         return undefined;
       },
     });
     const { result } = hook(gate("room"));
     act(() => result.current.start());
     fromFrame({ type: "live", ...STATUS });
-    await act(() => result.current.save());
-    await waitFor(() => expect(result.current.conflict).not.toBeNull());
-    expect(result.current.reviewing).toBe(true);
-    expect(result.current.conflict).toMatchObject({
-      draft: "# Mine",
-      currentText: "# Theirs",
-      base: 3,
-      current: 4,
-      rev: 7,
-    });
+    await act(() => result.current.publish());
+    // The room has frozen the draft by now; the frame reports it.
+    fromFrame({ type: "live", ...STATUS, conflict_version: 4 });
+    await act(() => result.current.openReview());
+    const review = sentToFrame("review").at(-1);
+    expect(review?.[1]).toBe(ORIGIN);
+    expect(Object.keys(review?.[0] ?? {}).sort()).toEqual(["nonce", "source", "type", "v"]);
+    expect(result.current.review).toMatchObject({ base: 3, current: 4, mode: "room" });
     expect(result.current.phase).toBe("conflict");
-    await act(() => result.current.keepMine());
-    const resolve = calls.filter((c) => c.method === "POST").at(-1);
-    expect(resolve?.body).toEqual({
+    expect(calls.some((c) => /\/versions\/|\/live\/draft/.test(c.path))).toBe(false);
+  });
+
+  /** A room-mode hook with the review of v4 open in the frame (draft rev 7 on base 3). */
+  async function inReview(handle: (c: { method: string; path: string }) => Response | undefined) {
+    const api = stubApi({
+      handle: (c) => handle(c) ?? (c.path.endsWith("/live") ? json(INFO) : undefined),
+    });
+    const h = hook(gate("room"));
+    act(() => h.result.current.start());
+    fromFrame({ type: "live", ...STATUS, conflict_version: 4 });
+    await act(() => h.result.current.openReview());
+    const nonce = sentToFrame("review").at(-1)?.[0].nonce as string;
+    const reviewed = () => sentToFrame("reviewed").map((c) => c[0].result as string);
+    return { ...api, ...h, nonce, reviewed };
+  }
+
+  it("Publish mine checkpoints the room's draft against the version reviewed, and answers done", async () => {
+    const t = await inReview((c) =>
+      c.path.endsWith("/live/checkpoint")
+        ? json({ saved: true, version: { version: 5 }, live: { rev: 8, dirty: false } })
+        : undefined,
+    );
+    fromFrame({
+      type: "resolved",
+      nonce: t.nonce,
+      outcome: "publish",
+      version: 4,
+      rev: 7,
+      note: "Counted",
+    });
+    await waitFor(() => expect(t.reviewed()).toEqual(["done"]));
+    expect(t.calls.filter((c) => c.method === "POST").at(-1)?.body).toEqual({
       base_version: 3,
       rev: 7,
       reason: "save",
-      resolved_text: "# Mine",
       conflict_version: 4,
+      note: "Counted",
     });
-    expect(result.current.conflict).toBeNull();
+    expect(t.result.current.savedVersion).toBe(5);
+    expect(t.result.current.review).toBeNull();
   });
 
-  it("solo: collects the text with a nonce, then publishes it with the shown version as base", async () => {
+  it("Discard mine deletes the draft at the rev reviewed, for the version reviewed", async () => {
+    const t = await inReview((c) =>
+      c.method === "DELETE" ? new Response(null, { status: 204 }) : undefined,
+    );
+    fromFrame({ type: "resolved", nonce: t.nonce, outcome: "discard", version: 4, rev: 7 });
+    await waitFor(() => expect(t.reviewed()).toEqual(["done"]));
+    expect(t.calls.find((c) => c.method === "DELETE")?.path).toBe(
+      "/artifacts/art1/live/draft?rev=7&conflict_version=4",
+    );
+  });
+
+  it("maps busy, resolved, conflict and a moved draft to the frame's answer", async () => {
+    let answer: Response = json({ saved: false, reason: "busy" });
+    const t = await inReview((c) => (c.path.endsWith("/live/checkpoint") ? answer : undefined));
+    const choose = () =>
+      fromFrame({ type: "resolved", nonce: t.nonce, outcome: "publish", version: 4, rev: 7 });
+    choose();
+    await waitFor(() => expect(t.reviewed()).toEqual(["busy"]));
+    expect(t.result.current.review).not.toBeNull();
+    answer = conflict409(5, "live_resolved");
+    choose();
+    await waitFor(() => expect(t.reviewed()).toEqual(["busy", "resolved"]));
+    answer = conflict409(5, "live_conflict");
+    choose();
+    await waitFor(() => expect(t.reviewed().at(-1)).toBe("conflict"));
+    answer = conflict409(4, "live_moved");
+    choose();
+    await waitFor(() => expect(t.reviewed().at(-1)).toBe("failed"));
+    expect(toasts.at(-1)).toBe("The page changes moved on. Review them again.");
+  });
+
+  it("drops a choice for another review, without the key, or naming text in room mode", async () => {
+    const t = await inReview(() => json({ saved: true, version: { version: 5 } }));
+    fromFrame({ type: "resolved", nonce: "x".repeat(24), outcome: "publish", version: 4, rev: 7 });
+    fromFrame(
+      { type: "resolved", nonce: t.nonce, outcome: "publish", version: 4, rev: 7 },
+      ORIGIN,
+      null,
+    );
+    fromFrame({ type: "resolved", nonce: t.nonce, outcome: "publish", text: "# Forged" });
+    await new Promise((r) => setTimeout(r, 10));
+    expect(t.calls.filter((c) => c.method === "POST")).toHaveLength(0);
+    // Cancel closes the review here; the draft stays frozen.
+    fromFrame({ type: "resolved", nonce: t.nonce, outcome: "cancelled" });
+    expect(t.result.current.review).toBeNull();
+    expect(t.result.current.phase).toBe("conflict");
+  });
+
+  it("a review closes when the room unfreezes the draft (another editor's choice)", async () => {
+    const t = await inReview(() => undefined);
+    expect(t.result.current.reviewing).toBe(true);
+    fromFrame({ type: "live", ...STATUS, base_version: 5, conflict_version: null });
+    expect(t.result.current.reviewing).toBe(false);
+  });
+
+  it("solo: collects the text with a nonce, then publishes it with the shown version as base and files", async () => {
     const onReload = vi.fn();
     const { calls } = stubApi({
       handle: (c) =>
@@ -289,10 +381,12 @@ describe("useLiveEdit", () => {
     const { result } = hook(gate("solo"), onReload);
     expect(result.current.mode).toBe("solo");
     act(() => result.current.start());
+    // Solo: the frame is told the version it shows, whose files the draft is drawn with.
+    expect(sentToFrame("edit").at(-1)?.[0]).toMatchObject({ on: true, base: 3 });
     fromFrame({ type: "live", ...STATUS, connected: false, dirty: true, rev: 0, base_version: 0 });
     let saving: Promise<void> = Promise.resolve();
     act(() => {
-      saving = result.current.save("From the page");
+      saving = result.current.publish("From the page");
     });
     const collect = sentToFrame("collect").at(-1);
     expect(collect?.[1]).toBe(ORIGIN);
@@ -303,46 +397,109 @@ describe("useLiveEdit", () => {
     fromFrame({ type: "draft", nonce, text: "# Edited" });
     await act(() => saving);
     const put = calls.find((c) => c.method === "PUT");
-    expect(put?.body).toEqual({ content: "# Edited", base_version: 3, note: "From the page" });
+    expect(put?.body).toEqual({
+      content: "# Edited",
+      base_version: 3,
+      files_from_version: 3,
+      note: "From the page",
+    });
     expect(result.current.savedVersion).toBe(4);
     expect(onReload).toHaveBeenCalled();
   });
 
-  it("solo: a 409 from the save opens the review with the frame's text", async () => {
-    stubApi({
+  it("solo: a 409 opens the review in the frame with the files from the two versions' lists", async () => {
+    let refuse = true;
+    const onReload = vi.fn();
+    const { calls } = stubApi({
       handle: (c) => {
         if (c.method === "PUT") {
-          return json(
-            { error: { code: "conflict", message: "Stale", details: { current_version: 4 } } },
-            409,
-          );
+          if (refuse) {
+            refuse = false;
+            return json(
+              { error: { code: "conflict", message: "Stale", details: { current_version: 4 } } },
+              409,
+            );
+          }
+          return json({ id: "art1", version: 5, type: "doc", warnings: [] });
+        }
+        if (c.path === "/artifacts/art1/versions/3") {
+          return json({
+            type: "doc",
+            content: "x",
+            assets: [{ path: "chart.png", size_bytes: 10, sha256: "a".repeat(64) }],
+          });
         }
         if (c.path === "/artifacts/art1/versions/4") {
-          return json({ type: "doc", content: "# Theirs", source_path: "content.md" });
+          return json({
+            type: "doc",
+            content: "y",
+            assets: [{ path: "chart.png", size_bytes: 12, sha256: "b".repeat(64) }],
+          });
         }
         return undefined;
       },
     });
-    const { result } = hook(gate("solo"));
+    const { result } = hook(gate("solo"), onReload);
     act(() => result.current.start());
     fromFrame({ type: "live", ...STATUS, connected: false });
     let saving: Promise<void> = Promise.resolve();
     act(() => {
-      saving = result.current.save();
+      saving = result.current.publish();
     });
     const nonce = sentToFrame("collect").at(-1)?.[0].nonce as string;
     fromFrame({ type: "draft", nonce, text: "# Mine" });
     await act(() => saving);
-    await waitFor(() => expect(result.current.conflict).not.toBeNull());
-    expect(result.current.conflict).toMatchObject({
-      draft: "# Mine",
-      currentText: "# Theirs",
-      current: 4,
-      base: 3,
+    await waitFor(() => expect(sentToFrame("review")).toHaveLength(1));
+    const review = sentToFrame("review")[0]?.[0];
+    expect(review).toMatchObject({ n: 4, base: 3 });
+    expect(review.files).toMatchObject({
+      replaced: [{ path: "chart.png", kind: "replaced", before: 10, after: 12 }],
+      added: [],
+      removed: [],
     });
+    expect(result.current.review).toMatchObject({ base: 3, current: 4, mode: "solo" });
+    // Publish mine: the frame's own copy over v4, with v3's files and the note naming v4.
+    fromFrame(
+      { type: "resolved", nonce: review.nonce, outcome: "publish", text: "# Mine" },
+      ORIGIN,
+    );
+    await waitFor(() => expect(sentToFrame("reviewed").at(-1)?.[0].result).toBe("done"));
+    expect(calls.filter((c) => c.method === "PUT").at(-1)?.body).toEqual({
+      content: "# Mine",
+      base_version: 4,
+      files_from_version: 3,
+      note: "Edited on the page. Replaces the changes in v4.",
+    });
+    expect(onReload).toHaveBeenCalled();
   });
 
-  it("asks before leaving only while there is unflushed (room) or unsaved (solo) text", () => {
+  it("solo: Discard mine drops the tab's copy and loads the current version", async () => {
+    stubApi({
+      handle: (c) => {
+        if (c.method === "PUT") return conflict409(4, "");
+        if (/\/versions\/\d$/.test(c.path)) return json({ type: "doc", content: "", assets: [] });
+        return undefined;
+      },
+    });
+    const onReload = vi.fn();
+    const { result } = hook(gate("solo"), onReload);
+    act(() => result.current.start());
+    fromFrame({ type: "live", ...STATUS, connected: false });
+    let saving: Promise<void> = Promise.resolve();
+    act(() => {
+      saving = result.current.publish();
+    });
+    const nonce = sentToFrame("collect").at(-1)?.[0].nonce as string;
+    fromFrame({ type: "draft", nonce, text: "# Mine" });
+    await act(() => saving);
+    await waitFor(() => expect(sentToFrame("review")).toHaveLength(1));
+    const r = sentToFrame("review")[0]?.[0].nonce as string;
+    fromFrame({ type: "resolved", nonce: r, outcome: "discard" });
+    expect(onReload).toHaveBeenCalled();
+    expect(result.current.review).toBeNull();
+  });
+
+  it("asks before leaving only while there is unflushed (room) or unpublished (solo) text", () => {
     stubApi({ handle: (c) => (c.path.endsWith("/live") ? json(INFO) : undefined) });
     const { result } = hook(gate("room"));
     act(() => result.current.start());
@@ -355,103 +512,6 @@ describe("useLiveEdit", () => {
     expect(leave()).toBe(false);
     fromFrame({ type: "live", ...STATUS, unflushed: true });
     expect(leave()).toBe(true);
-  });
-
-  /** A room-mode hook in review of a conflict with v4 (draft "# Mine", rev 7). */
-  async function inReview(
-    handle: (c: { method: string; path: string; body: unknown }) => Response | undefined,
-  ) {
-    let conflictVersion = 4;
-    const api = stubApi({
-      handle: (c) => {
-        const r = handle(c);
-        if (r) return r;
-        if (c.path.endsWith("/live")) return json(INFO);
-        if (c.path.endsWith("/live/draft")) {
-          return json({
-            text: "# Mine",
-            base_version: 3,
-            rev: 7,
-            conflict_version: conflictVersion,
-          });
-        }
-        const m = /^\/artifacts\/art1\/versions\/(\d+)$/.exec(c.path);
-        if (m)
-          return json({ type: "doc", content: `# Theirs v${m[1]}`, source_path: "content.md" });
-        return undefined;
-      },
-    });
-    const h = hook(gate("room"));
-    act(() => h.result.current.start());
-    fromFrame({ type: "live", ...STATUS, conflict_version: 4 });
-    await act(() => h.result.current.review());
-    await waitFor(() => expect(h.result.current.conflict?.current).toBe(4));
-    return { ...api, ...h, setConflict: (n: number) => (conflictVersion = n) };
-  }
-
-  it("a resolution names the conflict it reviewed; a newer conflict reopens the review on it", async () => {
-    let refuse = true;
-    const t = await inReview((c) => {
-      if (!c.path.endsWith("/live/checkpoint")) return undefined;
-      if (refuse) {
-        refuse = false;
-        return json(
-          {
-            error: {
-              code: "conflict",
-              message: "v5 was published while you reviewed. Review it.",
-              details: { current_version: 5, reason: "live_conflict" },
-            },
-          },
-          409,
-        );
-      }
-      return json({ saved: true, version: { version: 6 }, live: { rev: 8, dirty: false } });
-    });
-    t.setConflict(5);
-    await act(() => t.result.current.keepMine());
-    expect(t.calls.filter((c) => c.method === "POST").at(-1)?.body).toMatchObject({
-      resolved_text: "# Mine",
-      conflict_version: 4,
-    });
-    // Not saved over v5: the review is open again, now against v5's text.
-    await waitFor(() => expect(t.result.current.conflict?.current).toBe(5));
-    expect(t.result.current.conflict?.currentText).toBe("# Theirs v5");
-    expect(t.result.current.reviewing).toBe(true);
-    expect(toasts).toContain("v5 was published while you reviewed. Review it.");
-  });
-
-  it("a choice refused as busy (the other choice is running) keeps the review open and says so", async () => {
-    const t = await inReview((c) =>
-      c.path.endsWith("/live/checkpoint") ? json({ saved: false, reason: "busy" }) : undefined,
-    );
-    const busy =
-      "These page edits are being published or discarded right now. Look again in a moment.";
-    await act(() => t.result.current.keepMine());
-    expect(t.result.current.reviewing).toBe(true);
-    expect(t.result.current.conflict?.current).toBe(4);
-    expect(toasts.at(-1)).toBe(busy);
-    toasts.length = 0;
-    await act(() => t.result.current.takeLatest());
-    expect(t.result.current.reviewing).toBe(true);
-    expect(toasts).toEqual([busy]);
-  });
-
-  it("taking the latest posts that version's text for the conflict reviewed, then closes", async () => {
-    const t = await inReview((c) =>
-      c.path.endsWith("/live/checkpoint") ? json({ saved: false, reason: "unchanged" }) : undefined,
-    );
-    await act(() => t.result.current.takeLatest());
-    expect(t.calls.filter((c) => c.method === "POST").at(-1)?.body).toEqual({
-      base_version: 3,
-      rev: 7,
-      reason: "save",
-      resolved_text: "# Theirs v4",
-      conflict_version: 4,
-    });
-    expect(t.result.current.conflict).toBeNull();
-    expect(t.result.current.reviewing).toBe(false);
-    expect(toasts.at(-1)).toBe("The page is back to v4.");
   });
 
   it("an idle autosave refused as too soon is tried again when the server says", async () => {
@@ -490,44 +550,34 @@ describe("useLiveEdit", () => {
     expect(result.current.savedVersion).toBe(4);
   });
 
-  it("room discard: looks up the rev when the frame has not reported, and says so on a 409", async () => {
-    let refuse = false;
-    const { calls } = stubApi({
-      handle: (c) => {
-        if (c.path.endsWith("/live/draft")) {
-          return json({ text: "x", base_version: 3, rev: 12, conflict_version: null });
-        }
-        if (c.method === "DELETE") {
-          if (refuse) {
-            return json(
-              {
-                error: {
-                  code: "conflict",
-                  message: "The page edits changed since you looked. Look again.",
-                },
-              },
-              409,
-            );
-          }
-          return new Response(null, { status: 204 });
-        }
-        return undefined;
-      },
-    });
+  it("room discard: the rev the frame shows, and says so on a 409 or while busy", async () => {
+    let answer: Response = new Response(null, { status: 204 });
+    const { calls } = stubApi({ handle: (c) => (c.method === "DELETE" ? answer : undefined) });
     const { result } = hook(gate("room"));
+    // Not connected: nothing to name, nothing sent.
+    await act(() => result.current.discard());
+    expect(calls.filter((c) => c.method === "DELETE")).toHaveLength(0);
+    fromFrame({ type: "live", ...STATUS, editing: false, rev: 15 });
     await act(() => result.current.discard());
     expect(calls.find((c) => c.method === "DELETE")?.path).toBe(
-      "/artifacts/art1/live/draft?rev=12",
-    );
-    expect(toasts.at(-1)).toBe("Unsaved page edits discarded.");
-    // With a status, its rev is the one discarded; someone typed since: 409, nothing claimed.
-    fromFrame({ type: "live", ...STATUS, editing: false, rev: 15 });
-    refuse = true;
-    await act(() => result.current.discard());
-    expect(calls.filter((c) => c.method === "DELETE").at(-1)?.path).toBe(
       "/artifacts/art1/live/draft?rev=15",
     );
+    expect(toasts.at(-1)).toBe("Unpublished page changes discarded.");
+    answer = json(
+      {
+        error: {
+          code: "conflict",
+          message: "The page edits changed since you looked. Look again.",
+          details: { rev: 16 },
+        },
+      },
+      409,
+    );
+    await act(() => result.current.discard());
     expect(toasts.at(-1)).toBe("The page edits changed since you looked. Look again.");
+    answer = conflict409(3, "live_busy", "busy");
+    await act(() => result.current.discard());
+    expect(toasts.at(-1)).toBe(CHOOSING_BUSY);
   });
 
   it("solo Done leaves edit mode only after the publish succeeded", async () => {
@@ -558,13 +608,13 @@ describe("useLiveEdit", () => {
     };
     expect(await finish()).toBe(false);
     expect(result.current.editing).toBe(true);
-    expect(toasts.at(-1)).toBe("Hourly version limit reached. Your edits stay as a draft.");
+    expect(toasts.at(-1)).toBe("Hourly version limit reached. Your changes stay as a draft.");
     fail = false;
     expect(await finish()).toBe(true);
     expect(result.current.editing).toBe(false);
   });
 
-  it("solo keeps a copy while dirty, and a reload offers it back with its own base", async () => {
+  it("solo keeps a copy while dirty, and a reload offers it back with its own base and files", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     const { calls } = stubApi({
       handle: (c) =>
@@ -593,115 +643,20 @@ describe("useLiveEdit", () => {
     expect(calls.find((c) => c.method === "PUT")?.body).toEqual({
       content: "# Kept",
       base_version: 3,
+      files_from_version: 3,
     });
     expect(second.result.current.restore).toBeNull();
     expect(sessionStorage.length).toBe(0);
   });
 
-  it("solo: dropping the kept copy clears it", () => {
-    stubApi();
-    sessionStorage.setItem(
-      "plinth-draft:page-edit:art1",
-      JSON.stringify({ text: "# Old", base: 2, saved_at: "2026-11-18T00:00:00.000Z" }),
-    );
-    const { result } = hook(gate("solo"));
-    expect(result.current.restore?.base).toBe(2);
-    act(() => result.current.dropRestore());
-    expect(result.current.restore).toBeNull();
-    expect(sessionStorage.getItem("plinth-draft:page-edit:art1")).toBeNull();
-  });
-
-  // A sheet's page edits are never merged: the review reads the base too (for its change lists),
-  // and its two choices publish the draft as it is or go back to the version published meanwhile.
-  const sheetGate = (mode: "room" | "solo") => {
-    const g = gate(mode);
-    g.artifact = { ...g.artifact, type: "sheet" };
-    return g;
-  };
-  const sheetVersion = (path: string) => {
-    const m = /^\/artifacts\/art1\/versions\/(\d+)$/.exec(path);
-    return m
-      ? json({ type: "sheet", content: `sheet v${m[1]}`, source_path: "sheet.jsonl" })
-      : null;
-  };
-
-  it("a sheet: never merges, reads the base for the review, and Publish mine sends the draft as it is", async () => {
-    const { calls } = stubApi({
-      handle: (c) => {
-        if (c.path.endsWith("/live")) return json(INFO);
-        if (c.path.endsWith("/live/draft")) {
-          return json({ text: "sheet mine", base_version: 3, rev: 7, conflict_version: 4 });
-        }
-        if (c.path.endsWith("/live/checkpoint")) {
-          return json({ saved: true, version: { version: 5 }, live: { rev: 8, dirty: false } });
-        }
-        return sheetVersion(c.path) ?? undefined;
-      },
-    });
-    const { result } = hook(sheetGate("room"));
-    expect(result.current.merges).toBe(false);
+  it("Esc at the top level of the frame moves focus to the strip", () => {
+    stubApi({ handle: (c) => (c.path.endsWith("/live") ? json(INFO) : undefined) });
+    const onLeave = vi.fn();
+    const { result } = hook(gate("room"), vi.fn(), { onLeave });
     act(() => result.current.start());
-    fromFrame({ type: "live", ...STATUS, conflict_version: 4 });
-    await act(() => result.current.review());
-    await waitFor(() => expect(result.current.conflict).not.toBeNull());
-    expect(result.current.conflict).toEqual({
-      draft: "sheet mine",
-      base: 3,
-      current: 4,
-      currentText: "sheet v4",
-      baseText: "sheet v3",
-      rev: 7,
-    });
-    await act(() => result.current.keepMine());
-    expect(calls.filter((c) => c.method === "POST").at(-1)?.body).toEqual({
-      base_version: 3,
-      rev: 7,
-      reason: "save",
-      resolved_text: "sheet mine",
-      conflict_version: 4,
-    });
-    expect(result.current.conflict).toBeNull();
-    expect(hook(gate("room")).result.current.merges).toBe(true);
-  });
-
-  it("a sheet, solo: Publish mine says in the note which version it replaces", async () => {
-    let puts = 0;
-    const { calls } = stubApi({
-      handle: (c) => {
-        if (c.method === "PUT") {
-          puts++;
-          if (puts === 1) {
-            return json(
-              { error: { code: "conflict", message: "Stale", details: { current_version: 4 } } },
-              409,
-            );
-          }
-          return json({ id: "art1", version: 5, type: "sheet", warnings: [] });
-        }
-        return sheetVersion(c.path) ?? undefined;
-      },
-    });
-    const { result } = hook(sheetGate("solo"));
-    act(() => result.current.start());
-    fromFrame({ type: "live", ...STATUS, connected: false });
-    let saving: Promise<void> = Promise.resolve();
-    act(() => {
-      saving = result.current.save();
-    });
-    const nonce = sentToFrame("collect").at(-1)?.[0].nonce as string;
-    fromFrame({ type: "draft", nonce, text: "sheet mine" });
-    await act(() => saving);
-    await waitFor(() => expect(result.current.conflict).not.toBeNull());
-    expect(result.current.conflict).toMatchObject({
-      baseText: "sheet v3",
-      currentText: "sheet v4",
-    });
-    await act(() => result.current.keepMine());
-    expect(calls.filter((c) => c.method === "PUT").at(-1)?.body).toEqual({
-      content: "sheet mine",
-      base_version: 4,
-      note: "Edited on the page. Replaces the changes in v4.",
-    });
-    expect(result.current.conflict).toBeNull();
+    fromFrame({ type: "leave" });
+    expect(onLeave).toHaveBeenCalledTimes(1);
+    fromFrame({ type: "leave" }, ORIGIN, null);
+    expect(onLeave).toHaveBeenCalledTimes(1);
   });
 });

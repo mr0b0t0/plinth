@@ -53,6 +53,9 @@ make a test pass.
 | A page steers the app through its update answers | Page script, or another frame, posts `hello`, `update:ok` with a path such as `//evil.example` or `/__plinth/enter?t=...`, or `shown`, to make the app load something else or skip an update | The app reads frame answers only from the window of the frame it holds at its exact content origin (never `"*"` or `"null"`: under opaque isolation there is no handshake), with the nonce it sent; the path must start with one `/`, holds no backslash or control character, is at most 2,048 characters and never under `/__plinth/`, loses its hash, becomes only the gate's `next` and passes `safeNext` on the server; the worst an answer does is hold the page behind the Update notice or land it on a page of its own artifact ([Keeping state across versions](#keeping-state-across-versions)) |
 | Carried state leaks to another artifact or viewer | A page's `{ state }`, handed to its next version, is read by another artifact, the app or the next person on a shared browser | It lives only in the content origin's `sessionStorage` (one tab, one artifact, partitioned under the app), at most 16 KiB, read and removed by the next version within 30 s; nothing crosses to the app; under opaque isolation there is no storage and nothing is carried ([Keeping state across versions](#keeping-state-across-versions)) |
 | A doc shown in place runs author HTML | The renderer re-renders a newer version's Markdown inside the open frame | The Markdown comes from the frame's own origin (`/__plinth/v/<n>/content.md`, `connect-src 'self'`, the pass it holds, served as text that runs nothing) and goes through the same Markdown pass and sanitizer as at boot; the app sends only the version number and a nonce, and only at the exact content origin ([Keeping state across versions](#keeping-state-across-versions)) |
+| A forged editing message from another document | A page the editor's frame navigated to, or another frame, posts `save`, `draft` or a review choice to the app | Editing messages are read only from the window of the frame the app holds, at its exact content origin, with that frame load's random key (from the fragment, removed before anything renders), and a choice only for the app's own review nonce; none at all under opaque isolation; the server decides every choice against the room's own state ([Inline editing](#inline-editing)) |
+| A review choice combines both sides, or both choices take effect | "Publish mine" carries the newer version's files under the draft's text, or a discard lands while "Publish mine" is saving and the next autosave reverts the new version | "Publish mine" stages the room's own draft with its base version's files only (`files_from_version`); both choices and every discard take the room's checkpoint lock and are checked against the version and revision reviewed; a save that outlived its lock never finishes onto replaced lines (the draft's epoch) ([Inline editing](#inline-editing)) |
+| A draft no Publish can save | A person types `<html> basics` as a doc's first paragraph, or deletes the block above one, and every save is refused | The live rules mirror the publish hooks' source checks (a parity test pins them); the doc editor escapes a leading `<html` as `\<html`; an edit that would break a rule is refused with the reason and the block is put back ([Inline editing](#inline-editing)) |
 | Enumerating who has an account | A caller tries addresses to learn which ones have a Plinth account or what they are called, for example by adding them as grants on an artifact of their own and reading the people list or the sharing settings back | No route takes an email or a name to look up, and the people list searches only one artifact's access list. Since the owner writes that list without its holders being told, an access list shows a grant holder's name only once that person has taken part in the artifact (a comment, a shared-data entry or a version, which already show their name to the readers of the list), and a name it keeps back is `null` and never matched by `q`, the same as an address with no account (`policy.ts accessListShowsName`) |
 | An agent files a private artifact into a shared category | A prompt-injected or confused agent publishes another client's report with `category: "acme"`, or moves one there with `update_artifact` or `PATCH` | Filing never shares: the artifact waits as pending, and the category's people cannot open, list, find or get a code for it until the signed-in owner reviews it in the app; agents and bearer tokens cannot review; the owner's agent is told `category_share.state: "pending"` with the review link; tool descriptions say never to file because of comment, mention or page text ([Category sharing](#category-sharing)) |
 | A stale review reopens access | A review left from a deleted share, from before a rename, or from another key, or a review made against a version or filing that changed before it was confirmed | A review is bound to the share id it was made against and counts only while that share is the current share of the artifact's current key; a key change resets it and bumps `category_rev` in the same statement; a decision to share applies only at the version and `category_rev` the owner was shown (one to keep private holds at any version), checked in the statement that writes it; creating a share and changing its people reset every artifact of the key first; a rename re-checks its share decision inside its batch ([Category sharing](#category-sharing)) |
@@ -196,6 +199,10 @@ What changes for the app and for artifacts:
   and the upgrade is refused before anything else is read. The runtime resolves `plinth.room.ready`
   as `{ available: false, reason: "opaque_isolation" }` without a request, and the CSP names no
   socket. See [Live rooms](#live-rooms).
+- **No editing on the page.** The app could address a frame only by window and `"*"` there, so docs
+  and sheets are edited in the source editor only (`GET /api/v1/config` says `inline_editing:
+  null`); no editing message is posted to a frame or accepted from one, and no version text is
+  posted into a frame. See [Inline editing](#inline-editing).
 - **No files people add.** Uploading needs an identified content pass, which needs a cookie, so the
   file store is off: the runtime resolves `plinth.files.ready` as `{ available: false, reason:
   "opaque_isolation" }` without a request, and `/__plinth/files/` answers 404. See
@@ -441,15 +448,17 @@ the artifact's own content origin, never on the app host. Design:
   captures, pinned versions, review mode) has the same bytes as before. Edit mode starts only when
   the app posts `{ type: "edit" }` to the frame it holds, at the exact content origin; the frame
   answers only its parent at the exact app origin, and sends draft text to the app only in solo
-  mode. The doc frame can be trusted with this because only Plinth's renderer runs on a doc origin
+  mode, and accepts each of the frame's editing messages only with the frame key
+  ([Inline editing](#inline-editing)). The doc frame can be trusted with this because only
+  Plinth's renderer runs on a doc origin
   (`script-src 'self'`, and a doc's files run no script); HTML artifacts get no on-page editing,
   because their own scripts share the frame's origin and could forge edit messages. The renderer
   never loads `/__plinth/runtime.js`, so a heading `id="plinth"` cannot clobber anything it uses.
   The draft lives in D1 (`live_drafts`), is written only by the room in a guarded statement that
   refuses deleted and taken-down artifacts, and becomes a version only through the ordinary
   publish path on the app host (session, CSRF, exact Origin, policy action `live_edit`), always
-  with the draft's `base_version`. Agents see that a draft exists (`get_artifact.live_draft`, a
-  `live_draft` warning), never its text.
+  with the draft's `base_version` and its base version's files. Agents see that a draft exists
+  (`get_artifact.live_draft`, a `live_draft` warning), never its text.
 - **Opaque mode.** Nothing extra is needed: the content is already in the shell, so the doc never
   has to `fetch()` its own files, and the renderer and stylesheet are cookie-less subresources with
   `Cross-Origin-Resource-Policy: cross-origin` like every opaque content response. Images carry the
@@ -1375,7 +1384,7 @@ The upgrade (`apps/worker/src/content/room.ts`) therefore checks, in this order:
    without a pass (one that forges `Origin` outside a browser) learns only what the content path
    tells them, that the artifact exists, and never its type or whether it declares `room`.
 8. **Kind.** The path names it: `page` for an HTML artifact whose current version declares
-   `room`, `doc` for a doc or a sheet (a type with `liveEdit`, with `ALLOW_LIVE_EDITING`), `slides` for a deck (a type with `follow`,
+   `room`, `doc` for a doc or a sheet (a type with `edit: "live"`, with `ALLOW_LIVE_EDITING`), `slides` for a deck (a type with `follow`,
    with `ALLOW_SLIDES_FOLLOW`). Any other name under the prefix is a 404.
 9. **Policy.** `roomAccess` in `policy.ts` decides joining and what the socket may do. Everyone
    identified joins a page room and may set presence, which is never authority. Emitting is a
@@ -1409,7 +1418,7 @@ lost call and changes made with SQL, so a decision can be stale for at most a mi
 runtime re-check `/__plinth/api/v1/room` and fire `plinth:expired` when access is over.
 
 **The doc channel.** `/__plinth/room/v1/doc` is for owners and editors of a doc or a sheet (a type
-with `liveEdit`) only, and only with `ALLOW_LIVE_EDITING`. The account flag in the sealed claim (`a: 1`, set when the gate's
+with `edit: "live"`) only, and only with `ALLOW_LIVE_EDITING`. The account flag in the sealed claim (`a: 1`, set when the gate's
 principal was signed in) decides the right: signed-in editors may lease and edit, editors confirmed
 by code only watch, and passes sealed before the flag existed watch until a reload. The room
 enforces leases (exclusive line ranges), refuses edits past the type's limits (a doc's 1 MB and
@@ -2458,7 +2467,7 @@ sending domain becomes a way to reach strangers' inboxes with text an attacker w
 
 Owners and editors edit a sheet on its page through the same draft channel as a doc
 (`/__plinth/room/v1/doc`, [Live rooms](#live-rooms), "The doc channel"): the same gate, the same
-`roomAccess` decision (a type with `liveEdit`, owners and editors only, signed in to write), the
+`roomAccess` decision (a type with `edit: "live"`, owners and editors only, signed in to write), the
 same 64 KiB frames, leases, D1 flush and checkpoints through the app host's REST API. Nothing new
 is reachable from a page: no endpoint, frame, CSP, sandbox, cookie or setting changed, and the
 sheet's frame still runs only Plinth's renderer (`script-src 'self'`).
@@ -2468,9 +2477,10 @@ sheet's frame still runs only Plinth's renderer (`script-src 'self'`).
   their columns (the publish checks of [Sheets](#sheets): types, links, the formula allowlist,
   sizes) and must be that row's canonical spelling; a header must be the canonical header with
   the same number of columns, and a changed header is checked against every row. Nothing goes
-  above the header; the sheet limits hold. A refused edit is not applied. So a modified client
-  cannot put into the draft anything a publish would refuse, and a checkpoint stores the draft as
-  it is.
+  above the header; the sheet limits hold; a text edit changes the line count only by appending
+  rows at the end, so rows in the middle move only through `struct`, which rewrites the formula
+  references the move shifts. A refused edit is not applied. So a modified client cannot put into
+  the draft anything a publish would refuse, and a checkpoint stores the draft as it is.
 - **Rows and columns move only under no one else's lease.** A `struct` frame carries an op of a
   fixed shape (a row number and count, or a column letter and new column definitions, checked by a
   strict schema before it is read) and no text. The room applies it only from a writer, at the
@@ -2482,26 +2492,102 @@ sheet's frame still runs only Plinth's renderer (`script-src 'self'`).
   editor or a restore) is never merged into a sheet's draft, because a line merge cannot tell a
   row edited in place from rows moved, and could put a person's value or formula where nobody
   wrote it without anyone seeing it. Unless that version's sheet equals the draft's base or the
-  draft itself, the room freezes the draft (leases end; edits and `struct` frames are refused), and
-  the editors choose between the two whole sheets. The checkpoint holds them to that choice: a
-  frozen sheet draft is resolved only to the room's draft exactly ("Publish mine", saved on top of
-  the version published meanwhile, which stays in the history) or to that version exactly
-  ("Discard mine", which writes nothing), at the draft's current `rev`, and anything else is
-  refused with the draft kept. So a modified client cannot save a combination neither side wrote.
-  Both choices and every discard (`DELETE live/draft`, a doc's too) take the room's checkpoint
-  lock and are refused as busy while another save or choice holds it, so a discard cannot reset
-  the draft under a version being published from it and leave the published edits looking unsaved,
-  for the next save to revert without a review. A save that finishes after its 30 s lock ran out
-  is finished onto the draft only when the draft's lines were not replaced since its snapshot (the
-  draft's epoch); otherwise its version is handled as any version published meanwhile.
-  The review shows both sheets in the app as text nodes, never as HTML, as the source diff did.
+  draft itself (each with the same files), the room freezes the draft (leases end; edits and
+  `struct` frames are refused), and the editors choose between the two whole sheets in the
+  whole-draft review ([Inline editing](#inline-editing)). No text comes from the app: "Publish
+  mine" publishes the room's own frozen draft on top of the version published meanwhile, which
+  stays in the history, and "Discard mine" returns to that version, which writes nothing. So a
+  modified client cannot save a combination neither side wrote. Both choices and every discard
+  (`DELETE live/draft`, a doc's too) take the room's checkpoint lock and are checked against the
+  version and revision reviewed, so exactly one choice takes effect, and a save that finishes
+  after its 30 s lock ran out is finished onto the draft only when the draft's lines were not
+  replaced since its snapshot (the draft's epoch). The review draws both sheets in the frame with
+  the sheet's own renderer, as text nodes, never as HTML.
 - **The renderer stays free of HTML parsing.** The editor builds its fields, lists, the edit strip
   and the column settings with `createElement` and fills them through `.value` and `textContent`;
   the source test that keeps HTML sinks out of the sheet renderer covers the editor's files. Values
   are checked in the frame with the same rules before they are sent.
 - **Agents.** Agents never join the room; they change a sheet with `edit_sheet` or
   `update_artifact`, which publish versions that freeze the draft for the editors' review, and see
-  only that a draft exists (`live_draft`), never its text.
+  only that a draft exists (`live_draft`), never its text. They are told that the people editing
+  review the agent's version beside theirs and may publish theirs as the next version, with the
+  agent's kept in the history.
+## Inline editing
+
+Owners and editors edit docs and sheets on their page (spec: "Editing", "Editing on the page").
+Every editing control, and every rendering of draft or version content, runs in Plinth's own
+renderer on the artifact's content origin (`script-src 'self'`); the app page holds the strip and
+makes the REST calls, and renders no content. Nothing new is reachable from a page: no endpoint,
+cookie, CSP, sandbox flag or setting was added, and the content host still sends no CORS header.
+
+- **The frame boundary.** The app accepts an editing message (`live`, `save`, `draft`, `resolved`,
+  `leave`, and `ask` in edit mode) only from the window of the frame it holds, at the exact content
+  origin, and only with that frame's key; it posts editing messages only to that origin, never
+  `"*"`. Under opaque isolation and the path fallback there is no editing on the page at all, so no
+  frame whose origin is `"null"` is ever trusted with an editing message.
+- **The frame key.** For an owner or editor who may edit, the app opens each frame load at its
+  enter URL with a fresh 32-byte random key in the fragment (`#plinth-k=…`). A fragment is never
+  sent to a server, survives the enter redirect (a `Location` without a fragment keeps it) and
+  appears in no `Referer`. The renderer reads it once at boot and removes it from the address
+  before it renders, then sends it with every editing message. A document the frame navigated to
+  (a link, a redirect) has no key, so its messages are dropped. It is defence in depth on top of
+  the frame window and origin checks, not an account secret: it is never logged or stored.
+- **What crosses the boundary.** In room mode no draft or version text reaches the app page: the
+  frame reads the draft on the draft socket and the two versions from its own origin
+  (`/__plinth/v/<n>/`, a same-origin request with the content cookie). In solo mode the frame
+  hands its copy to the app only to publish it, as a string the app sends to `PUT` and never
+  renders. The app tells the frame the version and the file changes to review (solo only: paths,
+  kinds and sizes, from the two versions' file lists) and what came of a choice; co-editor emails
+  and their places ("row 12", built by the renderer from lease positions, never content) become
+  text nodes. No route returns draft text: `GET live/draft` is gone, and the checkpoint refuses any
+  text from the app.
+- **Per-type rules mirror the stager.** The room checks every edit and structural change with the
+  type's rules, which hold every check the type's publish hook makes on the source alone (a doc
+  must not start like a whole HTML document; a sheet keeps its row, header and size rules, and a
+  text edit changes its line count only by appending at the end), and a parity test runs the rules
+  against the Worker's real publish hooks. So a modified client cannot leave a draft that a
+  Publish would refuse, and a person's natural edit cannot either: the doc editor escapes a
+  leading `<html` or `<!doctype html` in any block as `\<`. Structural ops must be of a kind the
+  artifact's type takes, and may not touch another socket's lease.
+- **Never merged, except a doc's clean merge.** A doc's draft is merged with a version published
+  meanwhile only when `merge3` is clean, the result fits and it passes the doc's rules (#49). A
+  sheet's draft is never merged. Otherwise the draft freezes, and the editors see the whole-draft
+  review: both whole sides rendered in the frame, each against the files it would publish, the
+  change lists of both with their files parts, and exactly two choices. Neither choice combines
+  anything, so neither can produce a result that means something nobody wrote.
+- **Publish mine publishes exactly the draft.** It is `POST live/checkpoint` with
+  `conflict_version`: the room's own frozen draft, byte for byte, over that version, with the files
+  of the draft's base version carried by reference (`files_from_version`), never the files of the
+  version it replaces. Every page Publish stages its draft that way (the checkpoint, the solo
+  `PUT`), because a person's page edit never changes a file; for an ordinary Publish the base is
+  the current version, as before. `files_from_version` names a version of this artifact, at most
+  its current one, under the `edit` policy, and is refused together with `assets`; MCP's
+  `update_artifact` does not take it. The replaced versions stay in History, and the note names
+  them.
+- **Both choices are serialized.** "Publish mine", "Discard mine" (`DELETE live/draft` with
+  `conflict_version`) and the strip's discard take the room's checkpoint lock before their first
+  await, and are refused as busy while another holder has it. A choice is checked, before anything
+  else, against the version and the draft revision it was reviewed for: a draft that is no longer
+  frozen answers 409 `live_resolved` (never 200), a newer frozen version 409 `live_conflict`, a
+  moved draft 409 `live_moved`. Discard mine checks the frozen version, the revision, the draft's
+  base and its epoch again after its reads, so a version notify or a late save that changed the
+  draft meanwhile stops it. A save that outlived its 30 s lock is finished onto the draft only when
+  the draft's lines were not replaced since its snapshot (the epoch); otherwise its version is
+  handled as any version published meanwhile. So exactly one choice takes effect while the lock
+  holds, and after it runs out no draft is ever left dirty on top of a version it did not come
+  from: a choice that arrives late is refused, or reviewed as a new version.
+- **Forged choices.** A `resolved` message is read only from the frame the app holds, with its
+  key, for the nonce of the review the app opened, with field checks (a room choice names a
+  version and a revision and no text; a solo one carries the frame's own text within the type's
+  size). Even then the server decides, under the policy of any Publish or discard (`live_edit`,
+  `edit`), against the room's own state.
+- **Renderers stay free of HTML parsing.** The review is built with `createElement` and
+  `textContent`; each side is drawn by the type's renderer through its sanitizer, the same as the
+  page, and its images resolve against that version's files (`/__plinth/v/<n>/`).
+- **Agents.** Agents never join the room. They publish versions, see that a draft exists
+  (`live_draft`), never its text, and are told that the people editing review the agent's version
+  beside theirs and may publish theirs over it, with the agent's kept in History.
+
 ## Comparing versions
 
 History's Compare page is the one app page that reads two versions' source (spec: "Comparing

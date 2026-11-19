@@ -3,8 +3,15 @@
 // message is { source: "plinth-renderer", v: 1, type, ... }.
 //
 //   app -> frame: print                    the renderer calls its own window.print()
-//   app -> frame: edit { on }              on-page editing on or off (#36)
+//   app -> frame: edit { on, base? }       on-page editing on or off (#36); `base` (solo only) is
+//                                          the version shown, whose files the draft is drawn with
 //   app -> frame: collect { nonce }        solo mode only: send me the edited text
+//   app -> frame: review { nonce, n?, base?, files? }
+//                                          open the whole-draft review; n, base and files (the
+//                                          app's fileChanges of the two versions) in solo only
+//   app -> frame: reviewed { nonce, result }
+//                                          what came of the review's choice: busy, resolved,
+//                                          conflict, failed or done
 //   app -> frame: goto { slide }           a deck shows slide N (slidesProtocol.ts)
 //   app -> frame: view { mode }            a deck switches view: deck, presenter or overview
 //   app -> frame: export { format, nonce } a deck builds its .pptx and downloads it in the frame
@@ -16,6 +23,12 @@
 //   frame -> app: live { ...status }       numbers, booleans and co-editor emails; never text
 //   frame -> app: save                     Cmd/Ctrl+S inside the frame
 //   frame -> app: draft { nonce, text }    the answer to collect, solo mode only
+//   frame -> app: resolved { nonce, outcome, version?, rev?, text?, note? }
+//                                          the review's choice: publish, discard or cancelled;
+//                                          version and rev in room mode, text in solo mode
+//   frame -> app: ask { anchor }           "Ask an agent" about a place on the page (a structural
+//                                          key and a short label)
+//   frame -> app: leave                    Esc at the top level of edit mode: focus the strip
 //   frame -> app: shown { n, nonce, ok }   the answer to version: shown in place, or not (the app
 //                                          then loads a fresh frame)
 //
@@ -27,13 +40,21 @@
 // Only Plinth's renderer runs on a doc origin (script-src 'self'), so a message that passes both
 // checks comes from it. Draft text crosses only frame -> app, and only in solo mode.
 //
+// The frame key: for an owner or editor who may edit on the page, the app opens each frame at
+// enter_url + "#plinth-k=<key>" with a fresh random key (withFrameKey). The renderer takes the key
+// out of its address at boot and sends it with every editing message (live, save, draft, resolved,
+// ask in edit mode, leave); the app drops any that does not carry its frame's key.
+//
 // Every kind is a row in a table: APP_MESSAGE_KINDS for app -> frame, FRAME_READERS for
 // frame -> app (each kind's validator). A new kind is additive and keeps version 1: a row, its
 // builder or reader, and its handler in matchFrameMessage, which the compiler asks for. Bridge
 // messages (highlight, pick:*) are a different protocol and never become renderer messages.
 import {
   type AppConfig,
+  type FileChangeSummary,
   LIMITS,
+  PAGE_ANCHOR_KEY_RE,
+  PAGE_COMMENT_LIMITS,
   RENDERER_MESSAGE_SOURCE,
   RENDERER_PROTOCOL_VERSION,
 } from "@plinth/shared";
@@ -201,6 +222,32 @@ export interface EditMessage {
   v: typeof RENDERER_PROTOCOL_VERSION;
   type: "edit";
   on: boolean;
+  /** Solo only: the version the frame shows, whose files the draft is drawn with. */
+  base?: number;
+}
+
+/** Open the whole-draft review in the frame. */
+export interface ReviewMessage {
+  source: typeof RENDERER_MESSAGE_SOURCE;
+  v: typeof RENDERER_PROTOCOL_VERSION;
+  type: "review";
+  nonce: string;
+  /** Solo only: the version published meanwhile (from the 409), and the draft's base. */
+  n?: number;
+  base?: number;
+  /** Solo only: what n changed in the files since base (the app's fileChanges of the two). */
+  files?: FileChangeSummary;
+}
+
+/** What came of the review's choice, for the frame: its buttons and whether it closes. */
+export type ReviewResult = "busy" | "resolved" | "conflict" | "failed" | "done";
+
+export interface ReviewedMessage {
+  source: typeof RENDERER_MESSAGE_SOURCE;
+  v: typeof RENDERER_PROTOCOL_VERSION;
+  type: "reviewed";
+  nonce: string;
+  result: ReviewResult;
 }
 
 export interface CollectMessage {
@@ -229,14 +276,30 @@ export interface LiveFrameStatus {
   conflict_version: number | null;
   last_by_you: boolean;
   last_edit_at: string | null;
-  /** Other people on the doc socket, and whether each holds a block. */
-  editors: { email: string; block: boolean }[];
+  /**
+   * Other people on the doc socket, whether each holds a block, and where (a structural place the
+   * renderer names, "row 12", never content).
+   */
+  editors: { email: string; block: boolean; where?: string }[];
+  /** False when the draft cannot be a version yet (LiveTypeRules.unpublishable). */
+  publishable: boolean;
+  /** The frame cannot edit this artifact on its page (it is too large to). */
+  unavailable?: "too_large";
 }
+
+/** The review's choice, as the frame sends it. */
+export type ReviewChoice =
+  | { outcome: "publish"; version?: number; rev?: number; text?: string; note?: string }
+  | { outcome: "discard"; version?: number; rev?: number }
+  | { outcome: "cancelled" };
 
 export type FrameMessage =
   | { type: "live"; status: LiveFrameStatus }
   | { type: "save" }
   | { type: "draft"; nonce: string; text: string }
+  | ({ type: "resolved"; nonce: string } & ReviewChoice)
+  | { type: "ask"; anchor: { key: string; text: string } | null }
+  | { type: "leave" }
   | { type: "shown"; n: number; nonce: string; ok: boolean };
 
 export const NONCE_RE = /^[A-Za-z0-9_-]{16,64}$/;
@@ -244,8 +307,56 @@ const MAX_EDITORS = 50;
 const MAX_EMAIL = 254;
 const MAX_INT = 2 ** 31;
 
-export function editMessage(on: boolean): EditMessage {
-  return { source: RENDERER_MESSAGE_SOURCE, v: RENDERER_PROTOCOL_VERSION, type: "edit", on };
+export function editMessage(on: boolean, base?: number): EditMessage {
+  return {
+    source: RENDERER_MESSAGE_SOURCE,
+    v: RENDERER_PROTOCOL_VERSION,
+    type: "edit",
+    on,
+    ...(base !== undefined ? { base } : {}),
+  };
+}
+
+export function reviewMessage(
+  nonce: string,
+  solo?: { n: number; base: number; files: FileChangeSummary },
+): ReviewMessage {
+  return {
+    source: RENDERER_MESSAGE_SOURCE,
+    v: RENDERER_PROTOCOL_VERSION,
+    type: "review",
+    nonce,
+    ...(solo ?? {}),
+  };
+}
+
+export function reviewedMessage(nonce: string, result: ReviewResult): ReviewedMessage {
+  return {
+    source: RENDERER_MESSAGE_SOURCE,
+    v: RENDERER_PROTOCOL_VERSION,
+    type: "reviewed",
+    nonce,
+    result,
+  };
+}
+
+/** 32 random bytes as base64url: the key of one frame load. */
+export function newFrameKey(): string {
+  const b = new Uint8Array(32);
+  crypto.getRandomValues(b);
+  return btoa(String.fromCharCode(...b))
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/, "");
+}
+
+export const FRAME_KEY_RE = /^[A-Za-z0-9_-]{43}$/;
+
+/** The frame's address with its key in the fragment (any fragment it had goes after `&h=`). */
+export function withFrameKey(url: string, key: string): string {
+  const at = url.indexOf("#");
+  if (at < 0) return `${url}#plinth-k=${key}`;
+  return `${url.slice(0, at)}#plinth-k=${key}&h=${url.slice(at + 1)}`;
 }
 
 export function collectMessage(nonce: string): CollectMessage {
@@ -306,6 +417,8 @@ export const APP_MESSAGE_KINDS = [
   "export",
   "paired",
   "version",
+  "review",
+  "reviewed",
 ] as const;
 export type AppMessageKind = (typeof APP_MESSAGE_KINDS)[number];
 
@@ -318,7 +431,9 @@ export type AppToFrameMessage =
   | ViewMessage
   | ExportMessage
   | PairedMessage
-  | VersionMessage;
+  | VersionMessage
+  | ReviewMessage
+  | ReviewedMessage;
 
 /**
  * Post an editing or version message to the frame's window at the exact origin, never "*". False
@@ -327,7 +442,7 @@ export type AppToFrameMessage =
 export function postToRenderer(
   frame: HTMLIFrameElement | null,
   targetOrigin: string | null,
-  message: EditMessage | CollectMessage | VersionMessage,
+  message: EditMessage | CollectMessage | VersionMessage | ReviewMessage | ReviewedMessage,
 ): boolean {
   const win = frame?.contentWindow;
   if (!win || !targetOrigin || targetOrigin === "*") return false;
@@ -354,10 +469,14 @@ function readStatus(m: Record<string, unknown>): LiveFrameStatus | null {
   const list: LiveFrameStatus["editors"] = [];
   for (const e of editors) {
     if (typeof e !== "object" || e === null) return null;
-    const { email, block } = e as Record<string, unknown>;
+    const { email, block, where } = e as Record<string, unknown>;
     if (typeof email !== "string" || email.length > MAX_EMAIL || !isBool(block)) return null;
-    list.push({ email, block });
+    if (where !== undefined && (typeof where !== "string" || where.length > MAX_WHERE)) return null;
+    list.push({ email, block, ...(typeof where === "string" ? { where } : {}) });
   }
+  const publishable = m.publishable === undefined ? true : m.publishable;
+  if (!isBool(publishable)) return null;
+  if (m.unavailable !== undefined && m.unavailable !== "too_large") return null;
   return {
     connected: connected as boolean,
     failed: failed as boolean,
@@ -371,6 +490,8 @@ function readStatus(m: Record<string, unknown>): LiveFrameStatus | null {
     last_by_you: last_by_you as boolean,
     last_edit_at: last_edit_at as string | null,
     editors: list,
+    publishable,
+    ...(m.unavailable === "too_large" ? { unavailable: "too_large" as const } : {}),
   };
 }
 
@@ -382,6 +503,28 @@ interface ReadOptions {
   maxDocBytes?: number;
   /** The nonce of the `version` message the app is waiting on; `shown` is read only for it. */
   shown?: string | null;
+  /** The key of the frame the app holds; editing messages without it are dropped. */
+  key?: string | null;
+  /** The nonce of the `review` message the app is waiting on; `resolved` is read only for it. */
+  review?: string | null;
+}
+
+/** The kinds that carry the frame key. `shown` (live views) and `ask` outside edit mode do not. */
+const KEYED: ReadonlySet<FrameMessageKind> = new Set([
+  "live",
+  "save",
+  "draft",
+  "resolved",
+  "leave",
+]);
+const MAX_WHERE = 80;
+/** Whether `s` holds a control character (U+0000 to U+001F, or U+007F). */
+function hasControl(s: string): boolean {
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    if (c < 0x20 || c === 0x7f) return true;
+  }
+  return false;
 }
 
 /** Each frame -> app kind's validator: the message, or null when any field is wrong. */
@@ -404,6 +547,67 @@ const FRAME_READERS: {
     if (m.text.length > max || new TextEncoder().encode(m.text).byteLength > max) return null;
     return { type: "draft", nonce: m.nonce, text: m.text };
   },
+  resolved(m, opts) {
+    if (!opts.review || m.nonce !== opts.review) return null;
+    const nonce = m.nonce;
+    if (m.outcome === "cancelled") return { type: "resolved", nonce, outcome: "cancelled" };
+    if (m.outcome !== "publish" && m.outcome !== "discard") return null;
+    // Room mode names the frozen version and the draft revision the person reviewed.
+    const room = m.version !== undefined || m.rev !== undefined;
+    if (room && (!isInt(m.version, 1) || !isInt(m.rev))) return null;
+    if (room && opts.solo) return null;
+    if (m.outcome === "discard") {
+      if (m.text !== undefined || m.note !== undefined) return null;
+      return room
+        ? {
+            type: "resolved",
+            nonce,
+            outcome: "discard",
+            version: m.version as number,
+            rev: m.rev as number,
+          }
+        : { type: "resolved", nonce, outcome: "discard" };
+    }
+    let note: string | undefined;
+    if (m.note !== undefined) {
+      if (typeof m.note !== "string" || m.note.length > LIMITS.maxNoteLength) return null;
+      note = m.note;
+    }
+    if (room) {
+      if (m.text !== undefined) return null;
+      return {
+        type: "resolved",
+        nonce,
+        outcome: "publish",
+        version: m.version as number,
+        rev: m.rev as number,
+        ...(note !== undefined ? { note } : {}),
+      };
+    }
+    // Solo: the frame's own draft, published as it is with its base's files.
+    if (!opts.solo || typeof m.text !== "string") return null;
+    const max = opts.maxDocBytes ?? LIMITS.maxDocBytes;
+    if (m.text.length > max || new TextEncoder().encode(m.text).byteLength > max) return null;
+    return {
+      type: "resolved",
+      nonce,
+      outcome: "publish",
+      text: m.text,
+      ...(note !== undefined ? { note } : {}),
+    };
+  },
+  ask(m) {
+    if (m.anchor === undefined) return { type: "ask", anchor: null };
+    const a = m.anchor as Record<string, unknown> | null;
+    if (typeof a !== "object" || a === null) return null;
+    const { key, text } = a;
+    if (typeof key !== "string" || !PAGE_ANCHOR_KEY_RE.test(key)) return null;
+    if (typeof text !== "string" || text.length > PAGE_COMMENT_LIMITS.maxText || hasControl(text)) {
+      return null;
+    }
+    return { type: "ask", anchor: { key, text } };
+  },
+  leave: () => ({ type: "leave" }),
   shown(m, opts) {
     if (!opts.shown || m.nonce !== opts.shown || !isInt(m.n, 1) || !isBool(m.ok)) return null;
     return { type: "shown", n: m.n, nonce: m.nonce, ok: m.ok };
@@ -425,7 +629,8 @@ export function matchFrameMessage<R>(m: FrameMessage, handlers: FrameMessageHand
 
 /**
  * A message from the doc frame, validated, or null. It must come from `frame`'s window at exactly
- * `contentOrigin`; draft text is accepted only in solo mode, only for the nonce the app is waiting
+ * `contentOrigin`; an editing message must carry the frame's key (`key`, when the app gave the
+ * frame one); draft text is accepted only in solo mode, only for the nonce the app is waiting
  * for, and only up to the instance's doc size.
  */
 export function readFrameMessage(
@@ -437,6 +642,8 @@ export function readFrameMessage(
     nonce: string | null;
     maxDocBytes?: number;
     shown?: string | null;
+    key?: string | null;
+    review?: string | null;
   },
 ): FrameMessage | null {
   const win = opts.frame?.contentWindow;
@@ -448,5 +655,10 @@ export function readFrameMessage(
   if (typeof m !== "object" || m === null) return null;
   if (m.source !== RENDERER_MESSAGE_SOURCE || m.v !== RENDERER_PROTOCOL_VERSION) return null;
   if (typeof m.type !== "string" || !Object.hasOwn(FRAME_READERS, m.type)) return null;
-  return FRAME_READERS[m.type as FrameMessageKind](m, opts);
+  const kind = m.type as FrameMessageKind;
+  // An editing message comes only from the document that holds this frame's key. `ask` carries
+  // it in edit mode; outside it, the message only opens a composer the person must confirm.
+  const keyed = KEYED.has(kind) || (kind === "ask" && m.key !== undefined);
+  if (keyed && opts.key !== undefined && (opts.key === null || m.key !== opts.key)) return null;
+  return FRAME_READERS[kind](m, opts);
 }

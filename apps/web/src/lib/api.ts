@@ -15,7 +15,6 @@ import {
   HOST_COOKIE_PREFIX,
   type LiveCheckpointInput,
   type LiveCheckpointResult,
-  type LiveDraftText,
   type LiveInfo,
   route,
 } from "@plinth/shared";
@@ -185,12 +184,7 @@ export function liveInfo(ref: string, signal?: AbortSignal): Promise<LiveInfo> {
   return api<LiveInfo>(route(API.live, { ref }), { signal });
 }
 
-/** The live draft's text, to review a conflict. */
-export function liveDraft(ref: string, signal?: AbortSignal): Promise<LiveDraftText> {
-  return api<LiveDraftText>(route(API.liveDraft, { ref }), { signal });
-}
-
-/** Save the live draft as a version (Save, Done, or an idle autosave). */
+/** Publish the live draft as a version (Publish, Done, an idle autosave, or "Publish mine"). */
 export function liveCheckpoint(
   ref: string,
   body: LiveCheckpointInput,
@@ -198,9 +192,13 @@ export function liveCheckpoint(
   return api<LiveCheckpointResult>(route(API.liveCheckpoint, { ref }), { method: "POST", body });
 }
 
-/** Drop the unsaved page edits at draft revision `rev`. */
-export function liveDiscard(ref: string, rev: number): Promise<void> {
-  return api<void>(`${route(API.liveDraft, { ref })}?rev=${rev}`, { method: "DELETE" });
+/**
+ * Drop the unpublished page edits at draft revision `rev`; with `conflictVersion`, only a draft
+ * frozen against exactly that version ("Discard mine" in the review).
+ */
+export function liveDiscard(ref: string, rev: number, conflictVersion?: number): Promise<void> {
+  const q = `?rev=${rev}${conflictVersion !== undefined ? `&conflict_version=${conflictVersion}` : ""}`;
+  return api<void>(`${route(API.liveDraft, { ref })}${q}`, { method: "DELETE" });
 }
 
 // ---------- design export (PNG and PDF rendered by the server) ----------

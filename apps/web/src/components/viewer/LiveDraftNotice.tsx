@@ -1,7 +1,7 @@
-// One line above a doc for its owners and editors while they are not editing it on the page
-// (#36): someone left unsaved page edits, someone is editing right now, or a version published
-// meanwhile changed the same lines as the unsaved edits. Viewers and commenters never get here:
-// the gate gives them no `live`, so they see versions only.
+// One line above a doc or a sheet for its owners and editors while they are not editing it on the
+// page (#36): someone left unpublished changes on the page, someone is editing right now, or a
+// version published meanwhile waits for review beside the unpublished changes. Viewers and
+// commenters never get here: the gate gives them no `live`, so they see versions only.
 import { WarningIcon } from "@phosphor-icons/react";
 import type { LiveDraftInfo } from "@plinth/shared";
 import { type ReactNode, useId, useState } from "react";
@@ -11,7 +11,7 @@ import { timeAgo } from "./format.ts";
 import type { LiveFrameStatus } from "./rendererProtocol.ts";
 
 export interface LiveDraftNoticeProps {
-  /** The unsaved draft as the gate reported it. */
+  /** The unpublished draft as the gate reported it. */
   draft: LiveDraftInfo | null;
   /** What the frame reports (room mode), or null. */
   status: LiveFrameStatus | null;
@@ -20,7 +20,7 @@ export interface LiveDraftNoticeProps {
   /** Confirmed by code without an account: no editing actions. */
   signIn?: boolean;
   /**
-   * Why the shared draft cannot be saved or discarded from here right now (the room is not
+   * Why the shared draft cannot be published or discarded from here right now (the room is not
    * connected), or null when it can. Those two actions are disabled with this as the reason.
    */
   unavailable?: string | null;
@@ -67,8 +67,8 @@ export function LiveDraftNotice(props: LiveDraftNoticeProps) {
     const n = (status?.connected ? status.conflict_version : draft?.conflict_version) as number;
     text =
       props.merges === false
-        ? `v${n} was published over the unsaved page edits. Review them to go on.`
-        : `v${n} changed the same paragraphs as the unsaved page edits`;
+        ? `v${n} was published while there were unpublished changes on the page. Review them to go on.`
+        : `v${n} changed the same paragraphs as the unpublished changes on the page`;
     if (actions) {
       buttons = (
         <Button size="sm" variant="secondary" onClick={onReview}>
@@ -89,13 +89,13 @@ export function LiveDraftNotice(props: LiveDraftNoticeProps) {
   } else if (kind === "draft") {
     const by = draft?.updated_by_email;
     const when = timeAgo(draft?.updated_at, props.now);
-    text = `Unsaved page edits${by ? ` by ${by}` : ""}${when ? `, ${when}` : ""}`;
+    text = `Unpublished changes on the page${by ? ` by ${by}` : ""}${when ? `, ${when}` : ""}`;
     if (actions) {
       const why = blocked ? { "aria-describedby": reasonId } : {};
       buttons = (
         <>
           <Button size="sm" variant="secondary" onClick={onSave} disabled={!!blocked} {...why}>
-            Save as version
+            Publish
           </Button>
           <Button size="sm" variant="ghost" onClick={onContinue}>
             Continue editing
@@ -113,11 +113,11 @@ export function LiveDraftNotice(props: LiveDraftNoticeProps) {
       );
     }
   } else {
-    text = `Unsaved page edits from earlier in this tab, based on v${restore?.base}`;
+    text = `Unpublished changes from earlier in this tab, based on v${restore?.base}`;
     buttons = (
       <>
         <Button size="sm" variant="secondary" onClick={props.onSaveRestore}>
-          Save as version
+          Publish
         </Button>
         <Button size="sm" variant="ghost" onClick={props.onDropRestore}>
           Discard
@@ -145,9 +145,9 @@ export function LiveDraftNotice(props: LiveDraftNoticeProps) {
           setConfirmDiscard(false);
           onDiscard();
         }}
-        title="Discard the unsaved page edits?"
-        description={`The page goes back to the current version, for everyone editing it.${draftAuthor(draft) ? ` The edits by ${draftAuthor(draft)} are not kept anywhere.` : ""} Saved versions are not touched.`}
-        confirmLabel="Discard page edits"
+        title="Discard the unpublished changes?"
+        description={`The page goes back to the current version, for everyone editing it.${draftAuthor(draft) ? ` The changes by ${draftAuthor(draft)} are not kept anywhere.` : ""} Published versions are not touched.`}
+        confirmLabel="Discard changes"
         danger
       />
     </div>

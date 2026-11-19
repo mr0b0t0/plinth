@@ -13,22 +13,29 @@
 // socket, shows the live draft as it changes and reports its status to the app; edit code runs
 // only once the app sends { type: "edit", on: true }. Without `live` that message turns on solo
 // editing of the version's lines, which the app saves through its own session after asking for
-// them with `collect`. Downloads always give what the page shows.
+// them with `collect`. Downloads always give what the page shows. A frozen draft is reviewed whole
+// in the frame (common/review.ts) when the app sends `review`: the two grids side by side, with
+// what each side changed. Every editing message to the app carries the frame key the app put in
+// the address (common/frameKey.ts), which is taken out of it before anything renders.
 import {
   applySheetStruct,
+  type ChangeItem,
+  colIndex,
   evaluateSheet,
   joinLines,
   LIMITS,
+  liveRules,
   parseSheet,
-  RENDERER_MESSAGE_SOURCE,
-  RENDERER_PROTOCOL_VERSION,
   type Sheet,
   type SheetEvaluation,
   TYPED_PAYLOAD_VERSION,
   type TypedPayload,
 } from "@plinth/shared";
 import type { LiveFrameStatus } from "../../components/viewer/rendererProtocol.ts";
+import { appPoster, ReviewSession } from "../common/editSession.ts";
+import { takeFrameKey } from "../common/frameKey.ts";
 import { type ClientLease, LiveDocClient } from "../common/live.ts";
+import { DraftReview, type ReviewPane } from "../common/review.ts";
 import { LocalSheet, type SheetBackend, SheetEditor } from "./edit.ts";
 import { exportSheet } from "./export.ts";
 import { buildGrid, type Grid } from "./grid.ts";
@@ -37,6 +44,49 @@ import { fromApp, readSheetAppMessage, type SheetAppMessage } from "./protocol.t
 const ROOT_ID = "__plinth-sheet";
 const DATA_ID = "__plinth-content";
 const FALLBACK = "This sheet could not be shown.";
+const RULES = liveRules("sheet");
+
+/** Where a change item points in a grid: its cell, its row, or its column. */
+function gridGoto(grid: Grid): (item: ChangeItem) => boolean {
+  return (item) => {
+    const cell = /^([A-Z]{1,3})(\d+)\b/.exec(item.what);
+    const row = /^Row (\d+)/.exec(item.where) ?? /^Rows? (\d+)/.exec(item.what);
+    const col = /^Column ([A-Z]{1,3})$/.exec(item.where);
+    const td = cell
+      ? grid.cell(Number(cell[2]), colIndex(cell[1] as string))
+      : row
+        ? grid.cell(Number(row[1]), 0)
+        : col
+          ? grid.cell(1, colIndex(col[1] as string))
+          : null;
+    if (!td) return false;
+    td.scrollIntoView({ block: "center", inline: "center" });
+    return true;
+  };
+}
+
+/** The sheet's side of the review: its grid, read-only (no editing is attached to it). */
+function sheetPane(doc: Document, evaluate: (s: Sheet) => SheetEvaluation): ReviewPane {
+  return {
+    render(el, text) {
+      const p = parseSheet(text);
+      if (!p.ok) {
+        const msg = doc.createElement("p");
+        msg.textContent = "This sheet could not be shown.";
+        el.replaceChildren(msg);
+        return null;
+      }
+      const ev = evaluate(p.sheet);
+      const grid = buildGrid(doc, p.sheet, ev, {
+        title: "",
+        onDownload: () => undefined,
+        exhausted: ev.exhausted,
+      });
+      el.replaceChildren(grid.el);
+      return gridGoto(grid);
+    },
+  };
+}
 
 export function readPayload(doc: Document): TypedPayload | null {
   const raw = doc.getElementById(DATA_ID)?.textContent;
@@ -78,6 +128,8 @@ const ERRORS: Record<string, string> = {
 export function boot(win: Window, opts: BootOptions = {}): () => void {
   const doc = win.document;
   const html = doc.documentElement;
+  // The frame key leaves the address before anything renders (common/frameKey.ts).
+  const key = takeFrameKey(win);
   const root = doc.getElementById(ROOT_ID);
   const payload = readPayload(doc);
   const parsed = payload ? parseSheet(payload.text) : null;
@@ -142,29 +194,26 @@ export function boot(win: Window, opts: BootOptions = {}): () => void {
     let local: LocalSheet | null = null;
     let queued = false;
     let renderQueued = false;
-    let stopped = false;
     const backend = (): SheetBackend | null => local ?? (client as SheetBackend | null);
-    const post = (msg: Record<string, unknown>) => {
-      if (appOrigin === "" || stopped) return;
-      try {
-        win.parent.postMessage(
-          { source: RENDERER_MESSAGE_SOURCE, v: RENDERER_PROTOCOL_VERSION, ...msg },
-          appOrigin,
-        );
-      } catch {
-        // The app page is gone or navigated away: nobody to tell.
-      }
-    };
+    const poster = appPoster(win, appOrigin, key);
+    const post = poster.post;
     const statusNow = () => {
       queued = false;
       const c = local ? null : client;
       const b = backend();
       const you = c?.you?.email;
-      const holders = new Set([...(c?.leases.values() ?? [])].map((l) => l.by));
+      // Where each other editor is: the row (or the header) of their lease, never its content.
+      const where = new Map<string, string>();
+      for (const l of c?.leases.values() ?? []) {
+        if (l.end > l.start) where.set(l.by, l.start === 0 ? "the header" : `row ${l.start + 1}`);
+      }
       const editors = (c?.editors ?? [])
         .filter((e) => e !== you)
         .slice(0, 50)
-        .map((email) => ({ email: email.slice(0, 254), block: holders.has(email) }));
+        .map((email) => {
+          const w = where.get(email);
+          return { email: email.slice(0, 254), block: w !== undefined, ...(w ? { where: w } : {}) };
+        });
       const s: LiveFrameStatus = {
         connected: c?.connected ?? false,
         failed: client?.failed ?? false,
@@ -178,6 +227,7 @@ export function boot(win: Window, opts: BootOptions = {}): () => void {
         last_by_you: c?.lastByYou ?? false,
         last_edit_at: c?.lastEditAt ?? null,
         editors,
+        publishable: RULES?.unpublishable(local ? local.text : (c?.text ?? "")) === null,
       };
       post({ type: "live", ...s });
     };
@@ -196,7 +246,28 @@ export function boot(win: Window, opts: BootOptions = {}): () => void {
       renderQueued = true;
       queueMicrotask(renderNow);
     };
-    const hooks = { save: () => post({ type: "save" }), status, refresh: renderNow };
+    const hooks = {
+      save: () => post({ type: "save" }),
+      status,
+      refresh: renderNow,
+      leave: () => {
+        if (!session.isOpen) post({ type: "leave" });
+      },
+    };
+    const review = new DraftReview({
+      win,
+      type: "sheet",
+      sourcePath: payload?.path ?? "sheet.jsonl",
+      rules: RULES as NonNullable<typeof RULES>,
+      pane: sheetPane(doc, evaluate),
+      choose: (outcome, note) => session.choose(outcome, note),
+    });
+    const session = new ReviewSession(review, {
+      post,
+      rules: RULES as NonNullable<typeof RULES>,
+      room: () => (local ? null : client),
+      soloText: () => local?.text ?? null,
+    });
     const events = {
       granted: (l: ClientLease) => editor?.granted(l),
       changed: () => {
@@ -244,9 +315,15 @@ export function boot(win: Window, opts: BootOptions = {}): () => void {
           lost: (r) => {
             if (!local) editor?.lost(r);
           },
-          version: () => status(),
-          error: (code) =>
-            editor?.notify(ERRORS[code] ?? "Something went wrong with live editing."),
+          version: (kind, n, info) => {
+            if (!local) session.version(kind, n, info);
+            status();
+          },
+          error: (code) => {
+            // A refused change: the grid shows the room's lines again, and says why.
+            if (code === "invalid") renderNow();
+            editor?.notify(ERRORS[code] ?? "Something went wrong with live editing.");
+          },
           structDenied: (r, by) => {
             if (!local) editor?.structDenied(r, by);
           },
@@ -256,7 +333,7 @@ export function boot(win: Window, opts: BootOptions = {}): () => void {
       client.start();
     }
 
-    const onMessage = (m: Extract<SheetAppMessage, { type: "edit" | "collect" }>) => {
+    const onMessage = (m: Exclude<SheetAppMessage, { type: "print" | "export" }>) => {
       if (m.type === "edit") {
         if (m.on && (!client || client.failed)) goSolo();
         editor?.setEditing(m.on);
@@ -264,6 +341,11 @@ export function boot(win: Window, opts: BootOptions = {}): () => void {
       } else if (m.type === "collect" && local) {
         editor?.flush();
         post({ type: "draft", nonce: m.nonce, text: local.text });
+      } else if (m.type === "review") {
+        editor?.flush();
+        void session.open(m);
+      } else if (m.type === "reviewed") {
+        session.answer(m);
       }
     };
     return {
@@ -271,7 +353,8 @@ export function boot(win: Window, opts: BootOptions = {}): () => void {
       stop: () => {
         client?.stop();
         editor?.setEditing(false);
-        stopped = true;
+        review.close();
+        poster.stop();
       },
     };
   }

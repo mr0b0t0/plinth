@@ -528,6 +528,13 @@ export interface AppConfig {
    */
   artifact_types?: { id: ArtifactType; available: boolean }[];
   /**
+   * How owners and editors edit docs and sheets on their page here: "room" (live with each other,
+   * with rooms), "solo" (alone, origin isolation without rooms), or null when editing on the page
+   * is off (ALLOW_LIVE_EDITING=false, or opaque isolation and the path fallback). The Worker
+   * always sends it; absent reads as null.
+   */
+  inline_editing?: "room" | "solo" | null;
+  /**
    * Designs can be downloaded as PNG or PDF rendered on the server (DESIGN_EXPORT with a Browser
    * Rendering binding). The Worker always sends it; absent reads as off.
    */
@@ -680,14 +687,6 @@ export interface LiveInfo {
   editors_online: number | null;
   idle_checkpoint_s: number;
   auto_checkpoint_min_s: number;
-}
-
-/** GET /api/v1/artifacts/:ref/live/draft: the draft text, to review a conflict. */
-export interface LiveDraftText {
-  text: string;
-  base_version: number;
-  rev: number;
-  conflict_version: number | null;
 }
 
 /** POST /api/v1/artifacts/:ref/live/checkpoint */

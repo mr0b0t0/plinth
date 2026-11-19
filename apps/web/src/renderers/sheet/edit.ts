@@ -138,6 +138,8 @@ export interface SheetEditorHooks {
   status(): void;
   /** Show the backend's lines now (before a granted lease puts a field in a cell). */
   refresh(): void;
+  /** Esc in the grid with no cell open: the app moves focus to its strip. */
+  leave?(): void;
 }
 
 type Field = HTMLInputElement | HTMLSelectElement;
@@ -423,6 +425,10 @@ export class SheetEditor {
 
   private readonly onKey = (e: KeyboardEvent) => {
     if (this.open && e.target === this.open.field) return;
+    if (e.key === "Escape" && !this.open && !e.defaultPrevented) {
+      this.hooks.leave?.();
+      return;
+    }
     const at = this.addressOf(e.target);
     if (!at) return;
     const header = at.row === 1;

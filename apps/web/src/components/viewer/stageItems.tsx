@@ -468,17 +468,18 @@ const editBar: StageNode = ({ editing, live, gate, refs, actions }) =>
       connected={live.status?.connected ?? false}
       connecting={live.status === null}
       dirty={live.status?.dirty ?? false}
+      flushed={live.status ? !live.status.unflushed : undefined}
       saving={live.saving}
       savedVersion={live.savedVersion}
       rebasedVersion={live.rebasedVersion}
       newerVersion={live.newerVersion}
-      merges={live.merges}
-      conflictVersion={live.status?.conflict_version ?? live.conflict?.current ?? null}
+      conflictVersion={live.status?.conflict_version ?? live.review?.current ?? null}
+      publishable={live.status?.publishable ?? true}
       editors={live.status?.editors ?? []}
-      onSave={(note) => void live.save(note)}
+      onPublish={(note) => void live.publish(note)}
       onDiscard={() => void live.discard()}
       onDone={actions.finishEditing}
-      onReview={() => void live.review()}
+      onReview={() => void live.openReview()}
     />
   );
 
@@ -499,13 +500,13 @@ const liveDraftNotice: StageNode = ({ editing, live, gate, actions }) =>
             : "Live editing is unavailable right now."
       }
       onSave={() => {
-        void live.save().then(actions.refocusAfterNotice);
+        void live.publish().then(actions.refocusAfterNotice);
       }}
       onContinue={actions.startEditing}
       onDiscard={() => {
         void live.discard().then(actions.refocusAfterNotice);
       }}
-      onReview={() => void live.review()}
+      onReview={() => void live.openReview()}
       onSaveRestore={() => void live.saveRestore()}
       onDropRestore={live.dropRestore}
     />

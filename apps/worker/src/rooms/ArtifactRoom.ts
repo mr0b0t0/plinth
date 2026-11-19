@@ -64,7 +64,7 @@ import {
 import type { Bindings } from "../config.ts";
 import { randomString } from "../lib/crypto.ts";
 import { versionCapabilities } from "../services/artifacts.ts";
-import { type DocSnapshot, LiveDoc, type StoredLease } from "./doc.ts";
+import { type DocDiscardResult, type DocSnapshot, LiveDoc, type StoredLease } from "./doc.ts";
 import { roomDeclaration } from "./notify.ts";
 import { SlidesChannel } from "./slides.ts";
 
@@ -916,19 +916,16 @@ export class ArtifactRoom extends DurableObject<Bindings> {
     return this.doc.snapshot(artifactId);
   }
 
-  /** The checkpoint holding `lockId` saves an editor's resolution of a conflict instead. */
-  async docResolve(lockId: string, text: string): Promise<boolean> {
-    return this.doc.resolveWith(lockId, text);
-  }
-
+  /** Version n holds the checkpoint; `resolved` when it was "Publish mine" in the review. */
   async docFinish(
     artifactId: string,
     n: number,
     text: string,
     lockId: string,
     epoch?: string,
+    resolved?: boolean,
   ): Promise<{ rev: number; dirty: boolean }> {
-    return this.doc.finishCheckpoint(artifactId, n, text, lockId, epoch);
+    return this.doc.finishCheckpoint(artifactId, n, text, lockId, epoch, resolved === true);
   }
 
   /** The checkpoint holding `lockId` gave up (another checkpoint's lock stays). */
@@ -936,12 +933,12 @@ export class ArtifactRoom extends DurableObject<Bindings> {
     await this.doc.abortCheckpoint(lockId);
   }
 
-  /** Under the checkpoint lock: `busy` while another checkpoint holds it (rooms/doc.ts). */
+  /** Under the checkpoint lock: `busy` while another holder has it (rooms/doc.ts). */
   async docDiscard(
     artifactId: string,
     rev: number,
-    opts: { lock?: string; conflictVersion?: number } = {},
-  ): Promise<{ ok: boolean; rev: number; busy?: true }> {
+    opts: { conflictVersion?: number } = {},
+  ): Promise<DocDiscardResult> {
     return this.doc.discard(artifactId, rev, opts);
   }
 

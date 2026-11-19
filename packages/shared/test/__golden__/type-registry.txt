@@ -19,7 +19,7 @@
         "language": "html",
         "wordWrap": "on"
       },
-      "liveEdit": false
+      "edit": "ask"
     }
   ],
   [
@@ -46,7 +46,7 @@
         "language": "markdown",
         "wordWrap": "on"
       },
-      "liveEdit": true
+      "edit": "live"
     }
   ],
   [
@@ -79,7 +79,7 @@
         "language": "markdown",
         "wordWrap": "on"
       },
-      "liveEdit": false,
+      "edit": "ask",
       "present": true,
       "follow": true,
       "fileExports": [
@@ -111,7 +111,7 @@
         "language": "json",
         "wordWrap": "off"
       },
-      "liveEdit": false
+      "edit": "ask"
     }
   ],
   [
@@ -139,7 +139,7 @@
         "language": "html",
         "wordWrap": "on"
       },
-      "liveEdit": false,
+      "edit": "ask",
       "opaqueFrames": true
     }
   ],
@@ -167,7 +167,7 @@
         "language": "plaintext",
         "wordWrap": "off"
       },
-      "liveEdit": true
+      "edit": "live"
     }
   ],
   [
@@ -195,7 +195,7 @@
         "language": "json",
         "wordWrap": "on"
       },
-      "liveEdit": false,
+      "edit": "board",
       "pageData": "fixed",
       "assets": false,
       "upload": false

@@ -61,10 +61,13 @@ export interface ArtifactTypeDef {
   renderer: RendererFiles | null;
   editor: { language: EditorLanguage; wordWrap: "on" | "off" };
   /**
-   * Owners and editors may edit it on its rendered page, live with each other (#36). Only types
-   * whose page is Plinth's own renderer: page scripts in an HTML artifact could forge edits.
+   * How people change it in the app. "live": owners and editors edit it on its rendered page, live
+   * with each other (#36; isLiveType). Only types whose page is Plinth's own renderer: page scripts
+   * in an HTML artifact could forge edits. "ask": people ask an agent, or use the source editor;
+   * its page has no editor of its own. "board": the page is always live through shared data (a
+   * whiteboard), and its settings are an app dialog.
    */
-  liveEdit: boolean;
+  edit: "live" | "ask" | "board";
   /**
    * The viewer offers Present and Presenter view, and review mode and the editor preview show
    * every page stacked (payload `view: "overview"`). Absent means false.
@@ -182,6 +185,19 @@ export function rendererFiles(
 
 /** Where the web build puts renderer files, and where the Worker reads them from ASSETS. */
 export const RENDERERS_DIR = "__plinth-renderers";
+
+/** Whether people edit the type on its page (its registry row has `edit: "live"`). */
+export function isLiveType(def: Pick<ArtifactTypeDef, "edit"> | null | undefined): boolean {
+  return def?.edit === "live";
+}
+
+/**
+ * A whole HTML document sent where Markdown or another typed format belongs. The publish hooks of
+ * the typed types refuse a source that matches it, and the live rules (liveTypes.ts) refuse a page
+ * edit whose result would, so a draft is always one a Publish can save. (`[ ]` is one space, so the
+ * renderer bundles that carry this rule hold no "<!doctype html" text of their own.)
+ */
+export const HTML_DOCUMENT_RE = /^\s*(<!doctype[ ]html|<html[\s>])/i;
 
 /** The registry row for a type id, or null for an unknown value (prototype keys included). */
 export function typeDef(t: string): ArtifactTypeDef | null {

@@ -765,8 +765,8 @@ export function pendingNote(result) {
 /**
  * Warning codes that need no action: `not_scanned` only says the reference check did not read
  * some files (past its budget, or sent unchanged as {path, sha256}), and `live_draft` only says
- * people have unsaved edits on a doc's page (nothing was overwritten). Nothing in the folder can
- * or should change for either.
+ * people have unsaved edits on the page of a doc or a sheet (the version was published, and
+ * nothing was overwritten). Nothing in the folder can or should change for either.
  */
 const NOTE_CODES = new Set(["not_scanned", "live_draft"]);
 

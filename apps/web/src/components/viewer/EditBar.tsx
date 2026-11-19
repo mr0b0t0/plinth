@@ -1,7 +1,15 @@
-// The slim strip under the artifact bar while a doc is edited on its page (#36): what is going on
-// (announced politely), who else is editing, Save version (the one primary action), Discard in the
-// overflow menu behind a confirm, and Done.
-import { DotsThreeIcon, FloppyDiskIcon, PencilSimpleIcon, UsersIcon } from "@phosphor-icons/react";
+// The slim strip under the artifact bar while a doc or a sheet is edited on its page (#36): what
+// is going on (announced politely), who else is editing and where, Publish (the one primary
+// action, Cmd/Ctrl+S), "Publish with a note…" and "Discard unpublished changes" (behind a confirm)
+// in the overflow menu, and Done. While a version published meanwhile waits for review, Publish
+// gives way to "Review changes", which opens the whole-draft review in the frame.
+import {
+  DotsThreeIcon,
+  PencilSimpleIcon,
+  UploadSimpleIcon,
+  UsersIcon,
+} from "@phosphor-icons/react";
+import { versionRange } from "@plinth/shared";
 import { type FormEvent, type Ref, useId, useState } from "react";
 import { Button, ConfirmDialog, Dialog, Input, Menu } from "../ui/index.ts";
 import type { LivePhase } from "./useLiveEdit.ts";
@@ -15,20 +23,20 @@ export interface EditBarProps {
   /** Room mode, before the frame first reported. */
   connecting?: boolean;
   dirty: boolean;
+  /** Room mode: everything typed has been written to the draft (flushed). */
+  flushed?: boolean;
   saving: boolean;
   savedVersion: number | null;
   rebasedVersion: number | null;
   /** Solo: a version published while editing. */
   newerVersion?: number | null;
-  /**
-   * False for a type whose page edits are never merged (a sheet): a version published meanwhile
-   * always stops editing for a review, whatever lines it changed. Default true (a doc).
-   */
-  merges?: boolean;
   /** The version the frozen page edits are reviewed against, when known. */
   conflictVersion?: number | null;
-  editors: { email: string; block: boolean }[];
-  onSave: (note?: string) => void;
+  /** False when the draft cannot be a version yet: Publish is off, with `unpublishableReason`. */
+  publishable?: boolean;
+  unpublishableReason?: string;
+  editors: { email: string; block: boolean; where?: string }[];
+  onPublish: (note?: string) => void;
   onDiscard: () => void;
   onDone: () => void;
   onReview?: () => void;
@@ -38,38 +46,55 @@ export interface EditBarProps {
   focusRef?: Ref<HTMLElement>;
 }
 
-/** The status line's words. */
+/** The status line's words, most urgent first. */
 export function editStatus(p: EditBarProps): string {
-  if (p.saving) return "Saving…";
-  if (p.phase === "conflict" && p.merges === false) {
-    return `${p.conflictVersion ? `v${p.conflictVersion}` : "A newer version"} was published while you edited. Review it to go on.`;
+  if (p.saving) return "Publishing…";
+  if (p.phase === "conflict") {
+    const n = p.conflictVersion;
+    if (!n) return "A newer version was published while you edited. Review it to go on.";
+    const from = Math.min(p.version + 1, n);
+    return from < n
+      ? `${versionRange(from, n)} were published while you edited. Review them to go on.`
+      : `v${n} was published while you edited. Review it to go on.`;
   }
-  if (p.phase === "conflict") return "A newer version changed the same lines. Review the changes.";
   if (p.newerVersion) return `v${p.newerVersion} was published while you were editing`;
   if (p.mode === "room" && p.connecting) return "Connecting…";
-  if (p.mode === "room" && !p.connected) return "Not connected, your edits are kept";
-  if (p.rebasedVersion && p.dirty)
-    return `v${p.rebasedVersion} was published; your edits were kept`;
-  if (p.savedVersion && !p.dirty) return `Saved as v${p.savedVersion}`;
-  if (p.dirty) return "Unsaved changes";
+  if (p.mode === "room" && !p.connected) return "Not connected, your changes are kept";
+  if (p.rebasedVersion && p.dirty) {
+    return `v${p.rebasedVersion} was published; your changes were kept`;
+  }
+  if (p.savedVersion && !p.dirty) return `Published as v${p.savedVersion}`;
+  if (p.dirty && p.mode === "solo") return "Unpublished changes, kept in this tab";
+  if (p.dirty) return p.flushed === false ? "Saving draft…" : "Draft saved";
   return `Editing v${p.version}`;
 }
 
+/** "Ana is editing row 12" for the people named in the strip. */
+function editorText(e: { email: string; block: boolean; where?: string }): string {
+  if (!e.block) return e.email;
+  return e.where ? `${e.email} (editing ${e.where})` : `${e.email} (editing)`;
+}
+
 export function EditBar(props: EditBarProps) {
-  const { phase, dirty, saving, editors, onSave, onDiscard, onDone, onReview } = props;
+  const { phase, dirty, saving, editors, onPublish, onDiscard, onDone, onReview } = props;
   const [noteOpen, setNoteOpen] = useState(false);
   const [note, setNote] = useState("");
   const [confirmDiscard, setConfirmDiscard] = useState(false);
   const noteForm = useId();
+  const reasonId = useId();
   const conflict = phase === "conflict";
+  const publishable = props.publishable !== false;
   const shown = editors.slice(0, 3);
   const more = editors.length - shown.length;
   const submitNote = (e: FormEvent) => {
     e.preventDefault();
     setNoteOpen(false);
-    onSave(note.trim() || undefined);
+    onPublish(note.trim() || undefined);
     setNote("");
   };
+  const reason = !publishable
+    ? (props.unpublishableReason ?? "These page changes can't be published yet.")
+    : null;
 
   return (
     <section
@@ -90,11 +115,15 @@ export function EditBar(props: EditBarProps) {
           <span className="visually-hidden">Also here: </span>
           {shown.map((e) => (
             <span key={e.email} className="pl-editbar__editor">
-              {e.email}
-              {e.block && <span className="pl-editbar__typing"> (editing)</span>}
+              {editorText(e)}
             </span>
           ))}
           {more > 0 && <span className="pl-editbar__editor">+{more}</span>}
+        </span>
+      )}
+      {reason && (
+        <span id={reasonId} className="pl-editbar__reason">
+          {reason}
         </span>
       )}
       <span className="pl-editbar__actions">
@@ -106,15 +135,16 @@ export function EditBar(props: EditBarProps) {
           <Button
             variant="primary"
             size="sm"
-            icon={FloppyDiskIcon}
+            icon={UploadSimpleIcon}
             loading={saving}
-            disabled={!dirty}
+            disabled={!dirty || !publishable}
             aria-keyshortcuts="Meta+S Control+S"
-            // The label hides under the spinner while saving; the name stays.
-            aria-label="Save version"
-            onClick={() => onSave()}
+            {...(reason ? { "aria-describedby": reasonId } : {})}
+            // The label hides under the spinner while publishing; the name stays.
+            aria-label="Publish"
+            onClick={() => onPublish()}
           >
-            Save version
+            Publish
           </Button>
         )}
         <Menu
@@ -126,12 +156,12 @@ export function EditBar(props: EditBarProps) {
           align="end"
           items={[
             {
-              label: "Save with a note…",
-              disabled: !dirty || conflict,
+              label: "Publish with a note…",
+              disabled: !dirty || conflict || !publishable,
               onSelect: () => setNoteOpen(true),
             },
             {
-              label: "Discard unsaved changes",
+              label: "Discard unpublished changes",
               danger: true,
               disabled: !dirty,
               onSelect: () => setConfirmDiscard(true),
@@ -145,7 +175,7 @@ export function EditBar(props: EditBarProps) {
       <Dialog
         open={noteOpen}
         onClose={() => setNoteOpen(false)}
-        title="Save version"
+        title="Publish with a note"
         description="A short note helps people find this version in the history."
         size="sm"
         footer={
@@ -154,7 +184,7 @@ export function EditBar(props: EditBarProps) {
               Cancel
             </Button>
             <Button variant="primary" type="submit" form={noteForm}>
-              Save version
+              Publish
             </Button>
           </>
         }
@@ -176,8 +206,12 @@ export function EditBar(props: EditBarProps) {
           setConfirmDiscard(false);
           onDiscard();
         }}
-        title="Discard unsaved changes?"
-        description="The page goes back to the current version, for everyone editing it. Saved versions are not touched."
+        title="Discard unpublished changes?"
+        description={
+          props.mode === "room"
+            ? "The page goes back to the current version, for everyone editing it. Published versions are not touched."
+            : "The page goes back to the current version. Published versions are not touched."
+        }
         confirmLabel="Discard changes"
         danger
       />

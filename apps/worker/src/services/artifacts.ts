@@ -12,6 +12,7 @@ import {
   type Capabilities,
   type EffectiveRole,
   type InvitationReport,
+  isLiveType,
   type PublishResult,
   type Role,
   readStoredCapabilities,
@@ -520,6 +521,20 @@ async function stageInline(
   return stager.finish();
 }
 
+/** The source, plus every file of version `from` by reference, as a restore carries them. */
+async function stageWithFilesOf(
+  stager: VersionStager,
+  text: string,
+  def: ArtifactTypeDef,
+  from: VersionRow,
+): Promise<StagedVersion> {
+  await stager.addSource(text);
+  for (const m of parseManifest(from.manifest)) {
+    if (!def.reservedPaths.includes(m.path)) stager.carry(from, m);
+  }
+  return stager.finish();
+}
+
 /** Stage with `run`, then commit; on any failure the attempt's objects are deleted. */
 async function writeVersion(
   ctx: Ctx,
@@ -595,6 +610,13 @@ export interface UpdateInput {
   base_version?: number;
   /** Owner only; omitted keeps the current category. */
   category?: string;
+  /**
+   * Carry every file of this version, by reference, instead of the current version's: a page
+   * Publish stages exactly its draft, the source plus the files of the version the draft is based
+   * on (REST and the live checkpoint; never MCP). Refused with `assets`; 404 for a version that
+   * does not exist or is newer than the current one.
+   */
+  files_from_version?: number;
   /** Internal: a checkpoint of the doc's live draft (services/live.ts); never from the wire. */
   checkpoint?: boolean;
 }
@@ -610,6 +632,16 @@ export async function updateArtifact(ctx: Ctx, input: UpdateInput): Promise<Publ
   const { def, text } = resolveSource(input, requireTypeDef(target.artifact.type).id);
   checkSourceSize(def, text);
   precheckAssets(ctx, def, input.assets);
+  // A page edit's files: exactly one version's, checked after the edit policy like every field.
+  let filesFrom: VersionRow | null = null;
+  if (input.files_from_version !== undefined) {
+    if (input.assets !== undefined) {
+      throw new ApiError("invalid_input", "files_from_version cannot be sent with assets", {
+        reason: "files_from_with_assets",
+      });
+    }
+    filesFrom = await requireVersion(ctx, target.artifact, input.files_from_version);
+  }
   // The category is the owner's: an editor's call that carries one is refused here, before the
   // rate limit and any R2 operation, never silently dropped.
   if (input.category !== undefined) {
@@ -628,12 +660,16 @@ export async function updateArtifact(ctx: Ctx, input: UpdateInput): Promise<Publ
     target: { mode: "update", artifact: target.artifact },
   });
   await enforcePublishRate(ctx);
-  // No assets given: the current version's assets are carried forward as references.
+  // No assets given: the current version's assets (or those of files_from_version) are carried
+  // forward as references.
   const staged = prepared?.text ?? text;
+  const from = filesFrom;
   let result = await writeVersion(
     ctx,
     target,
-    (s) => stageInline(s, staged, input.assets),
+    from
+      ? (s) => stageWithFilesOf(s, staged, def, from)
+      : (s) => stageInline(s, staged, input.assets),
     input.checkpoint ? { liveCheckpoint: true } : {},
   );
   if (prepared?.afterCommit) result = await prepared.afterCommit(result);
@@ -674,7 +710,7 @@ export async function loadArtifactDetail(
   };
   // A doc's unsaved page edits, as metadata, for owners and editors (and their agents) only.
   const live =
-    def.liveEdit && (role === "owner" || role === "editor")
+    isLiveType(def) && (role === "owner" || role === "editor")
       ? { live_draft: await readLiveDraftMeta(ctx.env.DB, artifact.id) }
       : {};
   // Per-type fields (an HTML page's design system reference), read as the caller.

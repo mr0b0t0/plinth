@@ -8,7 +8,7 @@
 //
 // Live views (notifyViewers): a new version, or a change to the page's shared data, reaches the
 // artifact's watch sockets the same way, as a signal made of integers and nothing else.
-import { type Capabilities, typeDef } from "@plinth/shared";
+import { type Capabilities, isLiveType, typeDef } from "@plinth/shared";
 import {
   type Bindings,
   type Config,
@@ -74,7 +74,7 @@ function mayHaveSockets(
 ): boolean {
   if (liveViewsActive(ctx.config, ctx.env)) return true;
   const def = typeDef(facts.type);
-  if (def?.liveEdit || def?.follow) return true;
+  if (isLiveType(def) || def?.follow) return true;
   return facts.cur?.room === true || facts.prev?.room === true;
 }
 

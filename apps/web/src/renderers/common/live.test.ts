@@ -59,7 +59,10 @@ function listener(): LiveDocListener & { calls: string[] } {
     granted: (l: ClientLease) => calls.push(`granted:${l.start}-${l.end}`),
     denied: rec("denied"),
     lost: rec("lost"),
-    version: rec("version"),
+    version: (kind: string, n: number, info: { why?: string; was: number | null }) =>
+      calls.push(
+        `version:${kind},${n}${info.why ? `,${info.why}` : ""}${info.was ? `,was ${info.was}` : ""}`,
+      ),
     error: rec("error"),
   };
 }
@@ -324,9 +327,39 @@ describe("LiveDocClient", () => {
     expect(client.rev).toBe(5);
     expect(client.baseVersion).toBe(4);
     expect(L.calls).toContain("version:rebased,4");
-    sock().frame({ t: "conflict", version: 5 });
+    const files = {
+      added: [{ path: "new.png", kind: "added", after: 3 }],
+      removed: [],
+      replaced: [{ path: "chart.png", kind: "replaced", before: 2, after: 4 }],
+      more: 12,
+      same: 1,
+    };
+    sock().frame({ t: "conflict", version: 5, files });
     expect(client.conflictVersion).toBe(5);
+    expect(client.conflictFiles).toEqual(files);
     expect(client.lease({ start: 0, end: 1 })).toBe(false);
+    // A choice resolved it: the reset says which, and the draft was frozen against v5.
+    sock().frame({ t: "reset", version: 6, gen: "g1", rev: 7, why: "published" });
+    sock().frame({ t: "text", gen: "g1", part: 0, of: 1, chunk: "mine" });
+    expect(L.calls).toContain("version:reset,6,published,was 5");
+    expect(client.conflictVersion).toBeNull();
+    expect(client.conflictFiles).toBeNull();
+  });
+
+  it("refuses a conflict frame whose files part is not a summary, and a reset with another why", () => {
+    client.start();
+    welcome(sock(), "a");
+    sock().frame({ t: "conflict", version: 5, files: { added: "x" } });
+    expect(client.conflictVersion).toBeNull();
+    sock().frame({
+      t: "conflict",
+      version: 5,
+      files: { added: [], removed: [], replaced: [], more: -1, same: 0 },
+    });
+    expect(client.conflictVersion).toBeNull();
+    sock().frame({ t: "reset", version: 6, gen: "g1", rev: 2, why: "merged" });
+    sock().frame({ t: "text", gen: "g1", part: 0, of: 1, chunk: "x" });
+    expect(client.text).toBe("a");
   });
 
   it("ignores frames that fail validation and denials it did not ask for", () => {

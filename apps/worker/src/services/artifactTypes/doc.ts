@@ -1,14 +1,11 @@
 // The doc type's Worker hooks: Markdown, never a whole HTML document; its title is the first
 // "# " heading; it declares no capabilities; assets are images. A new version of a doc that people
-// are editing on its page is merged under their live draft (rooms/doc.ts), and the agent is told
-// so once, with nothing to do.
-import { LIMITS } from "@plinth/shared";
+// are editing on its page is merged under their live draft (rooms/doc.ts), or reviewed by them when
+// it overlaps, and the agent is told so once, with nothing to do.
+import { HTML_DOCUMENT_RE, LIMITS } from "@plinth/shared";
 import { ApiError } from "../../lib/errors.ts";
 import type { TypeHooks } from "../artifactTypes.ts";
 import { liveAfterCommit } from "./live.ts";
-
-/** A whole HTML document sent where Markdown (or another typed format) belongs. */
-const HTML_DOCUMENT_RE = /^\s*(<!doctype html|<html[\s>])/i;
 
 /** The first non-empty "# " heading in the first 200 lines, or null. */
 export function markdownTitle(text: string): string | null {

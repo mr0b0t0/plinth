@@ -236,7 +236,10 @@ describe("ArtifactPage: applying a newer version (live views)", () => {
     const ask = await sentOf(sent, "version");
     // Before the renderer answers, the viewer edits and the page has unsaved changes.
     await user.click(screen.getByRole("button", { name: "Edit" }));
-    fromFrame({ source: "plinth-renderer", v: 1, ...DIRTY });
+    // An editor's frame carries its key in its address; its editing messages carry it too.
+    const key = /#plinth-k=([A-Za-z0-9_-]{43})$/.exec(frame.getAttribute("src") ?? "")?.[1];
+    expect(key).toBeTruthy();
+    fromFrame({ source: "plinth-renderer", v: 1, key, ...DIRTY });
     const n = s.reads.length;
     // The renderer refuses: it never replaces a draft. The frame must stay too.
     fromFrame({

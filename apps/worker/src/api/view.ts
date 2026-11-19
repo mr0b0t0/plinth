@@ -6,6 +6,7 @@ import {
   type DictationOwner,
   type EffectiveRole,
   hasPageCapabilities,
+  isLiveType,
   RATE_LIMITS,
   REVIEW_MODE_PARAM,
   TTL,
@@ -390,7 +391,7 @@ async function gateLive(
   d: Extract<Decision, { allow: true }>,
   opts: GateOptions,
 ): Promise<ViewGateLive | undefined> {
-  if (!typeDef(a.type)?.liveEdit || a.takenDownAt) return undefined;
+  if (!isLiveType(typeDef(a.type)) || a.takenDownAt) return undefined;
   if (d.role !== "owner" && d.role !== "editor") return undefined;
   if (opts.version !== undefined) return undefined;
   const p = ctx.principal;

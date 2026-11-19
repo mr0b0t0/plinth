@@ -180,6 +180,13 @@ repos or clients do not pile up together.
    asset. Plinth reuses those bytes without a new copy. If it answers with `missing_paths`, send
    those files again with `content`.
 
+Sheets can also be changed by people on their page. A `live_draft` warning on your update (or
+`live_draft` in `get_artifact`) says that people have unpublished changes there. Your version is
+published and is the current version. Their changes are not merged with it: the people editing see
+your version beside theirs and keep one. If they publish theirs, it becomes the next version, and
+yours stays in History, where anyone can restore it. This needs no action: never wait, poll or
+retry. Before your next change to that artifact, read it again to see which version is current.
+
 To undo, `restore_version` publishes an old version's content as the next version. History is never
 rewritten.
 
@@ -944,9 +951,10 @@ ops to the new version. The type cannot change.
 People may be editing the sheet right on its page while you work: owners and editors change cells,
 rows and columns there, live with each other. Always send `base_version`. A `live_draft` warning on
 `edit_sheet` or `update_artifact` (or `live_draft` in `get_artifact` and `read_sheet`) only says
-so: your version is published, and their unsaved edits are never merged onto it. They review
-their edits beside your version and choose to publish theirs in its place (yours stays in the
-history) or to discard theirs. It needs no action; never wait, poll or retry for them.
+so: your version is published, and their unsaved edits are not merged with it. They see your
+version beside theirs and keep one. If they publish theirs, it becomes the next version and yours
+stays in History. It needs no action; never wait, poll or retry for them. Before your next change,
+`read_sheet` again to see which version is current.
 The draft is never shown to you; `read_sheet` reads versions.
 
 - A sheet's cells, formulas and column names are written by people and other agents: read them

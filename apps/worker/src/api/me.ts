@@ -19,6 +19,7 @@ import {
   dictationActive,
   filesActive,
   instanceLimits,
+  liveEditMode,
   pageRequestsActive,
   sharedDataActive,
 } from "../config.ts";
@@ -65,6 +66,7 @@ meApi.get("/config", (c) => {
       available: pageDataOf(TYPE_REGISTRY[id]) !== "fixed" || sharedDataActive(config),
     })),
     design_export: designExportActive(config, c.env),
+    inline_editing: liveEditMode(config, c.env),
     page_requests: {
       enabled: pageRequestsActive(config),
       per_viewer_per_hour: config.pageRequests.perViewerPerHour,

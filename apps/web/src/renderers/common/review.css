@@ -1,0 +1,352 @@
+/* The whole-draft review (review.ts), shared by the renderers that edit on the page. It covers
+   the page while open; system fonts only, light and dark. Every class starts with plinth-review. */
+
+:root {
+  --review-bg: #ffffff;
+  --review-fg: #1f2328;
+  --review-muted: #59636e;
+  --review-border: #d8dee4;
+  --review-soft: #f3f5f7;
+  --review-accent: #0a58ca;
+  --review-accent-fg: #ffffff;
+  --review-danger: #b42318;
+  --review-live: #8f5a2a;
+  --review-focus: #0a58ca;
+  --review-font:
+    system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --review-bg: #0d1117;
+    --review-fg: #e6edf3;
+    --review-muted: #9198a1;
+    --review-border: #3d444d;
+    --review-soft: #161b22;
+    --review-accent: #4493f8;
+    --review-accent-fg: #0d1117;
+    --review-danger: #f47067;
+    --review-live: #d29b62;
+    --review-focus: #4493f8;
+  }
+}
+
+html.plinth-reviewing,
+html.plinth-reviewing body {
+  overflow: hidden;
+}
+
+/* The review covers the page and scrolls as one column; each side keeps a fixed height and
+   scrolls on its own, and paints nothing outside it (a sheet's sticky headers included). */
+.plinth-review {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: block;
+  overflow: auto;
+  padding: 1rem;
+  background: var(--review-bg);
+  color: var(--review-fg);
+  font: 0.9375rem / 1.5 var(--review-font);
+}
+
+.plinth-review > * + * {
+  margin-top: 0.75rem;
+}
+
+.plinth-review__heading {
+  margin: 0;
+  font-size: 1.25rem;
+  line-height: 1.3;
+}
+
+.plinth-review__intro {
+  margin: 0;
+  max-width: 48rem;
+  color: var(--review-muted);
+}
+
+.plinth-review__switch {
+  display: none;
+  border: 1px solid var(--review-border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.plinth-review__switch-option {
+  min-width: 5rem;
+  min-height: 44px;
+  padding: 0.25rem 1rem;
+  border: 0;
+  background: var(--review-bg);
+  color: var(--review-fg);
+  font: inherit;
+  cursor: pointer;
+}
+
+.plinth-review__switch-option[aria-checked="true"] {
+  background: var(--review-accent);
+  color: var(--review-accent-fg);
+}
+
+.plinth-review__panes {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 1rem;
+}
+
+.plinth-review__pane {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  min-width: 0;
+  padding: 0.75rem;
+  border: 1px solid var(--review-border);
+  border-radius: 8px;
+}
+
+.plinth-review__pane[data-side="mine"] {
+  border-left: 3px solid var(--review-live);
+}
+
+.plinth-review__label {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.plinth-review__changes-title,
+.plinth-review__files-title {
+  margin: 0.25rem 0;
+  font-size: 0.875rem;
+}
+
+.plinth-review__files-title {
+  color: var(--review-muted);
+}
+
+.plinth-review__list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  max-height: 12rem;
+  overflow: auto;
+}
+
+.plinth-review__item {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 0.5rem;
+  padding: 0.125rem 0;
+  overflow-wrap: anywhere;
+}
+
+.plinth-review__item-button {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--review-accent);
+  font: inherit;
+  text-align: left;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.plinth-review__values {
+  color: var(--review-muted);
+}
+
+.plinth-review__none,
+.plinth-review__missing {
+  margin: 0;
+  color: var(--review-muted);
+}
+
+.plinth-review__body {
+  flex: none;
+  height: min(60vh, 36rem);
+  overflow: auto;
+  contain: paint;
+  border-top: 1px solid var(--review-border);
+  padding-top: 0.5rem;
+}
+
+.plinth-review__body .plinth-sheet__page {
+  height: 100%;
+}
+
+.plinth-review__body .plinth-sheet__bar {
+  display: none;
+}
+
+.plinth-review__choices {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.75rem;
+}
+
+.plinth-review__why {
+  flex: 1 0 100%;
+  order: 10;
+  margin: 0;
+  max-width: 48rem;
+  color: var(--review-muted);
+  font-size: 0.875rem;
+}
+
+.plinth-review__primary,
+.plinth-review__secondary,
+.plinth-review__danger {
+  min-height: 44px;
+  padding: 0.375rem 1rem;
+  border: 1px solid var(--review-border);
+  border-radius: 6px;
+  background: var(--review-soft);
+  color: var(--review-fg);
+  font: inherit;
+  cursor: pointer;
+}
+
+.plinth-review__primary {
+  border-color: var(--review-accent);
+  background: var(--review-accent);
+  color: var(--review-accent-fg);
+}
+
+.plinth-review__danger {
+  border-color: var(--review-danger);
+  color: var(--review-danger);
+}
+
+.plinth-review button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.plinth-review button:focus-visible,
+.plinth-review__body:focus-visible,
+.plinth-review__note-input:focus-visible {
+  outline: 2px solid var(--review-focus);
+  outline-offset: 2px;
+}
+
+.plinth-review__note {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 0.5rem;
+  flex: 1 0 100%;
+}
+
+.plinth-review__note[hidden] {
+  display: none;
+}
+
+.plinth-review__note-label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  flex: 1 1 16rem;
+  font-size: 0.875rem;
+}
+
+.plinth-review__note-input {
+  min-height: 44px;
+  padding: 0.25rem 0.5rem;
+  border: 1px solid var(--review-border);
+  border-radius: 6px;
+  background: var(--review-bg);
+  color: var(--review-fg);
+  font: inherit;
+}
+
+.plinth-review__reason {
+  flex: 1 0 100%;
+  margin: 0;
+  color: var(--review-muted);
+}
+
+.plinth-review__reason:empty {
+  display: none;
+}
+
+.plinth-review__scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 21;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  background: rgb(0 0 0 / 0.4);
+}
+
+.plinth-review__confirm {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  max-width: 32rem;
+  padding: 1rem;
+  border: 1px solid var(--review-border);
+  border-radius: 8px;
+  background: var(--review-bg);
+  color: var(--review-fg);
+}
+
+.plinth-review__confirm-title {
+  margin: 0;
+  font-size: 1.0625rem;
+}
+
+.plinth-review__confirm-text {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.plinth-review__confirm-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.5rem;
+}
+
+.plinth-review__announce {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+/* Phone width: one side at a time, with the switch; full-width choices. */
+@media (max-width: 640px) {
+  .plinth-review {
+    padding: 1rem;
+  }
+
+  .plinth-review__switch {
+    display: inline-flex;
+  }
+
+  .plinth-review__panes {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .plinth-review[data-show="mine"] .plinth-review__pane[data-side="theirs"],
+  .plinth-review[data-show="theirs"] .plinth-review__pane[data-side="mine"] {
+    display: none;
+  }
+
+  .plinth-review__primary,
+  .plinth-review__secondary,
+  .plinth-review__danger {
+    flex: 1 0 100%;
+  }
+}
+
+@media print {
+  .plinth-review {
+    display: none;
+  }
+}

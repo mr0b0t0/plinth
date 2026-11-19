@@ -1,9 +1,9 @@
 // Editing a sheet on its page, live across editors (#36, live sheets): the owner and an editor
 // have the sheet open in two browser contexts. A cell one of them opens shows its row held, with
 // their email, in the other; the typing arrives as it is typed; inserting a row moves the formulas
-// on both pages; Save makes the next version; and a version an agent publishes with edit_sheet
-// meanwhile is never merged: the page edits freeze, and the review publishes them as they are or
-// discards them.
+// on both pages; Publish makes the next version; and a version an agent publishes with edit_sheet
+// meanwhile is never merged: the page edits freeze, and the whole-draft review in the page
+// publishes them as they are or discards them.
 import { type Browser, expect, type Page, test } from "@playwright/test";
 import { apiGet, apiPut, publishArtifact, uniqueEmail } from "../support/api.ts";
 import { seedSession, seedToken } from "../support/db.ts";
@@ -85,7 +85,7 @@ async function startEditing(page: Page) {
   await expect(bar).not.toContainText("Not connected");
 }
 
-test("two editors on one sheet: a held row, typing that arrives live, a row both see, Save makes v2", async ({
+test("two editors on one sheet: a held row, typing that arrives live, a row both see, Publish makes v2", async ({
   page,
   browser,
 }) => {
@@ -144,9 +144,9 @@ test("two editors on one sheet: a held row, typing that arrives live, a row both
   await expect(cell(other, "A6")).toHaveText("Total");
   await expect(cell(other, "B6")).toHaveText("37");
 
-  await page.getByRole("button", { name: "Save version" }).click();
+  await page.getByRole("button", { name: "Publish", exact: true }).click();
   await expect(page.getByRole("region", { name: "Editing on the page" })).toContainText(
-    "Saved as v2",
+    "Published as v2",
   );
   const detail = await apiGet(page.request, `/artifacts/${s.id}`);
   expect(detail.body.current_version).toBe(2);
@@ -178,7 +178,7 @@ test("an agent's edit_sheet during the page edits is never merged: the review pu
     const field = frameOf(page).locator(`#__plinth-cell-${a} .plinth-sheet__input`);
     await field.fill(value);
     await field.press("Enter");
-    await expect(bar).toContainText("Unsaved changes");
+    await expect(bar).toContainText(/Draft saved|Saving draft/);
   }
 
   /** The agent sets one cell with edit_sheet on `base`. */
@@ -208,19 +208,23 @@ test("an agent's edit_sheet during the page edits is never merged: the review pu
     timeout: 10_000,
   });
   await bar.getByRole("button", { name: "Review changes" }).click();
-  const review = page.getByRole("dialog", { name: "v2 was published while you were editing" });
-  await expect(
-    review.getByRole("region", { name: "Your page changes (not published, based on v1)" }),
-  ).toContainText("B2: 3 → 4");
+  // The review is in the page itself: both grids, and what each side changed.
+  const review = frameOf(page).getByRole("region", { name: "Review v2 and the page changes" });
+  await expect(review.getByRole("heading", { level: 2 })).toHaveText(
+    "v2 was published while you were editing",
+  );
+  const mine = review.getByRole("region", { name: "Your page changes" });
+  await expect(mine).toContainText("B2 changed");
+  await expect(mine).toContainText("3 → 4");
+  await expect(mine.locator("table")).toBeVisible();
   // At phone width one sheet shows at a time, with a switch between them.
   const toV2 = review.getByRole("radio", { name: "v2" });
   if (await toV2.isVisible()) {
-    await toV2.check();
-    await expect(
-      review.getByRole("region", { name: "Your page changes (not published, based on v1)" }),
-    ).toHaveCount(0);
+    await toV2.click();
+    await expect(mine).toBeHidden();
   }
-  await expect(review.getByRole("region", { name: "v2" })).toContainText("B3: 5 → 6");
+  await expect(review.getByRole("region", { name: "v2" })).toContainText("B3 changed");
+  await expect(review.getByRole("region", { name: "v2" })).toContainText("No files changed");
   // Cancel keeps the draft frozen, and the review opens again.
   await review.getByRole("button", { name: "Cancel" }).click();
   await expect(review).toHaveCount(0);
@@ -228,9 +232,9 @@ test("an agent's edit_sheet during the page edits is never merged: the review pu
   await bar.getByRole("button", { name: "Review changes" }).click();
 
   // Publish mine: the page edits become v3 as they are; v2 stays in the history.
-  await review.getByRole("button", { name: "Publish mine" }).click();
+  await review.getByRole("button", { name: "Publish mine", exact: true }).click();
   await expect(review).toHaveCount(0);
-  await expect(bar).toContainText("Saved as v3", { timeout: 10_000 });
+  await expect(bar).toContainText("Published as v3", { timeout: 10_000 });
   const v3 = (await apiGet(page.request, `/artifacts/${s.id}`)).body.content as string;
   expect(v3.split("\n").slice(1, 3)).toEqual(['["Apples",4,1.5,true]', '["Pears",5,0.5,false]']);
   const versions = await apiGet(page.request, `/artifacts/${s.id}/versions`);
@@ -245,14 +249,21 @@ test("an agent's edit_sheet during the page edits is never merged: the review pu
   await agentSets("B4", 9, 3);
   await expect(bar).toContainText("v4 was published while you edited.", { timeout: 10_000 });
   await bar.getByRole("button", { name: "Review changes" }).click();
-  const second = page.getByRole("dialog", { name: "v4 was published while you were editing" });
+  const second = frameOf(page).getByRole("region", { name: "Review v4 and the page changes" });
   await second.getByRole("button", { name: "Discard mine" }).click();
-  const confirm = page.getByRole("alertdialog", { name: "Discard the page changes?" });
-  await expect(confirm).toContainText("This change will be lost: B2: 4 → 7.");
-  // Pressed, not clicked: at phone width the "Updated to v4" toast can sit over this button, and a
-  // toast under a resting pointer pauses, so a click can wait on it until the test times out.
-  await confirm.getByRole("button", { name: "Discard the page changes" }).press("Enter");
-  await expect(page.getByText("The page is back to v4.")).toBeVisible({ timeout: 10_000 });
+  const confirm = frameOf(page).getByRole("alertdialog", { name: "Discard the page changes?" });
+  await expect(confirm).toContainText("This change will be lost:");
+  await expect(confirm).toContainText("B2 changed");
+  await expect(confirm).toContainText("The page will show v4.");
+  // Clicked with the pointer left resting on any notification first: no toast covers the
+  // review's choices, at phone width either, and a resting pointer does not keep one for good.
+  const toast = await page.locator(".pl-toast").first().boundingBox();
+  if (toast) await page.mouse.move(toast.x + toast.width / 2, toast.y + toast.height / 2);
+  await confirm.getByRole("button", { name: "Discard the page changes" }).click();
+  await expect(frameOf(page).locator(".plinth-review__announce")).toHaveText(
+    "The page changes were discarded. The page shows v4.",
+    { timeout: 10_000 },
+  );
   await expect(cell(page, "B2")).toHaveText("4");
   await expect(cell(page, "B4")).toHaveText("9");
   const after = await apiGet(page.request, `/artifacts/${s.id}`);

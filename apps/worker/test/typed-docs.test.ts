@@ -671,7 +671,10 @@ describe("doc artifacts with unsaved page edits (#36)", () => {
     const { tools } = await mcp.listTools();
     const desc = (n: string) => tools.find((t) => t.name === n)?.description ?? "";
     expect(desc("get_artifact")).toMatch(/live_draft.*metadata.*never returned/);
-    expect(desc("update_artifact")).toMatch(/live_draft says people are editing a doc/);
+    expect(desc("update_artifact")).toMatch(/live_draft says people are editing it on its page/);
+    expect(desc("update_artifact")).toMatch(
+      /For a doc, their unsaved edits are merged onto it or reviewed by them\./,
+    );
     expect(desc("publish_artifact")).toMatch(/declare room for live presence/);
     expect(mcp.getInstructions()).toContain("not_scanned and live_draft need no action");
   });

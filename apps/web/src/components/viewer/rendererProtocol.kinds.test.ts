@@ -13,6 +13,8 @@ import {
   pairedMessage,
   printMessage,
   readFrameMessage,
+  reviewedMessage,
+  reviewMessage,
   sheetExportMessage,
   versionMessage,
   viewMessage,
@@ -40,8 +42,18 @@ describe("renderer protocol kinds", () => {
       "export",
       "paired",
       "version",
+      "review",
+      "reviewed",
     ]);
-    expect([...FRAME_MESSAGE_KINDS]).toEqual(["live", "save", "draft", "shown"]);
+    expect([...FRAME_MESSAGE_KINDS]).toEqual([
+      "live",
+      "save",
+      "draft",
+      "resolved",
+      "ask",
+      "leave",
+      "shown",
+    ]);
     expect(
       [
         printMessage(),
@@ -52,6 +64,8 @@ describe("renderer protocol kinds", () => {
         exportMessage("n".repeat(16)),
         pairedMessage(),
         versionMessage(2, "n".repeat(16)),
+        reviewMessage("n".repeat(16)),
+        reviewedMessage("n".repeat(16), "busy"),
       ].map((m) => m.type),
     ).toEqual([...APP_MESSAGE_KINDS]);
     const all = [
@@ -65,6 +79,8 @@ describe("renderer protocol kinds", () => {
       sheetExportMessage("csv"),
       pairedMessage(),
       versionMessage(1, "x".repeat(16)),
+      reviewMessage("x".repeat(16)),
+      reviewedMessage("x".repeat(16), "done"),
     ];
     for (const m of all) {
       expect(m).toMatchObject({ source: "plinth-renderer", v: 1 });
@@ -83,6 +99,9 @@ describe("renderer protocol kinds", () => {
       live: vi.fn(() => "live"),
       save: vi.fn(() => "save"),
       draft: vi.fn(() => "draft"),
+      resolved: vi.fn(() => "resolved"),
+      ask: vi.fn(() => "ask"),
+      leave: vi.fn(() => "leave"),
       shown: vi.fn(() => "shown"),
     };
     const messages: FrameMessage[] = [

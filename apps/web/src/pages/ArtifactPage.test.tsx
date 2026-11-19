@@ -11,6 +11,11 @@ async function loadPage() {
   return (await import("./ArtifactPage.tsx")).default;
 }
 
+/** The frame key an owner's or editor's frame carries in its address, and the address without it. */
+const keyOf = (el: Element) =>
+  /#plinth-k=([A-Za-z0-9_-]{43})$/.exec(el.getAttribute("src") ?? "")?.[1];
+const srcOf = (el: Element) =>
+  (el.getAttribute("src") ?? "").replace(/#plinth-k=[A-Za-z0-9_-]{43}$/, "");
 const ENTER = (n: number) =>
   `http://art123.content.localhost:8787/__plinth/enter?t=token-${n}&next=%2F`;
 
@@ -538,7 +543,7 @@ describe("ArtifactPage: editing a doc on its page (#36)", () => {
     );
   });
 
-  it("tells editors about unsaved page edits, and turns comments off while editing", async () => {
+  it("tells editors about unpublished page changes, and turns comments off while editing", async () => {
     const draft = {
       base_version: 3,
       dirty: true,
@@ -559,7 +564,7 @@ describe("ArtifactPage: editing a doc on its page (#36)", () => {
     render(<ArtifactPage params={{ slug: "garden-plan" }} />);
     await screen.findByTitle("Plan, version 3");
     expect(screen.getByRole("note").textContent).toContain(
-      "Unsaved page edits by bo@example.org, 2 h ago",
+      "Unpublished changes on the page by bo@example.org, 2 h ago",
     );
     await user.click(screen.getByRole("button", { name: "Comments" }));
     expect(screen.getByRole("button", { name: "Comments" }).getAttribute("aria-pressed")).toBe(
@@ -581,7 +586,7 @@ describe("ArtifactPage: editing a doc on its page (#36)", () => {
     );
   });
 
-  it("does not offer to save or discard the shared draft before the room is reachable", async () => {
+  it("does not offer to publish or discard the shared draft before the room is reachable", async () => {
     const draft = {
       base_version: 3,
       dirty: true,
@@ -598,9 +603,9 @@ describe("ArtifactPage: editing a doc on its page (#36)", () => {
     render(<ArtifactPage params={{ slug: "garden-plan" }} />);
     await screen.findByTitle("Plan, version 3");
     expect(screen.getByRole("note").textContent).toContain("Connecting to the live draft…");
-    expect(
-      (screen.getByRole("button", { name: "Save as version" }) as HTMLButtonElement).disabled,
-    ).toBe(true);
+    expect((screen.getByRole("button", { name: "Publish" }) as HTMLButtonElement).disabled).toBe(
+      true,
+    );
     expect((screen.getByRole("button", { name: "Discard" }) as HTMLButtonElement).disabled).toBe(
       true,
     );
@@ -644,11 +649,14 @@ describe("ArtifactPage: editing a doc on its page (#36)", () => {
       const ArtifactPage = await loadPage();
       render(<ArtifactPage params={{ slug: "garden-plan" }} />);
       const frame = (await screen.findByTitle("Plan, version 3")) as HTMLIFrameElement;
+      // An editor's frame has a fresh key in its address; its editing messages carry it.
+      expect(keyOf(frame)).toMatch(/^[A-Za-z0-9_-]{43}$/);
       const e = new MessageEvent("message", {
         origin: "http://art123.content.localhost:8787",
         data: {
           source: "plinth-renderer",
           v: 1,
+          key: keyOf(frame),
           type: "live",
           connected: true,
           failed: false,
@@ -672,7 +680,7 @@ describe("ArtifactPage: editing a doc on its page (#36)", () => {
       await vi.advanceTimersByTimeAsync(VERSION_POLL_MS);
       const shown = await screen.findByTitle("Plan, version 4");
       expect(shown).toBe(frame);
-      expect(shown.getAttribute("src")).toBe(ENTER(1));
+      expect(srcOf(shown)).toBe(ENTER(1));
       expect(document.querySelectorAll("iframe")).toHaveLength(1);
     });
 
@@ -709,6 +717,7 @@ describe("ArtifactPage: editing a doc on its page (#36)", () => {
         data: {
           source: "plinth-renderer",
           v: 1,
+          key: keyOf(frame),
           type: "live",
           connected,
           failed: false,
@@ -750,13 +759,13 @@ describe("ArtifactPage: editing a doc on its page (#36)", () => {
       // The gate was read again, but the frame that follows the room stays.
       expect(n).toBe(2);
       expect(screen.getByTitle("Plan, version 3")).toBe(frame);
-      expect(frame.getAttribute("src")).toBe(ENTER(1));
+      expect(srcOf(frame)).toBe(ENTER(1));
       expect(document.querySelectorAll("iframe")).toHaveLength(1);
-      // The pause ends (the room socket closed with the old pass): a fresh gate renews the frame.
+      // The pause ends (the room socket closed with the old pass): a fresh gate renews the frame,
+      // with a key of its own.
       roomStatus(frame, false);
-      await waitFor(() =>
-        expect(screen.getByTitle("Plan, version 3").getAttribute("src")).not.toBe(ENTER(1)),
-      );
+      await waitFor(() => expect(srcOf(screen.getByTitle("Plan, version 3"))).not.toBe(ENTER(1)));
+      expect(keyOf(screen.getByTitle("Plan, version 3"))).not.toBe(keyOf(frame));
     });
 
     it("a sharing change that ends access shows the gate, even while paused", async () => {
@@ -795,9 +804,7 @@ describe("ArtifactPage: editing a doc on its page (#36)", () => {
       ws.frame({ t: "welcome", v: 1, version: 3, data: false });
       ws.revoke();
       const fresh = await waitFor(() => {
-        const f = [...document.querySelectorAll("iframe")].find(
-          (x) => x.getAttribute("src") === ENTER(2),
-        );
+        const f = [...document.querySelectorAll("iframe")].find((x) => srcOf(x) === ENTER(2));
         if (!f) throw new Error("not renewed yet");
         return f;
       });
@@ -826,7 +833,7 @@ describe("ArtifactPage: editing a doc on its page (#36)", () => {
       const post = (data: Record<string, unknown>) => {
         const e = new MessageEvent("message", {
           origin: "http://art123.content.localhost:8787",
-          data: { source: "plinth-renderer", v: 1, ...data },
+          data: { source: "plinth-renderer", v: 1, key: keyOf(frame), ...data },
         });
         Object.defineProperty(e, "source", { value: frame.contentWindow });
         act(() => {
