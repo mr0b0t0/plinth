@@ -7,7 +7,10 @@
 // writes and posts it, through the panel and the comments API with the person's own session.
 // Every page request is a hint the app may refuse: compose is accepted at most once a second,
 // only after the page said hello, only while the tab is visible and no dialog is open, and is
-// answered exactly once (`composed`) whatever happens to it.
+// answered exactly once (`composed`) whatever happens to it. `open` obeys the same visibility and
+// dialog rules, and a request that would open a closed panel (compose or open) is accepted at
+// most once a second. No page request moves focus: the person clicks or tabs into the composer,
+// so keystrokes meant for the page never land in a comment.
 import {
   type CommentInfo,
   PAGE_COMMENT_LIMITS,
@@ -27,8 +30,6 @@ export type PageComposeResult =
 export interface PageCompose {
   req: string;
   anchor: PageAnchor | null;
-  /** Focus was in the frame (or nowhere) when the page asked: the composer may take it. */
-  focus: boolean;
 }
 
 export interface UsePageCommentsOptions {
@@ -39,8 +40,10 @@ export interface UsePageCommentsOptions {
   enabled: boolean;
   /** The artifact's comments (from the panel while open, else from the closed-panel fetch). */
   items: CommentInfo[] | null;
-  /** A dialog is open (Share): compose requests are refused. */
+  /** A dialog is open (Share): compose and open requests are refused. */
   blocked: boolean;
+  /** Whether the comments panel is open now (read when a request arrives). */
+  panelOpen: () => boolean;
   /** An accepted compose request: open the panel with this anchor. */
   onCompose: (request: PageCompose) => void;
   /** The page asked to show this thread (a known root). */
@@ -70,6 +73,7 @@ export function usePageComments(opts: UsePageCommentsOptions): PageComments {
   const pendingRef = useRef<Set<string>>(new Set());
   const lastComposeRef = useRef(Number.NEGATIVE_INFINITY);
   const lastOpenRef = useRef(Number.NEGATIVE_INFINITY);
+  const lastReopenRef = useRef(Number.NEGATIVE_INFINITY);
   const positionTimesRef = useRef<number[]>([]);
 
   const threads = useMemo(() => buildThreads(items ?? []), [items]);
@@ -89,6 +93,14 @@ export function usePageComments(opts: UsePageCommentsOptions): PageComments {
     const onMessage = (msg: PageFrameMessage) => {
       const cur = live.current;
       const doc = (cur.opts.win ?? window).document;
+      // A request that would open the panel the person closed: at most one a second, compose and
+      // open together. Taking the slot is the caller's job, once the request is accepted.
+      const reopenRefused = (t: number) =>
+        !cur.opts.panelOpen() &&
+        t - lastReopenRef.current < PAGE_COMMENT_LIMITS.reopenMinIntervalMs;
+      const takeReopen = (t: number) => {
+        if (!cur.opts.panelOpen()) lastReopenRef.current = t;
+      };
       switch (msg.type) {
         case "hello":
           helloRef.current = true;
@@ -104,19 +116,22 @@ export function usePageComments(opts: UsePageCommentsOptions): PageComments {
           if (t - lastComposeRef.current < PAGE_COMMENT_LIMITS.composeMinIntervalMs) {
             return void refuse();
           }
+          if (reopenRefused(t)) return void refuse();
           lastComposeRef.current = t;
+          takeReopen(t);
           pendingRef.current.add(msg.req);
-          const active = doc.activeElement;
-          const focus = !active || active === doc.body || active === frame;
-          cur.opts.onCompose({ req: msg.req, anchor: msg.anchor, focus });
+          cur.opts.onCompose({ req: msg.req, anchor: msg.anchor });
           return;
         }
         case "open": {
-          if (!cur.enabled || !helloRef.current) return;
+          if (!cur.enabled || !helloRef.current || cur.blocked) return;
+          if (doc.visibilityState !== "visible") return;
           if (!cur.threads.some((th) => th.root.id === msg.id)) return;
           const t = now();
           if (t - lastOpenRef.current < PAGE_COMMENT_LIMITS.openMinIntervalMs) return;
+          if (reopenRefused(t)) return;
           lastOpenRef.current = t;
+          takeReopen(t);
           cur.opts.onOpenThread(msg.id);
           return;
         }
@@ -196,6 +211,8 @@ export interface StagePageComments {
   pagePositions: Map<string, PinPosition>;
   onActiveChange: (id: string) => void;
   pageOpen: { id: string; n: number } | null;
+  /** A page request opened the panel: it must not take focus when it mounts. */
+  openedByPage: boolean;
 }
 
 /**
@@ -207,14 +224,17 @@ export function useStagePageComments(o: StagePageCommentsOptions): StagePageComm
   const enabled = o.gate.page_comments === true && o.gate.artifact.type === "html";
   const [pageCompose, setPageCompose] = useState<PageCompose | null>(null);
   const [pageOpen, setPageOpen] = useState<{ id: string; n: number } | null>(null);
+  const [openedByPage, setOpenedByPage] = useState(false);
   const openRef = useRef(o.commentsOpen);
   openRef.current = o.commentsOpen;
   const openComments = o.openComments;
   const ensureOpen = useCallback(() => {
     if (openRef.current) return;
     openRef.current = true;
+    setOpenedByPage(true);
     openComments();
   }, [openComments]);
+  const panelOpen = useCallback(() => openRef.current, []);
   const page = usePageComments({
     frame: o.frame,
     contentOrigin: o.contentOrigin,
@@ -222,6 +242,7 @@ export function useStagePageComments(o: StagePageCommentsOptions): StagePageComm
     enabled,
     items: o.items,
     blocked: o.blocked,
+    panelOpen,
     onCompose: (request) => {
       setPageCompose(request);
       ensureOpen();
@@ -240,8 +261,11 @@ export function useStagePageComments(o: StagePageCommentsOptions): StagePageComm
     [settle],
   );
   // A request to show a thread is for the panel that is open now, not for a later one.
+  // Likewise whether a page request opened it: the person opening it later moves focus as usual.
   useEffect(() => {
-    if (!o.commentsOpen) setPageOpen(null);
+    if (o.commentsOpen) return;
+    setPageOpen(null);
+    setOpenedByPage(false);
   }, [o.commentsOpen]);
   return {
     pageOwnsAnchors: enabled,
@@ -250,5 +274,6 @@ export function useStagePageComments(o: StagePageCommentsOptions): StagePageComm
     pagePositions: page.positions,
     onActiveChange: page.focus,
     pageOpen,
+    openedByPage,
   };
 }

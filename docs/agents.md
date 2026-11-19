@@ -414,7 +414,11 @@ stable element (a `<canvas>` sketch, a slide deck, a map, a pan-and-zoom diagram
 - **The page draws its own markers.** `onThreads(fn)` gets the page-anchored threads (id, pin
   number, status, anchor), never their text. `locate(fn)` tells Plinth where an anchor is on screen,
   so its pins sit on the same spots; call `refresh()` after a pan or zoom. `onFocus(fn)` hears when
-  the person picks a thread, and `open(id)` shows one.
+  the person picks a thread, and `open(id)` shows one. Any commenter can post a page anchor through
+  the comments API, so the page treats the anchors it hears as untrusted: text with `textContent`,
+  never `innerHTML`, and only keys and finite numbers it knows.
+- **Focus stays in the page.** Plinth never moves focus on a page's request; the person clicks or
+  tabs into the composer.
 - **Nothing reloads.** Opening the comments panel on such a page keeps the frame as it is, so a
   drawing or a zoom level survives.
 - **Always a fallback.** Guard with `window.plinth?.comments`; `ready` resolves

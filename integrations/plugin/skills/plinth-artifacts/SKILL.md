@@ -450,7 +450,8 @@ their own (a canvas drawing, slides, a map, a pan-and-zoom diagram, a chart's da
   `{ status: "closed" }` or `{ status: "busy" }` (someone is writing a comment), and rejects with
   `invalid` when the anchor breaks the limits. Leave out (or pass `undefined` for) a field you do
   not have. The promise may stay pending until the person posts or closes the panel; each call
-  gets its own answer, and a second call does not end the first.
+  gets its own answer, and a second call does not end the first. Focus stays in the page: the
+  person clicks or tabs into the composer, so never tell them to keep typing.
 - **Anchors.** `key` names the spot in the page's own terms (`canvas`, `slide-3`, `node:42`: a
   letter or digit, then up to 127 of letters, digits and `_ . : / -`), `x` and `y` are finite page
   coordinates, `text` is a short label for the chip (120 characters), `data` up to 16 flat fields
@@ -462,6 +463,10 @@ their own (a canvas drawing, slides, a map, a pan-and-zoom diagram, a chart's da
   same spots; call `plinth.comments.refresh()` after a pan, zoom or scroll. `onFocus(({ id, anchor })
   => ...)` hears when the person picks a thread (pan to it), and `open(id)` shows one in the panel
   (when your own marker is clicked).
+- **Thread anchors are untrusted.** Any commenter can post a page anchor with any `key`, `x`, `y`
+  and `data` through the comments API, not only your page's code. Render them with `textContent`,
+  never `innerHTML`; check that numbers are finite and keys are ones your page knows before using
+  them.
 - **Always a fallback.** Guard with `window.plinth?.comments`. `await plinth.comments.ready` never
   rejects: `{ available, reason }`, where `reason` is `not_framed`, `no_app` (in-chat previews, the
   editor preview) or `not_declared`. The page must still work when it is unavailable. Opening the

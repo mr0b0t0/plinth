@@ -71,6 +71,11 @@ export interface CommentsPanelProps {
   onActiveChange?: (id: string) => void;
   /** The page asked to show a thread; `n` changes for every request. */
   pageOpen?: { id: string; n: number } | null;
+  /**
+   * A page request opened the panel: focus stays where it was when the panel mounts, as for every
+   * page request (the person clicks or tabs into the panel).
+   */
+  openedByPage?: boolean;
 }
 
 /** How often to look for new comments and mention progress while the panel is open. */
@@ -115,6 +120,7 @@ export function CommentsPanel({
   onItemsChange,
   onActiveChange,
   pageOpen = null,
+  openedByPage = false,
 }: CommentsPanelProps) {
   const { pathname, search } = useLocation();
   const [items, setItems] = useState<CommentInfo[] | null>(null);
@@ -134,12 +140,13 @@ export function CommentsPanel({
   const panelRef = useRef<HTMLElement | null>(null);
   const headingRef = useRef<HTMLHeadingElement | null>(null);
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
-  const footRef = useRef<HTMLElement | null>(null);
   const bridgeRef = useRef<BridgeClient | null>(null);
   const seenRef = useRef<Set<string> | null>(null);
   const loadingRef = useRef(false);
   const pickingRef = useRef(false);
-  const focusThreadRef = useRef<string | null>(null);
+  // The thread to scroll to once it is rendered, and whether focus moves to it (not for a page's
+  // request to show it).
+  const focusThreadRef = useRef<{ id: string; focus: boolean } | null>(null);
   pickingRef.current = picking;
 
   const ref = artifactId || slug;
@@ -293,7 +300,10 @@ export function CommentsPanel({
 
   // ---------- focus ----------
 
+  // The panel takes focus when the person opened it, never when a page request did.
+  const openedByPageRef = useRef(openedByPage);
   useEffect(() => {
+    if (openedByPageRef.current) return;
     const el = headingRef.current;
     try {
       el?.focus({ preventScroll: true });
@@ -305,12 +315,15 @@ export function CommentsPanel({
   // After a pin click, scroll to its thread and move focus there once it is rendered.
   // biome-ignore lint/correctness/useExhaustiveDependencies: runs after the list re-renders
   useEffect(() => {
-    const id = focusThreadRef.current;
-    if (!id) return;
-    const el = panelRef.current?.querySelector<HTMLElement>(`[data-thread-id="${CSS.escape(id)}"]`);
+    const target = focusThreadRef.current;
+    if (!target) return;
+    const el = panelRef.current?.querySelector<HTMLElement>(
+      `[data-thread-id="${CSS.escape(target.id)}"]`,
+    );
     if (!el) return;
     focusThreadRef.current = null;
     el.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    if (!target.focus) return;
     try {
       el.focus({ preventScroll: true });
     } catch {
@@ -329,14 +342,15 @@ export function CommentsPanel({
 
   const onPinClick = (id: string) => {
     if (!visible.some((t) => t.root.id === id)) setFilter("open");
-    focusThreadRef.current = id;
+    focusThreadRef.current = { id, focus: true };
     activate(id);
   };
 
   // ---------- comments from the page ----------
 
-  // The page asked to show a thread: show it whatever the filter, then as a pin click. A request
-  // that opened the panel arrives before the list has loaded, so it waits for the list (once).
+  // The page asked to show a thread: show it whatever the filter, then as a pin click, except that
+  // focus stays where it was. A request that opened the panel arrives before the list has loaded,
+  // so it waits for the list (once).
   const pageOpenDoneRef = useRef<number | null>(null);
   // biome-ignore lint/correctness/useExhaustiveDependencies: one run per request (`n`) and list
   useEffect(() => {
@@ -345,7 +359,7 @@ export function CommentsPanel({
     const t = threads.find((x) => x.root.id === pageOpen.id);
     if (!t) return;
     setFilter((f) => (f === "all" || f === t.root.status ? f : "all"));
-    focusThreadRef.current = pageOpen.id;
+    focusThreadRef.current = { id: pageOpen.id, focus: false };
     activate(pageOpen.id);
   }, [pageOpen?.n, items === null]);
 
@@ -379,15 +393,10 @@ export function CommentsPanel({
     pageReqRef.current = req;
     setPicking(false);
     setAnchor(pageCompose.anchor);
-    // Focus moves only when the person was using the page: to the composer, or to what stands
-    // in its place ("Sign in to comment"), so that where focus goes says nothing either.
-    if (pageCompose.focus) {
-      requestAnimationFrame(() => {
-        const el =
-          composerRef.current ?? footRef.current?.querySelector<HTMLElement>("a, [tabindex]");
-        el?.focus();
-      });
-    }
+    // Focus stays where it was: the person clicks or tabs into the composer. Moving it there
+    // while someone types in the page would send the rest of their keystrokes (and a Ctrl+Enter)
+    // into a comment they never meant to write. Screen readers hear that the page asked.
+    announce("The page asked for a comment.");
   }, [pageCompose?.req]);
   // Closing the panel ends it too. Deferred, so the effect re-run of React's strict mode (a
   // cleanup and a run again, on the same panel) does not end a request the panel still holds.
@@ -449,7 +458,7 @@ export function CommentsPanel({
       setAnchor(null);
       settlePage({ status: "posted", id: created.id });
       if (filter === "resolved") setFilter("open");
-      focusThreadRef.current = created.id;
+      focusThreadRef.current = { id: created.id, focus: true };
       setActiveId(created.id);
       afterWrite(created);
       announce(`Comment posted.${mentionSummary(created)}`);
@@ -595,15 +604,13 @@ export function CommentsPanel({
           )}
         </div>
 
-        <footer ref={footRef} className="cm-foot">
+        <footer className="cm-foot">
           {blocked === "signin" ? (
             <p className="cm-note">
               <Link to={loginHref}>Sign in to comment</Link>
             </p>
           ) : blocked === "forbidden" ? (
-            <p className="cm-note" tabIndex={-1}>
-              You can view this artifact but not comment on it
-            </p>
+            <p className="cm-note">You can view this artifact but not comment on it</p>
           ) : (
             <Composer
               value={draft}

@@ -79,6 +79,10 @@ test("the page opens the composer with its anchor, and the frame keeps its state
   await expect(chip).toContainText("Point");
   // No pick button: the page places its own anchors.
   await expect(panel.getByRole("button", { name: "Pin to an element" })).toHaveCount(0);
+  // Focus stayed in the page: a page request never moves it, so keystrokes meant for the page
+  // cannot end up in a comment.
+  await page.waitForTimeout(200);
+  expect(await page.evaluate(() => document.activeElement?.tagName)).toBe("IFRAME");
   // The frame was not reloaded into review mode: same document, no review gate.
   expect(await marked(page)).toBe(42);
   expect(gates.filter((g) => g.includes("review=1"))).toEqual([]);

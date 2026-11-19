@@ -40,6 +40,8 @@ export const PAGE_COMMENT_LIMITS = {
   composeMinIntervalMs: 1000,
   /** At most four `open` messages a second are accepted. */
   openMinIntervalMs: 250,
+  /** At most one page request a second (compose or open) may open a panel that is closed. */
+  reopenMinIntervalMs: 1000,
   /** Position reports accepted (and sent) per second. */
   positionsPerSecond: 20,
   /** How long `ready` waits for the app's answer. */

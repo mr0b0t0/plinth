@@ -1,7 +1,12 @@
 import { type CommentInfo, PAGE_COMMENTS_SOURCE } from "@plinth/shared";
 import { act, cleanup, renderHook } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { type UsePageCommentsOptions, usePageComments } from "./usePageComments.ts";
+import {
+  type StagePageCommentsOptions,
+  type UsePageCommentsOptions,
+  usePageComments,
+  useStagePageComments,
+} from "./usePageComments.ts";
 
 const ORIGIN = "http://art1.content.localhost:8787";
 const REQ = (n: number) => `request-${String(n).padStart(12, "0")}`;
@@ -29,6 +34,7 @@ function kit(over: Partial<UsePageCommentsOptions> = {}) {
   const frame = document.createElement("iframe");
   Object.defineProperty(frame, "contentWindow", { configurable: true, value: frameWin });
   let clock = 10_000;
+  const panel = { open: true };
   const onCompose = vi.fn();
   const onOpenThread = vi.fn();
   const initial: UsePageCommentsOptions = {
@@ -38,6 +44,7 @@ function kit(over: Partial<UsePageCommentsOptions> = {}) {
     enabled: true,
     items: [],
     blocked: false,
+    panelOpen: () => panel.open,
     onCompose,
     onOpenThread,
     now: () => clock,
@@ -68,6 +75,7 @@ function kit(over: Partial<UsePageCommentsOptions> = {}) {
     sent,
     onCompose,
     onOpenThread,
+    panel,
     tick: (ms: number) => {
       clock += ms;
     },
@@ -181,6 +189,53 @@ describe("usePageComments", () => {
     expect(k.onOpenThread).toHaveBeenCalledTimes(2);
   });
 
+  it("refuses open while a dialog is open and while the tab is hidden", () => {
+    const known = comment({ anchor: { kind: "page", key: "a" } });
+    const k = kit({ items: [known], blocked: true });
+    k.send({ type: "hello" });
+    k.send({ type: "open", id: known.id });
+    k.rerenderWith({ items: [known], blocked: false });
+    const hidden = vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
+    k.tick(2000);
+    k.send({ type: "open", id: known.id });
+    hidden.mockRestore();
+    expect(k.onOpenThread).not.toHaveBeenCalled();
+    k.tick(2000);
+    k.send({ type: "open", id: known.id });
+    expect(k.onOpenThread.mock.calls).toEqual([[known.id]]);
+  });
+
+  it("reopens a closed panel at most once a second, for compose and open together", () => {
+    const known = comment({ anchor: { kind: "page", key: "a" } });
+    const k = kit({ items: [known] });
+    k.panel.open = false;
+    k.send({ type: "hello" });
+    k.send({ type: "open", id: known.id });
+    expect(k.onOpenThread).toHaveBeenCalledTimes(1);
+    // The person closes the panel at once; the page keeps asking, four times a second.
+    for (let i = 0; i < 3; i++) {
+      k.tick(250);
+      k.send({ type: "open", id: known.id });
+    }
+    expect(k.onOpenThread).toHaveBeenCalledTimes(1);
+    // A compose in the same second would reopen it too: refused, and answered.
+    k.send({ type: "compose", req: REQ(1) });
+    expect(k.onCompose).not.toHaveBeenCalled();
+    expect(k.sent("composed").map((m) => [m.req, m.status])).toEqual([[REQ(1), "closed"]]);
+    k.tick(250);
+    k.send({ type: "compose", req: REQ(2) });
+    expect(k.onCompose).toHaveBeenCalledTimes(1);
+    k.tick(250);
+    k.send({ type: "open", id: known.id });
+    expect(k.onOpenThread).toHaveBeenCalledTimes(1);
+    // While the panel is open, showing a thread does not reopen anything: four a second.
+    k.panel.open = true;
+    k.send({ type: "open", id: known.id });
+    k.tick(250);
+    k.send({ type: "open", id: known.id });
+    expect(k.onOpenThread).toHaveBeenCalledTimes(3);
+  });
+
   it("tells the page ids, pins, status and anchors only: no text of any kind", () => {
     const page = comment({
       anchor: {
@@ -280,5 +335,60 @@ describe("usePageComments", () => {
     expect(k.sent("composed")).toEqual([
       { type: "composed", req: REQ(1), status: "closed", source: PAGE_COMMENTS_SOURCE, v: 1 },
     ]);
+  });
+});
+
+describe("useStagePageComments", () => {
+  function stage() {
+    const frameWin = { postMessage: vi.fn() };
+    const frame = document.createElement("iframe");
+    Object.defineProperty(frame, "contentWindow", { configurable: true, value: frameWin });
+    const openComments = vi.fn();
+    const initial: StagePageCommentsOptions = {
+      gate: { page_comments: true, artifact: { type: "html" } } as StagePageCommentsOptions["gate"],
+      frame,
+      contentOrigin: ORIGIN,
+      opaque: false,
+      items: [],
+      blocked: false,
+      commentsOpen: false,
+      openComments,
+    };
+    const hook = renderHook((p: StagePageCommentsOptions) => useStagePageComments(p), {
+      initialProps: initial,
+    });
+    const send = (data: Record<string, unknown>) =>
+      act(() => {
+        window.dispatchEvent(
+          new MessageEvent("message", {
+            data: { source: PAGE_COMMENTS_SOURCE, v: 1, ...data },
+            origin: ORIGIN,
+            source: frameWin as unknown as MessageEventSource,
+          }),
+        );
+      });
+    return {
+      ...hook,
+      send,
+      openComments,
+      rerenderWith: (p: Partial<StagePageCommentsOptions>) => hook.rerender({ ...initial, ...p }),
+    };
+  }
+
+  it("says when a page request opened the panel, so the panel does not take focus", () => {
+    const k = stage();
+    expect(k.result.current.openedByPage).toBe(false);
+    k.send({ type: "hello" });
+    k.send({ type: "compose", req: REQ(1) });
+    expect(k.openComments).toHaveBeenCalledTimes(1);
+    expect(k.result.current.openedByPage).toBe(true);
+    expect(k.result.current.pageCompose).toEqual({ req: REQ(1), anchor: null });
+    k.rerenderWith({ commentsOpen: true });
+    expect(k.result.current.openedByPage).toBe(true);
+    // The person closes it, and later opens it again themselves.
+    k.rerenderWith({ commentsOpen: false });
+    expect(k.result.current.openedByPage).toBe(false);
+    k.rerenderWith({ commentsOpen: true });
+    expect(k.result.current.openedByPage).toBe(false);
   });
 });

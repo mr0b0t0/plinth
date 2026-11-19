@@ -77,6 +77,21 @@ function fakeFrame() {
 
 const ANCHOR: PageAnchor = { kind: "page", key: "canvas", x: 40, y: 30, text: "Top left" };
 
+/** Something outside the panel that has focus (the frame, or a control in the app's bar). */
+function focusElsewhere(): HTMLElement {
+  const el = document.createElement("button");
+  el.textContent = "Elsewhere";
+  document.body.appendChild(el);
+  el.focus();
+  return el;
+}
+
+/** Let the panel's effects and animation-frame callbacks run. */
+const settle = () =>
+  act(async () => {
+    await new Promise((r) => requestAnimationFrame(() => setTimeout(r, 10)));
+  });
+
 function renderPanel(server: Server, props: Partial<CommentsPanelProps> = {}) {
   serve(server);
   const { frame, frameWin } = fakeFrame();
@@ -111,7 +126,7 @@ afterEach(() => {
 describe("CommentsPanel, comments from the page", () => {
   it("shows the page's anchor, posts it as a page anchor and settles posted with the id", async () => {
     const server: Server = { items: [], posts: [] };
-    const k = renderPanel(server, { pageCompose: { req: REQ, anchor: ANCHOR, focus: true } });
+    const k = renderPanel(server, { pageCompose: { req: REQ, anchor: ANCHOR } });
     await screen.findByText("No comments yet.");
     expect(within(k.panel).getByText(/Placed by the page/).textContent).toBe(
       "Placed by the page: Top left",
@@ -121,7 +136,6 @@ describe("CommentsPanel, comments from the page", () => {
     expect(k.frameWin.postMessage).not.toHaveBeenCalled();
     const user = userEvent.setup();
     const box = within(k.panel).getByRole("textbox", { name: "New comment" });
-    await waitFor(() => expect(document.activeElement).toBe(box));
     await user.type(box, "Move this");
     await user.click(within(k.panel).getByRole("button", { name: "Comment" }));
     await waitFor(() => expect(server.posts.length).toBe(1));
@@ -134,13 +148,13 @@ describe("CommentsPanel, comments from the page", () => {
 
   it("settles closed when the chip is removed, and when the panel closes", async () => {
     const server: Server = { items: [], posts: [] };
-    const k = renderPanel(server, { pageCompose: { req: REQ, anchor: ANCHOR, focus: false } });
+    const k = renderPanel(server, { pageCompose: { req: REQ, anchor: ANCHOR } });
     await screen.findByText("No comments yet.");
-    // Focus stays where it was (the panel heading), since the person was not using the page.
+    // The person opened the panel, so it took focus; the page's request moved it nowhere.
     expect(document.activeElement).toBe(within(k.panel).getByRole("heading", { name: "Comments" }));
     await userEvent.setup().click(within(k.panel).getByRole("button", { name: "Remove pin" }));
     expect(k.settled).toHaveBeenCalledWith(REQ, { status: "closed" });
-    k.rerender({ pageCompose: { req: "request-0000000002", anchor: null, focus: false } });
+    k.rerender({ pageCompose: { req: "request-0000000002", anchor: null } });
     k.unmount();
     await waitFor(() =>
       expect(k.settled).toHaveBeenLastCalledWith("request-0000000002", { status: "closed" }),
@@ -162,7 +176,7 @@ describe("CommentsPanel, comments from the page", () => {
           contentOrigin={ORIGIN}
           onClose={vi.fn()}
           pageOwnsAnchors
-          pageCompose={{ req: REQ, anchor: ANCHOR, focus: false }}
+          pageCompose={{ req: REQ, anchor: ANCHOR }}
           onPageComposeSettled={settled}
         />
       </StrictMode>,
@@ -177,10 +191,10 @@ describe("CommentsPanel, comments from the page", () => {
 
   it("is busy while someone writes, and replaces an earlier request nobody wrote for", async () => {
     const server: Server = { items: [], posts: [] };
-    const k = renderPanel(server, { pageCompose: { req: REQ, anchor: ANCHOR, focus: false } });
+    const k = renderPanel(server, { pageCompose: { req: REQ, anchor: ANCHOR } });
     await screen.findByText("No comments yet.");
     const second: PageAnchor = { kind: "page", key: "slide-2" };
-    k.rerender({ pageCompose: { req: "request-0000000002", anchor: second, focus: false } });
+    k.rerender({ pageCompose: { req: "request-0000000002", anchor: second } });
     expect(k.settled).toHaveBeenCalledWith(REQ, { status: "closed" });
     expect(within(k.panel).getByText(/Placed by the page/).textContent).toBe(
       "Placed by the page: slide-2",
@@ -188,7 +202,7 @@ describe("CommentsPanel, comments from the page", () => {
     await userEvent
       .setup()
       .type(within(k.panel).getByRole("textbox", { name: "New comment" }), "Hi");
-    k.rerender({ pageCompose: { req: "request-0000000003", anchor: ANCHOR, focus: false } });
+    k.rerender({ pageCompose: { req: "request-0000000003", anchor: ANCHOR } });
     expect(k.settled).toHaveBeenCalledWith("request-0000000003", { status: "busy" });
     // The anchor under the draft did not change.
     expect(within(k.panel).getByText(/Placed by the page/).textContent).toBe(
@@ -198,7 +212,7 @@ describe("CommentsPanel, comments from the page", () => {
 
   it("holds a request from someone who cannot comment like any other", async () => {
     const server: Server = { items: [], posts: [], list: { can_comment: false, signed_in: false } };
-    const k = renderPanel(server, { pageCompose: { req: REQ, anchor: ANCHOR, focus: true } });
+    const k = renderPanel(server, { pageCompose: { req: REQ, anchor: ANCHOR } });
     const link = await within(k.panel).findByRole("link", { name: "Sign in to comment" });
     // The page is not told, not even by how soon it hears back, that this person cannot comment.
     await act(async () => {
@@ -206,11 +220,13 @@ describe("CommentsPanel, comments from the page", () => {
     });
     expect(k.settled).not.toHaveBeenCalled();
     // A request while the panel is open is held too, and replaces the earlier one, as for a
-    // commenter who has not written anything; focus goes where the composer would be.
-    link.blur();
-    k.rerender({ pageCompose: { req: "request-0000000002", anchor: ANCHOR, focus: true } });
+    // commenter who has not written anything; focus stays where it was.
+    const elsewhere = focusElsewhere();
+    k.rerender({ pageCompose: { req: "request-0000000002", anchor: ANCHOR } });
     expect(k.settled).toHaveBeenCalledWith(REQ, { status: "closed" });
-    await waitFor(() => expect(document.activeElement).toBe(link));
+    await settle();
+    expect(document.activeElement).toBe(elsewhere);
+    expect(link).toBeTruthy();
     expect(k.settled).toHaveBeenCalledTimes(1);
     // Closing the panel ends it.
     k.unmount();
@@ -220,15 +236,50 @@ describe("CommentsPanel, comments from the page", () => {
     expect(k.settled).toHaveBeenCalledTimes(2);
   });
 
-  it("moves focus to the note for a viewer who may not comment", async () => {
-    const server: Server = { items: [], posts: [], list: { can_comment: false, signed_in: true } };
-    const k = renderPanel(server);
-    const note = await within(k.panel).findByText(
-      "You can view this artifact but not comment on it",
+  it("never moves focus on a page's compose, so keystrokes meant for the page stay there", async () => {
+    // The person is typing in the page (focus is in the frame) when the page asks to compose.
+    const k = renderPanel({ items: [], posts: [] });
+    await screen.findByText("No comments yet.");
+    const frame = focusElsewhere();
+    k.rerender({ pageCompose: { req: REQ, anchor: ANCHOR } });
+    await settle();
+    expect(document.activeElement).toBe(frame);
+    expect(within(k.panel).getByText(/Placed by the page/)).toBeTruthy();
+    // Screen readers hear that the page asked.
+    await waitFor(() =>
+      expect(within(k.panel).getByRole("status").textContent).toBe("The page asked for a comment."),
     );
-    k.rerender({ pageCompose: { req: REQ, anchor: ANCHOR, focus: true } });
-    await waitFor(() => expect(document.activeElement).toBe(note));
-    expect(k.settled).not.toHaveBeenCalled();
+    // The same for a viewer who may not comment: focus says nothing about the role.
+    cleanup();
+    const v = renderPanel({
+      items: [],
+      posts: [],
+      list: { can_comment: false, signed_in: true },
+    });
+    await within(v.panel).findByText("You can view this artifact but not comment on it");
+    const there = focusElsewhere();
+    v.rerender({ pageCompose: { req: REQ, anchor: ANCHOR } });
+    await settle();
+    expect(document.activeElement).toBe(there);
+    expect(v.settled).not.toHaveBeenCalled();
+  });
+
+  it("does not take focus when a page request opened it", async () => {
+    // The person closed the panel; focus went back to the Comments toggle in the app bar.
+    const toggle = focusElsewhere();
+    const k = renderPanel(
+      { items: [], posts: [] },
+      { openedByPage: true, pageCompose: { req: REQ, anchor: ANCHOR } },
+    );
+    await screen.findByText("No comments yet.");
+    await settle();
+    expect(document.activeElement).toBe(toggle);
+    expect(within(k.panel).getByText(/Placed by the page/)).toBeTruthy();
+    // Opened by the person, it takes focus as before.
+    cleanup();
+    focusElsewhere();
+    const p = renderPanel({ items: [], posts: [] });
+    expect(document.activeElement).toBe(within(p.panel).getByRole("heading", { name: "Comments" }));
   });
 
   it("shows a thread the page asked for before the list had loaded", async () => {
@@ -236,17 +287,20 @@ describe("CommentsPanel, comments from the page", () => {
     const resolved = comment({ status: "resolved", anchor: { kind: "page", key: "b" } });
     const active = vi.fn();
     // The page's own marker opened the panel: the request is there when the panel mounts.
+    const frame = focusElsewhere();
     const k = renderPanel(
       { items: [pinned, resolved], posts: [] },
-      { onActiveChange: active, pageOpen: { id: resolved.id, n: 1 } },
+      { onActiveChange: active, pageOpen: { id: resolved.id, n: 1 }, openedByPage: true },
     );
     await waitFor(() => expect(active).toHaveBeenCalledWith(resolved.id));
     expect((within(k.panel).getByRole("radio", { name: "All" }) as HTMLInputElement).checked).toBe(
       true,
     );
-    const el = k.panel.querySelector(`[data-thread-id="${resolved.id}"]`);
-    await waitFor(() => expect(document.activeElement).toBe(el));
-    // Focusing the thread tells the page again, as for a pin click; nothing else does.
+    expect(k.panel.querySelector(`[data-thread-id="${CSS.escape(resolved.id)}"]`)).toBeTruthy();
+    // The thread is shown, but focus stays where it was: a page request never moves it.
+    await settle();
+    expect(document.activeElement).toBe(frame);
+    // Showing the thread tells the page, as for a pin click; nothing else does.
     expect(active.mock.calls.every(([id]) => id === resolved.id)).toBe(true);
     const calls = active.mock.calls.length;
     await act(async () => {
@@ -261,7 +315,7 @@ describe("CommentsPanel, comments from the page", () => {
     const k = renderPanel(
       { items: [thread], posts: [] },
       {
-        pageCompose: { req: REQ, anchor: hostile, focus: false },
+        pageCompose: { req: REQ, anchor: hostile },
       },
     );
     await within(k.panel).findByText(/<b>bold<\/b>/);

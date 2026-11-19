@@ -668,12 +668,15 @@ markers and tell Plinth where to draw its pins.
   while someone writes one. A request from a viewer who cannot comment is held like any other and
   ends `closed` only when the panel closes or a later request replaces it, as for a commenter who
   has written nothing, so neither the answer nor its timing says whether the viewer can comment.
-  Focus, when it moves, goes to the composer or to what stands in its place ("Sign in to
-  comment").
+  No page request moves focus: the panel opens, or shows the thread, with focus where it was, and
+  the person clicks or tabs into the composer. Keystrokes meant for the page never land in a
+  comment, and where focus goes says nothing about the viewer's role.
 - **No comment text in the frame.** Plinth tells the page thread ids, pin numbers, status and
-  anchors (the page's own key, coordinates and data, or an element's selector) and request ids.
+  anchors (a page anchor's key, coordinates and data, or an element's selector) and request ids.
   Never comment bodies, authors, emails, roles, mention state, an anchor's label or an element's
-  text excerpt.
+  text excerpt. A page anchor's key, coordinates and data are written by the page's code or by any
+  commenter (the comments API takes page anchors from anyone who may comment), so they are
+  untrusted input for the page too: render them as text, never as HTML.
 - **Page anchors.** `{ kind: "page", key, x?, y?, text?, data? }`: `key` names what the page anchors
   to in its own terms (`^[A-Za-z0-9][A-Za-z0-9_.:/-]{0,127}$`), `x` and `y` are page coordinates
   (finite, within ±10⁹), `text` is a label of at most 120 characters for the composer's chip, and
@@ -689,9 +692,11 @@ markers and tell Plinth where to draw its pins.
   runtime positions element anchors itself, and "Pin to an element" is hidden.
 - **Limits in the app.** At most one compose a second is accepted, only after the page said hello,
   while the tab is visible and no dialog is open; a compose while someone is writing is `busy` and
-  leaves the draft and its anchor alone. Focus moves to the composer only when it was in the frame.
-  At most 4 `open` and 20 position reports a second, and 500 threads. A page can at worst reopen a
-  panel the person closed, once a second; the report link covers a page that abuses it.
+  leaves the draft and its anchor alone. `open` is refused while the tab is hidden or a dialog is
+  open. A request that would open a closed panel, compose or `open`, is accepted at most once a
+  second, the two together. No page request moves focus. At most 4 `open` and 20 position reports
+  a second, and 500 threads. A page can at worst reopen a panel the person closed, once a second;
+  the report link covers a page that abuses it.
 - **Availability.** Origin and opaque isolation alike: the app identifies the frame by its window
   (and, under origin isolation, its exact origin) and posts to it with the exact content origin, or
   `"*"` under opaque isolation, which is safe because the messages hold nothing the framed document
