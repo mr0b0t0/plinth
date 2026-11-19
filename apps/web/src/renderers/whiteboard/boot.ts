@@ -152,6 +152,7 @@ async function startLive(win: Window, board: Board, runtime: PlinthRuntime): Pro
     },
     say: (t) => board.say(t),
     emit: (topic, d) => board.live?.saved(topic, d.id),
+    busy: (id) => board.gesturing(id),
   });
 
   win.addEventListener("plinth:expired", () => {

@@ -565,12 +565,19 @@ export class Board {
     this.drag = null;
     if (drag.kind === "pan") return;
     const cur = this.model.blocks.get(drag.id)?.data;
-    if (!cur) return;
-    if (drag.kind === "move") {
-      if (!drag.moved) return;
+    if (cur && drag.kind === "move" && drag.moved) {
       this.live?.moved();
       this.save(drag.id, { x: cur.x, y: cur.y }, { x: drag.bx, y: drag.by });
-    } else this.save(drag.id, { w: cur.w, h: cur.h }, { w: drag.w0, h: drag.h0 });
+    } else if (cur && drag.kind === "resize") {
+      this.save(drag.id, { w: cur.w, h: cur.h }, { w: drag.w0, h: drag.h0 });
+    }
+    // A peer's save that came in during the gesture: read now, or after the save just started.
+    this.sync?.release(drag.id);
+  }
+
+  /** Whether this viewer is dragging or resizing a block (its model copy holds the gesture). */
+  gesturing(id: string): boolean {
+    return this.drag !== null && this.drag.kind !== "pan" && this.drag.id === id;
   }
 
   private onKey(e: KeyboardEvent): void {

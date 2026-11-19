@@ -4,7 +4,8 @@
 // fields are put on top of it, up to four times, and a field someone else changed meanwhile keeps
 // their value (the viewer is told). One write per block is in flight at a time, and later changes
 // to it are folded into the next one. A refusal the viewer cannot fix (read_only, forbidden) turns
-// the board read-only.
+// the board read-only. A peer's save of a block this viewer is saving, dragging or resizing is
+// read once that is over, so it never replaces what the viewer is in the middle of.
 import { type BoardArrow, type BoardBlock, cleanBlock } from "@plinth/shared";
 import type { BoardModel, Entry } from "./model.ts";
 import type { RuntimeCollection, RuntimeError } from "./runtime.ts";
@@ -21,6 +22,11 @@ export interface SyncDeps {
   say(text: string): void;
   /** Tell the room a block or arrow was saved (a no-op without a room). */
   emit(topic: "block.saved" | "arrow.saved", data: { id: string }): void;
+  /**
+   * Whether this viewer holds a block in a gesture already drawn into the model (a drag or a
+   * resize): a peer's save of it is read once the gesture ends (release).
+   */
+  busy?(id: string): boolean;
   /** Waits; a test passes its own. */
   wait?(ms: number): Promise<void>;
 }
@@ -69,6 +75,8 @@ export class BoardSync {
   private readonly running = new Map<string, Promise<boolean>>();
   /** The server's copy of each block being saved, at its rev: what the next write starts from. */
   private readonly known = new Map<string, Entry<BoardBlock>>();
+  /** Blocks a peer saved while this viewer was busy with them: read again when it is done. */
+  private readonly deferred = new Set<string>();
   private stopped = false;
 
   constructor(private readonly d: SyncDeps) {}
@@ -116,6 +124,7 @@ export class BoardSync {
       running = this.drain(id).finally(() => {
         this.running.delete(id);
         this.known.delete(id);
+        this.release(id);
       });
       this.running.set(id, running);
     }
@@ -312,8 +321,12 @@ export class BoardSync {
     try {
       const doc = await coll.get(id);
       const m = this.d.model;
-      // A block this viewer is still saving keeps its local data until its write settles.
-      if (collection === "blocks" && this.running.has(id)) return;
+      // A block this viewer is saving, dragging or resizing keeps its local copy (which a drag's
+      // drop is read from) and is read again once that is over.
+      if (collection === "blocks" && this.held(id)) {
+        this.deferred.add(id);
+        return;
+      }
       if (doc === null) m.remove(collection, id);
       else if (collection === "blocks") m.upsertBlock(doc.id, doc.data, doc.rev);
       else m.upsertArrow(doc.id, doc.data, doc.rev);
@@ -321,6 +334,20 @@ export class BoardSync {
     } catch {
       // The next snapshot catches up.
     }
+  }
+
+  private held(id: string): boolean {
+    return this.running.has(id) || this.d.busy?.(id) === true;
+  }
+
+  /**
+   * This viewer is done with a block (a gesture ended, or its save settled): read it again if a
+   * peer saved it meanwhile. A save the gesture started keeps it deferred until that settles.
+   */
+  release(id: string): void {
+    if (!this.deferred.has(id) || this.held(id)) return;
+    this.deferred.delete(id);
+    void this.refetch("blocks", id);
   }
 
   /** Whether a block has a write in flight (its local copy is ahead of the server's). */
