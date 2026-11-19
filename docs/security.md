@@ -44,6 +44,10 @@ make a test pass.
 | Page code harvests names and the access list | A page reads `plinth.viewer.name`, its authors' names or `plinth.people.list()` and copies them where link viewers or every viewer can read them | Names appear only where the email already does (`viewer` declared, identified reader); the people list only for owners and editors on a page that declares `data viewer people`, whose author is the owner or an editor; every identified viewer is told, under the bar, that the owner and editors can see everyone the page is shared with; the skill forbids copying the list or emails into shared data. WebRTC stays the known CSP gap ([The people list](#the-people-list)) |
 | Display name used to impersonate | Someone sets their name to "Owner", "ana@example.com" or a right-to-left override that reorders the text around it | Names cannot contain `@` or the two characters that render as one (U+FE6B, U+FF20: every character whose NFKC form is `@`), nor control, bidi, zero-width or separator characters, are cut to 64 code points on every read, and are never authority: `role` and `comment_author_role` stay server-derived and Plinth's own UI shows the role beside them; tool descriptions say names are display text |
 | Enumerating who has an account | A caller tries addresses to learn which ones have a Plinth account or what they are called, for example by adding them as grants on an artifact of their own and reading the people list or the sharing settings back | No route takes an email or a name to look up, and the people list searches only one artifact's access list. Since the owner writes that list without its holders being told, an access list shows a grant holder's name only once that person has taken part in the artifact (a comment, a shared-data entry or a version, which already show their name to the readers of the list), and a name it keeps back is `null` and never matched by `q`, the same as an address with no account (`policy.ts accessListShowsName`) |
+| An agent files a private artifact into a shared category | A prompt-injected or confused agent publishes another client's report with `category: "acme"`, or moves one there with `update_artifact` or `PATCH` | Filing never shares: the artifact waits as pending, and the category's people cannot open, list, find or get a code for it until the signed-in owner reviews it in the app; agents and bearer tokens cannot review; the owner's agent is told `category_share.state: "pending"` with the review link; tool descriptions say never to file because of comment, mention or page text ([Category sharing](#category-sharing)) |
+| A stale review reopens access | A review left from a deleted share, from before a rename, or from another key, or a review made against a version or filing that changed before it was confirmed | A review is bound to the share id it was made against and counts only while that share is the current share of the artifact's current key; a key change resets it and bumps `category_rev` in the same statement; a review applies only at the version and `category_rev` the owner was shown, checked in the statement that writes it; creating a share and changing its people reset every artifact of the key first; a rename re-checks its share decision inside its batch ([Category sharing](#category-sharing)) |
+| Editors learn the owner's sharing | An editor's `update_artifact` result or upload status names the owner's category share | `category_share` and the share id in `review_url` are built only for the owner (`seesOwnerMetadata`), never for an editor, an editor's agent or a token limited to one artifact |
+| Probing who a category is shared with | Trying addresses on a portal's code flow | The same answer whether or not the address holds a grant, the allowlist flow's rate limits, single-use hashed codes bound to the share; the email names who shared it, never the title or the category |
 
 Out of scope for v1: denial of service beyond Cloudflare's defaults, a compromised Cloudflare
 account, and malicious instance operators.
@@ -206,8 +210,8 @@ scoped to the app as top-level site.
 
 A token or cookie for artifact A is rejected on artifact B: both carry the artifact id and the
 content host checks it against its own subdomain. Any change to visibility, the password or the
-grants bumps the artifact's access epoch, which invalidates every outstanding token, cookie and
-password pass at once.
+grants, or a category share change that can take access away, bumps the artifact's access epoch,
+which invalidates every outstanding token, cookie and password pass at once.
 
 **Open counts** ([spec](spec.md#admin-stats-and-view-counts)). The gate may add one signed bit,
 `w`, to the viewer token, for a normal open of the live page by someone other than the owner, an
@@ -506,7 +510,21 @@ REST, MCP and the content host alike. Roles: owner; editor (view, comment, menti
 commenter (view, comment, mention); viewer (view). Strangers get 404, not 403, so private artifacts
 do not reveal that they exist. Agents act as their user, further limited by token scopes
 (`artifacts:read`, `artifacts:write`, `mentions`). An artifact's category is returned only to its
-owner (`policy.seesOwnerMetadata`, applied in the one function that builds artifact summaries).
+owner (`policy.seesOwnerMetadata`, applied in the one function that builds artifact summaries), and
+so is its place in a shared category (`category_share`).
+
+**Category grants.** A person's role on an artifact is the stronger of their direct grant and their
+grant on the share of the artifact's owner and category key (`grantedRole`), and the category grant
+counts only through `categoryRoleOf`: the artifact's review is `shared`, made against the very share
+the grant is on, that share is on the artifact's current key, and `ALLOW_CATEGORY_SHARING` is on.
+The loaders hand policy the share's id and key and the artifact's stored review; the binding is
+checked in `policy.ts`, never in a loader. `roleOf` uses `grantedRole`, so every `decideFor` path
+(REST, MCP, the gate, thumbnails, comments, data, live editing, and the room through the sealed
+claim) applies it. The paths that compute roles in bulk (`list_artifacts`, portals, mention tasks,
+the allowlist code flow) mirror it in SQL and then run `grantedRole` or `decide` on every row. A
+category grant is never more than commenter, and never reaches edit, restore, manage, data reads
+over MCP or REST, live editing or view counts. A collaborator's personal category is shown to that
+person only, in the app (`seesPersonalCategory`: a signed-in person with a role other than owner).
 
 A personal access token may be **limited to one artifact** (`agent_connections.artifact_id`, for
 CI). The policy carries it on the agent principal (`boundArtifactId`, rebuilt from the live
@@ -1243,6 +1261,68 @@ pulls. What it does about text it did not write and about the token:
   `pull_request_target` to build and publish a fork's code with the token.
 - **Pinning.** The Action is used at a release tag or a commit SHA, and imports the client from
   the same commit with no dependencies, so the pin covers everything it runs.
+
+## Category sharing
+
+An owner shares a category with people, and the hard requirement is that a wrong filing never
+discloses anything: agents set categories, and a prompt-injected agent could file another client's
+report under a shared category. Filing and sharing are separate acts, and these rules hold (tests:
+`category-safeguard.test.ts`, `category-shares.test.ts`, `policy-category-sharing.test.ts`):
+
+1. Only the owner's share requests (create, a people change, a review, delete) write
+   `artifacts.category_review`, and all need a signed-in session with CSRF and exact `Origin`
+   (`mayManageCategoryShares`). No MCP tool, bearer token, upload ticket or `ADMIN_TOKEN` can.
+2. A review counts only while it is `shared`, bound to the share id that is the current share of the
+   artifact's current key, and the switch is on (`categoryRoleOf`). Share ids are random and never
+   reused, so a stale value cannot count in any order of writes.
+3. A change of `category_key` resets the review and bumps `category_rev` in the same SQL statement
+   (`CATEGORY_SET`, evaluated against the old row), and bumps the access epoch when the review was
+   `shared`.
+4. A review confirms a specific (artifact, version, `category_rev`) inside the share's current key,
+   checked in the statement that writes it (`json_each` over the submitted items). A concurrent new
+   version, move, delete or takedown skips the item.
+5. Creating a share and changing its people reset every artifact of the key, then apply the
+   submitted review, in one batch: no earlier value survives into a new share or a new set of
+   people.
+6. A rename re-checks its share decision inside its batch: every statement is guarded on the
+   owner's `category_share_rev`, which every share create, delete or move bumps, and a probe
+   statement reports it, so a share change after the rename's read turns the whole rename into a
+   no-op (409 `sharing_changed`). Kept reviews are those bound to the share that is on the new key
+   after the batch's own move.
+7. A pending or private artifact answers a category grantee as a stranger's private artifact does:
+   404, absent from lists, portals and mention roles, and no code from the allowlist code flow.
+8. The owner's agents learn about it (`category_share.state: "pending"`, `review_url`), so the hold
+   is never invisible; editors' agents learn nothing about the owner's sharing.
+
+**Concurrency.** A rename and a share create on the same key: whichever commits second either sees
+the counter moved (the rename changes nothing) or finds the artifacts moved away (the share's
+review skips them all as `moved`). A filing that lands after a share's batch arrives pending; one
+that lands before it is not in the owner's list, so the reset leaves it pending. A filing during a
+review changes the key and `category_rev`, or the version, and the item is skipped. Of two dialogs,
+the later batch wins, and its reset means the result is exactly what that owner confirmed. A
+filing into a key while a share moves onto it leaves that artifact unreviewed: pending, never
+disclosed.
+
+**Epochs.** A people change, a deleted share, a review from shared to private, a key change away
+from a shared review and a rename or clear bump the affected artifacts' access epochs in the same
+batch and notify their rooms (`revoke`, 4401; the room's alarm re-checks D1 as a backup). Turning
+`ALLOW_CATEGORY_SHARING` off stops new decisions at once; passes issued earlier end within 12 hours,
+or at once with `pnpm --filter @plinth/worker admin -- bump-epochs --category-shared`.
+
+**Portals.** `/p/<share id>` lists the share's shared artifacts to people holding a grant (and to
+the owner as a preview), never to agents. The id is random but not a secret: every request is
+authorized by email, and a share that exists answers `email_required` to anyone else. The code
+flow mirrors the allowlist's (same answer listed or not, same rate limit counters, five attempts,
+single use, re-checking the grant after use); its codes carry `share_id` with `artifact_id` NULL
+and a hash that binds the share, so a portal code never opens an artifact's code route and the
+reverse. The viewer session it starts names no artifact. Portal pages are `no-store` and
+`noindex`. Grantees see the share's title and the artifacts' titles, never the category name, the
+owner's share state or other people on the share. Category names and share titles are never
+logged.
+
+**Erasure.** A person's own shares, grants on them, portal codes and personal categories cascade
+from `users`; `erase-user` also deletes their address from other people's shares
+(`category_grants`). Deleting or taking down an artifact removes every personal category on it.
 
 ## Operator checklist for the content domain
 

@@ -147,6 +147,12 @@ export interface Config {
    * Permissions-Policy at microphone=().
    */
   allowDictation: boolean;
+  /**
+   * ALLOW_CATEGORY_SHARING (default on): owners may share a category with people, who then see the
+   * artifacts the owner reviewed into it (docs/spec.md "Category sharing and personal categories").
+   * Off, category grants count for nothing and the share and portal endpoints are closed.
+   */
+  allowCategorySharing: boolean;
   /** OPERATOR_*: who runs this instance, for its legal pages. null when none is published. */
   operator: {
     name: string;
@@ -371,6 +377,7 @@ export function parseConfig(env: Record<string, unknown>): Config {
     allowLiveEditing: boolDefaultOn(env.ALLOW_LIVE_EDITING),
     live: parseLiveEditSettings(env),
     allowDictation: bool(env.ALLOW_DICTATION),
+    allowCategorySharing: boolDefaultOn(env.ALLOW_CATEGORY_SHARING),
     operator: parseOperator(env),
   };
   validate(config);

@@ -36,6 +36,13 @@ export const ARTIFACT_WIPE: readonly ArtifactWipeStep[] = [
     claimsAttempts: true,
     statements: (d1, id, now) => [claimArtifactAttempts(d1, id, now)],
   },
+  // Collaborators' own categories for it (0013_category_sharing): nobody can open it any more.
+  {
+    tables: ["personal_categories"],
+    statements: (d1, id) => [
+      d1.prepare("DELETE FROM personal_categories WHERE artifact_id = ?1").bind(id),
+    ],
+  },
   // Tokens limited to the artifact (0012_bound_tokens) are revoked: they can never act again, and
   // the row stays on its person's Connections page until the artifact's erase removes it.
   {

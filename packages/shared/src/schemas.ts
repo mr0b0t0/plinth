@@ -2,6 +2,7 @@
 // the web app may reuse them for client-side checks. Field names are snake_case on the wire.
 import { z } from "zod";
 import { ARTIFACT_TYPES } from "./artifactTypes.ts";
+import { CATEGORY_ROLES } from "./categories.ts";
 import {
   ASSET_PATH_RE,
   CLIENT_TYPES,
@@ -350,7 +351,59 @@ export const renameCategoryInput = z.object({
     .max(LIMITS.maxCategoryLength)
     .nullable()
     .describe("The new name (an existing one merges into it), or null to clear the category"),
+  /**
+   * true: rename, merge or clear one of the caller's own categories for artifacts shared with them
+   * (docs/spec.md "Category sharing and personal categories") instead of an owner category.
+   */
+  personal: z.boolean().optional(),
 });
+
+// ---------- category sharing and personal categories ----------
+
+export const categoryRoleSchema = z.enum(CATEGORY_ROLES);
+
+/** One person a category is shared with: viewer or commenter, never editor. */
+export const categoryPersonInput = z.object({ email: emailSchema, role: categoryRoleSchema });
+
+/** Review items in one request, at most; the Worker also caps them at the owner's artifact limit. */
+export const MAX_REVIEW_ITEMS = 10_000;
+
+/**
+ * One decision of the owner's review: the artifact, and the version and category_rev the owner was
+ * shown. A concurrent change to either skips the item.
+ */
+export const reviewItemInput = z.object({
+  id: z.string().regex(ARTIFACT_ID_RE),
+  version: z.number().int().min(0),
+  category_rev: z.number().int().min(0),
+  decision: z.enum(["shared", "private"]),
+});
+
+/** POST /category-shares (the signed-in owner only). */
+export const createCategoryShareInput = z.object({
+  category: categorySchema,
+  title: titleSchema.optional(),
+  people: z.array(categoryPersonInput).max(LIMITS.maxAllowlistEmails),
+  review: z.array(reviewItemInput).max(MAX_REVIEW_ITEMS),
+});
+
+/**
+ * PATCH /category-shares/:id: a new title, new people, or both. `review` is required with
+ * `people` (the route refuses it otherwise): changing who sees a category re-confirms what they see.
+ */
+export const updateCategoryShareInput = z.object({
+  title: titleSchema.optional(),
+  people: z.array(categoryPersonInput).max(LIMITS.maxAllowlistEmails).optional(),
+  review: z.array(reviewItemInput).max(MAX_REVIEW_ITEMS).optional(),
+});
+
+/** POST /category-shares/:id/review. */
+export const categoryReviewInput = z.object({
+  items: z.array(reviewItemInput).min(1).max(MAX_REVIEW_ITEMS),
+});
+
+/** PUT /artifacts/:ref/my-category: the caller's own category for an artifact shared with them. */
+export const myCategoryInput = z.object({ category: categorySchema.nullable() });
 
 export const viewerPasswordInput = z.object({
   password: z.string().min(1).max(LIMITS.maxPasswordLength),

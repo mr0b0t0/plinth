@@ -1,6 +1,7 @@
 // Response shapes for /api/v1 and MCP tool results (structuredContent). snake_case on the wire.
 
 import type { ArtifactSource, ArtifactType } from "./artifactTypes.ts";
+import type { CategoryRole, CategoryShareState, ReviewSkipReason } from "./categories.ts";
 import type {
   ClientType,
   CommentStatus,
@@ -58,6 +59,17 @@ export interface ArtifactSummary {
    * but the owner. Untrusted text.
    */
   category: string | null;
+  /**
+   * Where the artifact stands in its category's share (docs/spec.md "Category sharing and personal
+   * categories"): `pending` until the owner reviews it, then `shared` or `private`. null when its
+   * category is not shared, and always null for anyone but the owner. The Worker always sends it.
+   */
+  category_share?: CategoryShareState | null;
+  /**
+   * The signed-in person's own category for an artifact shared with them (never on their own
+   * artifacts). Seen by that person only, in the app: null for everyone else and for agents.
+   */
+  my_category?: string | null;
 }
 
 export interface AssetInfo {
@@ -138,6 +150,18 @@ export interface PublishResult {
   stored: StoredSummary;
   /** The stored (snapped) category, present only when this call set one. Never on a restore. */
   category?: string;
+  /**
+   * The owner's own results only, when the artifact's category is shared: filing never shares,
+   * so a new filing is `pending` until the owner reviews it in the app (`review_url`).
+   */
+  category_share?: CategoryShareResult;
+}
+
+/** Where an artifact stands in its shared category, for its owner's own results. */
+export interface CategoryShareResult {
+  state: CategoryShareState;
+  /** pending only: the dashboard's review dialog for that share. */
+  review_url?: string;
 }
 
 /** One publish warning. Never blocks a publish. Text echoed from files is truncated and escaped. */
@@ -211,6 +235,11 @@ export interface StartUploadResult {
   /** Shell commands with a <folder> placeholder. npx only on release builds >= MIN_UPLOAD_CLI_VERSION. */
   commands: { curl: string; npx?: string };
   next: string;
+  /**
+   * The owner's own upload into a shared category: the state the artifact will be in once the
+   * bundle commits (always `pending`).
+   */
+  category_share?: CategoryShareResult;
 }
 
 /**
@@ -234,6 +263,8 @@ export interface UploadStatus {
   expires_at: string;
   receiving_until: string | null;
   next: string;
+  /** Once used, for the owner's own upload into a shared category (never an editor's). */
+  category_share?: CategoryShareResult;
 }
 
 /** POST /api/v1/uploads/:id/bundle: 201 for a publish, 200 for an update. */
@@ -261,6 +292,19 @@ export interface SharingSettings {
   has_password: boolean;
   grants: GrantInfo[];
   public_allowed: boolean;
+  /**
+   * The share of this artifact's category, when it has one (the owner only): who else sees the
+   * artifact through it, once it is `shared`.
+   */
+  category_share?: SharingCategoryShare | null;
+}
+
+/** A category share as an artifact's sharing settings show it. */
+export interface SharingCategoryShare {
+  id: string;
+  title: string;
+  state: CategoryShareState;
+  people: CategoryPerson[];
 }
 
 export interface CommentInfo {
@@ -418,6 +462,11 @@ export interface AppConfig {
    * declare `dictation` may receive words the viewer speaks, recognized by the app.
    */
   dictation: boolean;
+  /**
+   * Owners may share a category with people (ALLOW_CATEGORY_SHARING). The Worker always sends it;
+   * absent reads as off.
+   */
+  category_sharing?: boolean;
 }
 
 export interface OperatorInfo {
@@ -675,6 +724,8 @@ export interface DevOutboxItem {
 export interface CategoryCount {
   name: string;
   count: number;
+  /** The owner shares this category with people (listed even with no artifact in it yet). */
+  shared?: true;
 }
 
 /** list_artifacts and GET /api/v1/artifacts: the artifacts plus the caller's own category names. */
@@ -682,7 +733,95 @@ export interface ArtifactList {
   items: ArtifactSummary[];
   /** The caller's own categories, most-used first, whatever the query or filter. */
   categories: CategoryCount[];
+  /**
+   * The signed-in person's own categories for artifacts shared with them, most-used first (the
+   * app only; never sent to agents).
+   */
+  my_categories?: CategoryCount[];
 }
+
+// ---------- category sharing (docs/spec.md "Category sharing and personal categories") ----------
+
+/** One person a category is shared with. */
+export interface CategoryPerson {
+  email: string;
+  role: CategoryRole;
+}
+
+/** GET /api/v1/category-shares item: one of the owner's shares. */
+export interface CategoryShareSummary {
+  id: string;
+  /** The owner's category name (owner only). */
+  category: string;
+  /** What the people see: the portal's heading. */
+  title: string;
+  /** The portal: APP_HOST/p/<id>. */
+  portal_url: string;
+  people: CategoryPerson[];
+  counts: { shared: number; pending: number; private: number };
+}
+
+/** One artifact of a shared category, as the owner's review shows it. */
+export interface CategoryShareArtifact {
+  id: string;
+  slug: string;
+  title: string;
+  current_version: number;
+  category_rev: number;
+  state: CategoryShareState;
+  taken_down: boolean;
+  updated_at: string;
+  /** Who published the current version: a person's name or email, or a connection label. */
+  last_author: string | null;
+}
+
+/** GET /api/v1/category-shares/preview?category=: what sharing a category would ask to review. */
+export interface CategorySharePreview {
+  /** The owner's name for it. */
+  category: string;
+  artifacts: CategoryShareArtifact[];
+}
+
+/** GET /api/v1/category-shares/:id. */
+export interface CategoryShareDetail extends CategoryShareSummary {
+  artifacts: CategoryShareArtifact[];
+}
+
+/** The answer of every request that applies a review. */
+export interface CategoryReviewResult {
+  shared: number;
+  private: number;
+  skipped: { id: string; reason: ReviewSkipReason }[];
+}
+
+/** POST and PATCH /api/v1/category-shares: the share as it is now, and how the review went. */
+export interface CategoryShareWriteResult {
+  share: CategoryShareSummary;
+  review: CategoryReviewResult | null;
+}
+
+/** GET /api/v1/portals item: a collection someone shared with the caller. */
+export interface PortalSummary {
+  id: string;
+  title: string;
+  owner_name: string | null;
+  count: number;
+}
+
+/** GET /api/v1/portals/:id, and the answer of a confirmed portal code. */
+export type PortalGate =
+  | {
+      status: "ok";
+      portal: {
+        id: string;
+        title: string;
+        owner_name: string | null;
+        /** The caller's role through the share, or owner for the owner's preview. */
+        role: "owner" | CategoryRole;
+      };
+      items: ArtifactSummary[];
+    }
+  | { status: "email_required"; portal: { id: string } };
 
 /** One token of a design system, as get_design_system returns it. */
 export interface DesignSystemTokenRead {

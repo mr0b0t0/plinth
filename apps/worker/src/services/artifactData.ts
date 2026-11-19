@@ -76,7 +76,7 @@ async function targetOf(ctx: Ctx, a: ArtifactRow): Promise<DataTarget> {
  */
 async function writerOf(ctx: Ctx, a: ArtifactRow, role: EffectiveRole | null): Promise<DataWriter> {
   const own = principalEmail(ctx.principal);
-  const email = role === "owner" ? own : ((await grantFor(ctx, a.id))?.email ?? own);
+  const email = role === "owner" ? own : ((await grantFor(ctx, a))?.email ?? own);
   if (!email || !role) throw new ApiError("forbidden", "You cannot change this artifact's data");
   const p = ctx.principal;
   return {

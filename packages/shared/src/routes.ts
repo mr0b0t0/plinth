@@ -58,6 +58,17 @@ export const API = {
   // categories (the caller's own names; rename and merge for the signed-in owner only)
   categories: "/categories", // GET names with counts
   categoryRename: "/categories/rename", // POST rename, merge or clear (session only)
+  myCategory: "/artifacts/:ref/my-category", // PUT your own category on an artifact shared with you (session only)
+  // category sharing (the signed-in owner only; never agents, never MCP)
+  categoryShares: "/category-shares", // GET your shares, POST share a category with its review
+  categorySharePreview: "/category-shares/preview", // GET ?category= what sharing one would review
+  categoryShare: "/category-shares/:id", // GET with its artifacts, PATCH title or people, DELETE stop
+  categoryShareReview: "/category-shares/:id/review", // POST share or keep private, per artifact
+  // portals: the collections shared with you (people only)
+  portals: "/portals", // GET the collections shared with the caller
+  portal: "/portals/:id", // GET PortalGate
+  portalEmail: "/portals/:id/email", // POST ask for a code
+  portalCode: "/portals/:id/code", // POST confirm the code
   // viewing (gate, then a one-time token for the content host)
   view: "/view/:ref", // GET ViewGate, ?version=n&review=1&preview=1
   viewPassword: "/view/:ref/password",
@@ -105,6 +116,7 @@ export const APP_ROUTES = {
   editor: "/a/:slug/edit",
   settings: "/a/:slug/settings",
   open: "/open/:id",
+  portal: "/p/:id",
   report: "/a/:slug/report",
   adminReports: "/admin/reports",
   adminStats: "/admin/stats",

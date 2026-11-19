@@ -10,6 +10,16 @@ Add a line under **Unreleased** in the pull request that makes a change people w
 
 ## Unreleased
 
+- **Your own categories for artifacts shared with you, and sharing a whole category.** On the
+  dashboard, "Move to category…" now files an artifact someone shared with you under a category of
+  your own, which only you see; the Category menu covers yours under Shared (#42). Owners can share
+  one of their categories with people (viewer or commenter) under a name they choose: the people
+  get one page, `/p/<id>`, listing the artifacts the owner ticked, and confirm their email there
+  once. Filing an artifact under a shared category never shares it: it waits for the owner's review
+  (a banner on the dashboard, "Waiting for review" on the row), and the owner's agent is told so
+  (`category_share.state: "pending"` with a review link). On by default; `ALLOW_CATEGORY_SHARING`
+  turns it off. Migration `0013_category_sharing.sql`.
+
 - **Dictation, run by Plinth, for pages that ask for it.** A page that declares `dictation` can
   take the words a viewer speaks (`plinth.dictation`): Plinth's app runs the browser's speech
   recognizer after the viewer's click and consent, shows "Listening" with a Stop the page cannot

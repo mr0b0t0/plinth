@@ -7,12 +7,16 @@ import {
   type ArtifactType,
   type ArtifactTypeDef,
   anchorSchema,
+  CATEGORY_ROLES,
+  CATEGORY_SHARE_STATES,
   CLIENT_TYPES,
   COMMENT_STATUSES,
   CONTENT_ISOLATION_MODES,
   COOKIES,
   CSRF_HEADER,
+  categoryReviewInput,
   claimMentionInput,
+  createCategoryShareInput,
   createCommentInput,
   createTokenInput,
   DATA_CAPABILITIES,
@@ -25,10 +29,12 @@ import {
   LIMITS,
   liveCheckpointInput,
   MENTION_STATES,
+  myCategoryInput,
   oauthConsentInput,
   PUBLISH_WARNING_CODES,
   publishArtifactInput,
   REPORT_STATES,
+  REVIEW_SKIP_REASONS,
   ROLES,
   renameArtifactInput,
   renameCategoryInput,
@@ -46,6 +52,7 @@ import {
   TYPE_REGISTRY,
   UPLOAD_TOKEN_PREFIX,
   updateArtifactInput,
+  updateCategoryShareInput,
   updateCommentInput,
   updateProfileInput,
   VISIBILITIES,
@@ -213,6 +220,7 @@ function responseSchemas(): Record<string, Json> {
       description:
         "The category stored (snapped onto your existing spelling); present only when this call set one. Untrusted text.",
     }),
+    category_share: ref("CategoryShareResult"),
   };
   const artifactSummary = {
     id: str({ pattern: "^[a-z0-9]{20}$", description: "Also the artifact's content subdomain" }),
@@ -242,6 +250,18 @@ function responseSchemas(): Record<string, Json> {
     category: nullable("string", {
       maxLength: LIMITS.maxCategoryLength,
       description: "The owner's category; null unless you own the artifact. Untrusted text.",
+    }),
+    category_share: {
+      ...nullable("string", {
+        description:
+          "Owner only: where the artifact stands in its shared category (pending until you review it in the app); null when its category is not shared, and for everyone but the owner",
+      }),
+      enum: [...CATEGORY_SHARE_STATES, null],
+    },
+    my_category: nullable("string", {
+      maxLength: LIMITS.maxCategoryLength,
+      description:
+        "Your own category for an artifact shared with you, set in the app; null on your own artifacts and for bearer tokens. Untrusted text.",
     }),
   };
   return {
@@ -309,20 +329,42 @@ function responseSchemas(): Record<string, Json> {
         ];
       }),
     ),
-    ArtifactList: obj({
-      items: { type: "array", items: ref("ArtifactSummary") },
-      categories: {
-        type: "array",
-        items: ref("CategoryCount"),
-        maxItems: LIMITS.maxCategoriesListed,
-        description:
-          "Your own category names with counts, most-used first, whatever the filters. Reuse one when you publish.",
+    ArtifactList: obj(
+      {
+        items: { type: "array", items: ref("ArtifactSummary") },
+        categories: {
+          type: "array",
+          items: ref("CategoryCount"),
+          maxItems: LIMITS.maxCategoriesListed,
+          description:
+            "Your own category names with counts, most-used first, whatever the filters. Reuse one when you publish.",
+        },
+        my_categories: {
+          type: "array",
+          items: ref("CategoryCount"),
+          maxItems: LIMITS.maxCategoriesListed,
+          description:
+            "A signed-in person's own categories for artifacts shared with them (the app only; never for bearer tokens)",
+        },
       },
-    }),
-    CategoryCount: obj({
-      name: str({ description: "One of your category names. Untrusted text." }),
-      count: int({ minimum: 1, description: "Your live artifacts in this category" }),
-    }),
+      ["my_categories"],
+    ),
+    CategoryCount: obj(
+      {
+        name: str({ description: "One of your category names. Untrusted text." }),
+        count: int({
+          minimum: 0,
+          description:
+            "Your live artifacts in this category (0 for a shared category with none yet)",
+        }),
+        shared: {
+          const: true,
+          description:
+            "You share this category with people: filing under it never shares an artifact",
+        },
+      },
+      ["shared"],
+    ),
     CategoryList: obj({
       items: {
         type: "array",
@@ -331,14 +373,22 @@ function responseSchemas(): Record<string, Json> {
         description: "Your own category names with counts, most-used first",
       },
     }),
-    CategoryRenameResult: obj({
-      updated: int({ minimum: 0, description: "Your live artifacts that moved" }),
-      category: nullable("string", {
-        description:
-          "The name they now carry (an existing spelling when it was a merge); null when cleared",
-      }),
-    }),
-    PublishResult: obj(publishResult, ["category"]),
+    CategoryRenameResult: obj(
+      {
+        updated: int({ minimum: 0, description: "Your live artifacts that moved" }),
+        category: nullable("string", {
+          description:
+            "The name they now carry (an existing spelling when it was a merge); null when cleared",
+        }),
+        pending: int({
+          minimum: 1,
+          description:
+            "How many arrived in a shared category: they wait for your review before its people see them",
+        }),
+      },
+      ["pending"],
+    ),
+    PublishResult: obj(publishResult, ["category", "category_share"]),
     PublishWarning: obj(
       {
         code: enumOf(PUBLISH_WARNING_CODES),
@@ -373,63 +423,71 @@ function responseSchemas(): Record<string, Json> {
       max_bundle_bytes: int({ description: "Bytes on the wire of one bundle" }),
       max_bundle_file_bytes: int({ description: "One file in a bundle" }),
     }),
-    StartUploadResult: obj({
-      upload_id: str(),
-      upload_token: str({
-        pattern: `^${UPLOAD_TOKEN_PREFIX}`,
-        description:
-          "Single use, shown once, only its SHA-256 hash is stored. Send it only in the Authorization header of the bundle request",
-      }),
-      expires_at: dateTime,
-      upload_url: str({ format: "uri", description: "<APP_ORIGIN>/api/v1/uploads/<id>/bundle" }),
-      target: {
-        oneOf: [
-          obj({
-            mode: { const: "publish" },
-            id: str({
-              description:
-                "Reserved now: the artifact the bundle creates gets this id, so after a lost response get_artifact says whether it was published",
+    StartUploadResult: obj(
+      {
+        upload_id: str(),
+        upload_token: str({
+          pattern: `^${UPLOAD_TOKEN_PREFIX}`,
+          description:
+            "Single use, shown once, only its SHA-256 hash is stored. Send it only in the Authorization header of the bundle request",
+        }),
+        expires_at: dateTime,
+        upload_url: str({ format: "uri", description: "<APP_ORIGIN>/api/v1/uploads/<id>/bundle" }),
+        target: {
+          oneOf: [
+            obj({
+              mode: { const: "publish" },
+              id: str({
+                description:
+                  "Reserved now: the artifact the bundle creates gets this id, so after a lost response get_artifact says whether it was published",
+              }),
+              type: artifactType,
             }),
-            type: artifactType,
-          }),
-          obj({
-            mode: { const: "update" },
-            id: str(),
-            slug: str(),
-            type: artifactType,
-            base_version: int({ minimum: 1 }),
-            visibility,
-          }),
-        ],
-      },
-      limits: ref("InstanceLimits"),
-      content_isolation: enumOf(CONTENT_ISOLATION_MODES),
-      commands: obj(
-        {
-          curl: str({ description: "Needs bash or zsh; <folder> is a placeholder" }),
-          npx: str({ description: "Only on release versions of the server" }),
+            obj({
+              mode: { const: "update" },
+              id: str(),
+              slug: str(),
+              type: artifactType,
+              base_version: int({ minimum: 1 }),
+              visibility,
+            }),
+          ],
         },
-        ["npx"],
-      ),
-      next: str(),
-    }),
-    UploadStatus: obj({
-      upload_id: str(),
-      state: {
-        ...enumOf(["open", "receiving", "used", "dead", "taken_down", "expired", "exhausted"]),
-        description:
-          "receiving: a bundle request still holds the lease; used: it committed; dead: a conflict ended it; taken_down: the artifact was taken down, nothing was published and nothing is to be resent",
+        limits: ref("InstanceLimits"),
+        content_isolation: enumOf(CONTENT_ISOLATION_MODES),
+        commands: obj(
+          {
+            curl: str({ description: "Needs bash or zsh; <folder> is a placeholder" }),
+            npx: str({ description: "Only on release versions of the server" }),
+          },
+          ["npx"],
+        ),
+        next: str(),
+        category_share: ref("CategoryShareResult"),
       },
-      mode: enumOf(["publish", "update"]),
-      id: str({
-        description: "The artifact updated, or the one a publish creates (reserved at mint)",
-      }),
-      version: nullable("integer"),
-      url: nullable("string"),
-      expires_at: dateTime,
-      receiving_until: nullable("string"),
-      next: str(),
-    }),
+      ["category_share"],
+    ),
+    UploadStatus: obj(
+      {
+        upload_id: str(),
+        state: {
+          ...enumOf(["open", "receiving", "used", "dead", "taken_down", "expired", "exhausted"]),
+          description:
+            "receiving: a bundle request still holds the lease; used: it committed; dead: a conflict ended it; taken_down: the artifact was taken down, nothing was published and nothing is to be resent",
+        },
+        mode: enumOf(["publish", "update"]),
+        id: str({
+          description: "The artifact updated, or the one a publish creates (reserved at mint)",
+        }),
+        version: nullable("integer"),
+        url: nullable("string"),
+        expires_at: dateTime,
+        receiving_until: nullable("string"),
+        next: str(),
+        category_share: ref("CategoryShareResult"),
+      },
+      ["category_share"],
+    ),
     BundleResult: obj(
       {
         ...publishResult,
@@ -439,7 +497,7 @@ function responseSchemas(): Record<string, Json> {
           stripped_prefix: nullable("string"),
         }),
       },
-      ["category"],
+      ["category", "category_share"],
     ),
     VersionInfo: obj({
       number: int({ minimum: 1 }),
@@ -470,6 +528,11 @@ function responseSchemas(): Record<string, Json> {
         }),
       },
       public_allowed: { type: "boolean" },
+      category_share: {
+        oneOf: [ref("SharingCategoryShare"), { type: "null" }],
+        description:
+          "The share of this artifact's category, when it has one: who else sees it through the category once it is shared",
+      },
     }),
     Anchor: fromZod(anchorSchema),
     CommentInfo: obj({
@@ -629,6 +692,10 @@ function responseSchemas(): Record<string, Json> {
         type: "boolean",
         description:
           "Dictation is offered here (ALLOW_DICTATION with origin isolation): pages that declare `dictation` may receive words the viewer speaks, recognized by the app",
+      },
+      category_sharing: {
+        type: "boolean",
+        description: "Owners may share a category with people here (ALLOW_CATEGORY_SHARING)",
       },
     }),
     LoginResult: obj({
@@ -1243,6 +1310,273 @@ function liveSchemas(): Record<string, Json> {
       ],
     },
   };
+}
+
+// ---------- category sharing and personal categories ----------
+
+function categorySharingSchemas(): Record<string, Json> {
+  const person = obj({ email: str({ format: "email" }), role: enumOf(CATEGORY_ROLES) });
+  const summary = {
+    id: str({ description: "Never changes, also across renames: the portal link" }),
+    category: str({ description: "Your category name (owner only). Untrusted text." }),
+    title: str({ description: "What the people see: the portal's heading" }),
+    portal_url: str({ format: "uri", description: "<APP_HOST>/p/<id>" }),
+    people: { type: "array", items: ref("CategoryPerson") },
+    counts: obj({ shared: int(), pending: int(), private: int() }),
+  };
+  const review = obj({
+    shared: int({ minimum: 0 }),
+    private: int({ minimum: 0 }),
+    skipped: {
+      type: "array",
+      description:
+        "Items not applied because the artifact changed since you were shown it: review again",
+      items: obj({ id: str(), reason: enumOf(REVIEW_SKIP_REASONS) }),
+    },
+  });
+  return {
+    CreateCategoryShareInput: fromZod(createCategoryShareInput),
+    UpdateCategoryShareInput: fromZod(updateCategoryShareInput),
+    CategoryReviewInput: fromZod(categoryReviewInput),
+    MyCategoryInput: fromZod(myCategoryInput),
+    CategoryPerson: person,
+    CategoryShareResult: obj(
+      {
+        state: enumOf(CATEGORY_SHARE_STATES),
+        review_url: str({
+          format: "uri",
+          description: "pending only: where the owner reviews it in the app",
+        }),
+      },
+      ["review_url"],
+    ),
+    SharingCategoryShare: obj({
+      id: str(),
+      title: str(),
+      state: enumOf(CATEGORY_SHARE_STATES),
+      people: { type: "array", items: ref("CategoryPerson") },
+    }),
+    CategoryShareSummary: obj(summary),
+    CategoryShareList: paged("CategoryShareSummary"),
+    CategoryShareArtifact: obj({
+      id: str(),
+      slug: str(),
+      title: str(),
+      current_version: int({ minimum: 0 }),
+      category_rev: int({ minimum: 0 }),
+      state: enumOf(CATEGORY_SHARE_STATES),
+      taken_down: { type: "boolean" },
+      updated_at: dateTime,
+      last_author: nullable("string", {
+        description: "Who published the current version (a name, email or connection label)",
+      }),
+    }),
+    CategoryShareDetail: obj({
+      ...summary,
+      artifacts: { type: "array", items: ref("CategoryShareArtifact") },
+    }),
+    CategoryReviewResult: review,
+    CategorySharePreview: obj({
+      category: str({ description: "Your category name. Untrusted text." }),
+      artifacts: {
+        type: "array",
+        description: "Every live artifact of the category, as the review lists them",
+        items: ref("CategoryShareArtifact"),
+      },
+    }),
+    CategoryShareWriteResult: obj({
+      share: ref("CategoryShareSummary"),
+      review: { oneOf: [ref("CategoryReviewResult"), { type: "null" }] },
+    }),
+    PortalSummary: obj({
+      id: str(),
+      title: str(),
+      owner_name: nullable("string"),
+      count: int({ minimum: 0 }),
+    }),
+    PortalList: paged("PortalSummary"),
+    PortalGate: {
+      oneOf: [
+        obj({
+          status: { const: "ok" },
+          portal: obj({
+            id: str(),
+            title: str(),
+            owner_name: nullable("string"),
+            role: enumOf(["owner", ...CATEGORY_ROLES]),
+          }),
+          items: { type: "array", items: ref("ArtifactSummary") },
+        }),
+        obj({ status: { const: "email_required" }, portal: obj({ id: str() }) }),
+      ],
+    },
+  };
+}
+
+function categorySharingOperations(): Operation[] {
+  const owner =
+    "The signed-in owner only (session, CSRF and exact Origin); agents and bearer tokens get 403, and no MCP tool does this.";
+  const review =
+    "Each review item names the artifact, the current_version and category_rev you were shown, and shared or private; " +
+    "an item whose artifact changed meanwhile is skipped, never applied.";
+  return [
+    {
+      method: "put",
+      path: API.myCategory,
+      operationId: "setMyCategory",
+      summary: "Your own category for an artifact shared with you",
+      description:
+        "Seen by you only, in the app; never the owner's category, never on your own artifacts. " +
+        "`category: null` clears it. Session only: bearer tokens get 403.",
+      tag: "Artifacts",
+      auth: "user",
+      body: "MyCategoryInput",
+      ok: [200, "ArtifactSummary"],
+      errors: [400, 401, 403, 404],
+    },
+    {
+      method: "get",
+      path: API.categoryShares,
+      operationId: "listCategoryShares",
+      summary: "Your category shares",
+      description: owner,
+      tag: "Sharing",
+      auth: "user",
+      ok: [200, "CategoryShareList"],
+      errors: [401, 403],
+    },
+    {
+      method: "post",
+      path: API.categoryShares,
+      operationId: "createCategoryShare",
+      summary: "Share one of your categories with people",
+      description:
+        `${owner} Filing an artifact under a shared category never shares it: only this review ` +
+        "does. Every artifact of the category not reviewed as shared in this request stays " +
+        `private or pending. ${review} 409 when the category is already shared.`,
+      tag: "Sharing",
+      auth: "user",
+      body: "CreateCategoryShareInput",
+      ok: [201, "CategoryShareWriteResult"],
+      errors: [400, 401, 403, 404, 409],
+    },
+    {
+      method: "get",
+      path: API.categorySharePreview,
+      operationId: "previewCategoryShare",
+      summary: "What sharing one of your categories would ask you to review",
+      description:
+        `${owner} Every live artifact of the category with the current_version and category_rev a ` +
+        "review item quotes. 409 when the category is already shared.",
+      tag: "Sharing",
+      auth: "user",
+      query: [
+        {
+          name: "category",
+          schema: str({ minLength: 1, maxLength: LIMITS.maxCategoryLength }),
+          required: true,
+          description: "One of your categories, matched ignoring case, spaces, '-' and '_'",
+        },
+      ],
+      ok: [200, "CategorySharePreview"],
+      errors: [401, 403, 404, 409],
+    },
+    {
+      method: "get",
+      path: API.categoryShare,
+      operationId: "getCategoryShare",
+      summary: "A category share and every artifact of its category",
+      description: owner,
+      tag: "Sharing",
+      auth: "user",
+      ok: [200, "CategoryShareDetail"],
+      errors: [401, 403, 404],
+    },
+    {
+      method: "patch",
+      path: API.categoryShare,
+      operationId: "updateCategoryShare",
+      summary: "Change a category share's title or people",
+      description:
+        `${owner} \`review\` is required with \`people\` (400 review_required): changing who ` +
+        `sees a category re-confirms what they see. ${review}`,
+      tag: "Sharing",
+      auth: "user",
+      body: "UpdateCategoryShareInput",
+      ok: [200, "CategoryShareWriteResult"],
+      errors: [400, 401, 403, 404],
+    },
+    {
+      method: "delete",
+      path: API.categoryShare,
+      operationId: "deleteCategoryShare",
+      summary: "Stop sharing a category",
+      description: `${owner} Its people lose every artifact they saw through it at once.`,
+      tag: "Sharing",
+      auth: "user",
+      ok: [204, null],
+      errors: [401, 403, 404],
+    },
+    {
+      method: "post",
+      path: API.categoryShareReview,
+      operationId: "reviewCategoryShare",
+      summary: "Share or keep private, per artifact of a shared category",
+      description: `${owner} ${review}`,
+      tag: "Sharing",
+      auth: "user",
+      body: "CategoryReviewInput",
+      ok: [200, "CategoryReviewResult"],
+      errors: [400, 401, 403, 404],
+    },
+    {
+      method: "get",
+      path: API.portals,
+      operationId: "listPortals",
+      summary: "The collections people shared with you",
+      description: "A session or a confirmed viewer email; empty for everyone else.",
+      tag: "Viewing",
+      auth: "optional",
+      ok: [200, "PortalList"],
+      errors: [401],
+    },
+    {
+      method: "get",
+      path: API.portal,
+      operationId: "getPortal",
+      summary: "A shared collection: the artifacts you may open in it",
+      description:
+        "`email_required` until you confirm an email that holds a grant on it; 404 for an unknown id.",
+      tag: "Viewing",
+      auth: "optional",
+      ok: [200, "PortalGate"],
+      errors: [404],
+    },
+    {
+      method: "post",
+      path: API.portalEmail,
+      operationId: "portalEmail",
+      summary: "Ask for a code to open a shared collection",
+      description: "Same response whether or not the email holds a grant on it.",
+      tag: "Viewing",
+      auth: "optional",
+      body: "ViewerEmailInput",
+      ok: [200, "Ok"],
+      errors: [400, 403, 404, 429],
+    },
+    {
+      method: "post",
+      path: API.portalCode,
+      operationId: "portalCode",
+      summary: "Confirm a shared collection's code",
+      description: `Sets the \`${COOKIES.viewer}\` cookie on APP_HOST (or signs the owner in).`,
+      tag: "Viewing",
+      auth: "optional",
+      body: "ViewerCodeInput",
+      ok: [200, "PortalGate"],
+      errors: [400, 403, 404, 429],
+    },
+  ];
 }
 
 function liveOperations(): Operation[] {
@@ -2121,7 +2455,12 @@ function operationObject(op: Operation): Json {
 
 export function openApiDocument(config: Pick<Config, "appOrigin">): Json {
   const paths: Record<string, Json> = {};
-  for (const op of [...operations(), ...dataOperations(), ...liveOperations()]) {
+  for (const op of [
+    ...operations(),
+    ...dataOperations(),
+    ...liveOperations(),
+    ...categorySharingOperations(),
+  ]) {
     const key = toOpenApiPath(op.path);
     paths[key] ??= {};
     (paths[key] as Json)[op.method] = operationObject(op);
@@ -2181,6 +2520,7 @@ export function openApiDocument(config: Pick<Config, "appOrigin">): Json {
         ...responseSchemas(),
         ...dataSchemas(),
         ...liveSchemas(),
+        ...categorySharingSchemas(),
         ...designSystemSchemas(),
       }),
       responses: errorResponses,

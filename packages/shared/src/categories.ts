@@ -30,8 +30,10 @@ export function categoryProblem(s: string): string | null {
 }
 
 /**
- * Match key, never stored: NFKC, lower case, runs of whitespace, "-" and "_" -> one space, trimmed.
- * "." and "/" are kept, so "a.b" and "a b" stay distinct.
+ * Match key: NFKC, lower case, runs of whitespace, "-" and "_" -> one space, trimmed. "." and "/"
+ * are kept, so "a.b" and "a b" stay distinct. Stored since migration 0013 as
+ * artifacts.category_key and category_shares.category_key, which a category share matches on: a
+ * change to this function needs a migration that recomputes both columns.
  */
 export function categoryKey(s: string): string {
   return s
@@ -46,3 +48,21 @@ export function snapCategory(name: string, existing: readonly string[]): string 
   const key = categoryKey(name);
   return existing.find((e) => categoryKey(e) === key) ?? name;
 }
+
+// ---------- category sharing (docs/spec.md "Category sharing and personal categories") ----------
+
+/** The roles a category grant may give: never editor. */
+export const CATEGORY_ROLES = ["viewer", "commenter"] as const;
+export type CategoryRole = (typeof CATEGORY_ROLES)[number];
+
+/**
+ * Where an artifact stands in its category's share, as its owner sees it: `shared` and `private`
+ * once the owner reviewed it into this share, `pending` until then (every artifact filed under a
+ * shared category starts pending, whoever filed it).
+ */
+export const CATEGORY_SHARE_STATES = ["shared", "pending", "private"] as const;
+export type CategoryShareState = (typeof CATEGORY_SHARE_STATES)[number];
+
+/** Why a review item was not applied: the artifact changed since the owner was shown it. */
+export const REVIEW_SKIP_REASONS = ["moved", "changed", "gone"] as const;
+export type ReviewSkipReason = (typeof REVIEW_SKIP_REASONS)[number];

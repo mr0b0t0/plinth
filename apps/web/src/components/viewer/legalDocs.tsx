@@ -30,7 +30,7 @@ export interface LegalDoc {
 /** The instance settings the pages use. */
 export type LegalConfig = Pick<
   AppConfig,
-  "operator" | "email_provider" | "max_artifacts_per_user" | "dictation"
+  "operator" | "email_provider" | "max_artifacts_per_user" | "dictation" | "category_sharing"
 >;
 
 const EMAIL_SERVICE: Record<AppConfig["email_provider"], string | null> = {
@@ -182,7 +182,8 @@ function privacy(op: OperatorInfo, cfg: LegalConfig): LegalDoc {
             </li>
             <li>
               <strong>Your artifacts</strong>: every version of the pages, files, titles, categories
-              and notes you or your agents publish. They contain whatever you put in them.
+              and notes you or your agents publish. They contain whatever you put in them. The
+              categories you file artifacts shared with you under are seen by you only.
             </li>
             <li>
               <strong>What people enter on shared pages</strong>: some pages can save what their
@@ -206,6 +207,15 @@ function privacy(op: OperatorInfo, cfg: LegalConfig): LegalDoc {
               <strong>Sharing settings</strong>: the email addresses you give access to, and a
               scrambled (hashed) password if you set one.
             </li>
+            {cfg.category_sharing && (
+              <li>
+                <strong>Shared categories</strong>: when you share a category, the email addresses
+                of the people you share it with and their roles, the name they see for it, and which
+                of its artifacts you chose to show them. They see that name and those artifacts,
+                never the category's own name. If you are one of those people, the owner sees your
+                email address and role, as for an artifact shared with you.
+              </li>
+            )}
             <li>
               <strong>Comments</strong>: their text, who wrote them, and requests made to agents.
             </li>

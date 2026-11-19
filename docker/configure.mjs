@@ -57,6 +57,8 @@ const WORKER_VARS = [
   "ALLOW_LIVE_EDITING",
   // Dictation run by the app (docs/docker.md#settings); off unless set to "true".
   "ALLOW_DICTATION",
+  // Owners may share a category with people (docs/docker.md#settings); on unless set to "false".
+  "ALLOW_CATEGORY_SHARING",
 ];
 
 // `plinth init` flags and the variables that set them, to name the variable in its errors.

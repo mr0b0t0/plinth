@@ -57,12 +57,14 @@ export async function serveSpa(c: AppContext): Promise<Response> {
   // Fresh headers: the stored file's ETag and cache status do not describe this page.
   const headers = new Headers({ "Content-Type": "text/html; charset=utf-8" });
   applyAppHeaders(c.get("config"), headers);
-  // Artifact pages depend on the artifact's visibility, so they are never stored.
+  // Artifact pages depend on the artifact's visibility, so they are never stored; a portal
+  // (/p/<share id>) lists what its people may open, so it is never stored or indexed either.
+  const portal = path.startsWith("/p/");
   headers.set(
     "Cache-Control",
-    path.startsWith("/a/") || path.startsWith("/open/") ? "no-store" : "no-cache",
+    path.startsWith("/a/") || path.startsWith("/open/") || portal ? "no-store" : "no-cache",
   );
-  if (shell.noindex) headers.set("X-Robots-Tag", "noindex, nofollow");
+  if (shell.noindex || portal) headers.set("X-Robots-Tag", "noindex, nofollow");
   ensureCsrfCookie(c, headers);
   return new Response(c.req.method === "HEAD" ? null : shell.html, { status: 200, headers });
 }

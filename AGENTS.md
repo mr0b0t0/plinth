@@ -105,6 +105,9 @@ make a test pass.
   behaviour a page can reach is Plinth's fixed shared-data service at `/__plinth/api/` and its live
   room at `/__plinth/room/`, which a page opts into. Only the owner and people the artifact is
   shared with can write from the page, and only the owner's and editors' agents over MCP or REST.
+- Filing an artifact under a shared category never shares it: only the signed-in owner's review,
+  bound to that share, adds an artifact to a category share. A collaborator's own category for an
+  artifact shared with them is seen and set by that person only, in the app.
 - Anything a self-hoster may change (hosts, quota, email provider, CDN allowlist) is an env var.
 - The product name must not contain "Claude" or "Codex".
 

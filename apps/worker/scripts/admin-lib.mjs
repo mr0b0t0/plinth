@@ -52,6 +52,10 @@ Commands:
                                   their address, and their address on reports.
   erase-artifact <id|slug>        Erase one artifact for good: all versions, stored files,
                                   comments, sharing and reports. Works on deleted artifacts too.
+  bump-epochs --category-shared   End every content pass and room socket opened through a
+                                  category share at once (after ALLOW_CATEGORY_SHARING is
+                                  turned off; passes issued earlier otherwise live out their
+                                  12-hour lifetime).
   sweep-orphans                   Delete stored files no version points to, across the whole
                                   bucket. The Worker's hourly cron already removes what an
                                   interrupted publish left (its staging_attempts rows); this is
@@ -122,6 +126,7 @@ export function parseArgs(argv) {
   let dryRun = false;
   let artifact = null;
   let olderThanMinutes = 60;
+  let categoryShared = false;
   const positional = [];
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
@@ -145,6 +150,8 @@ export function parseArgs(argv) {
       if (!bucket || !BUCKET_RE.test(bucket)) throw new UsageError("--bucket needs a bucket name");
     } else if (a === "--dry-run") {
       dryRun = true;
+    } else if (a === "--category-shared") {
+      categoryShared = true;
     } else if (a === "--artifact") {
       i += 1;
       artifact = validateArtifactRef(args[i]);
@@ -189,6 +196,30 @@ export function parseArgs(argv) {
     };
   }
   if (artifact !== null) throw new UsageError("--artifact is for sweep-orphans");
+  if (command === "bump-epochs") {
+    if (rest.length !== 0 || !categoryShared) {
+      throw new UsageError("bump-epochs takes --category-shared and no arguments");
+    }
+    if (!target) throw new UsageError("Pass --local or --remote to choose the database");
+    const sql = bumpCategorySharedEpochsSql();
+    return {
+      help: false,
+      command,
+      target,
+      sql,
+      wranglerArgs: [
+        "d1",
+        "execute",
+        "DB",
+        `--${target}`,
+        "--json",
+        "--command",
+        sql,
+        ...wranglerExtra,
+      ],
+    };
+  }
+  if (categoryShared) throw new UsageError("--category-shared is for bump-epochs");
   if (command === "erase-user" || command === "erase-artifact") {
     if (rest.length !== 1) throw new UsageError(`${command} needs exactly one argument`);
     if (!target) throw new UsageError("Pass --local or --remote to choose the database");
@@ -242,6 +273,16 @@ export function parseArgs(argv) {
   if (env) wranglerArgs.push("--env", env);
   if (config) wranglerArgs.push("--config", config);
   return { help: false, command, email, limit, target, sql, wranglerArgs };
+}
+
+/**
+ * bump-epochs --category-shared: a new access epoch for every artifact reviewed as shared into a
+ * category share, so content passes, password passes and room sockets issued through a share end
+ * now (docs/self-hosting.md, ALLOW_CATEGORY_SHARING). Rows the owner or a direct grant opens get
+ * new passes on their next visit.
+ */
+export function bumpCategorySharedEpochsSql() {
+  return "UPDATE artifacts SET access_epoch = access_epoch + 1 WHERE category_review = 'shared' AND deleted_at IS NULL RETURNING id";
 }
 
 /** Rows updated (rows RETURNING gave back), from `wrangler d1 execute --json` output. */
@@ -319,6 +360,12 @@ export const ERASE_USER_STEPS = [
       `DELETE FROM comments WHERE author_user_id IN (SELECT id FROM users WHERE email = '${email}')`,
   },
   { table: "access_grants", sql: (email) => `DELETE FROM access_grants WHERE email = '${email}'` },
+  // Category shares of other people's that hold this address (0013_category_sharing); the
+  // person's own shares, and their personal categories, cascade with the users row.
+  {
+    table: "category_grants",
+    sql: (email) => `DELETE FROM category_grants WHERE email = '${email}'`,
+  },
   { table: "login_codes", sql: (email) => `DELETE FROM login_codes WHERE email = '${email}'` },
   { table: "sessions", sql: (email) => `DELETE FROM sessions WHERE viewer_email = '${email}'` },
   {
