@@ -54,7 +54,7 @@ export interface ArtifactTypeDef {
    * (a design's board loader, content/boardLoader.ts): the content host serves it only behind the
    * content pass, never from the web build.
    */
-  renderer: { script: string; style: string; frame?: string } | null;
+  renderer: RendererFiles | null;
   editor: { language: EditorLanguage; wordWrap: "on" | "off" };
   /**
    * Owners and editors may edit it on its rendered page, live with each other (#36). Only types
@@ -73,6 +73,32 @@ export interface ArtifactTypeDef {
    * isolation would, and the content host serves its renderer.frame. Absent means false.
    */
   opaqueFrames?: boolean;
+  /**
+   * Files the viewer can download, each built inside the frame by the renderer from what it shows
+   * (a deck's .pptx). Absent means none. Print and PDF are not listed: every renderer prints.
+   */
+  fileExports?: readonly FileExport[];
+}
+
+/** A file a renderer builds in the frame for the viewer to download. */
+export type FileExport = "pptx";
+
+/**
+ * A renderer's files: one script and one style, plus scripts it loads only when needed and, for a
+ * type with opaqueFrames, the fixed page it frames.
+ */
+export interface RendererFiles {
+  script: string;
+  style: string;
+  /**
+   * Scripts the renderer adds to its own page only when someone uses a feature that needs them
+   * (a deck's .pptx writer), so the first view never downloads them. Each is built from `entry`
+   * (a file in the renderer's directory) as its own IIFE with no exports and no globals, and
+   * served at /__plinth/types/<id>/<file> under the same guard as the script.
+   */
+  lazy?: readonly { file: string; entry: string }[];
+  /** A fixed Plinth page the renderer frames, at /__plinth/frames/<id>/ (opaqueFrames only). */
+  frame?: string;
 }
 
 /** A type module's row: an ArtifactTypeDef whose id is that module's own type. */
@@ -88,7 +114,8 @@ export const TYPE_REGISTRY: { readonly [K in ArtifactType]: TypeModule<K> } = {
 };
 
 /**
- * The files a type's renderer is made of, each with the only Content-Type it may be served as.
+ * The files a type's renderer is made of (its script, its style and its lazy scripts), each with
+ * the only Content-Type it may be served as.
  * The web build emits exactly these (apps/web/build/renderers.ts) and the content host serves
  * only these (content/typed.ts serveRendererFile). Empty for a type without a renderer.
  */
@@ -99,6 +126,10 @@ export function rendererFiles(
   return [
     { name: def.renderer.script, contentType: "text/javascript" },
     { name: def.renderer.style, contentType: "text/css" },
+    ...(def.renderer.lazy ?? []).map((l) => ({
+      name: l.file,
+      contentType: "text/javascript" as const,
+    })),
   ];
 }
 

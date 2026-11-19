@@ -8,7 +8,7 @@
 // the slides type: its publish note, the type and content descriptions and the instructions' deck
 // sentence; publishing from CI: the instructions' sentence on tokens limited to one artifact; the
 // design type: its publish note, the type, content, update and get_artifact descriptions and the
-// instructions' design sentence).
+// instructions' design sentence; the slides .pptx download: its clause in the slides publish note).
 // Category sharing adds its note to publish_artifact, update_artifact, start_upload and
 // list_artifacts and a sentence to the instructions, only while ALLOW_CATEGORY_SHARING is on: the
 // pins below hold with the switch off, and "category sharing on" pins the surface with it on.
@@ -67,7 +67,7 @@ describe("MCP surface (golden)", () => {
   it("origin isolation", async () => {
     expect(await surface(OFF)).toEqual({
       names: NAMES,
-      tools: "8b537bc2761a0a9afe0ef5837a3eba98562066ab0d0fd2b44fa626e3c2e8b41e",
+      tools: "39f420497895a202ded2bdf74f3f41d5a2f54a2108a4cb9dbfb58069e8361dd2",
       resources: RESOURCES,
       preview: "fd84092d5ecc5a28f494373097e8a3b6e27065d5ef6928f3e124c634f8cf6f47",
       instructions: INSTRUCTIONS,
@@ -77,7 +77,7 @@ describe("MCP surface (golden)", () => {
   it("opaque isolation", async () => {
     expect(await surface({ ...OFF, CONTENT_ISOLATION: "opaque" })).toEqual({
       names: NAMES,
-      tools: "0411972a53009682bb5e9aa40f98fa24507dda508db503fb5cae12a0378476d4",
+      tools: "ddb37805833eb1dfa736fa3a96c876c33a12c48411404e684cccd2ee69ff502a",
       resources: RESOURCES,
       preview: "257bbf5bb47164c389849fffa7fc1dd46e6e7c20e4ef616b4bffefb53a8fd08b",
       instructions: INSTRUCTIONS,
@@ -89,7 +89,7 @@ describe("MCP surface (golden)", () => {
       await surface({ ...OFF, STAGING_CONTENT_FALLBACK: "true", CONTENT_ISOLATION: "opaque" }),
     ).toEqual({
       names: NAMES,
-      tools: "ddbde8153c98fc6c8a09c40ac2adc4000258584617b1f053fc66071ca168a7fe",
+      tools: "08cbc681b7c572dc413345e99469066a6e142edec1ae6c12bc482b298de40c51",
       resources: RESOURCES,
       preview: "257bbf5bb47164c389849fffa7fc1dd46e6e7c20e4ef616b4bffefb53a8fd08b",
       instructions: INSTRUCTIONS,
@@ -99,7 +99,7 @@ describe("MCP surface (golden)", () => {
   it("category sharing on (the default): the share note and the instructions' sentence", async () => {
     expect(await surface()).toEqual({
       names: NAMES,
-      tools: "f62c8d1571332814b52775f557ecbe1e50f50159b5c1766c8d37e7f06e4b6ec5",
+      tools: "bbb4f5a76ec70c56eee1596087d6968c5578df3123e9cfea92918ed496a4f2ee",
       resources: RESOURCES,
       preview: "fd84092d5ecc5a28f494373097e8a3b6e27065d5ef6928f3e124c634f8cf6f47",
       instructions: "4682d9a16d481d8d05ac73b8742a7a263fe80ee3c15cb1a8a228c7c175bd2d33",

@@ -34,6 +34,7 @@ make a test pass.
 | A page steers the app through a deck's messages | A script on another frame posts look-alike `position` or `fullscreen` messages to the app page | Deck messages are accepted only from the window of the frame the app holds, at the exact content origin (or `null` under opaque isolation), only for decks, and carry only slide numbers; full screen still needs the person's activation ([Slides](#slides)) |
 | A design's artboard attacks the shell, the app or another board | Board script reads `parent.document`, the content cookie or storage, navigates the app, or posts a look-alike renderer or board message | Every artboard is a nested frame with an opaque origin in every isolation mode (iframe `sandbox` and CSP `sandbox`, never `allow-same-origin`); the shell holds no author markup and runs only Plinth's renderer (`script-src 'self'`); it answers a board's `ready` only from the window of the frame it just made, once, with that board's own document; the app accepts renderer messages only from its own frame's window ([Designs](#designs)) |
 | Another site paints its content into a board loader | A page frames `<id>.<CONTENT_HOST>/__plinth/frames/design/board.html` and writes its own HTML into it | Under origin isolation the loader keeps `frame-ancestors 'self' <app>` for view and capture passes, so only the design's own shell inside the app can frame it; it goes without only under opaque isolation and for a preview pass. In every mode it answers only a request with this artifact's content pass at its epoch, which lives in the app's partitioned jar (and an MCP host's, for a preview), so another site's frame gets the 401 text; what a parent writes runs with an opaque origin, as in a frame of its own ([Designs](#designs)) |
+| A deck's .pptx export reaches past its own files | The export is made to read another artifact's files, an outside host, or its own files under opaque isolation through a loosened rule | The frame reads only URLs on its own origin (`connect-src 'self'`, and the export checks the origin first), under opaque isolation reads no file at all and leaves images out rather than ask for CORS, and loads its writer only from `'self'`; the app sends a nonce and gets back booleans and a count ([Slides](#slides)) |
 | Leaked CI secret | A `PLINTH_TOKEN` from a pipeline shows up in a fork's logs or a compromised runner | Make it a token limited to one artifact: it can read that artifact and publish new versions of it, nothing else (every other artifact answers 404 whatever its scopes, checked in `decide` before the scope), a version is never an overwrite and anyone with edit rights can revert it; secrets are not given to fork workflows ([Publishing from CI](#publishing-from-ci)) |
 | Workflow command injection through the Action's log | A title, warning path or server message `::set-output name=x::y` or `::add-mask::` printed by the Action steers the job | Everything the client prints runs between `::stop-commands::<random>` and `::<random>::`; the Action's own annotations escape their text, the summary escapes Markdown and HTML, outputs use random heredoc delimiters; `docs/ci.md` passes outputs to scripts through `env:` ([Publishing from CI](#publishing-from-ci)) |
 | Artifact eavesdrops through the microphone | A shared page starts recording on load or on an unrelated click and saves the transcript as shared data | Frames never get the microphone (`allow=""`, the content host's `microphone=()`); the app's `microphone=(self)` is the ceiling, and only while dictation is on. Dictation runs in the app: per-artifact consent, a click in the page for every start, at most 60 s, stopped on a hidden tab, a blurred window or a frame reload, and an app "Listening" control with Stop the page cannot cover ([Dictation](#dictation-and-text-to-speech)) |
@@ -446,6 +447,39 @@ What is new:
   `history.replaceState`: it never reaches the server or a log.
 - **Speaker notes are not secret.** They are in the stored source and the rendered page for anyone
   who can open the deck; the skill, the tool descriptions and the spec say so.
+- **The .pptx is built in the frame.** "Download .pptx" sends the frame
+  `export { format: "pptx", nonce }` (the app's random nonce, `[A-Za-z0-9_-]{16,64}`), and the
+  frame answers `exported { nonce, ok, images_skipped, opaque }`: booleans and a count (distinct
+  image files left out, at most `LIMITS.maxAssetsCeiling`), never deck text. The app shows an
+  answer only for the nonce it is waiting for, from the frame's window, for a deck, and stops
+  waiting when that frame is replaced. A request that reaches the frame while it is still making
+  a file starts nothing: the running export answers the newest nonce. The file is made and saved
+  inside the frame, on the artifact's origin, from the slides it has already rendered, so the app
+  never holds the deck's text and nothing reaches the server. Deck text goes into the file's XML
+  escaped by the writer and without the characters XML 1.0 forbids, so a control character in a
+  deck cannot break the file.
+- **The writer is a lazy renderer file.** `slides-pptx.js` (PptxGenJS 4.0.1 and JSZip, MIT, built
+  into one IIFE with no exports and no globals) is listed in the type registry (`renderer.lazy`),
+  so `serveRendererFile` serves it like the deck's script: from ASSETS at a path built from the
+  registry, only as `text/javascript`, refusing the SPA fallback, with no cookie, and never on the
+  app host. The deck adds it to its own page from `'self'` only when someone downloads, under the
+  shell's unchanged `script-src 'self'` (the writer needs no `eval`). It hands its writer to the
+  renderer with one event on the document. Only Plinth's renderer runs on a deck's origin (a deck's
+  assets are images, served with `script-src 'none'`), so no page script can answer that event.
+- **Export images stay on the deck's origin.** Under origin isolation the frame fetches each image
+  it shows from its own origin (the export refuses any other origin before fetching, and
+  `connect-src 'self'` would block it anyway) with the content cookie, and draws SVG, WebP and AVIF
+  to PNG on a canvas, which a same-origin image does not taint. Under opaque isolation and the path
+  fallback the document has no origin of its own: it would need CORS on the content host to read
+  its files, which the content host never sends, so the export reads no file and leaves those
+  images out, and the app says so. Inline `data:` images are part of the deck's text and go in.
+  No rule is relaxed for the export.
+- **The download stays in the frame.** The frame saves the file with an `<a download>` click on a
+  `blob:` URL; both frame sandboxes already include `allow-downloads`. For a browser that saves
+  only from a click inside the frame, the frame shows its own Download button for 30 seconds; the
+  blob URL is released when it goes. The file name is the deck's title reduced to letters, digits,
+  spaces, dots, dashes and underscores, at most 80 characters. Links in the file keep only what the
+  doc's URL rules allow (web and mail links, and `#N` as a link to a slide of the deck).
 ## Design systems
 
 A design system (`artifacts.type = 'design_system'`) stores JSON in `system.json` and is shown by a
