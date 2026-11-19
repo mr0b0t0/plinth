@@ -2,7 +2,7 @@
   "mcpServers": {
     "plinth": {
       "type": "http",
-      "url": "${user_config.instance_url}/mcp"
+      "url": "https://plinth.aconite.io/mcp"
     }
   }
 }

@@ -51,18 +51,18 @@ const meta = {
   keywords: [...PLUGIN.keywords],
 };
 
-// The Claude Code plugins' server follows their Plinth instance option (PLUGIN_USER_CONFIG), whose
-// default is the hosted instance. The full plugin lets PLINTH_URL override it, as before the option
-// existed; the directory build reads no environment variables.
+// The full Claude Code plugin's server follows its Plinth instance option (PLUGIN_USER_CONFIG),
+// whose default is the hosted instance, and PLINTH_URL overrides it, as before the option existed.
+// The directory build has neither: see its section below.
 const optionMcp = `\${user_config.${PLUGIN_INSTANCE_OPTION}}/mcp`;
-const claudeManifest = json({
-  ...meta,
+const listingFields = {
   privacyPolicyUrl: PLUGIN.privacyPolicyUrl,
   termsOfServiceUrl: PLUGIN.termsOfServiceUrl,
   supportUrl: PLUGIN.supportUrl,
   documentationUrl: PLUGIN.documentationUrl,
-  userConfig: PLUGIN_USER_CONFIG,
-});
+};
+const claudeManifest = json({ ...meta, ...listingFields, userConfig: PLUGIN_USER_CONFIG });
+const directoryManifest = json({ ...meta, ...listingFields });
 
 /** path (from the repo root) -> content */
 const outputs = new Map();
@@ -206,10 +206,11 @@ outputs.set(
 
 // ---------- Claude Code plugin directory build ----------
 // Anthropic's plugin directory accepts hooks, monitors and scripts only from verified
-// organizations, and each MCP server URL must be an absolute https URL or a `${user_config.KEY}`
-// reference (claude.com/docs/plugins/pre-submission-checklist). So the directory gets the skill and
-// a server that follows the instance option. The full plugin (watcher, session note, PLINTH_URL)
-// stays the one in integrations/plugin, installed from this repository's marketplace.
+// organizations, and its policy check refuses an MCP server whose url has a `${...}` variable in it
+// ("Plugin couldn't be read completely", 2026-11-19, though the pre-submission checklist allows a
+// `${user_config.KEY}` reference). So the directory gets the skill and a fixed server at the hosted
+// instance, with no instance option. The full plugin (instance option, watcher, session note,
+// PLINTH_URL) stays the one in integrations/plugin, installed from this repository's marketplace.
 const DIRECTORY = "integrations/plugin-directory";
 const directorySkillEdits = [
   [
@@ -218,7 +219,7 @@ const directorySkillEdits = [
   ],
   [
     "- Claude Code: the plugin asks for its Plinth instance when it is enabled (the default is the\n  hosted one). Install it with `claude plugin install plinth@plinth --config instance_url=<origin>`,\n  or change it later with `/plugin configure plinth@plinth`, then restart Claude Code. `PLINTH_URL`,\n  when set, overrides it.",
-    "- Claude Code: the plugin asks for its Plinth instance when it is enabled (the default is the\n  hosted one). Change it later in `/config` (the Plinth plugin's Plinth instance), then restart\n  Claude Code.",
+    "- Claude Code: this build of the plugin, from Anthropic's plugin directory, connects to the\n  hosted instance only. For another instance, add it as its own server\n  (`claude mcp add --transport http plinth <origin>/mcp`), or use the full plugin from this\n  repository's marketplace instead (`claude plugin marketplace add mr0b0t0/plinth`, then\n  `claude plugin install plinth@plinth --config instance_url=<origin>`).",
   ],
 ];
 let directorySkill = skill;
@@ -231,10 +232,10 @@ for (const [from, to] of directorySkillEdits) {
   directorySkill = directorySkill.replace(from, to);
 }
 outputs.set(`${DIRECTORY}/skills/${SKILL_NAME}/SKILL.md`, directorySkill);
-outputs.set(`${DIRECTORY}/.claude-plugin/plugin.json`, claudeManifest);
+outputs.set(`${DIRECTORY}/.claude-plugin/plugin.json`, directoryManifest);
 outputs.set(
   `${DIRECTORY}/.mcp.json`,
-  json({ mcpServers: { [SERVER_NAME]: { type: "http", url: optionMcp } } }),
+  json({ mcpServers: { [SERVER_NAME]: { type: "http", url: hostedMcp } } }),
 );
 
 // ---------- Gemini CLI extension ----------
