@@ -46,6 +46,11 @@ export interface RichHost {
   /** The text the model would be sent as, or null when it cannot be (verify after edit). */
   verify(b: RichBlock): string | null;
   isSafeHref(url: string): boolean;
+  /**
+   * A typed address as the page's parser writes a link's href (percent-encoded, the host in
+   * punycode), so the link reads back as the same mark.
+   */
+  normalizeHref(url: string): string;
 }
 
 export const FORMAT_LOST = "That formatting can't be kept here.";
@@ -1081,7 +1086,8 @@ export class RichBlockEditor {
       this.removeLink();
       return;
     }
-    if (!this.host.isSafeHref(url)) {
+    const href = this.host.normalizeHref(url);
+    if (!this.host.isSafeHref(url) || !this.host.isSafeHref(href)) {
       this.host.announce(LINK_REFUSED);
       return;
     }
@@ -1091,7 +1097,7 @@ export class RichBlockEditor {
     for (const [i, a, b] of this.ranges(refs, r)) {
       const ref = refs[i];
       if (ref && ref.kind !== "plain") {
-        ref.set(applyMark(ref.get(), a, b, "link", true, { href: url, title: "" }));
+        ref.set(applyMark(ref.get(), a, b, "link", true, { href, title: "" }));
       }
     }
     this.linkForm.hidden = true;

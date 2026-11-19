@@ -2,7 +2,7 @@
 // is text, links go through the URL check, and Enter, Backspace and Tab act on the model.
 import { DOC_DIALECT, type RichBlock, serializeBlock, verifyBlock } from "@plinth/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { docEnv, docMarkdownTools, isSafeHref } from "../doc/markdown.ts";
+import { docEnv, docMarkdownTools, isSafeHref, normalizeHref } from "../doc/markdown.ts";
 import { FORMAT_LOST, LINK_REFUSED, RichBlockEditor, type RichHost } from "./richblock.ts";
 
 const TOOLS = docMarkdownTools();
@@ -17,6 +17,7 @@ function make(block: RichBlock) {
     announce: vi.fn(),
     verify: (b: RichBlock) => verifyBlock(b, TOOLS, docEnv("")),
     isSafeHref,
+    normalizeHref,
   } satisfies RichHost;
   const r = new RichBlockEditor(document, host, block, { label: "Block 1, paragraph" });
   document.body.append(r.el);
@@ -84,6 +85,25 @@ describe("RichBlockEditor", () => {
     const followed = new MouseEvent("click", { bubbles: true, cancelable: true, metaKey: true });
     a.dispatchEvent(followed);
     expect(followed.defaultPrevented).toBe(true);
+  });
+
+  it("sets a link to an address with spaces or letters outside ASCII, as the page would", () => {
+    for (const [url, href] of [
+      ["https://pt.wikipedia.org/wiki/São_Paulo", "https://pt.wikipedia.org/wiki/S%C3%A3o_Paulo"],
+      ["https://bücher.de/", "https://xn--bcher-kva.de/"],
+      ["https://example.com/a b", "https://example.com/a%20b"],
+    ]) {
+      const { r, host } = make({ t: "paragraph", c: [text("click here")] });
+      caret(r.editable.firstChild as Node, 6, 10);
+      key(r.editable, "k", { metaKey: true });
+      const input = r.el.querySelector<HTMLInputElement>('input[aria-label="Link address"]');
+      (input as HTMLInputElement).value = url as string;
+      key(input as HTMLInputElement, "Enter");
+      expect(host.announce).not.toHaveBeenCalledWith(FORMAT_LOST);
+      expect(md(r.model)).toBe(`click [here](${href})`);
+      expect(r.editable.querySelector("a")?.getAttribute("href")).toBe(href);
+      r.el.remove();
+    }
   });
 
   it("refuses formatting with nothing selected, and undoes what cannot be kept", () => {

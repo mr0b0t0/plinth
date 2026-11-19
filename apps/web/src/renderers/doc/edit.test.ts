@@ -3,13 +3,16 @@
 // back as Markdown by the serializer; Esc gives the block back; Cmd/Ctrl+S goes to the app; blocks
 // other people hold show who holds them; the block menu turns, inserts, moves and deletes blocks;
 // blocks the model cannot show are read-only with Ask an agent; images keep their bytes.
+import { LIMITS } from "@plinth/shared";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ClientLease } from "../common/live.ts";
 import { FORMAT_LOST, type RichBlockEditor } from "../common/richblock.ts";
 import {
   composeBlock,
+  DOC_FULL,
   DocEditor,
   EDIT_DEBOUNCE_MS,
+  JOINED_BLOCKS,
   LocalDoc,
   padded,
   READ_ONLY_NOTE,
@@ -475,6 +478,88 @@ describe("DocEditor: the block menu", () => {
     menu("Delete");
     expect(local.text).toBe("[r]: https://example.com\n\nkeep [x][r]");
     expect(root.querySelector("a")?.getAttribute("href")).toBe("https://example.com");
+  });
+
+  it("a Delete or Move with no blank lines around the blocks keeps the others apart", () => {
+    const { local } = setup("Intro text\n## Section\nBody");
+    click(root.querySelector("h2") as Element);
+    menu("Delete");
+    expect(local.text).toBe("Intro text\n\nBody");
+    expect(root.querySelectorAll("p").length).toBe(2);
+  });
+
+  it("a Move with no blank lines around the blocks keeps them apart at both ends", () => {
+    const { local } = setup("Intro text\n## Section\nBody");
+    click(root.querySelector("h2") as Element);
+    menu("Move up");
+    expect(local.text).toBe("## Section\n\nIntro text\n\nBody");
+    expect(root.querySelectorAll("p").length).toBe(2);
+  });
+
+  it("a Delete or Move never joins two lists of the same marker", () => {
+    const { local } = setup("- a\n- b\n\nThen:\n\n- c\n- d");
+    click(root.querySelector("p") as Element);
+    menu("Delete");
+    expect(local.text).toBe("- a\n- b\n\n* c\n* d");
+    expect(root.querySelectorAll("ul").length).toBe(2);
+    expect(root.querySelector("ul p")).toBeNull();
+  });
+
+  it("a Move that would join two lists writes the moved list with a free marker", () => {
+    const { local } = setup("- a\n\nmid\n\n- b\n\nend");
+    click(root.querySelector("p") as Element);
+    menu("Move down");
+    expect(local.text).toBe("- a\n\n* b\n\nmid\n\nend");
+    expect(root.querySelectorAll("ul").length).toBe(2);
+  });
+
+  it("refuses a Delete that would run the blocks around it together, and says why", () => {
+    // Without the paragraph, the indented line would continue the list item.
+    const { local } = setup("- a\n\nmid\n\n    code");
+    click(root.querySelector("p") as Element);
+    menu("Delete");
+    expect(local.text).toBe("- a\n\nmid\n\n    code");
+    expect(document.querySelector('[role="status"]')?.textContent).toContain(JOINED_BLOCKS);
+  });
+
+  it("refuses a Delete between numbered lists when no delimiter is free", () => {
+    // The list after the paragraph has the first list's delimiter, and the next one has the other.
+    const { local } = setup("1. a\n\nmid\n\n1. b\n1) c");
+    click(root.querySelector("p") as Element);
+    menu("Delete");
+    expect(local.text).toBe("1. a\n\nmid\n\n1. b\n1) c");
+    expect(root.querySelectorAll("ol").length).toBe(3);
+    expect(document.querySelector('[role="status"]')?.textContent).toContain(JOINED_BLOCKS);
+  });
+
+  it("a block op the doc cannot take says so and opens nothing", () => {
+    const filler = "x".repeat(LIMITS.maxDocBytes - 20);
+    const { local, editor } = setup(`one\n\ntwo\n\n${filler}`);
+    click(root.querySelector("p") as Element);
+    const button = [...document.querySelectorAll<HTMLElement>(".plinth-doc__menu-button")].at(-1);
+    click(button as Element);
+    const inputs = document.querySelectorAll<HTMLInputElement>(".plinth-doc__menu-table input");
+    (inputs[0] as HTMLInputElement).value = "1";
+    (inputs[1] as HTMLInputElement).value = "2";
+    click(
+      [...document.querySelectorAll(".plinth-doc__menu-item")].find(
+        (b) => b.textContent === "Insert table",
+      ) as Element,
+    );
+    expect(local.text).toBe(`one\n\ntwo\n\n${filler}`);
+    expect(editor.openEditor).toBeNull();
+    expect(document.querySelector('[role="status"]')?.textContent).toContain(DOC_FULL);
+  });
+
+  it("a block op whose edit is not sent says so and opens nothing", () => {
+    const { local, editor } = setup("one\n\ntwo\n\nthree");
+    vi.spyOn(local, "edit").mockReturnValue(false);
+    click(root.querySelector("p") as Element);
+    menu("Divider", "Insert below");
+    expect(local.text).toBe("one\n\ntwo\n\nthree");
+    expect(editor.openEditor).toBeNull();
+    expect(local.mine).toBeNull();
+    expect(document.querySelector('[role="status"]')?.textContent).toContain("Not connected");
   });
 
   it("an empty doc offers Write something, which starts a new paragraph", () => {

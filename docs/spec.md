@@ -2711,14 +2711,21 @@ the same leases, room, drafts and Publish as [Editing](#editing).
   formatting command whose result CommonMark cannot express is undone, with "That formatting can't
   be kept here.", and nothing is sent.
 - **Formatting and the block menu.** A toolbar and the shortcuts Cmd/Ctrl+B, I, E (code), K (a
-  link, checked by the same rule as the page's links) and Shift+X (strikethrough). Enter ends a
+  link, checked by the same rule as the page's links and stored as the page's parser writes the
+  address, percent-encoded with the host in punycode) and Shift+X (strikethrough). Enter ends a
   block (a new item in a list, a new paragraph in a quote), Shift+Enter is a line break, Tab and
   Shift+Tab indent and outdent list items (three levels at most) and move between table cells,
   and Esc gives the block back. Each block's menu has "Turn into" (paragraph, heading 1 to 3,
   bulleted or numbered list, quote, code block), "Insert below" (the same kinds, a divider, a table
   of a chosen size, and "Add or replace an image: Ask an agent"), "Move up", "Move down" and
   "Delete". A move takes one lease over both blocks and swaps their lines. A new list never joins
-  the list next to it.
+  the list next to it. A Move or a Delete never runs the blocks around it together: a blank line
+  goes wherever a block would touch the next one, a moved list that would sit next to a list of
+  its own marker takes another marker, and so does the list after a deleted block, written again
+  in the same lease. One that would still join blocks (two numbered lists around it that use both
+  `.` and `)`, or an indented block that would continue the list above) is not made, and the page
+  says why. A block op the doc has no room for, or that cannot be sent, says so and changes
+  nothing.
 - **Images are agent-only.** An image block's alt text is a field; the image itself, and adding
   one, are left to agents through Ask an agent, whose page anchor names the place (`block-3`, or
   `block-3:image`), never its text.

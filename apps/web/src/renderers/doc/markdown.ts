@@ -257,6 +257,11 @@ export function sourceMarkdown(): MarkdownIt {
   return source;
 }
 
+/** An address as the doc's parser writes it into a link's href (what a typed link must match). */
+export function normalizeHref(url: string): string {
+  return sourceMarkdown().normalizeLink(url);
+}
+
 /** What the formatted-text editor checks a doc block with: the doc's dialect and both parsers. */
 export function docMarkdownTools(): MarkdownTools {
   return {

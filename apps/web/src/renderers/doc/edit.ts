@@ -54,7 +54,14 @@ import {
 } from "../common/live.ts";
 import { FORMAT_LOST, kindName, RichBlockEditor, type RichHost } from "../common/richblock.ts";
 import { type Block, BlockCache, parseBlocks, rangeOf, reconcile } from "./blocks.ts";
-import { docEnv, docMarkdownTools, isSafeHref, renderInlineMarkdown } from "./markdown.ts";
+import {
+  docEnv,
+  docMarkdownTools,
+  isSafeHref,
+  markdown,
+  normalizeHref,
+  renderInlineMarkdown,
+} from "./markdown.ts";
 import { BlockMenu, type MenuGroup } from "./menu.ts";
 import { sanitizeHtml } from "./sanitize.ts";
 
@@ -69,6 +76,11 @@ export const REFUSED_EDIT =
 export const READ_ONLY_NOTE =
   "This part can't be edited here, so it is shown as it is. An agent can change it.";
 export const EMPTY_DOC = "Write something";
+/** Why a Move or Delete was not made: the blocks around it would have become one. */
+export const JOINED_BLOCKS =
+  "That would run the blocks around it together into one, so nothing was changed.";
+/** Why a block op was not made: the doc has no room for it. */
+export const DOC_FULL = "The doc is at its size limit, so that change wasn't made.";
 
 /** What the editor needs of the live draft: the room's (LiveDocClient) or a local one. */
 export type DocBackend = LiveBackend;
@@ -160,6 +172,11 @@ interface OpResult {
   focus?: number;
   /** Open that block for editing once it is drawn (a table just inserted). */
   open?: boolean;
+  /**
+   * How many top-level blocks the doc has after the op. Anything else means blocks nobody touched
+   * ran together (or came apart), and the op is refused.
+   */
+  blocks?: number;
 }
 
 interface Want extends LineRange {
@@ -996,17 +1013,23 @@ export class DocEditor {
     };
     this.runOp(plan, (lines, lease) => {
       const blocks = parseBlocks(joinLines(lines));
-      const first = blocks.find((x) => x.start === lease.start);
-      const second = blocks.find((x) => filledEnd(lines, x) === lease.end);
-      if (!first || !second || first === second) return null;
+      const i = blocks.findIndex((x) => x.start === lease.start);
+      const j = blocks.findIndex((x) => filledEnd(lines, x) === lease.end);
+      const first = blocks[i];
+      const second = blocks[j];
+      if (!first || !second || i >= j) return null;
       // Each block moves with its own lines, blank lines after it left where they are.
-      const a = lines.slice(first.start, filledEnd(lines, first));
+      const own = (x: Block | undefined) => x && lines.slice(x.start, filledEnd(lines, x));
+      let a = lines.slice(first.start, filledEnd(lines, first));
       const between = lines.slice(filledEnd(lines, first), second.start);
-      const b = lines.slice(second.start, lease.end);
+      let b = lines.slice(second.start, lease.end);
+      // A moved list that would join the list next to it is written with another marker.
+      b = apart(b, [own(blocks[i - 1]), a]) ?? b;
+      a = apart(a, [b, own(blocks[j + 1])]) ?? a;
       const gap = between.length > 0 ? between : [""];
-      const text = [...b, ...gap, ...a].join("\n");
-      const moved = dir < 0 ? first.start : first.start + b.length + gap.length;
-      return { text, focus: moved };
+      const { text, lead } = separated(lines, lease, [...b, ...gap, ...a].join("\n"));
+      const moved = first.start + lead + (dir < 0 ? 0 : b.length + gap.length);
+      return { text, focus: moved, blocks: blocks.length };
     });
   }
 
@@ -1023,26 +1046,46 @@ export class DocEditor {
       const s = next || !prev ? cur.start : prev.end;
       let e = next ? next.start : cur.end;
       const kept = removedText(lines, cur, { start: s, end: e }, next);
-      // Deleting it would leave the next block first, starting like a web page: that block is
-      // written again escaped, in the same edit.
-      if (next && RULES?.checkEdit(lines, s, e - s, blockLines(kept))) e = next.end;
+      // The next block is written again in the same edit when deleting this one would leave it
+      // first, starting like a web page (escaped); right against the block before, with no blank
+      // line left between them (one is added); or next to a list of its own marker (it takes
+      // another).
+      const own = (x: Block) => lines.slice(x.start, filledEnd(lines, x));
+      if (
+        next &&
+        (RULES?.checkEdit(lines, s, e - s, blockLines(kept)) ||
+          (prev &&
+            ((kept === "" && !isBlank(lines[s - 1]) && !isBlank(lines[e])) ||
+              listsJoin(own(prev), own(next)))))
+      ) {
+        e = next.end;
+      }
       return { start: s, end: e, text: joinLines(lines.slice(s, e)) };
     };
     this.runOp(plan, (lines, lease) => {
       const blocks = parseBlocks(joinLines(lines));
-      const cur = blocks.find((x) => x.core.start >= lease.start && x.core.end <= lease.end);
+      const i = blocks.findIndex((x) => x.core.start >= lease.start && x.core.end <= lease.end);
+      const cur = blocks[i];
       if (!cur) return null;
-      const next = blocks.find((x) => x.start >= cur.end && x.end > x.start);
+      const k = blocks.findIndex((x) => x.start >= cur.end && x.end > x.start);
+      const next = blocks[k];
       const withNext = next !== undefined && next.end === lease.end && next.start < lease.end;
-      const text = withNext
-        ? composeBlock(defsOf(lines, cur), joinLines(lines.slice(next.start, next.end)), [])
-        : removedText(
-            lines,
-            cur,
-            lease,
-            blocks.find((x) => x.start === lease.end),
-          );
-      return { text, focus: lease.start };
+      const own = (x: Block | undefined) => x && lines.slice(x.start, filledEnd(lines, x));
+      let text: string;
+      if (withNext) {
+        const nextLines = lines.slice(next.start, next.end);
+        const kept = apart(nextLines, [own(blocks[i - 1]), own(blocks[k + 1])]) ?? nextLines;
+        text = composeBlock(defsOf(lines, cur), joinLines(kept), []);
+      } else {
+        text = removedText(
+          lines,
+          cur,
+          lease,
+          blocks.find((x) => x.start === lease.end),
+        );
+      }
+      const out = separated(lines, lease, text);
+      return { text: out.text, focus: lease.start + out.lead, blocks: blocks.length - 1 };
     });
   }
 
@@ -1260,6 +1303,7 @@ export class DocEditor {
       announce: (text) => (text ? this.showNotice(text) : this.hideNotice()),
       verify: (b) => verifyBlock(b, TOOLS, holder.open?.env ?? env),
       isSafeHref,
+      normalizeHref,
     };
     const rich = new RichBlockEditor(this.doc, host, model, { label, extra });
     rich.el.classList.add("plinth-doc__open");
@@ -1285,8 +1329,26 @@ export class DocEditor {
       this.showNotice(REFUSED_EDIT);
       return;
     }
-    if (fitted !== text) this.backend.edit(fitted);
+    const after = [
+      ...lines.slice(0, lease.start),
+      ...blockLines(fitted),
+      ...lines.slice(lease.end),
+    ];
+    let refusal: string | null = null;
+    if (result.blocks !== undefined && parseBlocks(joinLines(after)).length !== result.blocks) {
+      refusal = JOINED_BLOCKS;
+    } else if (new TextEncoder().encode(joinLines(after)).byteLength > LIMITS.maxDocBytes) {
+      refusal = DOC_FULL;
+    } else if (fitted !== text && !this.backend.edit(fitted)) {
+      refusal = "Not connected. Try again in a moment.";
+    }
     this.backend.release();
+    if (refusal) {
+      // Nothing changed, so nothing is opened or selected for it.
+      this.showNotice(refusal);
+      this.render();
+      return;
+    }
     if (result.focus !== undefined) this.after = { line: result.focus, open: !!result.open };
     this.render();
     this.hooks.status();
@@ -1620,6 +1682,91 @@ function filledEnd(lines: readonly string[], b: Block): number {
   let end = b.end;
   while (end > b.start && isBlank(lines[end - 1])) end--;
   return end;
+}
+
+/**
+ * `text` for `range` with a blank line added at either end where it would sit right against the
+ * line next to it, so a block an op moves or uncovers never runs into its neighbour. `lead` is 1
+ * when one was added before it.
+ */
+function separated(
+  lines: readonly string[],
+  range: LineRange,
+  text: string,
+): { text: string; lead: number } {
+  if (text === "") return { text, lead: 0 };
+  const out = text.split("\n");
+  let lead = 0;
+  if (range.start > 0 && !isBlank(lines[range.start - 1]) && !isBlank(out[0])) {
+    out.unshift("");
+    lead = 1;
+  }
+  if (range.end < lines.length && !isBlank(lines[range.end]) && !isBlank(out.at(-1))) out.push("");
+  return { text: out.join("\n"), lead };
+}
+
+const BULLETS = ["-", "*", "+"];
+const DELIMITERS = [".", ")"];
+const BULLET_AT = /^(\s{0,3})[-*+]/;
+const NUMBER_AT = /^(\s{0,3}\d{1,9})[.)]/;
+
+interface ListMark {
+  ordered: boolean;
+  /** The bullet, or a numbered list's delimiter. */
+  mark: string;
+  /** The lines (counted from the first given) the list's own items start on. */
+  items: number[];
+}
+
+/** The list a block's lines start with, or null when they do not start with one. */
+function listMark(lines: readonly string[]): ListMark | null {
+  const tokens = markdown().parse(joinLines(lines), {});
+  const first = tokens[0];
+  if (first?.type !== "bullet_list_open" && first?.type !== "ordered_list_open") return null;
+  const close = first.type.replace("_open", "_close");
+  const end = tokens.findIndex((t) => t.type === close && t.level === 0);
+  const items = tokens
+    .slice(0, end < 0 ? undefined : end)
+    .filter((t) => t.type === "list_item_open" && t.level === 1)
+    .map((t) => t.map?.[0] ?? -1);
+  return { ordered: first.type === "ordered_list_open", mark: first.markup, items };
+}
+
+/** Whether two blocks are lists that would be read as one with only blank lines between them. */
+function listsJoin(a: readonly string[], b: readonly string[]): boolean {
+  const x = listMark(a);
+  const y = listMark(b);
+  return !!x && !!y && x.ordered === y.ordered && x.mark === y.mark;
+}
+
+/**
+ * A block's lines, with a list's markers changed to one no list among `neighbours` uses when one
+ * of them shares its marker (two such lists would join); the lines as they are when none does,
+ * and null when no marker is free.
+ */
+function apart(
+  lines: readonly string[],
+  neighbours: readonly (readonly string[] | undefined)[],
+): string[] | null {
+  const list = listMark(lines);
+  if (!list) return [...lines];
+  const taken = new Set<string>();
+  for (const n of neighbours) {
+    const m = n && listMark(n);
+    if (m && m.ordered === list.ordered) taken.add(m.mark);
+  }
+  if (!taken.has(list.mark)) return [...lines];
+  const re = list.ordered ? NUMBER_AT : BULLET_AT;
+  if (!list.items.every((n) => n >= 0 && re.test(lines[n] ?? ""))) return null;
+  for (const mark of list.ordered ? DELIMITERS : BULLETS) {
+    if (taken.has(mark)) continue;
+    const out = [...lines];
+    for (const n of list.items) out[n] = (out[n] as string).replace(re, `$1${mark}`);
+    // The new marker must keep it the same list ("* * *" is a divider, not an item).
+    const again = listMark(out);
+    if (again?.mark === mark && again.items.length === list.items.length) return out;
+  }
+  return null;
 }
 
 /** A block's reference definitions (the lines of its range outside its core). */
