@@ -159,32 +159,38 @@ function TokenDialogBody({ onClose, onCreated }: Omit<NewTokenDialogProps, "open
             copyLabel="Copy token"
             copiedMessage="Token copied"
           />
-          <Note tone="warning">
-            You won't see this token again. Copy it now and keep it somewhere safe, like your
-            agent's settings, a CI secret or a password manager. If you lose it, revoke it and
-            create a new one.
-          </Note>
           {createdFor ? (
             <>
-              <p className="type-small text-muted">
-                Save it as the secret <code>PLINTH_TOKEN</code>, then add this step after your
-                build.{" "}
-                <a href={CI_DOCS_URL} target="_blank" rel="noreferrer">
-                  CI guide
-                </a>
-              </p>
+              <Note tone="warning">
+                Shown only once. Save it as the CI secret <code>PLINTH_TOKEN</code>.
+              </Note>
               <CopyBlock
-                label="GitHub Actions step"
+                label={
+                  <>
+                    GitHub Actions step <span aria-hidden="true">·</span>{" "}
+                    <a href={CI_DOCS_URL} target="_blank" rel="noreferrer">
+                      CI guide
+                    </a>
+                  </>
+                }
                 // The app runs on its own origin, which is the instance the token belongs to.
                 value={ciWorkflowSnippet({ id: createdFor, appOrigin: window.location.origin })}
                 copyLabel="Copy workflow step"
                 copiedMessage="Workflow step copied"
+                wrap={false}
               />
             </>
           ) : (
-            <p className="type-small text-muted">
-              Agents send it as <code>Authorization: Bearer …</code> to the MCP server URL.
-            </p>
+            <>
+              <Note tone="warning">
+                You won't see this token again. Copy it now and keep it somewhere safe, like your
+                agent's settings, a CI secret or a password manager. If you lose it, revoke it and
+                create a new one.
+              </Note>
+              <p className="type-small text-muted">
+                Agents send it as <code>Authorization: Bearer …</code> to the MCP server URL.
+              </p>
+            </>
           )}
         </Stack>
       </Dialog>

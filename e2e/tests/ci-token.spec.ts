@@ -1,6 +1,7 @@
 // Publishing from CI (docs/ci.md): the New token dialog makes a token limited to one artifact and
 // shows the workflow step; the token publishes a new version of that artifact and gets 404 for any
-// other; deleting the artifact revokes it, and Connections says it can no longer open it.
+// other; deleting the artifact revokes it, and Connections says it can no longer open it. The
+// Connections page lists it with the tokens, not among the agents.
 import { expect, test } from "@playwright/test";
 import {
   apiDelete,
@@ -41,9 +42,16 @@ test("a token limited to one artifact, from the New token dialog to its end", as
     const token = await field.inputValue();
     await expect(page.getByText(`id: ${art.id}`)).toBeVisible();
     await page.getByRole("button", { name: "Done" }).click();
-    // Listed with the connections, limited to the artifact; not among the sidebar's agents.
-    const item = page.getByRole("listitem").filter({ hasText: "CI: Coverage report" });
-    await expect(item).toContainText("Only Coverage report");
+    // Listed with the tokens, limited to the artifact; not among the agents.
+    const item = page
+      .getByRole("list", { name: "Tokens for one artifact" })
+      .getByRole("listitem")
+      .filter({ hasText: "CI: Coverage report" });
+    await expect(item).toContainText("Coverage report");
+    await expect(item).toContainText("Publish new versions");
+    await expect(
+      page.getByRole("region", { name: /Connected agents/ }).getByText("CI: Coverage report"),
+    ).toHaveCount(0);
     const sidebar = page.getByRole("heading", { name: "Agents" }).locator("..");
     await expect(sidebar.getByRole("link", { name: /CI: Coverage report/ })).toHaveCount(0);
 
@@ -67,7 +75,7 @@ test("a token limited to one artifact, from the New token dialog to its end", as
     const revoked = page.getByRole("region", { name: /Revoked/ });
     const gone = revoked.getByRole("listitem").filter({ hasText: "CI: Coverage report" });
     await expect(gone).toBeVisible();
-    await expect(gone).toContainText("Only an artifact you can no longer open");
+    await expect(gone).toContainText("An artifact you can no longer open");
   } finally {
     await api.dispose();
   }

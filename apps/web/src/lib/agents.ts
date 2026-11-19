@@ -1,13 +1,15 @@
 // The signed-in person's connected agents, for the sidebar. Loaded when a signed-in page mounts
 // and kept between pages, so navigating does not make the list flicker. Failures keep the last
 // list (or none): the sidebar is a shortcut, the Connections page is the source of truth. A token
-// limited to one artifact (a CI pipeline) is not an agent, so the sidebar leaves it out.
+// limited to one artifact (a CI pipeline) is not an agent, so the sidebar leaves it out, and the
+// Connections page lists it with the personal access tokens.
 import { API, type ConnectionInfo, type Paged } from "@plinth/shared";
 import { useEffect, useSyncExternalStore } from "react";
 import { api } from "./api.ts";
 
 let agents: ConnectionInfo[] | null = null;
-const isAgent = (c: ConnectionInfo) => !c.revoked_at && !c.artifact;
+/** An active connection that is not limited to one artifact. */
+export const isAgent = (c: ConnectionInfo) => !c.revoked_at && !c.artifact;
 let forUser: string | null = null;
 const listeners = new Set<() => void>();
 

@@ -119,6 +119,15 @@ describe("New token: Limit to one artifact", () => {
     expect(text).toContain(`id: ${ID}`);
     expect(text).toContain(`url: ${window.location.origin}`);
     expect(text).toContain("secrets.PLINTH_TOKEN");
+    // The guide sits in the step's caption; the step keeps its lines whole (YAML) and scrolls.
+    const guide = screen.getByRole("link", { name: "CI guide" });
+    expect(guide.closest("figcaption")?.textContent).toBe("GitHub Actions step · CI guide");
+    const step = document.querySelector("pre");
+    expect(step?.classList.contains("pl-acct-block__code--nowrap")).toBe(true);
+    expect(step?.getAttribute("tabindex")).toBe("0");
+    // Both copy buttons sit inside their boxes.
+    const token = screen.getByLabelText("Token");
+    expect(token.closest(".pl-acct-copy--box")?.querySelector("button")).toBeTruthy();
   });
 
   it("a read-only token for the artifact sends artifacts:read alone", async () => {

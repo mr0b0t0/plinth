@@ -179,8 +179,9 @@ describe("Connections", () => {
 });
 
 describe("Connections: tokens limited to one artifact", () => {
-  it('shows "Only <title>" with a link, or that the artifact can no longer be opened', async () => {
+  it("lists them with the tokens: the artifact, then what they may do, and a key", async () => {
     backend([
+      conn({}),
       conn({
         id: "c2",
         label: "CI: Coverage",
@@ -201,11 +202,22 @@ describe("Connections: tokens limited to one artifact", () => {
     render(<Connections />);
     const link = await screen.findByRole("link", { name: "Coverage <b>report</b>" });
     expect(link.getAttribute("href")).toBe("/a/coverage");
-    expect(link.closest("p")?.textContent).toBe("Only Coverage <b>report</b>");
-    expect(screen.getByText("Only an artifact you can no longer open")).toBeTruthy();
-    // No client badge: a limited token answers no mentions.
+    // One line: the artifact first, then the permissions in short labels.
+    const line = link.closest("p") as HTMLElement;
+    expect(line.textContent).toBe(
+      "Only Coverage <b>report</b>Permissions: ReadPublish new versions",
+    );
     const item = link.closest("li") as HTMLElement;
+    expect(item.querySelectorAll("p.pl-acct-conn__scopes")).toHaveLength(1);
+    // A key, not initials, so it does not read as another agent; and no client badge.
+    expect(item.querySelector(".pl-acct-conn__mark svg")).toBeTruthy();
     expect(within(item).queryByText("Other client")).toBeNull();
+    expect(screen.getByText("An artifact you can no longer open")).toBeTruthy();
+    // Under the tokens, not among the connected agents, which count only the agent.
+    expect(link.closest("details")).toBeTruthy();
+    const agents = screen.getByRole("region", { name: /Connected agents/ });
+    expect(within(agents).getAllByRole("listitem")).toHaveLength(1);
+    expect(within(agents).getByText("1")).toBeTruthy();
   });
 
   it("leaves them out of the sidebar's agents", async () => {
