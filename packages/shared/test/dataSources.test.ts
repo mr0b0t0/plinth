@@ -402,6 +402,61 @@ describe("sanitizeSourceRef", () => {
     }
   });
 
+  it("refuses a scheme-less connection string whose password holds a '/'", () => {
+    const pw = ["pa", "/ss"].join("");
+    const tiger = ["ti", "ger"].join("");
+    for (const ref of [
+      `admin:${pw}@db.internal:5432/prod`,
+      `admin:${pw}@db.example.com/prod`,
+      `admin:${pw}@10.0.0.5`,
+      `admin:${pw}@localhost`,
+      `admin:${pw}@//db.example.com:1521/ORCL`,
+      `jdbc:oracle:thin:scott/${tiger}@//db.example.com:1521/ORCL`,
+      `jdbc:oracle:thin:scott/${tiger}@db.example.com:1521:ORCL`,
+      `scott/${tiger}@db.example.com:1521/ORCL`,
+      `scott/${tiger}@db.example.com/ORCL`,
+      `scott/${tiger}@//db.example.com/ORCL`,
+      `scott/${tiger}@10.0.0.5:1521/ORCL`,
+      `sqlplus scott/${tiger}@orcl`,
+      `sqlplus -s scott/${tiger}@orcl`,
+      `sqlplus scott/${tiger}`,
+      `SQLPLUS "scott/${tiger}"@orcl`,
+      `rman target sys/${tiger}@orcl`,
+      `expdp scott/${tiger} directory=dump`,
+      `sqlldr userid=scott/${tiger} control=load.ctl`,
+      `CONNECT scott/${tiger}@orcl`,
+      `connect scott/${tiger};`,
+    ]) {
+      expect(sanitizeSourceRef(ref), ref).toMatchObject({ ok: false });
+      expect(looksLikeSecret(ref), ref).toBe(true);
+      expect(recipeProblem(`Count orders, run ${ref}`), ref).not.toBeNull();
+      expect(sourceTextProblem(ref.slice(0, 60), "label"), ref).not.toBeNull();
+    }
+    // A ref, a version or a package after the "@", and Oracle logins without a password, pass.
+    for (const ok of [
+      "github:owner/repo@v1",
+      "github:owner/repo@v1.2.3",
+      "github:acme/web@main",
+      "actions/checkout@v4",
+      "acme/web@main",
+      "npm:@types/node",
+      "https://medium.com/@acme.blog",
+      "jdbc:oracle:thin:@//db.example.com:1521/ORCL",
+      "sqlplus /nolog",
+      "sqlplus / as sysdba",
+      "sqlplus scott@orcl",
+      "rman target /",
+      "Connect Linear issues to the page",
+      "connect to github/acme and count open issues",
+    ]) {
+      expect(looksLikeSecret(ok), ok).toBe(false);
+    }
+    expect(sanitizeSourceRef("github:owner/repo@v1")).toEqual({
+      ok: true,
+      ref: "github:owner/repo@v1",
+    });
+  });
+
   it("checks a URL path segment by segment, and the text around it as before", () => {
     const airtable = "https://airtable.com/appAbC123dEf456Gh/tblXyZ789aBc012De";
     expect(looksLikeSecret(`see ${airtable} for the base`)).toBe(false);

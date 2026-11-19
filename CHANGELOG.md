@@ -24,7 +24,8 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   `plinth-data-sourced` collections that only the owner and editors write. Credential-like text is
   refused in recipes, labels, connectors and stamps, and a stamp's link loses any user name and
   password whatever its scheme (a link whose password holds an unencoded `/`, `?`, `#` or `@` is
-  refused); links to records (a Linear issue, a Jira board, a Notion page, a
+  refused, and so are a bare `user:pa/ss@host:port`, Oracle's `user/password@host` and
+  `sqlplus user/password`); links to records (a Linear issue, a Jira board, a Notion page, a
   Google Sheet or Drive file, a GitHub commit, an Airtable view, a Salesforce or Stripe record)
   pass. Works with no page declaration and under opaque isolation (figures inline). Migration
   `0015_data_sources.sql`.

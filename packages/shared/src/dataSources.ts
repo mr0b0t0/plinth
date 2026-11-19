@@ -107,6 +107,38 @@ const URL_PASSWORD = /\b[a-z][a-z0-9+.-]*:\/\/[^\s@:]*:[^\s@]*@/i;
  * never backtracks; `mailto:person@host` is an address, not a password (looksLikeSecret).
  */
 const BARE_PASSWORD = /(?:^|[\s"'(<[,;=])([^\s"'()<>[\],;=/@:]+):[^\s"'()<>[\]/@]+@[A-Za-z0-9-]/g;
+/**
+ * What follows the `@` of a pasted connection string: `//host`, a host with a port, an IPv4
+ * address, `localhost`, or a dotted host whose last label is letters (`db.internal`). A ref or a
+ * version (`@v1`, `@v1.2.3`, `@main`) is none of these, so `github:owner/repo@v1` passes.
+ */
+const HOST_AFTER_AT = String.raw`(?:\/\/|(?:[A-Za-z0-9-]+\.)*[A-Za-z0-9-]+:\d{1,5}(?![A-Za-z0-9])|\d{1,3}(?:\.\d{1,3}){3}(?![A-Za-z0-9.])|localhost(?![A-Za-z0-9.-])|(?:[A-Za-z0-9-]+\.)+[A-Za-z]{2,}(?![A-Za-z0-9.-]))`;
+/**
+ * A bare `user:password@host` whose password holds a `/` (`admin:pa/ss@db.internal:5432/prod`,
+ * `jdbc:oracle:thin:scott/tiger@//db:1521/ORCL`). A `/` is allowed only when a host follows the
+ * `@` (HOST_AFTER_AT); a password never starts with `//`, which is a URL's (URL_PASSWORD), and
+ * never ends with `:` (`jdbc:oracle:thin:@//db` holds none). `mailto:` is excluded as for
+ * BARE_PASSWORD.
+ */
+const BARE_PASSWORD_SLASHED = new RegExp(
+  String.raw`(?:^|[\s"'(<[,;=])([^\s"'()<>[\],;=/@:]+):(?!\/\/)[^\s"'()<>[\]@]*[^\s"'()<>[\]@:]@${HOST_AFTER_AT}`,
+  "g",
+);
+/** Oracle's `user/password@host` (EZConnect), when a host follows the `@` (HOST_AFTER_AT). */
+const ORACLE_PASSWORD = new RegExp(
+  String.raw`(?:^|[\s"'(<[,;=])[^\s"'()<>[\],;=/@:]+\/[^\s"'()<>[\]@]+@${HOST_AFTER_AT}`,
+);
+/**
+ * An Oracle login with its password, whatever follows: a command-line tool's
+ * `user/password[@alias]` (`sqlplus -s scott/tiger@orcl`, `rman target sys/pw@db`, `expdp
+ * scott/tiger`), `userid=user/password`, and SQL*Plus `CONNECT user/password` ending at `@`, `;`
+ * or the line's end. `sqlplus /nolog`, `sqlplus / as sysdba` and `rman target /` hold none.
+ */
+const ORACLE_LOGIN = [
+  /\b(?:sqlplus|sqlldr|expdp|impdp|rman|dgmgrl)(?:\s+-\S+)*\s+(?:(?:target|catalog|auxiliary)\s*=?\s*)?["']?[^\s"'/@=-][^\s"'/@=]*\/[^\s"'@]/i,
+  /\buserid\s*=\s*["']?[^\s"'/@=]+\/[^\s"'@]/i,
+  /\bconn(?:ect)?\s+["']?[^\s"'/@=]+\/[^\s"'@;]+["']?(?=[@;]|[ \t]*$)/im,
+];
 
 // Each id may be followed by the punctuation of the sentence the link sits in ("…/edit).").
 /** A Google Docs, Sheets, Slides, Forms or Drive id, the segment after `/d/`, `/e/` or `/folders/`. */
@@ -153,7 +185,10 @@ function withoutRecordIds(text: string): string {
  * Text that looks like it holds a credential: a bearer header or any `Authorization:` header,
  * `X-Api-Key`, a well-known token prefix (TOKEN_PREFIX), a field such as `api_key=` or
  * `password:`, a JWT, a query or fragment parameter named like a secret, a URL with a password
- * (any `:` between its `://` and its first `@`, URL_PASSWORD) or a bare `user:password@host`, a run of 32 or more hex characters, or a run of 40 or more
+ * (any `:` between its `://` and its first `@`, URL_PASSWORD), a bare `user:password@host` (whose
+ * password may hold a `/` when a host follows the `@`) or Oracle's `user/password@host`, an
+ * Oracle login with its password (`sqlplus scott/tiger@orcl`, ORACLE_LOGIN), a run of 32 or more
+ * hex characters, or a run of 40 or more
  * base64 or base64url characters that mixes upper case, lower case and digits and does not read
  * as words and identifiers (keyLikeRun). In a URL's host and path each segment between slashes is
  * a run of its own, so a link to a record whose segments are short opaque ids (Airtable,
@@ -168,9 +203,12 @@ export function looksLikeSecret(text: string): boolean {
   if (CREDENTIAL_HEADER.test(text) || CREDENTIAL_FIELD.test(text)) return true;
   if (/eyJ[A-Za-z0-9_-]*\.eyJ[A-Za-z0-9_-]*\./.test(text)) return true;
   if (SECRET_PARAM.test(text) || URL_PASSWORD.test(text)) return true;
-  for (const m of text.matchAll(BARE_PASSWORD)) {
-    if ((m[1] ?? "").toLowerCase() !== "mailto") return true;
+  for (const re of [BARE_PASSWORD, BARE_PASSWORD_SLASHED]) {
+    for (const m of text.matchAll(re)) {
+      if ((m[1] ?? "").toLowerCase() !== "mailto") return true;
+    }
   }
+  if (ORACLE_PASSWORD.test(text) || ORACLE_LOGIN.some((re) => re.test(text))) return true;
   const runs = withoutRecordIds(text);
   if (HEX_RUN.test(runs)) return true;
   for (const url of runs.match(URL_UP_TO_QUERY) ?? []) {
@@ -220,7 +258,8 @@ export function recipeProblem(s: string): string | null {
  * A document's source_ref as stored, or why it is refused. Trimmed; a URL of any scheme
  * (`https://`, `postgres://`, `mongodb+srv://`, `redis://`) keeps only its scheme, host and path
  * (user name, password, query and fragment are dropped); any other text is kept as it is, and a
- * bare `user:password@host` is refused (looksLikeSecret). A URL whose user info runs past the
+ * bare `user:password@host`, `user:pa/ss@host:port` or Oracle `user/password@host` is refused
+ * (looksLikeSecret). A URL whose user info runs past the
  * host, because its password holds an unencoded `/`, `?`, `#` or `@`, is refused, not stripped. Empty is null. Refused past
  * LIMITS.maxSourceRefLength, with control or invisible characters, or when it looks like it holds
  * a credential. Every reader of the page may see it, anonymous link viewers included.

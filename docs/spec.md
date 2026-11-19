@@ -2021,7 +2021,9 @@ where they came from.
   header, a known token or key prefix such as `sk-`, `ghp_`, `glpat-`, `AIza`, `rk_live_` or
   `xoxb-`, a field such as `api_key=` or `password:`, a JWT, a secret-named query or fragment
   parameter such as `?client_secret=` or `#access_token=`, a URL or a bare `user:password@host`
-  with a password, 32 or more hex characters, or 40 or more key-like characters that mix upper
+  with a password (a `/` in it included when a host follows the `@`), Oracle's
+  `user/password@host` or an Oracle login with its password such as `sqlplus scott/tiger@orcl`,
+  32 or more hex characters, or 40 or more key-like characters that mix upper
   case, lower case and digits and do not read as words and identifiers, where each segment of a
   URL's path counts on its own, so a link to a record passes; in their own links the ids of Google
   Docs and Drive, full commit SHAs on GitHub and GitLab, and Notion page and view ids are not
@@ -2052,7 +2054,7 @@ where they came from.
   5 minutes ahead of the server and 30 days old; `ref` is an optional pointer to the records (a URL
   of any scheme keeps only its scheme, host and path, so a user name and password, a query and a
   fragment are dropped; at most 300 characters; refused when it looks like a credential, a bare
-  `user:password@host` included, and when an `@` follows the authority and the text before it
+  `user:password@host` (`admin:pa/ss@db:5432`) and Oracle's `user/password@host` included, and when an `@` follows the authority and the text before it
   holds a `:` or an `@`, or the scheme is not http(s), since a password with an unencoded `/`,
   `?`, `#` or `@` runs past the host).
   The server copies the source's label and connector onto the document and records the stamping
