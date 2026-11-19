@@ -64,8 +64,9 @@ async function loadRoomFacts(env: Bindings, artifactId: string) {
 
 /**
  * Whether the artifact's object may hold sockets: watch sockets on every artifact while live views
- * are active, room sockets on a doc, on a type with `follow` (a deck's follow channel, which has no
- * declaration to redeclare), or on a page whose current or previous version declares `room`.
+ * are active, room sockets on a doc or a sheet (a type with `liveEdit`), on a type with `follow`
+ * (a deck's follow channel, which has no declaration to redeclare), or on a page whose current or
+ * previous version declares `room`.
  */
 function mayHaveSockets(
   facts: NonNullable<Awaited<ReturnType<typeof loadRoomFacts>>>,
@@ -147,9 +148,10 @@ export function notifyVersion(
 }
 
 /**
- * After version `n` of a doc committed (an agent, the source editor, a restore or a checkpoint):
- * its room merges the live draft onto it, or freezes the draft for review, and open pages follow.
- * `hash` is the version's content.md sha256, which lets the room recognize its own checkpoint.
+ * After version `n` of a doc or a sheet committed (an agent, the source editor, a restore or a
+ * checkpoint): its room merges the live draft onto it, or freezes the draft for review, and open
+ * pages follow. `hash` is the version's source file's sha256 (content.md, sheet.jsonl), which lets
+ * the room recognize its own checkpoint.
  * Only while on-page editing runs with rooms; a draft left from before is rebased when it loads.
  */
 export function notifyDocVersion(

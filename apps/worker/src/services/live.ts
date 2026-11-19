@@ -1,9 +1,10 @@
-// On-page doc editing on the app host (#36, docs/spec.md "Editing"): the live draft's metadata,
+// On-page editing on the app host (#36, docs/spec.md "Editing"): the live draft's metadata,
 // its text for reviewing a conflict, checkpoints and discard. Every route goes through
 // requireArtifact with the `live_edit` action (signed-in owners and editors only; never agents),
-// and is for doc artifacts only. A checkpoint saves the draft through the ordinary stager
-// (updateArtifact), always with the draft's own base_version, so a stale draft is refused in SQL
-// like any other stale save and nothing is ever overwritten. The room never creates a version.
+// and is for types with liveEdit only (docs and sheets). A checkpoint saves the draft through the
+// ordinary stager (updateArtifact), always with the draft's own base_version, so a stale draft is
+// refused in SQL like any other stale save and nothing is ever overwritten. The room never creates
+// a version.
 import {
   LIVE_DEFAULTS,
   type LiveCheckpointInput,
@@ -12,12 +13,16 @@ import {
   type LiveDraftMeta,
   type LiveDraftText,
   type LiveInfo,
+  liveReplacesNote,
+  liveRules,
+  TYPE_REGISTRY,
   typeDef,
 } from "@plinth/shared";
 import { type Bindings, getConfig, liveEditMode, roomsActive } from "../config.ts";
 import type { ArtifactRow } from "../db/schema.ts";
 import { ApiError } from "../lib/errors.ts";
 import { requireArtifact, updateArtifact } from "./artifacts.ts";
+import { resolveSource } from "./artifactTypes.ts";
 import type { Ctx } from "./context.ts";
 import { readText } from "./storage.ts";
 
@@ -81,11 +86,17 @@ const unavailable = () =>
     reason: "live_unavailable",
   });
 
-/** Policy (live_edit), then a doc. */
+/** What can be edited on its page, for the refusal: "a doc or a sheet". */
+const LIVE_KINDS = Object.values(TYPE_REGISTRY)
+  .filter((d) => d.liveEdit)
+  .map((d) => `a ${(d.badge ?? d.label).toLowerCase()}`)
+  .join(" or ");
+
+/** Policy (live_edit), then a type edited on its page. */
 async function requireLiveDoc(ctx: Ctx, ref: string): Promise<ArtifactRow> {
   const { artifact } = await requireArtifact(ctx, ref, "live_edit");
-  if (!typeDef(artifact.type)?.liveEdit) {
-    throw new ApiError("invalid_input", "Only a doc can be edited on its page", {
+  if (!typeDef(artifact.type)?.liveEdit || !liveRules(artifact.type)) {
+    throw new ApiError("invalid_input", `Only ${LIVE_KINDS} can be edited on its page`, {
       reason: "unsupported_type",
     });
   }
@@ -135,14 +146,14 @@ export async function getLiveDraft(ctx: Ctx, ref: string): Promise<LiveDraftText
   return out;
 }
 
-/** The text of one version's source, for comparing a resolution with it. */
-async function versionText(ctx: Ctx, artifactId: string, n: number): Promise<string | null> {
+/** The text of one version's source file (the artifact's own type), for comparing a resolution. */
+async function versionText(ctx: Ctx, a: ArtifactRow, n: number): Promise<string | null> {
   const v = await ctx.env.DB.prepare(
     "SELECT r2_prefix FROM versions WHERE artifact_id = ?1 AND number = ?2",
   )
-    .bind(artifactId, n)
+    .bind(a.id, n)
     .first<{ r2_prefix: string }>();
-  const def = typeDef("doc");
+  const def = typeDef(a.type);
   if (!v || !def) return null;
   return readText(ctx.env.FILES, `${v.r2_prefix}${def.sourcePath}`);
 }
@@ -192,6 +203,11 @@ export async function liveCheckpoint(
   }
   let text = snap.text;
   let base = snap.base_version;
+  // A doc's draft is merged with a version published meanwhile when that is clean; a sheet's
+  // never is (liveTypes.ts), so its review has exactly two choices.
+  const merges = liveRules(a.type)?.merge !== false;
+  /** A sheet's page edits published whole over this version (it stays in the history). */
+  let replaced: number | null = null;
   if (input.resolved_text !== undefined) {
     if (snap.conflict_version === null) {
       await abort();
@@ -215,14 +231,50 @@ export async function liveCheckpoint(
       );
     }
     base = snap.conflict_version;
-    text = input.resolved_text;
-    if (text === (await versionText(ctx, a.id, base))) {
+    // The text a version of this type stores (a sheet's canonical JSON lines; refused with the
+    // type's own issues when it cannot hold it), so the room's draft is what the version holds.
+    try {
+      text = resolveSource({ content: input.resolved_text }, a.type).text;
+    } catch (e) {
+      await abort();
+      throw e;
+    }
+    const published = await versionText(ctx, a, base);
+    if (!merges) {
+      // A type that never merges (a sheet) is resolved whole, against the draft the editor
+      // reviewed: the page edits as they are ("Publish mine"), or the version published meanwhile
+      // ("Discard mine"). Nothing in between is saved.
+      if (input.rev !== snap.rev) {
+        await abort();
+        throw new ApiError("conflict", "The page edits changed meanwhile. Review them again.", {
+          current_version: snap.conflict_version,
+          reason: "live_conflict",
+        });
+      }
+      if (text !== snap.text && text !== published) {
+        await abort();
+        throw new ApiError(
+          "invalid_input",
+          "Publish the page edits as they are, or discard them for the published version",
+          { reason: "not_a_choice" },
+        );
+      }
+      // The page edits published as they are over the version published meanwhile: the note
+      // says what the new version leaves out (that version stays in the history).
+      if (text === snap.text) replaced = base;
+    }
+    if (text === published) {
       // Resolved to the published version exactly: the draft goes, and no version is written.
+      // The discard runs under this snapshot's lock (and releases it), so the other choice or a
+      // save arriving meanwhile is busy, and only the version reviewed is taken.
+      let ok = false;
       try {
-        await stub.docAbort(snap.lock);
-        const d = await stub.docDiscard(a.id, snap.rev);
-        if (!d.ok) throw new Error("moved");
+        ok = (await stub.docDiscard(a.id, snap.rev, { lock: snap.lock, conflictVersion: base })).ok;
       } catch {
+        // Answered below; the lock runs out on its own when the abort is lost too.
+      }
+      if (!ok) {
+        await abort();
         throw new ApiError("conflict", "The page edits changed meanwhile. Review them again.", {
           current_version: snap.conflict_version,
         });
@@ -238,10 +290,13 @@ export async function liveCheckpoint(
     if (!held) return { saved: false, reason: "busy" };
   } else if (snap.conflict_version !== null) {
     await abort();
-    throw new ApiError("conflict", `v${snap.conflict_version} changed the same lines. Review it.`, {
-      current_version: snap.conflict_version,
-      reason: "live_conflict",
-    });
+    throw new ApiError(
+      "conflict",
+      merges
+        ? `v${snap.conflict_version} changed the same lines. Review it.`
+        : `v${snap.conflict_version} was published while you edited. Review it.`,
+      { current_version: snap.conflict_version, reason: "live_conflict" },
+    );
   } else if (snap.unchanged) {
     await abort();
     return { saved: false, reason: "unchanged" };
@@ -253,9 +308,10 @@ export async function liveCheckpoint(
       return { saved: false, reason: "too_soon", ...(wait > 0 ? { retry_in_s: wait } : {}) };
     }
   }
-  const note =
+  const own =
     (input.note?.trim() || LIVE_NOTE) +
     (input.reason === "idle" && !input.note ? " (autosaved)" : "");
+  const note = replaced !== null ? liveReplacesNote(own, replaced) : own;
   let version: Awaited<ReturnType<typeof updateArtifact>>;
   try {
     version = await updateArtifact(ctx, {
@@ -267,12 +323,12 @@ export async function liveCheckpoint(
     });
   } catch (e) {
     await abort();
-    throw await staleRoom(stub, a.id, base, e);
+    throw await staleRoom(stub, a.id, base, e, merges);
   }
   let live = { rev: snap.rev, dirty: false };
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
-      live = await stub.docFinish(a.id, version.version, text, snap.lock);
+      live = await stub.docFinish(a.id, version.version, text, snap.lock, snap.epoch);
       break;
     } catch {
       // Retried once; the version notify (its content hash) finishes it otherwise.
@@ -292,6 +348,7 @@ async function staleRoom(
   artifactId: string,
   base: number,
   e: unknown,
+  merges = true,
 ): Promise<unknown> {
   const current = (
     e instanceof ApiError && e.code === "conflict"
@@ -309,7 +366,9 @@ async function staleRoom(
   if (after?.conflict_version != null) {
     return new ApiError(
       "conflict",
-      `v${after.conflict_version} changed the same lines. Review it.`,
+      merges
+        ? `v${after.conflict_version} changed the same lines. Review it.`
+        : `v${after.conflict_version} was published while you edited. Review it.`,
       {
         current_version: after.conflict_version,
         reason: "live_conflict",
@@ -344,7 +403,9 @@ async function autosaveWait(ctx: Ctx, a: ArtifactRow, typedSince: boolean): Prom
 /**
  * DELETE /api/v1/artifacts/:ref/live/draft?rev=n: drop the unsaved edits. Through the room while
  * rooms are active (open pages follow); otherwise the stored row goes directly (for example after
- * the binding was removed). 409 when the draft moved past `rev`.
+ * the binding was removed). 409 when the draft moved past `rev`, and 409 `live_busy` while a save
+ * or the review's other choice holds the room's checkpoint lock, so a discard never lands under a
+ * version being published from the same draft.
  */
 export async function discardLiveDraft(
   ctx: Ctx,
@@ -355,11 +416,18 @@ export async function discardLiveDraft(
   const rev = typeof readRev === "function" ? readRev() : readRev;
   if (roomsActive(ctx.config, ctx.env)) {
     const stub = room(ctx.env, a.id);
-    let r: { ok: boolean; rev: number } | undefined;
+    let r: { ok: boolean; rev: number; busy?: true } | undefined;
     try {
       r = await stub?.docDiscard(a.id, rev);
     } catch {
       throw unavailable();
+    }
+    if (r?.busy) {
+      throw new ApiError(
+        "conflict",
+        "These page edits are being published or discarded right now. Look again in a moment.",
+        { rev: r.rev, reason: "live_busy" },
+      );
     }
     if (r && !r.ok) {
       throw new ApiError("conflict", "The page edits changed since you looked. Look again.", {

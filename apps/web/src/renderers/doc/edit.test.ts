@@ -2,8 +2,8 @@
 // sanitized, typing is sent at most every 250 ms, Esc gives the block back, Cmd/Ctrl+S goes to the
 // app, blocks other people hold show who holds them, and touch screens get a 16px field.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { ClientLease } from "../common/live.ts";
 import { DocEditor, EDIT_DEBOUNCE_MS, LocalDoc, padded, unpadded } from "./edit.ts";
-import type { ClientLease } from "./live.ts";
 
 let root: HTMLElement;
 let save: ReturnType<typeof vi.fn<() => void>>;

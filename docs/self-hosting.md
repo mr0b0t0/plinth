@@ -145,7 +145,7 @@ Booleans accept `true`, `1`, `yes` or `on`.
 | `ROOM_MAX_CONNECTIONS_PER_ARTIFACT` | `50` | Open sockets on one artifact's room, `2` to `1000` |
 | `ROOM_MAX_MESSAGE_BYTES` | `8192` | One message a page sends to its room, `512` to `65536` |
 | `ROOM_MESSAGES_PER_SECOND` | `20` | Messages per connection per second, with bursts of twice that, `1` to `100`. A socket that keeps going over is closed |
-| `ALLOW_LIVE_EDITING` | `true` | Owners and editors with an account edit a doc right on its page; edits become versions when saved. Empty keeps it on; any other value turns it off, leaving the source editor. Never under `CONTENT_ISOLATION=opaque` |
+| `ALLOW_LIVE_EDITING` | `true` | Owners and editors with an account edit a doc or a sheet right on its page; edits become versions when saved. Empty keeps it on; any other value turns it off, leaving the source editor. Never under `CONTENT_ISOLATION=opaque` |
 | `LIVE_CHECKPOINT_IDLE_S` | `120` | Seconds without page edits before the unsaved edits are saved as a version on their own. `0` saves only when someone saves; otherwise `30` to `3600` |
 | `LIVE_AUTO_CHECKPOINT_MIN_S` | `600` (or the idle time, when longer) | Least seconds between the current version (saved, autosaved, or published by an agent) and an automatic one, at least `LIVE_CHECKPOINT_IDLE_S`. An autosave asked for sooner waits and is tried again then, while someone is still editing the page. Saved versions count toward `MAX_PUBLISHES_PER_HOUR` |
 | `LIVE_DRAFT_FLUSH_S` | `5` | How often, at most, the room writes unsaved page edits to D1, `2` to `60`. A Worker restart can lose up to this much typing, which editors' pages send again |

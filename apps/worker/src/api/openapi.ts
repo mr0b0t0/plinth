@@ -1835,14 +1835,14 @@ function categorySharingOperations(): Operation[] {
 
 function liveOperations(): Operation[] {
   const who =
-    "Signed-in owners and editors of a doc only (live_edit); agents are refused and publish " +
-    "versions instead.";
+    "Signed-in owners and editors of a doc or a sheet only (live_edit); agents are refused and " +
+    "publish versions instead.";
   return [
     {
       method: "get",
       path: API.live,
       operationId: "getLiveInfo",
-      summary: "On-page editing of a doc: mode, unsaved draft, editors online",
+      summary: "On-page editing of a doc or a sheet: mode, unsaved draft, editors online",
       description: who,
       tag: "Live editing",
       auth: "user",
@@ -1869,7 +1869,10 @@ function liveOperations(): Operation[] {
         `${who} The version is published with the draft's base_version, so a stale draft is ` +
         "refused (409) and nothing is overwritten. A draft equal to its base writes nothing. " +
         "resolved_text is accepted only while the draft is in conflict, with the conflict_version " +
-        "the editor reviewed (409 when the draft now conflicts with a newer version).",
+        "the editor reviewed (409 when the draft now conflicts with a newer version). A sheet's " +
+        "draft is never merged: its resolved_text must be the draft itself, saved on top of the " +
+        "conflicting version, or that version's text, which drops the draft (400 not_a_choice " +
+        "otherwise, 409 when rev is not the draft's).",
       tag: "Live editing",
       auth: "user",
       body: "LiveCheckpointInput",
@@ -1881,7 +1884,10 @@ function liveOperations(): Operation[] {
       path: API.liveDraft,
       operationId: "discardLiveDraft",
       summary: "Discard the unsaved draft (409 when it changed past rev)",
-      description: who,
+      description:
+        `${who} ` +
+        "409 with reason live_busy while a save or a review choice is publishing or discarding " +
+        "the same draft.",
       tag: "Live editing",
       auth: "user",
       query: [{ name: "rev", schema: int({ minimum: 0 }), description: "The draft revision seen" }],
@@ -2902,7 +2908,8 @@ export function openApiDocument(config: Pick<Config, "appOrigin">): Json {
       },
       {
         name: "Live editing",
-        description: "Editing a doc on its page: the unsaved draft and checkpoints. Not for agents",
+        description:
+          "Editing a doc or a sheet on its page: the unsaved draft and checkpoints. Not for agents",
       },
       {
         name: "Data sources",

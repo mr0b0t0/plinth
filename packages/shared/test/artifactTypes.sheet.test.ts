@@ -34,7 +34,7 @@ describe("sheet type", () => {
     for (const t of ["", "image/png", "text/css", "text/plain", "application/octet-stream"]) {
       expect(d.assetTypes?.test(t), t).toBe(false);
     }
-    expect(d.liveEdit).toBe(false);
+    expect(d.liveEdit).toBe(true);
     expect(d.editor).toEqual({ language: "plaintext", wordWrap: "off" });
     expect(rendererFiles(d)).toEqual([
       { name: "sheet.js", contentType: "text/javascript" },

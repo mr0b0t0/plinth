@@ -302,7 +302,17 @@ describe("app messages", () => {
     });
     expect(readSheetAppMessage(msg({ type: "export", format: "xlsm" }))).toBeNull();
     expect(readSheetAppMessage({ type: "print" })).toBeNull();
-    expect(readSheetAppMessage(msg({ type: "edit", on: true }))).toBeNull();
+    // On-page editing (#36): edit and collect, as the doc renderer reads them.
+    expect(readSheetAppMessage(msg({ type: "edit", on: true }))).toEqual({
+      type: "edit",
+      on: true,
+    });
+    expect(readSheetAppMessage(msg({ type: "edit", on: "yes" }))).toBeNull();
+    expect(readSheetAppMessage(msg({ type: "collect", nonce: "n".repeat(16) }))).toEqual({
+      type: "collect",
+      nonce: "n".repeat(16),
+    });
+    expect(readSheetAppMessage(msg({ type: "collect", nonce: "short" }))).toBeNull();
     expect(readSheetAppMessage(null)).toBeNull();
   });
 });

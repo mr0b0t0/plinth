@@ -167,7 +167,7 @@
         "language": "plaintext",
         "wordWrap": "off"
       },
-      "liveEdit": false
+      "liveEdit": true
     }
   ],
   [

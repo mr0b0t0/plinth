@@ -4,7 +4,8 @@
 // canonical form (serializeSheet), so each row has one spelling and diffs show only real changes.
 // Publish parses formulas but never evaluates them (CPU). A sheet has no title of its own (the
 // publish call names it), declares no capabilities and takes no assets. content_format "csv" or
-// "xlsx" imports a file into JSON lines first (shared import.ts).
+// "xlsx" imports a file into JSON lines first (shared import.ts). A new version of a sheet people
+// are editing on its page freezes their live draft for review (rooms/doc.ts): it is never merged.
 import {
   importSheet,
   parseSheet,
@@ -15,6 +16,7 @@ import {
 } from "@plinth/shared";
 import { ApiError } from "../../lib/errors.ts";
 import type { TypeHooks } from "../artifactTypes.ts";
+import { liveAfterCommit } from "./live.ts";
 
 const HTML_DOCUMENT_RE = /^\s*(<!doctype html|<html[\s>])/i;
 const SKILL = 'See the plinth-artifacts skill, "Sheets".';
@@ -83,4 +85,6 @@ export const sheetHooks: TypeHooks = {
     }
   },
   assetRule: "A sheet has no assets: images and files are not part of a sheet",
+  // People edit a sheet on its page too: a new version freezes their live draft for review.
+  afterCommit: liveAfterCommit("sheet"),
 };

@@ -42,6 +42,13 @@ describe("EditBar", () => {
     expect(editStatus(props({ mode: "solo", newerVersion: 5 }))).toBe(
       "v5 was published while you were editing",
     );
+    // A sheet's page edits are never merged: any version published meanwhile stops editing.
+    expect(editStatus(props({ phase: "conflict" }))).toBe(
+      "A newer version changed the same lines. Review the changes.",
+    );
+    expect(editStatus(props({ phase: "conflict", merges: false, conflictVersion: 6 }))).toBe(
+      "v6 was published while you edited. Review it to go on.",
+    );
   });
 
   it("announces the status politely and offers Save version with its shortcut", async () => {
@@ -222,6 +229,17 @@ describe("LiveDraftNotice", () => {
     );
     await userEvent.click(screen.getByRole("button", { name: "Review changes" }));
     expect(h.onReview).toHaveBeenCalled();
+    rerender(
+      <LiveDraftNotice
+        draft={null}
+        status={status({ dirty: true, conflict_version: 5 })}
+        merges={false}
+        {...h}
+      />,
+    );
+    expect(screen.getByRole("note").textContent).toContain(
+      "v5 was published over the unsaved page edits. Review them to go on.",
+    );
   });
 
   it("gives a code-confirmed editor no editing actions", () => {

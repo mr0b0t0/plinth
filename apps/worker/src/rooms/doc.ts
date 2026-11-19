@@ -15,8 +15,16 @@
 // stager, with this draft's base_version; when a version is published from outside, the draft is
 // merged onto it when that is clean (merge3) and frozen for review when it is not. Draft text is
 // never logged.
+//
+// Every type with liveEdit has a draft here (docs and sheets): the type's rules (liveTypes.ts)
+// check each edit and each merge, so a sheet's draft is always valid canonical JSON lines. A
+// sheet's rows and columns move with `struct`, applied here and on every socket by the same pure
+// function, only while nobody else holds a lease. A sheet's draft is never merged: a version
+// published under it freezes it, and the editors publish it as it is or discard it.
 import {
+  type ArtifactTypeDef,
   applyLineEdit,
+  applySheetStruct,
   blockLines,
   chunkText,
   joinLines,
@@ -26,18 +34,19 @@ import {
   type LiveDocClientFrame,
   type LiveDocErrorCode,
   type LiveDocServerFrame,
-  liveDocTooLarge,
+  type LiveTypeRules,
+  liveRules,
+  type Merge3Result,
   merge3,
   rangesOverlap,
+  type SheetStructOp,
   shiftRange,
   splitLines,
-  TYPE_REGISTRY,
+  typeDef,
 } from "@plinth/shared";
 import { type Bindings, getConfig } from "../config.ts";
 import { randomString, sha256Hex } from "../lib/crypto.ts";
 import { nowIso } from "../lib/time.ts";
-
-const SOURCE = TYPE_REGISTRY.doc.sourcePath;
 
 /** A doc socket's lease, as its hibernation attachment holds it. */
 export interface StoredLease {
@@ -82,12 +91,23 @@ export interface DocSnapshot {
   unchanged: boolean;
   /** The checkpoint lock this snapshot took ("" when it took none), for resolve, finish and abort. */
   lock: string;
+  /** The draft's epoch when snapshotted, for finish (see `Loaded.epoch`). */
+  epoch: string;
 }
 
 interface Loaded {
   artifactId: string;
+  /** The artifact's type (its source file) and its live rules. */
+  def: ArtifactTypeDef;
+  rules: LiveTypeRules;
   /** Random per in-memory load: a client never mistakes a reload for a continuation. */
   gen: string;
+  /**
+   * Random, new on every load and whenever the lines are replaced rather than edited (a discard,
+   * a reset or rebase onto a version, a resolved conflict). A checkpoint that finishes without its
+   * lock (it ran out) finishes onto the lines only when the epoch is the one it snapshotted.
+   */
+  epoch: string;
   rev: number;
   flushedRev: number;
   baseVersion: number;
@@ -145,7 +165,7 @@ export class LiveDoc {
   private async load(artifactId: string): Promise<Loaded | null> {
     const DB = this.host.env.DB;
     const row = await DB.prepare(
-      `SELECT a.current_version, a.deleted_at, a.taken_down_at,
+      `SELECT a.type, a.current_version, a.deleted_at, a.taken_down_at,
               d.base_version, d.content, d.rev, d.conflict_version,
               (SELECT r2_prefix FROM versions
                 WHERE artifact_id = a.id AND number = coalesce(d.base_version, a.current_version)) AS base_prefix
@@ -154,6 +174,7 @@ export class LiveDoc {
     )
       .bind(artifactId)
       .first<{
+        type: string;
         current_version: number;
         deleted_at: string | null;
         taken_down_at: string | null;
@@ -164,12 +185,18 @@ export class LiveDoc {
         base_prefix: string | null;
       }>();
     if (!row || row.deleted_at || row.taken_down_at || !row.base_prefix) return null;
-    const baseText = await this.readVersionText(row.base_prefix);
+    const def = typeDef(row.type);
+    const rules = liveRules(row.type);
+    if (!def?.liveEdit || !rules) return null;
+    const baseText = await this.readVersionText(row.base_prefix, def);
     if (baseText === null) return null;
     const draft = row.content !== null && row.base_version !== null && row.rev !== null;
     const doc: Loaded = {
       artifactId,
+      def,
+      rules,
       gen: randomString(16),
+      epoch: randomString(12),
       rev: draft ? (row.rev as number) : 0,
       flushedRev: draft ? (row.rev as number) : 0,
       baseVersion: draft ? (row.base_version as number) : row.current_version,
@@ -187,18 +214,18 @@ export class LiveDoc {
     return this.loaded;
   }
 
-  private async readVersionText(prefix: string): Promise<string | null> {
-    const obj = await this.host.env.FILES.get(`${prefix}${SOURCE}`);
+  private async readVersionText(prefix: string, def: ArtifactTypeDef): Promise<string | null> {
+    const obj = await this.host.env.FILES.get(`${prefix}${def.sourcePath}`);
     return obj ? obj.text() : null;
   }
 
-  private async versionText(artifactId: string, n: number): Promise<string | null> {
+  private async versionText(doc: Loaded, n: number): Promise<string | null> {
     const v = await this.host.env.DB.prepare(
       "SELECT r2_prefix FROM versions WHERE artifact_id = ?1 AND number = ?2",
     )
-      .bind(artifactId, n)
+      .bind(doc.artifactId, n)
       .first<{ r2_prefix: string }>();
-    return v ? this.readVersionText(v.r2_prefix) : null;
+    return v ? this.readVersionText(v.r2_prefix, doc.def) : null;
   }
 
   /** Leases come back from the sockets' attachments; any that no longer fit are dropped. */
@@ -342,6 +369,8 @@ export class LiveDoc {
         return this.release(ws, s, doc, f.lease);
       case "takeover":
         return this.takeover(ws, s, doc, f.lease);
+      case "struct":
+        return this.struct(ws, s, doc, f.rev, f.op);
     }
   }
 
@@ -379,8 +408,11 @@ export class LiveDoc {
       return this.host.send(ws, { t: "lease_denied", reason: "frozen" });
     }
     const ins = blockLines(text);
+    // The type's rules first (a sheet's rows and header), then its size.
+    const refused = doc.rules.checkEdit(doc.lines, l.start, l.end - l.start, ins);
+    if (refused) return this.error(ws, refused);
     const next = applyLineEdit(doc.lines, l.start, l.end - l.start, ins);
-    if (liveDocTooLarge(joinLines(next))) return this.error(ws, "too_large");
+    if (doc.rules.tooLarge(joinLines(next))) return this.error(ws, "too_large");
     const e = { start: l.start, del: l.end - l.start, ins: ins.length };
     doc.lines = next;
     doc.rev += 1;
@@ -443,6 +475,43 @@ export class LiveDoc {
     if (prev) this.broadcast({ t: "released", lease: prev });
     this.broadcast({ t: "released", lease: id });
     this.broadcast({ t: "leased", lease: s.lease.id, start, end, holder: s.id, by: s.email });
+  }
+
+  /**
+   * A sheet's rows or columns (struct): a writer's, at the current rev, while no other socket holds
+   * a lease (so no lease has to move). The sender's own lease ends first; the op is applied with
+   * applySheetStruct and broadcast as it came, and every socket applies it to the same lines.
+   */
+  private struct(ws: WebSocket, s: DocSocket, doc: Loaded, rev: number, op: SheetStructOp) {
+    if (s.doc !== "write") return this.host.send(ws, { t: "struct_denied", reason: "watch" });
+    if (!doc.rules.struct) return this.error(ws, "invalid");
+    if (doc.conflictVersion !== null) {
+      return this.host.send(ws, { t: "struct_denied", reason: "frozen" });
+    }
+    if (rev !== doc.rev) return this.host.send(ws, { t: "struct_denied", reason: "stale" });
+    for (const o of this.host.sockets()) {
+      if (o.ws !== ws && o.s.lease) {
+        return this.host.send(ws, { t: "struct_denied", reason: "held", by: o.s.email });
+      }
+    }
+    const next = applySheetStruct(doc.lines, op);
+    if (!next) return this.error(ws, "invalid");
+    const text = joinLines(next);
+    if (doc.rules.tooLarge(text)) return this.error(ws, "too_large");
+    if (!doc.rules.valid(text)) return this.error(ws, "invalid");
+    if (s.lease) {
+      const id = s.lease.id;
+      s.lease = null;
+      this.host.save(ws, s);
+      this.broadcast({ t: "released", lease: id });
+    }
+    doc.lines = next;
+    doc.rev += 1;
+    doc.lastBy = s.id;
+    doc.lastEmail = s.email;
+    doc.lastEditAt = nowIso();
+    this.broadcast({ t: "struct", gen: doc.gen, rev: doc.rev, op, by: s.id });
+    this.scheduleFlush();
   }
 
   /** Every lease ends (a rebase, a conflict, a reset): holders keep their text and re-lease. */
@@ -601,13 +670,14 @@ export class LiveDoc {
       await this.flushNow();
       return;
     }
-    const theirs = await this.versionText(doc.artifactId, n);
+    const theirs = await this.versionText(doc, n);
     if (theirs === null || this.loaded !== doc || n <= doc.baseVersion) return;
     const ours = this.text(doc);
     if (ours === doc.baseText && doc.conflictVersion === null) {
       doc.lines = splitLines(theirs);
       doc.baseText = theirs;
       doc.baseVersion = n;
+      doc.epoch = randomString(12);
       doc.rev += 1;
       this.revokeLeases("rebased");
       this.broadcast({ t: "reset", version: n, gen: doc.gen, rev: doc.rev });
@@ -617,12 +687,22 @@ export class LiveDoc {
       this.status(doc);
       return;
     }
-    const m = merge3(doc.baseText, ours, theirs, { maxEdits: LIVE_DOC.maxMergeEdits });
-    if (m.clean && !liveDocTooLarge(m.text)) {
+    // A type that never merges (a sheet) is frozen for review whenever the version changed the
+    // source under the draft, and nothing is combined. Only a version whose source is byte for
+    // byte the draft's base (a title change), or the draft itself, moves the base under the
+    // draft's lines as they are.
+    const m: Merge3Result = doc.rules.merge
+      ? merge3(doc.baseText, ours, theirs, { maxEdits: LIVE_DOC.maxMergeEdits })
+      : theirs === doc.baseText || theirs === ours
+        ? { clean: true, text: ours, work: 0 }
+        : { clean: false, reason: "conflict", conflicts: [], work: 0 };
+    // A clean merge the type cannot hold is reviewed like an overlap.
+    if (m.clean && !doc.rules.tooLarge(m.text) && doc.rules.valid(m.text)) {
       doc.lines = splitLines(m.text);
       doc.baseText = theirs;
       doc.baseVersion = n;
       doc.conflictVersion = null;
+      doc.epoch = randomString(12);
       doc.rev += 1;
       this.revokeLeases("rebased");
       this.broadcast({ t: "rebased", version: n, gen: doc.gen, rev: doc.rev });
@@ -642,7 +722,15 @@ export class LiveDoc {
   /** Flush, then the draft as a checkpoint would save it, under a 30 s lock. */
   async snapshot(artifactId: string): Promise<DocSnapshot> {
     const doc = await this.ensure(artifactId);
-    const empty = { text: "", rev: 0, base_version: 1, conflict_version: null, hash: "", lock: "" };
+    const empty = {
+      text: "",
+      rev: 0,
+      base_version: 1,
+      conflict_version: null,
+      hash: "",
+      lock: "",
+      epoch: "",
+    };
     if (!doc) return { state: "gone", ...empty, unchanged: true };
     if (this.lock && this.lock.until > Date.now()) {
       return {
@@ -672,13 +760,14 @@ export class LiveDoc {
       throw e;
     }
     if (this.loaded !== doc || this.lock !== lock) {
-      // Reset (gone) or discarded while flushing.
+      // Reset (gone) while flushing, or the lock ran out and another checkpoint took it.
       if (this.lock === lock) this.lock = null;
       return this.loaded === doc
         ? { state: "busy", ...empty, rev: doc.rev, base_version: doc.baseVersion, unchanged: false }
         : { state: "gone", ...empty, unchanged: true };
     }
     const text = this.text(doc);
+    const epoch = doc.epoch;
     const unchanged = text === doc.baseText;
     const hash = await sha256Hex(text);
     const state = doc.conflictVersion !== null ? "conflict" : unchanged ? "clean" : "ready";
@@ -698,6 +787,7 @@ export class LiveDoc {
       hash,
       unchanged,
       lock: state === "clean" ? "" : lock.id,
+      epoch,
     };
   }
 
@@ -713,18 +803,29 @@ export class LiveDoc {
     return true;
   }
 
-  /** Version `n` holds the checkpoint: it becomes the draft's base; edits made since are kept. */
+  /**
+   * Version `n` holds the checkpoint: it becomes the draft's base; edits made since are kept.
+   * When the checkpoint no longer holds its lock (it ran out) and the lines were replaced since
+   * its snapshot (`epoch`: a discard, a reset), the saved text is not their ancestor, so `n` is
+   * handled as any version published meanwhile instead of becoming the base under them.
+   */
   async finishCheckpoint(
     artifactId: string,
     n: number,
     text: string,
     lockId: string,
+    epoch?: string,
   ): Promise<{ rev: number; dirty: boolean }> {
     const doc = await this.ensure(artifactId);
     if (!doc) return { rev: 0, dirty: false };
     const mine = this.lock?.id === lockId ? this.lock : null;
-    if (n > doc.baseVersion) this.finish(doc, n, text, mine);
-    else if (mine) this.lock = null;
+    if (n <= doc.baseVersion) {
+      if (mine) this.lock = null;
+    } else if (mine || epoch === undefined || epoch === doc.epoch) {
+      this.finish(doc, n, text, mine);
+    } else {
+      await this.outside(doc, n, null);
+    }
     await this.flushNow();
     const out = { rev: doc.rev, dirty: this.text(doc) !== doc.baseText };
     await this.releaseIfIdle(doc);
@@ -741,6 +842,7 @@ export class LiveDoc {
       // A resolved conflict: the saved text is the draft now.
       doc.lines = splitLines(text);
       doc.conflictVersion = null;
+      doc.epoch = randomString(12);
       doc.rev += 1;
       this.revokeLeases("closed");
       this.broadcast({ t: "reset", version: n, gen: doc.gen, rev: doc.rev });
@@ -769,30 +871,68 @@ export class LiveDoc {
     await this.outside(doc, current, null);
   }
 
-  /** Drop the unsaved edits: the draft goes back to the current version. */
-  async discard(artifactId: string, rev: number): Promise<{ ok: boolean; rev: number }> {
+  /**
+   * Drop the unsaved edits: the draft goes back to the current version. It runs under the
+   * checkpoint lock, so it never interleaves with a save or the review's other choice: `busy`
+   * while another checkpoint holds the lock; otherwise it takes the lock before its first read
+   * (a snapshot arriving meanwhile is busy) and releases it when done. `lock` is the caller's own
+   * checkpoint lock ("Discard mine" in the review), which it runs under and releases.
+   * `conflictVersion` limits it to a draft frozen against that version, which must still be the
+   * current one. `rev` (and `conflictVersion`) are checked before and after the reads.
+   */
+  async discard(
+    artifactId: string,
+    rev: number,
+    opts: { lock?: string; conflictVersion?: number } = {},
+  ): Promise<{ ok: boolean; rev: number; busy?: true }> {
     const doc = await this.ensure(artifactId);
     if (!doc) return { ok: true, rev: 0 };
-    if (rev !== doc.rev) return { ok: false, rev: doc.rev };
-    const cur = await this.host.env.DB.prepare(
-      "SELECT current_version FROM artifacts WHERE id = ?1",
-    )
-      .bind(artifactId)
-      .first<{ current_version: number }>();
-    const text = cur ? await this.versionText(artifactId, cur.current_version) : null;
-    if (!cur || text === null || this.loaded !== doc) return { ok: false, rev: doc.rev };
-    this.lock = null;
-    doc.lines = splitLines(text);
-    doc.baseText = text;
-    doc.baseVersion = cur.current_version;
-    doc.conflictVersion = null;
-    doc.rev += 1;
-    doc.lastBy = null;
-    this.revokeLeases("closed");
-    this.broadcast({ t: "reset", version: doc.baseVersion, gen: doc.gen, rev: doc.rev });
-    this.broadcastText(doc);
-    this.needsFlush = true;
-    await this.flushNow();
+    const held = this.lock && this.lock.until > Date.now() ? this.lock : null;
+    if (held && held.id !== opts.lock) return { ok: false, rev: doc.rev, busy: true };
+    const fits = () =>
+      this.loaded === doc &&
+      rev === doc.rev &&
+      (opts.conflictVersion === undefined || doc.conflictVersion === opts.conflictVersion);
+    if (!fits()) return { ok: false, rev: doc.rev };
+    const lock: CheckpointLock = held ?? {
+      id: `k_${randomString(12)}`,
+      rev: doc.rev,
+      text: "",
+      hash: "",
+      until: Date.now() + LIVE_DOC.checkpointLockS * 1000,
+      resolved: false,
+    };
+    this.lock = lock;
+    const release = () => {
+      if (this.lock === lock) this.lock = null;
+    };
+    try {
+      const cur = await this.host.env.DB.prepare(
+        "SELECT current_version FROM artifacts WHERE id = ?1",
+      )
+        .bind(artifactId)
+        .first<{ current_version: number }>();
+      const text = cur ? await this.versionText(doc, cur.current_version) : null;
+      const reviewed =
+        opts.conflictVersion === undefined || cur?.current_version === opts.conflictVersion;
+      if (!cur || text === null || this.lock !== lock || !fits() || !reviewed) {
+        return { ok: false, rev: doc.rev };
+      }
+      doc.lines = splitLines(text);
+      doc.baseText = text;
+      doc.baseVersion = cur.current_version;
+      doc.conflictVersion = null;
+      doc.epoch = randomString(12);
+      doc.rev += 1;
+      doc.lastBy = null;
+      this.revokeLeases("closed");
+      this.broadcast({ t: "reset", version: doc.baseVersion, gen: doc.gen, rev: doc.rev });
+      this.broadcastText(doc);
+      this.needsFlush = true;
+      await this.flushNow();
+    } finally {
+      release();
+    }
     this.status(doc);
     await this.releaseIfIdle(doc);
     return { ok: true, rev: doc.rev };

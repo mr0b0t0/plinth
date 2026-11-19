@@ -8,7 +8,7 @@
 // (stageItems.tsx): this component holds the state and hands every item one StageContext.
 
 import { FileIcon } from "@phosphor-icons/react";
-import { API, APP_ROUTES, type CommentInfo, route, type ViewGate } from "@plinth/shared";
+import { API, APP_ROUTES, type CommentInfo, route, typeDef, type ViewGate } from "@plinth/shared";
 import { Fragment, lazy, Suspense, useEffect, useRef, useState } from "react";
 import { api } from "../../lib/api.ts";
 import { Link } from "../../lib/router.tsx";
@@ -38,6 +38,7 @@ import "./viewer.css";
 
 // The review of overlapping page edits uses Monaco's diff: a chunk of its own, loaded on demand.
 const LiveConflictDialog = lazy(() => import("./LiveConflictDialog.tsx"));
+const LiveSheetReview = lazy(() => import("./LiveSheetReview.tsx"));
 
 type OkGate = Extract<ViewGate, { status: "ok" }>;
 
@@ -180,7 +181,7 @@ export function ViewerStage({
     openComments: onToggleComments,
   });
 
-  // On-page editing of a doc (#36): owners and editors on the current version only.
+  // On-page editing of a doc or a sheet (#36): owners and editors on the current version only.
   const live = useLiveEdit({
     gate,
     frame,
@@ -416,13 +417,27 @@ export function ViewerStage({
           </nav>
         </footer>
       </div>
-      {live.reviewing && live.conflict && (
+      {live.reviewing && live.conflict && !live.merges && (
+        <Suspense fallback={null}>
+          <LiveSheetReview
+            conflict={live.conflict}
+            saving={live.saving}
+            mode={live.mode === "room" && live.conflict.rev !== undefined ? "room" : "solo"}
+            onClose={live.closeReview}
+            onPublishMine={() => void live.keepMine()}
+            onDiscardMine={() => void live.takeLatest()}
+          />
+        </Suspense>
+      )}
+      {live.reviewing && live.conflict && live.merges && (
         <Suspense fallback={null}>
           <LiveConflictDialog
             conflict={live.conflict}
             artifactId={artifact.id}
             saving={live.saving}
             mode={live.mode === "room" && live.conflict.rev !== undefined ? "room" : "solo"}
+            language={typeDef(artifact.type)?.editor.language ?? "markdown"}
+            sourceLabel={typeDef(artifact.type)?.sourceLabel ?? "Markdown"}
             onClose={live.closeReview}
             onKeepMine={() => void live.keepMine()}
             onTakeLatest={() => void live.takeLatest()}

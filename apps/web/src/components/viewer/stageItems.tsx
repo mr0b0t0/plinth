@@ -458,6 +458,8 @@ const editBar: StageNode = ({ editing, live, gate, refs, actions }) =>
       savedVersion={live.savedVersion}
       rebasedVersion={live.rebasedVersion}
       newerVersion={live.newerVersion}
+      merges={live.merges}
+      conflictVersion={live.status?.conflict_version ?? live.conflict?.current ?? null}
       editors={live.status?.editors ?? []}
       onSave={(note) => void live.save(note)}
       onDiscard={() => void live.discard()}
@@ -474,6 +476,7 @@ const liveDraftNotice: StageNode = ({ editing, live, gate, actions }) =>
       status={live.status}
       restore={live.restore}
       signIn={live.signIn}
+      merges={live.merges}
       unavailable={
         live.roomReady
           ? null
