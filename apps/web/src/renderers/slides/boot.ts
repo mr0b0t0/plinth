@@ -90,6 +90,8 @@ export function boot(win: Window, opts: BootOptions = {}): () => void {
   const appOrigin = payload.app_origin;
   const fixedOverview = payload.view === "overview";
   html.setAttribute("data-theme", settings.theme);
+  // A fixed overview has no current slide to mark and no slide to open on a click.
+  if (fixedOverview) root.setAttribute("data-fixed", "");
   html.setAttribute("data-aspect", settings.aspect);
 
   const views = buildDeck(doc, parsed);
@@ -115,9 +117,6 @@ export function boot(win: Window, opts: BootOptions = {}): () => void {
     counter,
     button(doc, "Next slide", "›", () => deck.next()),
     button(doc, "Overview", "Overview", () => pick(mode === "overview" ? "deck" : "overview")),
-    button(doc, "Presenter view", "Presenter", () =>
-      pick(mode === "presenter" ? "deck" : "presenter"),
-    ),
   );
   root.replaceChildren(deckEl, controls, announcer);
   pageStyle(doc).textContent = pageRule(canvas, false);
@@ -158,6 +157,8 @@ export function boot(win: Window, opts: BootOptions = {}): () => void {
   const render = () => {
     const n = deck.current;
     root.setAttribute("data-mode", mode);
+    // The overview marks the slide the person was on only when they chose it (not on phones).
+    root.toggleAttribute("data-mark", !fixedOverview && !auto);
     for (const v of views) {
       if (v.n === n) {
         v.frame.setAttribute("data-active", "");
@@ -200,7 +201,7 @@ export function boot(win: Window, opts: BootOptions = {}): () => void {
     }
   };
 
-  // The app keeps its own idea of the view (the presenter strip, the version pause), so every change
+  // The app keeps its own idea of the view (the menu, the version pause), so every change
   // is reported, whichever key, control or message made it.
   const reportView = () => postToApp(win, appOrigin, { type: "view", mode });
 
@@ -237,7 +238,8 @@ export function boot(win: Window, opts: BootOptions = {}): () => void {
     mode: () => mode,
     setMode: pick,
     fullscreen: () => postToApp(win, appOrigin, { type: "fullscreen" }),
-    print: () => print(false),
+    // Printing from presenter view prints the handout, each slide over its notes.
+    print: () => print(mode === "presenter"),
     activity,
     fixedOverview,
   });
@@ -259,7 +261,7 @@ export function boot(win: Window, opts: BootOptions = {}): () => void {
       pick(m.mode);
       // A view the frame did not take: the app learns the one it shows.
       if (mode !== m.mode) reportView();
-    } else print(m.notes);
+    } else print(mode === "presenter");
   };
   const onResize = () => {
     if (auto) {

@@ -514,6 +514,11 @@ test("a deck renders, pages through * and window identity, and opens presenter v
   await expect(locator.locator(".plinth-slides__notes")).toHaveText(
     "Speaker notes in an opaque frame.",
   );
-  await expect(page.getByRole("region", { name: "Presenter view" })).toContainText("Slide 1 of 3");
+  // The app took the frame's position and its presenter view: the slide is in the fragment and
+  // the menu offers the audience window.
+  await expect.poll(() => new URL(page.url()).hash).toBe("#slide=1");
+  await page.getByRole("button", { name: "Artifact actions" }).click();
+  await expect(page.getByRole("menuitem", { name: "Audience window" })).toBeVisible();
+  await page.keyboard.press("Escape");
   expect(problems).toEqual([]);
 });

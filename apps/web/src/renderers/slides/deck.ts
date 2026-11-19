@@ -120,9 +120,6 @@ function buildSlide(
     number.setAttribute("aria-hidden", "true");
     slide.append(number);
   }
-  const label = el(doc, "span", "plinth-slides__label");
-  label.textContent = `Slide ${s.n}`;
-  label.setAttribute("aria-hidden", "true");
   const canvas = el(doc, "div", "plinth-slides__canvas");
   canvas.append(slide);
   const notes = renderPart(doc, s.notes);
@@ -130,7 +127,7 @@ function buildSlide(
   // The handout (print with speaker notes) shows each slide over its notes.
   const handout = el(doc, "div", "plinth-slides__handout");
   handout.append(notes.cloneNode(true));
-  frame.append(label, canvas, handout);
+  frame.append(canvas, handout);
   return { n: s.n, frame, el: slide, body, layout, notes, line: s.line };
 }
 

@@ -385,7 +385,7 @@ What is new:
   ids are prefixed per slide (`s<n>-`), and copies of a slide (presenter view, the handout) carry
   no ids at all.
 - **Numbers only between the app and the frame.** The app sends `goto { slide }`, `view { mode }`
-  and `print { notes }`; the frame sends `ready` and `position` (a slide and a count), `view { mode }`
+  and `print`; the frame sends `ready` and `position` (a slide and a count), `view { mode }`
   (the view it switched to) and `fullscreen`. Slides are integers from 1 to 500 on both ends; nothing carries deck text. The
   renderer acts only on messages whose `event.source` is its parent and whose origin is the exact
   app origin, and posts only to the app origin.
@@ -394,7 +394,7 @@ What is new:
   `"null"` under opaque isolation and the path fallback (`frameGuard.ts acceptFrom`), and only for a
   type with `present`. It posts to `"*"` there, which reveals nothing the frame does not have. Only
   Plinth's renderer runs on a deck's origin, and the worst a forged message could do is move the
-  app's slide number, show or hide its presenter strip (and so hold or release a newer version's
+  app's slide number, switch the app's presenter mode (and so hold or release a newer version's
   swap), or ask for full screen, which the browser grants only with the person's own activation.
 - **Full screen without a frame permission.** Present calls `requestFullscreen()` on the app's own
   `<iframe>` element from the button's click. No `allow="fullscreen"` attribute is added, so an

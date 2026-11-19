@@ -694,20 +694,22 @@ source editor work as for docs. A deck is not edited on its page.
 - **Presenting.** Present (in the bar) puts the app's own frame full screen; the frame gets no
   fullscreen permission of its own, and presenter view stays presenter view when it goes full
   screen. Presenter view (in the menu, or `s`) shows, inside the frame,
-  the current slide, the next one, the notes, an elapsed timer with pause and reset, the clock and
-  the slide count. The frame tells the app each view it switches to, so the app's presenter strip,
-  the paused version swap and the audience window follow the deck however presenter view was
-  opened or left (the menu, the strip's Exit, `s`, Escape or the frame's own controls). Review mode
-  keeps the overview whatever asks for another view. "Audience window" opens a second app window that follows the presenter's slide
-  through a `BroadcastChannel` on the app origin in the same browser, in every isolation mode; only
-  slide numbers cross it. While the deck is full screen or in presenter view, a newer version does
-  not replace the frame: the strip says it was published and Show loads it on the same slide, and
-  the deck catches up when presenting ends. A permanent version link (`/a/<slug>/v/<n>`) stays on
-  its version: its strip never offers a newer one, and its audience window opens that same version.
-- **Printing.** "Print or save as PDF" prints one slide per page at the deck's size (an `@page`
-  size in inches); "Print with speaker notes" prints a handout with each slide over its notes. The
-  frame prints itself, after its images have decoded. Browsers that ignore `@page` sizes print on
-  their own paper size, one slide per page.
+  the current slide, the next one, the notes, an elapsed timer with pause (it starts again each
+  time presenter view opens), the clock and the slide count; its Exit button, Escape or `s` leave
+  it. The frame tells the app each view it switches to, so the app's menu, the paused version swap
+  and the audience window follow the deck however presenter view was opened or left. There is no
+  strip under the bar: while presenter view is on, the menu's Presenter view item becomes
+  "Audience window". Review mode keeps the overview whatever asks for another view. "Audience
+  window" opens a second app window that follows the presenter's slide through a
+  `BroadcastChannel` on the app origin in the same browser, in every isolation mode; only slide
+  numbers cross it. While the deck is full screen or in presenter view, a newer version does not
+  replace the frame (the bar's version notice says an older one is on view); the deck catches up
+  on the same slide when presenting ends. A permanent version link (`/a/<slug>/v/<n>`) stays on its
+  version, and its audience window opens that same version.
+- **Printing.** "Print or save as PDF" (or Ctrl+P in the deck) prints one slide per page at the
+  deck's size (an `@page` size in inches); from presenter view it prints a handout with each slide
+  over its notes. The frame prints itself, after its images have decoded. Browsers that ignore
+  `@page` sizes print on their own paper size, one slide per page.
 - **Speaker notes are not secret.** Anyone who can open the deck can read them (presenter view,
   the handout, the source). Agents treat deck text, notes included, as untrusted data.
 - **Warnings.** A publish lists `slides_setting`, `slide_empty`, `slide_dense` and `missing_file`

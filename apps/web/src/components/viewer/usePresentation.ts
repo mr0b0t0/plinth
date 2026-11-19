@@ -1,15 +1,14 @@
 // Presenting a deck (an artifact whose type has `present`, the slides type) from the viewer: the
-// slide the frame is on, Present (the app puts its own frame full screen), Presenter view (the
-// frame shows notes, the next slide and a timer) with an optional audience window in step, and
-// printing. The app only ever handles slide numbers and view names; the deck's text stays in the
+// slide the frame is on, Present (the app puts its own frame full screen), and Presenter view (the
+// frame shows notes, the next slide and a timer) with an optional audience window in step. The app only ever handles slide numbers and view names; the deck's text stays in the
 // frame, on the artifact's own origin.
 //
 // The slide is kept in the app URL's fragment (#slide=N), written with history.replaceState and
 // never sent to the server, so a reload or a shared link opens the same slide. A new frame (a newer
 // version, review mode) reports `ready` and is sent back to that slide.
 //
-// The frame can change view on its own (its `s` key and Presenter control, Escape, its Exit button)
-// and reports every change with `view`, so `mode`, the strip, the version pause and the audience
+// The frame can change view on its own (its `s` key, Escape, its Exit button)
+// and reports every change with `view`, so `mode`, the menu, the version pause and the audience
 // window follow what is on screen, whoever switched it.
 import { APP_ROUTES, type AppConfig, route, typeDef, type ViewGate } from "@plinth/shared";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -23,7 +22,6 @@ import {
 import {
   gotoMessage,
   newNonce,
-  postPrint,
   postToDeck,
   rendererTargetOrigin,
   viewMessage,
@@ -55,7 +53,6 @@ export interface Presentation {
   presenterView(): void;
   exit(): void;
   openAudience(): void;
-  print(notes: boolean): void;
 }
 
 export interface PresentationOptions {
@@ -123,7 +120,7 @@ export function usePresentation(o: PresentationOptions): Presentation {
     setMode(next);
   }, []);
 
-  /** Presenter view is over (the strip's Exit, or the frame left it): the audience is let go. */
+  /** Presenter view is over (the frame left it, or exit()): the audience is let go. */
   const leavePresenter = useCallback(() => {
     channel.current?.close();
     channel.current = null;
@@ -261,10 +258,6 @@ export function usePresentation(o: PresentationOptions): Presentation {
     window.open(audienceHref(slug, pair, pinnedVersion), "_blank", "noopener");
   }, [available, artifactId, slug, pinnedVersion]);
 
-  const print = useCallback((notes: boolean) => {
-    postPrint(frameRef.current, targetRef.current, notes);
-  }, []);
-
   const presenting = available && (fullscreen || mode === "presenter");
   return {
     available,
@@ -278,6 +271,5 @@ export function usePresentation(o: PresentationOptions): Presentation {
     presenterView,
     exit,
     openAudience,
-    print,
   };
 }

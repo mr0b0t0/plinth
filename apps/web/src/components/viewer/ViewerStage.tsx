@@ -229,7 +229,6 @@ export function ViewerStage({
       startEditing,
       finishEditing: () => void finishEditing(),
       refocusAfterNotice: () => refocusIfLost(focusEditEntry),
-      reload: () => onReload?.(),
     },
   };
 

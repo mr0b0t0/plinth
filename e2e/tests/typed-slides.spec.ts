@@ -1,8 +1,8 @@
 // Slides (type "slides"): an agent publishes a deck's Markdown over MCP and Plinth renders it with
 // its fixed renderer on the artifact's own origin. Checked here: the deck runs none of its
 // Markdown and reaches no other host; paging, deep links and #N links; Present (the app puts its
-// own frame full screen); presenter view with an audience window kept in step; printing with and
-// without notes; phones, the dark scheme, the editor with its overview preview, history and
+// own frame full screen); presenter view with an audience window kept in step; printing, with the
+// notes from presenter view; phones, the dark scheme, the editor with its overview preview, history and
 // restore; and a version published mid-talk that waits. The opaque case is in opaque.spec.ts.
 import { expect, type Frame, type Page, test } from "@playwright/test";
 import { APP_ORIGIN, apiGet, CONTENT_HOST, uniqueEmail } from "../support/api.ts";
@@ -274,16 +274,18 @@ test.describe("a published deck", () => {
         );
         await expect(presenter.locator(".plinth-slides__pane--next")).toContainText("Revenue");
         await expect(presenter.locator(".plinth-slides__count")).toHaveText("Slide 1 of 5");
-        const strip = page.getByRole("region", { name: "Presenter view" });
-        await expect(strip).toBeVisible();
+        // No strip under the bar: presenter view is in the frame, the audience window in the menu.
+        await expect(page.getByRole("region", { name: "Presenter view" })).toHaveCount(0);
 
         const opened = context.waitForEvent("page");
-        await strip.getByRole("button", { name: "Audience window" }).click();
+        await openMenuItem(page, "Audience window");
         const audience = await opened;
         await audience.waitForLoadState();
         expect(new URL(audience.url()).hash).toMatch(/^#present=audience&pair=/);
-        await expect(audience.getByText("Audience window. Click Present")).toBeVisible();
         const audienceFrame = await deckFrame(audience);
+        await audience.getByRole("button", { name: "Artifact actions" }).click();
+        await expect(audience.getByRole("menuitem", { name: "Presenter view" })).toHaveCount(0);
+        await audience.keyboard.press("Escape");
 
         await focusDeck(page);
         await page.keyboard.press("ArrowRight");
@@ -293,18 +295,24 @@ test.describe("a published deck", () => {
         await expect.poll(() => slideOf(audienceFrame), { timeout: 10_000 }).toBe("3");
         await audience.close();
 
-        await strip.getByRole("button", { name: "Exit" }).click();
+        await presenter.getByRole("button", { name: "Exit presenter view" }).click();
         await expect.poll(() => modeOf(frame)).toBe("deck");
-        await expect(strip).toBeHidden();
+        const menuOffers = async (name: string) => {
+          await page.getByRole("button", { name: "Artifact actions" }).click();
+          await expect(page.getByRole("menuitem", { name })).toBeVisible();
+          await page.keyboard.press("Escape");
+        };
+        await menuOffers("Presenter view");
 
-        // The frame's own s key and Escape switch the app's presenter strip too.
+        // The frame's own s key and Escape switch the app's menu too.
         await focusDeck(page);
         await page.keyboard.press("s");
         await expect.poll(() => modeOf(frame)).toBe("presenter");
-        await expect(strip).toBeVisible();
+        await menuOffers("Audience window");
+        await focusDeck(page);
         await page.keyboard.press("Escape");
         await expect.poll(() => modeOf(frame)).toBe("deck");
-        await expect(strip).toBeHidden();
+        await menuOffers("Presenter view");
       } finally {
         await client.close();
       }
@@ -344,7 +352,10 @@ test.describe("a published deck", () => {
         expect(pages.slice(0, -1).every((p) => p.after === "page")).toBe(true);
         await page.emulateMedia({ media: "screen" });
 
-        await openMenuItem(page, "Print with speaker notes");
+        // From presenter view, the same item prints the handout.
+        await openMenuItem(page, "Presenter view");
+        await expect.poll(() => modeOf(frame)).toBe("presenter");
+        await openMenuItem(page, "Print or save as PDF");
         await expect.poll(() => printed(frame)).toBe(2);
         await expect(frame.locator("#__plinth-slides")).toHaveAttribute("data-print", "handout");
         await page.emulateMedia({ media: "print" });
@@ -357,7 +368,7 @@ test.describe("a published deck", () => {
       }
     });
 
-    test("a version published while presenting waits until the presenter shows it", async ({
+    test("a version published while presenting waits until presenter view ends", async ({
       page,
     }) => {
       test.setTimeout(60_000);
@@ -377,13 +388,15 @@ test.describe("a published deck", () => {
         });
         expect(up.isError, up.text).toBe(false);
         await page.clock.fastForward(16_000);
-        const strip = page.getByRole("region", { name: "Presenter view" });
-        await expect(strip).toContainText("v2 was published");
-        // The frame on view is still version 1, on the same slide.
+        // The bar's version notice says v1 is on view; the frame is still version 1, same slide.
+        await expect(page.getByText("You are viewing v1")).toBeVisible();
         await expect(page.locator('iframe[title$="version 1"]')).toHaveCount(1);
         expect(await slideOf(frame)).toBe("2");
 
-        await strip.getByRole("button", { name: "Show" }).click();
+        await frame
+          .locator(".plinth-slides__presenter")
+          .getByRole("button", { name: "Exit presenter view" })
+          .click();
         await expect(page.locator('iframe[title$="version 2"]')).toHaveCount(1, {
           timeout: 15_000,
         });

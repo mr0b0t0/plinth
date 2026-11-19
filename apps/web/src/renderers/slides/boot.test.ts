@@ -279,6 +279,9 @@ describe("boot", () => {
     const f = framed();
     stop = boot(f.win);
     expect(root().getAttribute("data-mode")).toBe("overview");
+    // Nothing to open and no current slide: no click cursor, no ring.
+    expect(root().hasAttribute("data-fixed")).toBe(true);
+    expect(root().hasAttribute("data-mark")).toBe(false);
     key(f, "Escape");
     key(f, "o");
     key(f, "s");
@@ -309,11 +312,9 @@ describe("boot", () => {
     key(f, "Escape");
     key(f, "o");
     key(f, "o");
-    (document.querySelector('[aria-label="Presenter view"]') as HTMLElement).click();
-    const exit = Array.from(document.querySelectorAll(".plinth-slides__presenter button")).find(
-      (x) => x.textContent === "Exit presenter view",
-    ) as HTMLElement;
-    exit.click();
+    (document.querySelector('[aria-label="Overview"]') as HTMLElement).click();
+    key(f, "s");
+    (document.querySelector('[aria-label="Exit presenter view"]') as HTMLElement).click();
     appMessage(f, msg({ type: "view", mode: "presenter" }));
     // The view it already shows: nothing to report.
     appMessage(f, msg({ type: "view", mode: "presenter" }));
@@ -322,6 +323,7 @@ describe("boot", () => {
       "deck",
       "overview",
       "deck",
+      "overview",
       "presenter",
       "deck",
       "presenter",
@@ -345,6 +347,18 @@ describe("boot", () => {
     f.size.h = 740;
     stop = boot(f.win);
     expect(root().getAttribute("data-mode")).toBe("overview");
+    // Nobody chose this overview: no slide is marked as the current one.
+    expect(root().hasAttribute("data-mark")).toBe(false);
+  });
+
+  it("marks the current slide in an overview the person opened", () => {
+    mount();
+    const f = framed();
+    stop = boot(f.win);
+    key(f, "o");
+    expect(root().getAttribute("data-mode")).toBe("overview");
+    expect(root().hasAttribute("data-mark")).toBe(true);
+    expect(root().hasAttribute("data-fixed")).toBe(false);
   });
 
   it("asks the app for full screen on f", () => {
@@ -382,7 +396,7 @@ describe("presenter view", () => {
     c.t = 65_000;
     c.tick?.();
     expect(timer.textContent).toBe("1:05");
-    const [pause, reset] = Array.from(p.querySelectorAll("button"));
+    const [pause] = Array.from(p.querySelectorAll("button"));
     pause?.click();
     c.t = 125_000;
     c.tick?.();
@@ -391,10 +405,11 @@ describe("presenter view", () => {
     c.t = 130_000;
     c.tick?.();
     expect(timer.textContent).toBe("1:10");
-    reset?.click();
-    expect(timer.textContent).toBe("0:00");
     key(f, "Escape");
     expect(document.querySelector(".plinth-slides__presenter")).toBeNull();
+    // The timer starts again each time presenter view opens.
+    key(f, "s");
+    expect(document.querySelector(".plinth-slides__timer")?.textContent).toBe("0:00");
   });
 
   it("warns when the current slide overflows", () => {
@@ -467,6 +482,20 @@ describe("printing", () => {
     key(f, "p", { ctrlKey: true });
     await vi.waitFor(() => expect(f.print).toHaveBeenCalledTimes(2));
   });
+
+  it("prints the handout with the notes from presenter view", async () => {
+    mount();
+    const f = framed();
+    stop = boot(f.win);
+    key(f, "s");
+    appMessage(f, msg({ type: "print" }));
+    await vi.waitFor(() => expect(f.print).toHaveBeenCalledTimes(1));
+    expect(root().getAttribute("data-print")).toBe("handout");
+    f.target.dispatchEvent(new Event("afterprint"));
+    key(f, "p", { ctrlKey: true });
+    await vi.waitFor(() => expect(f.print).toHaveBeenCalledTimes(2));
+    expect(root().getAttribute("data-print")).toBe("handout");
+  });
 });
 
 describe("readSlidesAppMessage", () => {
@@ -475,11 +504,7 @@ describe("readSlidesAppMessage", () => {
       type: "goto",
       slide: 2,
     });
-    expect(readSlidesAppMessage(msg({ type: "print" }))).toEqual({ type: "print", notes: false });
-    expect(readSlidesAppMessage(msg({ type: "print", notes: true }))).toEqual({
-      type: "print",
-      notes: true,
-    });
+    expect(readSlidesAppMessage(msg({ type: "print" }))).toEqual({ type: "print" });
     expect(readSlidesAppMessage(msg({ type: "view", mode: "presenter" }))).toEqual({
       type: "view",
       mode: "presenter",
@@ -491,7 +516,6 @@ describe("readSlidesAppMessage", () => {
       { ...msg({ type: "goto", slide: 1 }), v: 2 },
       msg({ type: "goto", slide: 1.5 }),
       msg({ type: "goto", slide: 501 }),
-      msg({ type: "print", notes: "yes" }),
       msg({ type: "view", mode: "edit" }),
       msg({ type: "edit", on: true }),
     ]) {

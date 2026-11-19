@@ -1,6 +1,6 @@
 // usePresentation: the slide from #slide=N is sent to the frame after it reports ready (again
-// after a frame swap), each position is written to the URL fragment, presenter view and printing
-// post only numbers and names to the frame, and nothing happens for an artifact that is not a deck.
+// after a frame swap), each position is written to the URL fragment, presenter view posts only
+// numbers and names to the frame, and nothing happens for an artifact that is not a deck.
 import type { ViewGate } from "@plinth/shared";
 import { act, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -109,11 +109,6 @@ describe("usePresentation", () => {
     expect(result.current.pause).toBe("present");
     expect(f.contentWindow.postMessage).toHaveBeenLastCalledWith(
       { source: "plinth-renderer", v: 1, type: "view", mode: "presenter" },
-      ORIGIN,
-    );
-    act(() => result.current.print(true));
-    expect(f.contentWindow.postMessage).toHaveBeenLastCalledWith(
-      { source: "plinth-renderer", v: 1, type: "print", notes: true },
       ORIGIN,
     );
     act(() => result.current.exit());

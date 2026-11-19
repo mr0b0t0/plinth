@@ -20,6 +20,7 @@ import {
   PresentationChartIcon,
   PresentationIcon,
   PrinterIcon,
+  ProjectorScreenIcon,
   ShareNetworkIcon,
   SunIcon,
 } from "@phosphor-icons/react";
@@ -31,7 +32,6 @@ import { Button, buttonClassName, Menu, type MenuEntry, Tooltip } from "../ui/in
 import { DataNotice } from "./DataNotice.tsx";
 import { EditBar } from "./EditBar.tsx";
 import { LiveDraftNotice } from "./LiveDraftNotice.tsx";
-import { PresentStrip } from "./PresentStrip.tsx";
 import { postPrint, rendererTargetOrigin } from "./rendererProtocol.ts";
 import type { LiveEdit } from "./useLiveEdit.ts";
 import type { Presentation } from "./usePresentation.ts";
@@ -83,8 +83,6 @@ export interface StageContext {
     finishEditing: () => void;
     /** After a notice button that may have unmounted with focus in it: move focus on. */
     refocusAfterNotice: () => void;
-    /** Fetch a fresh gate (the newest version). */
-    reload: () => void;
   };
 }
 
@@ -153,25 +151,26 @@ const printTyped: MenuItem = (c) => [
   },
 ];
 
-/** A deck's presenter view: notes, the next slide and a timer, in the frame. */
-const presenterView: MenuItem = (c) =>
-  c.present.available && c.present.mode !== "audience"
-    ? [{ label: "Presenter view", icon: PresentationChartIcon, onSelect: c.present.presenterView }]
-    : [];
-
-/** A deck's handout: each slide over its speaker notes, printed by the frame. */
-const printWithNotes: MenuItem = (c) => [
-  {
-    label: "Print with speaker notes",
-    icon: PrinterIcon,
-    onSelect: () => c.present.print(true),
-  },
-];
+/**
+ * A deck's presenter view (notes, the next slide and a timer, in the frame). While it is on, the
+ * same slot opens an audience window that follows it; the frame's own Exit and Escape leave it.
+ */
+const presenterView: MenuItem = (c) => {
+  if (!c.present.available || c.present.mode === "audience") return [];
+  if (c.present.mode === "presenter") {
+    return [
+      { label: "Audience window", icon: ProjectorScreenIcon, onSelect: c.present.openAudience },
+    ];
+  }
+  return [
+    { label: "Presenter view", icon: PresentationChartIcon, onSelect: c.present.presenterView },
+  ];
+};
 
 /** Menu items for one artifact type, in order, after Settings and Stats. One type per line. */
 export const TYPE_MENU_ITEMS: Partial<Record<ArtifactType, readonly MenuItem[]>> = {
   doc: [printTyped],
-  slides: [presenterView, printTyped, printWithNotes],
+  slides: [presenterView, printTyped],
 };
 
 /** Menu items for a page that declares one capability, in order, after the type's items. */
@@ -404,20 +403,10 @@ const liveDraftNotice: StageNode = ({ editing, live, gate, actions }) =>
     />
   );
 
-const presentStrip: StageNode = ({ present, gate: { artifact }, actions }) => (
-  <PresentStrip
-    present={present}
-    version={artifact.version}
-    currentVersion={artifact.current_version}
-    onShowNewer={actions.reload}
-  />
-);
-
 /** The strip of notices under the bar, top to bottom. One item per line. */
 export const STRIP_ITEMS: readonly StageItem[] = [
   { id: "older-version", render: olderVersion },
   { id: "data-notice", render: dataNotice },
   { id: "edit-bar", render: editBar },
   { id: "live-draft", render: liveDraftNotice },
-  { id: "present", render: presentStrip },
 ];

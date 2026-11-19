@@ -1,6 +1,6 @@
 // Presenter view, inside the deck's own frame: the current slide, the next one, the speaker notes,
-// an elapsed timer with pause and reset, the wall clock, "Slide 3 of 20", and a warning when the
-// current slide does not fit. Everything here is made with createElement and textContent; the
+// an elapsed timer with pause (it starts again each time presenter view opens), the wall clock,
+// "Slide 3 of 20", and a warning when the current slide does not fit. Everything here is made with createElement and textContent; the
 // slides and notes it shows are copies of what deck.ts already sanitized.
 import { dropIds, type SlideView } from "./deck.ts";
 import { fitSlide, type Measure, overflows } from "./layout.ts";
@@ -86,11 +86,16 @@ export class Presenter {
 
     this.current = el(doc, "div", "plinth-slides__pane plinth-slides__pane--current");
     const side = el(doc, "div", "plinth-slides__side");
-    const nextLabel = el(doc, "p", "plinth-slides__caption", "Next");
+    const nextLabel = el(doc, "p", "plinth-slides__caption plinth-slides__caption--next", "Next");
     this.next = el(doc, "div", "plinth-slides__pane plinth-slides__pane--next");
     this.next.setAttribute("inert", "");
     this.next.setAttribute("aria-hidden", "true");
-    const notesLabel = el(doc, "p", "plinth-slides__caption", "Notes");
+    const notesLabel = el(
+      doc,
+      "p",
+      "plinth-slides__caption plinth-slides__caption--notes",
+      "Notes",
+    );
     this.notes = el(doc, "div", "plinth-slides__notes");
     side.append(nextLabel, this.next, notesLabel, this.notes);
 
@@ -102,16 +107,14 @@ export class Presenter {
     this.pauseBtn = el(doc, "button", "plinth-slides__btn", "Pause");
     this.pauseBtn.type = "button";
     this.pauseBtn.addEventListener("click", () => this.togglePause());
-    const reset = el(doc, "button", "plinth-slides__btn", "Reset");
-    reset.type = "button";
-    reset.addEventListener("click", () => this.reset());
     this.clockEl = el(doc, "span", "plinth-slides__clock");
     this.warning = el(doc, "span", "plinth-slides__warning", "This slide overflows");
     this.warning.hidden = true;
-    const exit = el(doc, "button", "plinth-slides__btn", "Exit presenter view");
+    const exit = el(doc, "button", "plinth-slides__btn", "Exit");
     exit.type = "button";
+    exit.setAttribute("aria-label", "Exit presenter view");
     exit.addEventListener("click", () => this.o.exit());
-    bar.append(this.timer, this.pauseBtn, reset, this.clockEl, this.counter, this.warning, exit);
+    bar.append(this.timer, this.pauseBtn, this.clockEl, this.counter, this.warning, exit);
 
     this.el.append(this.current, side, bar);
   }
@@ -150,12 +153,6 @@ export class Presenter {
       this.pausedAt = null;
       this.pauseBtn.textContent = "Pause";
     }
-    this.tick();
-  }
-
-  reset(): void {
-    this.startedAt = this.clock.now();
-    if (this.pausedAt !== null) this.pausedAt = this.startedAt;
     this.tick();
   }
 
