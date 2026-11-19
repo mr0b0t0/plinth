@@ -111,8 +111,10 @@ every program that runs this Claude Code profile (T3 Code included) uses it. It 
 Connect panel, `/llms.txt` and `npx @mr0b0t0/plinth connect` of an instance other than the hosted
 one print the install with `--config` already filled in.
 
-The directory build (`integrations/plugin-directory`, for Anthropic's plugin directory) has the same
-option, without `PLINTH_URL`: change it in `/config`.
+The directory build (`integrations/plugin-directory`, for Anthropic's plugin directory) connects to
+the hosted instance only: the directory refuses a server URL with a variable in it. With that build,
+add another instance as its own server (`claude mcp add --transport http plinth <origin>/mcp`), or
+install the full plugin from this repository's marketplace instead.
 
 #### Several Claude Code configuration directories
 
@@ -194,7 +196,10 @@ clone. Google has been moving users to Antigravity CLI; this adapter stays thin 
 
 ### Cursor and VS Code
 
-Add the server with the install links on **Connections > Connect an agent**. For the rules, save
+In Cursor, the Plinth plugin ([`integrations/plugin-cursor`](../integrations/plugin-cursor)) brings
+the server and the skill together, once it is listed in the Cursor Marketplace or on
+cursor.directory. Otherwise, add the server with the install links on
+**Connections > Connect an agent**. For the rules, save
 [`integrations/cursor/plinth-artifacts.mdc`](../integrations/cursor/plinth-artifacts.mdc) into your
 project's `.cursor/rules/`, or
 [`integrations/vscode/plinth-artifacts.instructions.md`](../integrations/vscode/plinth-artifacts.instructions.md)
@@ -326,7 +331,7 @@ There is no rendered preview for agents yet. To check that a publish arrived int
    it sets a cookie for that one artifact's content host (valid for 12 hours) and redirects to the
    page, so the same cookie jar then fetches the HTML and every asset exactly as viewers get them,
    with their headers and Content Security Policy. An agent's gate never counts as an open of the
-   page ([spec](spec.md#admin-stats-and-view-counts)). Do it in a new temporary directory, never in
+   page ([spec](spec.md#artifact-stats)). Do it in a new temporary directory, never in
    the build folder: a cookie jar or a downloaded copy left there would go out with the next
    upload, and the jar is a live credential.
 
@@ -467,6 +472,9 @@ a JavaScript single-page app, so the page an agent receives says where to go ins
 - **`GET /robots.txt`** keeps crawlers off `/a/`, `/open/`, `/api/`, `/mcp` and the signed-in
   pages. Artifact pages also send `X-Robots-Tag: noindex, nofollow`, except a public artifact on an
   instance with public visibility on.
+
+`GET /.well-known/openai-apps-challenge` returns the operator's `OPENAI_APPS_CHALLENGE` token as
+plain text, for OpenAI's plugin portal to verify the MCP server's domain; without it the path is 404.
 
 Paths under `/.well-known/` that are not one of these or the OAuth metadata, and file names that
 are not app assets (`/AGENTS.md`, `/sitemap.xml`), answer `404` rather than the app.

@@ -9,7 +9,7 @@ import { ROOM_FRAGMENT } from "../src/content/runtime/room.ts";
 import { assembleRuntime, RUNTIME_FRAGMENTS, runtimeScript } from "../src/content/runtime.ts";
 import { config } from "./helpers.ts";
 
-/** sha256 and length of RUNTIME_SCRIPT at 94ea515, the last commit before the fragments. */
+/** sha256 and length of RUNTIME_SCRIPT on main (unchanged from 94ea515 to 2110cc4), before the fragments. */
 const GOLDEN_SHA256 = "409e0c6962e06426cc55e4593f7a054085255e0de4ab391446c1eb6fbebcc680";
 const GOLDEN_LENGTH = 24787;
 

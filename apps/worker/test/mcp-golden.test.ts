@@ -43,6 +43,7 @@ const NAMES = [
   "claim_mention",
   "reply_comment",
   "start_upload",
+  "get_artifact_stats",
   "list_artifact_data",
   "write_artifact_data",
   "preview_artifact",
