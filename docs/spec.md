@@ -1096,7 +1096,8 @@ A page gets files from a project (a log viewer, a CSV explorer, a code tour, a t
 snapshot. The agent publishes copies as assets under `files/`, keeping their project paths, and
 they are versioned, reverted and access-checked with the page. The page reads them by relative URL
 (`fetch("./files/data.csv")`); under `CONTENT_ISOLATION=opaque` a page cannot `fetch` its own
-files, so small files are embedded as `<script type="application/json">`. A refresh is a new
+files, so small files are embedded as `<script type="application/json">`, with every `<` written as
+`\u003c`. A refresh is a new
 version with `base_version`, sending the re-read files and reusing the rest by `{path, sha256}`.
 A `start_upload` bundle or a folder published with the CLI is the whole new version and carries
 nothing forward, so for a refresh it holds the page and every file the version keeps, not only the
@@ -1119,8 +1120,10 @@ live read, and the feature adds no tool, route, env var or stored state.
   it, with the page's shared data and room in reach, and HTML, CSS and JS files get the reference
   check that page code gets; a named `content_type` applies only to extensions Plinth does not
   know. The agent adds `.txt` to a project file of those types and of `.js`, `.mjs`, `.cjs` and
-  `.css` (`files/src/app.js.txt`), or embeds it in the page as JSON, and keeps the real project
-  path in the local record. A reference warning on a project file comes from its contents: the
+  `.css` (`files/src/app.js.txt`), or embeds it in the page as JSON in a
+  `<script type="application/json">` block with every `<` written as `\u003c`
+  (`JSON.stringify` leaves `</script>` as it is, which would end the block and run the rest of the
+  file as markup in the page), and keeps the real project path in the local record. A reference warning on a project file comes from its contents: the
   agent never reads or adds another file to fix it, and adds `.txt` instead. This is agent-side;
   the server serves and checks a `files/` path as it does any other.
 - **The local record.** Agents keep the user's choices in `.plinth-files.json` at the project root

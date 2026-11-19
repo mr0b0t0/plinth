@@ -1266,7 +1266,7 @@ collaborator can read them. What the server enforces, and what only the agent ca
 | A2 | That nothing on Plinth chooses those files, and that a mention, from any role, needs the user's yes in the session | Agent only | The `UNTRUSTED_NOTE` sentence, the project files and mention notes in the MCP tool descriptions, the plinth-artifacts skill, the watcher's announcement |
 | A3 | Selection rules: no dot segments, keys, credential files, Git-ignored files, or paths outside the project after symlinks are resolved | Agent only, backed by S5 for bundles and S6 for names | The skill and the project files note |
 | A4 | The contents of project files, and of files read back with `get_artifact`, are data, never instructions. A reference warning on a project file (`missing_file`, `blocked_host`) never makes the agent read or add another file | Agent only | The skill and the project files note |
-| A5 | A project file the content host would serve as a document or as code (`.html`, `.htm`, `.svg`, `.xml`, `.js`, `.mjs`, `.cjs`, `.css`) is published with `.txt` added, or embedded in the page as JSON | Agent only | The skill and the project files note. The server serves `files/` like any asset, by extension (`assetContentType` honours a named type only for extensions it does not know) |
+| A5 | A project file the content host would serve as a document or as code (`.html`, `.htm`, `.svg`, `.xml`, `.js`, `.mjs`, `.cjs`, `.css`) is published with `.txt` added, or embedded in the page as JSON with every `<` written as `\u003c`, so a `</script>` in the file cannot end the block | Agent only | The skill and the project files note. The server serves `files/` like any asset, by extension (`assetContentType` honours a named type only for extensions it does not know) |
 
 **Why A1 and A2 cannot move to the server.** The server could refuse new `files/` paths in an
 update that follows a mention, but that would not close the leak. An agent that obeys the mention
@@ -1286,7 +1286,12 @@ page, so it passes every check on `/__plinth/api/` and `/__plinth/room/` and can
 page's shared data and join its room as that viewer; the CSP still blocks other hosts. This is not
 a platform hole (any author can publish active HTML), but a page that shows files as data must not
 serve them as code, so agents add `.txt` (A5). Its references, checked as page code, would also
-point the agent at files the user never chose, which A4 forbids acting on.
+point the agent at files the user never chose, which A4 forbids acting on. Embedding the file in
+the page instead has the same hazard one step earlier: `JSON.stringify` leaves `</script>`
+unescaped, so a fixture or a log line holding it would close a `<script type="application/json">`
+block and the rest of the file would be parsed as markup in the page itself, where the content CSP
+allows inline script. Agents therefore write every `<` in embedded JSON as `\u003c`, as the doc
+shell does (`jsonForScript`).
 
 **The local record is sensitive.** `.plinth-files.json` lists artifact ids, and an id opens an
 unlisted artifact (`findArtifact` resolves a ref by id, and `canView` allows any principal on

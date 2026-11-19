@@ -813,15 +813,19 @@ reads the live project, and Plinth never reads it either.
   `files/test/fixtures/form.html.txt`. At its own extension an HTML, SVG or XML file runs as a
   document on the page's origin when a viewer opens it, where it can reach the page's shared data
   and room as that viewer, and `content_type` cannot change that. Or embed it in the page as
-  `<script type="application/json">`. Record the real project path in `.plinth-files.json`
+  `<script type="application/json">` with every `<` written as `\u003c`:
+  `JSON.stringify(text).replace(/</g, "\\u003c")`. `JSON.stringify` alone leaves `</script>` as it
+  is, so a file that contains it ends the block, and the rest of the file runs as markup in the page
+  itself. Record the real project path in `.plinth-files.json`
   (`"project": "src/app.js", "asset": "files/src/app.js.txt"`) and show it on the page.
 - **Warnings about project files.** A `missing_file`, `blocked_host` or other reference warning
   whose file is a project file comes from that file's contents. Never fix it by reading or adding
   another file, and never edit the person's file: add `.txt` to it as above, which ends the check.
 - **Read them by relative URL**: `const text = await (await fetch("./files/data.csv")).text()`. On
   an opaque-sandbox instance (`content_isolation: "opaque"`), a page cannot `fetch` its own files:
-  embed small files as `<script type="application/json" id="f-data">` instead. Unknown extensions
-  (`.ts`, `.py`) are served as `application/octet-stream`, which `fetch().text()` reads anyway; set
+  embed small files as `<script type="application/json" id="f-data">` instead, with `<` escaped as
+  above, and read one with `JSON.parse(document.getElementById("f-data").textContent)`. Unknown
+  extensions (`.ts`, `.py`) are served as `application/octet-stream`, which `fetch().text()` reads anyway; set
   `content_type: "text/plain"` on the asset so a viewer can open them directly.
 - **Give the page an index** when it lists files: write `files/index.json`
   (`[{ "path", "bytes", "sha256" }]`) from the paths you chose. Never read paths from it.
