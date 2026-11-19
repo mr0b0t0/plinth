@@ -115,6 +115,9 @@ describe("Ask an agent: not editing", () => {
     // One review-mode reload for the pick.
     await waitFor(() => expect(s.views()).toBe(2));
     expect(within(form).getByRole("button", { name: "Point at something" })).toBeTruthy();
+    // One heading and one close button: closing the panel ends the request. No @mention hint.
+    expect(within(panel).getAllByRole("button", { name: /^Close|instead$/ })).toHaveLength(1);
+    expect(within(panel).queryByText(/mention @claude/)).toBeNull();
     const claude = within(form).getByRole("radio", { name: "Claude" }) as HTMLInputElement;
     expect(claude.checked).toBe(true);
     expect(within(form).getByRole("radio", { name: /My other agent/ })).toBeTruthy();
@@ -444,6 +447,7 @@ describe("Ask an agent in edit mode: the Ask dialog", () => {
     post({ type: "ask", anchor: { key: "slide-3:image-1", text: "Slide 3, image 1" } });
     const dialog = await screen.findByRole("dialog", { name: "Ask an agent" });
     expect(within(dialog).getByText("Slide 3, image 1")).toBeTruthy();
+    expect(within(dialog).getByText(/Pointing at/)).toBeTruthy();
     await user.type(within(dialog).getByRole("textbox", { name: "What should change?" }), "Swap");
     await user.click(within(dialog).getByRole("button", { name: "Send" }));
     await waitFor(() => expect(s.posted).toHaveLength(1));
@@ -461,5 +465,17 @@ describe("Ask an agent in edit mode: the Ask dialog", () => {
       await new Promise((r) => setTimeout(r, 20));
     });
     expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("Stop pointing makes the request about the whole page", async () => {
+    const { s, user, post } = await editing();
+    post({ type: "ask", anchor: { key: "slide-3:image-1", text: "Slide 3, image 1" } });
+    const dialog = await screen.findByRole("dialog", { name: "Ask an agent" });
+    await user.click(within(dialog).getByRole("button", { name: "Stop pointing" }));
+    expect(within(dialog).queryByText(/Pointing at/)).toBeNull();
+    await user.type(within(dialog).getByRole("textbox", { name: "What should change?" }), "Tidy");
+    await user.click(within(dialog).getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(s.posted).toHaveLength(1));
+    expect(s.posted[0]).not.toHaveProperty("anchor");
   });
 });

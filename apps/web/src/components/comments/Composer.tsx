@@ -1,11 +1,12 @@
 // New comment: Markdown text, optional pin (an element picked through the bridge, or a spot the
 // page placed itself through plinth.comments), send. In request mode (Ask an agent) the same form
-// asks the owner's agent for a change: "Point at something" picks the element, the text describes
-// the change, and, when the owner has more than one, the person picks which agent gets it.
+// asks the owner's agent for a change: "Point at something" (an icon button) picks the element, the
+// text describes the change, and, when the owner has more than one, the person picks which agent
+// gets it, beside Send. Closing the panel ends request mode: the form has no close button of its own.
 import { MapPinIcon, PaperPlaneRightIcon, XIcon } from "@phosphor-icons/react";
 import { type ClientType, isPageAnchor, LIMITS, type PageAnchor } from "@plinth/shared";
 import { type RefObject, useId } from "react";
-import { Button, ICON_SIZE, IconButton, SegmentedControl } from "../ui/index.ts";
+import { Button, ICON_SIZE, IconButton, SegmentedControl, Tooltip } from "../ui/index.ts";
 import { askTargetInText, askTargetName } from "./askTargets.ts";
 import type { PickedAnchor } from "./bridge.ts";
 import { MentionTextarea } from "./MentionTextarea.tsx";
@@ -37,8 +38,6 @@ export interface AskRequestProps {
   onTo: (t: ClientType) => void;
   /** The viewer owns the artifact ("My other agent"). */
   owner: boolean;
-  /** Back to a plain comment. */
-  onLeave: () => void;
 }
 
 /** The agent choice of request mode: shown only when there is more than one agent to pick. */
@@ -47,12 +46,14 @@ export function AgentChoice({
   to,
   onTo,
   owner,
-}: Pick<AskRequestProps, "targets" | "to" | "onTo" | "owner">) {
+  className,
+}: Pick<AskRequestProps, "targets" | "to" | "onTo" | "owner"> & { className?: string }) {
   if (targets.length < 2 || !to) return null;
   return (
     <SegmentedControl<ClientType>
       label="Send to"
       size="sm"
+      className={className}
       value={to}
       onChange={onTo}
       options={targets.map((t) => ({ value: t, label: askTargetName(t, owner) }))}
@@ -66,18 +67,38 @@ export function askSendLabel(r: Pick<AskRequestProps, "targets" | "to" | "owner"
   return r.targets.length === 1 ? `Send to ${askTargetInText(r.to, r.owner)}` : "Send";
 }
 
+/**
+ * The place a request is about, in the comments panel and the Ask dialog alike: "Pointing at …"
+ * with a button to drop it (the request is then about the whole page). `text` is untrusted: it is
+ * only ever rendered as text.
+ */
+export function PointingChip({
+  text,
+  onRemove,
+}: {
+  text: string | undefined;
+  onRemove: () => void;
+}) {
+  const label = text?.trim();
+  return (
+    <div className="cm-anchor-chip">
+      <MapPinIcon size={ICON_SIZE.sm} aria-hidden="true" />
+      <span className="cm-anchor-chip__text">
+        {label ? (
+          <>
+            Pointing at <q>{excerpt(label, 40)}</q>
+          </>
+        ) : (
+          "Pointing at an element"
+        )}
+      </span>
+      <IconButton size="sm" icon={XIcon} label="Stop pointing" onClick={onRemove} />
+    </div>
+  );
+}
+
 /** The chip's words. Anchor text is untrusted: it is only ever rendered as text. */
-function chipText(anchor: PickedAnchor | PageAnchor, asking: boolean) {
-  if (asking) {
-    const text = isPageAnchor(anchor) ? anchor.text || anchor.key : anchor.text?.trim();
-    return text ? (
-      <>
-        Pointing at <q>{excerpt(text, 40)}</q>
-      </>
-    ) : (
-      "Pointing at an element"
-    );
-  }
+function chipText(anchor: PickedAnchor | PageAnchor) {
   if (isPageAnchor(anchor)) {
     return (
       <>
@@ -133,17 +154,9 @@ export function Composer({
       }}
     >
       {asking && (
-        <div className="cm-ask__head">
-          <h3 id={titleId} className="cm-ask__title">
-            Ask an agent
-          </h3>
-          <IconButton
-            size="sm"
-            icon={XIcon}
-            label="Write a comment instead"
-            onClick={request.onLeave}
-          />
-        </div>
+        <h3 id={titleId} className="cm-ask__title">
+          Ask an agent
+        </h3>
       )}
       {picking ? (
         <div className="cm-picking" role="status">
@@ -153,16 +166,16 @@ export function Composer({
             Cancel
           </Button>
         </div>
+      ) : anchor && asking ? (
+        <PointingChip
+          text={isPageAnchor(anchor) ? anchor.text || anchor.key : anchor.text}
+          onRemove={onRemoveAnchor}
+        />
       ) : anchor ? (
         <div className="cm-anchor-chip">
           <MapPinIcon size={ICON_SIZE.sm} aria-hidden="true" />
-          <span className="cm-anchor-chip__text">{chipText(anchor, asking)}</span>
-          <IconButton
-            size="sm"
-            icon={XIcon}
-            label={asking ? "Stop pointing" : "Remove pin"}
-            onClick={onRemoveAnchor}
-          />
+          <span className="cm-anchor-chip__text">{chipText(anchor)}</span>
+          <IconButton size="sm" icon={XIcon} label="Remove pin" onClick={onRemoveAnchor} />
         </div>
       ) : null}
       <div className="cm-composer__field" hidden={picking}>
@@ -183,7 +196,17 @@ export function Composer({
         />
       </div>
       <div className="cm-actions" hidden={picking}>
-        {!anchor && onStartPick && (
+        {!anchor && onStartPick && asking ? (
+          <Tooltip content="Point at something">
+            <IconButton
+              size="sm"
+              icon={MapPinIcon}
+              label="Point at something"
+              onClick={onStartPick}
+              disabled={!canPin}
+            />
+          </Tooltip>
+        ) : !anchor && onStartPick ? (
           <Button
             size="sm"
             variant="ghost"
@@ -191,9 +214,9 @@ export function Composer({
             onClick={onStartPick}
             disabled={!canPin}
           >
-            {asking ? "Point at something" : "Pin to an element"}
+            Pin to an element
           </Button>
-        )}
+        ) : null}
         {asking ? (
           <div className="cm-actions__send">
             <AgentChoice {...request} />

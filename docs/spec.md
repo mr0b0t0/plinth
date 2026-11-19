@@ -2626,21 +2626,24 @@ authority, whoever sends it (only `comment_author_role` says the owner did).
     opens the source editor for owners and editors).
 - **Not editing: the comments panel in request mode.** Ask an agent opens the comments panel (one
   reload into review mode, as when comments open, which the pick needs; nothing is unpublished
-  then). The composer is titled "Ask an agent" and has the description ("Describe the change…"),
-  "Point at something" (the review-mode pick: an element on an HTML page, a board on a design), and
-  the agent choice. It posts a comment with `request_to` against the version on view; its close
-  button ("Write a comment instead") turns it back into a plain comment. Request mode lasts as long
-  as the panel it opened: once the panel closes, sent or not, the Comments toggle opens a plain
-  composer again.
+  then). The composer is titled "Ask an agent" and has the description ("Describe the change…")
+  and one row under it: "Point at something" (an icon button with that tooltip: the review-mode
+  pick, an element on an HTML page, a board on a design), then the agent choice and Send. The place
+  picked shows as a "Pointing at “…”" chip whose button drops it. An empty list shows only its
+  title, with no hint. It posts a comment with `request_to` against the version on view.
+  It has no close button of its own: request mode lasts as long as the panel it opened, and once
+  the panel closes, sent or not, the Comments toggle opens a plain composer again.
 - **In edit mode: the Ask dialog.** A modal dialog in the app that changes nothing in the frame: no
   review mode, no reload, the comments panel stays closed, and the frame keeps edit mode and its
   draft. It opens from the ⋯ item, or from an `ask` message the renderer posts with the frame's key
   and a page anchor (`{ kind: "page", key, text }`, a structural name such as `slide-3:image-1`,
   shown as text); the renderer releases its own lease before it asks. While the app is in edit
   mode, an `ask` without the frame's key is dropped like any other editing message; only outside
-  edit mode does a keyless `ask` open the comments panel in request mode. It has the description, the
-  agent choice and "Publish my changes first", off by default and shown only when there are
-  unpublished changes ("Otherwise the agent works from v5.", plus, in room mode while others edit,
+  edit mode does a keyless `ask` open the comments panel in request mode. It has the composer's
+  "Pointing at “…”" chip when the renderer named a place (dropping it makes the request about the
+  whole page), the description, "Publish my changes first", and, as in the composer, the agent
+  choice next to Send (Cancel, the choice, Send). "Publish my changes first" is off by default and
+  shown only when there are unpublished changes ("Otherwise the agent works from v5.", plus, in room mode while others edit,
   "This also publishes the others' changes."). With it on, the request is posted after the strip's
   Publish succeeds, against the version it made; if that Publish does not succeed (a conflict, busy, a draft that
   cannot be a version yet, a lost session) nothing is posted, the dialog says why in the strip's

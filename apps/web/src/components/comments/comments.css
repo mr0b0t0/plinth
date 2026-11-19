@@ -564,23 +564,23 @@
   background: var(--color-wall);
 }
 
-/* Ask an agent: the composer in request mode (Composer.tsx). */
-.cm-ask__head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-1);
-  color: var(--color-ink);
-}
+/* Ask an agent: the composer in request mode (Composer.tsx). One row: the point button on the
+   left, the agent choice and Send on the right. */
 .cm-ask__title {
   margin: 0;
   padding-left: var(--space-0-5);
+  color: var(--color-ink);
   font-size: var(--text-sm);
   font-weight: var(--weight-medium);
+}
+.cm-composer--ask .cm-actions {
+  flex-wrap: nowrap;
+  align-items: center;
 }
 .cm-actions__send {
   display: flex;
   align-items: center;
   gap: var(--space-1);
+  min-width: 0;
   margin-left: auto;
 }

@@ -740,16 +740,14 @@
 /* Ask an agent: the Ask dialog in edit mode (AskDialog.tsx). */
 .pl-ask {
   display: grid;
+  /* One column that may shrink: a long "Pointing at" chip ellipsizes instead of widening the sheet. */
+  grid-template-columns: minmax(0, 1fr);
   gap: var(--space-4);
 }
-.pl-ask__anchor {
-  margin: 0;
-  color: var(--color-ink-muted);
-  font-size: var(--text-sm);
-  overflow-wrap: anywhere;
-}
-.pl-ask__anchor q {
-  color: var(--color-ink);
+/* The agent choice in the footer, between Cancel and Send, as in the request composer. */
+.pl-dialog__footer > .pl-ask__to {
+  flex: none;
+  align-self: center;
 }
 .pl-ask__error {
   margin: 0;

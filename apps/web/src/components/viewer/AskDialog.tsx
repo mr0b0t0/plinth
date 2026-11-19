@@ -4,7 +4,8 @@
 // before it asked). The request is an ordinary comment with `request_to`, posted against the
 // version being edited, or, with "Publish my changes first" (off by default), against the version
 // that Publish makes. When that Publish does not succeed, nothing is posted: the dialog says why
-// and offers to post without publishing.
+// and offers to post without publishing. It matches the request composer: the same "Pointing at"
+// chip, and the agent choice beside Send (Cancel · Claude | Codex · Send).
 import {
   API,
   type ClientType,
@@ -16,8 +17,8 @@ import {
 import { type FormEvent, useEffect, useId, useRef, useState } from "react";
 import { ApiRequestError, api } from "../../lib/api.ts";
 import { askTargetInText } from "../comments/askTargets.ts";
-import { AgentChoice, askSendLabel } from "../comments/Composer.tsx";
-import { excerpt } from "../comments/model.ts";
+import { AgentChoice, askSendLabel, PointingChip } from "../comments/Composer.tsx";
+import "../comments/comments.css";
 import { Button, Checkbox, Dialog, showToast, Textarea } from "../ui/index.ts";
 // Types only: askAgent.tsx imports this file.
 import type { AskAnchor } from "./askAgent.tsx";
@@ -64,12 +65,14 @@ export function AskDialog({
   artifactId,
   targets: initialTargets,
   owner,
-  anchor,
+  anchor: initialAnchor,
   live,
   version,
   onClose,
 }: AskDialogProps) {
   const formId = useId();
+  // The place it is about; "Stop pointing" makes it about the whole page.
+  const [anchor, setAnchor] = useState(initialAnchor);
   const [targets, setTargets] = useState(initialTargets);
   const [to, setTo] = useState<ClientType | null>(initialTargets[0] ?? null);
   const [body, setBody] = useState("");
@@ -157,11 +160,18 @@ export function AskDialog({
       onClose={onClose}
       title="Ask an agent"
       footer={
-        unpublished ? (
-          <>
-            <Button variant="ghost" onClick={onClose}>
-              Cancel
-            </Button>
+        <>
+          <Button variant="ghost" onClick={onClose}>
+            Cancel
+          </Button>
+          <AgentChoice
+            className="pl-ask__to"
+            targets={targets}
+            to={to}
+            onTo={setTo}
+            owner={owner}
+          />
+          {unpublished ? (
             <Button
               variant="primary"
               loading={sending}
@@ -169,12 +179,7 @@ export function AskDialog({
             >
               Post without publishing
             </Button>
-          </>
-        ) : (
-          <>
-            <Button variant="ghost" onClick={onClose}>
-              Cancel
-            </Button>
+          ) : (
             <Button
               variant="primary"
               type="submit"
@@ -184,15 +189,13 @@ export function AskDialog({
             >
               {askSendLabel({ targets, to, owner })}
             </Button>
-          </>
-        )
+          )}
+        </>
       }
     >
       <form id={formId} onSubmit={submit} noValidate className="pl-ask">
         {anchor && (
-          <p className="pl-ask__anchor">
-            About: <q>{excerpt(anchor.text || anchor.key, 60)}</q>
-          </p>
+          <PointingChip text={anchor.text || anchor.key} onRemove={() => setAnchor(null)} />
         )}
         <Textarea
           label="What should change?"
@@ -209,7 +212,6 @@ export function AskDialog({
             }
           }}
         />
-        <AgentChoice targets={targets} to={to} onTo={setTo} owner={owner} />
         {dirty && (
           <Checkbox
             label="Publish my changes first"
