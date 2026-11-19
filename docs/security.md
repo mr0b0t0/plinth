@@ -83,7 +83,7 @@ Agents fetch artifact links as text, so the app host answers them without runnin
   carry only configuration, and so does `/.well-known/openai-apps-challenge` (the operator's
   `OPENAI_APPS_CHALLENGE` token, `no-store`, 404 when unset). Unknown `/.well-known/` paths and missing files answer `404`, never
   the SPA.
-- None of these ever include open counts.
+- None of these ever include artifact stats (who opened a page, or how often).
 
 ## Opaque content isolation
 
@@ -190,17 +190,27 @@ content host checks it against its own subdomain. Any change to visibility, the 
 grants bumps the artifact's access epoch, which invalidates every outstanding token, cookie and
 password pass at once.
 
-**Open counts** ([spec](spec.md#admin-stats-and-view-counts)). The gate may add one signed bit,
-`w`, to the viewer token, for a normal open of the live page by someone other than the owner, an
-agent or an admin without a role. The issuer refuses `w` on capture and preview tokens, and a
-viewer cannot add it without breaking the signature. The enter exchange counts the open only after
-every check above (signature, artifact, epoch, takedown, nonce) and only for a view pass; it reads
-the request's existing content cookie to count each browser once, and stores nothing about the
-viewer. The content cookie it sets carries the same signed bit, `w`, once the browser's open was
-counted (carried forward by later view enters at that epoch), so dedupe needs no state of its own;
-capture and preview passes never carry it, and a pass that does is rejected. The response is the
-same, byte for byte apart from the cookie's signed value, whether or not the open counted: same
-status, `Location`, cookie attributes and Content Security Policy, and no CORS headers. The write runs after the response, and a failure is logged as a fixed string.
+**Artifact stats** ([spec](spec.md#artifact-stats)). The gate may add one signed bit, `w`, to the
+viewer token, for a normal open of the live page by someone other than the owner, an agent or an
+admin without a role, and beside it `o`, who is opening (a user id, an allowlisted email confirmed
+by code, or nobody, and the role). `o` is AES-GCM sealed under its own HKDF key and bound to the
+artifact id, like the identity claim, because the token travels in a URL: no user id or email is
+ever in a URL in clear, and the claim cannot be moved to another artifact. The issuer refuses `w`
+on capture and preview tokens and `o` without `w`, and a viewer cannot add either without breaking
+the signature. The enter exchange records the open only after every check above (signature,
+artifact, epoch, takedown, nonce) and only for a view pass, and never copies `o` into the cookie.
+It reads the request's existing content cookie to count each browser once: the cookie it sets
+carries the signed bit `w` once the browser's open was counted (carried forward by later view
+enters at that epoch), so dedupe needs no state of its own; capture and preview passes never carry
+it, and a pass that does is rejected. While `VIEW_COUNTS` is on, view cookies also carry `i`, a
+random visitor id that counts anonymous visitors. It is read from any validly signed content cookie
+for this artifact, at any epoch and up to 30 days past its pass's expiry, so the cookie's
+`Max-Age` is 30 days while counting is on; the signed `exp` inside still ends the pass after 12
+hours, and the visitor id grants nothing (`visitorIdIn` is never used for access). The response is
+the same, byte for byte apart from the cookie's signed value, whether or not the open counted:
+same status, `Location`, cookie attributes and Content Security Policy, and no CORS headers. The
+write runs after the response, and a failure is logged as a fixed string. No IP address or user
+agent is stored.
 
 ## Cookies
 
@@ -210,7 +220,7 @@ status, `Location`, cookie attributes and Content Security Policy, and no CORS h
 | `__Host-plinth_csrf` | `APP_HOST` only | `Secure; SameSite=Strict`, readable by the app's JS | 1 year | Double-submit CSRF token |
 | `__Host-plinth_viewer` | `APP_HOST` only | `HttpOnly; Secure; SameSite=Lax` | 7 days | Viewer who confirmed an allowlisted email by code |
 | `__Host-plinth_pw_<id>` | `APP_HOST` only | `HttpOnly; Secure; SameSite=Lax` | 12 hours | Password entered for one artifact (signed, epoch-bound) |
-| `__Host-plinth_content` | one artifact subdomain | `HttpOnly; Secure; SameSite=None; Partitioned` | 12 hours | Access to that artifact's files and its shared data. For an identified viewer it may also carry a sealed identity claim (email and role, below). Named `plinth_content` in the staging path fallback and on plain-http instances |
+| `__Host-plinth_content` | one artifact subdomain | `HttpOnly; Secure; SameSite=None; Partitioned` | 12 hours for the pass it carries; the cookie itself lasts 30 days while `VIEW_COUNTS` is on | Access to that artifact's files and its shared data. For an identified viewer it may also carry a sealed identity claim (email and role, below). While counting is on it also carries a random visitor id for the owner's anonymous-visitor count, which is all an expired one is still read for. Named `plinth_content` in the staging path fallback and on plain-http instances |
 
 No cookie is set with a `Domain` attribute, so none is shared between hosts. Every app cookie
 carries the `__Host-` prefix: browsers accept such a cookie only when it is `Secure`, on `Path=/`
@@ -379,12 +389,16 @@ do not reveal that they exist. Agents act as their user, further limited by toke
 (`artifacts:read`, `artifacts:write`, `mentions`). An artifact's category is returned only to its
 owner (`policy.seesOwnerMetadata`, applied in the one function that builds artifact summaries).
 
-An artifact's open counts ([spec](spec.md#admin-stats-and-view-counts)) are behind their own
-policy action, `views`: the owner only, a read action for agents (`artifacts:read`). Anyone who
+An artifact's stats ([spec](spec.md#artifact-stats)), which name the people who opened it, are
+behind their own policy action, `views`: the owner only, a read action for agents
+(`artifacts:read`). Anyone who
 may view the page but is not its owner gets 403 (`forbidden`): editors, viewers, and signed-in
 strangers on a public or unlisted page. Strangers who cannot view it (a private, allowlist or
 password page) get 404, anonymous callers 401, and an admin without a role is denied like anyone
-else. The
+else. The summary across artifacts (`GET /api/v1/stats/artifacts`, and `get_artifact_stats`
+without an id) selects only artifacts whose `owner_id` is the caller. The MCP tool's description
+tells agents the people list is the owner's private data, not to be put where others can read
+it. The
 admin Stats page (`GET /api/v1/admin/stats`) checks the current `ADMIN_EMAIL` at the route and
 again in the service, and answers everyone else, agents included, with the same 404 as an unknown
 endpoint. It returns instance-wide aggregates only: no statement selects an artifact's id, slug

@@ -10,6 +10,8 @@ import {
   LIVE_DEFAULTS,
   ROOM_BOUNDS,
   ROOM_DEFAULTS,
+  VIEW_LOG_BOUNDS,
+  VIEW_LOG_DEFAULTS,
 } from "@plinth/shared";
 import { getDomain } from "tldts";
 import { PASSWORD_HASH_RE } from "./lib/crypto.ts";
@@ -40,6 +42,7 @@ export interface OptionalBindings {
 /** Vars an operator may set that the shipped wrangler.jsonc leaves out (their defaults apply). */
 export interface OptionalVars {
   VIEW_COUNTS?: string;
+  VIEW_LOG_RETENTION_DAYS?: string;
   REVIEW_LOGIN_EMAIL?: string;
   OPENAI_APPS_CHALLENGE?: string;
 }
@@ -127,9 +130,15 @@ export interface Config {
    */
   thumbnails: boolean;
   /**
-   * VIEW_COUNTS (default on): count artifact opens per UTC day, aggregate only (docs/spec.md).
+   * VIEW_COUNTS (default on): record each counted open of an artifact, with who opened it, for the
+   * owner's stats (docs/spec.md "Artifact stats"). Off stops recording; what was recorded stays.
    */
   viewCounts: boolean;
+  /**
+   * VIEW_LOG_RETENTION_DAYS (default 365, from 90 to 3650): opens older than this are folded into
+   * the artifact's all-time count and deleted, so who opened it is kept only this long.
+   */
+  viewLogRetentionDays: number;
   /**
    * ALLOW_ROOMS (default on): pages that declare `room` get live presence and broadcast, and doc
    * editors see each other's page edits live. Only in effect with origin isolation and a ROOMS
@@ -410,6 +419,7 @@ export function parseConfig(env: Record<string, unknown>): Config {
     showSourceLink: boolDefaultOn(env.SHOW_SOURCE_LINK),
     thumbnails: boolDefaultOn(env.THUMBNAILS),
     viewCounts: boolDefaultOn(env.VIEW_COUNTS),
+    viewLogRetentionDays: parseViewLogRetentionDays(env),
     allowRooms: boolDefaultOn(env.ALLOW_ROOMS),
     rooms: parseRoomLimits(env),
     allowLiveEditing: boolDefaultOn(env.ALLOW_LIVE_EDITING),
@@ -515,6 +525,16 @@ function parseRoomLimits(env: Record<string, unknown>): RoomLimits {
       ...b.messagesPerSecond,
     ),
   };
+}
+
+/** VIEW_LOG_RETENTION_DAYS alone, so the cron can read it without the host configuration. */
+export function parseViewLogRetentionDays(env: Record<string, unknown>): number {
+  return boundedInt(
+    env,
+    "VIEW_LOG_RETENTION_DAYS",
+    VIEW_LOG_DEFAULTS.retentionDays,
+    ...VIEW_LOG_BOUNDS.retentionDays,
+  );
 }
 
 function parseLiveEditSettings(env: Record<string, unknown>): LiveEditSettings {

@@ -3,6 +3,7 @@
 // in ?category=), and the artifact quota.
 import {
   ArrowsDownUpIcon,
+  ChartLineUpIcon,
   FolderSimpleIcon,
   ListBulletsIcon,
   MagnifyingGlassIcon,
@@ -368,6 +369,9 @@ export default function Dashboard() {
           />
           {categoryMenu}
           <span className="pl-dash-bar__spacer" />
+          <ButtonLink to={APP_ROUTES.stats} variant="ghost" icon={ChartLineUpIcon}>
+            Stats
+          </ButtonLink>
           <Menu
             label={`Sort by ${SORT_LABEL[sort].toLowerCase()}`}
             variant="ghost"

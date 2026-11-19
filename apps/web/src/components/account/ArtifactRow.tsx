@@ -2,6 +2,7 @@
 // (ArtifactCard). Both share the access label, the owner cell and the actions menu.
 import {
   ArrowSquareOutIcon,
+  ChartLineUpIcon,
   ClockCounterClockwiseIcon,
   DotsThreeIcon,
   FolderSimpleIcon,
@@ -42,6 +43,11 @@ export function artifactMenu(a: ArtifactSummary, onCopy: (url: string) => void):
   });
   if (a.role === "owner") {
     items.push({ label: "Settings", icon: GearIcon, href: route(APP_ROUTES.settings, slug) });
+    items.push({
+      label: "Stats",
+      icon: ChartLineUpIcon,
+      href: route(APP_ROUTES.artifactStats, slug),
+    });
     items.push({
       label: "Move to category…",
       icon: FolderSimpleIcon,

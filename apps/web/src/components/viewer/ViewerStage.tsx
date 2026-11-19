@@ -5,6 +5,7 @@
 // link to Plinth's source. The banner is app chrome: nothing is ever added to the artifact itself.
 
 import {
+  ChartLineUpIcon,
   ChatCircleIcon,
   ClockCounterClockwiseIcon,
   CodeIcon,
@@ -127,6 +128,7 @@ export function ViewerStage({
   const historyHref = route(APP_ROUTES.history, { slug });
   const reportHref = route(APP_ROUTES.report, { slug });
   const settingsHref = route(APP_ROUTES.settings, { slug });
+  const statsHref = route(APP_ROUTES.artifactStats, { slug });
 
   // The open-thread count on the Comments toggle. The panel reports it while open; while closed
   // it is read once (and again after the panel closes). Failures just hide the number.
@@ -232,7 +234,12 @@ export function ViewerStage({
           },
         ]
       : []),
-    ...(isOwner ? [{ label: "Settings", icon: GearSixIcon, href: settingsHref }] : []),
+    ...(isOwner
+      ? [
+          { label: "Settings", icon: GearSixIcon, href: settingsHref },
+          { label: "Stats", icon: ChartLineUpIcon, href: statsHref },
+        ]
+      : []),
     // A doc prints itself: the renderer in the frame calls its own print(), so the browser prints
     // the document (or saves it as PDF), not this page around it.
     ...(artifact.type === "doc"
