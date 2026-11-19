@@ -3852,7 +3852,7 @@
                 "id": { "type": "string" },
                 "slug": { "type": "string" },
                 "title": { "type": "string", "description": "UNTRUSTED" },
-                "type": { "type": "string", "enum": ["html", "doc"] },
+                "type": { "type": "string", "enum": ["html", "doc", "slides"] },
                 "visibility": {
                   "type": "string",
                   "enum": ["public", "unlisted", "password", "allowlist"]

@@ -211,6 +211,7 @@ export function ViewerStage({
       history: historyHref,
       report: reportHref,
       settings: settingsHref,
+      stats: statsHref,
       signIn: signInHref,
     },
     comments: {
