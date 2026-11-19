@@ -24,9 +24,12 @@ Gemini CLI, Cursor or VS Code. Claude's artifact experience is the reference (de
 For a memo, plan, spec, proposal, mostly-text report, meeting notes or a how-to, it publishes
 `type: "doc"` with Markdown in `content`, and Plinth renders a finished page (reading typography,
 heading anchors, tables, code, images from the doc's own files, light and dark, phone width, a print
-stylesheet). Dashboards, charts, anything interactive, custom visual design and slides stay HTML.
-When unsure and the result is mostly text, a doc. The type is fixed at publish; the server's
-instructions and the skill's "Documents (type doc)" section say this to every harness.
+stylesheet). For a talk, pitch, review or lesson it publishes `type: "slides"`: Markdown with a line
+`---` between slides and speaker notes after `Note:`, which Plinth renders as a deck people can page
+through, present full screen with a presenter view, and print to PDF. Dashboards, charts, anything
+interactive and custom visual design stay HTML. When unsure and the result is mostly text, a doc.
+The type is fixed at publish; the server's instructions and the skill's "Documents (type doc)" and
+"Slides (type slides)" sections say this to every harness.
 
 ## How each harness gets it
 
