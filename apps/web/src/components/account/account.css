@@ -812,6 +812,9 @@ ul.pl-acct-steps > li::before {
   min-width: 0;
   overflow-wrap: anywhere;
 }
+.pl-acct-person__name {
+  font-weight: 500;
+}
 .pl-acct-person__controls {
   display: flex;
   align-items: center;

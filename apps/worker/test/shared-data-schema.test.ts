@@ -266,6 +266,7 @@ describe("createVersion stores capabilities", () => {
       shared: ["tasks"],
       room: false,
       roomOpen: [],
+      people: false,
     });
     expect(versionCapabilities(null)).toBeNull();
     // Malformed stored values read as nothing declared, never as a crash.
@@ -279,6 +280,7 @@ describe("createVersion stores capabilities", () => {
       shared: [],
       room: false,
       roomOpen: [],
+      people: false,
     });
     // A room declaration, alone or with data; topics that break the rule are dropped.
     expect(
@@ -286,7 +288,14 @@ describe("createVersion stores capabilities", () => {
         capabilities:
           '{"data":false,"viewer":true,"shared":[],"room":true,"roomOpen":["cursor","*","Bad!",7]}',
       }),
-    ).toEqual({ data: false, viewer: true, shared: [], room: true, roomOpen: ["cursor", "*"] });
+    ).toEqual({
+      data: false,
+      viewer: true,
+      shared: [],
+      room: true,
+      roomOpen: ["cursor", "*"],
+      people: false,
+    });
     expect(
       versionCapabilities({ capabilities: '{"data":false,"viewer":false,"room":"yes"}' }),
     ).toBeNull();
@@ -295,6 +304,6 @@ describe("createVersion stores capabilities", () => {
       versionCapabilities({
         capabilities: '{"data":true,"viewer":false,"shared":[],"roomOpen":["cursor"]}',
       }),
-    ).toEqual({ data: true, viewer: false, shared: [], room: false, roomOpen: [] });
+    ).toEqual({ data: true, viewer: false, shared: [], room: false, roomOpen: [], people: false });
   });
 });

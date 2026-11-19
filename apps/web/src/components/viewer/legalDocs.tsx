@@ -11,7 +11,7 @@ export const LEGAL_DOC_IDS = ["terms", "privacy", "acceptable-use"] as const;
 export type LegalDocId = (typeof LEGAL_DOC_IDS)[number];
 
 /** When the text of these pages last changed. Update it with any change to the wording. */
-export const LEGAL_UPDATED = "18 November 2026";
+export const LEGAL_UPDATED = "19 November 2026";
 
 export const isLegalDocId = (v: string): v is LegalDocId =>
   (LEGAL_DOC_IDS as readonly string[]).includes(v);
@@ -170,8 +170,12 @@ function privacy(op: OperatorInfo, cfg: LegalConfig): LegalDoc {
         body: (
           <ul>
             <li>
-              <strong>Your email address</strong>, and a name if you add one: to sign you in and to
-              show who owns, edits or comments on an artifact.
+              <strong>Your email address</strong>, and a name if you add one: to sign you in, to
+              show who owns, edits or comments on an artifact and, on pages that show who is
+              viewing, to the page and the people it is shared with. A page can also let its owner,
+              its editors and their agents see everyone it is shared with, by email address and
+              role, and by name once that person has commented, entered something or published a
+              version on it.
             </li>
             <li>
               <strong>Your artifacts</strong>: every version of the pages, files, titles, categories
@@ -180,8 +184,9 @@ function privacy(op: OperatorInfo, cfg: LegalConfig): LegalDoc {
             <li>
               <strong>What people enter on shared pages</strong>: some pages can save what their
               viewers enter (votes, sign-ups, entries on a tracker). We store what you enter, with
-              your email address, your role and the time, and show them to the page, its owner and
-              the agents the owner connects. Only people the owner invited can enter anything.
+              your email address, your role and the time, and show them, with your name if you added
+              one, to the page, its owner and the agents the owner connects. Only people the owner
+              invited can enter anything.
             </li>
             <li>
               <strong>Sharing settings</strong>: the email addresses you give access to, and a

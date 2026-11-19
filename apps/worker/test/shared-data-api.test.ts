@@ -473,6 +473,7 @@ describe("session", () => {
       available: true,
       viewer: null,
       can_write: false,
+      can_list_people: false,
       capabilities: ["data", "viewer"],
       shared: ["tasks"],
       limits: {
@@ -489,14 +490,14 @@ describe("session", () => {
     const { id } = await setup(POLL);
     const c = await person(id, "commenter");
     const s = await json(await api(id, "/session", { cookie: c.cookie }));
-    expect(s.viewer).toEqual({ id: c.viewerId, email: c.email, role: "commenter" });
+    expect(s.viewer).toEqual({ id: c.viewerId, email: c.email, name: null, role: "commenter" });
     expect(s.can_write).toBe(true);
   });
 
   it("identified without `viewer`: id and role, no email", async () => {
     const { id, ownerP } = await setup(DATA_ONLY);
     const s = await json(await api(id, "/session", { cookie: ownerP.cookie }));
-    expect(s.viewer).toEqual({ id: ownerP.viewerId, email: null, role: "owner" });
+    expect(s.viewer).toEqual({ id: ownerP.viewerId, email: null, name: null, role: "owner" });
     expect(s.capabilities).toEqual(["data"]);
     expect(s.shared).toEqual([]);
     expect(s.can_write).toBe(true);
@@ -827,8 +828,8 @@ describe("writes", () => {
     const doc = await json(
       await api(id, "/data/tasks/t1", { cookie: e.cookie, body: { data: { n: 2 } } }),
     );
-    expect(doc.created_by).toEqual({ email: a.email, role: "commenter", via: "page" });
-    expect(doc.updated_by).toEqual({ email: e.email, role: "editor", via: "page" });
+    expect(doc.created_by).toEqual({ email: a.email, name: null, role: "commenter", via: "page" });
+    expect(doc.updated_by).toEqual({ email: e.email, name: null, role: "editor", via: "page" });
     expect(doc.mine).toBe(false);
   });
 });
@@ -1050,7 +1051,12 @@ describe("reads", () => {
     const seen = await json(
       await api(withViewer.id, "/data/votes", { cookie: withViewer.ownerP.cookie }),
     );
-    expect(seen.docs[0].created_by).toEqual({ email: a.email, role: "commenter", via: "page" });
+    expect(seen.docs[0].created_by).toEqual({
+      email: a.email,
+      name: null,
+      role: "commenter",
+      via: "page",
+    });
 
     const dataOnly = await setup(DATA_ONLY);
     const b = await person(dataOnly.id, "commenter");

@@ -1,14 +1,19 @@
 // /__plinth/runtime.js is assembled from fragments (content/runtime/). The assembly replaced one
 // static string without a behaviour change, so the served bytes are pinned to the script on main
-// before the split; and the app channel, which no fragment uses yet, is tested on its own.
+// before the split; and the app channel, which no fragment uses yet, is tested on its own. A
+// change that means to alter the script updates the pin here, on purpose: display names and the
+// people fragment (who is viewing) did.
 import { describe, expect, it } from "vitest";
 import type { RuntimeFragment } from "../src/content/runtime/fragment.ts";
 import { assembleRuntime, RUNTIME_FRAGMENTS, runtimeScript } from "../src/content/runtime.ts";
 import { config } from "./helpers.ts";
 
-/** sha256 and length of RUNTIME_SCRIPT at 94ea515, the last commit before the fragments. */
-const GOLDEN_SHA256 = "409e0c6962e06426cc55e4593f7a054085255e0de4ab391446c1eb6fbebcc680";
-const GOLDEN_LENGTH = 24787;
+/**
+ * sha256 and length of the script: at 94ea515, the last commit before the fragments, it was
+ * 409e0c69… (24787 characters); names and plinth.people changed it to this.
+ */
+const GOLDEN_SHA256 = "9a9a912c4e45c260f2cd80264adca6f24a578134c2dc0e64b8e53052681c61a3";
+const GOLDEN_LENGTH = 26439;
 
 async function sha256(s: string): Promise<string> {
   const d = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(s));

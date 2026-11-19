@@ -41,8 +41,32 @@ export type NoticeGate = Partial<Omit<Extract<ViewGate, { status: "ok" }>, "stat
 /** One line of the notice, or null when it has nothing to say for this gate. */
 export type NoticeLine = (gate: NoticeGate) => string | null;
 
+/** The people list (`people`), told to every identified viewer: their own address is on it. */
+export const PEOPLE_LIST_NOTICE =
+  "The owner and editors can see everyone this page is shared with.";
+
+/**
+ * Who is viewing: the display name the page sees beside the email the data line names, and
+ * whether the page lists everyone it is shared with. Null when neither applies.
+ */
+export function peopleNoticeText(gate: NoticeGate): string | null {
+  const p = gate.people;
+  if (!p) return null;
+  const parts: string[] = [];
+  if (p.name) {
+    parts.push(
+      `The page also sees your name, ${p.name}, and shows it wherever it shows your email.`,
+    );
+  }
+  if (p.list) parts.push(PEOPLE_LIST_NOTICE);
+  return parts.length > 0 ? parts.join(" ") : null;
+}
+
 /** The notice's lines, in the order they are read out. One line function per line. */
-export const DATA_NOTICE_LINES: readonly NoticeLine[] = [(gate) => dataNoticeText(gate.data)];
+export const DATA_NOTICE_LINES: readonly NoticeLine[] = [
+  (gate) => dataNoticeText(gate.data),
+  peopleNoticeText,
+];
 
 /** The whole notice for a gate, or null when no line has anything to say. */
 export function noticeText(gate: NoticeGate): string | null {

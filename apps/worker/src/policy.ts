@@ -62,7 +62,9 @@ export type ArtifactAction =
    * Read, save or discard a doc's live page draft (#36): an owner or editor who is signed in.
    * Agents never (they push versions), and a viewer confirmed by code must sign in first.
    */
-  | "live_edit";
+  | "live_edit"
+  /** List everyone with access (owner and grants, with names): owners and editors. */
+  | "people";
 
 export interface ArtifactFacts {
   ownerId: string;
@@ -113,6 +115,7 @@ const ACTION_SCOPES: Record<ArtifactAction, Scope> = {
   data_clear: "artifacts:write",
   views: "artifacts:read",
   live_edit: "artifacts:write",
+  people: "artifacts:read",
 };
 
 export function principalEmail(p: Principal): string | null {
@@ -205,6 +208,10 @@ export function decide(
         return deny(p.kind === "anonymous" ? "login_required" : "forbidden", role);
       if (p.kind === "user") return { allow: true, role };
       return deny(p.kind === "viewer" ? "account_required" : "forbidden", role);
+    case "people":
+      return role === "owner" || role === "editor"
+        ? { allow: true, role }
+        : deny(p.kind === "anonymous" ? "login_required" : "forbidden", role);
   }
 }
 
@@ -401,4 +408,50 @@ export function canMakePublic(opts: {
 /** Admin pages (reports, takedown). */
 export function isAdmin(p: Principal): boolean {
   return p.kind === "user" && p.isAdmin;
+}
+
+// ---------- who is viewing: the people list on the page ----------
+
+/**
+ * Does the artifact offer its people list at all: its current version declares `data viewer
+ * people` while shared data is active (`active`: sharedDataActive(config))? This one answer governs
+ * every way to read the list: the page (pagePeopleAccess), owners' and editors' agents
+ * (list_artifact_data's summary) and REST (GET /api/v1/artifacts/:ref/people), and the notice
+ * under the bar tells every identified viewer exactly when it is true. Without it nobody but the
+ * owner (in the sharing settings) sees the access list.
+ */
+export function peopleListOffered(caps: Capabilities | null, active: boolean): boolean {
+  return active && caps?.data === true && caps.viewer && caps.people;
+}
+
+/**
+ * May this page reader list the artifact's people (/__plinth/api/v1/people)? Owners and editors
+ * with an identity claim, on a page that offers the list (peopleListOffered). Commenters, viewers
+ * and anonymous link viewers never: the list holds every grant holder's email. The role comes from
+ * the claim, sealed at the current access epoch, so a demoted editor's pass stops working at once.
+ */
+export function pagePeopleAccess(
+  claim: PageClaim | null,
+  caps: Capabilities | null,
+  active: boolean,
+): { list: boolean } {
+  const editor = claim?.role === "owner" || claim?.role === "editor";
+  return { list: editor && peopleListOffered(caps, active) };
+}
+
+/**
+ * May an access list (the people list, the owner's sharing settings) show this person's display
+ * name? The owner types every grant's address and its holder is not told, so a name beside such an
+ * address would say whether it has an account and what that account is called. An access list
+ * therefore names only the owner (whose name the gate already shows every viewer), the reader's own
+ * row, and a grant holder who has taken part in this artifact: written a comment, a shared-data
+ * entry or a version, each of which already shows their name to the people who can read the list.
+ * Everyone else is listed by address alone, whether or not an account stands behind it.
+ */
+export function accessListShowsName(p: {
+  role: EffectiveRole;
+  you: boolean;
+  tookPart: boolean;
+}): boolean {
+  return p.role === "owner" || p.you || p.tookPart;
 }
