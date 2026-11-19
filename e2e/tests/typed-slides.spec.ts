@@ -397,7 +397,7 @@ test.describe("a published deck", () => {
       }
     });
 
-    test("the editor previews every slide, saves v2, compares slides.md and restores v1 as v3", async ({
+    test("the editor previews every slide, saves v2, Compare lists the new slide, restores v1 as v3", async ({
       page,
     }) => {
       test.setTimeout(90_000);
@@ -432,9 +432,13 @@ test.describe("a published deck", () => {
         expect(current.body.content).toContain("## Appendix");
 
         await page.goto(`/a/${artifact.slug}/compare?from=1&to=2`);
-        const diff = page.getByRole("table", { name: /Changes to slides\.md from v1 to v2/ });
-        await expect(diff).toBeVisible();
-        await expect(diff.getByRole("row", { name: /Added ## Appendix/ })).toBeVisible();
+        const changes = page.getByRole("region", { name: "What changed from v1 to v2" });
+        // Where Monaco put the typed lines varies with the platform's End key; the list names the
+        // slide that the "## Appendix" line starts, wherever it landed.
+        await expect(
+          changes.getByRole("listitem").filter({ hasText: /^\+Slide \d “Appendix.*” added$/ }),
+        ).toHaveCount(1);
+        await expect(page.locator("main")).not.toContainText("## Appendix");
 
         await page.goto(`/a/${artifact.slug}/history`);
         await page

@@ -154,7 +154,7 @@ Test-file shorthand: `W:` = `apps/worker/test/`, `Wb:` = `apps/web/src/`, `E:` =
 | Top bar: title, version picker, share, edit, comments toggle, report link | Met | `Wb:components/viewer/ViewerStage.tsx`; `Wb:pages/ArtifactPage.test.tsx`; `E:viewer.spec.ts` "the owner sees visibility, Edit..." | |
 | `/a/<slug>/v/<n>` permanent link | Met | `E:viewer.spec.ts` "a version link keeps showing that version after an update" | |
 | History list with author (person or label), note, date | Met | `Wb:pages/History.tsx`; `E:history.spec.ts` "history lists every version with author, note and links" | |
-| Source diff between any two versions | Met | `E:history.spec.ts` "compare v1 and v3: source diff..."; `Wb:components/history/diff.test.ts` | |
+| Source diff between any two versions | Met | `E:history.spec.ts` "compare v1 and v3: the list of changes..."; `packages/shared/test/changes.test.ts` | Superseded on 2026-11-19 (DECISIONS): a plain-language list of what changed, files included, replaces the source diff, because the app shows no source code |
 | Side-by-side rendered comparison | Met | `E:history.spec.ts` same test (frames + sandbox asserted) | |
 | Restore publishes old content as next version | Met | `W:artifacts.test.ts` "restore publishes the old content as the next version"; `E:history.spec.ts` "restore v1 publishes it as v4" | |
 | Editor: Monaco with live preview in sandboxed iframe | Met | `E:editor.spec.ts` "edit in Monaco, see it in the preview, save with a note" | |

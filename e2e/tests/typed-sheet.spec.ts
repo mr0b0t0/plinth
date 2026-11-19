@@ -249,7 +249,7 @@ test.describe("a published sheet", () => {
     }
   });
 
-  test("edit_sheet publishes a version the open page picks up, with a one-line diff", async ({
+  test("edit_sheet publishes a version the open page picks up, and Compare lists the cell", async ({
     page,
   }) => {
     test.setTimeout(90_000);
@@ -276,15 +276,14 @@ test.describe("a published sheet", () => {
         )
         .toMatch(/12[.,]00/);
       await page.goto(`/a/${artifact.slug}/compare?from=1&to=2`);
-      const diff = page.getByRole("table", { name: /Changes to sheet\.jsonl from v1 to v2/ });
-      await expect(diff).toBeVisible();
-      // One row changed: one line removed, one added; every other line is the same.
-      const kind = (name: string) =>
-        diff.getByRole("row").filter({ has: page.getByRole("cell", { name, exact: true }) });
-      await expect(kind("Removed")).toHaveCount(1);
-      await expect(kind("Removed")).toContainText('["Apples",3,');
-      await expect(kind("Added")).toHaveCount(1);
-      await expect(kind("Added")).toContainText('["Apples",10,');
+      // One cell changed, said as a cell and its two values; no sheet lines on the page.
+      const changes = page.getByRole("region", { name: "What changed from v1 to v2" });
+      const items = changes.getByRole("list").first().getByRole("listitem");
+      await expect(items).toHaveCount(1);
+      await expect(items).toContainText("B2 changed");
+      await expect(items).toContainText("Row 2, “Qty”");
+      await expect(items).toContainText(/Before: 3\b.*after: 10\b/);
+      await expect(page.locator("main")).not.toContainText('["Apples"');
     } finally {
       await client.close();
     }

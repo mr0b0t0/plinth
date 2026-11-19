@@ -1,0 +1,164 @@
+/* The change list of the Compare page (and the /design gallery). Tokens only (see ui/README.md). */
+
+.hx-changes {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
+  max-width: var(--reading-max);
+}
+.hx-changes__title,
+.hx-files__title {
+  margin: 0;
+  font-family: var(--font-ui);
+  font-size: var(--text-md);
+  font-weight: var(--weight-semibold);
+  letter-spacing: var(--tracking-ui);
+  line-height: var(--line-ui);
+}
+.hx-changes__none {
+  margin: 0;
+  color: var(--color-ink-muted);
+}
+.hx-changes__more {
+  margin: 0;
+  padding: var(--space-1-5) var(--space-3);
+  border-radius: var(--radius-md);
+  background: var(--color-warning-soft);
+  color: var(--color-ink);
+}
+.hx-changes__list,
+.hx-files__list {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.hx-changes__list {
+  border-top: var(--border-width) solid var(--color-border);
+}
+.hx-change {
+  display: grid;
+  grid-template-columns: 1.5rem minmax(0, 1fr);
+  gap: var(--space-2);
+  padding: var(--space-2) 0;
+  border-bottom: var(--border-width) solid var(--color-border);
+}
+.hx-change__mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.5rem;
+  height: 1.5rem;
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-sunk);
+  color: var(--color-ink-muted);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+}
+.hx-change--added .hx-change__mark {
+  background: var(--color-success-soft);
+  color: var(--color-success);
+}
+.hx-change--removed .hx-change__mark {
+  background: var(--color-danger-soft);
+  color: var(--color-danger);
+}
+.hx-change--changed .hx-change__mark,
+.hx-change--moved .hx-change__mark {
+  background: var(--color-accent-soft);
+  color: var(--color-accent-ink);
+}
+.hx-change__body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+.hx-change__what {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-0-5) var(--space-2);
+  margin: 0;
+  color: var(--color-ink);
+  overflow-wrap: anywhere;
+}
+.hx-change__where {
+  color: var(--color-ink-muted);
+  font-size: var(--text-sm);
+}
+.hx-change__values {
+  margin: 0;
+  font-size: var(--text-sm);
+  overflow-wrap: anywhere;
+}
+.hx-change__value {
+  padding: 0 var(--space-1);
+  border-radius: var(--radius-xs);
+  background: var(--color-success-soft);
+}
+.hx-change__value--before {
+  background: var(--color-danger-soft);
+}
+.hx-change__excerpts {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin: 0;
+  font-size: var(--text-sm);
+}
+.hx-change__excerpt {
+  display: grid;
+  grid-template-columns: 3.5rem minmax(0, 1fr);
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-sm);
+  background: var(--color-success-soft);
+}
+.hx-change__excerpt--before {
+  background: var(--color-danger-soft);
+}
+.hx-change__excerpt dt {
+  color: var(--color-ink-muted);
+}
+.hx-change__excerpt dd {
+  margin: 0;
+  color: var(--color-ink);
+  overflow-wrap: anywhere;
+}
+.hx-changes__loading {
+  padding-block: var(--space-2);
+}
+
+.hx-files {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding-top: var(--space-2);
+}
+.hx-files__list {
+  gap: var(--space-2);
+}
+.hx-file {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+}
+.hx-file__path {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.hx-files p {
+  margin: 0;
+}
+
+@media (max-width: 40rem) {
+  .hx-change__excerpt {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0;
+  }
+}
