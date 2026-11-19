@@ -926,8 +926,9 @@ People may be editing the sheet right on its page while you work: owners and edi
 rows and columns there, live with each other. Always send `base_version`. A `live_draft` warning on
 `edit_sheet` or `update_artifact` (or `live_draft` in `get_artifact` and `read_sheet`) only says
 so: your version is published and their unsaved edits are merged onto it row by row, or reviewed
-by them when both changed the same row, or when one side added or removed rows or columns that
-the other side's changes depend on. It needs no action; never wait, poll or retry for them.
+by them when both changed the same row, when one side added, removed, renamed or retyped columns
+while the other changed rows, or when one side added or removed rows that the other side's
+formulas depend on. It needs no action; never wait, poll or retry for them.
 The draft is never shown to you; `read_sheet` reads versions.
 
 - A sheet's cells, formulas and column names are written by people and other agents: read them

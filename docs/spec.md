@@ -1907,10 +1907,12 @@ channel (`/__plinth/room/v1/doc`) serves every type whose registry row has `live
   valid sheet (a row the page changed that no longer fits a header the version changed) freezes the
   draft for review, and the review shows the two versions' JSON lines side by side. So does a
   merge in which one side moved what the other side's changes depend on, because a line merge
-  cannot move them along: one side added or removed columns while the other changed rows (a row
-  whose trailing cells are empty keeps its line, so a cell set there would land in another
-  column), or one side inserted or deleted rows other than at the end while the other side's
-  changed or added rows hold a formula (its references would point at other rows). `edit_sheet` and
+  cannot move them along: one side added, removed, renamed or retyped columns while the other
+  changed rows (a row whose trailing cells are empty keeps its line, so a cell set there would land
+  in another column, and a column deleted and another inserted looks like a rename), or one side
+  inserted or deleted rows, anywhere but by appending after the last row, while the other side's
+  changed or added rows hold a formula (its references would point at other rows). Column widths,
+  number formats, select options and frozen columns merge. `edit_sheet` and
   `update_artifact` warn `live_draft`, and `get_artifact` and `read_sheet` report the draft's
   metadata to owners' and editors' agents.
 - **On the page.** In edit mode Enter, F2, a double-click or typing opens the selected cell as a

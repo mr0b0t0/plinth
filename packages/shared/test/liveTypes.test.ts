@@ -292,8 +292,85 @@ describe("sheet merges", () => {
     expect(
       merge(wide, set, struct(wide, { op: "delete_columns", from: "C", count: 1 })),
     ).toMatchObject({ clean: false, reason: "refused" });
-    // A rename keeps every column in place, so it still merges with row changes.
-    const renamed = [header(["Name", "Mail", "Notes"]), ...tall.slice(1)];
-    expect(merge(tall, renamed, note)).toMatchObject({ clean: true });
+    // Widths and number formats move nothing, so they still merge with row changes.
+    const widened = [header(["Name", "Email", "Notes"]).replace('"text"}', '"text","width":200}')];
+    expect(sheetHeaderLine(widened[0])).not.toBeNull();
+    expect(merge(tall, [...widened, ...tall.slice(1)], note)).toMatchObject({ clean: true });
+  });
+
+  it("reviews a column deleted and another inserted, which keeps the count but moves cells", () => {
+    const header = (names: string[]) =>
+      JSON.stringify({
+        plinth: "sheet",
+        v: 1,
+        columns: names.map((name) => ({ name, type: "text" })),
+      });
+    const col = (name: string) => ({ name, type: "text" as const });
+    const moved = (lines: string[], before: string, name: string) =>
+      struct(struct(lines, { op: "delete_columns", from: "B", count: 1 }), {
+        op: "insert_columns",
+        before,
+        columns: [col(name)],
+      });
+    // Email removed and Phone added after the last column: still four columns, and Ann's short
+    // row keeps its line, so an email set in B2 would land in Notes.
+    const base = [header(["Name", "Email", "Notes", "Extra"]), '["Ann"]', '["Bob","b@x","n","e"]'];
+    const ours = moved(base, "D", "Phone");
+    expect(ours[0]).toBe(header(["Name", "Notes", "Extra", "Phone"]));
+    expect(ours[1]).toBe(base[1]);
+    const theirs = [...base];
+    theirs[1] = '["Ann","ann@x"]';
+    expect(merge(base, ours, theirs)).toMatchObject({ clean: false, reason: "refused" });
+    expect(merge(base, theirs, ours)).toMatchObject({ clean: false, reason: "refused" });
+    // Five columns, B deleted and a column inserted before D: C3 would sit under the old D.
+    const five = [header(["A", "B", "C", "D", "E"]), '["a1","b1","c1","d1","e1"]', '["a2"]'];
+    const shifted = moved(five, "C", "New");
+    expect(shifted[0]).toBe(header(["A", "C", "New", "D", "E"]));
+    const c3 = [...five];
+    c3[2] = '["a2",null,"note for C"]';
+    expect(merge(five, shifted, c3)).toMatchObject({ clean: false, reason: "refused" });
+    expect(merge(five, c3, shifted)).toMatchObject({ clean: false, reason: "refused" });
+    // A rename looks the same as a column replaced in place, so it is reviewed too.
+    const renamed = [header(["Name", "Mail", "Notes", "Extra"]), ...base.slice(1)];
+    expect(merge(base, renamed, theirs)).toMatchObject({ clean: false, reason: "refused" });
+    // Two columns with the same name and type: any change to the header is reviewed.
+    const twins = [header(["X", "X", "X", "Y"]), '["a"]', '["b","c","d","e"]'];
+    const twinsMoved = struct(struct(twins, { op: "delete_columns", from: "B", count: 1 }), {
+      op: "insert_columns",
+      before: "C",
+      columns: [{ ...col("X"), width: 120 }],
+    });
+    expect(twinsMoved.slice(1)).toEqual(['["a"]', '["b","d",null,"e"]']);
+    const twinsSet = [...twins];
+    twinsSet[1] = '["a",null,"z"]';
+    expect(merge(twins, twinsMoved, twinsSet)).toMatchObject({ clean: false, reason: "refused" });
+  });
+
+  it("reviews a row deleted at the end when the other side's added rows hold a formula", () => {
+    // The page deletes row 5; an agent appends a total. Merged, the total would sit on row 5 and
+    // count itself.
+    const base = [QTY, "[1]", "[2]", "[3]", "[4]"];
+    const deleted = struct(base, { op: "delete_rows", from: 5, count: 1 });
+    expect(deleted).toEqual(base.slice(0, 4));
+    const total = [...base, '["=SUM(A2:A5)"]'];
+    expect(merge(base, deleted, total)).toMatchObject({ clean: false, reason: "refused" });
+    // The mirror: the page appends a formula while the agent deletes the last row.
+    expect(merge(base, [...base, '["=A2+A5"]'], deleted)).toMatchObject({
+      clean: false,
+      reason: "refused",
+    });
+    // A row inserted before a last row whose formula moves with it: one change at the end, but
+    // the last row moved, so a formula pointing at it from the other side is reviewed.
+    const sum = [QTY, "[1]", "[2]", '["=SUM(A2:A4)"]'];
+    const inserted = struct(sum, { op: "insert_rows", before: 4, count: 1 });
+    expect(inserted).toEqual([QTY, "[1]", "[2]", "[]", '["=SUM(A2:A5)"]']);
+    const pointer = [...sum];
+    pointer[1] = '["=A4"]';
+    expect(merge(sum, inserted, pointer)).toMatchObject({ clean: false, reason: "refused" });
+    // Rows only appended on one side still merge with a formula on the other.
+    const doubled = [...base];
+    doubled[1] = '["=A3*2"]';
+    expect(merge(base, [...base, "[5]"], doubled)).toMatchObject({ clean: true });
+    expect(merge(base, doubled, [...base, "[5]"])).toMatchObject({ clean: true });
   });
 });

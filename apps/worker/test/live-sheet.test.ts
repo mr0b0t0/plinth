@@ -281,7 +281,8 @@ describe("sheet socket: versions published from outside", () => {
     const { owner, id, ownerP } = await sheetSetup(SHEET);
     const a = await connectDoc(id, ownerP.cookie);
     // The page puts a number in the empty Qty of Plums; the agent makes Qty a checkbox column and
-    // fixes the rows it sees. Different lines, so the merge is clean, but Plums' 2 is no checkbox.
+    // fixes the rows it sees. Different lines, so the lines merge, but Plums' 2 is no checkbox
+    // (and a column's type changed, which is reviewed on its own).
     await editRow(a, 3, '["Plums",2]', 0);
     const res = await editSheet(id, owner.auth, {
       base_version: 1,
@@ -297,5 +298,66 @@ describe("sheet socket: versions published from outside", () => {
     expect(peeked).toMatchObject({ base_version: 1, conflict_version: 2 });
     expect(peeked?.text).toBe(SHEET.replace('["Plums"]', '["Plums",2]'));
     a.ws.close(1000);
+
+    // The same columns with other options: the lines merge and no column changed its name or
+    // type, but the page's "done" is no longer an option, so the merged sheet is not valid.
+    const header =
+      '{"plinth":"sheet","v":1,"columns":[{"name":"Item","type":"text"},{"name":"State","type":"select","options":["open","done"]}]}';
+    const select = [header, '["Apples","done"]', '["Pears","open"]', '["Plums"]'].join("\n");
+    const s = await sheetSetup(select);
+    const b = await connectDoc(s.id, s.ownerP.cookie);
+    await editRow(b, 3, '["Plums","done"]', 0);
+    const res2 = await editSheet(s.id, s.owner.auth, {
+      base_version: 1,
+      ops: [
+        { op: "set_column", column: "B", options: ["open", "closed"] },
+        { op: "set", at: "B2", values: [["closed"]] },
+      ],
+    });
+    expect(res2.status).toBe(201);
+    expect(await b.nextOf("conflict")).toEqual({ t: "conflict", version: 2 });
+    expect((await stubFor(s.id).docPeek(s.id))?.text).toBe(
+      select.replace('["Plums"]', '["Plums","done"]'),
+    );
+    b.ws.close(1000);
+  });
+
+  it("a column deleted and another inserted, or the last row deleted, is frozen for review", async () => {
+    // The page sets Plums' Paid on its short line; the agent deletes Qty and adds a column after
+    // Paid. Still three columns and Plums' line is unchanged, so the merged true would sit in Note.
+    const cols = await sheetSetup(SHEET);
+    const a = await connectDoc(cols.id, cols.ownerP.cookie);
+    await editRow(a, 3, '["Plums",null,true]', 0);
+    const res = await editSheet(cols.id, cols.owner.auth, {
+      base_version: 1,
+      ops: [
+        { op: "delete_columns", from: "B" },
+        { op: "insert_columns", before: "C", columns: [{ name: "Note", type: "text" }] },
+      ],
+    });
+    expect(res.status).toBe(201);
+    expect(await a.nextOf("conflict")).toEqual({ t: "conflict", version: 2 });
+    a.ws.close(1000);
+
+    // The page deletes the Total row, the last one; the agent appends a check of the total. Merged,
+    // the check would sit on row 5 and point at itself.
+    const rows = await sheetSetup(SHEET);
+    const b = await connectDoc(rows.id, rows.ownerP.cookie);
+    expect(await struct(b, { op: "delete_rows", from: 5, count: 1 }, 0)).toMatchObject({
+      t: "struct",
+      rev: 1,
+    });
+    // A lease released flushes the draft now rather than after the pause.
+    const held = await lease(b, 1, 2, 1);
+    if (held.t !== "leased") throw new Error(`lease ${held.t}`);
+    b.send({ t: "release", lease: held.lease });
+    await b.nextOf("flushed");
+    const res2 = await editSheet(rows.id, rows.owner.auth, {
+      base_version: 1,
+      ops: [{ op: "append_rows", values: [["Check", "=B5*2"]] }],
+    });
+    expect(res2.status).toBe(201);
+    expect(await b.nextOf("conflict")).toEqual({ t: "conflict", version: 2 });
+    b.ws.close(1000);
   });
 });

@@ -124,23 +124,45 @@ function formulasIn(lines: readonly string[]): number {
 }
 
 /**
+ * Each column's name and type, in order: what a column is, as far as a header can tell. Width,
+ * number format, options and frozen columns move no cell. Null for a header that does not parse.
+ */
+function columnKeys(line: string | undefined): string[] | null {
+  const header = sheetHeaderLine(line);
+  return header ? header.columns.map((c) => JSON.stringify([c.name, c.type])) : null;
+}
+
+/**
  * Whether a clean row-by-row merge of a sheet draft with a version would change what cells mean,
  * so it goes to review instead. Rows merge as records, but a structural change on one side moves
  * cells and rewrites that side's formulas (shiftFormula), and the other side's rows know nothing
  * of it:
- * - a side that adds or removes columns moves every cell right of them, and a row whose trailing
- *   cells are empty keeps its line, so a cell the other side set there would land in another
- *   column. Any column count change with changes on both sides is reviewed.
- * - a side that inserts or deletes rows above other rows (not only at the end) moves them, so a
- *   formula in a row the other side wrote would point at different cells. Reviewed when the other
- *   side's changed or added rows hold a formula.
+ * - a side that inserts or deletes columns moves every cell right of them, and a row whose
+ *   trailing cells are empty keeps its line, so a cell the other side set there would land in
+ *   another column. Columns carry no identity but their name and type, so a column deleted and
+ *   another inserted (the same count) shows only as names or types changed in place, and so does a
+ *   rename: any change to a column's name or type, or to the count, is reviewed. When two columns
+ *   share a name and type, a move between them changes neither, so any change to that header is.
+ * - a side that inserts or deletes rows moves the rows after them, and the other side's rows added
+ *   at the end come after them too; a deleted row also takes the cells a formula pointed at. So
+ *   any change to the number of rows other than rows only appended after the last one is reviewed
+ *   when the other side's changed or added rows hold a formula, whose references would point at
+ *   other rows.
  */
 export function sheetMergeRefused(s: Merge3Sides): boolean {
-  const columns = (line: string | undefined) => sheetHeaderLine(line)?.columns.length ?? -1;
-  const n = columns(s.base[0]);
-  if (columns(s.ours[0]) !== n || columns(s.theirs[0]) !== n) return true;
+  const base = columnKeys(s.base[0]);
+  const same = (line: string | undefined) => {
+    const keys = columnKeys(line);
+    if (base === null || keys === null) return base === keys;
+    return keys.length === base.length && keys.every((k, i) => k === base[i]);
+  };
+  if (!same(s.ours[0]) || !same(s.theirs[0])) return true;
+  if (base !== null && new Set(base).size < base.length) {
+    if (s.ours[0] !== s.base[0] || s.theirs[0] !== s.base[0]) return true;
+  }
+  // A hunk that starts past the last base row only appends; any other change of count moves rows.
   const movesRows = (hunks: readonly LineHunk[]) =>
-    hunks.some((h) => h.aEnd < s.base.length && h.aEnd - h.aStart !== h.bEnd - h.bStart);
+    hunks.some((h) => h.aStart < s.base.length && h.aEnd - h.aStart !== h.bEnd - h.bStart);
   const writesFormulas = (lines: readonly string[], hunks: readonly LineHunk[]) =>
     hunks.some((h) => formulasIn(lines.slice(Math.max(1, h.bStart), h.bEnd)) > 0);
   return (
