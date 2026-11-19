@@ -488,6 +488,39 @@ describe("a pinned connection that goes away", () => {
     row = await pinRow(d3.id);
     expect(row?.target_connection).toBeNull();
     expect(row?.pin_lost_at).toBeTruthy();
+
+    // A set that changes the recipe (keeping the pin) between the revocation's read and its batch:
+    // the unpin must not stamp the hash of the recipe it read onto the row that now holds another.
+    // Here the read recipe, unpinned, is exactly what the owner confirmed, so a stale hash would
+    // activate a recipe the owner never saw.
+    const d4 = await dashboard();
+    const p4 = agentPrincipal({
+      user: { id: d4.owner.userId, email: d4.owner.email },
+      connectionId: d4.owner.connectionId,
+    });
+    const unpinned = await setSources(d4.id, d4.owner.auth, [LINEAR]);
+    await confirm(d4.id, d4.owner.session, unpinned.body.sources[0].config_hash);
+    await setSources(d4.id, d4.owner.auth, [{ ...LINEAR, pin_connection: true }]);
+    const other = `${LINEAR.recipe} Also count closed issues.`;
+    const swap = () =>
+      setDataSources(serviceCtxFor(p4), {
+        id: d4.id,
+        sources: [{ ...LINEAR, recipe: other, pin_connection: true }],
+      });
+    const ctx4 = personCtxFor({ id: d4.owner.userId, email: d4.owner.email });
+    await revokeConnection({ ...ctx4, db: racing(ctx4.db, swap) }, d4.owner.connectionId);
+    const swapped = await env.DB.prepare(
+      "SELECT recipe, target_connection, pin_lost_at, config_hash, confirmed_hash FROM data_sources WHERE artifact_id = ?1",
+    )
+      .bind(d4.id)
+      .first<Record<string, string | null>>();
+    expect(swapped?.recipe).toBe(other);
+    expect(swapped?.target_connection).toBeNull();
+    expect(swapped?.pin_lost_at).toBeTruthy();
+    expect(swapped?.config_hash).not.toBe(swapped?.confirmed_hash);
+    const { token } = await createToken(d4.owner.userId);
+    const [view] = await ownerView(d4.id, { Authorization: `Bearer ${token}` });
+    expect(view).toMatchObject({ status: "awaiting_confirmation", recipe: other });
   });
 });
 

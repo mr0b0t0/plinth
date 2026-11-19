@@ -21,8 +21,8 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   document carries, says which figures were fetched by an agent of the owner, from which system
   and how long ago, and how many were last changed by a person. A page can declare
   `plinth-data-sourced` collections that only the owner and editors write. Credential-like text is
-  refused in recipes and stamps; links to records (a Linear issue, a Jira board, a Notion page)
-  pass. Works with no page declaration and under opaque isolation (figures
+  refused in recipes and stamps; links to records (a Linear issue, a Jira board, a Notion page, an
+  Airtable view, a Salesforce or Stripe record) pass. Works with no page declaration and under opaque isolation (figures
   inline). Migration `0015_data_sources.sql`.
 - **Follow the presenter in a deck.** An owner or editor can turn on **Lead viewers** in a deck's
   controls or presenter view, and the people the deck is shared with who have it open follow their

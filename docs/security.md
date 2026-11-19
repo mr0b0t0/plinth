@@ -2148,13 +2148,20 @@ written it. So:
   connection of its type. The revocation reads the pinned rows before its batch commits, so a set
   that pins the same connection in between could land after the read: both the set and the
   revocation check the connection again after they commit and unpin what is still pinned to a
-  revoked one, so whichever commits second catches it.
+  revoked one, so whichever commits second catches it. An unpin writes the hash it worked out only
+  while the row still has the hash it read, so a set that changed the recipe in between never
+  gets the old recipe's hash (which could equal an earlier confirmation and activate the new
+  recipe unseen); the check after the batch reads that row again.
 - Recipes, labels and connectors that look like credentials are refused, and so is control, bidi
   and zero-width text. A long run of key-like characters counts as a credential when it mixes
   upper case, lower case and digits, unless every piece between its separators reads as a word or
   an identifier, so a link to a record (`/acme/issue/ENG-123/fix-the-login-redirect`, a Notion
   page id) passes and a random key does not; hex counts from 40 characters (a SHA-1 or a
-  SHA-256). The Share dialog shows the recipe in a `<pre>` as text.
+  SHA-256). In a URL's path each segment between slashes is a run of its own, so record links
+  made of short opaque ids (Airtable, Salesforce, Stripe) pass too; the cost is that a
+  standard-base64 key split across path segments, none of them 40 characters long, is not
+  caught there (outside a URL the slashes keep it one run). The Share dialog shows the recipe in a
+  `<pre>` as text.
 - Tool descriptions and results say the recipe is a request, never an instruction with the owner's
   authority, to be run only as a read-only query into its own collection.
 

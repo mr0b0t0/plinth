@@ -587,7 +587,9 @@ export async function unpinIfRevoked(db: Db, connectionId: string, now = nowIso(
  * the OAuth grant revocation): every source pinned to it is unpinned, marks when, and gets the hash
  * of its new config (no pin), which no longer matches the owner's confirmation, so it waits for the
  * owner again instead of moving to any connection of its type (fail closed). Its open refresh tasks
- * end. Reads the affected rows first (an index scan on data_sources_target).
+ * end. Reads the affected rows first (an index scan on data_sources_target). Each unpin applies only
+ * while the row still has the config_hash that was read, so a hash worked out from a config a set
+ * has since replaced never lands on the new config (it could equal an older confirmation).
  */
 export async function unpinConnectionQueries(db: Db, connectionId: string, now = nowIso()) {
   const rows = await db
@@ -616,6 +618,10 @@ export async function unpinConnectionQueries(db: Db, connectionId: string, now =
             eq(dataSources.artifactId, r.artifactId),
             eq(dataSources.sourceId, r.sourceId),
             eq(dataSources.targetConnection, connectionId),
+            // The hash covers every column of the config, so an equal hash means the row still
+            // holds the config read above. A set that changed it since keeps its own row; the
+            // unpinIfRevoked after the batch reads that row again and unpins it with its own hash.
+            eq(dataSources.configHash, r.configHash),
           ),
         ),
       db

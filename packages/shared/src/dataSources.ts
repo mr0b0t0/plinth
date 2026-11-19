@@ -48,8 +48,8 @@ const WORDLIKE_PIECE = /^(?:[A-Z]?[a-z]+(?:[A-Z][a-z]+)*|[A-Z0-9]+|[a-z0-9]+)$/;
 /**
  * A long run of key-like characters is taken for a credential when it mixes upper case, lower
  * case and digits, unless every piece between its separators (`-`, `_`, `/`, `+`, `=`) reads as
- * a word or an identifier. So a URL path such as `/acme/issue/ENG-123/fix-the-login-redirect` or
- * a Notion page name passes, and a random key, with or without the odd separator, does not.
+ * a word or an identifier. So a path such as `/acme/issue/ENG-123/fix-the-login-redirect` or a
+ * Notion page name passes, and a random key, with or without the odd separator, does not.
  */
 function keyLikeRun(run: string): boolean {
   if (!(/[A-Z]/.test(run) && /[a-z]/.test(run) && /[0-9]/.test(run))) return false;
@@ -59,13 +59,22 @@ function keyLikeRun(run: string): boolean {
     .every((piece) => WORDLIKE_PIECE.test(piece));
 }
 
+/** An http or https URL up to its query or fragment: scheme, host and path. */
+const URL_UP_TO_QUERY = /\bhttps?:\/\/[^\s?#]*/gi;
+/** In a URL's path `/` separates segments, so a run stops there: base64url and `+`, `=`. */
+const PATH_RUN = /[A-Za-z0-9_+=-]{40,}/g;
+/** Anywhere else `/` stays in the run, so a standard-base64 key with slashes is one run. */
+const TEXT_RUN = /[A-Za-z0-9_+/=-]{40,}/g;
+
 /**
  * Text that looks like it holds a credential: a bearer header, a well-known token prefix (OpenAI
  * and Anthropic `sk-`, GitHub `ghp_` and `gho_`, Slack `xox?-`, AWS `AKIA`, Plinth's own
  * `plinth_`), a JWT, a URL query parameter named like a secret, a run of 40 or more hex
  * characters (a SHA-1 or SHA-256, an API key), or a run of 40 or more base64 or base64url
  * characters that mixes upper case, lower case and digits and does not read as words and
- * identifiers (keyLikeRun). Recipes describe queries; they never need any of these.
+ * identifiers (keyLikeRun). In a URL's host and path each segment between slashes is a run of its
+ * own, so a link to a record whose segments are short opaque ids (Airtable, Salesforce, Stripe)
+ * passes; elsewhere `/` joins the run. Recipes describe queries; they never need any of these.
  */
 export function looksLikeSecret(text: string): boolean {
   if (/\bbearer\s+\S/i.test(text)) return true;
@@ -74,7 +83,10 @@ export function looksLikeSecret(text: string): boolean {
   if (/[?&;](?:token|key|secret|sig|signature|access_token|api_key|apikey|password)=/i.test(text))
     return true;
   if (/[0-9a-fA-F]{40,}/.test(text)) return true;
-  for (const run of text.match(/[A-Za-z0-9_+/=-]{40,}/g) ?? []) {
+  for (const url of text.match(URL_UP_TO_QUERY) ?? []) {
+    for (const run of url.match(PATH_RUN) ?? []) if (keyLikeRun(run)) return true;
+  }
+  for (const run of text.replace(URL_UP_TO_QUERY, " ").match(TEXT_RUN) ?? []) {
     if (keyLikeRun(run)) return true;
   }
   return false;

@@ -239,13 +239,16 @@ describe("stamping", () => {
     }
   });
 
-  it("a ref may point at the record in the tracker: long paths and page ids are not credentials", async () => {
+  it("a ref may point at the record in the tracker: long paths and record ids are not credentials", async () => {
     const d = await dashboard();
     await setSources(d.id, d.owner.auth, [LINEAR]);
     for (const [i, ref] of [
       "https://linear.app/acme/issue/ENG-123/fix-the-login-redirect-on-mobile",
       "https://acme.atlassian.net/jira/software/projects/ENG/boards/12",
       "https://www.notion.so/acme/Q4-Roadmap-2a1b3c4d5e6f7a8b9c0d1e2f3a4b5c6d",
+      "https://airtable.com/appAbC123dEf456Gh/tblXyZ789aBc012De/viwQwE345rTy678Ui",
+      "https://acme.lightning.force.com/lightning/r/Opportunity/0065g00000ABCDeAAE/view",
+      "https://dashboard.stripe.com/payments/pi_3NxYzABCdefGHIjkl0123456",
     ].entries()) {
       const r = await writeOne(d.id, d.owner.auth, {
         doc_id: `r${i}`,

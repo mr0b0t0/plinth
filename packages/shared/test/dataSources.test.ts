@@ -114,6 +114,10 @@ const RECORD_URLS = [
   "https://github.com/acme/web/issues/4821",
   "https://app.hubspot.com/contacts/1234567/objects/0-3/views/all/list",
   "https://acme.notion.site/MyProject-Getting-Started-With-Our-API-v2",
+  // Opaque record ids that mix cases and digits, each shorter than 40 characters.
+  "https://airtable.com/appAbC123dEf456Gh/tblXyZ789aBc012De/viwQwE345rTy678Ui",
+  "https://acme.lightning.force.com/lightning/r/Opportunity/0065g00000ABCDeAAE/view",
+  "https://dashboard.stripe.com/payments/pi_3NxYzABCdefGHIjkl0123456",
 ];
 
 describe("looksLikeSecret", () => {
@@ -206,7 +210,18 @@ describe("sanitizeSourceRef", () => {
     expect(sanitizeSourceRef("eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.x").ok).toBe(false);
     expect(sanitizeSourceRef("0123456789abcdef0123456789abcdef01234567").ok).toBe(false);
     expect(sanitizeSourceRef("https://").ok).toBe(false);
-    expect(sanitizeSourceRef(`https://x.example/files/${FAKE.slashed}`).ok).toBe(false);
+    // A key in one path segment is still a run of its own; outside a URL, `/` joins the run.
+    expect(sanitizeSourceRef(`https://x.example/files/${FAKE.mixed}`).ok).toBe(false);
+    expect(sanitizeSourceRef(`https://x.example/files/${FAKE.dashed}/view`).ok).toBe(false);
+    expect(sanitizeSourceRef(`airtable:${FAKE.slashed}`).ok).toBe(false);
+  });
+
+  it("checks a URL path segment by segment, and the text around it as before", () => {
+    const airtable = "https://airtable.com/appAbC123dEf456Gh/tblXyZ789aBc012De";
+    expect(looksLikeSecret(`see ${airtable} for the base`)).toBe(false);
+    expect(looksLikeSecret(`see ${airtable} and ${FAKE.slashed}`)).toBe(true);
+    expect(looksLikeSecret(`${airtable}?x=${FAKE.slashed}`)).toBe(true);
+    expect(looksLikeSecret(`${airtable}/${FAKE.mixed}`)).toBe(true);
   });
 });
 

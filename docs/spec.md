@@ -2020,7 +2020,8 @@ where they came from.
   are refused, and so is anything that looks like a credential (a bearer header, a known token
   prefix, a JWT, a secret-named query parameter, 40 or more hex characters, or 40 or more key-like
   characters that mix upper case, lower case and digits and do not read as words and identifiers,
-  so a link to a record passes): a recipe describes a query and never needs one. Only the owner reads the recipe, the target and the confirmation hash;
+  where each segment of a URL's path counts on its own, so a link to a record passes): a recipe
+  describes a query and never needs one. Only the owner reads the recipe, the target and the confirmation hash;
   editors see what a source is and its state.
 - **Setting a source never confirms it.** The owner's agent sets the whole list with
   `set_data_sources` (or `PUT /api/v1/artifacts/:ref/sources`); the signed-in owner may too, naming
