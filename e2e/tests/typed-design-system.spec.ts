@@ -85,6 +85,7 @@ test.describe("a published design system", () => {
     const fonts = await stubGoogleFonts(page);
     const { artifact, client } = await publishDs(page);
     try {
+      await page.emulateMedia({ colorScheme: "light" });
       await page.goto(`/a/${artifact.slug}`);
       const site = await siteFrame(page);
       await expect(site.locator(".ds-header h1")).toHaveText("Acme UI");
@@ -99,11 +100,11 @@ test.describe("a published design system", () => {
         );
       expect(swatches).toEqual(["#ffffff", "#0d1117"]);
 
-      // The Button preview: real CSS from the design system, in its own frame.
+      // The Button preview: real CSS from the design system, in its own frame, in the reader's
+      // color scheme, and it follows a change of scheme.
       const light = await previewFrame(site, "Button: Primary (light)");
       await expect(light.locator("button")).toHaveCSS("background-color", "rgb(51, 85, 255)");
-      const example = site.locator("#ds-components-button .ds-example").first();
-      await example.getByRole("button", { name: "Dark", exact: true }).click();
+      await page.emulateMedia({ colorScheme: "dark" });
       const dark = await previewFrame(site, "Button: Primary (dark)");
       await expect(dark.locator("button")).toHaveCSS("background-color", "rgb(107, 140, 255)");
       await expect(dark.locator("html")).toHaveAttribute("data-theme", "dark");
@@ -146,6 +147,8 @@ test.describe("a published design system", () => {
     });
     const { artifact, client } = await publishDs(page, content);
     try {
+      // Previews follow the color scheme; the titles below name the light ones.
+      await page.emulateMedia({ colorScheme: "light" });
       await page.goto(`/a/${artifact.slug}`);
       await page.evaluate(() => {
         (window as unknown as { __messages: unknown[] }).__messages = [];

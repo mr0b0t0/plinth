@@ -13,7 +13,8 @@ import {
   TYPED_PAYLOAD_VERSION,
   type TypedPayload,
 } from "@plinth/shared";
-import { renderProblems, renderSite, sectionId } from "./render.ts";
+import type { PreviewTheme } from "./preview.ts";
+import { renderProblems, renderSite, sectionId, setPreviewTheme } from "./render.ts";
 
 const ROOT_ID = "__plinth-design_system";
 const DATA_ID = "__plinth-content";
@@ -87,10 +88,15 @@ export function boot(win: Window): () => void {
     style.textContent = faces;
     doc.head.append(style);
   }
-  root.replaceChildren(renderSite(doc, ds));
+  // Previews follow the reader's color scheme, as the site's own chrome does.
+  const scheme = win.matchMedia?.("(prefers-color-scheme: dark)") ?? null;
+  const theme = (): PreviewTheme => (scheme?.matches ? "dark" : "light");
+  root.replaceChildren(renderSite(doc, ds, theme()));
   html.setAttribute("data-ready", "ok");
   follow(doc);
 
+  const onScheme = () => setPreviewTheme(root, theme());
+  scheme?.addEventListener?.("change", onScheme);
   const onHash = () => follow(doc);
   // Ctrl/Cmd+P inside the frame prints the frame, not the app page around it.
   const onKey = (e: KeyboardEvent) => {
@@ -117,6 +123,7 @@ export function boot(win: Window): () => void {
   win.addEventListener("keydown", onKey);
   win.addEventListener("message", onMessage);
   return () => {
+    scheme?.removeEventListener?.("change", onScheme);
     win.removeEventListener("hashchange", onHash);
     win.removeEventListener("keydown", onKey);
     win.removeEventListener("message", onMessage);

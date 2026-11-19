@@ -273,11 +273,7 @@ export default function EditorWorkspace({
         return;
       }
       if (s.invalid) {
-        toast.toast({
-          title: `Fix the ${label} first`,
-          description: "The problems under the editor say what to change.",
-          tone: "warning",
-        });
+        toast.toast({ title: `Fix the ${label} first`, tone: "warning" });
         return;
       }
       if (s.dirty) void save();
@@ -417,21 +413,20 @@ export default function EditorWorkspace({
         </div>
       )}
       {invalid && (
-        <div className="pl-editor__notice pl-editor__problems" role="status" aria-live="polite">
+        <div
+          className="pl-editor__notice pl-editor__problems"
+          role="status"
+          aria-live="polite"
+          aria-label={`Fix the ${label} to save`}
+        >
           <InfoIcon aria-hidden="true" />
-          <div>
-            <p>
-              The {label} has {problems.length === 1 ? "a problem" : `${problems.length} problems`}.
-              Fix {problems.length === 1 ? "it" : "them"} to save.
-            </p>
-            <ul>
-              {problems.slice(0, 5).map((p) => (
-                <li key={`${p.path} ${p.message}`}>
-                  <code>{p.path || "(root)"}</code> {p.message}
-                </li>
-              ))}
-            </ul>
-          </div>
+          <ul>
+            {problems.slice(0, 5).map((p) => (
+              <li key={`${p.path} ${p.message}`}>
+                <code>{p.path || "(root)"}</code> {p.message}
+              </li>
+            ))}
+          </ul>
         </div>
       )}
       {mode === "edit" && newer !== null && (

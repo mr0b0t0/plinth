@@ -60,22 +60,13 @@
   line-height: 1.2;
 }
 
-.ds-eyebrow {
-  margin: 0 0 4px;
-  color: var(--doc-muted);
-  font-size: 0.8rem;
-  font-weight: 600;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
+.ds-header .ds-prose.plinth-doc {
+  margin: 0;
 }
 
 .ds-lede {
-  font-size: 1.1rem;
-}
-
-.ds-muted {
   color: var(--doc-muted);
-  font-size: 0.92rem;
+  font-size: 1.1rem;
 }
 
 .plinth-design_system code {
@@ -121,16 +112,19 @@
 }
 
 .ds-nav a:focus-visible,
-.ds-copy:focus-visible,
-.ds-seg button:focus-visible,
-.ds-table:focus-visible {
+.ds-token__var:focus-visible,
+.ds-code summary:focus-visible {
   outline: 2px solid var(--doc-focus);
   outline-offset: 2px;
 }
 
-.ds-nav__child a {
-  padding-left: 20px;
+.ds-nav__label {
+  display: block;
+  margin-top: 12px;
+  padding: 5px 8px;
   color: var(--doc-muted);
+  font-size: 0.78rem;
+  font-weight: 600;
 }
 
 .ds-section {
@@ -153,11 +147,6 @@
   font-size: 1.05rem;
 }
 
-.ds-fonts,
-.ds-component-list {
-  padding-left: 1.4em;
-}
-
 .ds-badge {
   display: inline-block;
   padding: 1px 8px;
@@ -177,17 +166,21 @@
   color: var(--ds-info-fg);
 }
 
-/* Token tables */
-
-.ds-table {
-  max-width: 100%;
-  overflow-x: auto;
-}
+/* Token tables: the same three columns in every group, so the tables line up. */
 
 .ds-table table {
   width: 100%;
   border-collapse: collapse;
+  table-layout: fixed;
   font-size: 0.92rem;
+}
+
+.ds-col-sample {
+  width: 36%;
+}
+
+.ds-col-value {
+  width: 24%;
 }
 
 .ds-table th,
@@ -204,10 +197,9 @@
   font-weight: 600;
 }
 
-.ds-token__samples {
+.ds-token__pair {
   display: flex;
   gap: 8px;
-  min-width: 132px;
 }
 
 .ds-token__path {
@@ -215,12 +207,34 @@
   font-weight: 600;
 }
 
-.ds-token__name {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px;
-  margin-top: 2px;
+/* The variable name copies itself: it reads as code, with a hint on hover and after a copy. */
+.ds-token__var {
+  margin: 2px 0 0;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  color: var(--doc-fg);
+  font: inherit;
+  font-family: var(--doc-mono);
+  font-size: 0.85em;
+  text-align: left;
+  overflow-wrap: anywhere;
+  cursor: copy;
+}
+
+.ds-token__var:hover {
+  text-decoration: underline dotted;
+  text-underline-offset: 3px;
+}
+
+.ds-token__var[data-copied]::after {
+  content: "Copied";
+  display: inline-block;
+  margin-left: 8px;
+  color: var(--doc-muted);
+  font-family: system-ui, sans-serif;
+  font-size: 0.85em;
 }
 
 .ds-token__desc,
@@ -232,33 +246,18 @@
 
 .ds-token__values code {
   display: block;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 
 .ds-token__dark {
   color: var(--doc-muted);
 }
 
-.ds-copy {
-  padding: 1px 8px;
-  border: 1px solid var(--doc-border);
-  border-radius: 6px;
-  background: transparent;
-  color: var(--doc-fg);
-  font: inherit;
-  font-size: 0.78rem;
-  cursor: pointer;
-}
-
-.ds-copy:hover {
-  background: var(--ds-panel);
-}
-
 /* Samples: each one shows a token's value; light and dark samples sit on their own ground. */
 
 .ds-sample {
   flex: 1 1 0;
-  min-width: 56px;
+  min-width: 0;
   min-height: 48px;
   border: 1px solid var(--doc-border);
   border-radius: 8px;
@@ -280,7 +279,6 @@
 .ds-sample--type {
   display: flex;
   align-items: center;
-  min-width: 220px;
   padding: 8px 10px;
   overflow: hidden;
   white-space: nowrap;
@@ -340,73 +338,22 @@
   font-size: 0.85rem;
 }
 
-/* Components */
+/* Components: each example is its name, its preview, and its HTML behind a disclosure. */
 
 .ds-example {
   margin: 16px 0 24px;
-  border: 1px solid var(--doc-border);
-  border-radius: 10px;
-  overflow: hidden;
-}
-
-.ds-example__bar {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px 12px;
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--doc-border);
-  background: var(--ds-panel);
 }
 
 .ds-example__name {
-  margin-right: auto;
-  color: var(--doc-heading);
-  font-weight: 600;
-}
-
-.ds-seg {
-  display: inline-flex;
-  border: 1px solid var(--doc-border);
-  border-radius: 6px;
-  overflow: hidden;
-}
-
-.ds-seg[hidden] {
-  display: none;
-}
-
-.ds-seg button {
-  padding: 3px 10px;
-  border: 0;
-  border-right: 1px solid var(--doc-border);
-  background: transparent;
-  color: var(--doc-fg);
-  font: inherit;
-  font-size: 0.8rem;
-  cursor: pointer;
-}
-
-.ds-seg button:last-child {
-  border-right: 0;
-}
-
-.ds-seg button[aria-pressed="true"] {
-  background: var(--doc-bg);
+  margin: 0 0 8px;
   color: var(--doc-heading);
   font-weight: 600;
 }
 
 .ds-example__stage {
-  display: grid;
-  grid-auto-flow: column;
-  grid-auto-columns: minmax(0, 1fr);
-  gap: 1px;
-  background: var(--doc-border);
-}
-
-.ds-example__stage[hidden] {
-  display: none;
+  border: 1px solid var(--doc-border);
+  border-radius: 10px;
+  overflow: hidden;
 }
 
 .ds-preview__frame {
@@ -415,25 +362,37 @@
   min-width: 0;
   border: 0;
   background: #ffffff;
-  resize: horizontal;
 }
 
 .ds-preview__frame[data-theme="dark"] {
   background: #0d1117;
 }
 
+.ds-code {
+  margin-top: 8px;
+}
+
+.ds-code summary {
+  width: fit-content;
+  border-radius: 4px;
+  color: var(--doc-muted);
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.ds-code summary:hover {
+  color: var(--doc-fg);
+}
+
 .ds-example__code {
-  margin: 0;
+  margin: 8px 0 0;
   padding: 14px 16px;
   overflow-x: auto;
+  border-radius: 8px;
   background: var(--doc-code-bg);
   font-size: 0.85rem;
   line-height: 1.5;
   white-space: pre;
-}
-
-.ds-example__code[hidden] {
-  display: none;
 }
 
 .ds-error {
@@ -447,6 +406,15 @@
 
 .ds-problems code {
   font-weight: 600;
+}
+
+/* Headings the author wrote sit under the site's own section headings. */
+.ds-prose.plinth-doc h1 {
+  font-size: 1.25rem;
+}
+
+.ds-prose.plinth-doc h2 {
+  font-size: 1.1rem;
 }
 
 @media (max-width: 760px) {
@@ -466,12 +434,45 @@
     gap: 4px;
   }
 
-  .ds-nav__child {
+  .ds-nav__group,
+  .ds-nav__group ul {
+    display: contents;
+  }
+
+  .ds-nav__label {
     display: none;
   }
 
-  .ds-example__stage {
-    grid-auto-flow: row;
+  /* Each token stacks: samples, then its name and variable, then its value. */
+  .ds-table colgroup,
+  .ds-table thead {
+    display: none;
+  }
+
+  .ds-table table,
+  .ds-table tbody,
+  .ds-table tr,
+  .ds-table td {
+    display: block;
+  }
+
+  .ds-table tr {
+    padding: 12px 0;
+    border-bottom: 1px solid var(--doc-border);
+  }
+
+  .ds-table td {
+    padding: 0;
+    border: 0;
+  }
+
+  .ds-table td + td {
+    margin-top: 8px;
+  }
+
+  .ds-token__values code {
+    display: inline;
+    margin-right: 12px;
   }
 }
 
@@ -485,8 +486,7 @@
   }
 
   .ds-nav,
-  .ds-copy,
-  .ds-seg {
+  .ds-code {
     display: none;
   }
 

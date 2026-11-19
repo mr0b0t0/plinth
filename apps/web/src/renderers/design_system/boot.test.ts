@@ -59,10 +59,12 @@ describe("boot", () => {
       ["Shadows", "#tokens/shadow"],
       ["Motion", "#tokens/motion"],
       ["Other tokens", "#tokens/other"],
-      ["Components", "#components"],
       ["Button", "#components/button"],
       ["Badge", "#components/badge"],
     ]);
+    // Components are listed under a heading in the navigation, not a page of their own.
+    expect(root().querySelector(".ds-nav__group .ds-nav__label")?.textContent).toBe("Components");
+    expect(root().querySelectorAll(".ds-nav__group a")).toHaveLength(2);
     for (const [, href] of nav) {
       expect(document.getElementById(sectionId((href ?? "").slice(1))), href ?? "").not.toBeNull();
     }
@@ -76,6 +78,13 @@ describe("boot", () => {
     );
     expect(links).toEqual([FIXTURE.fonts[0]?.google]);
     expect(document.head.querySelector("style")?.textContent).toContain('font-family:"Acme Mono"');
+  });
+
+  it("leaves the overview out when there are no guidelines", () => {
+    mountShell(JSON.stringify({ ...FIXTURE, guidelines: undefined }));
+    stop = boot(window);
+    expect(document.getElementById(sectionId("overview"))).toBeNull();
+    expect(root().querySelector(".ds-nav a")?.textContent).toBe("Colors");
   });
 
   it("a malformed hash neither throws nor stops navigation and printing", () => {
@@ -133,27 +142,76 @@ describe("boot", () => {
     expect(rows[4]?.querySelector(".ds-token__deprecated")?.textContent).toBe("Deprecated Use fg");
   });
 
-  it("renders each component's examples in preview frames, with HTML and CSS views", () => {
+  it("renders each component's examples in preview frames, with its HTML and CSS behind disclosures", () => {
     mountShell(JSON.stringify(FIXTURE));
     stop = boot(window);
     const button = document.getElementById("ds-components-button") as HTMLElement;
     const frames = button.querySelectorAll("iframe");
     expect(frames).toHaveLength(1);
     expect(frames[0]?.getAttribute("sandbox")).toBe("allow-same-origin");
-    const both = button.querySelector<HTMLButtonElement>('.ds-seg button[data-value="both"]');
-    both?.click();
-    expect([...button.querySelectorAll("iframe")].map((f) => f.dataset.theme)).toEqual([
-      "light",
-      "dark",
+    expect(frames[0]?.dataset.theme).toBe("light");
+    const codes = [...button.querySelectorAll<HTMLDetailsElement>("details.ds-code")];
+    expect(codes.map((d) => [d.querySelector("summary")?.textContent, d.open])).toEqual([
+      ["HTML", false],
+      ["CSS", false],
     ]);
-    button.querySelector<HTMLButtonElement>('.ds-seg button[data-value="html"]')?.click();
-    const codes = button.querySelectorAll<HTMLElement>(".ds-example__code");
-    expect(codes[0]?.hidden).toBe(false);
-    expect(codes[0]?.textContent).toBe('<button class="acme-btn acme-btn--primary">Save</button>');
-    button.querySelector<HTMLButtonElement>('.ds-seg button[data-value="768"]')?.click();
-    expect(button.querySelector<HTMLElement>(".ds-example__stage")?.style.maxWidth).toBe("768px");
+    expect(codes[0]?.querySelector(".ds-example__code")?.textContent).toBe(
+      '<button class="acme-btn acme-btn--primary">Save</button>',
+    );
+    // No view, theme or width switches.
+    expect(button.querySelectorAll("button")).toHaveLength(0);
     const badge = document.getElementById("ds-components-badge") as HTMLElement;
     expect(badge.querySelector(".ds-badge")?.textContent).toBe("Beta");
+  });
+
+  it("shows previews in the reader's color scheme and follows a change", () => {
+    let dark = true;
+    const listeners: (() => void)[] = [];
+    const matchMedia = window.matchMedia;
+    window.matchMedia = ((q: string) => ({
+      get matches() {
+        return q === "(prefers-color-scheme: dark)" && dark;
+      },
+      addEventListener: (_: string, f: () => void) => listeners.push(f),
+      removeEventListener: () => undefined,
+    })) as unknown as typeof window.matchMedia;
+    try {
+      mountShell(JSON.stringify(FIXTURE));
+      stop = boot(window);
+      const themes = () =>
+        [...document.querySelectorAll<HTMLIFrameElement>("#ds-components-button iframe")].map(
+          (f) => f.dataset.theme,
+        );
+      expect(themes()).toEqual(["dark"]);
+      dark = false;
+      for (const f of listeners) f();
+      expect(themes()).toEqual(["light"]);
+    } finally {
+      window.matchMedia = matchMedia;
+    }
+  });
+
+  it("copies a token's variable when its name is clicked", async () => {
+    mountShell(JSON.stringify(FIXTURE));
+    stop = boot(window);
+    const copied: string[] = [];
+    const clipboard = Object.getOwnPropertyDescriptor(navigator, "clipboard");
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText: async (t: string) => void copied.push(t) },
+    });
+    try {
+      const name = root().querySelector<HTMLButtonElement>(
+        '.ds-token[data-path="color.bg"] button.ds-token__var',
+      );
+      expect(name?.getAttribute("aria-label")).toBe("Copy var(--acme-color-bg)");
+      name?.click();
+      expect(copied).toEqual(["var(--acme-color-bg)"]);
+      expect(name?.hasAttribute("data-copied")).toBe(true);
+    } finally {
+      if (clipboard) Object.defineProperty(navigator, "clipboard", clipboard);
+      else delete (navigator as { clipboard?: unknown }).clipboard;
+    }
   });
 
   it("puts every author string on the page as text", () => {

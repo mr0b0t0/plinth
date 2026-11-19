@@ -702,13 +702,13 @@ for look the same. It is the third artifact type, `design_system`, beside `html`
   set in both themes, to `normal` where that theme has no value (what its shorthand resets the part
   to), so neither theme's shorthand reads a variable the other alone defines.
 - **The site.** A fixed Plinth renderer on the artifact's own origin (`/__plinth/types/design_system/`,
-  `script-src 'self'`, like a doc) shows the overview and guidelines, the tokens by kind (colors,
-  typography, spacing and sizes, radii, shadows, motion, others) with light and dark samples, CSS
-  variable names and copy buttons, and every component with live previews in light, dark or both at
-  360 px, 768 px or full width, beside its HTML and CSS. Guidelines, descriptions and usage follow
-  the doc type's Markdown rules. The site's own chrome uses Plinth's neutral styles; the design
-  system's tokens and CSS apply only to samples and previews. Navigation is by hash
-  (`#tokens/color`, `#components/button`).
+  `script-src 'self'`, like a doc) shows the guidelines, the tokens by kind (colors, typography,
+  spacing and sizes, radii, shadows, motion, others) with their samples (light and dark side by
+  side when the values differ) and CSS variable names, which copy when clicked, and every component
+  with a live preview of each example in the reader's color scheme, its HTML and CSS behind closed
+  disclosures. Guidelines, descriptions and usage follow the doc type's Markdown rules. The site's
+  own chrome uses Plinth's neutral styles; the design system's tokens and CSS apply only to samples
+  and previews. Navigation is by hash (`#tokens/color`, `#components/button`).
 - **Previews.** Each example renders in its own `srcdoc` frame with `sandbox="allow-same-origin"`
   and nothing else, so no script runs in it whatever the markup holds, and nothing in it submits,
   opens popups or navigates the page. The frame inherits the shell's CSP. The example HTML also
@@ -738,9 +738,8 @@ for look the same. It is the third artifact type, `design_system`, beside `html`
   mentions `plinth-design-system` is not scanned at all.
 - **In the app.** The source editor holds the JSON with Monaco's JSON language and the format's
   JSON Schema, shows the parser's problems under the editor and keeps Save off until there are
-  none. The dashboard shows a "Design system" badge and a "Design systems" filter when there is
-  one. The artifact menu's "Copy for an agent" copies a line with the design system's link and id,
-  never its title.
+  none. The dashboard shows a "Design system" badge. The artifact menu's "Copy for an agent" copies
+  a line with the design system's link and id, never its title.
 - **Not in v1.** No runtime loading across artifacts (it would need CSP sources for other artifact
   origins and a content pass for two artifacts), no script in previews, no on-page or live editing,
   no themes other than `dark`, and no copying of font or image files between artifacts.

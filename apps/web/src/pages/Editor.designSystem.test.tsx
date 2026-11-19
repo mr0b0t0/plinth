@@ -159,15 +159,16 @@ describe("the editor on a design system", () => {
     })) as HTMLTextAreaElement;
     const broken = SOURCE.replace('"#ffffff"', '"#ffffff; }"');
     fireEvent.change(box, { target: { value: broken } });
-    const notice = await screen.findByText(/has a problem\. Fix it to save\./);
-    const list = notice.closest(".pl-editor__problems") as HTMLElement;
+    const list = await screen.findByRole("status", { name: "Fix the design system JSON to save" });
     expect(list.querySelector("code")?.textContent).toBe("tokens.color.bg.$value");
     const save = screen.getByRole("button", { name: /^Save/ }) as HTMLButtonElement;
     expect(save.disabled).toBe(true);
 
     const fixed = SOURCE.replace('"#ffffff"', '"#fafafa"');
     fireEvent.change(box, { target: { value: fixed } });
-    await waitFor(() => expect(screen.queryByText(/Fix it to save/)).toBeNull());
+    await waitFor(() =>
+      expect(screen.queryByRole("status", { name: /^Fix the design system JSON/ })).toBeNull(),
+    );
     expect(save.disabled).toBe(false);
     fireEvent.click(save);
     await waitFor(() => expect(sent.some((s) => s.method === "PUT")).toBe(true));
