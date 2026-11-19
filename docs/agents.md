@@ -108,8 +108,10 @@ every program that runs this Claude Code profile (T3 Code included) uses it. It 
 Connect panel, `/llms.txt` and `npx @mr0b0t0/plinth connect` of an instance other than the hosted
 one print the install with `--config` already filled in.
 
-The directory build (`integrations/plugin-directory`, for Anthropic's plugin directory) has the same
-option, without `PLINTH_URL`: change it in `/config`.
+The directory build (`integrations/plugin-directory`, for Anthropic's plugin directory) connects to
+the hosted instance only: the directory refuses a server URL with a variable in it. With that build,
+add another instance as its own server (`claude mcp add --transport http plinth <origin>/mcp`), or
+install the full plugin from this repository's marketplace instead.
 
 #### Several Claude Code configuration directories
 

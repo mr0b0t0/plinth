@@ -10,13 +10,17 @@ Add a line under **Unreleased** in the pull request that makes a change people w
 
 ## Unreleased
 
+- **The plugin directory build connects to the hosted instance again.** Anthropic's plugin directory
+  refused the 0.15.0 build because its server URL used the Plinth instance option, so the directory
+  build has a fixed `https://plinth.aconite.io/mcp` server and no option. With that build, add a
+  self-hosted instance as its own server, or install the full plugin from this repository's
+  marketplace, which keeps the option. Plugin 0.16.0.
 - **The Claude Code plugin remembers your instance.** It asks which Plinth instance to use when you
   enable it (the hosted one by default), keeps the answer, and its mention watcher follows it, so a
   self-hosted or local instance no longer needs `PLINTH_URL` exported every time Claude Code starts.
   From a terminal: `claude plugin install plinth@plinth --config instance_url=<origin>`; later,
-  `/plugin configure plinth@plinth`. `PLINTH_URL` still works and wins. The directory build has the
-  option too, and the Connect panel, `/llms.txt` and `plinth connect` print the right command for
-  each instance. Plugin 0.15.0.
+  `/plugin configure plinth@plinth`. `PLINTH_URL` still works and wins. The Connect panel, `/llms.txt`
+  and `plinth connect` print the right command for each instance. Plugin 0.15.0.
 - **Review account sign-in.** An operator can give one ordinary account a password, for a
   directory's reviewers who cannot receive sign-in emails: set `REVIEW_LOGIN_EMAIL` and the secret
   `REVIEW_LOGIN_PASSWORD_HASH` (from `apps/worker/scripts/review-login-hash.mjs`). It signs in at

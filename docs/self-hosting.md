@@ -74,9 +74,11 @@ It ends with the commands that connect Claude Code, Codex and the other agents. 
 that is the Plinth plugin set to your instance
 (`claude plugin install plinth@plinth --config instance_url=https://<app host>`). For Codex, it is
 your instance's server under the name `plinth`, which replaces the plugin's hosted server
-([agents.md](agents.md#claude-code)). A plugin installed from Anthropic's plugin directory or
-OpenAI's works with your instance the same way: set the Claude Code plugin's Plinth instance option,
-or add your server as `plinth` in Codex. ChatGPT connects from OpenAI's servers to the instance its
+([agents.md](agents.md#claude-code)). A plugin installed from OpenAI's directory works with your
+instance the same way: add your server as `plinth` in Codex. The build in Anthropic's plugin
+directory connects to the hosted instance only, so add your instance next to it
+(`claude mcp add --transport http plinth https://<app host>/mcp`), or install the full plugin from
+this repository's marketplace as above. ChatGPT connects from OpenAI's servers to the instance its
 listing names, the hosted one, so add your instance there as a custom connector instead, if it is
 reachable from the internet.
 

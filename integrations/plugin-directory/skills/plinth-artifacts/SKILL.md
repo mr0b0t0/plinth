@@ -448,9 +448,11 @@ The Plinth plugin and extension connect to the hosted instance at `https://plint
 sign in with OAuth on first use. For another instance (self-hosted, or `http://127.0.0.1:8788` for
 `npx @mr0b0t0/plinth`):
 
-- Claude Code: the plugin asks for its Plinth instance when it is enabled (the default is the
-  hosted one). Change it later in `/config` (the Plinth plugin's Plinth instance), then restart
-  Claude Code.
+- Claude Code: this build of the plugin, from Anthropic's plugin directory, connects to the
+  hosted instance only. For another instance, add it as its own server
+  (`claude mcp add --transport http plinth <origin>/mcp`), or use the full plugin from this
+  repository's marketplace instead (`claude plugin marketplace add mr0b0t0/plinth`, then
+  `claude plugin install plinth@plinth --config instance_url=<origin>`).
 - Codex: `codex mcp add plinth --url <origin>/mcp`, then `codex mcp login plinth`. A server named
   `plinth` replaces the plugin's hosted one.
 - Any other client: point the `plinth` MCP server at the instance's `/mcp` URL.
