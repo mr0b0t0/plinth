@@ -526,6 +526,107 @@ describe("sheet socket: versions published from outside", () => {
     f.a.ws.close(1000);
   });
 
+  it("an edit acknowledged while the room reads a version equal to the draft is kept: the draft freezes", async () => {
+    const s = await sheetSetup(SHEET);
+    const a = await connectDoc(s.id, s.ownerP.cookie);
+    const draft = SHEET.replace('["Apples",3,true]', '["Apples",4,true]');
+    await editRow(a, 1, '["Apples",4,true]', 0);
+    const held = await lease(a, 2, 3, 1);
+    expect(held.t).toBe("leased");
+    // The page's edit to Pears arrives while the room reads the two versions' files.
+    const stub = stubFor(s.id);
+    await runInDurableObject(stub, async (room) => {
+      type Sock = { ws: WebSocket; s: { lease?: { id: string } | null } };
+      const doc = (
+        room as unknown as {
+          doc: {
+            loaded: unknown;
+            host: { sockets(): Sock[] };
+            fileSets: (...args: unknown[]) => Promise<unknown>;
+            edit: (ws: WebSocket, s: unknown, d: unknown, l: string, q: number, t: string) => void;
+          };
+        }
+      ).doc;
+      const sets = doc.fileSets.bind(doc);
+      let once = true;
+      doc.fileSets = async (...args) => {
+        const out = await sets(...args);
+        if (once) {
+          once = false;
+          const o = doc.host.sockets().find((x) => x.s.lease?.id === held.lease);
+          if (!o) throw new Error("no holder");
+          doc.edit(o.ws, o.s, doc.loaded, held.lease, 2, '["Pears",6]');
+        }
+        return out;
+      };
+    });
+    // An agent publishes exactly the draft as it was before that edit.
+    const put = await call(s.id, s.owner.auth, "", {
+      method: "PUT",
+      body: { content: draft, base_version: 1 },
+    });
+    expect(put.status).toBe(200);
+    expect(await a.nextOf("op")).toMatchObject({ rev: 2, ins: '["Pears",6]' });
+    // v2 is no longer the draft: the acknowledged edit stays, and the draft is frozen against v2.
+    let seen = await a.next();
+    while (seen.t !== "conflict" && seen.t !== "reset") seen = await a.next();
+    expect(seen).toMatchObject({ t: "conflict", version: 2 });
+    expect(await stub.docPeek(s.id)).toMatchObject({
+      base_version: 1,
+      conflict_version: 2,
+      text: draft.replace('["Pears",5]', '["Pears",6]'),
+    });
+    a.ws.close(1000);
+  });
+
+  it("a save that finishes while the room reads a newer version's files is that version's base", async () => {
+    const s = await sheetSetup(SHEET);
+    const a = await connectDoc(s.id, s.ownerP.cookie);
+    const draft = SHEET.replace('["Apples",3,true]', '["Apples",4,true]');
+    await editRow(a, 1, '["Apples",4,true]', 0);
+    const stub = stubFor(s.id);
+    type Doc = {
+      loaded: unknown;
+      version: (...args: unknown[]) => Promise<void>;
+      outside: (d: unknown, n: number, h: string | null) => Promise<void>;
+      fileSets: (...args: unknown[]) => Promise<unknown>;
+      finishCheckpoint: (...args: unknown[]) => Promise<unknown>;
+    };
+    const docOf = (room: unknown) => (room as { doc: Doc }).doc;
+    await runInDurableObject(stub, async (room) => {
+      docOf(room).version = async () => undefined;
+    });
+    // A page Publish saves the draft as v2, and an agent changes B3 on top of it as v3.
+    const snap = await stub.docSnapshot(s.id);
+    const put = (body: Record<string, unknown>) =>
+      call(s.id, s.owner.auth, "", { method: "PUT", body });
+    expect((await put({ content: draft, base_version: 1 })).status).toBe(200);
+    const v3 = draft.replace('["Pears",5]', '["Pears",7]');
+    expect((await put({ content: v3, base_version: 2 })).status).toBe(200);
+    // v3's notify reads v1 to v3's files; v2's finish lands meanwhile and makes the draft clean.
+    await runInDurableObject(stub, async (room) => {
+      const doc = docOf(room);
+      const sets = doc.fileSets.bind(doc);
+      let once = true;
+      doc.fileSets = async (...args) => {
+        const out = await sets(...args);
+        if (once) {
+          once = false;
+          await doc.finishCheckpoint(s.id, 2, snap.text, snap.lock, snap.epoch);
+        }
+        return out;
+      };
+      await doc.outside(doc.loaded, 3, null);
+    });
+    // Judged from v2, v3 is a version under a clean draft: it moves onto v3, with no review.
+    expect(await stub.docPeek(s.id)).toMatchObject({
+      base_version: 3,
+      conflict_version: null,
+      text: v3,
+    });
+    a.ws.close(1000);
+  });
+
   it("never merged: whatever is published, the room's lines are the draft's or the version's", async () => {
     // Random agent changes against a fixed page edit: each ends with the draft's lines, or v2's.
     const changes: Record<string, unknown>[] = [

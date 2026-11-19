@@ -817,13 +817,20 @@ export class LiveDoc {
         this.broadcast({ t: "rebased", version: n, gen: doc.gen, rev: doc.rev });
         this.broadcastText(doc);
       } else {
-        const files = await this.filesBetween(doc, doc.baseVersion, n);
+        const base = doc.baseVersion;
+        const files = await this.filesBetween(doc, base, n);
         if (stale()) return;
+        // A save finished meanwhile: the files (and the merge) were for the old base.
+        if (doc.baseVersion !== base) return this.outside(doc, n, hash);
         this.freeze(doc, n, files);
       }
     } else {
-      const sets = await this.fileSets(doc, doc.baseVersion, n);
+      const base = doc.baseVersion;
+      const sets = await this.fileSets(doc, base, n);
       if (stale()) return;
+      if (doc.baseVersion !== base) return this.outside(doc, n, hash);
+      // Edits applied (and acknowledged) during the read are part of the draft compared below.
+      const now = this.text(doc);
       const same = sets !== null && sameFiles(sets.a, sets.b);
       if (same && theirs === doc.baseText) {
         // n holds nothing the draft would leave out: its lines stay as they are, on n.
@@ -836,7 +843,7 @@ export class LiveDoc {
         this.revokeLeases("rebased");
         this.broadcast({ t: "rebased", version: n, gen: doc.gen, rev: doc.rev });
         this.broadcastText(doc);
-      } else if (same && theirs === ours) {
+      } else if (same && theirs === now) {
         // n is the draft: nothing is unpublished any more.
         this.replace(doc, n, theirs, null, "closed");
       } else {
@@ -998,11 +1005,13 @@ export class LiveDoc {
       if (mine) this.lock = null;
     } else if (mine || epoch === undefined || epoch === doc.epoch) {
       this.finish(doc, n, text, mine, resolved || mine?.resolved === true);
-      if (doc.conflictVersion !== null) {
-        // Frozen against a version newer than this save: the review now runs from n.
-        const files = await this.filesBetween(doc, doc.baseVersion, doc.conflictVersion);
-        if (this.loaded === doc && doc.conflictVersion !== null) {
-          this.freeze(doc, doc.conflictVersion, files);
+      const frozen = doc.conflictVersion;
+      if (frozen !== null) {
+        // Frozen against a version newer than this save: the review now runs from n. A version
+        // that froze the draft (or a save that moved its base) during the read set its own files.
+        const files = await this.filesBetween(doc, n, frozen);
+        if (this.loaded === doc && doc.conflictVersion === frozen && doc.baseVersion === n) {
+          this.freeze(doc, frozen, files);
         }
       }
     } else {

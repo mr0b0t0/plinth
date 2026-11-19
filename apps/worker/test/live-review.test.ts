@@ -4,6 +4,8 @@
 // draft with the files it was made with, never the files of the version it replaces. Also the
 // doc's HTML-document rule on the socket, the files part of the conflict frame and its cap, the
 // stager parity of the live rules, and AppConfig.inline_editing.
+import { runInDurableObject } from "cloudflare:test";
+import { env } from "cloudflare:workers";
 import { HTML_DOCUMENT_RE, liveRules, typeDef, updateArtifactInput } from "@plinth/shared";
 import { describe, expect, it } from "vitest";
 import { docHooks } from "../src/services/artifactTypes/doc.ts";
@@ -54,8 +56,14 @@ async function docWithFiles() {
   });
 }
 
-async function editLines(c: Client & { welcome: Frame }, start: number, end: number, text: string) {
-  c.send({ t: "lease", rev: 0, start, end });
+async function editLines(
+  c: Client & { welcome: Frame },
+  start: number,
+  end: number,
+  text: string,
+  rev = 0,
+) {
+  c.send({ t: "lease", rev, start, end });
   let lease = "";
   for (;;) {
     const f = await c.next();
@@ -259,6 +267,81 @@ describe("the files part of the conflict frame", () => {
     expect(f.files.added.length + f.files.more).toBe(300);
     expect(new TextEncoder().encode(JSON.stringify(f)).byteLength).toBeLessThan(16 * 1024);
     a.ws.close(1000);
+  });
+});
+
+describe("the files part after a late save", () => {
+  it("a version that freezes the draft while a save's finish reads files keeps its own files list", async () => {
+    const { id, owner, ownerP } = await docWithFiles();
+    const a = await connectDoc(id, ownerP.cookie);
+    expect(await editLines(a, 4, 5, "First, by a person.")).toBeNull();
+    const ns = env.ROOMS;
+    if (!ns) throw new Error("no ROOMS binding");
+    const stub = ns.get(ns.idFromName(id));
+    type Doc = {
+      loaded: unknown;
+      version: (...args: unknown[]) => Promise<void>;
+      outside: (d: unknown, n: number, h: string | null) => Promise<void>;
+      filesBetween: (d: unknown, a: number, b: number) => Promise<unknown>;
+    };
+    const docOf = (room: unknown) => (room as { doc: Doc }).doc;
+    // Version notifies are held back, so the test delivers each one when the race needs it.
+    await runInDurableObject(stub, async (room) => {
+      docOf(room).version = async () => undefined;
+    });
+    // A page Publish snapshots the draft; the page edits the same line again meanwhile.
+    const snap = await stub.docSnapshot(id);
+    expect(await editLines(a, 4, 5, "First, by a person, twice.", 1)).toBeNull();
+    const put = (body: Record<string, unknown>) =>
+      call(id, owner.auth, "", { method: "PUT", body });
+    // v2 is that Publish (its finish has not reached the room yet).
+    expect((await put({ content: snap.text, base_version: 1, files_from_version: 1 })).status).toBe(
+      200,
+    );
+    // v3, by an agent, replaces chart.png and changes the same line: the draft freezes against it.
+    const v3 = { content: BASE.replace("First.", "First, by an agent."), base_version: 2 };
+    expect((await put({ ...v3, assets: [png("chart.png", PNG_B), png("old.png")] })).status).toBe(
+      200,
+    );
+    await runInDurableObject(stub, async (room) => {
+      const doc = docOf(room);
+      await doc.outside(doc.loaded, 3, null);
+    });
+    expect(await a.nextOf("conflict")).toMatchObject({ version: 3 });
+    // v4 also drops old.png and adds new.png; its notify lands while v2's finish reads v2 to v3.
+    const v4 = { content: BASE.replace("First.", "First, by an agent, again."), base_version: 3 };
+    expect((await put({ ...v4, assets: [png("chart.png", PNG_B), png("new.png")] })).status).toBe(
+      200,
+    );
+    await runInDurableObject(stub, async (room) => {
+      const doc = docOf(room);
+      const between = doc.filesBetween.bind(doc);
+      let once = true;
+      doc.filesBetween = async (d, x, y) => {
+        const out = await between(d, x, y);
+        if (once) {
+          once = false;
+          await doc.outside(doc.loaded, 4, null);
+        }
+        return out;
+      };
+    });
+    await stub.docFinish(id, 2, snap.text, snap.lock, snap.epoch);
+    // The review lists what v4 changed in v2's files, not what v3 did.
+    const files = { added: [{ path: "new.png" }], removed: [{ path: "old.png" }] };
+    expect(await a.nextOf("conflict")).toMatchObject({ version: 4, files });
+    const b = await connectDoc(id, ownerP.cookie);
+    expect(b.welcome).toMatchObject({
+      base_version: 2,
+      conflict_version: 4,
+      files: { ...files, replaced: [{ path: "chart.png" }] },
+    });
+    // No later frame re-sends the review with another version's list.
+    for (const f of a.pending().filter((x) => x.t === "conflict")) {
+      expect(f).toMatchObject({ version: 4, files });
+    }
+    a.ws.close(1000);
+    b.ws.close(1000);
   });
 });
 
