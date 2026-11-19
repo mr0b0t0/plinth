@@ -398,7 +398,11 @@ category filter returns nothing); `GET /categories` returns none; the category i
 `seesOwnerMetadata(principal, role)` and `data_usage` by `decide(data_read)`; `canActOnMention`
 refuses a bound token (which never holds `mentions`), and an `@<label>` mention never targets one.
 `GET /me` answers a bound token with the person's id and the connection only: no email, name,
-artifact count or limit, or admin flag. The Connections list and `GET /me` name the bound artifact
+artifact count or limit, or admin flag. Artifact summaries (`get_artifact`, `list_artifacts`, update
+results) and the version list show it the people as a link viewer sees them
+(`seesPeople(principal, role)`): the owner by name with no id or email, a version's author by name or
+the address's local part with no ids, even when the token is the owner's, so a leaked CI token
+gives away no email address. The Connections list and `GET /me` name the bound artifact
 only where `decide(view)` allows it for the person now. A binding only narrows: the column is never
 updated, deleting or taking down the artifact revokes its tokens, erasing it removes them by cascade
 (never `SET NULL`), and a CHECK refuses it on an OAuth connection. Only the artifact's owner or an

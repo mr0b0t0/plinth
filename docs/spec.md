@@ -201,7 +201,9 @@ comments (reading or writing them), shared data, view counts or mentions (403 `t
 own artifact while it may view it; once its person may not, every action answers as viewing does).
 It is never the target of an `@<label>` mention. It does not see the artifact's category, its
 shared-data usage or the owner's category names; it does see the version list and `live_draft`
-metadata, as an editor's agent does. Only the artifact's owner or an editor can make one. The limit
+metadata, as an editor's agent does, but sees the people only as a link viewer does: the owner by
+name, with no id or email, and each version's author by name or the address's local part, with no
+ids, even when the token is the owner's. Only the artifact's owner or an editor can make one. The limit
 never widens; deleting or taking down the artifact revokes it, and removing the person's grant stops
 it.
 
@@ -660,7 +662,11 @@ keeps every run. Guide: `docs/ci.md`.
   `nothing_to_publish`, `already_published`, `dry_run`, `conflict`, `unknown` or `error`),
   `current-version` (on a conflict), `verified`, `warnings` and `json` (the CLI's `--json`). The
   step's exit code is the CLI's (3 on a conflict, never retried); `fail-on-warnings` turns a
-  published run with warnings into 1.
+  published run with warnings into 1. `not_scanned` and `live_draft` need no action: they get no
+  annotation and are not counted by `warnings` or `fail-on-warnings`. On a conflict the summary
+  says to re-run when the step has no `base-version` (someone published while it was sending), and
+  to check what changed and set `base-version` to the current version when it has one (a re-run
+  with the same one stops the same way).
 - **Which artifact.** `id`, else the artifact the token is limited to, else a new private
   artifact (the summary then says to add `id:`). A token limited to one artifact with an `id` that
   names another artifact fails with exit 2 before anything is sent, and so does `base-version`
@@ -671,7 +677,8 @@ keeps every run. Guide: `docs/ci.md`.
   re-run publishes the build again, and without `id` it creates another artifact.
 - **Version note.** By default `<commit subject> (<short sha>)` (the push's head commit, else the
   pull request title, else the checkout's last commit, else `<workflow> #<run number>`), at most
-  500 characters, keeping the SHA. `note: "-"` sends none. `link-run: true` appends the run's URL;
+  500 characters (UTF-16 code units, as the server counts them, never splitting a character),
+  keeping the SHA. `note: "-"` sends none. `link-run: true` appends the run's URL;
   it is off by default because the note, like the token's label, is shown to everyone who can
   view the artifact's history.
 - **Untrusted text.** Everything the client prints runs between `::stop-commands::<random>` and

@@ -584,15 +584,19 @@ function report(result, check, opts, out) {
 }
 
 /**
- * Warnings to fix, and notes that need no action: `not_scanned` only says the reference check did
- * not read some files (past its budget, or sent unchanged as {path, sha256}); nothing in the
- * folder can or should change for it.
+ * Warning codes that need no action: `not_scanned` only says the reference check did not read
+ * some files (past its budget, or sent unchanged as {path, sha256}), and `live_draft` only says
+ * people have unsaved edits on a doc's page (nothing was overwritten). Nothing in the folder can
+ * or should change for either.
  */
+const NOTE_CODES = new Set(["not_scanned", "live_draft"]);
+
+/** Warnings to fix, and notes that need no action (NOTE_CODES). */
 export function splitWarnings(warnings) {
   const all = warnings ?? [];
   return {
-    fix: all.filter((w) => w.code !== "not_scanned"),
-    notes: all.filter((w) => w.code === "not_scanned"),
+    fix: all.filter((w) => !NOTE_CODES.has(w?.code)),
+    notes: all.filter((w) => NOTE_CODES.has(w?.code)),
   };
 }
 

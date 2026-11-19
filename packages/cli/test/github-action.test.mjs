@@ -12,7 +12,10 @@ import path from "node:path";
 import { after, before, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import {
+  actionableWarnings,
   buildArgv,
+  conflictAdvice,
+  cut,
   defaultNote,
   escapeData,
   escapeMarkdown,
@@ -207,6 +210,27 @@ describe("the GitHub Action", () => {
     const note = fake.state.lastPut.note;
     assert.equal([...note].length, 500);
     assert.ok(note.endsWith(" (0123456)"));
+
+    // The server counts UTF-16 code units: a subject of emoji (two units each) must still fit.
+    const astral = await action(
+      { path: build({ "index.html": "<p>5</p>" }), id: a.id },
+      { event: { head_commit: { message: "🚀".repeat(300) } } },
+    );
+    assert.equal(astral.code, 0, astral.stdout);
+    const cutNote = fake.state.lastPut.note;
+    assert.ok(cutNote.length <= 500, `${cutNote.length} code units`);
+    assert.ok(cutNote.isWellFormed(), "never splits a surrogate pair");
+    assert.ok(cutNote.endsWith(" (0123456)"));
+    const given = await action({
+      path: build({ "index.html": "<p>6</p>" }),
+      id: a.id,
+      note: "🚀".repeat(400),
+      "link-run": "true",
+    });
+    assert.equal(given.code, 0, given.stdout);
+    const givenNote = fake.state.lastPut.note;
+    assert.ok(givenNote.length <= 500 && givenNote.isWellFormed());
+    assert.ok(givenNote.endsWith(" https://github.com/acme/reports/actions/runs/4242"));
   });
 
   it("a conflict: exit 3, outcome conflict, the current version and an error annotation", async () => {
@@ -222,7 +246,50 @@ describe("the GitHub Action", () => {
     assert.equal(r.outputs["current-version"], "2");
     const { after: tail } = blocks(r.lines);
     assert.ok(tail.some((l) => l.startsWith("::error title=Plinth::")));
+    // base-version is past: a re-run with the same one stops the same way, so it says to change it.
+    assert.match(r.summary, /The artifact is at v2, past the base-version this step states/);
+    assert.match(r.summary, /set base-version to 2/);
+    assert.doesNotMatch(r.summary, /while this run was sending/);
+  });
+
+  it("a conflict without base-version: someone published while it was sending, so re-run", async () => {
+    const a = fake.seed({ "index.html": "<p>1</p>" });
+    fake.state.bumpBeforePut = () => fake.bump(a);
+    const r = await action({ path: build({ "index.html": "<p>x</p>" }), id: a.id });
+    assert.equal(r.code, 3, r.stdout);
+    assert.equal(r.outputs.outcome, "conflict");
+    assert.equal(r.outputs["current-version"], "2");
     assert.match(r.summary, /Someone published v2 while this run was sending/);
+    assert.match(r.summary, /Re-run the job/);
+    assert.doesNotMatch(r.summary, /base-version/);
+  });
+
+  it("fail-on-warnings ignores the notes that need no action (not_scanned, live_draft)", async () => {
+    const a = fake.seed({ "content.md": "# 1" }, "doc");
+    fake.state.warnings = [
+      {
+        code: "live_draft",
+        file: "content.md",
+        message: "Nothing was overwritten. No action needed.",
+      },
+      { code: "not_scanned", file: "a.js", count: 1, message: "1 file was not checked" },
+    ];
+    try {
+      const r = await action({
+        path: build({ "content.md": "# 2" }),
+        id: a.id,
+        "fail-on-warnings": "true",
+      });
+      assert.equal(r.code, 0, r.stdout);
+      assert.equal(r.outputs.outcome, "published");
+      assert.equal(r.outputs.warnings, "0");
+      const { after: tail } = blocks(r.lines);
+      assert.ok(!tail.some((l) => l.startsWith("::warning")), tail.join("\n"));
+      assert.ok(!tail.some((l) => l.startsWith("::error")), tail.join("\n"));
+      assert.doesNotMatch(r.summary, /\| Warnings \|/);
+    } finally {
+      fake.state.warnings = null;
+    }
   });
 
   it("fail-on-warnings: exit 1 with a warning, and it is still published", async () => {
@@ -441,6 +508,50 @@ describe("the GitHub Action", () => {
 });
 
 describe("the Action's helpers", () => {
+  it("cut counts UTF-16 code units, as the server does, and never splits a surrogate pair", () => {
+    assert.equal(cut("abc", 5), "abc");
+    assert.equal(cut("abcdef", 4), "abcd");
+    // "a🚀🚀" is 5 units: 4 would end inside the second pair, so it drops the whole pair.
+    assert.equal(cut("a🚀🚀", 4), "a🚀");
+    assert.equal(cut("a🚀🚀", 3), "a🚀");
+    assert.equal(cut("🚀", 1), "");
+    const env = { GITHUB_SHA: SHA };
+    const i = readInputs({ INPUT_TOKEN: PAT, INPUT_PATH: "dist" });
+    for (const subject of ["🚀".repeat(300), `x${"🚀".repeat(300)}`]) {
+      const note = defaultNote(
+        i,
+        env,
+        () => ({ head_commit: { message: subject } }),
+        () => "",
+      );
+      assert.ok(note.length <= 500 && note.length >= 499, String(note.length));
+      assert.ok(note.isWellFormed());
+      assert.ok(note.endsWith(" (0123456)"));
+    }
+  });
+
+  it("conflict advice: re-run after a race, change base-version when it is past", () => {
+    assert.match(conflictAdvice("7", false), /Someone published v7 while this run was sending/);
+    const stated = conflictAdvice("7", true);
+    assert.match(stated, /set base-version to 7/);
+    assert.doesNotMatch(stated, /while this run was sending/);
+  });
+
+  it("counts only the warnings that need a fix", () => {
+    const json = {
+      warnings: [
+        { code: "live_draft", file: "content.md", message: "x" },
+        { code: "not_scanned", file: "a.js", message: "x" },
+        { code: "missing_file", file: "index.html", message: "x" },
+      ],
+    };
+    assert.deepEqual(
+      actionableWarnings(json).map((w) => w.code),
+      ["missing_file"],
+    );
+    assert.deepEqual(actionableWarnings(null), []);
+  });
+
   it("escape workflow command data and properties", () => {
     assert.equal(escapeData("a%b\r\nc"), "a%25b%0D%0Ac");
     assert.equal(escapeProperty("t: a, b%\n"), "t%3A a%2C b%25%0A");

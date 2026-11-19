@@ -4,6 +4,7 @@
 // Markdown. main.mjs does the I/O.
 import { randomBytes } from "node:crypto";
 import { appendFileSync } from "node:fs";
+import { splitWarnings } from "../packages/cli/bin/client/publish.mjs";
 import { LIMITS } from "../packages/cli/bin/client/vendor/constants.mjs";
 
 /** The longest version note the server takes. */
@@ -74,10 +75,16 @@ export function readInputs(env) {
   return out;
 }
 
-/** `s` cut to `max` code points (never inside a surrogate pair). */
-function cut(s, max) {
-  const cps = [...s];
-  return cps.length <= max ? s : cps.slice(0, max).join("");
+/**
+ * `s` cut to at most `max` UTF-16 code units, the length the server's note limit counts
+ * (`z.string().max`), never inside a surrogate pair.
+ */
+export function cut(s, max) {
+  if (s.length <= max) return s;
+  let end = Math.max(0, max);
+  const last = s.charCodeAt(end - 1);
+  if (last >= 0xd800 && last <= 0xdbff) end--;
+  return s.slice(0, end);
 }
 
 /**
@@ -114,17 +121,18 @@ export function runUrl(env) {
 
 /**
  * The version note: the input, or "<commit subject> (<short sha>)"; with link-run, this run's URL
- * after it. Cut to MAX_NOTE_LENGTH, keeping the SHA and the link. "-" sends none (null).
+ * after it. Cut to MAX_NOTE_LENGTH (UTF-16 code units, as the server counts), keeping the SHA and
+ * the link. "-" sends none (null).
  */
 export function defaultNote(inputs, env, readEvent, gitSubject) {
   if (inputs.note === "-") return null;
   const link = inputs.linkRun ? runUrl(env) : null;
   const tail = link ? ` ${link}` : "";
-  if (inputs.note) return cut(inputs.note, MAX_NOTE_LENGTH - [...tail].length) + tail;
+  if (inputs.note) return cut(inputs.note, MAX_NOTE_LENGTH - tail.length) + tail;
   const sha = (env.GITHUB_SHA ?? "").slice(0, 7);
   const suffix = `${sha ? ` (${sha})` : ""}${tail}`;
   const subject = commitSubject(env, readEvent, gitSubject);
-  return cut(subject, MAX_NOTE_LENGTH - [...suffix].length) + suffix;
+  return cut(subject, MAX_NOTE_LENGTH - suffix.length) + suffix;
 }
 
 /** The refusal for base-version with nothing to update: a new artifact has no version to check. */
@@ -166,6 +174,27 @@ export function unknownAdvice(json, baseStated) {
   return `${lost} Check the artifacts list before re-running: a re-run without id creates another new artifact if this one was created.`;
 }
 
+/**
+ * The publish warnings that ask for a fix: the ones the annotations show, the `warnings` output
+ * counts and fail-on-warnings fails on. not_scanned and live_draft are notes that need no action.
+ */
+export function actionableWarnings(json) {
+  return splitWarnings(Array.isArray(json?.warnings) ? json.warnings : []).fix;
+}
+
+/**
+ * What to do after a conflict. Without base-version the run read the version itself and someone
+ * published while it was sending, so a re-run publishes this build on top. With base-version the
+ * artifact is past the version the step names, and a re-run with the same base-version stops the
+ * same way, so the step's base-version has to change.
+ */
+export function conflictAdvice(current, baseStated) {
+  const now = current ? `v${current}` : "a newer version";
+  if (baseStated)
+    return `The artifact is at ${now}, past the base-version this step states, so nothing was published. Check what changed, then set base-version to ${current || "the current version"} (or remove it) and re-run: a re-run with the same base-version stops the same way.`;
+  return `Someone published ${now} while this run was sending, so nothing was published. Re-run the job to publish this build as the next version.`;
+}
+
 /** The outcome for a CLI exit code and its --json object. */
 export function outcomeOf(code, json) {
   if (json?.published === "unknown") return "unknown";
@@ -200,7 +229,7 @@ export function formatOutputs({ code, json, raw, origin }) {
       slug && v > 1 ? `${page}/compare?from=${v - 1}&to=${v}&view=rendered` : "",
     ]);
     pairs.push(["verified", json.verified === true ? "true" : "false"]);
-    pairs.push(["warnings", String(Array.isArray(json.warnings) ? json.warnings.length : 0)]);
+    pairs.push(["warnings", String(actionableWarnings(json).length)]);
   }
   if (Number.isInteger(json?.current_version))
     pairs.push(["current-version", String(json.current_version)]);
@@ -282,7 +311,7 @@ export function renderSummary({ code, json, outputs, created, message, baseState
         `| Sent | ${size(s.bytes_written)} written, ${s.reused} files reused; ${json.verified ? "verified" : "not verified"} |`,
       );
     }
-    const warnings = Array.isArray(json?.warnings) ? json.warnings : [];
+    const warnings = actionableWarnings(json);
     if (warnings.length) {
       const first = warnings
         .slice(0, 5)
@@ -307,12 +336,7 @@ export function renderSummary({ code, json, outputs, created, message, baseState
   } else if (outcome === "dry_run") {
     lines.push("### Plinth: dry run", "", "Checked the build; nothing was sent.");
   } else if (outcome === "conflict") {
-    const now = out["current-version"] ? `v${out["current-version"]}` : "a newer version";
-    lines.push(
-      "### Plinth: not published",
-      "",
-      `Someone published ${now} while this run was sending. Re-run the job.`,
-    );
+    lines.push("### Plinth: not published", "", conflictAdvice(out["current-version"], baseStated));
   } else if (outcome === "unknown") {
     lines.push("### Plinth: outcome unknown", "", escapeMarkdown(unknownAdvice(json, baseStated)));
   } else {

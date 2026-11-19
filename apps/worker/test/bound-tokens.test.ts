@@ -193,6 +193,63 @@ describe("using a token limited to one artifact", () => {
     expect((await req("GET", `/artifacts/${other.id}/versions`, t.auth)).status).toBe(404);
   });
 
+  it("sees the owner and the version authors as a link viewer does: no email or ids", async () => {
+    const { owner, h, id } = await setup();
+    const editor = await createUser();
+    const share = await req("PUT", `/artifacts/${id}/sharing`, h, {
+      grants: [{ email: editor.email, role: "editor" }],
+    });
+    expect(share.status).toBe(200);
+    // A version published from the app by the editor, so the list names a person, not a token.
+    const fromApp = await req("PUT", `/artifacts/${id}`, await signedIn(editor.id), {
+      html: DATA_PAGE.replace("A report", "Edited in the app"),
+      base_version: 1,
+    });
+    expect(fromApp.status, JSON.stringify(fromApp.body)).toBe(200);
+    for (const person of [h, await signedIn(editor.id)]) {
+      const t = await boundToken(person, id);
+      const got = await req("GET", `/artifacts/${id}`, t.auth);
+      expect(got.status).toBe(200);
+      expect(got.body.owner).toEqual({ id: null, email: null, name: owner.user.name ?? null });
+      const list = await req("GET", "/artifacts", t.auth);
+      expect(list.body.items[0].owner).toEqual(got.body.owner);
+      const versions = await req("GET", `/artifacts/${id}/versions`, t.auth);
+      expect(versions.status).toBe(200);
+      const byNumber = (n: number) =>
+        versions.body.items.find((v: { number: number }) => v.number === n);
+      expect(byNumber(2).author).toEqual({
+        kind: "user",
+        label: editor.email.split("@")[0],
+        user_id: null,
+        connection_id: null,
+      });
+      expect(byNumber(1).author).toMatchObject({
+        kind: "connection",
+        label: "Test token",
+        user_id: null,
+        connection_id: null,
+      });
+      const put = await req("PUT", `/artifacts/${id}`, t.auth, {
+        html: DATA_PAGE.replace("A report", `Build ${t.connectionId}`),
+        base_version: got.body.version,
+      });
+      expect(put.status).toBe(200);
+      for (const body of [got.body, list.body, versions.body, put.body]) {
+        expect(JSON.stringify(body)).not.toContain(owner.user.email);
+        expect(JSON.stringify(body)).not.toContain(editor.email);
+      }
+    }
+    // Account-wide tokens and sessions still see who the people are.
+    const wide = await req("GET", `/artifacts/${id}`, owner.auth);
+    expect(wide.body.owner).toMatchObject({ id: owner.user.id, email: owner.user.email });
+    const wideVersions = await req("GET", `/artifacts/${id}/versions`, owner.auth);
+    const v2 = wideVersions.body.items.find((v: { number: number }) => v.number === 2);
+    expect(v2.author).toMatchObject({
+      label: editor.email,
+      user_id: editor.id,
+    });
+  });
+
   it("a read-only bound token gets 404, never 403, for a write on another artifact", async () => {
     const { h, id, other } = await setup();
     const t = await boundToken(h, id, ["artifacts:read"]);

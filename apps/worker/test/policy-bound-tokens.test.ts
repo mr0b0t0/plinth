@@ -14,6 +14,7 @@ import {
   type Principal,
   scopeFor,
   seesOwnerMetadata,
+  seesPeople,
 } from "../src/policy.ts";
 
 const OWNER = "u-owner";
@@ -200,7 +201,7 @@ describe("policy: a token bound to one artifact", () => {
     }
   });
 
-  it("the helpers: boundArtifactOf, mayCreateArtifacts, seesOwnerMetadata, canActOnMention", () => {
+  it("the helpers: boundArtifactOf, mayCreateArtifacts, seesOwnerMetadata, seesPeople, canActOnMention", () => {
     const wide = {
       ...(boundAgent(ALL) as Extract<Principal, { kind: "agent" }>),
       boundArtifactId: null,
@@ -217,6 +218,14 @@ describe("policy: a token bound to one artifact", () => {
     expect(seesOwnerMetadata(boundAgent(), "owner")).toBe(false);
     expect(seesOwnerMetadata(wide, "owner")).toBe(true);
     expect(seesOwnerMetadata(user, "owner")).toBe(true);
+    // Who the people are: role holders, never a bound token (even the owner's) or a link viewer.
+    for (const role of ["owner", "editor", "commenter", "viewer"] as const) {
+      expect(seesPeople(boundAgent(), role), role).toBe(false);
+      expect(seesPeople(wide, role), role).toBe(true);
+      expect(seesPeople(user, role), role).toBe(true);
+    }
+    expect(seesPeople(user, null)).toBe(false);
+    expect(seesPeople(anon, null)).toBe(false);
     const task = { targetConnection: "c-ci", targetClientType: null };
     expect(canActOnMention(boundAgent(ALL), task, OWNER)).toBe(false);
     expect(canActOnMention({ ...wide, connectionId: "c-ci" }, task, OWNER)).toBe(true);

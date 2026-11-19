@@ -41,6 +41,7 @@ import {
   principalEmail,
   principalUserId,
   seesOwnerMetadata,
+  seesPeople,
 } from "../policy.ts";
 import { notifyRoom } from "../rooms/notify.ts";
 import { requireTypeDef, resolveSource } from "./artifactTypes.ts";
@@ -241,8 +242,8 @@ export function toSummary(
     updated_at: a.updatedAt,
     url: appUrl(ctx.config, `/a/${a.slug}`),
     content_url: `${contentOrigin(ctx.config, a.id)}/`,
-    // Link viewers (no role) do not learn the owner's address or id.
-    owner: role
+    // Link viewers (no role) and tokens bound to one artifact do not learn the owner's address or id.
+    owner: seesPeople(ctx.principal, role)
       ? { id: owner.id, email: owner.email, name: owner.name }
       : { id: null, email: null, name: owner.name },
     // Callers only build summaries for artifacts the principal may view; viewers get "viewer".
@@ -655,19 +656,21 @@ export async function listVersions(ctx: Ctx, ref: string): Promise<VersionInfo[]
     )
     .orderBy(desc(versions.number))
     .all();
+  // Link viewers and tokens bound to one artifact: names or local parts, no ids (seesPeople).
+  const people = seesPeople(ctx.principal, role);
   return rows.map(({ v, user, conn }) => {
     const author: Author = conn
       ? {
           kind: "connection",
           label: conn.label,
-          user_id: role ? v.createdByUser : null,
-          connection_id: role ? conn.id : null,
+          user_id: people ? v.createdByUser : null,
+          connection_id: people ? conn.id : null,
         }
       : {
           kind: "user",
           // Link viewers see a name or the address's local part, never the full email.
-          label: user?.name || (role ? user?.email : user?.email?.split("@")[0]) || "Unknown",
-          user_id: role ? v.createdByUser : null,
+          label: user?.name || (people ? user?.email : user?.email?.split("@")[0]) || "Unknown",
+          user_id: people ? v.createdByUser : null,
           connection_id: null,
         };
     return {

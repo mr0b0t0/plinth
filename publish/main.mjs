@@ -15,6 +15,7 @@ import { main as clientMain, userAgentFor } from "../packages/cli/bin/client/mai
 import { resolveOrigin } from "../packages/cli/bin/client/origin.mjs";
 import { bindingOf } from "../packages/cli/bin/client/publish.mjs";
 import {
+  actionableWarnings,
   BASE_VERSION_NEEDS_ID,
   buildArgv,
   defaultNote,
@@ -178,14 +179,14 @@ export async function run() {
   const origin = result.origin ?? inputs.url.replace(/\/+$/, "");
   const outputs = formatOutputs({ code: result.code, json: result.json, raw: result.raw, origin });
   if (ENV.GITHUB_OUTPUT) writeOutputFile(ENV.GITHUB_OUTPUT, outputs);
-  const warnings = Array.isArray(result.json?.warnings) ? result.json.warnings : [];
+  // not_scanned and live_draft need no action: no annotation, and fail-on-warnings ignores them.
+  const warnings = actionableWarnings(result.json);
   for (const w of warnings) {
-    if (w?.code === "not_scanned") continue;
     line(`::warning title=Plinth::${escapeData(`${w?.code} ${w?.file}: ${w?.message}`)}`);
   }
   let code = result.code;
   if (code !== 0) errorAnnotation(result.message ?? `The publish failed (exit ${code})`);
-  const counted = warnings.filter((w) => w?.code !== "not_scanned").length;
+  const counted = warnings.length;
   if (code === 0 && inputs.failOnWarnings && counted > 0) {
     errorAnnotation(`Published, with ${counted} warnings (fail-on-warnings is on)`);
     code = EXIT.error;

@@ -140,11 +140,12 @@ is safe.
 | `base-version` | empty | Publish only if the artifact is still at this version. Needs an artifact to update (`id`, or a token limited to one): without one the step fails with exit code 2 and creates nothing |
 | `include-maps` | `false` | Also send source maps |
 | `dry-run` | `false` | Check the build and report what would be sent; publish nothing |
-| `fail-on-warnings` | `false` | Fail the step when the publish reports warnings (it is still published) |
+| `fail-on-warnings` | `false` | Fail the step when the publish reports warnings (it is still published). `not_scanned` and `live_draft` need no action and never fail it |
 | `summary` | `true` | Write a job summary with the links |
 
 The default note is the subject of the commit that triggered the run (or the pull request's
-title), then the short SHA, at most 500 characters.
+title), then the short SHA, at most 500 characters (counted as the server counts them: an emoji
+takes two).
 
 ### Outputs
 
@@ -158,7 +159,7 @@ title), then the short SHA, at most 500 characters.
 | `outcome` | `published`, `nothing_to_publish`, `already_published`, `dry_run`, `conflict`, `unknown` or `error` |
 | `current-version` | On a conflict, the version someone else published |
 | `verified` | `true` when every file was read back and matched |
-| `warnings` | The number of publish warnings (missing files, blocked hosts) |
+| `warnings` | The number of publish warnings to fix (missing files, blocked hosts). Not counted: `not_scanned` (some files were not checked) and `live_draft` (people have unsaved edits on a doc's page; nothing was overwritten) |
 | `json` | The CLI's `--json` output (untrusted, see above) |
 
 ## Pull requests and forks
@@ -227,7 +228,7 @@ limited to one artifact, `--id` may be left out.
 | 0 | `published`, `nothing_to_publish`, `already_published`, `dry_run` | Done. With `base-version`, a build that matches the current version (or the one after it, published by an earlier run whose answer was lost) sends nothing |
 | 1 | `error`, `unknown` | Failed. `unknown`: the build was sent but the answer was lost, so it may have been published. Re-run with `base-version` set to the version the build was sent against (the summary names it): the re-run sends nothing if the build landed and stops with a conflict if someone else published first. A re-run without `base-version` publishes the build again, and one without `id` creates another artifact |
 | 2 | `error` | A usage problem: a bad input, a path that is not a build folder or an `.html` or `.md` file, or an `id` other than the token's artifact |
-| 3 | `conflict` | Someone published a newer version while this run was sending. Never retried |
+| 3 | `conflict` | Nothing was published. Without `base-version`: someone published a newer version while this run was sending; re-run the job. With `base-version`: the artifact is past that version; check what changed and set `base-version` to the current version (`current-version`), since a re-run with the same one stops the same way. Never retried |
 
 With `--json`, the CLI prints one JSON object on stdout for every outcome: the result
 (`id`, `slug`, `version`, `url`, `content_url`, `stored`, `warnings`, `verified`, `title`), or

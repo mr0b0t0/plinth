@@ -129,7 +129,9 @@ npx @mr0b0t0/plinth publish report.html   # one page (sent as index.html); notes
   later even when its files equal the folder, since then someone else published too.
 - **Checks.** It reads the new version back and compares every file's SHA-256 with the folder,
   then prints the link, how many files were written and reused, and any warnings (for example a
-  file the page refers to that is not in the folder). `--json` prints `id`, `slug`, `version`,
+  file the page refers to that is not in the folder). `not_scanned` (some files were not checked)
+  and `live_draft` (people have unsaved edits on a doc's page) are printed as notes that need no
+  action. `--json` prints `id`, `slug`, `version`,
   `url`, `content_url`, `stored`, `warnings`, `verified` and `title` for scripts and agents (and
   `category` when you passed `--category`; after a lost answer it is read back from the artifact,
   and left out only when that read fails too). With `--json`, a failure prints one object too:

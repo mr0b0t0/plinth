@@ -14,9 +14,11 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   or one HTML or Markdown file as the next version of an artifact on every run, with the commit in
   the version note and the links in the job summary. A token can now be limited to one artifact
   (the artifact's Settings, **Publish from CI**): it reads that artifact and publishes new versions
-  of it, nothing else, and deleting the artifact revokes it. `plinth publish` takes a single
+  of it, nothing else (not even the owner's or other people's email addresses), and deleting the
+  artifact revokes it. `plinth publish` takes a single
   `.html` or `.md` file, uses a token's artifact when `--id` is left out, and with `--json` prints
-  a JSON object on failure too. GitLab CI and cron: `docs/ci.md` (#51).
+  a JSON object on failure too, and prints `live_draft` as a note that needs no action. GitLab CI
+  and cron: `docs/ci.md` (#51).
 - **The Claude Code plugin remembers your instance.** It asks which Plinth instance to use when you
   enable it (the hosted one by default), keeps the answer, and its mention watcher follows it, so a
   self-hosted or local instance no longer needs `PLINTH_URL` exported every time Claude Code starts.

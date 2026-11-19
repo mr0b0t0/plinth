@@ -48,7 +48,7 @@ inputs:
     required: false
     default: "false"
   fail-on-warnings:
-    description: Fail the step when the publish reports warnings (it is still published)
+    description: Fail the step when the publish reports warnings to fix (it is still published; not_scanned and live_draft never fail it)
     required: false
     default: "false"
   summary:
@@ -75,7 +75,7 @@ outputs:
   verified:
     description: true when every file was read back and matched
   warnings:
-    description: The number of publish warnings
+    description: The number of publish warnings to fix (not counting not_scanned and live_draft)
   json:
     description: "The CLI's --json output. It holds the artifact's title and warning text: untrusted, never paste it into a script"
 runs:

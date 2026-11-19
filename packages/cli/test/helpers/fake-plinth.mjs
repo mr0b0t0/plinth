@@ -465,6 +465,9 @@ export async function startFakePlinth(options = {}) {
         if (req.method === "PUT") {
           const input = JSON.parse((await body(req)).toString());
           state.lastPut = input;
+          // The server's noteSchema: z.string().trim().max(500), which counts UTF-16 code units.
+          if (typeof input.note === "string" && input.note.trim().length > 500)
+            return apiError(res, 400, "invalid_input", "note is too long", { field: "note" });
           if (state.putError) {
             const e = state.putError;
             state.putError = null;

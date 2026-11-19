@@ -1287,6 +1287,22 @@ describe("reporting", () => {
     assert.deepEqual(splitWarnings(undefined), { fix: [], notes: [] });
   });
 
+  it("treats live_draft as a note too: nothing was overwritten and nothing needs a fix", () => {
+    const w = [
+      { code: "live_draft", file: "content.md", message: "Nothing was overwritten." },
+      { code: "blocked_host", file: "content.md", message: "evil.example is blocked" },
+    ];
+    const { fix, notes } = splitWarnings(w);
+    assert.deepEqual(
+      fix.map((x) => x.code),
+      ["blocked_host"],
+    );
+    assert.deepEqual(
+      notes.map((x) => x.code),
+      ["live_draft"],
+    );
+  });
+
   it('names a version conflict whether or not the server gives reason "conflict"', () => {
     const err = (details) => new ApiError(409, "conflict", "Not current", details);
     assert.equal(isVersionConflict(err({ current_version: 2 })), true);

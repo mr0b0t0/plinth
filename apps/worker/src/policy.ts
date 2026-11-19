@@ -443,6 +443,16 @@ export function boundArtifactOf(p: Principal): string | null {
   return p.kind === "agent" ? p.boundArtifactId : null;
 }
 
+/**
+ * Does this principal learn who the people on an artifact are: the owner's id and email, and the
+ * ids and full emails of the people and connections that published its versions? Role holders do;
+ * a link viewer and a token bound to one artifact (even the owner's) see them as a link viewer does,
+ * by name or the address's local part. A leaked CI token then gives away no email address.
+ */
+export function seesPeople(p: Principal, role: EffectiveRole | null): boolean {
+  return role !== null && boundArtifactOf(p) === null;
+}
+
 /** May this principal create artifacts? Not a token bound to one artifact. */
 export function mayCreateArtifacts(p: Principal): boolean {
   return boundArtifactOf(p) === null;

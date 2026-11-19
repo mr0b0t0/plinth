@@ -39,7 +39,10 @@ export interface ArtifactSummary {
   url: string;
   /** Artifact origin on the content host. Needs a viewer token unless already exchanged. */
   content_url: string;
-  /** Email and id are only shown to people with a role on the artifact (not to link viewers). */
+  /**
+   * Email and id are only shown to people with a role on the artifact (not to link viewers, nor to
+   * a token limited to one artifact).
+   */
   owner: { id: string | null; email: string | null; name: string | null };
   /** The caller's role on this artifact. */
   role: EffectiveRole;
