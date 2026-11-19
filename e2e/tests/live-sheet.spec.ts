@@ -249,7 +249,9 @@ test("an agent's edit_sheet during the page edits is never merged: the review pu
   await second.getByRole("button", { name: "Discard mine" }).click();
   const confirm = page.getByRole("alertdialog", { name: "Discard the page changes?" });
   await expect(confirm).toContainText("This change will be lost: B2: 4 → 7.");
-  await confirm.getByRole("button", { name: "Discard the page changes" }).click();
+  // Pressed, not clicked: at phone width the "Updated to v4" toast can sit over this button, and a
+  // toast under a resting pointer pauses, so a click can wait on it until the test times out.
+  await confirm.getByRole("button", { name: "Discard the page changes" }).press("Enter");
   await expect(page.getByText("The page is back to v4.")).toBeVisible({ timeout: 10_000 });
   await expect(cell(page, "B2")).toHaveText("4");
   await expect(cell(page, "B4")).toHaveText("9");
