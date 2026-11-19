@@ -2504,8 +2504,8 @@ sheet's frame still runs only Plinth's renderer (`script-src 'self'`).
   after its 30 s lock ran out is finished onto the draft only when the draft's lines were not
   replaced since its snapshot (the draft's epoch). The review draws both sheets in the frame with
   the sheet's own renderer, as text nodes, never as HTML.
-- **The renderer stays free of HTML parsing.** The editor builds its fields, lists, the edit strip,
-  the column settings with their option list, the row and column menus and the docked cell editor
+- **The renderer stays free of HTML parsing.** The editor builds its fields, lists, the column
+  settings with their option list, the row and column menus and the docked cell editor
   with `createElement` and fills them through `.value` and `textContent` (a column's name reaches
   an `aria-label` only as an attribute value); the source test that keeps HTML sinks out of the
   sheet renderer covers the editor's files. Values are checked in the frame with the same rules

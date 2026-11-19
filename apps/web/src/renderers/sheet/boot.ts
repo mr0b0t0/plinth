@@ -130,8 +130,8 @@ const ERRORS: Record<string, string> = {
 /**
  * A rebuild (new columns, a width, a row count) replaces the grid, which takes the focus out of
  * the page. This notes where it was and returns how to give it back afterwards, or null when the
- * grid did not have it. A control that outlives the rebuild (the column settings, the strip, an
- * open cell's field) gets it again, caret and all; the filter's field gives it to the new filter;
+ * grid did not have it. A control that outlives the rebuild (the column settings, an open
+ * cell's field) gets it again, caret and all; the filter's field gives it to the new filter;
  * a cell gives it to the selected cell. Anything else (a download button) leaves it where it fell:
  * never on a cell, where the next key would start editing it.
  */

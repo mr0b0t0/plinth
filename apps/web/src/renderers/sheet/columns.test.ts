@@ -97,15 +97,23 @@ const notice = () => document.querySelector(".plinth-sheet__notice")?.textConten
 const said = () => document.querySelector(".plinth-sheet__announce")?.textContent ?? "";
 const key = (el: Element, k: string, extra: KeyboardEventInit = {}) =>
   el.dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true, ...extra }));
-const button = (name: string) =>
-  [...document.querySelectorAll<HTMLButtonElement>(".plinth-sheet__strip button")].find(
-    (b) => b.textContent === name,
-  ) as HTMLButtonElement;
 const menu = () => document.querySelector<HTMLElement>('[role="menu"]');
 const item = (name: string) =>
   [...document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')].find(
     (b) => b.textContent === name,
   ) as HTMLButtonElement;
+const selectedCell = () => document.querySelector(".plinth-sheet__selected") as HTMLElement;
+/** An item of the selected cell's row menu, opened from the row's number. */
+const rowItem = (name: string) => {
+  ((selectedCell().closest("tr") as HTMLTableRowElement).cells[0] as HTMLElement).click();
+  return item(name);
+};
+/** An item of the selected cell's column menu, opened from its header's button. */
+const columnItem = (name: string) => {
+  const letters = /^__plinth-cell-([A-Z]+)\d+$/.exec(selectedCell().id)?.[1];
+  (cell(`${letters}1`).querySelector(".plinth-sheet__colmenu") as HTMLButtonElement).click();
+  return item(name);
+};
 const panel = () => document.querySelector(".plinth-sheet__panel") as HTMLFormElement;
 const labelled = (form: HTMLElement, name: string) =>
   [...form.querySelectorAll("label")].find((l) => l.firstChild?.textContent === name)
@@ -310,11 +318,12 @@ describe("the grid for keyboards and screen readers", () => {
 });
 
 describe("rows move", () => {
-  it("up and down from the strip and with Alt+Shift+arrows; formulas follow; it is said", async () => {
+  it("up and down from the row's menu and with Alt+Shift+arrows; formulas follow; it is said", async () => {
     const f = solo();
     cell("A3").focus();
-    expect(button("Move row up").disabled).toBe(false);
-    button("Move row up").click();
+    const up = rowItem("Move row up");
+    expect(up.hasAttribute("aria-disabled")).toBe(false);
+    up.click();
     const draft = await collected(f);
     expect(draft.slice(1)).toEqual([
       '["Pears",5,0.5,false,"done"]',
@@ -324,7 +333,9 @@ describe("rows move", () => {
     expect(text("A2")).toBe("Pears");
     expect(said()).toBe("Row 3 moved to row 2.");
     // The moved row stays selected: row 2 cannot move up.
-    expect(button("Move row up").disabled).toBe(true);
+    expect(rowItem("Move row up").getAttribute("aria-disabled")).toBe("true");
+    key(item("Move row up"), "Escape");
+    expect(menu()).toBeNull();
     // Pears back down with the keyboard: the total's references are as they were.
     cell("B2").focus();
     key(cell("B2"), "ArrowDown", { altKey: true, shiftKey: true });
@@ -381,7 +392,7 @@ describe("rows move", () => {
     const f = solo();
     sortOf("A1").click();
     cell("A3").focus();
-    button("Move row down").click();
+    rowItem("Move row down").click();
     expect(notice()).toContain("Turn the sort off first");
     expect(await collected(f)).toEqual(LINES);
   });
@@ -430,7 +441,7 @@ describe("rows move", () => {
     ws.frame({ t: "text", gen: "g1", part: 0, of: 1, chunk: LINES.join("\n") });
     send(f, { type: "edit", on: true });
     cell("A3").focus();
-    button("Move row down").click();
+    rowItem("Move row down").click();
     const op = { op: "move_rows", from: 3, count: 1, to: 4 };
     expect(ws.sent.at(-1)).toEqual({ t: "struct", rev: 3, op });
     // Someone inserted a row above first: Pears is row 4 now, so the move is aimed there.
@@ -493,28 +504,11 @@ describe("column widths", () => {
     expect(said()).toBe("Price: 200 pixels wide.");
   });
 
-  it("in the column settings, where an empty field means automatic", async () => {
-    const f = solo({}, [
-      JSON.stringify({ plinth: "sheet", v: 1, columns: [{ ...COLUMNS[0], width: 200 }] }),
-      '["a"]',
-    ]);
-    cell("A2").focus();
-    button("Column settings").click();
-    const w = labelled(panel(), "Width in pixels");
-    expect(w.value).toBe("200");
-    w.value = "30";
-    submit(panel());
-    expect(notice()).toContain("from 40 to 800");
-    w.value = "";
-    submit(panel());
-    expect((await header(f)).columns[0]).toEqual({ name: "Item", type: "text" });
-  });
-
   it("changed while the column settings are open: Apply keeps that width", async () => {
     vi.useFakeTimers();
     const f = solo();
     cell("B2").focus();
-    button("Column settings").click();
+    columnItem("Column settings…").click();
     labelled(panel(), "Name").value = "Quantity";
     key(sortOf("B1"), "ArrowRight", { altKey: true });
     vi.advanceTimersByTime(500);
@@ -524,24 +518,11 @@ describe("column widths", () => {
     expect((await header(f)).columns[1]).toEqual({ name: "Quantity", type: "number", width: 128 });
   });
 
-  it("changed while the column settings are open: a width typed there wins", async () => {
-    vi.useFakeTimers();
-    const f = solo();
-    cell("B2").focus();
-    button("Column settings").click();
-    labelled(panel(), "Name").value = "Quantity";
-    labelled(panel(), "Width in pixels").value = "300";
-    key(sortOf("B1"), "ArrowRight", { altKey: true });
-    vi.advanceTimersByTime(500);
-    submit(panel());
-    expect((await header(f)).columns[1]).toEqual({ name: "Quantity", type: "number", width: 300 });
-  });
-
   it("changed while the column settings are open: renamed options still reach the cells", async () => {
     vi.useFakeTimers();
     const f = solo();
     cell("E2").focus();
-    button("Column settings").click();
+    columnItem("Column settings…").click();
     (panel().querySelectorAll(".plinth-sheet__option input")[1] as HTMLInputElement).value = "Done";
     key(sortOf("E1"), "ArrowRight", { altKey: true });
     vi.advanceTimersByTime(500);
@@ -577,7 +558,7 @@ describe("column widths", () => {
   it("in the room: a width someone else set while the settings were open is kept", async () => {
     const { ws } = roomed();
     cell("B2").focus();
-    button("Column settings").click();
+    columnItem("Column settings…").click();
     labelled(panel(), "Name").value = "Quantity";
     theirs(
       ws,
@@ -600,7 +581,7 @@ describe("column widths", () => {
   it("in the room: a column inserted before it while the settings are open; they follow it", async () => {
     const { ws } = roomed();
     cell("E2").focus();
-    button("Column settings").click();
+    columnItem("Column settings…").click();
     expect(panel().getAttribute("aria-label")).toBe("Column E settings");
     // "done", which E3 holds, renamed: the cells that hold it must be renamed with it.
     (panel().querySelectorAll(".plinth-sheet__option input")[1] as HTMLInputElement).value = "Done";
@@ -637,7 +618,7 @@ describe("column widths", () => {
   it("in the room: a column inserted before it, then a removed option a cell holds is refused", async () => {
     const { ws } = roomed();
     cell("E2").focus();
-    button("Column settings").click();
+    columnItem("Column settings…").click();
     const remove = panel().querySelector('button[aria-label="Remove done"]') as HTMLButtonElement;
     remove.click();
     ws.frame({
@@ -657,7 +638,7 @@ describe("column widths", () => {
   it("in the room: its column deleted while the settings are open; they stay, saying so", async () => {
     const { ws } = roomed();
     cell("B2").focus();
-    button("Column settings").click();
+    columnItem("Column settings…").click();
     labelled(panel(), "Name").value = "Quantity";
     ws.frame({
       t: "struct",
@@ -680,7 +661,7 @@ describe("column widths", () => {
   it("in the room: the settings stay open, with what was typed, when the write is refused at the grant", async () => {
     const { ws } = roomed();
     cell("B2").focus();
-    button("Column settings").click();
+    columnItem("Column settings…").click();
     labelled(panel(), "Name").value = "Quantity";
     submit(panel());
     expect(ws.sent.at(-1)).toEqual({ t: "lease", rev: 3, start: 0, end: 1 });
@@ -704,7 +685,7 @@ describe("column widths", () => {
   it("in the room: Cancel while Apply waits for its lease applies nothing", () => {
     const { ws } = roomed();
     cell("B2").focus();
-    button("Column settings").click();
+    columnItem("Column settings…").click();
     labelled(panel(), "Name").value = "Quantity";
     submit(panel());
     expect(ws.sent.at(-1)).toEqual({ t: "lease", rev: 3, start: 0, end: 1 });
@@ -722,7 +703,7 @@ describe("column widths", () => {
   it("in the room: a rename someone else made while the settings were open still refuses", async () => {
     const { ws } = roomed();
     cell("B2").focus();
-    button("Column settings").click();
+    columnItem("Column settings…").click();
     labelled(panel(), "Name").value = "Quantity";
     theirs(
       ws,
@@ -741,7 +722,7 @@ describe("number grouping", () => {
   it("turns thousands separators off and on, only with a number format", async () => {
     const f = solo();
     cell("C2").focus();
-    button("Column settings").click();
+    columnItem("Column settings…").click();
     const g = labelled(panel(), "Thousands separators");
     expect(g.checked).toBe(true);
     expect((g.closest("label") as HTMLElement).hidden).toBe(false);
@@ -753,7 +734,7 @@ describe("number grouping", () => {
       decimals: 2,
       grouping: false,
     });
-    button("Column settings").click();
+    columnItem("Column settings…").click();
     expect(labelled(panel(), "Thousands separators").checked).toBe(false);
     labelled(panel(), "Thousands separators").checked = true;
     submit(panel());
@@ -764,7 +745,7 @@ describe("number grouping", () => {
     });
     // An automatic format has no separators to set.
     cell("B2").focus();
-    button("Column settings").click();
+    columnItem("Column settings…").click();
     expect((labelled(panel(), "Thousands separators").closest("label") as HTMLElement).hidden).toBe(
       true,
     );
@@ -782,21 +763,18 @@ describe("select options as a list", () => {
   it("adds, reorders and removes options, through a lease on the header", async () => {
     const f = solo();
     cell("E2").focus();
-    button("Column settings").click();
+    columnItem("Column settings…").click();
     expect(optionInputs()).toEqual(["new", "done"]);
     const add = panel().querySelector('input[aria-label="New option"]') as HTMLInputElement;
     add.value = "later";
     key(add, "Enter");
     expect(optionInputs()).toEqual(["new", "done", "later"]);
-    expect(panel().querySelector(".plinth-sheet__options-count")?.textContent).toBe(
-      "3 of 100 options",
-    );
     optionButton("Move later up").click();
     expect(optionInputs()).toEqual(["new", "later", "done"]);
     expect(optionButton("Move new up").disabled).toBe(true);
     submit(panel());
     expect((await header(f)).columns[4].options).toEqual(["new", "later", "done"]);
-    button("Column settings").click();
+    columnItem("Column settings…").click();
     optionButton("Remove later").click();
     submit(panel());
     expect((await header(f)).columns[4].options).toEqual(["new", "done"]);
@@ -805,7 +783,7 @@ describe("select options as a list", () => {
   it("refuses to drop an option a cell holds, saying where", async () => {
     const f = solo();
     cell("E2").focus();
-    button("Column settings").click();
+    columnItem("Column settings…").click();
     optionButton("Remove done").click();
     submit(panel());
     expect(notice()).toContain('E3 holds "done". Change those cells first, or keep the option.');
@@ -816,7 +794,7 @@ describe("select options as a list", () => {
   it("renames an option in the cells that hold it too, in one change", async () => {
     const f = solo();
     cell("E2").focus();
-    button("Column settings").click();
+    columnItem("Column settings…").click();
     const inputs = panel().querySelectorAll<HTMLInputElement>(".plinth-sheet__option input");
     (inputs[1] as HTMLInputElement).value = "Done";
     // A swap of names is a rename of both.
@@ -850,7 +828,7 @@ describe("select options as a list", () => {
     ws.frame({ t: "text", gen: "g1", part: 0, of: 1, chunk: LINES.join("\n") });
     send(f, { type: "edit", on: true });
     cell("E2").focus();
-    button("Column settings").click();
+    columnItem("Column settings…").click();
     (panel().querySelectorAll(".plinth-sheet__option input")[1] as HTMLInputElement).value = "Done";
     submit(panel());
     expect(ws.sent.at(-1)).toEqual({ t: "lease", rev: 3, start: 0, end: 4 });
@@ -859,7 +837,7 @@ describe("select options as a list", () => {
     expect(edit.t).toBe("edit");
     expect(edit.text.split("\n")[2]).toBe('["Pears",5,0.5,false,"Done"]');
     // An option no cell holds: the header alone.
-    button("Column settings").click();
+    columnItem("Column settings…").click();
     const add = panel().querySelector('input[aria-label="New option"]') as HTMLInputElement;
     add.value = "later";
     submit(panel());
@@ -929,7 +907,7 @@ describe("while someone else changes the sheet", () => {
   it("a rebuild leaves the focus in the column settings, so a key goes there, not to a cell", async () => {
     const { ws } = roomed();
     cell("B2").focus();
-    button("Column settings").click();
+    columnItem("Column settings…").click();
     const name = labelled(panel(), "Name");
     expect(document.activeElement).toBe(name);
     name.value = "Quant";
@@ -1049,6 +1027,18 @@ describe("freezing", () => {
     expect(text("A1")).toBe("Item");
     send(f, { type: "edit", on: false });
     expect(document.querySelector(".plinth-sheet__tool")).toBeNull();
+  });
+});
+
+describe("a sheet with no rows", () => {
+  it("adds its first row from a column's menu, which has no row number to open", async () => {
+    const f = solo({}, [HEADER]);
+    (cell("B1").querySelector(".plinth-sheet__colmenu") as HTMLButtonElement).click();
+    item("Insert row").click();
+    expect(await collected(f)).toEqual([HEADER, "[]"]);
+    // Once a row exists, rows come from their own menus.
+    (cell("B1").querySelector(".plinth-sheet__colmenu") as HTMLButtonElement).click();
+    expect(item("Insert row")).toBeUndefined();
   });
 });
 

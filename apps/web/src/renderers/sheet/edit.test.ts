@@ -108,10 +108,22 @@ const type = (el: HTMLInputElement, value: string) => {
   el.value = value;
   el.dispatchEvent(new Event("input"));
 };
-const button = (name: string) =>
-  [...document.querySelectorAll<HTMLButtonElement>(".plinth-sheet__strip button")].find(
+const selectedCell = () => document.querySelector(".plinth-sheet__selected") as HTMLElement;
+const menuItem = (name: string) =>
+  [...document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')].find(
     (b) => b.textContent === name,
   ) as HTMLButtonElement;
+/** An item of the selected cell's row menu, opened from the row's number. */
+const rowItem = (name: string) => {
+  ((selectedCell().closest("tr") as HTMLTableRowElement).cells[0] as HTMLElement).click();
+  return menuItem(name);
+};
+/** An item of the selected cell's column menu, opened from its header's button. */
+const columnItem = (name: string) => {
+  const letters = /^__plinth-cell-([A-Z]+)\d+$/.exec(selectedCell().id)?.[1];
+  (cell(`${letters}1`).querySelector(".plinth-sheet__colmenu") as HTMLButtonElement).click();
+  return menuItem(name);
+};
 const tick = () => new Promise((r) => setTimeout(r, 0));
 
 /** The draft the frame hands the app in solo mode. */
@@ -188,7 +200,7 @@ describe("solo editing", () => {
 
   it("opens a cell, sends the row, recomputes formulas, and the draft is canonical", async () => {
     const f = start();
-    expect(document.querySelector(".plinth-sheet__strip")).not.toBeNull();
+    expect(cell("A1").querySelector(".plinth-sheet__colmenu")).not.toBeNull();
     dbl(cell("B2"));
     const input = field();
     expect(input?.value).toBe("3");
@@ -287,16 +299,16 @@ describe("solo editing", () => {
   it("inserts and deletes rows and columns, moving formulas", async () => {
     const f = start();
     cell("A3").focus();
-    button("Row above").click();
+    rowItem("Insert row above").click();
     expect(document.documentElement.getAttribute("data-rows")).toBe("4");
     expect((await collected(f)).split("\n")[4]).toBe('["Total","=SUM(B2:B4)","=B2*C2+B4*C4"]');
     cell("B2").focus();
-    button("Column left").click();
+    columnItem("Insert column left").click();
     expect(text("B1")).toBe("Column 6");
-    button("Delete column").click();
+    columnItem("Delete column").click();
     expect(text("B1")).toBe("Qty");
     cell("A3").focus();
-    button("Delete row").click();
+    rowItem("Delete row").click();
     expect((await collected(f)).split("\n")).toEqual(LINES);
   });
 
@@ -310,7 +322,7 @@ describe("solo editing", () => {
     key(input, "Enter");
     expect(text("A1")).toBe("Fruit");
     cell("B2").focus();
-    button("Column settings").click();
+    columnItem("Column settings…").click();
     const form = document.querySelector(".plinth-sheet__panel") as HTMLFormElement;
     const typeSelect = form.querySelectorAll("select")[0] as HTMLSelectElement;
     typeSelect.value = "checkbox";
@@ -406,13 +418,13 @@ describe("room editing", () => {
     expect(ws.sent.length).toBe(before);
     expect(notice()).toContain("bo@example.org is editing this row.");
     cell("A3").focus();
-    button("Delete row").click();
+    rowItem("Delete row").click();
     expect(ws.sent.length).toBe(before);
     expect(notice()).toContain("Rows and columns change once they finish");
     ws.frame({ t: "released", lease: "l9" });
     await tick();
     expect(cell("A2").closest("tr")?.querySelector(".plinth-sheet__holder")).toBeNull();
-    button("Row below").click();
+    rowItem("Insert row below").click();
     const op = { op: "insert_rows", before: 4, count: 1 };
     expect(ws.sent.at(-1)).toEqual({ t: "struct", rev: 4, op });
     ws.frame({ t: "struct", gen: "g1", rev: 5, op, by: "s1" });
@@ -425,7 +437,7 @@ describe("room editing", () => {
     const { ws } = start();
     const del = { op: "delete_rows", from: 2, count: 1 };
     cell("A2").focus();
-    button("Delete row").click();
+    rowItem("Delete row").click();
     expect(ws.sent.at(-1)).toEqual({ t: "struct", rev: 3, op: del });
     // Someone else deleted Apples first: deleting row 2 again would delete Pears.
     ws.frame({ t: "struct", gen: "g1", rev: 4, op: del, by: "s2" });
@@ -438,7 +450,7 @@ describe("room editing", () => {
 
     // Someone else inserted a row above Pears first: Pears is row 4 now.
     cell("A2").focus();
-    button("Delete row").click();
+    rowItem("Delete row").click();
     expect(ws.sent.at(-1)).toEqual({ t: "struct", rev: 4, op: del });
     ws.frame({
       t: "struct",
@@ -464,7 +476,7 @@ describe("room editing", () => {
     });
     await tick();
     cell("A3").focus();
-    button("Row below").click();
+    rowItem("Insert row below").click();
     expect(ws.sent.at(-1)).toEqual({
       t: "struct",
       rev: 6,
@@ -488,7 +500,7 @@ describe("room editing", () => {
   it("aims a column struct refused as stale at the column chosen", async () => {
     const { ws } = start();
     cell("C2").focus();
-    button("Delete column").click();
+    columnItem("Delete column").click();
     expect(ws.sent.at(-1)).toEqual({
       t: "struct",
       rev: 3,
@@ -596,7 +608,7 @@ describe("room editing", () => {
   it("says why the room refused a struct", async () => {
     const { ws } = start();
     cell("B2").focus();
-    button("Delete column").click();
+    columnItem("Delete column").click();
     expect(ws.sent.at(-1)).toMatchObject({ t: "struct", op: { op: "delete_columns" } });
     ws.frame({ t: "struct_denied", reason: "held", by: "bo@example.org" });
     expect(notice()).toContain("bo@example.org is editing");

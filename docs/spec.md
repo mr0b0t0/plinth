@@ -2537,21 +2537,20 @@ and the whole-draft review is the only way on (below).
   tab-separated text writes the rows it covers, adding rows past the end, up to what one edit frame
   carries (64 KiB; a larger paste is refused with a note before anything changes). F2 in a column name
   renames it. Numbers are typed in the viewer's locale, with its decimal separator; a percent column
-  takes 12.5 for 12.5%. A strip under the formula bar inserts a row above or below, deletes the
-  row, moves it up or down, inserts a column left or right, deletes the column, and opens the
-  column's settings. Alt+Shift+Up and Alt+Shift+Down move the selected row too, and the move is
-  announced ("Row 4 moved to row 3"); rows move in the sheet's own order, so not while a sort is
-  on. A row's number, or Alt+Down in one of its cells, opens the row's menu (insert above or below,
-  move up or down, delete); a column header's menu button, or Alt+Down on the header, opens the
-  column's (its settings, "Freeze up to this column" and "Unfreeze columns", insert left or right,
-  delete). The column settings set the name, type, number format, currency, decimals, thousands
-  separators (on unless turned off), width (40 to 800 pixels, or automatic) and a select column's
-  options, as a list: rename one in place, move it up or down, remove it, or add one (at most 100,
-  of at most 100 characters each). An option a cell holds cannot be removed (the settings name the
+  takes 12.5 for 12.5%. Rows and columns change from their menus, the one way in: a row's
+  number, or Alt+Down in one of its cells, opens the row's menu (insert above or below, move up or
+  down, delete); a column header's menu button, or Alt+Down on the header, opens the column's (its
+  settings, "Freeze up to this column" and "Unfreeze columns", insert left or right, delete, and
+  "Insert row" while the sheet has no rows, which have no number to open a menu from).
+  Alt+Shift+Up and Alt+Shift+Down move the selected row too, and the move is announced ("Row 4
+  moved to row 3"); rows move in the sheet's own order, so not while a sort is on. The column
+  settings set the name, type, number format, currency, decimals, thousands separators (on unless
+  turned off) and a select column's options, as a list: rename one in place, move it up or down,
+  remove it, or add one (at most 100, of at most 100 characters each). An option a cell holds cannot be removed (the settings name the
   cell); renaming one that cells hold renames it in those cells too, in one change of the whole
-  sheet under a lease on every line, up to what one edit frame carries. A width also changes by
-  dragging the header's edge, or with Alt+Left and Alt+Right on the header in steps of 8 pixels,
-  sent once the keys rest (and still sent when edit mode ends first). Freezing keeps up to five
+  sheet under a lease on every line, up to what one edit frame carries. A width (40 to 800
+  pixels) changes by dragging the header's edge, or with Alt+Left and Alt+Right on the header in
+  steps of 8 pixels, sent once the keys rest (and still sent when edit mode ends first). Freezing keeps up to five
   columns in view. Each of these is a lease on
   the header's line (freezing moves no rows, so it is not a `struct`). A value the room would
   refuse stays in its field with the reason. A lease or `struct` the room refuses as `stale` (someone else's change
@@ -2560,7 +2559,7 @@ and the whole-draft review is the only way on (below).
   meanwhile" when it is gone; a write is made from the row as it is when the lease is granted.
   The column settings find their column by its definition apart from its width, so a width
   changed while they are open (dragged, set with the keys or by someone else) is no conflict:
-  Apply keeps that width unless the Width field was changed, and then sets the one typed there.
+  Apply keeps that width.
   They follow their column the same way through any change while they are open, so a column
   inserted or deleted before it changes the letter they name and the cells they check for options
   in use. When the column itself is deleted or changed by someone else, they stay open with what
@@ -2571,9 +2570,8 @@ and the whole-draft review is the only way on (below).
   shows.
 - **At phone width** (a frame 640 pixels wide or less) an open cell's field is docked at the
   bottom of the page with the column's name, the cell's address and Done, and the page keeps the
-  cell in view above it; the row and column menus are sheets across the bottom, the edit strip is
-  one row that scrolls sideways (so it does not push the cells down under a notice), and touch
-  targets are at least 44 pixels.
+  cell in view above it; the row and column menus are sheets across the bottom, the column
+  settings are one column with Apply and Cancel last, and touch targets are at least 44 pixels.
 - **Keyboard and screen readers.** The cells are a grid (`role="grid"` with `aria-rowcount`,
   `aria-colcount`, row and column indexes, and `aria-readonly` outside edit mode) with one tab
   stop, the selected cell (a header's stop is its sort button). The arrows, Home and End move among
@@ -2585,7 +2583,7 @@ and the whole-draft review is the only way on (below).
   not name. A row move is announced and
   its row selected once the room says it applied this frame's move. When someone else's change
   redraws the grid (new columns, a width, a row count), the focus stays where it was: in the
-  column settings, the strip or an open cell's field with its selection, in the filter with its
+  column settings or an open cell's field with its selection, in the filter with its
   text, or on the selected cell when a cell had it. It never moves onto a cell from anywhere else,
   since a key typed in a selected cell starts editing it.
 - **Live views.** A sheet edited on its page keeps its frame as a doc does

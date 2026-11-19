@@ -12,7 +12,7 @@
 // On-page editing (#36, edit.ts) keeps the grid and changes what it shows: update() repaints the
 // cells whose computed value changed when the rows and columns are the same (a rebuild otherwise,
 // with the view carried over), setHolders() marks the rows other people hold with their email,
-// and the edit strip (rows, columns) sits in the slot between the formula bar and the cells. In
+// and the column settings sit in the slot between the formula bar and the cells. In
 // edit mode the editor also puts its own controls in each column header (setHeaderTools: the
 // column menu button and the width handle) and previews a width while it changes (setWidth).
 //
@@ -53,7 +53,7 @@ export interface Grid {
   el: HTMLElement;
   /** The cells' table, for the editor's listeners. */
   table: HTMLTableElement;
-  /** Between the formula bar and the cells: the editor's strip goes here. */
+  /** Between the formula bar and the cells: the editor's column settings go here. */
   slot: HTMLElement;
   /** The toolbar's filter field (a rebuild gives the focus back to the new one). */
   filterInput: HTMLInputElement;

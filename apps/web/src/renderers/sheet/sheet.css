@@ -384,23 +384,9 @@ body {
   display: none;
 }
 
-.plinth-sheet__strip {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 16px;
-  border-bottom: 1px solid var(--sheet-rule);
-}
-
 .plinth-sheet__btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
-}
-
-.plinth-sheet__hint {
-  color: var(--sheet-muted);
-  margin-left: auto;
 }
 
 .plinth-sheet__panel {
@@ -438,6 +424,11 @@ body {
 .plinth-sheet__panel-actions {
   display: flex;
   gap: 6px;
+}
+
+.plinth-sheet__options-list,
+.plinth-sheet__options-add {
+  max-width: 420px;
 }
 
 .plinth-sheet__page--editing .plinth-sheet__cell {
@@ -635,6 +626,7 @@ body {
 
 .plinth-sheet__panel-field--check {
   flex-direction: row-reverse;
+  justify-content: flex-end;
   align-items: center;
   gap: 6px;
 }
@@ -652,6 +644,12 @@ body {
 
 .plinth-sheet__options[hidden] {
   display: none;
+}
+
+/* A select column's options take their own line, under the fields and the actions. */
+.plinth-sheet__panel .plinth-sheet__options {
+  order: 1;
+  flex: 1 1 100%;
 }
 
 .plinth-sheet__options legend {
@@ -681,13 +679,9 @@ body {
   min-width: 0;
 }
 
-.plinth-sheet__options-count {
-  margin: 0;
-  font-size: 12px;
-}
-
 .plinth-sheet__btn--small {
-  padding: 2px 8px;
+  min-width: 28px;
+  padding: 2px 6px;
 }
 
 /* ---------- the docked cell editor (phone width) ---------- */
@@ -777,7 +771,6 @@ body.plinth-sheet--docked .plinth-sheet__notice {
 }
 
 @media (pointer: coarse) {
-  .plinth-sheet__strip .plinth-sheet__btn,
   .plinth-sheet__panel .plinth-sheet__btn,
   .plinth-sheet__menu-item {
     min-height: 44px;
@@ -786,37 +779,34 @@ body.plinth-sheet--docked .plinth-sheet__notice {
   .plinth-sheet__colmenu {
     width: 36px;
   }
-
-  /* The keyboard hint is for keyboards. */
-  .plinth-sheet__hint {
-    display: none;
-  }
 }
 
 @media (max-width: 640px) {
+  /* One column that scrolls, the actions last and full width. */
   .plinth-sheet__panel {
     flex-direction: column;
+    flex-wrap: nowrap;
     align-items: stretch;
     max-height: 60vh;
     overflow-y: auto;
   }
 
-  /* One row that scrolls sideways, so the strip does not push the cells under the notice. */
-  .plinth-sheet__strip {
-    flex-wrap: nowrap;
-    overflow-x: auto;
-    overscroll-behavior-x: contain;
+  .plinth-sheet__panel .plinth-sheet__options {
+    order: 0;
+    flex: none;
   }
 
-  .plinth-sheet__strip > .plinth-sheet__btn {
-    flex: none;
-    white-space: nowrap;
+  .plinth-sheet__options-list,
+  .plinth-sheet__options-add {
+    max-width: none;
   }
 
-  .plinth-sheet__hint {
-    flex: none;
-    margin-left: 0;
-    white-space: nowrap;
+  .plinth-sheet__panel-actions {
+    order: 2;
+  }
+
+  .plinth-sheet__panel-actions > .plinth-sheet__btn {
+    flex: 1 1 0;
   }
 }
 

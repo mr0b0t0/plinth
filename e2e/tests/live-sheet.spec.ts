@@ -73,6 +73,15 @@ async function openAs(browser: Browser, email: string, slug: string, base?: Page
   return page;
 }
 
+/** Choose an item of a row's menu, opened from its number. */
+async function rowMenu(page: Page, row: number, item: string) {
+  await frameOf(page).locator(`tr[data-row="${row}"] th`).click();
+  const menu = frameOf(page).getByRole("menu", { name: `Row ${row}` });
+  await expect(menu).toBeVisible();
+  await menu.getByRole("menuitem", { name: item }).click();
+  await expect(menu).toHaveCount(0);
+}
+
 async function startEditing(page: Page) {
   const toggle = page.getByRole("button", { name: "Edit", exact: true });
   if (await toggle.isVisible()) await toggle.click();
@@ -139,8 +148,7 @@ test("two editors on one sheet: a held row, typing that arrives live, a row both
   await expect(cell(page, "B3")).toBeFocused();
 
   // A row inserted above Plums: both pages show it, and the totals' ranges grow.
-  await cell(page, "A4").click();
-  await frameOf(page).getByRole("button", { name: "Row above" }).click();
+  await rowMenu(page, 4, "Insert row above");
   await expect(frameOf(page).locator("html")).toHaveAttribute("data-rows", "5");
   await expect(frameOf(other).locator("html")).toHaveAttribute("data-rows", "5");
   await expect(cell(other, "A6")).toHaveText("Total");
@@ -308,14 +316,28 @@ test("column settings, widths, freezing, options and row moves on the page publi
   const settings = frame.locator(".plinth-sheet__panel");
   const saved = async () => expect(bar).toContainText(/Draft saved|Saving draft/);
 
-  // Price: no thousands separators, and 180 px wide.
+  // Price: no thousands separators.
   await columnMenu(page, "C1", "Column settings…");
   await expect(settings).toBeVisible();
   await settings.getByLabel("Thousands separators").uncheck();
-  await settings.getByLabel("Width in pixels").fill("180");
   await settings.getByRole("button", { name: "Apply" }).click();
   await expect(settings).toHaveCount(0);
   await expect(cell(page, "C2")).not.toContainText(/1[,.\s  ]500/);
+  await saved();
+
+  // Price 180 px wide, by dragging its header's edge 60 px to the right.
+  const handle = cell(page, "C1").locator(".plinth-sheet__resize");
+  await handle.scrollIntoViewIfNeeded();
+  const edge = await handle.boundingBox();
+  if (!edge) throw new Error("no width handle");
+  const x = edge.x + edge.width / 2;
+  const y = edge.y + edge.height / 2;
+  await page.mouse.move(x, y);
+  await page.mouse.down();
+  await page.mouse.move(x + 30, y);
+  await page.mouse.move(x + 60, y);
+  await page.mouse.up();
+  await expect(frame.locator(".plinth-sheet__announce")).toHaveText("Price: 180 pixels wide.");
   await saved();
 
   // Stage: "done" renamed "shipped" (in its cell too), and a third option added.
@@ -339,8 +361,7 @@ test("column settings, widths, freezing, options and row moves on the page publi
   await page.waitForTimeout(800);
 
   // Pears above Apples: the total still adds both.
-  await cell(page, "A3").click();
-  await frame.getByRole("button", { name: "Move row up" }).click();
+  await rowMenu(page, 3, "Move row up");
   await expect(cell(page, "A2")).toHaveText("Pears");
   await expect(frame.locator(".plinth-sheet__announce")).toHaveText("Row 3 moved to row 2.");
   await expect(cell(page, "B4")).toHaveText("8");
@@ -437,8 +458,7 @@ test("an agent's version during a row move or a width change is never merged: th
   }
 
   // A row swap on the page, an agent's cell meanwhile: Publish mine keeps the swap.
-  await cell(page, "A3").click();
-  await frameOf(page).getByRole("button", { name: "Move row up" }).click();
+  await rowMenu(page, 3, "Move row up");
   await expect(cell(page, "A2")).toHaveText("Pears");
   await expect(bar).toContainText(/Draft saved|Saving draft/);
   await agentSets("B4", 9, 1);
