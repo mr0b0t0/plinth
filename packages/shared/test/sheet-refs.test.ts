@@ -77,6 +77,40 @@ describe("shiftFormula", () => {
     expect(shiftFormula('=IF(A3>0,"A3",A3)', mv(3, 1, 2))).toBe('=IF(A2>0,"A3",A2)');
   });
 
+  it("moves rows across a range's edge: one result for one new order, never a total of itself", () => {
+    const mv = (from: number, count: number, to: number) => ({
+      kind: "move_rows" as const,
+      from,
+      count,
+      to,
+    });
+    // a, b, c, Total (=SUM(B2:B4)): Total up one, or c down one, is a, b, Total, c. Either way
+    // the total adds the rows above it, and never its own row 4.
+    expect(shiftFormula("=SUM(B2:B4)", mv(5, 1, 4))).toBe("=SUM(B2:B3)");
+    expect(shiftFormula("=SUM(B2:B4)", mv(4, 1, 5))).toBe("=SUM(B2:B3)");
+    // The mirror: Total (=SUM(B3:B5)) first, down one, or x up one: x, Total, y, z.
+    expect(shiftFormula("=SUM(B3:B5)", mv(2, 1, 3))).toBe("=SUM(B4:B5)");
+    expect(shiftFormula("=SUM(B3:B5)", mv(3, 1, 2))).toBe("=SUM(B4:B5)");
+    // The same order reached either way gives the same formula, for every range and move.
+    for (let lo = 2; lo <= 7; lo++) {
+      for (let hi = lo; hi <= 7; hi++) {
+        for (let from = 2; from <= 7; from++) {
+          for (let count = 1; from + count - 1 <= 7; count++) {
+            for (let to = 2; to + count - 1 <= 7; to++) {
+              if (to === from) continue;
+              const other =
+                to > from ? mv(from + count, to - from, from) : mv(to, from - to, to + count);
+              const f = `=SUM(B${lo}:B${hi})`;
+              expect(shiftFormula(f, mv(from, count, to)), `${f} ${from}+${count}>${to}`).toBe(
+                shiftFormula(f, other),
+              );
+            }
+          }
+        }
+      }
+    }
+  });
+
   it("keeps everything else byte for byte", () => {
     expect(shiftFormula('=IF(a5 > 1, "A5", a5)', ins(3))).toBe('=IF(A6 > 1, "A5", A6)');
     expect(shiftFormula("plain", ins(1))).toBe("plain");

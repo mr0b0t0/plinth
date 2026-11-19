@@ -14,7 +14,7 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   menu (its settings, **Freeze up to this column**, **Unfreeze columns**, insert and delete), and
   each row number opens the row's (insert, **Move row up**, **Move row down**, delete; Alt+Shift+Up
   and Down move the selected row too). A moved row keeps every formula pointing at the cells it
-  meant. The column settings add a width (or drag the header's edge, or Alt+Left and Alt+Right),
+  meant, and a total moved next to its range never adds itself. The column settings add a width (or drag the header's edge, or Alt+Left and Alt+Right),
   thousands separators, and a select column's options as a list to rename, reorder, add to and
   remove from; renaming an option renames it in the cells that hold it. At phone width a cell
   opens in an editor docked at the bottom of the page, with the column's name and Done. The grid

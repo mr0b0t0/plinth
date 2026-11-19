@@ -5,9 +5,10 @@
 //
 // Moving rows (a live sheet's `move_rows`) is a cut and insert: references into the moved rows
 // follow them, and every other reference shifts as for a delete of the moved rows followed by an
-// insert where they land. A range is the span of rows it covers: inside the moved rows it follows
-// them, a move within it leaves it as it is, and any other move shrinks or grows it as that delete
-// and insert would (moveRange). Nothing becomes #REF!.
+// insert where they land. A range is the span of rows it covers: one that holds every row the
+// move reorders stays as it is, and otherwise it takes whichever reading of the reorder (the rows
+// moved, or the rows they pass moved the other way) changes the fewest of its rows (moveRange).
+// Nothing becomes #REF!.
 import { A1_MAX_COL, A1_MAX_ROW, type CellRef, colLetter } from "./address.ts";
 import { lexFormula, type RangeEnd } from "./formula/lexer.ts";
 
@@ -28,8 +29,10 @@ export type StructuralChange =
 const rowsChange = (c: StructuralChange) =>
   c.kind === "insert_rows" || c.kind === "delete_rows" || c.kind === "move_rows";
 
+type RowMove = Extract<StructuralChange, { kind: "move_rows" }>;
+
 /** Where row `p` is after a move: a moved row follows it, any other shifts past the gap. */
-function moveRow(p: number, c: Extract<StructuralChange, { kind: "move_rows" }>): number {
+function moveRow(p: number, c: RowMove): number {
   const end = c.from + c.count - 1;
   if (p >= c.from && p <= end) return p - c.from + c.to;
   const out = p > end ? p - c.count : p;
@@ -89,17 +92,63 @@ function shiftRef(ref: CellRef, c: StructuralChange): CellRef | null {
 }
 
 /**
- * A range's ends after a row move, read as the span of rows it covers. A span inside the moved
- * rows follows them. A move that starts and lands inside the span only reorders its rows, so the
- * range stays as it is. Any other move is a delete of the moved rows from the span, then an
- * insert where they land (so the span shrinks when rows leave it and grows when they land inside
- * it). Each end keeps its own $, and the range keeps the direction it was written in.
+ * The same reorder read the other way: moving rows past their neighbours is moving those
+ * neighbours past them (row 5 up to 4 is row 4 down to 5).
  */
-function moveRange(
-  a: RangeEnd,
-  b: RangeEnd,
-  c: Extract<StructuralChange, { kind: "move_rows" }>,
-): [RangeEnd, RangeEnd] {
+function otherMove(c: RowMove): RowMove {
+  return c.to > c.from
+    ? { kind: "move_rows", from: c.from + c.count, count: c.to - c.from, to: c.from }
+    : { kind: "move_rows", from: c.to, count: c.from - c.to, to: c.to + c.count };
+}
+
+/**
+ * A span after the move, read as `c`: inside the moved rows it follows them, and otherwise it
+ * shrinks or grows as a delete of the moved rows, then an insert where they land, would.
+ */
+function readMove(lo: number, hi: number, c: RowMove): [number, number] {
+  const end = c.from + c.count - 1;
+  if (lo >= c.from && hi <= end) return [lo - c.from + c.to, hi - c.from + c.to];
+  const out = moveSpan(lo, hi, { kind: "delete_rows", from: c.from, count: c.count }, A1_MAX_ROW);
+  if (!out) return [lo, hi];
+  const ins = moveSpan(
+    out[0],
+    out[1],
+    { kind: "insert_rows", before: c.to, count: c.count },
+    A1_MAX_ROW,
+  );
+  return ins ?? out;
+}
+
+/** How many of rows `lo` to `hi` are in rows `x` to `y` once the move is made. */
+function keptRows(lo: number, hi: number, x: number, y: number, c: RowMove): number {
+  const end = c.from + c.count - 1;
+  const down = c.to > c.from;
+  // Each block of rows shifts as one: the moved rows, the rows they pass, and the rest.
+  const blocks: [number, number, number][] = [
+    [c.from, end, c.to - c.from],
+    down ? [end + 1, c.to + c.count - 1, -c.count] : [c.to, c.from - 1, c.count],
+    [Number.NEGATIVE_INFINITY, Math.min(c.from, c.to) - 1, 0],
+    [Math.max(end, c.to + c.count - 1) + 1, Number.POSITIVE_INFINITY, 0],
+  ];
+  let n = 0;
+  for (const [s, t, d] of blocks) {
+    const from = Math.max(s, lo) + d;
+    const to = Math.min(t, hi) + d;
+    n += Math.max(0, Math.min(to, y) - Math.max(from, x) + 1);
+  }
+  return n;
+}
+
+/**
+ * A range's ends after a row move, read as the span of rows it covers. A span that holds every
+ * row the move reorders only has them in a new order, so the range stays as it is. Otherwise the
+ * move is read both ways (the rows moved, or the rows they pass moved the other way, which gives
+ * the same order), and the range takes the reading that drops the fewest of its own rows plus
+ * takes in the fewest others; on a tie, the shorter one, then the one that starts higher up. So
+ * the result depends only on the new order of the rows, and a total moved next to its range never
+ * adds itself. Each end keeps its own $, and the range keeps the direction it was written in.
+ */
+function moveRange(a: RangeEnd, b: RangeEnd, c: RowMove): [RangeEnd, RangeEnd] {
   if (a.kind === "col" || b.kind === "col") return [a, b];
   const rowOf = (e: RangeEnd) => (e.kind === "cell" ? e.ref.row : e.kind === "row" ? e.row : 0);
   const put = (e: RangeEnd, row: number): RangeEnd =>
@@ -112,21 +161,20 @@ function moveRange(
   const rb = rowOf(b);
   const lo = Math.min(ra, rb);
   const hi = Math.max(ra, rb);
-  const end = c.from + c.count - 1;
-  const landEnd = c.to + c.count - 1;
-  let span: [number, number];
-  if (lo >= c.from && hi <= end) span = [lo - c.from + c.to, hi - c.from + c.to];
-  else if (c.from >= lo && end <= hi && c.to >= lo && landEnd <= hi) span = [lo, hi];
-  else {
-    const out = moveSpan(lo, hi, { kind: "delete_rows", from: c.from, count: c.count }, A1_MAX_ROW);
-    span = out
-      ? (moveSpan(
-          out[0],
-          out[1],
-          { kind: "insert_rows", before: c.to, count: c.count },
-          A1_MAX_ROW,
-        ) ?? out)
-      : [lo, hi];
+  let span: [number, number] = [lo, hi];
+  if (lo > Math.min(c.from, c.to) || hi < Math.max(c.from, c.to) + c.count - 1) {
+    let best = Number.POSITIVE_INFINITY;
+    for (const read of [c, otherMove(c)]) {
+      const [x, y] = readMove(lo, hi, read);
+      const kept = keptRows(lo, hi, x, y, c);
+      const cost = hi - lo + 1 - kept + (y - x + 1 - kept);
+      const len = y - x;
+      const was = span[1] - span[0];
+      if (cost < best || (cost === best && (len < was || (len === was && x < span[0])))) {
+        best = cost;
+        span = [x, y];
+      }
+    }
   }
   return ra <= rb ? [put(a, span[0]), put(b, span[1])] : [put(a, span[1]), put(b, span[0])];
 }

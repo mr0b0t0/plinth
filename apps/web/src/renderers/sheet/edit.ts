@@ -94,7 +94,11 @@ export class LocalSheet implements SheetBackend {
 
   constructor(
     readonly baseText: string,
-    private readonly events: { granted(l: ClientLease): void; changed(): void },
+    private readonly events: {
+      granted(l: ClientLease): void;
+      changed(): void;
+      structLanded?(op: SheetStructOp): void;
+    },
   ) {
     this.lines = splitLines(baseText);
   }
@@ -144,6 +148,7 @@ export class LocalSheet implements SheetBackend {
     if (RULES.tooLarge(text) || !RULES.valid(text)) return false;
     this.mine = null;
     this.lines = next;
+    this.events.structLanded?.(op);
     this.events.changed();
     return true;
   }
@@ -424,19 +429,26 @@ export class SheetEditor {
   private readonly loc: NumberLocale;
   /** The docked field's panel (phone width), while a cell is open there. */
   private dock: HTMLElement | null = null;
-  /** The open row or column menu, the control that opened it, and where focus goes back. */
-  private menu: { el: HTMLElement; button: HTMLElement | null; back: HTMLElement | null } | null =
-    null;
+  /**
+   * The open row or column menu, the control that opened it, where focus goes back, and whether
+   * the row or column it names is still where it was when it opened.
+   */
+  private menu: {
+    el: HTMLElement;
+    button: HTMLElement | null;
+    back: HTMLElement | null;
+    still: () => boolean;
+  } | null = null;
   /** The frame's polite live region (row moves, widths, freezing). */
   private announcer: HTMLElement | null = null;
   /** A width changed with Alt+arrows, sent once the keys rest. */
   private widthPending: { col: number; was: SheetColumn; width: number } | null = null;
   private widthTimer: ReturnType<typeof setTimeout> | null = null;
   /**
-   * A row move sent: the lines it was sent against, the moved row's line as it will be once the
-   * move lands (its formulas rewritten), and the column to select there.
+   * A row move sent: the column to select where the row lands, whether to focus it, and whether
+   * the room (or the local copy) has said that this frame's move was applied.
    */
-  private moving: { line: string; before: string; col: number; focus: boolean } | null = null;
+  private moving: { col: number; focus: boolean; arrived: boolean } | null = null;
   private readonly dockOpt: boolean | undefined;
 
   constructor(
@@ -459,9 +471,24 @@ export class SheetEditor {
     return this.win.document;
   }
 
-  /** A cell's text is waiting in the debounce, not yet sent. */
+  /**
+   * A cell's text or a width is waiting in the debounce, or a one-shot write waits for its lease
+   * (while connected: a lease asked for on a socket that closed is never answered).
+   */
   get pending(): boolean {
-    return this.timer !== null || this.widthTimer !== null;
+    return (
+      this.timer !== null ||
+      this.widthTimer !== null ||
+      (this.want?.kind === "write" && this.backend.connected)
+    );
+  }
+
+  /** The room's socket closed: a write still waiting for its lease will not be answered. */
+  disconnected(): void {
+    if (this.want?.kind !== "write") return;
+    this.want = null;
+    this.showNotice("That change was not sent. Try again in a moment.");
+    this.hooks.status();
   }
 
   setBackend(b: SheetBackend): void {
@@ -536,9 +563,10 @@ export class SheetEditor {
   setEditing(on: boolean): void {
     if (on === this.editing) return;
     if (!on) {
-      // A width still waiting for the keys to rest is sent first.
-      this.commitWidth();
+      // A width still waiting for the keys to rest is still sent: its lease is asked for here,
+      // while edit mode is on, and granted() writes it after edit mode has ended.
       this.close(true);
+      this.commitWidth();
     }
     this.editing = on;
     const g = this.grid;
@@ -885,7 +913,8 @@ export class SheetEditor {
   granted(lease: ClientLease): void {
     const w = this.want;
     this.want = null;
-    if (!this.editing || !w) {
+    // A write asked for before edit mode ended (a width the keys had not sent yet) is still made.
+    if (!w || (!this.editing && w.kind !== "write")) {
       if (!this.open) this.backend.release();
       return;
     }
@@ -907,7 +936,7 @@ export class SheetEditor {
       this.backend.release();
       if (sent) {
         this.hideNotice();
-        if (w.said) this.announce(w.said);
+        if (w.said && this.editing) this.announce(w.said);
       } else if (!this.notice) {
         this.showNotice("That change was not sent. Try again in a moment.");
       }
@@ -1048,7 +1077,22 @@ export class SheetEditor {
       }
     }
     this.landed();
+    this.staleMenu();
     this.render();
+  }
+
+  /**
+   * A menu names a row or a column by its number, and its items act on that number. When someone
+   * else's change moved what sits there, the menu closes and says so, rather than act on another
+   * row or column than the one it names.
+   */
+  private staleMenu(): void {
+    const m = this.menu;
+    if (!m || m.still()) return;
+    const inside = m.el.contains(this.doc.activeElement);
+    this.closeMenu(false);
+    if (inside) this.grid?.focusSelected();
+    this.showNotice("The sheet changed while the menu was open. Open it again.");
   }
 
   /** A row could not be taken again: its field closes, and the text it held is shown. */
@@ -1070,13 +1114,6 @@ export class SheetEditor {
       const op = s.again(this.backend.lines);
       if (op) {
         this.lastStruct = { ...s, op, tries: s.tries + 1 };
-        const m = this.moving;
-        const lines = this.backend.lines;
-        const landing = op.op === "move_rows" ? applySheetStruct(lines, op)?.[op.to - 1] : null;
-        if (m && landing) {
-          m.line = landing;
-          m.before = joinLines(lines);
-        }
         if (this.backend.struct(op)) return;
       }
     }
@@ -1460,10 +1497,8 @@ export class SheetEditor {
     const line = lines[row - 1];
     if (row < 2 || to < 2 || to > lines.length || line === undefined) return;
     const op: SheetStructOp = { op: "move_rows", from: row, count: 1, to };
-    const landing = applySheetStruct(lines, op)?.[to - 1];
-    if (landing === undefined) return;
     // Set first: alone (solo), the move lands before struct() returns.
-    this.moving = { line: landing, before: joinLines(lines), col: g.selected().col, focus };
+    this.moving = { col: g.selected().col, focus, arrived: false };
     const sent = this.struct(op, (now) => {
       const at = locateBlock(now, line, row - 1);
       const from = at + 1;
@@ -1473,13 +1508,22 @@ export class SheetEditor {
     if (!sent) this.moving = null;
   }
 
+  /**
+   * The backend applied this frame's own struct. Only the move last sent counts: the lines alone
+   * cannot tell, since a move between two equal rows leaves them as they were.
+   */
+  structLanded(op: SheetStructOp): void {
+    const m = this.moving;
+    const s = this.lastStruct?.op;
+    if (!m || s?.op !== "move_rows" || op.op !== "move_rows") return;
+    if (op.from === s.from && op.count === s.count && op.to === s.to) m.arrived = true;
+  }
+
   /** A row move landed: the row stays selected (and focused) where it went, and it is said. */
   private landed(): void {
     const m = this.moving;
     const op = this.lastStruct?.op;
-    if (!m || op?.op !== "move_rows") return;
-    const lines = this.backend.lines;
-    if (lines[op.to - 1] !== m.line || joinLines(lines) === m.before) return;
+    if (!m?.arrived || op?.op !== "move_rows") return;
     this.moving = null;
     this.grid?.select(op.to, m.col);
     if (m.focus) this.grid?.cell(op.to, m.col)?.focus();
@@ -1690,7 +1734,12 @@ export class SheetEditor {
       },
     );
     const back = this.grid?.cell(1, col)?.querySelector<HTMLElement>(".plinth-sheet__sort") ?? from;
-    this.openMenu(from, `Column ${colLetter(col)}, ${c.name}`, items, back, button);
+    // Column names are unique, so the same name at the same letter is the same column.
+    const still = () => {
+      const h = this.header();
+      return h?.columns[col]?.name === c.name && (h.freeze?.cols ?? 0) === frozen;
+    };
+    this.openMenu(from, `Column ${colLetter(col)}, ${c.name}`, items, back, button, still);
   }
 
   /** A row's menu, from its number or Alt+Down in one of its cells. */
@@ -1739,7 +1788,9 @@ export class SheetEditor {
         },
       },
     ];
-    this.openMenu(from, `Row ${row}`, items, g.cell(row, col) ?? from, null);
+    const line = this.backend.lines[row - 1];
+    const still = () => this.backend.lines[row - 1] === line;
+    this.openMenu(from, `Row ${row}`, items, g.cell(row, col) ?? from, null, still);
   }
 
   /**
@@ -1753,6 +1804,7 @@ export class SheetEditor {
     items: readonly MenuItem[],
     back: HTMLElement | null,
     button: HTMLElement | null,
+    still: () => boolean,
   ): void {
     this.closeMenu(false);
     const d = this.doc;
@@ -1782,6 +1834,10 @@ export class SheetEditor {
       b.addEventListener("click", () => {
         if (it.off) {
           this.announce(it.off);
+          return;
+        }
+        if (!still()) {
+          this.staleMenu();
           return;
         }
         this.closeMenu(false);
@@ -1818,7 +1874,7 @@ export class SheetEditor {
     }
     d.body.append(menu);
     button?.setAttribute("aria-expanded", "true");
-    this.menu = { el: menu, button, back };
+    this.menu = { el: menu, button, back, still };
     d.addEventListener("pointerdown", this.onOutside, true);
     buttons[0]?.focus();
   }
@@ -1834,7 +1890,11 @@ export class SheetEditor {
     this.doc.removeEventListener("pointerdown", this.onOutside, true);
     m.el.remove();
     m.button?.setAttribute("aria-expanded", "false");
-    if (goBack) m.back?.focus();
+    // A rebuild meanwhile (someone else's width or row) replaced the cell focus went back to.
+    if (goBack) {
+      if (m.back?.isConnected) m.back.focus();
+      else this.grid?.focusSelected();
+    }
   }
 
   // ---------- column settings ----------

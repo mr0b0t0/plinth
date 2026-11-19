@@ -28,6 +28,7 @@ import {
   parseSheet,
   type Sheet,
   type SheetEvaluation,
+  type SheetStructOp,
   TYPED_PAYLOAD_VERSION,
   type TypedPayload,
 } from "@plinth/shared";
@@ -276,6 +277,7 @@ export function boot(win: Window, opts: BootOptions = {}): () => void {
     });
     const events = {
       granted: (l: ClientLease) => editor?.granted(l),
+      structLanded: (op: SheetStructOp) => editor?.structLanded(op),
       changed: () => {
         renderNow();
         editor?.changed();
@@ -313,6 +315,7 @@ export function boot(win: Window, opts: BootOptions = {}): () => void {
               // The room never answered: keep editing alone.
               goSolo();
             }
+            if (!local && client && !client.connected) editor?.disconnected();
             status();
           },
           granted: (l) => {
@@ -335,6 +338,9 @@ export function boot(win: Window, opts: BootOptions = {}): () => void {
           },
           structDenied: (r, by) => {
             if (!local) editor?.structDenied(r, by);
+          },
+          structLanded: (op) => {
+            if (!local) editor?.structLanded(op);
           },
         },
       });

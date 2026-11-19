@@ -2503,9 +2503,14 @@ and the whole-draft review is the only way on (below).
   to the same lines with the same pure function (`applySheetStruct`), which moves formula
   references as `edit_sheet` does. A move is a cut and an insert: a reference into the moved rows
   follows them, every other reference shifts as for a delete of the moved rows followed by an
-  insert where they land, and a range is the span of rows it covers, so a move that starts and
-  lands inside it leaves it as it is, a range inside the moved rows follows them, and any other
-  move shrinks or grows it as that delete and insert would. Nothing becomes `#REF!`. `move_rows`
+  insert where they land, and a range is the span of rows it covers. A range that holds every row
+  the move reorders stays as it is. Otherwise the move is read both ways (the rows moved, or the
+  rows they pass moved the other way, which gives the same order): in each reading a range inside
+  the moved rows follows them and any other shrinks or grows as that delete and insert would, and
+  the range takes the reading that drops the fewest of its rows plus takes in the fewest others
+  (on a tie the shorter, then the one higher up). So one new order of the rows gives one result,
+  and a total moved next to its own range (row 5's `=SUM(B2:B4)` up one) adds the rows above it
+  (`=SUM(B2:B3)`), never itself. Nothing becomes `#REF!`. `move_rows`
   is the page's own op: `edit_sheet` does not take it, and an agent moves rows by deleting and
   inserting them.
 - **Versions from elsewhere.** A sheet's draft is never merged with a version published meanwhile
@@ -2546,7 +2551,8 @@ and the whole-draft review is the only way on (below).
   cell); renaming one that cells hold renames it in those cells too, in one change of the whole
   sheet under a lease on every line, up to what one edit frame carries. A width also changes by
   dragging the header's edge, or with Alt+Left and Alt+Right on the header in steps of 8 pixels,
-  sent once the keys rest. Freezing keeps up to five columns in view. Each of these is a lease on
+  sent once the keys rest (and still sent when edit mode ends first). Freezing keeps up to five
+  columns in view. Each of these is a lease on
   the header's line (freezing moves no rows, so it is not a `struct`). A value the room would
   refuse stays in its field with the reason. A lease or `struct` the room refuses as `stale` (someone else's change
   came first) is asked for again on the same row or column where it is now, found by the row's
@@ -2563,7 +2569,11 @@ and the whole-draft review is the only way on (below).
   stop, the selected cell (a header's stop is its sort button). The arrows, Home and End move among
   the rows shown, the header included, and Ctrl+Home and Ctrl+End to the first and the last cell.
   The menus are menu buttons with arrow-key menus that Escape closes, and the cells of a row
-  someone else holds say "Being edited by …" in their accessible description.
+  someone else holds say "Being edited by …" in their accessible description. A row's or column's
+  menu closes, saying the sheet changed, when someone else's change puts another row or column at
+  the number it names (or changes that row, or what is frozen), so it never acts on one it does
+  not name. A row move is announced and
+  its row selected once the room says it applied this frame's move.
 - **Live views.** A sheet edited on its page keeps its frame as a doc does
   ([Live views](#live-views-decided-2026-11-19)).
 ### Comparing versions (decided 2026-11-19)

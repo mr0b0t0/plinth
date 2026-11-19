@@ -142,6 +142,30 @@ function solo(opts: BootOptions = {}, lines = LINES) {
   return f;
 }
 
+/** A sheet with the room, in edit mode: the welcome at rev 3 and LINES as its text. */
+function roomed() {
+  mount(LINES, "room");
+  const f = framed();
+  stop = boot(f.win, { connect: () => new FakeSocket() as unknown as WebSocket });
+  const ws = FakeSocket.all.at(-1) as FakeSocket;
+  ws.frame({
+    t: "welcome",
+    v: 1,
+    you: { id: "s1", email: "ada@example.org", right: "write" },
+    gen: "g1",
+    rev: 3,
+    base_version: 2,
+    flushed_rev: 3,
+    conflict_version: null,
+    last_by_you: false,
+    leases: [],
+    peers: [],
+  });
+  ws.frame({ t: "text", gen: "g1", part: 0, of: 1, chunk: LINES.join("\n") });
+  send(f, { type: "edit", on: true });
+  return { f, ws };
+}
+
 describe("pure helpers", () => {
   it("reads an edited option list: renames, removals, empties dropped, duplicates refused", () => {
     expect(
@@ -325,6 +349,32 @@ describe("rows move", () => {
     expect((await collected(f)).slice(1)).toEqual(['["b","=B3*2"]', '["a",1]']);
     expect(text("B2")).toBe("2");
     expect(said()).toBe("Row 3 moved to row 2.");
+  });
+
+  it("a move between two equal rows lands and is said, and a later edit leaves the focus alone", async () => {
+    const f = solo({}, [
+      JSON.stringify({ plinth: "sheet", v: 1, columns: COLUMNS.slice(0, 2) }),
+      '["x"]',
+      '["x"]',
+      '["y",1]',
+      '["z",2]',
+    ]);
+    cell("A2").focus();
+    key(cell("A2"), "ArrowDown", { altKey: true, shiftKey: true });
+    expect(said()).toBe("Row 2 moved to row 3.");
+    expect(document.activeElement).toBe(cell("A3"));
+    // Typing in another cell afterwards: once its edit lands, nothing moves the focus or says
+    // a move again.
+    cell("B5").focus();
+    key(cell("B5"), "7");
+    const input = field() as HTMLInputElement;
+    expect(document.activeElement).toBe(input);
+    await new Promise((r) => setTimeout(r, 450));
+    expect(field()).toBe(input);
+    expect(document.activeElement).toBe(input);
+    expect(said()).toBe("Row 2 moved to row 3.");
+    key(input, "Enter");
+    expect((await collected(f))[4]).toBe('["z",7]');
   });
 
   it("refuses while a sort is on, since rows move in the sheet's own order", async () => {
@@ -588,6 +638,76 @@ describe("select options as a list", () => {
     add.value = "later";
     submit(panel());
     expect(ws.sent.at(-1)).toEqual({ t: "lease", rev: 3, start: 0, end: 1 });
+  });
+});
+
+describe("while someone else changes the sheet", () => {
+  it("a row's menu closes when another row comes above it, rather than act on that one", async () => {
+    const { ws } = roomed();
+    const num = (a: string) =>
+      (cell(a).parentElement as HTMLTableRowElement).cells[0] as HTMLElement;
+    num("A3").click();
+    expect(menu()?.getAttribute("aria-label")).toBe("Row 3");
+    // A row added below it changes nothing the menu names: it stays.
+    ws.frame({
+      t: "struct",
+      gen: "g1",
+      rev: 4,
+      op: { op: "insert_rows", before: 5, count: 1 },
+      by: "s2",
+    });
+    await tick();
+    expect(menu()?.getAttribute("aria-label")).toBe("Row 3");
+    // One above it: row 3 is Apples now, so "Delete row" would delete the wrong row.
+    ws.frame({
+      t: "struct",
+      gen: "g1",
+      rev: 5,
+      op: { op: "insert_rows", before: 2, count: 1 },
+      by: "s2",
+    });
+    await tick();
+    expect(menu()).toBeNull();
+    expect(notice()).toContain("The sheet changed while the menu was open");
+    expect(ws.sent.filter((m) => m.t === "struct")).toEqual([]);
+    expect(text("A4")).toBe("Pears");
+  });
+
+  it("a column's menu closes when another column comes before it", async () => {
+    const { ws } = roomed();
+    (cell("C1").querySelector(".plinth-sheet__colmenu") as HTMLButtonElement).click();
+    expect(menu()?.getAttribute("aria-label")).toBe("Column C, Price");
+    ws.frame({
+      t: "struct",
+      gen: "g1",
+      rev: 4,
+      op: { op: "insert_columns", before: "A", columns: [{ name: "Note", type: "text" }] },
+      by: "s2",
+    });
+    await tick();
+    expect(menu()).toBeNull();
+    expect(notice()).toContain("The sheet changed while the menu was open");
+    expect(text("D1")).toContain("Price");
+  });
+
+  it("a width the keys had not sent yet is still written when edit mode ends", async () => {
+    const { f, ws } = roomed();
+    key(sortOf("B1"), "ArrowRight", { altKey: true });
+    key(sortOf("B1"), "ArrowRight", { altKey: true });
+    send(f, { type: "edit", on: false });
+    expect(ws.sent.at(-1)).toEqual({ t: "lease", rev: 3, start: 0, end: 1 });
+    // Until the lease is answered, the frame says it has a change not saved yet.
+    await tick();
+    const live = f.parent.postMessage.mock.calls.map((c) => c[0]).filter((m) => m.type === "live");
+    expect(live.at(-1)?.unflushed).toBe(true);
+    ws.frame({ t: "leased", lease: "l1", start: 0, end: 1, holder: "s1", by: "ada@example.org" });
+    const edit = ws.sent.find((m) => m.t === "edit") as { text: string } | undefined;
+    expect(JSON.parse(edit?.text ?? "{}").columns[1]).toEqual({
+      name: "Qty",
+      type: "number",
+      width: 136,
+    });
+    expect(ws.sent.at(-1)).toEqual({ t: "release", lease: "l1" });
   });
 });
 
