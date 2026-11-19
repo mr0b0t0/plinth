@@ -77,6 +77,7 @@ make a test pass.
 | A whiteboard's room keeps old rights | A commenter keeps emitting `block.move` after the owner made the board editors-only | The settings version changes the effective open topics, so its sockets close with 4410 as it commits and reconnect with no right to emit; the data API refuses their writes from the next request |
 | The editor preview writes to the live board | The owner's draft in the editor drives the board through the preview frame's content pass | The app's preview sets `preview` and the whiteboard renderer then makes no shared-data or room call; only Plinth's code runs in that frame |
 | A starting board writes shared data unchecked | An agent's publish or update carries blocks it may not write, or races another write | A `data_write` decision before staging and again after the commit, whose role stamps the documents; one all-or-none statement that never overwrites, and `board_not_empty` on an update of a board with blocks |
+| A version attacks the app through Compare | A version's HTML, Markdown, sheet cells or design-system strings hold `<img onerror>`, `</script>` or a `javascript:` link, and the change list puts them on the app host; or a hostile page makes the list take minutes | The app never renders a version's source: pure describers in `packages/shared/src/changes/` return plain text, which React renders as text nodes; HTML is read by a string scanner with no DOM; the versions render only in their sandboxed frames on the content host; item, excerpt and diff-work caps ([Comparing versions](#comparing-versions)) |
 
 Out of scope for v1: denial of service beyond Cloudflare's defaults, a compromised Cloudflare
 account, and malicious instance operators.
@@ -2117,6 +2118,38 @@ dialog and can delete them there.
 **Agents** list and delete files over MCP and REST (owner or editor) and never get the bytes: an
 image is a prompt-injection channel and a new egress path, so reading files is left for its own
 review. Names carry the untrusted note.
+
+## Comparing versions
+
+History's Compare page is the one app page that reads two versions' source (spec: "Comparing
+versions"), and it shows none of it. It is an app-host page, so the rule that user HTML never runs
+there is what it has to keep.
+
+- **Text only.** The change list is worked out in the browser by the describers in
+  `packages/shared/src/changes/` from the version details the page already fetches under the
+  `view` decision. Each item is a kind, a place, a sentence and short excerpts, all plain strings,
+  and the page renders them as React text nodes: never `innerHTML`, never a document. A describer
+  quotes only what a person sees on the page (visible text, names, values, settings), never
+  markup, scripts, styles, component code or sheet lines, so the list cannot carry an active
+  construct even as text. Unit tests pin that hostile markup comes out as text and that no script,
+  style, comment or template text is quoted.
+- **No DOM for user HTML.** An HTML page or a design board is read by a string scanner
+  (`changes/htmlScan.ts`), not by `DOMParser`, a `<template>` or a detached document: nothing of
+  the version is parsed into nodes, loaded or run on the app origin. The scanner finds text runs,
+  tag names and link, image, stylesheet and script addresses, skips comments, scripts, styles and
+  templates, and decodes character references once.
+- **Bounded work.** Every step is linear in its input: the scanner and the Markdown reader use no
+  regular expression that can backtrack across a line (tests feed a megabyte of `<`, `![`, `[a](`
+  and unclosed quotes). A diff stops past 4,000 edits or 400 ms and reports the region as
+  replaced; a list holds at most 200 items of at most 160 characters each; a sheet's formulas get
+  1,000,000 steps. A hostile version can slow its own Compare page at most, in the viewer's own
+  tab, after the page has painted.
+- **Rendered versions unchanged.** The two versions render as before: each in its own sandboxed
+  frame on the artifact's content origin, entered through a fresh one-time gate, with the
+  isolation mode's sandbox flags.
+- **No source in History.** The source diff is gone: neither History nor Compare shows a version's
+  source text. The source stays readable to agents (MCP, REST, the CLI and `GET /a/<slug>/source`,
+  which is plain text and linked only from discovery tags).
 
 ## Operator checklist for the content domain
 

@@ -56,14 +56,9 @@ export function versionPath(slug: string, n: number, current?: number): string {
   return n === current ? artifactPath(slug) : route(APP_ROUTES.artifactVersion, { slug, n });
 }
 
-export function comparePath(
-  slug: string,
-  from: number,
-  to: number,
-  view?: "source" | "rendered",
-): string {
+/** The Compare page for two versions. Older links may carry `view=`; the page ignores it. */
+export function comparePath(slug: string, from: number, to: number): string {
   const q = new URLSearchParams({ from: String(from), to: String(to) });
-  if (view && view !== "source") q.set("view", view);
   return `${route(APP_ROUTES.compare, { slug })}?${q}`;
 }
 

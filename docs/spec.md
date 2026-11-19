@@ -416,7 +416,8 @@ allowlist is unchanged. Raw HTML in the Markdown shows as text, links pass an al
 a new tab, and the shell's CSP (header and a meta copy, so the editor preview gets it too) allows
 only `script-src 'self'`; a doc's other files run no script. The type is fixed at publish
 (`artifacts.type`, default `html`); versions, `base_version` conflicts and restore work as for HTML.
-The editor edits the Markdown with a live preview and history diffs `content.md`. Owners and
+The editor edits the Markdown with a live preview, and Compare lists what changed between two
+versions block by block, in words. Owners and
 editors can also edit a doc on its rendered page ([Editing](#editing)): for them, on the current
 version while rooms and live editing are on, the shell's payload carries `live: "room"` and the
 renderer connects the doc socket; every other shell is byte for byte as before. The second type
@@ -445,7 +446,8 @@ viewer's browser ([Slides](#slides-decided-2026-11-19)); there is no `.docx` exp
   in `versions`. Files it shares with the current version are referenced, not copied.
 - The artifact page shows the list: number, author (person or agent label), note, date.
 - Any version has a permanent URL (`/a/<slug>/v/3`). The bare URL always serves the current one.
-- Two versions can be compared as a source diff or side by side as rendered pages.
+- Two versions can be compared side by side as rendered pages, with a plain-language list of what
+  changed ([Comparing versions](#comparing-versions-decided-2026-11-19)).
 - Restoring v2 publishes its content as the next version, so history is never rewritten.
 - Open views follow new versions: see [Live views](#live-views-decided-2026-11-19). A doc
   updates in place and a page with the runtime keeps its state; a page that declares `hold` waits
@@ -1685,7 +1687,7 @@ a price comparison) is a sheet: the agent writes JSON lines, Plinth renders a sp
 fourth [typed output](#mcp-interface) and works like the others: `publish_artifact` and
 `update_artifact` take `type: "sheet"` with the source in `content`, a version stores
 `sheet.jsonl` and nothing else (a sheet has no assets), and versions, `base_version` conflicts,
-restore, history, diffs and the source editor work as for docs. Cells are versioned content, never
+restore, history, Compare and the source editor work as for docs. Cells are versioned content, never
 shared data: every change, an agent's or a person's, is a new version anyone can revert. A sheet is
 not edited on its page yet.
 
@@ -1707,7 +1709,7 @@ not edited on its page yet.
   and the editor.
 - **Canonical storage.** The Worker stores every accepted sheet re-serialised: the header's keys in
   a fixed order, one `JSON.stringify` per row with trailing empty cells trimmed, no final newline.
-  Each row therefore has one spelling, and a version diff shows only the rows that changed. This
+  Each row therefore has one spelling, and Compare lists only the rows that changed. This
   holds for inline publishes, updates and bundles alike; the CLI's read-back allows for it.
 - **Formulas.** Plinth's own Excel-compatible interpreter (`packages/shared/src/sheet/formula/`),
   the same code in the Worker and in the browser: A1 references (`B7`, `$B$7`), ranges (`A1:B5`,
@@ -1977,6 +1979,56 @@ its page without a new version each time, and agents add and move blocks with
 - **Not yet.** Saving the board as a version (a snapshot) and restoring it onto the board, images
   on the board, freehand drawing, selecting several blocks, frames, an export item in the app
   menu, and anonymous link viewers in the room.
+
+### Comparing versions (decided 2026-11-19)
+
+History's Compare page says what changed between two versions in plain language and shows both
+versions rendered. It shows no source code, following the maintainer's decision of 2026-11-19 that
+people work with artifacts as they look, not as their source. Agents, MCP, REST and the CLI still
+read and write source, and `GET /a/<slug>/source` (plain text for agents and crawlers, linked only
+from discovery tags) stays.
+
+- **The page.** `/a/:slug/compare?from=&to=` shows "What changed from v4 to v5", a list of changes
+  with a "Files" part, then the two versions side by side, each in its own sandboxed frame on the
+  content host through a fresh viewer gate (as before). At phone width the frames show one at a
+  time, with a Before and After switch. There is no source view: a link that still carries
+  `view=source` or `view=rendered` lands on the same page.
+- **The list.** It is worked out in the browser, from the two version details Compare already
+  fetches (`GET /api/v1/artifacts/:ref/versions/:n`), by pure, zod-free describers in
+  `packages/shared/src/changes/` (one per type, keyed by the registry, so a new type must add one).
+  Each item has a kind (added, removed, changed, moved), where it is ("Under “Pricing”", "Slide
+  3", "Row 7, “Qty”", "Board “Home”"), a short sentence, and the visible text or value before and
+  after. The app holds the two source texts only as the describers' input and renders only their
+  output, as text nodes. Working it out on the Worker was rejected: a diff of two 1 MB versions can
+  pass the free plan's CPU time per request, and the app has the versions already.
+
+| Type | What the list names |
+| --- | --- |
+| `doc` | Blocks located by the nearest heading above: headings added, removed, renamed or moved to another level; paragraphs, lists, quotes, code blocks and tables added, removed or changed, with excerpts of their text (Markdown syntax stripped); formatting-only changes; images added or removed (by alt text or file name) or described differently; link targets |
+| `slides` | Deck settings (aspect, theme, slide numbers, footer); slides added, removed and moved ("Slide 4 moved to 2"); per slide its title, text, columns, images and speaker notes |
+| `sheet` | Columns added, removed, renamed, or with another type, number format, choices or width; frozen columns; rows added or removed (counted, labelled by their first cell); cells changed ("B7 changed", 12 → 14); a formula cell's "calculation changed", with both results when both versions evaluate within 1,000,000 steps |
+| `design_system` | Name, description, prefix, fonts; tokens added, removed and changed, light and dark ("color.brand.500 changed", #3B5BDB → #2F4AC0), their descriptions and deprecation; guidelines (as a doc); shared styles; components added, removed, renamed, their status, description and usage, and "examples or styles changed" (never the code) |
+| `design` | Shared styles or fonts; boards added, removed, renamed, resized, moved, their background and section; per board its visible text, images and styles |
+| `html` | The page title; visible text located by the nearest heading; links, images and forms added or removed (counted); styles and scripts changed (never quoted) |
+| `whiteboard` | The board's settings (background, who can edit). Notes and arrows live in shared data, which versions do not hold |
+
+- **HTML without a DOM.** HTML pages and design boards are read by a string scanner that finds text
+  runs, tag names and a few attributes (link targets, image sources, stylesheets, scripts). It
+  never builds a document (no DOM, no `DOMParser`), skips comments, scripts, styles and templates,
+  decodes character references once, and is linear in its input.
+- **Files.** Every type lists its files added, removed and replaced, with their sizes. Two files at
+  one path are the same when their `sha256` match, or, when either side was stored before hashes
+  were kept, when their sizes match. At most 50 files of each kind are listed, within 12 KB as
+  JSON, then "and N more files", so the same summary fits one socket frame when the page's editors
+  review a draft.
+- **Limits.** At most 200 items and 160 characters an excerpt. A diff stops looking for the
+  smallest set of edits past 4,000 edits or 400 ms and reports the region as replaced. The list
+  says when it was cut, and the two rendered versions below it always show everything. A version
+  the type's checks refuse is not described in detail ("One of the two versions cannot be read in
+  detail"); two texts that differ in nothing a person sees say "Nothing visible changed, only how
+  the content is stored".
+- **No setting.** Compare is the same on every instance and in both isolation modes; it adds no
+  route, no table and no env var.
 
 ### Big builds and reuse by hash
 
@@ -2436,7 +2488,7 @@ for a single user.
    the content domain, CSP, quotas.
 3. **Sharing.** Email allowlists with magic-link viewing, roles, a dashboard listing artifacts and
    connections.
-4. **Version history UI.** Version list, permanent version URLs, diff, restore.
+4. **Version history UI.** Version list, permanent version URLs, compare, restore.
 5. **Comments and pull mentions.** Threads, element pins, the mention queue and its MCP tools.
 6. **Editor.** Monaco with live preview and conflict handling.
 7. **Open-source launch.** Deploy button, setup script, docs, license, contribution guide.

@@ -10,6 +10,13 @@ Add a line under **Unreleased** in the pull request that makes a change people w
 
 ## Unreleased
 
+- **Compare says what changed, in words.** History's Compare page no longer shows a source diff.
+  It lists what changed between the two versions the way the page shows it: "Under “Pricing”:
+  paragraph changed" with the text before and after, "Slide 4 moved to 2", "B7 changed: 12 → 14",
+  "color.brand.500 changed", boards added or resized, a page's title, text, links and images, and
+  the files added, removed or replaced. The two versions are still rendered side by side below the
+  list, one at a time with a Before and After switch on a phone. Older links with `view=source`
+  open the same page. Agents still read and write source as before.
 - **Follow the presenter in a deck.** An owner or editor can turn on **Lead viewers** in a deck's
   controls or presenter view, and the people the deck is shared with who have it open follow their
   slide, with a "Following the presenter" note; paging by hand pauses it until they choose "Back to

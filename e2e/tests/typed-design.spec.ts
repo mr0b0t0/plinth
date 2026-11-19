@@ -468,10 +468,11 @@ test.describe("editing a design", () => {
       expect(current.body.content).toContain('name="Banner"');
 
       await page.goto(`/a/${artifact.slug}/compare?from=1&to=2`);
-      const diff = page.getByRole("table", { name: /Changes to design\.html from v1 to v2/ });
-      await expect(diff).toBeVisible();
-      await expect(diff.getByRole("row", { name: /Added .*artboard id="banner"/ })).toBeVisible();
-      await page.getByRole("tab", { name: "Rendered" }).click();
+      const changes = page.getByRole("region", { name: "What changed from v1 to v2" });
+      await expect(
+        changes.getByRole("listitem").filter({ hasText: "Board “Banner” added" }),
+      ).toBeVisible();
+      await expect(page.locator("main")).not.toContainText("artboard");
       const f1 = page.frameLocator(`iframe[title="v1 of ${TITLE}"]`);
       const f2 = page.frameLocator(`iframe[title="v2 of ${TITLE}"]`);
       await expect(f1.locator(".plinth-design__board")).toHaveCount(3, { timeout: 15_000 });

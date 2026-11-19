@@ -459,14 +459,13 @@ test.describe("editing a doc", () => {
       expect(current.body.content).toBe(`${V1}\n## Added`);
       expect(current.body.html).toBeUndefined();
 
-      // Compare: the source diff is on content.md and shows the added line.
+      // Compare: the list names the added heading in words, with no Markdown on the page.
       await page.goto(`/a/${artifact.slug}/compare?from=1&to=2`);
-      const diff = page.getByRole("table", { name: /Changes to content\.md from v1 to v2/ });
-      await expect(diff).toBeVisible();
-      await expect(diff.getByRole("row", { name: /Added ## Added/ })).toBeVisible();
+      const changes = page.getByRole("region", { name: "What changed from v1 to v2" });
+      await expect(changes.getByRole("listitem")).toHaveText([/Heading “Added” added/]);
+      await expect(page.locator("main")).not.toContainText("## Added");
 
-      // Rendered compare: each version through the renderer.
-      await page.getByRole("tab", { name: "Rendered" }).click();
+      // Below it, each version through the renderer.
       const f1 = page.frameLocator(`iframe[title="v1 of ${TITLE}"]`);
       const f2 = page.frameLocator(`iframe[title="v2 of ${TITLE}"]`);
       await expect(f1.locator("h1#field-notes")).toContainText(TITLE, { timeout: 15_000 });

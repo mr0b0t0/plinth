@@ -18,8 +18,15 @@ import {
   ShareNetworkIcon,
   TrashIcon,
 } from "@phosphor-icons/react";
-import { API, APP_ROUTES, VISIBILITIES } from "@plinth/shared";
+import {
+  API,
+  APP_ROUTES,
+  type ChangeList as ChangeListData,
+  type FileChangeSummary,
+  VISIBILITIES,
+} from "@plinth/shared";
 import { type ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { ChangeList } from "../components/history/ChangeList.tsx";
 import { LogoMark } from "../components/Logo.tsx";
 import { AppShell } from "../components/layout/AppShell.tsx";
 import {
@@ -70,6 +77,35 @@ import "../components/viewer/viewer.css";
 import { THEME_NAMES, type Theme, useTheme } from "../lib/theme.ts";
 
 const MODES: Theme[] = ["light", "dark"];
+
+/** A change list as Compare shows it: what a person sees changed, never the source. */
+const SAMPLE_CHANGES: ChangeListData = {
+  truncated: false,
+  items: [
+    {
+      kind: "changed",
+      where: "Under “Plot 4”",
+      what: "Paragraph changed",
+      before: "Spring survey, plot 4: twelve nests.",
+      after: "Spring survey, plot 4: fourteen nests, two of them new.",
+    },
+    { kind: "added", where: "Under “Plot 4”", what: "Image “Nest map” added" },
+    {
+      kind: "changed",
+      where: "",
+      what: "Heading “Notes” renamed",
+      before: "Notes",
+      after: "Field notes",
+    },
+  ],
+};
+const SAMPLE_FILES: FileChangeSummary = {
+  added: [{ path: "img/nest-map.png", kind: "added", after: 48_200 }],
+  removed: [],
+  replaced: [],
+  more: 0,
+  same: 2,
+};
 
 /** Ends the session, then reloads on the sign-in page so every cached state is dropped. */
 function signOut() {
@@ -1041,9 +1077,15 @@ function ComponentSpecimens() {
               content: <p className="text-muted">The rendered artifact, in its sandboxed frame.</p>,
             },
             {
-              id: "source",
-              label: "Source",
-              content: <pre>{"<h1>Field notes</h1>\n<p>Spring survey, plot 4.</p>"}</pre>,
+              id: "changes",
+              label: "Changes",
+              content: (
+                <ChangeList
+                  heading="What changed from v6 to v7"
+                  changes={SAMPLE_CHANGES}
+                  files={SAMPLE_FILES}
+                />
+              ),
             },
             {
               id: "history",
