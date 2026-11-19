@@ -19,20 +19,13 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   enable it (the hosted one by default), keeps the answer, and its mention watcher follows it, so a
   self-hosted or local instance no longer needs `PLINTH_URL` exported every time Claude Code starts.
   From a terminal: `claude plugin install plinth@plinth --config instance_url=<origin>`; later,
-  `/plugin configure plinth@plinth`. `PLINTH_URL` still works and wins. The directory build has the
-  option too, and the Connect panel, `/llms.txt` and `plinth connect` print the right command for
-  each instance. Plugin 0.15.0.
+  `/plugin configure plinth@plinth`. `PLINTH_URL` still works and wins. The Connect panel, `/llms.txt`
+  and `plinth connect` print the right command for each instance. Plugin 0.15.0.
 - **Review account sign-in.** An operator can give one ordinary account a password, for a
   directory's reviewers who cannot receive sign-in emails: set `REVIEW_LOGIN_EMAIL` and the secret
   `REVIEW_LOGIN_PASSWORD_HASH` (from `apps/worker/scripts/review-login-hash.mjs`). It signs in at
   `/login/review`, linked from the sign-in page, and locks after repeated wrong passwords. Off
   unless both are set; never an admin account ([security.md](docs/security.md#review-account-sign-in)).
-||||||| parent of a235159 (Plugin directory: a fixed hosted server URL (0.16.0))
-  `/plugin configure plinth@plinth`. `PLINTH_URL` still works and wins. The directory build has the
-  option too, and the Connect panel, `/llms.txt` and `plinth connect` print the right command for
-  each instance. Plugin 0.15.0.
-  `/plugin configure plinth@plinth`. `PLINTH_URL` still works and wins. The Connect panel, `/llms.txt`
-  and `plinth connect` print the right command for each instance. Plugin 0.15.0.
 - **Plinth shows up properly in Codex.** The plugin now carries Codex's listing block (name,
   short description, icon, starter prompts, links), so Codex and Codex plugin directories show it
   with its own icon and description. Plugin 0.13.0.
