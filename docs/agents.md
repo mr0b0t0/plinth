@@ -193,7 +193,10 @@ clone. Google has been moving users to Antigravity CLI; this adapter stays thin 
 
 ### Cursor and VS Code
 
-Add the server with the install links on **Connections > Connect an agent**. For the rules, save
+In Cursor, the Plinth plugin ([`integrations/plugin-cursor`](../integrations/plugin-cursor)) brings
+the server and the skill together, once it is listed in the Cursor Marketplace or on
+cursor.directory. Otherwise, add the server with the install links on
+**Connections > Connect an agent**. For the rules, save
 [`integrations/cursor/plinth-artifacts.mdc`](../integrations/cursor/plinth-artifacts.mdc) into your
 project's `.cursor/rules/`, or
 [`integrations/vscode/plinth-artifacts.instructions.md`](../integrations/vscode/plinth-artifacts.instructions.md)

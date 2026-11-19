@@ -18,6 +18,7 @@
       "!integrations/plugin/**/*.json",
       "!integrations/plugin-directory/**/*.json",
       "!integrations/plugin-openai/**/*.json",
+      "!integrations/plugin-cursor/**/*.json",
       "!integrations/gemini/**/*.json",
       "!.claude-plugin",
       "!.agents"

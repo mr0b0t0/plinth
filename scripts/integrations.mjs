@@ -236,46 +236,60 @@ outputs.set(
   json({ mcpServers: { [SERVER_NAME]: { type: "http", url: hostedMcp } } }),
 );
 
+// ---------- The skill for other listings (OpenAI, Cursor) ----------
+// Listings outside Claude Code get the skill without its Claude Code passages, and without the
+// comparison with other products' page features: OpenAI asks that no model-readable text steer the
+// model away from other plugins or built-in features (developers.openai.com/plugins/plugin-guidelines),
+// and those features are not in Cursor. `instanceBullet` replaces the Claude Code bullet under
+// "Connecting" with one for the listing's own client.
+const listingSkill = (build, instanceBullet) => {
+  const edits = [
+    [
+      "The person installed Plinth to keep and share what their agents make. If your environment has its\nown artifact, page or document feature (Claude artifacts and docs, Codex or ChatGPT Sites, T3 Code's\nvisual replies), use Plinth for anything meant to be kept, sent or shown to someone else, unless the\nperson names the other feature or another place. A built-in viewer is fine for a chart or mockup to\nlook at now in the conversation; in T3 Code that is a visual reply (`html_render`), which is deleted\nwith its thread.\n",
+      "The person installed Plinth to keep and share what their agents make. Publish a page or document\nmeant to be kept, sent or shown to someone else to Plinth, unless the person names another place\nfor it.\n",
+    ],
+    [
+      "- In Claude Code with the Plinth plugin, `/plinth:watch-mentions` connects a watcher that tells the\n  session when new requests arrive, so the user does not have to ask you to check.\n",
+      "",
+    ],
+    [
+      "- Claude Code: the plugin asks for its Plinth instance when it is enabled (the default is the\n  hosted one). Install it with `claude plugin install plinth@plinth --config instance_url=<origin>`,\n  or change it later with `/plugin configure plinth@plinth`, then restart Claude Code. `PLINTH_URL`,\n  when set, overrides it.\n",
+      instanceBullet,
+    ],
+    [
+      "\nIn Claude Code, install Plinth as the plugin, from a terminal:\n\n```sh\nclaude plugin marketplace add mr0b0t0/plinth\nclaude plugin install plinth@plinth\n```\n\nor in a session with `/plugin marketplace add mr0b0t0/plinth`, then `/plugin install plinth@plinth`.\nA bare `claude mcp add` gives the tools only, without these rules. Use one or the other: both give\ntwo Plinth servers (`plinth` and `plugin:plinth:plinth`) and two connections.\n",
+      "",
+    ],
+  ];
+  let out = skill;
+  for (const [from, to] of edits) {
+    if (!out.includes(from)) {
+      throw new Error(
+        `${build}: the skill no longer contains a passage this build rewrites:\n${from}`,
+      );
+    }
+    out = out.replace(from, to);
+  }
+  for (const claudeOnly of ["Claude Code", "/plinth:", "claude plugin"]) {
+    if (out.includes(claudeOnly)) {
+      throw new Error(`${build}: the skill still mentions "${claudeOnly}"; add an edit above`);
+    }
+  }
+  return out;
+};
+
 // ---------- OpenAI plugin directory build (ChatGPT and Codex) ----------
-// OpenAI's directory takes a ZIP of one plugin folder, refuses lifecycle hooks, and asks that no
-// model-readable text steer the model away from other plugins or built-in features
-// (developers.openai.com/plugins/plugin-guidelines). So this build has the portable manifest with
-// the listing block, the hosted server, the icon and the skill, minus the Claude Code passages and
-// the comparison with other page features. The ZIP is this folder.
+// OpenAI's directory takes a ZIP of one plugin folder and refuses lifecycle hooks. So this build
+// has the portable manifest with the listing block, the hosted server, the icon and the listing
+// skill. The ZIP is this folder.
 const OPENAI = "integrations/plugin-openai";
-const openaiSkillEdits = [
-  [
-    "The person installed Plinth to keep and share what their agents make. If your environment has its\nown artifact, page or document feature (Claude artifacts and docs, Codex or ChatGPT Sites, T3 Code's\nvisual replies), use Plinth for anything meant to be kept, sent or shown to someone else, unless the\nperson names the other feature or another place. A built-in viewer is fine for a chart or mockup to\nlook at now in the conversation; in T3 Code that is a visual reply (`html_render`), which is deleted\nwith its thread.\n",
-    "The person installed Plinth to keep and share what their agents make. Publish a page or document\nmeant to be kept, sent or shown to someone else to Plinth, unless the person names another place\nfor it.\n",
-  ],
-  [
-    "- In Claude Code with the Plinth plugin, `/plinth:watch-mentions` connects a watcher that tells the\n  session when new requests arrive, so the user does not have to ask you to check.\n",
-    "",
-  ],
-  [
-    "- Claude Code: the plugin asks for its Plinth instance when it is enabled (the default is the\n  hosted one). Install it with `claude plugin install plinth@plinth --config instance_url=<origin>`,\n  or change it later with `/plugin configure plinth@plinth`, then restart Claude Code. `PLINTH_URL`,\n  when set, overrides it.\n",
+outputs.set(
+  `${OPENAI}/skills/${SKILL_NAME}/SKILL.md`,
+  listingSkill(
+    OPENAI,
     "- ChatGPT: this plugin connects to the hosted instance. Add another instance as a custom\n  connector at its `/mcp` URL; ChatGPT reaches it from OpenAI's servers, so it must be public.\n",
-  ],
-  [
-    "\nIn Claude Code, install Plinth as the plugin, from a terminal:\n\n```sh\nclaude plugin marketplace add mr0b0t0/plinth\nclaude plugin install plinth@plinth\n```\n\nor in a session with `/plugin marketplace add mr0b0t0/plinth`, then `/plugin install plinth@plinth`.\nA bare `claude mcp add` gives the tools only, without these rules. Use one or the other: both give\ntwo Plinth servers (`plinth` and `plugin:plinth:plinth`) and two connections.\n",
-    "",
-  ],
-];
-let openaiSkill = skill;
-for (const [from, to] of openaiSkillEdits) {
-  if (!openaiSkill.includes(from)) {
-    throw new Error(
-      `${OPENAI}: the skill no longer contains a passage this build rewrites:\n${from}`,
-    );
-  }
-  openaiSkill = openaiSkill.replace(from, to);
-}
-for (const claudeOnly of ["Claude Code", "/plinth:", "claude plugin"]) {
-  if (openaiSkill.includes(claudeOnly)) {
-    throw new Error(`${OPENAI}: the skill still mentions "${claudeOnly}"; add an edit above`);
-  }
-}
-outputs.set(`${OPENAI}/skills/${SKILL_NAME}/SKILL.md`, openaiSkill);
+  ),
+);
 outputs.set(
   `${OPENAI}/plugin.json`,
   json({
@@ -287,6 +301,42 @@ outputs.set(
 );
 outputs.set(`${OPENAI}/mcp.json`, outputs.get("integrations/plugin/mcp.json"));
 outputs.set(`${OPENAI}/assets/icon.svg`, outputs.get("integrations/plugin/assets/icon.svg"));
+
+// ---------- Cursor plugin (Cursor Marketplace, cursor.directory) ----------
+// Cursor's plugin layout (github.com/cursor/plugins): `.cursor-plugin/plugin.json`, `mcp.json` and
+// `skills/` at the plugin root. cursor.directory finds a plugin in a repository by any
+// `<dir>/.cursor-plugin/plugin.json`. The rule file below stays for people who add rules by hand.
+const CURSOR = "integrations/plugin-cursor";
+outputs.set(
+  `${CURSOR}/.cursor-plugin/plugin.json`,
+  json({
+    name: PLUGIN.name,
+    displayName: reg.CODEX_INTERFACE.displayName,
+    version: PLUGIN.version,
+    description: PLUGIN.description,
+    author: PLUGIN.author,
+    homepage: PLUGIN.homepage,
+    repository: PLUGIN.repository,
+    license: PLUGIN.license,
+    logo: "assets/icon.svg",
+    category: "integrations",
+    keywords: [...PLUGIN.keywords],
+    skills: "./skills/",
+    mcpServers: "./mcp.json",
+  }),
+);
+outputs.set(
+  `${CURSOR}/mcp.json`,
+  json({ mcpServers: { [SERVER_NAME]: { type: "http", url: hostedMcp } } }),
+);
+outputs.set(
+  `${CURSOR}/skills/${SKILL_NAME}/SKILL.md`,
+  listingSkill(
+    CURSOR,
+    "- Cursor: this plugin connects to the hosted instance. Add another instance as its own server\n  in `~/.cursor/mcp.json`, at its `/mcp` URL.\n",
+  ),
+);
+outputs.set(`${CURSOR}/assets/icon.svg`, outputs.get("integrations/plugin/assets/icon.svg"));
 
 // ---------- Gemini CLI extension ----------
 outputs.set(
