@@ -29,10 +29,14 @@ For a memo, plan, spec, proposal, mostly-text report, meeting notes or a how-to,
 heading anchors, tables, code, images from the doc's own files, light and dark, phone width, a print
 stylesheet). For a talk, pitch, review or lesson it publishes `type: "slides"`: Markdown with a line
 `---` between slides and speaker notes after `Note:`, which Plinth renders as a deck people can page
-through, present full screen with a presenter view, and print to PDF. Dashboards, charts, anything
-interactive and custom visual design stay HTML. When unsure and the result is mostly text, a doc.
-The type is fixed at publish; the server's instructions and the skill's "Documents (type doc)" and
-"Slides (type slides)" sections say this to every harness.
+through, present full screen with a presenter view, and print to PDF. For visual compositions at
+fixed sizes (app screens, landing page mockups, posters, social posts, ads and banners, several
+variants side by side) it publishes `type: "design"`: shared `<head>` tags, then artboards, each a
+marker line (`<!-- artboard name="Home" size="iphone" -->`) and its HTML, which Plinth lays out on
+a canvas people pan, zoom and print, every board alone at its exact size. Dashboards, charts and
+anything interactive stay HTML. When unsure and the result is mostly text, a doc. The type is fixed
+at publish; the server's instructions and the skill's "Documents (type doc)", "Slides (type
+slides)" and "Designs (type design)" sections say this to every harness.
 
 **Design systems.** A person's tokens, components and guidelines can live on Plinth as a design
 system (`type: "design_system"`, JSON in `content`), shown as a reference site with live component

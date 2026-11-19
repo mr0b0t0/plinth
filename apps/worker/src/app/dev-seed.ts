@@ -4,6 +4,9 @@
 // DEV_SEED=true; it is an authentication bypass by design and must never run anywhere else.
 // GET /__dev/data/:id is its read-side twin: an artifact's shared-data row counts, for checks no
 // API can make once the artifact is gone (a takedown's wipe), without spawning wrangler.
+// POST /__dev/capture-url mints what a thumbnail capture opens (the enter URL of a capture pass
+// for one version, no identity, and the cookies its browser sets first), so the suite can load a
+// page top-level as Plinth's own browser does.
 import { TTL } from "@plinth/shared";
 import { Hono } from "hono";
 import { z } from "zod";
@@ -14,6 +17,7 @@ import { appCookieName } from "../lib/cookies.ts";
 import { hashToken, newId, newToken } from "../lib/crypto.ts";
 import { ApiError } from "../lib/errors.ts";
 import { isoIn, nowIso } from "../lib/time.ts";
+import { captureLoad } from "../services/thumbnails.ts";
 import { getOrCreateUser } from "../services/users.ts";
 
 const seedInput = z.object({
@@ -94,4 +98,32 @@ devSeed.get("/__dev/data/:id", async (c) => {
     ),
   ]);
   return c.json({ docs: docs?.results[0]?.n ?? 0, usage_rows: usage?.results[0]?.n ?? 0 });
+});
+
+const captureInput = z.object({
+  artifact_id: z.string().regex(/^[a-z0-9]{20}$/),
+  version: z.number().int().min(1),
+});
+
+/** What services/thumbnails.ts would open for this version, and the cookies it would set first. */
+devSeed.post("/__dev/capture-url", async (c) => {
+  const config = c.get("config");
+  devOnly(config);
+  const parsed = captureInput.safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success)
+    throw new ApiError("invalid_input", "Invalid input", { issues: parsed.error.issues });
+  const { artifact_id: id, version } = parsed.data;
+  const row = await c.env.DB.prepare(
+    "SELECT access_epoch AS e, type FROM artifacts WHERE id = ?1 AND deleted_at IS NULL",
+  )
+    .bind(id)
+    .first<{ e: number; type: string }>();
+  if (!row) throw new ApiError("not_found", "Not found");
+  const load = await captureLoad(config, {
+    artifactId: id,
+    accessEpoch: row.e,
+    type: row.type,
+    number: version,
+  });
+  return c.json(load, 201);
 });

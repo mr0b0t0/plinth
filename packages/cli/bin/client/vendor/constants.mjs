@@ -152,6 +152,8 @@ export const LIMITS = {
   maxPageDisplayNameLength: 64,
   /** The `q` of a people search. */
   maxPeopleQueryLength: 100,
+  /** Bytes of design HTML (design.html) per version of a design artifact. */
+  maxDesignBytes: 2 * MB,
   /** Bytes of JSON (system.json) per version of a design system artifact. */
   maxDesignSystemBytes: 1 * MB,
   /** The design system format's limits (packages/shared/src/designSystem.ts). */
