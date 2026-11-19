@@ -21,7 +21,13 @@ import path from "node:path";
 import { after, before, beforeEach, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import { claudeCodeConnectText } from "../bin/client/connect.mjs";
-import { checkLimits } from "../bin/client/files.mjs";
+import {
+  checkLimits,
+  defaultLimits,
+  SOURCE_FILES,
+  sourceField,
+  sourceMaxBytes,
+} from "../bin/client/files.mjs";
 import { ApiError } from "../bin/client/http.mjs";
 import { HOSTED_ORIGIN, resolveOrigin } from "../bin/client/origin.mjs";
 import { isVersionConflict, splitWarnings } from "../bin/client/publish.mjs";
@@ -486,6 +492,107 @@ describe("plinth publish", () => {
     );
   });
 
+  it("publishes a folder with system.json as a design system, and updates it inline with content", async () => {
+    const system = (name) =>
+      `${JSON.stringify({
+        format: "plinth.design-system/1",
+        name,
+        fonts: [{ family: "Acme Sans", src: "fonts/acme.woff2" }],
+        tokens: { color: { $type: "color", bg: { $value: "#ffffff" } } },
+      })}\n`;
+    const dir = build({ "system.json": system("Acme UI"), "fonts/acme.woff2": "wOF2" });
+    const missing = await plinth(["publish", build({ "dist/system.json": "{}" }), "--dry-run"], {
+      extraEnv: asPat(),
+    });
+    assert.equal(missing.code, 1);
+    assert.match(missing.stderr, /system\.json for a design system/);
+    const dry = await plinth(["publish", dir, "--dry-run"], { extraEnv: asPat() });
+    assert.equal(dry.code, 0, dry.stderr);
+    assert.match(dry.stdout, /Would publish 2 files .* as a new design system, in one bundle/);
+    const first = await plinth(["publish", dir, "--json", "--title", "Acme UI"], {
+      extraEnv: asPat(),
+    });
+    assert.equal(first.code, 0, first.stderr);
+    assert.deepEqual(fake.state.lastUploadInput, { type: "design_system", title: "Acme UI" });
+    const out = JSON.parse(first.stdout);
+    assert.equal(out.verified, true);
+    const stored = fake.state.artifacts.get(out.id).versions[0];
+    assert.deepEqual([...stored.keys()].sort(), ["fonts/acme.woff2", "system.json"]);
+    assert.equal(stored.get("system.json").bytes.toString(), system("Acme UI"));
+
+    writeFileSync(path.join(dir, "system.json"), system("Acme UI 2"));
+    const r = await plinth(["publish", dir, "--id", out.id, "--json"], { extraEnv: asPat() });
+    assert.equal(r.code, 0, r.stderr);
+    const result = JSON.parse(r.stdout);
+    assert.equal(result.version, 2);
+    assert.equal(result.verified, true);
+    const put = fake.state.lastPut;
+    assert.equal(put.content, system("Acme UI 2"));
+    assert.equal(put.html, undefined);
+    assert.equal(put.base_version, 1);
+    // The unchanged font is reused by its hash, not sent again.
+    assert.deepEqual(put.assets, [
+      { path: "fonts/acme.woff2", sha256: stored.get("fonts/acme.woff2").sha256 },
+    ]);
+
+    const wrong = await plinth(["publish", build(site(1)), "--id", out.id, "--dry-run"], {
+      extraEnv: asPat(),
+    });
+    assert.equal(wrong.code, 1);
+    assert.match(wrong.stderr, /is a design system; the folder needs system\.json at its top/);
+    const single = await plinth(
+      ["publish", path.join(build(site(1)), "index.html"), "--id", out.id, "--dry-run"],
+      { extraEnv: asPat() },
+    );
+    assert.equal(single.code, 1);
+    assert.match(
+      single.stderr,
+      /is a design system; publish a folder with system\.json at its top/,
+    );
+  });
+
+  it("keeps a folder with index.html a page when it also holds system.json", async () => {
+    const dir = build({ ...site(1), "system.json": '{"format":"plinth.design-system/1"}' });
+    const r = await plinth(["publish", dir, "--json"], { extraEnv: asPat() });
+    assert.equal(r.code, 0, r.stderr);
+    assert.deepEqual(fake.state.lastUploadInput, { type: "html" });
+    const stored = fake.state.artifacts.get(JSON.parse(r.stdout).id).versions[0];
+    assert.ok(stored.has("system.json"), "system.json travels as one of the page's files");
+  });
+
+  it("checks a design system's system.json against the fixed 1 MB limit", () => {
+    const limits = { ...fake.state.limits, max_html_bytes: 10 };
+    const files = [{ path: "system.json", size: 2 * 1024 * 1024 }];
+    assert.throws(
+      () => checkLimits(files, "system.json", "design_system", limits),
+      /system\.json is 2\.0 MB; the limit is 1\.0 MB/,
+    );
+    assert.doesNotThrow(() =>
+      checkLimits([{ path: "system.json", size: 20 }], "system.json", "design_system", limits),
+    );
+  });
+
+  it("knows the source file, field and limit of every type a folder can publish", async () => {
+    const { TYPE_REGISTRY } = await import("../../shared/src/artifactTypes.ts");
+    // A type without bundle uploads (upload: false in its registry row) has no folder to publish.
+    const folderTypes = Object.values(TYPE_REGISTRY).filter((t) => t.upload !== false);
+    assert.deepEqual(
+      Object.fromEntries(folderTypes.map((t) => [t.id, t.sourcePath])),
+      { ...SOURCE_FILES },
+      "a new artifact type needs its source file in SOURCE_FILES (packages/cli/bin/client/files.mjs)",
+    );
+    // index.html wins over every typed source, so an existing build folder stays a page.
+    assert.equal(Object.keys(SOURCE_FILES)[0], "html");
+    for (const t of folderTypes) {
+      assert.equal(sourceField(t.id), t.sourceField, `${t.id}: the field its source goes in`);
+      assert.equal(
+        sourceMaxBytes(t.id, defaultLimits()),
+        t.maxSourceBytes,
+        `${t.id}: the limit its source is checked against`,
+      );
+    }
+  });
+
   it("checks a deck's slides.md against the Markdown limit, not the HTML one", () => {
     const limits = { ...fake.state.limits, max_html_bytes: 10 };
     const files = [{ path: "slides.md", size: 2 * 1024 * 1024 }];
@@ -710,6 +817,23 @@ describe("plinth upload", () => {
     assert.equal(out.bundle.entries, 2);
     const stored = fake.state.artifacts.get(out.id).versions[0];
     assert.deepEqual([...stored.keys()].sort(), ["img/c.png", "slides.md"]);
+  });
+
+  it("sends a design system's folder (system.json at its top) for a design_system ticket", async () => {
+    const t = await ticket({ type: "design_system" });
+    const dir = build({
+      "system.json": '{"format":"plinth.design-system/1","name":"Acme UI"}',
+      "img/logo.png": "png",
+    });
+    const r = await plinth(["upload", dir, "--to", t.upload_url], {
+      extraEnv: { PLINTH_UPLOAD_TOKEN: t.upload_token },
+    });
+    assert.equal(r.code, 0, r.stderr);
+    const out = JSON.parse(r.stdout);
+    assert.equal(out.type, "design_system");
+    assert.equal(out.bundle.entries, 2);
+    const stored = fake.state.artifacts.get(out.id).versions[0];
+    assert.deepEqual([...stored.keys()].sort(), ["img/logo.png", "system.json"]);
   });
 
   it("refuses an http or wrong-path --to, and a missing token", async () => {

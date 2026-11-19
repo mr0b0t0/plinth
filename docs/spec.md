@@ -1017,6 +1017,11 @@ for look the same. It is the fourth artifact type, `design_system`, beside `html
   none. The dashboard shows a "Design system" badge and a "Design systems" filter when there is
   one. The artifact menu's "Copy for an agent" copies a line with the design system's link and id,
   never its title.
+- **Uploads and the CLI.** `start_upload` with `type: "design_system"` (or the `id` of a design
+  system) takes a folder with `system.json` and its images and fonts at its top. The Plinth CLI
+  publishes such a folder as a design system (`plinth publish <dir>`), updates one with the JSON in
+  `content` (`--id`), sends one with `plinth upload`, and checks `system.json` against the fixed
+  1 MB limit before sending. A folder with `index.html` at its top is a page, whatever else it holds.
 - **Not in v1.** No runtime loading across artifacts (it would need CSP sources for other artifact
   origins and a content pass for two artifacts), no script in previews, no on-page or live editing,
   no themes other than `dark`, and no copying of font or image files between artifacts.

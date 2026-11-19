@@ -10,6 +10,11 @@ Add a line under **Unreleased** in the pull request that makes a change people w
 
 ## Unreleased
 
+- **The CLI publishes design systems.** `plinth publish <dir>` publishes a folder with
+  `system.json` at its top (and its images and fonts) as a design system, `--id` updates one with
+  only the changed files, and `plinth upload` sends one for a `start_upload` ticket. `system.json`
+  is checked against the 1 MB limit before anything is sent. A folder with `index.html` at its top
+  is still a page.
 - **Follow the presenter in a deck.** An owner or editor can turn on **Lead viewers** in a deck's
   controls or presenter view, and the people the deck is shared with who have it open follow their
   slide, with a "Following the presenter" note; paging by hand pauses it until they choose "Back to
