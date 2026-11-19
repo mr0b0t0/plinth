@@ -323,7 +323,8 @@
   height: 132px;
   overflow: hidden;
   border-bottom: var(--border-width) solid var(--color-border);
-  border-radius: calc(var(--radius-lg) - var(--border-width)) calc(var(--radius-lg) - var(--border-width)) 0 0;
+  border-radius: calc(var(--radius-lg) - var(--border-width))
+    calc(var(--radius-lg) - var(--border-width)) 0 0;
   background: var(--color-sidebar);
 }
 /* The version's screenshot. Hidden until it has loaded, so a missing one (404 until its capture
