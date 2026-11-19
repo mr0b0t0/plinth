@@ -8,7 +8,7 @@
 // (stageItems.tsx): this component holds the state and hands every item one StageContext.
 
 import { FileIcon } from "@phosphor-icons/react";
-import { API, APP_ROUTES, type CommentInfo, route, type ViewGate } from "@plinth/shared";
+import { API, APP_ROUTES, type CommentInfo, route, typeDef, type ViewGate } from "@plinth/shared";
 import { Fragment, lazy, Suspense, useEffect, useRef, useState } from "react";
 import { api } from "../../lib/api.ts";
 import { Link } from "../../lib/router.tsx";
@@ -160,7 +160,7 @@ export function ViewerStage({
     openComments: onToggleComments,
   });
 
-  // On-page editing of a doc (#36): owners and editors on the current version only.
+  // On-page editing of a doc or a sheet (#36): owners and editors on the current version only.
   const live = useLiveEdit({
     gate,
     frame,
@@ -402,6 +402,8 @@ export function ViewerStage({
             artifactId={artifact.id}
             saving={live.saving}
             mode={live.mode === "room" && live.conflict.rev !== undefined ? "room" : "solo"}
+            language={typeDef(artifact.type)?.editor.language ?? "markdown"}
+            sourceLabel={typeDef(artifact.type)?.sourceLabel ?? "Markdown"}
             onClose={live.closeReview}
             onKeepMine={() => void live.keepMine()}
             onTakeLatest={() => void live.takeLatest()}

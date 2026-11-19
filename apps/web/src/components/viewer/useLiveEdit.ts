@@ -1,6 +1,7 @@
-// On-page editing of a doc (#36), app side: the state machine behind the Edit toggle, the edit bar
-// and the unsaved-edits notice. The doc frame does the editing; this hook talks to it with the
-// renderer protocol (rendererProtocol.ts) and to the server with the session cookie.
+// On-page editing of a doc or a sheet (#36), app side: the state machine behind the Edit toggle,
+// the edit bar and the unsaved-edits notice. The frame does the editing (the doc or sheet
+// renderer); this hook talks to it with the renderer protocol (rendererProtocol.ts) and to the
+// server with the session cookie.
 //
 // Modes (gate.live.mode, decided by the server):
 // - "room": the frame edits the live draft in the artifact's room with the other editors. The app
@@ -24,6 +25,7 @@ import {
   type PublishResult,
   route,
   sourceOf,
+  typeDef,
   type ViewGate,
 } from "@plinth/shared";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -127,6 +129,11 @@ export function useLiveEdit({
 }: UseLiveEditOptions): LiveEdit {
   const { artifact } = gate;
   const id = artifact.id;
+  const def = typeDef(artifact.type);
+  // What the person edits, in messages ("doc", "sheet"), and how much the frame may hand back.
+  const noun = (def?.badge ?? "doc").toLowerCase();
+  const maxBytes =
+    artifact.type === "doc" ? config?.limits.max_doc_bytes : (def?.maxSourceBytes ?? undefined);
   const target = editTargetOrigin(config, contentOrigin);
   const available = gate.live !== undefined && target !== null;
   const signIn = gate.live?.sign_in === true;
@@ -162,7 +169,7 @@ export function useLiveEdit({
         contentOrigin: target,
         solo: latest.current.mode === "solo",
         nonce: collecting.current?.nonce ?? null,
-        maxDocBytes: config?.limits.max_doc_bytes,
+        maxDocBytes: maxBytes,
       });
       if (!m) return;
       matchFrameMessage(m, {
@@ -198,7 +205,7 @@ export function useLiveEdit({
     };
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);
-  }, [available, frame, target, config]);
+  }, [available, frame, target, maxBytes]);
 
   // A new frame (a reload, review mode off) starts in view mode: tell it again, once it loaded.
   const told = useRef(false);
@@ -236,22 +243,25 @@ export function useLiveEdit({
 
   // ---------- errors ----------
 
-  const fail = useCallback((e: unknown, onConflict?: () => void) => {
-    if (!(e instanceof ApiRequestError)) {
-      toast(e instanceof Error ? e.message : "Something went wrong. Your edits are kept.");
-      return;
-    }
-    if (e.status === 401) {
-      toast("Sign in again to save. Your edits are kept.");
-      latest.current.onReload();
-    } else if (e.status === 403) toast("You can no longer edit this doc.");
-    else if (e.status === 409 && onConflict) onConflict();
-    else if (e.status === 409) toast(e.message);
-    else if (e.status === 413) toast("This doc is too large to save as a version.");
-    else if (e.status === 429) toast("Hourly version limit reached. Your edits stay as a draft.");
-    else if (e.status === 503) toast("Live editing is unavailable. Your edits are kept.");
-    else toast(e.message);
-  }, []);
+  const fail = useCallback(
+    (e: unknown, onConflict?: () => void) => {
+      if (!(e instanceof ApiRequestError)) {
+        toast(e instanceof Error ? e.message : "Something went wrong. Your edits are kept.");
+        return;
+      }
+      if (e.status === 401) {
+        toast("Sign in again to save. Your edits are kept.");
+        latest.current.onReload();
+      } else if (e.status === 403) toast(`You can no longer edit this ${noun}.`);
+      else if (e.status === 409 && onConflict) onConflict();
+      else if (e.status === 409) toast(e.message);
+      else if (e.status === 413) toast(`This ${noun} is too large to save as a version.`);
+      else if (e.status === 429) toast("Hourly version limit reached. Your edits stay as a draft.");
+      else if (e.status === 503) toast("Live editing is unavailable. Your edits are kept.");
+      else toast(e.message);
+    },
+    [noun],
+  );
 
   // ---------- review (conflicts) ----------
 

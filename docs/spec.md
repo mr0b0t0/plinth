@@ -31,8 +31,8 @@ account.
 - Viewers need no AI account. At most they confirm an email address.
 - Every publish is a version. Old versions stay readable and restorable.
 - People can edit an artifact in the browser and ask an agent for changes by commenting on it.
-- Invited people can work on a page together live, and owners and editors can edit a doc on its
-  page together.
+- Invited people can work on a page together live, and owners and editors can edit a doc or a
+  sheet on its page together.
 - Open source, and cheap enough to self-host on Cloudflare's free tier.
 
 **Non-goals for v1**
@@ -44,8 +44,8 @@ account.
   (see [Files people add to a page](#files-people-add-to-a-page-decided-2026-11-19)).
 - Character-level co-editing (OT or CRDT), and live editing of HTML artifacts' text (pages build
   their own multiplayer with [live rooms](#live-rooms)).
-- On-page editing of HTML artifacts and designs (docs are edited on the page; HTML and designs in
-  the source editor).
+- On-page editing of HTML artifacts and designs (docs and sheets are edited on the page; HTML and
+  designs in the source editor).
 - Importing artifacts automatically from Claude or ChatGPT accounts. Agents push; the platform does
   not pull.
 - Team workspaces and billing. Planned, but after the core works.
@@ -167,7 +167,7 @@ and two fields to the stored declaration:
 | Table or column | Key fields | Notes |
 | --- | --- | --- |
 | `versions.capabilities` | adds `room`, `roomOpen` | Written only when the page declares `room` (`<meta name="plinth-capabilities" content="room">`, open topics from `<meta name="plinth-room-open">`), so every other declaration is stored exactly as before. A row without them reads as no room. `room` is not shared data: a page that declares only `room` has none |
-| `live_drafts` | artifact_id (key), base_version, content, size_bytes, rev, conflict_version, updated_by_user, created_at, updated_at | At most one unsaved page draft per doc, apart from its immutable versions, and never a version itself. Written by the artifact's room in a guarded flush that cannot bring back a deleted or taken-down artifact, never moves `rev` backwards and keeps at most 20 drafts per owner. A row exists only while the draft differs from `base_version`, or while `conflict_version` (a version published meanwhile that changed the same lines) waits for review. Content follows the doc limits (1 MB, 50,000 lines). Deleted with the artifact and on takedown; `updated_by_user` is cleared on `erase-user`; untouched rows are deleted after `LIVE_DRAFT_RETENTION_DAYS` |
+| `live_drafts` | artifact_id (key), base_version, content, size_bytes, rev, conflict_version, updated_by_user, created_at, updated_at | At most one unsaved page draft per doc, apart from its immutable versions, and never a version itself. Written by the artifact's room in a guarded flush that cannot bring back a deleted or taken-down artifact, never moves `rev` backwards and keeps at most 20 drafts per owner. A row exists only while the draft differs from `base_version`, or while `conflict_version` (a version published meanwhile that changed the same lines) waits for review. Content follows the doc limits (1 MB, 50,000 lines), or a sheet's (1 MB, 10,000 rows) for a sheet ([Live sheets](#live-sheets-decided-2026-11-19)). Deleted with the artifact and on takedown; `updated_by_user` is cleared on `erase-user`; untouched rows are deleted after `LIVE_DRAFT_RETENTION_DAYS` |
 
 Settings (env vars): `ALLOW_ROOMS` (on), `ROOM_MAX_CONNECTIONS_PER_ARTIFACT` (50, from 2 to 1000),
 `ROOM_MAX_MESSAGE_BYTES` (8192, from 512 to 65536), `ROOM_MESSAGES_PER_SECOND` (20 per connection,
@@ -719,7 +719,7 @@ Decided 2026-11-14 (issue #1). Design:
 Decided 2026-11-18 (issue #36). Presence and broadcast among the people who have one artifact
 open: live cursors, who is here, a note moving while it is dragged. Nothing in a room persists;
 durable state belongs in [shared data](#shared-data-and-viewer-identity), which is also where a
-late joiner reads it. Plinth's own on-page doc editing is the room's first use.
+late joiner reads it. Plinth's own on-page editing of docs and sheets is the room's first use.
 
 - **Declaration.** A page opts in with `room` in `<meta name="plinth-capabilities">` (for example
   `content="data viewer room"`), and may list topics commenters may emit too with
@@ -745,8 +745,8 @@ late joiner reads it. Plinth's own on-page doc editing is the room's first use.
   `can_emit` (`all`, `open` or `none`) say which applies. Agents never join a room.
 - **Transport.** One WebSocket per page to its own origin, `wss://<id>.<CONTENT_HOST>/__plinth/room/v1/page`,
   served by the artifact's Durable Object with the Hibernation API. Plinth's own renderers use
-  `/__plinth/room/v1/doc` (on-page doc editing) and `/__plinth/room/v1/slides` (following the
-  presenter in a deck) the same way. The handshake is checked in
+  `/__plinth/room/v1/doc` (on-page editing of docs and sheets) and `/__plinth/room/v1/slides`
+  (following the presenter in a deck) the same way. The handshake is checked in
   order: method, exact `Origin`, fetch metadata, the `plinth.room.v1` subprotocol, rooms active,
   the artifact, the content pass with its identity claim at the current epoch, the kind the path
   names (after the pass, so a caller without one learns nothing about the declaration), and policy
@@ -1659,8 +1659,9 @@ fourth [typed output](#mcp-interface) and works like the others: `publish_artifa
 `update_artifact` take `type: "sheet"` with the source in `content`, a version stores
 `sheet.jsonl` and nothing else (a sheet has no assets), and versions, `base_version` conflicts,
 restore, history, diffs and the source editor work as for docs. Cells are versioned content, never
-shared data: every change, an agent's or a person's, is a new version anyone can revert. A sheet is
-not edited on its page yet.
+shared data: every change, an agent's or a person's, is a new version anyone can revert. Owners and
+editors also edit a sheet on its page, live with each other
+([Live sheets](#live-sheets-decided-2026-11-19)).
 
 - **Format.** Line 1 is the header, `{"plinth":"sheet","v":1,"columns":[...],"freeze":{"cols":n}}`,
   and every later line is one row, a JSON array of cells. In A1 terms the header's column names are
@@ -1775,13 +1776,14 @@ not edited on its page yet.
   `max_sheet_columns`.
 - **Security.** Sheet text reaches the DOM only through `textContent` in the renderer on the
   artifact's content origin; the renderer contains no HTML parser, links pass the link rule again
-  in the browser, and cell ids come from addresses only. The app and the frame exchange only
-  `print` and `export { format }`, which carry no data; the frame acts on them only from its parent
-  at the app origin. Cell text and column names are untrusted data for agents. See
+  in the browser, and cell ids come from addresses only. Outside on-page editing the app and the
+  frame exchange only `print` and `export { format }`, which carry no data; the frame acts on them
+  only from its parent at the app origin. On-page editing uses the doc renderer's messages and the
+  room's draft channel ([Live sheets](#live-sheets-decided-2026-11-19)). Cell text and column names are untrusted data for agents. See
   [docs/security.md](security.md#sheets).
-- **Not in this slice.** Editing cells on the page with other editors (live sheets) comes next;
-  multiple worksheets, charts, conditional formatting, merged cells, cell styles and server-side
-  exports are not planned.
+- **Not in this slice.** Multiple worksheets, charts, conditional formatting, merged cells, cell
+  styles and server-side exports are not planned. Cells are edited on the page as
+  [Live sheets](#live-sheets-decided-2026-11-19) describes.
 
 ### Files people add to a page (decided 2026-11-19)
 
@@ -1869,6 +1871,57 @@ note. Everyone who can open the page sees them. No file can ever run as a page o
   are no cookies, so `ready` resolves `{ available: false, reason: "opaque_isolation" }` without a
   request. The notice under the viewer bar tells each person that the page keeps files people add,
   and who can see who added them.
+
+### Live sheets (decided 2026-11-19)
+
+Owners and editors edit a sheet right on its page, live with each other, exactly as they edit a doc
+([Editing](#editing)): the same Edit toggle, strip, Save version, Discard and Done, the same
+checkpoints, autosave, conflict review and modes ("room" with live rooms, "solo" under origin
+isolation without rooms, none under opaque isolation or the path fallback), the same policy action
+`live_edit`, the same `ALLOW_LIVE_EDITING` switch and the same `LIVE_*` settings. Nothing new is
+stored and no setting is added: the draft is a `live_drafts` row like a doc's, and the room's draft
+channel (`/__plinth/room/v1/doc`) serves every type whose registry row has `liveEdit`.
+
+- **A row is a line.** The draft is the sheet's canonical JSON lines (see
+  [Sheets](#sheets-decided-2026-11-19)): line 1 is the header (row 1), and row *r* is line *r*. A
+  lease on a row is a lease on its line, so two people never edit the same row, and typing sends
+  the whole row line again at most every 250 ms. The header's line is leased to rename a column or
+  change its type or format.
+- **What the room accepts.** Every line an edit puts in must be a valid row of the sheet in its one
+  canonical spelling, or, on line 1, a header with the same number of columns; a changed header is
+  checked against every row, so a type the cells do not fit is refused. Nothing goes above the
+  header, and the sheet limits hold (1 MB, 10,000 rows, 32 KiB a row, 50,000 formulas). A refused
+  edit is not applied and its sender gets `invalid` (or `too_large`). So the draft is always a valid
+  sheet, and a checkpoint stores it byte for byte.
+- **Rows and columns.** Inserting and deleting rows and columns is one more frame, `struct`, with
+  the op as `edit_sheet` would take it (`insert_rows`, `delete_rows`, `insert_columns`,
+  `delete_columns`) and no text. The room applies it only from a writer, at the draft's current
+  `rev`, while nobody else holds a lease (`struct_denied` `held`, `stale`, `frozen` or `watch`
+  otherwise) and only when the result is a valid sheet; the sender's own lease ends first. Every
+  socket then applies the same op to the same lines with the same pure function
+  (`applySheetStruct`), which moves formula references as `edit_sheet` does.
+- **Versions from elsewhere.** An agent's version (`edit_sheet`, `update_artifact`), the source
+  editor or a restore is merged under the draft row by row: rows changed on different sides are
+  both kept, even when they are next to each other. The same row changed differently on both
+  sides, different rows inserted at the same place on both sides, or a merge whose result is not a
+  valid sheet (a row the page changed that no longer fits a header the version changed) freezes the
+  draft for review, and the review shows the two versions' JSON lines side by side. `edit_sheet` and
+  `update_artifact` warn `live_draft`, and `get_artifact` and `read_sheet` report the draft's
+  metadata to owners' and editors' agents.
+- **On the page.** In edit mode Enter, F2, a double-click or typing opens the selected cell as a
+  field (a list for a select column, a date picker for a date column, a text field otherwise or for
+  a formula); Enter, Tab and the up and down arrows commit and move; Escape puts the row back as it
+  was. Enter, Space or a double-click toggles a checkbox, Delete clears a cell, and pasting
+  tab-separated text writes the rows it covers, adding rows past the end. F2 in a column name
+  renames it. Numbers are typed in the viewer's locale, with its decimal separator; a percent column
+  takes 12.5 for 12.5%. A strip under the formula bar inserts a row above or below, deletes the
+  row, inserts a column left or right, deletes the column, and opens the column's settings (name,
+  type, number format, currency, decimals, options). A value the room would refuse stays in its
+  field with the reason. Rows other people hold show their email, and their typing arrives as it
+  is typed. Sort and filter stay the viewer's own while editing; downloads give what the page
+  shows.
+- **Live views.** A sheet edited on its page keeps its frame as a doc does
+  ([Live views](#live-views-decided-2026-11-19)).
 
 ### Big builds and reuse by hash
 
@@ -2334,7 +2387,7 @@ for a single user.
 7. **Open-source launch.** Deploy button, setup script, docs, license, contribution guide.
 8. **Hosted public instance.** Public visibility, report and takedown flow, terms and privacy
    pages.
-9. **Later.** Typed outputs: docs done (2026-11-14), slides, design systems, designs and sheets done (2026-11-19); editing a sheet's cells on its page next. Push agents with
+9. **Later.** Typed outputs: docs done (2026-11-14), slides, design systems, designs and sheets done (2026-11-19); editing a sheet on its page with other editors done (2026-11-19). Push agents with
    bring-your-own key, team workspaces, paid plans, custom domains. Tags beside the category and a
    group-by-category view (personal categories for artifacts shared with you, and sharing a whole
    category, shipped 2026-11-19). Tokens limited

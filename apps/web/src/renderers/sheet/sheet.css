@@ -19,6 +19,10 @@
   --sheet-btn-hover: #eef1f4;
   --sheet-note-bg: #fff7e6;
   --sheet-note-fg: #7a4b00;
+  /* On-page editing: rows other people hold, as the doc renderer marks blocks. */
+  --sheet-live: #8f5a2a;
+  --sheet-live-soft: #f0e8e0;
+  --sheet-invalid: #b42318;
   --sheet-font:
     system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif,
     "Apple Color Emoji", "Segoe UI Emoji";
@@ -45,6 +49,9 @@
     --sheet-btn-hover: #2a3038;
     --sheet-note-bg: #3a2a0a;
     --sheet-note-fg: #ffd58a;
+    --sheet-live: #d39a62;
+    --sheet-live-soft: #27211c;
+    --sheet-invalid: #ff8a80;
   }
 }
 
@@ -360,6 +367,163 @@ body {
   font-size: 12px;
 }
 
+/* ---------- on-page editing ---------- */
+
+.plinth-sheet__slot:empty {
+  display: none;
+}
+
+.plinth-sheet__strip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 16px;
+  border-bottom: 1px solid var(--sheet-rule);
+}
+
+.plinth-sheet__strip .plinth-sheet__btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.plinth-sheet__hint {
+  color: var(--sheet-muted);
+  margin-left: auto;
+}
+
+.plinth-sheet__panel {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 8px 16px;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--sheet-rule);
+  background: var(--sheet-head-bg);
+}
+
+.plinth-sheet__panel-field {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  color: var(--sheet-muted);
+}
+
+.plinth-sheet__panel-field[hidden] {
+  display: none;
+}
+
+.plinth-sheet__panel input,
+.plinth-sheet__panel select,
+.plinth-sheet__panel textarea {
+  padding: 4px 6px;
+  border: 1px solid var(--sheet-rule-strong);
+  border-radius: 6px;
+  background: var(--sheet-bg);
+  color: var(--sheet-fg);
+  font: inherit;
+}
+
+.plinth-sheet__panel-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.plinth-sheet__page--editing .plinth-sheet__cell {
+  cursor: text;
+}
+
+.plinth-sheet__grid td:has(> .plinth-sheet__input) {
+  padding: 0;
+}
+
+.plinth-sheet__input {
+  display: block;
+  width: 100%;
+  height: 100%;
+  min-height: calc(var(--sheet-row-h) - 1px);
+  margin: 0;
+  padding: 0 8px;
+  border: 0;
+  outline: 2px solid var(--sheet-live);
+  outline-offset: -2px;
+  background: var(--sheet-bg);
+  color: var(--sheet-fg);
+  font: inherit;
+}
+
+.plinth-sheet__input[aria-invalid="true"] {
+  outline-color: var(--sheet-invalid);
+}
+
+@media (pointer: coarse) {
+  .plinth-sheet__input {
+    font-size: 16px;
+  }
+}
+
+.plinth-sheet__row--held td,
+.plinth-sheet__row--held th:not(.plinth-sheet__rownum) {
+  background: var(--sheet-live-soft);
+  cursor: not-allowed;
+}
+
+.plinth-sheet__grid .plinth-sheet__row--held .plinth-sheet__rownum {
+  overflow: visible;
+  box-shadow: inset 3px 0 0 var(--sheet-live);
+}
+
+.plinth-sheet__holder {
+  position: absolute;
+  left: calc(100% + 4px);
+  top: -8px;
+  z-index: 4;
+  padding: 0 6px;
+  border-radius: 3px;
+  background: var(--sheet-live);
+  color: var(--sheet-bg);
+  font: 600 11px / 16px var(--sheet-font);
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.plinth-sheet__notice {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  left: 16px;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 560px;
+  margin-left: auto;
+  padding: 8px 12px;
+  border: 1px solid var(--sheet-rule-strong);
+  border-left: 3px solid var(--sheet-live);
+  border-radius: 6px;
+  background: var(--sheet-bg);
+  color: var(--sheet-fg);
+  box-shadow: 0 4px 16px rgb(0 0 0 / 0.15);
+}
+
+.plinth-sheet__notice > span {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.plinth-sheet__notice-close {
+  flex: none;
+  border: 0;
+  background: transparent;
+  color: var(--sheet-muted);
+  font: inherit;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+}
+
 @media (max-width: 480px) {
   .plinth-sheet__bar {
     padding: 8px 16px;
@@ -387,7 +551,10 @@ body {
   }
 
   .plinth-sheet__bar > :not(.plinth-sheet__title),
-  .plinth-sheet__fx {
+  .plinth-sheet__fx,
+  .plinth-sheet__slot,
+  .plinth-sheet__notice,
+  .plinth-sheet__holder {
     display: none;
   }
 

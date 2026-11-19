@@ -15,8 +15,15 @@
 // stager, with this draft's base_version; when a version is published from outside, the draft is
 // merged onto it when that is clean (merge3) and frozen for review when it is not. Draft text is
 // never logged.
+//
+// Every type with liveEdit has a draft here (docs and sheets): the type's rules (liveTypes.ts)
+// check each edit and each merge, so a sheet's draft is always valid canonical JSON lines. A
+// sheet's rows and columns move with `struct`, applied here and on every socket by the same pure
+// function, only while nobody else holds a lease.
 import {
+  type ArtifactTypeDef,
   applyLineEdit,
+  applySheetStruct,
   blockLines,
   chunkText,
   joinLines,
@@ -26,18 +33,18 @@ import {
   type LiveDocClientFrame,
   type LiveDocErrorCode,
   type LiveDocServerFrame,
-  liveDocTooLarge,
+  type LiveTypeRules,
+  liveRules,
   merge3,
   rangesOverlap,
+  type SheetStructOp,
   shiftRange,
   splitLines,
-  TYPE_REGISTRY,
+  typeDef,
 } from "@plinth/shared";
 import { type Bindings, getConfig } from "../config.ts";
 import { randomString, sha256Hex } from "../lib/crypto.ts";
 import { nowIso } from "../lib/time.ts";
-
-const SOURCE = TYPE_REGISTRY.doc.sourcePath;
 
 /** A doc socket's lease, as its hibernation attachment holds it. */
 export interface StoredLease {
@@ -86,6 +93,9 @@ export interface DocSnapshot {
 
 interface Loaded {
   artifactId: string;
+  /** The artifact's type (its source file) and its live rules. */
+  def: ArtifactTypeDef;
+  rules: LiveTypeRules;
   /** Random per in-memory load: a client never mistakes a reload for a continuation. */
   gen: string;
   rev: number;
@@ -145,7 +155,7 @@ export class LiveDoc {
   private async load(artifactId: string): Promise<Loaded | null> {
     const DB = this.host.env.DB;
     const row = await DB.prepare(
-      `SELECT a.current_version, a.deleted_at, a.taken_down_at,
+      `SELECT a.type, a.current_version, a.deleted_at, a.taken_down_at,
               d.base_version, d.content, d.rev, d.conflict_version,
               (SELECT r2_prefix FROM versions
                 WHERE artifact_id = a.id AND number = coalesce(d.base_version, a.current_version)) AS base_prefix
@@ -154,6 +164,7 @@ export class LiveDoc {
     )
       .bind(artifactId)
       .first<{
+        type: string;
         current_version: number;
         deleted_at: string | null;
         taken_down_at: string | null;
@@ -164,11 +175,16 @@ export class LiveDoc {
         base_prefix: string | null;
       }>();
     if (!row || row.deleted_at || row.taken_down_at || !row.base_prefix) return null;
-    const baseText = await this.readVersionText(row.base_prefix);
+    const def = typeDef(row.type);
+    const rules = liveRules(row.type);
+    if (!def?.liveEdit || !rules) return null;
+    const baseText = await this.readVersionText(row.base_prefix, def);
     if (baseText === null) return null;
     const draft = row.content !== null && row.base_version !== null && row.rev !== null;
     const doc: Loaded = {
       artifactId,
+      def,
+      rules,
       gen: randomString(16),
       rev: draft ? (row.rev as number) : 0,
       flushedRev: draft ? (row.rev as number) : 0,
@@ -187,18 +203,18 @@ export class LiveDoc {
     return this.loaded;
   }
 
-  private async readVersionText(prefix: string): Promise<string | null> {
-    const obj = await this.host.env.FILES.get(`${prefix}${SOURCE}`);
+  private async readVersionText(prefix: string, def: ArtifactTypeDef): Promise<string | null> {
+    const obj = await this.host.env.FILES.get(`${prefix}${def.sourcePath}`);
     return obj ? obj.text() : null;
   }
 
-  private async versionText(artifactId: string, n: number): Promise<string | null> {
+  private async versionText(doc: Loaded, n: number): Promise<string | null> {
     const v = await this.host.env.DB.prepare(
       "SELECT r2_prefix FROM versions WHERE artifact_id = ?1 AND number = ?2",
     )
-      .bind(artifactId, n)
+      .bind(doc.artifactId, n)
       .first<{ r2_prefix: string }>();
-    return v ? this.readVersionText(v.r2_prefix) : null;
+    return v ? this.readVersionText(v.r2_prefix, doc.def) : null;
   }
 
   /** Leases come back from the sockets' attachments; any that no longer fit are dropped. */
@@ -342,6 +358,8 @@ export class LiveDoc {
         return this.release(ws, s, doc, f.lease);
       case "takeover":
         return this.takeover(ws, s, doc, f.lease);
+      case "struct":
+        return this.struct(ws, s, doc, f.rev, f.op);
     }
   }
 
@@ -379,8 +397,11 @@ export class LiveDoc {
       return this.host.send(ws, { t: "lease_denied", reason: "frozen" });
     }
     const ins = blockLines(text);
+    // The type's rules first (a sheet's rows and header), then its size.
+    const refused = doc.rules.checkEdit(doc.lines, l.start, l.end - l.start, ins);
+    if (refused) return this.error(ws, refused);
     const next = applyLineEdit(doc.lines, l.start, l.end - l.start, ins);
-    if (liveDocTooLarge(joinLines(next))) return this.error(ws, "too_large");
+    if (doc.rules.tooLarge(joinLines(next))) return this.error(ws, "too_large");
     const e = { start: l.start, del: l.end - l.start, ins: ins.length };
     doc.lines = next;
     doc.rev += 1;
@@ -443,6 +464,43 @@ export class LiveDoc {
     if (prev) this.broadcast({ t: "released", lease: prev });
     this.broadcast({ t: "released", lease: id });
     this.broadcast({ t: "leased", lease: s.lease.id, start, end, holder: s.id, by: s.email });
+  }
+
+  /**
+   * A sheet's rows or columns (struct): a writer's, at the current rev, while no other socket holds
+   * a lease (so no lease has to move). The sender's own lease ends first; the op is applied with
+   * applySheetStruct and broadcast as it came, and every socket applies it to the same lines.
+   */
+  private struct(ws: WebSocket, s: DocSocket, doc: Loaded, rev: number, op: SheetStructOp) {
+    if (s.doc !== "write") return this.host.send(ws, { t: "struct_denied", reason: "watch" });
+    if (!doc.rules.struct) return this.error(ws, "invalid");
+    if (doc.conflictVersion !== null) {
+      return this.host.send(ws, { t: "struct_denied", reason: "frozen" });
+    }
+    if (rev !== doc.rev) return this.host.send(ws, { t: "struct_denied", reason: "stale" });
+    for (const o of this.host.sockets()) {
+      if (o.ws !== ws && o.s.lease) {
+        return this.host.send(ws, { t: "struct_denied", reason: "held", by: o.s.email });
+      }
+    }
+    const next = applySheetStruct(doc.lines, op);
+    if (!next) return this.error(ws, "invalid");
+    const text = joinLines(next);
+    if (doc.rules.tooLarge(text)) return this.error(ws, "too_large");
+    if (!doc.rules.valid(text)) return this.error(ws, "invalid");
+    if (s.lease) {
+      const id = s.lease.id;
+      s.lease = null;
+      this.host.save(ws, s);
+      this.broadcast({ t: "released", lease: id });
+    }
+    doc.lines = next;
+    doc.rev += 1;
+    doc.lastBy = s.id;
+    doc.lastEmail = s.email;
+    doc.lastEditAt = nowIso();
+    this.broadcast({ t: "struct", gen: doc.gen, rev: doc.rev, op, by: s.id });
+    this.scheduleFlush();
   }
 
   /** Every lease ends (a rebase, a conflict, a reset): holders keep their text and re-lease. */
@@ -601,7 +659,7 @@ export class LiveDoc {
       await this.flushNow();
       return;
     }
-    const theirs = await this.versionText(doc.artifactId, n);
+    const theirs = await this.versionText(doc, n);
     if (theirs === null || this.loaded !== doc || n <= doc.baseVersion) return;
     const ours = this.text(doc);
     if (ours === doc.baseText && doc.conflictVersion === null) {
@@ -617,8 +675,13 @@ export class LiveDoc {
       this.status(doc);
       return;
     }
-    const m = merge3(doc.baseText, ours, theirs, { maxEdits: LIVE_DOC.maxMergeEdits });
-    if (m.clean && !liveDocTooLarge(m.text)) {
+    const m = merge3(doc.baseText, ours, theirs, {
+      maxEdits: LIVE_DOC.maxMergeEdits,
+      rows: doc.rules.rows,
+    });
+    // A clean merge the type cannot hold (a sheet row that no longer fits a header the other side
+    // changed) is reviewed like an overlap.
+    if (m.clean && !doc.rules.tooLarge(m.text) && doc.rules.valid(m.text)) {
       doc.lines = splitLines(m.text);
       doc.baseText = theirs;
       doc.baseVersion = n;
@@ -779,7 +842,7 @@ export class LiveDoc {
     )
       .bind(artifactId)
       .first<{ current_version: number }>();
-    const text = cur ? await this.versionText(artifactId, cur.current_version) : null;
+    const text = cur ? await this.versionText(doc, cur.current_version) : null;
     if (!cur || text === null || this.loaded !== doc) return { ok: false, rev: doc.rev };
     this.lock = null;
     doc.lines = splitLines(text);

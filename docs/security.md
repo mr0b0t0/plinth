@@ -73,6 +73,7 @@ make a test pass.
 | An upload gives away where it was made | A phone photo's EXIF location reaches every reader of the page | Files are stored as added and everyone who may add one is told so (the viewer notice, the privacy notice, the skill) |
 | An upload outlives a delete or takedown | A part arrives after the owner deleted the file or an admin took the artifact down, and the file comes back | Every write repeats the artifact's live check and the row's state in its SQL; a delete or takedown turns rows into tombstones in its own batch, a takedown deletes the ready objects right after, and the hourly sweep clears the rest |
 | A file name steers an agent or tricks a viewer | A file named "Ignore previous instructions.png", `../../etc/passwd`, or a right-to-left override that turns `gpj.exe` around | Names are cleaned (last segment, no control or bidi characters, at most 200 characters, the proven extension added) and are display text everywhere; agents get names with the untrusted note and never the bytes |
+| A forged sheet edit breaks the shared draft | A modified client on the draft socket sends a row the sheet cannot hold, a header with fewer columns, or a struct that moves rows under someone else's open cell | The room checks every row line and header an edit puts in against the sheet's rules in their canonical spelling, re-checks every row when the header changes, applies a struct only from a writer at the current `rev` while nobody else holds a lease, and freezes a merge whose result is not a valid sheet for review ([Live sheets](#live-sheets)) |
 
 Out of scope for v1: denial of service beyond Cloudflare's defaults, a compromised Cloudflare
 account, and malicious instance operators.
@@ -412,8 +413,8 @@ the artifact's own content origin, never on the app host. Design:
   and `event.origin` is the exact app origin; the message carries no data.
 - **On-page editing (#36).** For an owner's or editor's view pass on the current version's own
   path, outside review mode, with rooms and live editing on, the shell's payload carries
-  `live: "room"` and the renderer opens the doc socket (`/__plinth/room/v1/doc`, see
-  [Live rooms](#live-rooms)). Every other shell (commenters, viewers, link viewers, previews,
+  `live: "room"` and the renderer opens the draft socket (`/__plinth/room/v1/doc`, see
+  [Live rooms](#live-rooms)); a doc and a sheet ([Live sheets](#live-sheets)) work the same way. Every other shell (commenters, viewers, link viewers, previews,
   captures, pinned versions, review mode) has the same bytes as before. Edit mode starts only when
   the app posts `{ type: "edit" }` to the frame it holds, at the exact content origin; the frame
   answers only its parent at the exact app origin, and sends draft text to the app only in solo
@@ -1180,7 +1181,7 @@ and agents have no bulk delete; only the owner clears everything, in the app.
 
 A page that declares `room` (spec: "Live rooms") gets presence and broadcast through one WebSocket
 to `/__plinth/room/v1/page` on its own content origin, served by the artifact's Durable Object
-(`ArtifactRoom`, one per artifact). Plinth's doc renderer uses `/__plinth/room/v1/doc` the same way,
+(`ArtifactRoom`, one per artifact). Plinth's doc and sheet renderers use `/__plinth/room/v1/doc` the same way,
 and its slides renderer `/__plinth/room/v1/slides`. The room runs Plinth's fixed code; there is
 still no per-artifact server code.
 
@@ -1209,7 +1210,7 @@ The upgrade (`apps/worker/src/content/room.ts`) therefore checks, in this order:
    without a pass (one that forges `Origin` outside a browser) learns only what the content path
    tells them, that the artifact exists, and never its type or whether it declares `room`.
 8. **Kind.** The path names it: `page` for an HTML artifact whose current version declares
-   `room`, `doc` for a doc (with `ALLOW_LIVE_EDITING`), `slides` for a deck (a type with `follow`,
+   `room`, `doc` for a doc or a sheet (a type with `liveEdit`, with `ALLOW_LIVE_EDITING`), `slides` for a deck (a type with `follow`,
    with `ALLOW_SLIDES_FOLLOW`). Any other name under the prefix is a 404.
 9. **Policy.** `roomAccess` in `policy.ts` decides joining and what the socket may do. Everyone
    identified joins a page room and may set presence, which is never authority. Emitting is a
@@ -1235,20 +1236,21 @@ authority. Only the status and a reason code of a refusal are logged, never fram
 **Revocation.** A socket is admitted at one access epoch. The Worker tells the room after a
 sharing change (`revoke`, close code 4401), a takedown or delete (`gone`, 4404) and a version that
 changes the room declaration (`redeclare`, 4410), through `waitUntil` with one retry, and only for
-artifacts that can have a room (a doc, a deck, or a page whose current or previous version declares
+artifacts that can have a room (a doc, a sheet, a deck, or a page whose current or previous version declares
 `room`), or, while live views are on, for every artifact, since any of them may have watch sockets
 ([Live views](#live-views)). While any socket is open, the room's alarm re-reads the artifact in D1 every 60 s and
 closes sockets whose epoch is old, whose pass expired, or whose artifact is gone; that catches a
 lost call and changes made with SQL, so a decision can be stale for at most a minute. 4401 makes the
 runtime re-check `/__plinth/api/v1/room` and fire `plinth:expired` when access is over.
 
-**The doc channel.** `/__plinth/room/v1/doc` is for owners and editors of a doc only, and only
-with `ALLOW_LIVE_EDITING`. The account flag in the sealed claim (`a: 1`, set when the gate's
+**The doc channel.** `/__plinth/room/v1/doc` is for owners and editors of a doc or a sheet (a type
+with `liveEdit`) only, and only with `ALLOW_LIVE_EDITING`. The account flag in the sealed claim (`a: 1`, set when the gate's
 principal was signed in) decides the right: signed-in editors may lease and edit, editors confirmed
 by code only watch, and passes sealed before the flag existed watch until a reload. The room
-enforces leases (exclusive line ranges), refuses edits past the doc limits (1 MB, 50,000 lines;
-doc frames up to 64 KiB) and never creates a version; checkpoints and discards go through the app
-host's REST API.
+enforces leases (exclusive line ranges), refuses edits past the type's limits (a doc's 1 MB and
+50,000 lines, a sheet's 1 MB and 10,000 rows; frames up to 64 KiB) and every line a sheet cannot
+hold ([Live sheets](#live-sheets)), and never creates a version; checkpoints and discards go through
+the app host's REST API.
 
 **The slides channel.** `/__plinth/room/v1/slides` carries slide numbers and nothing else
 (`packages/shared/src/slidesRoom.ts`, `apps/worker/src/rooms/slides.ts`). Every identified viewer
@@ -2042,6 +2044,44 @@ dialog and can delete them there.
 **Agents** list and delete files over MCP and REST (owner or editor) and never get the bytes: an
 image is a prompt-injection channel and a new egress path, so reading files is left for its own
 review. Names carry the untrusted note.
+
+## Live sheets
+
+Owners and editors edit a sheet on its page through the same draft channel as a doc
+(`/__plinth/room/v1/doc`, [Live rooms](#live-rooms), "The doc channel"): the same gate, the same
+`roomAccess` decision (a type with `liveEdit`, owners and editors only, signed in to write), the
+same 64 KiB frames, leases, D1 flush and checkpoints through the app host's REST API. Nothing new
+is reachable from a page: no endpoint, frame, CSP, sandbox, cookie or setting changed, and the
+sheet's frame still runs only Plinth's renderer (`script-src 'self'`).
+
+- **The draft is always a valid sheet.** The room checks each edit with the sheet's rules
+  (`packages/shared/src/liveTypes.ts`): every line it puts in must parse as a row whose cells fit
+  their columns (the publish checks of [Sheets](#sheets): types, links, the formula allowlist,
+  sizes) and must be that row's canonical spelling; a header must be the canonical header with
+  the same number of columns, and a changed header is checked against every row. Nothing goes
+  above the header; the sheet limits hold. A refused edit is not applied. So a modified client
+  cannot put into the draft anything a publish would refuse, and a checkpoint stores the draft as
+  it is (a conflict's resolution text is re-checked and stored canonically before the room takes
+  it).
+- **Rows and columns move only under no one else's lease.** A `struct` frame carries an op of a
+  fixed shape (a row number and count, or a column letter and new column definitions, checked by a
+  strict schema before it is read) and no text. The room applies it only from a writer, at the
+  draft's current `rev`, while it is not frozen and no other socket holds a lease, and only when
+  the result is a valid sheet; it ends the sender's own lease first. Every socket applies the same
+  op with the same pure function (`applySheetStruct`); a client that cannot apply it, or sees a gap
+  in `rev` or a lease it still knows of, asks for the draft again.
+- **Merges are checked too.** A version published meanwhile is merged under the draft row by row
+  (rows next to each other merge; the same row changed on both sides, or different rows inserted
+  at the same place, do not). The merged text must still be a valid sheet; when it is not, the
+  draft is frozen for review as for any overlap, so a merge never makes a draft that a publish
+  would refuse.
+- **The renderer stays free of HTML parsing.** The editor builds its fields, lists, the edit strip
+  and the column settings with `createElement` and fills them through `.value` and `textContent`;
+  the source test that keeps HTML sinks out of the sheet renderer covers the editor's files. Values
+  are checked in the frame with the same rules before they are sent.
+- **Agents.** Agents never join the room; they change a sheet with `edit_sheet` or
+  `update_artifact`, which publish versions that are merged under the draft, and see only that a
+  draft exists (`live_draft`), never its text.
 
 ## Operator checklist for the content domain
 

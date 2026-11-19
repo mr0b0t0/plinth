@@ -1714,14 +1714,14 @@ function categorySharingOperations(): Operation[] {
 
 function liveOperations(): Operation[] {
   const who =
-    "Signed-in owners and editors of a doc only (live_edit); agents are refused and publish " +
-    "versions instead.";
+    "Signed-in owners and editors of a doc or a sheet only (live_edit); agents are refused and " +
+    "publish versions instead.";
   return [
     {
       method: "get",
       path: API.live,
       operationId: "getLiveInfo",
-      summary: "On-page editing of a doc: mode, unsaved draft, editors online",
+      summary: "On-page editing of a doc or a sheet: mode, unsaved draft, editors online",
       description: who,
       tag: "Live editing",
       auth: "user",
@@ -2765,7 +2765,8 @@ export function openApiDocument(config: Pick<Config, "appOrigin">): Json {
       },
       {
         name: "Live editing",
-        description: "Editing a doc on its page: the unsaved draft and checkpoints. Not for agents",
+        description:
+          "Editing a doc or a sheet on its page: the unsaved draft and checkpoints. Not for agents",
       },
     ],
     paths,

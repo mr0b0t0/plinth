@@ -1,9 +1,10 @@
-// On-page doc editing on the app host (#36, docs/spec.md "Editing"): the live draft's metadata,
+// On-page editing on the app host (#36, docs/spec.md "Editing"): the live draft's metadata,
 // its text for reviewing a conflict, checkpoints and discard. Every route goes through
 // requireArtifact with the `live_edit` action (signed-in owners and editors only; never agents),
-// and is for doc artifacts only. A checkpoint saves the draft through the ordinary stager
-// (updateArtifact), always with the draft's own base_version, so a stale draft is refused in SQL
-// like any other stale save and nothing is ever overwritten. The room never creates a version.
+// and is for types with liveEdit only (docs and sheets). A checkpoint saves the draft through the
+// ordinary stager (updateArtifact), always with the draft's own base_version, so a stale draft is
+// refused in SQL like any other stale save and nothing is ever overwritten. The room never creates
+// a version.
 import {
   LIVE_DEFAULTS,
   type LiveCheckpointInput,
@@ -12,12 +13,15 @@ import {
   type LiveDraftMeta,
   type LiveDraftText,
   type LiveInfo,
+  liveRules,
+  TYPE_REGISTRY,
   typeDef,
 } from "@plinth/shared";
 import { type Bindings, getConfig, liveEditMode, roomsActive } from "../config.ts";
 import type { ArtifactRow } from "../db/schema.ts";
 import { ApiError } from "../lib/errors.ts";
 import { requireArtifact, updateArtifact } from "./artifacts.ts";
+import { resolveSource } from "./artifactTypes.ts";
 import type { Ctx } from "./context.ts";
 import { readText } from "./storage.ts";
 
@@ -81,11 +85,17 @@ const unavailable = () =>
     reason: "live_unavailable",
   });
 
-/** Policy (live_edit), then a doc. */
+/** What can be edited on its page, for the refusal: "a doc or a sheet". */
+const LIVE_KINDS = Object.values(TYPE_REGISTRY)
+  .filter((d) => d.liveEdit)
+  .map((d) => `a ${(d.badge ?? d.label).toLowerCase()}`)
+  .join(" or ");
+
+/** Policy (live_edit), then a type edited on its page. */
 async function requireLiveDoc(ctx: Ctx, ref: string): Promise<ArtifactRow> {
   const { artifact } = await requireArtifact(ctx, ref, "live_edit");
-  if (!typeDef(artifact.type)?.liveEdit) {
-    throw new ApiError("invalid_input", "Only a doc can be edited on its page", {
+  if (!typeDef(artifact.type)?.liveEdit || !liveRules(artifact.type)) {
+    throw new ApiError("invalid_input", `Only ${LIVE_KINDS} can be edited on its page`, {
       reason: "unsupported_type",
     });
   }
@@ -135,14 +145,14 @@ export async function getLiveDraft(ctx: Ctx, ref: string): Promise<LiveDraftText
   return out;
 }
 
-/** The text of one version's source, for comparing a resolution with it. */
-async function versionText(ctx: Ctx, artifactId: string, n: number): Promise<string | null> {
+/** The text of one version's source file (the artifact's own type), for comparing a resolution. */
+async function versionText(ctx: Ctx, a: ArtifactRow, n: number): Promise<string | null> {
   const v = await ctx.env.DB.prepare(
     "SELECT r2_prefix FROM versions WHERE artifact_id = ?1 AND number = ?2",
   )
-    .bind(artifactId, n)
+    .bind(a.id, n)
     .first<{ r2_prefix: string }>();
-  const def = typeDef("doc");
+  const def = typeDef(a.type);
   if (!v || !def) return null;
   return readText(ctx.env.FILES, `${v.r2_prefix}${def.sourcePath}`);
 }
@@ -215,8 +225,15 @@ export async function liveCheckpoint(
       );
     }
     base = snap.conflict_version;
-    text = input.resolved_text;
-    if (text === (await versionText(ctx, a.id, base))) {
+    // The text a version of this type stores (a sheet's canonical JSON lines; refused with the
+    // type's own issues when it cannot hold it), so the room's draft is what the version holds.
+    try {
+      text = resolveSource({ content: input.resolved_text }, a.type).text;
+    } catch (e) {
+      await abort();
+      throw e;
+    }
+    if (text === (await versionText(ctx, a, base))) {
       // Resolved to the published version exactly: the draft goes, and no version is written.
       try {
         await stub.docAbort(snap.lock);

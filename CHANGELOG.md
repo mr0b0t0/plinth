@@ -10,6 +10,14 @@ Add a line under **Unreleased** in the pull request that makes a change people w
 
 ## Unreleased
 
+- **Edit a sheet on its page, live with other editors.** Owners and editors turn on Edit on a
+  sheet and change cells right in the grid: Enter, a double-click or typing opens a cell, Enter and
+  Tab move on, Escape puts it back, a checkbox toggles with Space, and pasting cells from a
+  spreadsheet fills the rows they cover. A strip inserts and deletes rows and columns and changes a
+  column's name, type and format. The others editing see each change as it is typed, and rows
+  someone holds show their email. Save version (or a pause) makes the next version, as for docs; a
+  version an agent publishes meanwhile is merged under the page edits row by row, or reviewed when
+  both changed the same row. Numbers are typed in your locale. Follows `ALLOW_LIVE_EDITING`.
 - **Follow the presenter in a deck.** An owner or editor can turn on **Lead viewers** in a deck's
   controls or presenter view, and the people the deck is shared with who have it open follow their
   slide, with a "Following the presenter" note; paging by hand pauses it until they choose "Back to

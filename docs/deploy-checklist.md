@@ -168,9 +168,10 @@ the setup script, `plinth deploy`, local, tunnel and Docker instances all write 
   messages a second) cost about 7,200 billed requests and 450 GB-s an hour; two people typing in a
   doc about 1,440 requests and at most 720 D1 writes an hour (the operations are in
   [spec.md](spec.md#costs)). When the
-  allowance runs out, sockets fail: pages work alone and docs are edited without seeing others.
+  allowance runs out, sockets fail: pages work alone and docs and sheets are edited without seeing
+  others.
 - **Off switch.** `ALLOW_ROOMS=false` turns rooms off, `ALLOW_LIVE_EDITING=false` turns on-page
-  doc editing off and `ALLOW_SLIDES_FOLLOW=false` turns following the presenter in decks off
+  editing of docs and sheets off and `ALLOW_SLIDES_FOLLOW=false` turns following the presenter in decks off
   ([self-hosting.md](self-hosting.md#settings)). Keep the binding: turning them back
   on then needs no deploy-time change. A config without the binding also deploys and runs, with
   rooms off; `check-config` (and so `deploy:<env>`) prints a note naming it.
@@ -475,7 +476,7 @@ These need accounts, money or legal judgement, so no script does them.
     instance's privacy notice covers it (what viewers enter, the email and role stamped on each
     write, and the identity in the viewing cookie). An operator with a privacy notice of their own
     should cover the same, or set `ALLOW_SHARED_DATA` to `"false"`.
-13. Live rooms and on-page doc editing are on unless `ALLOW_ROOMS` and `ALLOW_LIVE_EDITING` are set
+13. Live rooms and on-page editing of docs and sheets are on unless `ALLOW_ROOMS` and `ALLOW_LIVE_EDITING` are set
     to a false value, once the config has the `ROOMS` binding (a setup re-run adds it). The hosted
     instance's privacy notice covers them, so it may run with both on: unsaved page edits (the
     draft and who last changed it, kept in D1 until someone saves or discards it, and for at most

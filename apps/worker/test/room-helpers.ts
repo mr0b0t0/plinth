@@ -237,6 +237,15 @@ export function docSetup(content = "# Plan\n\nFirst.\n\nSecond.\n") {
   return setup(undefined, docBody(content));
 }
 
+// ---------- live sheet editing (live-sheet.test.ts) ----------
+
+export const sheetBody = (content: string) => ({ html: undefined, type: "sheet", content });
+
+/** A sheet artifact and its signed-in owner with a content cookie. */
+export function sheetSetup(content: string) {
+  return setup(undefined, sheetBody(content));
+}
+
 /**
  * A content cookie for an identity sealed by hand: `account: false` is an editor confirmed by
  * code (no account), as the gate seals it for a viewer principal.
