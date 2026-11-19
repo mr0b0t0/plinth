@@ -1,4 +1,5 @@
-// Sign-in for people: magic link and six-digit code, sessions, logout. Every POST here sits behind
+// Sign-in for people: magic link and six-digit code (and, where configured, the one review
+// account's password), sessions, logout. Every POST here sits behind
 // the CSRF middleware in api/index.ts (anonymous POSTs included), which also stops login CSRF.
 import {
   API,
@@ -6,12 +7,14 @@ import {
   type LoginRequestResult,
   type LoginResult,
   requestLoginInput,
+  reviewLoginInput,
   verifyLoginCodeInput,
   verifyMagicLinkInput,
 } from "@plinth/shared";
 import { desc, eq, sql } from "drizzle-orm";
 import { Hono } from "hono";
 import { type LoginDeps, requestLogin, verifyLoginCode, verifyMagicLink } from "../auth/login.ts";
+import { reviewLoginEnabled, verifyReviewLogin } from "../auth/review-login.ts";
 import type { Config } from "../config.ts";
 import type { Db } from "../db/client.ts";
 import { devOutbox, type UserRow } from "../db/schema.ts";
@@ -62,6 +65,16 @@ authApi.post(API.loginVerifyCode, async (c) => {
 authApi.post(API.loginVerifyLink, async (c) => {
   const { token } = await parseBody(c, verifyMagicLinkInput);
   return signedIn(c, await verifyMagicLink(loginDeps(c), token));
+});
+
+/** The review account's password sign-in (auth/review-login.ts). 404 unless REVIEW_LOGIN_* are set. */
+authApi.post(API.loginReview, async (c) => {
+  const config = c.get("config");
+  // Before reading the body: an instance without the review sign-in has no such endpoint.
+  if (!reviewLoginEnabled(config)) throw new ApiError("not_found", "No such API endpoint");
+  const { email, password } = await parseBody(c, reviewLoginInput);
+  const deps = { config, db: c.get("db"), d1: c.env.DB, ip: clientIp(c) };
+  return signedIn(c, await verifyReviewLogin(deps, email, password));
 });
 
 authApi.post(API.logout, async (c) => {

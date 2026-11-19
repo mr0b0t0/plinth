@@ -166,6 +166,8 @@ test("history lists every version with author, note and links", async ({ page },
   await page.goBack();
 
   await expect(rows(page)).toHaveCount(3);
+  // The h1 comes from a separate request than the version rows; wait for both before axe.
+  await expect(page.getByRole("heading", { level: 1, name: TITLE })).toBeVisible();
   await expectNoAxeViolations(page);
   await shot(page, info, "history");
 });

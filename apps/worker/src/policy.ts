@@ -56,7 +56,10 @@ export type ArtifactAction =
   | "data_write"
   /** Delete all of an artifact's shared data: the owner, signed in, never an agent. */
   | "data_clear"
-  /** Read the artifact's open counts: the owner only. */
+  /**
+   * Read the artifact's stats (who opened it, when, how often, which version): the owner only. An
+   * agent needs artifacts:read. The name predates the stats; other code enumerates it.
+   */
   | "views"
   /**
    * Read, save or discard a doc's live page draft (#36): an owner or editor who is signed in.

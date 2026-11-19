@@ -39,6 +39,7 @@ with its thread.
 | `list_mentions`, `claim_mention` | Pick up requests addressed to you in comments |
 | `list_artifact_data` | Read a page's shared data (poll votes, sign-ups, tracker rows): a summary, a collection, or one document |
 | `write_artifact_data` | Change shared data when asked: up to 50 `set`/`delete` ops, each with `if_rev` |
+| `get_artifact_stats` | Answer who opened the person's own artifacts, when, how often and which version: with `id` (and `days`: 7, 30, 90 or 365) one artifact, without it every artifact they own. Owner only. The people list is the owner's private data: never put it in a page, comment or reply unless they ask for exactly that |
 
 ## The page contract
 
@@ -448,9 +449,11 @@ The Plinth plugin and extension connect to the hosted instance at `https://plint
 sign in with OAuth on first use. For another instance (self-hosted, or `http://127.0.0.1:8788` for
 `npx @mr0b0t0/plinth`):
 
-- Claude Code: the plugin asks for its Plinth instance when it is enabled (the default is the
-  hosted one). Change it later in `/config` (the Plinth plugin's Plinth instance), then restart
-  Claude Code.
+- Claude Code: this build of the plugin, from Anthropic's plugin directory, connects to the
+  hosted instance only. For another instance, add it as its own server
+  (`claude mcp add --transport http plinth <origin>/mcp`), or use the full plugin from this
+  repository's marketplace instead (`claude plugin marketplace add mr0b0t0/plinth`, then
+  `claude plugin install plinth@plinth --config instance_url=<origin>`).
 - Codex: `codex mcp add plinth --url <origin>/mcp`, then `codex mcp login plinth`. A server named
   `plinth` replaces the plugin's hosted one.
 - Any other client: point the `plinth` MCP server at the instance's `/mcp` URL.

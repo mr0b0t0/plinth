@@ -8,6 +8,7 @@ import {
   type EffectiveRole,
   HOST_COOKIE_PREFIX,
   REVIEW_MODE_PARAM,
+  TTL,
   typeDef,
 } from "@plinth/shared";
 import { and, eq, isNull } from "drizzle-orm";
@@ -19,7 +20,7 @@ import { openJson, viewerIdFor } from "../lib/crypto.ts";
 import { ApiError } from "../lib/errors.ts";
 import type { PageClaim } from "../policy.ts";
 import { fileKey, type ManifestEntry } from "../services/storage.ts";
-import { isCountableRequest, recordView } from "../services/views.ts";
+import { isCountableRequest, recordOpen } from "../services/views.ts";
 import { injectBridge, serveBridgeScript } from "./bridge.ts";
 import { applyContentHeaders, type ContentCspOptions } from "./csp.ts";
 import { serveDataApi } from "./data-api.ts";
@@ -30,12 +31,15 @@ import {
   consumeNonce,
   IDENTITY_CLAIM_INFO,
   isVersion,
+  newVisitorId,
+  openOpener,
   type PassKind,
   passMaxAgeS,
   safeNext,
   signContentCookie,
   verifyContentCookie,
   verifyEnterToken,
+  visitorIdIn,
 } from "./tokens.ts";
 import { rendererRequest, serveRendererFile, serveTypedEntry, unsupportedType } from "./typed.ts";
 import { loadVersion } from "./versionCache.ts";
@@ -260,6 +264,24 @@ export async function readContentPass(
   return found;
 }
 
+/**
+ * This browser's anonymous visitor id for the artifact (artifact stats): the first one any of its
+ * content cookies for this artifact carries, whatever their epoch, or null. Approximate by design:
+ * it lives in one partitioned cookie and is lost when the browser drops it.
+ */
+async function readVisitorId(
+  request: Request,
+  config: Config,
+  artifactId: string,
+): Promise<string | null> {
+  const name = contentCookieName(config, new URL(request.url));
+  for (const value of cookieValues(request.headers.get("cookie"), name)) {
+    const id = await visitorIdIn(config, artifactId, value);
+    if (id) return id;
+  }
+  return null;
+}
+
 /** Whether this request carries a valid capture pass for the live artifact (top-level loads). */
 async function hasCapturePass(
   request: Request,
@@ -472,11 +494,16 @@ async function serve(
     // not, so reloads, second tabs and the editor's preview count nothing more while the pass
     // lives. It reads the incoming cookies, before the new one, and changes nothing else about
     // the response below.
+    // While counting is on, every view cookie also carries this browser's anonymous visitor id
+    // (from any earlier cookie for this artifact, even one past its pass or epoch, else a new
+    // one), and lives TTL.visitorIdS so the id outlives the pass; the pass inside still expires.
     let seen = false;
     let countNow = false;
+    let visitor: string | undefined;
     if (kind === "view" && config.viewCounts) {
       seen = (await readContentPass(request, config, current))?.counted === true;
       countNow = !seen && payload.w === 1 && isCountableRequest(request);
+      visitor = (await readVisitorId(request, config, artifactId)) ?? newVisitorId();
     }
     const value = await signContentCookie(
       config,
@@ -486,6 +513,7 @@ async function serve(
       kind,
       preview ? (payload.v as number) : undefined,
       seen || countNow,
+      visitor,
     );
     const next = safeNext(url.searchParams.get("next"));
     const res = redirect(config, 302, `${base}${next}`, enterOpts);
@@ -499,11 +527,22 @@ async function serve(
         sameSite: "None",
         partitioned: true,
         path: cookiePath,
-        maxAge: passMaxAgeS(kind),
+        maxAge: visitor !== undefined ? TTL.visitorIdS : passMaxAgeS(kind),
       }),
     );
     if (countNow) {
-      const write = recordView(env.DB, artifactId, Date.now());
+      const nowMs = Date.now();
+      const write = openOpener(config, artifactId, payload.o)
+        .catch(() => null)
+        .then((opener) =>
+          recordOpen(env.DB, {
+            artifactId,
+            version: current.currentVersion,
+            opener,
+            visitor: visitor ?? null,
+            nowMs,
+          }),
+        );
       if (defer) defer(write);
       else await write;
     }
