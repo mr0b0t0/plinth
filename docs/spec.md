@@ -1883,7 +1883,8 @@ when the user told it to.
   defaults to `false` everywhere. In the app, the People section of an artifact's settings and the
   Share category dialog have a **Notify people** box, ticked by default: adding a person then sends
   `notify: true` (role changes, removals and Undo never do). `publish_artifact`'s `emails` never
-  emails anyone; an agent that should notify people adds them with `set_visibility`.
+  emails anyone; an agent that should notify people publishes without `emails` and adds them with
+  `set_visibility`.
 - **Who is emailed.** Only a new grant: an address that held no grant on the artifact (or the
   share) before the change. Re-saving a list, changing a role or adding someone who already had
   access emails nobody, and the owner's own address is never emailed. The decision is
@@ -1895,13 +1896,13 @@ when the user told it to.
   them again. At most `RATE_LIMITS.invitationsPerChange` (40) invitations per change,
   `RATE_LIMITS.invitationsPerOwnerPerDay` (100) per owner and
   `RATE_LIMITS.invitationsPerRecipientPerDay` (10) per address, from every owner together, per UTC
-  day. The counters are read in one query and written in one batch, whatever the number of people. The counters sit in `rate_limits` under keys holding a hash of the address, never the
-  address, and the hourly cron deletes them two days after their day. Nothing else is stored.
+  day. The counters sit in `rate_limits` under keys holding a hash of the address, never the
+  address, are read in one query and written in one batch whatever the number of people, and the
+  hourly cron deletes them two days after their day. Nothing else is stored.
 - **What the result says.** With `notify: true`, the result adds `invitations`: `emailed` (the
   addresses handed to the email provider) and `skipped` (`{ email, reason }`, with `reason` one of
   `owner_unverified`, `taken_down`, `already_emailed`, `change_limit`, `owner_limit`,
-  `recipient_limit`). Without
-  it, the result is exactly as before. A skipped invitation never fails the change: the grants are
+  `recipient_limit`). Without it, the result is exactly as before. A skipped invitation never fails the change: the grants are
   saved either way. The app names the people it did not email, and why, in a toast.
 - **The email.** Subject `<owner name or email> shared "<title>" with you`; the body names the
   owner by display name and address, the title (for a category, the name its people see, never the

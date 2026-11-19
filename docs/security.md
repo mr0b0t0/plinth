@@ -2066,12 +2066,12 @@ sending domain becomes a way to reach strangers' inboxes with text an attacker w
   Re-saving, a role change or Undo sends nothing; the app sends `notify` only when it adds someone.
 - **How often.** One email per artifact (or share) and address within a day, counted across the
   previous and the current UTC day with an atomic counter, so two saves at once still send one and
-  removing and re-adding someone does not resend. At most 40 invitations per change (so one request
-  stays within the Worker's limits on queries and outgoing requests), and 100 per owner and 10 per
-  recipient (from every owner together) per UTC day. Over a limit, the grant is still saved and the result's
-  `invitations.skipped` says why that person was not emailed. Counters live in `rate_limits` under
-  keys holding a SHA-256 of the address (never the address) and are deleted by the hourly cron two
-  days after their day.
+  removing and re-adding someone does not resend. At most 40 invitations per change (so one
+  request stays within the Worker's limits on queries and outgoing requests), and 100 per owner
+  and 10 per recipient (from every owner together) per UTC day. Over a limit, the grant is still
+  saved and the result's `invitations.skipped` says why that person was not emailed. Counters
+  live in `rate_limits` under keys holding a SHA-256 of the address (never the address) and are
+  deleted by the hourly cron two days after their day.
 - **What the email holds.** One link, the artifact's (`/a/<slug>`) or the portal's (`/p/<id>`),
   and no code, token or secret: the recipient still confirms their address when the link asks, as
   for any allowlist or portal. The owner is named by address beside any display name, so a name
