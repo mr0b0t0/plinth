@@ -695,7 +695,6 @@ describe("folding old days", () => {
   });
 
   it("never folds a day the 90-day admin trend still shows", async () => {
-    const adm = await admin();
     const { p } = await linkPage();
     // The 03 UTC run of today (in the future before 03 UTC; the same UTC day either way).
     const at3 = new Date();
@@ -703,6 +702,9 @@ describe("folding old days", () => {
     const now = at3.getTime();
     vi.useFakeTimers({ toFake: ["Date"], now: now + 9 * 3_600_000 });
     try {
+      // Signed in on the faked clock: a session made on the real clock has
+      // expired by 12 UTC whenever this runs before 11 UTC.
+      const adm = await admin();
       await seed(p.id, 91, 1, now); // past the cutoff: folds
       await seed(p.id, 90, 2, now); // the cutoff day: older than the trend, kept as a day
       await seed(p.id, 89, 3, now); // the oldest day of the 90-day trend
