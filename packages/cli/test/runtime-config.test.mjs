@@ -121,6 +121,9 @@ describe("generated Worker configs carry the flag and the cron", () => {
     assert.equal(repoCfg.vars.ALLOW_DICTATION, "false");
     // Category sharing ships on.
     assert.equal(repoCfg.vars.ALLOW_CATEGORY_SHARING, "true");
+    // The sheet formula budget ships at its documented default, and the CLI's base copies it.
+    assert.equal(repoCfg.vars.SHEET_EVAL_BUDGET, "200000");
+    assert.equal(runtimeBase(repoCfg).vars.SHEET_EVAL_BUDGET, "200000");
   });
 
   it("the CLI's runtime/wrangler.base.json (packages/cli/scripts/bundle.mjs)", () => {

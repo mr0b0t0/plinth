@@ -141,5 +141,32 @@
       "liveEdit": false,
       "opaqueFrames": true
     }
+  ],
+  [
+    "sheet",
+    {
+      "id": "sheet",
+      "label": "Sheet",
+      "badge": "Sheet",
+      "sourcePath": "sheet.jsonl",
+      "sourceField": "content",
+      "sourceLabel": "sheet JSON lines",
+      "contentType": "text/plain; charset=utf-8",
+      "maxSourceBytes": 1048576,
+      "reservedPaths": [
+        "index.html",
+        "sheet.jsonl"
+      ],
+      "assetTypes": "/(?!)/",
+      "renderer": {
+        "script": "sheet.js",
+        "style": "sheet.css"
+      },
+      "editor": {
+        "language": "plaintext",
+        "wordWrap": "off"
+      },
+      "liveEdit": false
+    }
   ]
 ]

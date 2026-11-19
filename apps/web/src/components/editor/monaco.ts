@@ -6,7 +6,9 @@
 // grammars (HTML embeds the other two), the HTML language service (completion, hover,
 // formatting), which runs in the html worker, the Markdown grammar for docs (a tokenizer
 // only: it needs no worker), and the JSON language service for design systems (system.json),
-// which runs in the json worker and checks the source against the format's JSON Schema. CSS and
+// which runs in the json worker and checks the source against the format's JSON Schema, and plain
+// text for sheets (sheet.jsonl: JSON lines, which the JSON service would read as one document and
+// flag; the editor checks it with the sheet parser instead, sourceChecks.ts). CSS and
 // TypeScript workers are never requested because the editor only ever holds HTML, Markdown and
 // JSON models.
 //
@@ -33,6 +35,7 @@ const LANGUAGE_WORKERS: {
   html: { labels: ["html", "handlebars", "razor"], create: () => new HtmlWorker() },
   markdown: null,
   json: { labels: ["json"], create: () => new JsonWorker() },
+  plaintext: null,
 };
 
 /** Where the editor keeps a design system's draft (EditorWorkspace draftModelName). */

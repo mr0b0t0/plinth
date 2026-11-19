@@ -59,6 +59,9 @@ make a test pass.
 | Author publishes a secret with project files | An agent building a log viewer sends `files/.env` or `deploy/server.pem`. Or it sends the local `.plinth-files.json` with a public page, and the record's artifact ids open every unlisted artifact made from the project (`canView` allows any principal on `unlisted`), while its instance URLs name private hosts | Bundles never carry a dot segment (`isDotfile`), and the CLI skips dotfiles too. `sensitive_file` covers inline assets and names without a dot (`id_rsa`, `*.pem`, `*.p12`, `credentials.json`), and the record, with its own message (an id cannot be rotated: publish without it and ask the user about the listed artifacts' visibility). It checks names only, comes first so the cap keeps it, and tells the agent to stop and ask. The skill requires deliberate selection and forbids copying the record's ids anywhere on Plinth. The file passes the artifact's own access check, and deleting the artifact is the only purge. Known gaps: a name check misses secrets in ordinary file names and a renamed copy of the record (`plinth-files.json`, ids pasted into `files/index.json`), and inline assets still accept dotfiles |
 | A participant forges what a page counts | An invited viewer writes another person's sign-off, adds extra approval documents that are not their personal one, or ticks a team-only checklist item through the page's runtime | A personal document can be created only by its own person, and every write is stamped by the server; what only the owner's side decides is in the versioned HTML; the example pages count only personal sign-offs, one per person, whose own person made the last change from the page, and a team item only when the owner or an editor made its tick's last change; a link viewer, who gets no stamps, is told that only invited people can see the result. Deletions are not marked: shared data keeps no history ([Example pages and server stamps](#example-pages-and-server-stamps)) |
 | A mention reaches an agent nobody meant | A collaborator writes `@claude-code` for the owner's Claude Code, and an older connection whose name makes the same handle takes it | Only the owner's own connections are ever targets; the Connections page and the naming dialogs show each connection's handle and warn when an older one takes it; a comment written by an agent never creates a task |
+| A sheet's cell becomes markup or script | A cell, column name or title holds `<img onerror>`, `</script>` or a `javascript:` link | Strict publish parser and link rule; `jsonForScript` in the shell; the renderer uses `textContent` only and re-checks links; the strict shell CSP ([Sheets](#sheets)) |
+| A downloaded sheet attacks the spreadsheet app | A CSV cell `=cmd\|' /C calc'!A0` or an .xlsx formula calling HYPERLINK or WEBSERVICE runs when the file is opened | CSV text starting with `=`, `+`, `-`, `@`, tab or CR gets a leading `'`; .xlsx text is inline strings and its formulas come only from the function allowlist, with no external links or macros ([Sheets](#sheets)) |
+| A sheet exhausts the Worker or the browser | Formulas that reference each other in a long chain or a cycle, `REPT` of huge text, a 1 MB sheet of formulas, or a ZIP bomb, XML that makes a scanner backtrack, or a small file of very many cells sent as an import | An explicit stack and cycle detection (`#CYCLE!`), a step budget on both sides (`#LIMIT!`), text capped and charged by the length made and read, publish parses but never evaluates, and imports capped at 2 MB in and 24 MB inflated, inflated in small steps, scanned in linear time, and refused once their cells pass what 1 MB holds; numeric text matched in linear time; an edit's inserts and deletes capped at 4 MB of formula text rewritten ([Sheets](#sheets)) |
 
 Out of scope for v1: denial of service beyond Cloudflare's defaults, a compromised Cloudflare
 account, and malicious instance operators.
@@ -625,6 +628,125 @@ doc, a design's boards are author HTML with scripts, so they never run in the sh
   shell is itself opaque at the top, where Chromium keys no partition, so that pass is
   unpartitioned. If the browser refuses it, the capture still runs and shows boards without their
   own files; viewing never depends on it.
+## Sheets
+
+A sheet (`artifacts.type = 'sheet'`) stores JSON lines in `sheet.jsonl` and is served exactly like
+a doc: the same shell (`typedShellHtml`, root `#__plinth-sheet`), the same strict shell CSP and
+meta copy (`script-src 'self'`), renderer files under `/__plinth/types/sheet/` behind the same
+registry and Content-Type guard, `sheet.jsonl` served as `text/plain` with `nosniff` and
+`script-src 'none'`, and a 404 for `/__plinth-renderers/*` on the app host. Under opaque isolation
+the shell keeps the CSP `sandbox`. No CSP, CDN allowlist or frame sandbox setting changed for
+sheets. Text passes six layers:
+
+1. **Publish (Worker).** A strict parser (`packages/shared/src/sheet/format.ts`): unknown header and
+   column keys are refused, every literal cell must fit its column, a url cell must be an absolute
+   `http:`, `https:` or `mailto:` link with no whitespace, control or invisible characters, column
+   names and options have no control or invisible characters, and every formula must parse with
+   functions from the allowlist. Sizes and counts are capped (1 MB, 10,000 rows, 100 columns,
+   32 KiB a row, 4,000 characters a cell, 2,000 a formula, 50,000 formulas, nesting 32). What is
+   stored is the canonical re-serialisation. A sheet takes no assets of any content type.
+2. **Embedding.** The shell embeds the text with `jsonForScript`, as for docs, so `</script>` in a
+   cell cannot leave the data block; the title is HTML-escaped.
+3. **Render.** The renderer (`apps/web/src/renderers/sheet/`) puts every data string in the DOM
+   with `textContent` and has no HTML parser at all: no `innerHTML`, `outerHTML`,
+   `insertAdjacentHTML`, `document.write`, `DOMParser` or `srcdoc` (a test reads its sources). The
+   only attributes taken from data are `href` (a url cell that passes `isSheetLinkUrl` again in
+   the browser, with `target=_blank` and `rel="noopener noreferrer nofollow"`), `title` (an error's
+   fixed meaning) and a width clamped to 40 to 800 pixels. Class names come from a fixed set and
+   cell ids from the cell's address alone (`__plinth-cell-B7`).
+4. **Evaluate.** Formulas are data for a pure interpreter (`packages/shared/src/sheet/formula/`):
+   no `eval`, `Function` or `with`; a function is looked up by its upper-cased name in a `Map`
+   built from a fixed list (so `constructor` or `__proto__` resolve to nothing); no property is read
+   by a key the data supplies. The list has no function that reaches a network, a file, another
+   artifact, the host or the clock beyond today's UTC date: HYPERLINK, WEBSERVICE, FILTERXML, the
+   IMPORT functions, INDIRECT, OFFSET, CELL, INFO, RTD, CALL, REGISTER, NOW and RAND are refused at
+   publish. Cells are computed with an explicit stack, never JS recursion across cells, and every
+   expression node and range cell costs a step: the Worker stops at `SHEET_EVAL_BUDGET`
+   (`read_sheet`), the browser at 20,000,000 steps, and text a formula makes costs its length and
+   stops at 32,767 characters, so `REPT` cannot fill memory. Text a function or comparison reads
+   costs a step per 32 characters (LEN, LEFT, RIGHT and MID walk it with an index, never spread
+   into an array; FIND, SEARCH, SUBSTITUTE, EXACT, criteria, lookups and `=` pay for what they
+   compare or search; UPPER, LOWER, PROPER and TRIM pay for what they read, not only for what
+   they return, and SUBSTITUTE pays a step per match it replaces), so one 32,767-character text
+   read many times stays within the budget's CPU: when a read was free, 200,000 steps of
+   `LEN(A2)` took 1.4 s, and of `TRIM` over spaces 190 ms. Text longer than 1,024
+   characters is never converted to a number or a boolean, and numeric text is matched by a
+   pattern with one way to read each character (`\d+\.?\d*` tried every split of a digit run
+   with a bad tail, about 1 ms for 1,024 characters, which no step paid for). Wildcard criteria
+   are matched by a loop whose work is charged, never by a regular expression built from cell
+   text.
+5. **CSV export.** RFC 4180 quoting and the OWASP formula-injection guard: a text value (a literal
+   or a formula's text result) starting with `=`, `+`, `-`, `@`, tab or carriage return is written
+   with a leading `'`; numbers are never prefixed. UTF-8 with a BOM, CRLF.
+6. **.xlsx export.** Text is written as inline strings, so text starting with `=` stays text;
+   formulas come only from the sheet's own formulas, whose functions are the allowlist, so a
+   downloaded workbook cannot hold HYPERLINK, WEBSERVICE, DDE (`cmd|...`) or an external
+   reference. Every text node and attribute is XML-escaped, with the characters XML 1.0 forbids and
+   lone surrogates dropped. No macros (`.xlsx`, never `.xlsm`), no external relationships, and the
+   title is the only document property (no names or emails).
+
+What else is new:
+
+- **Downloads stay in the frame.** The renderer builds CSV and .xlsx inside the frame and hands
+  them to the browser from a `blob:` URL by a temporary `<a download>`; nothing is fetched. Both
+  frame sandboxes already allowed downloads. The app's menu only posts `export { format }` (and
+  `print`), which carry no data; the frame acts on them only when `event.source` is its parent and
+  `event.origin` is the app origin, and answers nothing. Under opaque isolation the app posts them
+  to `"*"`, as print, since they reveal nothing the frame does not have.
+- **Imports are bounded and never run anything.** `content_format: "csv"` or `"xlsx"` converts a
+  file into JSON lines (`packages/shared/src/sheet/import.ts`), in the Worker for MCP and REST and in
+  the browser for the editor's import. An .xlsx is at most 2 MB; its ZIP is read from the central
+  directory, encrypted and ZIP64 archives are refused, and its parts are inflated with fflate up to
+  24 MB in all, 2 KB of compressed input at a time (at most about 2 MB out per step, since DEFLATE
+  expands at most 1,032 times), so a ZIP bomb stops at the cap instead of after it has inflated.
+  Its XML is read by a small scanner that refuses a DOCTYPE and expands only the five named
+  entities and character references, so no external entity is ever resolved. The scanner is
+  linear in the part's length whatever it holds: it finds each construct's end with `indexOf` or
+  one pass, starts the next search after it, matches a tag's pattern only against the tag's own
+  text, refuses markup that never ends, and expands entities with a loop rather than a replace
+  that keeps every match. Number format codes are read with patterns that never search past the
+  next bracket, once per code, and a code longer than 255 characters reads as General. Row
+  numbers are bounded as they are read: a `<row r>` or a cell reference (`<c r="A50000000">`) past
+  row 10,001 is refused at once, so a tiny file cannot make a huge sparse table, and the row and
+  column counts are checked before any work that grows with them. Cells are counted as they are
+  read, at least two bytes of JSON lines each (and a data row's text its length), and a file past
+  1 MB by that count is refused before its table is built, since 10,001 rows of 100 cells fit the
+  row and column bounds but not the 128 MB a Worker has. A formula is kept or dropped as its cell
+  is read, so the cell counts as what it becomes: a kept formula by its source, a dropped one by
+  the cached value it falls back to (one 4,000-character shared string behind 100,000 cells with
+  an invalid formula was 400 MB of sheet from a 9 KB file). A header cell is not counted, so a
+  column name is cut to 1,000 characters before anything else reads it. A field's text (a
+  `<v>`, an inline or shared string, a formula) is gathered from its text events in pieces and
+  joined once, and only its first characters are kept: 8,000 of a formula, which is then too long
+  to keep, and 28,007 of any other text, which is still longer than a cell holds once its
+  `_xHHHH_` escapes are expanded. Any tag inside a field ends one text event, so a 36 KB file
+  could split one field into millions of them, and appending each built a rope that ran a 192 MB
+  heap out. Excel's `_xHHHH_`
+  escapes are expanded with a loop like entities, and no replace with a callback runs on text a
+  file can make long. A CSV field is built from slices of the text, never a character at a time
+  (a 2 MB field took more than 64 MB that way), and a CSV field longer than 1,024 characters is
+  text without any pattern run on it (the number pattern is linear too; the old one took about a
+  second on a 40,000-digit field). `<col>` widths are read only for columns
+  1 to 100 and from at most 100 ranges, whatever `min` and `max` say. A CSV keeps at most 10,000
+  rows under its header and only counts the rest, and counts its cells before it makes values of
+  them. A CSV never makes a formula; an .xlsx formula is kept only when it
+  parses as a sheet formula (the allowlist), otherwise its cached value is used. The result passes
+  the same publish checks as any sheet.
+- **Agents read cells as data.** `read_sheet`, `edit_sheet` and `get_artifact` say that cell
+  text, formulas and column names are untrusted, written by people and other agents, and the
+  shared untrusted note says so for every tool; the skill repeats it. `read_sheet` is the `view`
+  action and `edit_sheet` the `edit` action through `policy.ts`, and `edit_sheet` publishes only
+  through `update_artifact`, which checks edit rights and the base version again: there is no cell
+  write outside a version.
+- **Edits are bounded by the formulas they rewrite.** Each `insert_rows`, `delete_rows`,
+  `insert_columns` or `delete_columns` re-reads every formula in the sheet to move its references,
+  so one call rewrites at most 4 MB of formula text (`LIMITS.maxSheetOpShiftChars`), counted
+  before each formula is read. The ops run before the publish rate limit, as every publish's
+  validation does, so a call whose ops are refused costs no quota; this cap keeps each such call to
+  a few hundred milliseconds. Before it, 200 inserts and deletes on a 1 MB sheet of formulas took
+  25 s of CPU.
+- **Sort and filter are local.** They reorder and hide rows on the viewer's page only and are never
+  saved or sent.
 
 ## CSRF and input handling
 

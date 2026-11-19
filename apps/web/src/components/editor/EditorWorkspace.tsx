@@ -47,6 +47,7 @@ import { clearAllDrafts, clearDraft, saveDraft } from "./draft.ts";
 import type { EditorInitial, VersionText } from "./initial.ts";
 import { PreviewFrame } from "./PreviewFrame.tsx";
 import { utf8Bytes } from "./previewProtocol.ts";
+import { SheetImport } from "./SheetImport.tsx";
 import { SplitPane, type SplitView } from "./SplitPane.tsx";
 import { sourceProblems } from "./sourceChecks.ts";
 import "./editor.css";
@@ -391,6 +392,7 @@ export default function EditorWorkspace({
               }
             }}
           />
+          {def.id === "sheet" && mode === "edit" && <SheetImport onImport={setHtml} />}
           <Button variant="ghost" onClick={cancel}>
             Cancel
           </Button>

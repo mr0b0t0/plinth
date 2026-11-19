@@ -120,6 +120,10 @@ function bodyFor(method: string, path: string): unknown {
     "POST /artifacts/:ref/data": {
       ops: [{ op: "set", collection: "votes", doc_id: "x", data: { v: 1 }, if_rev: 0 }],
     },
+    "POST /artifacts/:ref/sheet/edits": {
+      base_version: 1,
+      ops: [{ op: "set", at: "A2", values: [["defaced"]] }],
+    },
   };
   return known[`${method} ${p}`] ?? {};
 }

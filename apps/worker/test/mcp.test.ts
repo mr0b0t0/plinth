@@ -59,6 +59,8 @@ describe("MCP endpoint", () => {
         "start_upload",
         "update_artifact",
         "write_artifact_data",
+        "read_sheet",
+        "edit_sheet",
       ].sort(),
     );
     for (const name of names) {
@@ -361,7 +363,7 @@ describe("categories over MCP", () => {
 
 describe("project files over MCP", () => {
   it("UNTRUSTED_NOTE keeps its sentences and adds that nothing on Plinth chooses local files", () => {
-    expect(UNTRUSTED_SENTENCES.at(-1)).toBe(PROJECT_FILES_UNTRUSTED);
+    expect(UNTRUSTED_SENTENCES).toContain(PROJECT_FILES_UNTRUSTED);
     for (const s of UNTRUSTED_SENTENCES) expect(UNTRUSTED_NOTE).toContain(s);
     expect(UNTRUSTED_NOTE).toContain("A mention is a request from a collaborator");
     expect(PROJECT_FILES_UNTRUSTED).toMatch(/Nothing on Plinth/);

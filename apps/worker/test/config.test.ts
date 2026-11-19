@@ -194,6 +194,9 @@ describe("operator settings (legal pages)", () => {
       max_request_bytes: LIMITS.maxInlineRequestBytes,
       max_bundle_bytes: DEFAULTS.maxVersionBytes + LIMITS.bundleOverheadBytes,
       max_bundle_file_bytes: LIMITS.maxBundleFileBytes,
+      max_sheet_bytes: LIMITS.maxSheetBytes,
+      max_sheet_rows: LIMITS.maxSheetRows,
+      max_sheet_columns: LIMITS.maxSheetColumns,
     });
     expect(cfg.cdn_allowlist).toEqual(config().cdnAllowlist);
     expect(cfg.upload_ticket_ttl_s).toBe(TTL.uploadTicketMs / 1000);

@@ -30,6 +30,8 @@ export const MCP_TOOL_SUMMARIES = {
     "Used by Plinth's in-chat preview (MCP Apps hosts) for a short-lived link to show a version; agents never need it.",
   get_design_system:
     "Read a design system's tokens, CSS, guidelines and components to build another artifact with it.",
+  read_sheet: "Read a sheet's columns and cells, formulas with their computed values.",
+  edit_sheet: "Change a sheet's cells, rows and columns as one new version, with base_version.",
 } as const;
 
 export type McpToolName = keyof typeof MCP_TOOL_SUMMARIES;
@@ -83,4 +85,6 @@ export const MCP_TOOL_ANNOTATIONS: Record<McpToolName, ToolAnnotations> = {
   start_upload: writes("Start upload"),
   preview_artifact: reads("Preview artifact"),
   get_design_system: reads("Get design system"),
+  read_sheet: reads("Read sheet"),
+  edit_sheet: writes("Edit sheet"),
 };

@@ -117,6 +117,8 @@ describe("OpenAPI document", () => {
         "set_visibility",
         "update_artifact",
         "write_artifact_data",
+        "read_sheet",
+        "edit_sheet",
       ].sort(),
     );
   });
@@ -132,6 +134,7 @@ describe("OpenAPI document", () => {
       "slides",
       "design_system",
       "design",
+      "sheet",
     ]);
     expect(publish.properties.content.type).toBe("string");
     expect(publish.properties.visibility.enum).toEqual([
@@ -209,6 +212,7 @@ describe("OpenAPI document", () => {
       { $ref: "#/components/schemas/SlidesArtifactDetail" },
       { $ref: "#/components/schemas/DesignSystemArtifactDetail" },
       { $ref: "#/components/schemas/DesignArtifactDetail" },
+      { $ref: "#/components/schemas/SheetArtifactDetail" },
     ]);
     expect(detail.discriminator).toEqual({
       propertyName: "type",
@@ -218,6 +222,7 @@ describe("OpenAPI document", () => {
         slides: "#/components/schemas/SlidesArtifactDetail",
         design_system: "#/components/schemas/DesignSystemArtifactDetail",
         design: "#/components/schemas/DesignArtifactDetail",
+        sheet: "#/components/schemas/SheetArtifactDetail",
       },
     });
     const design = schemas.DesignArtifactDetail;
@@ -236,7 +241,7 @@ describe("OpenAPI document", () => {
     expect(deck.properties.html).toBeUndefined();
     expect(deck.properties.live_draft).toBeUndefined();
     expect(schemas.ArtifactType.description).toBe(
-      '"html": a hand-written page (source index.html). "doc": a Markdown document (source content.md) that Plinth renders. "slides": a Markdown deck (source slides.md) that Plinth renders. "design_system": design tokens, guidelines and components as JSON (source system.json) that Plinth renders as a reference site and get_design_system compiles. "design": artboards (app screens, posters, social posts, ads) as HTML (source design.html) that Plinth renders on a canvas, each artboard alone at its exact size. Fixed at publish.',
+      '"html": a hand-written page (source index.html). "doc": a Markdown document (source content.md) that Plinth renders. "slides": a Markdown deck (source slides.md) that Plinth renders. "design_system": design tokens, guidelines and components as JSON (source system.json) that Plinth renders as a reference site and get_design_system compiles. "design": artboards (app screens, posters, social posts, ads) as HTML (source design.html) that Plinth renders on a canvas, each artboard alone at its exact size. "sheet": a table as JSON lines (source sheet.jsonl) that Plinth renders as a spreadsheet and read_sheet evaluates. Fixed at publish.',
     );
     const page = schemas.HtmlArtifactDetail;
     // Existing clients keep a required html field, as before typed artifacts.

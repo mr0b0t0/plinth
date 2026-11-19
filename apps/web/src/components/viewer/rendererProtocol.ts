@@ -8,6 +8,7 @@
 //   app -> frame: goto { slide }           a deck shows slide N (slidesProtocol.ts)
 //   app -> frame: view { mode }            a deck switches view: deck, presenter or overview
 //   app -> frame: export { format, nonce } a deck builds its .pptx and downloads it in the frame
+//   app -> frame: export { format }        a sheet downloads itself as "csv" or "xlsx"
 //   frame -> app: live { ...status }       numbers, booleans and co-editor emails; never text
 //   frame -> app: save                     Cmd/Ctrl+S inside the frame
 //   frame -> app: draft { nonce, text }    the answer to collect, solo mode only
@@ -99,7 +100,8 @@ export function viewMessage(mode: DeckView): ViewMessage {
   return { source: RENDERER_MESSAGE_SOURCE, v: RENDERER_PROTOCOL_VERSION, type: "view", mode };
 }
 
-export interface ExportMessage {
+/** A deck's export request. Sheets send the same kind with their own formats (SheetExportMessage). */
+export interface DeckExportMessage {
   source: typeof RENDERER_MESSAGE_SOURCE;
   v: typeof RENDERER_PROTOCOL_VERSION;
   type: "export";
@@ -108,7 +110,7 @@ export interface ExportMessage {
   nonce: string;
 }
 
-export function exportMessage(nonce: string): ExportMessage {
+export function exportMessage(nonce: string): DeckExportMessage {
   return {
     source: RENDERER_MESSAGE_SOURCE,
     v: RENDERER_PROTOCOL_VERSION,
@@ -126,11 +128,48 @@ export function exportMessage(nonce: string): ExportMessage {
 export function postToDeck(
   frame: HTMLIFrameElement | null,
   targetOrigin: string | null,
-  message: GotoMessage | ViewMessage | ExportMessage,
+  message: GotoMessage | ViewMessage | DeckExportMessage,
 ): boolean {
   const win = frame?.contentWindow;
   if (!win || !targetOrigin) return false;
   win.postMessage(message, targetOrigin);
+  return true;
+}
+
+// ---------- sheets (the sheet type) ----------
+
+export type SheetExportFormat = "csv" | "xlsx";
+
+export interface SheetExportMessage {
+  source: typeof RENDERER_MESSAGE_SOURCE;
+  v: typeof RENDERER_PROTOCOL_VERSION;
+  type: "export";
+  format: SheetExportFormat;
+}
+
+export function sheetExportMessage(format: SheetExportFormat): SheetExportMessage {
+  return { source: RENDERER_MESSAGE_SOURCE, v: RENDERER_PROTOCOL_VERSION, type: "export", format };
+}
+
+/**
+ * The one `export` kind: a deck asks for "pptx" with a nonce, a sheet for "csv" or "xlsx". Each
+ * renderer reads only its own formats and ignores the others.
+ */
+export type ExportMessage = DeckExportMessage | SheetExportMessage;
+
+/**
+ * Ask a sheet's frame to download itself. The message names only a format, which the frame's
+ * own toolbar offers anyway, so it may go to "*" for opaque frames, like print. False when it
+ * cannot be sent.
+ */
+export function postExport(
+  frame: HTMLIFrameElement | null,
+  targetOrigin: string | null,
+  format: SheetExportFormat,
+): boolean {
+  const win = frame?.contentWindow;
+  if (!win || !targetOrigin) return false;
+  win.postMessage(sheetExportMessage(format), targetOrigin);
   return true;
 }
 

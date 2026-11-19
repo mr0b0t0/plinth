@@ -12,7 +12,11 @@ export const SOURCE_FILES = {
   doc: "content.md",
   slides: "slides.md",
   design: "design.html",
+  sheet: "sheet.jsonl",
 };
+
+/** One file a publish imports as a sheet (the server converts it): its content_format by extension. */
+export const IMPORT_FORMATS = { ".csv": "csv", ".xlsx": "xlsx" };
 
 /** The field a type's source goes in on PUT /artifacts: html for a page, content for every typed one. */
 export const sourceField = (type) => (type === "html" ? "html" : "content");
@@ -22,6 +26,7 @@ export function sourceMaxBytes(type, limits) {
   if (type === "doc") return limits.max_doc_bytes;
   if (type === "slides") return LIMITS.maxSlidesBytes;
   if (type === "design") return LIMITS.maxDesignBytes;
+  if (type === "sheet") return limits.max_sheet_bytes ?? LIMITS.maxSheetBytes;
   return limits.max_html_bytes;
 }
 
@@ -109,6 +114,9 @@ export function defaultLimits() {
     max_request_bytes: LIMITS.maxInlineRequestBytes,
     max_bundle_bytes: DEFAULTS.maxVersionBytes + LIMITS.bundleOverheadBytes,
     max_bundle_file_bytes: LIMITS.maxBundleFileBytes,
+    max_sheet_bytes: LIMITS.maxSheetBytes,
+    max_sheet_rows: LIMITS.maxSheetRows,
+    max_sheet_columns: LIMITS.maxSheetColumns,
   };
 }
 
