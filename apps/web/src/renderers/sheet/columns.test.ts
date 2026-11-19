@@ -597,6 +597,128 @@ describe("column widths", () => {
     });
   });
 
+  it("in the room: a column inserted before it while the settings are open; they follow it", async () => {
+    const { ws } = roomed();
+    cell("E2").focus();
+    button("Column settings").click();
+    expect(panel().getAttribute("aria-label")).toBe("Column E settings");
+    // "done", which E3 holds, renamed: the cells that hold it must be renamed with it.
+    (panel().querySelectorAll(".plinth-sheet__option input")[1] as HTMLInputElement).value = "Done";
+    ws.frame({
+      t: "struct",
+      gen: "g1",
+      rev: 4,
+      op: { op: "insert_columns", before: "A", columns: [{ name: "Note", type: "text" }] },
+      by: "s2",
+    });
+    await tick();
+    // Stage is column F now; the settings say so and still hold what was typed.
+    expect(panel().getAttribute("aria-label")).toBe("Column F settings");
+    expect(
+      (panel().querySelectorAll(".plinth-sheet__option input")[1] as HTMLInputElement).value,
+    ).toBe("Done");
+    submit(panel());
+    // The cells of column F hold "done": the whole sheet, not the header alone.
+    expect(ws.sent.at(-1)).toEqual({ t: "lease", rev: 4, start: 0, end: 4 });
+    expect(panel()).not.toBeNull();
+    ws.frame({ t: "leased", lease: "l1", start: 0, end: 4, holder: "s1", by: "ada@example.org" });
+    const edit = ws.sent.find((m) => m.t === "edit") as { text: string } | undefined;
+    const lines = (edit?.text ?? "").split("\n");
+    expect(JSON.parse(lines[0] ?? "{}").columns[5]).toEqual({
+      name: "Stage",
+      type: "select",
+      options: ["new", "Done"],
+    });
+    expect(lines[2]).toBe('[null,"Pears",5,0.5,false,"Done"]');
+    expect(panel()).toBeNull();
+    expect(said()).toBe("Column F settings applied.");
+  });
+
+  it("in the room: a column inserted before it, then a removed option a cell holds is refused", async () => {
+    const { ws } = roomed();
+    cell("E2").focus();
+    button("Column settings").click();
+    const remove = panel().querySelector('button[aria-label="Remove done"]') as HTMLButtonElement;
+    remove.click();
+    ws.frame({
+      t: "struct",
+      gen: "g1",
+      rev: 4,
+      op: { op: "insert_columns", before: "A", columns: [{ name: "Note", type: "text" }] },
+      by: "s2",
+    });
+    await tick();
+    submit(panel());
+    expect(notice()).toContain('F3 holds "done"');
+    expect(panel()).not.toBeNull();
+    expect(ws.sent.filter((m) => m.t === "lease")).toEqual([]);
+  });
+
+  it("in the room: its column deleted while the settings are open; they stay, saying so", async () => {
+    const { ws } = roomed();
+    cell("B2").focus();
+    button("Column settings").click();
+    labelled(panel(), "Name").value = "Quantity";
+    ws.frame({
+      t: "struct",
+      gen: "g1",
+      rev: 4,
+      op: { op: "delete_columns", from: "B", count: 1 },
+      by: "s2",
+    });
+    await tick();
+    expect(panel()).not.toBeNull();
+    expect(labelled(panel(), "Name").value).toBe("Quantity");
+    expect(notice()).toContain("Column B (Qty) was deleted meanwhile");
+    submit(panel());
+    expect(panel()).not.toBeNull();
+    expect(labelled(panel(), "Name").value).toBe("Quantity");
+    expect(notice()).toContain("Column B (Qty) was deleted meanwhile");
+    expect(ws.sent.filter((m) => m.t === "lease")).toEqual([]);
+  });
+
+  it("in the room: the settings stay open, with what was typed, when the write is refused at the grant", async () => {
+    const { ws } = roomed();
+    cell("B2").focus();
+    button("Column settings").click();
+    labelled(panel(), "Name").value = "Quantity";
+    submit(panel());
+    expect(ws.sent.at(-1)).toEqual({ t: "lease", rev: 3, start: 0, end: 1 });
+    // Still waiting for the lease: the settings stay, and a second Apply asks for nothing more.
+    expect(panel()).not.toBeNull();
+    submit(panel());
+    expect(ws.sent.filter((m) => m.t === "lease")).toHaveLength(1);
+    // Someone else renames the column before the lease comes.
+    theirs(
+      ws,
+      COLUMNS.map((c, i) => (i === 1 ? { ...c, name: "Units" } : c)),
+      4,
+    );
+    ws.frame({ t: "leased", lease: "l1", start: 0, end: 1, holder: "s1", by: "ada@example.org" });
+    expect(notice()).toContain("The column changed meanwhile");
+    expect(ws.sent.filter((m) => m.t === "edit")).toEqual([]);
+    expect(panel()).not.toBeNull();
+    expect(labelled(panel(), "Name").value).toBe("Quantity");
+  });
+
+  it("in the room: Cancel while Apply waits for its lease applies nothing", () => {
+    const { ws } = roomed();
+    cell("B2").focus();
+    button("Column settings").click();
+    labelled(panel(), "Name").value = "Quantity";
+    submit(panel());
+    expect(ws.sent.at(-1)).toEqual({ t: "lease", rev: 3, start: 0, end: 1 });
+    (
+      [...panel().querySelectorAll("button")].find(
+        (b) => b.textContent === "Cancel",
+      ) as HTMLButtonElement
+    ).click();
+    expect(panel()).toBeNull();
+    ws.frame({ t: "leased", lease: "l1", start: 0, end: 1, holder: "s1", by: "ada@example.org" });
+    expect(ws.sent.filter((m) => m.t === "edit")).toEqual([]);
+    expect(text("B1")).toContain("Qty");
+  });
+
   it("in the room: a rename someone else made while the settings were open still refuses", async () => {
     const { ws } = roomed();
     cell("B2").focus();

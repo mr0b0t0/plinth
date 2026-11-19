@@ -221,6 +221,8 @@ type Want =
       tries: number;
       /** Said in the frame's live region once the change is sent. */
       said?: string;
+      /** Called once the change is sent (a refusal leaves whoever asked as it was). */
+      sent?: () => void;
     };
 
 /** A struct frame sent and not answered yet, and how to aim it again at the lines as they are. */
@@ -439,6 +441,20 @@ export class SheetEditor {
   private notice: HTMLElement | null = null;
   private strip: HTMLElement | null = null;
   private panel: HTMLElement | null = null;
+  /**
+   * The column the open settings are for, found again by its definition apart from its width
+   * (findColumn) after every change: where it is now, how many columns the header had then, and,
+   * once it is gone (deleted, or changed by someone else), what to say about it.
+   */
+  private panelAt: {
+    was: SheetColumn;
+    col: number;
+    count: number;
+    gone: string | null;
+    relabel: () => void;
+  } | null = null;
+  /** A write's lines are being handed to the backend: its own echo is no change to react to. */
+  private sending = false;
   private lastStruct: SentStruct | null = null;
   private readonly loc: NumberLocale;
   /** The docked field's panel (phone width), while a cell is open there. */
@@ -570,6 +586,7 @@ export class SheetEditor {
     }
     g.setHolders(held);
     this.updateStrip();
+    this.syncPanel();
   }
 
   // ---------- edit mode ----------
@@ -810,7 +827,7 @@ export class SheetEditor {
   private write(
     range: LineRange,
     make: Extract<Want, { kind: "write" }>["make"],
-    opts: { what?: string; said?: string } = {},
+    opts: { what?: string; said?: string; sent?: () => void } = {},
   ): void {
     if (!this.canWrite()) return;
     const other = this.heldBy(range);
@@ -829,6 +846,7 @@ export class SheetEditor {
       make,
       tries: 0,
       ...(opts.said ? { said: opts.said } : {}),
+      ...(opts.sent ? { sent: opts.sent } : {}),
     };
     if (!this.backend.lease(range)) {
       this.want = null;
@@ -946,11 +964,18 @@ export class SheetEditor {
         return;
       }
       // A refused send has said why (too large, not connected): that notice stays.
-      const sent = this.backend.edit(r.join("\n"));
+      this.sending = true;
+      let sent: boolean;
+      try {
+        sent = this.backend.edit(r.join("\n"));
+      } finally {
+        this.sending = false;
+      }
       this.backend.release();
       if (sent) {
         this.hideNotice();
         if (w.said && this.editing) this.announce(w.said);
+        w.sent?.();
       } else if (!this.notice) {
         this.showNotice("That change was not sent. Try again in a moment.");
       }
@@ -1674,15 +1699,22 @@ export class SheetEditor {
     col: number,
     was: SheetColumn,
     change: (c: SheetColumn) => SheetColumn,
-    opts: { said?: string; anyWidth?: boolean } = {},
+    opts: {
+      said?: string;
+      anyWidth?: boolean;
+      sent?: () => void;
+      /** Told where the column was found when the lease was granted. */
+      landed?: (at: number) => void;
+    } = {},
   ): void {
-    const { anyWidth, ...rest } = opts;
+    const { anyWidth, landed, ...rest } = opts;
     this.write(
       { start: 0, end: 1 },
       (lines) => {
         const now = sheetHeaderLine(lines[0]);
         const at = now ? findColumn(now, was, col, { anyWidth }) : -1;
         if (!now || at < 0) return { error: "The column changed meanwhile. Try again." };
+        landed?.(at);
         const line = headerWith(now, at, change);
         if (typeof line !== "string") return line;
         const problem = rowsProblem(lines, sheetHeaderLine(line) as SheetHeader);
@@ -1917,6 +1949,52 @@ export class SheetEditor {
   private closePanel(): void {
     this.panel?.remove();
     this.panel = null;
+    this.panelAt = null;
+  }
+
+  /**
+   * Find the open settings' column again after a change: follow it to its new letter, or, once it
+   * is gone, say so and keep the settings open with what was typed (Cancel closes them).
+   */
+  private syncPanel(): void {
+    const p = this.panelAt;
+    if (!p || this.sending) return;
+    const header = this.header();
+    if (!header) return;
+    const at = findColumn(header, p.was, p.col, { anyWidth: true });
+    if (at >= 0) {
+      // Back as it was (a change undone): what was said about it no longer holds.
+      if (p.gone !== null && this.notice?.textContent?.startsWith(p.gone)) this.hideNotice();
+      p.gone = null;
+      if (at !== p.col) {
+        p.col = at;
+        p.relabel();
+      }
+    } else if (p.gone === null) {
+      p.gone = this.panelGone(p, header);
+      this.showNotice(p.gone);
+    }
+    p.count = header.columns.length;
+  }
+
+  /** Why the open settings cannot be applied: their column was deleted, or someone changed it. */
+  private panelGone(p: NonNullable<SheetEditor["panelAt"]>, header: SheetHeader): string {
+    const deleted =
+      header.columns.length < p.count && !header.columns.some((c) => c.name === p.was.name);
+    const kept = "What you entered stays here until you cancel.";
+    return deleted
+      ? `Column ${colLetter(p.col)} (${p.was.name}) was deleted meanwhile, so these settings cannot be applied. ${kept}`
+      : `The column changed meanwhile: ${p.was.name} is not as it was when these settings opened. ${kept} Open its settings again to start from it as it is now.`;
+  }
+
+  /** Where the open settings' column is now, or -1, saying why, when it is gone. */
+  private panelColumn(): number {
+    const p = this.panelAt;
+    if (!p) return -1;
+    this.syncPanel();
+    if (p.gone === null) return p.col;
+    this.showNotice(p.gone);
+    return -1;
   }
 
   /** The settings of a column (the selected one by default). */
@@ -1932,7 +2010,8 @@ export class SheetEditor {
     const form = d.createElement("form");
     form.className = "plinth-sheet__panel";
     if (this.narrow()) form.classList.add("plinth-sheet__panel--sheet");
-    form.setAttribute("aria-label", `Column ${colLetter(col)} settings`);
+    const label = (at: number) => `Column ${colLetter(at)} settings`;
+    form.setAttribute("aria-label", label(col));
     const field = (labelText: string, input: HTMLElement) => {
       const label = d.createElement("label");
       label.className = "plinth-sheet__panel-field";
@@ -2015,7 +2094,14 @@ export class SheetEditor {
     cancel.type = "button";
     cancel.className = "plinth-sheet__btn";
     cancel.textContent = "Cancel";
+    /** The last Apply's callback, to know it while its write waits for the lease. */
+    let asked: (() => void) | null = null;
     const back = () => {
+      // Cancel while an Apply waits for its lease: nothing is applied, as the settings close.
+      if (asked && this.want?.kind === "write" && this.want.sent === asked) {
+        this.want = null;
+        this.hooks.status();
+      }
       this.closePanel();
       this.grid?.focusSelected();
     };
@@ -2032,6 +2118,8 @@ export class SheetEditor {
     form.append(actions);
     form.addEventListener("submit", (e) => {
       e.preventDefault();
+      // Apply pressed again while the change waits for its lease: that one is still coming.
+      if (asked && this.want?.kind === "write" && this.want.sent === asked) return;
       const t = type.value as SheetColumnType;
       const w = width.value.trim();
       const px = w === "" ? null : Number(w);
@@ -2064,7 +2152,11 @@ export class SheetEditor {
         if (list && !("error" in list)) next.options = list.options;
         return next;
       };
-      const first = headerWith(header, col, change);
+      // The column as it is now: someone else may have moved it, changed it or deleted it.
+      const here = this.panelColumn();
+      const head = this.header();
+      if (here < 0 || !head) return;
+      const first = headerWith(head, here, change);
       if (typeof first !== "string") {
         this.showNotice(first.error);
         return;
@@ -2072,7 +2164,7 @@ export class SheetEditor {
       const lines = this.backend.lines;
       // An option that cells hold cannot just go: say where, and keep the panel open.
       if (list && !("error" in list) && c.type === "select") {
-        const held = firstUse(lines, col, new Set(list.removed));
+        const held = firstUse(lines, here, new Set(list.removed));
         if (held) {
           this.showNotice(
             `${held.at} holds "${held.value}". Change those cells first, or keep the option.`,
@@ -2080,17 +2172,28 @@ export class SheetEditor {
           return;
         }
       }
-      const said = `Column ${colLetter(col)} settings applied.`;
+      // The panel closes only once the change is sent, and says the column's letter then.
+      let landed = here;
+      const sent = () => {
+        if (this.panel === form) {
+          const inside = form.contains(this.doc.activeElement);
+          this.closePanel();
+          if (inside) this.grid?.focusSelected();
+        }
+        if (this.editing) this.announce(`Column ${colLetter(landed)} settings applied.`);
+      };
+      asked = sent;
       // Renaming options that cells hold renames them in those cells too: one change of the
       // whole sheet, header and rows, so the rows always fit the header.
-      if (firstUse(lines, col, new Set(renames.keys()))) {
+      if (firstUse(lines, here, new Set(renames.keys()))) {
         const make = (now: readonly string[], l: LineRange): string[] | { error: string } => {
           if (l.start !== 0 || l.end !== now.length) {
             return { error: "The sheet changed meanwhile. Try again." };
           }
           const h = sheetHeaderLine(now[0]);
-          const at = h ? findColumn(h, c, col, { anyWidth: true }) : -1;
+          const at = h ? findColumn(h, c, this.panelAt?.col ?? here, { anyWidth: true }) : -1;
           if (!h || at < 0) return { error: "The column changed meanwhile. Try again." };
+          landed = at;
           const line = headerWith(h, at, change);
           if (typeof line !== "string") return line;
           const next = sheetHeaderLine(line) as SheetHeader;
@@ -2115,14 +2218,27 @@ export class SheetEditor {
           );
           return;
         }
-        this.closePanel();
-        this.write(range, make, { what: "this sheet", said });
+        this.write(range, make, { what: "this sheet", sent });
         return;
       }
-      this.closePanel();
-      this.writeColumn(col, c, change, { said, anyWidth: true });
+      this.writeColumn(here, c, change, {
+        sent,
+        anyWidth: true,
+        landed: (at) => {
+          landed = at;
+        },
+      });
     });
     this.panel = form;
+    this.panelAt = {
+      was: c,
+      col,
+      count: header.columns.length,
+      gone: null,
+      relabel: () => {
+        if (this.panelAt) form.setAttribute("aria-label", label(this.panelAt.col));
+      },
+    };
     g.slot.append(form);
     name.focus();
   }

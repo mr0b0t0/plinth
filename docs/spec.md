@@ -2561,6 +2561,12 @@ and the whole-draft review is the only way on (below).
   The column settings find their column by its definition apart from its width, so a width
   changed while they are open (dragged, set with the keys or by someone else) is no conflict:
   Apply keeps that width unless the Width field was changed, and then sets the one typed there.
+  They follow their column the same way through any change while they are open, so a column
+  inserted or deleted before it changes the letter they name and the cells they check for options
+  in use. When the column itself is deleted or changed by someone else, they stay open with what
+  was typed and say so, and Apply is refused. They close only once the change is sent; a change
+  refused when its lease is granted leaves them open, and Cancel drops a change still waiting for
+  its lease.
   Rows other people hold show their email, and their typing arrives as it is typed. Sort and filter stay the viewer's own while editing; downloads give what the page
   shows.
 - **At phone width** (a frame 640 pixels wide or less) an open cell's field is docked at the
