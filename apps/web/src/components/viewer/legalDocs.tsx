@@ -199,7 +199,10 @@ function privacy(op: OperatorInfo, cfg: LegalConfig): LegalDoc {
                 the audio to Google, Edge to Microsoft and Safari to Apple, under their own terms,
                 unless the browser does it on your device. We do not receive or keep the audio. The
                 words go to the page you are dictating into. If the page saves them, we keep them as
-                that page's shared data, as described above.
+                that page's shared data, as described above. The question that asks you to allow
+                dictation names the page's owner by their email address, so if you publish a page
+                that takes dictation, the people you share it with see your email address when they
+                first start dictating on it.
               </li>
             )}
             <li>

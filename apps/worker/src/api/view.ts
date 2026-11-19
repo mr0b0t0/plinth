@@ -2,6 +2,9 @@
 // for a password or an email when needed, and hands out a one-time token for the content host.
 import {
   capabilityList,
+  type DictationAccess,
+  type DictationOwner,
+  type EffectiveRole,
   RATE_LIMITS,
   REVIEW_MODE_PARAM,
   TTL,
@@ -349,6 +352,25 @@ async function gateVoice(
   a: ArtifactRow,
   d: Extract<Decision, { allow: true }>,
 ): Promise<ViewGateVoice | undefined> {
+  const v = await voiceAccess(ctx, a, d);
+  if (!v) return undefined;
+  if (!v.dictation.available || !v.identity) return { dictation: v.dictation };
+  // The app binds this browser's consent to the viewer's id on this page, so the next person on a
+  // shared browser is asked again. The owner's email is not here: the consent dialog fetches it
+  // (GET /view/:ref/dictation) only when it opens.
+  const viewerId = await viewerIdFor(ctx.config.tokenSigningKey, a.id, v.identity.email);
+  return { dictation: v.dictation, viewer_id: viewerId };
+}
+
+/** The page's dictation declaration and this viewer's access to it; undefined when not declared. */
+async function voiceAccess(
+  ctx: Ctx,
+  a: ArtifactRow,
+  d: Extract<Decision, { allow: true }>,
+): Promise<
+  | { dictation: DictationAccess; identity: { email: string; role: EffectiveRole } | null }
+  | undefined
+> {
   if (!ctx.config.allowDictation || a.type !== "html") return undefined;
   const row = await ctx.db
     .select({ capabilities: versions.capabilities })
@@ -367,19 +389,29 @@ async function gateVoice(
     isolation: ctx.config.contentIsolation,
     type: a.type,
   });
-  if (!dictation.available || !identity) return { dictation };
-  // The consent dialog names who wrote the page by the owner's email, which the owner cannot pick
-  // freely as they can a display name. Only viewers who may dictate get it: the owner and the
-  // people the owner granted access by email.
-  const owner =
-    d.role === "owner"
-      ? { email: identity.email }
-      : await ctx.db
-          .select({ email: users.email })
-          .from(users)
-          .where(eq(users.id, a.ownerId))
-          .get();
-  return owner ? { dictation, owner_email: owner.email } : { dictation };
+  return { dictation, identity };
+}
+
+/**
+ * The owner's email for the dictation consent dialog, or null. The dialog names who wrote the page
+ * by it, which the owner cannot pick freely as they can a display name. Only viewers who may
+ * dictate get it (the owner and the people the owner granted access by email), and the app asks
+ * only when the dialog opens, never on a plain page load.
+ */
+async function dictationOwner(ctx: Ctx, ref: string): Promise<DictationOwner | null> {
+  const a = await findArtifact(ctx, ref);
+  if (!a || a.currentVersion < 1 || a.takenDownAt) return null;
+  const d = await decideFor(ctx, a, "view");
+  if (!d.allow) return null;
+  const v = await voiceAccess(ctx, a, d);
+  if (!v?.dictation.available || !v.identity) return null;
+  if (d.role === "owner") return { owner_email: v.identity.email };
+  const owner = await ctx.db
+    .select({ email: users.email })
+    .from(users)
+    .where(eq(users.id, a.ownerId))
+    .get();
+  return owner ? { owner_email: owner.email } : null;
 }
 
 function gateOptions(q: (k: string) => string | undefined): GateOptions {
@@ -400,12 +432,23 @@ function gateOptions(q: (k: string) => string | undefined): GateOptions {
 async function gateForRequest(c: AppContext, ref: string, opts: GateOptions): Promise<ViewGate> {
   const ctx = serviceCtx(c);
   const gate = await computeGate(ctx, ref, opts);
-  if (gate.status !== "email_required" || ctx.principal.kind !== "user") return gate;
-  const cookie = c.get("cookies").get(appCookieName(ctx.config, "viewer"));
-  const viewer = cookie ? await resolveViewerSession(ctx.db, cookie) : null;
-  if (viewer?.kind !== "viewer" || viewer.email === ctx.principal.email) return gate;
+  if (gate.status !== "email_required") return gate;
+  const viewer = await otherViewer(c, ctx);
+  if (!viewer) return gate;
   const alt = await computeGate({ ...ctx, principal: viewer }, ref, opts);
   return alt.status === "ok" ? alt : gate;
+}
+
+/**
+ * The viewer session this browser also holds, for a signed-in person, when it is for another
+ * email (confirmed by code in this browser); null otherwise.
+ */
+async function otherViewer(c: AppContext, ctx: Ctx): Promise<Principal | null> {
+  if (ctx.principal.kind !== "user") return null;
+  const cookie = c.get("cookies").get(appCookieName(ctx.config, "viewer"));
+  const viewer = cookie ? await resolveViewerSession(ctx.db, cookie) : null;
+  if (viewer?.kind !== "viewer" || viewer.email === ctx.principal.email) return null;
+  return viewer;
 }
 
 viewApi.get("/view/:ref", async (c) => {
@@ -416,6 +459,23 @@ viewApi.get("/view/:ref", async (c) => {
   );
   c.header("Cache-Control", "no-store");
   return c.json(gate);
+});
+
+/**
+ * Dictation: the owner's email for the consent dialog, for the same principal the gate would use.
+ * 404 for anyone who may not dictate on the page, the same answer as for a missing artifact.
+ */
+viewApi.get("/view/:ref/dictation", async (c) => {
+  const ctx = serviceCtx(c);
+  const ref = c.req.param("ref");
+  let owner = await dictationOwner(ctx, ref);
+  if (!owner) {
+    const viewer = await otherViewer(c, ctx);
+    if (viewer) owner = await dictationOwner({ ...ctx, principal: viewer }, ref);
+  }
+  c.header("Cache-Control", "no-store");
+  if (!owner) throw new ApiError("not_found", "Artifact not found");
+  return c.json(owner);
 });
 
 /**

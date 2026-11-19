@@ -1090,22 +1090,31 @@ a start made before then is not cut off, and every later load ends the session. 
 page cannot cover, restyle or fold it away.
 
 **Consent.** "Let this page take dictation?" is app chrome above the frame. It names the page and
-its owner by email (the gate's `voice.owner_email`, sent only to viewers who may dictate: the owner
-and people the owner granted access by email), never by the display name, which anyone can set to
-"Plinth Security" or a colleague's name. It says the page may save the words where others with access see them, names the company
+its owner by email, never by the display name, which anyone can set to
+"Plinth Security" or a colleague's name. The app fetches that email
+(`GET /api/v1/view/:ref/dictation`) only when the dialog opens, never with the gate, and the
+endpoint answers 404 to anyone who may not dictate on the page; so the owner's email reaches only
+the owner and people the owner granted access by email, and only when they start dictating on a
+page they have not allowed yet. It says the page may save the words where others with access see them, names the company
 whose speech service hears the audio (Google for Chrome, Microsoft for Edge, Apple for Safari, or a
 generic sentence), and says Plinth never receives the audio. Focus starts on "Not now", and both
 buttons ignore input for 500 ms after it opens, so a click the page times to land where "Allow"
 appears does nothing. "Allow on this page" is stored in the app origin's `localStorage` under
-`plinth:dictation:<artifact id>`; artifact frames are cross-origin and cannot read or write it. The
-⋯ menu takes it back, and sign-out clears every such key, so the next person on a shared browser is
-asked again. It grants no data access: it is one viewer's choice about their own microphone in this
+`plinth:dictation:<artifact id>`, with the viewer's id on the page as its value (the gate's
+`voice.viewer_id`); artifact frames are cross-origin and cannot read or write it. A stored consent
+counts only for the viewer it names, so the next person on a shared browser is asked again even
+when the first one never signed out (an expired or revoked session, a closed tab, a viewer
+confirmed by code, who has no sign-out). The ⋯ menu takes it back, and sign-out clears every such
+key. It grants no data access: it is one viewer's choice about their own microphone in this
 browser, so it needs no server table.
 
 **The page's side.** The runtime posts only to `window.parent` with `targetOrigin` set to the
 embedded app origin, and acts on a message only from `window.parent` at that exact origin and for
 its current session. A page framed by another site (an MCP host's in-chat preview) or opened on its
-own gets `no_host`. The runtime embeds `APP_ORIGIN` as a JSON string: public configuration, the same
+own gets `no_host`. The app listens from the moment the viewer stage creates the frame, before its
+own config arrives: until then it answers from the gate's `voice` part, which the server set from
+the same switch and isolation, and stays silent when that says `opaque_isolation`; a page without
+one gets no dictation either way, and its `hello` is answered once the config arrives. The runtime embeds `APP_ORIGIN` as a JSON string: public configuration, the same
 bytes for every artifact on an instance, with no secrets and no artifact data.
 
 **Opaque isolation.** Off. The app would have to post the viewer's words with `"*"` to a frame

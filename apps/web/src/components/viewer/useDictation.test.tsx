@@ -11,6 +11,8 @@ import { CONSENT_PREFIX, forgetAllConsents, VOICE_LIMITS } from "./voiceProtocol
 type OkGate = Extract<ViewGate, { status: "ok" }>;
 const ORIGIN = "http://art1.content.localhost:8787";
 const ON: AppConfig = { ...CONFIG, dictation: true };
+/** This viewer's id on the page (the gate's voice.viewer_id): the consent is bound to it. */
+const VIEWER = "u_viewer1";
 
 const gate = (over: Partial<OkGate> = {}): OkGate => ({
   status: "ok",
@@ -26,7 +28,7 @@ const gate = (over: Partial<OkGate> = {}): OkGate => ({
   },
   enter_url: `${ORIGIN}/__plinth/enter?t=x`,
   role: "viewer",
-  voice: { dictation: { available: true, reason: null }, owner_email: "ada@example.com" },
+  voice: { dictation: { available: true, reason: null }, viewer_id: VIEWER },
   ...over,
 });
 
@@ -57,6 +59,8 @@ class FakeRec {
 }
 
 let frame: HTMLIFrameElement;
+/** The owner's email for the consent dialog, fetched only when it opens. */
+let loadOwner: ReturnType<typeof vi.fn<(id: string) => Promise<string>>>;
 let toFrame: ReturnType<typeof vi.fn>;
 let frameWin: { postMessage: ReturnType<typeof vi.fn> };
 const activation = { isActive: true };
@@ -67,6 +71,7 @@ let active: Element | null = null;
 beforeEach(() => {
   vi.useFakeTimers();
   FakeRec.all = [];
+  loadOwner = vi.fn(async () => "ada@example.com");
   frame = document.createElement("iframe");
   toFrame = vi.fn();
   frameWin = { postMessage: toFrame };
@@ -91,7 +96,7 @@ afterEach(() => {
 function mount(over: { gate?: OkGate; config?: AppConfig | null } = {}) {
   return renderHook(
     (p: { gate: OkGate; config: AppConfig | null }) =>
-      useDictation({ frame, contentOrigin: ORIGIN, gate: p.gate, config: p.config }),
+      useDictation({ frame, contentOrigin: ORIGIN, gate: p.gate, config: p.config, loadOwner }),
     {
       initialProps: {
         gate: over.gate ?? gate(),
@@ -120,8 +125,10 @@ const start = (id = "s1", extra: Record<string, unknown> = {}) =>
   fromFrame({ type: "start", id, interim: true, ...extra });
 const rec = () => FakeRec.all.at(-1) as FakeRec;
 const allow = () => {
-  localStorage.setItem(`${CONSENT_PREFIX}art1`, "allowed");
+  localStorage.setItem(`${CONSENT_PREFIX}art1`, VIEWER);
 };
+/** Let the owner's email arrive, so the consent dialog opens. */
+const settle = () => act(async () => {});
 /** Start with stored consent and let the recognizer report it is listening. */
 function listen(result: { current: ReturnType<typeof useDictation> }, id = "s1") {
   allow();
@@ -177,6 +184,39 @@ describe("useDictation: answering the page", () => {
     fromFrame({ type: "hello" });
     expect(toFrame).not.toHaveBeenCalled();
   });
+
+  it("answers a page that asks before the app's config arrives, from the gate", () => {
+    // Opened directly: the frame loads and its page says hello while GET /config and /me are
+    // still on their way. The runtime asks once, so a dropped hello would cost the whole load.
+    const h = mount({ config: null });
+    fromFrame({ type: "hello" });
+    expect(last()).toEqual(voice({ type: "status", available: true, reason: null }));
+    // A dictation started before the config arrives keeps going when it does.
+    listen(h.result);
+    h.rerender({ gate: gate(), config: ON });
+    expect(h.result.current.listening).toBe(true);
+    expect(rec().aborted).toBe(false);
+  });
+
+  it("holds a hello the gate cannot settle until the config arrives", () => {
+    const h = mount({ config: null, gate: gate({ voice: undefined }) });
+    fromFrame({ type: "hello" });
+    start("s1");
+    expect(toFrame).not.toHaveBeenCalled();
+    h.rerender({ gate: gate({ voice: undefined }), config: { ...ON, dictation: false } });
+    expect(sent()).toEqual([voice({ type: "status", available: false, reason: "disabled" })]);
+    // Answered once only.
+    h.rerender({ gate: gate({ voice: undefined }), config: ON });
+    expect(sent()).toHaveLength(1);
+  });
+
+  it("before the config, a gate that says opaque isolation keeps the app silent", () => {
+    const opaque = gate({ voice: { dictation: { available: false, reason: "opaque_isolation" } } });
+    const h = mount({ config: null, gate: opaque });
+    fromFrame({ type: "hello" });
+    h.rerender({ gate: opaque, config: { ...ON, content_isolation: "opaque" } });
+    expect(toFrame).not.toHaveBeenCalled();
+  });
 });
 
 describe("useDictation: starting", () => {
@@ -206,10 +246,11 @@ describe("useDictation: starting", () => {
     expect(FakeRec.all).toEqual([]);
   });
 
-  it("asks first; Allow stores the consent and starts the recognizer", () => {
+  it("asks first; Allow stores the consent and starts the recognizer", async () => {
     const { result } = mount();
     expect(result.current.allowed).toBe(false);
     start("s1", { lang: "pt-PT", interim: false });
+    await settle();
     // The owner by email, never by the display name the owner chose ("Ada").
     expect(result.current.consent).toMatchObject({
       title: "Field notes",
@@ -223,7 +264,7 @@ describe("useDictation: starting", () => {
     act(() => result.current.consent?.allow());
     expect(result.current.consent).toBeNull();
     expect(result.current.allowed).toBe(true);
-    expect(localStorage.getItem(`${CONSENT_PREFIX}art1`)).toBe("allowed");
+    expect(localStorage.getItem(`${CONSENT_PREFIX}art1`)).toBe(VIEWER);
     expect(rec()).toMatchObject({
       started: true,
       continuous: true,
@@ -243,15 +284,58 @@ describe("useDictation: starting", () => {
     const { result } = mount();
     listen(result);
     expect(result.current.consent).toBeNull();
+    // Nobody asked for the owner's email: there was no dialog to name them in.
+    expect(loadOwner).not.toHaveBeenCalled();
   });
 
-  it("Not now answers not_granted and never reopens on this load; closing answers dismissed", () => {
+  it("fetches the owner's email only when the dialog opens, and refuses network without it", async () => {
+    const { result } = mount();
+    fromFrame({ type: "hello" });
+    expect(loadOwner).not.toHaveBeenCalled();
+    loadOwner.mockRejectedValueOnce(new Error("offline"));
+    start("s1");
+    expect(loadOwner).toHaveBeenCalledWith("art1");
+    await settle();
+    expect(result.current.consent).toBeNull();
+    expect(last()).toEqual(voice({ type: "refused", id: "s1", code: "network" }));
+    expect(FakeRec.all).toEqual([]);
+  });
+
+  it("a consent another viewer gave on this browser does not count: this viewer is asked", async () => {
+    // Someone else allowed dictation on this page here and left without signing out.
+    localStorage.setItem(`${CONSENT_PREFIX}art1`, "u_someone_else");
+    const { result } = mount();
+    expect(result.current.allowed).toBe(false);
+    start("s1");
+    await settle();
+    expect(result.current.consent).toMatchObject({ owner: "ada@example.com" });
+    expect(FakeRec.all).toEqual([]);
+    later(VOICE_LIMITS.dialogArmMs);
+    act(() => result.current.consent?.allow());
+    expect(localStorage.getItem(`${CONSENT_PREFIX}art1`)).toBe(VIEWER);
+    expect(rec().started).toBe(true);
+  });
+
+  it("a stored consent never starts for a viewer the gate gives no id", () => {
+    allow();
+    const { result } = mount({
+      gate: gate({ voice: { dictation: { available: true, reason: null } } }),
+    });
+    expect(result.current.allowed).toBe(false);
+    start("s1");
+    expect(last()).toEqual(voice({ type: "refused", id: "s1", code: "unavailable" }));
+    expect(FakeRec.all).toEqual([]);
+  });
+
+  it("Not now answers not_granted and never reopens on this load; closing answers dismissed", async () => {
     const { result } = mount();
     start("s1");
+    await settle();
     act(() => result.current.consent?.dismiss());
     expect(last()).toEqual(voice({ type: "refused", id: "s1", code: "dismissed" }));
     later(VOICE_LIMITS.minStartGapMs);
     start("s2");
+    await settle();
     act(() => result.current.consent?.notNow());
     expect(last()).toEqual(voice({ type: "refused", id: "s2", code: "not_granted" }));
     later(VOICE_LIMITS.minStartGapMs);
@@ -475,8 +559,8 @@ describe("useDictation: listening", () => {
 
 describe("dictation consent storage", () => {
   it("sign-out forgets every artifact's consent and nothing else", () => {
-    localStorage.setItem(`${CONSENT_PREFIX}a`, "allowed");
-    localStorage.setItem(`${CONSENT_PREFIX}b`, "allowed");
+    localStorage.setItem(`${CONSENT_PREFIX}a`, VIEWER);
+    localStorage.setItem(`${CONSENT_PREFIX}b`, VIEWER);
     localStorage.setItem("plinth:theme", "dark");
     forgetAllConsents();
     expect(localStorage.getItem(`${CONSENT_PREFIX}a`)).toBeNull();

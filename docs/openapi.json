@@ -1229,6 +1229,34 @@
         ]
       }
     },
+    "/view/{ref}/dictation": {
+      "get": {
+        "operationId": "viewDictationOwner",
+        "summary": "The owner's email for the dictation consent dialog",
+        "description": "Only for a viewer who may dictate on the page (the owner or a grant holder, signed in or confirmed by code, while dictation is on); 404 for everyone else.",
+        "tags": ["Viewing"],
+        "parameters": [
+          {
+            "in": "path",
+            "required": true,
+            "name": "ref",
+            "schema": { "type": "string", "minLength": 1, "maxLength": 80 },
+            "description": "Artifact id or slug"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/DictationOwner" } }
+            }
+          },
+          "404": { "$ref": "#/components/responses/E404" },
+          "default": { "$ref": "#/components/responses/Error" }
+        },
+        "security": [{}, { "bearerAuth": [] }, { "sessionCookie": [] }]
+      }
+    },
     "/artifacts/{ref}/comments": {
       "get": {
         "operationId": "listComments",
@@ -4517,13 +4545,24 @@
             },
             "required": ["available", "reason"]
           },
-          "owner_email": {
+          "viewer_id": {
             "type": "string",
-            "description": "The owner's email, only when this viewer may dictate: the consent dialog names who wrote the page by it"
+            "description": "This viewer's id on this page, only when they may dictate: the app binds this browser's consent to it"
           }
         },
         "required": ["dictation"],
         "description": "Present on `ok` only when the current version of an HTML page declares `dictation` and ALLOW_DICTATION is on: whether this viewer may dictate into the page (identified viewers only, origin isolation only). The app runs the recognizer; the page never gets the microphone"
+      },
+      "DictationOwner": {
+        "type": "object",
+        "properties": {
+          "owner_email": {
+            "type": "string",
+            "description": "The owner's email: the consent dialog names who wrote the page by it"
+          }
+        },
+        "required": ["owner_email"],
+        "description": "Who wrote the page, for the dictation consent dialog. Only for viewers who may dictate on it; the app asks only when the dialog opens"
       },
       "LiveInfo": {
         "type": "object",

@@ -1033,8 +1033,11 @@ microphone.
   editor), signed in or confirmed by code, the same people who write shared data or join a room.
   Anonymous link viewers (unlisted, password, public) never do. The gate's `voice.dictation` says
   `{ available, reason }`, decided by `dictationAccess` in `policy.ts` (`not_declared`,
-  `opaque_isolation`, `disabled`, `not_identified`). When it is available, `voice.owner_email` is
-  the owner's email, which the consent dialog names.
+  `opaque_isolation`, `disabled`, `not_identified`). When it is available, `voice.viewer_id` is
+  the viewer's id on the page (the `u_` id their shared data writes carry), which the app binds
+  this browser's consent to. The gate never carries the owner's email: the consent dialog fetches
+  it from `GET /api/v1/view/:ref/dictation` when it opens, and that answers 404 to anyone who may
+  not dictate on the page.
 - **Page API.** `window.plinth.dictation`: `ready` (resolves `{ available, reason }`, never rejects;
   `reason` adds `unsupported` for a browser without a recognizer and `no_host` when the page is
   not framed by the Plinth viewer: an in-chat preview, a thumbnail, the editor preview, or opened on
@@ -1065,7 +1068,8 @@ microphone.
   wrote the page (the owner's email, never the display name the owner chooses) and may save the
   words, which company's speech service hears the audio, and how
   to stop. It starts on "Not now", and both buttons ignore input for 500 ms after it opens. "Allow
-  on this page" is kept in the app origin's `localStorage` (`plinth:dictation:<artifact id>`),
+  on this page" is kept in the app origin's `localStorage` (`plinth:dictation:<artifact id>` =
+  the viewer's id on the page), so another person on the same browser is asked again, and it is
   cleared on sign-out; "Not now" lasts for the page load. "Dictation on this page: allowed. Turn
   off" in the ⋯ menu takes it back and stops listening.
 - **While listening.** A red "Listening" control with **Stop** sits in the viewer bar at every width.

@@ -24,7 +24,7 @@ const GATE: OkGate = {
   },
   enter_url: `${ORIGIN}/__plinth/enter?t=token-1&next=%2F`,
   role: "viewer",
-  voice: { dictation: { available: true, reason: null } },
+  voice: { dictation: { available: true, reason: null }, viewer_id: "u_viewer1" },
 };
 
 class FakeRec {
@@ -65,6 +65,7 @@ async function open(gate: OkGate = GATE) {
     me: ME,
     config: { ...CONFIG, dictation: true },
     handle: (c) => {
+      if (c.path === "/view/art123/dictation") return json({ owner_email: "ada@example.com" });
       if (c.path.startsWith("/view/")) return json(gate);
       if (c.path.includes("/comments")) return json({ items: [] });
       return undefined;
@@ -107,11 +108,12 @@ describe("dictation in the viewer", () => {
     fromFrame({ type: "start", id: "s1", interim: true });
     const dialog = await screen.findByRole("dialog", { name: "Let this page take dictation?" });
     expect(dialog.textContent).toContain("Field notes");
+    expect(dialog.textContent).toContain("which ada@example.com wrote");
     await act(async () => {
       await new Promise((r) => setTimeout(r, VOICE_LIMITS.dialogArmMs + 50));
     });
     await user.click(screen.getByRole("button", { name: "Allow on this page" }));
-    expect(localStorage.getItem(`${CONSENT_PREFIX}art123`)).toBe("allowed");
+    expect(localStorage.getItem(`${CONSENT_PREFIX}art123`)).toBe("u_viewer1");
     act(() => FakeRec.last?.onstart?.());
     const bar = document.querySelector(".pl-viewer__bar") as HTMLElement;
     await waitFor(() => expect(bar.textContent).toContain("Listening"));
@@ -123,7 +125,7 @@ describe("dictation in the viewer", () => {
 
   it("shows no dictation control or menu entry on a page that does not declare it", async () => {
     const user = userEvent.setup();
-    localStorage.setItem(`${CONSENT_PREFIX}art123`, "allowed");
+    localStorage.setItem(`${CONSENT_PREFIX}art123`, "u_viewer1");
     await open({ ...GATE, voice: undefined });
     expect(document.querySelector(".pl-viewer__listening")).toBeNull();
     expect(await menuItems(user)).not.toContain("Dictation on this page: allowed. Turn off");
