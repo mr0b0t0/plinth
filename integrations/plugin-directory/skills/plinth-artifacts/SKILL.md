@@ -380,9 +380,10 @@ Rules that keep these pages working:
   Give each person their own document (`setMine`) and count the documents. When several people
   must edit one document, use `update(fn)` or `ifRev`, never a plain `set` of a value you read
   earlier.
-- **Use `onSnapshot` only when live updates matter** (a poll people watch fill up). It polls every
-  15 seconds while the tab is visible. Otherwise read once with `all()` after `ready`, and again
-  after the viewer's own write.
+- **Use `onSnapshot` only when live updates matter** (a poll people watch fill up). Where the
+  instance has live views, Plinth tells the page within about a second that the data changed;
+  elsewhere it polls every 15 seconds while the tab is visible. Otherwise read once with `all()`
+  after `ready`, and again after the viewer's own write.
 - **Never copy `viewer.email` into data.** People who open the link without an invitation can read
   the data. Use `viewer.id` or `setMine` to tie entries to a person; let Plinth show authors.
 - **Results.** Read what people entered with `list_artifact_data` (no collection for the summary,
@@ -744,3 +745,15 @@ microphone: `getUserMedia` and `SpeechRecognition` fail in every Plinth frame (a
   `stop()` ends it from the page.
 - Dictated text is the viewer's input: render it with `textContent`, and if the page saves it, it is
   shared data like any other entry. Declare `data` too to keep it (`content="data dictation"`).
+
+## Open pages follow new versions (live views)
+
+- After `update_artifact` or `restore_version`, every open view of the artifact shows the new
+  version within seconds by itself. Never tell the user to reload; the link stays the same. A
+  permanent version link (`/a/<slug>/v/3`) stays on its version and says a newer one exists.
+- The new version replaces the page in the viewer's frame, so scroll position and in-page state
+  do not carry over. Keep what people enter in shared data, not only in the page.
+- `onSnapshot` is pushed where the instance has live views and checks every 60 s as a backstop.
+  Do not set `intervalMs` for speed, and never add a polling loop of your own: it only adds load.
+- Nothing to declare. Where live views are off (or under opaque isolation, for data), pages poll
+  as before and work the same.

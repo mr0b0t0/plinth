@@ -367,8 +367,10 @@ There is no rendered preview for agents yet. To check that a publish arrived int
 
 ## Multiplayer pages with plinth.room
 
-Shared data keeps what people enter, but it reaches other open pages only on the next 15 s poll.
-For things people do together at the same moment (cursors, who is here, a note moving while it is
+Shared data keeps what people enter, and with live views on it reaches other open pages within
+about a second ([spec](spec.md#live-views-decided-2026-11-19)); without them, on the next 15 s
+poll. Either way it is the stored result, not the moment. For things people do together at the
+same moment (cursors, who is here, a note moving while it is
 dragged), a page also declares `room` and uses `window.plinth.room` from the same runtime
 ([spec](spec.md#live-rooms), [security](security.md#live-rooms)):
 
@@ -465,6 +467,16 @@ Pages may speak and, on instances that offer it, take dictation; they never get 
   like any entry, and `list_artifact_data` marks it untrusted.
 
 The skill's "Voice" section has the full API.
+
+## Open pages follow new versions
+
+A new version (`update_artifact`, `restore_version`, the source editor, a save on the page) reaches
+every open view of the artifact within seconds: the app page holds a watch socket on the app host
+and re-reads its gate when told ([spec](spec.md#live-views-decided-2026-11-19),
+[security](security.md#live-views)). Agents never hold that socket (a bearer token is refused), and
+never need to tell anyone to reload. Pages that keep shared data get `onSnapshot` pushed the same
+way; do not shorten `intervalMs` to make them faster. With `ALLOW_LIVE_VIEWS=false`, or without the
+`ROOMS` binding, pages poll every 15 s as before.
 
 ## Agent discovery
 
