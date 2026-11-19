@@ -7,6 +7,7 @@ import {
   arrowEndpoints,
   BOARD_COLORS,
   type BoardBackground,
+  type BoardBlock,
   type BoardColor,
 } from "@plinth/shared";
 import type { Camera } from "./camera.ts";
@@ -186,6 +187,11 @@ export interface DrawState {
   readOnly: boolean;
   /** Block ids peers have selected, with the peer's colour hue. */
   peerSelections: Map<string, number>;
+  /**
+   * Where peers are dragging blocks right now: drawn there (and their arrows with them), never
+   * part of the model, whose copy of a block stays the server's.
+   */
+  peerMoves: ReadonlyMap<string, { x: number; y: number }>;
 }
 
 const blockLabel = (kind: ToolKind, text: string) => {
@@ -197,9 +203,14 @@ const blockLabel = (kind: ToolKind, text: string) => {
 
 /** Draw every block and arrow of the model, reusing elements by id. */
 export function draw(doc: Document, v: ViewEls, model: BoardModel, s: DrawState): void {
+  const shown = (id: string, b: BoardBlock): BoardBlock => {
+    const m = s.peerMoves.get(id);
+    return m ? { ...b, x: m.x, y: m.y } : b;
+  };
   const seen = new Set<string>();
   let order = 1;
-  for (const [id, { data: b }] of model.ordered()) {
+  for (const [id, { data }] of model.ordered()) {
+    const b = shown(id, data);
     seen.add(id);
     let el = v.blocks.get(id);
     if (!el) {
@@ -222,6 +233,7 @@ export function draw(doc: Document, v: ViewEls, model: BoardModel, s: DrawState)
     el.style.zIndex = String(order++);
     el.setAttribute("aria-label", blockLabel(b.kind, b.text));
     el.classList.toggle("selected", s.selected === id || s.connectFrom === id);
+    el.classList.toggle("moving", s.peerMoves.has(id));
     const hue = s.peerSelections.get(id);
     if (hue === undefined) el.style.removeProperty("--wb-peer");
     else el.style.setProperty("--wb-peer", `hsl(${hue} 65% 45%)`);
@@ -248,9 +260,11 @@ export function draw(doc: Document, v: ViewEls, model: BoardModel, s: DrawState)
 
   const seenArrows = new Set<string>();
   for (const [id, { data: a }] of model.arrows) {
-    const from = model.blocks.get(a.from)?.data;
-    const to = model.blocks.get(a.to)?.data;
-    if (!from || !to) continue;
+    const fromData = model.blocks.get(a.from)?.data;
+    const toData = model.blocks.get(a.to)?.data;
+    if (!fromData || !toData) continue;
+    const from = shown(a.from, fromData);
+    const to = shown(a.to, toData);
     seenArrows.add(id);
     let els = v.arrowEls.get(id);
     if (!els) {
