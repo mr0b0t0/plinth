@@ -834,6 +834,19 @@ The result is always a new version. Anyone with edit rights can restore the prev
 Only the owner's own connections can be mentioned, and only commenters and editors can mention.
 `@claude` and `@codex` reach connections of that client type; `@<label>` reaches one connection.
 
+- **Several connections of one type.** `@claude` is one task that every live Claude connection of
+  the owner lists. The first `claim_mention` wins; the others get `conflict` and leave it.
+- **The handle of a label.** `@<label>` uses the label lowercased, with spaces turned into `-` and
+  other characters dropped: `Claude Code` is `@claude-code`. `claude` and `codex` always mean the
+  client types, so a connection labelled `Claude` is reached only as a Claude-type connection. When
+  two labels make the same handle, the older connection gets it. The Connections page shows each
+  connection's handle, and warns when a name cannot be reached.
+- **Agents do not hand work to each other.** A comment or reply written by an agent never creates
+  a task, whatever it mentions. To pass work on, a person mentions the next agent.
+
+[Several agents on one artifact](agents.md#several-agents-on-one-artifact) covers hand-offs,
+conflicts and who did what when Claude, Codex, Gemini CLI, Cursor and scripts work on one page.
+
 ## Opaque sandbox instances
 
 Instances that run with `CONTENT_ISOLATION=opaque` (staging, and any instance whose content

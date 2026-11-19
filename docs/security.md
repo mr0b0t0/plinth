@@ -44,6 +44,8 @@ make a test pass.
 | Page code harvests names and the access list | A page reads `plinth.viewer.name`, its authors' names or `plinth.people.list()` and copies them where link viewers or every viewer can read them | Names appear only where the email already does (`viewer` declared, identified reader); the people list only for owners and editors on a page that declares `data viewer people`, whose author is the owner or an editor; every identified viewer is told, under the bar, that the owner and editors can see everyone the page is shared with; the skill forbids copying the list or emails into shared data. WebRTC stays the known CSP gap ([The people list](#the-people-list)) |
 | Display name used to impersonate | Someone sets their name to "Owner", "ana@example.com" or a right-to-left override that reorders the text around it | Names cannot contain `@` or the two characters that render as one (U+FE6B, U+FF20: every character whose NFKC form is `@`), nor control, bidi, zero-width or separator characters, are cut to 64 code points on every read, and are never authority: `role` and `comment_author_role` stay server-derived and Plinth's own UI shows the role beside them; tool descriptions say names are display text |
 | Enumerating who has an account | A caller tries addresses to learn which ones have a Plinth account or what they are called, for example by adding them as grants on an artifact of their own and reading the people list or the sharing settings back | No route takes an email or a name to look up, and the people list searches only one artifact's access list. Since the owner writes that list without its holders being told, an access list shows a grant holder's name only once that person has taken part in the artifact (a comment, a shared-data entry or a version, which already show their name to the readers of the list), and a name it keeps back is `null` and never matched by `q`, the same as an address with no account (`policy.ts accessListShowsName`) |
+| A participant forges what a page counts | An invited viewer writes another person's sign-off, or ticks a team-only checklist item through the page's runtime | A personal document can be created only by its own person, and every write is stamped by the server; what only the owner's side decides is in the versioned HTML; the example pages count a sign-off only when its own person made its last change from the page, and a team item only when the owner or an editor did ([Example pages and server stamps](#example-pages-and-server-stamps)) |
+| A mention reaches an agent nobody meant | A collaborator writes `@claude-code` for the owner's Claude Code, and an older connection whose name makes the same handle takes it | Only the owner's own connections are ever targets; the Connections page and the naming dialogs show each connection's handle and warn when an older one takes it; a comment written by an agent never creates a task |
 
 Out of scope for v1: denial of service beyond Cloudflare's defaults, a compromised Cloudflare
 account, and malicious instance operators.
@@ -1243,6 +1245,38 @@ pulls. What it does about text it did not write and about the token:
   `pull_request_target` to build and publish a fork's code with the token.
 - **Pinning.** The Action is used at a release tag or a commit SHA, and imports the client from
   the same commit with no dependencies, so the pin covers everything it runs.
+
+## Example pages and server stamps
+
+The pages in `docs/examples/` for people outside the owner's team (an approval sign-off, a client
+intake form, a client checklist) are ordinary artifacts: the same content host, CSP, sandbox and
+shared-data API with its four caller checks. They load nothing but `/__plinth/runtime.js` and need
+no server change. What they rely on:
+
+- **Who may write is the server's.** `canModifyDoc` in `policy.ts` decides every write: the owner
+  and people with a grant write, link viewers read only, a personal `u_` document is created only
+  by its own person, and the owner and editors may change or delete any document. The pages never
+  replace that rule.
+- **What counts is the page's, from the stamps.** A page counts a sign-off only when its creator
+  made its last change from the page (`createdBy` and `updatedBy` agree, `via: "page"`), and a
+  team checklist item only when the owner or an editor made its last change. A moderated sign-off,
+  one an agent wrote, or a team item a viewer ticked through the runtime is shown and marked, never
+  counted. This is display logic on top of server-derived stamps; a page cannot forge a stamp.
+- **Decisions are versioned.** The subject, its revision, the required approvals, the questions,
+  the items and "closed" are in the HTML. Only the owner, editors and their agents publish
+  versions, so invited people cannot change them, and every change can be reverted.
+- **Text, not markup.** Every stored value is drawn with `textContent` and cleaned to its expected
+  shape first; the end-to-end contract test refuses `innerHTML`, `outerHTML`,
+  `insertAdjacentHTML`, `document.write`, `eval` and `new Function` in every example, any
+  reference to another host, and a form without `preventDefault`.
+- **Everyone with access reads everything.** There is no per-document read rule, so the intake
+  page is one per client, and the pages store no emails in data (authors come from stamps, which
+  link viewers never get).
+- **No sensitive fields.** The intake page and the skill forbid fields for passwords, card or bank
+  numbers, government ids and health data (the "Phishing through an input page" row above).
+- **Agents.** Sign-off notes, intake answers, tick notes and other agents' comments are untrusted
+  input for agents; the README, the guide and the skill say so, as the tool descriptions already
+  do. An agent never writes a sign-off or answers for someone.
 
 ## Operator checklist for the content domain
 

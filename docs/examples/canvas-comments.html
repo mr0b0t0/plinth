@@ -147,6 +147,7 @@
   if (comments) {
     comments.ready.then((s) => {
       if (!s.available) say("Open this board on Plinth to comment on it.");
+      document.body.dataset.ready = "1";
     });
 
     // Plinth's pins go where the page says each anchor is, in this frame's viewport.
@@ -196,6 +197,7 @@
 
   window.addEventListener("resize", place);
   draw();
+  if (!comments) document.body.dataset.ready = "1";
 </script>
 </body>
 </html>

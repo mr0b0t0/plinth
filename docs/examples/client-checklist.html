@@ -1,0 +1,402 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<!--
+  A client checklist for Plinth (docs/examples/README.md): onboarding or a launch, shared by the
+  owner's team and a client, with items each side owns. The client's people confirm their email by
+  code (no account needed) and tick their items.
+
+  Decided in the HTML (only the owner, editors and their agents change it, by a new version):
+    - ITEMS: each item's id, label, side ("client" or "team"), optional due date (YYYY-MM-DD) and
+      group. Item ids are document ids: a lowercase letter or digit, then up to 63 of a-z 0-9 -.
+      Never rename an id: its tick would be left behind. Rewording the label is fine.
+
+  Stored as shared data, collection "ticks", declared shared so any writer may tick or untick any
+  item. The document id is the item id. Shape: { done: boolean, note: string (at most 500) }.
+
+  Trust the stamp, not the data. A team item counts as done only when its last change was made by
+  the owner or an editor (updatedBy.role); one ticked by anyone else shows "waiting for the team to
+  confirm" and does not count. Client items count whoever ticks them. Plinth enforces who may write
+  at all; this page only decides what to count. Who did what comes only from Plinth's stamps.
+
+  An agent adds, removes or rewords items in ITEMS with update_artifact (base_version, a note), and
+  reads progress with list_artifact_data(id, "ticks"). It ticks a team item with
+  write_artifact_data (if_rev on every op) only when the owner asks.
+-->
+<meta name="plinth-capabilities" content="data viewer">
+<meta name="plinth-data-shared" content="ticks">
+<title>Launch checklist: Acme</title>
+<style>
+  :root {
+    --bg: #f4f6f4;
+    --panel: #ffffff;
+    --fg: #1a1d1a;
+    --muted: #586058;
+    --border: #d2d9d2;
+    --accent: #2e6b3e;
+    --client: #2f55a4;
+    --team: #6b4fa0;
+    --warn: #8a4b12;
+    --focus: #2f55a4;
+    --chip: #e8ece8;
+    --bar: #dfe6df;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #131613;
+      --panel: #1c201c;
+      --fg: #e8ece8;
+      --muted: #a3aca3;
+      --border: #343b34;
+      --accent: #7cc28a;
+      --client: #8eb0f0;
+      --team: #c2a8ee;
+      --warn: #e5a96b;
+      --focus: #8eb0f0;
+      --chip: #262b26;
+      --bar: #2b322b;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--fg);
+    font: 16px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    overflow-wrap: anywhere;
+  }
+  .wrap { max-width: 760px; margin: 0 auto; padding: 16px; }
+  header h1 { font-size: 24px; line-height: 1.25; margin: 8px 0 4px; }
+  header p { margin: 0; color: var(--muted); }
+  #banner, #msg { margin: 12px 0 0; padding: 10px 12px; border-radius: 8px; font-size: 15px; }
+  #banner { background: var(--chip); }
+  #msg { border: 1px solid var(--warn); color: var(--warn); }
+  #banner:empty, #msg:empty { display: none; }
+  #progress { font-weight: 650; margin: 16px 0 6px; }
+  .bar { height: 8px; border-radius: 4px; background: var(--bar); overflow: hidden; }
+  .bar span { display: block; height: 100%; width: 0; background: var(--accent); }
+  section { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 12px 16px; margin-top: 16px; }
+  section h2 { font-size: 17px; margin: 0 0 4px; }
+  ul { list-style: none; margin: 0; padding: 0; }
+  li { display: flex; gap: 10px; align-items: flex-start; padding: 10px 0; border-top: 1px solid var(--border); }
+  li:first-child { border-top: 0; }
+  li input[type="checkbox"] { width: 22px; height: 22px; margin: 2px 0 0; flex: none; }
+  .body { flex: 1; min-width: 0; }
+  .body label { display: block; }
+  li[data-done="true"] .body label { text-decoration: line-through; text-decoration-thickness: 1px; color: var(--muted); }
+  .meta { display: block; font-size: 14px; color: var(--muted); }
+  .side { display: inline-block; font-size: 12px; font-weight: 600; padding: 0 6px; border-radius: 4px; border: 1px solid currentColor; margin-right: 6px; }
+  .side[data-side="client"] { color: var(--client); }
+  .side[data-side="team"] { color: var(--team); }
+  .overdue { color: var(--warn); font-weight: 600; }
+  .state { display: block; font-size: 14px; }
+  .state[data-pending="true"] { color: var(--warn); }
+  .note { display: block; font-size: 14px; white-space: pre-wrap; margin-top: 2px; }
+  details { margin-top: 4px; font-size: 14px; }
+  summary { cursor: pointer; color: var(--muted); }
+  .note-row { display: flex; gap: 6px; margin-top: 6px; }
+  .note-row input { flex: 1; min-width: 0; font: inherit; color: var(--fg); background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; }
+  button { font: inherit; font-size: 14px; min-height: 36px; padding: 4px 12px; border-radius: 6px; border: 1px solid var(--border); background: var(--panel); color: var(--fg); cursor: pointer; }
+  button:disabled, input:disabled { opacity: 0.55; cursor: default; }
+  input:focus-visible, button:focus-visible, summary:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+  footer { color: var(--muted); font-size: 14px; margin: 16px 0 24px; }
+</style>
+<script src="/__plinth/runtime.js"></script>
+<script>
+// Decided in the HTML: the items, who owns each, and due dates. Item ids are document ids:
+// ^[a-z0-9][a-z0-9-]{0,63}$ (so never "u_..."). Never rename one; reword the label instead.
+const ITEMS = [
+  { id: "brand-assets", label: "Send logo files and brand colours", side: "client", due: "2026-12-01", group: "Before kickoff" },
+  { id: "kickoff-call", label: "Kickoff call booked", side: "team", group: "Before kickoff" },
+  { id: "domain-access", label: "Give us access to the domain's DNS", side: "client", due: "2026-12-05", group: "Before kickoff" },
+  { id: "content-draft", label: "First draft of page copy", side: "client", due: "2026-12-12", group: "Build" },
+  { id: "staging-site", label: "Staging site ready for review", side: "team", due: "2026-12-19", group: "Build" },
+  { id: "review-done", label: "Review notes sent", side: "client", group: "Build" },
+  { id: "launch", label: "Site launched", side: "team", group: "Launch" },
+];
+</script>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <p>Shared checklist</p>
+    <h1>Website launch</h1>
+    <p>Tick an item when it is done. Team items are confirmed by our team.</p>
+  </header>
+  <p id="banner" role="status"></p>
+  <main>
+    <p id="progress" role="status"></p>
+    <div class="bar" aria-hidden="true"><span id="bar"></span></div>
+    <div id="groups"></div>
+    <p id="msg" role="alert"></p>
+  </main>
+  <footer>Everyone this page is shared with can see every tick and note, and who made it.</footer>
+</div>
+<script>
+"use strict";
+const ITEM_ID = /^[a-z0-9][a-z0-9-]{0,63}$/;
+const SIDES = ["client", "team"];
+const DUE = /^\d{4}-\d{2}-\d{2}$/;
+const NOTE_MAX = 500;
+
+/** The items as written above, minus any entry that breaks the rules (with a warning). */
+function checkedItems(raw) {
+  const out = [];
+  const seen = new Set();
+  for (const it of Array.isArray(raw) ? raw : []) {
+    if (!it || typeof it.id !== "string" || !ITEM_ID.test(it.id) || seen.has(it.id) ||
+        typeof it.label !== "string" || !SIDES.includes(it.side) ||
+        (it.due !== undefined && !(typeof it.due === "string" && DUE.test(it.due)))) {
+      console.warn("Checklist: skipped an item that breaks the rules.", it);
+      continue;
+    }
+    seen.add(it.id);
+    out.push({ id: it.id, label: it.label, side: it.side, due: it.due || "", group: typeof it.group === "string" && it.group ? it.group : "Items" });
+  }
+  return out;
+}
+const LIST = checkedItems(ITEMS);
+
+const groupsEl = document.getElementById("groups");
+const banner = document.getElementById("banner");
+const msg = document.getElementById("msg");
+const progressEl = document.getElementById("progress");
+const barEl = document.getElementById("bar");
+
+const rows = new Map(); // item id -> { item, li, box, state, note, noteInput, noteBtn }
+let ticks = null;
+let canWrite = false;
+let isTeam = false; // the viewer is the owner or an editor
+let lastDocs = [];
+const pending = new Set(); // item ids with a write in flight
+
+function el(tag, className, text) {
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  if (text !== undefined) node.textContent = text;
+  return node;
+}
+
+function who(a) {
+  if (!a) return "Someone";
+  if (a.name && a.email) return `${a.name} (${a.email})`;
+  return a.email || a.name || "Someone";
+}
+
+function when(iso) {
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? "" : d.toLocaleString();
+}
+
+function dueText(due) {
+  const d = new Date(`${due}T00:00:00`);
+  return Number.isNaN(d.getTime()) ? due : d.toLocaleDateString();
+}
+
+function today() {
+  const d = new Date();
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+/** Shared data is written by other people: keep only well-formed fields. */
+function clean(d) {
+  return {
+    done: Boolean(d && d.done === true),
+    note: d && typeof d.note === "string" ? d.note.slice(0, NOTE_MAX) : "",
+  };
+}
+
+function build() {
+  const groups = new Map();
+  for (const item of LIST) {
+    let g = groups.get(item.group);
+    if (!g) {
+      const section = el("section");
+      section.append(el("h2", "", item.group));
+      const ul = document.createElement("ul");
+      section.append(ul);
+      groupsEl.append(section);
+      g = ul;
+      groups.set(item.group, g);
+    }
+    const li = document.createElement("li");
+    li.dataset.item = item.id;
+    li.dataset.side = item.side;
+    const box = document.createElement("input");
+    box.type = "checkbox";
+    box.id = `i-${item.id}`;
+    box.disabled = true;
+    const body = el("div", "body");
+    const label = el("label", "", item.label);
+    label.htmlFor = box.id;
+    const meta = el("span", "meta");
+    const side = el("span", "side", item.side === "client" ? "Client" : "Team");
+    side.dataset.side = item.side;
+    meta.append(side);
+    if (item.due) meta.append(`Due ${dueText(item.due)}`);
+    const overdue = el("span", "overdue");
+    meta.append(" ", overdue);
+    const state = el("span", "state");
+    const note = el("span", "note");
+    const details = document.createElement("details");
+    details.append(el("summary", "", "Note"));
+    const noteRow = el("div", "note-row");
+    const noteInput = document.createElement("input");
+    noteInput.type = "text";
+    noteInput.maxLength = NOTE_MAX;
+    noteInput.setAttribute("aria-label", `Note on ${item.label}`);
+    noteInput.disabled = true;
+    const noteBtn = el("button", "", "Save note");
+    noteBtn.type = "button";
+    noteBtn.disabled = true;
+    noteRow.append(noteInput, noteBtn);
+    details.append(noteRow);
+    body.append(label, meta, state, note, details);
+    li.append(box, body);
+    g.append(li);
+    const row = { item, li, box, overdue, state, note, noteInput, noteBtn };
+    rows.set(item.id, row);
+    box.addEventListener("change", () => save(item.id, { done: box.checked }));
+    noteBtn.addEventListener("click", () => save(item.id, { note: noteInput.value.slice(0, NOTE_MAX) }));
+  }
+}
+
+/** A tick counts when it says done and, for a team item, the owner or an editor made it. */
+function counts(item, doc) {
+  if (!doc || !clean(doc.data).done) return { done: false, waiting: false };
+  if (item.side === "client") return { done: true, waiting: false };
+  const u = doc.updatedBy;
+  if (!u && !doc.createdBy) return { done: true, waiting: false }; // a reader without stamps
+  const team = Boolean(u && (u.role === "owner" || u.role === "editor"));
+  return { done: team, waiting: !team };
+}
+
+function render(docs) {
+  lastDocs = docs;
+  const byId = new Map();
+  for (const d of docs) if (rows.has(d.id)) byId.set(d.id, d); // ids not in ITEMS are ignored
+  const day = today();
+  const tally = { client: [0, 0], team: [0, 0] };
+  for (const row of rows.values()) {
+    const { item } = row;
+    const doc = byId.get(item.id);
+    const { done, waiting } = counts(item, doc);
+    tally[item.side][1]++;
+    if (done) tally[item.side][0]++;
+    row.li.dataset.done = String(done);
+    if (!pending.has(item.id)) row.box.checked = done;
+    row.overdue.textContent = !done && item.due && item.due < day ? "overdue" : "";
+    const u = doc?.updatedBy;
+    if (done) {
+      row.state.textContent = u ? `Done by ${who(u)}, ${when(doc.updatedAt)}${u.via === "agent" ? " via agent" : ""}` : "Done";
+    } else if (waiting) {
+      row.state.textContent = `Marked done by ${who(u)}; waiting for the team to confirm`;
+    } else {
+      row.state.textContent = "";
+    }
+    row.state.dataset.pending = String(waiting);
+    const n = doc ? clean(doc.data).note : "";
+    row.note.textContent = n ? `Note: ${n}` : "";
+    if (document.activeElement !== row.noteInput) row.noteInput.value = n;
+  }
+  const done = tally.client[0] + tally.team[0];
+  const total = tally.client[1] + tally.team[1];
+  progressEl.textContent = `${done} of ${total} done (client ${tally.client[0]} of ${tally.client[1]}, team ${tally.team[0]} of ${tally.team[1]})`;
+  barEl.style.width = total ? `${Math.round((done / total) * 100)}%` : "0";
+  setControls();
+}
+
+function setControls() {
+  for (const row of rows.values()) {
+    const mayTick = canWrite && (row.item.side === "client" || isTeam);
+    row.box.disabled = !mayTick || pending.has(row.item.id);
+    row.noteInput.disabled = !canWrite;
+    row.noteBtn.disabled = !canWrite || pending.has(row.item.id);
+  }
+}
+
+function errorText(e) {
+  const code = e?.code;
+  if (code === "rate_limited") return "Slow down a moment, then try again.";
+  if (code === "quota_exceeded") return "This checklist has no room for more changes. Ask the owner.";
+  if (code === "too_large") return "That note is too long.";
+  if (code === "read_only" || code === "forbidden") return "Only people this checklist was shared with can change it.";
+  if (code === "expired") return "Your access changed. Reload the page.";
+  if (code === "conflict") return "Someone else kept changing this item. Try again.";
+  if (code === "network") return "Could not reach Plinth. Check your connection and try again.";
+  return "Could not save. Try again.";
+}
+
+/** Change one field on top of the latest copy (update retries on a conflict). */
+async function save(id, patch) {
+  if (!ticks || pending.has(id)) return;
+  pending.add(id);
+  setControls();
+  msg.textContent = "";
+  try {
+    const doc = await ticks.update(id, (d) => ({ ...clean(d), ...patch }));
+    render([...lastDocs.filter((d) => d.id !== id), doc]);
+  } catch (e) {
+    msg.textContent = errorText(e);
+  } finally {
+    pending.delete(id);
+    render(lastDocs);
+  }
+}
+
+window.addEventListener("plinth:expired", () => {
+  canWrite = false;
+  setControls();
+  banner.textContent = "Your access changed. Reload the page.";
+});
+
+const WHY = {
+  opaque_isolation: "Ticking is not available on this server.",
+  disabled: "Shared data is turned off on this server, so the checklist cannot save ticks.",
+  not_declared: "This version of the page keeps no ticks.",
+  preview: "This is a preview. Open the page in Plinth to tick items.",
+  expired: "Your access changed. Reload the page.",
+  network: "Could not reach Plinth. Reload the page.",
+};
+
+function ready(canWriteNow, reason) {
+  document.body.dataset.canWrite = String(canWriteNow);
+  document.body.dataset.reason = reason || "";
+  document.body.dataset.ready = "1";
+}
+
+async function start() {
+  build();
+  render([]);
+  const P = window.plinth;
+  if (!P) {
+    banner.textContent = "Ticking is not available here. The checklist is shown read-only.";
+    ready(false, "no_runtime");
+    return;
+  }
+  const s = await P.ready;
+  if (!s.available) {
+    banner.textContent = WHY[s.reason] || "Ticking is not available here.";
+    ready(false, s.reason);
+    return;
+  }
+  canWrite = s.canWrite;
+  const role = s.viewer?.role;
+  isTeam = role === "owner" || role === "editor";
+  if (!canWrite) banner.textContent = "You can see the checklist. Only people it was shared with can tick items.";
+  ticks = P.db.collection("ticks");
+  ticks.onSnapshot(render, (e) => {
+    if (e && e.code === "expired") return; // the plinth:expired handler says it
+    msg.textContent = "Could not load the checklist. Reload the page.";
+  });
+  setControls();
+  ready(canWrite, "");
+}
+start();
+</script>
+</body>
+</html>
