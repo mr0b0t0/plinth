@@ -373,4 +373,77 @@ describe("sheet merges", () => {
     expect(merge(base, [...base, "[5]"], doubled)).toMatchObject({ clean: true });
     expect(merge(base, doubled, [...base, "[5]"])).toMatchObject({ clean: true });
   });
+
+  it("reviews a row deleted and another added, which keeps the count but moves rows", () => {
+    // A running total: every row's formula points at the row above, so a delete rewrites every
+    // row below it and the line diff shows one change of the same size, with no row moved.
+    const RUN = JSON.stringify({
+      plinth: "sheet",
+      v: 1,
+      columns: [
+        { name: "Item", type: "text" },
+        { name: "Amt", type: "number" },
+        { name: "Run", type: "number" },
+      ],
+    });
+    const base = [RUN, '["a",1,"=B2"]', '["b",2,"=C2+B3"]', '["c",3,"=C3+B4"]', '["d",4,"=C4+B5"]'];
+    const deleted = struct(base, { op: "delete_rows", from: 3, count: 1 });
+    expect(deleted.slice(2)).toEqual(['["c",3,"=#REF!+B3"]', '["d",4,"=C3+B4"]']);
+    // The page deletes row 3 and appends a row; an agent appends a row that points at c's B4.
+    const appended = [...deleted, '["e",5,"=C4+B5"]'];
+    const pointer = [...base, '["ref c",null,"=B4"]'];
+    expect(merge(base, appended, pointer)).toMatchObject({ clean: false, reason: "refused" });
+    expect(merge(base, pointer, appended)).toMatchObject({ clean: false, reason: "refused" });
+    // The page deletes row 3, then inserts a row before row 5; an agent's formula on row 2 points
+    // at c's B4.
+    const reinserted = struct(deleted, { op: "insert_rows", before: 5, count: 1 });
+    expect(reinserted.length).toBe(base.length);
+    const row2 = [...base];
+    row2[1] = '["a =B4",1,"=B2+B4"]';
+    expect(merge(base, reinserted, row2)).toMatchObject({ clean: false, reason: "refused" });
+    expect(merge(base, row2, reinserted)).toMatchObject({ clean: false, reason: "refused" });
+    // One row changed in place on one side still merges with a formula on the other.
+    const one = [...base];
+    one[2] = '["b",20,"=C2+B3"]';
+    expect(merge(base, one, pointer)).toMatchObject({ clean: true });
+    expect(merge(base, pointer, one)).toMatchObject({ clean: true });
+  });
+
+  it("reviews rows inserted or deleted in a run of equal rows when the other side changed one", () => {
+    const ITEMS = JSON.stringify({
+      plinth: "sheet",
+      v: 1,
+      columns: [
+        { name: "Item", type: "text" },
+        { name: "Qty", type: "number" },
+      ],
+    });
+    // Two blank rows above a total. An agent inserts a row before row 3; the line diff puts the
+    // new blank row after the run, so the page's row 4, filled meanwhile, would stay row 4 and the
+    // total, rewritten to B5, would read the blank row instead.
+    const base = [ITEMS, '["a",1]', "[]", "[]", '["total","=B4"]'];
+    const inserted = struct(base, { op: "insert_rows", before: 3, count: 1 });
+    expect(inserted).toEqual([ITEMS, '["a",1]', "[]", "[]", "[]", '["total","=B5"]']);
+    const filled = [...base];
+    filled[3] = '["b",5]';
+    expect(merge(base, filled, inserted)).toMatchObject({ clean: false, reason: "refused" });
+    expect(merge(base, inserted, filled)).toMatchObject({ clean: false, reason: "refused" });
+    // A row deleted from the run, the same way.
+    const tall = [ITEMS, '["a",1]', "[]", "[]", "[]", '["total","=B5"]'];
+    const shorter = struct(tall, { op: "delete_rows", from: 3, count: 1 });
+    expect(shorter).toEqual([ITEMS, '["a",1]', "[]", "[]", '["total","=B4"]']);
+    const tallFilled = [...tall];
+    tallFilled[3] = '["b",5]';
+    expect(merge(tall, tallFilled, shorter)).toMatchObject({ clean: false, reason: "refused" });
+    expect(merge(tall, shorter, tallFilled)).toMatchObject({ clean: false, reason: "refused" });
+    // The run untouched by the other side, or a row inserted away from it: rows follow their lines.
+    const named = [...base];
+    named[1] = '["apples",1]';
+    expect(merge(base, named, inserted)).toMatchObject({
+      clean: true,
+      text: [ITEMS, '["apples",1]', "[]", "[]", "[]", '["total","=B5"]'].join("\n"),
+    });
+    const top = struct(base, { op: "insert_rows", before: 2, count: 1 });
+    expect(merge(base, filled, top)).toMatchObject({ clean: true });
+  });
 });

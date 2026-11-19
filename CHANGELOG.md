@@ -18,7 +18,7 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   someone holds show their email. Save version (or a pause) makes the next version, as for docs; a
   version an agent publishes meanwhile is merged under the page edits row by row, or reviewed when
   both changed the same row, or when one side changed the columns or moved rows under the other's
-  cells or formulas. When two people change rows at once, each change lands on the row it was made on, or
+  cells or formulas (including a row deleted and another added, and rows moved among blank ones). When two people change rows at once, each change lands on the row it was made on, or
   is dropped with a note when that row is gone. Numbers are typed in your locale. Follows
   `ALLOW_LIVE_EDITING`.
 - **Follow the presenter in a deck.** An owner or editor can turn on **Lead viewers** in a deck's

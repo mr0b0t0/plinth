@@ -1911,7 +1911,12 @@ channel (`/__plinth/room/v1/doc`) serves every type whose registry row has `live
   changed rows (a row whose trailing cells are empty keeps its line, so a cell set there would land
   in another column, and a column deleted and another inserted looks like a rename), or one side
   inserted or deleted rows, anywhere but by appending after the last row, while the other side's
-  changed or added rows hold a formula (its references would point at other rows). Column widths,
+  changed or added rows hold a formula (its references would point at other rows). A change to two
+  or more adjacent rows counts as moving rows here, because a row deleted and another inserted,
+  with every row between them rewritten by the formula shift, looks like rows changed in place.
+  Rows inserted or deleted next to rows equal to them (blank rows, typically) are reviewed too
+  when the other side changed or added a row among those equal rows, since a line merge cannot
+  tell which of them moved and would put that row one row off. Column widths,
   number formats, select options and frozen columns merge. `edit_sheet` and
   `update_artifact` warn `live_draft`, and `get_artifact` and `read_sheet` report the draft's
   metadata to owners' and editors' agents.

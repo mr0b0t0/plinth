@@ -147,7 +147,14 @@ function columnKeys(line: string | undefined): string[] | null {
  *   at the end come after them too; a deleted row also takes the cells a formula pointed at. So
  *   any change to the number of rows other than rows only appended after the last one is reviewed
  *   when the other side's changed or added rows hold a formula, whose references would point at
- *   other rows.
+ *   other rows. A row deleted and another inserted keep the count, and when every row between
+ *   them changed (shiftFormula rewrote them) the diff shows those rows changed in place; so a
+ *   change of two or more adjacent rows counts as a move too.
+ * - a line diff cannot tell which of several equal rows (blank ones, typically) a side inserted
+ *   or deleted, and puts the change after the run of them. A row the other side changed in that
+ *   run would then sit one row off from where the moving side's rows, and the formulas it
+ *   rewrote, expect it. So a change of the row count is reviewed when the other side changed or
+ *   added a row among the equal rows next to it.
  */
 export function sheetMergeRefused(s: Merge3Sides): boolean {
   const base = columnKeys(s.base[0]);
@@ -160,15 +167,46 @@ export function sheetMergeRefused(s: Merge3Sides): boolean {
   if (base !== null && new Set(base).size < base.length) {
     if (s.ours[0] !== s.base[0] || s.theirs[0] !== s.base[0]) return true;
   }
-  // A hunk that starts past the last base row only appends; any other change of count moves rows.
-  const movesRows = (hunks: readonly LineHunk[]) =>
-    hunks.some((h) => h.aStart < s.base.length && h.aEnd - h.aStart !== h.bEnd - h.bStart);
-  const writesFormulas = (lines: readonly string[], hunks: readonly LineHunk[]) =>
-    hunks.some((h) => formulasIn(lines.slice(Math.max(1, h.bStart), h.bEnd)) > 0);
   return (
-    (movesRows(s.oursHunks) && writesFormulas(s.theirs, s.theirsHunks)) ||
-    (movesRows(s.theirsHunks) && writesFormulas(s.ours, s.oursHunks))
+    rowsMoveUnder(s.base, s.ours, s.oursHunks, s.theirs, s.theirsHunks) ||
+    rowsMoveUnder(s.base, s.theirs, s.theirsHunks, s.ours, s.oursHunks)
   );
+}
+
+/**
+ * Whether one side's (`lines`, `hunks`) row changes could move rows under the other side's
+ * changes (`other`, `otherHunks`): sheetMergeRefused's row half.
+ */
+function rowsMoveUnder(
+  base: readonly string[],
+  lines: readonly string[],
+  hunks: readonly LineHunk[],
+  other: readonly string[],
+  otherHunks: readonly LineHunk[],
+): boolean {
+  // A hunk that starts past the last base row only appends, and one row changed in place moves
+  // nothing; any other change of the count, or of two or more adjacent rows, may move rows.
+  const counts = (h: LineHunk) => h.aEnd - h.aStart !== h.bEnd - h.bStart;
+  const moves = hunks.filter((h) => h.aStart < base.length && (counts(h) || h.aEnd - h.aStart > 1));
+  if (moves.length === 0) return false;
+  if (otherHunks.some((h) => formulasIn(other.slice(Math.max(1, h.bStart), h.bEnd)) > 0)) {
+    return true;
+  }
+  for (const h of moves) {
+    if (!counts(h)) continue;
+    // The run of base rows around the hunk equal to a row it inserted, deleted or rewrote: the
+    // diff could have put the change anywhere in it.
+    const equal = new Set([...base.slice(h.aStart, h.aEnd), ...lines.slice(h.bStart, h.bEnd)]);
+    let lo = h.aStart;
+    while (lo > 1 && equal.has(base[lo - 1] as string)) lo--;
+    let hi = h.aEnd;
+    while (hi < base.length && equal.has(base[hi] as string)) hi++;
+    if (lo === h.aStart && hi === h.aEnd) continue;
+    const touches = (o: LineHunk) =>
+      o.aStart === o.aEnd ? lo < o.aStart && o.aStart < hi : o.aStart < hi && o.aEnd > lo;
+    if (otherHunks.some(touches)) return true;
+  }
+  return false;
 }
 
 const docRules: LiveTypeRules = {

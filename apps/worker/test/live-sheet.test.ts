@@ -275,6 +275,21 @@ describe("sheet socket: versions published from outside", () => {
     expect(res2.status).toBe(201);
     expect(await b.nextOf("conflict")).toEqual({ t: "conflict", version: 2 });
     b.ws.close(1000);
+
+    // Two blank rows above a total: the page fills row 4 while the agent inserts a row before
+    // row 3. The line diff puts the new blank row after the blank run, so the filled row would
+    // stay row 4 while the total, rewritten to B5, read the blank row below it.
+    const blank = [HEADER, '["Apples",3,true]', "[]", "[]", '["Total","=B4"]'];
+    const blanks = await sheetSetup(blank.join("\n"));
+    const c = await connectDoc(blanks.id, blanks.ownerP.cookie);
+    await editRow(c, 3, '["Pears",5]', 0);
+    const res3 = await editSheet(blanks.id, blanks.owner.auth, {
+      base_version: 1,
+      ops: [{ op: "insert_rows", before: 3, count: 1 }],
+    });
+    expect(res3.status).toBe(201);
+    expect(await c.nextOf("conflict")).toEqual({ t: "conflict", version: 2 });
+    c.ws.close(1000);
   });
 
   it("a merge the sheet cannot hold is frozen for review, like an overlap", async () => {

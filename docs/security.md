@@ -2078,7 +2078,10 @@ sheet's frame still runs only Plinth's renderer (`script-src 'self'`).
   frozen too: one side added, removed, renamed or retyped columns while the other changed rows
   (columns have no identity but their name and type, so a column deleted and another inserted
   looks like a rename), or one side inserted or deleted rows, anywhere but by appending after the
-  last row, while the other side's changed or added rows hold a formula. So an agent's version cannot shift a person's cells into another column, or a
+  last row, while the other side's changed or added rows hold a formula (a change to two or more
+  adjacent rows counts, since a row deleted and another inserted can look like that), or one side
+  inserted or deleted rows next to rows equal to them while the other side changed one of those
+  rows. So an agent's version cannot shift a person's cells into another column, or a
   person's formula onto other rows, without anyone seeing it.
 - **The renderer stays free of HTML parsing.** The editor builds its fields, lists, the edit strip
   and the column settings with `createElement` and fills them through `.value` and `textContent`;
