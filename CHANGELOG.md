@@ -17,6 +17,7 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   the notes, the next slide and a timer (and an audience window that follows it), and print or save
   as PDF with or without the notes. Update the plugin for the agent's slides rules. The Plinth CLI
   publishes a folder with `slides.md` at its top as a deck (`plinth publish`, `plinth upload`).
+  Plugin 0.19.0.
 - **Artifact stats: see who opened your artifacts.** Each artifact's Stats page (`/a/<slug>/stats`,
   linked from its menu and the Share dialog) shows opens and viewers over 7, 30, 90 or 365 days,
   the people who opened it (name and email for people signed in and allowlisted viewers, with the
