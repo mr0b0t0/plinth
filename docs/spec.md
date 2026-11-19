@@ -2571,8 +2571,9 @@ and the whole-draft review is the only way on (below).
   shows.
 - **At phone width** (a frame 640 pixels wide or less) an open cell's field is docked at the
   bottom of the page with the column's name, the cell's address and Done, and the page keeps the
-  cell in view above it; the row and column menus are sheets across the bottom, and touch targets
-  are at least 44 pixels.
+  cell in view above it; the row and column menus are sheets across the bottom, the edit strip is
+  one row that scrolls sideways (so it does not push the cells down under a notice), and touch
+  targets are at least 44 pixels.
 - **Keyboard and screen readers.** The cells are a grid (`role="grid"` with `aria-rowcount`,
   `aria-colcount`, row and column indexes, and `aria-readonly` outside edit mode) with one tab
   stop, the selected cell (a header's stop is its sort button). The arrows, Home and End move among

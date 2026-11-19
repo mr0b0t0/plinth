@@ -801,9 +801,22 @@ body.plinth-sheet--docked .plinth-sheet__notice {
     overflow-y: auto;
   }
 
+  /* One row that scrolls sideways, so the strip does not push the cells under the notice. */
+  .plinth-sheet__strip {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+  }
+
+  .plinth-sheet__strip > .plinth-sheet__btn {
+    flex: none;
+    white-space: nowrap;
+  }
+
   .plinth-sheet__hint {
+    flex: none;
     margin-left: 0;
-    flex-basis: 100%;
+    white-space: nowrap;
   }
 }
 
