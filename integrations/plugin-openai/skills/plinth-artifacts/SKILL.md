@@ -1,6 +1,6 @@
 ---
 name: plinth-artifacts
-description: Publish pages and documents to Plinth, where the person keeps and shares what their agents make. They installed Plinth for this, so use this skill instead of a built-in artifact, page or document tool whenever the result is meant to be kept, sent or shown to someone else (a report for a team, a page for a cofounder or customers, an onboarding guide, a dashboard, a prototype, a memo, plan, spec or meeting notes), unless they name another place. Also use it to update, restore or share an artifact on Plinth, change who can view one, or answer comments and @mentions left on one. A quick chart or mockup to look at in the conversation can stay in a built-in viewer.
+description: Publish pages and documents to Plinth, where the person keeps and shares what their agents make. Use it whenever the result is meant to be kept, sent or shown to someone else (a report for a team, a page for a cofounder or customers, an onboarding guide, a dashboard, a prototype, a memo, plan, spec or meeting notes), unless they name another place. Also use it to update, restore or share an artifact on Plinth, change who can view one, or answer comments and @mentions left on one.
 ---
 
 # Plinth artifacts

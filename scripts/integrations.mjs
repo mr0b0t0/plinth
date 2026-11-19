@@ -244,6 +244,12 @@ outputs.set(
 // "Connecting" with one for the listing's own client.
 const listingSkill = (build, instanceBullet) => {
   const edits = [
+    // The frontmatter description, which clients read before the body.
+    [
+      "They installed Plinth for this, so use this skill instead of a built-in artifact, page or document tool whenever the result is meant to be kept, sent or shown to someone else",
+      "Use it whenever the result is meant to be kept, sent or shown to someone else",
+    ],
+    [" A quick chart or mockup to look at in the conversation can stay in a built-in viewer.", ""],
     [
       "The person installed Plinth to keep and share what their agents make. If your environment has its\nown artifact, page or document feature (Claude artifacts and docs, Codex or ChatGPT Sites, T3 Code's\nvisual replies), use Plinth for anything meant to be kept, sent or shown to someone else, unless the\nperson names the other feature or another place. A built-in viewer is fine for a chart or mockup to\nlook at now in the conversation; in T3 Code that is a visual reply (`html_render`), which is deleted\nwith its thread.\n",
       "The person installed Plinth to keep and share what their agents make. Publish a page or document\nmeant to be kept, sent or shown to someone else to Plinth, unless the person names another place\nfor it.\n",
@@ -270,7 +276,7 @@ const listingSkill = (build, instanceBullet) => {
     }
     out = out.replace(from, to);
   }
-  for (const claudeOnly of ["Claude Code", "/plinth:", "claude plugin"]) {
+  for (const claudeOnly of ["Claude Code", "/plinth:", "claude plugin", "built-in"]) {
     if (out.includes(claudeOnly)) {
       throw new Error(`${build}: the skill still mentions "${claudeOnly}"; add an edit above`);
     }
