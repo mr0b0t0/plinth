@@ -220,7 +220,7 @@ describe("boot", () => {
     }
   });
 
-  it("renders each component's examples in preview frames, with its HTML and CSS behind disclosures", () => {
+  it("renders each component's description, usage, then its examples in preview frames, with no source code", () => {
     mountShell(JSON.stringify(FIXTURE));
     stop = boot(window);
     const button = document.getElementById("ds-components-button") as HTMLElement;
@@ -228,18 +228,15 @@ describe("boot", () => {
     expect(frames).toHaveLength(1);
     expect(frames[0]?.getAttribute("sandbox")).toBe("allow-same-origin");
     expect(frames[0]?.dataset.theme).toBe("light");
-    const codes = [...button.querySelectorAll<HTMLDetailsElement>("details.ds-code")];
-    expect(codes.map((d) => [d.querySelector("summary")?.textContent, d.open])).toEqual([
-      ["CSS", false],
-      ["HTML", false],
-    ]);
-    // The component's CSS sits under its description, apart from the examples' HTML.
-    expect(codes[0]?.parentElement).toBe(button);
-    expect(codes[0]?.previousElementSibling?.classList.contains("plinth-doc")).toBe(true);
-    expect(codes[1]?.closest(".ds-example")).not.toBeNull();
-    expect(codes[1]?.querySelector(".ds-example__code")?.textContent).toBe(
-      '<button class="acme-btn acme-btn--primary">Save</button>',
-    );
+    // People never see source code: agents read the HTML and CSS with get_design_system.
+    expect(button.querySelectorAll("details, pre, code")).toHaveLength(0);
+    expect(button.textContent).not.toContain("acme-btn");
+    // Reading order: heading, description, usage, then the examples.
+    expect(
+      [...button.children].map(
+        (c) => c.tagName.toLowerCase() + (c.className ? `.${c.className.split(" ").pop()}` : ""),
+      ),
+    ).toEqual(["h2", "div.ds-prose", "h3", "div.ds-prose", "figure.ds-example"]);
     // No view, theme or width switches.
     expect(button.querySelectorAll("button")).toHaveLength(0);
     const badge = document.getElementById("ds-components-badge") as HTMLElement;

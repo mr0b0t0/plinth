@@ -109,6 +109,9 @@ test.describe("a published design system", () => {
       await expect(dark.locator("button")).toHaveCSS("background-color", "rgb(107, 140, 255)");
       await expect(dark.locator("html")).toHaveAttribute("data-theme", "dark");
 
+      // People see the rendered examples, never their source: no code disclosures or blocks.
+      await expect(site.locator("#ds-components-button :is(details, pre)")).toHaveCount(0);
+
       // The preview frames run no script: sandboxed with allow-same-origin only.
       const sandboxes = await site
         .locator("iframe.ds-preview__frame")

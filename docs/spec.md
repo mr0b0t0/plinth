@@ -705,10 +705,12 @@ for look the same. It is the third artifact type, `design_system`, beside `html`
   `script-src 'self'`, like a doc) shows the guidelines, the tokens by kind (colors, typography,
   spacing and sizes, radii, shadows, motion, others) with their samples (light and dark side by
   side when the values differ, labelled once above the group, otherwise one sample in the reader's
-  color scheme), CSS variable names, which copy when clicked, and values, and every component with
-  its CSS behind a closed disclosure under its description and a live preview of each example in
-  the reader's color scheme, with its HTML behind another. The guidelines open the page under the
-  name and description, with no heading of their own. Guidelines, descriptions and usage follow
+  color scheme; every sample one size, in one column, above the text on a phone), CSS variable
+  names, which copy when clicked ("Copied" shows in the name's place), and values, and every
+  component's description, usage and a live preview of each example in the reader's color scheme.
+  The site shows no source code: agents read the examples' HTML and the CSS with
+  `get_design_system`. The guidelines open the page under the name and description, with no
+  heading of their own. Guidelines, descriptions and usage follow
   the doc type's Markdown rules, without heading anchors or heading rules, so the site's own
   section headings stay the only ones. The site's own chrome uses Plinth's neutral
   styles; the design system's tokens and CSS apply only to samples and previews. Navigation is by

@@ -6,10 +6,10 @@
 // tokens and CSS apply only to swatches, specimens and preview frames.
 //
 // The chrome is kept to what a reader needs: a variable name copies itself when clicked, previews
-// follow the reader's color scheme, code sits behind a closed disclosure, and token tables have no
-// visible column headings (a group with light and dark samples labels them once, above the table).
+// follow the reader's color scheme, and token tables have no visible column headings (a group with
+// light and dark samples labels them once, above the table). The site shows no source code: agents
+// read the examples' HTML and the CSS with get_design_system.
 import type { DesignSystem, DsComponent, DsExample, DsToken } from "@plinth/shared";
-import { designSystemComponentCss } from "@plinth/shared";
 import { renderMarkdown } from "../doc/markdown.ts";
 import { sanitizeHtml } from "../doc/sanitize.ts";
 import { mountPreview, type PreviewTheme } from "./preview.ts";
@@ -268,17 +268,6 @@ function tokenTable(doc: Document, group: Group, tokens: DsToken[]): HTMLElement
 /** Redraws one example's preview in a theme; set per stage by exampleBlock. */
 const redraws = new WeakMap<Element, (theme: PreviewTheme) => void>();
 
-/** Code behind a disclosure, closed until the reader opens it. */
-function codeBlock(doc: Document, label: string, text: string): HTMLElement {
-  return el(
-    doc,
-    "details",
-    { class: "ds-code" },
-    el(doc, "summary", {}, label),
-    el(doc, "pre", { class: "ds-example__code" }, el(doc, "code", {}, text)),
-  );
-}
-
 function exampleBlock(
   doc: Document,
   ds: DesignSystem,
@@ -301,7 +290,6 @@ function exampleBlock(
     { class: "ds-example" },
     el(doc, "figcaption", { class: "ds-example__name" }, ex.name),
     stage,
-    codeBlock(doc, "HTML", ex.html),
   );
 }
 
@@ -329,10 +317,8 @@ function componentSection(
       ),
     );
   s.append(title);
+  // Description, usage, then the examples.
   if (comp.description) s.append(prose(doc, comp.description));
-  // The component's CSS sits under its description, apart from each example's HTML.
-  const css = designSystemComponentCss(ds, [comp]);
-  if (css) s.append(codeBlock(doc, "CSS", css));
   if (comp.usage) s.append(el(doc, "h3", {}, "Usage"), prose(doc, comp.usage));
   for (const ex of comp.examples) s.append(exampleBlock(doc, ds, comp, ex, theme));
   return s;
