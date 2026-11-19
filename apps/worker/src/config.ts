@@ -8,6 +8,8 @@ import {
   LIMITS,
   LIVE_BOUNDS,
   LIVE_DEFAULTS,
+  LIVE_VIEW_BOUNDS,
+  LIVE_VIEW_DEFAULTS,
   ROOM_BOUNDS,
   ROOM_DEFAULTS,
 } from "@plinth/shared";
@@ -147,6 +149,14 @@ export interface Config {
    * Permissions-Policy at microphone=().
    */
   allowDictation: boolean;
+  /**
+   * ALLOW_LIVE_VIEWS (default on): open artifact pages get new versions, and pages that keep
+   * shared data get its changes, pushed over a watch socket on the app host. Only in effect with a
+   * ROOMS binding; see liveViewsActive.
+   */
+  allowLiveViews: boolean;
+  /** Live-view limits (LIVE_VIEW_* env vars). */
+  liveViews: LiveViewLimits;
   /** OPERATOR_*: who runs this instance, for its legal pages. null when none is published. */
   operator: {
     name: string;
@@ -179,6 +189,11 @@ export interface RoomLimits {
   maxMessageBytes: number;
   /** ROOM_MESSAGES_PER_SECOND: per connection, with a burst of twice this. */
   messagesPerSecond: number;
+}
+
+export interface LiveViewLimits {
+  /** LIVE_VIEW_MAX_SOCKETS_PER_ARTIFACT: watch sockets on one artifact, apart from room sockets. */
+  maxSocketsPerArtifact: number;
 }
 
 export interface LiveEditSettings {
@@ -371,6 +386,15 @@ export function parseConfig(env: Record<string, unknown>): Config {
     allowLiveEditing: boolDefaultOn(env.ALLOW_LIVE_EDITING),
     live: parseLiveEditSettings(env),
     allowDictation: bool(env.ALLOW_DICTATION),
+    allowLiveViews: boolDefaultOn(env.ALLOW_LIVE_VIEWS),
+    liveViews: {
+      maxSocketsPerArtifact: boundedInt(
+        env,
+        "LIVE_VIEW_MAX_SOCKETS_PER_ARTIFACT",
+        LIVE_VIEW_DEFAULTS.maxSocketsPerArtifact,
+        ...LIVE_VIEW_BOUNDS.maxSocketsPerArtifact,
+      ),
+    },
     operator: parseOperator(env),
   };
   validate(config);
@@ -558,6 +582,17 @@ export function liveEditMode(
  */
 export function dictationActive(c: Pick<Config, "allowDictation" | "contentIsolation">): boolean {
   return c.allowDictation && c.contentIsolation === "origin";
+}
+
+/**
+ * Live views are in effect: ALLOW_LIVE_VIEWS is on and the deploy has the ROOMS binding (watch
+ * sockets live in the artifact's ArtifactRoom). They do not need ALLOW_ROOMS or origin isolation:
+ * the socket is on the app host, and carries only version numbers and change signals. Without the
+ * binding they are off; that is not a configuration error. Data signals also need shared data
+ * (sharedDataActive), since only then does a page keep any.
+ */
+export function liveViewsActive(c: Pick<Config, "allowLiveViews">, env: OptionalBindings): boolean {
+  return c.allowLiveViews && env.ROOMS !== undefined;
 }
 
 /** Something on the page that reads the identity claim, and whether it is switched on. */

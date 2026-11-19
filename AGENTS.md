@@ -75,7 +75,10 @@ make a test pass.
   metadata, an exact `Origin` on writes and JSON bodies; keep all four. The room upgrade at
   `/__plinth/room/` requires an exact `Origin` (absent or `null` refused), same-origin fetch
   metadata when sent, the `plinth.room.v1` subprotocol and the content cookie at the current epoch
-  with an identity claim; keep all four.
+  with an identity claim; keep all four. The live-view socket at `/api/v1/view/:ref/watch` on the
+  app host requires an exact app `Origin` (absent or `null` refused), same-origin fetch metadata
+  when sent, the `plinth.view.v1` subprotocol and no bearer token, takes the gate's view decision,
+  and carries only version numbers and change signals; keep all five.
 - **Every artifact response carries a CSP**, built from the configurable CDN allowlist. Network
   calls to other hosts are blocked.
 - **Artifacts render in sandboxed iframes**, never with `allow-same-origin` toward the app.

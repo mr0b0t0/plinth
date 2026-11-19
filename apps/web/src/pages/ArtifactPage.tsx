@@ -2,15 +2,16 @@
 // The gate runs first (password, email, takedown); then the artifact fills the page in a sandboxed
 // iframe on its own content subdomain, under a slim bar that stays out of the way.
 import { APP_ROUTES, route, type ViewGate } from "@plinth/shared";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { PublicShell } from "../components/layout/PublicShell.tsx";
 import { Button, EmptyState, showToast } from "../components/ui/index.ts";
 import { GateScreen } from "../components/viewer/GateScreen.tsx";
 import { parseVersion } from "../components/viewer/gate.ts";
 import { useGate } from "../components/viewer/useGate.ts";
+import { useLiveView } from "../components/viewer/useLiveView.ts";
 import {
   useVersionWatch,
-  VERSION_POLL_MS,
+  versionPollMs,
   type WatchPause,
 } from "../components/viewer/useVersionWatch.ts";
 import { ViewerSkeleton, ViewerStage } from "../components/viewer/ViewerStage.tsx";
@@ -37,7 +38,18 @@ export default function ArtifactPage({ params }: { params: Record<string, string
   // page the frame stays (#36): it follows the room itself, or holds unsaved solo edits.
   const shown = state.kind === "gate" && state.gate.status === "ok" ? state.gate : null;
   const [pause, setPause] = useState<WatchPause>(null);
-  useVersionWatch(
+  // Live views: the watch socket says when to look (a version, or the page's data changed), so the
+  // gate poll is only a backstop while it is open.
+  const checkRef = useRef<() => void>(() => undefined);
+  const [dataTick, setDataTick] = useState(0);
+  const live = useLiveView({
+    gate: shown,
+    onVersion: () => checkRef.current(),
+    onData: () => setDataTick((n) => n + 1),
+    onAccessChanged: reload,
+    onGone: reload,
+  });
+  const { checkNow } = useVersionWatch(
     path,
     shown,
     pinned,
@@ -46,9 +58,10 @@ export default function ArtifactPage({ params }: { params: Record<string, string
       setGate(gate);
       if (!pinned && moved) showToast({ title: `Updated to v${gate.artifact.version}` });
     },
-    VERSION_POLL_MS,
+    versionPollMs(live),
     pause,
   );
+  checkRef.current = checkNow;
   // A page that declares `comments` anchors its own comments: opening the panel never reloads it
   // into review mode (the gate ignores review for it too). If a new version drops the declaration
   // while the panel is open, review mode turns on then, with one reload as on a first open.
@@ -120,6 +133,7 @@ export default function ArtifactPage({ params }: { params: Record<string, string
       onReload={reload}
       onEditModeChange={onEditModeChange}
       onPauseChange={setPause}
+      liveData={{ pushed: live === "open", tick: dataTick }}
     />
   );
 }

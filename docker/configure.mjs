@@ -57,6 +57,9 @@ const WORKER_VARS = [
   "ALLOW_LIVE_EDITING",
   // Dictation run by the app (docs/docker.md#settings); off unless set to "true".
   "ALLOW_DICTATION",
+  // Live views (docs/docker.md#settings): open pages follow new versions over a socket on the app
+  // host, through the same ROOMS binding.
+  "ALLOW_LIVE_VIEWS",
 ];
 
 // `plinth init` flags and the variables that set them, to name the variable in its errors.

@@ -458,6 +458,11 @@ export type ViewGate =
       page_comments?: true;
       /** Dictation for this page: present only when the current version declares `dictation`. */
       voice?: ViewGateVoice;
+      /**
+       * Live views: open the watch socket (GET /api/v1/view/:id/watch) to learn of new versions,
+       * and of shared-data changes, as they happen. Absent: poll as before.
+       */
+      watch?: true;
     }
   | { status: "password_required"; artifact: ViewArtifactStub }
   | { status: "email_required"; artifact: ViewArtifactStub }

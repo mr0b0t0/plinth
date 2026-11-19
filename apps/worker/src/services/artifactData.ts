@@ -19,6 +19,7 @@ import type { ArtifactRow } from "../db/schema.ts";
 import { viewerIdFor } from "../lib/crypto.ts";
 import { ApiError, notFound } from "../lib/errors.ts";
 import { peopleListOffered, principalEmail } from "../policy.ts";
+import { notifyViewers } from "../rooms/notify.ts";
 import {
   decideFor,
   grantFor,
@@ -178,13 +179,17 @@ export async function writeArtifactData(
     });
   }
   const writer = await writerOf(ctx, artifact, role);
-  return applyOps(ctx.env.DB, ctx.config, target, writer, input.ops);
+  const out = await applyOps(ctx.env.DB, ctx.config, target, writer, input.ops);
+  // Open views of the page re-read their data (live views); only the signal travels.
+  if (out.results.some((r) => r.ok)) notifyViewers(ctx, artifact.id, "data");
+  return out;
 }
 
 /** Delete every document of an artifact: the signed-in owner only (data_clear), never an agent. */
 export async function clearArtifactData(ctx: Ctx, ref: string): Promise<{ deleted: number }> {
   const { artifact } = await requireArtifact(ctx, ref, "data_clear");
   const { docs } = await clearData(ctx.env.DB, artifact.id);
+  if (docs > 0) notifyViewers(ctx, artifact.id, "data");
   return { deleted: docs };
 }
 

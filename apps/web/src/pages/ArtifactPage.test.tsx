@@ -284,6 +284,59 @@ describe("ArtifactPage", () => {
       expect(document.title).toBe("Garden plan · Plinth");
     });
 
+    it("with live views, a pushed version loads at once and the gate poll is only a backstop", async () => {
+      const sockets: { url: string; onmessage: ((e: { data: string }) => void) | null }[] = [];
+      class FakeSocket {
+        onmessage: ((e: { data: string }) => void) | null = null;
+        onclose = null;
+        onerror = null;
+        constructor(
+          public url: string,
+          public protocol: string,
+        ) {
+          sockets.push(this);
+        }
+        send() {}
+        close() {}
+      }
+      vi.stubGlobal("WebSocket", FakeSocket);
+      let current = 3;
+      const reads: string[] = [];
+      stubApi({
+        handle: (c) => {
+          if (c.path !== "/view/garden-plan") return undefined;
+          reads.push(c.path);
+          return json(
+            okGate(
+              {
+                watch: true,
+                artifact: { ...ARTIFACT, current_version: current, version: current },
+              },
+              reads.length,
+            ),
+          );
+        },
+      });
+      const ArtifactPage = await loadPage();
+      render(<ArtifactPage params={{ slug: "garden-plan" }} />);
+      await screen.findByTitle("Garden plan, version 3");
+      expect(sockets).toHaveLength(1);
+      expect(sockets[0]?.url).toMatch(/\/api\/v1\/view\/art123\/watch$/);
+      const frame = (f: unknown) => act(() => sockets[0]?.onmessage?.({ data: JSON.stringify(f) }));
+      frame({ t: "welcome", v: 1, version: 3, data: false });
+      // While the socket is open, the gate is not read on the 15 s pace.
+      await vi.advanceTimersByTimeAsync(VERSION_POLL_MS * 2);
+      expect(reads).toHaveLength(1);
+      current = 4;
+      frame({ t: "version", version: 4, spread_ms: 0 });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(await screen.findByTitle("Garden plan, version 4")).toBeTruthy();
+      expect(reads).toHaveLength(2);
+      expect(await screen.findByText("Updated to v4")).toBeTruthy();
+      // The same socket stays open for the new version.
+      expect(sockets).toHaveLength(1);
+    });
+
     it("keeps a permanent version link on its version and points to the new current one", async () => {
       window.history.replaceState(null, "", "/a/garden-plan/v/3");
       let current = 3;

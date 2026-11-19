@@ -29,6 +29,7 @@ import { StageFrame } from "./StageFrame.tsx";
 import { BAR_CONTROLS, STRIP_ITEMS, type StageContext, type StageItem } from "./stageItems.tsx";
 import { useDictation } from "./useDictation.ts";
 import { useLiveEdit } from "./useLiveEdit.ts";
+import { useLiveDataRelay } from "./useLiveView.ts";
 import { usePresentation } from "./usePresentation.ts";
 import type { WatchPause } from "./useVersionWatch.ts";
 import "./viewer.css";
@@ -59,6 +60,11 @@ export interface ViewerStageProps {
   onEditModeChange?: (on: boolean) => void;
   /** How the version watch must treat the frame while the doc is edited on its page. */
   onPauseChange?: (pause: WatchPause) => void;
+  /**
+   * Live views: whether signals are pushed, and a count that moves each time the page's shared
+   * data changed; the frame's runtime is told both (useLiveDataRelay).
+   */
+  liveData?: { pushed: boolean; tick: number };
 }
 
 export { canEdit } from "./stageItems.tsx";
@@ -91,6 +97,7 @@ export function ViewerStage({
   onReload,
   onEditModeChange,
   onPauseChange,
+  liveData,
 }: ViewerStageProps) {
   const { me, config } = useSession();
   const [theme, setTheme] = useTheme();
@@ -157,6 +164,17 @@ export function ViewerStage({
   const pause: WatchPause = live.pause ?? present.pause;
   // Dictation run by the app, for the main artifact frame only (never a preview or a compare).
   const dictation = useDictation({ frame, contentOrigin, gate, config });
+  // Live views: shared-data changes reach the page's runtime (origin isolation only).
+  useLiveDataRelay({
+    frame,
+    contentOrigin,
+    enabled:
+      config?.content_isolation === "origin" &&
+      !config.content_path_fallback &&
+      gate.data?.available === true,
+    pushed: liveData?.pushed === true,
+    dataTick: liveData?.tick ?? 0,
+  });
   useEffect(() => {
     onPauseChange?.(pause);
   }, [pause, onPauseChange]);

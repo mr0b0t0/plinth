@@ -67,6 +67,8 @@
     "LIVE_DRAFT_FLUSH_S": "5",
     "LIVE_DRAFT_RETENTION_DAYS": "30",
     "ALLOW_DICTATION": "false",
+    "ALLOW_LIVE_VIEWS": "true",
+    "LIVE_VIEW_MAX_SOCKETS_PER_ARTIFACT": "1000",
     "DEV_OUTBOX": "true",
     "DEV_IGNORE_CLIENT_IP": "false",
     "DEV_SEED": "false",

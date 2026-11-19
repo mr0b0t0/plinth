@@ -10,6 +10,16 @@ Add a line under **Unreleased** in the pull request that makes a change people w
 
 ## Unreleased
 
+- **Open pages follow new versions at once.** An artifact page that is open picks up a version an
+  agent or editor publishes within seconds, without waiting for its 15 s check, and pages that keep
+  shared data (`onSnapshot`) see other people's changes within about a second. The app holds one
+  WebSocket on its own host that carries only version numbers and "data changed" signals; nothing
+  about the page or its data travels over it. On by default wherever the `ROOMS` binding is
+  configured (also under opaque isolation, for versions); `ALLOW_LIVE_VIEWS=false` turns it off and
+  pages poll as before. `LIVE_VIEW_MAX_SOCKETS_PER_ARTIFACT` (1000) caps the open views that get
+  pushes. Update the plugin for the agent's rule never to tell people to reload. A reverse proxy
+  must pass WebSocket upgrades on the app host too.
+
 - **Dictation, run by Plinth, for pages that ask for it.** A page that declares `dictation` can
   take the words a viewer speaks (`plinth.dictation`): Plinth's app runs the browser's speech
   recognizer after the viewer's click and consent, shows "Listening" with a Stop the page cannot

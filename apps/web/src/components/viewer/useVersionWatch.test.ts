@@ -1,6 +1,8 @@
 import type { ViewGate } from "@plinth/shared";
-import { describe, expect, it } from "vitest";
-import { nextGate } from "./useVersionWatch.ts";
+import { act, renderHook } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { json, stubApi } from "./test-utils.ts";
+import { nextGate, useVersionWatch, VERSION_POLL_MS, versionPollMs } from "./useVersionWatch.ts";
 
 type OkGate = Extract<ViewGate, { status: "ok" }>;
 
@@ -64,5 +66,55 @@ describe("nextGate while a doc is edited on its page", () => {
   it("changes nothing when no newer version exists", () => {
     expect(nextGate(gate(3, 3), gate(3, 3, "x"), false, "follow")).toBeNull();
     expect(nextGate(gate(3, 3), gate(3, 3, "x"), false, "hold")).toBeNull();
+  });
+});
+
+describe("useVersionWatch while the live-view socket is open", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  it("polls every 15 s, and every 5 minutes as a backstop while open", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const { calls } = stubApi({ handle: () => json(gate(3, 3)) });
+    const { rerender } = renderHook(
+      ({ ms }) => useVersionWatch("/view/s", gate(3, 3), false, () => undefined, ms),
+      { initialProps: { ms: versionPollMs("connecting") } },
+    );
+    await act(() => vi.advanceTimersByTimeAsync(VERSION_POLL_MS));
+    expect(calls).toHaveLength(1);
+    rerender({ ms: versionPollMs("open") });
+    await act(() => vi.advanceTimersByTimeAsync(VERSION_POLL_MS * 4));
+    expect(calls).toHaveLength(1);
+    await act(() => vi.advanceTimersByTimeAsync(300_000));
+    expect(calls).toHaveLength(2);
+  });
+
+  it("checkNow reads the gate at once, and a change of pace does not cancel it", async () => {
+    let release!: () => void;
+    const held = new Promise<void>((r) => {
+      release = r;
+    });
+    stubApi({
+      handle: async () => {
+        await held;
+        return json(gate(4, 4, "fresh"));
+      },
+    });
+    const seen: string[] = [];
+    const { result, rerender } = renderHook(
+      ({ ms }) => useVersionWatch("/view/s", gate(3, 3), false, (g) => seen.push(g.enter_url), ms),
+      { initialProps: { ms: versionPollMs("connecting") } },
+    );
+    act(() => result.current.checkNow());
+    // The socket's welcome both asks for the version and switches the pace.
+    rerender({ ms: versionPollMs("open") });
+    release();
+    await act(async () => {
+      await held;
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    expect(seen).toEqual(["fresh"]);
   });
 });

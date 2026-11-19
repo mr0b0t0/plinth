@@ -184,6 +184,29 @@ the setup script, `plinth deploy`, local, tunnel and Docker instances all write 
   so nothing is lost, but turning rooms on again then needs yet another tag). Prefer
   `ALLOW_ROOMS=false` on the current release.
 
+### Live views
+
+Live views use the same `ROOMS` binding and `rooms-v1` migration as live rooms: the
+`ArtifactRoom` object of an artifact also holds its open views' watch sockets, a kind that joins
+no room and stores nothing.
+
+- **Cost.** While `ALLOW_LIVE_VIEWS` is on (the default), each open view is one Durable Object
+  request when it connects (again after 12 hours, or after its tab was hidden for a minute), and
+  every new version, shared-data write, sharing change, takedown or delete is one notify call to
+  the artifact's object, for every artifact. Hibernated watch sockets accrue no duration and their
+  keep-alive is answered without waking the object. In return an idle open view stops reading its
+  gate and the shared-data change counter every 15 s ([spec.md](spec.md#costs)).
+- **Off switch.** `ALLOW_LIVE_VIEWS=false` ([self-hosting.md](self-hosting.md#settings)): pages poll
+  as before, and artifacts without a room never get an object. Without the binding live views are
+  off too, with no config error.
+- **Isolation.** Live views work under every isolation mode, since the socket is on the app host;
+  the shared-data signals need `CONTENT_ISOLATION=origin`, like shared data.
+- **Proxies.** The socket is `wss://<APP_HOST>/api/v1/view/<id>/watch`. Cloudflare's edge, Workers
+  routes and Tunnel pass it unchanged; a reverse proxy in front of a container must forward the
+  upgrade on the app host as well ([docker.md](docker.md#what-the-proxy-must-do)).
+- **Caps.** `LIVE_VIEW_MAX_SOCKETS_PER_ARTIFACT` (1000) per artifact, apart from the room's cap;
+  views over it poll.
+
 ### Dictation
 
 Dictation needs no binding, no migration and no Cloudflare resource: the viewer's browser does

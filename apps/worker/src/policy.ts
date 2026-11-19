@@ -536,3 +536,25 @@ export function dictationAccess(
   if (!identity) return { available: false, reason: "not_identified" };
   return { available: true, reason: null };
 }
+
+// ---------- live views: pushed versions and data changes (app host, the watch socket) ----------
+
+/**
+ * May this principal hold a watch socket on the artifact, and does it get `data` signals? `d` is
+ * the view decision (the gate's, `decideFor(ctx, a, "view")`); `active` is liveViewsActive(config,
+ * env); `sharedData` is sharedDataActive(config); `caps` the current version's declaration. Anyone
+ * who may open the artifact may watch (anonymous link viewers included: a watch socket joins no
+ * room, sees no peers and carries no identity), never an agent, which publishes and never pulls.
+ * Data signals follow pageDataAccess's read rule: an HTML page whose current version declares
+ * `data`, with shared data active. The gate and the handshake both ask this, so the decision lives
+ * here.
+ */
+export function liveViewAccess(
+  p: Principal,
+  d: Decision,
+  caps: Capabilities | null,
+  o: { active: boolean; sharedData: boolean; type: ArtifactType },
+): { watch: boolean; data: boolean } {
+  const watch = o.active && d.allow && p.kind !== "agent";
+  return { watch, data: watch && o.type === "html" && caps?.data === true && o.sharedData };
+}

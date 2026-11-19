@@ -43,6 +43,9 @@ make a test pass.
 | Cross-site WebSocket hijacking of a live room | Artifact B, framed by the app, opens a socket to artifact A's `/__plinth/room/` with A's content cookie from the shared partitioned jar | The upgrade requires an exact `Origin` (absent or `null` refused), same-origin fetch metadata when sent, the `plinth.room.v1` subprotocol and an identified content pass at the current epoch; no CORS anywhere ([Live rooms](#live-rooms)) |
 | Page code harvests names and the access list | A page reads `plinth.viewer.name`, its authors' names or `plinth.people.list()` and copies them where link viewers or every viewer can read them | Names appear only where the email already does (`viewer` declared, identified reader); the people list only for owners and editors on a page that declares `data viewer people`, whose author is the owner or an editor; every identified viewer is told, under the bar, that the owner and editors can see everyone the page is shared with; the skill forbids copying the list or emails into shared data. WebRTC stays the known CSP gap ([The people list](#the-people-list)) |
 | Display name used to impersonate | Someone sets their name to "Owner", "ana@example.com" or a right-to-left override that reorders the text around it | Names cannot contain `@` or the two characters that render as one (U+FE6B, U+FF20: every character whose NFKC form is `@`), nor control, bidi, zero-width or separator characters, are cut to 64 code points on every read, and are never authority: `role` and `comment_author_role` stay server-derived and Plinth's own UI shows the role beside them; tool descriptions say names are display text |
+| Cross-site WebSocket hijacking of the live-view socket | Another site, or an artifact framed by the app, opens `wss://<APP_HOST>/api/v1/view/<id>/watch` with the viewer's app cookies to learn when a private artifact changes | The handshake requires `Origin` exactly the app's origin (absent, `null`, every content origin and every other site refused), same-origin fetch metadata when sent and the `plinth.view.v1` subprotocol; app session cookies are `SameSite=Lax` too; the socket says only what the same person's gate and change counter say ([Live views](#live-views)) |
+| A forged live-view hint | Page script, or another frame, posts `{ source: "plinth-view", type: "data" }` or `push` to a page | The runtime takes them only from `window.parent` at the app origin, and both are hints: the worst a forged one does is make the page re-read its own data through the shared-data API or change its own poll; the app posts them only at the frame's exact content origin, never `"*"` ([Live views](#live-views)) |
+| An audience floods an artifact after a signal | A thousand open views of a public page re-read their gate at the same moment a version is published | Each signal carries `spread_ms` (10 ms per recipient, at most 10 s) and each view waits a random time up to it; watch sockets are capped per artifact (`LIVE_VIEW_MAX_SOCKETS_PER_ARTIFACT`), per client and per minute, and over a cap the page polls ([Live views](#live-views)) |
 | Enumerating who has an account | A caller tries addresses to learn which ones have a Plinth account or what they are called, for example by adding them as grants on an artifact of their own and reading the people list or the sharing settings back | No route takes an email or a name to look up, and the people list searches only one artifact's access list. Since the owner writes that list without its holders being told, an access list shows a grant holder's name only once that person has taken part in the artifact (a comment, a shared-data entry or a version, which already show their name to the readers of the list), and a name it keeps back is `null` and never matched by `q`, the same as an address with no account (`policy.ts accessListShowsName`) |
 
 Out of scope for v1: denial of service beyond Cloudflare's defaults, a compromised Cloudflare
@@ -797,6 +800,7 @@ version just published appears in the agent's thread.
 | Live-room messages per socket | `ROOM_MESSAGES_PER_SECOND` (20, burst 40); over it each message gets `rate_limited`, and 50 such in 10 s close the socket (4429) |
 | One live-room frame | `ROOM_MAX_MESSAGE_BYTES` (8 KiB; larger closes with 1009, binary with 1003); presence 400 bytes per room; 3 rooms per socket |
 | People-list reads per reader per artifact | 600 per hour |
+| Live-view watch sockets per artifact | `LIVE_VIEW_MAX_SOCKETS_PER_ARTIFACT` (1000), apart from room sockets; 32 per client; 60 connects per client per minute (close code 4409, then the page polls) |
 
 Limited requests get `429` with `Retry-After`; live-room limits answer on the socket instead.
 
@@ -926,7 +930,8 @@ authority. Only the status and a reason code of a refusal are logged, never fram
 sharing change (`revoke`, close code 4401), a takedown or delete (`gone`, 4404) and a version that
 changes the room declaration (`redeclare`, 4410), through `waitUntil` with one retry, and only for
 artifacts that can have a room (a doc, or a page whose current or previous version declares
-`room`). While any socket is open, the room's alarm re-reads the artifact in D1 every 60 s and
+`room`), or, while live views are on, for every artifact, since any of them may have watch sockets
+([Live views](#live-views)). While any socket is open, the room's alarm re-reads the artifact in D1 every 60 s and
 closes sockets whose epoch is old, whose pass expired, or whose artifact is gone; that catches a
 lost call and changes made with SQL, so a decision can be stale for at most a minute. 4401 makes the
 runtime re-check `/__plinth/api/v1/room` and fire `plinth:expired` when access is over.
@@ -949,6 +954,89 @@ reports `{ available, reason, you, can_emit, open_topics, limits }`, where `can_
 `open` or `none` (a viewer). It needs a content pass (401
 otherwise) and works where shared data is off: the gate seals the identity claim whenever shared
 data or rooms are active with origin isolation.
+
+## Live views
+
+An open artifact page learns of a new version, and a page that keeps shared data learns that it
+changed, over one receive-only WebSocket that the app page opens on the app host (spec: "Live
+views"): `GET /api/v1/view/<artifact id>/watch` (`apps/worker/src/api/watch.ts`), served by the
+artifact's `ArtifactRoom` as a socket of kind `watch`. It is Plinth's own code on the app host;
+the artifact never touches it.
+
+**The threat: cross-site WebSocket hijacking, on the app host this time.** The handshake carries
+the app's cookies and is not subject to CORS. A socket opened by another site, or by an artifact
+framed by the app, would tell it when a private artifact changes. The checks, in this order:
+
+1. **Method and upgrade.** A GET with `Upgrade: websocket`; a HEAD gets 405 and a GET without the
+   upgrade 426. Other methods never reach the route: the `/api/v1` router refuses them, CSRF first.
+2. **Origin**, required and exactly the app's origin. Browsers always send `Origin` on a handshake
+   and page script cannot set it. A missing Origin and `null` are refused with 403, and so is every
+   artifact: its documents run on their own content origins, or with an opaque origin (`null`)
+   under opaque isolation and the path fallback. This is the check that stops hijacking. App
+   session cookies are also `SameSite=Lax`, which browsers do not send on a cross-site handshake,
+   but the design relies on the Origin check.
+3. **Fetch metadata**, when sent: `Sec-Fetch-Site: same-origin` and `Sec-Fetch-Mode: websocket`.
+4. **Subprotocol.** `Sec-WebSocket-Protocol` must offer `plinth.view.v1` (400 otherwise), and the
+   101 echoes it.
+5. **No bearer token.** A request with an `Authorization` header is refused (403) before the token
+   is resolved: agents publish and never pull, so they never watch.
+6. **Availability.** `ALLOW_LIVE_VIEWS` and the `ROOMS` binding (404 otherwise). Neither rooms nor
+   origin isolation are needed: the socket is on the app host and carries no artifact content.
+7. **Artifact**, by id (never the slug, which can change): not deleted, not taken down, with a
+   version.
+8. **View decision.** `decideFor(ctx, artifact, "view")` with the principal `authenticate`
+   resolved from the app's cookies: the session, a viewer session confirmed by code, password
+   passes. It is the gate's decision; any refusal (not found, forbidden, password or email needed)
+   is one identical 404, so the socket says no more than the gate.
+9. **Policy.** `liveViewAccess` in `policy.ts`: anyone the view decision lets in, never an agent;
+   the data right only for an HTML page whose current version declares `data`, with shared data
+   active. The gate's `watch` field asks the same function.
+
+The 101 carries the app's own security headers (CSP, `X-Frame-Options`, no `Access-Control-*`).
+The app's CSP `connect-src` is `'self'` plus `wss://<APP_HOST>` (`ws://` under `PUBLIC_SCHEME=http`),
+which names the app's own host for browsers that do not count WebSocket schemes as `'self'`; it
+never names a content host.
+
+**What the socket carries.** The Worker hands the room a fresh internal request whose only custom
+header is `x-plinth-watch`, built from the checks above (artifact, epoch, socket expiry, current
+version, the data right, a client key and the caps); no client header is copied, and the room
+parses it as strictly as a room's. The room sends only frames it makes from integers: `welcome {
+version, data }`, `version { version, spread_ms }` and `data { spread_ms }`. Never artifact
+content, document data, emails, names, peers or anything a page wrote. A watch socket joins no
+room and is never a peer: room traffic never reaches it, and it never appears in `peers`. The
+client may send only the text `ping` (answered `pong` without waking the object); anything else
+closes it with 4400. What a watcher learns, the current version number and the moments the page's
+data changes, the same person can already read from the gate and the change counter, every 15 s.
+Anonymous link viewers may watch for that reason; they still never join a room.
+
+**The app-to-frame hints.** On a `data` signal the app posts `{ source: "plinth-view", v: 1, type:
+"data" }` to the artifact frame, and on each frame load and status change `{ ..., type: "push",
+on }`, only at the frame's exact content origin and only under origin isolation with shared data
+available, never with `"*"`. Under opaque isolation and the path fallback nothing is posted, since
+no shared data exists there. The runtime (`content/runtime/live.ts`) takes them only from
+`window.parent` at the app origin it embeds, and treats them as hints: page script can forge a
+`MessageEvent` on its own window, and the worst a forged one does is make the page re-read its own
+data (through the shared-data API, with all of its checks) or change its own poll. No data crosses
+`postMessage`.
+
+**Revocation.** A watch socket is admitted at one access epoch and lives at most a content pass's
+lifetime (12 hours). A sharing change closes it (`revoke`, 4401, reason `access_changed`), and the
+app re-reads its gate, which may now ask for an email or a password; a takedown or delete closes it
+(4404). The room's 60 s alarm backs both up, closes sockets that reached their lifetime (4401,
+reason `expired`: the app reconnects, and the handshake decides again), sends a version whose
+notify was lost, and takes the data right away when the current version stops declaring `data`.
+The room never grants the data right itself: only a new handshake does.
+
+**Caps and fan-out.** Watch sockets are counted apart from room sockets, so viewers never fill a
+room: `LIVE_VIEW_MAX_SOCKETS_PER_ARTIFACT` (1000) per artifact, 32 per client and 60 connects per
+client per minute, where a client is the account, the confirmed email, or the address for
+anonymous viewers, kept only as a 16-character HMAC (keyed by `TOKEN_SIGNING_KEY`, per artifact).
+Over a cap the socket is closed with 4409 and the page polls, as it does without live views. Each
+signal carries `spread_ms` (10 ms per recipient, at most 10 s), and each view waits a random time
+up to it before it re-reads (under 100 ms it acts at once), so one artifact sees at most about 100 follow-up requests a second.
+Notifies are best effort (`waitUntil`, one retry); losses are caught by the alarm within a minute
+for versions and by the runtime's 60 s backstop poll for data. Refusals log the status and a reason
+code only; the socket URL holds only the artifact id.
 
 ## The people list
 

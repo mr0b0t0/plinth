@@ -83,13 +83,14 @@ flowchart TB
     app["App domain<br/>Sign-in, dashboard, editor<br/>Comments and sharing"]
     content["Content domain<br/>One subdomain per artifact<br/>Access check, strict CSP"]
   end
-  rooms["Live rooms (optional)<br/>One Durable Object per artifact<br/>Presence and broadcast"]
+  rooms["Live rooms (optional)<br/>One Durable Object per artifact<br/>Presence and broadcast,<br/>and the open views' signals"]
   d1[("D1 database<br/>Users, versions, permissions, comments, mention queue")]
   r2[("R2 storage<br/>Artifact files, one folder per version<br/>Unchanged files reused by hash")]
   agents --> mcp
   publishers --> app
   viewers --> content
   content --> rooms
+  app --> rooms
   worker --> d1
   worker --> r2
 ```
@@ -99,7 +100,9 @@ sessions, and each artifact gets its own subdomain so artifacts cannot read each
 Metadata goes to D1 and files to R2; nothing else needs to be provisioned. The same Worker also
 defines one SQLite-backed Durable Object class, `ArtifactRoom` (binding `ROOMS`), for
 [live rooms](#live-rooms): an object per artifact, created only when someone opens that artifact's
-room, keeping no tables. A deploy without the binding runs with rooms off.
+room, keeping no tables. A deploy without the binding runs with rooms off. The same object also
+holds the artifact's open views' watch sockets ([live views](#live-views-decided-2026-11-19)), so
+while live views are on it is created when someone opens the artifact at all.
 
 ## Data model
 
@@ -193,6 +196,13 @@ declares `dictation` (a row without it reads as no dictation), and one setting, 
 (off). Fixed: 60 s per start, results of at most 2,000 characters, 1 s between starts, 10 s after
 the viewer's Stop, three Stops per page load, and a consent dialog armed after 500 ms. A viewer's
 consent lives in their browser, not in D1.
+
+**Live views** ([below](#live-views-decided-2026-11-19), no migration) store nothing and add two
+settings: `ALLOW_LIVE_VIEWS` (on) and `LIVE_VIEW_MAX_SOCKETS_PER_ARTIFACT` (1000, from 10 to
+10000). Fixed: 32 watch sockets per client and 60 connects per client per minute on one artifact,
+a socket lifetime of 12 hours (the content pass's), a spread of 10 ms per recipient up to 10 s,
+backstop polls every 60 s (the page's data) and 5 minutes (the app's gate), and a tab hidden for
+60 s closes its socket.
 
 ## Auth and permissions
 
@@ -357,6 +367,7 @@ JSON, which agents read with `get_design_system` to build other pages; see
 - Any version has a permanent URL (`/a/<slug>/v/3`). The bare URL always serves the current one.
 - Two versions can be compared as a source diff or side by side as rendered pages.
 - Restoring v2 publishes its content as the next version, so history is never rewritten.
+- Open views follow new versions: see [Live views](#live-views-decided-2026-11-19).
 
 ### Thumbnails and link previews
 
@@ -598,11 +609,13 @@ Decided 2026-11-14 (issue #1). Design:
   applies and retries on conflict. Every agent op needs `if_rev`. A document's `rev` is one past
   the artifact's change counter, so revs grow across the artifact and a document deleted and
   created again never repeats one. Data is not versioned and is not part of diffs or restores.
-- **Live updates.** No push for data: `onSnapshot` polls a one-row change counter every 15 s while
-  the tab is visible (at least 10 s), and refetches when it moves, at once after the page's own
-  write. A page that also declares `room` can push its own moments (a note being dragged, "note 3
-  saved, refetch it") to the people who have it open; see [Live rooms](#live-rooms). The poll is
-  unchanged.
+- **Live updates.** `onSnapshot` reads a one-row change counter and refetches when it moves, at
+  once after the page's own write. While [live views](#live-views-decided-2026-11-19) are on, the
+  app that frames the page tells it within about a second that the data changed, and the counter
+  is polled only every 60 s as a backstop; otherwise it is polled every 15 s while the tab is
+  visible (at least 10 s, `intervalMs`). A page that also declares `room` can push its own moments
+  (a note being dragged, "note 3 saved, refetch it") to the people who have it open; see
+  [Live rooms](#live-rooms).
 - **Limits** (env vars): `ALLOW_SHARED_DATA` (on), `DATA_MAX_DOCS_PER_ARTIFACT` (1000),
   `DATA_MAX_BYTES_PER_ARTIFACT` (1 MiB), `DATA_MAX_BYTES_PER_USER` (16 MiB across an owner's
   artifacts), `DATA_MAX_DOC_BYTES` (16 KiB), `DATA_WRITES_PER_VIEWER_PER_HOUR` (300) and
@@ -676,6 +689,9 @@ late joiner reads it. Plinth's own on-page doc editing is the room's first use.
 - **Availability.** Only with origin isolation and the `ROOMS` binding. Under opaque isolation (and
   the path fallback) `room.ready` resolves `{ available: false, reason: "opaque_isolation" }`
   without a request. A page should work alone when the room is unavailable.
+- **Watch sockets are not members.** The [live views](#live-views-decided-2026-11-19) sockets of an
+  artifact's open views share its object, but join no room, never appear among peers and never
+  count toward `ROOM_MAX_CONNECTIONS_PER_ARTIFACT`.
 
 ### Who is viewing: names and the people list (decided 2026-11-19)
 
@@ -1090,6 +1106,66 @@ microphone.
   click and keep the text on screen; `getVoices()` and network voices are the page author's
   choices in the viewer's browser ([docs/security.md](security.md#dictation-and-text-to-speech)).
 
+### Live views (decided 2026-11-19)
+
+An open artifact page picks up a newly published version by itself within seconds, and a page that
+keeps [shared data](#shared-data-and-viewer-identity) learns that it changed without waiting for
+its poll. Plinth pushes signals, never content: the page still loads every version and every
+document through the gate and the shared-data API, with all of their checks.
+
+- **Who.** Anyone who can open the artifact (the owner, people it is shared with, and anonymous
+  viewers of an unlisted, password or public link), never agents. A watch socket joins no
+  [room](#live-rooms), sees no peers and carries no identity, so it shows nobody to anybody; it
+  tells a viewer only what the gate and the change counter already tell them, sooner.
+- **Transport.** The app page, never the artifact, opens one receive-only WebSocket on the app host,
+  `wss://<APP_HOST>/api/v1/view/<artifact id>/watch`, with the app's own cookies, when its gate
+  says `watch: true`. The handshake is checked in order: method and upgrade, `Origin` exactly the
+  app's origin (absent and `null` refused, so no artifact can open one), same-origin fetch
+  metadata when sent, the `plinth.view.v1` subprotocol, no bearer token, live views active, the
+  artifact by id, the gate's view decision (any refusal is one identical 404), and policy
+  (`liveViewAccess` in `policy.ts`); see [docs/security.md](security.md#live-views). The socket is
+  served by the artifact's `ArtifactRoom` with the Hibernation API. The app's CSP `connect-src`
+  names its own `wss:` origin and nothing else.
+- **Signals.** JSON frames the room builds from integers: `welcome` (the current version, and
+  whether this socket gets data signals), `version` (a version was published: by an agent, the
+  source editor, a restore or an on-page checkpoint) and `data` (the page's shared data changed:
+  a write from the page, an agent or the app, or the owner's "Delete all shared data"). The client
+  sends only the text `ping`. Each signal carries `spread_ms` (10 ms per recipient, at most 10 s):
+  each open view waits a random time up to it before it acts (under 100 ms, fewer than ten views,
+  they act at once), so at most about 100 follow-up requests a second reach one artifact, whatever
+  the audience.
+- **What the page does.** On `version` the app re-reads its own gate at once and shows the new
+  version as it did after a poll ("Updated to vN"; a pinned `/v/n` link only learns the number).
+  On `data` it posts `{ source: "plinth-view", v: 1, type: "data" }` to the frame at its exact
+  content origin, and `/__plinth/runtime.js` re-reads the change counter and refetches what
+  `onSnapshot` watches when it moved. The app also says whether signals are pushed (`type:
+  "push"`), and while they are the runtime polls only every 60 s. Both messages are hints: page
+  script can forge them on its own window, and the worst a forged one does is make the page
+  re-read its own data or change its own poll.
+- **Data signals** need an HTML page whose current version declares `data`, with shared data active
+  (origin isolation): the handshake grants the right, a version that drops `data` takes it away,
+  and the app reconnects when a newer gate shows data the socket lacked. Under opaque isolation
+  nothing is posted to frames.
+- **Lifecycle.** A sharing change closes watch sockets (4401) and the page re-reads its gate, which
+  may now ask for an email or a password; a takedown or delete closes them (4404). A socket also
+  closes at the content pass's lifetime (4401, reason `expired`), and the page reconnects. While
+  sockets are open the room re-checks D1 every 60 s: it closes what a lost call left open, sends a
+  `version` whose notify was lost, and takes the data right away when the current version no
+  longer declares `data`. A tab hidden for 60 s closes its socket and reconnects when shown.
+- **Fallback.** Without the socket (live views off, no `ROOMS` binding, refused, full, dropped, or no
+  WebSocket in the browser) the app polls its gate every 15 s and the runtime polls the change
+  counter every 15 s, as before. While the socket is open the app still reads its gate every
+  5 minutes as a backstop. A refused or full socket is tried again after 5 minutes; a dropped one
+  reconnects after 1, 2, 5, 10 and 30 s.
+- **Limits.** `ALLOW_LIVE_VIEWS` (on) and `LIVE_VIEW_MAX_SOCKETS_PER_ARTIFACT` (1000, from 10 to
+  10000), counted apart from room sockets so viewers never crowd out a room; over a cap the socket
+  is closed with 4409 and the page polls. Fixed: 32 sockets and 60 connects a minute per client
+  (an account, a confirmed email, or one address for anonymous viewers, kept only as an HMAC).
+- **Availability.** Needs only `ALLOW_LIVE_VIEWS` and the `ROOMS` binding, not `ALLOW_ROOMS` and not
+  origin isolation: versions are pushed under opaque isolation and the path fallback too. Data
+  signals also need shared data. Without the binding live views are off, never a configuration
+  error.
+
 ### Big builds and reuse by hash
 
 Decided 2026-11-15. Agents publish built sites (a Vite or similar `dist/` folder with hundreds of
@@ -1332,6 +1408,11 @@ options.
   keeps a microphone grant for the app's origin, so delegating it to one frame would give it to
   every artifact. With `ALLOW_DICTATION`, the app runs the recognizer after the viewer's click in
   the page and their consent, shows a Stop the page cannot cover, and posts only words.
+- **Live views carry only signals.** The watch socket is on the app host and refuses any `Origin`
+  but the app's, a missing one and `null`, so no artifact can open it; it refuses bearer tokens,
+  takes the gate's view decision, and carries version numbers and change signals made by the
+  server, never content or anything a page wrote. The app posts its two hints to a frame only at
+  its exact content origin ([Live views](#live-views-decided-2026-11-19)).
 - **Open counts are aggregates.** One number per artifact per UTC day, never who opened it, shown
   only to the artifact's owner and, summed over the instance, to admins.
 - **Quotas and rate limits.** Each account is limited to 100 artifacts by default, set by an
@@ -1456,6 +1537,21 @@ a day by requests and 28 by duration. Two people typing in a doc send at most 8 
 about 1,440 billed requests and at most 720 D1 rows written an hour, against 100k D1 rows written a
 day on the free plan. Past the allowance, sockets fail and pages work alone;
 `ALLOW_ROOMS=false` turns rooms off.
+
+Live views run on the same Durable Object allowance:
+
+| Operation | Durable Object requests | D1 rows read | D1 rows written |
+| --- | --- | --- | --- |
+| Watch connect (one per open view, again after 12 hours or a hidden tab) | 1 (plus 1 Worker request) | about 3 (session, artifact and grant, declaration) | 0 |
+| Version published | 1 notify call (every artifact while live views are on) | 0 | 0 |
+| Shared-data write | 1 notify call | 0 | 0 |
+| Sharing change, takedown or delete | 1 notify call (every artifact while live views are on) | 1 | 0 |
+| Re-check while sockets are open | 60 per hour per artifact | 1 each | 0 |
+
+Hibernated watch sockets accrue no duration and their keep-alive is answered without waking the
+object. An idle open view goes from 4 gate reads and 4 change-counter reads a minute to about
+none. On the Workers Free plan a busy instance may prefer `ALLOW_LIVE_VIEWS=false`, which keeps
+the polls and calls no object for artifacts without a room.
 
 Not included: push-mode agent calls, which bill to the user's API key or a paid plan. Vercel was
 considered and set aside: its free plan is non-commercial only, so the floor is about $20 per month

@@ -11,6 +11,7 @@ import { contentCookieName } from "../src/content/serve.ts";
 import { signContentCookie } from "../src/content/tokens.ts";
 import { artifacts } from "../src/db/schema.ts";
 import { viewerIdFor } from "../src/lib/crypto.ts";
+import { parseConnect, parseWatchConnect } from "../src/rooms/ArtifactRoom.ts";
 import {
   APP,
   agent,
@@ -430,5 +431,67 @@ describe("GET /__plinth/api/v1/room", () => {
       },
     });
     expect(await json(res)).toEqual({ available: false, reason: "not_declared" });
+  });
+});
+
+describe("live views: the room's watch header (docs/security.md#live-views)", () => {
+  const good = {
+    artifactId: "a0b1c2d3e4f5g6h7i8j9",
+    kind: "watch",
+    epoch: 3,
+    passExp: 1_900_000_000_000,
+    version: 2,
+    data: true,
+    client: "0123456789abcdef",
+    limits: { maxSockets: 1000 },
+  };
+
+  it("parses a well-formed header into exactly its fields", () => {
+    expect(parseWatchConnect(JSON.stringify({ ...good, extra: "dropped" }))).toEqual(good);
+  });
+
+  it("refuses every other shape", () => {
+    const bad: unknown[] = [
+      null,
+      "",
+      "not json",
+      "[]",
+      JSON.stringify([good]),
+      JSON.stringify({ ...good, kind: "page" }),
+      JSON.stringify({ ...good, artifactId: "SHORT" }),
+      JSON.stringify({ ...good, epoch: -1 }),
+      JSON.stringify({ ...good, epoch: 1.5 }),
+      JSON.stringify({ ...good, passExp: "soon" }),
+      JSON.stringify({ ...good, version: null }),
+      JSON.stringify({ ...good, data: 1 }),
+      JSON.stringify({ ...good, client: "0123456789abcde" }),
+      JSON.stringify({ ...good, client: "0123456789abcdeg" }),
+      JSON.stringify({ ...good, limits: { maxSockets: 0 } }),
+      JSON.stringify({ ...good, limits: [] }),
+      JSON.stringify({ ...good, limits: undefined }),
+      JSON.stringify({ ...good, client: "x".repeat(2000) }),
+    ];
+    for (const raw of bad) expect(parseWatchConnect(raw as string | null), String(raw)).toBeNull();
+  });
+
+  it("a room header can never name the watch kind", () => {
+    const room = {
+      artifactId: good.artifactId,
+      type: "html",
+      kind: "watch",
+      epoch: 1,
+      passExp: good.passExp,
+      viewer: "u_0123456789abcdef01234567",
+      role: "viewer",
+      email: "a@example.com",
+      name: null,
+      seeIdentity: false,
+      emit: "none",
+      openTopics: [],
+      doc: "none",
+      limits: { maxConnections: 50, maxMessageBytes: 8192, messagesPerSecond: 20 },
+    };
+    expect(parseConnect(JSON.stringify(room))).toBeNull();
+    expect(parseConnect(JSON.stringify({ ...room, kind: "page" }))).not.toBeNull();
   });
 });
