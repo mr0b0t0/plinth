@@ -62,7 +62,8 @@ versions, and changing or deleting anyone's entries) are set in the app's Share 
 What an invited person sees:
 
 1. They open the link and enter their email address.
-2. Plinth emails them a six-digit code; they type it. No account and no password.
+2. Plinth emails them a six-digit code; they type it. No sign-up and no password: the code signs
+   them in to Plinth with that address, creating their account the first time.
 3. A line under Plinth's bar says that the page can see their email and saves what they enter,
    and that people with access can see the entries and who wrote them.
 4. They use the page.

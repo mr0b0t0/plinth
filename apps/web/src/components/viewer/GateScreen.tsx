@@ -8,7 +8,7 @@ import { useSession } from "../../lib/session.ts";
 import NotFound from "../../pages/NotFound.tsx";
 import { PublicShell } from "../layout/PublicShell.tsx";
 import { ButtonLink, ICON_SIZE } from "../ui/index.ts";
-import { EmailForm, PasswordForm } from "./GateForms.tsx";
+import { codeLead, codeSignsInFor, EmailForm, PasswordForm } from "./GateForms.tsx";
 import type { GateQuery } from "./gate.ts";
 import "./viewer.css";
 
@@ -23,7 +23,8 @@ export interface GateScreenProps {
 }
 
 export function GateScreen({ gate, artifactRef, query, onGate }: GateScreenProps) {
-  const { me } = useSession();
+  const { me, config } = useSession();
+  const codeSignsIn = codeSignsInFor(config);
   const title = gate.status === "not_found" ? null : gate.artifact.title;
 
   useEffect(() => {
@@ -77,7 +78,7 @@ export function GateScreen({ gate, artifactRef, query, onGate }: GateScreenProps
         <p className="pl-gate__lead">
           {password
             ? "Enter the password the owner gave you to open this artifact."
-            : "Only the people the owner listed can open this artifact. Confirm your email address with a one-time code. You do not need an account."}
+            : `Only the people the owner listed can open this artifact. Confirm your email address with a one-time code. ${codeLead(codeSignsIn)}`}
         </p>
         {password ? (
           <PasswordForm artifactRef={artifactRef} query={query} onGate={onGate} />
@@ -87,6 +88,7 @@ export function GateScreen({ gate, artifactRef, query, onGate }: GateScreenProps
             query={query}
             onGate={onGate}
             signedInEmail={me?.email ?? null}
+            codeSignsIn={codeSignsIn}
           />
         )}
       </section>

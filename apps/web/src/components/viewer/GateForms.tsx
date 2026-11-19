@@ -67,12 +67,58 @@ export function PasswordForm({ artifactRef, query, onGate }: StepProps) {
   );
 }
 
+/**
+ * What confirming a viewing code does, said before anyone asks for one (docs/spec.md "Auth and
+ * permissions", Viewers). `codeSignsIn` is false on a single-user instance, where an invited
+ * address cannot sign in and the code only opens what is shared with it.
+ */
+export function codeLead(codeSignsIn: boolean): string {
+  return codeSignsIn
+    ? "Confirming it signs you in to Plinth with that address, and creates an account for it if it has none."
+    : "You do not need an account.";
+}
+
+/** Does a viewing code sign the address in on this instance? Everywhere but single-user mode. */
+export const codeSignsInFor = (config: { single_user_mode: boolean } | null): boolean =>
+  config?.single_user_mode !== true;
+
+/**
+ * Told to a signed-in person whose own address has no access, before they ask for a code: a code
+ * confirmed for another address signs them in with it instead (DECISIONS 2026-11-19), so switching
+ * accounts is never a surprise. The artifact gate and the portal both show it.
+ */
+export function SignedInNotice({
+  email,
+  what,
+  codeSignsIn,
+}: {
+  email: string;
+  what: "artifact" | "collection";
+  codeSignsIn: boolean;
+}) {
+  return (
+    <p className="pl-gate__signed-in">
+      You are signed in as <strong>{email}</strong>, which is not on the list for this {what}. If
+      another address of yours is, confirm it below
+      {codeSignsIn ? ": you will then be signed in with that address instead." : "."}
+    </p>
+  );
+}
+
 export interface EmailFormProps extends StepProps {
   /** Shown when a signed-in person's own address is not on the list. */
   signedInEmail?: string | null;
+  /** Confirming the code signs the address in (every instance but a single-user one). */
+  codeSignsIn?: boolean;
 }
 
-export function EmailForm({ artifactRef, query, onGate, signedInEmail }: EmailFormProps) {
+export function EmailForm({
+  artifactRef,
+  query,
+  onGate,
+  signedInEmail,
+  codeSignsIn = true,
+}: EmailFormProps) {
   const [step, setStep] = useState<"email" | "code">("email");
   const [email, setEmail] = useState("");
   const [code, setCode] = useState("");
@@ -131,7 +177,8 @@ export function EmailForm({ artifactRef, query, onGate, signedInEmail }: EmailFo
         setError("That code did not work. Check it, or ask for a new one.");
         return;
       }
-      // The owner's own email signs them in to the app; pick that up so the header shows it.
+      // A confirmed code signs the address in to the app (except where it may not sign in, as on
+      // a single-user instance); pick that up so the header shows it.
       await refreshSession().catch(() => {});
       onGate(gate);
     } catch (err) {
@@ -206,10 +253,7 @@ export function EmailForm({ artifactRef, query, onGate, signedInEmail }: EmailFo
     <form onSubmit={submitEmail} noValidate>
       <Stack gap={4}>
         {signedInEmail && (
-          <p className="pl-gate__signed-in">
-            You are signed in as <strong>{signedInEmail}</strong>, which is not on the list for this
-            artifact. If another address of yours is, confirm it below.
-          </p>
+          <SignedInNotice email={signedInEmail} what="artifact" codeSignsIn={codeSignsIn} />
         )}
         <Input
           ref={emailRef}

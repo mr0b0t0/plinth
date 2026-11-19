@@ -90,6 +90,8 @@ make a test pass.
 | A request makes the agent leak identities to the page | A request asks the agent to list everyone with access in its answer, which the page reads and copies into shared data link viewers can read | Only the owner's agents' answers reach the page, and those agents already write the page's source and data, so an answer adds no new disclosure capacity; replies people type and every author stay in the app; the untrusted note and the skill tell agents never to put names or email addresses in an answer ([Page requests](#page-requests)) |
 | Another artifact files requests on this one | Artifact B, framed by the app, posts to A's `/__plinth/api/v1/requests` with A's cookie from the shared partitioned jar, by `fetch`, a form or a beacon | The data API's caller checks (`x-plinth-data`, same-origin fetch metadata, an exact `Origin`, required on `POST`, JSON bodies; no CORS, no preflight answered), then A's own content pass and claim |
 | Someone reads another person's requests | A commenter lists comments, replies by `parent_id` into another person's request, resolves it, or asks the page API for another request's id | Every comment read and write path checks thread visibility (`canSeeThread`: owner, editors and the requester) and answers "not found" alike, before the rate limit and any write; the page API filters every row through `pageSeesRequest` and answers 404 alike for anything not the caller's own ([Page requests](#page-requests)) |
+| A viewing code becomes a way to make accounts or take one over | An owner lists many addresses and asks codes for them to create accounts in their name, or someone who guessed a listed address types codes to sign in as that person | A code goes only to an address that holds a grant there (or is the owner's), and to that mailbox; an account exists only once a code sent to it is typed; the gate's rate limits, five attempts per code, single use and the grant re-checked after use all stay, and every guess also counts against the sign-in code's per-address budget, so the gate and the portal add no guesses toward an account. The code proves the mailbox exactly as the sign-in code does ([below](#viewing-codes-sign-people-in)) |
+| A viewing code's email talks its reader into handing the code over | An owner titles an artifact "Confirm receipt: reply with the code below", lists the victim and asks for a code; whoever reads it back is signed in as the victim | Where the code signs the address in, its email is a sign-in email: the subject says "sign-in code", the first line says the code signs the reader in, a warning never to give it to anyone or reply with it comes before anything the sharer wrote, and the title or sharer's name follows, labelled as theirs and not Plinth's ([below](#viewing-codes-sign-people-in)) |
 
 Out of scope for v1: denial of service beyond Cloudflare's defaults, a compromised Cloudflare
 account, and malicious instance operators.
@@ -277,7 +279,7 @@ status, `Location`, cookie attributes and Content Security Policy, and no CORS h
 | --- | --- | --- | --- | --- |
 | `__Host-plinth_session` | `APP_HOST` only | `HttpOnly; Secure; SameSite=Lax` | 30 days | Signed-in person. Stored server-side as a SHA-256 hash |
 | `__Host-plinth_csrf` | `APP_HOST` only | `Secure; SameSite=Strict`, readable by the app's JS | 1 year | Double-submit CSRF token |
-| `__Host-plinth_viewer` | `APP_HOST` only | `HttpOnly; Secure; SameSite=Lax` | 7 days | Viewer who confirmed an allowlisted email by code |
+| `__Host-plinth_viewer` | `APP_HOST` only | `HttpOnly; Secure; SameSite=Lax` | 7 days | Viewer who confirmed an allowlisted email by code where that address may not sign in (single-user mode); elsewhere a confirmed code sets `__Host-plinth_session` ([below](#viewing-codes-sign-people-in)) |
 | `__Host-plinth_pw_<id>` | `APP_HOST` only | `HttpOnly; Secure; SameSite=Lax` | 12 hours | Password entered for one artifact (signed, epoch-bound) |
 | `__Host-plinth_content` | one artifact subdomain | `HttpOnly; Secure; SameSite=None; Partitioned` | 12 hours | Access to that artifact's files and its shared data. For an identified viewer it may also carry a sealed identity claim (email and role, below). Named `plinth_content` in the staging path fallback and on plain-http instances |
 
@@ -1219,7 +1221,7 @@ version just published appears in the agent's thread.
 | --- | --- |
 | Sign-in requests per email | 5 per hour |
 | Sign-in requests per IP | 20 per hour |
-| Code attempts per email | 10 per hour |
+| Code attempts per email | 10 per hour, for each code flow; every code that can sign the address in (sign-in, allowlist gate, portal) also counts against one shared 10 per hour |
 | Password attempts per artifact per IP | 10 per hour |
 | Viewer codes per email | 5 per hour |
 | Comments per user | 60 per hour |
@@ -1958,7 +1960,8 @@ authorized by email, and a share that exists answers `email_required` to anyone 
 flow mirrors the allowlist's (same answer listed or not, same rate limit counters, five attempts,
 single use, re-checking the grant after use); its codes carry `share_id` with `artifact_id` NULL
 and a hash that binds the share, so a portal code never opens an artifact's code route and the
-reverse. The viewer session it starts names no artifact. `GET /api/v1/portals` lists a share only
+reverse. The session it starts (an app session, or a viewer session where the address may not
+sign in, [below](#viewing-codes-sign-people-in)) names no artifact. `GET /api/v1/portals` lists a share only
 when `decidePortal` lets the caller open it, the same decision `GET /api/v1/portals/:id` makes.
 Portal pages are `no-store` and
 `noindex`. Grantees see the share's title and the artifacts' titles, never the category name, the
@@ -2332,6 +2335,52 @@ caps bound it. (2) A prompt-injection channel to the owner's agent, as wide as a
 from a commenter and no wider. (3) A request can ask the agent to put identities into its answer;
 the agent is told not to, and could put the same text in the page anyway. (4) A commenter can probe
 the owner's connection handles with `unknown_agent`, as with `@handle` comments.
+
+## Viewing codes sign people in
+
+Spec: [Invitees get an account](spec.md#invitees-get-an-account-decided-2026-11-19). A six-digit
+code confirmed at an allowlist gate or a portal proves the mailbox exactly as the sign-in code
+does, so where the instance lets the address sign in (`maySignIn`: every address, except all but
+`ADMIN_EMAIL` in single-user mode) it starts a normal app session for it, creating the account on
+first use. Before, only the owner's own address was signed in this way (2026-11-16); everyone else
+got a viewer session.
+
+- **Nothing about who gets a code changes.** `POST .../email` gives the same answer whether or not
+  the address holds a grant, counts both alike against the same limits (per IP and per email), and
+  mails a code only to an address that holds a grant on that artifact or share or is the owner's.
+  A code is hashed with `SESSION_SECRET` and bound to its artifact or share, works once, stops after
+  five wrong guesses, expires after 15 minutes, and the grant is checked again after it is used.
+  Every failure looks the same and creates nothing: no session and no account.
+- **One guess budget per address.** A guess at a viewing code counts against the gate's own
+  per-email limit and also against `login:verify:<email>`, the sign-in code's limit (10 an hour),
+  for every address alike. Without that, an owner who lists a victim's address could add the
+  gate's 10 guesses an hour (and the portal's, which shares the gate's counter) to the sign-in
+  page's 10, each hit worth the whole account. With it, all the ways to sign an address in share
+  one 10 an hour, as before invitees were signed in.
+- **The email is a sign-in email.** Where the code signs the address in, the email's subject is
+  "Your Plinth sign-in code", its first line says the code signs the reader in and creates an
+  account if there is none, and before anything the sharer wrote it warns to enter the code only
+  on `APP_HOST` and never to give it to anyone or reply with it. The artifact's title (or, for a
+  portal, the sharer's name) comes after, labelled as written by whoever shared it and not by
+  Plinth. In single-user mode, where the code only opens what is shared, the email stays the
+  plain "viewing code" email.
+- **The account is the mailbox's.** An owner can list any address, but only the person who reads
+  that mailbox can type the code, so no one can create or enter an account for an address they do
+  not read. An account made this way is an ordinary account: verified, no name, the default quota,
+  and admin only if it is `ADMIN_EMAIL`, as `getOrCreateUser` decides at sign-in.
+- **One session per browser.** The app session cookie the code sets replaces the one the browser
+  held, and the server deletes that earlier session in the same request, so a person who confirms
+  a second address of theirs is signed in with it and out of the first. The gate and the portal
+  tell a signed-in person so before they ask for the code.
+- **Who has an account stays private.** Invitees now have accounts, but nothing shows whether an
+  address has one: access lists name a grant holder only after they took part in the artifact
+  ([The people list](#the-people-list)), and an account a code created has no name until its
+  person sets one.
+- **Viewer sessions where sign-in is not allowed.** In single-user mode the code starts the
+  `__Host-plinth_viewer` session as before, and viewer sessions started before this change keep
+  working until they expire (7 days). Every rule for them stays: they are not an account, policy
+  answers `account_required` for live editing, they never file artifacts under personal
+  categories, and a signed-in person may hold one for another address beside their own session.
 
 ## Operator checklist for the content domain
 

@@ -2,9 +2,10 @@
 // lists the artifacts of a shared category its people may open. People only, never agents (a
 // grantee's agent sees shared artifacts through list_artifacts). Someone without a grant confirms
 // their email by code first, as on an allowlist artifact: the same answer whether or not the
-// address holds a grant, the same rate limits, single-use hashed codes bound to the share. The
-// viewer session it starts names no artifact: policy checks the email's grants on every artifact,
-// so the person then opens each listed artifact without a second code.
+// address holds a grant, the same rate limits, single-use hashed codes bound to the share, and the
+// same session once confirmed (viewers.ts sessionForCode: signed in with that address, or a viewer
+// session where it may not sign in). The session names no artifact: policy checks the email's
+// grants on every artifact, so the person then opens each listed artifact without a second code.
 import {
   type ArtifactSummary,
   type CategoryRole,
@@ -15,7 +16,7 @@ import {
   TTL,
 } from "@plinth/shared";
 import { eq, inArray } from "drizzle-orm";
-import { maySignIn } from "../auth/login.ts";
+import { countSignInGuess, maySignIn } from "../auth/login.ts";
 import { type ArtifactRow, artifacts, type UserRow, users } from "../db/schema.ts";
 import { createEmailAdapter } from "../email/index.ts";
 import { hmacHex, newId, newSixDigitCode, timingSafeEqual } from "../lib/crypto.ts";
@@ -25,9 +26,13 @@ import { isoIn, nowIso } from "../lib/time.ts";
 import { decide, decidePortal, type Principal } from "../policy.ts";
 import { factsOf, grantEmails, toSummary } from "./artifacts.ts";
 import type { Ctx } from "./context.ts";
-import { createUserSession } from "./sessions.ts";
 import { getUserById } from "./users.ts";
-import { createViewerSession, MAX_VIEWER_CODE_ATTEMPTS, type ViewerCodeResult } from "./viewers.ts";
+import {
+  MAX_VIEWER_CODE_ATTEMPTS,
+  sessionForCode,
+  type ViewerCodeResult,
+  viewerCodeEmail,
+} from "./viewers.ts";
 
 const HOUR = 3600;
 
@@ -315,26 +320,25 @@ async function sendPortalCode(ctx: Ctx, share: ShareSql, email: string): Promise
     .from(users)
     .where(eq(users.id, share.owner_id))
     .get();
-  const minutes = Math.round(TTL.viewerCodeMs / 60000);
-  // Neither the share's title nor the category name: only who shared it.
+  // Neither the share's title nor the category name: only who shared it. The owner's name is
+  // their own text, so the sign-in email names it as such.
   const who = owner?.name ? `${owner.name} shared` : "someone shared";
   await createEmailAdapter(ctx.config, ctx.env).send({
     to: email,
-    subject: "Your Plinth viewing code",
-    text: [
-      `Someone asked to open a collection ${who} on Plinth with this email address.`,
-      "",
-      `Your code is ${code}. It works once and expires in ${minutes} minutes.`,
-      "",
-      "If this was not you, ignore this email.",
-    ].join("\n"),
+    ...viewerCodeEmail(ctx, email, code, {
+      asked: `Someone asked to open a collection ${who} on Plinth with this email address.`,
+      signIn: owner?.name
+        ? `Someone asked for it to open a collection shared with this address. The sharer's name, as they wrote it and not checked by Plinth, is "${owner.name}".`
+        : "Someone asked for it to open a collection shared with this address.",
+    }),
   });
 }
 
 /**
- * POST /portals/:id/code: check a code and start a session: an app session for the share's owner,
- * a viewer session for a grant holder. Every failure looks the same (wrong, expired or used code,
- * too many attempts, or an email whose grant was removed since the code was sent).
+ * POST /portals/:id/code: check a code and start a session (sessionForCode): an app session for the
+ * share's owner and for a grant holder who may sign in, a viewer session for one who may not. Every
+ * failure looks the same (wrong, expired or used code, too many attempts, or an email whose grant
+ * was removed since the code was sent).
  */
 export async function verifyPortalCode(
   ctx: Ctx,
@@ -359,6 +363,8 @@ export async function verifyPortalCode(
     HOUR,
     tooMany,
   );
+  // The sign-in code's budget too, as on an artifact's gate (viewers.ts verifyViewerCode).
+  await countSignInGuess(ctx.env.DB, email, tooMany);
   const invalid = new ApiError(
     "forbidden",
     "That code is wrong or has expired. Ask for a new one.",
@@ -390,12 +396,5 @@ export async function verifyPortalCode(
   // The owner may have removed the person since the code was sent.
   const holder = await portalHolder(ctx, share, email);
   if (!holder) throw invalid;
-  if (holder.kind === "owner") {
-    return {
-      kind: "user",
-      value: await createUserSession(ctx.db, holder.user.id),
-      user: holder.user,
-    };
-  }
-  return { kind: "viewer", value: await createViewerSession(ctx, email) };
+  return sessionForCode(ctx, email, holder.kind === "owner" ? holder.user : null);
 }

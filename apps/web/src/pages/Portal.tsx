@@ -1,18 +1,20 @@
 // Page: /p/:id. A collection someone shared with you through a category (docs/spec.md "Category
 // sharing and personal categories"): its title, who shared it, and the artifacts the owner chose to
 // show, each opening on its own page. Someone not yet known confirms their email by a one-time code
-// first, as on a private artifact; that one confirmation then opens every artifact listed here.
+// first, as on a private artifact, which signs them in with it; that one confirmation then opens
+// every artifact listed here.
 import { FolderSimpleIcon } from "@phosphor-icons/react";
 import { API, APP_ROUTES, type PortalGate, route } from "@plinth/shared";
 import { type FormEvent, useEffect, useRef, useState } from "react";
 import { formatDateTime, formatRelativeShort } from "../components/account/format.ts";
 import { PublicShell } from "../components/layout/PublicShell.tsx";
 import { Button, ICON_SIZE, Input, Spinner, Stack } from "../components/ui/index.ts";
+import { codeLead, codeSignsInFor, SignedInNotice } from "../components/viewer/GateForms.tsx";
 import { gateErrorMessage } from "../components/viewer/gate.ts";
 import "../components/viewer/viewer.css";
 import { ApiRequestError, api } from "../lib/api.ts";
 import { Link } from "../lib/router.tsx";
-import { refreshSession } from "../lib/session.ts";
+import { refreshSession, useSession } from "../lib/session.ts";
 import NotFound from "./NotFound.tsx";
 
 type State =
@@ -24,9 +26,15 @@ type State =
 export function PortalEmailForm({
   id,
   onGate,
+  signedInEmail,
+  codeSignsIn = true,
 }: {
   id: string;
   onGate: (gate: PortalGate) => void;
+  /** Shown when a signed-in person's own address has no access to the collection. */
+  signedInEmail?: string | null;
+  /** Confirming the code signs the address in (every instance but a single-user one). */
+  codeSignsIn?: boolean;
 }) {
   const [step, setStep] = useState<"email" | "code">("email");
   const [email, setEmail] = useState("");
@@ -136,6 +144,9 @@ export function PortalEmailForm({
   return (
     <form onSubmit={askCode} noValidate>
       <Stack gap={4}>
+        {signedInEmail && (
+          <SignedInNotice email={signedInEmail} what="collection" codeSignsIn={codeSignsIn} />
+        )}
         <Input
           ref={emailRef}
           label="Email"
@@ -159,6 +170,8 @@ export default function Portal({ params }: { params: Record<string, string> }) {
   const id = params.id ?? "";
   const [state, setState] = useState<State>({ status: "loading" });
   const [now] = useState(() => Date.now());
+  const { me, config } = useSession();
+  const codeSignsIn = codeSignsInFor(config);
 
   useEffect(() => {
     const ctrl = new AbortController();
@@ -215,9 +228,14 @@ export default function Portal({ params }: { params: Record<string, string> }) {
           </h1>
           <p className="pl-gate__lead">
             Only the people this collection is shared with can open it. Confirm your email address
-            with a one-time code. You do not need an account.
+            with a one-time code. {codeLead(codeSignsIn)}
           </p>
-          <PortalEmailForm id={id} onGate={(g) => setState({ status: "gate", gate: g })} />
+          <PortalEmailForm
+            id={id}
+            onGate={(g) => setState({ status: "gate", gate: g })}
+            signedInEmail={me?.email ?? null}
+            codeSignsIn={codeSignsIn}
+          />
         </section>
       </PublicShell>
     );

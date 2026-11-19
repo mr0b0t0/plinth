@@ -1482,7 +1482,8 @@ function liveSchemas(): Record<string, Json> {
       ]),
       description:
         "On-page editing of a doc: owners and editors on the current version, while live editing " +
-        "is on with origin isolation. sign_in: confirmed by code without an account (watch only)",
+        "is on with origin isolation. sign_in: a viewer session, confirmed by code where the " +
+        "address may not sign in (single-user mode), so watch only",
     },
     ViewGateVoice: {
       ...obj(
@@ -1810,7 +1811,10 @@ function categorySharingOperations(): Operation[] {
       path: API.portalCode,
       operationId: "portalCode",
       summary: "Confirm a shared collection's code",
-      description: `Sets the \`${COOKIES.viewer}\` cookie on APP_HOST (or signs the owner in).`,
+      description:
+        `Signs the address in: sets the \`${COOKIES.session}\` cookie on APP_HOST, creating the ` +
+        "account on first use and ending the app session the browser held before. Where the " +
+        `address may not sign in (single-user mode) it sets the \`${COOKIES.viewer}\` cookie instead.`,
       tag: "Viewing",
       auth: "optional",
       body: "ViewerCodeInput",
@@ -2467,7 +2471,10 @@ function operations(): Operation[] {
       path: API.viewCode,
       operationId: "viewCode",
       summary: "Confirm an allowlisted email with its code",
-      description: `Sets the \`${COOKIES.viewer}\` cookie on APP_HOST.`,
+      description:
+        `Signs the address in: sets the \`${COOKIES.session}\` cookie on APP_HOST, creating the ` +
+        "account on first use and ending the app session the browser held before. Where the " +
+        `address may not sign in (single-user mode) it sets the \`${COOKIES.viewer}\` cookie instead.`,
       tag: "Viewing",
       auth: "optional",
       body: "ViewerCodeInput",

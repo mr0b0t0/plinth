@@ -267,7 +267,7 @@ Rules for builds:
 Change visibility only when the person asks, with `set_visibility`:
 
 - `allowlist`: private; pass `emails` to let specific people in (they confirm their address with an
-  emailed code). With no emails, only the person and their collaborators can open it.
+  emailed code, which signs them in to Plinth). With no emails, only the person and their collaborators can open it.
 - `unlisted`: anyone with the link.
 - `password`: anyone with the link and the password (at least 6 characters). Tell them to send the
   password separately from the link.
@@ -330,7 +330,7 @@ support it.
   thread, read-only), `expired` or `network`.
 - `plinth.viewer` is `{ id, email, name, role }`, or `null` for anonymous link viewers. `email`
   and `name` are set only with `viewer` declared; `name` is the person's display name and may be
-  `null` (no name set, or confirmed by email code without an account): show `name || email`
+  `null` (no name set, or a viewer session on a single-user instance): show `name || email`
   there. `id` is stable for one person on this artifact.
 - `const c = plinth.db.collection("votes")` (names: a lowercase letter, then up to 39 of `a-z`,
   `0-9`, `_`, `-`), then:
@@ -1035,9 +1035,9 @@ reads the live project, and Plinth never reads it either.
 When the person wants a client, an approver or anyone outside their team to approve something,
 answer questions or tick items on a page:
 
-- **No account needed.** Share it with `set_visibility` (`visibility: "allowlist"`, `emails`) when
+- **No sign-up needed.** Share it with `set_visibility` (`visibility: "allowlist"`, `emails`) when
   the person asks; it replaces the list, so include everyone who should keep access. Each one confirms their
-  email with an emailed code. The viewer role is enough to write the page's shared data; the
+  email with an emailed code, which signs them in (see "People you share with sign in by code"). The viewer role is enough to write the page's shared data; the
   commenter and editor roles are set in the app's Share dialog.
 - **Decisions in the HTML, contributions in data.** What only the owner's side decides (what is
   approved and its revision, how many approvals count, the questions, the checklist items, whether
@@ -1333,3 +1333,19 @@ page's text), `request_data` and `requester_role`. Claim it, then publish a vers
 `reply_comment`: `result_version` when you published, `done: true` when you did not, `failed: true`
 with the reason when you will not. The page shows your reply text to the requester: never put
 people's names or email addresses in it.
+
+## People you share with sign in by code
+
+When the person shares an artifact (or, in the app, a category) by email, each address confirms
+itself with a six-digit code Plinth emails. Confirming it signs that person in to Plinth with the
+address, and creates their account the first time, so they then find it under Shared on their
+dashboard and can come back without a new code. Nobody has to sign up first.
+
+- When you hand over a private link, you may say: "They open the link, confirm their email with
+  the code Plinth sends, and are signed in."
+- Only addresses on the list get a code, and only the person who reads that mailbox can use it. A
+  stranger who asks gets the same answer and no email.
+- On a single-user instance only its owner may sign in: there, the people it shares with get a
+  viewer session that opens what is shared with them, with no account and no dashboard.
+- An editor who confirmed by code can edit a doc on its page like any signed-in editor. On a
+  single-user instance they watch the edits and cannot join them.

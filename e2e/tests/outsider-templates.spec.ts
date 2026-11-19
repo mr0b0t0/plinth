@@ -1,8 +1,8 @@
 // The example pages for people outside the owner's team (docs/examples/README.md), end to end:
 // an approval sign-off, a client intake form and a client checklist, each published by the owner's
-// agent and shared by email with people who have no account and confirm by code. What the owner's
-// side decides is in the HTML and changes by a new version; what participants contribute is shared
-// data, and each page counts only what the server's stamps vouch for.
+// agent and shared by email with people who have no account yet and confirm by code. What the
+// owner's side decides is in the HTML and changes by a new version; what participants contribute
+// is shared data, and each page counts only what the server's stamps vouch for.
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { type Browser, expect, type Frame, type Page, test } from "@playwright/test";
@@ -105,7 +105,7 @@ test("approval sign-off: two outside approvers, a new revision, moderation and a
     expect(APPROVAL).toContain('data-required="2"');
     const art = await publishFor(client, "Approval: Website redesign proposal", APPROVAL, [a, b]);
 
-    // A confirms by code (no account) and approves with a note.
+    // A confirms by code (which signs them in) and approves with a note.
     const pageA = await invitee(browser, art.url, a, true);
     pages.push(pageA);
     await readyFrame(pageA);

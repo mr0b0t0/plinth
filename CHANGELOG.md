@@ -53,6 +53,17 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   `@tostring` or another name JavaScript objects carry by default failed with an internal error.
   Such a name is now an ordinary handle: it reaches the owner's connection whose label normalizes
   to it, and a page request sent to it without such a connection is refused as `unknown_agent`.
+- **People you share with get an account.** Confirming the emailed code at an artifact's gate or
+  a shared collection now signs the person in to Plinth with that address, creating their account
+  the first time, as the owner's own code already did. What is shared with them then shows under
+  Shared on their dashboard, they can come back without a new code, and an editor can edit a doc
+  on its page. The gate, the email and the privacy notice say so, and the gate and the shared
+  collection tell someone already signed in that confirming another address switches them to it.
+  The code's email is now a sign-in email ("Your Plinth sign-in code"), warning never to give the
+  code to anyone before it shows the title the sharer wrote, and wrong guesses at it count
+  against the same per-address limit as the sign-in code. On a single-user instance, where only
+  the admin may sign in, the code still starts a viewer session without an account, and viewer
+  sessions started earlier keep working until they expire.
 - **Follow the presenter in a deck.** An owner or editor can turn on **Lead viewers** in a deck's
   controls or presenter view, and the people the deck is shared with who have it open follow their
   slide, with a "Following the presenter" note; paging by hand pauses it until they choose "Back to

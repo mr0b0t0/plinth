@@ -119,6 +119,26 @@ export async function requestLogin(deps: LoginDeps, email: string): Promise<void
   }
 }
 
+/**
+ * Count one guess at a code that can sign `email` in, against the one per-address budget every
+ * such code shares: the sign-in code here, and a viewing code at an allowlist gate or a portal,
+ * which signs the address in too (docs/spec.md "Invitees get an account"). Sharing the bucket
+ * means a second route to an account never adds guesses against it.
+ */
+export function countSignInGuess(
+  d1: D1Database,
+  email: string,
+  message = "Too many attempts. Request a new code later.",
+): Promise<void> {
+  return enforce(
+    d1,
+    `login:verify:${email}`,
+    RATE_LIMITS.codeAttemptsPerEmailPerHour,
+    HOUR,
+    message,
+  );
+}
+
 /** Check a six-digit code. On success the code is consumed and the user exists and is verified. */
 export async function verifyLoginCode(
   deps: LoginDeps,
@@ -126,13 +146,7 @@ export async function verifyLoginCode(
   code: string,
 ): Promise<UserRow> {
   const { config, db, d1 } = deps;
-  await enforce(
-    d1,
-    `login:verify:${email}`,
-    RATE_LIMITS.codeAttemptsPerEmailPerHour,
-    HOUR,
-    "Too many attempts. Request a new code later.",
-  );
+  await countSignInGuess(d1, email);
   if (!maySignIn(config, email)) throw new ApiError("invalid_input", INVALID);
 
   const row = await db

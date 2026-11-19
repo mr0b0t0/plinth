@@ -41,12 +41,16 @@ const DECLARED = `<!doctype html><title>Poll</title>
 <meta name="plinth-capabilities" content="data viewer">
 <p>poll</p>`;
 
-async function run(path: string, init: RequestInit = {}): Promise<Response> {
+async function run(
+  path: string,
+  init: RequestInit = {},
+  vars: Record<string, string> = {},
+): Promise<Response> {
   const ctx = createExecutionContext();
   const url = path.startsWith("http") ? path : `${APP}${path}`;
   const res = await worker.fetch(
     new Request(url, { redirect: "manual", ...init }),
-    env as never,
+    { ...env, ...vars } as never,
     ctx,
   );
   await waitOnExecutionContext(ctx);
@@ -65,8 +69,15 @@ function browser(extraCookie = "") {
   };
 }
 
-const post = (path: string, headers: Record<string, string>, body: unknown) =>
-  run(path, { method: "POST", headers, body: JSON.stringify(body) });
+const post = (
+  path: string,
+  headers: Record<string, string>,
+  body: unknown,
+  vars: Record<string, string> = {},
+) => run(path, { method: "POST", headers, body: JSON.stringify(body) }, vars);
+
+/** A single-user instance: only its admin may sign in, so a code starts a viewer session. */
+const SINGLE_USER = { SINGLE_USER_MODE: "true", ADMIN_EMAIL: "identity-admin@example.com" };
 
 async function codeFor(email: string): Promise<string> {
   const [mail] = await db()
@@ -80,9 +91,14 @@ async function codeFor(email: string): Promise<string> {
   return code;
 }
 
-async function confirmByCode(ref: string, email: string, headers = browser()) {
-  expect((await post(`/api/v1/view/${ref}/email`, headers, { email })).status).toBe(200);
-  return post(`/api/v1/view/${ref}/code`, headers, { email, code: await codeFor(email) });
+async function confirmByCode(
+  ref: string,
+  email: string,
+  headers: Record<string, string> = browser(),
+  vars: Record<string, string> = {},
+) {
+  expect((await post(`/api/v1/view/${ref}/email`, headers, { email }, vars)).status).toBe(200);
+  return post(`/api/v1/view/${ref}/code`, headers, { email, code: await codeFor(email) }, vars);
 }
 
 const viewerCookieOf = (res: Response) => (res.headers.get("set-cookie") ?? "").split(";")[0] ?? "";
@@ -166,8 +182,11 @@ async function passFor(artifactId: string, cookie: string) {
   return readContentPass(req, config(), row);
 }
 
-const gateHttp = async (ref: string, headers?: Record<string, string>) =>
-  json<ViewGate>(await call(`/api/v1/view/${ref}`, { headers }));
+const gateHttp = async (
+  ref: string,
+  headers?: Record<string, string>,
+  vars: Record<string, string> = {},
+) => json<ViewGate>(await run(`/api/v1/view/${ref}`, { headers }, vars));
 
 // ---------- sealing ----------
 
@@ -253,15 +272,30 @@ describe("identity claim: issued for identified viewers", () => {
       expect(pass?.claim).toMatchObject({ email: user.email, role });
     });
 
-    it(`a ${role} confirmed by email code, on the code response and on later visits`, async () => {
+    it(`a ${role} confirmed by email code is signed in: on the code response and on later visits`, async () => {
       const email = uniqueEmail(`code-${role}`);
       const { artifact } = await pub("allowlist", { emails: [email] });
       await grant(artifact.id, email, role);
       const ok = await confirmByCode(artifact.id, email);
       expect(ok.status).toBe(200);
       const gate = await json<ViewGate>(ok);
-      expect(await claimIn(gate)).toEqual({ m: email, r: role });
+      expect(await claimIn(gate)).toEqual({ m: email, r: role, a: 1 });
       const again = await gateHttp(artifact.id, { Cookie: viewerCookieOf(ok) });
+      expect(await claimIn(again)).toEqual({ m: email, r: role, a: 1 });
+      const { pass } = await passFrom(again);
+      expect(pass?.claim).toMatchObject({ email, role });
+    });
+
+    it(`a ${role} confirmed by email code where it may not sign in has a viewer session, no account flag`, async () => {
+      const email = uniqueEmail(`code-single-${role}`);
+      const { artifact } = await pub("allowlist", { emails: [email] });
+      await grant(artifact.id, email, role);
+      const ok = await confirmByCode(artifact.id, email, browser(), SINGLE_USER);
+      expect(ok.status).toBe(200);
+      expect(viewerCookieOf(ok)).toMatch(/^__Host-plinth_viewer=/);
+      const gate = await json<ViewGate>(ok);
+      expect(await claimIn(gate)).toEqual({ m: email, r: role });
+      const again = await gateHttp(artifact.id, { Cookie: viewerCookieOf(ok) }, SINGLE_USER);
       expect(await claimIn(again)).toEqual({ m: email, r: role });
       const { pass } = await passFrom(again);
       expect(pass?.claim).toMatchObject({ email, role });
@@ -281,18 +315,23 @@ describe("identity claim: issued for identified viewers", () => {
   });
 
   it("the alternate viewer path carries the email that holds the grant", async () => {
-    const user = await createUser();
+    // Single-user mode: the signed-in admin confirms another address, which may not sign in, so
+    // the browser holds the admin's session and a viewer session.
+    const user = await createUser(uniqueEmail("admin"));
+    const single = { SINGLE_USER_MODE: "true", ADMIN_EMAIL: user.email };
     const listed = uniqueEmail("work");
     const { artifact } = await pub("allowlist", { emails: [listed] });
     const s = await browserSession(user.id);
-    const ok = await confirmByCode(artifact.id, listed, {
-      ...browser(),
-      ...s.headers,
-      "Content-Type": "application/json",
-    });
+    const ok = await confirmByCode(
+      artifact.id,
+      listed,
+      { ...browser(), ...s.headers, "Content-Type": "application/json" },
+      single,
+    );
     expect((await json<ViewGate>(ok)).status).toBe("ok");
+    expect(viewerCookieOf(ok)).toMatch(/^__Host-plinth_viewer=/);
     const both = `${s.headers.Cookie}; ${viewerCookieOf(ok)}`;
-    const gate = await gateHttp(artifact.id, { Cookie: both });
+    const gate = await gateHttp(artifact.id, { Cookie: both }, single);
     expect(await claimIn(gate)).toEqual({ m: listed, r: "viewer", a: 1 });
 
     // Directly: a user principal whose own email is not listed, with the confirmed viewer email.
@@ -416,7 +455,7 @@ describe("identity claim: tokens and cookies", () => {
     const { artifact } = await pub("allowlist", { emails: [email] });
     const ok = await confirmByCode(artifact.id, email);
     const gate = asOk(await json<ViewGate>(ok));
-    expect(await claimIn(gate)).toEqual({ m: email, r: "viewer" });
+    expect(await claimIn(gate)).toEqual({ m: email, r: "viewer", a: 1 });
     const local = email.split("@")[0] ?? "";
     expect(gate.enter_url).not.toContain(local);
     expect(decodeURIComponent(gate.enter_url)).not.toContain(local);

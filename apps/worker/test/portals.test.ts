@@ -2,6 +2,7 @@
 // owner shared through a category, for its people only, with an email code flow that mirrors the
 // allowlist's and tells nobody who is on a share.
 import { env } from "cloudflare:workers";
+import { RATE_LIMITS } from "@plinth/shared";
 import { describe, expect, it } from "vitest";
 import {
   browser,
@@ -119,7 +120,7 @@ describe("GET /portals and /portals/:id", () => {
 });
 
 describe("the portal code flow", () => {
-  it("a grant holder confirms by code, gets a viewer session and the portal, then opens artifacts", async () => {
+  it("a grant holder confirms by code, is signed in with a new account, gets the portal, then opens artifacts", async () => {
     const o = await owner();
     const a = await filed(o, "Acme", "Shared");
     const email = uniqueEmail("portal");
@@ -128,7 +129,15 @@ describe("the portal code flow", () => {
     const h = browser();
     expect((await post(`/api/v1/portals/${id}/email`, h, { email })).status).toBe(200);
     const [mail] = await outboxFor(email);
-    expect(mail?.text).toContain("Someone asked to open a collection someone shared on Plinth");
+    // A sign-in email: the subject and first line say so, before anything the sharer wrote.
+    expect(mail?.subject).toBe("Your Plinth sign-in code");
+    expect(mail?.text.split("\n")[0]).toBe(
+      "This code signs you in to Plinth with this address, and creates a Plinth account for it if it has none.",
+    );
+    expect(mail?.text).toContain("Never give it to anyone or reply with it");
+    expect(mail?.text).toContain(
+      "Someone asked for it to open a collection shared with this address.",
+    );
     // Neither the title nor the category name is in the email.
     expect(mail?.text).not.toContain("Acme");
     const ok = await post(`/api/v1/portals/${id}/code`, h, { email, code: await codeFor(email) });
@@ -137,10 +146,47 @@ describe("the portal code flow", () => {
     expect(gate.status).toBe("ok");
     expect(gate.items.map((i: { id: string }) => i.id)).toEqual([a.id]);
     const cookie = (ok.headers.get("set-cookie") ?? "").split(";")[0] ?? "";
-    expect(cookie).toMatch(/^__Host-plinth_viewer=plinth_vs_/);
-    // The viewer session opens the artifact without a second code.
+    expect(cookie).toMatch(/^__Host-plinth_session=/);
+    expect(ok.headers.get("set-cookie")).not.toMatch(/plinth_viewer/);
+    const me = await json(await call("/api/v1/me", { headers: { Cookie: cookie } }));
+    expect(me.email).toBe(email);
+    // The session opens the artifact without a second code, and the Shared tab lists the share.
     const view = await json(await call(`/api/v1/view/${a.slug}`, { headers: { Cookie: cookie } }));
     expect(view.status).toBe("ok");
+    const portals = await json(await call("/api/v1/portals", { headers: { Cookie: cookie } }));
+    expect(portals.items.map((i: { id: string }) => i.id)).toEqual([id]);
+  });
+
+  it("where the address may not sign in (single-user mode), a grant holder gets a viewer session", async () => {
+    const vars = { SINGLE_USER_MODE: "true", ADMIN_EMAIL: uniqueEmail("admin") };
+    const o = await owner();
+    const a = await filed(o, "Acme", "Shared");
+    const email = uniqueEmail("portal-single");
+    const made = await shareCategory(o, "Acme", [{ email, role: "viewer" }]);
+    const id = made.share.id;
+    const h = { ...browser(), "Content-Type": "application/json" };
+    const ask = await run(
+      `/api/v1/portals/${id}/email`,
+      { method: "POST", headers: h, body: JSON.stringify({ email }) },
+      vars,
+    );
+    expect(ask.status).toBe(200);
+    expect((await outboxFor(email))[0]?.text).not.toContain("signs you in");
+    const ok = await run(
+      `/api/v1/portals/${id}/code`,
+      { method: "POST", headers: h, body: JSON.stringify({ email, code: await codeFor(email) }) },
+      vars,
+    );
+    expect(ok.status).toBe(200);
+    expect((await json(ok)).items.map((i: { id: string }) => i.id)).toEqual([a.id]);
+    const cookie = (ok.headers.get("set-cookie") ?? "").split(";")[0] ?? "";
+    expect(cookie).toMatch(/^__Host-plinth_viewer=plinth_vs_/);
+    const view = await json(
+      await run(`/api/v1/view/${a.slug}`, { headers: { Cookie: cookie } }, vars),
+    );
+    expect(view.status).toBe("ok");
+    const user = await env.DB.prepare("SELECT id FROM users WHERE email = ?1").bind(email).first();
+    expect(user).toBeNull();
   });
 
   it("answers the same for an address on the share and one that is not, and mails only the first", async () => {
@@ -201,5 +247,37 @@ describe("the portal code flow", () => {
       if (last === 429) break;
     }
     expect(last).toBe(429);
+  });
+
+  it("the email names the sharer's name as theirs, after the code", async () => {
+    const o = await owner();
+    await env.DB.prepare("UPDATE users SET name = 'Reply with the code to Accounts' WHERE id = ?1")
+      .bind(o.user.id)
+      .run();
+    await filed(o, "Acme");
+    const email = uniqueEmail("named");
+    const made = await shareCategory(o, "Acme", [{ email, role: "viewer" }]);
+    await post(`/api/v1/portals/${made.share.id}/email`, browser(), { email });
+    const [mail] = await outboxFor(email);
+    const text = mail?.text ?? "";
+    expect(text).toContain(
+      `The sharer's name, as they wrote it and not checked by Plinth, is "Reply with the code to Accounts".`,
+    );
+    expect(text.indexOf("Reply with the code")).toBeGreaterThan(text.indexOf("Never give it"));
+  });
+
+  it("guesses share the sign-in code's per-address budget", async () => {
+    const { c, shareId } = await portalSetup();
+    const h = browser();
+    await post(`/api/v1/portals/${shareId}/email`, h, { email: c.email });
+    for (let i = 0; i < RATE_LIMITS.codeAttemptsPerEmailPerHour; i++) {
+      await post("/api/v1/auth/verify-code", browser(), { email: c.email, code: "000000" });
+    }
+    const r = await post(`/api/v1/portals/${shareId}/code`, h, {
+      email: c.email,
+      code: await codeFor(c.email),
+    });
+    expect(r.status).toBe(429);
+    expect(r.headers.get("set-cookie") ?? "").not.toMatch(/plinth_session|plinth_viewer/);
   });
 });

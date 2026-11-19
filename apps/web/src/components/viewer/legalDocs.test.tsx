@@ -39,3 +39,17 @@ describe("privacy notice: shared categories", () => {
     }
   });
 });
+
+const forMode = (single_user_mode: boolean) =>
+  JSON.stringify(legalDoc("privacy", { ...CONFIG, single_user_mode }), (_k, v) =>
+    typeof v === "function" ? "" : v,
+  );
+
+describe("privacy notice: a viewing code signs the address in", () => {
+  it("says confirming the code creates an account, except on a single-user instance", () => {
+    const sentence =
+      "confirming the code we email you there signs you in and creates a Plinth account for that address if it has none";
+    expect(forMode(false)).toContain(sentence);
+    expect(forMode(true)).not.toContain(sentence);
+  });
+});

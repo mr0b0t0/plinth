@@ -40,7 +40,7 @@ export const PLUGIN = {
    * `version` (one minor above main, so installed plugins update), then run `pnpm integrations`,
    * which records both here; it refuses while `version` still equals `skillHashVersion`.
    */
-  skillHash: "7cef7c3f6ac4050f5f7b30d0f8e56af8964d877f6c9c92c938593985e3052631",
+  skillHash: "c41c24942bf4952933e0a68e3d3c3cc0e619bc4ffb7ba73836d3837b642b53f5",
   skillHashVersion: "0.15.0",
   description:
     "Publish, update and share HTML artifacts and Markdown documents on Plinth: the Plinth MCP server plus a skill with its publishing rules",

@@ -4,7 +4,7 @@ import type { ArtifactSummary } from "@plinth/shared";
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { apiError, json, stubApi } from "../components/viewer/test-utils.ts";
+import { apiError, CONFIG, json, ME, stubApi } from "../components/viewer/test-utils.ts";
 
 async function loadPage() {
   vi.resetModules();
@@ -90,6 +90,39 @@ describe("Portal", () => {
     expect(await screen.findByRole("heading", { name: "Acme Corp: reports" })).toBeTruthy();
     const code = api.calls.find((c) => c.path === `/portals/${ID}/code`);
     expect(code?.body).toEqual({ email: "client@example.org", code: "123456" });
+  });
+
+  it("tells a signed-in person without access that confirming another address signs them in with it", async () => {
+    stubApi({
+      me: ME,
+      handle: (c) =>
+        c.path === `/portals/${ID}`
+          ? json({ status: "email_required", portal: { id: ID } })
+          : undefined,
+    });
+    const Portal = await loadPage();
+    render(<Portal params={{ id: ID }} />);
+    const notice = await screen.findByText(/You are signed in as/);
+    expect(notice.textContent).toBe(
+      "You are signed in as ada@example.org, which is not on the list for this collection. If another address of yours is, confirm it below: you will then be signed in with that address instead.",
+    );
+  });
+
+  it("on a single-user instance, the notice does not say the code switches accounts", async () => {
+    stubApi({
+      me: ME,
+      config: { ...CONFIG, single_user_mode: true },
+      handle: (c) =>
+        c.path === `/portals/${ID}`
+          ? json({ status: "email_required", portal: { id: ID } })
+          : undefined,
+    });
+    const Portal = await loadPage();
+    render(<Portal params={{ id: ID }} />);
+    const notice = await screen.findByText(/You are signed in as/);
+    expect(notice.textContent).toContain("If another address of yours is, confirm it below.");
+    expect(notice.textContent).not.toContain("instead");
+    expect(screen.getByText(/You do not need an account\./)).toBeTruthy();
   });
 
   it("an unknown portal is not found", async () => {
