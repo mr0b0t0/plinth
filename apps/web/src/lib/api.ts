@@ -184,7 +184,7 @@ export function liveInfo(ref: string, signal?: AbortSignal): Promise<LiveInfo> {
   return api<LiveInfo>(route(API.live, { ref }), { signal });
 }
 
-/** Publish the live draft as a version (Publish, Done, an idle autosave, or "Publish mine"). */
+/** Publish the live draft as a version (Publish, Done, an idle autosave, or "Publish your changes"). */
 export function liveCheckpoint(
   ref: string,
   body: LiveCheckpointInput,
@@ -194,7 +194,7 @@ export function liveCheckpoint(
 
 /**
  * Drop the unpublished page edits at draft revision `rev`; with `conflictVersion`, only a draft
- * frozen against exactly that version ("Discard mine" in the review).
+ * frozen against exactly that version ("Discard your changes" in the review).
  */
 export function liveDiscard(ref: string, rev: number, conflictVersion?: number): Promise<void> {
   const q = `?rev=${rev}${conflictVersion !== undefined ? `&conflict_version=${conflictVersion}` : ""}`;

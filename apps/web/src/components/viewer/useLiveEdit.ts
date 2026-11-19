@@ -18,8 +18,8 @@
 //
 // A version published while the page changes were not combined with it freezes them: the frame
 // shows the whole-draft review (renderers/common/review.ts), and the person's choice comes back as
-// `resolved`. "Publish mine" is POST live/checkpoint with conflict_version (room), or PUT with
-// base_version: n and files_from_version: the draft's base (solo); "Discard mine" is DELETE
+// `resolved`. "Publish your changes" is POST live/checkpoint with conflict_version (room), or PUT with
+// base_version: n and files_from_version: the draft's base (solo); "Discard your changes" is DELETE
 // live/draft with conflict_version (room), or dropping the tab copy (solo). The app answers the
 // frame with `reviewed`, so its buttons say when another editor is choosing.
 //
@@ -198,7 +198,7 @@ export function useLiveEdit({
   const savingRef = useRef(false);
   const reviewRef = useRef<LiveReview | null>(null);
   reviewRef.current = review;
-  /** Solo: the kept copy a review is of (saveRestore), which its "Publish mine" publishes. */
+  /** Solo: the kept copy a review is of (saveRestore), which its "Publish your changes" publishes. */
   const keptReview = useRef<{ nonce: string; text: string } | null>(null);
 
   // ---------- errors ----------
@@ -240,7 +240,7 @@ export function useLiveEdit({
     const s = latest.current.status;
     if (latest.current.mode === "solo") return;
     if (s?.conflict_version == null) {
-      toast("Nothing to review: the page changes were kept on top of the new version.", "neutral");
+      toast("Nothing to review: your changes were kept on top of the new version.", "neutral");
       return;
     }
     const nonce = newNonce();
@@ -454,7 +454,7 @@ export function useLiveEdit({
       } catch (e) {
         const code = reasonOf(e);
         if (code === "live_unpublishable") {
-          if (reason !== "idle") toast("These page changes can't be published yet.", "neutral");
+          if (reason !== "idle") toast("These changes can't be published yet.", "neutral");
           return false;
         }
         fail(e, code === "live_conflict" ? () => void openReview() : undefined);
@@ -509,7 +509,8 @@ export function useLiveEdit({
       if (code === "live_resolved") return done("resolved");
       if (code === "live_conflict") return done("conflict");
       done("failed");
-      if (code === "live_moved") toast("The page changes moved on. Review them again.", "warning");
+      if (code === "live_moved")
+        toast("The unpublished changes moved on. Review them again.", "warning");
       else fail(e);
     };
     if (r.mode === "room") {
@@ -637,7 +638,7 @@ export function useLiveEdit({
     }
     try {
       await liveDiscard(id, s.rev);
-      showToast({ title: "Unpublished page changes discarded." });
+      showToast({ title: "Unpublished changes discarded." });
     } catch (e) {
       fail(e);
     }

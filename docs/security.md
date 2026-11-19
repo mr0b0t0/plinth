@@ -54,7 +54,7 @@ make a test pass.
 | Carried state leaks to another artifact or viewer | A page's `{ state }`, handed to its next version, is read by another artifact, the app or the next person on a shared browser | It lives only in the content origin's `sessionStorage` (one tab, one artifact, partitioned under the app), at most 16 KiB, read and removed by the next version within 30 s; nothing crosses to the app; under opaque isolation there is no storage and nothing is carried ([Keeping state across versions](#keeping-state-across-versions)) |
 | A doc shown in place runs author HTML | The renderer re-renders a newer version's Markdown inside the open frame | The Markdown comes from the frame's own origin (`/__plinth/v/<n>/content.md`, `connect-src 'self'`, the pass it holds, served as text that runs nothing) and goes through the same Markdown pass and sanitizer as at boot; the app sends only the version number and a nonce, and only at the exact content origin ([Keeping state across versions](#keeping-state-across-versions)) |
 | A forged editing message from another document | A page the editor's frame navigated to, or another frame, posts `save`, `draft` or a review choice to the app | Editing messages are read only from the window of the frame the app holds, at its exact content origin, with that frame load's random key (from the fragment, removed before anything renders), and a choice only for the app's own review nonce; none at all under opaque isolation; the server decides every choice against the room's own state ([Inline editing](#inline-editing)) |
-| A review choice combines both sides, or both choices take effect | "Publish mine" carries the newer version's files under the draft's text, or a discard lands while "Publish mine" is saving and the next autosave reverts the new version | "Publish mine" stages the room's own draft with its base version's files only (`files_from_version`); both choices and every discard take the room's checkpoint lock and are checked against the version and revision reviewed; a save that outlived its lock never finishes onto replaced lines (the draft's epoch) ([Inline editing](#inline-editing)) |
+| A review choice combines both sides, or both choices take effect | "Publish your changes" carries the newer version's files under the draft's text, or a discard lands while "Publish your changes" is saving and the next autosave reverts the new version | "Publish your changes" stages the room's own draft with its base version's files only (`files_from_version`); both choices and every discard take the room's checkpoint lock and are checked against the version and revision reviewed; a save that outlived its lock never finishes onto replaced lines (the draft's epoch) ([Inline editing](#inline-editing)) |
 | A draft no Publish can save | A person types `<html> basics` as a doc's first paragraph, or deletes the block above one, and every save is refused | The live rules mirror the publish hooks' source checks (a parity test pins them); the doc editor escapes a leading `<html` as `\<html`; an edit that would break a rule is refused with the reason and the block is put back ([Inline editing](#inline-editing)) |
 | Enumerating who has an account | A caller tries addresses to learn which ones have a Plinth account or what they are called, for example by adding them as grants on an artifact of their own and reading the people list or the sharing settings back | No route takes an email or a name to look up, and the people list searches only one artifact's access list. Since the owner writes that list without its holders being told, an access list shows a grant holder's name only once that person has taken part in the artifact (a comment, a shared-data entry or a version, which already show their name to the readers of the list), and a name it keeps back is `null` and never matched by `q`, the same as an address with no account (`policy.ts accessListShowsName`) |
 | An agent files a private artifact into a shared category | A prompt-injected or confused agent publishes another client's report with `category: "acme"`, or moves one there with `update_artifact` or `PATCH` | Filing never shares: the artifact waits as pending, and the category's people cannot open, list, find or get a code for it until the signed-in owner reviews it in the app; agents and bearer tokens cannot review; the owner's agent is told `category_share.state: "pending"` with the review link; tool descriptions say never to file because of comment, mention or page text ([Category sharing](#category-sharing)) |
@@ -2495,9 +2495,9 @@ sheet's frame still runs only Plinth's renderer (`script-src 'self'`).
   draft itself (each with the same files), the room freezes the draft (leases end; edits and
   `struct` frames are refused), and the editors choose between the two whole sheets in the
   whole-draft review ([Inline editing](#inline-editing)). No text comes from the app: "Publish
-  mine" publishes the room's own frozen draft on top of the version published meanwhile, which
-  stays in the history, and "Discard mine" returns to that version, which writes nothing. So a
-  modified client cannot save a combination neither side wrote. Both choices and every discard
+  your changes" publishes the room's own frozen draft on top of the version published meanwhile,
+  which stays in the history, and "Discard your changes" returns to that version, which writes
+  nothing. So a modified client cannot save a combination neither side wrote. Both choices and every discard
   (`DELETE live/draft`, a doc's too) take the room's checkpoint lock and are checked against the
   version and revision reviewed, so exactly one choice takes effect, and a save that finishes
   after its 30 s lock ran out is finished onto the draft only when the draft's lines were not
@@ -2541,7 +2541,7 @@ cookie, CSP, sandbox flag or setting was added, and the content host still sends
   review is of the copy the tab kept from before a reload, the review message carries that copy to
   the frame at the artifact's exact content origin. It is text the same renderer handed the app
   earlier, kept in the app origin's `sessionStorage` under the artifact's id; the frame checks it
-  with the type's rules before it renders it read-only, and Publish mine sends the app's own copy; co-editor emails
+  with the type's rules before it renders it read-only, and Publish your changes sends the app's own copy; co-editor emails
   and their places ("row 12", built by the renderer from lease positions, never content) become
   text nodes. No route returns draft text: `GET live/draft` is gone, and the checkpoint refuses any
   text from the app.
@@ -2559,7 +2559,7 @@ cookie, CSP, sandbox flag or setting was added, and the content host still sends
   review: both whole sides rendered in the frame, each against the files it would publish, the
   change lists of both with their files parts, and exactly two choices. Neither choice combines
   anything, so neither can produce a result that means something nobody wrote.
-- **Publish mine publishes exactly the draft.** It is `POST live/checkpoint` with
+- **Publish your changes publishes exactly the draft.** It is `POST live/checkpoint` with
   `conflict_version`: the room's own frozen draft, byte for byte, over that version, with the files
   of the draft's base version carried by reference (`files_from_version`), never the files of the
   version it replaces. Every page Publish stages its draft that way (the checkpoint, the solo
@@ -2568,13 +2568,13 @@ cookie, CSP, sandbox flag or setting was added, and the content host still sends
   its current one, under the `edit` policy, and is refused together with `assets`; MCP's
   `update_artifact` does not take it. The replaced versions stay in History, and the note names
   them.
-- **Both choices are serialized.** "Publish mine", "Discard mine" (`DELETE live/draft` with
-  `conflict_version`) and the strip's discard take the room's checkpoint lock before their first
+- **Both choices are serialized.** "Publish your changes", "Discard your changes" (`DELETE
+  live/draft` with `conflict_version`) and the strip's discard take the room's checkpoint lock before their first
   await, and are refused as busy while another holder has it. A choice is checked, before anything
   else, against the version and the draft revision it was reviewed for: a draft that is no longer
   frozen answers 409 `live_resolved` (never 200), a newer frozen version 409 `live_conflict`, a
-  moved draft 409 `live_moved`. Discard mine checks the frozen version, the revision, the draft's
-  base and its epoch again after its reads, so a version notify or a late save that changed the
+  moved draft 409 `live_moved`. Discard your changes checks the frozen version, the revision, the
+  draft's base and its epoch again after its reads, so a version notify or a late save that changed the
   draft meanwhile stops it. A save that outlived its 30 s lock is finished onto the draft only when
   the draft's lines were not replaced since its snapshot (the epoch); otherwise its version is
   handled as any version published meanwhile. So exactly one choice takes effect while the lock

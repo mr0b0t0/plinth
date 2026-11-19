@@ -194,6 +194,28 @@
 .pl-editbar__status {
   overflow-wrap: anywhere;
 }
+/* At phone width the strip stays one line: a short status ("v5 published") and how many others are
+   here stand in for the long words and the names, which are still read. */
+.pl-editbar__short,
+.pl-editbar__count {
+  display: none;
+}
+@media (max-width: 30rem) {
+  .pl-editbar__short,
+  .pl-editbar__count {
+    display: inline;
+  }
+  .pl-editbar__long,
+  .pl-editbar__editors > .pl-editbar__editor {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+}
 .pl-editbar__editors {
   display: inline-flex;
   flex-wrap: wrap;
@@ -250,16 +272,6 @@
   .pl-livenotice {
     padding-inline: var(--space-4);
   }
-}
-/* The review dialog's diff (ConflictView with editor.css). The dialog body has no definite
-   height, so the flex rules the source editor uses would give Monaco 0px: the diff gets its own. */
-.pl-liveconflict .pl-conflict {
-  flex: none;
-}
-.pl-liveconflict .pl-conflict__diff {
-  flex: none;
-  height: min(60vh, 32rem);
-  min-height: 16rem;
 }
 /* Shared data: what the page sees and saves. Long emails wrap rather than widen the page. */
 .pl-viewer__data {

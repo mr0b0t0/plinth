@@ -298,7 +298,7 @@ export function versionRange(from: number, to: number): string {
 }
 
 /**
- * The note of page edits published whole over the versions `from` to `to` ("Publish mine" in the
+ * The note of page edits published whole over the versions `from` to `to` ("Publish your changes" in the
  * review, where the draft is not combined with them): `note` (the editor's own, or "Edited on the
  * page") first, then what the new version leaves out, cut so the whole fits LIMITS.maxNoteLength.
  * "Edited on the page. Replaces the changes in v6." or "… in v6 to v7."

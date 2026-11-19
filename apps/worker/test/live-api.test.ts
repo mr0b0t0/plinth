@@ -1,7 +1,7 @@
 // On-page doc editing on the app host (#36): GET live, POST live/checkpoint and DELETE live/draft
 // (no route returns draft text: GET live/draft is gone). Policy (`live_edit`: signed-in owners and
 // editors, never agents), CSRF and the exact Origin, zod inputs, the checkpoint steps, versions
-// published from outside (merge or freeze), the review's two choices (Publish mine, Discard mine)
+// published from outside (merge or freeze), the review's two choices (Publish your changes, Discard your changes)
 // against the version reviewed, discard, and every path that clears a draft (delete, takedown,
 // retention).
 import {
@@ -413,7 +413,7 @@ describe("live API: versions published from outside", () => {
       conflict_version: 2,
     });
     expect(text.status).toBe(400);
-    // Publish mine: the room's own frozen draft, byte for byte, over v2, which stays in History.
+    // Publish your changes: the room's own frozen draft, byte for byte, over v2, which stays in History.
     const mine = "# Plan\n\nFirst, by a person.\n\nSecond.\n";
     const ok = await json(
       await checkpoint(id, h, { base_version: 1, rev: 1, reason: "save", conflict_version: 2 }),
@@ -595,7 +595,7 @@ describe("live API: resolving conflicts, and a room that missed a version", () =
     a.ws.close(1000);
   });
 
-  it("Discard mine drops the draft for everyone and writes no version", async () => {
+  it("Discard your changes drops the draft for everyone and writes no version", async () => {
     const { owner, id, ownerP } = await docSetup(BASE);
     const h = ownerP.session.headers;
     const a = await connectDoc(id, ownerP.cookie);
@@ -621,7 +621,7 @@ describe("live API: resolving conflicts, and a room that missed a version", () =
     expect(res.status).toBe(204);
     const reset = await a.nextOf("reset");
     expect(reset).toMatchObject({ version: 2, why: "discarded" });
-    // A second Discard mine finds the draft resolved.
+    // A second Discard your changes finds the draft resolved.
     const again = await api(`/artifacts/${id}/live/draft?rev=1&conflict_version=2`, h, {
       method: "DELETE",
     });

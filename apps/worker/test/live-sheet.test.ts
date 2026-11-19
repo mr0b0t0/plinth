@@ -5,7 +5,7 @@
 // holds a lease; a text edit that changes the line count only at the end; a version published
 // meanwhile (edit_sheet, PUT, a restore) never merged: the draft freezes, unless the version
 // changed nothing the draft holds or is the draft, and the review's two choices publish the
-// room's own draft (Publish mine, conflict_version) or discard it (Discard mine), each under the
+// room's own draft (Publish your changes, conflict_version) or discard it (Discard your changes), each under the
 // room's checkpoint lock, against exactly the version reviewed, so the two never interleave.
 import { runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
@@ -248,7 +248,7 @@ describe("sheet socket: versions published from outside", () => {
     call(id, h, `/live/draft?rev=${rev}${n !== undefined ? `&conflict_version=${n}` : ""}`, {
       method: "DELETE",
     });
-  /** "Publish mine" in the review: the room's own frozen draft, over version n. */
+  /** "Publish your changes" in the review: the room's own frozen draft, over version n. */
   const publishMine = (
     id: string,
     h: Record<string, string>,
@@ -364,7 +364,7 @@ describe("sheet socket: versions published from outside", () => {
     c.ws.close(1000);
   });
 
-  it("Publish mine: the room's draft becomes v3 on top of v2, v2 stays in the history, and editing resumes", async () => {
+  it("Publish your changes: the room's draft becomes v3 on top of v2, v2 stays in the history, and editing resumes", async () => {
     const { id, ownerP, owner, a, draft } = await frozen('["Apples",4,true]');
     const saved = await publishMine(id, ownerP.session.headers, 2);
     expect(saved.status).toBe(200);
@@ -391,7 +391,7 @@ describe("sheet socket: versions published from outside", () => {
     b.a.ws.close(1000);
   });
 
-  it("Publish mine is checked in order: busy, resolved, a newer version, an old rev, before clean", async () => {
+  it("Publish your changes is checked in order: busy, resolved, a newer version, an old rev, before clean", async () => {
     const { id, ownerP, owner, a } = await frozen('["Apples",4,true]');
     const h = ownerP.session.headers;
     const stub = stubFor(id);
@@ -432,7 +432,7 @@ describe("sheet socket: versions published from outside", () => {
     a.ws.close(1000);
   });
 
-  it("Discard mine: the page goes back to v2 for everyone, and no version is written", async () => {
+  it("Discard your changes: the page goes back to v2 for everyone, and no version is written", async () => {
     const { id, ownerP, a } = await frozen('["Apples",4,true]');
     const h = ownerP.session.headers;
     const res = await discardAt(id, h, 1, 2);
@@ -451,7 +451,7 @@ describe("sheet socket: versions published from outside", () => {
     a.ws.close(1000);
   });
 
-  it("Discard mine against a newer version is refused, and the draft stays frozen against it", async () => {
+  it("Discard your changes against a newer version is refused, and the draft stays frozen against it", async () => {
     const { id, ownerP, owner, a, draft } = await frozen('["Apples",4,true]');
     const h = ownerP.session.headers;
     const v3 = await editSheet(id, owner.auth, {
@@ -653,10 +653,10 @@ describe("sheet socket: versions published from outside", () => {
   // Both choices, and the strip's "Discard unpublished changes" (DELETE live/draft), take the
   // room's checkpoint lock: one choice resolves a frozen draft, and never on top of the other.
   describe("the two choices against each other", () => {
-    it("Publish against Discard: a discard while Publish mine is saving is busy, and v3 stays clean", async () => {
+    it("Publish against Discard: a discard while Publish your changes is saving is busy, and v3 stays clean", async () => {
       const { id, ownerP, a, draft } = await frozen('["Apples",4,true]');
       const stub = stubFor(id);
-      // Publish mine has taken the lock; the stager is writing v3.
+      // Publish your changes has taken the lock; the stager is writing v3.
       const snap = await stub.docSnapshot(id);
       expect(snap).toMatchObject({ state: "conflict", rev: 1, conflict_version: 2, text: draft });
       for (const n of [undefined, 2]) {
@@ -700,7 +700,7 @@ describe("sheet socket: versions published from outside", () => {
         conflict_version: null,
         text: V2,
       });
-      // The discard released its lock when it was done; Publish mine now finds it resolved.
+      // The discard released its lock when it was done; Publish your changes now finds it resolved.
       const retry = await publishMine(id, ownerP.session.headers, 2);
       expect(retry.status).toBe(409);
       expect((await json(retry)).error.details.reason).toBe("live_resolved");
@@ -803,7 +803,7 @@ describe("sheet socket: versions published from outside", () => {
       expect((await discardAt(id, ownerP.session.headers, 1, 2)).status).toBe(204);
       const reset = await a.nextOf("reset");
       await editRow(a, 2, '["Pears",8]', reset.rev);
-      // The stalled Publish mine commits v3 now.
+      // The stalled Publish your changes commits v3 now.
       const put = await call(id, owner.auth, "", {
         method: "PUT",
         body: { content: draft, base_version: 2 },
@@ -841,7 +841,7 @@ describe("sheet socket: versions published from outside", () => {
       a.ws.close(1000);
     });
 
-    it("a version notify during Discard mine's reads stops it: the draft stays frozen against the newer one", async () => {
+    it("a version notify during the reads of Discard your changes stops it: the draft stays frozen against the newer one", async () => {
       const { id, owner, a, draft } = await frozen('["Apples",4,true]');
       const stub = stubFor(id);
       // v3 is published while the room does not hear of it yet.

@@ -1317,13 +1317,14 @@ const EDIT_STATES: [string, Partial<EditBarProps>][] = [
   ["Not connected", { dirty: true, connected: false }],
   ["A version to review", { dirty: true, phase: "conflict", conflictVersion: 5 }],
   ["Versions to review", { dirty: true, phase: "conflict", conflictVersion: 6 }],
+  ["Reviewing", { dirty: true, phase: "conflict", conflictVersion: 5, reviewing: true }],
   [
     "Cannot be published yet",
     {
       dirty: true,
       phase: "dirty",
       publishable: false,
-      unpublishableReason: "These page changes can't be published yet.",
+      unpublishableReason: "These changes can't be published yet.",
     },
   ],
   [
@@ -1369,10 +1370,7 @@ function LiveEditSpecimens() {
   const hoursAgo = new Date(Date.now() - 3 * 3600_000).toISOString();
   return (
     <>
-      <Specimen
-        title="Edit bar"
-        note="Under the artifact bar while a doc or a sheet is edited on its page. Publish is the one ink primary; bronze marks the live state. While a version waits for review, Review changes is the only action besides Done."
-      >
+      <Specimen title="Edit bar" note="Under the artifact bar while editing on the page.">
         <div className="ds-stack">
           {EDIT_STATES.map(([label, over]) => (
             <div key={label}>

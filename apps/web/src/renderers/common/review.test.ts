@@ -1,6 +1,6 @@
 // The whole-draft review in the frame (review.ts, editSession.ts): both sides rendered read-only
 // against their own version's files, the two change lists with their files parts, ranges named,
-// exactly two choices and Cancel, the Discard confirmation, the busy state, what closes it, and the
+// exactly two choices and Back, the Discard confirmation, the busy state, what closes it, and the
 // phone switch. Also the frame key (frameKey.ts) and the file pinning (files.ts).
 // @vitest-environment happy-dom
 import { type ChangeItem, liveRules } from "@plinth/shared";
@@ -70,15 +70,15 @@ describe("the whole-draft review", () => {
   it("renders both sides read-only, each against the files it would publish", async () => {
     const { review } = setup();
     await review.open({ mode: "room", base: 5, n: 6, files: FILES, draft: MINE, editors: [] });
-    expect(region().getAttribute("aria-label")).toBe("Review v6 and the page changes");
-    expect(region().querySelector("h2")?.textContent).toBe(
-      "v6 was published while you were editing",
-    );
-    expect(document.activeElement).toBe(region().querySelector("h2"));
+    expect(region().getAttribute("aria-label")).toBe("Review v6 and your changes");
+    // No heading: the edit strip above the frame already says what happened. Focus moves to the
+    // named review itself.
+    expect(region().querySelector("h2")).toBeNull();
+    expect(document.activeElement).toBe(region());
     const [mine, theirs] = panes();
     expect(mine?.querySelector("h3")?.textContent).toBe("Your changes");
     expect(theirs?.querySelector("h3")?.textContent).toBe("v6");
-    // Short labels only: no explanatory paragraph under the heading.
+    // Short labels only: no explanatory paragraph.
     expect(region().querySelector(".plinth-review__intro, .plinth-review__why")).toBeNull();
     // The draft against v5's files, v6 against v6's.
     expect(mine?.querySelector(".plinth-review__body img")?.getAttribute("src")).toBe(
@@ -93,13 +93,13 @@ describe("the whole-draft review", () => {
     expect(region().querySelector("textarea, [contenteditable]")).toBeNull();
   });
 
-  it("lists both sides' changes, with vN's files: none listed for the page changes", async () => {
+  it("lists both sides' changes, with vN's files: none listed for your changes", async () => {
     const { review } = setup();
     await review.open({ mode: "room", base: 5, n: 6, files: FILES, draft: MINE, editors: [] });
     const [mine, theirs] = panes();
     expect(mine?.querySelector('[aria-label="Changes"]')).not.toBeNull();
     expect(theirs?.querySelector('[aria-label="Changes"]')).not.toBeNull();
-    // Page changes never change files, so the page changes' side lists none.
+    // Page edits never change files, so your changes' side lists none.
     expect(mine?.querySelector(".plinth-review__files")).toBeNull();
     const files = theirs?.querySelector(".plinth-review__files")?.textContent ?? "";
     expect(files).toContain("fonts/geist.woff2 added");
@@ -109,46 +109,46 @@ describe("the whole-draft review", () => {
     expect(mine?.querySelector(".plinth-review__item-button")?.textContent).toMatch(/changed/);
   });
 
-  it("names a range in the heading and the region, and the newest version on its side", async () => {
+  it("names a range in the region, and the newest version on its side", async () => {
     const { review } = setup();
     await review.open({ mode: "room", base: 5, n: 7, files: null, draft: MINE, editors: [] });
-    expect(region().querySelector("h2")?.textContent).toBe(
-      "v6 to v7 were published while you were editing",
-    );
-    expect(region().getAttribute("aria-label")).toBe("Review v6 to v7 and the page changes");
+    expect(region().getAttribute("aria-label")).toBe("Review v6 to v7 and your changes");
     expect(panes()[1]?.querySelector("h3")?.textContent).toBe("v7");
   });
 
-  it("Publish mine asks the app; the buttons go off until the answer", async () => {
+  it("Publish your changes asks the app; the buttons go off until the answer", async () => {
     const { review, choose } = setup();
     await review.open({ mode: "room", base: 5, n: 6, files: null, draft: MINE, editors: [] });
-    // Exactly two choices and Cancel: no separate "with a note" path.
-    expect(button("Publish mine with a note…")).toBeUndefined();
-    button("Publish mine")?.click();
+    // Exactly two choices and Back: no separate "with a note" path, and one way out.
+    expect(
+      [...region().querySelectorAll(".plinth-review__choices button")].map((b) => b.textContent),
+    ).toEqual(["Back", "Discard your changes", "Publish your changes"]);
+    expect(button("Publish your changes with a note…")).toBeUndefined();
+    button("Publish your changes")?.click();
     expect(choose).toHaveBeenCalledWith("publish", undefined);
-    expect(button("Discard mine")?.disabled).toBe(true);
+    expect(button("Discard your changes")?.disabled).toBe(true);
     expect(review.chosen).toBe("publish");
     // Another editor's choice holds the lock: the buttons stay off, with the reason.
     review.answer("busy");
     expect(region().textContent).toContain("Another editor is choosing right now");
-    expect(button("Discard mine")?.disabled).toBe(true);
+    expect(button("Discard your changes")?.disabled).toBe(true);
   });
 
   it("re-enables the choices a while after busy, and keeps them for a failed answer", async () => {
     vi.useFakeTimers();
     const { review } = setup();
     await review.open({ mode: "room", base: 5, n: 6, files: null, draft: MINE, editors: [] });
-    button("Publish mine")?.click();
+    button("Publish your changes")?.click();
     review.answer("busy");
     vi.advanceTimersByTime(5000);
-    expect(button("Publish mine")?.disabled).toBe(false);
-    button("Publish mine")?.click();
+    expect(button("Publish your changes")?.disabled).toBe(false);
+    button("Publish your changes")?.click();
     review.answer("failed");
-    expect(button("Publish mine")?.disabled).toBe(false);
+    expect(button("Publish your changes")?.disabled).toBe(false);
     expect(review.isOpen).toBe(true);
   });
 
-  it("Discard mine asks first, naming what will be lost, and goes only on confirm", async () => {
+  it("Discard your changes asks first, naming what will be lost, and goes only on confirm", async () => {
     const { review, choose } = setup();
     await review.open({
       mode: "room",
@@ -158,10 +158,17 @@ describe("the whole-draft review", () => {
       draft: MINE,
       editors: ["ana@example.org", "ben@example.org"],
     });
-    button("Discard mine")?.click();
+    button("Discard your changes")?.click();
     const dialog = document.querySelector('[role="alertdialog"]') as HTMLElement;
     expect(dialog.getAttribute("aria-modal")).toBe("true");
-    expect(dialog.textContent).toContain("Discard the page changes?");
+    // Worded and laid out as the edit strip's own confirmation: a close button, Cancel, and the
+    // named danger action last.
+    expect(dialog.querySelector("h3")?.textContent).toBe("Discard unpublished changes?");
+    expect(
+      [...dialog.querySelectorAll("button")].map(
+        (b) => b.getAttribute("aria-label") ?? b.textContent,
+      ),
+    ).toEqual(["Close", "Cancel", "Discard changes"]);
     expect(dialog.textContent).toMatch(/This change will be lost: .+\./);
     expect(dialog.textContent).toContain(
       "The page will show v6 for everyone editing (ana@example.org, ben@example.org).",
@@ -171,8 +178,16 @@ describe("the whole-draft review", () => {
     (document.activeElement as HTMLButtonElement).click();
     expect(choose).not.toHaveBeenCalled();
     expect(document.querySelector('[role="alertdialog"]')).toBeNull();
-    button("Discard mine")?.click();
-    button("Discard")?.click();
+    // The close button and a click beside the confirmation close it too.
+    button("Discard your changes")?.click();
+    (document.querySelector('[aria-label="Close"]') as HTMLButtonElement).click();
+    expect(document.querySelector('[role="alertdialog"]')).toBeNull();
+    button("Discard your changes")?.click();
+    (document.querySelector(".plinth-review__scrim") as HTMLElement).click();
+    expect(document.querySelector('[role="alertdialog"]')).toBeNull();
+    expect(choose).not.toHaveBeenCalled();
+    button("Discard your changes")?.click();
+    button("Discard changes")?.click();
     expect(choose).toHaveBeenCalledWith("discard", undefined);
   });
 
@@ -186,24 +201,24 @@ describe("the whole-draft review", () => {
       "These 7 changes will be lost: Slide 1: Title changed, Slide 2: Title changed, Slide 3: Title changed, and 4 more. The page will show v6.",
     );
     expect(discardDescription({ items: [], truncated: false }, 7, "room", [])).toBe(
-      "The page changes will be lost. The page will show v7 for everyone editing.",
+      "Your changes will be lost. The page will show v7 for everyone editing.",
     );
   });
 
-  it("Cancel closes the review and tells the app; the draft stays frozen", async () => {
+  it("Back closes the review and tells the app; the draft stays frozen", async () => {
     const { review, choose } = setup();
     await review.open({ mode: "room", base: 5, n: 6, files: null, draft: MINE, editors: [] });
-    button("Cancel")?.click();
+    button("Back")?.click();
     expect(choose).toHaveBeenCalledWith("cancelled");
     expect(review.isOpen).toBe(false);
     expect(region()).toBeNull();
   });
 
-  it("at phone width shows one side at a time, with a Mine and v6 switch", async () => {
+  it("at phone width shows one side at a time, with a Your changes and v6 switch", async () => {
     const { review } = setup();
     await review.open({ mode: "room", base: 5, n: 6, files: null, draft: MINE, editors: [] });
     const options = [...document.querySelectorAll('[role="radio"]')] as HTMLButtonElement[];
-    expect(options.map((o) => o.textContent)).toEqual(["Mine", "v6"]);
+    expect(options.map((o) => o.textContent)).toEqual(["Your changes", "v6"]);
     expect(region().dataset.show).toBe("mine");
     options[1]?.click();
     expect(region().dataset.show).toBe("theirs");
@@ -216,6 +231,19 @@ describe("the whole-draft review", () => {
     await review.open({ mode: "room", base: 5, n: 6, files: null, draft: MINE, editors: [] });
     (document.querySelector(".plinth-review__item-button") as HTMLButtonElement).click();
     expect(goto).toHaveBeenCalledTimes(2);
+  });
+
+  it("marks a side that scrolls sideways until it reaches the end", async () => {
+    const { review } = setup();
+    await review.open({ mode: "room", base: 5, n: 6, files: null, draft: MINE, editors: [] });
+    const body = document.querySelector(".plinth-review__body") as HTMLElement;
+    Object.defineProperty(body, "scrollWidth", { value: 600, configurable: true });
+    Object.defineProperty(body, "clientWidth", { value: 300, configurable: true });
+    body.dispatchEvent(new Event("scroll"));
+    expect(body.dataset.more).toBe("");
+    Object.defineProperty(body, "scrollLeft", { value: 300, configurable: true });
+    body.dispatchEvent(new Event("scroll"));
+    expect(body.dataset.more).toBeUndefined();
   });
 });
 
@@ -258,7 +286,7 @@ describe("the review session", () => {
     expect(panes()[1]?.querySelector(".plinth-review__files")?.textContent).toContain(
       "chart.png replaced",
     );
-    button("Publish mine")?.click();
+    button("Publish your changes")?.click();
     expect(post).toHaveBeenCalledWith({
       type: "resolved",
       nonce: NONCE,
@@ -284,16 +312,16 @@ describe("the review session", () => {
     s.version("reset", 7, { why: "published", was: 6 });
     expect(s.isOpen).toBe(false);
     expect(document.querySelector(".plinth-review__announce")?.textContent).toBe(
-      "Another editor published the page changes as v7.",
+      "Another editor published these changes as v7.",
     );
     expect(post).toHaveBeenLastCalledWith({ type: "resolved", nonce: NONCE, outcome: "cancelled" });
 
     await s.open({ type: "review", nonce: NONCE });
-    button("Discard mine")?.click();
-    button("Discard")?.click();
+    button("Discard your changes")?.click();
+    button("Discard changes")?.click();
     s.version("reset", 6, { why: "discarded", was: 6 });
     expect(document.querySelector(".plinth-review__announce")?.textContent).toBe(
-      "The page changes were discarded. The page shows v6.",
+      "Your changes were discarded. The page shows v6.",
     );
   });
 
@@ -303,17 +331,17 @@ describe("the review session", () => {
     // A doc whose newer version merged cleanly.
     s.version("rebased", 7, { was: 6 });
     expect(document.querySelector(".plinth-review__announce")?.textContent).toBe(
-      "v7 was published, and your page changes were kept on top of it.",
+      "v7 was published, and your changes were kept on top of it.",
     );
     await s.open({ type: "review", nonce: NONCE });
     // A version that is the draft itself.
     s.version("reset", 7, { was: 6 });
     expect(document.querySelector(".plinth-review__announce")?.textContent).toBe(
-      "v7 is the same as your page changes, so nothing is left to publish.",
+      "v7 is the same as your changes, so nothing is left to publish.",
     );
   });
 
-  it("a never-merged type: a version that undid the reviewed one keeps the page changes", async () => {
+  it("a never-merged type: a version that undid the reviewed one keeps your changes", async () => {
     const post = vi.fn();
     const rules = liveRules("sheet");
     if (!rules) throw new Error("no sheet rules");
@@ -327,7 +355,7 @@ describe("the review session", () => {
     await s.open({ type: "review", nonce: NONCE });
     s.version("rebased", 7, { was: 6 });
     expect(document.querySelector(".plinth-review__announce")?.textContent).toBe(
-      "v7 undid the changes of v6. Your page changes are kept.",
+      "v7 undid the changes of v6. Your changes are kept.",
     );
   });
 
@@ -338,19 +366,17 @@ describe("the review session", () => {
     (c as { conflictVersion: number }).conflictVersion = 7;
     s.version("conflict", 7, { was: 6 });
     await vi.waitFor(() =>
-      expect(region()?.querySelector("h2")?.textContent).toBe(
-        "v6 to v7 were published while you were editing",
-      ),
+      expect(region()?.getAttribute("aria-label")).toBe("Review v6 to v7 and your changes"),
     );
     expect(document.querySelector(".plinth-review__announce")?.textContent).toBe(
       "v7 was published too. The review now covers v6 to v7.",
     );
   });
 
-  it("solo: opens on the version the app names, and Publish mine sends the frame's own copy", async () => {
+  it("solo: opens on the version the app names, and Publish your changes sends the frame's own copy", async () => {
     const { s, post } = session(null, MINE);
     await s.open({ type: "review", nonce: NONCE, n: 6, base: 5, files: FILES });
-    button("Publish mine")?.click();
+    button("Publish your changes")?.click();
     expect(post).toHaveBeenCalledWith({
       type: "resolved",
       nonce: NONCE,
@@ -365,7 +391,7 @@ describe("the review session", () => {
     await s.open({ type: "review", nonce: NONCE, n: 6, base: 5, files: FILES, text: MINE });
     expect(s.isOpen).toBe(true);
     expect(panes()[0]?.textContent).toContain("First, by a person.");
-    button("Publish mine")?.click();
+    button("Publish your changes")?.click();
     expect(post).toHaveBeenCalledWith({
       type: "resolved",
       nonce: NONCE,

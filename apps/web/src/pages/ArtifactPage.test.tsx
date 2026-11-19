@@ -686,6 +686,31 @@ describe("ArtifactPage: editing a doc on its page (#36)", () => {
       expect(document.querySelectorAll("iframe")).toHaveLength(1);
     });
 
+    it("while editing, a newer version raises no toast: the edit strip says it", async () => {
+      let current = 3;
+      let n = 0;
+      stubApi({
+        me: ME,
+        handle: (c) =>
+          c.path.startsWith("/view/")
+            ? json(
+                docGate({ artifact: { ...DOC, current_version: current, version: current } }, ++n),
+              )
+            : undefined,
+      });
+      const ArtifactPage = await loadPage();
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+      render(<ArtifactPage params={{ slug: "garden-plan" }} />);
+      const frame = (await screen.findByTitle("Plan, version 3")) as HTMLIFrameElement;
+      roomStatus(frame, true);
+      await user.click(screen.getByRole("button", { name: "Edit" }));
+      expect(screen.getByRole("region", { name: "Editing on the page" })).toBeTruthy();
+      current = 4;
+      await vi.advanceTimersByTimeAsync(VERSION_POLL_MS);
+      await screen.findByTitle("Plan, version 4");
+      expect(screen.queryByText("Updated to v4")).toBeNull();
+    });
+
     /** A stand-in watch socket the test can send frames and a close through. */
     function stubWatchSocket() {
       const sockets: FakeWatch[] = [];

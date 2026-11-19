@@ -14,11 +14,14 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   unpublished changes on a doc or a sheet that are not combined with it, **Review changes** opens
   the review inside the page: their changes and the new version (or every version since, named as
   "v6 to v7") side by side, each with its own images, with what each changed, files included, and
-  two choices. **Publish mine** publishes the changes as they are, with the files they were made
-  with, as the next version (the other stays in History); **Discard mine** asks first, naming what
-  will be lost. The strip offers only **Review changes** and **Done** while a version waits, and
-  the line shown to people who are not editing no longer repeats the Edit toggle. Both are safe against another editor choosing at the same moment: exactly one takes
-  effect, and every other open review closes saying what happened. No source is shown. Changes
+  two choices. **Publish your changes** publishes them as they are, with the files they were made
+  with, as the next version (the other stays in History); **Discard your changes** asks first,
+  naming what will be lost; **Back** leaves the review. It looks like the rest of the app. The
+  strip offers only **Review changes** and **Done** while a version waits (and only its status
+  while the review is open, without an "Updated to" notification beside it), and the line shown
+  to people who are not editing no longer repeats the Edit toggle. Both choices are safe against
+  another editor choosing at the same moment: exactly one takes effect, and every other open
+  review closes saying what happened. No source is shown. Changes
   the tab kept from before a reload are reviewed the same way when a newer version is current.
 - **Publish on the page.** The edit strip says **Publish**, **Publish with a note…** and
   **Discard unpublished changes**, and its status says "Draft saved", "Publishing…" and "Published

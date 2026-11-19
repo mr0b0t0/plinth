@@ -655,29 +655,36 @@ page shows the strip and makes the REST calls, and renders no content.
 
   A frozen draft takes no edits (leases end; edits and structural changes are refused), idle
   autosave and Done do not publish it, and the strip says "v6 was published while you edited"
-  (for several versions since the draft's base: "v6 to v7 were published while you edited"), with
-  "Review changes" in place of Publish and its menu (the review holds both choices) and Done.
+  (for several versions since the draft's base: "v6 to v7 were published while you edited"; at
+  phone width "v6 published", so the strip stays one line), with "Review changes" in place of
+  Publish and its menu (the review holds both choices) and Done. While editing, the strip carries
+  every newer version's news, so the app shows no "Updated to vN" toast.
   Nothing is overwritten either way. `get_artifact` tells agents a draft exists (metadata only),
   and `update_artifact` and `edit_sheet` warn `live_draft`.
-- **The whole-draft review.** "Review changes" opens the review inside the frame (the strip does
-  not offer it again while it is open). Under the heading ("v6 was published while you were
-  editing") it shows "Your changes" and "v6" side by side (one at a time, with a "Mine" and "v6"
-  switch, at phone width), each drawn read-only by the type's own renderer against the files it
-  would publish: the page changes against the base version's files, vN against vN's. Each side
+- **The whole-draft review.** "Review changes" opens the review inside the frame; while it is
+  open the strip shows its status only (no "Review changes" and no Done), and the review has no
+  heading of its own, since the strip already says what happened. It shows "Your changes" and "v6"
+  side by side (one at a time, with a "Your changes" and "v6" switch, at phone width), each drawn
+  read-only by the type's own renderer against the files it would publish: your changes against
+  the base version's files, vN against vN's. Each side grows with its content up to a maximum
+  height and scrolls beyond it; one wider than its pane fades at the edge it scrolls to. Each side
   starts with its plain-language change list since the draft's base, from the History's
   describers ([Comparing versions](#comparing-versions-decided-2026-11-19)). vN's side also names
   each file it added, removed or replaced, at most 50 of each kind, then "and N more files"; page
   changes never change files, so their side lists none. Pressing an item brings both sides to the
-  place it names. The versions reviewed are every version since the draft's base; the heading and
+  place it names. The versions reviewed are every version since the draft's base; the strip and
   the version note name the whole range ("v6 to v7"), and the newer side is the newest version.
-  The review has no explanatory paragraphs: exactly two choices, and Cancel:
-  - **Publish mine**: the room's own frozen draft, byte for byte, becomes the next version on top
+  The review looks like the app around it (ink primary, bronze for the live state, the app's
+  compact buttons) and has no explanatory paragraphs: exactly two choices, and Back:
+  - **Publish your changes**: the room's own frozen draft, byte for byte, becomes the next version on top
     of vN, with the files of the draft's base version, and the note "Edited on the page. Replaces
     the changes in v6." (or "… in v6 to v7."). vN stays in History and can be restored.
-  - **Discard mine** asks first, naming what will be lost ("These 7 changes will be lost: …, and 4
-    more. The page will show v6."; in room mode "… for everyone editing", by name), then returns
-    the page to vN for everyone.
-  - **Cancel** closes the review; the draft stays frozen and kept.
+  - **Discard your changes** asks first, with the strip's own words and layout ("Discard
+    unpublished changes?", Cancel and "Discard changes"), naming what will be lost ("These 7
+    changes will be lost: …, and 4 more. The page will show v6."; in room mode "… for everyone
+    editing", by name), then returns the page to vN for everyone. The frame cannot dim the app
+    around it, so the confirmation dims nothing.
+  - **Back** (or Esc), the review's one way out, closes it; the draft stays frozen and kept.
 
   Both choices, every Publish and the strip's "Discard unpublished changes" take the room's
   checkpoint lock, so a frozen draft resolves exactly once and never on top of the other choice. A
@@ -690,25 +697,26 @@ page shows the strip and makes the REST calls, and renders no content.
   not replaced since its snapshot (the draft's epoch); otherwise its version is handled as any
   version published meanwhile, so a late save never lands under a discarded draft. When a choice
   resolves the draft, the room tells every editor (`reset` with `published` or `discarded`), and
-  every other open review closes with what happened ("Another editor published the page changes
-  as v7."). A review also closes, with what really happened, whenever the draft is unfrozen
-  another way: a newer version that undid the one reviewed ("v7 undid the changes of v6. Your page
-  changes are kept."), a doc version that merged cleanly, or a version equal to the draft.
+  every other open review closes with what happened ("Another editor published these changes as
+  v7."). A review also closes, with what really happened, whenever the draft is unfrozen another
+  way: a newer version that undid the one reviewed ("v7 undid the changes of v6. Your changes are
+  kept."), a doc version that merged cleanly, or a version equal to the draft.
 - **Modes.** "room" with live rooms on; "solo" under origin isolation without rooms (edit on the
   page alone; Publish makes a version over `PUT` with the shown version as `base_version` and its
   files as `files_from_version`; the tab keeps a copy, and after a reload offers to publish it or
   discard it; a Publish refused because a newer version is current opens the same review, the app
-  naming the version and its file changes from the two versions' file lists, and Publish mine sends
-  the frame's own copy; for the copy kept from before a reload, which the frame never held, the app
-  sends that copy with the review, and Publish mine and Discard mine act on it); under opaque
+  naming the version and its file changes from the two versions' file lists, and Publish your
+  changes sends the frame's own copy; for the copy kept from before a reload, which the frame never
+  held, the app sends that copy with the review, and Publish your changes and Discard your changes
+  act on it); under opaque
   isolation and the path fallback there is no editing on the page, and docs and sheets are edited
   in the source editor only. `ALLOW_LIVE_EDITING=false` turns
   it off. `GET /api/v1/config` says which applies (`inline_editing`: `room`, `solo` or null).
 - **On the page.** An Edit toggle in the artifact bar (the menu's source editor item becomes "Edit
   source") turns edit mode on; a strip under the bar says what is happening ("Draft saved",
   "Saving draft…", "Publishing…", "Published as v7", "Editing v5"), who else is editing and where
-  ("row 12", a structural place, never content), with Publish, a menu with "Publish with a note…"
-  and "Discard unpublished changes", and Done. A doc's block opens as a plain text field holding
+  ("row 12", a structural place, never content; at phone width only how many), with Publish, a
+  menu with "Publish with a note…" and "Discard unpublished changes", and Done. A doc's block opens as a plain text field holding
   its Markdown; blocks other people hold show their email and their text as it arrives. Esc at the
   top level of edit mode moves focus to the strip. Owners and editors who are not editing see one
   line when unpublished changes exist (with Publish and Discard), when someone is editing, or when
@@ -729,8 +737,8 @@ page shows the strip and makes the REST calls, and renders no content.
   handed back to the same frame origin, which checks it with the type's rules), and what came of a
   choice (`reviewed`: busy, resolved, conflict, failed or done).
 - **REST.** `GET /api/v1/artifacts/:ref/live`, `POST .../live/checkpoint` (with
-  `conflict_version` for Publish mine; no draft text is accepted) and `DELETE
-  .../live/draft?rev=n` (discard; with `&conflict_version=n` for Discard mine), for the signed-in
+  `conflict_version` for Publish your changes; no draft text is accepted) and `DELETE
+  .../live/draft?rev=n` (discard; with `&conflict_version=n` for Discard your changes), for the signed-in
   app only; not mirrored to MCP. No route returns draft text. The 409 reasons are `live_conflict`,
   `live_rebased`, `live_busy`, `live_resolved`, `live_moved` and `live_unpublishable`. `PUT
   /api/v1/artifacts/:ref` takes `files_from_version` (that version's files instead of the current
@@ -1579,7 +1587,8 @@ document through the gate and the shared-data API, with all of their checks.
   500 follow-up requests a second reach one artifact at the default cap (cap ÷ spread, 1000 at the
   top bound), and no frame says anything about who else has the artifact open.
 - **What the page does.** On `version` the app re-reads its own gate at once and shows the new
-  version as it did after a poll ("Updated to vN"; a pinned `/v/n` link only learns the number).
+  version as it did after a poll ("Updated to vN", except while editing on the page, where the
+  edit strip says it; a pinned `/v/n` link only learns the number).
   On `data` it posts `{ source: "plinth-view", v: 1, type: "data" }` to the frame at its exact
   content origin, and `/__plinth/runtime.js` re-reads the change counter and refetches what
   `onSnapshot` watches when it moved. The app also says whether signals are pushed (`type:
@@ -2505,9 +2514,9 @@ and the whole-draft review is the only way on (below).
   neither side wrote it. When such a version vN lands, the room freezes the draft and the editors
   see the whole-draft review ([Editing](#editing)): the draft and vN as read-only grids side by
   side, with what each changed since the draft's base ("B7: 12 → 14", "Row 10 added (Pears)"), and
-  exactly two choices, Publish mine (the room's own draft as vN+1, on top of vN, which stays in
-  the history) or Discard mine (back to vN for everyone, after a confirmation that names what will
-  be lost). The two cases that need no review are a version whose sheet and files equal the
+  exactly two choices, Publish your changes (the room's own draft as vN+1, on top of vN, which
+  stays in the history) or Discard your changes (back to vN for everyone, after a confirmation that
+  names what will be lost). The two cases that need no review are a version whose sheet and files equal the
   draft's base (it changed only the title, or restored the same content), which moves the base
   under the draft's lines as they are, and a version equal to the draft, which ends it. Both
   choices, and the strip's Discard, run under the room's checkpoint lock against the version and

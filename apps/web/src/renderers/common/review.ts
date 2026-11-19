@@ -5,11 +5,14 @@
 // each read-only by the type's own renderer and against the files it would publish: the page
 // changes against their base version's files, vN against vN's. Above each is its change list from
 // the shared describers (what the page changes did since the base, and what vN did since the
-// base, with vN's files when it changed any). Then exactly two choices, and Cancel:
-// - "Publish mine": the page changes become the next version, with the files they were made with,
+// base, with vN's files when it changed any). Then exactly two choices, and Back:
+// - "Publish your changes": they become the next version, with the files they were made with,
 //   over vN, which stays in History;
-// - "Discard mine": after a confirmation that names what will be lost, the page goes back to vN.
-// Short labels only: the heading says what happened, and the two panes show the rest.
+// - "Discard your changes": after a confirmation that names what will be lost, the page goes back
+//   to vN.
+// Short labels only: the edit strip above the frame says what happened, so the review has no
+// heading of its own; the two panes show the rest. Back is its one way out (the strip shows no
+// Done while it is open), and its styles follow the app's (ink primary, bronze live state).
 // The renderer only asks: it posts the choice to the app (`resolved`), which makes the REST call;
 // the room decides, under its checkpoint lock, and closes every open review with its `reset`.
 //
@@ -66,14 +69,19 @@ export interface ReviewState {
   editors: readonly string[];
 }
 
-/** The review's words, by range (exported for tests and the app's matching words). */
+/** The review's words (exported for tests). One noun throughout: "your changes". */
 export const REVIEW_WORDS = {
-  heading: (from: number, to: number) =>
-    `${versionRange(from, to)} ${from >= to ? "was" : "were"} published while you were editing`,
   mine: "Your changes",
   theirs: (to: number) => `v${to}`,
+  publish: "Publish your changes",
+  discard: "Discard your changes",
+  back: "Back",
   busy: "Another editor is choosing right now",
-  label: (from: number, to: number) => `Review ${versionRange(from, to)} and the page changes`,
+  unpublishable: "These changes can't be published yet.",
+  label: (from: number, to: number) => `Review ${versionRange(from, to)} and your changes`,
+  /** The Discard confirmation, worded as the edit strip's own. */
+  confirmTitle: "Discard unpublished changes?",
+  confirmAction: "Discard changes",
 } as const;
 
 const MAX_SUMMARY = 3;
@@ -93,7 +101,7 @@ export function discardDescription(
   const items = list?.items ?? [];
   const n = items.length;
   let lost: string;
-  if (n === 0) lost = "The page changes will be lost.";
+  if (n === 0) lost = "Your changes will be lost.";
   else {
     const shown = items.slice(0, MAX_SUMMARY).map(itemText);
     const more = n - shown.length + (list?.truncated ? 1 : 0);
@@ -131,6 +139,24 @@ function el<K extends keyof HTMLElementTagNameMap>(
   if (cls) e.className = cls;
   if (text !== undefined) e.textContent = text;
   return e;
+}
+
+/** The app's close glyph (Phosphor X, regular), built as DOM: no markup string is parsed. */
+function closeIcon(doc: Document): SVGElement {
+  const ns = "http://www.w3.org/2000/svg";
+  const svg = doc.createElementNS(ns, "svg");
+  svg.setAttribute("viewBox", "0 0 256 256");
+  svg.setAttribute("width", "16");
+  svg.setAttribute("height", "16");
+  svg.setAttribute("aria-hidden", "true");
+  svg.setAttribute("fill", "currentColor");
+  const path = doc.createElementNS(ns, "path");
+  path.setAttribute(
+    "d",
+    "M205.66,194.34a8,8,0,0,1-11.32,11.32L128,139.31,61.66,205.66a8,8,0,0,1-11.32-11.32L116.69,128,50.34,61.66A8,8,0,0,1,61.66,50.34L128,116.69l66.34-66.35a8,8,0,0,1,11.32,11.32L139.31,128Z",
+  );
+  svg.append(path);
+  return svg;
 }
 
 let ids = 0;
@@ -221,16 +247,17 @@ export class DraftReview {
     root.setAttribute("role", "region");
     root.setAttribute("aria-label", REVIEW_WORDS.label(from, to));
     root.dataset.show = "mine";
-    const heading = el(d, "h2", "plinth-review__heading", REVIEW_WORDS.heading(from, to));
-    heading.tabIndex = -1;
+    // Focus moves to the review itself when it opens (it is named), not to a heading: the strip
+    // above the frame already says what happened.
+    root.tabIndex = -1;
 
     // ---- the phone switch ----
     const sw = el(d, "div", "plinth-review__switch");
     sw.setAttribute("role", "radiogroup");
     sw.setAttribute("aria-label", "Show");
     const sides: [string, string][] = [
-      ["mine", "Mine"],
-      ["theirs", `v${to}`],
+      ["mine", REVIEW_WORDS.mine],
+      ["theirs", REVIEW_WORDS.theirs(to)],
     ];
     const swButtons = sides.map(([side, label]) => {
       const b = el(d, "button", "plinth-review__switch-option", label);
@@ -286,6 +313,13 @@ export class DraftReview {
       s.append(body);
       return s;
     };
+    // A side wider than its pane (a sheet at phone width) fades at the edge it scrolls toward.
+    const edges = () => {
+      for (const b of bodies) {
+        if (b.scrollLeft + b.clientWidth < b.scrollWidth - 1) b.dataset.more = "";
+        else delete b.dataset.more;
+      }
+    };
     panes.append(
       // Page changes never change files, so only vN's side can list any.
       pane("mine", REVIEW_WORDS.mine, this.mineList, fileLines(null), state.draft, state.base),
@@ -295,6 +329,7 @@ export class DraftReview {
     let syncing = false;
     for (const [i, b] of bodies.entries()) {
       b.addEventListener("scroll", () => {
+        edges();
         if (syncing) return;
         const other = bodies[1 - i];
         if (!other) return;
@@ -311,15 +346,16 @@ export class DraftReview {
     choices.setAttribute("role", "group");
     choices.setAttribute("aria-label", "Keep one");
     const unpublishable = this.setup.rules.unpublishable(state.draft);
-    const publish = el(d, "button", "plinth-review__primary", "Publish mine");
+    const publish = el(d, "button", "plinth-review__primary", REVIEW_WORDS.publish);
     publish.type = "button";
     publish.addEventListener("click", () => this.choose("publish"));
-    const discard = el(d, "button", "plinth-review__danger", "Discard mine");
+    const discard = el(d, "button", "plinth-review__danger", REVIEW_WORDS.discard);
     discard.type = "button";
     discard.addEventListener("click", () => this.openConfirm(discard));
-    const cancel = el(d, "button", "plinth-review__secondary", "Cancel");
-    cancel.type = "button";
-    cancel.addEventListener("click", () => {
+    const back = el(d, "button", "plinth-review__ghost", REVIEW_WORDS.back);
+    back.type = "button";
+    back.setAttribute("aria-keyshortcuts", "Escape");
+    back.addEventListener("click", () => {
       this.setup.choose("cancelled");
       this.close();
     });
@@ -327,16 +363,17 @@ export class DraftReview {
     reason.setAttribute("role", "status");
     if (unpublishable) {
       publish.disabled = true;
-      reason.textContent = "These page changes can't be published yet.";
+      reason.textContent = REVIEW_WORDS.unpublishable;
       reason.id = nextId("reason");
       publish.setAttribute("aria-describedby", reason.id);
     }
-    choices.append(publish, discard, cancel, reason);
+    // The app's dialog footer order: the way out first, the primary last.
+    choices.append(reason, back, discard, publish);
     this.buttons = [publish, discard];
     this.publishButton = publish;
     this.reason = reason;
 
-    root.append(heading, sw, panes, choices);
+    root.append(sw, panes, choices);
     root.addEventListener("keydown", (e) => {
       if (e.key === "Escape" && !this.confirm) {
         e.stopPropagation();
@@ -347,7 +384,8 @@ export class DraftReview {
     d.body.append(root);
     d.documentElement.classList.add("plinth-reviewing");
     this.root = root;
-    heading.focus();
+    root.focus();
+    edges();
   }
 
   /** One side's change list, and its files when it changed any. Items are buttons that bring both
@@ -438,7 +476,7 @@ export class DraftReview {
         }, 5000);
         return;
       case "resolved":
-        this.close("Another editor already published or discarded the page changes.");
+        this.close("Another editor already published or discarded these changes.");
         return;
       case "conflict":
         // A newer version froze the draft: the review opens again on it.
@@ -449,9 +487,7 @@ export class DraftReview {
         return;
       case "done":
         this.close(
-          chose === "discard"
-            ? "The page changes were discarded."
-            : "Your page changes were published.",
+          chose === "discard" ? "Your changes were discarded." : "Your changes were published.",
         );
         return;
     }
@@ -464,8 +500,14 @@ export class DraftReview {
     const box = el(d, "div", "plinth-review__confirm");
     box.setAttribute("role", "alertdialog");
     box.setAttribute("aria-modal", "true");
-    const t = el(d, "h3", "plinth-review__confirm-title", "Discard the page changes?");
+    const head = el(d, "div", "plinth-review__confirm-head");
+    const t = el(d, "h3", "plinth-review__confirm-title", REVIEW_WORDS.confirmTitle);
     t.id = nextId("confirm");
+    const x = el(d, "button", "plinth-review__close");
+    x.type = "button";
+    x.setAttribute("aria-label", "Close");
+    x.append(closeIcon(d));
+    head.append(t, x);
     const p = el(
       d,
       "p",
@@ -475,15 +517,16 @@ export class DraftReview {
     p.id = nextId("confirm-text");
     box.setAttribute("aria-labelledby", t.id);
     box.setAttribute("aria-describedby", p.id);
-    const no = el(d, "button", "plinth-review__secondary", "Cancel");
+    const no = el(d, "button", "plinth-review__ghost", "Cancel");
     no.type = "button";
-    const yes = el(d, "button", "plinth-review__danger", "Discard");
+    const yes = el(d, "button", "plinth-review__danger-solid", REVIEW_WORDS.confirmAction);
     yes.type = "button";
     const done = () => {
       this.closeConfirm();
       from.focus();
     };
     no.addEventListener("click", done);
+    x.addEventListener("click", done);
     yes.addEventListener("click", () => {
       this.closeConfirm();
       this.choose("discard");
@@ -495,7 +538,7 @@ export class DraftReview {
         done();
       } else if (e.key === "Tab") {
         // Focus stays in the confirmation.
-        const first = no;
+        const first = x;
         const last = yes;
         if (e.shiftKey && d.activeElement === first) {
           e.preventDefault();
@@ -508,9 +551,13 @@ export class DraftReview {
     });
     const actions = el(d, "div", "plinth-review__confirm-actions");
     actions.append(no, yes);
-    box.append(t, p, actions);
+    box.append(head, p, actions);
     const scrim = el(d, "div", "plinth-review__scrim");
     scrim.append(box);
+    // A click beside the confirmation closes it, as beside the app's dialogs.
+    scrim.addEventListener("click", (e) => {
+      if (e.target === scrim) done();
+    });
     this.root?.append(scrim);
     this.confirm = scrim;
     no.focus();

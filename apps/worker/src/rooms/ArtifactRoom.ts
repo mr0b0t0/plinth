@@ -916,7 +916,7 @@ export class ArtifactRoom extends DurableObject<Bindings> {
     return this.doc.snapshot(artifactId);
   }
 
-  /** Version n holds the checkpoint; `resolved` when it was "Publish mine" in the review. */
+  /** Version n holds the checkpoint; `resolved` when it was "Publish your changes" in the review. */
   async docFinish(
     artifactId: string,
     n: number,

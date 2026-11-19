@@ -154,7 +154,7 @@ interface CheckpointLock {
   text: string;
   hash: string;
   until: number;
-  /** The snapshot was of a frozen draft: the checkpoint is "Publish mine" in the review. */
+  /** The snapshot was of a frozen draft: the checkpoint is "Publish your changes" in the review. */
   resolved: boolean;
   /** The draft's epoch when snapshotted: its lines still descend from `text` while it holds. */
   epoch: string;
@@ -984,7 +984,7 @@ export class LiveDoc {
 
   /**
    * Version `n` holds the checkpoint: it becomes the draft's base; edits made since are kept.
-   * `resolved` (or a snapshot of a frozen draft): the checkpoint was "Publish mine", so the draft
+   * `resolved` (or a snapshot of a frozen draft): the checkpoint was "Publish your changes", so the draft
    * is the saved text now and every review closes (`reset` with why "published").
    * When the checkpoint no longer holds its lock (it ran out) and the lines were replaced since
    * its snapshot (`epoch`: a discard, a reset), the saved text is not their ancestor, so `n` is
@@ -1034,7 +1034,7 @@ export class LiveDoc {
     // Another checkpoint's lock (this one's ran out and a newer save took it) stays.
     if (!this.lock || this.lock === lock || this.lock.until <= Date.now()) this.lock = null;
     if (resolved && doc.conflictVersion !== null) {
-      // "Publish mine": the saved text is the draft now, and every open review closes.
+      // "Publish your changes": the saved text is the draft now, and every open review closes.
       this.replace(doc, n, text, "published", "closed");
     } else {
       doc.baseVersion = n;
@@ -1074,7 +1074,7 @@ export class LiveDoc {
    * runs under the checkpoint lock, so it never interleaves with a save or the review's other
    * choice: `busy` while another holder has the lock; otherwise it takes the lock before its first
    * read (a snapshot arriving meanwhile is busy) and releases it when done.
-   * `conflictVersion` ("Discard mine" in the review) limits it to a draft frozen against exactly
+   * `conflictVersion` ("Discard your changes" in the review) limits it to a draft frozen against exactly
    * that version, which must still be the current one: "resolved" when the draft is no longer
    * frozen, "conflict" when a newer version froze it. `rev`, the frozen version, the draft's base
    * and its epoch are checked again after the reads, so a version notify or a late save that

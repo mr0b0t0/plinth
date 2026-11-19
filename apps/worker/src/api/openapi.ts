@@ -1856,7 +1856,7 @@ function liveOperations(): Operation[] {
         `${who} The room's own draft is published with the draft's base_version and the files ` +
         "of that version, so a stale draft is refused (409) and nothing is overwritten. A draft " +
         "equal to its base writes nothing; a frozen draft is published only with " +
-        "conflict_version (Publish mine in the review), over that version, which stays in the " +
+        "conflict_version (Publish your changes in the review), over that version, which stays in the " +
         "history. With conflict_version: 200 busy while another save or choice runs, then 409 " +
         "live_resolved (the draft is no longer frozen), live_conflict (a newer version froze it) " +
         "or live_moved (rev is not current), all before clean. 409 live_unpublishable for a " +
@@ -1875,7 +1875,7 @@ function liveOperations(): Operation[] {
       description:
         `${who} ` +
         "409 with reason live_busy while a save or a review choice is publishing or discarding " +
-        "the same draft. With conflict_version (Discard mine in the review): 409 live_resolved " +
+        "the same draft. With conflict_version (Discard your changes in the review): 409 live_resolved " +
         "when the draft is no longer frozen, live_conflict when a newer version froze it.",
       tag: "Live editing",
       auth: "user",
@@ -1884,7 +1884,7 @@ function liveOperations(): Operation[] {
         {
           name: "conflict_version",
           schema: int({ minimum: 1 }),
-          description: "Discard mine: the version the frozen draft was reviewed against",
+          description: "Discard your changes: the version the frozen draft was reviewed against",
         },
       ],
       ok: [204, null],

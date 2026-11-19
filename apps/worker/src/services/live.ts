@@ -1,6 +1,6 @@
 // On-page editing on the app host (#36, docs/spec.md "Editing"): the live draft's metadata,
-// checkpoints (Publish, and "Publish mine" in the review) and discard (the strip's, and "Discard
-// mine"). Every route goes through requireArtifact with the `live_edit` action (signed-in owners
+// checkpoints (Publish, and "Publish your changes" in the review) and discard (the strip's, and
+// "Discard your changes"). Every route goes through requireArtifact with the `live_edit` action (signed-in owners
 // and editors only; never agents), and is for types people edit on their page only (docs and
 // sheets). A checkpoint saves the room's own draft through the ordinary stager (updateArtifact),
 // always with the version it replaces as base_version and the files of the draft's base version,
@@ -143,7 +143,7 @@ function frozenMessage(merges: boolean, n: number): string {
 /**
  * POST /api/v1/artifacts/:ref/live/checkpoint: save the live draft as the next version.
  * 1 policy; 2 snapshot (flush, 30 s lock), 503 when the room cannot be reached.
- * With `conflict_version` ("Publish mine" in the review), before anything else: 3a another save or
+ * With `conflict_version` ("Publish your changes" in the review), before anything else: 3a another save or
  * choice holds the lock (200 busy); 3b the draft is no longer frozen, because another editor's
  * choice resolved it (409 live_resolved, never 200 clean); 3c it is frozen against a newer version
  * (409 live_conflict naming it); 3d `rev` is not the draft's (409 live_moved). Without it: 3 nothing
@@ -151,7 +151,7 @@ function frozenMessage(merges: boolean, n: number): string {
  * it). 4 the page's base_version must be the draft's; 5 a draft the type cannot publish yet (409
  * live_unpublishable); 6 an autosave only once the current version is LIVE_AUTO_CHECKPOINT_MIN_S
  * old (with when to try again); 7 the stager, with the room's own draft text, the version it
- * replaces as base_version (the draft's base, or the frozen version for "Publish mine") and the
+ * replaces as base_version (the draft's base, or the frozen version for "Publish your changes") and the
  * files of the draft's base version (files_from_version), and a stale base makes the room catch
  * up; 8 any refusal releases this save's lock; 9 the room takes the version as the draft's base.
  */
@@ -245,7 +245,7 @@ export async function liveCheckpoint(
   const own =
     (input.note?.trim() || LIVE_NOTE) +
     (input.reason === "idle" && !input.note ? " (autosaved)" : "");
-  // "Publish mine": the room's own frozen draft replaces the versions published since its base,
+  // "Publish your changes": the room's own frozen draft replaces the versions published since its base,
   // which stay in the history; the note names them.
   const base = reviewed ?? snap.base_version;
   const note =
@@ -257,7 +257,7 @@ export async function liveCheckpoint(
       content: snap.text,
       base_version: base,
       // The draft's files are its base version's: never the files of a version published
-      // meanwhile, which "Publish mine" leaves out together with its text.
+      // meanwhile, which "Publish your changes" leaves out together with its text.
       files_from_version: snap.base_version,
       note,
       checkpoint: true,
@@ -356,7 +356,7 @@ const busy = (rev: number) =>
  * directly (for example after the binding was removed). 409 when the draft moved past `rev`, and
  * 409 `live_busy` while a save or the review's other choice holds the room's checkpoint lock, so a
  * discard never lands under a version being published from the same draft. With
- * `conflict_version` ("Discard mine" in the review) it drops only a draft frozen against exactly
+ * `conflict_version` ("Discard your changes" in the review) it drops only a draft frozen against exactly
  * that version: 409 `live_resolved` when the draft is no longer frozen, `live_conflict` when a
  * newer version froze it.
  */

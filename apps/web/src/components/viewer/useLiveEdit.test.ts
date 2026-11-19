@@ -290,7 +290,7 @@ describe("useLiveEdit", () => {
     return { ...api, ...h, nonce, reviewed };
   }
 
-  it("Publish mine checkpoints the room's draft against the version reviewed, and answers done", async () => {
+  it("Publish your changes checkpoints the room's draft against the version reviewed, and answers done", async () => {
     const t = await inReview((c) =>
       c.path.endsWith("/live/checkpoint")
         ? json({ saved: true, version: { version: 5 }, live: { rev: 8, dirty: false } })
@@ -316,7 +316,7 @@ describe("useLiveEdit", () => {
     expect(t.result.current.review).toBeNull();
   });
 
-  it("Discard mine deletes the draft at the rev reviewed, for the version reviewed", async () => {
+  it("Discard your changes deletes the draft at the rev reviewed, for the version reviewed", async () => {
     const t = await inReview((c) =>
       c.method === "DELETE" ? new Response(null, { status: 204 }) : undefined,
     );
@@ -344,7 +344,7 @@ describe("useLiveEdit", () => {
     answer = conflict409(4, "live_moved");
     choose();
     await waitFor(() => expect(t.reviewed().at(-1)).toBe("failed"));
-    expect(toasts.at(-1)).toBe("The page changes moved on. Review them again.");
+    expect(toasts.at(-1)).toBe("The unpublished changes moved on. Review them again.");
   });
 
   it("drops a choice for another review, without the key, or naming text in room mode", async () => {
@@ -459,7 +459,7 @@ describe("useLiveEdit", () => {
       removed: [],
     });
     expect(result.current.review).toMatchObject({ base: 3, current: 4, mode: "solo" });
-    // Publish mine: the frame's own copy over v4, with v3's files and the note naming v4.
+    // Publish your changes: the frame's own copy over v4, with v3's files and the note naming v4.
     fromFrame(
       { type: "resolved", nonce: review.nonce, outcome: "publish", text: "# Mine" },
       ORIGIN,
@@ -474,7 +474,7 @@ describe("useLiveEdit", () => {
     expect(onReload).toHaveBeenCalled();
   });
 
-  it("solo: Discard mine drops the tab's copy and loads the current version", async () => {
+  it("solo: Discard your changes drops the tab's copy and loads the current version", async () => {
     stubApi({
       handle: (c) => {
         if (c.method === "PUT") return conflict409(4, "");
@@ -563,7 +563,7 @@ describe("useLiveEdit", () => {
     expect(calls.find((c) => c.method === "DELETE")?.path).toBe(
       "/artifacts/art1/live/draft?rev=15",
     );
-    expect(toasts.at(-1)).toBe("Unpublished page changes discarded.");
+    expect(toasts.at(-1)).toBe("Unpublished changes discarded.");
     answer = json(
       {
         error: {
@@ -679,7 +679,7 @@ describe("useLiveEdit", () => {
     expect(review).toMatchObject({ n: 4, base: 3, text: "# Kept" });
     expect(result.current.review).toMatchObject({ base: 3, current: 4, mode: "solo" });
     expect(result.current.restore).toMatchObject({ text: "# Kept" });
-    // Publish mine publishes the kept copy, whatever text the frame sends back.
+    // Publish your changes publishes the kept copy, whatever text the frame sends back.
     fromFrame({ type: "resolved", nonce: review.nonce, outcome: "publish", text: "# Other" });
     await waitFor(() => expect(sentToFrame("reviewed").at(-1)?.[0].result).toBe("done"));
     expect(calls.filter((c) => c.method === "PUT").at(-1)?.body).toEqual({
@@ -693,7 +693,7 @@ describe("useLiveEdit", () => {
     expect(onReload).toHaveBeenCalled();
   });
 
-  it("solo: Discard mine in the review of a kept copy drops the copy", async () => {
+  it("solo: Discard your changes in the review of a kept copy drops the copy", async () => {
     savePageDraft("art1", 3, "# Kept");
     stubApi({
       handle: (c) => {

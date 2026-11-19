@@ -2009,7 +2009,7 @@
       "post": {
         "operationId": "liveCheckpoint",
         "summary": "Publish the unpublished draft as the next version",
-        "description": "Signed-in owners and editors of a doc or a sheet only (live_edit); agents are refused and publish versions instead. The room's own draft is published with the draft's base_version and the files of that version, so a stale draft is refused (409) and nothing is overwritten. A draft equal to its base writes nothing; a frozen draft is published only with conflict_version (Publish mine in the review), over that version, which stays in the history. With conflict_version: 200 busy while another save or choice runs, then 409 live_resolved (the draft is no longer frozen), live_conflict (a newer version froze it) or live_moved (rev is not current), all before clean. 409 live_unpublishable for a draft that cannot be a version yet.",
+        "description": "Signed-in owners and editors of a doc or a sheet only (live_edit); agents are refused and publish versions instead. The room's own draft is published with the draft's base_version and the files of that version, so a stale draft is refused (409) and nothing is overwritten. A draft equal to its base writes nothing; a frozen draft is published only with conflict_version (Publish your changes in the review), over that version, which stays in the history. With conflict_version: 200 busy while another save or choice runs, then 409 live_resolved (the draft is no longer frozen), live_conflict (a newer version froze it) or live_moved (rev is not current), all before clean. 409 live_unpublishable for a draft that cannot be a version yet.",
         "tags": ["Live editing"],
         "parameters": [
           {
@@ -2052,7 +2052,7 @@
       "delete": {
         "operationId": "discardLiveDraft",
         "summary": "Discard the unpublished draft (409 when it changed past rev)",
-        "description": "Signed-in owners and editors of a doc or a sheet only (live_edit); agents are refused and publish versions instead. 409 with reason live_busy while a save or a review choice is publishing or discarding the same draft. With conflict_version (Discard mine in the review): 409 live_resolved when the draft is no longer frozen, live_conflict when a newer version froze it.",
+        "description": "Signed-in owners and editors of a doc or a sheet only (live_edit); agents are refused and publish versions instead. 409 with reason live_busy while a save or a review choice is publishing or discarding the same draft. With conflict_version (Discard your changes in the review): 409 live_resolved when the draft is no longer frozen, live_conflict when a newer version froze it.",
         "tags": ["Live editing"],
         "parameters": [
           {
@@ -2074,7 +2074,7 @@
             "required": false,
             "name": "conflict_version",
             "schema": { "type": "integer", "minimum": 1 },
-            "description": "Discard mine: the version the frozen draft was reviewed against"
+            "description": "Discard your changes: the version the frozen draft was reviewed against"
           }
         ],
         "responses": {
@@ -6383,7 +6383,7 @@
           "note": { "type": "string", "maxLength": 500 },
           "reason": { "type": "string", "enum": ["save", "done", "idle"] },
           "conflict_version": {
-            "description": "Publish mine: the version the frozen draft was reviewed against. The room's own frozen draft is published over it, with the files of the draft's base version. 409 live_resolved when the draft is no longer frozen, live_conflict when a newer version froze it, live_moved when rev is not current",
+            "description": "Publish your changes: the version the frozen draft was reviewed against. The room's own frozen draft is published over it, with the files of the draft's base version. 409 live_resolved when the draft is no longer frozen, live_conflict when a newer version froze it, live_moved when rev is not current",
             "type": "integer",
             "minimum": 1,
             "maximum": 9007199254740991

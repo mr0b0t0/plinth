@@ -3,7 +3,9 @@
 // action, Cmd/Ctrl+S), "Publish with a note…" and "Discard unpublished changes" (behind a confirm)
 // in the overflow menu, and Done. While a version published meanwhile waits for review, Publish
 // and the overflow menu give way to "Review changes", which opens the whole-draft review in the
-// frame (the review holds the two choices), and which the strip hides while that review is open.
+// frame (the review holds the two choices and its own way out, Back). While that review is open the
+// strip shows its status only: no second exit. At phone width the status is short ("v5 published"),
+// so the strip stays one line.
 import {
   DotsThreeIcon,
   PencilSimpleIcon,
@@ -41,7 +43,7 @@ export interface EditBarProps {
   onDiscard: () => void;
   onDone: () => void;
   onReview?: () => void;
-  /** The whole-draft review is open in the frame: "Review changes" is not shown. */
+  /** The whole-draft review is open in the frame: the strip shows its status only. */
   reviewing?: boolean;
   /** The strip's accessible name (the design page shows several at once). */
   label?: string;
@@ -60,7 +62,7 @@ export function editStatus(p: EditBarProps): string {
       ? `${versionRange(from, n)} were published while you edited`
       : `v${n} was published while you edited`;
   }
-  if (p.newerVersion) return `v${p.newerVersion} was published while you were editing`;
+  if (p.newerVersion) return `v${p.newerVersion} was published while you edited`;
   if (p.mode === "room" && p.connecting) return "Connecting…";
   if (p.mode === "room" && !p.connected) return "Not connected, your changes are kept";
   if (p.rebasedVersion && p.dirty) {
@@ -70,6 +72,22 @@ export function editStatus(p: EditBarProps): string {
   if (p.dirty && p.mode === "solo") return "Unpublished changes, kept in this tab";
   if (p.dirty) return p.flushed === false ? "Saving draft…" : "Draft saved";
   return `Editing v${p.version}`;
+}
+
+/**
+ * The status at phone width, where the long words would wrap the strip to two lines, or null when
+ * it is the same as the long one.
+ */
+export function editStatusShort(p: EditBarProps): string | null {
+  if (p.saving) return null;
+  if (p.phase === "conflict") {
+    const n = p.conflictVersion;
+    if (!n) return "Newer version published";
+    const from = Math.min(p.version + 1, n);
+    return `${versionRange(from, n)} published`;
+  }
+  if (p.newerVersion) return `v${p.newerVersion} published`;
+  return null;
 }
 
 /** "Ana is editing row 12" for the people named in the strip. */
@@ -95,8 +113,10 @@ export function EditBar(props: EditBarProps) {
     onPublish(note.trim() || undefined);
     setNote("");
   };
+  const status = editStatus(props);
+  const short = editStatusShort(props);
   const reason = !publishable
-    ? (props.unpublishableReason ?? "These page changes can't be published yet.")
+    ? (props.unpublishableReason ?? "These changes can't be published yet.")
     : null;
 
   return (
@@ -109,7 +129,16 @@ export function EditBar(props: EditBarProps) {
       <span className="pl-editbar__state">
         <PencilSimpleIcon size={14} aria-hidden="true" />
         <span aria-live="polite" className="pl-editbar__status">
-          {editStatus(props)}
+          {short ? (
+            <>
+              <span className="pl-editbar__long">{status}</span>
+              <span className="pl-editbar__short" aria-hidden="true">
+                {short}
+              </span>
+            </>
+          ) : (
+            status
+          )}
         </span>
       </span>
       {editors.length > 0 && (
@@ -122,6 +151,10 @@ export function EditBar(props: EditBarProps) {
             </span>
           ))}
           {more > 0 && <span className="pl-editbar__editor">+{more}</span>}
+          {/* At phone width the names give way to how many, so the strip stays one line. */}
+          <span className="pl-editbar__count" aria-hidden="true">
+            {editors.length}
+          </span>
         </span>
       )}
       {reason && (
@@ -129,57 +162,58 @@ export function EditBar(props: EditBarProps) {
           {reason}
         </span>
       )}
-      <span className="pl-editbar__actions">
-        {conflict ? (
-          onReview &&
-          !props.reviewing && (
-            <Button variant="primary" size="sm" onClick={onReview}>
-              Review changes
-            </Button>
-          )
-        ) : (
-          <>
-            <Button
-              variant="primary"
-              size="sm"
-              icon={UploadSimpleIcon}
-              loading={saving}
-              disabled={!dirty || !publishable}
-              aria-keyshortcuts="Meta+S Control+S"
-              {...(reason ? { "aria-describedby": reasonId } : {})}
-              // The label hides under the spinner while publishing; the name stays.
-              aria-label="Publish"
-              onClick={() => onPublish()}
-            >
-              Publish
-            </Button>
-            <Menu
-              label="More editing actions"
-              icon={DotsThreeIcon}
-              iconOnly
-              variant="ghost"
-              size="sm"
-              align="end"
-              items={[
-                {
-                  label: "Publish with a note…",
-                  disabled: !dirty || !publishable,
-                  onSelect: () => setNoteOpen(true),
-                },
-                {
-                  label: "Discard unpublished changes",
-                  danger: true,
-                  disabled: !dirty,
-                  onSelect: () => setConfirmDiscard(true),
-                },
-              ]}
-            />
-          </>
-        )}
-        <Button variant="secondary" size="sm" onClick={onDone} disabled={saving}>
-          Done
-        </Button>
-      </span>
+      {!props.reviewing && (
+        <span className="pl-editbar__actions">
+          {conflict ? (
+            onReview && (
+              <Button variant="primary" size="sm" onClick={onReview}>
+                Review changes
+              </Button>
+            )
+          ) : (
+            <>
+              <Button
+                variant="primary"
+                size="sm"
+                icon={UploadSimpleIcon}
+                loading={saving}
+                disabled={!dirty || !publishable}
+                aria-keyshortcuts="Meta+S Control+S"
+                {...(reason ? { "aria-describedby": reasonId } : {})}
+                // The label hides under the spinner while publishing; the name stays.
+                aria-label="Publish"
+                onClick={() => onPublish()}
+              >
+                Publish
+              </Button>
+              <Menu
+                label="More editing actions"
+                icon={DotsThreeIcon}
+                iconOnly
+                variant="ghost"
+                size="sm"
+                align="end"
+                items={[
+                  {
+                    label: "Publish with a note…",
+                    disabled: !dirty || !publishable,
+                    onSelect: () => setNoteOpen(true),
+                  },
+                  {
+                    label: "Discard unpublished changes",
+                    danger: true,
+                    disabled: !dirty,
+                    onSelect: () => setConfirmDiscard(true),
+                  },
+                ]}
+              />
+            </>
+          )}
+          <Button variant="secondary" size="sm" onClick={onDone} disabled={saving}>
+            Done
+          </Button>
+        </span>
+      )}
       <Dialog
         open={noteOpen}
         onClose={() => setNoteOpen(false)}

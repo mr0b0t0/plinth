@@ -1,7 +1,7 @@
 import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { EditBar, type EditBarProps, editStatus } from "./EditBar.tsx";
+import { EditBar, type EditBarProps, editStatus, editStatusShort } from "./EditBar.tsx";
 import { LiveDraftNotice, noticeKind } from "./LiveDraftNotice.tsx";
 import type { LiveFrameStatus } from "./rendererProtocol.ts";
 
@@ -44,7 +44,7 @@ describe("EditBar", () => {
     // Solo has no socket: being "not connected" is normal there.
     expect(editStatus(props({ mode: "solo", connected: false }))).toBe("Editing v4");
     expect(editStatus(props({ mode: "solo", newerVersion: 5 }))).toBe(
-      "v5 was published while you were editing",
+      "v5 was published while you edited",
     );
     // A version (or a range of them) published meanwhile waits for review.
     expect(editStatus(props({ phase: "conflict" }))).toBe(
@@ -56,6 +56,20 @@ describe("EditBar", () => {
     expect(editStatus(props({ phase: "conflict", conflictVersion: 7 }))).toBe(
       "v5 to v7 were published while you edited",
     );
+  });
+
+  it("has short words for phone width only where the long ones would wrap the strip", () => {
+    expect(editStatusShort(props({ phase: "conflict", conflictVersion: 5 }))).toBe("v5 published");
+    expect(editStatusShort(props({ phase: "conflict", conflictVersion: 7 }))).toBe(
+      "v5 to v7 published",
+    );
+    expect(editStatusShort(props({ mode: "solo", newerVersion: 5 }))).toBe("v5 published");
+    expect(editStatusShort(props({ dirty: true }))).toBeNull();
+    // Both are in the live region; only the long words are read.
+    render(<EditBar {...props({ dirty: true, phase: "conflict", conflictVersion: 5 })} />);
+    const short = screen.getByText("v5 published");
+    expect(short.getAttribute("aria-hidden")).toBe("true");
+    expect(screen.getByText("v5 was published while you edited")).toBeTruthy();
   });
 
   it("announces the status politely and offers Publish with its shortcut", async () => {
@@ -127,10 +141,12 @@ describe("EditBar", () => {
     expect(screen.queryByRole("button", { name: "More editing actions" })).toBeNull();
     await userEvent.click(screen.getByRole("button", { name: "Review changes" }));
     expect(p.onReview).toHaveBeenCalled();
-    // While the review is open in the frame, the strip does not offer it again.
+    // While the review is open in the frame, the strip shows its status only: the review's Back
+    // is the one way out, so there is no Done beside it either.
     rerender(<EditBar {...p} reviewing />);
     expect(screen.queryByRole("button", { name: "Review changes" })).toBeNull();
-    expect(screen.getByRole("button", { name: "Done" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Done" })).toBeNull();
+    expect(screen.getByRole("region").textContent).toContain("published while you edited");
   });
 
   it("turns Publish off, with the reason, for a draft that cannot be a version yet", () => {
