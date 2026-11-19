@@ -17,7 +17,10 @@ import {
 } from "../src/index.ts";
 import { COLUMN_NAME_SOURCE_CHARS } from "../src/sheet/import.ts";
 import {
+  FieldText,
   inflateInSlices,
+  MAX_FIELD_CHARS,
+  MAX_FORMULA_FIELD_CHARS,
   readXlsx,
   scanXml,
   unescapeExcel,
@@ -441,6 +444,61 @@ describe(".xlsx import", () => {
       { t: "s", v: "y".repeat(3_600) },
       { t: "f", f: 'CONCAT("a")', cached: { t: "s", v: "a" } },
     ]);
+  });
+
+  it("keeps a field's text up to its cap, however many tags split it", () => {
+    // Every tag inside a field ends one text event: one += per event built a rope of a node per
+    // event, and 24 MB of "a<x/>" ran a 192 MB heap out. A field now keeps its first characters
+    // in pieces, joined once, and only counts the rest.
+    const field = new FieldText(10);
+    for (let i = 0; i < 1_000_000; i++) field.add("ab");
+    expect(field.length).toBe(10);
+    expect(field.pieces).toBe(5);
+    expect(field.text()).toBe("ababababab");
+    const split = "a<x/>".repeat(40_000);
+    const header = (cell: string, strings = "<sst></sst>") =>
+      readXlsx(
+        xlsx({
+          ...WORKBOOK,
+          "xl/sharedStrings.xml": strings,
+          "xl/worksheets/sheet1.xml": `<worksheet><sheetData><row>${cell}</row></sheetData></worksheet>`,
+        }),
+      ).rows[0]?.[0];
+    const cut = { t: "s", v: "a".repeat(MAX_FIELD_CHARS) };
+    expect(header(`<c t="str"><v>${split}</v></c>`)).toEqual(cut);
+    expect(header(`<c t="inlineStr"><is><t>${split}</t></is></c>`)).toEqual(cut);
+    expect(header(`<c t="s"><v>0</v></c>`, `<sst><si><t>${split}</t></si></sst>`)).toEqual(cut);
+    // A formula split by tags is read whole, and one past what keptFormula reads falls back to
+    // its cached value.
+    expect(header("<c><f>1<x/>+<x/>2</f><v>3</v></c>")).toEqual({
+      t: "f",
+      f: "1+2",
+      cached: { t: "n", v: 3, style: 0 },
+    });
+    expect(header(`<c><f>${"1<x/>+".repeat(5_000)}1</f><v>3</v></c>`)).toEqual({
+      t: "n",
+      v: 3,
+      style: 0,
+    });
+    expect(MAX_FORMULA_FIELD_CHARS).toBe(8_000);
+    // Kept text is still longer than a cell holds, so a data cell of it is refused as before, and
+    // a header cell is named from its first 1,000 characters.
+    // 5,000 escapes for "A", 35,000 characters: the 28,007 kept still expand to 4,001.
+    const escapes = "_x0041_<x/>".repeat(5_000);
+    const s = (head: string, body: string) =>
+      sheetFromXlsx(
+        xlsx({
+          ...WORKBOOK,
+          "xl/worksheets/sheet1.xml": `<worksheet><sheetData><row>${head}</row><row>${body}</row></sheetData></worksheet>`,
+        }),
+      );
+    expect(() => s('<c t="str"><v>N</v></c>', `<c t="str"><v>${escapes}</v></c>`)).toThrow(
+      /has a cell over 4000 characters/,
+    );
+    expect(
+      s(`<c t="str"><v>${"b<x/>".repeat(60_000)}</v></c>`, "<c><v>1</v></c>").header.columns[0]
+        ?.name,
+    ).toBe("b".repeat(100));
   });
 
   it("expands Excel's _xHHHH_ escapes with a loop", () => {

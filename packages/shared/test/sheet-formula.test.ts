@@ -384,6 +384,38 @@ describe("dependencies, cycles and the budget", () => {
     expect(Date.now() - t0).toBeLessThan(500);
   });
 
+  it("charges what a text function reads, not only what it returns", () => {
+    const steps = (a2: string, formula: string) => {
+      const ev = evaluateSheet(sheetOf([[a2, formula]]), { budget: 10_000_000 });
+      return ev.steps - evaluateSheet(sheetOf([[a2, "=1"]]), { budget: 10_000_000 }).steps;
+    };
+    const spaces = '=REPT(" ",32767)';
+    const read = Math.floor(32_767 / 32);
+    // TRIM returns "" here, but reads all 32,767 characters.
+    expect(steps(spaces, "=TRIM(A2)")).toBeGreaterThanOrEqual(read);
+    // SUBSTITUTE pays a step per match: 32,767 one-character matches split into 32,768 pieces.
+    const xs = '=REPT("x",32767)';
+    expect(steps(xs, '=SUBSTITUTE(A2,"x","")')).toBeGreaterThanOrEqual(32_767);
+    expect(steps(xs, '=SUBSTITUTE(A2,"x","",30000)')).toBeGreaterThanOrEqual(30_000);
+    // With no match it costs its read and the text it returns, as before.
+    expect(steps(xs, '=SUBSTITUTE(A2,"y","")')).toBeLessThan(read + 32_767 + 20);
+    expect(calc('TRIM("  a   b  ")')).toBe("a b");
+    expect(calc('SUBSTITUTE("a-b-c","-","+")')).toBe("a+b+c");
+    expect(calc('SUBSTITUTE("a-b-c","-","+",2)')).toBe("a-b+c");
+  });
+
+  it("bounds the CPU of a long text trimmed many times", () => {
+    // 100 TRIMs of 32,767 spaces per formula: when TRIM was charged only for the "" it returns,
+    // 200,000 steps took about 190 ms here; now at most 200,000 / 1,023 of them run.
+    const f = `=${Array(100).fill("TRIM($A$2)").join("&")}`;
+    const rows: Cell[][] = [['=REPT(" ",32767)']];
+    for (let i = 0; i < 200; i++) rows.push(Array(5).fill(f));
+    const t0 = Date.now();
+    const ev = evaluateSheet(sheetOf(rows), { budget: 200_000 });
+    expect(ev.exhausted).toBe(true);
+    expect(Date.now() - t0).toBeLessThan(100);
+  });
+
   it("never reads text longer than 1,024 characters as a number or a boolean", () => {
     expect(calc('VALUE(REPT("0",1023)&"7")')).toBe(7);
     expect(calc('VALUE(REPT("0",1024)&"7")')).toEqual(E("#VALUE!"));

@@ -529,8 +529,10 @@ sheets. Text passes six layers:
    stops at 32,767 characters, so `REPT` cannot fill memory. Text a function or comparison reads
    costs a step per 32 characters (LEN, LEFT, RIGHT and MID walk it with an index, never spread
    into an array; FIND, SEARCH, SUBSTITUTE, EXACT, criteria, lookups and `=` pay for what they
-   compare or search), so one 32,767-character text read many times stays within the budget's
-   CPU: when a read was free, 200,000 steps of `LEN(A2)` took 1.4 s. Text longer than 1,024
+   compare or search; UPPER, LOWER, PROPER and TRIM pay for what they read, not only for what
+   they return, and SUBSTITUTE pays a step per match it replaces), so one 32,767-character text
+   read many times stays within the budget's CPU: when a read was free, 200,000 steps of
+   `LEN(A2)` took 1.4 s, and of `TRIM` over spaces 190 ms. Text longer than 1,024
    characters is never converted to a number or a boolean. Wildcard criteria are matched by a
    loop whose work is charged, never by a regular expression built from cell text.
 5. **CSV export.** RFC 4180 quoting and the OWASP formula-injection guard: a text value (a literal
@@ -573,7 +575,13 @@ What else is new:
   is read, so the cell counts as what it becomes: a kept formula by its source, a dropped one by
   the cached value it falls back to (one 4,000-character shared string behind 100,000 cells with
   an invalid formula was 400 MB of sheet from a 9 KB file). A header cell is not counted, so a
-  column name is cut to 1,000 characters before anything else reads it. Excel's `_xHHHH_`
+  column name is cut to 1,000 characters before anything else reads it. A field's text (a
+  `<v>`, an inline or shared string, a formula) is gathered from its text events in pieces and
+  joined once, and only its first characters are kept: 8,000 of a formula, which is then too long
+  to keep, and 28,007 of any other text, which is still longer than a cell holds once its
+  `_xHHHH_` escapes are expanded. Any tag inside a field ends one text event, so a 36 KB file
+  could split one field into millions of them, and appending each built a rope that ran a 192 MB
+  heap out. Excel's `_xHHHH_`
   escapes are expanded with a loop like entities, and no replace with a callback runs on text a
   file can make long. A CSV field is built from slices of the text, never a character at a time
   (a 2 MB field took more than 64 MB that way). `<col>` widths are read only for columns

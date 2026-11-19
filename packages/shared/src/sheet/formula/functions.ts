@@ -724,11 +724,15 @@ def("MID", (args, ctx) => {
   const from = forward(t, 0, start - 1, ctx);
   return ctx.text(t.slice(from, forward(t, from, n, ctx)));
 });
+// UPPER, LOWER, PROPER and TRIM read all their text, whatever they return: TRIM of 32,767
+// spaces returns "", and charging only what it returns made that read free.
 const mapText =
   (f: (s: string) => string): Fn =>
   (args, ctx) => {
     const t = text(args[0]);
-    return isError(t) ? t : ctx.text(f(t));
+    if (isError(t)) return t;
+    ctx.charge(textCost(t));
+    return ctx.text(f(t));
   };
 def(
   "UPPER",
@@ -758,10 +762,12 @@ def("SUBSTITUTE", (args, ctx) => {
   const to = text(args[2]);
   if (isError(to)) return to;
   if (from === "") return t;
-  // The search reads the whole text, whatever it finds.
+  // The search reads the whole text, whatever it finds, and each match is a piece split off and
+  // joined again: 32,767 matches are 32,767 pieces however short the text that holds them.
   ctx.charge(textCost(t));
   if (args[3] === undefined) {
     const parts = t.split(from);
+    ctx.charge(parts.length - 1);
     if (t.length + (parts.length - 1) * (to.length - from.length) > 32_767) return err("#VALUE!");
     return ctx.text(parts.join(to));
   }
@@ -770,6 +776,7 @@ def("SUBSTITUTE", (args, ctx) => {
   if (nth < 1) return err("#VALUE!");
   let at = -1;
   for (let k = 0; k < nth; k++) {
+    ctx.charge(1);
     at = t.indexOf(from, at + 1);
     if (at < 0) return t;
   }

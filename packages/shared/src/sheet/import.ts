@@ -21,9 +21,15 @@ import {
 } from "./format.ts";
 import { isoDateSerial, MIN_DATE_SERIAL, numberFromText, serialIso } from "./formula/values.ts";
 import { platform } from "./platform.ts";
-import { checkSheetBytes, type RawCell, readXlsx, SheetImportError } from "./xlsxRead.ts";
+import {
+  COLUMN_NAME_SOURCE_CHARS,
+  checkSheetBytes,
+  type RawCell,
+  readXlsx,
+  SheetImportError,
+} from "./xlsxRead.ts";
 
-export { SheetImportError } from "./xlsxRead.ts";
+export { COLUMN_NAME_SOURCE_CHARS, SheetImportError } from "./xlsxRead.ts";
 
 /** The formats an import reads: the sheet's own JSON lines, CSV, or an .xlsx (base64 on the wire). */
 export const SHEET_CONTENT_FORMATS = ["jsonl", "csv", "xlsx"] as const;
@@ -38,9 +44,6 @@ type In =
   | { t: "f"; f: string; cached: In };
 
 const CONTROL_OR_FORMAT = /[\p{Cc}\p{Cf}]/gu;
-
-/** A column name is read from this many characters of its header cell, and keeps at most 100. */
-export const COLUMN_NAME_SOURCE_CHARS = 1_000;
 
 /** The first `n` UTF-16 units of `s`, one fewer when the last would split a surrogate pair. */
 function cut(s: string, n: number): string {

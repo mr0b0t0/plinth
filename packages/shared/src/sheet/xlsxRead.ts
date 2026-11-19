@@ -397,28 +397,83 @@ function firstSheetPath(r: Reader): string {
   throw new SheetImportError("The .xlsx file has no worksheet");
 }
 
+/** A column name is read from this many characters of its header cell, and keeps at most 100. */
+export const COLUMN_NAME_SOURCE_CHARS = 1_000;
+
+/**
+ * The characters of a cell's text or a shared string an import keeps (28,007). Text this long is
+ * still longer than a cell holds once its _xHHHH_ escapes (7 characters for 1) are expanded, so
+ * a data cell of it is refused, and a header cell's name comes from its first 1,000 characters:
+ * what follows changes nothing, so it is not kept. A number, a boolean, an error code or a shared
+ * string index is read from these characters too; no spreadsheet app writes one this long.
+ */
+export const MAX_FIELD_CHARS =
+  7 * (Math.max(LIMITS.maxSheetCellChars, COLUMN_NAME_SOURCE_CHARS) + 1);
+
+/** keptFormula never keeps a source this long, so `<f>` text is kept up to it: no more matters. */
+export const MAX_FORMULA_FIELD_CHARS = LIMITS.maxSheetFormulaChars * 4;
+
+/**
+ * The text of one field (a cell's `<f>`, `<v>` or inline `<t>`, a shared string's `<t>` runs),
+ * gathered from its text events up to `max` characters and joined once. Any tag inside the text
+ * ends one event and starts the next, so a small file can split one field into millions of
+ * events: appending each with += built a rope of a node per event (about 20 bytes per character
+ * of the file, which ran a 192 MB heap out on 24 MB of "a<x/>"), and nothing bounded its length.
+ */
+export class FieldText {
+  private readonly parts: string[] = [];
+  private kept = 0;
+  private readonly max: number;
+
+  constructor(max: number) {
+    this.max = max;
+  }
+
+  add(s: string): void {
+    const room = this.max - this.kept;
+    if (room <= 0 || s === "") return;
+    const part = s.length > room ? s.slice(0, room) : s;
+    this.parts.push(part);
+    this.kept += part.length;
+  }
+
+  /** The characters kept: the field's length, or `max` when it is at least that long. */
+  get length(): number {
+    return this.kept;
+  }
+
+  /** How many pieces are kept (at most `max`, one per text event that added characters). */
+  get pieces(): number {
+    return this.parts.length;
+  }
+
+  text(): string {
+    return this.parts.join("");
+  }
+}
+
 function sharedStrings(r: Reader): string[] {
   const xml = r.text("xl/sharedStrings.xml");
   const out: string[] = [];
   if (!xml) return out;
-  let cur: string | null = null;
+  let cur: FieldText | null = null;
   let inT = false;
   let skip = 0;
   scanXml(xml, {
     open(name) {
-      if (name === "si") cur = "";
+      if (name === "si") cur = new FieldText(MAX_FIELD_CHARS);
       else if (name === "t") inT = true;
       else if (name === "rPh" || name === "phoneticPr") skip++;
     },
     close(name) {
       if (name === "si" && cur !== null) {
-        out.push(unescapeExcel(cur));
+        out.push(unescapeExcel(cur.text()));
         cur = null;
       } else if (name === "t") inT = false;
       else if (name === "rPh" || name === "phoneticPr") skip--;
     },
     text(s) {
-      if (cur !== null && inT && skip === 0) cur += s;
+      if (cur !== null && inT && skip === 0) cur.add(s);
     },
   });
   return out;
@@ -527,10 +582,10 @@ export function readXlsx(bytes: Uint8Array): RawSheet {
   let rowNum = 0;
   let col = -1;
   let cell: { t: string; s: number } | null = null;
-  let f: string | null = null;
+  let f: FieldText | null = null;
   let fShared = false;
-  let v: string | null = null;
-  let inline: string | null = null;
+  let v: FieldText | null = null;
+  let inline: FieldText | null = null;
   let field: "f" | "v" | "t" | null = null;
   let nextCol = 0;
   let colRanges = 0;
@@ -579,15 +634,15 @@ export function readXlsx(bytes: Uint8Array): RawSheet {
         }
         case "f":
           field = "f";
-          f = "";
+          f = new FieldText(MAX_FORMULA_FIELD_CHARS);
           fShared = a.t === "shared" || a.t === "array" || a.t === "dataTable";
           break;
         case "v":
           field = "v";
-          v = "";
+          v = new FieldText(MAX_FIELD_CHARS);
           break;
         case "is":
-          inline = "";
+          inline = new FieldText(MAX_FIELD_CHARS);
           break;
         case "t":
           if (inline !== null) field = "t";
@@ -604,17 +659,18 @@ export function readXlsx(bytes: Uint8Array): RawSheet {
       }
       if (name !== "c" || !cell) return;
       if (col >= LIMITS.maxSheetColumns) {
-        if (v !== null || inline !== null || f) {
+        if (v !== null || inline !== null || (f !== null && f.length > 0)) {
           throw new SheetImportError(`A sheet has at most ${LIMITS.maxSheetColumns} columns`);
         }
         cell = null;
         return;
       }
-      const value = rawValue(cell, v, inline, strings);
+      const value = rawValue(cell, v?.text() ?? null, inline?.text() ?? null, strings);
       // The formula is decided here, not after the table is built, so a cell is counted as what
       // it becomes: a kept formula by its source, a dropped one by the cached value it falls back
       // to (one long shared string can stand behind every cell of a small file).
-      const kept = f && !fShared ? keptFormula(f) : null;
+      const src = f?.text() ?? "";
+      const kept = src && !fShared ? keptFormula(src) : null;
       const out: RawCell = kept !== null ? { t: "f", f: kept, cached: value } : value;
       if (out !== null) {
         jsonBytes += 2 + (rowNum > 1 ? textLength(out) : 0);
@@ -629,9 +685,9 @@ export function readXlsx(bytes: Uint8Array): RawSheet {
       cell = null;
     },
     text(s) {
-      if (field === "f" && f !== null) f += s;
-      else if (field === "v" && v !== null) v += s;
-      else if (field === "t" && inline !== null) inline += s;
+      if (field === "f" && f !== null) f.add(s);
+      else if (field === "v" && v !== null) v.add(s);
+      else if (field === "t" && inline !== null) inline.add(s);
     },
   });
   return { rows, widths, freezeCols, styles };

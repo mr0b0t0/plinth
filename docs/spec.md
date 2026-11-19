@@ -1146,8 +1146,9 @@ not edited on its page yet.
   for every cell on a circular reference and `#LIMIT!` for a cell not computed within the step
   budget. Each formula is computed once, in dependency order, with an explicit stack; one step is
   charged per expression node and per cell a range visits, text a function makes costs its
-  length, and text a function or comparison reads (to walk, search, compare or lowercase it)
-  costs a step per 32 characters, so one long text read many times is paid for each time. Text
+  length, and text a function or comparison reads (to walk, search, compare, lowercase or trim
+  it) costs a step per 32 characters, so one long text read many times is paid for each time;
+  SUBSTITUTE also costs a step per match it replaces. Text
   longer than 1,024 characters is never read as a number or a boolean (`#VALUE!`). A publish
   parses formulas and never evaluates them.
 - **Viewing.** The page shows a toolbar (title, row count, a filter box, Download CSV and Excel), a
