@@ -3098,7 +3098,8 @@
               "ds_deprecated_alias",
               "design_system_unavailable",
               "design_system_outdated",
-              "blocked_feature"
+              "blocked_feature",
+              "sensitive_file"
             ]
           },
           "file": { "type": "string", "description": "The version file the reference is in" },

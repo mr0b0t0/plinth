@@ -10,6 +10,12 @@ Add a line under **Unreleased** in the pull request that makes a change people w
 
 ## Unreleased
 
+- **A `sensitive_file` publish warning.** A publish, update or upload that sends a file whose name
+  usually holds secrets (`.env`, `*.pem`, `id_rsa`, `credentials.json`), or a `.plinth-files.json`
+  record, lists `sensitive_file` first, so the agent stops and asks before handing over the link.
+  It checks names only, never blocks, and is not reported for files carried forward, reused by
+  hash or restored.
+
 - **Dictation, run by Plinth, for pages that ask for it.** A page that declares `dictation` can
   take the words a viewer speaks (`plinth.dictation`): Plinth's app runs the browser's speech
   recognizer after the viewer's click and consent, shows "Listening" with a Stop the page cannot

@@ -1,9 +1,14 @@
 // Publish warnings (services/publishCheck.ts): advisory, derived from the CSP's own sources, on
 // real Vite output and hand-written cases, bounded in time and in what they echo.
-import { LIMITS, type PublishWarning } from "@plinth/shared";
+import {
+  LIMITS,
+  PROJECT_FILES_RECORD,
+  type PublishWarning,
+  SENSITIVE_PATH_RULES,
+} from "@plinth/shared";
 import { describe, expect, it } from "vitest";
 import { contentSources } from "../src/content/csp.ts";
-import { echo, scanPublish } from "../src/services/publishCheck.ts";
+import { echo, isSensitivePath, scanPublish } from "../src/services/publishCheck.ts";
 import type { FileEntry } from "../src/services/storage.ts";
 import { contentTypeFor } from "../src/services/storage.ts";
 import defaultFiles from "./fixtures/vite/default/files.txt?raw";
@@ -272,5 +277,116 @@ describe("publish results carry warnings", () => {
     expect(opaque.warnings).toEqual([
       expect.objectContaining({ code: "opaque_module", file: "index.html" }),
     ]);
+  });
+});
+
+describe("sensitive_file (names of the files a request sent)", () => {
+  const sentScan = (
+    sent: string[],
+    files: FileEntry[] = [],
+    isolation: "origin" | "opaque" = "origin",
+  ) =>
+    scanPublish({
+      files,
+      manifestPaths: new Set([...files.map((f) => f.path), ...sent]),
+      sources,
+      isolation,
+      sent,
+    });
+
+  it.each([
+    ".env",
+    "config/.env.production",
+    "keys/server.pem",
+    ".ssh/id_ed25519",
+    "x/.git/config",
+    "credentials.json",
+    "deploy/service-account-prod.json",
+    ".dev.vars",
+    "files/id_rsa",
+    "infra/terraform.tfstate",
+    "files/.aws/credentials",
+    ".plinth-files.json",
+    "files/.plinth-files.json",
+    ".ENV",
+    "Server.PEM",
+    ".PLINTH-FILES.JSON",
+  ])("%s is sensitive", (path) => {
+    expect(isSensitivePath(path)).toBe(true);
+  });
+
+  it.each([
+    ".env.example",
+    "env.js",
+    "files/keyboard.png",
+    "monkey.js",
+    ".well-known/security.txt",
+    "README.md",
+    // Only the last segment's final extension counts.
+    "public.key.md",
+  ])("%s is not sensitive", (path) => {
+    expect(isSensitivePath(path)).toBe(false);
+  });
+
+  it("the project files record has one spelling, and the rules list it", () => {
+    expect(PROJECT_FILES_RECORD).toBe(".plinth-files.json");
+    expect(SENSITIVE_PATH_RULES).toContainEqual({ kind: "name", value: PROJECT_FILES_RECORD });
+  });
+
+  it("the record gets its own message; a key gets the rotate message", () => {
+    const w = sentScan(["files/.plinth-files.json", "keys/a.pem"]);
+    expect(w.map((x) => [x.code, x.file])).toEqual([
+      ["sensitive_file", "files/.plinth-files.json"],
+      ["sensitive_file", "keys/a.pem"],
+    ]);
+    expect(w[0]?.message).toMatch(/unlisted/);
+    expect(w[0]?.message).toMatch(/cannot be changed/);
+    expect(w[1]?.message).toMatch(/rotate the secret/);
+    expect(w[1]?.message).not.toMatch(/unlisted/);
+  });
+
+  it("flags only sent paths that match, under both isolations", () => {
+    for (const isolation of ["origin", "opaque"] as const) {
+      const w = sentScan(
+        ["files/.env", "index.html"],
+        [file("index.html", "<!doctype html><p>x</p>")],
+        isolation,
+      );
+      expect(w).toEqual([expect.objectContaining({ code: "sensitive_file", file: "files/.env" })]);
+    }
+  });
+
+  it("echoes the path truncated and with control characters escaped", () => {
+    const [w] = sentScan([`${"d".repeat(300)}/id_rsa`]);
+    expect(w?.file.length).toBe(201);
+    expect(w?.file.endsWith("…")).toBe(true);
+    const [c] = sentScan(["a\u0001b/.env"]);
+    expect(c?.file).toBe("a\\u0001b/.env");
+  });
+
+  it("comes first, so the cap never folds it into the overflow", () => {
+    const max = LIMITS.maxWarnings;
+    const html = Array.from({ length: 60 }, (_, i) => `<img src="missing${i}.png">`).join("");
+    const w = sentScan(["files/id_rsa"], [file("index.html", html)]);
+    expect(w).toHaveLength(max);
+    expect(w[0]).toMatchObject({ code: "sensitive_file", file: "files/id_rsa" });
+    const middle = w.slice(1, max - 1);
+    expect(middle).toHaveLength(max - 2);
+    expect(middle.every((x) => x.code === "missing_file")).toBe(true);
+    // 61 warnings before the cap: 1 sensitive_file and 60 missing_file.
+    const overflow = w[max - 1];
+    expect(overflow).toMatchObject({ code: "missing_file", count: 61 - (max - 1) });
+    expect(overflow?.count).toBe(12);
+    expect((overflow?.count ?? 0) + (max - 1)).toBe(61);
+  });
+
+  it("many sensitive paths are capped like any warning", () => {
+    const max = LIMITS.maxWarnings;
+    const sent = Array.from({ length: 60 }, (_, i) => `keys/k${i}.pem`);
+    const w = sentScan(sent);
+    expect(w).toHaveLength(max);
+    expect(w.slice(0, max - 1).every((x) => x.code === "sensitive_file" && !x.count)).toBe(true);
+    expect(w[max - 1]).toMatchObject({ code: "sensitive_file", count: 60 - (max - 1) });
+    expect(w[max - 1]?.count).toBe(11);
   });
 });

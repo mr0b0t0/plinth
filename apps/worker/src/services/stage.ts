@@ -362,6 +362,12 @@ export class VersionStager implements Stager {
   private readonly scanText = new Map<string, Uint8Array>();
   private scanBytes = 0;
   private readonly unscanned: string[] = [];
+  /**
+   * Raw paths whose bytes this request carried (addFile only), for sensitive_file. Never filled by
+   * addRef, addRefTyped, carry or carryCurrent: the server reports what a request sent, and makes
+   * no claim about who chose a path that was carried or referenced.
+   */
+  private readonly sentPaths = new Set<string>();
   private readonly running = new Set<Promise<void>>();
   private inflightBytes = 0;
   private failure: unknown = null;
@@ -555,6 +561,7 @@ export class VersionStager implements Stager {
       own: false,
     };
     this.entries.set(path, entry);
+    if (this.scan) this.sentPaths.add(path);
     this.checkCount();
     this.countBytes(bytes.byteLength);
     this.keepForScan(path, contentType, bytes);
@@ -840,6 +847,7 @@ export class VersionStager implements Stager {
         manifestPaths,
         sources: contentSources(this.ctx.config),
         isolation: this.ctx.config.contentIsolation,
+        sent: [...this.sentPaths].map((p) => byRaw.get(p) ?? p),
         unscanned: this.unscanned.map((p) => byRaw.get(p) ?? p),
         reused,
         typed: typeHooks(def).sourceWarnings?.(def, sourceText, manifestPaths),

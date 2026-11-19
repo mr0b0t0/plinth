@@ -1163,6 +1163,12 @@ files) and big pages without merging chunks, and an update stores only what chan
   8 MB per publish, so every big build gets it; an inline update also gets it for text files reused
   by `{path, sha256}` or carried forward, whose bytes were not sent and so were not re-checked). The result's `stored` reports files, `written`,
   `reused` and bytes. Agents verify a publish by comparing `get_artifact`'s asset hashes.
+- **Sensitive file names.** `sensitive_file` flags a path whose bytes this request sent and whose
+  name usually holds secrets (`.env`, `*.pem`, `id_rsa`, `credentials.json`…) or is the local
+  `.plinth-files.json` record, whose artifact ids open unlisted artifacts. It checks names, never
+  content, over MCP, REST, inline and bundle alike, and it never blocks a publish. It comes before
+  every other warning, so the cap never hides it. Paths that are carried forward, reused by
+  `{path, sha256}` or restored are not reported.
 - **Out-of-band upload.** `start_upload` (MCP) or bearer-only `POST /api/v1/uploads` mints a
   ticket: single use, 30 minutes, at most 5 attempts, bound to its connection (or, in single-user
   mode, to the hash of `ADMIN_TOKEN`), to one target, and for an update to the base version the
