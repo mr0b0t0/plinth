@@ -99,7 +99,6 @@ const clock = (): PresenterClock & { t: number; tick?: () => void } => {
         c.tick = undefined;
       };
     },
-    time: () => "10:00",
   };
   return c;
 };
@@ -461,7 +460,8 @@ describe("presenter view", () => {
 
     key(f, "ArrowRight");
     expect(p.querySelector(".plinth-slides__count")?.textContent).toBe("2 / 5");
-    expect(p.querySelector(".plinth-slides__notes")?.textContent).toBe("No notes for this slide.");
+    // A slide without notes leaves the pane empty.
+    expect(p.querySelector(".plinth-slides__notes")?.textContent).toBe("");
     key(f, "End");
     expect(p.querySelector(".plinth-slides__pane--next")?.textContent).toBe("End of deck");
 
@@ -469,17 +469,6 @@ describe("presenter view", () => {
     c.t = 65_000;
     c.tick?.();
     expect(timer.textContent).toBe("1:05");
-    const [pause] = Array.from(p.querySelectorAll("button"));
-    expect(pause?.getAttribute("aria-label")).toBe("Pause timer");
-    pause?.click();
-    expect(pause?.getAttribute("aria-label")).toBe("Resume timer");
-    c.t = 125_000;
-    c.tick?.();
-    expect(timer.textContent).toBe("1:05");
-    pause?.click();
-    c.t = 130_000;
-    c.tick?.();
-    expect(timer.textContent).toBe("1:10");
     key(f, "Escape");
     expect(document.querySelector(".plinth-slides__presenter")).toBeNull();
     // The timer starts again each time presenter view opens.
@@ -496,7 +485,7 @@ describe("presenter view", () => {
     const names = Array.from(bar.querySelectorAll("button")).map((b) =>
       b.getAttribute("aria-label"),
     );
-    expect(names).toEqual(["Pause timer", "Previous slide", "Next slide", "Exit presenter view"]);
+    expect(names).toEqual(["Previous slide", "Next slide", "Exit presenter view"]);
     (bar.querySelector('[aria-label="Next slide"]') as HTMLElement).click();
     (bar.querySelector('[aria-label="Next slide"]') as HTMLElement).click();
     expect(slide()).toBe("3");

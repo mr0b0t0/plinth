@@ -698,9 +698,9 @@ source editor work as for docs. A deck is not edited on its page.
   the app's own frame full screen; the frame gets no fullscreen permission of its own, and
   presenter view stays presenter view when it goes full screen. "Presenter view" (or `s`) shows,
   inside the frame, the current slide, the next one and the notes over one bar: the elapsed timer
-  with pause (it starts again each time presenter view opens), previous and next around the same
-  `3 / 20` count as the pill (presenter view takes no swipes or taps, so touch screens page here),
-  the clock, and Exit; Exit, Escape or `s` leave it. The parts keep that order at every width. The
+  (it starts again each time presenter view opens), previous and next around the same `3 / 20`
+  count as the pill (presenter view takes no swipes or taps, so touch screens page here), and
+  Exit; Exit, Escape or `s` leave it. A slide without notes leaves the notes pane empty. The parts keep that order at every width. The
   frame tells the app each view it switches to, so the Present menu, the paused version swap and
   the audience window follow the deck however presenter view was opened or left. While presenter
   view is on, the Present menu offers "Audience window" in its place; the ⋯ menu has no present

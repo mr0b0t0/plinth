@@ -480,13 +480,12 @@ body {
   color: var(--slides-accent);
 }
 
-.plinth-slides__empty,
 .plinth-slides__end {
   margin: 0;
   color: var(--slides-muted);
 }
 
-/* Timer and pause on the left, paging in the middle, the clock and Exit pinned right. */
+/* The timer on the left, paging in the middle, Exit pinned right. */
 .plinth-slides__pbar {
   display: grid;
   grid-column: 1;
@@ -516,7 +515,6 @@ body {
   font-weight: 600;
 }
 
-.plinth-slides__clock,
 .plinth-slides__count {
   color: var(--slides-muted);
   font-size: 0.875rem;

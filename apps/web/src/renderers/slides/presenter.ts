@@ -1,18 +1,17 @@
 // Presenter view, inside the deck's own frame: the current slide, the next one and the speaker
-// notes, over one bar: the elapsed timer with pause (it starts again each time presenter view
-// opens), previous and next with "3 / 20" between them (touch screens have no keys, and presenter
-// view takes no swipes), the wall clock, and Exit. A slide that does not fit is marked on the
+// notes, over one bar: the elapsed timer (it starts again each time presenter view opens),
+// previous and next with "3 / 20" between them (touch screens have no keys, and presenter view
+// takes no swipes), and Exit. A slide that does not fit is marked on the
 // current pane. Everything here is made with createElement and textContent; the slides and notes
 // it shows are copies of what deck.ts already sanitized.
 import { dropIds, type SlideView } from "./deck.ts";
-import { iconButton, setIcon } from "./icons.ts";
+import { iconButton } from "./icons.ts";
 import { fitSlide, type Measure, overflows } from "./layout.ts";
 import { fitScale, setScale } from "./stage.ts";
 
 export interface PresenterClock {
   now(): number;
   every(ms: number, fn: () => void): () => void;
-  time(at: number): string;
 }
 
 export const systemClock: PresenterClock = {
@@ -21,7 +20,6 @@ export const systemClock: PresenterClock = {
     const id = setInterval(fn, ms);
     return () => clearInterval(id);
   },
-  time: (at) => new Date(at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
 };
 
 /** "4:05" or "1:02:09". */
@@ -62,10 +60,7 @@ export class Presenter {
   private readonly notes: HTMLElement;
   private readonly counter: HTMLElement;
   private readonly timer: HTMLElement;
-  private readonly clockEl: HTMLElement;
-  private readonly pauseBtn: HTMLButtonElement;
-  private startedAt: number;
-  private pausedAt: number | null = null;
+  private readonly startedAt: number;
   private stopTick: (() => void) | null = null;
   private n = 1;
 
@@ -103,14 +98,13 @@ export class Presenter {
     this.notes = el(doc, "div", "plinth-slides__notes");
     side.append(nextLabel, this.next, notesLabel, this.notes);
 
-    // Timer and pause on the left, paging in the middle, the clock and Exit on the right.
+    // The timer on the left, paging in the middle, Exit on the right.
     const bar = el(doc, "div", "plinth-slides__pbar");
     const timing = el(doc, "div", "plinth-slides__group");
     this.timer = el(doc, "span", "plinth-slides__timer", "0:00");
     this.timer.setAttribute("role", "timer");
     this.timer.setAttribute("aria-label", "Elapsed time");
-    this.pauseBtn = iconButton(doc, "pause", "Pause timer", () => this.togglePause());
-    timing.append(this.timer, this.pauseBtn);
+    timing.append(this.timer);
     const paging = el(doc, "div", "plinth-slides__group plinth-slides__group--paging");
     this.counter = el(doc, "span", "plinth-slides__count");
     paging.append(
@@ -119,11 +113,7 @@ export class Presenter {
       iconButton(doc, "caret-right", "Next slide", () => this.o.next()),
     );
     const end = el(doc, "div", "plinth-slides__group plinth-slides__group--end");
-    this.clockEl = el(doc, "span", "plinth-slides__clock");
-    end.append(
-      this.clockEl,
-      iconButton(doc, "x", "Exit presenter view", () => this.o.exit()),
-    );
+    end.append(iconButton(doc, "x", "Exit presenter view", () => this.o.exit()));
     bar.append(timing, paging, end);
 
     this.el.append(this.current, side, bar);
@@ -145,30 +135,12 @@ export class Presenter {
     this.stopTick = null;
   }
 
-  get paused(): boolean {
-    return this.pausedAt !== null;
-  }
-
   elapsed(): number {
-    return (this.pausedAt ?? this.clock.now()) - this.startedAt;
-  }
-
-  togglePause(): void {
-    const now = this.clock.now();
-    if (this.pausedAt === null) {
-      this.pausedAt = now;
-      setIcon(this.pauseBtn, "play", "Resume timer");
-    } else {
-      this.startedAt += now - this.pausedAt;
-      this.pausedAt = null;
-      setIcon(this.pauseBtn, "pause", "Pause timer");
-    }
-    this.tick();
+    return this.clock.now() - this.startedAt;
   }
 
   tick(): void {
     this.timer.textContent = formatElapsed(this.elapsed());
-    this.clockEl.textContent = this.clock.time(this.clock.now());
   }
 
   /** Shows slide `n` as current, the one after it as next, and its notes. */
@@ -195,13 +167,8 @@ export class Presenter {
     } else {
       this.next.append(el(this.doc, "p", "plinth-slides__end", "End of deck"));
     }
-    if (view && view.notes.childNodes.length > 0) {
-      this.notes.replaceChildren(view.notes.cloneNode(true));
-    } else {
-      this.notes.replaceChildren(
-        el(this.doc, "p", "plinth-slides__empty", "No notes for this slide."),
-      );
-    }
+    // A slide without notes leaves the notes pane empty.
+    this.notes.replaceChildren(...(view ? [view.notes.cloneNode(true)] : []));
     this.counter.textContent = `${n} / ${this.views.length}`;
     this.tick();
     this.layout();
