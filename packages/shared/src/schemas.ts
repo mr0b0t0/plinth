@@ -284,7 +284,8 @@ const sheetFormatSchema = z
     grouping: z.boolean().optional(),
   })
   .strict();
-const sheetColumnInputSchema = z
+/** A new column's definition (edit_sheet insert_columns, and a live sheet's struct frame). */
+export const sheetColumnInputSchema = z
   .object({
     name: z.string().min(1).max(100),
     type: z.enum(SHEET_COLUMN_TYPES).optional(),

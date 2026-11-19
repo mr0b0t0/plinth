@@ -163,6 +163,38 @@ describe("merge3", () => {
     });
   });
 
+  it("with rows, merges changes that only touch, but not two inserts at the same place", () => {
+    const b = L("h", "r1", "r2", "r3");
+    // Adjacent rows changed on each side: both kept.
+    expect(merge3(b, L("h", "R1", "r2", "r3"), L("h", "r1", "R2", "r3"), { rows: true })).toEqual({
+      clean: true,
+      text: L("h", "R1", "R2", "r3"),
+      work: expect.any(Number),
+    });
+    // A row inserted beside a row the other side changed.
+    expect(
+      merge3(b, L("h", "r1", "new", "r2", "r3"), L("h", "R1", "r2", "r3"), { rows: true }),
+    ).toMatchObject({ clean: true, text: L("h", "R1", "new", "r2", "r3") });
+    // A row deleted beside a row the other side changed.
+    expect(merge3(b, L("h", "r1", "r3"), L("h", "r1", "r2", "R3"), { rows: true })).toMatchObject({
+      clean: true,
+      text: L("h", "r1", "R3"),
+    });
+    // Rows appended on both sides, different: a conflict, so nothing is guessed.
+    expect(merge3(b, L(b, "x"), L(b, "y"), { rows: true })).toMatchObject({
+      clean: false,
+      reason: "conflict",
+    });
+    // The same row changed on both sides differently: a conflict, as for text.
+    expect(
+      merge3(b, L("h", "A", "r2", "r3"), L("h", "B", "r2", "r3"), { rows: true }),
+    ).toMatchObject({ clean: false, reason: "conflict" });
+    // Without rows, adjacent changes stay a conflict.
+    expect(merge3(b, L("h", "R1", "r2", "r3"), L("h", "r1", "R2", "r3"))).toMatchObject({
+      clean: false,
+    });
+  });
+
   it("handles empty texts", () => {
     expect(merge3("", "", "")).toMatchObject({ clean: true, text: "" });
     expect(merge3("", "new", "")).toMatchObject({ clean: true, text: "new" });
@@ -194,65 +226,71 @@ describe("merge3", () => {
     expect(merge3(b, `x\n${b}`, `${b}\ny`)).toMatchObject({ clean: true, text: `x\n${b}\ny` });
   });
 
-  it("never drops text: every line either side added or kept is in a clean merge", () => {
-    const r = rng(42);
-    let clean = 0;
-    for (let run = 0; run < 500; run++) {
-      const n = 1 + Math.floor(r() * 25);
-      const b = Array.from({ length: n }, (_, i) => `b${i}`);
-      let uid = 0;
-      const edit = (side: string) => {
-        const out: string[] = [];
-        const deleted = new Set<string>();
-        const added: string[] = [];
-        for (const line of b) {
-          const p = r();
-          if (p < 0.1) {
-            deleted.add(line);
-          } else if (p < 0.2) {
-            deleted.add(line);
-            const l = `${side}${uid++}`;
-            out.push(l);
-            added.push(l);
-          } else out.push(line);
-          if (r() < 0.08) {
-            const l = `${side}${uid++}`;
-            out.push(l);
-            added.push(l);
+  it.each([
+    ["text", false],
+    ["rows", true],
+  ])(
+    "never drops text (%s): every line either side added or kept is in a clean merge",
+    (_, rows) => {
+      const r = rng(42);
+      let clean = 0;
+      for (let run = 0; run < 500; run++) {
+        const n = 1 + Math.floor(r() * 25);
+        const b = Array.from({ length: n }, (_, i) => `b${i}`);
+        let uid = 0;
+        const edit = (side: string) => {
+          const out: string[] = [];
+          const deleted = new Set<string>();
+          const added: string[] = [];
+          for (const line of b) {
+            const p = r();
+            if (p < 0.1) {
+              deleted.add(line);
+            } else if (p < 0.2) {
+              deleted.add(line);
+              const l = `${side}${uid++}`;
+              out.push(l);
+              added.push(l);
+            } else out.push(line);
+            if (r() < 0.08) {
+              const l = `${side}${uid++}`;
+              out.push(l);
+              added.push(l);
+            }
           }
+          return { text: out.join("\n"), deleted, added };
+        };
+        const o = edit("o");
+        const t = edit("t");
+        const m = merge3(b.join("\n"), o.text, t.text, { rows });
+        if (!m.clean) {
+          if (m.reason === "conflict") expect(m.conflicts.length).toBeGreaterThan(0);
+          continue;
         }
-        return { text: out.join("\n"), deleted, added };
-      };
-      const o = edit("o");
-      const t = edit("t");
-      const m = merge3(b.join("\n"), o.text, t.text);
-      if (!m.clean) {
-        if (m.reason === "conflict") expect(m.conflicts.length).toBeGreaterThan(0);
-        continue;
+        clean++;
+        const result = m.text.split("\n");
+        const has = new Set(result);
+        // Everything added on either side is there, exactly once.
+        for (const l of [...o.added, ...t.added]) {
+          expect(has.has(l), `${l} in ${m.text}`).toBe(true);
+          expect(result.filter((x) => x === l)).toHaveLength(1);
+        }
+        // A base line both sides kept is still there; one either side deleted is gone.
+        for (const l of b) {
+          const kept = !o.deleted.has(l) && !t.deleted.has(l);
+          expect(has.has(l), `${l} in ${m.text}`).toBe(kept);
+        }
+        // Lines keep their order relative to each side.
+        const order = (side: string[]) => side.filter((l) => has.has(l));
+        const idx = new Map(result.map((l, i) => [l, i]));
+        for (const side of [o.text.split("\n"), t.text.split("\n")]) {
+          const kept = order(side).map((l) => idx.get(l) as number);
+          expect([...kept].sort((x, y) => x - y)).toEqual(kept);
+        }
       }
-      clean++;
-      const result = m.text.split("\n");
-      const has = new Set(result);
-      // Everything added on either side is there, exactly once.
-      for (const l of [...o.added, ...t.added]) {
-        expect(has.has(l), `${l} in ${m.text}`).toBe(true);
-        expect(result.filter((x) => x === l)).toHaveLength(1);
-      }
-      // A base line both sides kept is still there; one either side deleted is gone.
-      for (const l of b) {
-        const kept = !o.deleted.has(l) && !t.deleted.has(l);
-        expect(has.has(l), `${l} in ${m.text}`).toBe(kept);
-      }
-      // Lines keep their order relative to each side.
-      const order = (side: string[]) => side.filter((l) => has.has(l));
-      const idx = new Map(result.map((l, i) => [l, i]));
-      for (const side of [o.text.split("\n"), t.text.split("\n")]) {
-        const kept = order(side).map((l) => idx.get(l) as number);
-        expect([...kept].sort((x, y) => x - y)).toEqual(kept);
-      }
-    }
-    // The generator exercises both outcomes.
-    expect(clean).toBeGreaterThan(50);
-    expect(clean).toBeLessThan(500);
-  });
+      // The generator exercises both outcomes.
+      expect(clean).toBeGreaterThan(50);
+      expect(clean).toBeLessThan(500);
+    },
+  );
 });
