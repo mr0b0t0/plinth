@@ -17,7 +17,9 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   nobody touched byte for byte. A Move or Delete never runs the blocks around it together, even
   with no blank lines between them (a list that would join another takes a different bullet or
   number style, which looks the same). A link can go to any address the page links, spaces and
-  accented letters included. An image's alt text is a field, and **Add or replace an image: Ask
+  accented letters included. A change the doc cannot take (at its size limit, or while not
+  connected) says so and keeps the block open with what was typed. An image's alt text is a
+  field, and **Add or replace an image: Ask
   an agent** opens the Ask dialog. Blocks the page cannot show faithfully as formatted text are
   shown as they are, with **Ask an agent to change this**, Move and Delete.
 

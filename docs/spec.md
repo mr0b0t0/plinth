@@ -2725,7 +2725,8 @@ the same leases, room, drafts and Publish as [Editing](#editing).
   in the same lease. One that would still join blocks (two numbered lists around it that use both
   `.` and `)`, or an indented block that would continue the list above) is not made, and the page
   says why. A block op the doc has no room for, or that cannot be sent, says so and changes
-  nothing.
+  nothing. So does an Enter or typing that cannot be sent; after an Enter the block stays open
+  with what was typed, still waiting to be sent.
 - **Images are agent-only.** An image block's alt text is a field; the image itself, and adding
   one, are left to agents through Ask an agent, whose page anchor names the place (`block-3`, or
   `block-3:image`), never its text.

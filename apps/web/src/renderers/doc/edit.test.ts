@@ -17,6 +17,7 @@ import {
   padded,
   READ_ONLY_NOTE,
   REFUSED_EDIT,
+  TOO_LONG,
   unpadded,
 } from "./edit.ts";
 
@@ -303,6 +304,77 @@ describe("DocEditor: formatted text", () => {
     key(r.editable, "Enter", { shiftKey: true });
     key(rich(editor).editable, "Escape");
     expect(local.text).toBe("one\\\ntwo");
+  });
+
+  it("an Enter the doc has no room for keeps the block open with its text and says so", () => {
+    const filler = "x".repeat(LIMITS.maxDocBytes - 20);
+    const doc = `one two\n\nthree\n\n${filler}`;
+    const { local, editor } = setup(doc);
+    click(root.querySelector("p") as Element);
+    const r = rich(editor);
+    typeText(r.editable, "one two and more words");
+    select(r.editable, 3);
+    key(r.editable, "Enter");
+    expect(local.text).toBe(doc);
+    // The same block is still open, with what was typed, and nothing else opened.
+    expect(editor.openEditor).toBe(r);
+    expect(r.editable.textContent).toBe("one two and more words");
+    expect(local.mine).not.toBeNull();
+    expect(document.querySelector('[role="status"]')?.textContent).toContain(DOC_FULL);
+  });
+
+  it("an Enter whose edit is not sent keeps the typing, and sends it once it can", () => {
+    const { local, editor } = setup("one two\n\nthree");
+    const edit = vi.spyOn(local, "edit").mockReturnValue(false);
+    click(root.querySelector("p") as Element);
+    const r = rich(editor);
+    typeText(r.editable, "one two more");
+    select(r.editable, 3);
+    key(r.editable, "Enter");
+    expect(local.text).toBe("one two\n\nthree");
+    expect(editor.openEditor).toBe(r);
+    expect(r.editable.textContent).toBe("one two more");
+    expect(document.querySelector('[role="status"]')?.textContent).toContain("Not connected");
+    // Back online: the block is still pending, so Escape sends it as typed (not split).
+    edit.mockRestore();
+    key(r.editable, "Escape");
+    expect(local.text).toBe("one two more\n\nthree");
+  });
+
+  it("an Enter in a block over one frame keeps it open and says so", () => {
+    const long = "word ".repeat(Math.ceil(LIMITS.liveDocFrameBytes / 5)).trim();
+    const { local, editor } = setup(`${long}\n\nthree`);
+    click(root.querySelector("p") as Element);
+    const r = rich(editor);
+    select(r.editable, 4);
+    key(r.editable, "Enter");
+    expect(local.text).toBe(`${long}\n\nthree`);
+    expect(editor.openEditor).toBe(r);
+    expect(document.querySelector('[role="status"]')?.textContent).toContain(TOO_LONG);
+  });
+
+  it("Enter at the start of a block keeps what was typed in it", () => {
+    const { local, editor } = setup("one\n\ntwo");
+    click(root.querySelector("p") as Element);
+    const r = rich(editor);
+    typeText(r.editable, "one more");
+    select(r.editable, 0);
+    key(r.editable, "Enter");
+    const fresh = rich(editor);
+    expect(fresh).not.toBe(r);
+    typeText(fresh.editable, "above");
+    key(fresh.editable, "Escape");
+    expect(local.text).toBe("above\n\none more\n\ntwo");
+  });
+
+  it("typing the doc has no room for says so", () => {
+    const filler = "x".repeat(LIMITS.maxDocBytes - 10);
+    const { local, editor } = setup(`one\n\n${filler}`);
+    click(root.querySelector("p") as Element);
+    typeText(rich(editor).editable, "one and a lot more words");
+    vi.advanceTimersByTime(EDIT_DEBOUNCE_MS);
+    expect(local.text).toBe(`one\n\n${filler}`);
+    expect(document.querySelector('[role="status"]')?.textContent).toContain(DOC_FULL);
   });
 
   it("in a list, Enter makes an item, Tab indents and Shift+Tab outdents", () => {

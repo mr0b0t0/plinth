@@ -81,6 +81,10 @@ export const JOINED_BLOCKS =
   "That would run the blocks around it together into one, so nothing was changed.";
 /** Why a block op was not made: the doc has no room for it. */
 export const DOC_FULL = "The doc is at its size limit, so that change wasn't made.";
+/** Why an edit was not sent: the room is out of reach (or this frame has no lease). */
+export const NOT_SENT = "Not connected. Try again in a moment.";
+/** Why a block was not sent: it is over one frame. */
+export const TOO_LONG = "This block is too long to send. Split it into smaller blocks.";
 
 /** What the editor needs of the live draft: the room's (LiveDocClient) or a local one. */
 export type DocBackend = LiveBackend;
@@ -1340,7 +1344,7 @@ export class DocEditor {
     } else if (new TextEncoder().encode(joinLines(after)).byteLength > LIMITS.maxDocBytes) {
       refusal = DOC_FULL;
     } else if (fitted !== text && !this.backend.edit(fitted)) {
-      refusal = "Not connected. Try again in a moment.";
+      refusal = NOT_SENT;
     }
     this.backend.release();
     if (refusal) {
@@ -1482,9 +1486,15 @@ export class DocEditor {
       this.showNotice(FORMAT_LOST);
       return;
     }
+    // Typing not sent yet goes with the split (at the start, before the paragraph above opens).
+    const pending = this.timer !== null;
     this.cancelTimer();
     if (keepCore === "" && nextCore !== "") {
-      // Enter at the very start: a new paragraph above.
+      // Enter at the very start: a new paragraph above, once this block's typing is in.
+      if (pending && !this.send()) {
+        this.schedule(EDIT_DEBOUNCE_MS);
+        return;
+      }
       this.close(true);
       this.openInsert(mine.start + (this.pad.before ? 1 : 0), para());
       return;
@@ -1504,7 +1514,16 @@ export class DocEditor {
       (open.prefix.length > 0 && !isBlank(open.prefix.at(-1)) ? 1 : 0);
     const keepLines = keepCore === "" ? 0 : keepCore.split("\n").length;
     const end = mine.start + (text === "" ? 0 : text.split("\n").length) - (this.pad.after ? 1 : 0);
-    if (joinLines(lines.slice(mine.start, mine.end)) !== text) this.backend.edit(text);
+    if (joinLines(lines.slice(mine.start, mine.end)) !== text) {
+      const refusal =
+        this.unsendable(lines, mine, text) ?? (this.backend.edit(text) ? null : NOT_SENT);
+      if (refusal) {
+        // Nothing changed: the block stays open with what was typed, still to be sent.
+        this.showNotice(refusal);
+        if (pending) this.schedule(EDIT_DEBOUNCE_MS);
+        return;
+      }
+    }
     this.backend.release();
     this.dropOpen();
     this.held = null;
@@ -1563,10 +1582,6 @@ export class DocEditor {
       return false;
     }
     const text = padded(block, this.pad);
-    if (new TextEncoder().encode(text).byteLength > LIMITS.liveDocFrameBytes - 256) {
-      this.showNotice("This block is too long to send. Split it into smaller blocks.");
-      return false;
-    }
     const lines = this.backend.lines;
     if (joinLines(lines.slice(mine.start, mine.end)) === text) return true;
     // The room's rules, checked here first: a refusal is never silent.
@@ -1574,8 +1589,22 @@ export class DocEditor {
       this.refused(REFUSED_EDIT);
       return false;
     }
-    this.backend.edit(text);
+    const refusal =
+      this.unsendable(lines, mine, text) ?? (this.backend.edit(text) ? null : NOT_SENT);
+    if (refusal) {
+      this.showNotice(refusal);
+      return false;
+    }
     return true;
+  }
+
+  /** Why `text` in place of the leased lines cannot be sent, checked first; null when it can. */
+  private unsendable(lines: readonly string[], mine: LineRange, text: string): string | null {
+    const bytes = (s: string) => new TextEncoder().encode(s).byteLength;
+    if (bytes(text) > LIMITS.liveDocFrameBytes - 256) return TOO_LONG;
+    const after = [...lines.slice(0, mine.start), ...blockLines(text), ...lines.slice(mine.end)];
+    if (bytes(joinLines(after)) > LIMITS.maxDocBytes) return DOC_FULL;
+    return null;
   }
 
   /**
