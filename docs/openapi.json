@@ -1990,6 +1990,380 @@
         },
         "security": [{ "sessionCookie": [], "csrfHeader": [] }]
       }
+    },
+    "/artifacts/{ref}/my-category": {
+      "put": {
+        "operationId": "setMyCategory",
+        "summary": "Your own category for an artifact shared with you",
+        "description": "Seen by you only, in the app; never the owner's category, never on your own artifacts. `category: null` clears it. Session only: bearer tokens get 403. The role must be held by your account's own email; a viewer email confirmed in this browser gives 403 `no_grant`.",
+        "tags": ["Artifacts"],
+        "parameters": [
+          {
+            "in": "path",
+            "required": true,
+            "name": "ref",
+            "schema": { "type": "string", "minLength": 1, "maxLength": 80 },
+            "description": "Artifact id or slug"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": { "schema": { "$ref": "#/components/schemas/MyCategoryInput" } }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ArtifactSummary" } }
+            }
+          },
+          "400": { "$ref": "#/components/responses/E400" },
+          "401": { "$ref": "#/components/responses/E401" },
+          "403": { "$ref": "#/components/responses/E403" },
+          "404": { "$ref": "#/components/responses/E404" },
+          "default": { "$ref": "#/components/responses/Error" }
+        },
+        "security": [{ "sessionCookie": [], "csrfHeader": [] }]
+      }
+    },
+    "/category-shares": {
+      "get": {
+        "operationId": "listCategoryShares",
+        "summary": "Your category shares",
+        "description": "The signed-in owner only (session, CSRF and exact Origin); agents and bearer tokens get 403, and no MCP tool does this.",
+        "tags": ["Sharing"],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/CategoryShareList" } }
+            }
+          },
+          "401": { "$ref": "#/components/responses/E401" },
+          "403": { "$ref": "#/components/responses/E403" },
+          "default": { "$ref": "#/components/responses/Error" }
+        },
+        "security": [{ "sessionCookie": [] }]
+      },
+      "post": {
+        "operationId": "createCategoryShare",
+        "summary": "Share one of your categories with people",
+        "description": "The signed-in owner only (session, CSRF and exact Origin); agents and bearer tokens get 403, and no MCP tool does this. Filing an artifact under a shared category never shares it: only this review does. Every artifact of the category not reviewed as shared in this request stays private or pending. Each review item names the artifact, the current_version and category_rev you were shown, and shared or private; a shared item whose artifact changed meanwhile is skipped, never applied. A private item holds at any version, and is skipped only when the artifact left the category (moved, deleted or taken down). 409 when the category is already shared.",
+        "tags": ["Sharing"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/CreateCategoryShareInput" }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/CategoryShareWriteResult" }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/E400" },
+          "401": { "$ref": "#/components/responses/E401" },
+          "403": { "$ref": "#/components/responses/E403" },
+          "404": { "$ref": "#/components/responses/E404" },
+          "409": { "$ref": "#/components/responses/E409" },
+          "default": { "$ref": "#/components/responses/Error" }
+        },
+        "security": [{ "sessionCookie": [], "csrfHeader": [] }]
+      }
+    },
+    "/category-shares/preview": {
+      "get": {
+        "operationId": "previewCategoryShare",
+        "summary": "What sharing one of your categories would ask you to review",
+        "description": "The signed-in owner only (session, CSRF and exact Origin); agents and bearer tokens get 403, and no MCP tool does this. Every live artifact of the category with the current_version and category_rev a review item quotes. 409 when the category is already shared.",
+        "tags": ["Sharing"],
+        "parameters": [
+          {
+            "in": "query",
+            "required": true,
+            "name": "category",
+            "schema": { "type": "string", "minLength": 1, "maxLength": 60 },
+            "description": "One of your categories, matched ignoring case, spaces, '-' and '_'"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/CategorySharePreview" }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/E401" },
+          "403": { "$ref": "#/components/responses/E403" },
+          "404": { "$ref": "#/components/responses/E404" },
+          "409": { "$ref": "#/components/responses/E409" },
+          "default": { "$ref": "#/components/responses/Error" }
+        },
+        "security": [{ "sessionCookie": [] }]
+      }
+    },
+    "/category-shares/{id}": {
+      "get": {
+        "operationId": "getCategoryShare",
+        "summary": "A category share and every artifact of its category",
+        "description": "The signed-in owner only (session, CSRF and exact Origin); agents and bearer tokens get 403, and no MCP tool does this.",
+        "tags": ["Sharing"],
+        "parameters": [
+          {
+            "in": "path",
+            "required": true,
+            "name": "id",
+            "schema": { "type": "string", "minLength": 1, "maxLength": 200 }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/CategoryShareDetail" }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/E401" },
+          "403": { "$ref": "#/components/responses/E403" },
+          "404": { "$ref": "#/components/responses/E404" },
+          "default": { "$ref": "#/components/responses/Error" }
+        },
+        "security": [{ "sessionCookie": [] }]
+      },
+      "patch": {
+        "operationId": "updateCategoryShare",
+        "summary": "Change a category share's title or people",
+        "description": "The signed-in owner only (session, CSRF and exact Origin); agents and bearer tokens get 403, and no MCP tool does this. `review` is required with `people` (400 review_required): changing who sees a category re-confirms what they see. Each review item names the artifact, the current_version and category_rev you were shown, and shared or private; a shared item whose artifact changed meanwhile is skipped, never applied. A private item holds at any version, and is skipped only when the artifact left the category (moved, deleted or taken down).",
+        "tags": ["Sharing"],
+        "parameters": [
+          {
+            "in": "path",
+            "required": true,
+            "name": "id",
+            "schema": { "type": "string", "minLength": 1, "maxLength": 200 }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/UpdateCategoryShareInput" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/CategoryShareWriteResult" }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/E400" },
+          "401": { "$ref": "#/components/responses/E401" },
+          "403": { "$ref": "#/components/responses/E403" },
+          "404": { "$ref": "#/components/responses/E404" },
+          "default": { "$ref": "#/components/responses/Error" }
+        },
+        "security": [{ "sessionCookie": [], "csrfHeader": [] }]
+      },
+      "delete": {
+        "operationId": "deleteCategoryShare",
+        "summary": "Stop sharing a category",
+        "description": "The signed-in owner only (session, CSRF and exact Origin); agents and bearer tokens get 403, and no MCP tool does this. Its people lose every artifact they saw through it at once.",
+        "tags": ["Sharing"],
+        "parameters": [
+          {
+            "in": "path",
+            "required": true,
+            "name": "id",
+            "schema": { "type": "string", "minLength": 1, "maxLength": 200 }
+          }
+        ],
+        "responses": {
+          "204": { "description": "Done, no body" },
+          "401": { "$ref": "#/components/responses/E401" },
+          "403": { "$ref": "#/components/responses/E403" },
+          "404": { "$ref": "#/components/responses/E404" },
+          "default": { "$ref": "#/components/responses/Error" }
+        },
+        "security": [{ "sessionCookie": [], "csrfHeader": [] }]
+      }
+    },
+    "/category-shares/{id}/review": {
+      "post": {
+        "operationId": "reviewCategoryShare",
+        "summary": "Share or keep private, per artifact of a shared category",
+        "description": "The signed-in owner only (session, CSRF and exact Origin); agents and bearer tokens get 403, and no MCP tool does this. Each review item names the artifact, the current_version and category_rev you were shown, and shared or private; a shared item whose artifact changed meanwhile is skipped, never applied. A private item holds at any version, and is skipped only when the artifact left the category (moved, deleted or taken down).",
+        "tags": ["Sharing"],
+        "parameters": [
+          {
+            "in": "path",
+            "required": true,
+            "name": "id",
+            "schema": { "type": "string", "minLength": 1, "maxLength": 200 }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": { "schema": { "$ref": "#/components/schemas/CategoryReviewInput" } }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/CategoryReviewResult" }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/E400" },
+          "401": { "$ref": "#/components/responses/E401" },
+          "403": { "$ref": "#/components/responses/E403" },
+          "404": { "$ref": "#/components/responses/E404" },
+          "default": { "$ref": "#/components/responses/Error" }
+        },
+        "security": [{ "sessionCookie": [], "csrfHeader": [] }]
+      }
+    },
+    "/portals": {
+      "get": {
+        "operationId": "listPortals",
+        "summary": "The collections people shared with you",
+        "description": "A session or a confirmed viewer email; empty for everyone else.",
+        "tags": ["Viewing"],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/PortalList" } }
+            }
+          },
+          "401": { "$ref": "#/components/responses/E401" },
+          "default": { "$ref": "#/components/responses/Error" }
+        },
+        "security": [{}, { "bearerAuth": [] }, { "sessionCookie": [] }]
+      }
+    },
+    "/portals/{id}": {
+      "get": {
+        "operationId": "getPortal",
+        "summary": "A shared collection: the artifacts you may open in it",
+        "description": "`email_required` until you confirm an email that holds a grant on it; 404 for an unknown id.",
+        "tags": ["Viewing"],
+        "parameters": [
+          {
+            "in": "path",
+            "required": true,
+            "name": "id",
+            "schema": { "type": "string", "minLength": 1, "maxLength": 200 }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/PortalGate" } }
+            }
+          },
+          "404": { "$ref": "#/components/responses/E404" },
+          "default": { "$ref": "#/components/responses/Error" }
+        },
+        "security": [{}, { "bearerAuth": [] }, { "sessionCookie": [] }]
+      }
+    },
+    "/portals/{id}/email": {
+      "post": {
+        "operationId": "portalEmail",
+        "summary": "Ask for a code to open a shared collection",
+        "description": "Same response whether or not the email holds a grant on it.",
+        "tags": ["Viewing"],
+        "parameters": [
+          {
+            "in": "path",
+            "required": true,
+            "name": "id",
+            "schema": { "type": "string", "minLength": 1, "maxLength": 200 }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": { "schema": { "$ref": "#/components/schemas/ViewerEmailInput" } }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Ok" } } }
+          },
+          "400": { "$ref": "#/components/responses/E400" },
+          "403": { "$ref": "#/components/responses/E403" },
+          "404": { "$ref": "#/components/responses/E404" },
+          "429": { "$ref": "#/components/responses/E429" },
+          "default": { "$ref": "#/components/responses/Error" }
+        },
+        "security": [
+          { "csrfHeader": [] },
+          { "bearerAuth": [] },
+          { "sessionCookie": [], "csrfHeader": [] }
+        ]
+      }
+    },
+    "/portals/{id}/code": {
+      "post": {
+        "operationId": "portalCode",
+        "summary": "Confirm a shared collection's code",
+        "description": "Sets the `__Host-plinth_viewer` cookie on APP_HOST (or signs the owner in).",
+        "tags": ["Viewing"],
+        "parameters": [
+          {
+            "in": "path",
+            "required": true,
+            "name": "id",
+            "schema": { "type": "string", "minLength": 1, "maxLength": 200 }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": { "schema": { "$ref": "#/components/schemas/ViewerCodeInput" } }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/PortalGate" } }
+            }
+          },
+          "400": { "$ref": "#/components/responses/E400" },
+          "403": { "$ref": "#/components/responses/E403" },
+          "404": { "$ref": "#/components/responses/E404" },
+          "429": { "$ref": "#/components/responses/E429" },
+          "default": { "$ref": "#/components/responses/Error" }
+        },
+        "security": [
+          { "csrfHeader": [] },
+          { "bearerAuth": [] },
+          { "sessionCookie": [], "csrfHeader": [] }
+        ]
+      }
     }
   },
   "components": {
@@ -2132,7 +2506,8 @@
           "to": {
             "anyOf": [{ "type": "string", "minLength": 1, "maxLength": 60 }, { "type": "null" }],
             "description": "The new name (an existing one merges into it), or null to clear the category"
-          }
+          },
+          "personal": { "type": "boolean" }
         },
         "required": ["from", "to"]
       },
@@ -2461,6 +2836,16 @@
             "type": ["string", "null"],
             "maxLength": 60,
             "description": "The owner's category; null unless you own the artifact. Untrusted text."
+          },
+          "category_share": {
+            "type": ["string", "null"],
+            "description": "Owner only: where the artifact stands in its shared category (pending until you review it in the app); null when its category is not shared, and for everyone but the owner",
+            "enum": ["shared", "pending", "private", null]
+          },
+          "my_category": {
+            "type": ["string", "null"],
+            "maxLength": 60,
+            "description": "Your own category for an artifact shared with you, set in the app; null on your own artifacts and for bearer tokens. Untrusted text."
           }
         },
         "required": [
@@ -2479,7 +2864,9 @@
           "role",
           "taken_down",
           "thumbnail_url",
-          "category"
+          "category",
+          "category_share",
+          "my_category"
         ]
       },
       "ArtifactDetail": {
@@ -2554,6 +2941,16 @@
             "maxLength": 60,
             "description": "The owner's category; null unless you own the artifact. Untrusted text."
           },
+          "category_share": {
+            "type": ["string", "null"],
+            "description": "Owner only: where the artifact stands in its shared category (pending until you review it in the app); null when its category is not shared, and for everyone but the owner",
+            "enum": ["shared", "pending", "private", null]
+          },
+          "my_category": {
+            "type": ["string", "null"],
+            "maxLength": 60,
+            "description": "Your own category for an artifact shared with you, set in the app; null on your own artifacts and for bearer tokens. Untrusted text."
+          },
           "version": { "type": "integer", "minimum": 1, "description": "The version returned" },
           "source_path": {
             "type": "string",
@@ -2623,6 +3020,8 @@
           "taken_down",
           "thumbnail_url",
           "category",
+          "category_share",
+          "my_category",
           "version",
           "source_path",
           "html",
@@ -2680,6 +3079,16 @@
             "type": ["string", "null"],
             "maxLength": 60,
             "description": "The owner's category; null unless you own the artifact. Untrusted text."
+          },
+          "category_share": {
+            "type": ["string", "null"],
+            "description": "Owner only: where the artifact stands in its shared category (pending until you review it in the app); null when its category is not shared, and for everyone but the owner",
+            "enum": ["shared", "pending", "private", null]
+          },
+          "my_category": {
+            "type": ["string", "null"],
+            "maxLength": 60,
+            "description": "Your own category for an artifact shared with you, set in the app; null on your own artifacts and for bearer tokens. Untrusted text."
           },
           "version": { "type": "integer", "minimum": 1, "description": "The version returned" },
           "source_path": {
@@ -2750,6 +3159,8 @@
           "taken_down",
           "thumbnail_url",
           "category",
+          "category_share",
+          "my_category",
           "version",
           "source_path",
           "content",
@@ -2811,6 +3222,16 @@
             "type": ["string", "null"],
             "maxLength": 60,
             "description": "The owner's category; null unless you own the artifact. Untrusted text."
+          },
+          "category_share": {
+            "type": ["string", "null"],
+            "description": "Owner only: where the artifact stands in its shared category (pending until you review it in the app); null when its category is not shared, and for everyone but the owner",
+            "enum": ["shared", "pending", "private", null]
+          },
+          "my_category": {
+            "type": ["string", "null"],
+            "maxLength": 60,
+            "description": "Your own category for an artifact shared with you, set in the app; null on your own artifacts and for bearer tokens. Untrusted text."
           },
           "version": { "type": "integer", "minimum": 1, "description": "The version returned" },
           "source_path": {
@@ -2877,6 +3298,8 @@
           "taken_down",
           "thumbnail_url",
           "category",
+          "category_share",
+          "my_category",
           "version",
           "source_path",
           "content",
@@ -2938,6 +3361,16 @@
             "type": ["string", "null"],
             "maxLength": 60,
             "description": "The owner's category; null unless you own the artifact. Untrusted text."
+          },
+          "category_share": {
+            "type": ["string", "null"],
+            "description": "Owner only: where the artifact stands in its shared category (pending until you review it in the app); null when its category is not shared, and for everyone but the owner",
+            "enum": ["shared", "pending", "private", null]
+          },
+          "my_category": {
+            "type": ["string", "null"],
+            "maxLength": 60,
+            "description": "Your own category for an artifact shared with you, set in the app; null on your own artifacts and for bearer tokens. Untrusted text."
           },
           "version": { "type": "integer", "minimum": 1, "description": "The version returned" },
           "source_path": {
@@ -3004,6 +3437,8 @@
           "taken_down",
           "thumbnail_url",
           "category",
+          "category_share",
+          "my_category",
           "version",
           "source_path",
           "content",
@@ -3021,6 +3456,12 @@
             "items": { "$ref": "#/components/schemas/CategoryCount" },
             "maxItems": 500,
             "description": "Your own category names with counts, most-used first, whatever the filters. Reuse one when you publish."
+          },
+          "my_categories": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/CategoryCount" },
+            "maxItems": 500,
+            "description": "A signed-in person's own categories for artifacts shared with them (the app only; never for bearer tokens)"
           }
         },
         "required": ["items", "categories"]
@@ -3034,8 +3475,12 @@
           },
           "count": {
             "type": "integer",
-            "minimum": 1,
-            "description": "Your live artifacts in this category"
+            "minimum": 0,
+            "description": "Your live artifacts in this category (0 for a shared category with none yet)"
+          },
+          "shared": {
+            "const": true,
+            "description": "You share this category with people: filing under it never shares an artifact"
           }
         },
         "required": ["name", "count"]
@@ -3063,6 +3508,11 @@
           "category": {
             "type": ["string", "null"],
             "description": "The name they now carry (an existing spelling when it was a merge); null when cleared"
+          },
+          "pending": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "How many arrived in a shared category: they wait for your review before its people see them"
           }
         },
         "required": ["updated", "category"]
@@ -3090,7 +3540,8 @@
             "type": "string",
             "maxLength": 60,
             "description": "The category stored (snapped onto your existing spelling); present only when this call set one. Untrusted text."
-          }
+          },
+          "category_share": { "$ref": "#/components/schemas/CategoryShareResult" }
         },
         "required": [
           "id",
@@ -3255,7 +3706,8 @@
             },
             "required": ["curl"]
           },
-          "next": { "type": "string" }
+          "next": { "type": "string" },
+          "category_share": { "$ref": "#/components/schemas/CategoryShareResult" }
         },
         "required": [
           "upload_id",
@@ -3287,7 +3739,8 @@
           "url": { "type": ["string", "null"] },
           "expires_at": { "type": "string", "format": "date-time" },
           "receiving_until": { "type": ["string", "null"] },
-          "next": { "type": "string" }
+          "next": { "type": "string" },
+          "category_share": { "$ref": "#/components/schemas/CategoryShareResult" }
         },
         "required": [
           "upload_id",
@@ -3325,6 +3778,7 @@
             "maxLength": 60,
             "description": "The category stored (snapped onto your existing spelling); present only when this call set one. Untrusted text."
           },
+          "category_share": { "$ref": "#/components/schemas/CategoryShareResult" },
           "bundle": {
             "type": "object",
             "properties": {
@@ -3398,9 +3852,13 @@
               "required": ["email", "role", "created_at", "name"]
             }
           },
-          "public_allowed": { "type": "boolean" }
+          "public_allowed": { "type": "boolean" },
+          "category_share": {
+            "oneOf": [{ "$ref": "#/components/schemas/SharingCategoryShare" }, { "type": "null" }],
+            "description": "The share of this artifact's category, when it has one: who else sees it through the category once it is shared"
+          }
         },
-        "required": ["visibility", "has_password", "grants", "public_allowed"]
+        "required": ["visibility", "has_password", "grants", "public_allowed", "category_share"]
       },
       "Anchor": {
         "anyOf": [
@@ -3730,6 +4188,10 @@
           "dictation": {
             "type": "boolean",
             "description": "Dictation is offered here (ALLOW_DICTATION with origin isolation): pages that declare `dictation` may receive words the viewer speaks, recognized by the app"
+          },
+          "category_sharing": {
+            "type": "boolean",
+            "description": "Owners may share a category with people here (ALLOW_CATEGORY_SHARING)"
           }
         },
         "required": [
@@ -3748,7 +4210,8 @@
           "limits",
           "cdn_allowlist",
           "upload_ticket_ttl_s",
-          "dictation"
+          "dictation",
+          "category_sharing"
         ]
       },
       "LoginResult": {
@@ -4649,6 +5112,335 @@
               "retry_in_s": { "type": "integer", "minimum": 1 }
             },
             "required": ["saved", "reason"]
+          }
+        ]
+      },
+      "CreateCategoryShareInput": {
+        "type": "object",
+        "properties": {
+          "category": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 60,
+            "description": "The project or client this artifact belongs to, usually the repo you are working in. Reuse a name from list_artifacts' categories. Only the owner sees or sets it."
+          },
+          "title": { "type": "string", "minLength": 1, "maxLength": 200 },
+          "people": {
+            "maxItems": 200,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "email": { "type": "string", "maxLength": 254 },
+                "role": { "type": "string", "enum": ["viewer", "commenter"] }
+              },
+              "required": ["email", "role"]
+            }
+          },
+          "review": {
+            "maxItems": 10000,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": { "type": "string", "pattern": "^[a-z0-9]{20}$" },
+                "version": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+                "category_rev": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+                "decision": { "type": "string", "enum": ["shared", "private"] }
+              },
+              "required": ["id", "version", "category_rev", "decision"]
+            }
+          }
+        },
+        "required": ["category", "people", "review"]
+      },
+      "UpdateCategoryShareInput": {
+        "type": "object",
+        "properties": {
+          "title": { "type": "string", "minLength": 1, "maxLength": 200 },
+          "people": {
+            "maxItems": 200,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "email": { "type": "string", "maxLength": 254 },
+                "role": { "type": "string", "enum": ["viewer", "commenter"] }
+              },
+              "required": ["email", "role"]
+            }
+          },
+          "review": {
+            "maxItems": 10000,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": { "type": "string", "pattern": "^[a-z0-9]{20}$" },
+                "version": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+                "category_rev": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+                "decision": { "type": "string", "enum": ["shared", "private"] }
+              },
+              "required": ["id", "version", "category_rev", "decision"]
+            }
+          }
+        }
+      },
+      "CategoryReviewInput": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "minItems": 1,
+            "maxItems": 10000,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": { "type": "string", "pattern": "^[a-z0-9]{20}$" },
+                "version": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+                "category_rev": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+                "decision": { "type": "string", "enum": ["shared", "private"] }
+              },
+              "required": ["id", "version", "category_rev", "decision"]
+            }
+          }
+        },
+        "required": ["items"]
+      },
+      "MyCategoryInput": {
+        "type": "object",
+        "properties": {
+          "category": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 60,
+                "description": "The project or client this artifact belongs to, usually the repo you are working in. Reuse a name from list_artifacts' categories. Only the owner sees or sets it."
+              },
+              { "type": "null" }
+            ]
+          }
+        },
+        "required": ["category"]
+      },
+      "CategoryPerson": {
+        "type": "object",
+        "properties": {
+          "email": { "type": "string", "format": "email" },
+          "role": { "type": "string", "enum": ["viewer", "commenter"] }
+        },
+        "required": ["email", "role"]
+      },
+      "CategoryShareResult": {
+        "type": "object",
+        "properties": {
+          "state": { "type": "string", "enum": ["shared", "pending", "private"] },
+          "review_url": {
+            "type": "string",
+            "format": "uri",
+            "description": "pending only: where the owner reviews it in the app"
+          }
+        },
+        "required": ["state"]
+      },
+      "SharingCategoryShare": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "title": { "type": "string" },
+          "state": { "type": "string", "enum": ["shared", "pending", "private"] },
+          "people": { "type": "array", "items": { "$ref": "#/components/schemas/CategoryPerson" } }
+        },
+        "required": ["id", "title", "state", "people"]
+      },
+      "CategoryShareSummary": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Never changes, also across renames: the portal link"
+          },
+          "category": {
+            "type": "string",
+            "description": "Your category name (owner only). Untrusted text."
+          },
+          "title": { "type": "string", "description": "What the people see: the portal's heading" },
+          "portal_url": { "type": "string", "format": "uri", "description": "<APP_HOST>/p/<id>" },
+          "people": { "type": "array", "items": { "$ref": "#/components/schemas/CategoryPerson" } },
+          "counts": {
+            "type": "object",
+            "properties": {
+              "shared": { "type": "integer" },
+              "pending": { "type": "integer" },
+              "private": { "type": "integer" }
+            },
+            "required": ["shared", "pending", "private"]
+          }
+        },
+        "required": ["id", "category", "title", "portal_url", "people", "counts"]
+      },
+      "CategoryShareList": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/CategoryShareSummary" }
+          }
+        },
+        "required": ["items"]
+      },
+      "CategoryShareArtifact": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "slug": { "type": "string" },
+          "title": { "type": "string" },
+          "current_version": { "type": "integer", "minimum": 0 },
+          "category_rev": { "type": "integer", "minimum": 0 },
+          "state": { "type": "string", "enum": ["shared", "pending", "private"] },
+          "taken_down": { "type": "boolean" },
+          "updated_at": { "type": "string", "format": "date-time" },
+          "last_author": {
+            "type": ["string", "null"],
+            "description": "Who published the current version (a name, email or connection label)"
+          }
+        },
+        "required": [
+          "id",
+          "slug",
+          "title",
+          "current_version",
+          "category_rev",
+          "state",
+          "taken_down",
+          "updated_at",
+          "last_author"
+        ]
+      },
+      "CategoryShareDetail": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Never changes, also across renames: the portal link"
+          },
+          "category": {
+            "type": "string",
+            "description": "Your category name (owner only). Untrusted text."
+          },
+          "title": { "type": "string", "description": "What the people see: the portal's heading" },
+          "portal_url": { "type": "string", "format": "uri", "description": "<APP_HOST>/p/<id>" },
+          "people": { "type": "array", "items": { "$ref": "#/components/schemas/CategoryPerson" } },
+          "counts": {
+            "type": "object",
+            "properties": {
+              "shared": { "type": "integer" },
+              "pending": { "type": "integer" },
+              "private": { "type": "integer" }
+            },
+            "required": ["shared", "pending", "private"]
+          },
+          "artifacts": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/CategoryShareArtifact" }
+          }
+        },
+        "required": ["id", "category", "title", "portal_url", "people", "counts", "artifacts"]
+      },
+      "CategoryReviewResult": {
+        "type": "object",
+        "properties": {
+          "shared": { "type": "integer", "minimum": 0 },
+          "private": { "type": "integer", "minimum": 0 },
+          "skipped": {
+            "type": "array",
+            "description": "Items not applied because the artifact changed since you were shown it: review again",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": { "type": "string" },
+                "reason": { "type": "string", "enum": ["moved", "changed", "gone"] }
+              },
+              "required": ["id", "reason"]
+            }
+          }
+        },
+        "required": ["shared", "private", "skipped"]
+      },
+      "CategorySharePreview": {
+        "type": "object",
+        "properties": {
+          "category": { "type": "string", "description": "Your category name. Untrusted text." },
+          "artifacts": {
+            "type": "array",
+            "description": "Every live artifact of the category, as the review lists them",
+            "items": { "$ref": "#/components/schemas/CategoryShareArtifact" }
+          }
+        },
+        "required": ["category", "artifacts"]
+      },
+      "CategoryShareWriteResult": {
+        "type": "object",
+        "properties": {
+          "share": { "$ref": "#/components/schemas/CategoryShareSummary" },
+          "review": {
+            "oneOf": [{ "$ref": "#/components/schemas/CategoryReviewResult" }, { "type": "null" }]
+          }
+        },
+        "required": ["share", "review"]
+      },
+      "PortalSummary": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "title": { "type": "string" },
+          "owner_name": { "type": ["string", "null"] },
+          "count": { "type": "integer", "minimum": 0 }
+        },
+        "required": ["id", "title", "owner_name", "count"]
+      },
+      "PortalList": {
+        "type": "object",
+        "properties": {
+          "items": { "type": "array", "items": { "$ref": "#/components/schemas/PortalSummary" } }
+        },
+        "required": ["items"]
+      },
+      "PortalGate": {
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "status": { "const": "ok" },
+              "portal": {
+                "type": "object",
+                "properties": {
+                  "id": { "type": "string" },
+                  "title": { "type": "string" },
+                  "owner_name": { "type": ["string", "null"] },
+                  "role": { "type": "string", "enum": ["owner", "viewer", "commenter"] }
+                },
+                "required": ["id", "title", "owner_name", "role"]
+              },
+              "items": {
+                "type": "array",
+                "items": { "$ref": "#/components/schemas/ArtifactSummary" }
+              }
+            },
+            "required": ["status", "portal", "items"]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "status": { "const": "email_required" },
+              "portal": {
+                "type": "object",
+                "properties": { "id": { "type": "string" } },
+                "required": ["id"]
+              }
+            },
+            "required": ["status", "portal"]
           }
         ]
       },

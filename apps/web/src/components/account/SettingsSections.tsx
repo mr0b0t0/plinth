@@ -6,6 +6,7 @@ import {
   APP_ROUTES,
   type ArtifactSummary,
   type CategoryCount,
+  type CategoryShareSummary,
   CI_DOCS_URL,
   categoryKey,
   categoryProblem,
@@ -21,7 +22,7 @@ import {
 } from "@plinth/shared";
 import { type FormEvent, type ReactNode, useEffect, useId, useRef, useState } from "react";
 import { ApiRequestError, api } from "../../lib/api.ts";
-import { navigate } from "../../lib/router.tsx";
+import { Link, navigate } from "../../lib/router.tsx";
 import {
   Button,
   Dialog,
@@ -185,17 +186,24 @@ export function CategorySection({
     return () => ctrl.abort();
   }, []);
 
+  const [waiting, setWaiting] = useState<string | null>(null);
   const typed = normalizeCategory(value);
   const target = typed ? snapCategory(typed, snapTargets(artifact, names ?? [])) : "";
   const dirty = target !== "" && target !== artifact.category;
+  // Filing under a shared category never shares: say so before the owner saves.
+  const sharedTarget =
+    dirty &&
+    (names ?? []).some((c) => c.shared === true && categoryKey(c.name) === categoryKey(target));
   // A respelling that snaps back onto the current name, which other artifacts share: Save stays
   // off, so say why and where a respelling for all of them happens.
   const sameAsCurrent = typed !== "" && typed !== artifact.category && target === artifact.category;
-  const hint = dirty
-    ? `Will be filed under “${target}”.`
-    : sameAsCurrent
-      ? `Matches “${target}”, its current category. To respell it on every artifact, use Rename category on your dashboard.`
-      : undefined;
+  const hint = sharedTarget
+    ? `“${target}” is shared with people. This artifact will wait for your review before they see it.`
+    : dirty
+      ? `Will be filed under “${target}”.`
+      : sameAsCurrent
+        ? `Matches “${target}”, its current category. To respell it on every artifact, use Rename category on your dashboard.`
+        : undefined;
 
   const patch = async (category: string | null) => {
     setBusy(category === null ? "remove" : "save");
@@ -208,6 +216,17 @@ export function CategorySection({
       if (category === null) toast.success("Category removed");
       else toast.success("Category saved", res.category ?? undefined);
       onSaved(res.category);
+      // Filed under a shared category: point at the review that decides whether its people see it.
+      setWaiting(null);
+      if (res.category_share === "pending" && res.category) {
+        const stored = res.category;
+        api<{ items: CategoryShareSummary[] }>(API.categoryShares)
+          .then((r) => {
+            const s = r.items.find((x) => categoryKey(x.category) === categoryKey(stored));
+            setWaiting(s ? s.id : null);
+          })
+          .catch(() => undefined);
+      }
       // Save turns off and Remove may go away, so the focus would fall to the page: keep it here.
       inputRef.current?.focus();
     } catch (err) {
@@ -262,6 +281,14 @@ export function CategorySection({
             <option key={c.name} value={c.name} />
           ))}
         </datalist>
+        {waiting && (
+          <Note>
+            It waits for your review before the people its category is shared with see it.{" "}
+            <Link to={`${APP_ROUTES.dashboard}?review=${encodeURIComponent(waiting)}`}>
+              Review now
+            </Link>
+          </Note>
+        )}
         <div className="pl-acct-save">
           <Button type="submit" disabled={!dirty || busy === "remove"} loading={busy === "save"}>
             Save category
@@ -499,12 +526,39 @@ export function PeopleSection({
     }
   };
 
+  const viaCategory = sharing.category_share ?? null;
   return (
     <Section
       id="settings-people"
       title="People"
       description="Viewers can open it while it is private. Commenters can also comment; editors can also publish new versions."
     >
+      {viaCategory &&
+        (viaCategory.state === "shared" ? (
+          <Note>
+            Also visible to {viaCategory.people.length}{" "}
+            {viaCategory.people.length === 1 ? "person" : "people"} through “{viaCategory.title}” (a
+            shared category).{" "}
+            <Link
+              to={`${APP_ROUTES.dashboard}?category=${encodeURIComponent(artifact.category ?? "")}`}
+            >
+              Manage
+            </Link>
+          </Note>
+        ) : viaCategory.state === "pending" ? (
+          <Note tone="warning">
+            Its category is shared as “{viaCategory.title}”: it waits for your review before those
+            people see it.{" "}
+            <Link to={`${APP_ROUTES.dashboard}?review=${encodeURIComponent(viaCategory.id)}`}>
+              Review
+            </Link>
+          </Note>
+        ) : (
+          <Note>
+            Its category is shared as “{viaCategory.title}”, and you kept this artifact private
+            there.
+          </Note>
+        ))}
       {grants.length > 0 ? (
         <ul className="pl-acct-people" aria-busy={busy || undefined}>
           {grants.map((g) => (

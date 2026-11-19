@@ -7,14 +7,16 @@ import {
   accessGrants,
   agentConnections,
   artifacts,
+  categoryGrants,
+  categoryShares,
   comments,
   mentionTasks,
   users,
 } from "../db/schema.ts";
 import { ApiError, notFound, unauthorized } from "../lib/errors.ts";
 import { nowIso } from "../lib/time.ts";
-import { canActOnMention, type Principal } from "../policy.ts";
-import { requireVersion } from "./artifacts.ts";
+import { canActOnMention, grantedRole, type Principal } from "../policy.ts";
+import { factsOf, requireVersion } from "./artifacts.ts";
 import { authorLabel, insertComment, readAnchor, requireComment } from "./comments.ts";
 import type { Ctx } from "./context.ts";
 
@@ -53,6 +55,7 @@ async function loadTasks(ctx: Ctx, p: AgentPrincipal, where: SQL | undefined, li
   const rows = await ctx.db
     .select({
       t: mentionTasks,
+      a: artifacts,
       artifactSlug: artifacts.slug,
       artifactTitle: artifacts.title,
       ownerId: artifacts.ownerId,
@@ -61,6 +64,9 @@ async function loadTasks(ctx: Ctx, p: AgentPrincipal, where: SQL | undefined, li
       userEmail: users.email,
       connLabel: agentConnections.label,
       grantRole: accessGrants.role,
+      shareId: categoryShares.id,
+      shareKey: categoryShares.categoryKey,
+      categoryRole: categoryGrants.role,
     })
     .from(mentionTasks)
     .innerJoin(artifacts, eq(artifacts.id, mentionTasks.artifactId))
@@ -72,6 +78,22 @@ async function loadTasks(ctx: Ctx, p: AgentPrincipal, where: SQL | undefined, li
       and(
         eq(accessGrants.artifactId, mentionTasks.artifactId),
         eq(accessGrants.email, comments.authorEmail),
+      ),
+    )
+    // The author's grant on the current share of the artifact's category: policy.ts grantedRole
+    // decides below whether it counts for this artifact.
+    .leftJoin(
+      categoryShares,
+      and(
+        eq(categoryShares.ownerId, artifacts.ownerId),
+        eq(categoryShares.categoryKey, artifacts.categoryKey),
+      ),
+    )
+    .leftJoin(
+      categoryGrants,
+      and(
+        eq(categoryGrants.shareId, categoryShares.id),
+        eq(categoryGrants.email, comments.authorEmail),
       ),
     )
     .where(and(visibleTo(p), where))
@@ -96,7 +118,17 @@ async function loadTasks(ctx: Ctx, p: AgentPrincipal, where: SQL | undefined, li
           ? null
           : (r.c.authorEmail ?? r.userEmail ?? null),
         comment_author_role:
-          r.c.authorUserId && r.c.authorUserId === r.ownerId ? "owner" : (r.grantRole ?? null),
+          r.c.authorUserId && r.c.authorUserId === r.ownerId
+            ? "owner"
+            : grantedRole(factsOf(r.a), {
+                grantRole: r.grantRole ?? null,
+                categoryGrant:
+                  r.shareId && r.shareKey && r.categoryRole
+                    ? { shareId: r.shareId, shareKey: r.shareKey, role: r.categoryRole }
+                    : null,
+                categorySharing: ctx.config.allowCategorySharing,
+                passwordPassed: false,
+              }),
         anchor: readAnchor(r.c.anchor),
         version_number: r.c.versionNumber,
         claimed_by: r.t.claimedBy,

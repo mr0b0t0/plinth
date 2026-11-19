@@ -47,7 +47,15 @@ export declare function parseArgs(argv: string[]):
       config: string | null;
       minAgeMs: number;
       prefixesArgs: string[];
+    }
+  | {
+      help: false;
+      command: "bump-epochs";
+      target: "local" | "remote";
+      sql: string;
+      wranglerArgs: string[];
     };
+export declare function bumpCategorySharedEpochsSql(): string;
 export declare function validateArtifactRef(raw: unknown): string;
 export declare function userKeysSql(email: string): string;
 export declare function artifactKeysSql(ref: string): string;

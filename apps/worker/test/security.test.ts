@@ -109,6 +109,7 @@ function bodyFor(method: string, path: string): unknown {
     "PATCH /artifacts/:ref": { title: "renamed" },
     "PUT /artifacts/:ref/visibility": { visibility: "unlisted" },
     "PUT /artifacts/:ref/sharing": { grants: [] },
+    "PUT /artifacts/:ref/my-category": { category: "Mine" },
     "POST /artifacts/:ref/versions/:n/restore": {},
     "POST /artifacts/:ref/report": { reason: "spam" },
     "POST /artifacts/:ref/comments": { body: "hello" },

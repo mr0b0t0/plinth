@@ -8,6 +8,7 @@ import {
   GearIcon,
   LinkSimpleIcon,
   PencilSimpleIcon,
+  UsersThreeIcon,
 } from "@phosphor-icons/react";
 import { APP_ROUTES, type ArtifactSummary, route, typeDef, type Visibility } from "@plinth/shared";
 import { useState } from "react";
@@ -27,7 +28,20 @@ import { formatDateTime, formatRelativeShort, versionsText } from "./format.ts";
 /** The Category section's heading id on the Settings page ("Move to category…" links to it). */
 export const CATEGORY_SECTION_ID = "settings-category";
 
-export function artifactMenu(a: ArtifactSummary, onCopy: (url: string) => void): MenuEntry[] {
+/**
+ * The category a row shows: the owner's own on their artifacts, the person's own (issue #42) on an
+ * artifact shared with them. The owner's category never reaches anyone else.
+ */
+export function shownCategory(a: ArtifactSummary): string | null {
+  return a.role === "owner" ? a.category : (a.my_category ?? null);
+}
+
+export function artifactMenu(
+  a: ArtifactSummary,
+  onCopy: (url: string) => void,
+  /** Files an artifact shared with you under your own category (the dashboard opens a dialog). */
+  onFile?: (a: ArtifactSummary) => void,
+): MenuEntry[] {
   const slug = { slug: a.slug };
   const items: MenuEntry[] = [
     { label: "Open", icon: ArrowSquareOutIcon, href: route(APP_ROUTES.artifact, slug) },
@@ -47,6 +61,8 @@ export function artifactMenu(a: ArtifactSummary, onCopy: (url: string) => void):
       icon: FolderSimpleIcon,
       href: `${route(APP_ROUTES.settings, slug)}#${CATEGORY_SECTION_ID}`,
     });
+  } else if (onFile) {
+    items.push({ label: "Move to category…", icon: FolderSimpleIcon, onSelect: () => onFile(a) });
   }
   items.push({ type: "separator" });
   items.push({ label: "Copy link", icon: LinkSimpleIcon, onSelect: () => onCopy(a.url) });
@@ -117,13 +133,43 @@ function Owner({ artifact: a, you }: { artifact: ArtifactSummary; you?: string }
   );
 }
 
-/** The owner's category. A long name wraps inside the badge (dashboard.css), never cut. */
-function CategoryBadge({ name }: { name: string }) {
+/**
+ * The row's category: the owner's own, or the person's own on a shared artifact. A long name wraps
+ * inside the badge (dashboard.css), never cut.
+ */
+function CategoryBadge({ name, own = false }: { name: string; own?: boolean }) {
   return (
-    <Badge icon={FolderSimpleIcon} srPrefix="Category:" title={name} className="pl-dash__category">
+    <Badge
+      icon={FolderSimpleIcon}
+      srPrefix={own ? "Your category:" : "Category:"}
+      title={name}
+      className="pl-dash__category"
+    >
       <span className="pl-dash__category-name">{name}</span>
     </Badge>
   );
+}
+
+/** The owner's badge for an artifact in a shared category: shared, or waiting for review. */
+function ShareStateBadge({ state }: { state: ArtifactSummary["category_share"] }) {
+  if (state === "shared") {
+    return (
+      <Badge icon={UsersThreeIcon} title="Its category's people see it" tone="accent">
+        Shared
+      </Badge>
+    );
+  }
+  if (state === "pending") {
+    return (
+      <Badge
+        tone="warning"
+        title="Filed under a shared category: nobody it is shared with sees it yet"
+      >
+        Waiting for review
+      </Badge>
+    );
+  }
+  return null;
 }
 
 function Tags({
@@ -138,11 +184,13 @@ function Tags({
   // no type badge.
   const def = typeDef(a.type);
   const badge = def?.badge ?? null;
-  const category = withCategory ? a.category : null;
-  if (!category && !badge && !a.taken_down && a.role === "owner") return null;
+  const category = withCategory ? shownCategory(a) : null;
+  const share = a.role === "owner" ? (a.category_share ?? null) : null;
+  if (!category && !badge && !a.taken_down && !share && a.role === "owner") return null;
   return (
     <span className="pl-dash__tags">
-      {category && <CategoryBadge name={category} />}
+      {category && <CategoryBadge name={category} own={a.role !== "owner"} />}
+      <ShareStateBadge state={share} />
       {badge && <Badge title={def?.label}>{badge}</Badge>}
       {a.taken_down && <Badge tone="danger">Taken down</Badge>}
       {a.role !== "owner" && (
@@ -155,7 +203,13 @@ function Tags({
   );
 }
 
-function RowMenu({ artifact: a }: { artifact: ArtifactSummary }) {
+function RowMenu({
+  artifact: a,
+  onFile,
+}: {
+  artifact: ArtifactSummary;
+  onFile?: (a: ArtifactSummary) => void;
+}) {
   const toast = useToast();
   const onCopy = async (url: string) => {
     if (await copyText(url)) toast.success("Link copied");
@@ -170,7 +224,7 @@ function RowMenu({ artifact: a }: { artifact: ArtifactSummary }) {
       variant="ghost"
       align="end"
       className="pl-dash__menu"
-      items={artifactMenu(a, onCopy)}
+      items={artifactMenu(a, onCopy, onFile)}
     />
   );
 }
@@ -215,9 +269,11 @@ export interface ArtifactRowProps {
   now: number;
   /** The signed-in person's initials, for the owner cell of their own artifacts. */
   you?: string;
+  /** Opens "Move to category…" for an artifact shared with the person. */
+  onFile?: (a: ArtifactSummary) => void;
 }
 
-export function ArtifactRow({ artifact: a, now, you }: ArtifactRowProps) {
+export function ArtifactRow({ artifact: a, now, you, onFile }: ArtifactRowProps) {
   const href = route(APP_ROUTES.artifact, { slug: a.slug });
   return (
     <li className="pl-dash__row" data-role={a.role}>
@@ -234,7 +290,7 @@ export function ArtifactRow({ artifact: a, now, you }: ArtifactRowProps) {
       </span>
       <Owner artifact={a} you={you} />
       <Updated iso={a.updated_at} now={now} />
-      <RowMenu artifact={a} />
+      <RowMenu artifact={a} onFile={onFile} />
     </li>
   );
 }
@@ -249,7 +305,7 @@ function thumbLetters(title: string): string {
 
 export type ArtifactCardProps = ArtifactRowProps;
 
-export function ArtifactCard({ artifact: a, now, you }: ArtifactCardProps) {
+export function ArtifactCard({ artifact: a, now, you, onFile }: ArtifactCardProps) {
   const href = route(APP_ROUTES.artifact, { slug: a.slug });
   const AccessIcon = VISIBILITY_META[a.visibility].icon;
   // The thumbnail answers 404 until its capture lands: show the placeholder until it loads, and
@@ -297,7 +353,9 @@ export function ArtifactCard({ artifact: a, now, you }: ArtifactCardProps) {
           <span className="pl-dash__version" title={versionsText(a.version_count)}>
             <span className="visually-hidden">Version </span>v{a.current_version}
           </span>
-          {a.category && <CategoryBadge name={a.category} />}
+          {shownCategory(a) && (
+            <CategoryBadge name={shownCategory(a) as string} own={a.role !== "owner"} />
+          )}
           <span className="pl-dash__dot" aria-hidden="true">
             ·
           </span>
@@ -305,7 +363,7 @@ export function ArtifactCard({ artifact: a, now, you }: ArtifactCardProps) {
           <Updated iso={a.updated_at} now={now} />
         </span>
       </div>
-      <RowMenu artifact={a} />
+      <RowMenu artifact={a} onFile={onFile} />
     </li>
   );
 }

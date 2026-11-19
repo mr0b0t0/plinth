@@ -502,3 +502,83 @@
     height: 96px;
   }
 }
+
+/* ---------- category sharing (docs/spec.md "Category sharing and personal categories") ---------- */
+
+.pl-dash__notices {
+  display: grid;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+}
+.pl-dash__portals {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+  padding-inline: var(--space-2);
+  font-size: var(--text-sm);
+}
+.pl-dash__portals ul {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.pl-dash__portals-label {
+  color: var(--color-ink-muted);
+}
+.pl-share-cat__people,
+.pl-share-cat__artifacts {
+  display: grid;
+  gap: var(--space-2);
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.pl-share-cat__people legend,
+.pl-share-cat__artifacts legend {
+  margin-bottom: var(--space-2);
+  font-weight: 600;
+}
+.pl-share-cat__link {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-2);
+}
+.pl-share-cat__link > :first-child {
+  flex: 1;
+  min-width: 0;
+}
+.pl-share-cat__list,
+.pl-review__list {
+  display: grid;
+  gap: var(--space-2);
+  max-height: 18rem;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+.pl-review__row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding-block: var(--space-1-5);
+  border-bottom: var(--border-width) solid var(--color-border);
+}
+.pl-review__what {
+  display: grid;
+  min-width: 0;
+}
+.pl-review__title {
+  overflow-wrap: anywhere;
+}
+.pl-review__meta {
+  font-size: var(--text-xs);
+}

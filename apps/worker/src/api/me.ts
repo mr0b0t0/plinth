@@ -45,6 +45,7 @@ meApi.get("/config", (c) => {
     cdn_allowlist: [...config.cdnAllowlist],
     upload_ticket_ttl_s: TTL.uploadTicketMs / 1000,
     dictation: dictationActive(config),
+    category_sharing: config.allowCategorySharing,
   };
   const res = c.json(body);
   ensureCsrfCookie(c, res.headers);
