@@ -508,7 +508,7 @@ export function buildGrid(
   // Arrow keys move between visible cells (not while a cell's own field has the keys).
   table.addEventListener("keydown", (e) => {
     const td = (e.target as Element).closest?.("td") as HTMLTableCellElement | null;
-    if (!td || e.target !== td) return;
+    if (!td || (e.target as Element).closest?.("input, select, textarea")) return;
     const tr = td.parentElement as HTMLTableRowElement;
     const index = td.cellIndex;
     const visible = () =>
