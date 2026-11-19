@@ -1001,7 +1001,8 @@ never names a content host.
 header is `x-plinth-watch`, built from the checks above (artifact, epoch, socket expiry, current
 version, the data right, a client key and the caps); no client header is copied, and the room
 parses it as strictly as a room's. The room sends only frames it makes from integers: `welcome {
-version, data }`, `version { version, spread_ms }` and `data { spread_ms }`. Never artifact
+version, data }`, `version { version, spread_ms }`, `data { spread_ms }` and, just before a
+sharing change closes the socket, `access { spread_ms }`. Never artifact
 content, document data, emails, names, peers or anything a page wrote. A watch socket joins no
 room and is never a peer: room traffic never reaches it, and it never appears in `peers`. The
 client may send only the text `ping` (answered `pong` without waking the object); anything else
@@ -1020,12 +1021,17 @@ data (through the shared-data API, with all of its checks) or change its own pol
 `postMessage`.
 
 **Revocation.** A watch socket is admitted at one access epoch and lives at most a content pass's
-lifetime (12 hours). A sharing change closes it (`revoke`, 4401, reason `access_changed`), and the
-app re-reads its gate, which may now ask for an email or a password; a takedown or delete closes it
-(4404). The room's 60 s alarm backs both up, closes sockets that reached their lifetime (4401,
-reason `expired`: the app reconnects, and the handshake decides again), sends a version whose
-notify was lost, and takes the data right away when the current version stops declaring `data`.
-The room never grants the data right itself: only a new handshake does.
+lifetime (12 hours), and never past the earliest expiry of the app session, viewer session or
+password pass the handshake carried. A sharing change closes it (`revoke`, 4401, reason
+`access_changed`), and the app re-reads its gate, which may now ask for an email or a password, or
+refuse; a takedown or delete closes it (4404). The room's 60 s alarm backs both up, closes sockets
+that reached their lifetime (4401, reason `expired`: the app reconnects, and the handshake decides
+again), sends a version whose notify was lost, and takes the data right away when the current
+version stops declaring `data`. The room never grants the data right itself: only a new handshake
+does. Signing out, or a session deleted before it expires, does not close an open socket sooner;
+it keeps getting version numbers and change moments, which that browser could read while its access
+lasted, until the next sharing change, its lifetime or a reconnect, the same as a content pass
+outlives a sign-out.
 
 **Caps and fan-out.** Watch sockets are counted apart from room sockets, so viewers never fill a
 room: `LIVE_VIEW_MAX_SOCKETS_PER_ARTIFACT` (1000) per artifact, 32 per client and 60 connects per
@@ -1033,7 +1039,9 @@ client per minute, where a client is the account, the confirmed email, or the ad
 anonymous viewers, kept only as a 16-character HMAC (keyed by `TOKEN_SIGNING_KEY`, per artifact).
 Over a cap the socket is closed with 4409 and the page polls, as it does without live views. Each
 signal carries `spread_ms` (10 ms per recipient, at most 10 s), and each view waits a random time
-up to it before it re-reads (under 100 ms it acts at once), so one artifact sees at most about 100 follow-up requests a second.
+up to it before it re-reads (under 100 ms it acts at once), so one artifact sees at most about 100
+follow-up requests a second. A sharing change closes every view at once, so its `access` frame
+carries the same spread, and each view waits within it before it re-reads its gate and reconnects.
 Notifies are best effort (`waitUntil`, one retry); losses are caught by the alarm within a minute
 for versions and by the runtime's 60 s backstop poll for data. Refusals log the status and a reason
 code only; the socket URL holds only the artifact id.

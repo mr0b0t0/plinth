@@ -2061,9 +2061,12 @@ function liveViewOperations(): Operation[] {
         "receive-only: the client sends the text `ping` (answered `pong`) and nothing else. " +
         'Server frames are JSON text: `{t:"welcome",v:1,version,data}`, ' +
         '`{t:"version",version,spread_ms}` (re-read the gate after a random wait up to ' +
-        '`spread_ms`) and `{t:"data",spread_ms}` (the page re-reads its shared data). Close ' +
-        "codes: 4400 invalid, 4401 access changed or the socket expired (re-read the gate, then " +
-        "reconnect), 4404 gone, 4409 full (poll instead).",
+        '`spread_ms`), `{t:"data",spread_ms}` (the page re-reads its shared data) and ' +
+        '`{t:"access",spread_ms}` (sent just before a 4401 `access_changed` close). Close ' +
+        "codes: 4400 invalid, 4401 `access_changed` (after a random wait up to the `access` " +
+        "frame's `spread_ms`, re-read the gate, then reconnect) or `expired` (the socket's " +
+        "lifetime, or the credential it was opened with, ended: reconnect), 4404 gone, 4409 " +
+        "full (poll instead).",
       tag: "Viewing",
       auth: "browser",
       ok: [101, null],

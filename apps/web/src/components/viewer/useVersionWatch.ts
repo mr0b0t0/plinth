@@ -57,6 +57,31 @@ export function nextGate(
 }
 
 /**
+ * What to do with the gate re-read after a sharing change closed the watch socket (4401
+ * `access_changed`; useLiveView.ts). A sharing change ends every content pass of the artifact, so
+ * a frame keeps working only until its next request, and a new frame from `fresh` renews it.
+ * - `fresh` is not "ok": access ended, so it is shown (the gate asks again, or refuses).
+ * - Paused (a deck presented, a doc edited on its page): the frame stays, as it does for a new
+ *   version; only the count of versions moves on (`gate`, when it did). `renew` says the page
+ *   should load a fresh gate once the pause ends.
+ * - Otherwise `fresh` replaces the frame, as a new version does.
+ */
+export type AccessOutcome =
+  | { kind: "show"; gate: ViewGate }
+  | { kind: "keep"; gate: OkGate | null; renew: true };
+
+export function afterAccessChange(
+  shown: OkGate,
+  fresh: ViewGate,
+  pinned: boolean,
+  paused: WatchPause = null,
+): AccessOutcome {
+  if (fresh.status !== "ok") return { kind: "show", gate: fresh };
+  if (paused) return { kind: "keep", gate: nextGate(shown, fresh, pinned, paused), renew: true };
+  return { kind: "show", gate: fresh };
+}
+
+/**
  * Polls `path` (the page's own gate path) while `gate` is on view and calls `onNewer` with the gate
  * to show when a newer version appears; `paused` keeps the frame (see WatchPause). Failures and
  * gates that are no longer "ok" are ignored: the page keeps what it has until the next navigation.

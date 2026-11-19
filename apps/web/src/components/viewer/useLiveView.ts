@@ -60,6 +60,8 @@ const REFUSED: ReadonlySet<number> = new Set([
   ROOM_CLOSE.forbidden,
 ]);
 
+type TimerKey = "ping" | "retry" | "hidden" | "version" | "data" | "access";
+
 /** One page's watch socket: connects, reconnects, pings, and closes while the tab is hidden. */
 export class LiveViewConnection {
   private ws: WebSocket | null = null;
@@ -67,8 +69,10 @@ export class LiveViewConnection {
   private hiddenClosed = false;
   private failures = 0;
   private status: LiveViewStatus = "off";
-  private readonly timers = new Map<"ping" | "retry" | "hidden" | "version" | "data", number>();
+  private readonly timers = new Map<TimerKey, number>();
   private pendingVersion = 0;
+  /** The `spread_ms` of the `access` frame a sharing change sent just before its 4401 close. */
+  private accessSpread: number | null = null;
   private readonly Ws: typeof WebSocket | undefined;
   private readonly random: () => number;
   private readonly doc: NonNullable<Deps["doc"]>;
@@ -113,7 +117,7 @@ export class LiveViewConnection {
     this.on.onStatus(s);
   }
 
-  private later(key: "ping" | "retry" | "hidden" | "version" | "data", ms: number, fn: () => void) {
+  private later(key: TimerKey, ms: number, fn: () => void) {
     this.clear(key);
     this.timers.set(
       key,
@@ -124,7 +128,7 @@ export class LiveViewConnection {
     );
   }
 
-  private clear(key: "ping" | "retry" | "hidden" | "version" | "data"): void {
+  private clear(key: TimerKey): void {
     const t = this.timers.get(key);
     if (t !== undefined) window.clearTimeout(t);
     this.timers.delete(key);
@@ -195,20 +199,32 @@ export class LiveViewConnection {
       });
       return;
     }
+    if (f.t === "access") {
+      // The 4401 close follows; it uses this.
+      this.accessSpread = f.spread_ms;
+      return;
+    }
     if (this.timers.has("data")) return;
     this.spread("data", f.spread_ms, () => this.on.onData());
   }
 
   /**
-   * Act after random(0, spread_ms). A small audience (a spread under spreadAtOnceMs) acts at
-   * once: a few requests at the same moment are no load to spread.
+   * How long to wait before acting on a signal: random(0, spread_ms). A small audience (a spread
+   * under spreadAtOnceMs) acts at once: a few requests at the same moment are no load to spread.
    */
+  private wait(spreadMs: number): number {
+    if (spreadMs < LIVE_VIEW_LIMITS.spreadAtOnceMs) return 0;
+    return Math.floor(this.random() * spreadMs);
+  }
+
+  /** Act after `wait(spread_ms)`. */
   private spread(key: "version" | "data", spreadMs: number, fn: () => void): void {
-    if (spreadMs < LIVE_VIEW_LIMITS.spreadAtOnceMs) {
+    const ms = this.wait(spreadMs);
+    if (ms === 0) {
       fn();
       return;
     }
-    this.later(key, Math.floor(this.random() * spreadMs), fn);
+    this.later(key, ms, fn);
   }
 
   private closed(ws: WebSocket, code: number, reason: string): void {
@@ -223,11 +239,21 @@ export class LiveViewConnection {
       return;
     }
     if (code === ROOM_CLOSE.unauthorized) {
-      // The socket's lifetime ended: reconnect, which re-authorizes. Otherwise access changed:
-      // the page re-reads its gate first, which may now refuse (and then this connection stops).
       this.setStatus("fallback");
-      if (reason !== "expired") this.on.onAccessChanged();
-      this.later("retry", this.backoff(), () => this.connect());
+      if (reason === "expired") {
+        // The socket's lifetime ended: reconnect, which re-authorizes.
+        this.later("retry", this.backoff(), () => this.connect());
+        return;
+      }
+      // Access changed: the page re-reads its gate, which may now refuse (and then this connection
+      // stops), and reconnects after it. A sharing change closes every view of the artifact at
+      // once, so both wait random(0, spread_ms) from the `access` frame that came first; without
+      // one (it never arrived), the widest spread.
+      const wait = this.wait(this.accessSpread ?? LIVE_VIEW_LIMITS.spreadMaxMs);
+      this.accessSpread = null;
+      if (wait === 0) this.on.onAccessChanged();
+      else this.later("access", wait, () => this.on.onAccessChanged());
+      this.later("retry", wait + this.backoff(), () => this.connect());
       return;
     }
     if (REFUSED.has(code)) {

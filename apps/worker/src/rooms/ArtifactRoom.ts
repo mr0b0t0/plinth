@@ -15,8 +15,9 @@
 // Live views share the object (kind "watch", docs/spec.md "Live views"): receive-only sockets the
 // app page opens on the app host (api/watch.ts), for anyone who may open the artifact. A watch
 // socket joins no room, is never a peer and carries no identity; it gets only frames the room
-// makes from integers: `welcome`, `version` (published, or the alarm's catch-up) and `data`
-// (dataChanged). Watch sockets are counted apart from room sockets, so viewers never fill a room.
+// makes from integers: `welcome`, `version` (published, or the alarm's catch-up), `data`
+// (dataChanged) and `access` (just before a sharing change closes it). Watch sockets are counted
+// apart from room sockets, so viewers never fill a room.
 import { DurableObject } from "cloudflare:workers";
 import {
   ARTIFACT_ID_RE,
@@ -762,13 +763,28 @@ export class ArtifactRoom extends DurableObject<Bindings> {
    */
   async revoke(minEpoch: number): Promise<number> {
     let n = 0;
-    for (const { ws, s } of this.everyone()) {
+    for (const { ws, s } of this.sockets()) {
       if (s.epoch < minEpoch) {
         this.drop(ws, ROOM_CLOSE.unauthorized, "access_changed");
         n++;
       }
     }
-    return n;
+    const watchers = this.watchSockets().filter(({ s }) => s.epoch < minEpoch);
+    this.dropWatchers(watchers.map(({ ws }) => ws));
+    return n + watchers.length;
+  }
+
+  /**
+   * Close watch sockets after a sharing change (4401 `access_changed`). Each first gets an `access`
+   * frame with `spread_ms` for this many sockets, so the views re-read their gates and reconnect
+   * spread out, as they do after any other signal.
+   */
+  private dropWatchers(list: WebSocket[]): void {
+    const spread = spreadMs(list.length);
+    for (const ws of list) {
+      this.sendWatch(ws, { t: "access", spread_ms: spread });
+      this.drop(ws, ROOM_CLOSE.unauthorized, "access_changed");
+    }
   }
 
   /** The artifact was deleted or taken down: close everything, and forget the live draft. */
@@ -876,12 +892,14 @@ export class ArtifactRoom extends DurableObject<Bindings> {
     const now = Date.now();
     const caps = row ? versionCapabilities(row) : null;
     const behind: { ws: WebSocket; s: WatchState }[] = [];
+    const revoked: WebSocket[] = [];
     for (const { ws, s } of open) {
       if (!row || row.deleted_at || row.taken_down_at) this.drop(ws, ROOM_CLOSE.gone, "gone");
+      else if (s.kind === "watch" && s.epoch < row.access_epoch) revoked.push(ws);
       else if (s.epoch < row.access_epoch || s.passExp <= now) {
         // A watch socket that only reached its lifetime says so: the app reconnects, without
         // re-reading its gate first.
-        const expired = s.kind === "watch" && s.epoch >= row.access_epoch;
+        const expired = s.kind === "watch";
         this.drop(ws, ROOM_CLOSE.unauthorized, expired ? "expired" : "access_changed");
       } else if (s.kind === "page" && !sameDeclaration(caps, s)) {
         this.drop(ws, ROOM_CLOSE.redeclared, "redeclared");
@@ -896,6 +914,8 @@ export class ArtifactRoom extends DurableObject<Bindings> {
         if (lostData || late) this.save(ws, s);
       }
     }
+    // Watch sockets a lost `revoke` left open, spread like the RPC's.
+    this.dropWatchers(revoked);
     // Versions whose `published` was lost, or committed while live views were off.
     const spread = spreadMs(behind.length);
     for (const { ws, s } of behind) {

@@ -23,12 +23,14 @@
 // The room then gets a fresh internal request whose only custom header is built here; no client
 // header is copied. Refusals log the status and a reason code only.
 import { ARTIFACT_ID_RE, LIVE_VIEW_LIMITS, VIEW_WATCH_PROTOCOL } from "@plinth/shared";
-import { and, eq } from "drizzle-orm";
+import { and, eq, gt, inArray } from "drizzle-orm";
 import type { MiddlewareHandler } from "hono";
 import { applyAppHeaders } from "../app/headers.ts";
 import { type Config, liveViewsActive, sharedDataActive } from "../config.ts";
-import { versions } from "../db/schema.ts";
-import { hmacHex } from "../lib/crypto.ts";
+import { sessions, versions } from "../db/schema.ts";
+import { appCookieName } from "../lib/cookies.ts";
+import { hashToken, hmacHex, verifyToken } from "../lib/crypto.ts";
+import { nowIso } from "../lib/time.ts";
 import { liveViewAccess } from "../policy.ts";
 import {
   ROOM_CONNECT_URL,
@@ -37,7 +39,7 @@ import {
 } from "../rooms/ArtifactRoom.ts";
 import { decideFor, findArtifact, versionCapabilities } from "../services/artifacts.ts";
 import type { Ctx } from "../services/context.ts";
-import { type AppContext, type AppEnv, serviceCtx } from "./context.ts";
+import { type AppContext, type AppEnv, type PasswordPassPayload, serviceCtx } from "./context.ts";
 
 function refuse(
   config: Config,
@@ -102,6 +104,51 @@ async function clientKey(ctx: Ctx, artifactId: string): Promise<string> {
   return mac.slice(0, 16);
 }
 
+/**
+ * When the earliest credential this request opened the socket with expires (ms since the epoch), or
+ * null when it carries none: the app session or viewer session `authenticate` resolved, and the
+ * password pass for this artifact at its current epoch. The socket never outlives it: the room
+ * closes it then (4401 `expired`) and the app's reconnect is decided again with what the browser
+ * still holds. Counting every credential present, not only the one the decision needed, can only
+ * close a socket early, which costs one reconnect.
+ */
+async function credentialExpiry(
+  c: AppContext,
+  ctx: Ctx,
+  a: { id: string; accessEpoch: number },
+): Promise<number | null> {
+  const { config } = ctx;
+  const cookies = c.get("cookies");
+  const times: number[] = [];
+  const ids: string[] = [];
+  const session = cookies.get(appCookieName(config, "session"));
+  if (session && ctx.principal.kind === "user") ids.push(await hashToken(session));
+  const viewer = cookies.get(appCookieName(config, "viewer"));
+  if (viewer && (ctx.viewerEmail || ctx.principal.kind === "viewer")) {
+    ids.push(await hashToken(viewer));
+  }
+  if (ids.length) {
+    const rows = await ctx.db
+      .select({ expiresAt: sessions.expiresAt })
+      .from(sessions)
+      .where(and(inArray(sessions.id, ids), gt(sessions.expiresAt, nowIso())))
+      .all();
+    for (const r of rows) {
+      const t = Date.parse(r.expiresAt);
+      if (Number.isFinite(t)) times.push(t);
+    }
+  }
+  if (ctx.passwordPasses.get(a.id) === a.accessEpoch) {
+    const name = `${appCookieName(config, "passwordPassPrefix")}${a.id}`;
+    const value = cookies.get(name);
+    const pass = value
+      ? await verifyToken<PasswordPassPayload>(config.tokenSigningKey, value, "pw")
+      : null;
+    if (pass && pass.a === a.id) times.push(pass.exp);
+  }
+  return times.length ? Math.min(...times) : null;
+}
+
 /** Checks 6 to 9, then the room. */
 export async function serveViewWatch(c: AppContext): Promise<Response> {
   const config = c.get("config");
@@ -138,11 +185,14 @@ async function upgrade(c: AppContext): Promise<Response> {
   });
   if (!access.watch) return refuse(config, 404, "not_found");
 
+  // The socket lives a content pass's lifetime, and never past the credential that opened it.
+  const lifetime = Date.now() + LIVE_VIEW_LIMITS.socketTtlS * 1000;
+  const credential = await credentialExpiry(c, ctx, a);
   const connect: WatchConnect = {
     artifactId: a.id,
     kind: "watch",
     epoch: a.accessEpoch,
-    passExp: Date.now() + LIVE_VIEW_LIMITS.socketTtlS * 1000,
+    passExp: credential === null ? lifetime : Math.min(lifetime, credential),
     version: a.currentVersion,
     data: access.data,
     client: await clientKey(ctx, a.id),

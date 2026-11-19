@@ -10,11 +10,13 @@ import { parseVersion } from "../components/viewer/gate.ts";
 import { useGate } from "../components/viewer/useGate.ts";
 import { useLiveView } from "../components/viewer/useLiveView.ts";
 import {
+  afterAccessChange,
   useVersionWatch,
   versionPollMs,
   type WatchPause,
 } from "../components/viewer/useVersionWatch.ts";
 import { ViewerSkeleton, ViewerStage } from "../components/viewer/ViewerStage.tsx";
+import { api } from "../lib/api.ts";
 import { useLocation } from "../lib/router.tsx";
 
 export default function ArtifactPage({ params }: { params: Record<string, string> }) {
@@ -42,22 +44,51 @@ export default function ArtifactPage({ params }: { params: Record<string, string
   // gate poll is only a backstop while it is open.
   const checkRef = useRef<() => void>(() => undefined);
   const [dataTick, setDataTick] = useState(0);
+  const onNewer = (gate: Extract<ViewGate, { status: "ok" }>) => {
+    const moved = gate.artifact.version !== shown?.artifact.version;
+    setGate(gate);
+    if (!pinned && moved) showToast({ title: `Updated to v${gate.artifact.version}` });
+  };
+  const latest = useRef({ shown, pause, path, onNewer });
+  latest.current = { shown, pause, path, onNewer };
+  // A sharing change ended the frame's content pass. The page re-reads its gate; a refusal is
+  // shown, and otherwise a fresh frame renews the pass, except while a deck is presented or a doc
+  // is edited on its page: that frame stays, and is renewed once the pause ends.
+  const renew = useRef(false);
+  const onAccessChanged = useCallback(() => {
+    const asked = latest.current.path;
+    api<ViewGate>(asked).then(
+      (fresh) => {
+        const { shown: now, pause: paused, path: current, onNewer: show } = latest.current;
+        if (!now || current !== asked) return;
+        const next = afterAccessChange(now, fresh, pinned, paused);
+        if (next.kind === "keep") {
+          renew.current = true;
+          if (next.gate) show(next.gate);
+        } else if (next.gate.status === "ok") show(next.gate);
+        else setGate(next.gate);
+      },
+      // Offline or a hiccup: the frame stays; the reconnect and the poll try again.
+      () => undefined,
+    );
+  }, [pinned, setGate]);
+  useEffect(() => {
+    if (pause !== null || !renew.current) return;
+    renew.current = false;
+    reload();
+  }, [pause, reload]);
   const live = useLiveView({
     gate: shown,
     onVersion: () => checkRef.current(),
     onData: () => setDataTick((n) => n + 1),
-    onAccessChanged: reload,
+    onAccessChanged,
     onGone: reload,
   });
   const { checkNow } = useVersionWatch(
     path,
     shown,
     pinned,
-    (gate) => {
-      const moved = gate.artifact.version !== shown?.artifact.version;
-      setGate(gate);
-      if (!pinned && moved) showToast({ title: `Updated to v${gate.artifact.version}` });
-    },
+    (gate) => latest.current.onNewer(gate),
     versionPollMs(live),
     pause,
   );

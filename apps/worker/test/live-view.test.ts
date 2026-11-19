@@ -9,7 +9,7 @@ import { eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import { parseConfig } from "../src/config.ts";
 import { artifacts, sessions } from "../src/db/schema.ts";
-import { hashToken, newToken } from "../src/lib/crypto.ts";
+import { hashToken, newToken, signToken } from "../src/lib/crypto.ts";
 import { isoIn, nowIso } from "../src/lib/time.ts";
 import { getOrCreateUser } from "../src/services/users.ts";
 import {
@@ -499,6 +499,85 @@ describe("live views: closing", () => {
     expect(res.status).toBe(200);
     expect(await within(w.closed)).toEqual({ code: 4401, reason: "access_changed" });
     expect((await handshake(id, sessionCookie(ed))).status).toBe(404);
+  });
+
+  it("before a sharing change closes them, watch sockets get `access` with a spread for all of them", async () => {
+    const { id, ownerP } = await setup(PLAIN);
+    const ws = [];
+    for (let i = 0; i < 3; i++) ws.push(await watch(id, sessionCookie(ownerP)));
+    const res = await run(`${APP}/api/v1/artifacts/${id}/sharing`, {
+      method: "PUT",
+      headers: { ...ownerP.session.headers, "Content-Type": "application/json" },
+      body: JSON.stringify({ grants: [] }),
+    });
+    expect(res.status).toBe(200);
+    for (const w of ws) {
+      expect(await w.next()).toEqual({ t: "access", spread_ms: spreadMs(3) });
+      expect(await within(w.closed)).toEqual({ code: 4401, reason: "access_changed" });
+    }
+  });
+
+  it("the alarm closes watch sockets a lost revoke left open the same way", async () => {
+    const { id, ownerP } = await setup(PLAIN);
+    const a = await watch(id, sessionCookie(ownerP));
+    const b = await watch(id, sessionCookie(ownerP));
+    // An epoch bump made with SQL: no revoke reaches the room.
+    const row = await db().select().from(artifacts).where(eq(artifacts.id, id)).get();
+    await db()
+      .update(artifacts)
+      .set({ accessEpoch: (row?.accessEpoch ?? 0) + 1 })
+      .where(eq(artifacts.id, id))
+      .run();
+    expect(await runDurableObjectAlarm(stubFor(id))).toBe(true);
+    for (const w of [a, b]) {
+      expect(await w.next()).toEqual({ t: "access", spread_ms: spreadMs(2) });
+      expect(await within(w.closed)).toEqual({ code: 4401, reason: "access_changed" });
+    }
+  });
+
+  it("a socket never outlives the session or password pass it was opened with", async () => {
+    const lifetime = () => Date.now() + LIVE_VIEW_LIMITS.socketTtlS * 1000;
+    const passExps = async (id: string) =>
+      runInDurableObject(stubFor(id), async (_room, state) =>
+        state
+          .getWebSockets("k:watch")
+          .map((s) => (s.deserializeAttachment() as { passExp: number }).passExp),
+      );
+    const a = await agent();
+    // An allowlist viewer whose confirmed-email session ends in an hour.
+    const { body: list } = await publish(a.auth, { html: PLAIN, visibility: "allowlist" });
+    const email = uniqueEmail("hour");
+    await grant(list.id, email, "viewer");
+    const before = Date.now();
+    const viewer = await watch(list.id, await viewerSession(email));
+    const [vExp] = await passExps(list.id);
+    expect(vExp).toBeGreaterThan(before);
+    expect(vExp).toBeLessThanOrEqual(Date.now() + 3600_000);
+    viewer.ws.close(1000);
+    // A password pass that ends in a minute (signed with the instance key, as the gate signs it).
+    const { body: pw } = await publish(a.auth, {
+      html: PLAIN,
+      visibility: "password",
+      password: "open sesame",
+    });
+    const row = await db().select().from(artifacts).where(eq(artifacts.id, pw.id)).get();
+    const config = parseConfig(env as unknown as Record<string, unknown>);
+    const exp = Date.now() + 60_000;
+    const token = await signToken(config.tokenSigningKey, {
+      k: "pw",
+      a: pw.id,
+      e: row?.accessEpoch ?? 0,
+      exp,
+    });
+    const withPass = await watch(pw.id, `${COOKIES.passwordPassPrefix}${pw.id}=${token}`);
+    expect(await passExps(pw.id)).toEqual([exp]);
+    withPass.ws.close(1000);
+    // Anonymous on a link: a content pass's lifetime.
+    const { body: open } = await publish(a.auth, { html: PLAIN, visibility: "unlisted" });
+    const anon = await watch(open.id, null);
+    const [aExp] = await passExps(open.id);
+    expect(aExp).toBeGreaterThan(lifetime() - 60_000);
+    anon.ws.close(1000);
   });
 
   it("revocation reaches watch sockets under opaque isolation too, where rooms are off", async () => {

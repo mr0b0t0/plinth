@@ -1,4 +1,4 @@
-import type { ViewGate } from "@plinth/shared";
+import { LIVE_VIEW_LIMITS, type ViewGate } from "@plinth/shared";
 import { act, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -181,6 +181,8 @@ describe("LiveViewConnection", () => {
       { t: "version", version: "9", spread_ms: 0 },
       { t: "version", version: 9, spread_ms: 1e9 },
       { t: "welcome", v: 2, version: 9, data: true },
+      { t: "access", spread_ms: 1e9 },
+      { t: "access", spread_ms: 0 },
     ]) {
       s.frame(f);
     }
@@ -206,6 +208,9 @@ describe("LiveViewConnection", () => {
     conn.start();
     FakeSocket.last().frame(welcome());
     calls.length = 0;
+    // A small audience: the room's `access` frame says to act at once.
+    FakeSocket.last().frame({ t: "access", spread_ms: 10 });
+    expect(calls).toEqual([]);
     FakeSocket.last().drop(4401, "access_changed");
     expect(calls).toEqual(["access"]);
     expect(statuses.at(-1)).toBe("fallback");
@@ -219,6 +224,48 @@ describe("LiveViewConnection", () => {
     vi.advanceTimersByTime(1500);
     expect(FakeSocket.all).toHaveLength(3);
     conn.stop();
+  });
+
+  it("4401 access_changed after a large audience's `access` frame: the re-read and the reconnect wait within spread_ms", () => {
+    const { conn, calls } = setup();
+    conn.start();
+    const s = FakeSocket.last();
+    s.frame(welcome());
+    calls.length = 0;
+    s.frame({ t: "access", spread_ms: 10_000 });
+    s.drop(4401, "access_changed");
+    // random() is 0.5: the gate re-read waits 5 s, and the reconnect a backoff step after it.
+    vi.advanceTimersByTime(4999);
+    expect(calls).toEqual([]);
+    expect(FakeSocket.all).toHaveLength(1);
+    vi.advanceTimersByTime(1);
+    expect(calls).toEqual(["access"]);
+    expect(FakeSocket.all).toHaveLength(1);
+    vi.advanceTimersByTime(1000);
+    expect(FakeSocket.all).toHaveLength(2);
+    // The next close without an `access` frame of its own takes the widest spread.
+    FakeSocket.last().frame(welcome());
+    calls.length = 0;
+    FakeSocket.last().drop(4401, "access_changed");
+    vi.advanceTimersByTime(LIVE_VIEW_LIMITS.spreadMaxMs / 2 - 1);
+    expect(calls).toEqual([]);
+    vi.advanceTimersByTime(1);
+    expect(calls).toEqual(["access"]);
+    conn.stop();
+  });
+
+  it("stopping while an access re-read waits cancels it", () => {
+    const { conn, calls } = setup();
+    conn.start();
+    const s = FakeSocket.last();
+    s.frame(welcome());
+    calls.length = 0;
+    s.frame({ t: "access", spread_ms: 10_000 });
+    s.drop(4401, "access_changed");
+    conn.stop();
+    vi.advanceTimersByTime(60_000);
+    expect(calls).toEqual([]);
+    expect(FakeSocket.all).toHaveLength(1);
   });
 
   it("4404: the artifact is gone; it stops", () => {

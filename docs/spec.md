@@ -200,7 +200,8 @@ consent lives in their browser, not in D1.
 **Live views** ([below](#live-views-decided-2026-11-19), no migration) store nothing and add two
 settings: `ALLOW_LIVE_VIEWS` (on) and `LIVE_VIEW_MAX_SOCKETS_PER_ARTIFACT` (1000, from 10 to
 10000). Fixed: 32 watch sockets per client and 60 connects per client per minute on one artifact,
-a socket lifetime of 12 hours (the content pass's), a spread of 10 ms per recipient up to 10 s,
+a socket lifetime of 12 hours (the content pass's, or less when the session or password pass it was
+opened with ends sooner), a spread of 10 ms per recipient up to 10 s,
 backstop polls every 60 s (the page's data) and 5 minutes (the app's gate), and a tab hidden for
 60 s closes its socket.
 
@@ -1128,8 +1129,9 @@ document through the gate and the shared-data API, with all of their checks.
   names its own `wss:` origin and nothing else.
 - **Signals.** JSON frames the room builds from integers: `welcome` (the current version, and
   whether this socket gets data signals), `version` (a version was published: by an agent, the
-  source editor, a restore or an on-page checkpoint) and `data` (the page's shared data changed:
-  a write from the page, an agent or the app, or the owner's "Delete all shared data"). The client
+  source editor, a restore or an on-page checkpoint), `data` (the page's shared data changed:
+  a write from the page, an agent or the app, or the owner's "Delete all shared data") and `access`
+  (sent just before a sharing change closes the socket). The client
   sends only the text `ping`. Each signal carries `spread_ms` (10 ms per recipient, at most 10 s):
   each open view waits a random time up to it before it acts (under 100 ms, fewer than ten views,
   they act at once), so at most about 100 follow-up requests a second reach one artifact, whatever
@@ -1146,9 +1148,15 @@ document through the gate and the shared-data API, with all of their checks.
   (origin isolation): the handshake grants the right, a version that drops `data` takes it away,
   and the app reconnects when a newer gate shows data the socket lacked. Under opaque isolation
   nothing is posted to frames.
-- **Lifecycle.** A sharing change closes watch sockets (4401) and the page re-reads its gate, which
-  may now ask for an email or a password; a takedown or delete closes them (4404). A socket also
-  closes at the content pass's lifetime (4401, reason `expired`), and the page reconnects. While
+- **Lifecycle.** A sharing change closes watch sockets (4401, reason `access_changed`), each first
+  sent an `access` frame with `spread_ms` for all of them, and every page waits a random time up to
+  it, then re-reads its gate and reconnects. A sharing change ends every content pass of the
+  artifact, so the page shows a gate that now asks for an email or a password, or refuses, and
+  otherwise loads a fresh frame, as for a new version. While a deck is presented or a doc is edited
+  on its page the frame stays, as it does for a new version, and is renewed once that ends. A
+  takedown or delete closes them (4404). A socket also closes at the content pass's lifetime, or
+  earlier when the app session, viewer session or password pass it was opened with expires (4401,
+  reason `expired`), and the page reconnects, which decides again. While
   sockets are open the room re-checks D1 every 60 s: it closes what a lost call left open, sends a
   `version` whose notify was lost, and takes the data right away when the current version no
   longer declares `data`. A tab hidden for 60 s closes its socket and reconnects when shown.

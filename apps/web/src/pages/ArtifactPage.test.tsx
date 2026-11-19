@@ -676,6 +676,134 @@ describe("ArtifactPage: editing a doc on its page (#36)", () => {
       expect(document.querySelectorAll("iframe")).toHaveLength(1);
     });
 
+    /** A stand-in watch socket the test can send frames and a close through. */
+    function stubWatchSocket() {
+      const sockets: FakeWatch[] = [];
+      class FakeWatch {
+        onmessage: ((e: { data: string }) => void) | null = null;
+        onclose: ((e: { code: number; reason: string }) => void) | null = null;
+        onerror = null;
+        constructor(public url: string) {
+          sockets.push(this);
+        }
+        send() {}
+        close() {}
+      }
+      vi.stubGlobal("WebSocket", FakeWatch);
+      return {
+        sockets,
+        frame: (f: unknown) => act(() => sockets.at(-1)?.onmessage?.({ data: JSON.stringify(f) })),
+        /** A sharing change: the `access` frame, then the 4401 close. */
+        revoke: () =>
+          act(() => {
+            sockets.at(-1)?.onmessage?.({ data: JSON.stringify({ t: "access", spread_ms: 0 }) });
+            sockets.at(-1)?.onclose?.({ code: 4401, reason: "access_changed" });
+          }),
+      };
+    }
+
+    /** The renderer reports the doc room's state; `connected` true puts the frame in "follow". */
+    function roomStatus(frame: HTMLIFrameElement, connected: boolean) {
+      const e = new MessageEvent("message", {
+        origin: "http://art123.content.localhost:8787",
+        data: {
+          source: "plinth-renderer",
+          v: 1,
+          type: "live",
+          connected,
+          failed: false,
+          editing: false,
+          holding: false,
+          dirty: false,
+          unflushed: false,
+          rev: 2,
+          base_version: 3,
+          conflict_version: null,
+          last_by_you: false,
+          last_edit_at: null,
+          editors: [],
+        },
+      });
+      Object.defineProperty(e, "source", { value: frame.contentWindow });
+      act(() => {
+        window.dispatchEvent(e);
+      });
+    }
+
+    it("a sharing change keeps a paused frame, and renews it once the pause ends", async () => {
+      const ws = stubWatchSocket();
+      let n = 0;
+      stubApi({
+        me: ME,
+        handle: (c) =>
+          c.path.startsWith("/view/") ? json(docGate({ watch: true }, ++n)) : undefined,
+      });
+      const ArtifactPage = await loadPage();
+      render(<ArtifactPage params={{ slug: "garden-plan" }} />);
+      const frame = (await screen.findByTitle("Plan, version 3")) as HTMLIFrameElement;
+      ws.frame({ t: "welcome", v: 1, version: 3, data: false });
+      roomStatus(frame, true);
+      ws.revoke();
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(50);
+      });
+      // The gate was read again, but the frame that follows the room stays.
+      expect(n).toBe(2);
+      expect(screen.getByTitle("Plan, version 3")).toBe(frame);
+      expect(frame.getAttribute("src")).toBe(ENTER(1));
+      expect(document.querySelectorAll("iframe")).toHaveLength(1);
+      // The pause ends (the room socket closed with the old pass): a fresh gate renews the frame.
+      roomStatus(frame, false);
+      await waitFor(() =>
+        expect(screen.getByTitle("Plan, version 3").getAttribute("src")).not.toBe(ENTER(1)),
+      );
+    });
+
+    it("a sharing change that ends access shows the gate, even while paused", async () => {
+      const ws = stubWatchSocket();
+      let n = 0;
+      stubApi({
+        me: ME,
+        handle: (c) =>
+          c.path.startsWith("/view/")
+            ? ++n === 1
+              ? json(docGate({ watch: true }))
+              : json({ status: "not_found" })
+            : undefined,
+      });
+      const ArtifactPage = await loadPage();
+      render(<ArtifactPage params={{ slug: "garden-plan" }} />);
+      const frame = (await screen.findByTitle("Plan, version 3")) as HTMLIFrameElement;
+      ws.frame({ t: "welcome", v: 1, version: 3, data: false });
+      roomStatus(frame, true);
+      ws.revoke();
+      await waitFor(() => expect(screen.queryByTitle("Plan, version 3")).toBeNull());
+      expect(document.querySelectorAll("iframe")).toHaveLength(0);
+    });
+
+    it("a sharing change renews a frame that is not paused", async () => {
+      const ws = stubWatchSocket();
+      let n = 0;
+      stubApi({
+        me: ME,
+        handle: (c) =>
+          c.path.startsWith("/view/") ? json(docGate({ watch: true }, ++n)) : undefined,
+      });
+      const ArtifactPage = await loadPage();
+      render(<ArtifactPage params={{ slug: "garden-plan" }} />);
+      await screen.findByTitle("Plan, version 3");
+      ws.frame({ t: "welcome", v: 1, version: 3, data: false });
+      ws.revoke();
+      const fresh = await waitFor(() => {
+        const f = [...document.querySelectorAll("iframe")].find(
+          (x) => x.getAttribute("src") === ENTER(2),
+        );
+        if (!f) throw new Error("not renewed yet");
+        return f;
+      });
+      expect(fresh.getAttribute("title")).toBe("Plan, version 3");
+    });
+
     it("solo: opening Comments when the save on Done fails keeps editing and the frame", async () => {
       let views = 0;
       stubApi({

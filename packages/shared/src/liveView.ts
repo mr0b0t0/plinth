@@ -56,7 +56,13 @@ export type ViewWatchFrame =
   /** A new version was published: re-read the gate (after random(0, spread_ms) ms). */
   | { t: "version"; version: number; spread_ms: number }
   /** The page's shared data changed: the page re-reads it (after random(0, spread_ms) ms). */
-  | { t: "data"; spread_ms: number };
+  | { t: "data"; spread_ms: number }
+  /**
+   * Sent just before a sharing change closes the socket (4401 `access_changed`): the page re-reads
+   * its gate and reconnects only after random(0, spread_ms) ms, so a large audience does not do
+   * both at the same moment.
+   */
+  | { t: "access"; spread_ms: number };
 
 /** How long clients spread their follow-up requests when `recipients` sockets got a signal. */
 export function spreadMs(recipients: number): number {
@@ -105,5 +111,8 @@ export function readViewWatchFrame(raw: unknown): ViewWatchFrame | null {
     return { t: "version", version: f.version as number, spread_ms: f.spread_ms as number };
   }
   if (f.t === "data" && spread(f.spread_ms)) return { t: "data", spread_ms: f.spread_ms as number };
+  if (f.t === "access" && spread(f.spread_ms)) {
+    return { t: "access", spread_ms: f.spread_ms as number };
+  }
   return null;
 }

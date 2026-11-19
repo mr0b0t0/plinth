@@ -2,7 +2,13 @@ import type { ViewGate } from "@plinth/shared";
 import { act, renderHook } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { json, stubApi } from "./test-utils.ts";
-import { nextGate, useVersionWatch, VERSION_POLL_MS, versionPollMs } from "./useVersionWatch.ts";
+import {
+  afterAccessChange,
+  nextGate,
+  useVersionWatch,
+  VERSION_POLL_MS,
+  versionPollMs,
+} from "./useVersionWatch.ts";
 
 type OkGate = Extract<ViewGate, { status: "ok" }>;
 
@@ -66,6 +72,40 @@ describe("nextGate while a doc is edited on its page", () => {
   it("changes nothing when no newer version exists", () => {
     expect(nextGate(gate(3, 3), gate(3, 3, "x"), false, "follow")).toBeNull();
     expect(nextGate(gate(3, 3), gate(3, 3, "x"), false, "hold")).toBeNull();
+  });
+});
+
+describe("afterAccessChange (a sharing change closed the watch socket)", () => {
+  it("shows a gate that is no longer ok, paused or not", () => {
+    const gone: ViewGate = { status: "not_found" };
+    for (const paused of [null, "follow", "hold", "present"] as const) {
+      expect(afterAccessChange(gate(3, 3), gone, false, paused)).toEqual({
+        kind: "show",
+        gate: gone,
+      });
+    }
+  });
+
+  it("not paused: the fresh gate replaces the frame, which renews its pass", () => {
+    const fresh = gate(3, 3, "fresh");
+    expect(afterAccessChange(gate(3, 3), fresh, false)).toEqual({ kind: "show", gate: fresh });
+    expect(afterAccessChange(gate(3, 2), gate(3, 2, "p"), true)).toMatchObject({ kind: "show" });
+  });
+
+  it("presenting a deck, or a doc edited on its page: the frame stays until the pause ends", () => {
+    for (const paused of ["follow", "hold", "present"] as const) {
+      expect(afterAccessChange(gate(3, 3, "kept"), gate(3, 3, "fresh"), false, paused)).toEqual({
+        kind: "keep",
+        gate: null,
+        renew: true,
+      });
+    }
+    // A version published meanwhile moves only the count on, as the version watch does.
+    const held = afterAccessChange(gate(3, 3, "kept"), gate(4, 4, "fresh"), false, "present");
+    if (held.kind !== "keep") throw new Error("expected keep");
+    expect(held.gate?.enter_url).toBe("kept");
+    expect(held.gate?.artifact.version).toBe(3);
+    expect(held.gate?.artifact.current_version).toBe(4);
   });
 });
 
