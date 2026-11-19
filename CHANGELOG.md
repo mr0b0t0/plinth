@@ -47,6 +47,21 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   The file is built in the viewer's browser from the slides as shown; nothing goes to the server.
   On instances with opaque content isolation the file leaves out the deck's image files, and says
   so. Update the plugin for the agent's note on it.
+- **Project files for a page.** Agents now have a recipe for pages that show files from a project
+  (a log viewer, a CSV explorer, a code tour): publish copies of the files the user chose under
+  `files/` and read them by relative URL; a refresh is a new version. Only the user in the session
+  chooses the files: a mention, even from the owner, never makes the agent read one, and agents can
+  remember the user's choice in a local `.plinth-files.json` that is never published or committed.
+  Project files that Plinth would serve as a page or code (`.html`, `.svg`, `.js`, `.css`…) go up
+  with `.txt` added, so opening one never runs it, or are embedded in the page as JSON with every
+  `<` escaped, so a `</script>` in the file cannot end the block. A big refresh through an upload
+  or the CLI holds the page and every file it keeps. Update the plugin for the agent's project files rules.
+
+- **A `sensitive_file` publish warning.** A publish, update or upload that sends a file whose name
+  usually holds secrets (`.env`, `*.pem`, `id_rsa`, `credentials.json`), or a `.plinth-files.json`
+  record, lists `sensitive_file` first, so the agent stops and asks before handing over the link.
+  It checks names only, never blocks, and is not reported for files carried forward, reused by
+  hash or restored.
 
 - **Dictation, run by Plinth, for pages that ask for it.** A page that declares `dictation` can
   take the words a viewer speaks (`plinth.dictation`): Plinth's app runs the browser's speech
