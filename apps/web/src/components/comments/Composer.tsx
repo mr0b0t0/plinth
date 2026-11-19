@@ -25,18 +25,12 @@ export interface ComposerProps {
   textareaRef: RefObject<HTMLTextAreaElement | null>;
 }
 
-/** The chip's words. Anchor text is untrusted: it is only ever rendered as text. */
+/** The chip's words, the same for both kinds. Anchor text is untrusted: only ever rendered as text. */
 function chipText(anchor: PickedAnchor | PageAnchor) {
-  if (isPageAnchor(anchor)) {
-    return (
-      <>
-        Placed by the page: <q>{excerpt(anchor.text || anchor.key, 40)}</q>
-      </>
-    );
-  }
-  return anchor.text?.trim() ? (
+  const label = isPageAnchor(anchor) ? anchor.text?.trim() || anchor.key : anchor.text?.trim();
+  return label ? (
     <>
-      Pinned to <q>{excerpt(anchor.text, 40)}</q>
+      Pinned to <q>{excerpt(label, 40)}</q>
     </>
   ) : (
     "Pinned to an element"

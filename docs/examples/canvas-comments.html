@@ -87,7 +87,6 @@
     <canvas id="canvas" width="720" height="420" aria-label="Sketch board. Click to comment on a spot."></canvas>
   </div>
   <p id="status" role="status" aria-live="polite"></p>
-  <p>Focused thread: <span id="focused">none</span></p>
 </main>
 <script src="/__plinth/runtime.js"></script>
 <script>
@@ -189,7 +188,6 @@
 
     // The person picked a thread in Plinth's panel or clicked its pin.
     comments.onFocus((t) => {
-      document.getElementById("focused").textContent = t.id;
       for (const [id, m] of markers) m.toggleAttribute("data-focused", id === t.id);
     });
   }
