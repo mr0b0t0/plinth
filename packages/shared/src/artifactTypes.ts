@@ -8,6 +8,7 @@
 // one line in ARTIFACT_TYPES, one line in TYPE_REGISTRY, its Worker hooks
 // (apps/worker/src/services/artifactTypes/<id>.ts) and, for a type with a renderer, a renderer
 // directory (apps/web/src/renderers/<id>/main.ts); no wire change.
+import { design } from "./artifactTypes/design.ts";
 import { designSystem } from "./artifactTypes/design_system.ts";
 import { doc } from "./artifactTypes/doc.ts";
 import { html } from "./artifactTypes/html.ts";
@@ -21,6 +22,7 @@ export const ARTIFACT_TYPES = [
   "doc",
   "slides",
   "design_system",
+  "design",
 ] as const;
 export type ArtifactType = (typeof ARTIFACT_TYPES)[number];
 
@@ -46,8 +48,13 @@ export interface ArtifactTypeDef {
   reservedPaths: readonly string[];
   /** Allowed asset content types, or null for any. */
   assetTypes: RegExp | null;
-  /** Renderer files under /__plinth/types/<id>/, or null for a type served as-is. */
-  renderer: { script: string; style: string } | null;
+  /**
+   * Renderer files under /__plinth/types/<id>/, or null for a type served as-is. `frame`, only
+   * with opaqueFrames, names a fixed Plinth page the renderer frames, at /__plinth/frames/<id>/
+   * (a design's board loader, content/boardLoader.ts): the content host serves it only behind the
+   * content pass, never from the web build.
+   */
+  renderer: { script: string; style: string; frame?: string } | null;
   editor: { language: EditorLanguage; wordWrap: "on" | "off" };
   /**
    * Owners and editors may edit it on its rendered page, live with each other (#36). Only types
@@ -59,6 +66,13 @@ export interface ArtifactTypeDef {
    * every page stacked (payload `view: "overview"`). Absent means false.
    */
   present?: boolean;
+  /**
+   * The type's page shows author HTML only in nested frames with an opaque origin in every
+   * isolation mode (a design's artboards). Its files are then served with
+   * Cross-Origin-Resource-Policy: cross-origin, the publish scan reads its references as opaque
+   * isolation would, and the content host serves its renderer.frame. Absent means false.
+   */
+  opaqueFrames?: boolean;
 }
 
 /** A type module's row: an ArtifactTypeDef whose id is that module's own type. */
@@ -70,6 +84,7 @@ export const TYPE_REGISTRY: { readonly [K in ArtifactType]: TypeModule<K> } = {
   doc,
   slides,
   design_system: designSystem,
+  design,
 };
 
 /**

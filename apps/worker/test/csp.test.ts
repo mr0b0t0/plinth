@@ -54,6 +54,26 @@ describe("content CSP builder", () => {
     expect(contentResourcePolicy(vars({ STAGING_CONTENT_FALLBACK: "true" }))).toBe("cross-origin");
   });
 
+  it("sandbox: true adds the opaque sandbox once in every mode (a design's board loader)", () => {
+    const origin = vars();
+    const opaque = vars({ CONTENT_ISOLATION: "opaque" });
+    const sandboxes = (csp: string) => csp.split("; ").filter((d) => d.startsWith("sandbox"));
+    expect(sandboxes(contentCsp(origin, { sandbox: true }))).toEqual([OPAQUE_SANDBOX]);
+    expect(sandboxes(contentCsp(opaque, { sandbox: true }))).toEqual([OPAQUE_SANDBOX]);
+    expect(contentCsp(opaque, { sandbox: true })).toBe(contentCsp(opaque));
+    // Only the sandbox differs under origin isolation.
+    expect(contentCsp(origin, { sandbox: true }).replace(`; ${OPAQUE_SANDBOX}`, "")).toBe(
+      contentCsp(origin),
+    );
+    expect(contentCsp(origin, { sandbox: true, framing: "any" })).not.toContain("frame-ancestors");
+  });
+
+  it("opaqueReaders makes a response cross-origin readable (a design's files)", () => {
+    expect(contentResourcePolicy(vars(), { opaqueReaders: true })).toBe("cross-origin");
+    expect(contentResourcePolicy(vars(), { scripts: "none" })).toBe("same-origin");
+    expect(contentCsp(vars(), { opaqueReaders: true })).toBe(contentCsp(vars()));
+  });
+
   it("refuses an unknown CONTENT_ISOLATION", () => {
     expect(() => vars({ CONTENT_ISOLATION: "none" })).toThrow(/CONTENT_ISOLATION/);
     expect(vars({ CONTENT_ISOLATION: "OPAQUE" }).contentIsolation).toBe("opaque");

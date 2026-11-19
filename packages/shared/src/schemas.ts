@@ -70,7 +70,9 @@ export const contentSchema = z
   .describe(
     'The source of a typed artifact: for type "doc", the Markdown document (stored as content.md); ' +
       'for type "slides", the deck\'s Markdown with a line --- between slides (stored as slides.md); ' +
-      'for type "design_system", the design system JSON (stored as system.json). ' +
+      'for type "design_system", the design system JSON (stored as system.json); ' +
+      'for type "design", shared <head> tags then artboards, each starting with a line ' +
+      '<!-- artboard name="Home" size="iphone" --> (stored as design.html). ' +
       "Not for html artifacts, which send html.",
   );
 export const artifactTypeSchema = z
@@ -80,7 +82,9 @@ export const artifactTypeSchema = z
       'content, which Plinth renders as a finished page. "slides": a Markdown deck sent as content, ' +
       "which Plinth renders as a presentation. " +
       '"design_system": design tokens, guidelines and components as JSON in content ' +
-      "(format plinth.design-system/1), which Plinth renders as a reference site. Fixed at publish.",
+      "(format plinth.design-system/1), which Plinth renders as a reference site. " +
+      '"design": artboards (app screens, posters, social posts, ads) as HTML in content, which ' +
+      "Plinth renders on a canvas, each artboard alone at its exact size. Fixed at publish.",
   );
 export const noteSchema = z.string().trim().max(LIMITS.maxNoteLength);
 export const passwordSchema = z

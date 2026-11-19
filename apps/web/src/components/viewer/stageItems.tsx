@@ -174,6 +174,7 @@ export const TYPE_MENU_ITEMS: Partial<Record<ArtifactType, readonly MenuItem[]>>
   doc: [printTyped],
   slides: [presenterView, printTyped, printWithNotes],
   design_system: [copyForAgent],
+  design: [printTyped],
 };
 
 /** Menu items for a page that declares one capability, in order, after the type's items. */

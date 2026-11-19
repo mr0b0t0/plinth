@@ -37,6 +37,13 @@ describe("content reserved paths", () => {
     expect(stat("/__plinth/preview")).toBe("/__plinth/preview");
     expect(stat("/__plinth/types/doc/doc.js")).toBe("/__plinth/types/");
     expect(stat("/__plinth/types/")).toBe("/__plinth/types/");
+    // A type's framed page is never a static file: only the "pass" row, behind the content pass.
+    expect(stat("/__plinth/frames/design/board.html")).toBeUndefined();
+    expect(own("/__plinth/frames/design/board.html")).toBeUndefined();
+    expect(reservedPath("/__plinth/frames/design/board.html", "pass")?.path).toBe(
+      "/__plinth/frames/",
+    );
+    expect(reservedPath("/__plinth/types/design/design.js", "pass")).toBeUndefined();
     // Exact files only.
     expect(stat("/__plinth/runtime.js.map")).toBeUndefined();
     expect(stat("/__plinth/preview/x")).toBeUndefined();

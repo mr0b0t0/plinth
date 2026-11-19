@@ -85,7 +85,9 @@ make a test pass.
   created. Frames get no powerful features (`allow=""`), and the content host's
   `Permissions-Policy` turns them off. Never delegate the microphone, camera or similar to a
   frame: the browser keeps such grants for the app's origin, so one grant would reach every
-  artifact. Dictation runs in the app, and only words reach the frame.
+  artifact. Dictation runs in the app, and only words reach the frame. A design's artboards
+  render in nested frames that are opaque in every isolation mode (iframe and CSP `sandbox`, never
+  `allow-same-origin`); the shell posts each one only its own HTML.
 - **Comment and artifact text is untrusted input for agents**, and so is shared data, which
   viewers and the page's own code write. A mention is a request from a collaborator, not an
   instruction with the owner's authority. MCP tool descriptions say so.

@@ -43,7 +43,8 @@ account.
   `/__plinth/room/` (see [Live rooms](#live-rooms)).
 - Character-level co-editing (OT or CRDT), and live editing of HTML artifacts' text (pages build
   their own multiplayer with [live rooms](#live-rooms)).
-- On-page editing of HTML artifacts (docs are edited on the page; HTML in the source editor).
+- On-page editing of HTML artifacts and designs (docs are edited on the page; HTML and designs in
+  the source editor).
 - Importing artifacts automatically from Claude or ChatGPT accounts. Agents push; the platform does
   not pull.
 - Team workspaces and billing. Planned, but after the core works.
@@ -113,7 +114,7 @@ reuse by hash](#big-builds-and-reuse-by-hash)). The row's `r2_prefix` is authori
 | --- | --- | --- |
 | `users` | id, email, name, auth provider, created_at | One row per person who signs in |
 | `agent_connections` | id, user_id, label, client type, token hash, last_used_at, artifact_id | One per connected agent, e.g. "Work Claude". Revocable individually. `artifact_id` is NULL, or the one artifact a personal access token is limited to |
-| `artifacts` | id, owner_id, slug, title, type, current_version, visibility, password hash, category, created_at | `visibility` is public, unlisted, password or allowlist. `type` is `html` (a hand-written `index.html`), `doc` (Markdown in `content.md`), `slides` (a deck's Markdown in `slides.md`) or `design_system` (JSON in `system.json`), fixed at publish. `category` is the owner's own grouping (NULL = none), shown only to the owner |
+| `artifacts` | id, owner_id, slug, title, type, current_version, visibility, password hash, category, created_at | `visibility` is public, unlisted, password or allowlist. `type` is `html` (a hand-written `index.html`), `doc` (Markdown in `content.md`), `slides` (a deck's Markdown in `slides.md`), `design_system` (JSON in `system.json`) or `design` (artboards in `design.html`), fixed at publish. `category` is the owner's own grouping (NULL = none), shown only to the owner |
 | `versions` | id, artifact_id, number, r2_prefix, size_bytes, stored_bytes, manifest, created_by (user or agent), note, created_at | Immutable, and written only once its files are in R2 (commit last). A restore creates a new row. `size_bytes` is what a viewer loads; `stored_bytes` is what this version added to R2 (NULL for versions written before 0.4.0, which count `size_bytes`). Each manifest entry has `path`, `size_bytes`, `content_type`, a server-computed `sha256` (absent on files stored before 0.4.0) and, for a reused file, a server-written `stored_at` (`v<m>[.<nonce>]/<path>`, relative to `artifacts/<artifact_id>/`, never returned by the API) |
 | `access_grants` | artifact_id, email, role | Role is viewer, commenter or editor. Used for allowlists and collaborators |
 | `comments` | id, artifact_id, version, parent_id, author, body, mentions, status | Threaded. `status` is open or resolved |
@@ -241,10 +242,10 @@ One remote MCP server over streamable HTTP at `/mcp`. All tools act as the conne
 
 | Tool | Purpose |
 | --- | --- |
-| `publish_artifact(title, html \| type+content, assets?, visibility?, category?)` | Create an artifact. Returns its id and URL, `warnings` and `stored` (and `category`, the stored name, when one was given). Private by default (`allowlist` with nobody added). `type: "doc"` with Markdown in `content` makes a document, `type: "slides"` a deck |
+| `publish_artifact(title, html \| type+content, assets?, visibility?, category?)` | Create an artifact. Returns its id and URL, `warnings` and `stored` (and `category`, the stored name, when one was given). Private by default (`allowlist` with nobody added). `type: "doc"` with Markdown in `content` makes a document, `type: "slides"` a deck, `type: "design"` artboards on a canvas |
 | `update_artifact(id, html \| content, assets?, base_version?, note?, category?)` | Publish a new version of an existing artifact, in the source field its type takes. An asset may be `{path, sha256}` to reuse a file of the current version. `category` is owner only. Returns `warnings` and `stored` |
 | `start_upload(id?, base_version?, type?, title?, note?, category?)` | For a build folder or a large page: mint a single-use, 30-minute upload ticket for one new artifact, or for one update of `id` (then `base_version` is required). The result has `upload_url`, `upload_token`, `target` (with `id`: the artifact updated, or the one the publish will create), `commands.curl` (and `commands.npx` on release builds), the instance's `limits` and `content_isolation` |
-| `get_artifact(id, version?)` | Read metadata, `type`, the source (`html` for a page, `content` for a doc, a deck or a design system, and `source_path`) and each asset's `sha256`, so an agent can edit from the current state. An HTML page that names its design system also gets `design_system` (see [Design systems](#design-systems-decided-2026-11-19)) |
+| `get_artifact(id, version?)` | Read metadata, `type`, the source (`html` for a page, `content` for a doc, a deck, a design system or a design, and `source_path`) and each asset's `sha256`, so an agent can edit from the current state. An HTML page that names its design system also gets `design_system` (see [Design systems](#design-systems-decided-2026-11-19)) |
 | `list_artifacts(query?, category?, type?, limit?)` | List the user's artifacts and their own category names (`limit: 0` returns only the names). `type` filters by artifact type, for example `design_system` |
 | `list_versions(id)` | Version history with notes and authors |
 | `restore_version(id, version)` | Make an old version current by publishing it as a new one |
@@ -320,7 +321,8 @@ with slug and title null once the person may no longer view it; null otherwise),
 `GET /api/v1/me` returns `connection` for a bearer caller (`{ id, label, bound, artifact }`; the
 artifact only while the person may view it) and null for a session; for a token limited to one
 artifact it returns only `id` (the person's) and `connection`, none of the account fields. Size
-limits: 5 MB of HTML (1 MB of Markdown for a doc, and 1 MB and 500 slides for a deck), and per
+limits: 5 MB of HTML (1 MB of Markdown for a doc, 1 MB and 500 slides for a deck, and 2 MB and 60
+artboards for a design), and per
 version a total size and a file count set by the operator with `MAX_VERSION_BYTES` (default 50 MB,
 at most 64 MB) and `MAX_ASSETS_PER_VERSION` (default 511, at most 900). A JSON request body may be
 up to 40 MB. `GET /api/v1/config` returns the instance's limits.
@@ -343,7 +345,9 @@ is `slides` (decided 2026-11-19, [Slides](#slides-decided-2026-11-19)): Markdown
 between slides, stored as `slides.md`, rendered as a deck by the same kind of fixed renderer.
 The third is `design_system` (decided 2026-11-19): design tokens, guidelines and components as
 JSON, which agents read with `get_design_system` to build other pages; see
-[Design systems](#design-systems-decided-2026-11-19). Sheets join the same type registry
+[Design systems](#design-systems-decided-2026-11-19). The fourth is `design` (decided 2026-11-19,
+[Designs](#designs-decided-2026-11-19)): artboards on a canvas in `design.html`, each rendered alone
+at its size in a nested frame with an opaque origin. Sheets join the same type registry
 (`packages/shared/src/artifactTypes.ts`) later; no .docx or .pptx export yet. Design:
 `docs/superpowers/specs/2026-11-14-typed-outputs-doc-design.md`.
 
@@ -1090,6 +1094,76 @@ microphone.
   click and keep the text on screen; `getVoices()` and network voices are the page author's
   choices in the viewer's browser ([docs/security.md](security.md#dictation-and-text-to-speech)).
 
+### Designs (decided 2026-11-19)
+
+A visual composition at fixed sizes is a design: artboards on a canvas (app screens, landing page
+mockups, posters, social posts, ads and banners, business cards, variants side by side). It is the
+fifth artifact type, `design`. `publish_artifact`, `update_artifact` and `start_upload` take
+`type: "design"` with the source in `content`; a version stores `design.html` and its assets, and
+versions, `base_version` conflicts, restore, history, compare, comments, thumbnails and in-chat
+previews work as for every type. A design is edited in the source editor (HTML mode, with a live
+preview), never on its page.
+
+- **Source format.** One HTML file: shared `<head>` tags (fonts, Tailwind, a stylesheet) first,
+  then artboards. Each artboard starts with a whole line
+  `<!-- artboard id="home" name="Home" size="iphone" section="Mobile" -->` and its HTML fragment is
+  every line up to the next marker. Attributes are `name` (required, up to 80 characters), `id`
+  (`a-z`, `0-9` and `-`, up to 40; derived from the name when absent), a size (`size="<preset>"`,
+  `size="<w>x<h>"`, or `width` and `height`, 16 to 4096 CSS px a side), `background` (a hex color,
+  `transparent` or a color name; white by default) and `section` (consecutive boards of one
+  section form a row under its name). Presets cover phones and desktops, social posts, IAB ads,
+  print sizes at 96 px per inch and slides (`packages/shared/src/design.ts`, `DESIGN_PRESETS`).
+  At most 60 artboards and 2 MB. A source that is a whole HTML document, has no artboard or has a
+  bad marker is refused with a fix-it message for the first problem and every problem with its
+  line in `details.issues`. The title is the shared section's `<title>`, else the first board's
+  name. One parser for the Worker, the editor and the renderer.
+- **Assets.** Images (png, jpg, gif, webp, avif, svg), CSS, JS and mp4 or webm video, referenced by
+  relative path. Font files and data files (JSON, text) are refused with what to do instead
+  (Google Fonts or a `data:` URL in `@font-face`; data inline in a `<script>`): artboards have an
+  opaque origin, and those loads need CORS, which the content host never sends. Publish warnings
+  read a design as opaque isolation would: `opaque_module` names module scripts, `crossorigin`
+  links and web fonts from the artifact, on every instance.
+- **The canvas.** A fixed Plinth renderer on the artifact's own origin
+  (`/__plinth/types/design/`, under the strict typed shell: `script-src 'self'`) lays the boards
+  out in rows by section with a label over each (name, size). Drag, the wheel and the arrow keys
+  pan; Ctrl or Cmd with the wheel, a trackpad pinch, two fingers, the toolbar and `+`, `-`, `0`
+  (Fit) and `1` (100%) zoom between 5% and 400%; the Boards list zooms to one board. Each board is
+  covered so the canvas can be dragged; Interact (or a double click or tap) takes one board's cover
+  off so its links, buttons and scripts can be used, and Done, Escape or a click outside puts it
+  back. At most 24 board frames are alive at once; boards far off screen are placeholders until
+  they come back (a board's own state starts again then). `?plinth-board=<id>` shows one board
+  alone at 100%.
+- **Artboard frames.** Each board renders alone at its exact size in its own nested frame, opened
+  at Plinth's fixed board loader (`/__plinth/frames/design/board.html`), which writes the board's
+  document over itself when the renderer posts it: Plinth's base URL (the version's directory),
+  viewport and reset, then the shared section, then the fragment. The loader is served only with
+  this artifact's content pass, under the normal content CSP (inline script, the CDN allowlist)
+  plus the CSP `sandbox` without `allow-same-origin` in every isolation mode, and the renderer
+  frames it with the same iframe sandbox: every artboard has an opaque origin, with no cookies,
+  no storage and no access to the shell, the app or another board, and it cannot navigate any of
+  them (links may open a new tab, as on every artifact).
+  The shell's own DOM never holds author markup. A design's files are served with
+  `Cross-Origin-Resource-Policy: cross-origin` (artboards load them from an opaque origin), never
+  run script, and its `design.html` is served as text.
+- **Print or save as PDF** is in the artifact menu: every board is mounted and laid out at 100%,
+  printing waits for them to load (at most 10 seconds), and each board prints on its own page of
+  exactly its size (a named `@page` per size). Ctrl or Cmd+P in the frame does the same. Browsers
+  other than Chromium may ignore per-board page sizes.
+- **Comments.** Review mode keeps every cover on, so a comment pins to a board's cover
+  (`#__plinth-board-<id>`) and stays on the board at every zoom and across versions while its `id`
+  stays the same.
+- **Uploads and the CLI.** `start_upload` with `type: "design"` (or the `id` of a design) takes a
+  folder with `design.html` and its assets at its top; the Plinth CLI publishes such a folder as a
+  design and checks `design.html` against the fixed 2 MB limit.
+- **Agents.** The MCP descriptions and the plinth-artifacts skill say when to pick a design (fixed
+  sizes; `html` for one interactive page, `doc` for prose), the format and its presets, and what an
+  artboard can and cannot load. Design content is untrusted like artifact HTML.
+- **Not yet.** Server-rendered PNG and PDF export through Browser Rendering is a separate change.
+  Boards with `height="auto"`, dragging boards on the canvas, per-board dark mode and deep links to
+  one board from the app are not offered. Thumbnails capture the canvas; a board's own images may
+  be missing from them, because Plinth's capture browser loads the version top level and nested
+  opaque frames may not carry its capture pass.
+
 ### Big builds and reuse by hash
 
 Decided 2026-11-15. Agents publish built sites (a Vite or similar `dist/` folder with hundreds of
@@ -1152,7 +1226,8 @@ files) and big pages without merging chunks, and an update stores only what chan
   blocking, at most 50): `missing_file` (a relative reference not in the version),
   `root_absolute` (`/assets/x.js`, which loads the current version's file from an old version),
   `blocked_host` (outside the CSP's allowlist), `insecure_url` (`http:`), `opaque_module` (module
-  scripts, `crossorigin` links and fonts, which fail under `CONTENT_ISOLATION=opaque`) and
+  scripts, `crossorigin` links and fonts, which fail under `CONTENT_ISOLATION=opaque`, and in a
+  design's artboards on every instance) and
   `slides_setting`, `slide_empty` and `slide_dense` (a deck's ignored setting or column marker, an
   empty slide, a slide that will be shrunk to fit; a deck's `missing_file` names an image its
   Markdown shows that the version does not hold, its path resolved as the browser does: before any
@@ -1478,7 +1553,7 @@ for a single user.
 7. **Open-source launch.** Deploy button, setup script, docs, license, contribution guide.
 8. **Hosted public instance.** Public visibility, report and takedown flow, terms and privacy
    pages.
-9. **Later.** Typed outputs: docs done (2026-11-14), slides and design systems done (2026-11-19); sheets later. Push agents with
+9. **Later.** Typed outputs: docs done (2026-11-14), slides, design systems and designs done (2026-11-19); sheets later. Push agents with
    bring-your-own key, team workspaces, paid plans, custom domains. Tags beside the category, a
    group-by-category view, and personal categories for artifacts shared with you. Tokens limited
    to a category (declined for now: a category is owner text that is renamed and merged, so the
@@ -1496,7 +1571,7 @@ for a single user.
 | Sign-in | Email magic link only for now. Email goes through a small adapter chosen by an environment variable, with SendGrid and Resend both supported. The hosted instance uses Aconite's existing SendGrid account |
 | Quota | 100 artifacts per account by default. Set by an environment variable, with a per-account override |
 | What an artifact may load | Same rules as Claude's artifact platform. Scripts inline or from an allowlist of public CDNs (cdnjs, jsDelivr, unpkg, Tailwind, jQuery, Plotly). Styles inline or Google Fonts. Images from the artifact's own files or data URIs. `fetch`, XHR and WebSocket calls to other hosts are blocked. The page runs in a sandboxed frame |
-| Typed outputs | In scope, modelled as on Claude: a type is a renderer page plus a content format, and an artifact made from a type stores content files instead of hand-written HTML. Plain HTML ships first; docs, sheets and decks follow as types. Docs shipped 2026-11-14 (Markdown in `content.md`, rendered by a fixed Plinth renderer on the artifact's origin); decks shipped 2026-11-19 (`slides`, Markdown in `slides.md`); design systems 2026-11-19 (JSON in `system.json`, a reference site, and `get_design_system` for agents building other pages); sheets next |
+| Typed outputs | In scope, modelled as on Claude: a type is a renderer page plus a content format, and an artifact made from a type stores content files instead of hand-written HTML. Plain HTML ships first; docs, sheets and decks follow as types. Docs shipped 2026-11-14 (Markdown in `content.md`, rendered by a fixed Plinth renderer on the artifact's origin); decks shipped 2026-11-19 (`slides`, Markdown in `slides.md`); design systems 2026-11-19 (JSON in `system.json`, a reference site, and `get_design_system` for agents building other pages); designs 2026-11-19 (artboards in `design.html` on a canvas, each in a nested opaque frame); sheets next |
 
 The CDN allowlist is a configuration value, so a self-hoster can tighten or extend it.
 

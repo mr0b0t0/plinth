@@ -20,6 +20,7 @@ import { ApiError } from "../lib/errors.ts";
 import type { PageClaim } from "../policy.ts";
 import { fileKey, type ManifestEntry } from "../services/storage.ts";
 import { isCountableRequest, recordView } from "../services/views.ts";
+import { serveBoardLoader } from "./boardLoader.ts";
 import { injectBridge, serveBridgeScript } from "./bridge.ts";
 import { applyContentHeaders, type ContentCspOptions } from "./csp.ts";
 import { serveDataApi } from "./data-api.ts";
@@ -37,7 +38,14 @@ import {
   verifyContentCookie,
   verifyEnterToken,
 } from "./tokens.ts";
-import { rendererRequest, serveRendererFile, serveTypedEntry, unsupportedType } from "./typed.ts";
+import {
+  rendererRequest,
+  serveRendererFile,
+  serveTypedEntry,
+  TYPE_FRAMES_PREFIX,
+  typeFrameRequest,
+  unsupportedType,
+} from "./typed.ts";
 import { loadVersion } from "./versionCache.ts";
 
 /**
@@ -335,14 +343,25 @@ export interface ReservedPath {
    * `own`: answered first, before the content host's method, service-worker and navigation
    * checks, because it runs its own ordered checks and never redirects (an API, an upgrade).
    * `static`: answered after them, a file that holds no artifact data.
+   * `pass`: answered once the artifact has loaded and the request has shown a valid content pass
+   * for it at its current epoch (of any kind), before versioned paths: a fixed Plinth page that
+   * holds no version data but works only for people who may open the artifact.
    */
-  stage: "own" | "static";
+  stage: "own" | "static" | "pass";
   serve: (
     request: Request,
     env: Bindings,
     config: Config,
     route: ContentRoute,
+    /** Only for a `pass` row: the artifact and the pass the request carries. */
+    gate?: PassGate,
   ) => Response | Promise<Response>;
+}
+
+/** What a `pass` reserved row is given: the artifact and the request's valid content pass. */
+export interface PassGate {
+  artifact: ArtifactRow;
+  pass: ContentPass;
 }
 
 /**
@@ -360,6 +379,8 @@ export const RESERVED_PATHS: readonly ReservedPath[] = [
   { path: `${CONTENT_RESERVED_PREFIX}preview`, stage: "static", serve: servePreview },
   // A typed artifact's renderer files (content/typed.ts).
   { path: `${CONTENT_RESERVED_PREFIX}types/`, stage: "static", serve: serveRenderer },
+  // A type's framed page, a design's board loader (content/boardLoader.ts): behind the pass.
+  { path: TYPE_FRAMES_PREFIX, stage: "pass", serve: serveTypeFrame },
 ];
 
 function serveBridge(_r: Request, _e: Bindings, config: Config): Response {
@@ -382,6 +403,25 @@ function serveRenderer(
 ): Promise<Response> {
   const r = rendererRequest(route.path) ?? { id: "", file: "" };
   return serveRendererFile(request, env, config, r.id, r.file);
+}
+
+/**
+ * A type's framed page, for an artifact of that type only (every other artifact gets a 404). It
+ * holds no version data, so a preview pass for any version of the artifact gets it too.
+ */
+function serveTypeFrame(
+  request: Request,
+  _env: Bindings,
+  config: Config,
+  route: ContentRoute,
+  gate?: PassGate,
+): Response {
+  const def = typeFrameRequest(route.path);
+  const framing = gate?.pass.preview ? "any" : "app";
+  if (!def || !gate || gate.artifact.type !== def.id) {
+    return text(config, 404, "Not found", undefined, { framing });
+  }
+  return serveBoardLoader(request, config, def);
 }
 
 /** The reserved path row for `path` at this stage, if any. */
@@ -541,6 +581,10 @@ async function serve(
   const framing = pass.preview ? "any" : "app";
   const fail = (status: number, body: string) => text(config, status, body, undefined, { framing });
 
+  // Plinth's own pages that need the pass but hold no version data (a design's board loader).
+  const gated = reservedPath(path, "pass");
+  if (gated) return gated.serve(request, env, config, route, { artifact, pass });
+
   // Resolve version and file path.
   let versionNumber = artifact.currentVersion;
   let filePath = path;
@@ -610,18 +654,24 @@ async function serve(
     throw e;
   }
 
-  const isHtml = entry.content_type.startsWith("text/html");
+  // A typed artifact's source is never an HTML document on its origin: a design's design.html is
+  // served as text, like a doc's Markdown, and only the shell runs anything there.
+  const sourceAsText = def.renderer !== null && entry.content_type.startsWith("text/html");
+  const isHtml = !sourceAsText && entry.content_type.startsWith("text/html");
   const review = url.searchParams.has(REVIEW_MODE_PARAM) && isHtml;
   // Opaque isolation keeps the original caching: R2's tag, no-cache everywhere, no early 304.
   const caching = config.contentIsolation === "origin" && !review;
-  const headers = new Headers({ "Content-Type": entry.content_type });
+  const headers = new Headers({
+    "Content-Type": sourceAsText ? "text/plain; charset=utf-8" : entry.content_type,
+  });
   // A typed artifact's other files (content.md, images) run no script, not even an SVG opened as
-  // a document: only the shell runs Plinth's renderer.
+  // a document: only the shell runs Plinth's renderer. A design's files are loaded by its
+  // artboards, whose origin is opaque, so they are cross-origin readable (CORP).
   applyContentHeaders(
     config,
     headers,
     def.renderer
-      ? { scripts: "none", framing }
+      ? { scripts: "none", framing, ...(def.opaqueFrames ? { opaqueReaders: true } : {}) }
       : { framing, ...(isHtml && socket ? { socket } : {}) },
   );
   // Public artifacts (only when the instance allows public visibility) may be indexed.

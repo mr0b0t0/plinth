@@ -32,6 +32,8 @@ make a test pass.
 | A page drives the comment composer | A page that declares `comments` opens the composer again and again, swaps the anchor under a comment someone is writing, prefills `@claude ...` for a collaborator to click through, or reads comment text through the channel | The page can only open the composer: it never posts and cannot fill in the text; at most one compose a second, none while the tab is hidden or a dialog is open, none before the page said hello; a closed panel reopened at most once a second, by compose and `open` together; `busy` and no change while someone is writing; no page request moves focus, so keystrokes meant for the page never land in the composer; the frame is told ids, pins, status and anchors only ([Comments from the page](#comments-from-the-page)) |
 | Design system injects into pages built from it | A design system's token value or CSS closes a `<style>` element, imports a stylesheet from another host, or carries a script that an agent copies into a page | One value grammar for every string that reaches CSS (no `;`, braces, `<`, `>`, `\`, `@`, quotes or line breaks, no `url(`), font names quoted by Plinth, no `<` or `@import` in CSS blocks; `get_design_system` marks every field untrusted and tells agents never to copy scripts or handlers; the page's own CSP still applies ([Design systems](#design-systems)) |
 | A page steers the app through a deck's messages | A script on another frame posts look-alike `position` or `fullscreen` messages to the app page | Deck messages are accepted only from the window of the frame the app holds, at the exact content origin (or `null` under opaque isolation), only for decks, and carry only slide numbers; full screen still needs the person's activation ([Slides](#slides)) |
+| A design's artboard attacks the shell, the app or another board | Board script reads `parent.document`, the content cookie or storage, navigates the app, or posts a look-alike renderer or board message | Every artboard is a nested frame with an opaque origin in every isolation mode (iframe `sandbox` and CSP `sandbox`, never `allow-same-origin`); the shell holds no author markup and runs only Plinth's renderer (`script-src 'self'`); it answers a board's `ready` only from the window of the frame it just made, once, with that board's own document; the app accepts renderer messages only from its own frame's window ([Designs](#designs)) |
+| Another site paints its content into a board loader | A page frames `<id>.<CONTENT_HOST>/__plinth/frames/design/board.html` (sent without `frame-ancestors`) and writes its own HTML into it | The loader answers only a request with this artifact's content pass at its epoch, which lives in the app's partitioned jar (and an MCP host's, for a preview), so another site's frame gets the 401 text; what a parent writes runs with an opaque origin, as in a frame of its own ([Designs](#designs)) |
 | Leaked CI secret | A `PLINTH_TOKEN` from a pipeline shows up in a fork's logs or a compromised runner | Make it a token limited to one artifact: it can read that artifact and publish new versions of it, nothing else (every other artifact answers 404 whatever its scopes, checked in `decide` before the scope), a version is never an overwrite and anyone with edit rights can revert it; secrets are not given to fork workflows ([Publishing from CI](#publishing-from-ci)) |
 | Workflow command injection through the Action's log | A title, warning path or server message `::set-output name=x::y` or `::add-mask::` printed by the Action steers the job | Everything the client prints runs between `::stop-commands::<random>` and `::<random>::`; the Action's own annotations escape their text, the summary escapes Markdown and HTML, outputs use random heredoc delimiters; `docs/ci.md` passes outputs to scripts through `env:` ([Publishing from CI](#publishing-from-ci)) |
 | Artifact eavesdrops through the microphone | A shared page starts recording on load or on an unrelated click and saves the transcript as shared data | Frames never get the microphone (`allow=""`, the content host's `microphone=()`); the app's `microphone=(self)` is the ceiling, and only while dictation is on. Dictation runs in the app: per-artifact consent, a click in the page for every start, at most 60 s, stopped on a hidden tab, a blurred window or a frame reload, and an app "Listening" control with Stop the page cannot cover ([Dictation](#dictation-and-text-to-speech)) |
@@ -273,7 +275,10 @@ a `Permissions-Policy` that turns off camera, microphone, geolocation, payment, 
 similar features. Under opaque isolation the CSP ends with the `sandbox` directive shown in
 [Opaque content isolation](#opaque-content-isolation). A request carrying an in-chat preview pass
 gets the same CSP without `frame-ancestors`, and `Cross-Origin-Resource-Policy: cross-origin`
-([In-chat previews](#in-chat-previews)).
+([In-chat previews](#in-chat-previews)). A design's board loader is the other response without
+`frame-ancestors`: it adds the opaque `sandbox` directive in every isolation mode and is served
+only behind this artifact's content pass, and a design's files carry
+`Cross-Origin-Resource-Policy: cross-origin` ([Designs](#designs)).
 
 While live rooms are active (`ALLOW_ROOMS`, the `ROOMS` binding and origin isolation), documents
 (HTML entries and a typed artifact's shell, not other files, and never for a preview pass) name
@@ -487,6 +492,72 @@ served with `script-src 'none'`. What it adds:
   the author's page). Copied CSS restyles the page it is copied into, which is the point; the agent
   chose to copy it. WebRTC is the same known gap as for every artifact, and no script runs in
   previews, so it does not widen.
+
+## Designs
+
+A design (`artifacts.type = 'design'`) stores artboards in `design.html` (shared `<head>` tags,
+then a marker line and an HTML fragment per board) plus images, CSS, JS and video. Its page is the
+same strict typed shell as a doc's (`typedShellHtml`, root `#__plinth-design`, `script-src 'self'`
+in the header and a meta copy), renderer files under `/__plinth/types/design/` behind the same
+registry and Content-Type guard, and a 404 for `/__plinth-renderers/*` on the app host. Unlike a
+doc, a design's boards are author HTML with scripts, so they never run in the shell
+([docs/spec.md, Designs](spec.md#designs-decided-2026-11-19)).
+
+- **Every artboard has an opaque origin, in every isolation mode.** The renderer mounts each board
+  as a nested iframe with `sandbox="allow-scripts allow-forms allow-popups
+  allow-popups-to-escape-sandbox allow-modals allow-downloads"` (no `allow-same-origin`), opened at
+  the board loader, `/__plinth/frames/design/board.html` (`content/boardLoader.ts`). The loader's
+  response carries the default content CSP (so author inline script, `eval` and the CDN allowlist
+  work) plus the opaque `sandbox` directive whatever `CONTENT_ISOLATION` says, once. A board's
+  document therefore has no cookies, no storage, no service workers, cannot reach the shell's DOM,
+  the app or a sibling board, and cannot navigate any of them. The shell's own sandbox under opaque
+  isolation is unchanged.
+- **The shell holds no author markup.** The shared section and each fragment exist in the shell
+  only as strings: the renderer posts a board its whole document (Plinth's `<base>`, viewport and
+  reset first, so an author's `<base>` cannot redirect it) and builds its own labels, covers,
+  toolbar and list with `createElement` and `textContent`. Names and sections are shown as text;
+  ids are `[a-z0-9-]`; a background is a hex color, `transparent` or a color name, so it cannot
+  break out of the reset rule. On a design's origin only Plinth's renderer runs at the real origin:
+  every stored file is served with `script-src 'none'`, no asset may be HTML, and `design.html` is
+  served as `text/plain` (`nosniff`), never as a document.
+- **The board handshake.** The loader posts `ready` to its parent with `"*"`; the renderer answers
+  only a `ready` whose `event.source` is the window of the iframe element it just created, once,
+  posting `render` with that board's own document to that window with `"*"` (the frame's origin is
+  opaque, so no target origin can name it, and the document is what the design may show anyway).
+  Each re-mount is a new element. The loader accepts `render` only from its parent window, once,
+  then writes itself over (`document.open`, `write`, `close`) and says `loaded` when the board has
+  loaded. It checks no origin, by design: whatever its parent writes runs with no origin, as it
+  would in an opaque frame of the parent's own making. Board script can post anything to its
+  parent afterwards; the renderer ignores it except `loaded`, which only counts towards print
+  readiness.
+- **The loader is gated by the content pass.** It is the second response, after the in-chat
+  preview's, that carries no `frame-ancestors`: an opaque shell and an MCP host's sandbox cannot be
+  named by any source. So it is served only after the artifact loads and the request shows a valid
+  content pass for this artifact at its current epoch (view, capture or preview; a preview pass for
+  any version, since the loader holds no version data), only for an artifact of type `design`; any
+  other artifact gets a 404, and a top-level visit is redirected to the app like every other. A
+  frame on another site has no cookie in its partition and gets the 401 "reload" text, so nobody
+  can paint their own content into a frame with this artifact's URL.
+- **A design's files are cross-origin readable.** Boards load the version's images, CSS and JS
+  from an opaque origin, so a design's files carry `Cross-Origin-Resource-Policy: cross-origin`, as
+  every file does under opaque isolation; an HTML artifact's and a doc's files keep `same-origin`.
+  The exposure is the one opaque isolation already accepts: every file needs the host-only,
+  partitioned content cookie, so only pages in the app's top-level partition (and, during an
+  in-chat preview, the host's) can embed them, and every other artifact's CSP limits its own loads
+  to `'self'` and the CDN allowlist.
+- **Fonts and data files are refused, not enabled.** A font file or a JSON or text asset would need
+  CORS from an opaque origin, and the content host never sends CORS. The publish refuses them with
+  what to do instead (Google Fonts or a `data:` URL; data inline in a `<script>`), and the publish
+  scan reads a design as opaque isolation would (`opaque_module` for module scripts, `crossorigin`
+  links and web fonts).
+- **No shared data, viewer identity or room.** A design declares no capabilities, and its boards
+  are opaque (`Origin: null`, cross-site fetch metadata), so the shared-data API and the room
+  upgrade refuse them before anything else.
+- **Residual risks.** Board scripts can show dialogs, open popups (`allow-popups-to-escape-sandbox`,
+  as every artifact) and use CPU; at most 24 board frames are alive at once. Printing nested frames
+  depends on the browser (Chromium honours per-board page sizes). Plinth's thumbnail capture loads
+  the version top level, and a nested opaque frame's requests may not carry the capture pass, so a
+  thumbnail can lack a board's own images; viewing is unaffected.
 
 ## CSRF and input handling
 

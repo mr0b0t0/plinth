@@ -185,11 +185,13 @@ const TYPE_DESCRIPTIONS: Record<ArtifactType, string> = {
   doc: "a Markdown document",
   slides: "a Markdown deck",
   design_system: "design tokens, guidelines and components as JSON",
+  design: "artboards (app screens, posters, social posts, ads) as HTML",
 };
 
 /** What Plinth does with a rendered type's source, for the ArtifactType description; "renders" when absent. */
 const TYPE_RENDERS: Partial<Record<ArtifactType, string>> = {
   design_system: "renders as a reference site and get_design_system compiles",
+  design: "renders on a canvas, each artboard alone at its exact size",
 };
 
 function responseSchemas(): Record<string, Json> {
@@ -293,7 +295,7 @@ function responseSchemas(): Record<string, Json> {
             [def.sourceField]: str({ description: sourceDescription(def) }),
             assets: {
               type: "array",
-              description: "The version's other files; never index.html or content.md",
+              description: `The version's other files; never ${def.reservedPaths.join(" or ")}`,
               items: obj({
                 path: str(),
                 size_bytes: int(),

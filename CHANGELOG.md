@@ -10,6 +10,17 @@ Add a line under **Unreleased** in the pull request that makes a change people w
 
 ## Unreleased
 
+- **Designs.** Agents can publish visual designs at fixed sizes (`type: "design"`): app screens,
+  posters, social posts, ads and banners as artboards in one HTML file, each starting with a line
+  `<!-- artboard name="Home" size="iphone" -->`, with presets for phones, desktops, social posts,
+  IAB ads, print and slides. Plinth lays the boards out on a canvas you pan and zoom (Fit, 100%, a
+  Boards list), renders each one alone at its exact size in its own frame with an opaque origin, so
+  its scripts, styles and images run without reaching the page or each other, lets you interact
+  with one board, pins comments to boards, and prints or saves the design as PDF one board per
+  page. The editor previews the boards as you type and shows each problem with its line. The Plinth
+  CLI publishes a folder with `design.html` at its top as a design. Update the plugin for the
+  agent's design rules.
+
 - **Dictation, run by Plinth, for pages that ask for it.** A page that declares `dictation` can
   take the words a viewer speaks (`plinth.dictation`): Plinth's app runs the browser's speech
   recognizer after the viewer's click and consent, shows "Listening" with a Stop the page cannot

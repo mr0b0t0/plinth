@@ -19,6 +19,11 @@ export interface ScanInput {
   manifestPaths: Set<string>;
   sources: ContentSources;
   isolation: "origin" | "opaque";
+  /**
+   * Why the scan reads references as opaque isolation would: the instance runs it (the default),
+   * or the type shows author HTML only in opaque-origin artboards (a design, opaqueFrames).
+   */
+  opaqueReason?: "instance" | "artboard";
   /** Files left out of the scan by the stager's budget. */
   unscanned?: string[];
   /**
@@ -65,6 +70,8 @@ const BLOCKED_MICROPHONE =
   "Plinth frames never get the microphone, so this call fails for every viewer. For speech to text, declare dictation and use plinth.dictation (when the instance offers it); otherwise let people type";
 const OPAQUE =
   "This instance runs opaque isolation: module scripts, crossorigin links and web fonts load with Origin: null and fail. Build a classic bundle (Vite: build.modulePreload false and an iife/legacy output)";
+const OPAQUE_ARTBOARD =
+  "Artboards run with an opaque origin: module scripts, crossorigin links and web fonts from the artifact fail. Use classic scripts, Google Fonts or data: fonts.";
 
 /** Echo text from a caller's file safely: at most 200 characters, control characters escaped. */
 export function echo(s: string): string {
@@ -107,7 +114,11 @@ export function scanPublish(input: ScanInput): PublishWarning[] {
     else scanJs(text, found, flags);
     checkRefs(f.path, found, input, out);
     if (flags.opaque && input.isolation === "opaque") {
-      out.push({ code: "opaque_module", file: f.path, message: OPAQUE });
+      out.push({
+        code: "opaque_module",
+        file: f.path,
+        message: input.opaqueReason === "artboard" ? OPAQUE_ARTBOARD : OPAQUE,
+      });
     }
     if (flags.microphone > 0) {
       out.push({
