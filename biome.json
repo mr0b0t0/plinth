@@ -17,6 +17,7 @@
       "!**/test-results",
       "!integrations/plugin/**/*.json",
       "!integrations/plugin-directory/**/*.json",
+      "!integrations/plugin-openai/**/*.json",
       "!integrations/gemini/**/*.json",
       "!.claude-plugin",
       "!.agents"
