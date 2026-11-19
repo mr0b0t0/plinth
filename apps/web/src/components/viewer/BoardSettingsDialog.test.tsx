@@ -4,6 +4,7 @@
 import { boardSettingsText } from "@plinth/shared";
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { StrictMode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { clearToasts, Toaster } from "../ui/index.ts";
 import { BoardSettingsDialog } from "./BoardSettingsDialog.tsx";
@@ -23,16 +24,17 @@ const detail = (version: number, content: string) => ({
 const DOTS_COMMENTERS = '{\n  "v": 1,\n  "background": "dots",\n  "edit": "commenters"\n}\n';
 const GRID_EDITORS = '{\n  "v": 1,\n  "background": "grid",\n  "edit": "editors"\n}\n';
 
-function setup(handle: (c: Call) => Response | undefined) {
+function setup(handle: (c: Call) => Response | undefined, { strict = false } = {}) {
   const api = stubApi({ handle });
   const onClose = vi.fn();
   const onSaved = vi.fn();
-  render(
+  const tree = (
     <>
       <BoardSettingsDialog artifactId="wb1" onClose={onClose} onSaved={onSaved} />
       <Toaster />
-    </>,
+    </>
   );
+  render(strict ? <StrictMode>{tree}</StrictMode> : tree);
   return { ...api, onClose, onSaved };
 }
 
@@ -116,6 +118,30 @@ describe("BoardSettingsDialog", () => {
       note: "Board settings: background grid, editors only",
     });
     expect(put?.headers["x-plinth-csrf"]).toBe("tok-123");
+    await screen.findByText("Saved as v4");
+  });
+
+  it("loads and saves under StrictMode, whose effects mount, unmount and mount again", async () => {
+    // apps/web/src/main.tsx renders the app in <StrictMode>, so `pnpm dev` runs every effect's
+    // cleanup once before running it again. The dialog must still apply what it reads and saves.
+    const user = userEvent.setup();
+    const { onSaved } = setup(
+      (c) => {
+        if (c.method === "GET" && c.path === "/artifacts/wb1")
+          return json(detail(3, DOTS_COMMENTERS));
+        if (c.method === "PUT" && c.path === "/artifacts/wb1")
+          return json({ id: "wb1", version: 4 });
+        return undefined;
+      },
+      { strict: true },
+    );
+    expect(
+      ((await screen.findByRole("radio", { name: /^Dots/ })) as HTMLInputElement).checked,
+    ).toBe(true);
+    expect(screen.queryByText("Loading the board settings")).toBeNull();
+    await user.click(screen.getByRole("radio", { name: /^Grid/ }));
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(onSaved).toHaveBeenCalledWith(4));
     await screen.findByText("Saved as v4");
   });
 

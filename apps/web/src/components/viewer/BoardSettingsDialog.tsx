@@ -59,13 +59,16 @@ export function BoardSettingsDialog({ artifactId, onClose, onSaved }: BoardSetti
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
-  const alive = useRef(true);
-  useEffect(
-    () => () => {
+  // Whether the dialog is mounted, so a read or save that resolves after it closes changes nothing.
+  // The effect sets it on every mount, not only the ref's first value: StrictMode (`pnpm dev`)
+  // runs the cleanup and then the effect again, and a ref left false would drop every result.
+  const alive = useRef(false);
+  useEffect(() => {
+    alive.current = true;
+    return () => {
       alive.current = false;
-    },
-    [],
-  );
+    };
+  }, []);
 
   /** Read the current version's settings. Resolves to what it read, or null on failure. */
   const load = useCallback(async (): Promise<Loaded | null> => {
