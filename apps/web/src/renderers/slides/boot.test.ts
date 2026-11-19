@@ -12,6 +12,7 @@ import { boot } from "./boot.ts";
 import { formatElapsed, type PresenterClock } from "./presenter.ts";
 import { PAGE_STYLE_ID, pageRule, printDeck } from "./print.ts";
 import { readSlidesAppMessage } from "./protocol.ts";
+import { CONTROLS_BAND, overviewColumns, overviewScale } from "./stage.ts";
 
 const APP = "https://plinth.example.com";
 const DECK = [
@@ -260,8 +261,6 @@ describe("boot", () => {
     stop = boot(f.win);
     key(f, "o");
     expect(root().getAttribute("data-mode")).toBe("overview");
-    key(f, "ArrowRight");
-    expect(slide()).toBe("1");
     key(f, "Escape");
     expect(root().getAttribute("data-mode")).toBe("deck");
     key(f, "o");
@@ -361,6 +360,80 @@ describe("boot", () => {
     expect(root().hasAttribute("data-fixed")).toBe(false);
   });
 
+  it("lays the overview out as a grid on a wide frame, and moves the selection with the arrows", () => {
+    mount();
+    const f = framed();
+    stop = boot(f.win);
+    key(f, "o");
+    expect(root().style.getPropertyValue("--cols")).toBe("4");
+    const thumb = Math.round(overviewScale(1280, 1280, 4) * 10000) / 10000;
+    expect(root().style.getPropertyValue("--s")).toBe(String(thumb));
+    key(f, "ArrowRight");
+    expect(slide()).toBe("2");
+    expect(root().getAttribute("data-mode")).toBe("overview");
+    // Down moves a row of four, clamped to the deck; Home goes back to the first.
+    key(f, "ArrowDown");
+    expect(slide()).toBe("5");
+    key(f, "Home");
+    expect(slide()).toBe("1");
+    key(f, "ArrowRight");
+    key(f, "Enter");
+    expect(root().getAttribute("data-mode")).toBe("deck");
+    expect(slide()).toBe("2");
+  });
+
+  it("keeps a fixed overview in one column", () => {
+    mount(DECK, "overview");
+    const f = framed();
+    stop = boot(f.win);
+    expect(root().style.getPropertyValue("--cols")).toBe("1");
+    key(f, "ArrowRight");
+    expect(slide()).toBe("1");
+  });
+
+  it("has icon controls with names, and presses the overview button while the overview is on", () => {
+    mount();
+    const f = framed();
+    stop = boot(f.win);
+    const controls = document.querySelector(".plinth-slides__controls") as HTMLElement;
+    const names = Array.from(controls.querySelectorAll("button")).map((b) => [
+      b.getAttribute("aria-label"),
+      b.dataset.tip,
+      b.querySelector("svg") !== null,
+    ]);
+    expect(names).toEqual([
+      ["Previous slide", "Previous slide", true],
+      ["Next slide", "Next slide", true],
+      ["Overview", "Overview", true],
+    ]);
+    expect(controls.querySelector(".plinth-slides__counter")?.textContent).toBe("1 / 5");
+    const overview = controls.querySelector('[aria-label="Overview"]') as HTMLElement;
+    expect(overview.getAttribute("aria-pressed")).toBe("false");
+    overview.click();
+    expect(overview.getAttribute("aria-pressed")).toBe("true");
+    overview.click();
+    expect(overview.getAttribute("aria-pressed")).toBe("false");
+  });
+
+  it("fits the slide above the controls' band, and over the whole frame when it fills the screen", () => {
+    mount();
+    const f = framed();
+    f.size.h = 700;
+    stop = boot(f.win);
+    // 1280x700 less the band: the height decides, and the band stays free under the slide.
+    const scaled = (h: number) => String(Math.round((h / 720) * 10000) / 10000);
+    expect(root().style.getPropertyValue("--s")).toBe(scaled(700 - CONTROLS_BAND));
+    expect(root().style.getPropertyValue("--deck-top")).toBe("0px");
+    expect(root().style.getPropertyValue("--deck-bottom")).toBe(`${CONTROLS_BAND}px`);
+    (f.win as unknown as { screen: { width: number; height: number } }).screen = {
+      width: 1280,
+      height: 700,
+    };
+    f.target.dispatchEvent(new Event("resize"));
+    expect(root().style.getPropertyValue("--s")).toBe(scaled(700));
+    expect(root().style.getPropertyValue("--deck-bottom")).toBe("0px");
+  });
+
   it("asks the app for full screen on f", () => {
     mount();
     const f = framed();
@@ -383,11 +456,11 @@ describe("presenter view", () => {
     expect(p.querySelector(".plinth-slides__pane--next")?.textContent).toContain("Two");
     expect(p.querySelector(".plinth-slides__pane--next")?.hasAttribute("inert")).toBe(true);
     expect(p.querySelector(".plinth-slides__notes strong")?.textContent).toBe("bold");
-    expect(p.querySelector(".plinth-slides__count")?.textContent).toBe("Slide 1 of 5");
+    expect(p.querySelector(".plinth-slides__count")?.textContent).toBe("1 / 5");
     expect(p.querySelector("[id]")).toBeNull();
 
     key(f, "ArrowRight");
-    expect(p.querySelector(".plinth-slides__count")?.textContent).toBe("Slide 2 of 5");
+    expect(p.querySelector(".plinth-slides__count")?.textContent).toBe("2 / 5");
     expect(p.querySelector(".plinth-slides__notes")?.textContent).toBe("No notes for this slide.");
     key(f, "End");
     expect(p.querySelector(".plinth-slides__pane--next")?.textContent).toBe("End of deck");
@@ -397,7 +470,9 @@ describe("presenter view", () => {
     c.tick?.();
     expect(timer.textContent).toBe("1:05");
     const [pause] = Array.from(p.querySelectorAll("button"));
+    expect(pause?.getAttribute("aria-label")).toBe("Pause timer");
     pause?.click();
+    expect(pause?.getAttribute("aria-label")).toBe("Resume timer");
     c.t = 125_000;
     c.tick?.();
     expect(timer.textContent).toBe("1:05");
@@ -412,14 +487,47 @@ describe("presenter view", () => {
     expect(document.querySelector(".plinth-slides__timer")?.textContent).toBe("0:00");
   });
 
-  it("warns when the current slide overflows", () => {
+  it("pages with its own previous and next buttons, for touch screens", () => {
+    mount();
+    const f = framed();
+    stop = boot(f.win);
+    key(f, "s");
+    const bar = document.querySelector(".plinth-slides__pbar") as HTMLElement;
+    const names = Array.from(bar.querySelectorAll("button")).map((b) =>
+      b.getAttribute("aria-label"),
+    );
+    expect(names).toEqual(["Pause timer", "Previous slide", "Next slide", "Exit presenter view"]);
+    (bar.querySelector('[aria-label="Next slide"]') as HTMLElement).click();
+    (bar.querySelector('[aria-label="Next slide"]') as HTMLElement).click();
+    expect(slide()).toBe("3");
+    (bar.querySelector('[aria-label="Previous slide"]') as HTMLElement).click();
+    expect(slide()).toBe("2");
+    expect(bar.querySelector(".plinth-slides__count")?.textContent).toBe("2 / 5");
+  });
+
+  it("marks the current slide when it overflows, on the pane only", () => {
     mount();
     const f = framed();
     stop = boot(f.win, { measure: () => true });
     key(f, "s");
-    const warning = document.querySelector(".plinth-slides__warning") as HTMLElement;
-    expect(warning.hidden).toBe(false);
-    expect(warning.textContent).toBe("This slide overflows");
+    const current = document.querySelector(
+      ".plinth-slides__pane--current .plinth-slides__slide",
+    ) as HTMLElement;
+    expect(current.getAttribute("data-overflow")).toBe("true");
+    expect(document.querySelector(".plinth-slides__warning")).toBeNull();
+  });
+
+  it("picks three or four overview columns by width, one when narrow or fixed", () => {
+    expect(overviewColumns(360)).toBe(1);
+    expect(overviewColumns(699)).toBe(1);
+    expect(overviewColumns(700)).toBe(3);
+    expect(overviewColumns(1099)).toBe(3);
+    expect(overviewColumns(1100)).toBe(4);
+    expect(overviewColumns(1600, true)).toBe(1);
+    // Each column's width, less the gutters, never above the canvas.
+    expect(overviewScale(1280, 1280, 4)).toBeCloseTo((1280 - 32 - 48) / 4 / 1280, 6);
+    expect(overviewScale(360, 1280)).toBeCloseTo((360 - 32) / 1280, 6);
+    expect(overviewScale(4000, 1280)).toBe(1);
   });
 
   it("formats elapsed time", () => {

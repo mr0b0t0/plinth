@@ -15,13 +15,21 @@ import {
   type TypedPayload,
 } from "@plinth/shared";
 import { buildDeck, type SlideView } from "./deck.ts";
+import { iconButton } from "./icons.ts";
 import { fitSlide, type Measure, overflows } from "./layout.ts";
 import { bindInput, DeckController, type DeckMode } from "./nav.ts";
 import { bindOverview, revealSlide } from "./overview.ts";
 import { Presenter, type PresenterClock } from "./presenter.ts";
 import { pageRule, pageStyle, printDeck } from "./print.ts";
 import { fromApp, postToApp, readSlidesAppMessage } from "./protocol.ts";
-import { fitScale, overviewScale, prefersOverview, setScale } from "./stage.ts";
+import {
+  CONTROLS_BAND,
+  fitScale,
+  overviewColumns,
+  overviewScale,
+  prefersOverview,
+  setScale,
+} from "./stage.ts";
 
 const ROOT_ID = "__plinth-slides";
 const DATA_ID = "__plinth-content";
@@ -58,12 +66,13 @@ function el<K extends keyof HTMLElementTagNameMap>(
   return e;
 }
 
-function button(doc: Document, label: string, text: string, onClick: () => void) {
-  const b = el(doc, "button", "plinth-slides__btn", text);
-  b.type = "button";
-  b.setAttribute("aria-label", label);
-  b.addEventListener("click", onClick);
-  return b;
+/**
+ * Whether the frame fills the screen (the app put it full screen): the slide then takes the whole
+ * screen and the controls show over it only while the pointer moves.
+ */
+function fillsScreen(win: Window): boolean {
+  const s = win.screen;
+  return !!s && s.width > 0 && win.innerWidth >= s.width && win.innerHeight >= s.height;
 }
 
 /** Test seams: layout measuring and the presenter's clock. */
@@ -112,11 +121,17 @@ export function boot(win: Window, opts: BootOptions = {}): () => void {
   const controls = el(doc, "nav", "plinth-slides__controls");
   controls.setAttribute("aria-label", "Slides");
   controls.dataset.plinthControl = "";
+  const separator = el(doc, "span", "plinth-slides__sep");
+  separator.setAttribute("aria-hidden", "true");
+  const overviewBtn = iconButton(doc, "squares-four", "Overview", () =>
+    pick(mode === "overview" ? "deck" : "overview"),
+  );
   controls.append(
-    button(doc, "Previous slide", "‹", () => deck.prev()),
+    iconButton(doc, "caret-left", "Previous slide", () => deck.prev()),
     counter,
-    button(doc, "Next slide", "›", () => deck.next()),
-    button(doc, "Overview", "Overview", () => pick(mode === "overview" ? "deck" : "overview")),
+    iconButton(doc, "caret-right", "Next slide", () => deck.next()),
+    separator,
+    overviewBtn,
   );
   root.replaceChildren(deckEl, controls, announcer);
   pageStyle(doc).textContent = pageRule(canvas, false);
@@ -144,13 +159,21 @@ export function boot(win: Window, opts: BootOptions = {}): () => void {
   }
 
   const scale = () => {
-    if (mode === "overview") setScale(root, canvas, overviewScale(win.innerWidth, canvas.width));
-    else
-      setScale(
-        root,
-        canvas,
-        fitScale(win.innerWidth, win.innerHeight, canvas.width, canvas.height),
-      );
+    if (mode === "overview") {
+      const cols = overviewColumns(win.innerWidth, fixedOverview);
+      root.style.setProperty("--cols", String(cols));
+      setScale(root, canvas, overviewScale(win.innerWidth, canvas.width, cols));
+    } else {
+      // The controls get a band of their own under the slide, unless the deck fills the screen:
+      // the slide is centred, then lifted just enough to leave the band free.
+      const band = fillsScreen(win) ? 0 : CONTROLS_BAND;
+      const s = fitScale(win.innerWidth, win.innerHeight - band, canvas.width, canvas.height);
+      setScale(root, canvas, s);
+      const free = Math.max(0, win.innerHeight - canvas.height * s);
+      const below = Math.max(band, free / 2);
+      root.style.setProperty("--deck-top", `${Math.floor(free - below)}px`);
+      root.style.setProperty("--deck-bottom", `${Math.ceil(below)}px`);
+    }
     presenter?.layout();
   };
 
@@ -175,6 +198,7 @@ export function boot(win: Window, opts: BootOptions = {}): () => void {
     html.setAttribute("data-slide", String(n));
     html.setAttribute("data-count", String(views.length));
     counter.textContent = `${n} / ${views.length}`;
+    overviewBtn.setAttribute("aria-pressed", String(mode === "overview"));
     scale();
     if (mode === "overview") {
       for (const v of views) if (!fitted.has(v)) fitView(v);
@@ -186,6 +210,8 @@ export function boot(win: Window, opts: BootOptions = {}): () => void {
       if (!presenter) {
         presenter = new Presenter(doc, views, canvas, {
           exit: () => pick("deck"),
+          prev: () => deck.prev(),
+          next: () => deck.next(),
           clock: opts.clock,
           measure,
         });
@@ -242,6 +268,7 @@ export function boot(win: Window, opts: BootOptions = {}): () => void {
     print: () => print(mode === "presenter"),
     activity,
     fixedOverview,
+    columns: () => overviewColumns(win.innerWidth, fixedOverview),
   });
   const unbindOverview = bindOverview(root, {
     active: () => mode === "overview",

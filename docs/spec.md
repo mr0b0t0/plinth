@@ -686,23 +686,29 @@ source editor work as for docs. A deck is not edited on its page.
   dark or `auto` (the viewer's scheme on screen, light in print), system fonts, slide numbers and
   the footer.
 - **Viewing.** Keys (arrows, Page Up and Down, Space, Home, End, a number then Enter), clicks or
-  taps on the outer thirds, swipes and `#N` links page the deck; `o` shows every slide stacked (the
-  overview), which is also what phones in portrait, review mode (so comment pins anchor to every
-  slide) and the editor preview show. The app keeps the slide in its URL fragment (`#slide=N`,
-  never sent to the server), so a reload or a shared link opens the same slide, and a newer
-  version's frame is sent back to it.
-- **Presenting.** Present (in the bar) puts the app's own frame full screen; the frame gets no
-  fullscreen permission of its own, and presenter view stays presenter view when it goes full
-  screen. Presenter view (in the menu, or `s`) shows, inside the frame,
-  the current slide, the next one, the notes, an elapsed timer with pause (it starts again each
-  time presenter view opens), the clock and the slide count; its Exit button, Escape or `s` leave
-  it. The frame tells the app each view it switches to, so the app's menu, the paused version swap
-  and the audience window follow the deck however presenter view was opened or left. There is no
-  strip under the bar: while presenter view is on, the menu's Presenter view item becomes
-  "Audience window". Review mode keeps the overview whatever asks for another view. "Audience
-  window" opens a second app window that follows the presenter's slide through a
-  `BroadcastChannel` on the app origin in the same browser, in every isolation mode; only slide
-  numbers cross it. While the deck is full screen or in presenter view, a newer version does not
+  taps on the outer thirds, swipes, `#N` links and a control pill (previous, `3 / 20`, next and an
+  overview toggle, shown on input in a band under the slide) page the deck. The overview (`o` or
+  the pill) is a grid of thumbnails, three or four across from 700 px wide and one column below
+  that; the arrows move the selected slide and Enter or a click opens it. Phones in portrait show
+  the one-column overview by themselves, and review mode (so comment pins anchor to every slide)
+  and the editor preview keep it in one column, without the pill. The app keeps the slide in its
+  URL fragment (`#slide=N`, never sent to the server), so a reload or a shared link opens the same
+  slide, and a newer version's frame is sent back to it.
+- **Presenting.** Present is one control in the bar, a menu with two items. "Full screen" puts
+  the app's own frame full screen; the frame gets no fullscreen permission of its own, and
+  presenter view stays presenter view when it goes full screen. "Presenter view" (or `s`) shows,
+  inside the frame, the current slide, the next one and the notes over one bar: the elapsed timer
+  with pause (it starts again each time presenter view opens), previous and next around the same
+  `3 / 20` count as the pill (presenter view takes no swipes or taps, so touch screens page here),
+  the clock, and Exit; Exit, Escape or `s` leave it. The parts keep that order at every width. The
+  frame tells the app each view it switches to, so the Present menu, the paused version swap and
+  the audience window follow the deck however presenter view was opened or left. While presenter
+  view is on, the Present menu offers "Audience window" in its place; the ⋯ menu has no present
+  item. Review mode keeps the overview whatever asks for another view. "Audience window" opens a
+  second app window that follows the presenter's slide through a `BroadcastChannel` on the app
+  origin in the same browser, in every isolation mode; only slide numbers cross it. Once it has
+  heard from its presenter it shows the deck alone, without the bar or the banner; a link with a
+  pair id and no presenter window in that browser keeps the whole page. While the deck is full screen or in presenter view, a newer version does not
   replace the frame (the bar's version notice says an older one is on view); the deck catches up
   on the same slide when presenting ends. A permanent version link (`/a/<slug>/v/<n>`) stays on its
   version, and its audience window opens that same version.
@@ -955,7 +961,8 @@ options.
   a "report" link and a banner naming the platform, and reported artifacts can be taken down
   quickly. The banner also links to Plinth's source repository unless the operator turns that
   off (`SHOW_SOURCE_LINK`). It sits in the app's page around the frame, so the artifact's own
-  HTML is never changed.
+  HTML is never changed. The one page without it is a deck's audience window once its presenter
+  window in the same browser has paired with it: it shows the deck that person is presenting.
 - **Hosted instance paperwork.** Terms of use, a privacy notice and an acceptable use policy:
   short, final, plain-language pages built from the instance's `OPERATOR_*` settings (operator
   name, address, registration or VAT number, one contact address), since the operator is a host

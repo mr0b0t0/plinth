@@ -506,6 +506,13 @@
 }
 
 /* ---------- Presenting a deck (the slides type) ---------- */
+/* An audience window paired with its presenter shows the deck alone, on its own stage colour. */
+.pl-viewer--audience .pl-viewer__bar,
+.pl-viewer--audience .pl-viewer__banner,
+.pl-viewer--audience .pl-viewer__stage > :not(.pl-viewer__room) {
+  display: none;
+}
+
 /* The frame the app put full screen fills the screen with the deck's own stage colour. */
 .pl-viewer-frame:fullscreen {
   width: 100vw;

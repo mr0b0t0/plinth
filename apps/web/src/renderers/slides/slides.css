@@ -374,14 +374,237 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
-/* ---------- the overview: every slide stacked ---------- */
+/* ---------- presenter view (presenter.ts) ---------- */
+/* The current slide on the left with the bar under it, edge to edge; the next slide and the notes
+   on the right. Both slides are as wide as their columns, and they and the notes share one card
+   edge. On a narrow screen the same parts stack in the same order, with the bar at the bottom. */
 
-.plinth-slides[data-mode="overview"] .plinth-slides__deck,
+.plinth-slides__presenter {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+  grid-template-rows: auto auto minmax(0, 1fr);
+  gap: 12px 24px;
+  padding: 16px;
+  background: var(--slides-stage);
+  color: var(--slides-fg);
+  font-size: 1rem;
+}
+
+.plinth-slides__pane {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-start;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* One card edge for both slide panes and the notes. */
+.plinth-slides__pane .plinth-slides__canvas,
+.plinth-slides__notes {
+  border-radius: 8px;
+  box-shadow: 0 0 0 1px var(--slides-rule);
+}
+
+.plinth-slides__presenter .plinth-slides__pane .plinth-slides__handout {
+  display: none;
+}
+
+/* A slide pane is as wide as its column at the deck's shape; a short frame caps its height. */
+.plinth-slides__pane--current,
+.plinth-slides__pane--next {
+  aspect-ratio: 16 / 9;
+}
+
+.plinth-slides__pane--current {
+  grid-column: 1;
+  grid-row: 1;
+  max-height: calc(100vh - 100px);
+}
+
+.plinth-slides__side {
+  display: flex;
+  flex-direction: column;
+  grid-column: 2;
+  grid-row: 1 / -1;
+  gap: 8px;
+  min-height: 0;
+}
+
+.plinth-slides__pane--next {
+  flex: none;
+  max-height: 45%;
+}
+
+:root[data-aspect="4:3"] .plinth-slides__pane--current,
+:root[data-aspect="4:3"] .plinth-slides__pane--next {
+  aspect-ratio: 4 / 3;
+}
+
+.plinth-slides__caption {
+  margin: 0;
+  color: var(--slides-muted);
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.plinth-slides__caption--notes {
+  margin-top: 8px;
+}
+
+.plinth-slides__notes {
+  flex: 1;
+  min-height: 0;
+  padding: 12px 16px;
+  background: var(--slides-bg);
+  overflow: auto;
+  font-size: 1.125rem;
+  line-height: 1.55;
+}
+
+.plinth-slides__notes > :first-child {
+  margin-top: 0;
+}
+
+.plinth-slides__presenter .plinth-slides__notes code {
+  font-family: var(--slides-mono);
+  font-size: 0.9em;
+}
+
+.plinth-slides__notes a {
+  color: var(--slides-accent);
+}
+
+.plinth-slides__empty,
+.plinth-slides__end {
+  margin: 0;
+  color: var(--slides-muted);
+}
+
+/* Timer and pause on the left, paging in the middle, the clock and Exit pinned right. */
+.plinth-slides__pbar {
+  display: grid;
+  grid-column: 1;
+  grid-row: 2;
+  grid-template-columns: 1fr auto 1fr;
+  gap: 12px;
+  align-items: center;
+  min-height: 40px;
+}
+
+.plinth-slides__group {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  min-width: 0;
+}
+
+.plinth-slides__group--end {
+  justify-content: flex-end;
+  gap: 12px;
+}
+
+.plinth-slides__timer {
+  min-width: 3.25em;
+  font-size: 1.25rem;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+.plinth-slides__clock,
+.plinth-slides__count {
+  color: var(--slides-muted);
+  font-size: 0.875rem;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.plinth-slides__count {
+  min-width: 4.5em;
+  text-align: center;
+}
+
+@media (max-width: 900px) {
+  .plinth-slides__presenter {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr) auto;
+    gap: 12px;
+    padding: 12px;
+  }
+
+  .plinth-slides__pane--current {
+    max-height: 50vh;
+  }
+
+  .plinth-slides__side {
+    grid-column: 1;
+    grid-row: 2;
+    overflow-y: auto;
+  }
+
+  .plinth-slides__pane--next {
+    width: 50%;
+    max-height: none;
+  }
+
+  .plinth-slides__pbar {
+    grid-row: 3;
+  }
+
+  .plinth-slides__notes {
+    flex: 1 0 6em;
+  }
+}
+
+@media (max-width: 480px) {
+  .plinth-slides__pbar,
+  .plinth-slides__group--end {
+    gap: 4px;
+  }
+
+  .plinth-slides__timer {
+    min-width: 0;
+    font-size: 1rem;
+  }
+
+  .plinth-slides__count {
+    min-width: 3.5em;
+  }
+}
+
+/* ---------- the overview: a grid of thumbnails, or one column when narrow ---------- */
+
 .plinth-slides[data-print] .plinth-slides__deck {
   position: static;
   flex-direction: column;
   gap: 24px;
   padding: 16px 0 40px;
+}
+
+/* --cols comes from stage.ts overviewColumns; the gap is OVERVIEW_GUTTER. */
+.plinth-slides[data-mode="overview"]:not([data-print]) .plinth-slides__deck {
+  position: static;
+  display: grid;
+  grid-template-columns: repeat(var(--cols, 1), max-content);
+  gap: 16px;
+  justify-content: center;
+  align-content: start;
+  padding: 16px;
+}
+
+/* An overview the person opened stops above the controls' band; the one a phone shows by itself
+   only leaves room to scroll its last slide clear of them. */
+.plinth-slides[data-mode="overview"][data-mark] {
+  bottom: 48px;
+}
+
+.plinth-slides[data-mode="overview"]:not([data-fixed], [data-mark]) .plinth-slides__deck {
+  padding-bottom: 64px;
 }
 
 /* While printing, every slide is laid out on screen too, so each can be fitted first. */
@@ -425,153 +648,31 @@ body {
   font-size: 20px;
 }
 
-/* ---------- presenter view (presenter.ts) ---------- */
-
-.plinth-slides__presenter {
-  position: absolute;
-  inset: 0;
-  display: grid;
-  grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
-  grid-template-rows: minmax(0, 1fr) auto;
-  gap: 16px;
-  padding: 16px;
-  background: var(--slides-stage);
-  color: var(--slides-fg);
-  font-size: 1rem;
-}
-
-.plinth-slides__pane {
-  position: relative;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 0;
-  min-height: 0;
-  overflow: hidden;
-}
-
-.plinth-slides__presenter .plinth-slides__pane .plinth-slides__handout {
-  display: none;
-}
-
-.plinth-slides__side {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  min-height: 0;
-}
-
-.plinth-slides__pane--next {
-  flex: 0 0 36%;
-}
-
-.plinth-slides__caption {
-  margin: 0;
-  color: var(--slides-muted);
-  font-size: 0.8125rem;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-}
-
-.plinth-slides__notes {
-  flex: 1;
-  min-height: 0;
-  padding: 12px 16px;
-  border-radius: 8px;
-  background: var(--slides-bg);
-  overflow: auto;
-  font-size: 1.125rem;
-  line-height: 1.55;
-}
-
-.plinth-slides__notes > :first-child {
-  margin-top: 0;
-}
-
-.plinth-slides__presenter .plinth-slides__notes code {
-  font-family: var(--slides-mono);
-  font-size: 0.9em;
-}
-
-.plinth-slides__notes a {
-  color: var(--slides-accent);
-}
-
-.plinth-slides__empty,
-.plinth-slides__end {
-  margin: 0;
-  color: var(--slides-muted);
-}
-
-.plinth-slides__pbar {
-  display: flex;
-  flex-wrap: wrap;
-  grid-column: 1 / -1;
-  gap: 8px 12px;
-  align-items: center;
-}
-
-.plinth-slides__timer {
-  font-size: 1.5rem;
-  font-variant-numeric: tabular-nums;
-  font-weight: 600;
-}
-
-.plinth-slides__clock,
-.plinth-slides__count {
-  color: var(--slides-muted);
-  font-variant-numeric: tabular-nums;
-}
-
-.plinth-slides__warning {
-  color: var(--slides-warn);
-  font-weight: 600;
-}
-
-@media (max-width: 900px) {
-  .plinth-slides__presenter {
-    grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: minmax(0, 45%) minmax(0, 1fr) auto;
-  }
-
-  /* The notes come first on a narrow screen, each part under its caption. */
-  .plinth-slides__caption--notes {
-    order: 1;
-  }
-
-  .plinth-slides__notes {
-    order: 2;
-  }
-
-  .plinth-slides__caption--next {
-    order: 3;
-  }
-
-  .plinth-slides__pane--next {
-    order: 4;
-  }
-
-  .plinth-slides__pane--next {
-    flex-basis: 30%;
-  }
+/* Room for the controls' band under the slide (boot.ts sets the offsets). */
+.plinth-slides[data-mode="deck"]:not([data-print]) .plinth-slides__deck {
+  top: var(--deck-top, 0);
+  bottom: var(--deck-bottom, 0);
 }
 
 /* ---------- controls ---------- */
+/* One pill centred in the band under the slide: previous, "3 / 20", next, and the overview
+   toggle. It shows on input and hides after CONTROLS_IDLE_MS. */
 
 .plinth-slides__controls {
   position: fixed;
-  bottom: 12px;
+  bottom: 6px;
   left: 50%;
   display: flex;
-  gap: 4px;
+  gap: 2px;
   align-items: center;
-  padding: 4px;
+  padding: 2px;
   border-radius: 10px;
   background: var(--slides-ctl-bg);
-  box-shadow: 0 2px 12px rgb(0 0 0 / 0.18);
+  box-shadow:
+    0 0 0 1px var(--slides-rule),
+    0 2px 8px rgb(0 0 0 / 0.12);
   color: var(--slides-ctl-fg);
-  font-size: 0.875rem;
+  font-size: 0.8125rem;
   opacity: 0;
   pointer-events: none;
   transform: translateX(-50%);
@@ -584,41 +685,100 @@ body {
   pointer-events: auto;
 }
 
-.plinth-slides[data-mode="presenter"] .plinth-slides__controls {
+.plinth-slides[data-mode="presenter"] .plinth-slides__controls,
+.plinth-slides[data-fixed] .plinth-slides__controls {
   display: none;
 }
 
 .plinth-slides__counter {
-  min-width: 4.5em;
+  min-width: 4em;
   text-align: center;
   font-variant-numeric: tabular-nums;
 }
 
+.plinth-slides__sep {
+  width: 1px;
+  height: 18px;
+  margin: 0 2px;
+  background: var(--slides-rule);
+}
+
 .plinth-slides__btn {
-  min-width: 36px;
-  min-height: 36px;
-  padding: 4px 10px;
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 32px;
+  min-height: 32px;
+  padding: 0 8px;
   border: 0;
-  border-radius: 6px;
+  border-radius: 8px;
   background: transparent;
   color: inherit;
   font: inherit;
   cursor: pointer;
 }
 
-.plinth-slides__presenter .plinth-slides__btn {
-  border: 1px solid var(--slides-rule);
-  background: var(--slides-bg);
+.plinth-slides__btn--icon {
+  width: 32px;
+  padding: 0;
 }
 
 .plinth-slides__btn:hover {
   background: var(--slides-code-bg);
 }
 
+/* A toggle that is on (the overview). */
+.plinth-slides__btn[aria-pressed="true"] {
+  background: var(--slides-code-bg);
+  color: var(--slides-accent);
+}
+
 .plinth-slides__btn:focus-visible,
 .plinth-slides__body a:focus-visible {
   outline: 2px solid var(--slides-focus);
   outline-offset: 2px;
+}
+
+/* The tooltip: the button's name above it, on hover and keyboard focus. */
+.plinth-slides__btn[data-tip]::after {
+  content: attr(data-tip);
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 50%;
+  padding: 3px 8px;
+  border-radius: 6px;
+  background: var(--slides-heading);
+  color: var(--slides-bg);
+  font-size: 0.75rem;
+  font-weight: 400;
+  line-height: 1.4;
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateX(-50%);
+  transition: opacity 0.12s ease;
+}
+
+.plinth-slides__btn[data-tip]:hover::after {
+  transition-delay: 0.35s;
+  opacity: 1;
+}
+
+.plinth-slides__btn[data-tip]:focus-visible::after {
+  opacity: 1;
+}
+
+/* Tooltips at the bar's ends stay on screen. */
+.plinth-slides__group--end .plinth-slides__btn[data-tip]::after {
+  right: 0;
+  left: auto;
+  transform: none;
+}
+
+.plinth-slides__group:first-child .plinth-slides__btn[data-tip]::after {
+  left: 0;
+  transform: none;
 }
 
 .plinth-slides__live {
@@ -631,7 +791,8 @@ body {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .plinth-slides__controls {
+  .plinth-slides__controls,
+  .plinth-slides__btn[data-tip]::after {
     transition: none;
   }
 }

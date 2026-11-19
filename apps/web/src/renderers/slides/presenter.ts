@@ -1,8 +1,11 @@
-// Presenter view, inside the deck's own frame: the current slide, the next one, the speaker notes,
-// an elapsed timer with pause (it starts again each time presenter view opens), the wall clock,
-// "Slide 3 of 20", and a warning when the current slide does not fit. Everything here is made with createElement and textContent; the
-// slides and notes it shows are copies of what deck.ts already sanitized.
+// Presenter view, inside the deck's own frame: the current slide, the next one and the speaker
+// notes, over one bar: the elapsed timer with pause (it starts again each time presenter view
+// opens), previous and next with "3 / 20" between them (touch screens have no keys, and presenter
+// view takes no swipes), the wall clock, and Exit. A slide that does not fit is marked on the
+// current pane. Everything here is made with createElement and textContent; the slides and notes
+// it shows are copies of what deck.ts already sanitized.
 import { dropIds, type SlideView } from "./deck.ts";
+import { iconButton, setIcon } from "./icons.ts";
 import { fitSlide, type Measure, overflows } from "./layout.ts";
 import { fitScale, setScale } from "./stage.ts";
 
@@ -58,7 +61,6 @@ export class Presenter {
   private readonly next: HTMLElement;
   private readonly notes: HTMLElement;
   private readonly counter: HTMLElement;
-  private readonly warning: HTMLElement;
   private readonly timer: HTMLElement;
   private readonly clockEl: HTMLElement;
   private readonly pauseBtn: HTMLButtonElement;
@@ -73,6 +75,8 @@ export class Presenter {
     private readonly canvas: { width: number; height: number },
     private readonly o: {
       exit: () => void;
+      prev: () => void;
+      next: () => void;
       clock?: PresenterClock;
       measure?: Measure;
     },
@@ -99,22 +103,28 @@ export class Presenter {
     this.notes = el(doc, "div", "plinth-slides__notes");
     side.append(nextLabel, this.next, notesLabel, this.notes);
 
+    // Timer and pause on the left, paging in the middle, the clock and Exit on the right.
     const bar = el(doc, "div", "plinth-slides__pbar");
-    this.counter = el(doc, "span", "plinth-slides__count");
+    const timing = el(doc, "div", "plinth-slides__group");
     this.timer = el(doc, "span", "plinth-slides__timer", "0:00");
     this.timer.setAttribute("role", "timer");
     this.timer.setAttribute("aria-label", "Elapsed time");
-    this.pauseBtn = el(doc, "button", "plinth-slides__btn", "Pause");
-    this.pauseBtn.type = "button";
-    this.pauseBtn.addEventListener("click", () => this.togglePause());
+    this.pauseBtn = iconButton(doc, "pause", "Pause timer", () => this.togglePause());
+    timing.append(this.timer, this.pauseBtn);
+    const paging = el(doc, "div", "plinth-slides__group plinth-slides__group--paging");
+    this.counter = el(doc, "span", "plinth-slides__count");
+    paging.append(
+      iconButton(doc, "caret-left", "Previous slide", () => this.o.prev()),
+      this.counter,
+      iconButton(doc, "caret-right", "Next slide", () => this.o.next()),
+    );
+    const end = el(doc, "div", "plinth-slides__group plinth-slides__group--end");
     this.clockEl = el(doc, "span", "plinth-slides__clock");
-    this.warning = el(doc, "span", "plinth-slides__warning", "This slide overflows");
-    this.warning.hidden = true;
-    const exit = el(doc, "button", "plinth-slides__btn", "Exit");
-    exit.type = "button";
-    exit.setAttribute("aria-label", "Exit presenter view");
-    exit.addEventListener("click", () => this.o.exit());
-    bar.append(this.timer, this.pauseBtn, this.clockEl, this.counter, this.warning, exit);
+    end.append(
+      this.clockEl,
+      iconButton(doc, "x", "Exit presenter view", () => this.o.exit()),
+    );
+    bar.append(timing, paging, end);
 
     this.el.append(this.current, side, bar);
   }
@@ -147,11 +157,11 @@ export class Presenter {
     const now = this.clock.now();
     if (this.pausedAt === null) {
       this.pausedAt = now;
-      this.pauseBtn.textContent = "Resume";
+      setIcon(this.pauseBtn, "play", "Resume timer");
     } else {
       this.startedAt += now - this.pausedAt;
       this.pausedAt = null;
-      this.pauseBtn.textContent = "Pause";
+      setIcon(this.pauseBtn, "pause", "Pause timer");
     }
     this.tick();
   }
@@ -175,7 +185,6 @@ export class Presenter {
       const slide = copy.querySelector<HTMLElement>(".plinth-slides__slide");
       const body = copy.querySelector<HTMLElement>(".plinth-slides__body");
       if (slide && body) fitSlide(slide, body, measure);
-      this.warning.hidden = slide?.getAttribute("data-overflow") !== "true";
     }
     if (following) {
       const copy = copyOf(following);
@@ -193,7 +202,7 @@ export class Presenter {
         el(this.doc, "p", "plinth-slides__empty", "No notes for this slide."),
       );
     }
-    this.counter.textContent = `Slide ${n} of ${this.views.length}`;
+    this.counter.textContent = `${n} / ${this.views.length}`;
     this.tick();
     this.layout();
   }

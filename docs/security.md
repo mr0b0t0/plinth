@@ -380,7 +380,8 @@ and images served with `script-src 'none'`, and a 404 for `/__plinth-renderers/*
 What is new:
 
 - **The renderer's own elements are text.** Canvases, the footer, slide numbers, the controls and
-  presenter view are made with `createElement` and `textContent`, never `innerHTML`, so the
+  presenter view are made with `createElement` and `textContent` (their icons with
+  `createElementNS` and constant Phosphor paths), never `innerHTML`, so the
   sanitizer's class allowlist did not change. The footer is shown as text, never Markdown. Heading
   ids are prefixed per slide (`s<n>-`), and copies of a slide (presenter view, the handout) carry
   no ids at all.
@@ -401,7 +402,11 @@ What is new:
   HTML artifact cannot make itself full screen; a deck's `f` key only asks the app.
 - **The audience window.** Two app windows pair over `BroadcastChannel("plinth-present:<id>:<pair>")`
   on the app origin, so only the same browser can join. The pair id in the URL fragment is not a
-  credential; messages are validated and carry only slide numbers.
+  credential; messages are validated and carry only slide numbers. The audience window drops the
+  bar and the banner (with its report link) only after a slide message from its presenter window,
+  which only an app page in the same browser can send. A crafted `#present=audience&pair=` link
+  opened anywhere else never hears one, so it keeps the whole page and the banner every artifact
+  page carries.
 - **Deck text is scanned in linear time.** The deck parser and the image references behind
   `missing_file` run on every deck publish over up to 1 MB of Markdown, so they read each line with
   plain scans and anchored patterns that cannot backtrack: a deck of one long line of `![` or of

@@ -504,7 +504,7 @@ test("a deck renders, pages through * and window identity, and opens presenter v
   await expect.poll(slide).toBe("3");
   await expect.poll(() => new URL(page.url()).hash).toBe("#slide=3");
 
-  await page.getByRole("button", { name: "Artifact actions" }).click();
+  await page.getByRole("button", { name: "Present" }).click();
   await page.getByRole("menuitem", { name: "Presenter view" }).click();
   await expect(locator.locator(".plinth-slides__presenter")).toBeVisible();
   const box2 = await page.locator(CURRENT_FRAME).boundingBox();
@@ -515,9 +515,9 @@ test("a deck renders, pages through * and window identity, and opens presenter v
     "Speaker notes in an opaque frame.",
   );
   // The app took the frame's position and its presenter view: the slide is in the fragment and
-  // the menu offers the audience window.
+  // Present offers the audience window.
   await expect.poll(() => new URL(page.url()).hash).toBe("#slide=1");
-  await page.getByRole("button", { name: "Artifact actions" }).click();
+  await page.getByRole("button", { name: "Present" }).click();
   await expect(page.getByRole("menuitem", { name: "Audience window" })).toBeVisible();
   await page.keyboard.press("Escape");
   expect(problems).toEqual([]);

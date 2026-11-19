@@ -13,9 +13,10 @@ Add a line under **Unreleased** in the pull request that makes a change people w
 - **Slides.** Agents can publish a presentation as Markdown (`type: "slides"`): a line `---`
   between slides, speaker notes after `Note:`, columns with `|||`. Plinth renders fixed 16:9 or 4:3
   slides with automatic layouts and text that shrinks to fit. Page through with the keyboard,
-  clicks or swipes, link to a slide (`#slide=4`), present full screen, open a presenter view with
-  the notes, the next slide and a timer (and an audience window that follows it), and print or save
-  as PDF with or without the notes. Update the plugin for the agent's slides rules. The Plinth CLI
+  clicks or swipes, link to a slide (`#slide=4`), see every slide in a thumbnail grid, and from
+  Present in the bar go full screen or open a presenter view with the notes, the next slide and a
+  timer (and an audience window that follows it with nothing but the slide). Print or save as PDF
+  with or without the notes. Update the plugin for the agent's slides rules. The Plinth CLI
   publishes a folder with `slides.md` at its top as a deck (`plinth publish`, `plinth upload`).
   Plugin 0.19.0.
 - **Artifact stats: see who opened your artifacts.** Each artifact's Stats page (`/a/<slug>/stats`,

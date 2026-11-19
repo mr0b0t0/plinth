@@ -45,6 +45,11 @@ export interface Presentation {
   slide: number | null;
   count: number | null;
   mode: PresentMode;
+  /**
+   * An audience window that has heard from its presenter window: the viewer then shows only the
+   * deck. A link with a pair id and no presenter in this browser keeps the whole page.
+   */
+  paired: boolean;
   /** The app has put the frame full screen. */
   fullscreen: boolean;
   /** Keeps the frame while presenting (no swap to a newer version mid-talk). */
@@ -104,6 +109,7 @@ export function usePresentation(o: PresentationOptions): Presentation {
     available && initial.pair ? "audience" : "off",
   );
   const [fullscreen, setFullscreen] = useState(false);
+  const [paired, setPaired] = useState(false);
 
   const wanted = useRef<number | null>(initial.slide);
   const modeRef = useRef(mode);
@@ -212,6 +218,7 @@ export function usePresentation(o: PresentationOptions): Presentation {
     if (!available || mode !== "audience" || !initial.pair) return;
     const ch = openPresentChannel(artifactId, initial.pair, (m) => {
       if (m.type !== "slide") return;
+      setPaired(true);
       wanted.current = m.slide;
       goto(m.slide);
     });
@@ -265,6 +272,7 @@ export function usePresentation(o: PresentationOptions): Presentation {
     slide,
     count,
     mode,
+    paired: mode === "audience" && paired,
     fullscreen,
     pause: presenting ? "present" : null,
     present,

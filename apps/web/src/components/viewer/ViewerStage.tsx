@@ -236,7 +236,7 @@ export function ViewerStage({
     <IconProvider>
       <SkipLink />
       <div
-        className={`pl-viewer${commentsOpen ? " pl-viewer--panel" : ""}${editing ? " pl-viewer--editing" : ""}`}
+        className={`pl-viewer${commentsOpen ? " pl-viewer--panel" : ""}${editing ? " pl-viewer--editing" : ""}${present.paired ? " pl-viewer--audience" : ""}`}
       >
         <header className="pl-viewer__bar" ref={headerRef}>
           <div className="pl-viewer__crumbs">

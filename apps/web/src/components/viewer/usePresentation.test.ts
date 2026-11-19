@@ -235,6 +235,31 @@ describe("usePresentation", () => {
     expect(result.current.mode).toBe("audience");
   });
 
+  it("an audience window is paired only once its presenter window has sent a slide", async () => {
+    const pair = "q".repeat(16);
+    window.history.replaceState(null, "", `/a/talk#present=audience&pair=${pair}`);
+    const f = fakeFrame();
+    const { result } = renderHook(() =>
+      usePresentation({
+        gate: gate(),
+        frame: f.frame,
+        contentOrigin: ORIGIN,
+        config: CONFIG,
+        slug: "talk",
+      }),
+    );
+    expect(result.current.mode).toBe("audience");
+    // A link with a pair id and no presenter: the whole page stays.
+    expect(result.current.paired).toBe(false);
+    const presenter = new BroadcastChannel(`plinth-present:art123:${pair}`);
+    try {
+      presenter.postMessage({ v: 1, type: "slide", slide: 2 });
+      await vi.waitFor(() => expect(result.current.paired).toBe(true));
+    } finally {
+      presenter.close();
+    }
+  });
+
   it("posts to * under opaque isolation and accepts the frame's null origin", () => {
     const f = fakeFrame();
     const { result } = renderHook(() =>
