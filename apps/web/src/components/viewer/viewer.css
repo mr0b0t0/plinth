@@ -513,10 +513,11 @@
   display: none;
 }
 
-/* The frame the app put full screen fills the screen with the deck's own stage colour. */
+/* The frame the app put full screen fills the screen; the deck paints its own stage colour, light
+   or dark, around the slide. */
 .pl-viewer-frame:fullscreen {
   width: 100vw;
   height: 100vh;
   border: 0;
-  background: #000;
+  background: transparent;
 }

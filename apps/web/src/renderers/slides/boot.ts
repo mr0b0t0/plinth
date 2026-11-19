@@ -23,8 +23,9 @@ import { Presenter, type PresenterClock } from "./presenter.ts";
 import { pageRule, pageStyle, printDeck } from "./print.ts";
 import { fromApp, postToApp, readSlidesAppMessage } from "./protocol.ts";
 import {
-  CONTROLS_BAND,
+  CONTROLS_INSET,
   fitScale,
+  GUTTER,
   overviewColumns,
   overviewScale,
   prefersOverview,
@@ -163,16 +164,20 @@ export function boot(win: Window, opts: BootOptions = {}): () => void {
       const cols = overviewColumns(win.innerWidth, fixedOverview);
       root.style.setProperty("--cols", String(cols));
       setScale(root, canvas, overviewScale(win.innerWidth, canvas.width, cols));
+      root.style.removeProperty("--controls-bottom");
     } else {
-      // The controls get a band of their own under the slide, unless the deck fills the screen:
-      // the slide is centred, then lifted just enough to leave the band free.
-      const band = fillsScreen(win) ? 0 : CONTROLS_BAND;
-      const s = fitScale(win.innerWidth, win.innerHeight - band, canvas.width, canvas.height);
+      // The slide is centred with the stage's gutter on every side (none when the deck fills the
+      // screen); the controls show just inside its bottom edge, wherever the letterbox puts it.
+      const g = fillsScreen(win) ? 0 : GUTTER;
+      const s = fitScale(
+        win.innerWidth - 2 * g,
+        win.innerHeight - 2 * g,
+        canvas.width,
+        canvas.height,
+      );
       setScale(root, canvas, s);
-      const free = Math.max(0, win.innerHeight - canvas.height * s);
-      const below = Math.max(band, free / 2);
-      root.style.setProperty("--deck-top", `${Math.floor(free - below)}px`);
-      root.style.setProperty("--deck-bottom", `${Math.ceil(below)}px`);
+      const below = Math.max(0, (win.innerHeight - canvas.height * s) / 2);
+      root.style.setProperty("--controls-bottom", `${Math.floor(below) + CONTROLS_INSET}px`);
     }
     presenter?.layout();
   };

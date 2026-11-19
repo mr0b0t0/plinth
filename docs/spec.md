@@ -687,9 +687,10 @@ source editor work as for docs. A deck is not edited on its page.
   the footer.
 - **Viewing.** Keys (arrows, Page Up and Down, Space, Home, End, a number then Enter), clicks or
   taps on the outer thirds, swipes, `#N` links and a control pill (previous, `3 / 20`, next and an
-  overview toggle, shown on input in a band under the slide) page the deck. The overview (`o` or
-  the pill) is a grid of thumbnails, three or four across from 700 px wide and one column below
-  that; the arrows move the selected slide and Enter or a click opens it. Phones in portrait show
+  overview toggle, shown on input over the bottom of the slide) page the deck. The slide is centred
+  with one 16 px gutter on every side, the same in the overview and presenter view (none full
+  screen). The overview (`o` or the pill) is a grid of thumbnails, three or four across from
+  700 px wide and one column below that; the arrows move the selected slide and Enter or a click opens it. Phones in portrait show
   the one-column overview by themselves, and review mode (so comment pins anchor to every slide)
   and the editor preview keep it in one column, without the pill. The app keeps the slide in its
   URL fragment (`#slide=N`, never sent to the server), so a reload or a shared link opens the same
@@ -700,8 +701,8 @@ source editor work as for docs. A deck is not edited on its page.
   inside the frame, the current slide, the next one and the notes over one bar: the elapsed timer
   (it starts again each time presenter view opens), previous and next around the same `3 / 20`
   count as the pill (presenter view takes no swipes or taps, so touch screens page here), and
-  Exit; Exit, Escape or `s` leave it. A slide without notes leaves the notes pane empty. The parts keep that order at every width. The
-  frame tells the app each view it switches to, so the Present menu, the paused version swap and
+  Exit; Exit, Escape or `s` leave it. A slide without notes leaves the notes pane empty. The bar
+  ends level with the notes, and the parts keep that order at every width. The frame tells the app each view it switches to, so the Present menu, the paused version swap and
   the audience window follow the deck however presenter view was opened or left. While presenter
   view is on, the Present menu offers "Audience window" in its place; the ⋯ menu has no present
   item. Review mode keeps the overview whatever asks for another view. "Audience window" opens a

@@ -12,7 +12,7 @@ import { boot } from "./boot.ts";
 import { formatElapsed, type PresenterClock } from "./presenter.ts";
 import { PAGE_STYLE_ID, pageRule, printDeck } from "./print.ts";
 import { readSlidesAppMessage } from "./protocol.ts";
-import { CONTROLS_BAND, overviewColumns, overviewScale } from "./stage.ts";
+import { CONTROLS_INSET, GUTTER, overviewColumns, overviewScale } from "./stage.ts";
 
 const APP = "https://plinth.example.com";
 const DECK = [
@@ -414,23 +414,37 @@ describe("boot", () => {
     expect(overview.getAttribute("aria-pressed")).toBe("false");
   });
 
-  it("fits the slide above the controls' band, and over the whole frame when it fills the screen", () => {
+  it("fits the slide inside the gutter on every side, and over the whole frame when it fills the screen", () => {
     mount();
     const f = framed();
     f.size.h = 700;
     stop = boot(f.win);
-    // 1280x700 less the band: the height decides, and the band stays free under the slide.
+    // 1280x700 less the gutter on all four sides: the height decides. No room is kept for the
+    // controls, which show over the slide.
     const scaled = (h: number) => String(Math.round((h / 720) * 10000) / 10000);
-    expect(root().style.getPropertyValue("--s")).toBe(scaled(700 - CONTROLS_BAND));
-    expect(root().style.getPropertyValue("--deck-top")).toBe("0px");
-    expect(root().style.getPropertyValue("--deck-bottom")).toBe(`${CONTROLS_BAND}px`);
+    expect(root().style.getPropertyValue("--s")).toBe(scaled(700 - 2 * GUTTER));
+    expect(root().style.getPropertyValue("--deck-top")).toBe("");
+    expect(root().style.getPropertyValue("--deck-bottom")).toBe("");
+    // The controls sit just inside the slide's bottom edge.
+    expect(root().style.getPropertyValue("--controls-bottom")).toBe(`${GUTTER + CONTROLS_INSET}px`);
+    // A tall frame: the width decides, with the same gutter at the sides.
+    f.size.h = 1400;
+    f.target.dispatchEvent(new Event("resize"));
+    expect(root().style.getPropertyValue("--s")).toBe(
+      String(Math.round(((1280 - 2 * GUTTER) / 1280) * 10000) / 10000),
+    );
+    const tall = ((1280 - 2 * GUTTER) / 1280) * 720;
+    expect(root().style.getPropertyValue("--controls-bottom")).toBe(
+      `${Math.floor((1400 - tall) / 2) + CONTROLS_INSET}px`,
+    );
+    f.size.h = 700;
     (f.win as unknown as { screen: { width: number; height: number } }).screen = {
       width: 1280,
       height: 700,
     };
     f.target.dispatchEvent(new Event("resize"));
     expect(root().style.getPropertyValue("--s")).toBe(scaled(700));
-    expect(root().style.getPropertyValue("--deck-bottom")).toBe("0px");
+    expect(root().style.getPropertyValue("--controls-bottom")).toBe(`${CONTROLS_INSET}px`);
   });
 
   it("asks the app for full screen on f", () => {

@@ -375,16 +375,17 @@ body {
 }
 
 /* ---------- presenter view (presenter.ts) ---------- */
-/* The current slide on the left with the bar under it, edge to edge; the next slide and the notes
-   on the right. Both slides are as wide as their columns, and they and the notes share one card
-   edge. On a narrow screen the same parts stack in the same order, with the bar at the bottom. */
+/* The current slide on the left, as large as its column allows, with the bar at the column's
+   foot; the next slide and the notes on the right, ending level with the bar. The slides and the
+   notes share one card edge. On a narrow screen the same parts stack in the same order, each as
+   wide as the frame, with the bar at the bottom. */
 
 .plinth-slides__presenter {
   position: absolute;
   inset: 0;
   display: grid;
   grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
-  grid-template-rows: auto auto minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr) auto;
   gap: 12px 24px;
   padding: 16px;
   background: var(--slides-stage);
@@ -413,16 +414,15 @@ body {
   display: none;
 }
 
-/* A slide pane is as wide as its column at the deck's shape; a short frame caps its height. */
-.plinth-slides__pane--current,
-.plinth-slides__pane--next {
-  aspect-ratio: 16 / 9;
-}
-
+/* The current slide is sized from its grid row (presenter.ts fits the canvas to the pane); the
+   next one is as wide as its column at the deck's shape. */
 .plinth-slides__pane--current {
   grid-column: 1;
   grid-row: 1;
-  max-height: calc(100vh - 100px);
+}
+
+.plinth-slides__pane--next {
+  aspect-ratio: 16 / 9;
 }
 
 .plinth-slides__side {
@@ -439,7 +439,6 @@ body {
   max-height: 45%;
 }
 
-:root[data-aspect="4:3"] .plinth-slides__pane--current,
 :root[data-aspect="4:3"] .plinth-slides__pane--next {
   aspect-ratio: 4 / 3;
 }
@@ -448,9 +447,7 @@ body {
   margin: 0;
   color: var(--slides-muted);
   font-size: 0.75rem;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
+  font-weight: 500;
 }
 
 .plinth-slides__caption--notes {
@@ -532,11 +529,15 @@ body {
     grid-template-columns: minmax(0, 1fr);
     grid-template-rows: auto minmax(0, 1fr) auto;
     gap: 12px;
-    padding: 12px;
   }
 
   .plinth-slides__pane--current {
+    aspect-ratio: 16 / 9;
     max-height: 50vh;
+  }
+
+  :root[data-aspect="4:3"] .plinth-slides__pane--current {
+    aspect-ratio: 4 / 3;
   }
 
   .plinth-slides__side {
@@ -546,7 +547,6 @@ body {
   }
 
   .plinth-slides__pane--next {
-    width: 50%;
     max-height: none;
   }
 
@@ -584,7 +584,7 @@ body {
   padding: 16px 0 40px;
 }
 
-/* --cols comes from stage.ts overviewColumns; the gap is OVERVIEW_GUTTER. */
+/* --cols comes from stage.ts overviewColumns; the gap and the padding are GUTTER. */
 .plinth-slides[data-mode="overview"]:not([data-print]) .plinth-slides__deck {
   position: static;
   display: grid;
@@ -595,13 +595,8 @@ body {
   padding: 16px;
 }
 
-/* An overview the person opened stops above the controls' band; the one a phone shows by itself
-   only leaves room to scroll its last slide clear of them. */
-.plinth-slides[data-mode="overview"][data-mark] {
-  bottom: 48px;
-}
-
-.plinth-slides[data-mode="overview"]:not([data-fixed], [data-mark]) .plinth-slides__deck {
+/* Room to scroll the last row clear of the controls, which show over the stage. */
+.plinth-slides[data-mode="overview"]:not([data-fixed]) .plinth-slides__deck {
   padding-bottom: 64px;
 }
 
@@ -646,19 +641,13 @@ body {
   font-size: 20px;
 }
 
-/* Room for the controls' band under the slide (boot.ts sets the offsets). */
-.plinth-slides[data-mode="deck"]:not([data-print]) .plinth-slides__deck {
-  top: var(--deck-top, 0);
-  bottom: var(--deck-bottom, 0);
-}
-
 /* ---------- controls ---------- */
-/* One pill centred in the band under the slide: previous, "3 / 20", next, and the overview
-   toggle. It shows on input and hides after CONTROLS_IDLE_MS. */
+/* One pill centred over the bottom of the slide: previous, "3 / 20", next, and the overview
+   toggle. It shows on input and hides after CONTROLS_IDLE_MS, so it reserves no room. */
 
 .plinth-slides__controls {
   position: fixed;
-  bottom: 6px;
+  bottom: var(--controls-bottom, 24px);
   left: 50%;
   display: flex;
   gap: 2px;
