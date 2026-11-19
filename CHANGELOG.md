@@ -10,6 +10,9 @@ Add a line under **Unreleased** in the pull request that makes a change people w
 
 ## Unreleased
 
+- **A build for OpenAI's plugin directory.** `integrations/plugin-openai` is the folder to ZIP for
+  ChatGPT and Codex: the portable manifest with its listing block, the hosted server, the icon and
+  the skill, with no hooks and no Claude Code passages.
 - **The plugin directory build connects to the hosted instance again.** Anthropic's plugin directory
   refused the 0.15.0 build because its server URL used the Plinth instance option, so the directory
   build has a fixed `https://plinth.aconite.io/mcp` server and no option. With that build, add a
