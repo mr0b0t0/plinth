@@ -10,6 +10,7 @@ import {
   parseCapabilities,
   readStoredCapabilities,
   serializeCapabilities,
+  VOICE_LIMITS,
 } from "@plinth/shared";
 import { describe, expect, it } from "vitest";
 import { appPermissionsPolicy } from "../src/app/headers.ts";
@@ -240,17 +241,15 @@ describe("policy: dictationAccess", () => {
 describe("the gate's voice block", () => {
   it("only when the current version of an HTML page declares dictation and the switch is on", async () => {
     const { id, ownerP } = await setup(PAGE, { visibility: "unlisted" });
-    expect((await gate(id, ownerP.session.headers, ON)).voice).toEqual({
-      dictation: { available: true, reason: null },
-    });
+    // Those who may dictate get the owner's email for the consent dialog; nobody else does.
+    const yes = { dictation: { available: true, reason: null }, owner_email: ownerP.email };
+    expect((await gate(id, ownerP.session.headers, ON)).voice).toEqual(yes);
     // Off: nothing read, nothing said (the app answers `disabled` from its config).
     expect((await gate(id, ownerP.session.headers)).voice).toBeUndefined();
     // Grant holders, signed in.
     for (const role of ["viewer", "commenter", "editor"] as const) {
       const p = await person(id, role);
-      expect((await gate(id, p.session.headers, ON)).voice, role).toEqual({
-        dictation: { available: true, reason: null },
-      });
+      expect((await gate(id, p.session.headers, ON)).voice, role).toEqual(yes);
     }
     // An anonymous link viewer.
     expect((await gate(id, {}, ON)).voice).toEqual({
@@ -425,6 +424,8 @@ describe("plinth.dictation (runtime)", () => {
     p.fromApp(msg({ type: "refused", id, code: "no_activation" }));
     await expect(a).rejects.toMatchObject({ name: "PlinthError", code: "no_activation" });
     await expect(p.dictation.start({ lang: "en_US!" })).rejects.toMatchObject({ code: "invalid" });
+    const states: unknown[] = [];
+    p.dictation.onState((e: unknown) => states.push(e));
     const b = p.dictation.start();
     const id2 = p.posted.at(-1)?.[0].id;
     p.fromApp(msg({ type: "started", id: id2 }));
@@ -432,12 +433,30 @@ describe("plinth.dictation (runtime)", () => {
     const s = p.dictation.stop();
     p.fire(2000);
     await s;
+    // With no answer from the app, the page still hears idle, and late words are dropped.
+    expect(states).toEqual([{ state: "idle", reason: "stopped" }]);
+    p.fromApp(msg({ type: "final", id: id2, text: "late" }));
+    p.fromApp(msg({ type: "state", id: id2, state: "idle", reason: "stopped" }));
+    expect(states).toHaveLength(1);
     // Stopped before it started: the start rejects `dismissed`, and may be retried.
     const c = p.dictation.start();
     const id3 = p.posted.at(-1)?.[0].id;
     p.fromApp(msg({ type: "state", id: id3, state: "idle", reason: "stopped" }));
     await expect(c).rejects.toMatchObject({ code: "dismissed" });
+    // Stopped before it started, and the app never answers: the start still settles.
+    const d = p.dictation.start();
+    const stopD = p.dictation.stop();
+    p.fire(2000);
+    await stopD;
+    await expect(d).rejects.toMatchObject({ code: "dismissed" });
     await flush();
+  });
+
+  it("the app goes idle before the page's stop gives up waiting", () => {
+    // The app waits for the recognizer's last results for less time than stop() waits for the
+    // app, so the last words and idle reach the page while its session is still current.
+    expect(VOICE_LIMITS.appStopWaitMs).toBeLessThan(VOICE_LIMITS.stopWaitMs);
+    expect(runtimeScript(config())).toContain(`var VOICE_STOP_MS = ${VOICE_LIMITS.stopWaitMs};`);
   });
 
   it("a status that says unavailable rejects a start that was waiting", async () => {

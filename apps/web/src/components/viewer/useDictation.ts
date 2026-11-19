@@ -11,7 +11,9 @@
 // link that opened the page does not count); the tab visible and focused; not busy, not too soon,
 // not after Stop or "Not now";
 // the viewer's consent for this artifact; then the recognizer. Listening stops at the page's stop,
-// the viewer's Stop, silence, 60 s, a hidden tab, a blurred window, a frame reload and unmount.
+// the viewer's Stop, silence, 60 s, a hidden tab, a blurred window (polled while listening: with
+// focus inside the frame, a switch to another window sends this document no event), a frame
+// reload (any load of the frame after its first) and unmount.
 // Posts go only to the frame's exact content origin, never "*", so dictation is off under opaque
 // isolation (the server says so too).
 import type { AppConfig, ViewGate } from "@plinth/shared";
@@ -79,6 +81,8 @@ interface Session {
   /** Why it is stopping, while the recognizer delivers its last results. */
   reason: DictationIdleReason | null;
   timers: number[];
+  /** The focus check while listening (window.setInterval). */
+  poll: number | null;
 }
 
 /** What lasts for the whole viewer page load, across frame reloads. */
@@ -92,8 +96,15 @@ interface LoadState {
 
 /** How long the on-device check may take before the browser's default is used. */
 const LOCAL_CHECK_MS = 500;
-/** After a graceful stop, how long to wait for the recognizer's end. */
-const END_WAIT_MS = 2500;
+/** While listening, how often the app checks that its window still has focus. */
+export const FOCUS_POLL_MS = 250;
+
+/**
+ * Loads seen per artifact frame, counted from the moment the viewer stage first hands the frame
+ * over, whatever else the hook waits for (the config, the gate). The first load is the page's own
+ * document finishing; every later one is a reload or a navigation.
+ */
+const frameLoads = new WeakMap<HTMLIFrameElement, number>();
 
 export function useDictation({
   frame,
@@ -119,8 +130,24 @@ export function useDictation({
     lastViewerStop: Number.NEGATIVE_INFINITY,
   });
   const stopRef = useRef<((reason: DictationIdleReason) => void) | null>(null);
-  const about = useRef({ title: gate.artifact.title, owner: gate.artifact.owner_name });
-  about.current = { title: gate.artifact.title, owner: gate.artifact.owner_name };
+  const reloadRef = useRef<(() => void) | null>(null);
+  // Who wrote the page, by the owner's email (never the display name, which the owner picks).
+  const ownerEmail = gate.voice?.owner_email ?? null;
+  const about = useRef({ title: gate.artifact.title, owner: ownerEmail });
+  about.current = { title: gate.artifact.title, owner: ownerEmail };
+
+  // Count the frame's loads from the start, so a dictation started before the page finished
+  // loading is not cut off by that first load, and a reload after a late setup still counts.
+  useEffect(() => {
+    if (!frame) return;
+    const onLoad = () => {
+      const n = (frameLoads.get(frame) ?? 0) + 1;
+      frameLoads.set(frame, n);
+      if (n > 1) reloadRef.current?.();
+    };
+    frame.addEventListener("load", onLoad);
+    return () => frame.removeEventListener("load", onLoad);
+  }, [frame]);
 
   useEffect(() => {
     setAllowed(hasConsent(artifactId));
@@ -161,6 +188,8 @@ export function useDictation({
       if (session !== s) return;
       session = null;
       for (const t of s.timers) window.clearTimeout(t);
+      if (s.poll !== null) window.clearInterval(s.poll);
+      s.poll = null;
       const rec = s.rec;
       if (rec) {
         rec.onstart = rec.onresult = rec.onerror = rec.onend = null;
@@ -197,7 +226,8 @@ export function useDictation({
         finish(s, why);
         return;
       }
-      s.timers.push(window.setTimeout(() => finish(s, why), END_WAIT_MS));
+      // Shorter than the runtime's own wait, so the page hears the last words and idle first.
+      s.timers.push(window.setTimeout(() => finish(s, why), VOICE_LIMITS.appStopWaitMs));
     };
 
     const begin = async (s: Session) => {
@@ -243,6 +273,11 @@ export function useDictation({
         post({ type: "started", id: s.id });
         post({ type: "state", id: s.id, state: "listening" });
         s.timers.push(window.setTimeout(() => end(s, "time_limit"), VOICE_LIMITS.maxSessionMs));
+        // Focus inside the frame: a switch to another window blurs only the frame's window,
+        // which this document cannot observe, so its focus is checked instead.
+        s.poll = window.setInterval(() => {
+          if (!document.hasFocus()) end(s, "blurred");
+        }, FOCUS_POLL_MS);
       };
       rec.onresult = (e) => {
         if (session !== s || s.phase !== "listening") return;
@@ -311,6 +346,7 @@ export function useDictation({
         rec: null,
         reason: null,
         timers: [],
+        poll: null,
       };
       session = s;
       if (hasConsent(artifactId)) {
@@ -352,9 +388,6 @@ export function useDictation({
         if (session?.id === m.id) end(session, "stopped");
       } else onStart(m);
     };
-    const onLoad = () => {
-      if (session) finish(session, "frame_reloaded");
-    };
     const onVisibility = () => {
       if (document.visibilityState === "hidden" && session) end(session, "hidden");
     };
@@ -366,7 +399,9 @@ export function useDictation({
     };
 
     window.addEventListener("message", onMessage);
-    frame.addEventListener("load", onLoad);
+    reloadRef.current = () => {
+      if (session) finish(session, "frame_reloaded");
+    };
     document.addEventListener("visibilitychange", onVisibility);
     window.addEventListener("blur", onBlur);
     stopRef.current = (why) => {
@@ -374,7 +409,7 @@ export function useDictation({
     };
     return () => {
       window.removeEventListener("message", onMessage);
-      frame.removeEventListener("load", onLoad);
+      reloadRef.current = null;
       document.removeEventListener("visibilitychange", onVisibility);
       window.removeEventListener("blur", onBlur);
       stopRef.current = null;

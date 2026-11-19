@@ -402,6 +402,11 @@ export type ViewGate =
  */
 export interface ViewGateVoice {
   dictation: DictationAccess;
+  /**
+   * The owner's email, only when this viewer may dictate (the owner or a grant holder): the
+   * consent dialog names who wrote the page by it, never by the owner's chosen display name.
+   */
+  owner_email?: string;
 }
 
 /** How an owner or editor may edit this doc on its page (GET /view/:ref). */

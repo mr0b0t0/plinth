@@ -9,6 +9,7 @@ import {
   artifactFrame,
   fakeRecognizer,
   MIC_PROBE_PAGE,
+  SLOW_IMAGE,
   VOICE_TITLE,
   voicePage,
 } from "../support/voice.ts";
@@ -103,6 +104,76 @@ test("dictation: ask, listen, words to the page, Stop, and no second question", 
   await expect(inFrame(page, "result")).toHaveText("started");
   await expect(consent(page)).toHaveCount(0);
   await expect(inFrame(page, "final")).toHaveText("hello world");
+});
+
+/** The viewer allowed dictation on this artifact in this browser before (no dialog). */
+async function allowed(page: Page, artifactId: string) {
+  await page.addInitScript(
+    ([origin, key]) => {
+      if (location.origin === origin) localStorage.setItem(key, "allowed");
+    },
+    [APP_ORIGIN, `plinth:dictation:${artifactId}`] as const,
+  );
+}
+
+test("switching to another window with focus inside the page stops dictation", async ({ page }) => {
+  const { email, art } = await owner(page, voicePage());
+  await seedSession(page.context(), email);
+  await fakeRecognizer(page, APP_ORIGIN);
+  await allowed(page, art.id);
+  await page.goto(art.url);
+  await artifactFrame(page, "data-ready");
+  await page.frameLocator(FRAME).getByRole("button", { name: "Speak" }).click();
+  await expect(inFrame(page, "final")).toHaveText("hello world");
+  await expect(inFrame(page, "state")).toHaveText("listening");
+  const listening = page.locator(".pl-viewer__listening");
+  await expect(listening.getByRole("status")).toHaveText("Listening");
+  // Focus is inside the frame, so a switch to another app blurs only the frame's window and the
+  // app document gets no event; all it can see is that it no longer has focus.
+  expect(await page.evaluate(() => document.activeElement?.tagName)).toBe("IFRAME");
+  await page.evaluate(() => {
+    document.hasFocus = () => false;
+  });
+  await expect(inFrame(page, "state")).toHaveText("idle:blurred");
+  await expect(listening.getByRole("status")).toHaveText("");
+});
+
+test("the page finishing its own load does not stop a dictation started before it", async ({
+  page,
+}) => {
+  const { email, art } = await owner(page, voicePage({ slowImage: true }));
+  await seedSession(page.context(), email);
+  await fakeRecognizer(page, APP_ORIGIN);
+  await allowed(page, art.id);
+  let release = () => {};
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await page.route(`**/${SLOW_IMAGE}`, async (route) => {
+    await held;
+    // A 1x1 transparent GIF.
+    await route.fulfill({
+      status: 200,
+      contentType: "image/gif",
+      body: Buffer.from("R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7", "base64"),
+    });
+  });
+  await page.goto(art.url);
+  const frame = await artifactFrame(page, "data-ready");
+  expect(await frame.evaluate(() => document.readyState)).not.toBe("complete");
+  await page.frameLocator(FRAME).getByRole("button", { name: "Speak" }).click();
+  await expect(inFrame(page, "result")).toHaveText("started");
+  await expect(inFrame(page, "state")).toHaveText("listening");
+  release();
+  await expect.poll(() => frame.evaluate(() => document.readyState)).toBe("complete");
+  await page.waitForTimeout(300);
+  await expect(inFrame(page, "state")).toHaveText("listening");
+  await expect(page.locator(".pl-viewer__listening").getByRole("status")).toHaveText("Listening");
+  // A real reload of the frame still ends it.
+  await frame.evaluate(() => {
+    setTimeout(() => location.reload(), 0);
+  });
+  await expect(page.locator(".pl-viewer__listening").getByRole("status")).toHaveText("");
 });
 
 test("a start without a click is refused and opens no dialog", async ({ page }) => {

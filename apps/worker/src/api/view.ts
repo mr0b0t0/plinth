@@ -285,13 +285,24 @@ async function gateVoice(
     d.role !== null && (p.kind === "user" || p.kind === "viewer")
       ? { email: p.email, role: d.role }
       : null;
-  return {
-    dictation: dictationAccess(identity, caps, {
-      active: dictationActive(ctx.config),
-      isolation: ctx.config.contentIsolation,
-      type: a.type,
-    }),
-  };
+  const dictation = dictationAccess(identity, caps, {
+    active: dictationActive(ctx.config),
+    isolation: ctx.config.contentIsolation,
+    type: a.type,
+  });
+  if (!dictation.available || !identity) return { dictation };
+  // The consent dialog names who wrote the page by the owner's email, which the owner cannot pick
+  // freely as they can a display name. Only viewers who may dictate get it: the owner and the
+  // people the owner granted access by email.
+  const owner =
+    d.role === "owner"
+      ? { email: identity.email }
+      : await ctx.db
+          .select({ email: users.email })
+          .from(users)
+          .where(eq(users.id, a.ownerId))
+          .get();
+  return owner ? { dictation, owner_email: owner.email } : { dictation };
 }
 
 function gateOptions(q: (k: string) => string | undefined): GateOptions {

@@ -4,18 +4,21 @@ import type { Frame, Page } from "@playwright/test";
 
 export const VOICE_TITLE = "Voice notes";
 
+/** The image a `slowImage` voice page waits for: the test holds its response to delay load. */
+export const SLOW_IMAGE = "slow.png";
+
 /**
  * A page that declares dictation: a Speak button that calls plinth.dictation.start() straight from
  * its click, and lines that show what the runtime reports. With `auto`, it also starts on load,
- * without any click.
+ * without any click. With `slowImage`, its load event waits for SLOW_IMAGE.
  */
-export function voicePage(opts: { auto?: boolean } = {}): string {
+export function voicePage(opts: { auto?: boolean; slowImage?: boolean } = {}): string {
   return `<!doctype html>
 <html><head><meta charset="utf-8"><title>${VOICE_TITLE}</title>
 <meta name="plinth-capabilities" content="dictation">
 <script src="/__plinth/runtime.js"></script></head>
 <body>
-<button id="mic" type="button">Speak</button>
+<button id="mic" type="button">Speak</button>${opts.slowImage ? `\n<img src="${SLOW_IMAGE}" alt="">` : ""}
 <p id="ready"></p><p id="partial"></p><p id="final"></p><p id="state"></p><p id="result"></p>
 <script>
   var d = window.plinth.dictation;

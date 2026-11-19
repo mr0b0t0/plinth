@@ -646,13 +646,16 @@ microphone.
   editor), signed in or confirmed by code, the same people who write shared data or join a room.
   Anonymous link viewers (unlisted, password, public) never do. The gate's `voice.dictation` says
   `{ available, reason }`, decided by `dictationAccess` in `policy.ts` (`not_declared`,
-  `opaque_isolation`, `disabled`, `not_identified`).
+  `opaque_isolation`, `disabled`, `not_identified`). When it is available, `voice.owner_email` is
+  the owner's email, which the consent dialog names.
 - **Page API.** `window.plinth.dictation`: `ready` (resolves `{ available, reason }`, never rejects;
   `reason` adds `unsupported` for a browser without a recognizer and `no_host` when the page is
   not framed by the Plinth viewer: an in-chat preview, a thumbnail, the editor preview, or opened on
   its own), `start({ lang, interim })` (call it straight from a click; rejects with `PlinthError`
   `unavailable`, `no_activation`, `not_granted`, `dismissed`, `busy`, `rate_limited`, `invalid` or
-  `network`), `stop()`, `onPartial(fn)`, `onFinal(fn)` and `onState(fn)` (`idle`, `starting`,
+  `network`), `stop()` (resolves once the app reports idle after the last words, or after 2 s;
+  the app waits at most 1.5 s for the recognizer, so the page hears both first), `onPartial(fn)`,
+  `onFinal(fn)` and `onState(fn)` (`idle`, `starting`,
   `listening`; on idle a reason: `stopped`, `viewer_stopped`, `silence`, `time_limit`, `hidden`,
   `blurred`, `frame_reloaded`, `error`, `not_granted`). The names follow Claude's `dictation`
   capability. Nothing is posted until the page reads `ready` or calls `start()`. The page never
@@ -672,15 +675,19 @@ microphone.
   has not said "Not now", been refused by the browser's own prompt, or pressed Stop three times on
   this load.
 - **Consent.** The first start on a page opens the app's dialog "Let this page take dictation?": who
-  wrote the page and may save the words, which company's speech service hears the audio, and how
+  wrote the page (the owner's email, never the display name the owner chooses) and may save the
+  words, which company's speech service hears the audio, and how
   to stop. It starts on "Not now", and both buttons ignore input for 500 ms after it opens. "Allow
   on this page" is kept in the app origin's `localStorage` (`plinth:dictation:<artifact id>`),
   cleared on sign-out; "Not now" lasts for the page load. "Dictation on this page: allowed. Turn
   off" in the ⋯ menu takes it back and stops listening.
 - **While listening.** A red "Listening" control with **Stop** sits in the viewer bar at every width.
   It is app chrome, so the page cannot hide or restyle it. A session ends at the page's `stop()`,
-  the viewer's Stop, silence, 60 s, a hidden tab, a blurred window, a reload or navigation of the
-  frame, and when the viewer page changes or closes.
+  the viewer's Stop, silence, 60 s, a hidden tab, a blurred window (while listening the app checks
+  every 250 ms that its window has focus, because with focus inside the frame a switch to another
+  window sends the app no event), a reload or navigation of the frame (any load after the page's
+  own first one, so a start made before the page finished loading keeps going), and when the
+  viewer page changes or closes.
 - **Availability.** `ALLOW_DICTATION` (off). Only with origin isolation: under opaque isolation and
   the path fallback the app could post the viewer's words only with `"*"`, so `ready` resolves
   `{ available: false, reason: "opaque_isolation" }` without a message. Only while dictation is in

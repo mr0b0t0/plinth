@@ -869,11 +869,17 @@ public page from a stranger.
 artifact's subdomain receives nothing. A session ends at the page's `stop()`, the viewer's Stop,
 silence, 60 s, a hidden tab, a blurred window (focus moving into the frame does not count), the
 frame's `load` event (a reload, a navigation or a version swap), and when the viewer page unmounts
-or its gate changes. The "Listening" control with Stop sits in the app's bar at every width, so the
+or its gate changes. With focus inside the frame, a switch to another window blurs only the
+frame's window, which the app cannot observe, so while listening the app also checks
+`document.hasFocus()` every 250 ms and stops `blurred` when it turns false. The frame's loads are
+counted from the moment the stage creates it: the first is the page's own document finishing, so
+a start made before then is not cut off, and every later load ends the session. The "Listening" control with Stop sits in the app's bar at every width, so the
 page cannot cover, restyle or fold it away.
 
 **Consent.** "Let this page take dictation?" is app chrome above the frame. It names the page and
-its owner, says the page may save the words where others with access see them, names the company
+its owner by email (the gate's `voice.owner_email`, sent only to viewers who may dictate: the owner
+and people the owner granted access by email), never by the display name, which anyone can set to
+"Plinth Security" or a colleague's name. It says the page may save the words where others with access see them, names the company
 whose speech service hears the audio (Google for Chrome, Microsoft for Edge, Apple for Safari, or a
 generic sentence), and says Plinth never receives the audio. Focus starts on "Not now", and both
 buttons ignore input for 500 ms after it opens, so a click the page times to land where "Allow"

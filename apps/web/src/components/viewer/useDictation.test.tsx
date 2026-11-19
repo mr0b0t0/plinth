@@ -5,7 +5,7 @@ import type { AppConfig, ViewGate } from "@plinth/shared";
 import { act, cleanup, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CONFIG } from "./test-utils.ts";
-import { useDictation } from "./useDictation.ts";
+import { FOCUS_POLL_MS, useDictation } from "./useDictation.ts";
 import { CONSENT_PREFIX, forgetAllConsents, VOICE_LIMITS } from "./voiceProtocol.ts";
 
 type OkGate = Extract<ViewGate, { status: "ok" }>;
@@ -26,7 +26,7 @@ const gate = (over: Partial<OkGate> = {}): OkGate => ({
   },
   enter_url: `${ORIGIN}/__plinth/enter?t=x`,
   role: "viewer",
-  voice: { dictation: { available: true, reason: null } },
+  voice: { dictation: { available: true, reason: null }, owner_email: "ada@example.com" },
   ...over,
 });
 
@@ -210,7 +210,11 @@ describe("useDictation: starting", () => {
     const { result } = mount();
     expect(result.current.allowed).toBe(false);
     start("s1", { lang: "pt-PT", interim: false });
-    expect(result.current.consent).toMatchObject({ title: "Field notes", owner: "Ada" });
+    // The owner by email, never by the display name the owner chose ("Ada").
+    expect(result.current.consent).toMatchObject({
+      title: "Field notes",
+      owner: "ada@example.com",
+    });
     expect(FakeRec.all).toEqual([]);
     // Another start while the dialog is open is busy.
     later(VOICE_LIMITS.minStartGapMs);
@@ -356,6 +360,9 @@ describe("useDictation: listening", () => {
     h.unmount();
 
     h = mount();
+    act(() => {
+      frame.dispatchEvent(new Event("load"));
+    });
     listen(h.result);
     act(() => {
       frame.dispatchEvent(new Event("load"));
@@ -376,6 +383,59 @@ describe("useDictation: listening", () => {
     h.unmount();
     expect(last()).toEqual(idle("frame_reloaded"));
     expect(rec().aborted).toBe(true);
+  });
+
+  it("the page's own first load does not end a dictation started before it; a reload does", () => {
+    const { result } = mount();
+    listen(result);
+    act(() => {
+      frame.dispatchEvent(new Event("load"));
+    });
+    expect(result.current.listening).toBe(true);
+    act(() => {
+      frame.dispatchEvent(new Event("load"));
+    });
+    expect(last()).toEqual(
+      voice({ type: "state", id: "s1", state: "idle", reason: "frame_reloaded" }),
+    );
+  });
+
+  it("counts the frame's loads even before the config arrives", () => {
+    // The page loads while the app's config is still on its way; its next load is a reload.
+    const h = mount({ config: null });
+    act(() => {
+      frame.dispatchEvent(new Event("load"));
+    });
+    h.rerender({ gate: gate(), config: ON });
+    listen(h.result);
+    act(() => {
+      frame.dispatchEvent(new Event("load"));
+    });
+    expect(last()).toEqual(
+      voice({ type: "state", id: "s1", state: "idle", reason: "frame_reloaded" }),
+    );
+  });
+
+  it("stops when the window loses focus while focus is inside the frame (no blur event here)", () => {
+    const { result } = mount();
+    listen(result);
+    later(FOCUS_POLL_MS * 4);
+    expect(result.current.listening).toBe(true);
+    // A switch to another app blurs only the frame's window: this document sees no event.
+    focused = false;
+    later(FOCUS_POLL_MS);
+    expect(last()).toEqual(voice({ type: "state", id: "s1", state: "idle", reason: "blurred" }));
+    expect(rec().aborted).toBe(true);
+    expect(result.current.listening).toBe(false);
+  });
+
+  it("after the page's stop, goes idle before the page stops waiting, without the recognizer's end", () => {
+    const { result } = mount();
+    listen(result);
+    fromFrame({ type: "stop", id: "s1" });
+    later(VOICE_LIMITS.stopWaitMs - 250);
+    expect(last()).toEqual(voice({ type: "state", id: "s1", state: "idle", reason: "stopped" }));
+    expect(result.current.listening).toBe(false);
   });
 
   it("the viewer's Stop: idle viewer_stopped, a cooldown, and not_granted after three", () => {

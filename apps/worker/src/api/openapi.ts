@@ -936,12 +936,20 @@ function liveSchemas(): Record<string, Json> {
         "is on with origin isolation. sign_in: confirmed by code without an account (watch only)",
     },
     ViewGateVoice: {
-      ...obj({
-        dictation: obj({
-          available: { type: "boolean" },
-          reason: { oneOf: [enumOf(DICTATION_REASONS), { type: "null" }] },
-        }),
-      }),
+      ...obj(
+        {
+          dictation: obj({
+            available: { type: "boolean" },
+            reason: { oneOf: [enumOf(DICTATION_REASONS), { type: "null" }] },
+          }),
+          owner_email: {
+            type: "string",
+            description:
+              "The owner's email, only when this viewer may dictate: the consent dialog names who wrote the page by it",
+          },
+        },
+        ["owner_email"],
+      ),
       description:
         "Present on `ok` only when the current version of an HTML page declares `dictation` and " +
         "ALLOW_DICTATION is on: whether this viewer may dictate into the page (identified viewers " +

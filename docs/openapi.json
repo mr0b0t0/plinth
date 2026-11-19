@@ -3941,6 +3941,10 @@
               }
             },
             "required": ["available", "reason"]
+          },
+          "owner_email": {
+            "type": "string",
+            "description": "The owner's email, only when this viewer may dictate: the consent dialog names who wrote the page by it"
           }
         },
         "required": ["dictation"],

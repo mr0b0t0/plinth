@@ -163,8 +163,13 @@ export const DICTATION_FRAGMENT: RuntimeFragment = {
       var s = dc.session;
       if (!s) return Promise.resolve();
       return new Promise(function (resolve) {
+        // The app goes idle sooner than this; with no answer at all, end the session here so the
+        // page's state and start() settle: idle for a session that started, dismissed otherwise.
         var timer = setTimeout(function () {
+          if (dc.session !== s) return voiceEnd(s);
+          if (!s.started) return voiceRefuse(s, "dismissed", "Dictation stopped before it started.");
           voiceEnd(s);
+          voiceEmit(dc.state, { state: "idle", reason: "stopped" });
         }, VOICE_STOP_MS);
         s.stopWaiters.push(function () {
           clearTimeout(timer);

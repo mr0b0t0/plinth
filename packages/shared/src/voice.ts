@@ -28,6 +28,11 @@ export const VOICE_LIMITS = {
   helloTimeoutMs: 3_000,
   /** Runtime: stop() resolves at the latest this long after it is called. */
   stopWaitMs: 2_000,
+  /**
+   * App: after the page's stop or the time limit, how long it waits for the recognizer's last
+   * results before it goes idle. Shorter than `stopWaitMs`, so the page hears them and idle first.
+   */
+  appStopWaitMs: 1_500,
   /** The app ignores a message from the frame whose JSON is longer than this. */
   maxFrameMessageChars: 512,
 } as const;
