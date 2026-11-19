@@ -14,6 +14,7 @@ const caps = (over: Partial<Capabilities> = {}): Capabilities => ({
   people: false,
   comments: false,
   dictation: false,
+  hold: false,
   ...over,
 });
 

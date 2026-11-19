@@ -141,6 +141,30 @@
   color: var(--color-ink-muted);
   font-size: var(--text-sm);
 }
+/* A newer version waits while the viewer uses the page (live views, the hold rule). */
+.pl-viewer__notice--update {
+  color: var(--color-ink);
+}
+/* Update: a button that reads like the "Go to current" link next to it. */
+.pl-viewer__notice-action {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-decoration-line: underline;
+  text-decoration-color: var(--color-border-control);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.2em;
+  cursor: pointer;
+}
+.pl-viewer__notice-action:hover {
+  text-decoration-color: currentColor;
+}
+.pl-viewer__notice-action:disabled {
+  color: var(--color-ink-muted);
+  cursor: progress;
+}
 /* ---------- Editing a doc on its page (#36) ---------- */
 /* The bronze rule marks the live state: an edit strip under the bar, never a second primary. */
 .pl-viewer__edit[aria-pressed="true"] {

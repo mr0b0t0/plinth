@@ -198,7 +198,8 @@ no room and stores nothing.
   keep-alive is answered without waking the object. In return an idle open view stops reading its
   gate and the shared-data change counter every 15 s ([spec.md](spec.md#costs)).
 - **Off switch.** `ALLOW_LIVE_VIEWS=false` ([self-hosting.md](self-hosting.md#settings)): pages poll
-  as before, and artifacts without a room never get an object. Without the binding live views are
+  as before, artifacts without a room never get an object, and every new version reloads the frame
+  (no in-place docs, no carried state, no `hold`). Without the binding live views are
   off too, with no config error.
 - **Isolation.** Live views work under every isolation mode, since the socket is on the app host;
   the shared-data signals need `CONTENT_ISOLATION=origin`, like shared data.

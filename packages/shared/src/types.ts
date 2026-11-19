@@ -471,6 +471,13 @@ export interface AppConfig {
    * absent reads as off.
    */
   category_sharing?: boolean;
+  /**
+   * Open views apply new versions while keeping the reader's state (ALLOW_LIVE_VIEWS): a doc
+   * updates in place, a page with the runtime carries its scroll, location and state, and a page
+   * that declares `hold` waits while the viewer is using it. Absent or false: a new version
+   * replaces the page, as before.
+   */
+  live_views?: boolean;
 }
 
 export interface OperatorInfo {
@@ -516,6 +523,12 @@ export type ViewGate =
        * and of shared-data changes, as they happen. Absent: poll as before.
        */
       watch?: true;
+      /**
+       * The current version declares `hold` (HTML only, while ALLOW_LIVE_VIEWS is on): while the
+       * viewer is using the page (focus inside its frame), a newer version waits behind an Update
+       * button instead of replacing it. Absent otherwise.
+       */
+      hold?: true;
     }
   | { status: "password_required"; artifact: ViewArtifactStub }
   | { status: "email_required"; artifact: ViewArtifactStub }

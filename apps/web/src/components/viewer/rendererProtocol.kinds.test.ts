@@ -14,6 +14,7 @@ import {
   printMessage,
   readFrameMessage,
   sheetExportMessage,
+  versionMessage,
   viewMessage,
 } from "./rendererProtocol.ts";
 
@@ -38,8 +39,9 @@ describe("renderer protocol kinds", () => {
       "view",
       "export",
       "paired",
+      "version",
     ]);
-    expect([...FRAME_MESSAGE_KINDS]).toEqual(["live", "save", "draft"]);
+    expect([...FRAME_MESSAGE_KINDS]).toEqual(["live", "save", "draft", "shown"]);
     expect(
       [
         printMessage(),
@@ -49,6 +51,7 @@ describe("renderer protocol kinds", () => {
         viewMessage("presenter"),
         exportMessage("n".repeat(16)),
         pairedMessage(),
+        versionMessage(2, "n".repeat(16)),
       ].map((m) => m.type),
     ).toEqual([...APP_MESSAGE_KINDS]);
     const all = [
@@ -61,6 +64,7 @@ describe("renderer protocol kinds", () => {
       exportMessage("x".repeat(16)),
       sheetExportMessage("csv"),
       pairedMessage(),
+      versionMessage(1, "x".repeat(16)),
     ];
     for (const m of all) {
       expect(m).toMatchObject({ source: "plinth-renderer", v: 1 });
@@ -79,6 +83,7 @@ describe("renderer protocol kinds", () => {
       live: vi.fn(() => "live"),
       save: vi.fn(() => "save"),
       draft: vi.fn(() => "draft"),
+      shown: vi.fn(() => "shown"),
     };
     const messages: FrameMessage[] = [
       { type: "save" },
