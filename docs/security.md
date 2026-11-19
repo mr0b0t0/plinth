@@ -436,10 +436,15 @@ What is new:
   who can open the deck; the skill, the tool descriptions and the spec say so.
 - **The .pptx is built in the frame.** "Download .pptx" sends the frame
   `export { format: "pptx", nonce }` (the app's random nonce, `[A-Za-z0-9_-]{16,64}`), and the
-  frame answers `exported { nonce, ok, images_skipped, opaque }`: booleans and a count, never deck
-  text. The app shows an answer only for the nonce it is waiting for, from the frame's window, for
-  a deck. The file is made and saved inside the frame, on the artifact's origin, from the slides
-  it has already rendered, so the app never holds the deck's text and nothing reaches the server.
+  frame answers `exported { nonce, ok, images_skipped, opaque }`: booleans and a count (distinct
+  image files left out, at most `LIMITS.maxAssetsCeiling`), never deck text. The app shows an
+  answer only for the nonce it is waiting for, from the frame's window, for a deck, and stops
+  waiting when that frame is replaced. A request that reaches the frame while it is still making
+  a file starts nothing: the running export answers the newest nonce. The file is made and saved
+  inside the frame, on the artifact's origin, from the slides it has already rendered, so the app
+  never holds the deck's text and nothing reaches the server. Deck text goes into the file's XML
+  escaped by the writer and without the characters XML 1.0 forbids, so a control character in a
+  deck cannot break the file.
 - **The writer is a lazy renderer file.** `slides-pptx.js` (PptxGenJS 4.0.1 and JSZip, MIT, built
   into one IIFE with no exports and no globals) is listed in the type registry (`renderer.lazy`),
   so `serveRendererFile` serves it like the deck's script: from ASSETS at a path built from the

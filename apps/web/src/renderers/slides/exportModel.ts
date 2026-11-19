@@ -180,7 +180,12 @@ function lines(c: SlideCtx, el: Element, pre = false): Run[][] {
     }
   };
   walk(el, {});
-  return out.map((runs) => tidy(runs, pre)).filter((runs) => runs.length > 0);
+  const tidied = out.map((runs) => tidy(runs, pre));
+  if (!pre) return tidied.filter((runs) => runs.length > 0);
+  // A code block keeps its blank lines, as the screen does, each as one empty run (an empty
+  // paragraph at the block's size in the file). The newline that ends the block draws no line.
+  if (tidied.length > 1 && tidied[tidied.length - 1]?.length === 0) tidied.pop();
+  return tidied.map((runs) => (runs.length > 0 ? runs : [{ text: "" }]));
 }
 
 /** Drops the line's leading and trailing whitespace (not in a code block) and empty runs. */

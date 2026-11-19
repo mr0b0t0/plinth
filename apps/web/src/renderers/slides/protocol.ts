@@ -15,8 +15,11 @@
 //   frame -> app: fullscreen                 the person pressed f
 //   frame -> app: exported { nonce, ok, images_skipped, opaque }
 //                                            the export's outcome: whether the file was made, how
-//                                            many images were left out, and whether that was
-//                                            because the frame's origin is opaque
+//                                            many distinct image files were left out (at most
+//                                            LIMITS.maxAssetsCeiling), and whether that was
+//                                            because the frame's origin is opaque. An export asked
+//                                            for while one runs is not started again: the running
+//                                            one answers with the newest nonce
 import { isSlideNumber, RENDERER_MESSAGE_SOURCE, RENDERER_PROTOCOL_VERSION } from "@plinth/shared";
 import type { DeckMode } from "./nav.ts";
 

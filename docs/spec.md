@@ -956,9 +956,16 @@ source editor work as for docs. A deck is not edited on its page.
   loads from its own origin only when someone downloads, so a first view never fetches it. Images
   are the deck's own files, read by the frame from its own origin, with SVG, WebP and AVIF drawn
   to PNG; under opaque isolation and the path fallback the frame cannot read its own files, so
-  file images are left out (inline `data:` images stay) and the app says so. The browser saves the
+  file images are left out (inline `data:` images stay) and the app says so, counting each image
+  file once however many slides use it. Code blocks keep their blank lines, and characters an
+  XML file cannot hold (control characters other than tab and line breaks, such as a pasted
+  terminal colour code) are left out of the text, the notes and the title, so PowerPoint opens the
+  file without repairing it. The browser saves the
   file from the frame; the frame also shows a Download button for 30 seconds, for a browser that
-  only saves from a click inside the frame. Nothing is sent to the server, and the file holds only
+  only saves from a click inside the frame. Asking again while a file is being made makes no
+  second one: that one answers the newer request. If the deck's frame is replaced while it makes
+  the file (a newer version, review mode), the app stops waiting at once and says to download
+  again if no file was saved. Nothing is sent to the server, and the file holds only
   what the viewer can already read, notes included. There is no switch: it is part of the deck
   type, and costs the instance nothing.
 - **Speaker notes are not secret.** Anyone who can open the deck can read them (presenter view,

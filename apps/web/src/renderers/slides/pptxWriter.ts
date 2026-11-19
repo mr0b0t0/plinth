@@ -14,6 +14,21 @@ const MONO = "Courier New";
 type TextProps = PptxGenJS.TextProps;
 type Slide = PptxGenJS.Slide;
 
+/**
+ * Characters XML 1.0 does not allow: C0 controls other than tab, line feed and carriage return,
+ * U+FFFE and U+FFFF, and a surrogate without its pair. PptxGenJS escapes only & < > " ', so deck
+ * text holding one of these (an ANSI escape pasted into a code block, a backspace in the notes)
+ * would give a file PowerPoint repairs or refuses to open.
+ */
+const NOT_XML =
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: matching control characters is the point.
+  /[\u0000-\u0008\u000B\u000C\u000E-\u001F\uFFFE\uFFFF]|[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g;
+
+/** `s` without the characters an XML part cannot hold. */
+export function xmlText(s: string): string {
+  return s.replace(NOT_XML, "");
+}
+
 function runOptions(r: Run, p: Pick<Para, "size" | "color" | "bold" | "mono">) {
   return {
     fontFace: r.code || p.mono ? MONO : SANS,
@@ -22,7 +37,7 @@ function runOptions(r: Run, p: Pick<Para, "size" | "color" | "bold" | "mono">) {
     bold: p.bold || r.bold === true,
     ...(r.italic ? { italic: true } : {}),
     ...(r.strike ? { strike: "sngStrike" as const } : {}),
-    ...(r.href ? { hyperlink: { url: r.href } } : {}),
+    ...(r.href ? { hyperlink: { url: xmlText(r.href) } } : {}),
     ...(r.slide ? { hyperlink: { slide: r.slide } } : {}),
   };
 }
@@ -45,7 +60,7 @@ export function textRuns(paras: readonly Para[]): TextProps[] {
         if (p.spaceBefore > 0) options.paraSpaceBefore = p.spaceBefore;
       }
       if (ri === p.runs.length - 1 && pi < paras.length - 1) options.breakLine = true;
-      out.push({ text: r.text, options });
+      out.push({ text: xmlText(r.text), options });
     });
   });
   return out;
@@ -58,7 +73,7 @@ function cellOf(cell: Cell, t: Extract<Item, { kind: "table" }>): PptxGenJS.Tabl
     bold: cell.header,
     mono: false,
   };
-  const runs = cell.runs.map((r) => ({ text: r.text, options: runOptions(r, p) }));
+  const runs = cell.runs.map((r) => ({ text: xmlText(r.text), options: runOptions(r, p) }));
   return {
     text: runs.length > 0 ? runs : "",
     options: {
@@ -112,26 +127,30 @@ function addItem(slide: Slide, item: Item, images: ReadonlyMap<string, string>):
   }
   const data = images.get(item.src);
   if (!data) return false;
-  slide.addImage({ data, x, y, w, h, altText: item.alt });
+  slide.addImage({ data, x, y, w, h, altText: xmlText(item.alt) });
   return true;
 }
 
-/** The .pptx for `model`. An image whose src `images` lacks is left out and counted. */
+/**
+ * The .pptx for `model`. An image whose src `images` lacks is left out; `imagesSkipped` counts the
+ * distinct files left out (a logo on every slide is one), which is what the person can fix.
+ */
 export const buildPptx: PptxBuilder = async (model: DeckModel, images) => {
   const pptx = new PptxGenJS();
   pptx.defineLayout({ name: "PLINTH", width: model.width, height: model.height });
   pptx.layout = "PLINTH";
-  pptx.title = model.title;
+  pptx.title = xmlText(model.title);
   pptx.theme = { headFontFace: SANS, bodyFontFace: SANS };
-  let imagesSkipped = 0;
+  const skipped = new Set<string>();
   for (const s of model.slides) {
     const slide = pptx.addSlide();
     slide.background = { color: s.background };
     for (const item of s.items) {
-      if (!addItem(slide, item, images)) imagesSkipped += 1;
+      if (!addItem(slide, item, images) && item.kind === "image") skipped.add(item.src);
     }
-    if (s.notes !== "") slide.addNotes(s.notes);
+    const notes = xmlText(s.notes);
+    if (notes !== "") slide.addNotes(notes);
   }
   const blob = (await pptx.write({ outputType: "blob", compression: true })) as Blob;
-  return { blob, imagesSkipped };
+  return { blob, imagesSkipped: skipped.size };
 };

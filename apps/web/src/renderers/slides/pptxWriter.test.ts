@@ -163,6 +163,84 @@ describe("buildPptx", () => {
   });
 });
 
+describe("buildPptx, characters XML cannot hold", () => {
+  /** What XML 1.0 forbids in a part: C0 controls but tab, LF and CR, U+FFFE, U+FFFF, lone surrogates. */
+  const NOT_XML =
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: matching control characters is the point.
+    /[\u0000-\u0008\u000B\u000C\u000E-\u001F\uFFFE\uFFFF]|[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
+  const BAD = "\u0001\u0008\u000B\u000C\u001B\uFFFE\uFFFF\uD800";
+
+  it("leaves them out of every part: slide text, code, tables, alt text, notes and title", async () => {
+    const model: DeckModel = {
+      ...MODEL,
+      title: `Deck${BAD}title`,
+      slides: [
+        {
+          n: 1,
+          notes: `back\u0008space and \u001b[32mPASS\u001b[0m`,
+          background: "FFFFFF",
+          items: [
+            {
+              kind: "text",
+              box: { x: 1, y: 1, w: 5, h: 1 },
+              paras: [
+                para({ mono: true, runs: [{ text: "\u001b[32mPASS\u001b[0m\tok" }] }),
+                para({ runs: [{ text: `a${BAD}b 😀`, href: `https://example.com/${BAD}` }] }),
+              ],
+            },
+            {
+              kind: "table",
+              box: { x: 1, y: 3, w: 4, h: 1 },
+              rows: [[{ runs: [{ text: `c${BAD}d` }], header: false, align: "left" }]],
+              colW: [4],
+              size: 16,
+              color: "1F2328",
+              headColor: "1F2328",
+              rule: "D8DEE4",
+            },
+            {
+              kind: "image",
+              box: { x: 6, y: 1, w: 1, h: 1 },
+              src: "img/chart.png",
+              alt: `al${BAD}t`,
+            },
+          ],
+        },
+      ],
+    };
+    const { zip, text } = await files(model);
+    for (const name of Object.keys(zip).filter((n) => /\.(xml|rels)$/.test(n))) {
+      expect(NOT_XML.test(text(name)), name).toBe(false);
+    }
+    const slide = text("ppt/slides/slide1.xml");
+    // The text around them stays, tabs and astral characters included.
+    expect(slide).toContain("<a:t>[32mPASS[0m\tok</a:t>");
+    expect(slide).toContain("<a:t>ab 😀</a:t>");
+    expect(slide).toContain("<a:t>cd</a:t>");
+    expect(slide).toContain('descr="alt"');
+    expect(text("ppt/notesSlides/notesSlide1.xml")).toContain("backspace and [32mPASS[0m");
+    expect(text("docProps/core.xml")).toContain("<dc:title>Decktitle</dc:title>");
+  });
+});
+
+describe("buildPptx, images left out", () => {
+  it("counts each missing file once, however many slides use it", async () => {
+    const logo = (n: number) => ({
+      n,
+      notes: "",
+      background: "FFFFFF",
+      items: [
+        { kind: "image" as const, box: { x: 0, y: 0, w: 1, h: 1 }, src: "logo.png", alt: "" },
+        { kind: "image" as const, box: { x: 1, y: 0, w: 1, h: 1 }, src: `chart${n}.png`, alt: "" },
+        { kind: "image" as const, box: { x: 2, y: 0, w: 1, h: 1 }, src: "img/chart.png", alt: "" },
+      ],
+    });
+    const { imagesSkipped } = await files({ ...MODEL, slides: [1, 2, 3].map(logo) });
+    // logo.png and chart1..3.png are missing; img/chart.png is there.
+    expect(imagesSkipped).toBe(4);
+  });
+});
+
 describe("textRuns", () => {
   it("starts each paragraph with its settings and breaks between paragraphs", () => {
     const out = textRuns([

@@ -197,6 +197,18 @@ describe("buildExportModel", () => {
     expect(texts(items)).toContain("2");
   });
 
+  it("keeps a code block's blank lines, and draws no line for its closing newline", () => {
+    const m = model(["```js", "", "function a() {}", "", "", "function b() {}", "```"].join("\n"));
+    const code = paras(m.slides[0]?.items ?? []).filter((p) => p.mono);
+    expect(code.map((p) => p.runs.map((r) => r.text))).toEqual([
+      [""],
+      ["function a() {}"],
+      [""],
+      [""],
+      ["function b() {}"],
+    ]);
+  });
+
   it("turns the notes into plain text", () => {
     expect(model().slides.map((s) => s.notes)).toEqual([
       "Say hi.\n• first\n• second\n  1. inner",

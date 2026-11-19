@@ -67,6 +67,13 @@ export interface Presentation {
 /** How long the app waits for the frame's answer to an export before it gives up. */
 export const EXPORT_TIMEOUT_MS = 90_000;
 
+/** The toast when the deck's frame is replaced while it makes the file. */
+export const EXPORT_INTERRUPTED_TOAST = {
+  title: "The deck reloaded during the .pptx download",
+  description: "If no file was saved, choose Download .pptx again.",
+  tone: "warning",
+} as const;
+
 /** The toast for a finished export. Exported for tests. */
 export function exportedToast(m: { ok: boolean; images_skipped: number; opaque: boolean }): {
   title: string;
@@ -148,10 +155,12 @@ export function usePresentation(o: PresentationOptions): Presentation {
   );
   const [fullscreen, setFullscreen] = useState(false);
   const [exporting, setExporting] = useState(false);
-  /** The nonce of the export the app is waiting for, and its timeout. */
-  const pendingExport = useRef<{ nonce: string; timer: ReturnType<typeof setTimeout> } | null>(
-    null,
-  );
+  /** The export the app is waiting for: its nonce, its timeout and the frame it was sent to. */
+  const pendingExport = useRef<{
+    nonce: string;
+    timer: ReturnType<typeof setTimeout>;
+    frame: HTMLIFrameElement | null;
+  } | null>(null);
 
   const wanted = useRef<number | null>(initial.slide);
   const modeRef = useRef(mode);
@@ -257,6 +266,17 @@ export function usePresentation(o: PresentationOptions): Presentation {
     leavePresenter,
   ]);
 
+  // A new frame (a newer version, review mode) replaced the one making the file: its answer can no
+  // longer be heard, so the app stops waiting now rather than at the timeout.
+  useEffect(() => {
+    const pending = pendingExport.current;
+    if (!pending || pending.frame === frame) return;
+    clearTimeout(pending.timer);
+    pendingExport.current = null;
+    setExporting(false);
+    showToast(EXPORT_INTERRUPTED_TOAST);
+  }, [frame]);
+
   useEffect(() => {
     if (!available) return;
     const onChange = () => setFullscreen(document.fullscreenElement != null);
@@ -338,7 +358,7 @@ export function usePresentation(o: PresentationOptions): Presentation {
       setExporting(false);
       showToast({ title: "The .pptx could not be made", tone: "danger" });
     }, EXPORT_TIMEOUT_MS);
-    pendingExport.current = { nonce, timer };
+    pendingExport.current = { nonce, timer, frame: frameRef.current };
     setExporting(true);
   }, [available]);
 

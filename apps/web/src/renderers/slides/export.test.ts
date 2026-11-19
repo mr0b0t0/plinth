@@ -4,6 +4,7 @@
 // notice, and the boot wiring: an export message from the app (parent, app origin, nonce) builds
 // the file from every slide and answers with booleans and a count only.
 import {
+  LIMITS,
   RENDERER_MESSAGE_SOURCE,
   RENDERER_PROTOCOL_VERSION,
   TYPE_REGISTRY,
@@ -330,6 +331,60 @@ describe("boot: export", () => {
       ),
     );
     expect(f.fetch).not.toHaveBeenCalled();
+    stop();
+  });
+
+  it("makes the file once when asked again while it runs, and answers the newest nonce", async () => {
+    mount();
+    const f = framed();
+    let finish: (v: { blob: Blob; imagesSkipped: number }) => void = () => undefined;
+    const build = vi.fn<PptxBuilder>(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    const save = vi.fn();
+    const stop = boot(f.win, { loadWriter: async () => build, save, opaque: false, geometry });
+    const exportedCalls = () =>
+      f.parent.postMessage.mock.calls.filter(([m]) => (m as { type?: string }).type === "exported");
+    f.send(exportMsg());
+    await vi.waitFor(() => expect(build).toHaveBeenCalledTimes(1));
+    // The app gave up waiting, and the person asked again.
+    const NEWER = "qrstuvwxyzABCDEF";
+    f.send(exportMsg(NEWER));
+    await new Promise((r) => setTimeout(r, 10));
+    expect(exportedCalls()).toEqual([]);
+    finish({ blob: new Blob(["pk"]), imagesSkipped: 0 });
+    await vi.waitFor(() => expect(exportedCalls()).toHaveLength(1));
+    expect(exportedCalls()[0]?.[0]).toMatchObject({ type: "exported", nonce: NEWER, ok: true });
+    expect(build).toHaveBeenCalledTimes(1);
+    expect(save).toHaveBeenCalledTimes(1);
+    // Once it is done, a new request makes a new file.
+    f.send(exportMsg());
+    await vi.waitFor(() => expect(build).toHaveBeenCalledTimes(2));
+    finish({ blob: new Blob(["pk"]), imagesSkipped: 0 });
+    await vi.waitFor(() => expect(exportedCalls()).toHaveLength(2));
+    expect(exportedCalls()[1]?.[0]).toMatchObject({ nonce: NONCE });
+    stop();
+  });
+
+  it("reports at most the version file cap of images left out", async () => {
+    mount();
+    const f = framed();
+    const build = vi.fn<PptxBuilder>(async () => ({ blob: new Blob([]), imagesSkipped: 5000 }));
+    const stop = boot(f.win, { loadWriter: async () => build, save: vi.fn(), geometry });
+    f.send(exportMsg());
+    await vi.waitFor(() =>
+      expect(f.parent.postMessage).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          type: "exported",
+          ok: true,
+          images_skipped: LIMITS.maxAssetsCeiling,
+        }),
+        APP,
+      ),
+    );
     stop();
   });
 

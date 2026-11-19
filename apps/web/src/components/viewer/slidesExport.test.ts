@@ -9,7 +9,12 @@ import * as ui from "../ui/index.ts";
 import { exportMessage, NONCE_RE } from "./rendererProtocol.ts";
 import { readSlidesFrameMessage } from "./slidesProtocol.ts";
 import { CONFIG } from "./test-utils.ts";
-import { EXPORT_TIMEOUT_MS, exportedToast, usePresentation } from "./usePresentation.ts";
+import {
+  EXPORT_INTERRUPTED_TOAST,
+  EXPORT_TIMEOUT_MS,
+  exportedToast,
+  usePresentation,
+} from "./usePresentation.ts";
 
 type OkGate = Extract<ViewGate, { status: "ok" }>;
 
@@ -195,6 +200,42 @@ describe("usePresentation exportPptx", () => {
     });
     expect(result.current.exporting).toBe(false);
     expect(toast).toHaveBeenCalledWith({ title: "The .pptx could not be made", tone: "danger" });
+  });
+
+  it("stops waiting at once when a new frame replaces the one making the file", () => {
+    vi.useFakeTimers();
+    const toast = vi.spyOn(ui, "showToast");
+    const first = fakeFrame();
+    const second = fakeFrame();
+    const { result, rerender } = renderHook(
+      ({ f }) =>
+        usePresentation({
+          gate: gate(),
+          frame: f.frame,
+          contentOrigin: ORIGIN,
+          config: CONFIG,
+          slug: "talk",
+        }),
+      { initialProps: { f: first } },
+    );
+    act(() => result.current.exportPptx());
+    expect(result.current.exporting).toBe(true);
+    // The same frame re-rendering changes nothing.
+    rerender({ f: first });
+    expect(result.current.exporting).toBe(true);
+    expect(toast).not.toHaveBeenCalled();
+
+    rerender({ f: second });
+    expect(result.current.exporting).toBe(false);
+    expect(toast).toHaveBeenCalledExactlyOnceWith(EXPORT_INTERRUPTED_TOAST);
+    // The old timeout does not fire a second toast, and the menu item works again.
+    act(() => {
+      vi.advanceTimersByTime(EXPORT_TIMEOUT_MS);
+    });
+    expect(toast).toHaveBeenCalledTimes(1);
+    act(() => result.current.exportPptx());
+    expect(second.contentWindow.postMessage).toHaveBeenCalledTimes(1);
+    expect(result.current.exporting).toBe(true);
   });
 
   it("does nothing for an artifact that is not a deck", () => {

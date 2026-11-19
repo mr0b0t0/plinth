@@ -10,6 +10,7 @@
 // thumbnails.
 import {
   type DeckSettings,
+  LIMITS,
   parseDeck,
   SLIDE_ASPECTS,
   TYPED_PAYLOAD_VERSION,
@@ -273,7 +274,12 @@ export function boot(win: Window, opts: BootOptions = {}): () => void {
       clickDownload(doc, url, name);
       showReadyNotice(doc, root, url, name);
     });
-  let exporting = false;
+  /**
+   * The nonce the running export answers, or null when none runs. A request that comes while one
+   * runs (the app gave up waiting and the person asked again) takes over its answer: the app
+   * listens only for its latest nonce, and the file is made once.
+   */
+  let answerTo: string | null = null;
 
   /** Lays out and fits every slide, measures it, and puts the screen view back, in one task. */
   const measureDeck = (): DeckModel => {
@@ -300,14 +306,16 @@ export function boot(win: Window, opts: BootOptions = {}): () => void {
   };
 
   const runExport = async (nonce: string) => {
-    if (exporting) return;
-    exporting = true;
+    const busy = answerTo !== null;
+    answerTo = nonce;
+    if (busy) return;
     const report = (ok: boolean, skipped: number) =>
       postToApp(win, appOrigin, {
         type: "exported",
-        nonce,
+        nonce: answerTo ?? nonce,
         ok,
-        images_skipped: skipped,
+        // The app reads at most the version file cap; a deck of data: images could pass it.
+        images_skipped: Math.min(skipped, LIMITS.maxAssetsCeiling),
         opaque,
       });
     try {
@@ -323,7 +331,7 @@ export function boot(win: Window, opts: BootOptions = {}): () => void {
     } catch {
       report(false, 0);
     } finally {
-      exporting = false;
+      answerTo = null;
     }
   };
 
