@@ -27,6 +27,11 @@ export interface ScanInput {
    */
   reused?: string[];
   /**
+   * Warnings the version's type found in its own source (TypeHooks.sourceWarnings), listed first
+   * and capped with the rest.
+   */
+  typed?: PublishWarning[];
+  /**
    * Warnings from the version's type (its publishWarnings hook), listed after the reference
    * warnings and inside the same cap.
    */
@@ -67,7 +72,7 @@ function kindOf(f: FileEntry): "html" | "css" | "js" | null {
 }
 
 export function scanPublish(input: ScanInput): PublishWarning[] {
-  const out: PublishWarning[] = [];
+  const out: PublishWarning[] = [...(input.typed ?? [])];
   let budget = LIMITS.maxScanBytes;
   const unscanned = [...(input.unscanned ?? [])];
   for (const f of input.files) {

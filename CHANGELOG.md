@@ -10,6 +10,14 @@ Add a line under **Unreleased** in the pull request that makes a change people w
 
 ## Unreleased
 
+- **Slides.** Agents can publish a presentation as Markdown (`type: "slides"`): a line `---`
+  between slides, speaker notes after `Note:`, columns with `|||`. Plinth renders fixed 16:9 or 4:3
+  slides with automatic layouts and text that shrinks to fit. Page through with the keyboard,
+  clicks or swipes, link to a slide (`#slide=4`), present full screen, open a presenter view with
+  the notes, the next slide and a timer (and an audience window that follows it), and print or save
+  as PDF with or without the notes. Update the plugin for the agent's slides rules. The Plinth CLI
+  publishes a folder with `slides.md` at its top as a deck (`plinth publish`, `plinth upload`).
+
 - **Design systems.** Publish tokens, guidelines and components as a design system (`type:
   "design_system"`, JSON in `system.json`): Plinth shows it as a reference site with color, type,
   spacing and shadow samples and live component previews in light and dark. Agents read one with
@@ -24,8 +32,10 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   and posts every comment, and the page never sees comment text. Opening comments on such a page no
   longer reloads it. Agents see these anchors as `kind: "page"` in `list_comments` and mention
   tasks. Example: `docs/examples/canvas-comments.html`.
+
 - **Comment pins stay on their spot when selected.** A selected or hovered pin was drawn a little
   off its anchor; it now grows in place.
+
 - **Who is viewing: names and the people list.** Set your name from the account menu ("Your
   name…"); pages that show who is viewing now show it beside your email, on `plinth.viewer`, on
   the entries you write and in live rooms. A page that declares `data viewer people` lets its
@@ -35,6 +45,7 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   page. The list and the owner's sharing settings name a person once they have commented, entered
   something or published a version there, so adding an address never reveals whether it has an
   account. Names are display text: no `@`, no invisible characters, never a role.
+
 - **The Claude Code plugin remembers your instance.** It asks which Plinth instance to use when you
   enable it (the hosted one by default), keeps the answer, and its mention watcher follows it, so a
   self-hosted or local instance no longer needs `PLINTH_URL` exported every time Claude Code starts.
@@ -42,20 +53,25 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   `/plugin configure plinth@plinth`. `PLINTH_URL` still works and wins. The directory build has the
   option too, and the Connect panel, `/llms.txt` and `plinth connect` print the right command for
   each instance. Plugin 0.15.0.
+
 - **Plinth shows up properly in Codex.** The plugin now carries Codex's listing block (name,
   short description, icon, starter prompts, links), so Codex and Codex plugin directories show it
   with its own icon and description. Plugin 0.13.0.
+
 - **Live rooms.** Pages can show who is here and share moments live with `plinth.room`, and
   owners and editors can edit a doc together right on its page, saved as versions on Save or after
   a pause (#36).
+
 - **MCP tool annotations.** Every tool now says whether it only reads, whether it can remove
   data, and whether repeating it is safe, so clients can ask before the right calls and directories
   (Anthropic's connector directory requires them) can list Plinth.
+
 - **Admin stats and view counts.** Instance admins get a Stats page (people, artifacts,
   publishes, storage, shared data, agent connections, open reports and opens, with 7/30/90-day
   trends), and owners see how often other people opened a page in its Share dialog. Opens are
   kept as a daily number per page, never who opened it; `VIEW_COUNTS=off` turns counting off.
   Apply migration `0010_view_counts.sql` before deploying.
+
 - **Artifact categories: agents file artifacts under the project they work in; owners filter,
   move and rename them.** Each artifact can carry one category, usually the repo or client it
   belongs to. Agents set it when they publish (`category` on `publish_artifact` and
@@ -65,6 +81,7 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   see your categories, never the people you share with. Update the plugin (0.12.0) for the agent
   rules. Self-hosters: apply migration `0009_categories` before deploying
   ([deploy checklist](docs/deploy-checklist.md#6-upgrading-and-rolling-back)).
+
 - **The plugin's Plinth server loads in Codex and GitHub Copilot CLI.** Plugin 0.10.0 put a field
   in its `mcp.json` server entry that the Agent Plugins schema doesn't allow, so Codex and Copilot
   CLI installed the skill but skipped the server (Copilot logs `field "extensions" is not

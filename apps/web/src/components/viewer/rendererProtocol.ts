@@ -5,6 +5,8 @@
 //   app -> frame: print                    the renderer calls its own window.print()
 //   app -> frame: edit { on }              on-page editing on or off (#36)
 //   app -> frame: collect { nonce }        solo mode only: send me the edited text
+//   app -> frame: goto { slide }           a deck shows slide N (slidesProtocol.ts)
+//   app -> frame: view { mode }            a deck switches view: deck, presenter or overview
 //   frame -> app: live { ...status }       numbers, booleans and co-editor emails; never text
 //   frame -> app: save                     Cmd/Ctrl+S inside the frame
 //   frame -> app: draft { nonce, text }    the answer to collect, solo mode only
@@ -32,10 +34,17 @@ export interface PrintMessage {
   source: typeof RENDERER_MESSAGE_SOURCE;
   v: typeof RENDERER_PROTOCOL_VERSION;
   type: "print";
+  /** A deck prints the handout with speaker notes. The doc renderer ignores it. */
+  notes?: true;
 }
 
-export function printMessage(): PrintMessage {
-  return { source: RENDERER_MESSAGE_SOURCE, v: RENDERER_PROTOCOL_VERSION, type: "print" };
+export function printMessage(notes = false): PrintMessage {
+  return {
+    source: RENDERER_MESSAGE_SOURCE,
+    v: RENDERER_PROTOCOL_VERSION,
+    type: "print",
+    ...(notes ? { notes: true as const } : {}),
+  };
 }
 
 /**
@@ -51,10 +60,56 @@ export function rendererTargetOrigin(
 }
 
 /** Ask the renderer in `frame` to print. False when there is no frame window or target. */
-export function postPrint(frame: HTMLIFrameElement | null, targetOrigin: string | null): boolean {
+export function postPrint(
+  frame: HTMLIFrameElement | null,
+  targetOrigin: string | null,
+  notes = false,
+): boolean {
   const win = frame?.contentWindow;
   if (!win || !targetOrigin) return false;
-  win.postMessage(printMessage(), targetOrigin);
+  win.postMessage(printMessage(notes), targetOrigin);
+  return true;
+}
+
+// ---------- decks (the slides type) ----------
+
+/** A deck's views, as the app asks for them. */
+export type DeckView = "deck" | "presenter" | "overview";
+
+export interface GotoMessage {
+  source: typeof RENDERER_MESSAGE_SOURCE;
+  v: typeof RENDERER_PROTOCOL_VERSION;
+  type: "goto";
+  slide: number;
+}
+
+export interface ViewMessage {
+  source: typeof RENDERER_MESSAGE_SOURCE;
+  v: typeof RENDERER_PROTOCOL_VERSION;
+  type: "view";
+  mode: DeckView;
+}
+
+export function gotoMessage(slide: number): GotoMessage {
+  return { source: RENDERER_MESSAGE_SOURCE, v: RENDERER_PROTOCOL_VERSION, type: "goto", slide };
+}
+
+export function viewMessage(mode: DeckView): ViewMessage {
+  return { source: RENDERER_MESSAGE_SOURCE, v: RENDERER_PROTOCOL_VERSION, type: "view", mode };
+}
+
+/**
+ * Post a deck message (a slide number or a view name, which the frame already knows) to the frame
+ * at `targetOrigin`, "*" included for opaque frames. False when it cannot.
+ */
+export function postToDeck(
+  frame: HTMLIFrameElement | null,
+  targetOrigin: string | null,
+  message: GotoMessage | ViewMessage,
+): boolean {
+  const win = frame?.contentWindow;
+  if (!win || !targetOrigin) return false;
+  win.postMessage(message, targetOrigin);
   return true;
 }
 
@@ -142,11 +197,18 @@ export const APP_MESSAGE_KINDS = [
   "print",
   "edit",
   "collect",
+  "goto",
+  "view",
 ] as const;
 export type AppMessageKind = (typeof APP_MESSAGE_KINDS)[number];
 
 /** Every app -> frame message. Each kind has one interface and one builder above. */
-export type AppToFrameMessage = PrintMessage | EditMessage | CollectMessage;
+export type AppToFrameMessage =
+  | PrintMessage
+  | EditMessage
+  | CollectMessage
+  | GotoMessage
+  | ViewMessage;
 
 /** Post an editing message to the frame's window at the exact origin. False when it cannot. */
 export function postToRenderer(

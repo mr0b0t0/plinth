@@ -815,7 +815,8 @@ export class VersionStager implements Stager {
       }
       const manifestPaths = new Set(entries.map((e) => e.path));
       // Per-type warnings about the source (services/artifactTypes/<type>.ts), capped with the
-      // reference warnings.
+      // reference warnings: the type's own source checks first (sourceWarnings), the ones that
+      // read other artifacts after the reference warnings (publishWarnings).
       const typeWarnings = typeHooks(def).publishWarnings;
       const extra = typeWarnings
         ? await typeWarnings(this.ctx, { def, text: sourceText, paths: manifestPaths })
@@ -827,6 +828,7 @@ export class VersionStager implements Stager {
         isolation: this.ctx.config.contentIsolation,
         unscanned: this.unscanned.map((p) => byRaw.get(p) ?? p),
         reused,
+        typed: typeHooks(def).sourceWarnings?.(def, sourceText, manifestPaths),
         extra,
       });
       this.scanText.clear();

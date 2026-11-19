@@ -16,6 +16,8 @@ import {
   GearSixIcon,
   MoonIcon,
   PencilSimpleIcon,
+  PresentationChartIcon,
+  PresentationIcon,
   PrinterIcon,
   ShareNetworkIcon,
   SunIcon,
@@ -29,8 +31,10 @@ import { DataNotice } from "./DataNotice.tsx";
 import { copyForAgent } from "./designSystemItems.ts";
 import { EditBar } from "./EditBar.tsx";
 import { LiveDraftNotice } from "./LiveDraftNotice.tsx";
+import { PresentStrip } from "./PresentStrip.tsx";
 import { postPrint, rendererTargetOrigin } from "./rendererProtocol.ts";
 import type { LiveEdit } from "./useLiveEdit.ts";
+import type { Presentation } from "./usePresentation.ts";
 
 type OkGate = Extract<ViewGate, { status: "ok" }>;
 
@@ -48,6 +52,8 @@ export interface StageContext {
   /** On-page editing (#36). */
   live: LiveEdit;
   editing: boolean;
+  /** Presenting a deck (usePresentation); inert for every other type. */
+  present: Presentation;
   hrefs: {
     current: string;
     edit: string;
@@ -76,6 +82,8 @@ export interface StageContext {
     finishEditing: () => void;
     /** After a notice button that may have unmounted with focus in it: move focus on. */
     refocusAfterNotice: () => void;
+    /** Fetch a fresh gate (the newest version). */
+    reload: () => void;
   };
 }
 
@@ -141,9 +149,25 @@ const printTyped: MenuItem = (c) => [
   },
 ];
 
+/** A deck's presenter view: notes, the next slide and a timer, in the frame. */
+const presenterView: MenuItem = (c) =>
+  c.present.available && c.present.mode !== "audience"
+    ? [{ label: "Presenter view", icon: PresentationChartIcon, onSelect: c.present.presenterView }]
+    : [];
+
+/** A deck's handout: each slide over its speaker notes, printed by the frame. */
+const printWithNotes: MenuItem = (c) => [
+  {
+    label: "Print with speaker notes",
+    icon: PrinterIcon,
+    onSelect: () => c.present.print(true),
+  },
+];
+
 /** Menu items for one artifact type, in order, after Settings. One type per line. */
 export const TYPE_MENU_ITEMS: Partial<Record<ArtifactType, readonly MenuItem[]>> = {
   doc: [printTyped],
+  slides: [presenterView, printTyped, printWithNotes],
   design_system: [copyForAgent],
 };
 
@@ -268,6 +292,20 @@ const commentsToggle: StageNode = (c) => {
   );
 };
 
+/** Present a deck: the app puts its own frame full screen (no allow="fullscreen" on the frame). */
+const presentButton: StageNode = (c) =>
+  c.present.available && (
+    <Tooltip content="Present" placement="bottom">
+      <Button
+        variant="ghost"
+        icon={PresentationIcon}
+        aria-label="Present"
+        className="pl-viewer__present-button"
+        onClick={c.present.present}
+      />
+    </Tooltip>
+  );
+
 const shareButton: StageNode = (c) =>
   !c.compact && (
     <Button variant="primary" onClick={c.actions.openShare}>
@@ -291,6 +329,7 @@ export const BAR_CONTROLS: readonly StageItem[] = [
   { id: "history", render: historyLink },
   { id: "edit", render: editToggle },
   { id: "sign-in-to-edit", render: signInToEdit },
+  { id: "present", render: presentButton },
   { id: "comments", render: commentsToggle },
   { id: "share", render: shareButton },
   { id: "menu", render: actionsMenu },
@@ -361,10 +400,20 @@ const liveDraftNotice: StageNode = ({ editing, live, gate, actions }) =>
     />
   );
 
+const presentStrip: StageNode = ({ present, gate: { artifact }, actions }) => (
+  <PresentStrip
+    present={present}
+    version={artifact.version}
+    currentVersion={artifact.current_version}
+    onShowNewer={actions.reload}
+  />
+);
+
 /** The strip of notices under the bar, top to bottom. One item per line. */
 export const STRIP_ITEMS: readonly StageItem[] = [
   { id: "older-version", render: olderVersion },
   { id: "data-notice", render: dataNotice },
   { id: "edit-bar", render: editBar },
   { id: "live-draft", render: liveDraftNotice },
+  { id: "present", render: presentStrip },
 ];

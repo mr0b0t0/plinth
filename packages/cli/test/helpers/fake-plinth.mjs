@@ -15,6 +15,10 @@ const rid = (n = 20) =>
 
 export const PAT = "plinth_pat_testtoken";
 
+/** Each type's source file, as the server's registry has it; Markdown types send `content`. */
+const SOURCES = { html: "index.html", doc: "content.md", slides: "slides.md" };
+const sourceOf = (type) => SOURCES[type] ?? "index.html";
+
 export async function startFakePlinth(options = {}) {
   const state = {
     requests: [],
@@ -98,7 +102,7 @@ export async function startFakePlinth(options = {}) {
 
   function detail(a, n) {
     const v = a.versions[n - 1];
-    const sourcePath = a.type === "doc" ? "content.md" : "index.html";
+    const sourcePath = sourceOf(a.type);
     const assets = [...v]
       .filter(([p]) => p !== sourcePath)
       .map(([path, f]) => ({
@@ -119,7 +123,7 @@ export async function startFakePlinth(options = {}) {
       source_path: sourcePath,
       category: a.category ?? null,
       assets,
-      ...(a.type === "doc" ? { content: src } : { html: src }),
+      ...(a.type === "html" ? { html: src } : { content: src }),
     };
   }
 
@@ -127,7 +131,7 @@ export async function startFakePlinth(options = {}) {
   function commit(a, files, category) {
     const prev = a.versions.at(-1);
     const prevHashes = new Set(prev ? [...prev.values()].map((f) => f.sha256) : []);
-    const sourcePath = a.type === "doc" ? "content.md" : "index.html";
+    const sourcePath = sourceOf(a.type);
     const next = new Map();
     let written = 0;
     let bytesWritten = 0;
@@ -462,8 +466,17 @@ export async function startFakePlinth(options = {}) {
           const cur = a.versions.at(-1);
           const byHash = new Map([...cur.values()].map((f) => [f.sha256, f.bytes]));
           const files = new Map();
-          const src = a.type === "doc" ? input.content : input.html;
-          files.set(a.type === "doc" ? "content.md" : "index.html", Buffer.from(src, "utf8"));
+          // As resolveSource: the field must match the artifact's type, which cannot change.
+          const field = a.type === "html" ? "html" : "content";
+          const src = input[field];
+          if (typeof src !== "string" || input[field === "html" ? "content" : "html"] !== undefined)
+            return apiError(
+              res,
+              400,
+              "invalid_input",
+              `This artifact is a ${a.type}: send ${field === "html" ? "its HTML as html" : "its Markdown as content"}. The type cannot change.`,
+            );
+          files.set(sourceOf(a.type), Buffer.from(src, "utf8"));
           const missing = [];
           for (const x of input.assets ?? []) {
             if (x.content !== undefined) {

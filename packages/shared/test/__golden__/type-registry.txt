@@ -50,6 +50,34 @@
     }
   ],
   [
+    "slides",
+    {
+      "id": "slides",
+      "label": "Slides",
+      "badge": "Slides",
+      "sourcePath": "slides.md",
+      "sourceField": "content",
+      "sourceLabel": "Markdown",
+      "contentType": "text/markdown; charset=utf-8",
+      "maxSourceBytes": 1048576,
+      "reservedPaths": [
+        "index.html",
+        "slides.md"
+      ],
+      "assetTypes": "/^image\\/(png|jpeg|gif|webp|avif|svg\\+xml)$/",
+      "renderer": {
+        "script": "slides.js",
+        "style": "slides.css"
+      },
+      "editor": {
+        "language": "markdown",
+        "wordWrap": "on"
+      },
+      "liveEdit": false,
+      "present": true
+    }
+  ],
+  [
     "design_system",
     {
       "id": "design_system",

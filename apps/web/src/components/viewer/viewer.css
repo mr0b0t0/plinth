@@ -524,3 +524,28 @@
 .pl-viewer--editing .pl-viewer__frame-wrap {
   box-shadow: inset 0 2px 0 var(--color-accent);
 }
+
+/* ---------- Presenting a deck (the slides type) ---------- */
+.pl-viewer__present {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1-5) var(--space-3);
+  margin: 0;
+}
+.pl-viewer__present-title {
+  color: var(--color-ink);
+  font-weight: 600;
+}
+.pl-viewer__present-actions {
+  display: inline-flex;
+  gap: var(--space-1-5);
+  margin-left: auto;
+}
+/* The frame the app put full screen fills the screen with the deck's own stage colour. */
+.pl-viewer-frame:fullscreen {
+  width: 100vw;
+  height: 100vh;
+  border: 0;
+  background: #000;
+}

@@ -10,17 +10,20 @@
 // (room notifications, per-type publish warnings). stage.ts and artifacts.ts call the hooks and
 // never branch on a type id.
 import {
+  ARTIFACT_TYPES,
   type ArtifactDetailBase,
   type ArtifactType,
   type ArtifactTypeDef,
   type PublishResult,
   type PublishWarning,
+  TYPE_REGISTRY,
   typeDef,
 } from "@plinth/shared";
 import { ApiError } from "../lib/errors.ts";
 import { designSystemHooks } from "./artifactTypes/design_system.ts";
 import { docHooks } from "./artifactTypes/doc.ts";
 import { htmlHooks } from "./artifactTypes/html.ts";
+import { slidesHooks } from "./artifactTypes/slides.ts";
 import type { Ctx } from "./context.ts";
 
 export interface SourceInput {
@@ -59,6 +62,16 @@ export interface TypeHooks {
   /** Said to the agent when an asset is of a content type the type does not take. */
   assetRule?: string;
   /**
+   * Advisory publish warnings about the source itself, given every path of the version's final
+   * manifest. Runs where the reference scan runs (never on a restore), and its warnings share the
+   * scan's cap. Never throws for a source that validate accepted.
+   */
+  sourceWarnings?(
+    def: ArtifactTypeDef,
+    text: string,
+    manifestPaths: ReadonlySet<string>,
+  ): PublishWarning[];
+  /**
    * After the commit, outside its error handling: never makes the commit look failed. Returns
    * the result, with any per-type publish warnings added.
    */
@@ -66,6 +79,8 @@ export interface TypeHooks {
   /**
    * Per-type publish warnings about the staged source, before the commit (never on a restore).
    * `paths` are every file of the version, the source included. Advisory: never blocks a publish.
+   * Unlike sourceWarnings it may read other artifacts (a design system a page names); its warnings
+   * come after the reference warnings, inside the same cap.
    */
   publishWarnings?(ctx: Ctx, v: StagedSource): Promise<PublishWarning[]>;
   /** Extra fields of get_artifact for a version of this type, read as the caller. */
@@ -83,6 +98,7 @@ export interface StagedSource {
 const TYPE_HOOKS: { readonly [K in ArtifactType]: TypeHooks } = {
   html: htmlHooks,
   doc: docHooks,
+  slides: slidesHooks,
   design_system: designSystemHooks,
 };
 
@@ -90,6 +106,12 @@ const TYPE_HOOKS: { readonly [K in ArtifactType]: TypeHooks } = {
 export function typeHooks(def: ArtifactTypeDef): TypeHooks {
   return TYPE_HOOKS[def.id];
 }
+
+/** `pass type "doc", "slides" or "design_system"`: every type that takes content, from the registry. */
+const TYPED_CHOICES = ARTIFACT_TYPES.filter((t) => TYPE_REGISTRY[t].sourceField === "content")
+  .map((t) => `"${t}"`)
+  .join(", ")
+  .replace(/, ([^,]*)$/, " or $1");
 
 function refuse(def: ArtifactTypeDef, field: string, message: string): ApiError {
   return new ApiError("invalid_input", message, { type: def.id, field });
@@ -135,7 +157,7 @@ export function resolveSource(
         def,
         "content",
         publishing
-          ? 'content is for typed artifacts: pass type "doc", or send html'
+          ? `content is for typed artifacts: pass type ${TYPED_CHOICES}, or send html`
           : "This artifact is an HTML page: send html. The type cannot change.",
       );
     }

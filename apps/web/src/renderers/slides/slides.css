@@ -1,0 +1,723 @@
+/* The slides type's page (served as /__plinth/types/slides/slides.css on content origins). System
+   fonts only, as for docs: the content CSP allows no font host for Plinth's own files, and a deck
+   must look the same offline, on a projector and in print.
+
+   A slide is laid out at its fixed canvas size (--w x --h, 1280x720 or 1024x768) and scaled with a
+   transform (--s, set by stage.ts), so text wraps the same everywhere. Sizes below are canvas
+   pixels; --fit (layout.ts) shrinks the body's text until it fits. Classes that start with
+   plinth-doc__ or language- come from the doc's Markdown pipeline. */
+
+:root {
+  color-scheme: light;
+  --slides-stage: #e9ecef;
+  --slides-bg: #ffffff;
+  --slides-fg: #1f2328;
+  --slides-heading: #0d1117;
+  --slides-muted: #59636e;
+  --slides-accent: #0a58ca;
+  --slides-rule: #d8dee4;
+  --slides-code-bg: #f3f5f7;
+  --slides-ctl-bg: rgb(255 255 255 / 0.94);
+  --slides-ctl-fg: #1f2328;
+  --slides-warn: #9a3412;
+  --slides-focus: #0a58ca;
+  --slides-font:
+    system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif,
+    "Apple Color Emoji", "Segoe UI Emoji";
+  --slides-mono:
+    ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  --w: 1280px;
+  --h: 720px;
+  --s: 1;
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --slides-stage: #0b0d10;
+  --slides-bg: #15181c;
+  --slides-fg: #d6dbe0;
+  --slides-heading: #f0f3f6;
+  --slides-muted: #9aa4ae;
+  --slides-accent: #6cb2ff;
+  --slides-rule: #343a42;
+  --slides-code-bg: #1f242b;
+  --slides-ctl-bg: rgb(28 32 38 / 0.94);
+  --slides-ctl-fg: #e6eaee;
+  --slides-warn: #fdba74;
+  --slides-focus: #6cb2ff;
+}
+
+/* `auto` follows the viewer's scheme on screen and prints light. */
+@media screen and (prefers-color-scheme: dark) {
+  :root[data-theme="auto"] {
+    color-scheme: dark;
+    --slides-stage: #0b0d10;
+    --slides-bg: #15181c;
+    --slides-fg: #d6dbe0;
+    --slides-heading: #f0f3f6;
+    --slides-muted: #9aa4ae;
+    --slides-accent: #6cb2ff;
+    --slides-rule: #343a42;
+    --slides-code-bg: #1f242b;
+    --slides-ctl-bg: rgb(28 32 38 / 0.94);
+    --slides-ctl-fg: #e6eaee;
+    --slides-warn: #fdba74;
+    --slides-focus: #6cb2ff;
+  }
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+}
+
+body {
+  background: var(--slides-stage);
+  color: var(--slides-fg);
+  font-family: var(--slides-font);
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+  overflow: hidden;
+}
+
+.plinth-slides {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  outline: none;
+  background: var(--slides-stage);
+}
+
+.plinth-slides[data-mode="overview"] {
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+.plinth-slides__error {
+  margin: 40px 16px;
+  font-size: 1rem;
+  color: var(--slides-muted);
+}
+
+/* ---------- the deck and its frames ---------- */
+
+.plinth-slides__deck {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.plinth-slides[data-mode="deck"] .plinth-slides__frame:not([data-active]) {
+  display: none;
+}
+
+.plinth-slides[data-mode="presenter"] .plinth-slides__deck {
+  display: none;
+}
+
+.plinth-slides__frame {
+  position: relative;
+  flex: none;
+}
+
+.plinth-slides__canvas {
+  position: relative;
+  width: calc(var(--w) * var(--s));
+  height: calc(var(--h) * var(--s));
+  overflow: hidden;
+}
+
+.plinth-slides__label,
+.plinth-slides__handout {
+  display: none;
+}
+
+.plinth-slides__slide {
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: flex;
+  flex-direction: column;
+  width: var(--w);
+  height: var(--h);
+  padding: 64px 80px 72px;
+  overflow: hidden;
+  transform: scale(var(--s));
+  transform-origin: 0 0;
+  background: var(--slides-bg);
+  color: var(--slides-fg);
+  font-family: var(--slides-font);
+  line-height: 1.35;
+  overflow-wrap: break-word;
+}
+
+:root[data-aspect="4:3"] .plinth-slides__slide {
+  padding: 56px 64px 68px;
+}
+
+.plinth-slides__body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+  font-size: calc(30px * var(--fit, 1));
+}
+
+/* ---------- Markdown inside a slide ---------- */
+
+.plinth-slides__body :where(h1, h2, h3, h4, h5, h6) {
+  margin: 0 0 0.5em;
+  color: var(--slides-heading);
+  font-weight: 650;
+  line-height: 1.15;
+  letter-spacing: -0.01em;
+}
+
+.plinth-slides__body h1 {
+  font-size: 2.4em;
+}
+
+.plinth-slides__body h2 {
+  font-size: 1.733em;
+}
+
+.plinth-slides__body h3 {
+  font-size: 1.2em;
+}
+
+.plinth-slides__body :where(h4, h5, h6) {
+  font-size: 1em;
+}
+
+.plinth-slides__body :where(p, ul, ol, blockquote, pre, .plinth-doc__table) {
+  margin: 0 0 0.6em;
+}
+
+.plinth-slides__body :where(ul, ol) {
+  padding-left: 1.2em;
+}
+
+.plinth-slides__body li + li {
+  margin-top: 0.3em;
+}
+
+.plinth-slides__body li > :where(ul, ol) {
+  margin: 0.3em 0 0;
+  font-size: 0.9em;
+}
+
+.plinth-slides__body a {
+  color: var(--slides-accent);
+  text-underline-offset: 0.15em;
+}
+
+.plinth-slides__body blockquote {
+  padding-left: 0.8em;
+  border-left: 4px solid var(--slides-rule);
+  color: var(--slides-muted);
+}
+
+.plinth-slides__body code {
+  padding: 0.1em 0.3em;
+  border-radius: 6px;
+  background: var(--slides-code-bg);
+  font-family: var(--slides-mono);
+  font-size: 0.85em;
+}
+
+.plinth-slides__body pre {
+  padding: 0.8em 1em;
+  border-radius: 10px;
+  background: var(--slides-code-bg);
+  overflow: hidden;
+  font-size: 0.733em;
+  line-height: 1.45;
+}
+
+.plinth-slides__body pre code {
+  padding: 0;
+  background: none;
+  font-size: 1em;
+  white-space: pre-wrap;
+}
+
+.plinth-slides__body hr {
+  width: 100%;
+  margin: 0.6em 0;
+  border: 0;
+  border-top: 2px solid var(--slides-rule);
+}
+
+.plinth-slides__body table {
+  border-collapse: collapse;
+  font-size: 0.733em;
+}
+
+.plinth-slides__body :where(th, td) {
+  padding: 0.35em 0.8em;
+  border-bottom: 1px solid var(--slides-rule);
+  text-align: left;
+}
+
+.plinth-slides__body th {
+  color: var(--slides-heading);
+  font-weight: 650;
+}
+
+.plinth-doc__align-center {
+  text-align: center;
+}
+
+.plinth-doc__align-right {
+  text-align: right;
+}
+
+.plinth-slides__body img {
+  display: block;
+  max-width: 100%;
+  max-height: 400px;
+  margin: 0 auto;
+  object-fit: contain;
+}
+
+.plinth-slides__body p:has(> img:only-child) {
+  text-align: center;
+}
+
+/* ---------- layouts (layout.ts classifySlide) ---------- */
+
+.plinth-slides__slide[data-layout="title"] .plinth-slides__body,
+.plinth-slides__slide[data-layout="section"] .plinth-slides__body {
+  justify-content: center;
+}
+
+.plinth-slides__slide[data-layout="title"] h1 {
+  margin-bottom: 0.3em;
+}
+
+.plinth-slides__slide[data-layout="title"] p {
+  color: var(--slides-muted);
+  font-size: 1.333em;
+}
+
+.plinth-slides__slide[data-layout="section"] h2 {
+  font-size: 2.4em;
+  border-left: 10px solid var(--slides-accent);
+  padding-left: 0.4em;
+}
+
+.plinth-slides__slide[data-layout="image"] .plinth-slides__head {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.plinth-slides__slide[data-layout="image"] .plinth-slides__head > p {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  min-height: 0;
+  margin: 0;
+}
+
+.plinth-slides__slide[data-layout="image"] img {
+  max-height: 100%;
+}
+
+.plinth-slides__columns {
+  display: grid;
+  flex: 1;
+  gap: 48px;
+  min-height: 0;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.plinth-slides__columns[data-count="3"] {
+  gap: 40px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.plinth-slides__column > :last-child {
+  margin-bottom: 0;
+}
+
+.plinth-slides__footer,
+.plinth-slides__number {
+  position: absolute;
+  bottom: 26px;
+  color: var(--slides-muted);
+  font-size: 18px;
+  line-height: 1.2;
+}
+
+.plinth-slides__footer {
+  left: 80px;
+  max-width: calc(100% - 240px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.plinth-slides__number {
+  right: 80px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- the overview: every slide stacked ---------- */
+
+.plinth-slides[data-mode="overview"] .plinth-slides__deck,
+.plinth-slides[data-print] .plinth-slides__deck {
+  position: static;
+  flex-direction: column;
+  gap: 24px;
+  padding: 16px 0 40px;
+}
+
+/* While printing, every slide is laid out on screen too, so each can be fitted first. */
+.plinth-slides[data-print][data-mode] .plinth-slides__deck {
+  display: flex;
+}
+
+.plinth-slides[data-print][data-mode] .plinth-slides__frame:not([data-print-x]) {
+  display: block;
+}
+
+.plinth-slides[data-mode="overview"] .plinth-slides__canvas {
+  border-radius: 6px;
+  box-shadow:
+    0 0 0 1px var(--slides-rule),
+    0 2px 8px rgb(0 0 0 / 0.08);
+}
+
+.plinth-slides[data-mode="overview"] .plinth-slides__frame {
+  cursor: pointer;
+}
+
+.plinth-slides[data-mode="overview"] .plinth-slides__frame[data-active] .plinth-slides__canvas {
+  box-shadow:
+    0 0 0 3px var(--slides-accent),
+    0 2px 8px rgb(0 0 0 / 0.08);
+}
+
+.plinth-slides[data-mode="overview"] .plinth-slides__label {
+  display: block;
+  margin: 0 0 6px;
+  color: var(--slides-muted);
+  font-size: 0.8125rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.plinth-slides__pane--current .plinth-slides__slide[data-overflow]::after,
+.plinth-slides[data-mode="overview"] .plinth-slides__slide[data-overflow]::after {
+  content: "This slide overflows";
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  padding: 4px 12px;
+  border-radius: 6px;
+  background: var(--slides-warn);
+  color: var(--slides-bg);
+  font-size: 20px;
+}
+
+/* ---------- presenter view (presenter.ts) ---------- */
+
+.plinth-slides__presenter {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+  grid-template-rows: minmax(0, 1fr) auto;
+  gap: 16px;
+  padding: 16px;
+  background: var(--slides-stage);
+  color: var(--slides-fg);
+  font-size: 1rem;
+}
+
+.plinth-slides__pane {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.plinth-slides__presenter .plinth-slides__pane .plinth-slides__label,
+.plinth-slides__presenter .plinth-slides__pane .plinth-slides__handout {
+  display: none;
+}
+
+.plinth-slides__side {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+}
+
+.plinth-slides__pane--next {
+  flex: 0 0 36%;
+}
+
+.plinth-slides__caption {
+  margin: 0;
+  color: var(--slides-muted);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.plinth-slides__notes {
+  flex: 1;
+  min-height: 0;
+  padding: 12px 16px;
+  border-radius: 8px;
+  background: var(--slides-bg);
+  overflow: auto;
+  font-size: 1.125rem;
+  line-height: 1.55;
+}
+
+.plinth-slides__notes > :first-child {
+  margin-top: 0;
+}
+
+.plinth-slides__presenter .plinth-slides__notes code {
+  font-family: var(--slides-mono);
+  font-size: 0.9em;
+}
+
+.plinth-slides__notes a {
+  color: var(--slides-accent);
+}
+
+.plinth-slides__empty,
+.plinth-slides__end {
+  margin: 0;
+  color: var(--slides-muted);
+}
+
+.plinth-slides__pbar {
+  display: flex;
+  flex-wrap: wrap;
+  grid-column: 1 / -1;
+  gap: 8px 12px;
+  align-items: center;
+}
+
+.plinth-slides__timer {
+  font-size: 1.5rem;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+.plinth-slides__clock,
+.plinth-slides__count {
+  color: var(--slides-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.plinth-slides__warning {
+  color: var(--slides-warn);
+  font-weight: 600;
+}
+
+@media (max-width: 900px) {
+  .plinth-slides__presenter {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 45%) minmax(0, 1fr) auto;
+  }
+
+  .plinth-slides__side {
+    flex-direction: column-reverse;
+    justify-content: flex-end;
+  }
+
+  .plinth-slides__pane--next {
+    flex-basis: 30%;
+  }
+}
+
+/* ---------- controls ---------- */
+
+.plinth-slides__controls {
+  position: fixed;
+  bottom: 12px;
+  left: 50%;
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  padding: 4px;
+  border-radius: 10px;
+  background: var(--slides-ctl-bg);
+  box-shadow: 0 2px 12px rgb(0 0 0 / 0.18);
+  color: var(--slides-ctl-fg);
+  font-size: 0.875rem;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateX(-50%);
+  transition: opacity 0.2s ease;
+}
+
+.plinth-slides[data-controls="on"] .plinth-slides__controls,
+.plinth-slides__controls:focus-within {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.plinth-slides[data-mode="presenter"] .plinth-slides__controls {
+  display: none;
+}
+
+.plinth-slides__counter {
+  min-width: 4.5em;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.plinth-slides__btn {
+  min-width: 36px;
+  min-height: 36px;
+  padding: 4px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.plinth-slides__presenter .plinth-slides__btn {
+  border: 1px solid var(--slides-rule);
+  background: var(--slides-bg);
+}
+
+.plinth-slides__btn:hover {
+  background: var(--slides-code-bg);
+}
+
+.plinth-slides__btn:focus-visible,
+.plinth-slides__body a:focus-visible {
+  outline: 2px solid var(--slides-focus);
+  outline-offset: 2px;
+}
+
+.plinth-slides__live {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .plinth-slides__controls {
+    transition: none;
+  }
+}
+
+/* ---------- print: one slide per page, or the handout ---------- */
+/* The html prefix and [data-mode] lift these rules above the screen views' own. */
+
+@media print {
+  html,
+  body {
+    height: auto;
+    overflow: visible;
+    background: none;
+  }
+
+  :root[data-theme="dark"] {
+    print-color-adjust: exact;
+    -webkit-print-color-adjust: exact;
+  }
+
+  html .plinth-slides[data-mode] {
+    position: static;
+    overflow: visible;
+    background: none;
+  }
+
+  html .plinth-slides[data-mode] .plinth-slides__controls,
+  html .plinth-slides[data-mode] .plinth-slides__presenter,
+  html .plinth-slides[data-mode] .plinth-slides__live,
+  html .plinth-slides[data-mode] .plinth-slides__label {
+    display: none;
+  }
+
+  html .plinth-slides[data-mode] .plinth-slides__deck {
+    position: static;
+    display: block;
+    padding: 0;
+  }
+
+  html .plinth-slides[data-mode] .plinth-slides__deck > .plinth-slides__frame:not([data-print-x]) {
+    display: block;
+    break-after: page;
+    break-inside: avoid;
+  }
+
+  html .plinth-slides[data-mode] .plinth-slides__deck > .plinth-slides__frame:last-child {
+    break-after: auto;
+  }
+
+  /* Every slide at its canvas size: the @page rule (print.ts) is that size. */
+  html .plinth-slides[data-mode] .plinth-slides__canvas {
+    width: var(--w);
+    height: var(--h);
+    border-radius: 0;
+    box-shadow: none;
+  }
+
+  html .plinth-slides[data-mode] .plinth-slides__slide {
+    transform: none;
+  }
+
+  html .plinth-slides[data-mode] .plinth-slides__slide[data-overflow]::after {
+    display: none;
+  }
+
+  /* The handout: each slide scaled to the page width, over its notes. */
+  html .plinth-slides[data-print="handout"] .plinth-slides__canvas {
+    width: calc(var(--w) * 0.52);
+    height: calc(var(--h) * 0.52);
+    box-shadow: 0 0 0 1px #c9d1d9;
+  }
+
+  html .plinth-slides[data-print="handout"] .plinth-slides__slide {
+    transform: scale(0.52);
+  }
+
+  html[data-aspect="4:3"] .plinth-slides[data-print="handout"] .plinth-slides__canvas {
+    width: calc(var(--w) * 0.62);
+    height: calc(var(--h) * 0.62);
+  }
+
+  html[data-aspect="4:3"] .plinth-slides[data-print="handout"] .plinth-slides__slide {
+    transform: scale(0.62);
+  }
+
+  html .plinth-slides[data-print="handout"] .plinth-slides__handout {
+    display: block;
+    margin-top: 8mm;
+    color: #1f2328;
+    font-size: 11pt;
+    line-height: 1.5;
+  }
+}

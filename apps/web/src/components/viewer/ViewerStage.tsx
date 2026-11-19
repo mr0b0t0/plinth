@@ -27,6 +27,7 @@ import { ShareDialog } from "./ShareDialog.tsx";
 import { StageFrame } from "./StageFrame.tsx";
 import { BAR_CONTROLS, STRIP_ITEMS, type StageContext, type StageItem } from "./stageItems.tsx";
 import { useLiveEdit } from "./useLiveEdit.ts";
+import { usePresentation } from "./usePresentation.ts";
 import type { WatchPause } from "./useVersionWatch.ts";
 import "./viewer.css";
 
@@ -149,9 +150,21 @@ export function ViewerStage({
     onReload: onReload ?? (() => undefined),
   });
   const editing = live.editing;
+  // Presenting a deck: the slide, full screen, presenter view and its audience window.
+  const present = usePresentation({ gate, frame, contentOrigin, config, slug, pinned });
+  const pause: WatchPause = live.pause ?? present.pause;
   useEffect(() => {
-    onPauseChange?.(live.pause);
-  }, [live.pause, onPauseChange]);
+    onPauseChange?.(pause);
+  }, [pause, onPauseChange]);
+  // A version published while presenting waits; once presenting ends, the deck catches up.
+  const presented = useRef(false);
+  useEffect(() => {
+    const was = presented.current;
+    presented.current = present.pause !== null;
+    if (was && present.pause === null && !pinned) {
+      if (artifact.version < artifact.current_version) onReload?.();
+    }
+  }, [present.pause, pinned, artifact.version, artifact.current_version, onReload]);
   useEffect(() => {
     onEditModeChange?.(editing);
   }, [editing, onEditModeChange]);
@@ -209,6 +222,7 @@ export function ViewerStage({
     contentOrigin,
     live,
     editing,
+    present,
     hrefs: {
       current: currentHref,
       edit: editHref,
@@ -232,6 +246,7 @@ export function ViewerStage({
       startEditing,
       finishEditing: () => void finishEditing(),
       refocusAfterNotice: () => refocusIfLost(focusEditEntry),
+      reload: () => onReload?.(),
     },
   };
 
