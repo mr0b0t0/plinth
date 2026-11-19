@@ -2628,6 +2628,107 @@
         ],
         "x-mcp-tool": "delete_artifact_file"
       }
+    },
+    "/artifacts/{ref}/export/options": {
+      "get": {
+        "operationId": "getDesignExportOptions",
+        "summary": "A design's artboards and the formats it downloads as",
+        "description": "For an artifact of type design the caller may view: its boards (id, name, size) in the version (the current one without `version`). 404 for an artifact of another type.",
+        "tags": ["Artifacts"],
+        "parameters": [
+          {
+            "in": "path",
+            "required": true,
+            "name": "ref",
+            "schema": { "type": "string", "minLength": 1, "maxLength": 80 },
+            "description": "Artifact id or slug"
+          },
+          {
+            "in": "query",
+            "required": false,
+            "name": "version",
+            "schema": { "type": "integer", "minimum": 1 },
+            "description": "Version number. Defaults to the current version"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/DesignExportOptions" }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/E400" },
+          "401": { "$ref": "#/components/responses/E401" },
+          "404": { "$ref": "#/components/responses/E404" },
+          "default": { "$ref": "#/components/responses/Error" }
+        },
+        "security": [{ "bearerAuth": ["artifacts:read"] }, { "sessionCookie": [] }]
+      }
+    },
+    "/artifacts/{ref}/export": {
+      "get": {
+        "operationId": "exportDesign",
+        "summary": "Download a design as PNG (one artboard) or PDF",
+        "description": "For an artifact of type design the caller may view, rendered on the server by Browser Rendering: a PNG of one board at 1x or 2x, or a PDF with one page per board at its own size (every board, or the one named). An attachment named `<slug>[-<board>].png` or `.pdf`. At most 33,554,432 PNG pixels, and DESIGN_EXPORTS_PER_HOUR exports per person, or per address signed out (429). 403 feature_disabled where the instance has no Browser Rendering binding or DESIGN_EXPORT is off; 503 unavailable when the render fails. 404 for an artifact of another type.",
+        "tags": ["Artifacts"],
+        "parameters": [
+          {
+            "in": "path",
+            "required": true,
+            "name": "ref",
+            "schema": { "type": "string", "minLength": 1, "maxLength": 80 },
+            "description": "Artifact id or slug"
+          },
+          {
+            "in": "query",
+            "required": false,
+            "name": "format",
+            "schema": { "type": "string", "enum": ["png", "pdf"] },
+            "description": "png or pdf"
+          },
+          {
+            "in": "query",
+            "required": false,
+            "name": "version",
+            "schema": { "type": "integer", "minimum": 1 },
+            "description": "Version number. Defaults to the current version"
+          },
+          {
+            "in": "query",
+            "required": false,
+            "name": "board",
+            "schema": { "type": "string", "pattern": "^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$" },
+            "description": "The artboard id: required for png; for pdf, only this board"
+          },
+          {
+            "in": "query",
+            "required": false,
+            "name": "scale",
+            "schema": { "type": "integer", "enum": [1, 2] },
+            "description": "png only: device pixels per CSS px (default 1)"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "image/png": { "schema": { "type": "string", "format": "binary" } },
+              "application/pdf": { "schema": { "type": "string", "format": "binary" } }
+            }
+          },
+          "400": { "$ref": "#/components/responses/E400" },
+          "401": { "$ref": "#/components/responses/E401" },
+          "403": { "$ref": "#/components/responses/E403" },
+          "404": { "$ref": "#/components/responses/E404" },
+          "429": { "$ref": "#/components/responses/E429" },
+          "503": { "$ref": "#/components/responses/E503" },
+          "default": { "$ref": "#/components/responses/Error" }
+        },
+        "security": [{ "bearerAuth": ["artifacts:read"] }, { "sessionCookie": [] }]
+      }
     }
   },
   "components": {
@@ -4996,6 +5097,10 @@
           "files": {
             "type": "boolean",
             "description": "Pages that declare `files` may keep files people add here (ALLOW_FILES with origin isolation)"
+          },
+          "design_export": {
+            "type": "boolean",
+            "description": "Designs download as PNG or PDF rendered on the server here (DESIGN_EXPORT with a Browser Rendering binding)"
           }
         },
         "required": [
@@ -5017,7 +5122,8 @@
           "dictation",
           "category_sharing",
           "live_views",
-          "files"
+          "files",
+          "design_export"
         ]
       },
       "LoginResult": {
@@ -6669,6 +6775,38 @@
         },
         "required": ["available", "can_upload", "uploaders_shown"],
         "description": "Present on `ok` only when the current version of an HTML page declares `files` and ALLOW_FILES is on: what the viewer is told about the files people add to it"
+      },
+      "DesignExportOptions": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "version": { "type": "integer", "minimum": 1 },
+          "boards": {
+            "type": "array",
+            "description": "The version's artboards, in source order",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": { "type": "string" },
+                "name": { "type": "string", "description": "Untrusted text" },
+                "width": { "type": "integer", "minimum": 16, "maximum": 4096 },
+                "height": { "type": "integer", "minimum": 16, "maximum": 4096 }
+              },
+              "required": ["id", "name", "width", "height"]
+            }
+          },
+          "formats": { "type": "array", "items": { "type": "string", "enum": ["png", "pdf"] } },
+          "scales": { "type": "array", "items": { "type": "integer", "enum": [1, 2] } },
+          "max_pixels": {
+            "type": "integer",
+            "description": "The largest PNG, in device pixels (width x height x scale^2)"
+          },
+          "available": {
+            "type": "boolean",
+            "description": "This instance renders exports (DESIGN_EXPORT with a Browser Rendering binding); when false, GET /export answers feature_disabled"
+          }
+        },
+        "required": ["id", "version", "boards", "formats", "scales", "max_pixels", "available"]
       }
     },
     "responses": {

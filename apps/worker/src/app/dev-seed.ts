@@ -6,7 +6,8 @@
 // API can make once the artifact is gone (a takedown's wipe), without spawning wrangler.
 // POST /__dev/capture-url mints what a thumbnail capture opens (the enter URL of a capture pass
 // for one version, no identity, and the cookies its browser sets first), so the suite can load a
-// page top-level as Plinth's own browser does.
+// page top-level as Plinth's own browser does. POST /__dev/export-url does the same for what a
+// design export opens (services/designExport.ts).
 import { TTL } from "@plinth/shared";
 import { Hono } from "hono";
 import { z } from "zod";
@@ -17,6 +18,7 @@ import { appCookieName } from "../lib/cookies.ts";
 import { hashToken, newId, newToken } from "../lib/crypto.ts";
 import { ApiError } from "../lib/errors.ts";
 import { isoIn, nowIso } from "../lib/time.ts";
+import { exportLoad } from "../services/designExport.ts";
 import { captureLoad } from "../services/thumbnails.ts";
 import { getOrCreateUser } from "../services/users.ts";
 
@@ -126,4 +128,36 @@ devSeed.post("/__dev/capture-url", async (c) => {
     number: version,
   });
   return c.json(load, 201);
+});
+
+const exportInput = captureInput.extend({
+  board: z
+    .string()
+    .regex(/^[a-z0-9-]{1,40}$/)
+    .nullable()
+    .default(null),
+});
+
+/**
+ * What services/designExport.ts would open for a design export of this version (one board, or
+ * every board with board null), and the cookies it would set first. No rate limit, no render: the
+ * suite loads it in its own Chromium and prints or screenshots it as Browser Rendering would.
+ */
+devSeed.post("/__dev/export-url", async (c) => {
+  const config = c.get("config");
+  devOnly(config);
+  const parsed = exportInput.safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success)
+    throw new ApiError("invalid_input", "Invalid input", { issues: parsed.error.issues });
+  const { artifact_id: id, version, board } = parsed.data;
+  const row = await c.env.DB.prepare(
+    "SELECT access_epoch AS e FROM artifacts WHERE id = ?1 AND deleted_at IS NULL AND type = 'design'",
+  )
+    .bind(id)
+    .first<{ e: number }>();
+  if (!row) throw new ApiError("not_found", "Not found");
+  return c.json(
+    await exportLoad(config, { artifactId: id, accessEpoch: row.e }, version, board),
+    201,
+  );
 });

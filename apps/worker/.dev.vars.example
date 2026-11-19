@@ -9,3 +9,8 @@ RESEND_API_KEY=
 # 67108864 bytes (default 52428800), MAX_ASSETS_PER_VERSION from 1 to 900 (default 511).
 # MAX_VERSION_BYTES=52428800
 # MAX_ASSETS_PER_VERSION=511
+# Design PNG and PDF export, in effect only with a Browser Rendering binding (BROWSER), which
+# `wrangler dev` runs without: DESIGN_EXPORT (default true), DESIGN_EXPORTS_PER_HOUR from 1 to 1000
+# (default 30) per person.
+# DESIGN_EXPORT=true
+# DESIGN_EXPORTS_PER_HOUR=30

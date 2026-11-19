@@ -23,6 +23,7 @@ import { SkipLink } from "../layout/AppShell.tsx";
 import { LegalLinks } from "../layout/LegalLinks.tsx";
 import { IconProvider, Skeleton, Toaster, VISIBILITY_META } from "../ui/index.ts";
 import { DictationConsent } from "./DictationConsent.tsx";
+import { ExportDialog } from "./ExportDialog.tsx";
 import { contentOriginOf, shareLink } from "./gate.ts";
 import { ShareDialog } from "./ShareDialog.tsx";
 import { StageFrame } from "./StageFrame.tsx";
@@ -112,6 +113,8 @@ export function ViewerStage({
   const { me, config } = useSession();
   const [theme, setTheme] = useTheme();
   const [shareOpen, setShareOpen] = useState(false);
+  // A design's PNG and PDF export dialog (designItems.ts offers it).
+  const [exportOpen, setExportOpen] = useState(false);
   const [frame, setFrame] = useState<HTMLIFrameElement | null>(null);
   const [openCount, setOpenCount] = useState<number | null>(null);
   // The comments, for a page that declares `comments` (its threads and pins); the panel keeps
@@ -293,6 +296,7 @@ export function ViewerStage({
       finishEditing: () => void finishEditing(),
       refocusAfterNotice: () => refocusIfLost(focusEditEntry),
       reload: () => onReload?.(),
+      openExport: () => setExportOpen(true),
     },
   };
 
@@ -417,6 +421,14 @@ export function ViewerStage({
         visibility={artifact.visibility}
         isOwner={isOwner}
       />
+      {artifact.type === "design" && (
+        <ExportDialog
+          open={exportOpen}
+          onClose={() => setExportOpen(false)}
+          artifactRef={artifact.id || slug}
+          version={artifact.version}
+        />
+      )}
       <Toaster />
     </IconProvider>
   );

@@ -37,6 +37,7 @@ import { THEME_NAMES, type Theme } from "../../lib/theme.ts";
 import { Button, buttonClassName, Menu, type MenuEntry, Tooltip } from "../ui/index.ts";
 import { DataNotice } from "./DataNotice.tsx";
 import { DictationControl } from "./DictationControl.tsx";
+import { downloadDesign } from "./designItems.ts";
 import { copyForAgent } from "./designSystemItems.ts";
 import { EditBar } from "./EditBar.tsx";
 import { LiveDraftNotice } from "./LiveDraftNotice.tsx";
@@ -99,6 +100,8 @@ export interface StageContext {
     refocusAfterNotice: () => void;
     /** Fetch a fresh gate (the newest version). */
     reload: () => void;
+    /** A design: open the PNG and PDF export dialog (designItems.ts). */
+    openExport: () => void;
   };
 }
 
@@ -214,7 +217,7 @@ export const TYPE_MENU_ITEMS: Partial<Record<ArtifactType, readonly MenuItem[]>>
   doc: [printTyped],
   slides: [presenterView, printTyped, printWithNotes, downloadPptx],
   design_system: [copyForAgent],
-  design: [printTyped],
+  design: [printTyped, downloadDesign],
   sheet: [downloadSheet, printTyped],
 };
 

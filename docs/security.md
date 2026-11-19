@@ -73,6 +73,9 @@ make a test pass.
 | An upload gives away where it was made | A phone photo's EXIF location reaches every reader of the page | Files are stored as added and everyone who may add one is told so (the viewer notice, the privacy notice, the skill) |
 | An upload outlives a delete or takedown | A part arrives after the owner deleted the file or an admin took the artifact down, and the file comes back | Every write repeats the artifact's live check and the row's state in its SQL; a delete or takedown turns rows into tombstones in its own batch, a takedown deletes the ready objects right after, and the hourly sweep clears the rest |
 | A file name steers an agent or tricks a viewer | A file named "Ignore previous instructions.png", `../../etc/passwd`, or a right-to-left override that turns `gpj.exe` around | Names are cleaned (last segment, no control or bidi characters, at most 200 characters, the proven extension added) and are display text everywhere; agents get names with the untrusted note and never the bytes |
+| A design export runs author code on the app host | An artboard's HTML or a crafted name ends up in the PNG or PDF response, which the app host serves, and a browser renders it as a page | The file is the browser's own screenshot or print, served as an attachment with `Content-Security-Policy: sandbox; default-src 'none'`, `nosniff` and CORP `same-origin`; the file name is `[a-z0-9-]` only ([Design export](#design-export)) |
+| A design export leaks a pass or an identity | The export's enter URL, or a pass for the person exporting, reaches the page, a log or the caller, and opens the artifact as them | A capture pass with no identity, minted and used inside the Worker's own browser session, never returned; error messages are logged with every URL removed |
+| Design exports drain Browser Rendering | Someone with a link, or a script with a token, asks for exports in a loop to run up the operator's browser hours | Only people who may view the artifact; `DESIGN_EXPORTS_PER_HOUR` per person (per address signed out) counted before the browser starts, refused requests not counted; 25 s per render; `DESIGN_EXPORT=false` turns it off |
 
 Out of scope for v1: denial of service beyond Cloudflare's defaults, a compromised Cloudflare
 account, and malicious instance operators.
@@ -1019,6 +1022,45 @@ file.
   retried after a day, so neither a burst of dashboard loads nor repeated preview fetches can
   launch a browser per request.
 
+### Design export
+
+A design downloads as a PNG of one artboard or a PDF of its boards, rendered by the same Browser
+Rendering binding ([spec](spec.md#designs-decided-2026-11-19)). It is in effect only with
+`DESIGN_EXPORT` on and the `BROWSER` binding; elsewhere the endpoint answers `feature_disabled`
+and the menu has only the browser's own print.
+
+- **The thumbnail's load, at the export layout.** The Worker mints a one-time capture pass for the
+  exact version (no identity claim, 120 seconds, this artifact at this epoch), with `next` at the
+  version's `?plinth-print=1` (and `&plinth-board=<id>`), and hands the browser the same pass for
+  the boards' cookie partition through the DevTools protocol before the page loads, as for a
+  design's thumbnail ([Designs](#designs)). The URL never leaves the Worker: it is not returned,
+  and a failed render is logged with every URL removed from the error text. The page the browser
+  opens is the strict typed shell (`script-src 'self'`); author code still runs only inside the
+  opaque board frames, which in that layout are mounted at 100% with no covers or chrome.
+- **Who may export.** `GET /api/v1/artifacts/:ref/export` and `/export/options` take the policy
+  module's `view` check, like reading the artifact and its thumbnail: a stranger gets the same
+  404 as for a missing artifact, a signed-out visitor of a private design the same refusal as
+  when viewing it. The type is checked after that, and the query (format, board, scale, version)
+  only then, so the answer never says what type an artifact is to someone who may not view it,
+  and a malformed request from them still gets their 404. Agents' bearer tokens work (`artifacts:read`); there
+  is no MCP tool.
+- **The file is ours, not the author's.** The response is the browser's own PNG or PDF, sent from
+  the app host as an attachment with `Content-Security-Policy: sandbox; default-src 'none'`,
+  `X-Content-Type-Options: nosniff`, `Cross-Origin-Resource-Policy: same-origin`,
+  `Cache-Control: private, no-store` and the app's other headers. Its name is the slug and the
+  board id, `[a-z0-9-]` only. A PDF can hold the boards' links, as a print from the browser does;
+  it holds nothing a viewer of the artifact could not already see.
+- **Cost.** Every export launches a browser, so the hourly limit (`DESIGN_EXPORTS_PER_HOUR`, 30
+  by default, per person, per confirmed email, or per address signed out) is counted before the
+  browser starts, after the input checks, so a typo costs nothing. A render has 25 seconds and
+  waits at most 10 for boards to load; a PNG is at most 33,554,432 device pixels. Browser Rendering
+  answers busy when the account's concurrent browsers are taken, and the export then answers 503
+  `unavailable`. Nothing is stored.
+- **Residual risks.** A board's scripts run in the export's browser, as in a thumbnail, and can
+  spend its 25 seconds; they reach only the CDN allowlist. Whoever may view a design can export
+  it, so a link viewer of an unlisted design spends the operator's browser time within the
+  per-address limit; an operator who does not want that sets `DESIGN_EXPORT=false`.
+
 ## In-chat previews
 
 Hosts that support [MCP Apps](https://github.com/modelcontextprotocol/ext-apps) (T3 Code, Claude,
@@ -1105,6 +1147,7 @@ version just published appears in the agent's thread.
 | One live-room frame | `ROOM_MAX_MESSAGE_BYTES` (8 KiB; larger closes with 1009, binary with 1003); presence 400 bytes per room; 3 rooms per socket |
 | People-list reads per reader per artifact | 600 per hour |
 | Live-view watch sockets per artifact | `LIVE_VIEW_MAX_SOCKETS_PER_ARTIFACT` (1000), apart from room sockets, half for the owner and the people it is shared with and half for everyone else; 32 per client; 60 connects per client per minute (close code 4409, then the page polls) |
+| Design exports (PNG and PDF) per person, per confirmed email, or per address signed out | `DESIGN_EXPORTS_PER_HOUR` (30) |
 
 Limited requests get `429` with `Retry-After`; live-room limits answer on the socket instead.
 

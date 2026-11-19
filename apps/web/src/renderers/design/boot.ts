@@ -1,7 +1,8 @@
 // Boots a design: reads the payload the shell embeds (typedShellHtml in @plinth/shared), parses it
 // with the shared parser, lays the artboards out on the canvas and mounts a frame for each board
 // on screen (frames.ts). With ?plinth-board=<id> it shows that one board alone at 100% instead
-// (an unknown id shows the canvas). It runs synchronously at the end of <body>, so the comments
+// (an unknown id shows the canvas). With ?plinth-print=1 it lays the boards out for the server's
+// PNG and PDF export (services/designExport.ts in the Worker). It runs synchronously at the end of <body>, so the comments
 // bridge (which waits for DOMContentLoaded) sees the finished DOM.
 //
 // The shell's DOM never receives author markup: the shared section and the fragments exist here
@@ -12,6 +13,7 @@
 import {
   boardDocument,
   DESIGN_BOARD_PARAM,
+  DESIGN_PRINT_PARAM,
   type DesignBoard,
   parseDesign,
   REVIEW_MODE_PARAM,
@@ -30,7 +32,7 @@ import {
   visibleBoards,
   zoomToBoard,
 } from "./layout.ts";
-import { pageName, preparePrint } from "./print.ts";
+import { pageName, preparePrint, printCss, printStyle } from "./print.ts";
 import { fromApp, readDesignAppMessage } from "./protocol.ts";
 import { boardLabel, boardList, boardSlot, button, el, sectionHeading, toolbar } from "./ui.ts";
 
@@ -133,9 +135,47 @@ export function boot(win: Window, opts: BootOptions = {}): DesignHandle {
       },
     });
 
-  // One board alone at 100% (?plinth-board=<id>): no canvas, no covers.
   const soloId = search.get(DESIGN_BOARD_PARAM);
   const solo = soloId ? design.boards.find((b) => b.id === soloId) : undefined;
+
+  // The export layout (?plinth-print=1, with ?plinth-board=<id> one board): what the server's
+  // PNG and PDF export renders. Every board mounted at 100% in normal flow, one named page per
+  // size, no chrome, no covers and no page background, and nothing printed from here: the
+  // export's own browser prints or screenshots the page once data-boards-loaded reaches
+  // data-boards. An unknown board id is an error, never a different board.
+  if (search.get(DESIGN_PRINT_PARAM) === "1") {
+    if (soloId !== null && !solo) {
+      frames.destroy();
+      return fail(doc, root);
+    }
+    const boards = solo ? [solo] : design.boards;
+    root.setAttribute("data-mode", "export");
+    root.setAttribute("data-print", "");
+    html.setAttribute("data-export", "");
+    printStyle(doc).textContent = printCss(boards);
+    const stage = el(doc, "div", "plinth-design__export");
+    for (const b of boards) {
+      const { slot, cover } = boardSlot(doc, b, pageName(b));
+      cover.remove();
+      stage.append(slot);
+      frames.add(b, slot);
+    }
+    root.replaceChildren(stage);
+    html.setAttribute("data-boards", String(boards.length));
+    html.setAttribute("data-boards-loaded", "0");
+    html.setAttribute("data-zoom", "100");
+    frames.mountAll();
+    html.setAttribute("data-ready", "ok");
+    return {
+      stop: () => {
+        for (const f of cleanups.splice(0)) f();
+      },
+      view: null,
+      frames,
+    };
+  }
+
+  // One board alone at 100% (?plinth-board=<id>): no canvas, no covers.
   if (solo) {
     root.setAttribute("data-mode", "solo");
     const { slot, cover } = boardSlot(doc, solo, pageName(solo));

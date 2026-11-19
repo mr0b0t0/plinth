@@ -10,6 +10,14 @@ Add a line under **Unreleased** in the pull request that makes a change people w
 
 ## Unreleased
 
+- **Download a design as PNG or PDF.** On instances with a Browser Rendering binding, a design's
+  artifact menu has **Download PNG or PDF…**: a PNG of one artboard at 1x or 2x (transparent where
+  the board is), or a PDF with every board, or one, each on a page of its own size, rendered by
+  the server from the version on screen. Anyone who may view the design can export it, up to 30
+  times an hour per person (`DESIGN_EXPORTS_PER_HOUR`); `DESIGN_EXPORT=false` turns it off.
+  Scripts and agents use `GET /api/v1/artifacts/<id>/export?format=png&board=<id>` or
+  `?format=pdf`, with `/export/options` listing the boards. Without the binding nothing changes:
+  Print or save as PDF stays.
 - **Follow the presenter in a deck.** An owner or editor can turn on **Lead viewers** in a deck's
   controls or presenter view, and the people the deck is shared with who have it open follow their
   slide, with a "Following the presenter" note; paging by hand pauses it until they choose "Back to

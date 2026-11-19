@@ -359,6 +359,22 @@ export const DEFAULTS = {
 };
 
 /**
+ * Server-side design export (docs/spec.md "Designs"): a PNG of one artboard, or a PDF of every
+ * board or one, rendered by Browser Rendering. DESIGN_EXPORT switches it; DESIGN_EXPORTS_PER_HOUR
+ * bounds how many one person (or one address, signed out) may start per hour.
+ */
+export const DESIGN_EXPORT = {
+  formats: ["png", "pdf"],
+  /** PNG pixel scales: each CSS px becomes this many device pixels per side. */
+  scales: [1, 2],
+  /** The largest PNG, in device pixels: width x height x scale^2 (8192 x 4096). */
+  maxPixels: 33_554_432,
+  /** DESIGN_EXPORTS_PER_HOUR's default and bounds. */
+  perHour: 30,
+  perHourBounds: [1, 1000],
+};
+
+/**
  * Browsers accept a `__Host-` cookie only when it is Secure, has Path=/ and no Domain, and no other
  * host (a sibling subdomain included) can set or overwrite one. Every app cookie uses it.
  */

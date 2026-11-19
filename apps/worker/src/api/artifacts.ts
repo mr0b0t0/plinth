@@ -1,5 +1,6 @@
 // REST mirror of the artifact MCP tools. Same services, same policy, same validation.
 import {
+  API,
   getArtifactInput,
   listArtifactsInput,
   publishArtifactInput,
@@ -24,6 +25,7 @@ import {
   updateArtifact,
 } from "../services/artifacts.ts";
 import { patchArtifact } from "../services/categories.ts";
+import { designExportOptions, exportDesign } from "../services/designExport.ts";
 import { scheduleThumbnail, thumbnailResponse } from "../services/thumbnails.ts";
 import { type AppEnv, parseBody, parseInput, serviceCtx } from "./context.ts";
 
@@ -134,4 +136,48 @@ artifactsApi.get("/artifacts/:ref/thumbnail", async (c) => {
   }
   scheduleThumbnail(ctx, artifact.id, n);
   return missing();
+});
+
+/** A query parameter, or undefined when absent or empty. */
+const queryOf = (c: { req: { query: (k: string) => string | undefined } }, k: string) => {
+  const v = c.req.query(k);
+  return v === undefined || v === "" ? undefined : v;
+};
+/** A query string is text: a non-number fails the schema's integer check (400). */
+const numberOf = (v: string | undefined) => (v === undefined ? undefined : Number(v));
+
+/**
+ * A design version's artboards and the formats it downloads as, for anyone who may view it (the
+ * app's export dialog). 404 for an artifact of another type. The service checks the query after
+ * the access decision.
+ */
+artifactsApi.get(API.designExportOptions, async (c) => {
+  return c.json(
+    await designExportOptions(serviceCtx(c), c.req.param("ref"), {
+      version: numberOf(queryOf(c, "version")),
+    }),
+  );
+});
+
+/**
+ * A design version as a PNG of one artboard or a PDF (every board, or one), rendered by Browser
+ * Rendering, for anyone who may view it. A download, never a page: an attachment with its own
+ * CSP that runs nothing.
+ */
+artifactsApi.get(API.designExport, async (c) => {
+  const ctx = serviceCtx(c);
+  const file = await exportDesign(ctx, c.req.param("ref"), {
+    format: queryOf(c, "format"),
+    version: numberOf(queryOf(c, "version")),
+    board: queryOf(c, "board"),
+    scale: numberOf(queryOf(c, "scale")),
+  });
+  const headers = new Headers();
+  applyAppHeaders(ctx.config, headers);
+  headers.set("Content-Security-Policy", "sandbox; default-src 'none'");
+  headers.set("Content-Type", file.contentType);
+  headers.set("Content-Disposition", `attachment; filename="${file.filename}"`);
+  headers.set("Content-Length", String(file.bytes.byteLength));
+  headers.set("Cache-Control", "private, no-store");
+  return new Response(file.bytes, { status: 200, headers });
 });
