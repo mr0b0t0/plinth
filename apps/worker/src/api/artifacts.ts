@@ -12,6 +12,7 @@ import {
 import { Hono } from "hono";
 import { applyAppHeaders } from "../app/headers.ts";
 import { thumbnailsActive } from "../config.ts";
+import { ApiError } from "../lib/errors.ts";
 import { getArtifactWithData } from "../services/artifactData.ts";
 import {
   deleteArtifact,
@@ -166,12 +167,21 @@ artifactsApi.get(API.designExportOptions, async (c) => {
  */
 artifactsApi.get(API.designExport, async (c) => {
   const ctx = serviceCtx(c);
-  const file = await exportDesign(ctx, c.req.param("ref"), {
-    format: queryOf(c, "format"),
-    version: numberOf(queryOf(c, "version")),
-    board: queryOf(c, "board"),
-    scale: numberOf(queryOf(c, "scale")),
-  });
+  let file: Awaited<ReturnType<typeof exportDesign>>;
+  try {
+    file = await exportDesign(ctx, c.req.param("ref"), {
+      format: queryOf(c, "format"),
+      version: numberOf(queryOf(c, "version")),
+      board: queryOf(c, "board"),
+      scale: numberOf(queryOf(c, "scale")),
+    });
+  } catch (e) {
+    // Every export slot taken: say when to try again, as the hourly limit's 429 does.
+    if (!(e instanceof ApiError) || e.code !== "unavailable") throw e;
+    const retryAfter = (e.details as { retry_after?: number } | undefined)?.retry_after;
+    if (!retryAfter) throw e;
+    return c.json(e.toBody(), 503, { "Retry-After": String(retryAfter) });
+  }
   const headers = new Headers();
   applyAppHeaders(ctx.config, headers);
   headers.set("Content-Security-Policy", "sandbox; default-src 'none'");

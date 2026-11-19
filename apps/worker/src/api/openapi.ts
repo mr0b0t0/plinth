@@ -3004,9 +3004,11 @@ function designExportOperations(): Operation[] {
         "Rendering: a PNG of one board at 1x or 2x, or a PDF with one page per board at its own " +
         "size (every board, or the one named). An attachment named `<slug>[-<board>].png` or " +
         `\`.pdf\`. At most ${DESIGN_EXPORT.maxPixels.toLocaleString("en-US")} PNG pixels, and ` +
-        "DESIGN_EXPORTS_PER_HOUR exports per person, or per address signed out (429). 403 " +
-        "feature_disabled where the instance has no Browser Rendering binding or DESIGN_EXPORT is " +
-        "off; 503 unavailable when the render fails. 404 for an artifact of another type.",
+        "DESIGN_EXPORTS_PER_HOUR exports per person, or per client network signed out (an IPv6 " +
+        "/64 as one; 429). 403 feature_disabled where the instance has no Browser Rendering " +
+        "binding or DESIGN_EXPORT is off; 503 unavailable when the render fails, or with " +
+        `Retry-After when ${DESIGN_EXPORT.maxConcurrent} exports are already rendering (not ` +
+        "counted). 404 for an artifact of another type.",
       tag: "Artifacts",
       auth: "agent",
       scope: "artifacts:read",

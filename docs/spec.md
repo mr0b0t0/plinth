@@ -251,7 +251,8 @@ declares `files` (a row without it reads as no files):
 file is rendered on request and never kept. It adds two settings, `DESIGN_EXPORT` (on, in effect
 only with a `BROWSER` binding) and `DESIGN_EXPORTS_PER_HOUR` (30, from 1 to 1000), counted in
 `rate_limits` like every other limit. Fixed: PNG at 1x or 2x, at most 33,554,432 device pixels; 25
-seconds per render, of which at most 10 waiting for the boards to load.
+seconds per render, of which at most 10 waiting for the boards to load; two exports at once per
+instance, each holding a lease row in `rate_limits` that names no person until its browser closes.
 
 ## Auth and permissions
 
@@ -1554,14 +1555,19 @@ preview), never on its page.
   version's boards, and `GET /api/v1/artifacts/:ref/export?format=png|pdf&version=&board=&scale=`
   returns the file as an attachment named `<slug>[-<board>].png` or `.pdf`. Anyone who may view
   the artifact may export it (the `view` action; strangers get 404), at most
-  `DESIGN_EXPORTS_PER_HOUR` times an hour per person (per confirmed email, or per address signed
-  out); a refused request (a bad board or scale) is not counted. The browser opens the exact
+  `DESIGN_EXPORTS_PER_HOUR` times an hour per person (per confirmed email, or signed out per
+  client network, an IPv6 /64 counting as one client); a refused request (a bad board or scale)
+  is not counted. At most two exports render at once across the instance, beside the thumbnails'
+  two; a request that finds both busy answers 503 `unavailable` with `Retry-After: 10` and is not
+  counted either. The browser opens the exact
   version as a thumbnail capture does: a one-time capture pass with no identity, the boards'
   cookie partition given the same pass through the DevTools protocol, at `?plinth-print=1` (with
   `&plinth-board=<id>` for one board), where the renderer lays the boards out at 100% with no
   chrome or covers, mounts every one and counts them as they load; the Worker waits for them (at
   most 10 seconds, then renders what loaded) and prints the page or takes the board's box. The
-  whole render has 25 seconds; a failure answers 503 `unavailable`, an instance without the binding
+  whole render has 25 seconds, and every wait ends 7 seconds before that so a slow board still
+  leaves a file of the boards that loaded; a render past its 25 seconds is stopped and its browser
+  closed. A failure answers 503 `unavailable`, an instance without the binding
   or with `DESIGN_EXPORT` off answers 403 `feature_disabled` and its menu has only Print. Agents
   have no export tool; the endpoint takes their bearer tokens like the thumbnail's. Each export
   spends Browser Rendering time, which Cloudflare bills per browser hour.

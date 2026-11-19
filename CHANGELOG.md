@@ -14,7 +14,8 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   artifact menu has **Download PNG or PDF…**: a PNG of one artboard at 1x or 2x (transparent where
   the board is), or a PDF with every board, or one, each on a page of its own size, rendered by
   the server from the version on screen. Anyone who may view the design can export it, up to 30
-  times an hour per person (`DESIGN_EXPORTS_PER_HOUR`); `DESIGN_EXPORT=false` turns it off.
+  times an hour per person (`DESIGN_EXPORTS_PER_HOUR`; signed out, per network), and at most two
+  render at once across the instance; `DESIGN_EXPORT=false` turns it off.
   Scripts and agents use `GET /api/v1/artifacts/<id>/export?format=png&board=<id>` or
   `?format=pdf`, with `/export/options` listing the boards. Without the binding nothing changes:
   Print or save as PDF stays.

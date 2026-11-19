@@ -4,9 +4,16 @@
 // own Print or save as PDF.
 //
 // Who may export: anyone who may view the artifact (requireArtifact "view", the same check as the
-// thumbnail; strangers get 404), at most DESIGN_EXPORTS_PER_HOUR per person, or per address
-// signed out. The type is checked after the access decision, so nobody learns whether an artifact
-// they cannot view exists or what type it is.
+// thumbnail; strangers get 404), at most DESIGN_EXPORTS_PER_HOUR per person, or per client network
+// signed out (lib/ip.ts: an IPv6 /64 is one client). The type is checked after the access
+// decision, so nobody learns whether an artifact they cannot view exists or what type it is.
+//
+// At most DESIGN_EXPORT.maxConcurrent exports render at once across the instance, beside the
+// thumbnails' own cap, because Browser Rendering limits the account's concurrent browsers: a lease
+// row in rate_limits (claimExportSlot). A request that finds every slot taken answers 503 at once
+// and is not counted. The lease is held until the browser has closed, not until the response: a
+// render past its budget is aborted, which closes the browser, and the Worker waits for that
+// (waitUntil) before it gives the slot back.
 //
 // How: the browser opens the exact version on its own content origin with a fresh capture pass,
 // as a thumbnail does (no identity, top-level, the pass for the boards' cookie partition handed to
@@ -35,7 +42,8 @@ import { type Config, designExportActive } from "../config.ts";
 import { issueEnterUrl } from "../content/tokens.ts";
 import type { ArtifactRow } from "../db/schema.ts";
 import { ApiError } from "../lib/errors.ts";
-import { enforce } from "../lib/ratelimit.ts";
+import { clientNetwork } from "../lib/ip.ts";
+import { enforce, peek } from "../lib/ratelimit.ts";
 import { requireArtifact, requireVersion } from "./artifacts.ts";
 import type { Ctx } from "./context.ts";
 import { readText } from "./storage.ts";
@@ -46,15 +54,32 @@ const DEF = TYPE_REGISTRY.design;
 export const EXPORT_RUN = {
   /** The whole render, browser launch included, as for thumbnails. */
   budgetMs: 25_000,
-  /** How long the page may take to load. */
-  navigationTimeoutMs: 12_000,
+  /**
+   * Kept back from the budget for the print or screenshot and the settle pause: every wait before
+   * them ends this long before the budget does, so slow boards still give a file of what loaded.
+   */
+  renderReserveMs: 7_000,
+  /** How long the page's document may take to arrive (the boards go on loading after it). */
+  navigationTimeoutMs: 10_000,
   /** How long the renderer may take to say it is ready. */
   readyTimeoutMs: 8_000,
   /** How long to wait for every board to load before rendering what has. */
   boardsTimeoutMs: 10_000,
   /** A pause after the boards load, for fonts, images and animations to settle. */
   settleMs: 500,
+  /** A lease not given back this long after it was taken no longer holds a slot. */
+  slotStaleS: 60,
+  /** Retry-After, in seconds, when every slot is taken. */
+  busyRetryAfterS: 10,
 } as const;
+
+/**
+ * A wait's timeout: its own cap, cut to what is left before `printBy`, and never below 1 ms, so a
+ * step that starts late gives up at once.
+ */
+export function stepTimeout(capMs: number, printBy: number, now: number = Date.now()): number {
+  return Math.max(1, Math.min(capMs, printBy - now));
+}
 
 /** What the browser renders for one export. */
 export interface ExportJob {
@@ -70,16 +95,43 @@ export interface ExportJob {
   board: string | null;
 }
 
-/** Renders an export in a browser and returns the file's bytes. */
-export type ExportShooter = (browser: Fetcher, job: ExportJob) => Promise<Uint8Array>;
+/**
+ * Renders an export in a browser and returns the file's bytes. `signal` aborts once the render's
+ * budget has passed; the shooter then closes its browser and settles.
+ */
+export type ExportShooter = (
+  browser: Fetcher,
+  job: ExportJob,
+  signal: AbortSignal,
+) => Promise<Uint8Array>;
+
+type Launch = (binding: Fetcher) => ReturnType<typeof puppeteer.launch>;
+const puppeteerLaunch: Launch = (binding) => puppeteer.launch(binding);
+let launch: Launch = puppeteerLaunch;
+
+/** Tests replace puppeteer's launch with a fake browser; null restores it. */
+export function setDesignExportLauncher(l: Launch | null): void {
+  launch = l ?? puppeteerLaunch;
+}
 
 /** An error message without any URL in it, so no enter token reaches a log. */
 export function redactUrls(message: string): string {
   return message.replace(/[a-z][a-z0-9+.-]*:\/\/\S+/gi, "<url>");
 }
 
-async function browserExport(binding: Fetcher, job: ExportJob): Promise<Uint8Array> {
-  const browser = await puppeteer.launch(binding);
+/** The real shooter: Browser Rendering through @cloudflare/puppeteer. */
+export async function browserExport(
+  binding: Fetcher,
+  job: ExportJob,
+  signal: AbortSignal,
+): Promise<Uint8Array> {
+  // One deadline for every wait, launch included, that leaves the print its reserve.
+  const printBy = Date.now() + EXPORT_RUN.budgetMs - EXPORT_RUN.renderReserveMs;
+  const browser = await launch(binding);
+  // Past the budget, close the browser at once: its pending calls reject and the finally runs.
+  const close = () => void browser.close().catch(() => undefined);
+  if (signal.aborted) close();
+  else signal.addEventListener("abort", close, { once: true });
   try {
     const page = await browser.newPage();
     if (job.cookies.length > 0) {
@@ -95,25 +147,27 @@ async function browserExport(binding: Fetcher, job: ExportJob): Promise<Uint8Arr
     }
     await page.setViewport(job.viewport);
     await page.emulateMediaFeatures([{ name: "prefers-color-scheme", value: "light" }]);
+    // The document, not network idle: a slow board must not fail the load, only be left out.
     const res = await page.goto(job.url, {
-      waitUntil: "networkidle0",
-      timeout: EXPORT_RUN.navigationTimeoutMs,
+      waitUntil: "domcontentloaded",
+      timeout: stepTimeout(EXPORT_RUN.navigationTimeoutMs, printBy),
     });
     // Never hand out a picture of an error page ("This link has expired", a 404).
     if (!res?.ok()) throw new Error(`page answered ${res ? res.status() : "nothing"}`);
     // The renderer marks <html> data-ready ("ok" or "error") and counts loaded boards on it.
     await page.waitForFunction('document.documentElement.getAttribute("data-ready") !== null', {
-      timeout: EXPORT_RUN.readyTimeoutMs,
+      timeout: stepTimeout(EXPORT_RUN.readyTimeoutMs, printBy),
     });
     const ready = await page.evaluate('document.documentElement.getAttribute("data-ready")');
     if (ready !== "ok") throw new Error("the design did not render");
-    // Render what has loaded once the cap passes, as Print does.
+    // Render what has loaded once the cap or the deadline passes, as Print does.
     await page
       .waitForFunction(
         `Number(document.documentElement.getAttribute("data-boards-loaded") || "0") >= ${Math.trunc(job.boards)}`,
-        { timeout: EXPORT_RUN.boardsTimeoutMs },
+        { timeout: stepTimeout(EXPORT_RUN.boardsTimeoutMs, printBy) },
       )
       .catch(() => undefined);
+    if (signal.aborted) throw new Error("the render ran out of time");
     await new Promise((r) => setTimeout(r, EXPORT_RUN.settleMs));
     if (job.format === "pdf") {
       const pdf = await page.pdf({ printBackground: true, preferCSSPageSize: true });
@@ -129,6 +183,7 @@ async function browserExport(binding: Fetcher, job: ExportJob): Promise<Uint8Arr
     });
     return new Uint8Array(shot);
   } finally {
+    signal.removeEventListener("abort", close);
     await browser.close().catch(() => undefined);
   }
 }
@@ -138,6 +193,71 @@ let shooter: ExportShooter = browserExport;
 /** Tests replace the browser; null restores it. */
 export function setDesignExportShooter(s: ExportShooter | null): void {
   shooter = s ?? browserExport;
+}
+
+/**
+ * Run a shooter within `budgetMs`. `result` rejects once the budget has passed, and the shooter is
+ * then aborted. `settled` resolves when the shooter itself has finished (its browser closed),
+ * whatever the outcome, so the caller can hold its slot and the request open until then.
+ */
+export function runShooter(
+  s: ExportShooter,
+  binding: Fetcher,
+  job: ExportJob,
+  budgetMs: number,
+): { result: Promise<Uint8Array>; settled: Promise<void> } {
+  const ctrl = new AbortController();
+  const shot = Promise.resolve().then(() => s(binding, job, ctrl.signal));
+  const settled = shot.then(
+    () => undefined,
+    () => undefined,
+  );
+  const result = withBudget(shot, budgetMs).catch((e: unknown) => {
+    ctrl.abort();
+    throw e;
+  });
+  return { result, settled };
+}
+
+/** Lease rows in rate_limits: `design-export:running:<uuid>`, window_start the claim's second. */
+const SLOT_PREFIX = "design-export:running:";
+/** The first key after every lease key (";" sorts right after ":"), for a primary-key range. */
+const SLOT_END = "design-export:running;";
+
+/**
+ * Take one of the instance's DESIGN_EXPORT.maxConcurrent export slots: the lease's key, or null
+ * when every slot is held. One statement, so two requests cannot both take the last slot. A lease
+ * older than EXPORT_RUN.slotStaleS no longer counts, and the rate limiter's pruning removes it.
+ */
+export async function claimExportSlot(
+  db: D1Database,
+  nowMs: number = Date.now(),
+): Promise<string | null> {
+  const key = `${SLOT_PREFIX}${crypto.randomUUID()}`;
+  const nowS = Math.floor(nowMs / 1000);
+  const row = await db
+    .prepare(
+      `INSERT INTO rate_limits (key, window_start, count)
+       SELECT ?1, ?2, 1
+       WHERE (SELECT count(*) FROM rate_limits
+              WHERE key >= ?3 AND key < ?4 AND window_start > ?5) < ?6
+       RETURNING key`,
+    )
+    .bind(
+      key,
+      nowS,
+      SLOT_PREFIX,
+      SLOT_END,
+      nowS - EXPORT_RUN.slotStaleS,
+      DESIGN_EXPORT.maxConcurrent,
+    )
+    .first<{ key: string }>();
+  return row ? key : null;
+}
+
+/** Give a slot back. */
+export async function releaseExportSlot(db: D1Database, key: string): Promise<void> {
+  await db.prepare("DELETE FROM rate_limits WHERE key = ?1").bind(key).run();
 }
 
 function requireDesign(artifact: ArtifactRow): void {
@@ -184,12 +304,15 @@ export async function designExportOptions(
   };
 }
 
-/** The rate-limit key: the person, a confirmed viewer's email, or the address signed out. */
-function rateKey(ctx: Ctx): string {
+/**
+ * The rate-limit key: the person, a confirmed viewer's email, or signed out the client's network
+ * (an IPv6 /64, in which one line or server may pick any address, is one client).
+ */
+export function exportRateKey(ctx: Pick<Ctx, "principal" | "ip">): string {
   const p = ctx.principal;
   if (p.kind === "user" || p.kind === "agent") return `design-export:u:${p.userId}`;
   if (p.kind === "viewer") return `design-export:e:${p.email}`;
-  return `design-export:ip:${ctx.ip ?? "unknown"}`;
+  return `design-export:ip:${ctx.ip === null ? "unknown" : clientNetwork(ctx.ip)}`;
 }
 
 /** `<slug>[-<board>].<ext>`, ASCII letters, digits and - only. */
@@ -296,8 +419,9 @@ function parseQuery<T>(
 }
 
 /**
- * Render a design version as PNG or PDF, as the caller (view rights), within the rate limit.
- * `raw` is the request's query, checked against designExportInput once access is decided.
+ * Render a design version as PNG or PDF, as the caller (view rights), within the rate limit and
+ * the instance's export slots. `raw` is the request's query, checked against designExportInput
+ * once access is decided.
  */
 export async function exportDesign(
   ctx: Ctx,
@@ -307,7 +431,8 @@ export async function exportDesign(
   const { artifact } = await requireArtifact(ctx, ref, "view");
   requireDesign(artifact);
   const input = parseQuery(designExportInput, { ...raw, id: ref });
-  if (!designExportActive(ctx.config, ctx.env) || !ctx.env.BROWSER) {
+  const binding = ctx.env.BROWSER;
+  if (!designExportActive(ctx.config, ctx.env) || !binding) {
     throw new ApiError(
       "feature_disabled",
       "This instance does not render design exports; use Print or save as PDF from the artifact menu",
@@ -316,36 +441,58 @@ export async function exportDesign(
   const version = input.version ?? artifact.currentVersion;
   const design = await storedDesign(ctx, artifact, version);
   const board = pickBoard(design, input);
-  await enforce(
-    ctx.env.DB,
-    rateKey(ctx),
-    ctx.config.designExportsPerHour,
-    3600,
-    `Export limit reached (${ctx.config.designExportsPerHour} per hour)`,
-  );
+
+  const limit = ctx.config.designExportsPerHour;
+  const key = exportRateKey(ctx);
+  const limitMessage = `Export limit reached (${limit} per hour)`;
+  // Someone already over the limit is refused without taking a slot; the hit itself is counted
+  // once a slot is held, so a busy answer costs nobody an export.
+  if ((await peek(ctx.env.DB, key, 3600)) >= limit) {
+    await enforce(ctx.env.DB, key, limit, 3600, limitMessage);
+  }
+  const slot = await claimExportSlot(ctx.env.DB);
+  if (!slot) {
+    throw new ApiError(
+      "unavailable",
+      "Other exports are rendering right now; try again in a few seconds",
+      { retry_after: EXPORT_RUN.busyRetryAfterS },
+    );
+  }
+
   const boards = board ? [board] : design.boards;
   const scale = input.format === "png" ? (input.scale ?? 1) : 1;
-  const { url, cookies } = await exportLoad(
-    ctx.config,
-    { artifactId: artifact.id, accessEpoch: artifact.accessEpoch },
-    version,
-    board?.id ?? null,
-  );
-  const job: ExportJob = {
-    format: input.format,
-    url,
-    cookies,
-    viewport: {
-      width: Math.max(...boards.map((b) => b.width)),
-      height: Math.max(...boards.map((b) => b.height)),
-      deviceScaleFactor: scale,
-    },
-    boards: boards.length,
-    board: board?.id ?? null,
-  };
+  let job: ExportJob;
+  try {
+    await enforce(ctx.env.DB, key, limit, 3600, limitMessage);
+    const { url, cookies } = await exportLoad(
+      ctx.config,
+      { artifactId: artifact.id, accessEpoch: artifact.accessEpoch },
+      version,
+      board?.id ?? null,
+    );
+    job = {
+      format: input.format,
+      url,
+      cookies,
+      viewport: {
+        width: Math.max(...boards.map((b) => b.width)),
+        height: Math.max(...boards.map((b) => b.height)),
+        deviceScaleFactor: scale,
+      },
+      boards: boards.length,
+      board: board?.id ?? null,
+    };
+  } catch (e) {
+    await releaseExportSlot(ctx.env.DB, slot).catch(() => undefined);
+    throw e;
+  }
+
+  const { result, settled } = runShooter(shooter, binding, job, EXPORT_RUN.budgetMs);
+  // The slot is given back once the browser has closed, even after a timed-out response.
+  ctx.waitUntil(settled.then(() => releaseExportSlot(ctx.env.DB, slot)).catch(() => undefined));
   let bytes: Uint8Array;
   try {
-    bytes = await withBudget(shooter(ctx.env.BROWSER, job), EXPORT_RUN.budgetMs);
+    bytes = await result;
     if (bytes.byteLength === 0) throw new Error("empty file");
   } catch (e) {
     console.warn(

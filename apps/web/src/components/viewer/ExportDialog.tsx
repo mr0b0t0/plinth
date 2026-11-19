@@ -142,6 +142,8 @@ export function ExportDialog({ open, onClose, artifactRef, version }: ExportDial
           onChange={(f) => {
             setFormat(f);
             setError(null);
+            // A PDF starts at every board, its default; a PNG needs one.
+            if (f === "pdf" && f !== format) setBoard(ALL);
             if (f === "png" && board === ALL) setBoard(boards[0]?.id ?? ALL);
           }}
           options={[

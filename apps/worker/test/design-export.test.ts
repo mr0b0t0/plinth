@@ -13,11 +13,19 @@ import { ConfigError, designExportActive, getConfig, parseConfig } from "../src/
 import { verifyEnterToken } from "../src/content/tokens.ts";
 import worker from "../src/index.ts";
 import {
+  browserExport,
+  claimExportSlot,
+  EXPORT_RUN,
   type ExportJob,
   exportFileName,
   exportPath,
+  exportRateKey,
   redactUrls,
+  releaseExportSlot,
+  runShooter,
+  setDesignExportLauncher,
   setDesignExportShooter,
+  stepTimeout,
 } from "../src/services/designExport.ts";
 import { APP, agent, browserSession, createUser, json, publish } from "./helpers.ts";
 
@@ -379,6 +387,262 @@ describe("export", () => {
     } finally {
       warn.mockRestore();
     }
+  });
+});
+
+describe("the signed-out limit", () => {
+  it("counts an IPv6 /64 as one client, so new addresses in it get no new budget", async () => {
+    const a = await agent();
+    const d = await publishDesign(a.auth, { visibility: "unlisted" });
+    const vars = { ...ON, DESIGN_EXPORTS_PER_HOUR: "1" };
+    const from = (addr: string) =>
+      run(exportUrl(d.id, "format=pdf"), { headers: { "cf-connecting-ip": addr } }, vars);
+    expect((await from("2001:db8:7:8::1")).status).toBe(200);
+    const sibling = await from("2001:db8:7:8:ffff:1:2:3");
+    expect(sibling.status).toBe(429);
+    expect((await json(sibling)).error.code).toBe("rate_limited");
+    // Another /64 is another client; an IPv4-mapped address counts as its IPv4 address.
+    expect((await from("2001:db8:7:9::1")).status).toBe(200);
+    expect((await from("198.51.100.7")).status).toBe(200);
+    expect((await from("::ffff:198.51.100.7")).status).toBe(429);
+    expect(jobs).toHaveLength(3);
+  });
+
+  it("keys a person by id, a viewer by email, and signed out by network", () => {
+    const anon = { kind: "anonymous" } as const;
+    expect(exportRateKey({ principal: anon, ip: "2001:db8:1:2:3:4:5:6" })).toBe(
+      "design-export:ip:2001:db8:1:2::/64",
+    );
+    expect(exportRateKey({ principal: anon, ip: "203.0.113.9" })).toBe(
+      "design-export:ip:203.0.113.9",
+    );
+    expect(exportRateKey({ principal: anon, ip: null })).toBe("design-export:ip:unknown");
+    expect(exportRateKey({ principal: { kind: "viewer", email: "v@example.com" }, ip: "x" })).toBe(
+      "design-export:e:v@example.com",
+    );
+  });
+});
+
+describe("export slots", () => {
+  it("renders at most DESIGN_EXPORT.maxConcurrent at once; a busy answer is 503 and not counted", async () => {
+    const a = await agent();
+    const d = await publishDesign(a.auth);
+    const max = DESIGN_EXPORT.maxConcurrent;
+    const vars = { ...ON, DESIGN_EXPORTS_PER_HOUR: String(max + 1) };
+    let open: () => void = () => undefined;
+    const gate = new Promise<void>((r) => {
+      open = r;
+    });
+    setDesignExportShooter(async (_b, job) => {
+      jobs.push(job);
+      await gate;
+      return PDF_BYTES;
+    });
+    const exportPdf = () => run(exportUrl(d.id, "format=pdf"), { headers: a.auth }, vars);
+    const held = Array.from({ length: max }, exportPdf);
+    try {
+      await vi.waitFor(() => expect(jobs).toHaveLength(max));
+      const busy = await exportPdf();
+      expect(busy.status).toBe(503);
+      expect(busy.headers.get("Retry-After")).toBe(String(EXPORT_RUN.busyRetryAfterS));
+      const body = await json(busy);
+      expect(body.error.code).toBe("unavailable");
+      expect(body.error.message).toMatch(/Other exports are rendering right now/);
+      expect(jobs).toHaveLength(max);
+    } finally {
+      open();
+    }
+    for (const res of await Promise.all(held)) expect(res.status).toBe(200);
+    // The slots are back, and the busy answer spent nothing: one more fits the hour, then 429.
+    expect((await exportPdf()).status).toBe(200);
+    expect((await exportPdf()).status).toBe(429);
+    expect(jobs).toHaveLength(max + 1);
+  });
+
+  it("gives the slot back after a failed render and after a refusal over the limit", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const a = await agent();
+      const d = await publishDesign(a.auth);
+      const vars = { ...ON, DESIGN_EXPORTS_PER_HOUR: "1" };
+      setDesignExportShooter(async () => {
+        throw new Error("browser busy");
+      });
+      expect((await run(exportUrl(d.id, "format=pdf"), { headers: a.auth }, vars)).status).toBe(
+        503,
+      );
+      for (let i = 0; i < 3; i++) {
+        const over = await run(exportUrl(d.id, "format=pdf"), { headers: a.auth }, vars);
+        expect(over.status).toBe(429);
+      }
+      const keys = [await claimExportSlot(env.DB), await claimExportSlot(env.DB)];
+      try {
+        expect(keys.every((k) => k !== null)).toBe(true);
+        expect(await claimExportSlot(env.DB)).toBeNull();
+      } finally {
+        for (const k of keys) if (k) await releaseExportSlot(env.DB, k);
+      }
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("lets a lease go stale when it was never given back", async () => {
+    const now = Date.now();
+    const old = [await claimExportSlot(env.DB, now), await claimExportSlot(env.DB, now)];
+    const later = now + (EXPORT_RUN.slotStaleS + 1) * 1000;
+    let fresh: string | null = null;
+    try {
+      expect(old.every((k) => k !== null)).toBe(true);
+      expect(await claimExportSlot(env.DB, now)).toBeNull();
+      fresh = await claimExportSlot(env.DB, later);
+      expect(fresh).not.toBeNull();
+    } finally {
+      for (const k of [...old, fresh]) if (k) await releaseExportSlot(env.DB, k);
+    }
+  });
+
+  it("aborts a render past its budget, and settles only once the shooter has", async () => {
+    let aborted = false;
+    let finish: () => void = () => undefined;
+    const { result, settled } = runShooter(
+      (_b, _job, signal) =>
+        new Promise<Uint8Array>((_resolve, reject) => {
+          signal.addEventListener("abort", () => {
+            aborted = true;
+            finish = () => reject(new Error("browser closed"));
+          });
+        }),
+      ON.BROWSER,
+      {} as ExportJob,
+      20,
+    );
+    await expect(result).rejects.toThrow(/longer than 20 ms/);
+    expect(aborted).toBe(true);
+    let done = false;
+    void settled.then(() => {
+      done = true;
+    });
+    await new Promise((r) => setTimeout(r, 10));
+    expect(done).toBe(false);
+    finish();
+    await settled;
+    expect(done).toBe(true);
+  });
+});
+
+describe("the browser's steps", () => {
+  type Calls = {
+    timeouts: Record<string, number>;
+    waitUntil?: string;
+    closed: number;
+    pdf: number;
+  };
+
+  /** A fake puppeteer browser on a fake clock: launch 3 s, the document 9 s, boards never load. */
+  function fakeBrowser(clock: { t: number }, hangGoto = false) {
+    const calls: Calls = { timeouts: {}, closed: 0, pdf: 0 };
+    let rejectGoto: (e: Error) => void = () => undefined;
+    const page = {
+      createCDPSession: async () => ({ send: async () => undefined }),
+      setViewport: async () => undefined,
+      emulateMediaFeatures: async () => undefined,
+      goto: async (_url: string, o: { waitUntil?: string; timeout?: number }) => {
+        calls.timeouts.goto = o.timeout ?? -1;
+        calls.waitUntil = o.waitUntil;
+        if (hangGoto) {
+          await new Promise((_r, reject) => {
+            rejectGoto = reject;
+          });
+        }
+        clock.t += 9_000;
+        return { ok: () => true, status: () => 200, url: () => "" };
+      },
+      waitForFunction: async (expression: string, o: { timeout?: number }) => {
+        if (expression.includes("data-ready")) {
+          calls.timeouts.ready = o.timeout ?? -1;
+          return true;
+        }
+        calls.timeouts.boards = o.timeout ?? -1;
+        clock.t += o.timeout ?? 0;
+        throw new Error("waiting failed: timeout");
+      },
+      evaluate: async () => "ok",
+      pdf: async () => {
+        calls.pdf += 1;
+        calls.timeouts.printAt = clock.t;
+        return PDF_BYTES;
+      },
+      $: async () => null,
+      screenshot: async () => PNG_BYTES,
+    };
+    const browser = {
+      newPage: async () => page,
+      close: async () => {
+        calls.closed += 1;
+        rejectGoto(new Error("Target closed"));
+      },
+    };
+    return {
+      calls,
+      launch: async () => {
+        clock.t += 3_000;
+        return browser as never;
+      },
+    };
+  }
+
+  const JOB: ExportJob = {
+    format: "pdf",
+    url: "http://x.content.localhost:8787/__plinth/enter",
+    cookies: [],
+    viewport: { width: 300, height: 250, deviceScaleFactor: 1 },
+    boards: 3,
+    board: null,
+  };
+
+  afterEach(() => {
+    setDesignExportLauncher(null);
+    vi.restoreAllMocks();
+  });
+
+  it("keep every wait inside the budget, so slow boards still print what loaded", async () => {
+    const clock = { t: 1_000_000 };
+    vi.spyOn(Date, "now").mockImplementation(() => clock.t);
+    const fake = fakeBrowser(clock);
+    setDesignExportLauncher(fake.launch);
+    const start = clock.t;
+    const bytes = await browserExport(ON.BROWSER, JOB, new AbortController().signal);
+    expect(bytes).toEqual(PDF_BYTES);
+    expect(fake.calls.pdf).toBe(1);
+    expect(fake.calls.closed).toBe(1);
+    // The document, not network idle, so a slow board cannot fail the load.
+    expect(fake.calls.waitUntil).toBe("domcontentloaded");
+    const printBy = start + EXPORT_RUN.budgetMs - EXPORT_RUN.renderReserveMs;
+    expect(fake.calls.timeouts.goto).toBe(EXPORT_RUN.navigationTimeoutMs);
+    expect(fake.calls.timeouts.ready).toBe(printBy - (start + 12_000));
+    // Launch (3 s) and the document (9 s) took 12 s: the boards get what is left, not 10 s.
+    expect(fake.calls.timeouts.boards).toBe(printBy - (start + 12_000));
+    expect(fake.calls.timeouts.printAt).toBeLessThanOrEqual(printBy);
+  });
+
+  it("close the browser as soon as the render is aborted", async () => {
+    const clock = { t: 0 };
+    const fake = fakeBrowser(clock, true);
+    setDesignExportLauncher(fake.launch);
+    const ctrl = new AbortController();
+    const shot = browserExport(ON.BROWSER, JOB, ctrl.signal);
+    await vi.waitFor(() => expect(fake.calls.timeouts.goto).toBeDefined());
+    ctrl.abort();
+    await expect(shot).rejects.toThrow(/Target closed/);
+    expect(fake.calls.closed).toBeGreaterThanOrEqual(1);
+    expect(fake.calls.pdf).toBe(0);
+  });
+
+  it("cut a step's timeout to what is left, never below 1 ms", () => {
+    expect(stepTimeout(10_000, 20_000, 5_000)).toBe(10_000);
+    expect(stepTimeout(10_000, 20_000, 14_000)).toBe(6_000);
+    expect(stepTimeout(10_000, 20_000, 25_000)).toBe(1);
   });
 });
 

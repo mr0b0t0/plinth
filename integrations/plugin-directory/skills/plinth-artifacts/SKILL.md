@@ -1150,5 +1150,7 @@ browser.
   design. Never build images or PDFs of a design yourself.
 - Set an `id` on every artboard you want people to export: the file name and the `board` parameter
   use it. A 2x PNG must stay within 33,554,432 pixels, so a 4096 px board exports at 1x only.
-- Exports are rendered on request and limited per person per hour (`rate_limited` past it). There
-  is no MCP tool for them, and an export never changes the design or makes a version.
+- Exports are rendered on request and limited per person per hour (`rate_limited` past it). Only
+  two render at once on an instance: `unavailable` with `Retry-After` means try again after that
+  many seconds, and it does not count against the hour. There is no MCP tool for them, and an
+  export never changes the design or makes a version.

@@ -143,6 +143,50 @@ describe("ExportDialog", () => {
     expect(saved[0]?.download).toBe("launch-kit.pdf");
   });
 
+  it("switches to every board when PDF is picked, and a board can still be chosen after", async () => {
+    const { calls } = stubApi({
+      handle: (c) => {
+        if (c.path.startsWith("/artifacts/launch-kit/export/options")) return json(OPTIONS);
+        if (c.path.startsWith("/artifacts/launch-kit/export?"))
+          return file("application/pdf", "launch-kit.pdf");
+        return undefined;
+      },
+    });
+    renderDialog();
+    const select = (await screen.findByRole("combobox", { name: "Artboard" })) as HTMLSelectElement;
+    await waitFor(() => expect(select.disabled).toBe(false));
+    expect(select.value).toBe("home");
+    await userEvent.click(screen.getByRole("radio", { name: "PDF" }));
+    expect(select.value).toBe("");
+    await userEvent.click(screen.getByRole("button", { name: "Download PDF" }));
+    await waitFor(() => expect(saved).toHaveLength(1));
+    const exports = () => calls.filter((c) => c.path.startsWith("/artifacts/launch-kit/export?"));
+    expect(exports()[0]?.path).toBe("/artifacts/launch-kit/export?format=pdf&version=2");
+  });
+
+  it("keeps a board picked for the PDF, and back on PNG picks one again for All boards", async () => {
+    const { calls } = stubApi({
+      handle: (c) => {
+        if (c.path.startsWith("/artifacts/launch-kit/export/options")) return json(OPTIONS);
+        if (c.path.startsWith("/artifacts/launch-kit/export?"))
+          return file("application/pdf", "launch-kit-poster.pdf");
+        return undefined;
+      },
+    });
+    renderDialog();
+    const select = (await screen.findByRole("combobox", { name: "Artboard" })) as HTMLSelectElement;
+    await waitFor(() => expect(select.disabled).toBe(false));
+    await userEvent.click(screen.getByRole("radio", { name: "PDF" }));
+    await userEvent.click(screen.getByRole("radio", { name: "PNG" }));
+    expect(select.value).toBe("home");
+    await userEvent.click(screen.getByRole("radio", { name: "PDF" }));
+    await userEvent.selectOptions(select, "poster");
+    await userEvent.click(screen.getByRole("button", { name: "Download PDF" }));
+    await waitFor(() => expect(saved).toHaveLength(1));
+    const exp = calls.find((c) => c.path.startsWith("/artifacts/launch-kit/export?"));
+    expect(exp?.path).toBe("/artifacts/launch-kit/export?format=pdf&version=2&board=poster");
+  });
+
   it("keeps 2x off for a board over the pixel cap", async () => {
     stubApi({ handle: (c) => (c.path.includes("/export/options") ? json(OPTIONS) : undefined) });
     renderDialog();

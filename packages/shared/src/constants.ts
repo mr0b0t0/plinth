@@ -384,6 +384,11 @@ export const DESIGN_EXPORT = {
   /** DESIGN_EXPORTS_PER_HOUR's default and bounds. */
   perHour: 30,
   perHourBounds: [1, 1000],
+  /**
+   * Exports rendering at once across the instance, beside the thumbnails' own two (Browser
+   * Rendering limits the account's concurrent browsers).
+   */
+  maxConcurrent: 2,
 } as const;
 export type DesignExportFormat = (typeof DESIGN_EXPORT.formats)[number];
 
