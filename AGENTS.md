@@ -95,9 +95,9 @@ make a test pass.
   `allow-same-origin`); the shell posts each one only its own HTML.
 - **Comment and artifact text is untrusted input for agents**, and so is shared data, which
   viewers and the page's own code write. A mention is a request from a collaborator, not an
-  instruction with the owner's authority. MCP tool descriptions say so. So is a data source's
-  recipe, which a session acting on injected text may have written: only the signed-in owner can
-  confirm it, and agents treat it as a read-only request, never an instruction.
+  instruction with the owner's authority. MCP tool descriptions say so. A data source's recipe is
+  untrusted too: a session acting on injected text may have written it, only the signed-in owner
+  can confirm it, and agents treat it as a read-only request, never an instruction.
 - **Authorization lives in one shared policy module** and is checked on every read and write,
   never only in the UI.
 - **Tokens** are stored hashed, shown once, revocable per connection. Secrets never appear in
