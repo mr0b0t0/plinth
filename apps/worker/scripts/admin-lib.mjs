@@ -49,7 +49,8 @@ Commands:
   erase-user <email>              Erase a person for good (a privacy request): their account,
                                   every artifact they own with all versions and stored files,
                                   their comments, connections and sessions, sharing entries for
-                                  their address, and their address on reports.
+                                  their address, their address on reports, and who they
+                                  were on their opens of other people's artifacts.
   erase-artifact <id|slug>        Erase one artifact for good: all versions, stored files,
                                   comments, sharing and reports. Works on deleted artifacts too.
   sweep-orphans                   Delete stored files no version points to, across the whole
@@ -293,10 +294,11 @@ export function versionPrefixesSql(ref) {
  * and sessions. Before that: comments they wrote on other people's artifacts, grants to their
  * address, codes and viewer sessions for it, rate-limit counters naming it, their address on
  * reports, shared-data documents they created (personal ones included) and their name, role and
- * agent connection label on documents they last changed. Their artifacts' staging attempt rows (no
- * foreign key) become tombstones: the files go with each artifact's root, and the Worker's sweep
- * deletes what an attempt still running puts after that, then the rows. The last statement
- * returns the erased user, so the CLI can tell whether one matched.
+ * agent connection label on documents they last changed, and who they were on their opens of
+ * other people's artifacts (each stays counted as an unknown open). Their artifacts' staging
+ * attempt rows (no foreign key) become tombstones: the files go with each artifact's root, and
+ * the Worker's sweep deletes what an attempt still running puts after that, then the rows. The
+ * last statement returns the erased user, so the CLI can tell whether one matched.
  */
 export function eraseUserSql(email) {
   return [
@@ -312,6 +314,8 @@ export function eraseUserSql(email) {
     `UPDATE artifact_docs SET updated_by_email = NULL, updated_by_role = NULL, updated_by_label = NULL WHERE updated_by_email = '${email}'`,
     // Unsaved page edits on other people's docs keep their text, not who made them.
     `UPDATE live_drafts SET updated_by_user = NULL WHERE updated_by_user IN (SELECT id FROM users WHERE email = '${email}')`,
+    // Their opens of other people's artifacts stay counted, as nobody (their own go by cascade).
+    `UPDATE artifact_opens SET viewer_kind = 'unknown', user_id = NULL, email = NULL, visitor = NULL, role = NULL WHERE email = '${email}' OR user_id IN (SELECT id FROM users WHERE email = '${email}')`,
     `DELETE FROM users WHERE email = '${email}' RETURNING id`,
   ].join("; ");
 }

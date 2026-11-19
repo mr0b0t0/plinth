@@ -8,6 +8,7 @@
 // itself (the frame, the hold rule) stay in ViewerStage.
 
 import {
+  ChartLineUpIcon,
   ChatCircleIcon,
   ClockCounterClockwiseIcon,
   CodeIcon,
@@ -53,6 +54,7 @@ export interface StageContext {
     history: string;
     report: string;
     settings: string;
+    stats: string;
     signIn: string;
   };
   comments: {
@@ -128,6 +130,9 @@ const editSource: MenuItem = (c) =>
 const settings: MenuItem = (c) =>
   c.gate.role === "owner" ? [{ label: "Settings", icon: GearSixIcon, href: c.hrefs.settings }] : [];
 
+const stats: MenuItem = (c) =>
+  c.gate.role === "owner" ? [{ label: "Stats", icon: ChartLineUpIcon, href: c.hrefs.stats }] : [];
+
 /**
  * A doc prints itself: the renderer in the frame calls its own print(), so the browser prints the
  * document (or saves it as PDF), not this page around it.
@@ -140,7 +145,7 @@ const printTyped: MenuItem = (c) => [
   },
 ];
 
-/** Menu items for one artifact type, in order, after Settings. One type per line. */
+/** Menu items for one artifact type, in order, after Settings and Stats. One type per line. */
 export const TYPE_MENU_ITEMS: Partial<Record<ArtifactType, readonly MenuItem[]>> = {
   doc: [printTyped],
 };
@@ -177,6 +182,7 @@ export const MENU_ITEMS: readonly MenuItem[] = [
   compactSignInToEdit,
   editSource,
   settings,
+  stats,
   typeItems,
   capabilityItems,
   report,

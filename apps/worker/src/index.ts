@@ -15,7 +15,7 @@ import {
   serveSource,
 } from "./app/discovery.ts";
 import { applyAppHeaders } from "./app/headers.ts";
-import { serveSpa } from "./app/spa.ts";
+import { notFoundText, serveSpa } from "./app/spa.ts";
 import { type Bindings, ConfigError, getConfig } from "./config.ts";
 import { contentRoot, resolveHost, serveContent } from "./content/serve.ts";
 import { ApiError } from "./lib/errors.ts";
@@ -23,7 +23,7 @@ import { handleMcp } from "./mcp/server.ts";
 import { mcpResourceMetadataUrl, oauthRoutes } from "./oauth/routes.ts";
 import { pruneUploadTickets, sweepStagingAttempts } from "./services/attempts.ts";
 import { liveRetentionDays, pruneLiveDrafts } from "./services/live.ts";
-import { foldViewDays } from "./services/views.ts";
+import { foldOpens, viewRetentionDays } from "./services/views.ts";
 
 // The live-room Durable Object class (binding ROOMS, wrangler.jsonc); see src/rooms/.
 export { ArtifactRoom } from "./rooms/ArtifactRoom.ts";
@@ -99,6 +99,18 @@ for (const path of [
 app.get("/.well-known/ai-catalog.json", (c) =>
   discoveryJson(c, aiCatalog(c.get("config")), "application/ai-catalog+json"),
 );
+// OpenAI's plugin portal checks that this MCP server's domain is the submitter's: the token alone,
+// as plain text. Only where the operator set it (OPENAI_APPS_CHALLENGE); 404 everywhere else.
+app.get("/.well-known/openai-apps-challenge", (c) => {
+  const token = c.get("config").openaiAppsChallenge;
+  if (!token) return notFoundText(c);
+  const headers = new Headers({
+    "Content-Type": "text/plain; charset=utf-8",
+    "Cache-Control": "no-store",
+  });
+  applyAppHeaders(c.get("config"), headers);
+  return new Response(token, { status: 200, headers });
+});
 for (const path of [
   "/mcp/server-card",
   "/.well-known/mcp.json",
@@ -176,9 +188,9 @@ export default {
   /**
    * The hourly cron trigger (wrangler.jsonc `triggers`): remove what abandoned upload attempts
    * left, upload tickets past their status window (services/attempts.ts), and live doc drafts
-   * nobody touched for LIVE_DRAFT_RETENTION_DAYS (services/live.ts). At 03 UTC, also fold daily
-   * open counts older than the window into per-artifact totals (services/views.ts), whether or not
-   * counting is on. Needs only the D1 and R2 bindings, not the host configuration.
+   * nobody touched for LIVE_DRAFT_RETENTION_DAYS (services/live.ts). At 03 UTC, also fold opens
+   * older than VIEW_LOG_RETENTION_DAYS into per-artifact counts and delete them (services/views.ts),
+   * whether or not counting is on. Needs only the D1 and R2 bindings, not the host configuration.
    */
   async scheduled(
     controller: ScheduledController,
@@ -187,8 +199,9 @@ export default {
   ): Promise<void> {
     await sweepStagingAttempts(env, controller.scheduledTime);
     await pruneUploadTickets(env.DB, controller.scheduledTime);
-    if (new Date(controller.scheduledTime).getUTCHours() === 3)
-      await foldViewDays(env.DB, controller.scheduledTime);
+    const keepDays = viewRetentionDays(env);
+    if (new Date(controller.scheduledTime).getUTCHours() === 3 && keepDays !== null)
+      await foldOpens(env.DB, keepDays, controller.scheduledTime);
     await pruneLiveDrafts(env.DB, liveRetentionDays(env), controller.scheduledTime);
   },
 } satisfies ExportedHandler<Bindings>;
