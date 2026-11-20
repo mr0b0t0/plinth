@@ -107,7 +107,15 @@ describe("runtime fragments", () => {
     ]);
     const served = runtimeScript(config());
     expect(assembleRuntime(config())).toBe(served);
-    expect(served).toBe(assembleRuntime(config(), [DATA_FRAGMENT, ROOM_FRAGMENT, COMMENTS_FRAGMENT, PEOPLE_FRAGMENT, LIVE_FRAGMENT]));
+    expect(served).toBe(
+      assembleRuntime(config(), [
+        DATA_FRAGMENT,
+        ROOM_FRAGMENT,
+        COMMENTS_FRAGMENT,
+        PEOPLE_FRAGMENT,
+        LIVE_FRAGMENT,
+      ]),
+    );
     // Memoized per app origin, which page comments embed.
     expect(runtimeScript(config())).toBe(served);
     expect(served).toContain(`var APP_ORIGIN = ${JSON.stringify(config().appOrigin)};`);

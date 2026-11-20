@@ -232,7 +232,13 @@ export function collect(dir, { includeMaps }) {
 }
 
 /** What each artifact type is called in messages. */
-const TYPE_NOUNS = { html: "page", doc: "document", slides: "deck", design: "design", sheet: "sheet" };
+const TYPE_NOUNS = {
+  html: "page",
+  doc: "document",
+  slides: "deck",
+  design: "design",
+  sheet: "sheet",
+};
 const nounOf = (type) => TYPE_NOUNS[type] ?? "page";
 
 function typeOfFolder(files) {
