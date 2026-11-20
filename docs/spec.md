@@ -1933,8 +1933,9 @@ editors also edit a sheet on its page, live with each other
 - **Viewing.** The page shows a toolbar (title, row count, a filter box, Download CSV and Excel), a
   formula bar with the selected cell's address and its raw text, and the grid: column letters and
   the header row stay at the top, frozen columns at the left (at phone width, a frame of 640
-  pixels or less, frozen columns that with the row numbers would take more than 40% of the frame
-  are drawn narrower together to fit, none under 40 pixels, their stored widths unchanged),
+  pixels or less, frozen columns that would take more than 40% of the frame, the row numbers not
+  counted, are drawn narrower together to fit, none under 40 pixels, their stored widths
+  unchanged), one ring colour for focus and the selection (the app's focus colour),
   numbers right-aligned in their format, dates as `YYYY-MM-DD`, checkboxes as a symbol with a
   spoken Yes or No, links that open in a new tab, and errors with what they mean. Clicking a header sorts ascending, descending, then
   back to the stored order; the filter keeps rows whose shown text contains it. Sort and filter

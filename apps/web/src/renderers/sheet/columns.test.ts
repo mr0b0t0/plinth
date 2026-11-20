@@ -1089,11 +1089,12 @@ describe("the docked cell editor (phone width)", () => {
     expect(await collected(f)).toEqual(LINES);
   });
 
-  it("narrows frozen columns at phone width to 40% of the frame with the row numbers", () => {
-    // 360 px: 144 px for the row numbers (48) and the frozen columns.
-    expect(shownWidths([220, 120, 120], 1, 360)).toEqual([96, 120, 120]);
-    // Each frozen column keeps at least 40 px.
-    expect(shownWidths([120, 72, 120], 2, 360)).toEqual([60, 40, 120]);
+  it("narrows frozen columns at phone width to 40% of the frame, the row numbers not counted", () => {
+    // 360 px: 144 px for the frozen columns, beside the row numbers.
+    expect(shownWidths([220, 120, 120], 1, 360)).toEqual([144, 120, 120]);
+    // Narrowed together, each keeping at least 40 px.
+    expect(shownWidths([200, 100, 120], 2, 360)).toEqual([96, 48, 120]);
+    expect(shownWidths([300, 40, 120], 2, 360)).toEqual([127, 40, 120]);
     // Columns that fit, a wider frame, an unknown one, or nothing frozen: as stored.
     expect(shownWidths([80, 120], 1, 360)).toEqual([80, 120]);
     expect(shownWidths([220, 120], 1, 1280)).toEqual([220, 120]);

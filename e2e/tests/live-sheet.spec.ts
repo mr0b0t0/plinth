@@ -356,11 +356,11 @@ test("column settings, widths, freezing, options and row moves on the page publi
   // Item stays in view; Qty two steps wider with the keyboard.
   await columnMenu(page, "A1", "Freeze up to this column");
   await expect(cell(page, "A2")).toHaveClass(/plinth-sheet__frozen/);
-  // At phone width the frozen pane takes at most 40% of the frame (144 px of 360), so Item is
-  // drawn at 96 px there; elsewhere at its stored 120 px.
+  // Item keeps its stored 120 px at every width: at phone width the frozen columns may take 40% of
+  // the frame (144 px of 360), the row numbers not counted, and its header shows its whole name.
   const frozenBox = await cell(page, "A2").boundingBox();
-  if ((page.viewportSize()?.width ?? 1024) <= 640) expect(frozenBox?.width).toBeLessThanOrEqual(97);
-  else expect(frozenBox?.width).toBeGreaterThanOrEqual(119);
+  expect(frozenBox?.width).toBeGreaterThanOrEqual(119);
+  expect(frozenBox?.width).toBeLessThanOrEqual(121);
   await cell(page, "B1").locator(".plinth-sheet__sort").focus();
   await page.keyboard.press("Alt+ArrowRight");
   await page.keyboard.press("Alt+ArrowRight");

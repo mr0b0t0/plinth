@@ -12,8 +12,9 @@
   --sheet-head-fg: #3b434b;
   --sheet-rule: #d8dee4;
   --sheet-rule-strong: #b6bec7;
+  /* Links. Rings and the selection tint take --sheet-focus. */
   --sheet-accent: #0a58ca;
-  --sheet-select: rgb(10 88 202 / 0.12);
+  --sheet-select: rgb(143 90 42 / 0.12);
   --sheet-error: #b42318;
   --sheet-btn-bg: #ffffff;
   --sheet-btn-hover: #eef1f4;
@@ -23,7 +24,7 @@
   --sheet-live: #8f5a2a;
   --sheet-live-soft: #f0e8e0;
   --sheet-invalid: #b42318;
-  /* The app's focus ring (--color-focus): the column settings' fields and the cell editor. */
+  /* The app's focus ring (--color-focus): every focus and selection ring in the sheet. */
   --sheet-focus: #8f5a2a;
   --sheet-font:
     system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif,
@@ -45,7 +46,7 @@
     --sheet-rule: #30363d;
     --sheet-rule-strong: #4a525b;
     --sheet-accent: #6cb2ff;
-    --sheet-select: rgb(108 178 255 / 0.16);
+    --sheet-select: rgb(211 154 98 / 0.16);
     --sheet-error: #ff8a80;
     --sheet-btn-bg: #1e2228;
     --sheet-btn-hover: #2a3038;
@@ -172,7 +173,7 @@ body {
 .plinth-sheet__sort:focus-visible,
 .plinth-sheet__scroll:focus-visible,
 .plinth-sheet__cell:focus-visible {
-  outline: 2px solid var(--sheet-accent);
+  outline: 2px solid var(--sheet-focus);
   outline-offset: -2px;
 }
 
@@ -273,6 +274,8 @@ body {
   align-items: stretch;
   height: 100%;
   min-width: 0;
+  /* The header's width (fixed by the table's columns), for its menu button below. */
+  container-type: inline-size;
 }
 
 .plinth-sheet__sort {
@@ -369,7 +372,7 @@ body {
 }
 
 .plinth-sheet__selected {
-  box-shadow: inset 0 0 0 2px var(--sheet-accent);
+  box-shadow: inset 0 0 0 2px var(--sheet-focus);
   background-image: linear-gradient(var(--sheet-select), var(--sheet-select));
 }
 
@@ -646,10 +649,14 @@ body {
   visibility: visible;
 }
 
-/* Where the button stays shown, the name makes room for it; a hover only lays it over the name. */
-.plinth-sheet__page--editing .plinth-sheet__name--current .plinth-sheet__sort,
-.plinth-sheet__page--editing .plinth-sheet__name:focus-within .plinth-sheet__sort {
-  padding-right: 20px;
+/* Where the button stays shown on a wide header, the name makes room for it; on a narrow one (a
+   frozen column at phone width) and on hover it lies over the end of the name, which keeps its
+   width. */
+@container (min-width: 120px) {
+  .plinth-sheet__page--editing .plinth-sheet__name--current .plinth-sheet__sort,
+  .plinth-sheet__page--editing .plinth-sheet__name:focus-within .plinth-sheet__sort {
+    padding-right: 20px;
+  }
 }
 
 @media (hover: hover) {
@@ -673,7 +680,7 @@ body {
 }
 
 .plinth-sheet__resize:hover {
-  box-shadow: inset -2px 0 0 var(--sheet-accent);
+  box-shadow: inset -2px 0 0 var(--sheet-focus);
 }
 
 /* ---------- row and column menus ---------- */
@@ -744,6 +751,8 @@ body {
 
 .plinth-sheet__panel-field--check > input {
   margin: 0;
+  /* Ink, as Apply, not the browser's blue. */
+  accent-color: var(--sheet-fg);
 }
 
 /* The row a row's menu acts on, while it is open. */
@@ -752,7 +761,7 @@ body {
 }
 
 .plinth-sheet__grid .plinth-sheet__row--target .plinth-sheet__rownum {
-  box-shadow: inset 3px 0 0 var(--sheet-accent);
+  box-shadow: inset 3px 0 0 var(--sheet-focus);
   color: var(--sheet-fg);
 }
 

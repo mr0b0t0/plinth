@@ -45,7 +45,7 @@ export const MIN_WIDTH = 40;
 export const MAX_WIDTH = 800;
 /** At phone width (a frame this wide or less) the frozen columns are drawn narrower to fit. */
 export const NARROW_FRAME = 640;
-/** There, the row numbers and the frozen columns take at most this share of the frame. */
+/** There, the frozen columns (the row numbers not counted) take at most this share of the frame. */
 export const FROZEN_SHARE = 0.4;
 
 export interface GridOptions {
@@ -148,15 +148,15 @@ function offsetsOf(widths: readonly number[], freeze: number): number[] {
 
 /**
  * The widths the columns are drawn at in a frame `frame` pixels wide: as stored, except at phone
- * width, where frozen columns that with the row numbers would take more than FROZEN_SHARE of the
- * frame are narrowed together to fit (none under MIN_WIDTH), so most of the grid still scrolls.
- * The stored widths never change.
+ * width, where frozen columns that together take more than FROZEN_SHARE of the frame (the row
+ * numbers not counted) are narrowed together to fit (none under MIN_WIDTH), so most of the grid
+ * still scrolls. The stored widths never change.
  */
 export function shownWidths(widths: readonly number[], freeze: number, frame: number): number[] {
   const out = widths.slice();
   const n = Math.min(freeze, widths.length);
   if (n <= 0 || !(frame > 0) || frame > NARROW_FRAME) return out;
-  const room = Math.floor(frame * FROZEN_SHARE) - ROW_NUMBER_WIDTH;
+  const room = Math.floor(frame * FROZEN_SHARE);
   let sum = 0;
   for (let c = 0; c < n; c++) sum += widths[c] as number;
   if (sum <= room) return out;
