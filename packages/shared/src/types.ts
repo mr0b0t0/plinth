@@ -19,10 +19,16 @@ import type { Anchor } from "./schemas.ts";
 
 export interface Author {
   kind: "user" | "connection";
-  /** Person's name or email, or the connection label. */
+  /** Person's name or email, or the connection label. Display text, never proof of role. */
   label: string;
   user_id: string | null;
   connection_id: string | null;
+  /**
+   * The artifact's owner wrote it (in person or through one of their agents), as the server knows
+   * it, never from the label. The app marks the owner's versions with it, so a name chosen to look
+   * like the owner's visibly lacks the mark. The Worker always sends it; absent reads as false.
+   */
+  is_owner?: boolean;
 }
 
 export interface ArtifactSummary {
@@ -286,7 +292,11 @@ export interface GrantInfo {
   email: string;
   role: Role;
   created_at: string;
-  /** The display name of the account with this email, if it has one (shown to the owner). */
+  /**
+   * The display name of the account with this email, shown to the owner only once its holder has
+   * taken part in the artifact (a comment, a shared-data entry or a version; policy.ts
+   * accessListShowsName). Null until then, and for an address with no account or no name.
+   */
   name: string | null;
 }
 
@@ -315,7 +325,12 @@ export interface CommentInfo {
   artifact_id: string;
   version_number: number;
   parent_id: string | null;
-  author: { email: string | null; connection_id: string | null; label: string };
+  /**
+   * `label` is display text, never proof of role. `is_owner`: the artifact's owner wrote it (in
+   * person or through one of their agents), as the server knows it; the app marks the owner's
+   * comments with it. The Worker always sends it; absent reads as false.
+   */
+  author: { email: string | null; connection_id: string | null; label: string; is_owner?: boolean };
   body: string;
   anchor: Anchor | null;
   status: CommentStatus;
@@ -509,15 +524,15 @@ export type ViewGate =
        */
       page_comments?: true;
       /**
-       * Who the page shows this viewer as, beyond the email `data` names, and whether it lists
-       * the people it is shared with. Absent when there is nothing to tell.
-       */
-      people?: ViewGatePeople;
-      /**
        * Live views: open the watch socket (GET /api/v1/view/:id/watch) to learn of new versions,
        * and of shared-data changes, as they happen. Absent: poll as before.
        */
       watch?: true;
+      /**
+       * Who the page shows this viewer as, beyond the email `data` names, and whether it lists
+       * the people it is shared with. Absent when there is nothing to tell.
+       */
+      people?: ViewGatePeople;
     }
   | { status: "password_required"; artifact: ViewArtifactStub }
   | { status: "email_required"; artifact: ViewArtifactStub }
@@ -1002,8 +1017,6 @@ export interface SheetRead {
   /** The range to read next when truncated, else null. */
   next_range: string | null;
   warnings: { code: "eval_budget"; message: string }[];
-  /** Owners and editors: unsaved page edits, as on get_artifact. Absent for other roles. */
-  live_draft?: LiveDraftMeta | null;
   untrusted: true;
 }
 

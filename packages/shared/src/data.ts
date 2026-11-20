@@ -530,8 +530,16 @@ export interface AgentPerson {
 /** GET /api/v1/artifacts/:ref/people */
 export interface PeopleResult {
   people: AgentPerson[];
+  /** How many matched `q` in all, before `limit`. */
+  total: number;
   untrusted: string;
 }
+
+/**
+ * The most people one list returns: the owner and every direct grant (LIMITS.maxAllowlistEmails).
+ * With a shared category's people the list can be longer; `total` counts them all.
+ */
+export const MAX_PEOPLE_LISTED = LIMITS.maxAllowlistEmails + 1;
 
 /** A people search: every whitespace-separated term must match a name or an email. */
 export const peopleQuerySchema = z
@@ -544,6 +552,7 @@ export const peopleQuerySchema = z
 export const listArtifactPeopleInput = z.object({
   id: artifactRefSchema,
   q: peopleQuerySchema.optional(),
+  limit: z.number().int().min(1).max(MAX_PEOPLE_LISTED).optional(),
 });
 
 /** list_artifact_data with a collection. */

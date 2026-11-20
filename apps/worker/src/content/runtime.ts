@@ -14,13 +14,14 @@
 //              set once ready resolves
 //   db.collection(name): list({ limit, cursor }) -> { docs, nextCursor }, all(), get(id) -> Doc |
 //              null, add(data), set(id, data, { ifRev }), update(id, fn), delete(id, { ifRev }),
-//              mine(), setMine(data), deleteMine(), onSnapshot(onDocs, onError, { intervalMs });
-//              a Doc's createdBy and updatedBy are { email, name | null, role, via }.
+//              mine(), setMine(data), deleteMine(), onSnapshot(onDocs, onError, { intervalMs }).
 //              While the app pushes changes (live views, runtime/live.ts) onSnapshot re-reads when
-//              told and polls only every 60 s; intervalMs applies while it does not
+//              told and polls only every 60 s; intervalMs applies while it does not. A Doc's
+//              createdBy and updatedBy are { email, name | null, role, via }
 //   people     who has access (owners and editors, pages that declare `data viewer people`):
-//              list({ q, limit }) -> [{ id, email, name | null, role, you }], get(id) -> that or
-//              null; others get forbidden or unavailable
+//              list({ q, limit }) -> [{ id, email, name | null, role, you }] (with .total, how
+//              many matched before limit), get(id) -> that or null; others get forbidden or
+//              unavailable
 //   PlinthError: .code unavailable | read_only | forbidden | not_found | conflict |
 //              quota_exceeded | too_large | rate_limited | expired | invalid | network;
 //              .retryAfter, .currentRev, .limit
@@ -62,8 +63,8 @@ export const RUNTIME_FRAGMENTS: readonly RuntimeFragment[] = [
   DATA_FRAGMENT,
   ROOM_FRAGMENT,
   COMMENTS_FRAGMENT,
-  PEOPLE_FRAGMENT,
   LIVE_FRAGMENT,
+  PEOPLE_FRAGMENT,
 ];
 
 /** Assemble the script from `fragments`, with the app channel when one of them uses it. */

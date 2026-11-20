@@ -54,7 +54,7 @@ const art = (extra: Partial<ArtifactFacts> = {}): ArtifactFacts => ({
 });
 const access = (extra: Partial<AccessFacts> = {}): AccessFacts => ({
   grantRole: null,
-  categoryGrant: { shareId: SHARE, shareKey: KEY, role: "commenter" },
+  categoryGrant: { shareId: SHARE, shareOwnerId: OWNER, shareKey: KEY, role: "commenter" },
   categorySharing: true,
   passwordPassed: false,
   ...extra,
@@ -66,7 +66,9 @@ describe("categoryRoleOf: the filing safeguard", () => {
     expect(
       categoryRoleOf(
         art(),
-        access({ categoryGrant: { shareId: SHARE, shareKey: KEY, role: "viewer" } }),
+        access({
+          categoryGrant: { shareId: SHARE, shareOwnerId: OWNER, shareKey: KEY, role: "viewer" },
+        }),
       ),
     ).toBe("viewer");
   });
@@ -105,7 +107,26 @@ describe("categoryRoleOf: the filing safeguard", () => {
     [
       "a grant on the share of another key",
       art(),
-      access({ categoryGrant: { shareId: SHARE, shareKey: "other", role: "commenter" } }),
+      access({
+        categoryGrant: {
+          shareId: SHARE,
+          shareOwnerId: OWNER,
+          shareKey: "other",
+          role: "commenter",
+        },
+      }),
+    ],
+    [
+      "a grant on a share another owner holds",
+      art(),
+      access({
+        categoryGrant: {
+          shareId: SHARE,
+          shareOwnerId: "someone-else",
+          shareKey: KEY,
+          role: "commenter",
+        },
+      }),
     ],
   ])("gives nothing: %s", (_label, a, x) => {
     expect(categoryRoleOf(a, x)).toBeNull();
@@ -113,7 +134,7 @@ describe("categoryRoleOf: the filing safeguard", () => {
   });
 
   it("clamps a stray role to viewer", () => {
-    const stray = { shareId: SHARE, shareKey: KEY, role: "editor" as never };
+    const stray = { shareId: SHARE, shareOwnerId: OWNER, shareKey: KEY, role: "editor" as never };
     expect(categoryRoleOf(art(), access({ categoryGrant: stray }))).toBe("viewer");
   });
 });
@@ -142,7 +163,9 @@ describe("decide with a category grant", () => {
     }
     expect(allow(client, "comment")).toBe(true);
     expect(allow(client, "mention")).toBe(true);
-    const asViewer = access({ categoryGrant: { shareId: SHARE, shareKey: KEY, role: "viewer" } });
+    const asViewer = access({
+      categoryGrant: { shareId: SHARE, shareOwnerId: OWNER, shareKey: KEY, role: "viewer" },
+    });
     expect(allow(client, "view", art(), asViewer)).toBe(true);
     expect(allow(client, "comment", art(), asViewer)).toBe(false);
     // A viewer confirmed by code holds it too.

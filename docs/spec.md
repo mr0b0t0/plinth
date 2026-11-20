@@ -194,8 +194,9 @@ one field to the stored declaration and a second kind of comment anchor:
 settings: `ALLOW_LIVE_VIEWS` (on) and `LIVE_VIEW_MAX_SOCKETS_PER_ARTIFACT` (1000, from 10 to
 10000, half for the people an artifact is shared with and half for everyone else). Fixed: 32
 watch sockets per client and 60 connects per client per minute on one artifact, a socket lifetime
-of 12 hours (the content pass's, or less when the session or password pass it was opened with ends
-sooner), a spread of 2 ms per socket the cap allows (at most 10 s, 2 s at the default),
+of 12 hours less up to 5 minutes at random (the content pass's, or less when the session or
+password pass it was opened with ends sooner), a spread of 2 ms per socket the cap allows (at most
+10 s, 2 s at the default), at most one data signal per spread, a first reconnect within 10 s,
 backstop polls every 60 s (the page's data) and 5 minutes (the app's gate), and a tab hidden for
 60 s closes its socket.
 
@@ -420,7 +421,8 @@ viewer's browser ([Slides](#slides-decided-2026-11-19)); there is no `.docx` exp
   in `versions`. Files it shares with the current version are referenced, not copied.
 - The artifact page shows the list: number, author (person or agent label), note, date.
 - Any version has a permanent URL (`/a/<slug>/v/3`). The bare URL always serves the current one.
-- Two versions can be compared as a source diff or side by side as rendered pages.
+- Two versions can be compared as a source diff or side by side as rendered pages (a sheet,
+  whose source people never see, only as rendered pages).
 - Restoring v2 publishes its content as the next version, so history is never rewritten.
 - Open views follow new versions: see [Live views](#live-views-decided-2026-11-19).
 
@@ -616,7 +618,8 @@ Owners publish many artifacts for different projects, so each artifact can carry
 short name for the project, repo or client it belongs to. It is the owner's private organisation:
 `category` is null for every caller but the owner, and no anonymous surface, upload status, email
 or log carries it, nor any share state, except to the owner. A shared category's people see the
-share's title, never the name. A collaborator files artifacts shared with them under categories of
+share's title, which is the category's name unless the owner changes it (a later rename leaves the
+title as it was). A collaborator files artifacts shared with them under categories of
 their own ([below](#category-sharing-and-personal-categories-decided-2026-11-19)).
 
 - **Agents set it.** `publish_artifact`, `start_upload`, `POST /api/v1/artifacts` and
@@ -1120,12 +1123,17 @@ never a directory.
 - **Display names.** `users.name` is the person's display name, set in the app ("Your name…" in
   the account menu) or with `PATCH /api/v1/me`. On write it is stored NFC with whitespace runs
   collapsed and trimmed, at most 100 characters, with no `@`, no character whose compatibility
-  (NFKC) form is `@` (U+FE6B, U+FF20, which render as one) and no control, format (bidi,
-  zero-width) or separator characters; an empty name clears it. Pages, rooms and agents get it
-  cleaned on every read (refused characters and every form of `@` dropped, at most 64 code points, `null` when
-  nothing is left), so names stored before these rules comply too. People with a viewer session
-  (confirmed by code where they may not sign in) have no name, and an account a code created has
-  none until its person sets one. A name is display text, never authority: `role` stays
+  (NFKC) form is `@` (U+FE6B, U+FF20, which render as one), no control, format (bidi,
+  zero-width) or separator characters, and at least one letter, number, symbol or punctuation mark
+  that is not blank (the Hangul fillers U+115F, U+1160, U+3164, U+FFA0 and blank Braille U+2800 do
+  not count, nor do combining marks alone); an empty name clears it. A refusal says why in one
+  sentence, the same in the app and in the API's error message. Pages, rooms, agents and the app
+  get it cleaned on every read (refused characters and every form of `@` dropped, at most 64 code
+  points, `null` when nothing visible is left): document authors, room peers, comment and mention
+  authors, the owner's name on summaries and the gate, version labels and stats. So names stored
+  before these rules comply too. People with a viewer session (confirmed by code where they may
+  not sign in) have no name, and an account a code created has none until its person sets one. A
+  name is display text, never authority: `role` stays
   server-derived beside it.
 - **Read live, never sealed.** The name is read from `users` by the identity email (the owner's
   own, or the one holding the grant) whenever a response needs it. It is not in the content pass or
@@ -1137,14 +1145,31 @@ never a directory.
   `room.ready.you` carry `name` beside `email`. Link viewers, previews and captures see none.
 - **People list.** `people` in `<meta name="plinth-capabilities">` (`content="data viewer
   people"`) lets the owner and editors list everyone the artifact is shared with: the owner, then
-  every grant by email, each with its `u_` id, email, name and role. It counts only with `data` and
+  every grant by email, each with its `u_` id, email, name and role. With `ALLOW_CATEGORY_SHARING`
+  on, "every grant" includes the people the artifact reaches through its shared category
+  ([below](#category-sharing-and-personal-categories-decided-2026-11-19)): a grant on the current
+  share of the owner's category key counts exactly when `policy.ts categoryRoleOf` lets it (the
+  owner reviewed this artifact as `shared` into that very share, the share is the owner's own, and
+  never above commenter), so a pending or private artifact, or one filed elsewhere, lists none of
+  them. Each person appears once, at the stronger of a direct grant and a category grant. With the
+  switch off the list is the direct grants alone. The owner, at most 200 direct grants and one
+  share's 200 people make the longest list 401 entries; `limit` keeps its bounds, so `total` says
+  when there are more than one page shows. It counts only with `data` and
   `viewer` and declares nothing on its own; it is stored in `versions.capabilities` only when
-  declared, so every other declaration is stored as before. `GET /__plinth/api/v1/people?q=&limit=`
-  returns `{ people, total }` (`limit` 1 to 201; `q`, at most 100 characters, keeps people whose
-  name or email contains every term) and `GET /__plinth/api/v1/people/<u_id>` one person, or 404
-  when the id is nobody with access now. Each entry has `you` on the reader's own row. The
+  declared, so every other declaration is stored as before. The list is offered only while every
+  version the content host serves (1 to the current one) was written by a person or their
+  account-wide agent: once a token limited to one artifact (a CI token) has published a version, or
+  a version's writer's account is gone, the artifact lists nobody to anyone, the owner included
+  (`policy.ts peopleListOffered`, by the writer facts thumbnails use). Every version counts, not
+  only the current one, because each is served at `/__plinth/v/<n>/` on the same origin under the
+  same pass, and nothing on a request says which version's code made it.
+  `GET /__plinth/api/v1/people?q=&limit=` returns `{ people, total }` (`limit` 1 to 201, all by
+  default; `total` counts every match before `limit`; `q`, at most 100 characters, keeps people
+  whose name or email contains every term) and `GET /__plinth/api/v1/people/<u_id>` one person, or
+  404 when the id is nobody with access now. Each entry has `you` on the reader's own row. The
   runtime adds `plinth.canListPeople` (from the session's `can_list_people`) and
-  `plinth.people.list({ q, limit })` and `plinth.people.get(id)`. Commenters, viewers, link
+  `plinth.people.list({ q, limit })` (an array that also carries `total`) and
+  `plinth.people.get(id)`. Commenters, viewers, link
   viewers, previews and captures are refused (`forbidden`, or `unavailable` with `not_identified`,
   `not_declared`, `preview`, `disabled` or `opaque_isolation`); reads are limited to 600 per hour
   per reader per artifact. The routes are entries of the shared-data route table, so the data API's
@@ -1152,7 +1177,8 @@ never a directory.
   that one list: nothing takes an arbitrary email or name and says whether it has an account.
 - **Names on the access list.** The owner types every grant's address and its holder is not told,
   so an access list (the people list for the page, agents and REST, and the owner's sharing
-  settings) shows a grant holder's name only once that person has taken part in the artifact:
+  settings) shows a grant holder's name, a category grant's holder included, only once that person
+  has taken part in the artifact:
   written a comment, a shared-data entry or a version of it, each of which already shows their name
   to the people who can read the list. The owner's name and the reader's own row are always shown.
   Until then the entry has `name: null`, exactly like an address with no account, and `q` does not
@@ -1166,15 +1192,22 @@ never a directory.
   address is on the list), and a live room says it "shows it to the other people who have it
   open". Without the block the line reads as before.
 - **In the app.** Once a name is set, the account chip at the foot of the sidebar shows it, and
-  the account menu's "Signed in as" header keeps the email.
+  the account menu's "Signed in as" header keeps the email. Since anyone may choose any name, the
+  owner's own comments and versions carry a quiet "Owner" mark (in a comment's header, beside a
+  version's author in History, "(owner)" in the version picker), from `is_owner`, which the server
+  derives from ids (`author.is_owner` on comments and versions, in REST and MCP alike), never from
+  the name: someone who names themself after the owner visibly lacks it. An agent's comment or
+  version keeps its "Agent" mark instead.
 - **Agents and REST.** No new MCP tool. Document authors gain `name` for owners' and editors'
   agents on any page, beside the `viewer_id` that already tells whose a `u_` document is (only its
   person can create it). The access list reaches agents only where the page offers it: when the
   current version declares `data viewer people` and shared data is on (`policy.ts
   peopleListOffered`, the same answer the page route and the notice use), `list_artifact_data`
   without a collection also returns `people` (`{ viewer_id, email, name, role }`, the same list),
-  and `GET /api/v1/artifacts/:ref/people?q=` mirrors it (policy action `people`: owners and
-  editors, `artifacts:read`; 403 `feature_disabled` with the reason otherwise). Without the
+  and `GET /api/v1/artifacts/:ref/people?q=&limit=` mirrors it with `total` (policy action
+  `people`: owners and editors, `artifacts:read`; 403 `feature_disabled` with the reason
+  otherwise, or `forbidden` on an artifact one of whose versions a token limited to one artifact
+  wrote, as the page route answers; the page route's 600 reads per hour per reader per artifact, counted together). Without the
   declaration only the owner sees the access list, in the sharing settings, as before; the owner's
   `GET /api/v1/artifacts/:ref/sharing` gains `name` on each grant under the rule above. Names are
   untrusted for agents and the tool descriptions say so.
@@ -1248,6 +1281,87 @@ keeps every run. Guide: `docs/ci.md`.
 - **Other CI and cron** use the CLI with an exact version (`npx @mr0b0t0/plinth@<version>
   publish`), with `PLINTH_TOKEN` (and `PLINTH_URL`) from the environment.
 
+### Live views (decided 2026-11-19)
+
+An open artifact page picks up a newly published version by itself within seconds, and a page that
+keeps [shared data](#shared-data-and-viewer-identity) learns that it changed without waiting for
+its poll. Plinth pushes signals, never content: the page still loads every version and every
+document through the gate and the shared-data API, with all of their checks.
+
+- **Who.** Anyone who can open the artifact (the owner, people it is shared with, and anonymous
+  viewers of an unlisted, password or public link), never agents. A watch socket joins no
+  [room](#live-rooms), sees no peers and carries no identity, so it shows nobody to anybody; it
+  tells a viewer only what the gate and the change counter already tell them, sooner.
+- **Transport.** The app page, never the artifact, opens one receive-only WebSocket on the app host,
+  `wss://<APP_HOST>/api/v1/view/<artifact id>/watch`, with the app's own cookies, when its gate
+  says `watch: true`. The handshake is checked in order: method and upgrade, `Origin` exactly the
+  app's origin (absent and `null` refused, so no artifact can open one), same-origin fetch
+  metadata when sent, the `plinth.view.v1` subprotocol, no bearer token, live views active, the
+  artifact by id, the gate's view decision (any refusal is one identical 404), and policy
+  (`liveViewAccess` in `policy.ts`); see [docs/security.md](security.md#live-views). The socket is
+  served by the artifact's `ArtifactRoom` with the Hibernation API. The app's CSP `connect-src`
+  names its own `wss:` origin and nothing else.
+- **Signals.** JSON frames the room builds from integers: `welcome` (the current version),
+  `version` (a version was published: by an agent, the
+  source editor, a restore or an on-page checkpoint), `data` (the page's shared data changed:
+  a write from the page, an agent or the app, or the owner's "Delete all shared data"; at most one
+  per `spread_ms` per artifact: a write in a quiet window sends it at once, and the writes after
+  it share one frame at the window's end, so the last write is always followed by one) and
+  `access` (sent just before a sharing change closes the socket). The client
+  sends only the text `ping`. Each signal carries `spread_ms`, which depends only on the
+  instance's cap, never on the audience: 2 ms per socket an artifact may hold, at most 10 s (2 s
+  at the default). Each open view waits a random time up to it before it acts, so at most about
+  500 follow-up requests a second reach one artifact at the default cap (cap ÷ spread, 1000 at the
+  top bound), however fast its data is written, and no frame says anything about who else has the
+  artifact open.
+- **What the page does.** On `version` the app re-reads its own gate at once and shows the new
+  version as it did after a poll ("Updated to vN"; a pinned `/v/n` link only learns the number).
+  One such notice shows at a time: a newer version's replaces the last, so versions published in
+  a row never stack.
+  On `data` it posts `{ source: "plinth-view", v: 1, type: "data" }` to the frame at its exact
+  content origin, and `/__plinth/runtime.js` re-reads the change counter and refetches what
+  `onSnapshot` watches when it moved. The app also says whether signals are pushed (`type:
+  "push"`), and while they are the runtime polls only every 60 s. Both messages are hints: page
+  script can forge them on its own window, and the worst a forged one does is make the page
+  re-read its own data or change its own poll.
+- **Data signals** need an HTML page whose current version declares `data`, with shared data active
+  (origin isolation): the handshake grants the right, a version that drops `data` takes it away,
+  and the app reconnects when a newer gate shows data the socket lacked. Under opaque isolation
+  nothing is posted to frames.
+- **Lifecycle.** A sharing change closes watch sockets (4401, reason `access_changed`), each first
+  sent an `access` frame with the same `spread_ms`, and every page waits a random time up to it,
+  then re-reads its gate and reconnects. A sharing change ends every content pass of the
+  artifact, so the page shows a gate that now asks for an email or a password, or refuses, and
+  otherwise loads a fresh frame, as for a new version. While a deck is presented or a doc is edited
+  on its page the frame stays, as it does for a new version, and is renewed once that ends. A
+  takedown or delete closes them (4404). A socket also closes at the content pass's lifetime, less
+  a random time up to 5 minutes so that sockets opened together do not all close together, or
+  earlier when the app session, viewer session or password pass it was opened with expires (4401,
+  reason `expired`), and the page reconnects after a random time up to 10 s, which decides again.
+  While
+  sockets are open the room re-checks D1 every 60 s: it closes what a lost call left open, sends a
+  `version` whose notify was lost, and takes the data right away when the current version no
+  longer declares `data`. A tab hidden for 60 s closes its socket and reconnects when shown.
+- **Fallback.** Without the socket (live views off, no `ROOMS` binding, refused, full, dropped, or no
+  WebSocket in the browser) the app polls its gate every 15 s and the runtime polls the change
+  counter every 15 s, as before. While the socket is open the app still reads its gate every
+  5 minutes as a backstop. A refused or full socket is tried again after 5 minutes. A dropped one
+  (a lost network, or a Worker deploy, which closes every socket on the instance at once) first
+  reconnects after a random time up to 10 s, so the views do not all come back in the same
+  second, then after 1, 2, 5, 10 and 30 s while it keeps failing.
+- **Limits.** `ALLOW_LIVE_VIEWS` (on) and `LIVE_VIEW_MAX_SOCKETS_PER_ARTIFACT` (1000, from 10 to
+  10000), counted apart from room sockets so viewers never crowd out a room, and split into two
+  pools of half each that never affect each other: one for the owner and the people the artifact
+  is shared with, one for everyone else the gate lets in. Someone the artifact is not shared with
+  can fill only the second, so a full pool never tells them whether the owner or a collaborator
+  has it open. Over a cap the socket is closed with 4409 and the page polls. Fixed: 32 sockets and
+  60 connects a minute per client (an account, a confirmed email, or for anonymous viewers one
+  network, an IPv4 address or an IPv6 /64, kept only as an HMAC).
+- **Availability.** Needs only `ALLOW_LIVE_VIEWS` and the `ROOMS` binding, not `ALLOW_ROOMS` and not
+  origin isolation: versions are pushed under opaque isolation and the path fallback too. Data
+  signals also need shared data. Without the binding live views are off, never a configuration
+  error.
+
 ### Designs (decided 2026-11-19)
 
 A visual composition at fixed sizes is a design: artboards on a canvas (app screens, landing page
@@ -1296,12 +1410,13 @@ restoring an older one.
   a label that is hovered or focused), takes that board's cover off so its links, buttons and
   scripts can be used. While a board is in use its label drops Interact and the toolbar holds only
   Done; Done, Escape or a click outside puts the cover back. At most 24 board frames are alive at once; boards far off screen are placeholders until
-  they come back (a board's own state starts again then). `?plinth-board=<id>` shows one board
-  alone at 100%.
+  they come back (a board's own state starts again then).
 - **Artboard frames.** Each board renders alone at its exact size in its own nested frame, opened
   at Plinth's fixed board loader (`/__plinth/frames/design/board.html`), which writes the board's
-  document over itself when the renderer posts it: Plinth's base URL (the version's directory),
-  viewport and reset, then the shared section, then the fragment. The loader is served only with
+  document over itself when the renderer posts it: Plinth's base URL (the shown version's own
+  path, `/__plinth/v/<n>/`, whose number the content host puts in the shell, so a board that
+  mounts after a newer version is published still loads its own version's files; a shell without
+  a valid number shows an error and no board), viewport and reset, then the shared section, then the fragment. The loader is served only with
   this artifact's content pass, under the normal content CSP (inline script, the CDN allowlist)
   plus the CSP `sandbox` without `allow-same-origin` in every isolation mode, with
   `frame-ancestors 'self' <app>` under origin isolation (none under opaque isolation or for an
@@ -1341,16 +1456,18 @@ restoring an older one.
 
 A table people sort, filter, calculate with or download (a budget, a tracker, a list of records,
 a price comparison) is a sheet: the agent writes JSON lines, Plinth renders a spreadsheet. It is the
-fourth [typed output](#mcp-interface) and works like the others: `publish_artifact` and
+fifth [typed output](#mcp-interface) and works like the others: `publish_artifact` and
 `update_artifact` take `type: "sheet"` with the source in `content`, a version stores
 `sheet.jsonl` and nothing else (a sheet has no assets), and versions, `base_version` conflicts,
-restore, history, diffs and the source editor work as for docs. Cells are versioned content, never
-shared data: every change, an agent's or a person's, is a new version anyone can revert. A sheet is
-not edited on its page yet.
+restore and history work as for docs. People never see the JSON lines: a sheet has no source
+editor (its registry row's `editor` is null), so the app offers no Edit, the editor's address goes
+to the sheet's page, and Compare shows two versions rendered side by side, never a source diff.
+Cells are versioned content, never shared data: every change is a new version anyone can revert.
+A sheet is not edited on its page yet; agents change it.
 
 - **Format.** Line 1 is the header, `{"plinth":"sheet","v":1,"columns":[...],"freeze":{"cols":n}}`,
   and every later line is one row, a JSON array of cells. In A1 terms the header's column names are
-  row 1 and data starts at row 2, so formulas mean the same in Plinth and in Excel. A column has a
+  row 1 and data starts at row 2, so A1 references mean the same in Plinth and in Excel. A column has a
   `name` (1 to 100 characters, no control or invisible characters), a `type` (`text`, the default,
   `number`, `date`, `checkbox`, `select` or `url`), an optional `width` (40 to 800 pixels), a
   `format` for numbers (`style` `plain`, `percent` or `currency`, `decimals` 0 to 10, `currency` an
@@ -1366,7 +1483,8 @@ not edited on its page yet.
   and the editor.
 - **Canonical storage.** The Worker stores every accepted sheet re-serialised: the header's keys in
   a fixed order, one `JSON.stringify` per row with trailing empty cells trimmed, no final newline.
-  Each row therefore has one spelling, and a version diff shows only the rows that changed. This
+  Each row therefore has one spelling, and a version's file differs from the last only in the
+  rows that changed. This
   holds for inline publishes, updates and bundles alike; the CLI's read-back allows for it by
   comparing the stored sheet with the folder's in that canonical spelling, never by skipping it.
 - **Formulas.** Plinth's own Excel-compatible interpreter (`packages/shared/src/sheet/formula/`),
@@ -1382,6 +1500,9 @@ not edited on its page yet.
   nothing that reaches a network, another artifact or the clock beyond today's UTC date (no
   HYPERLINK, WEBSERVICE, INDIRECT, OFFSET, NOW or RAND). Dates are 1900-system serials (a date
   column's literal is its serial in formulas); numbers show rounded to 15 significant digits.
+  A formula whose result is an empty cell (`=B2` on an empty B2, or an `IF` or `INDEX` that
+  returns one) shows blank, as in Google Sheets, where Excel shows 0; in arithmetic, text and
+  comparisons an empty cell is 0 or `""`, as in both.
   Errors are Excel's (`#DIV/0!`, `#VALUE!`, `#REF!`, `#NAME?`, `#N/A`, `#NUM!`) plus `#CYCLE!`
   for every cell on a circular reference and `#LIMIT!` for a cell not computed within the step
   budget. Each formula is computed once, in dependency order, with an explicit stack; one step is
@@ -1408,10 +1529,13 @@ not edited on its page yet.
   header row repeats on every page). The browser spends at most 20,000,000 steps; a sheet past
   that shows `#LIMIT!` in the cells it did not compute, with a one-line note.
 - **Downloads.** Anyone who can view the sheet downloads it as CSV or .xlsx from the artifact
-  menu (Download as CSV, Download as Excel (.xlsx)), which also has Print; the frame has no
-  buttons of its own. The frame builds the file and hands it to the browser from a `blob:` URL; nothing is fetched and no CDN, CSP or sandbox setting changes. CSV holds values:
-  UTF-8 with a BOM, CRLF, RFC 4180 quoting, and text starting with `=`, `+`, `-`, `@`, tab or
-  carriage return written with a leading `'` (numbers never are). The .xlsx is SpreadsheetML
+  menu (Print or save as PDF, then Download .xlsx and Download .csv, labelled like a deck's
+  Download .pptx); the frame has no buttons of its own. The frame builds the file and hands it to the browser from a `blob:` URL; nothing is fetched and no CDN, CSP or sandbox setting changes. CSV holds values:
+  UTF-8 with a BOM, CRLF, RFC 4180 quoting with every text value quoted (column names too, so
+  Excel with a semicolon or tab list separator still reads each as one cell, and the file never
+  starts with Excel's `sep=` directive), text starting with `=`, `+`, `-`, `@`, tab or carriage
+  return written with a leading `'`, and a `'` before `=`, `+`, `-` or `@` right after a comma,
+  semicolon or tab inside text (numbers never are). The .xlsx is SpreadsheetML
   written by Plinth and zipped with fflate 0.8.3: one worksheet named after the title, the header
   in bold, column widths, the frozen pane, number formats from the column formats, text as inline
   strings (text starting with `=` stays text), formulas with Plinth's computed values cached
@@ -1421,7 +1545,13 @@ not edited on its page yet.
   `"csv"` (CSV text) or `"xlsx"` (an .xlsx file in base64, at most 2 MB, of which at most 24 MB of
   its parts is ever decompressed) instead of JSON lines; `"jsonl"` is the default. The first row
   names the columns and each column's type is inferred from its values (all numbers, all dates,
-  all TRUE or FALSE, all links, else text). A CSV never makes a formula: text starting with `=`
+  all TRUE or FALSE, all links, else text); a text column keeps every CSV field as written. A CSV
+  field is a number only when no digit is lost or invented: no leading zero but `0` itself
+  (`00123` stays text), no leading `+` (`+351912345678` stays text) and at most 15 significant
+  digits (a 20-digit id stays text). The decimal mark is a point, or a comma in a file separated
+  by semicolons (`1,50`); thousands separators are read only where they cannot be the decimal
+  mark (`1,234.50`, `1.234,50`, `1,234,567`), so `1,500` in a comma file and `1.500` in a
+  semicolon file stay text. A CSV never makes a formula: text starting with `=`
   stays text, and the `'` a CSV export put before `=`, `+`, `-` or `@` is dropped. From an .xlsx
   (its first worksheet), a formula is kept when it parses as a sheet formula, otherwise its cached
   value is used, and number formats, column widths and frozen columns carry over where they map.
@@ -1445,9 +1575,12 @@ not edited on its page yet.
   `eval_budget` warning and those cells are `#LIMIT!`. It is the `view` action, like `get_artifact`.
   `edit_sheet(id, base_version, ops, note?)` applies 1 to 200 ops (at most 10,000 cells written)
   to `base_version` in order and publishes one new version through `update_artifact`, or nothing:
-  `set` (a block of raw cells from a cell, growing the sheet past its end), `append_rows`,
-  `insert_rows`, `delete_rows`, `set_column` (name, type, format, options, width; `null` clears),
-  `insert_columns` and `delete_columns`. An op that would take the sheet past 10,000 data rows
+  `set` (a block of raw cells from a cell, growing the sheet past its end by at most 1,000 empty
+  rows before the block, else refused with `details.reason` `"too_far_past_end"`; every row it adds
+  counts in `changed.rows_inserted`), `append_rows`, `insert_rows`, `delete_rows`, `set_column`
+  (name, type, format, options, width; `null` clears), `insert_columns` and `delete_columns`.
+  Frozen columns follow column inserts and deletes: columns inserted among them are frozen too (at
+  most 5), and deleted frozen columns leave the frozen pane. An op that would take the sheet past 10,000 data rows
   (row 10,001) is refused before the sheet grows. Inserting and deleting rows and columns moves formula
   references as Excel's structural changes do; references into deleted cells become `#REF!`. Each
   such op rewrites every formula in the sheet, and one call rewrites at most 4 MB (4,194,304
@@ -1470,80 +1603,6 @@ not edited on its page yet.
   multiple worksheets, charts, conditional formatting, merged cells, cell styles and server-side
   exports are not planned.
 
-### Live views (decided 2026-11-19)
-
-An open artifact page picks up a newly published version by itself within seconds, and a page that
-keeps [shared data](#shared-data-and-viewer-identity) learns that it changed without waiting for
-its poll. Plinth pushes signals, never content: the page still loads every version and every
-document through the gate and the shared-data API, with all of their checks.
-
-- **Who.** Anyone who can open the artifact (the owner, people it is shared with, and anonymous
-  viewers of an unlisted, password or public link), never agents. A watch socket joins no
-  [room](#live-rooms), sees no peers and carries no identity, so it shows nobody to anybody; it
-  tells a viewer only what the gate and the change counter already tell them, sooner.
-- **Transport.** The app page, never the artifact, opens one receive-only WebSocket on the app host,
-  `wss://<APP_HOST>/api/v1/view/<artifact id>/watch`, with the app's own cookies, when its gate
-  says `watch: true`. The handshake is checked in order: method and upgrade, `Origin` exactly the
-  app's origin (absent and `null` refused, so no artifact can open one), same-origin fetch
-  metadata when sent, the `plinth.view.v1` subprotocol, no bearer token, live views active, the
-  artifact by id, the gate's view decision (any refusal is one identical 404), and policy
-  (`liveViewAccess` in `policy.ts`); see [docs/security.md](security.md#live-views). The socket is
-  served by the artifact's `ArtifactRoom` with the Hibernation API. The app's CSP `connect-src`
-  names its own `wss:` origin and nothing else.
-- **Signals.** JSON frames the room builds from integers: `welcome` (the current version, and
-  whether this socket gets data signals), `version` (a version was published: by an agent, the
-  source editor, a restore or an on-page checkpoint), `data` (the page's shared data changed:
-  a write from the page, an agent or the app, or the owner's "Delete all shared data") and `access`
-  (sent just before a sharing change closes the socket). The client
-  sends only the text `ping`. Each signal carries `spread_ms`, which depends only on the
-  instance's cap, never on the audience: 2 ms per socket an artifact may hold, at most 10 s (2 s
-  at the default). Each open view waits a random time up to it before it acts, so at most about
-  500 follow-up requests a second reach one artifact at the default cap (cap ÷ spread, 1000 at the
-  top bound), and no frame says anything about who else has the artifact open.
-- **What the page does.** On `version` the app re-reads its own gate at once and shows the new
-  version as it did after a poll ("Updated to vN"; a pinned `/v/n` link only learns the number).
-  One such notice shows at a time: a newer version's replaces the last, so versions published in
-  a row never stack.
-  On `data` it posts `{ source: "plinth-view", v: 1, type: "data" }` to the frame at its exact
-  content origin, and `/__plinth/runtime.js` re-reads the change counter and refetches what
-  `onSnapshot` watches when it moved. The app also says whether signals are pushed (`type:
-  "push"`), and while they are the runtime polls only every 60 s. Both messages are hints: page
-  script can forge them on its own window, and the worst a forged one does is make the page
-  re-read its own data or change its own poll.
-- **Data signals** need an HTML page whose current version declares `data`, with shared data active
-  (origin isolation): the handshake grants the right, a version that drops `data` takes it away,
-  and the app reconnects when a newer gate shows data the socket lacked. Under opaque isolation
-  nothing is posted to frames.
-- **Lifecycle.** A sharing change closes watch sockets (4401, reason `access_changed`), each first
-  sent an `access` frame with the same `spread_ms`, and every page waits a random time up to it,
-  then re-reads its gate and reconnects. A sharing change ends every content pass of the
-  artifact, so the page shows a gate that now asks for an email or a password, or refuses, and
-  otherwise loads a fresh frame, as for a new version. While a deck is presented or a doc is edited
-  on its page the frame stays, as it does for a new version, and is renewed once that ends. A
-  takedown or delete closes them (4404). A socket also closes at the content pass's lifetime, or
-  earlier when the app session, viewer session or password pass it was opened with expires (4401,
-  reason `expired`), and the page reconnects, which decides again. While
-  sockets are open the room re-checks D1 every 60 s: it closes what a lost call left open, sends a
-  `version` whose notify was lost, and takes the data right away when the current version no
-  longer declares `data`. A tab hidden for 60 s closes its socket and reconnects when shown.
-- **Fallback.** Without the socket (live views off, no `ROOMS` binding, refused, full, dropped, or no
-  WebSocket in the browser) the app polls its gate every 15 s and the runtime polls the change
-  counter every 15 s, as before. While the socket is open the app still reads its gate every
-  5 minutes as a backstop. A refused or full socket is tried again after 5 minutes; a dropped one
-  reconnects after 1, 2, 5, 10 and 30 s.
-- **Limits.** `ALLOW_LIVE_VIEWS` (on) and `LIVE_VIEW_MAX_SOCKETS_PER_ARTIFACT` (1000, from 10 to
-  10000), counted apart from room sockets so viewers never crowd out a room, and split into two
-  pools of half each that never affect each other: one for the owner and the people the artifact
-  is shared with, one for everyone else the gate lets in. Someone the artifact is not shared with
-  can fill only the second, so a full pool never tells them whether the owner or a collaborator
-  has it open. Over a cap the socket is closed with 4409 and the page polls. Fixed: 32 sockets and
-  60 connects a minute per client (an account, a confirmed email, or for anonymous viewers one
-  network, an IPv4 address or an IPv6 /64, kept only as an HMAC).
-- **Availability.** Needs only `ALLOW_LIVE_VIEWS` and the `ROOMS` binding, not `ALLOW_ROOMS` and not
-  origin isolation: versions are pushed under opaque isolation and the path fallback too. Data
-  signals also need shared data. Without the binding live views are off, never a configuration
-  error.
-
 ### Category sharing and personal categories (decided 2026-11-19)
 
 Issue #42. Two things, both built on categories: a collaborator files artifacts shared with them
@@ -1560,7 +1619,9 @@ and artifact (`personal_categories`), validated and normalised as the owner's ca
 snapped onto the person's own names (their personal ones and their own artifacts' categories, one
 vocabulary). It is seen by that person only: summaries carry `my_category`, null for everyone else,
 and `GET /api/v1/artifacts` returns `my_categories` (their names with counts) to a signed-in
-session only. Agents never read or set it (403 `app_only`, and `token_bound` for a token limited
+session only. The counts cover only the artifacts the person can open now, as the list does: with
+`ALLOW_CATEGORY_SHARING` off, one they reach only through a category is not counted, and its row
+is kept for when the switch is back on. Agents never read or set it (403 `app_only`, and `token_bound` for a token limited
 to one artifact; `my_category` is null and `my_categories` absent for bearer callers), and the
 owner, who files with the artifact's own category, gets 400.
 `POST /api/v1/categories/rename` with `personal: true` renames, merges or clears one of them. The
@@ -1569,8 +1630,9 @@ removed in the same request that takes the person's last grant away (the sharing
 allowlist, a category share's people, a review kept private, a move out of the share).
 
 **Sharing a category.** The signed-in owner shares one of their categories (by key) with people,
-each a viewer or a commenter (never an editor), under a title the people see instead of the
-category's name: `POST /api/v1/category-shares` with `{ category, title?, people, review }`. The
+each a viewer or a commenter (never an editor), under a title the people see (the category's name
+when `title` is left out; renaming the category later leaves it): `POST /api/v1/category-shares`
+with `{ category, title?, people, review }`. The
 share's id is the portal link (`/p/<id>`) and never changes. `PATCH` changes the title or the
 people (a people change always carries a `review`: 400 `review_required` without one), `DELETE`
 stops sharing, and `GET /api/v1/category-shares/:id` lists every artifact of the category with its
@@ -1608,7 +1670,9 @@ delete beats it. `list_artifacts` lists the artifacts shared with the caller thr
 (never taken-down ones; owner and direct-grant rows list as before), with the role it gives. A
 token limited to one artifact never holds a role through a category grant: it opens its artifact
 with its person's direct grant only (`roleOf`), so once that grant goes it answers as viewing does,
-even while the person still sees the artifact through the category in the app.
+even while the person still sees the artifact through the category in the app. On a page that
+offers its people list, the owner and editors see category grantees on it like direct grantees,
+under the same name rule ([The people list](#who-is-viewing-names-and-the-people-list-decided-2026-11-19)).
 
 **Access ends at once.** Every change that can take access away (people removed, a share deleted, an
 artifact kept private, a key change away from a shared review, a rename or clear) gives the
@@ -1623,7 +1687,9 @@ key moves it with its people, link and reviews, and clearing the category leaves
 another existing category (409 `category_shared`), and artifacts merged into a shared category
 arrive pending (`pending: n`). The rename's batch is guarded on the owner's `category_share_rev`, so
 a share created, deleted or moved after the rename read its decision makes the rename change
-nothing (409 `sharing_changed`).
+nothing (409 `sharing_changed`). With `ALLOW_CATEGORY_SHARING` off a share still follows its
+category, so turning the switch on finds it on the current key; a merge then goes through (the owner
+cannot stop sharing first) and leaves the share empty, as clearing does, and `pending` is left out.
 
 **Portals.** `GET /api/v1/portals/:id` answers `ok` with the share's title, the owner's name, the
 caller's role and the artifacts they may open (live, published, not taken down, reviewed as shared
@@ -1947,8 +2013,9 @@ options.
   Only identified viewers write, stamps come from the server, quotas and write rate limits apply,
   and agents treat every document as untrusted input. Details in `docs/security.md`.
 - **Names are display text; the people list is the access list.** Display names have no `@` (nor
-  the small and fullwidth forms that render as one) and no control or invisible characters, and
-  never stand for a role. A page sees them only where it sees an email. Only the owner and editors
+  the small and fullwidth forms that render as one) and no control or invisible characters, must
+  show something, and never stand for a role: the app marks the owner's comments and versions from
+  ids. A page sees them only where it sees an email. Only the owner and editors
   (and their agents) list who has access, on a page that declares `people`, and every identified
   viewer is told; there is no visit log and no directory search. An access list names a grant
   holder only once they have taken part in the artifact, so the addresses an owner adds never
@@ -2090,19 +2157,6 @@ about 1,440 billed requests and at most 720 D1 rows written an hour, against 100
 day on the free plan. Past the allowance, sockets fail and pages work alone;
 `ALLOW_ROOMS=false` turns rooms off.
 
-Sheets run on the same Worker allowances:
-
-| Operation | Worker requests | Worker CPU | D1 rows |
-| --- | --- | --- | --- |
-| Publish or update a sheet | as any update | linear in its size: one `JSON.parse` per row and one parse per formula, never an evaluation (a 1 MB sheet takes tens of milliseconds) | as an update |
-| CSV or .xlsx import | as the publish | linear in the file (an .xlsx decompresses at most 24 MB of XML, about 2 MB at a time; memory stays near the parts' text and the cells a 1 MB sheet can hold) | as the publish |
-| `read_sheet` | 1 | at most `SHEET_EVAL_BUDGET` formula steps (200,000 by default, a few milliseconds; text read costs a step per 32 characters, so long text does not make a step dearer) | as `get_artifact` |
-| `edit_sheet` | 1 | the ops (inserts and deletes rewrite at most 4 MB of formula text per call, a few hundred milliseconds at worst), then a publish's validation | as an update |
-| Viewing and downloads | as any typed page | none: the browser computes and builds the files | none |
-
-On the free plan's 10 ms of CPU per request, the largest sheets may need a lower
-`SHEET_EVAL_BUDGET`, and an operator on Workers Paid can raise it to 20,000,000.
-
 Live views run on the same Durable Object allowance:
 
 | Operation | Durable Object requests | D1 rows read | D1 rows written |
@@ -2117,6 +2171,19 @@ Hibernated watch sockets accrue no duration and their keep-alive is answered wit
 object. An idle open view goes from 4 gate reads and 4 change-counter reads a minute to about
 none. On the Workers Free plan a busy instance may prefer `ALLOW_LIVE_VIEWS=false`, which keeps
 the polls and calls no object for artifacts without a room.
+
+Sheets run on the same Worker allowances:
+
+| Operation | Worker requests | Worker CPU | D1 rows |
+| --- | --- | --- | --- |
+| Publish or update a sheet | as any update | linear in its size: one `JSON.parse` per row and one parse per formula, never an evaluation (a 1 MB sheet takes tens of milliseconds) | as an update |
+| CSV or .xlsx import | as the publish | linear in the file (an .xlsx decompresses at most 24 MB of XML, about 2 MB at a time; memory stays near the parts' text and the cells a 1 MB sheet can hold) | as the publish |
+| `read_sheet` | 1 | at most `SHEET_EVAL_BUDGET` formula steps (200,000 by default, a few milliseconds; text read costs a step per 32 characters, so long text does not make a step dearer) | as `get_artifact` |
+| `edit_sheet` | 1 | the ops (inserts and deletes rewrite at most 4 MB of formula text per call, a few hundred milliseconds at worst), then a publish's validation | as an update |
+| Viewing and downloads | as any typed page | none: the browser computes and builds the files | none |
+
+On the free plan's 10 ms of CPU per request, the largest sheets may need a lower
+`SHEET_EVAL_BUDGET`, and an operator on Workers Paid can raise it to 20,000,000.
 
 Not included: push-mode agent calls, which bill to the user's API key or a paid plan. Vercel was
 considered and set aside: its free plan is non-commercial only, so the floor is about $20 per month

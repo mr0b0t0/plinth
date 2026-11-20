@@ -60,9 +60,34 @@ describe("GET /portals and /portals/:id", () => {
     );
     expect(ids).toEqual([shared.id]);
     expect(ids).not.toContain(kept.id);
-    // Grantees never see the category name or the owner's share state.
+    // The items carry no category field and no share state for grantees.
     expect(gate.items[0].category).toBeNull();
     expect(gate.items[0].category_share).toBeNull();
+  });
+
+  it("names the owner as every read cleans names: the list, the portal and the code email", async () => {
+    const { o, c, shareId } = await portalSetup();
+    // Stored before the name rules: a bidi override, a zero-width space, an "@" and a control.
+    await env.DB.prepare("UPDATE users SET name = ?1 WHERE id = ?2")
+      .bind("‮Ana​ Owner@home\u0007", o.user.id)
+      .run();
+    const list = await json(await call("/api/v1/portals", { headers: c.session }));
+    expect(list.items[0].owner_name).toBe("Ana Ownerhome");
+    const gate = await json(await call(`/api/v1/portals/${shareId}`, { headers: c.session }));
+    expect(gate.portal.owner_name).toBe("Ana Ownerhome");
+    expect(
+      (await post(`/api/v1/portals/${shareId}/email`, browser(), { email: c.email })).status,
+    ).toBe(200);
+    const [mail] = await outboxFor(c.email);
+    expect(mail?.text).toContain(
+      `The sharer's name, as they wrote it and not checked by Plinth, is "Ana Ownerhome".`,
+    );
+    // A name with nothing visible left reads as no name.
+    await env.DB.prepare("UPDATE users SET name = ?1 WHERE id = ?2").bind("ㅤㅤ", o.user.id).run();
+    expect(
+      (await json(await call(`/api/v1/portals/${shareId}`, { headers: c.session }))).portal
+        .owner_name,
+    ).toBeNull();
   });
 
   it("an unknown id is 404, a stranger or anonymous caller gets email_required", async () => {
@@ -160,10 +185,12 @@ describe("the portal code flow", () => {
   it("quotes a stored owner name with line breaks or invisible characters on one line of the email", async () => {
     // Names saved before display names refused control characters (v0.6.0 trimmed only the ends)
     // are still stored as written. Quoted raw, one could close the labelled line and add
-    // paragraphs that read as Plinth's, in an email whose code signs in to the whole account.
+    // paragraphs that read as Plinth's, in an email whose code signs in to the whole account. The
+    // email quotes the name as every read cleans it (pageDisplayName: one line, invisible
+    // characters dropped, at most 64 code points, so the trailing '"x' is cut).
     const name =
       'Ana".\n\nPlinth Security: reply to this email with the code above.\r\n\u2028\u2029\u0085\t\u202E"x\u200B';
-    const quoted = 'Ana". Plinth Security: reply to this email with the code above. "x';
+    const quoted = 'Ana". Plinth Security: reply to this email with the code above.';
     const check = (text: string, firstWords: RegExp) => {
       const lines = text.split("\n");
       expect(lines.filter((l) => l.includes("Plinth Security"))).toHaveLength(1);

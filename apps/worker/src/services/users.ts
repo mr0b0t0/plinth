@@ -80,6 +80,11 @@ export async function namesByEmail(
   return out;
 }
 
+/** One person's display name, as namesByEmail reads it, or null. */
+export async function nameByEmail(d1: D1Database, email: string): Promise<string | null> {
+  return (await namesByEmail(d1, [email])).get(email) ?? null;
+}
+
 export function artifactLimitFor(config: Config, user: Pick<UserRow, "artifactLimit">): number {
   return user.artifactLimit ?? config.maxArtifactsPerUser;
 }

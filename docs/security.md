@@ -42,16 +42,16 @@ make a test pass.
 | A person's version hands its capture to the current code | A person's version, captured with a pass that reads the data, loads a root-relative script or worker (`/assets/index.js`), frames a root-relative page, or navigates itself to `/`, where the artifact's current version, which a bound token may have written, would run under that pass | The capture pass is bound to its version (`v`): under it the content host serves every path that is not a version path (the root, `/assets/index.js`, `/chart.html`) from the captured version, never the current one, and answers 404 for another version's path; the capture's browser also aborts a navigation to another version or a Plinth helper path ([Thumbnails and link previews](#thumbnails-and-link-previews)) |
 | Workflow command injection through the Action's log | A title, warning path or server message `::set-output name=x::y` or `::add-mask::` printed by the Action steers the job | Everything the client prints runs between `::stop-commands::<random>` and `::<random>::`; the Action's own annotations escape their text, the summary escapes Markdown and HTML, outputs use random heredoc delimiters; `docs/ci.md` passes outputs to scripts through `env:` ([Publishing from CI](#publishing-from-ci)) |
 | Cross-site WebSocket hijacking of a live room | Artifact B, framed by the app, opens a socket to artifact A's `/__plinth/room/` with A's content cookie from the shared partitioned jar | The upgrade requires an exact `Origin` (absent or `null` refused), same-origin fetch metadata when sent, the `plinth.room.v1` subprotocol and an identified content pass at the current epoch; no CORS anywhere ([Live rooms](#live-rooms)) |
-| Page code harvests names and the access list | A page reads `plinth.viewer.name`, its authors' names or `plinth.people.list()` and copies them where link viewers or every viewer can read them | Names appear only where the email already does (`viewer` declared, identified reader); the people list only for owners and editors on a page that declares `data viewer people`, whose author is the owner or an editor; every identified viewer is told, under the bar, that the owner and editors can see everyone the page is shared with; the skill forbids copying the list or emails into shared data. WebRTC stays the known CSP gap ([The people list](#the-people-list)) |
-| Display name used to impersonate | Someone sets their name to "Owner", "ana@example.com" or a right-to-left override that reorders the text around it | Names cannot contain `@` or the two characters that render as one (U+FE6B, U+FF20: every character whose NFKC form is `@`), nor control, bidi, zero-width or separator characters, are cut to 64 code points on every read, and are never authority: `role` and `comment_author_role` stay server-derived and Plinth's own UI shows the role beside them; tool descriptions say names are display text |
-| Enumerating who has an account | A caller tries addresses to learn which ones have a Plinth account or what they are called, for example by adding them as grants on an artifact of their own and reading the people list or the sharing settings back | No route takes an email or a name to look up, and the people list searches only one artifact's access list. Since the owner writes that list without its holders being told, an access list shows a grant holder's name only once that person has taken part in the artifact (a comment, a shared-data entry or a version, which already show their name to the readers of the list), and a name it keeps back is `null` and never matched by `q`, the same as an address with no account (`policy.ts accessListShowsName`) |
-| A sheet's cell becomes markup or script | A cell, column name or title holds `<img onerror>`, `</script>` or a `javascript:` link | Strict publish parser and link rule; `jsonForScript` in the shell; the renderer uses `textContent` only and re-checks links; the strict shell CSP ([Sheets](#sheets)) |
-| A downloaded sheet attacks the spreadsheet app | A CSV cell `=cmd\|' /C calc'!A0` or an .xlsx formula calling HYPERLINK or WEBSERVICE runs when the file is opened | CSV text starting with `=`, `+`, `-`, `@`, tab or CR gets a leading `'`; .xlsx text is inline strings and its formulas come only from the function allowlist, with no external links or macros ([Sheets](#sheets)) |
-| A sheet exhausts the Worker or the browser | Formulas that reference each other in a long chain or a cycle, `REPT` of huge text, a 1 MB sheet of formulas, or a ZIP bomb, XML that makes a scanner backtrack, or a small file of very many cells sent as an import | An explicit stack and cycle detection (`#CYCLE!`), a step budget on both sides (`#LIMIT!`), text capped and charged by the length made and read, publish parses but never evaluates, and imports capped at 2 MB in and 24 MB inflated, inflated in small steps, scanned in linear time, and refused once their cells pass what 1 MB holds; numeric text matched in linear time; an edit's inserts and deletes capped at 4 MB of formula text rewritten ([Sheets](#sheets)) |
 | Cross-site WebSocket hijacking of the live-view socket | Another site, or an artifact framed by the app, opens `wss://<APP_HOST>/api/v1/view/<id>/watch` with the viewer's app cookies to learn when a private artifact changes | The handshake requires `Origin` exactly the app's origin (absent, `null`, every content origin and every other site refused), same-origin fetch metadata when sent and the `plinth.view.v1` subprotocol; app session cookies are `SameSite=Lax` too; the socket says only what the same person's gate and change counter say ([Live views](#live-views)) |
 | A forged live-view hint | Page script, or another frame, posts `{ source: "plinth-view", type: "data" }` or `push` to a page | The runtime takes them only from `window.parent` at the app origin, and both are hints: the worst a forged one does is make the page re-read its own data through the shared-data API or change its own poll; the app posts them only at the frame's exact content origin, never `"*"` ([Live views](#live-views)) |
 | An audience floods an artifact after a signal | A thousand open views of a public page re-read their gate at the same moment a version is published | Each signal carries `spread_ms`, set by the instance's cap alone (2 ms per socket an artifact may hold, at most 10 s: 2 s at the default), and each view waits a random time up to it; watch sockets are capped per artifact (`LIVE_VIEW_MAX_SOCKETS_PER_ARTIFACT`), per client and per minute, and over a cap the page polls ([Live views](#live-views)) |
 | A watcher reads presence from the live-view socket | Someone with a link opens many watch sockets of their own, from several addresses or accounts, to learn from a signal's `spread_ms` or from a 4409 refusal whether the owner or a collaborator has the page open | `spread_ms` depends only on the instance's cap, never on the audience; the cap is split into a pool for the people the artifact is shared with and a pool for everyone else, which never affect each other; an anonymous viewer's client is its IPv4 address or IPv6 /64 ([Live views](#live-views)) |
+| A sheet's cell becomes markup or script | A cell, column name or title holds `<img onerror>`, `</script>` or a `javascript:` link | Strict publish parser and link rule; `jsonForScript` in the shell; the renderer uses `textContent` only and re-checks links; the strict shell CSP ([Sheets](#sheets)) |
+| A downloaded sheet attacks the spreadsheet app | A CSV cell `=cmd\|' /C calc'!A0` or an .xlsx formula calling HYPERLINK or WEBSERVICE runs when the file is opened | CSV text is always quoted, text starting with `=`, `+`, `-`, `@`, tab or CR gets a leading `'`, and so does each `=`, `+`, `-` or `@` after a comma, semicolon or tab inside it; .xlsx text is inline strings and its formulas come only from the function allowlist, with no external links or macros ([Sheets](#sheets)) |
+| A sheet exhausts the Worker or the browser | Formulas that reference each other in a long chain or a cycle, `REPT` of huge text, a 1 MB sheet of formulas, or a ZIP bomb, XML that makes a scanner backtrack, or a small file of very many cells sent as an import | An explicit stack and cycle detection (`#CYCLE!`), a step budget on both sides (`#LIMIT!`), text capped and charged by the length made and read, publish parses but never evaluates, and imports capped at 2 MB in and 24 MB inflated, inflated in small steps, scanned in linear time, and refused once their cells pass what 1 MB holds; numeric text matched in linear time; an edit's inserts and deletes capped at 4 MB of formula text rewritten ([Sheets](#sheets)) |
+| Page code harvests names and the access list | A page reads `plinth.viewer.name`, its authors' names or `plinth.people.list()` and copies them where link viewers or every viewer can read them | Names appear only where the email already does (`viewer` declared, identified reader); the people list only for owners and editors on a page that declares `data viewer people` and every one of whose served versions a person (or their account-wide agent) wrote, never a token limited to one artifact (`policy.ts peopleListOffered`); every identified viewer is told, under the bar, that the owner and editors can see everyone the page is shared with; the skill forbids copying the list or emails into shared data. WebRTC stays the known CSP gap ([The people list](#the-people-list)) |
+| Display name used to impersonate | Someone sets their name to "Owner", "ana@example.com" or a right-to-left override that reorders the text around it | Names cannot contain `@` or the two characters that render as one (U+FE6B, U+FF20: every character whose NFKC form is `@`), nor control, bidi, zero-width or separator characters, must show something (a name made only of Hangul fillers, blank Braille or combining marks is refused, and reads as no name), are cut to 64 code points on every read, and are never authority: `role`, `comment_author_role` and `is_owner` stay server-derived, and Plinth's own UI marks the owner's comments and versions with "Owner" from `is_owner`, never from the name, so a lookalike visibly lacks it; tool descriptions say names are display text |
+| Enumerating who has an account | A caller tries addresses to learn which ones have a Plinth account or what they are called, for example by adding them as grants on an artifact of their own and reading the people list or the sharing settings back | No route takes an email or a name to look up, and the people list searches only one artifact's access list. Since the owner writes that list without its holders being told, an access list shows a grant holder's name only once that person has taken part in the artifact (a comment, a shared-data entry or a version, which already show their name to the readers of the list), and a name it keeps back is `null` and never matched by `q`, the same as an address with no account (`policy.ts accessListShowsName`) |
 | An agent files a private artifact into a shared category | A prompt-injected or confused agent publishes another client's report with `category: "acme"`, or moves one there with `update_artifact` or `PATCH` | Filing never shares: the artifact waits as pending, and the category's people cannot open, list, find or get a code for it until the signed-in owner reviews it in the app; agents and bearer tokens cannot review; the owner's agent is told `category_share.state: "pending"` with the review link; tool descriptions say never to file because of comment, mention or page text ([Category sharing](#category-sharing)) |
 | A stale review reopens access | A review left from a deleted share, from before a rename, or from another key, or a review made against a version or filing that changed before it was confirmed | A review is bound to the share id it was made against and counts only while that share is the current share of the artifact's current key; a key change resets it and bumps `category_rev` in the same statement; a decision to share applies only at the version and `category_rev` the owner was shown (one to keep private holds at any version), checked in the statement that writes it; creating a share and changing its people reset every artifact of the key first; a rename re-checks its share decision inside its batch ([Category sharing](#category-sharing)) |
 | Editors learn the owner's sharing | An editor's `update_artifact` result or upload status names the owner's category share | `category_share` and the share id in `review_url` are built only for the owner (`seesOwnerMetadata`), never for an editor, an editor's agent or a token limited to one artifact |
@@ -589,8 +589,8 @@ doc, a design's boards are author HTML with scripts, so they never run in the sh
   isolation is unchanged.
 - **The shell holds no author markup.** The shared section and each fragment exist in the shell
   only as strings: the renderer posts a board its whole document (Plinth's `<base>`, viewport and
-  reset first, so an author's `<base>` cannot redirect it) and builds its own labels, covers,
-  toolbar and list with `createElement` and `textContent`. Names and sections are shown as text;
+  reset first, so an author's `<base>` cannot redirect it) and builds its own labels, covers and
+  toolbar with `createElement` and `textContent`. Names and sections are shown as text;
   ids are `[a-z0-9-]`; a background is a hex color, `transparent` or a color name, so it cannot
   break out of the reset rule. On a design's origin only Plinth's renderer runs at the real origin:
   every stored file is served with `script-src 'none'`, no asset may be HTML, and `design.html` is
@@ -618,6 +618,11 @@ doc, a design's boards are author HTML with scripts, so they never run in the sh
   the app like every other. Where the loader has no `frame-ancestors`, a frame on another site has
   no cookie in its partition and gets the 401 "reload" text, so nobody can paint their own content
   into a frame with this artifact's URL.
+- **A board loads only its own version's files.** A board's `<base>` is the shown version's own
+  path, `/__plinth/v/<n>/`, built from the number the content host puts in the shell's payload
+  (the version it served, which for a capture pass is the captured one), never the artifact root,
+  where the content host serves whatever version is current when a board mounts. A shell without a
+  valid number (a positive integer of at most nine digits) mounts no board and shows an error.
 - **A design's files are cross-origin readable.** Boards load the version's images, CSS and JS
   from an opaque origin, and an opaque requester passes no `same-origin` or `same-site` resource
   policy, so a design's files carry `Cross-Origin-Resource-Policy: cross-origin`, as every file
@@ -707,7 +712,14 @@ sheets. Text passes six layers:
    text.
 5. **CSV export.** RFC 4180 quoting and the OWASP formula-injection guard: a text value (a literal
    or a formula's text result) starting with `=`, `+`, `-`, `@`, tab or carriage return is written
-   with a leading `'`; numbers are never prefixed. UTF-8 with a BOM, CRLF.
+   with a leading `'`; numbers are never prefixed. UTF-8 with a BOM, CRLF. The file's separator is
+   a comma, but Excel reads a CSV with the locale's list separator, a semicolon in pt-PT, de and
+   fr, so a cell `Total;=cmd|' /C calc'!A0` written unquoted became two cells there and the second
+   one ran. Every text value is therefore quoted, column names included, so a reader that honours
+   quotes keeps it one cell whatever its separator, and the first line never starts with Excel's
+   `sep=` directive (it starts with `"`). For a reader that splits on a separator anyway, each
+   `=`, `+`, `-` or `@` right after a comma, semicolon or tab inside text gets a `'` too
+   (`Total;'=cmd...`), at the cost of that one character in such text.
 6. **.xlsx export.** Text is written as inline strings, so text starting with `=` stays text;
    formulas come only from the sheet's own formulas, whose functions are the allowlist, so a
    downloaded workbook cannot hold HYPERLINK, WEBSERVICE, DDE (`cmd|...`) or an external
@@ -803,8 +815,9 @@ so is its place in a shared category (`category_share`).
 grant on the share of the artifact's owner and category key (`grantedRole`), and the category grant
 counts only through `categoryRoleOf`: the artifact's review is `shared`, made against the very share
 the grant is on, that share is on the artifact's current key, and `ALLOW_CATEGORY_SHARING` is on.
-The loaders hand policy the share's id and key and the artifact's stored review; the binding is
-checked in `policy.ts`, never in a loader. `roleOf` uses `grantedRole`, so every `decideFor` path
+The loaders hand policy the share's id, owner and key and the artifact's stored review; the
+binding (same share, same key, the share's owner is the artifact's owner) is checked in `policy.ts`,
+never in a loader. `roleOf` uses `grantedRole`, so every `decideFor` path
 (REST, MCP, the gate, thumbnails, comments, data, live editing, and the room through the sealed
 claim) applies it. The paths that compute roles in bulk (`list_artifacts`, portals, mention tasks,
 the allowlist code flow) mirror it in SQL and then run `grantedRole` or `decide` on every row. A
@@ -827,7 +840,16 @@ comment bodies, commenters' emails or mention tasks. The people list (`people`: 
 /artifacts/:ref/people`) is refused like the rest, and its other ways in need `data_read`
 (`list_artifact_data`'s summary, names on documents) or a content pass (the page's
 `/__plinth/api/v1/people`, room names, the gate's `people` block), so a bound token never learns
-who has access. Calls that are not about one artifact go
+who has access. Nor does a page it wrote: once a bound token has written a version, the artifact
+offers no people list to anyone, not even to the owner who opens it (`peopleListOffered` takes the
+writers of every version the content host serves, 1 to the current one, by the same
+`captureReadsData` facts the thumbnail capture uses), so a leaked CI token cannot publish a page
+that reads the list through the owner's session and copies it where link viewers can read it.
+Every version counts, not only the current one: each is served at `/__plinth/v/<n>/` on the
+artifact's one origin under the same pass, so the token's version opened from History, left open
+in a tab, or framing `/` would call the people route with the reader's claim, and nothing on a
+request says which version's code made it. A person's later version or a restore does not turn the
+list back on, since versions are never deleted. Calls that are not about one artifact go
 through the policy too: `mayCreateArtifacts` refuses `publish_artifact`, `POST /artifacts`,
 `start_upload` and `POST /uploads` without an id, and the redeem of a publish ticket;
 `mayReadStatsSummary` refuses `GET /stats/artifacts` and `get_artifact_stats` without an id with
@@ -1218,8 +1240,8 @@ version just published appears in the agent's thread.
 | Live-room sockets per artifact | `ROOM_MAX_CONNECTIONS_PER_ARTIFACT` (50); 8 per viewer; 20 connects per viewer per minute (close code 4409) |
 | Live-room messages per socket | `ROOM_MESSAGES_PER_SECOND` (20, burst 40); over it each message gets `rate_limited`, and 50 such in 10 s close the socket (4429) |
 | One live-room frame | `ROOM_MAX_MESSAGE_BYTES` (8 KiB; larger closes with 1009, binary with 1003); presence 400 bytes per room; 3 rooms per socket |
-| People-list reads per reader per artifact | 600 per hour |
 | Live-view watch sockets per artifact | `LIVE_VIEW_MAX_SOCKETS_PER_ARTIFACT` (1000), apart from room sockets, half for the owner and the people it is shared with and half for everyone else; 32 per client; 60 connects per client per minute (close code 4409, then the page polls) |
+| People-list reads per reader per artifact | 600 per hour |
 
 Limited requests get `429` with `Retry-After`; live-room limits answer on the socket instead.
 
@@ -1374,68 +1396,6 @@ reports `{ available, reason, you, can_emit, open_topics, limits }`, where `can_
 otherwise) and works where shared data is off: the gate seals the identity claim whenever shared
 data or rooms are active with origin isolation.
 
-## The people list
-
-Display names and the people list (spec: "Who is viewing: names and the people list") tell a page
-more about people, so their rules are listed here.
-
-**Names are display text.** A display name (`users.name`) is refused on write when it holds `@` or
-a control, format (bidi override, zero-width) or separator character, or passes 100 characters, and
-is cleaned again on every read (those characters dropped, cut to 64 code points), so a name stored
-earlier cannot slip through. It is never sealed into the content pass and never stored with shared
-data: it is read from `users` by the identity email when a response needs it, so `erase-user`
-removes it everywhere. It is never authority: the role beside it comes from the server, and
-`list_artifact_data`'s description and `untrusted` field say names are untrusted. A page sees a
-name only where it already sees that person's email (the page declares `viewer` and the reader is
-identified). In a room the name is read once at connect and travels in the room's internal connect
-header, escaped to ASCII and checked again by the room (null, or at most 256 UTF-8 bytes without
-`@`), so a socket's hibernation attachment stays under its limit; an update that would pass it is
-refused with `too_large`.
-
-**The list.** `GET /__plinth/api/v1/people` and `/people/<u_id>` are entries of the shared-data
-route table, so checks 1 to 10 above run first: method, the custom header, fetch metadata, the
-exact `Origin`, availability, the artifact, the content pass and the `data` declaration. Then, in
-order (`apps/worker/src/content/people.ts`):
-
-11. **Identity.** A pass with an identity claim; previews never get this far (check 9), and
-    capture passes and link viewers carry none: 403 `feature_disabled`, `not_identified`.
-12. **Declaration.** The current version declares `viewer people`: 403 `not_declared` otherwise.
-13. **Policy.** `pagePeopleAccess` in `policy.ts`: owners and editors only, by the role sealed in
-    the claim at the current access epoch, so a demoted editor's pass stops at the next request.
-14. **Rate limit.** 600 reads per hour per reader per artifact, then 429 with `Retry-After`.
-
-The list is the owner and every grant (at most 201 people), with `u_` id, email, name and role. It
-is who has access, never who opened the page or when: no visit is recorded. `q` searches that list
-only, so nothing anywhere takes an arbitrary email or name and says whether it has an account. The
-routes are GET only, take no body and never log names, emails or queries.
-
-**Names on an access list.** The owner writes every grant's address, adding one sends nothing to
-its holder, and a name beside an address says that it has an account. So an access list (this
-list, its agent and REST copies, and the owner's sharing settings) names a grant holder only after
-they have taken part in the artifact: written a comment, a shared-data entry or a version. Those
-already show their name to everyone who can read the list, so the list tells no reader anything
-new. The owner's own name (which the gate shows every viewer) and the reader's own row are always
-named. A name kept back reads as `null`, exactly like an address without an account, and `q` only
-searches the names shown. The rule is `accessListShowsName` in `policy.ts`, and the SQL works out
-"has taken part" only for holders whose account has a name. Pages, agents and the owner still see
-names wherever the person themselves wrote something (document authors, comments, versions) or is
-present (room peers), as before.
-
-**Editors see viewers' addresses.** Editors can read the list from the page although
-`/sharing` stays owner-only. They can already change the page, read every writer's email over
-MCP and log the email of everyone who opens a `viewer` page, and owners grant editor on purpose.
-Every identified viewer of a page that declares `people` is told, under the bar, that the owner and
-editors can see everyone it is shared with.
-
-**Agents and REST, under the same declaration.** Owners' and editors' agents get the same list in
-`list_artifact_data`'s summary, and `GET /api/v1/artifacts/:ref/people` (policy action `people`,
-`artifacts:read`) mirrors it for scripts, only while the current version declares `data viewer
-people` and shared data is on (`peopleListOffered` in `policy.ts`, the answer the page route and
-the notice under the bar also use). Otherwise the summary has no `people` and the route answers 403
-`feature_disabled` with the reason, so the notice is accurate: no editor, and no editor's agent,
-reads the access list of a page that does not declare `people`. An agent still tells whose a `u_`
-document is from the document's own `created_by`, since only that person can create it.
-
 ## Live views
 
 An open artifact page learns of a new version, and a page that keeps shared data learns that it
@@ -1482,7 +1442,7 @@ never names a content host.
 header is `x-plinth-watch`, built from the checks above (artifact, epoch, socket expiry, current
 version, the data right, a client key, its cap pool and the caps); no client header is copied,
 and the room parses it as strictly as a room's. The room sends only frames it makes from integers: `welcome {
-version, data }`, `version { version, spread_ms }`, `data { spread_ms }` and, just before a
+version }`, `version { version, spread_ms }`, `data { spread_ms }` and, just before a
 sharing change closes the socket, `access { spread_ms }`. Never artifact
 content, document data, emails, names, peers or anything a page wrote. A watch socket joins no
 room and is never a peer: room traffic never reaches it, and it never appears in `peers`. The
@@ -1530,7 +1490,8 @@ data (through the shared-data API, with all of its checks) or change its own pol
 `postMessage`.
 
 **Revocation.** A watch socket is admitted at one access epoch and lives at most a content pass's
-lifetime (12 hours), and never past the earliest expiry of the app session, viewer session or
+lifetime (12 hours, less a random time up to 5 minutes so one wave of sockets does not expire in
+one alarm), and never past the earliest expiry of the app session, viewer session or
 password pass the handshake carried. A sharing change closes it (`revoke`, 4401, reason
 `access_changed`), and the app re-reads its gate, which may now ask for an email or a password, or
 refuse; a takedown or delete closes it (4404). The room's 60 s alarm backs both up, closes sockets
@@ -1553,10 +1514,98 @@ up to it before it re-reads (under 100 ms, on an instance capped below 50, it ac
 artifact never holds more sockets than the cap, so it sees at most cap ÷ spread follow-up requests
 a second: about 500 at the default, 1000 at the top bound. A sharing change closes every view at
 once, so its `access` frame carries the same spread, and each view waits within it before it
-re-reads its gate and reconnects.
+re-reads its gate and reconnects. The room sends at most one `data` frame per spread (the writes
+after one share a frame at the window's end), so however fast a page is written, each view
+re-reads at most once per spread. A Worker deploy closes every watch socket on the instance at
+once; the first reconnect after a dropped socket or an `expired` close waits a random time up to
+10 s (`reconnectSpreadMs`), so the handshakes and their D1 reads arrive spread out.
 Notifies are best effort (`waitUntil`, one retry); losses are caught by the alarm within a minute
 for versions and by the runtime's 60 s backstop poll for data. Refusals log the status and a reason
 code only; the socket URL holds only the artifact id.
+
+## The people list
+
+Display names and the people list (spec: "Who is viewing: names and the people list") tell a page
+more about people, so their rules are listed here.
+
+**Names are display text.** A display name (`users.name`) is refused on write when it holds `@` or
+a control, format (bidi override, zero-width) or separator character, passes 100 characters, or
+shows nothing (no letter, number, symbol or punctuation mark other than the Hangul fillers U+115F,
+U+1160, U+3164, U+FFA0 and blank Braille U+2800, so a name of fillers or combining marks alone),
+and is cleaned again on every read (those characters dropped, cut to 64 code points, `null` when
+nothing visible is left), so a name stored earlier cannot slip through. That read applies wherever
+a name leaves the Worker: pages, rooms, agents (comment and mention authors, owners, version
+labels, stats) and the app. It is never sealed into the content pass and never stored with shared
+data: it is read from `users` by the identity email when a response needs it, so `erase-user`
+removes it everywhere. It is never authority: the role beside it comes from the server, and
+`list_artifact_data`'s description and `untrusted` field say names are untrusted. A page sees a
+name only where it already sees that person's email (the page declares `viewer` and the reader is
+identified). In a room the name is read once at connect and travels in the room's internal connect
+header, escaped to ASCII and checked again by the room (null, or at most 256 UTF-8 bytes without
+`@`), so a socket's hibernation attachment stays under its limit; an update that would pass it is
+refused with `too_large`.
+
+**The list.** `GET /__plinth/api/v1/people` and `/people/<u_id>` are entries of the shared-data
+route table, so checks 1 to 10 above run first: method, the custom header, fetch metadata, the
+exact `Origin`, availability, the artifact, the content pass and the `data` declaration. Then, in
+order (`apps/worker/src/content/people.ts`):
+
+11. **Identity.** A pass with an identity claim; previews never get this far (check 9), and
+    capture passes and link viewers carry none: 403 `feature_disabled`, `not_identified`.
+12. **Declaration.** The current version declares `viewer people`: 403 `not_declared` otherwise.
+13. **Policy.** `pagePeopleAccess` in `policy.ts`: owners and editors only, by the role sealed in
+    the claim at the current access epoch, so a demoted editor's pass stops at the next request,
+    and only on an artifact every served version of which a person or their account-wide agent
+    wrote (never a token limited to one artifact): 403 `forbidden` otherwise.
+14. **Rate limit.** 600 reads per hour per reader per artifact, then 429 with `Retry-After`. REST
+    (`GET /api/v1/artifacts/:ref/people`) counts in the same bucket.
+
+The list is the owner and every grant, with `u_` id, email, name and role. With
+`ALLOW_CATEGORY_SHARING` on, the grants include the people on the current share of the artifact's
+category, each counted only when `policy.ts categoryRoleOf` lets their grant count: the owner
+reviewed this artifact as `shared` into that very share, the share is the artifact owner's own,
+and the role is at most commenter ([Category sharing](#category-sharing)). The people list reads
+those facts in its one statement and asks `grantedRole`, the function every other access check
+uses, so it never lists someone the artifact is not shown to, and a pending, private or moved
+artifact lists none of the share's people. Each person appears once, at the stronger of a direct
+and a category grant. With the switch off the statement never reads a share. At most 401 people
+(the owner, 200 direct grants and one share's 200 people); `limit` keeps its 1 to 201 bounds and
+`total` counts them all. Every table in the statement is reached by key. It is who has access,
+never who opened the page or when: no visit is recorded. `q` searches that list
+only, so nothing anywhere takes an arbitrary email or name and says whether it has an account. The
+routes are GET only, take no body and never log names, emails or queries.
+
+**Names on an access list.** The owner writes every grant's address, adding one sends nothing to
+its holder, and a name beside an address says that it has an account. So an access list (this
+list, its agent and REST copies, and the owner's sharing settings) names a grant holder only after
+they have taken part in the artifact (a direct or a category grant alike): written a comment, a
+shared-data entry or a version. Those
+already show their name to everyone who can read the list, so the list tells no reader anything
+new. The owner's own name (which the gate shows every viewer) and the reader's own row are always
+named. A name kept back reads as `null`, exactly like an address without an account, and `q` only
+searches the names shown. The rule is `accessListShowsName` in `policy.ts`, and the SQL works out
+"has taken part" only for holders whose account has a name. Pages, agents and the owner still see
+names wherever the person themselves wrote something (document authors, comments, versions) or is
+present (room peers), as before.
+
+**Editors see viewers' addresses.** Editors can read the list from the page although
+`/sharing` stays owner-only. They can already change the page, read every writer's email over
+MCP and log the email of everyone who opens a `viewer` page, and owners grant editor on purpose.
+Every identified viewer of a page that declares `people` is told, under the bar, that the owner and
+editors can see everyone it is shared with.
+
+**Agents and REST, under the same declaration.** Owners' and editors' agents get the same list in
+`list_artifact_data`'s summary, and `GET /api/v1/artifacts/:ref/people` (policy action `people`,
+`artifacts:read`, `limit` 1 to 201 with `total`, the page's rate limit) mirrors it for scripts,
+only while the current version declares `data viewer people`, shared data is on and every served
+version's writer may read the list (`peopleListOffered` in `policy.ts`, the answer the page route and the
+notice under the bar also use). Otherwise the summary has no `people` and the route answers 403
+`feature_disabled` with the reason, or 403 `forbidden` on a declared page once a bound token has
+written any of its versions.
+So the list is readable exactly while the notice says so. That does not make the declaration the
+owner's alone: an editor can publish a version that adds or drops `people`, and each identified
+viewer is told on their next visit. An agent still tells whose a `u_` document is from the
+document's own `created_by`, since only that person can create it.
 
 ## Comments are untrusted input for agents
 
@@ -1716,7 +1765,9 @@ report under a shared category. Filing and sharing are separate acts, and these 
    no-op (409 `sharing_changed`). Kept reviews are those bound to the share that is on the new key
    after the batch's own move.
 7. A pending or private artifact answers a category grantee as a stranger's private artifact does:
-   404, absent from lists, portals and mention roles, and no code from the allowlist code flow.
+   404, absent from lists, portals, mention roles and its people list, and no code from the
+   allowlist code flow. The people list counts a category grant with the same `grantedRole` call
+   ([The people list](#the-people-list), `people-category.test.ts`).
 8. The owner's agents learn about it (`category_share.state: "pending"`, `review_url`), so the hold
    is never invisible; editors' agents learn nothing about the owner's sharing.
 9. A token limited to one artifact never sees or manages category sharing
@@ -1753,9 +1804,10 @@ reverse. The session it starts (an app session, or a viewer session where the ad
 sign in, [below](#viewing-codes-sign-people-in)) names no artifact. `GET /api/v1/portals` lists a share only
 when `decidePortal` lets the caller open it, the same decision `GET /api/v1/portals/:id` makes.
 Portal pages are `no-store` and
-`noindex`. Grantees see the share's title and the artifacts' titles, never the category name, the
-owner's share state or other people on the share. Category names and share titles are never
-logged.
+`noindex`. Grantees see the share's title, the artifacts' titles and the owner's name and email
+address. The title is the category's name unless the owner changes it, and a later rename of the
+category does not change it. Grantees never see the category field on a summary, the owner's share
+state or other people on the share. Category names and share titles are never logged.
 
 **Erasure.** A person's own shares, grants on them, portal codes and personal categories cascade
 from `users`; `erase-user` also deletes their address from other people's shares
@@ -1793,7 +1845,8 @@ got a viewer session.
   whitespace or control characters in it becomes one space and format characters (bidi overrides,
   zero-width) are dropped. A title set through publish or update keeps inner line breaks, and a
   name saved before display names refused control characters (v0.6.0 and earlier trimmed only
-  the ends) is still stored as written. Otherwise either could close the labelled line and add
+  the ends) is still stored as written; the name is also cleaned as on every read
+  (`displayName.ts pageDisplayName`). Otherwise either could close the labelled line and add
   paragraphs that read as Plinth's, such as "reply with the code above". In single-user mode,
   where the code only opens what is shared, the email stays the plain "viewing code" email.
 - **The account is the mailbox's.** An owner can list any address, but only the person who reads

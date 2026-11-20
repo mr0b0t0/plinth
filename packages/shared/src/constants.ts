@@ -181,13 +181,6 @@ export const LIMITS = {
   },
   /** People listed in one artifact's stats (the most recent; `people_total` says how many). */
   maxStatsPeople: 500,
-  // Who is viewing (docs/spec.md "Who is viewing: names and the people list").
-  /** A display name as stored (users.name, PATCH /api/v1/me). */
-  maxDisplayNameLength: 100,
-  /** Code points of a display name as pages, rooms and agents see it. */
-  maxPageDisplayNameLength: 64,
-  /** The `q` of a people search. */
-  maxPeopleQueryLength: 100,
   // Sheets (docs/spec.md "Sheets", packages/shared/src/sheet/). Fixed, like the doc limits.
   /** Bytes of JSON lines (sheet.jsonl) per version of a sheet. */
   maxSheetBytes: 1 * MB,
@@ -210,6 +203,12 @@ export const LIMITS = {
   /** Cells one edit_sheet call writes. */
   maxSheetOpCells: 10_000,
   /**
+   * Empty rows one edit_sheet set may add between the sheet's last row and the row it writes
+   * (a set at B5000 on a sheet of 10 data rows would add 4,988). Past it the op is refused with
+   * reason "too_far_past_end": append_rows or insert_rows add rows on purpose.
+   */
+  maxSheetSetGapRows: 1_000,
+  /**
    * Formula characters one edit_sheet call rewrites. Each insert or delete of rows or columns
    * re-reads every formula in the sheet to move its references, so this bounds the call's CPU:
    * four passes over a sheet that is all formulas.
@@ -225,6 +224,13 @@ export const LIMITS = {
   maxSheetImportBytes: 2 * MB,
   /** Bytes an .xlsx import may decompress in all (its parts' XML). */
   maxSheetImportInflatedBytes: 24 * MB,
+  // Who is viewing (docs/spec.md "Who is viewing: names and the people list").
+  /** A display name as stored (users.name, PATCH /api/v1/me). */
+  maxDisplayNameLength: 100,
+  /** Code points of a display name as pages, rooms and agents see it. */
+  maxPageDisplayNameLength: 64,
+  /** The `q` of a people search. */
+  maxPeopleQueryLength: 100,
 } as const;
 
 /** The windows an owner can pick for one artifact's stats, in UTC days. */
@@ -415,6 +421,10 @@ export const BRIDGE_MESSAGE_SOURCE = "plinth-bridge";
 /** postMessage protocol between the app and a typed artifact's renderer (artifactTypes.ts). */
 export const RENDERER_MESSAGE_SOURCE = "plinth-renderer";
 export const RENDERER_PROTOCOL_VERSION = 1;
+
+/** The files a sheet's frame builds when the app asks it to (the renderer message `export`). */
+export const SHEET_EXPORT_FORMATS = ["csv", "xlsx"] as const;
+export type SheetExportFormat = (typeof SHEET_EXPORT_FORMATS)[number];
 
 /**
  * CONTENT_ISOLATION. `origin`: each artifact is its own origin. `opaque`: artifact documents get an

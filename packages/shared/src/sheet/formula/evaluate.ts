@@ -16,6 +16,7 @@ import {
   finite,
   isError,
   isoDateSerial,
+  isRange,
   type SheetError,
   textCost,
   todaySerial,
@@ -43,10 +44,6 @@ export interface RangeArg {
 }
 
 export type Arg = Value | RangeArg;
-
-export function isRange(a: Arg): a is RangeArg {
-  return typeof a === "object" && a !== null && (a as RangeArg).kind === "range";
-}
 
 /** What a function may call back into while it runs. */
 export interface EvalContext {

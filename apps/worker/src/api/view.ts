@@ -3,6 +3,7 @@
 import {
   type Capabilities,
   capabilityList,
+  pageDisplayName,
   RATE_LIMITS,
   REVIEW_MODE_PARAM,
   TTL,
@@ -38,11 +39,12 @@ import {
   denialError,
   findArtifact,
   grantFor,
+  servedVersionWriters,
   versionCapabilities,
 } from "../services/artifacts.ts";
 import type { Ctx } from "../services/context.ts";
 import { readLiveDraftInfo } from "../services/live.ts";
-import { namesByEmail } from "../services/users.ts";
+import { nameByEmail } from "../services/users.ts";
 import { requestViewerCode, verifyViewerCode } from "../services/viewers.ts";
 import { countsAsView, openerFor } from "../services/views.ts";
 import { setCodeSession } from "./codeSession.ts";
@@ -140,7 +142,7 @@ export async function computeGate(
       current_version: a.currentVersion,
       version,
       visibility: a.visibility,
-      owner_name: owner?.name ?? null,
+      owner_name: pageDisplayName(owner?.name),
     },
     enter_url: await issueEnterUrl(ctx.config, a, next, identity, { countView, opener }),
     role: d.role,
@@ -362,13 +364,22 @@ async function gatePeople(
   const data = sharedDataActive(ctx.config) && caps.data;
   const room = caps.room && a.type === "html" && roomsActive(ctx.config, ctx.env);
   if (!data && !room) return undefined;
-  const name = (await namesByEmail(ctx.env.DB, [identity.email])).get(identity.email) ?? null;
+  const name = await nameByEmail(ctx.env.DB, identity.email);
   const out: ViewGatePeople = {
     ...(name ? { name } : {}),
     // Exactly when anyone (the page, agents, REST) can read the list: policy.ts peopleListOffered.
-    ...(peopleListOffered(caps, sharedDataActive(ctx.config)) ? { list: true as const } : {}),
+    ...((await peopleOffered(ctx, a, caps)) ? { list: true as const } : {}),
   };
   return out.name || out.list ? out : undefined;
+}
+
+/**
+ * policy.ts peopleListOffered for the current version (whose declaration is `caps`), reading the
+ * writers of every served version only on a page that declares `people`.
+ */
+async function peopleOffered(ctx: Ctx, a: ArtifactRow, caps: Capabilities): Promise<boolean> {
+  const writers = caps.people ? await servedVersionWriters(ctx.env.DB, a.id) : null;
+  return peopleListOffered(caps, sharedDataActive(ctx.config), writers);
 }
 
 function gateOptions(q: (k: string) => string | undefined): GateOptions {

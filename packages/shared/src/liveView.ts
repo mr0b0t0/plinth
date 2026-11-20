@@ -33,8 +33,8 @@ export const LIVE_VIEW_LIMITS = {
   /** Watch connects one client may make to one artifact per minute. */
   connectsPerClientPerMinute: 60,
   /**
-   * A watch socket lives at most as long as a content pass: the room closes it with 4401 when it
-   * expires, and the app re-reads the gate and reconnects.
+   * A watch socket lives at most as long as a content pass (less up to lifetimeJitterS, at
+   * random): the room closes it with 4401 `expired` then, and the app reconnects.
    */
   socketTtlS: TTL.contentCookieS,
   /**
@@ -57,14 +57,29 @@ export const LIVE_VIEW_LIMITS = {
   pingIntervalS: 30,
   /** After a refusal (full, rate, invalid), the app polls and tries the socket again after this. */
   refusedRetryS: 300,
-  /** Reconnect delays in seconds after a network failure; the last one repeats. */
+  /**
+   * The first reconnect after a socket closed on its own (a dropped network, a Worker deploy that
+   * restarts every object, a lifetime that ended) waits random(0, reconnectSpreadMs): full jitter.
+   * A deploy closes every watch socket on the instance at the same moment, so without it every open
+   * view would reconnect, a handshake with its D1 reads and then a data re-read, within a second.
+   * 10 s, the widest signal spread, so 1000 views of one artifact reconnect at about 100 a second.
+   */
+  reconnectSpreadMs: 10_000,
+  /** Later reconnect delays in seconds while the socket keeps failing; then refusedRetryS. */
   backoffS: [1, 2, 5, 10, 30],
+  /**
+   * A socket's lifetime (socketTtlS) ends up to this much earlier, at random per handshake, so the
+   * sockets one reconnect wave opened do not all reach their lifetime in the same alarm 12 hours
+   * later and reconnect together again. The room's 60 s alarm closes them, so 300 s spreads one
+   * wave over five or six alarms.
+   */
+  lifetimeJitterS: 300,
 } as const;
 
 /** Server -> client, JSON text frames. The client only ever sends the text "ping". */
 export type ViewWatchFrame =
-  /** First frame: the current version, and whether this socket gets `data` signals. */
-  | { t: "welcome"; v: 1; version: number; data: boolean }
+  /** First frame: the current version. */
+  | { t: "welcome"; v: 1; version: number }
   /** A new version was published: re-read the gate (after random(0, spread_ms) ms). */
   | { t: "version"; version: number; spread_ms: number }
   /** The page's shared data changed: the page re-reads it (after random(0, spread_ms) ms). */
@@ -138,8 +153,8 @@ export function readViewWatchFrame(raw: unknown): ViewWatchFrame | null {
   const f = v as Record<string, unknown>;
   const count = (n: unknown) => typeof n === "number" && Number.isSafeInteger(n) && n >= 0;
   const spread = (n: unknown) => count(n) && (n as number) <= LIVE_VIEW_LIMITS.spreadMaxMs;
-  if (f.t === "welcome" && f.v === 1 && count(f.version) && typeof f.data === "boolean") {
-    return { t: "welcome", v: 1, version: f.version as number, data: f.data };
+  if (f.t === "welcome" && f.v === 1 && count(f.version)) {
+    return { t: "welcome", v: 1, version: f.version as number };
   }
   if (f.t === "version" && count(f.version) && spread(f.spread_ms)) {
     return { t: "version", version: f.version as number, spread_ms: f.spread_ms as number };

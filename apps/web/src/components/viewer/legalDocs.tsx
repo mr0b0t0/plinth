@@ -208,10 +208,12 @@ function privacy(op: OperatorInfo, cfg: LegalConfig): LegalDoc {
             {cfg.category_sharing && (
               <li>
                 <strong>Shared categories</strong>: when you share a category, the email addresses
-                of the people you share it with and their roles, the name they see for it, and which
-                of its artifacts you chose to show them. They see that name and those artifacts,
-                never the category's own name. If you are one of those people, the owner sees your
-                email address and role, as for an artifact shared with you.
+                of the people you share it with and their roles, the title they see for it, and
+                which of its artifacts you chose to show them. The title is the category's name
+                unless you change it. Renaming the category later does not change the title. They
+                see the title, those artifacts, and your name and email address. If you are one of
+                those people, the owner sees your email address and role, as for an artifact shared
+                with you.
               </li>
             )}
             <li>

@@ -29,7 +29,7 @@ export const ARTIFACT_TYPES = [
 export type ArtifactType = (typeof ARTIFACT_TYPES)[number];
 
 /** The languages the source editor holds. The web app has a Monaco setup for each one. */
-export type EditorLanguage = "html" | "markdown" | "json" | "plaintext";
+export type EditorLanguage = "html" | "markdown" | "json";
 
 export interface ArtifactTypeDef {
   id: ArtifactType;
@@ -58,7 +58,7 @@ export interface ArtifactTypeDef {
    */
   renderer: RendererFiles | null;
   /**
-   * The source editor's settings, or null for a type people never see the source of (a design):
+   * The source editor's settings, or null for a type people never see the source of (a sheet or a design):
    * the app then offers no Edit and no source diff, and agents change it.
    */
   editor: { language: EditorLanguage; wordWrap: "on" | "off" } | null;
@@ -73,17 +73,17 @@ export interface ArtifactTypeDef {
    */
   present?: boolean;
   /**
-   * Files the viewer can download, each built inside the frame by the renderer from what it shows
-   * (a deck's .pptx). Absent means none. Print and PDF are not listed: every renderer prints.
-   */
-  fileExports?: readonly FileExport[];
-  /**
    * The type's page shows author HTML only in nested frames with an opaque origin in every
    * isolation mode (a design's artboards). Its files are then served with
    * Cross-Origin-Resource-Policy: cross-origin, the publish scan reads its references as opaque
    * isolation would, and the content host serves its renderer.frame. Absent means false.
    */
   opaqueFrames?: boolean;
+  /**
+   * Files the viewer can download, each built inside the frame by the renderer from what it shows
+   * (a deck's .pptx). Absent means none. Print and PDF are not listed: every renderer prints.
+   */
+  fileExports?: readonly FileExport[];
 }
 
 /** A file a renderer builds in the frame for the viewer to download. */
@@ -93,6 +93,8 @@ export type FileExport = "pptx";
 export interface RendererFiles {
   script: string;
   style: string;
+  /** A fixed Plinth page the renderer frames (see ArtifactTypeDef.renderer). */
+  frame?: string;
   /**
    * Scripts the renderer adds to its own page only when someone uses a feature that needs them
    * (a deck's .pptx writer), so the first view never downloads them. Each is built from `entry`
@@ -100,8 +102,6 @@ export interface RendererFiles {
    * served at /__plinth/types/<id>/<file> under the same guard as the script.
    */
   lazy?: readonly { file: string; entry: string }[];
-  /** A fixed Plinth page the renderer frames; see ArtifactTypeDef.renderer. */
-  frame?: string;
 }
 
 /** A type module's row: an ArtifactTypeDef whose id is that module's own type. */
@@ -177,6 +177,12 @@ export interface TypedPayload {
    * renderer shows every slide stacked. Absent otherwise, so every other shell is unchanged.
    */
   view?: "overview";
+  /**
+   * The version number this shell shows, set only for a type with opaque frames (a design): its
+   * boards load their files from /__plinth/v/<version>/, never from the current version, which a
+   * later publish replaces. Absent otherwise, so every other shell is unchanged.
+   */
+  version?: number;
 }
 
 const SCRIPT_UNSAFE: Record<string, string> = {
@@ -220,6 +226,7 @@ export function typedShellHtml(
     appOrigin: string;
     live?: "room";
     view?: "overview";
+    version?: number;
   },
 ): string {
   if (!def.renderer) throw new Error(`Type ${def.id} has no renderer`);
@@ -232,6 +239,7 @@ export function typedShellHtml(
     text: o.text,
     ...(o.live ? { live: o.live } : {}),
     ...(o.view ? { view: o.view } : {}),
+    ...(o.version !== undefined ? { version: o.version } : {}),
   };
   return (
     '<!doctype html><html lang="en"><head>' +

@@ -1,8 +1,9 @@
 // Boots a design: reads the payload the shell embeds (typedShellHtml in @plinth/shared), parses it
 // with the shared parser, lays the artboards out on the canvas and mounts a frame for each board
-// on screen (frames.ts). With ?plinth-board=<id> it shows that one board alone at 100% instead
-// (an unknown id shows the canvas). It runs synchronously at the end of <body>, so the comments
-// bridge (which waits for DOMContentLoaded) sees the finished DOM.
+// on screen (frames.ts). Boards load their files from the version the payload names (base.ts); a
+// payload without a valid version shows the error instead of any board. It runs synchronously at
+// the end of <body>, so the comments bridge (which waits for DOMContentLoaded) sees the finished
+// DOM.
 //
 // The shell's DOM never receives author markup: the shared section and the fragments exist here
 // only as strings posted to board frames, names only as textContent, and ids are
@@ -11,7 +12,6 @@
 // tests and thumbnails.
 import {
   boardDocument,
-  DESIGN_BOARD_PARAM,
   type DesignBoard,
   parseDesign,
   REVIEW_MODE_PARAM,
@@ -105,7 +105,9 @@ export function boot(win: Window, opts: BootOptions = {}): DesignHandle {
   const loc = opts.location ?? win.location;
   const search = new URLSearchParams(loc.search);
   const review = search.has(REVIEW_MODE_PARAM);
-  const baseHref = boardBaseUrl(loc);
+  // Never the shell's own directory: at the root that follows the current version.
+  const baseHref = boardBaseUrl(loc, payload.version);
+  if (baseHref === null) return fail(doc, root);
   const documentFor = (board: DesignBoard) =>
     boardDocument({ board, shared: design.shared, baseHref });
   const schedule: Schedule =
@@ -144,34 +146,6 @@ export function boot(win: Window, opts: BootOptions = {}): DesignHandle {
         after();
       },
     });
-
-  // One board alone at 100% (?plinth-board=<id>): no canvas, no covers.
-  const soloId = search.get(DESIGN_BOARD_PARAM);
-  const solo = soloId ? design.boards.find((b) => b.id === soloId) : undefined;
-  if (solo) {
-    root.setAttribute("data-mode", "solo");
-    const { slot, cover } = boardSlot(doc, solo, pageName(solo));
-    cover.remove();
-    const stage = el(doc, "div", "plinth-design__solo");
-    stage.append(slot);
-    root.replaceChildren(stage);
-    frames.add(solo, slot);
-    frames.show([solo.id]);
-    html.setAttribute("data-boards", "1");
-    html.setAttribute("data-zoom", "100");
-    listen("message", (e) => {
-      if (!fromApp(e, win, appOrigin)) return;
-      if (readDesignAppMessage(e.data)?.type === "print") void printNow([solo], () => {});
-    });
-    html.setAttribute("data-ready", "ok");
-    return {
-      stop: () => {
-        for (const f of cleanups.splice(0)) f();
-      },
-      view: null,
-      frames,
-    };
-  }
 
   const byId = new Map(design.boards.map((b) => [b.id, b]));
   root.setAttribute("data-mode", "canvas");

@@ -696,8 +696,12 @@ async function serve(
   const def = typeDef(artifact.type);
   if (!def) return unsupportedType(config);
   if (def.renderer && rel === "index.html") {
-    // serveTypedEntry reads only the version's prefix (its source file is always under it).
-    const version = { r2Prefix: v.r2Prefix } as Pick<VersionRow, "r2Prefix"> as VersionRow;
+    // serveTypedEntry reads only the version's prefix (its source file is always under it) and
+    // number (a design's boards load their files from that version's path).
+    const version = { r2Prefix: v.r2Prefix, number: versionNumber } as Pick<
+      VersionRow,
+      "r2Prefix" | "number"
+    > as VersionRow;
     // On-page editing (#36): only an owner's or editor's view pass, on the current version's own
     // path (not a pinned /__plinth/v/<n>/ one), outside review mode, with rooms and live editing on.
     const editor = pass.claim?.role === "owner" || pass.claim?.role === "editor";

@@ -12,6 +12,7 @@ import {
   LIMITS,
   type PortalGate,
   type PortalSummary,
+  pageDisplayName,
   RATE_LIMITS,
   TTL,
 } from "@plinth/shared";
@@ -149,7 +150,8 @@ export async function listPortals(ctx: Ctx): Promise<PortalSummary[]> {
       {
         id: r.id,
         title: r.title,
-        owner_name: r.owner_name,
+        // The name cleaned on read (displayName.ts pageDisplayName), as everywhere else it shows.
+        owner_name: pageDisplayName(r.owner_name),
         count: Math.min(r.count, LIMITS.maxPortalItems),
       },
     ];
@@ -196,7 +198,12 @@ export async function portalGate(ctx: Ctx, id: string): Promise<PortalGate> {
     const v = decide(as, "view", factsOf(a), {
       grantRole: direct.get(a.id) ?? null,
       categoryGrant: grant
-        ? { shareId: share.id, shareKey: share.category_key, role: grant.role }
+        ? {
+            shareId: share.id,
+            shareOwnerId: share.owner_id,
+            shareKey: share.category_key,
+            role: grant.role,
+          }
         : null,
       categorySharing: ctx.config.allowCategorySharing,
       passwordPassed: false,
@@ -207,7 +214,12 @@ export async function portalGate(ctx: Ctx, id: string): Promise<PortalGate> {
   }
   return {
     status: "ok",
-    portal: { id: share.id, title: share.title, owner_name: owner.name, role: d.role },
+    portal: {
+      id: share.id,
+      title: share.title,
+      owner_name: pageDisplayName(owner.name),
+      role: d.role,
+    },
     items,
   };
 }
@@ -326,10 +338,10 @@ async function sendPortalCode(ctx: Ctx, share: ShareSql, email: string): Promise
     .where(eq(users.id, share.owner_id))
     .get();
   // Neither the share's title nor the category name: only who shared it. The owner's name is
-  // their own text, so the sign-in email names it as such, on one line: names saved before display
-  // names refused control characters (v0.6.0 trimmed only the ends) are still stored as written,
-  // and a line break could close the labelled line and add lines that read as Plinth's.
-  const name = owner?.name ? oneLine(owner.name) : "";
+  // their own text, so the sign-in email names it as such, cleaned as everywhere it shows
+  // (displayName.ts pageDisplayName) and kept on one line (oneLine): a line break could close the
+  // labelled line and add lines that read as Plinth's.
+  const name = oneLine(pageDisplayName(owner?.name) ?? "");
   const who = name ? `${name} shared` : "someone shared";
   await createEmailAdapter(ctx.config, ctx.env).send({
     to: email,
