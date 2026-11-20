@@ -14,9 +14,11 @@
 // The browser sees the page as a signed-out link viewer would: the enter token carries no identity
 // claim, so a page with shared data shows it read-only and never learns who is viewing. A version
 // whose writer may not read the data (policy.captureReadsData: a token limited to one artifact
-// wrote it) is captured with a pass that reads none. Whatever the version, the browser lets the
-// page reach only its own origin and the hosts its CSP allows, and no navigation leaves the
-// captured version's own path (docs/security.md#thumbnails-and-link-previews).
+// wrote it) is captured with a pass that reads none. The pass is bound to the captured version, so
+// the content host serves that version on every path, the artifact's root included. Whatever the
+// version, the browser lets the page reach only its own origin and the hosts its CSP allows, and no
+// navigation opens another version or a Plinth helper path
+// (docs/security.md#thumbnails-and-link-previews).
 import puppeteer from "@cloudflare/puppeteer";
 import { CONTENT_RESERVED_PREFIX } from "@plinth/shared";
 import { type Bindings, type Config, contentOrigin, thumbnailsActive } from "../config.ts";
@@ -55,13 +57,13 @@ export function thumbnailKey(artifactId: string, n: number): string {
  * Where the capture browser lets a page go: the artifact's own content origin (and, under the path
  * fallback, only its own path there), and the hosts the content CSP lets any page load from (the
  * CDN allowlist and Google Fonts), never as a navigation. A navigation (top-level or a frame's)
- * stays on the captured version's own path, /__plinth/v/<version>/, and the enter step that leads
- * there.
+ * under /__plinth/ goes only to the captured version, /__plinth/v/<version>/, and the enter step
+ * that leads there.
  */
 export interface CaptureScope {
   /** contentOrigin(config, id): an origin, or an origin and path under the path fallback. */
   artifact: string;
-  /** The version being captured: the only one a navigation may open. */
+  /** The version being captured: the only one a navigation may open by its version path. */
   version: number;
   /** Hosts reached over https on their default port, for subresources only. */
   hosts: readonly string[];
@@ -96,12 +98,12 @@ const LOCAL_SCHEMES: ReadonlySet<string> = new Set(["data:", "blob:", "about:"])
  * leave the browser, and subresources from the CSP's hosts; everything else is aborted, above all
  * a navigation (top-level or a frame's) anywhere but the artifact, which the CSP cannot stop.
  *
- * A navigation on the artifact must also stay on the captured version: its own path
- * (/__plinth/v/<n>/ and below, or /__plinth/v/<n>, which the content host redirects to the
- * slash), or the enter step whose `next` is exactly that path. Anywhere else on the origin (`/`,
- * another version, a reserved helper) is aborted: the artifact's root serves its current version,
- * whose code may come from another writer, and it would run under this capture's pass, which may
- * read the shared data. Subresources keep the origin-wide rule.
+ * A navigation on the artifact under /__plinth/ must also stay on the captured version: its own
+ * path (/__plinth/v/<n>/ and below, or /__plinth/v/<n>, which the content host redirects to the
+ * slash), or the enter step whose `next` is exactly that path. Another version and every reserved
+ * helper are aborted as navigations. The artifact's other paths (`/`, `/chart.html`) stay open:
+ * the capture pass is bound to its version, so the content host serves them from it, never from
+ * the current version. Subresources keep the origin-wide rule.
  */
 export function captureRequestAllowed(
   scope: CaptureScope,
@@ -122,13 +124,15 @@ export function captureRequestAllowed(
     if (!navigation) {
       return base === "" || u.pathname === base || u.pathname.startsWith(`${base}/`);
     }
+    if (u.pathname !== base && !u.pathname.startsWith(`${base}/`)) return false;
+    const rest = u.pathname.slice(base.length);
+    if (!rest.startsWith(CONTENT_RESERVED_PREFIX)) return true;
     const version = captureVersionPath(scope.version);
-    if (u.pathname === `${base}${CONTENT_RESERVED_PREFIX}enter`) {
+    if (rest === `${CONTENT_RESERVED_PREFIX}enter`) {
       const next = u.searchParams.getAll("next");
       return next.length === 1 && next[0] === version;
     }
-    const page = `${base}${version}`;
-    return u.pathname === page.slice(0, -1) || u.pathname.startsWith(page);
+    return rest === version.slice(0, -1) || rest.startsWith(version);
   }
   if (navigation) return false;
   return u.protocol === "https:" && u.port === "" && scope.hosts.includes(u.hostname);
@@ -306,7 +310,7 @@ export async function captureThumbnail(
       { id: target.artifactId, accessEpoch: target.accessEpoch },
       captureVersionPath(target.number),
       undefined,
-      { capture: true, noData: !target.readsData },
+      { capture: true, captureVersion: target.number, noData: !target.readsData },
     );
     const scope = captureScope(config, target.artifactId, target.number);
     const jpeg = await withBudget(shooter(env.BROWSER, url, scope), THUMB.budgetMs);

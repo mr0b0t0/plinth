@@ -53,7 +53,7 @@ export interface EnterPayload {
   x?: string;
   /**
    * A thumbnail capture (services/thumbnails.ts): the cookie it becomes may load the artifact as a
-   * top-level page, which only Plinth's own capture browser does. Never with `x`.
+   * top-level page, which only Plinth's own capture browser does. Never with `x`; always with `v`.
    */
   c?: 1;
   /**
@@ -66,7 +66,7 @@ export interface EnterPayload {
    * page (no frame-ancestors) and is read-only. Never with `x` or `c`; always with `v`.
    */
   p?: 1;
-  /** The one version a preview may show. */
+  /** The one version a preview may show, or a capture pictures. */
   v?: number;
   /**
    * Count this entry as an open (docs/spec.md "Artifact stats"). Set only by the gate,
@@ -99,7 +99,10 @@ export interface ContentPayload {
   d?: 1;
   /** a preview pass (copied from the enter token): any framer, read-only, no identity */
   p?: 1;
-  /** the one version a preview pass opens (copied from the enter token) */
+  /**
+   * The one version a preview or capture pass opens (copied from the enter token). Under a capture
+   * pass the content host also serves the artifact's other paths from it, never the current one.
+   */
   v?: number;
   /**
    * This browser's open of the artifact was counted, at this pass or an earlier one at the same
@@ -145,6 +148,8 @@ export async function issueEnterUrl(
   identity?: ViewerIdentity,
   opts: {
     capture?: boolean;
+    /** With `capture` only, and required by it: the version the capture pictures. */
+    captureVersion?: number;
     /** With `capture` only: the pass reads no shared data. */
     noData?: boolean;
     previewVersion?: number;
@@ -165,6 +170,8 @@ export async function issueEnterUrl(
     if (opts.noData) payload.d = 1;
   } else if (opts.noData) {
     throw new Error("Only a capture is minted without shared data");
+  } else if (opts.captureVersion !== undefined) {
+    throw new Error("Only a capture names its captured version");
   }
   if (opts.previewVersion !== undefined) {
     if (identity || opts.capture) throw new Error("A preview is never identified or a capture");
@@ -179,6 +186,11 @@ export async function issueEnterUrl(
     if (opts.opener) payload.o = await sealOpener(config, artifact.id, opts.opener);
   } else if (opts.opener) {
     throw new Error("Only a counted open carries an opener");
+  }
+  // A capture is bound to the version it pictures: under it the content host serves no other one.
+  if (opts.capture) {
+    if (!isVersion(opts.captureVersion)) throw new Error("A capture names one version");
+    payload.v = opts.captureVersion;
   }
   if (identity) {
     payload.x = await sealJson(config.tokenSigningKey, IDENTITY_CLAIM_INFO, artifact.id, {
@@ -245,7 +257,8 @@ export async function signContentCookie(
   epoch: number,
   x?: string,
   kind: PassKind = "view",
-  previewVersion?: number,
+  /** The one version a preview or capture pass opens: required for both, refused otherwise. */
+  version?: number,
   counted = false,
   visitor?: string,
   noData = false,
@@ -257,8 +270,8 @@ export async function signContentCookie(
   if (kind !== "view" && visitor !== undefined)
     throw new Error(`A ${kind} pass never carries a visitor id`);
   if (visitor !== undefined && !VISITOR_ID_RE.test(visitor)) throw new Error("Bad visitor id");
-  if ((kind === "preview") !== (previewVersion !== undefined && isVersion(previewVersion)))
-    throw new Error("A preview pass, and only a preview pass, names one version");
+  if ((kind === "preview" || kind === "capture") !== (version !== undefined && isVersion(version)))
+    throw new Error("A preview or capture pass, and only those, names one version");
   const payload: ContentPayload = {
     k: "content",
     a: artifactId,
@@ -268,10 +281,8 @@ export async function signContentCookie(
   if (x !== undefined) payload.x = x;
   if (kind === "capture") payload.c = 1;
   if (noData) payload.d = 1;
-  if (kind === "preview") {
-    payload.p = 1;
-    payload.v = previewVersion;
-  }
+  if (kind === "preview") payload.p = 1;
+  if (kind === "preview" || kind === "capture") payload.v = version;
   if (counted) payload.w = 1;
   if (visitor !== undefined) payload.i = visitor;
   return signToken(config.tokenSigningKey, payload);

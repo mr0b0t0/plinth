@@ -10,10 +10,11 @@ Add a line under **Unreleased** in the pull request that makes a change people w
 
 ## Unreleased
 
-- **Thumbnails stay on the version they picture.** The thumbnail browser now aborts a page's
-  navigation to anywhere but the captured version's own path (`/__plinth/v/<n>/`), so a version
-  that links or redirects to the artifact's root, or to another version, can no longer run that
-  page's code during its capture. What a page loads (scripts, images, shared data) is unchanged.
+- **Thumbnails picture the version they are of.** The capture of a version is served that
+  version on every path, so a page that loads `/assets/index.js`, frames `/chart.html` or
+  redirects to `/docs/` shows its own files, not the current version's, and an older version's
+  thumbnail never runs a newer version's code. The thumbnail browser also no longer opens another
+  version or a Plinth helper path as a page.
 - **Publish from CI.** A GitHub Action, `mr0b0t0/plinth/publish@v0.6.0`, publishes a build folder
   or one HTML or Markdown file as the next version of an artifact on every run, with the commit in
   the version note and the links in the job summary. A token can now be limited to one artifact

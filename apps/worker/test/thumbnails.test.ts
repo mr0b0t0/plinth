@@ -5,8 +5,10 @@ import { createExecutionContext, waitOnExecutionContext } from "cloudflare:test"
 import { env } from "cloudflare:workers";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { getConfig } from "../src/config.ts";
+import { contentCookieName } from "../src/content/serve.ts";
 import { issueEnterUrl, signContentCookie, verifyEnterToken } from "../src/content/tokens.ts";
 import worker from "../src/index.ts";
+import { signToken } from "../src/lib/crypto.ts";
 import {
   type CaptureScope,
   captureRequestAllowed,
@@ -374,6 +376,129 @@ describe("what the capture browser loads", () => {
     expect((await state(p.id, 1))?.thumbnail).toBe("ok");
   });
 
+  it("is served the captured version on every path, never the current one", async () => {
+    // A person's version 1 loads root-relative files (a Vite build with base '/'): a script and a
+    // frame. A token limited to the artifact then publishes version 2 with its own files at the
+    // same paths. Version 1's later capture (a retry or a reader's backfill) must run version 1's
+    // code, not the token's, under its pass that reads the shared data.
+    const owner = await agent();
+    const v1 = `<!doctype html><script src="/app.js"></script><iframe src="/chart.html"></iframe>`;
+    const p = await publish(owner.auth, {
+      html: v1,
+      assets: [
+        { path: "app.js", content: "window.one = 1;" },
+        { path: "chart.html", content: "<!doctype html><p>chart one</p>" },
+      ],
+    });
+    const ci = await createToken(owner.user.id, {
+      scopes: "artifacts:read artifacts:write",
+      artifactId: p.id,
+    });
+    const up = await run(`/api/v1/artifacts/${p.id}`, {
+      method: "PUT",
+      headers: { Authorization: `Bearer ${ci.token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        html: "<!doctype html><h1>Token's page</h1>",
+        assets: [
+          { path: "app.js", content: "window.two = 2;" },
+          { path: "chart.html", content: "<!doctype html><p>chart two</p>" },
+        ],
+        base_version: 1,
+      }),
+    });
+    expect(up.status, await up.clone().text()).toBe(200);
+
+    const got: Record<string, { status: number; body: string }> = {};
+    setThumbnailShooter(async (_b, url) => {
+      const enter = await run(url, { headers: { "sec-fetch-dest": "document" } });
+      const cookie = (enter.headers.get("set-cookie") ?? "").split(";")[0] as string;
+      const own = new URL(url).origin;
+      const load = async (path: string, dest: string) => {
+        const res = await run(`${own}${path}`, {
+          headers: { Cookie: cookie, "sec-fetch-dest": dest },
+        });
+        got[`${dest} ${path}`] = { status: res.status, body: await res.text() };
+      };
+      await load("/__plinth/v/1/", "document");
+      await load("/app.js", "script");
+      await load("/chart.html", "iframe");
+      await load("/", "document");
+      await load("/__plinth/v/2/", "document");
+      await load("/__plinth/v/2/app.js", "script");
+      return JPEG;
+    });
+    await env.DB.prepare(
+      "UPDATE versions SET thumbnail = NULL WHERE artifact_id = ?1 AND number = 1",
+    )
+      .bind(p.id)
+      .run();
+    await run(`/api/v1/artifacts/${p.id}/thumbnail?version=1`, { headers: owner.auth });
+
+    expect(got["document /__plinth/v/1/"]?.body).toContain('<script src="/app.js">');
+    expect(got["script /app.js"]).toEqual({ status: 200, body: "window.one = 1;" });
+    expect(got["iframe /chart.html"]).toEqual({
+      status: 200,
+      body: "<!doctype html><p>chart one</p>",
+    });
+    expect(got["document /"]?.status).toBe(200);
+    expect(got["document /"]?.body).toContain('<script src="/app.js">');
+    expect(got["document /"]?.body).not.toContain("Token's page");
+    // Another version, the current one included, is not this capture's to open.
+    expect(got["document /__plinth/v/2/"]?.status).toBe(404);
+    expect(got["script /__plinth/v/2/app.js"]?.status).toBe(404);
+  });
+
+  it("refuses a capture that names no version, at the issuer and on the content host", async () => {
+    const config = getConfig(env as never);
+    const a = await agent();
+    const p = await publish(a.auth, {}, {});
+    const art = await env.DB.prepare("SELECT access_epoch FROM artifacts WHERE id = ?1")
+      .bind(p.id)
+      .first<{ access_epoch: number }>();
+    const artifact = { id: p.id, accessEpoch: art?.access_epoch as number };
+    await expect(
+      issueEnterUrl(config, artifact, "/__plinth/v/1/", undefined, { capture: true }),
+    ).rejects.toThrow("A capture names one version");
+    await expect(
+      issueEnterUrl(config, artifact, "/", undefined, { captureVersion: 1 }),
+    ).rejects.toThrow("Only a capture names its captured version");
+    await expect(
+      signContentCookie(config, p.id, artifact.accessEpoch, undefined, "capture"),
+    ).rejects.toThrow("names one version");
+    await expect(
+      signContentCookie(config, p.id, artifact.accessEpoch, undefined, "view", 1),
+    ).rejects.toThrow("names one version");
+    // Tokens signed the way an older Worker signed them, with no version: no pass at all.
+    const own = `http://${p.id}.content.localhost:8787`;
+    const enter = await signToken(config.tokenSigningKey, {
+      k: "enter",
+      a: p.id,
+      e: artifact.accessEpoch,
+      n: "unversioned-capture-nonce",
+      exp: Date.now() + 60_000,
+      c: 1,
+    });
+    const entered = await run(
+      `${own}/__plinth/enter?${new URLSearchParams({ t: enter, next: "/__plinth/v/1/" })}`,
+      { headers: { "sec-fetch-dest": "document" } },
+    );
+    expect(entered.status).toBe(403);
+    expect(entered.headers.get("set-cookie")).toBeNull();
+    const pass = await signToken(config.tokenSigningKey, {
+      k: "content",
+      a: p.id,
+      e: artifact.accessEpoch,
+      exp: Date.now() + 60_000,
+      c: 1,
+    });
+    const name = contentCookieName(config, new URL(own));
+    const page = await run(`${own}/__plinth/v/1/`, {
+      headers: { Cookie: `${name}=${pass}`, "sec-fetch-dest": "document" },
+    });
+    expect(page.status).toBe(302);
+    expect(new URL(page.headers.get("location") as string).host).toBe("app.localhost:8787");
+  });
+
   it("sends an ordinary viewer's top-level visit to the app page, as before", async () => {
     const a = await agent();
     const p = await publish(a.auth, {}, {});
@@ -440,6 +565,7 @@ describe("what the capture browser loads", () => {
     ).rejects.toThrow();
     const url = await issueEnterUrl(config, artifact, "/", undefined, {
       capture: true,
+      captureVersion: 1,
       noData: true,
     });
     const token = await verifyEnterToken(config, new URL(url).searchParams.get("t") as string);
@@ -615,11 +741,13 @@ describe("where the capture browser may go", () => {
     ).toBe(true);
     expect(ok("http://localhost:8787/__content/abc/app.js", false)).toBe(true);
     expect(ok("http://localhost:8787/__content/abc", false)).toBe(true);
-    // The artifact's root serves its current version: a subresource may load from it, a
-    // navigation may not.
-    expect(ok("http://localhost:8787/__content/abc")).toBe(false);
-    expect(ok("http://localhost:8787/__content/abc/")).toBe(false);
+    // Under a capture pass the artifact's other paths serve the captured version: open to a
+    // navigation; another version and the helper paths are not.
+    expect(ok("http://localhost:8787/__content/abc")).toBe(true);
+    expect(ok("http://localhost:8787/__content/abc/")).toBe(true);
+    expect(ok("http://localhost:8787/__content/abc/chart.html")).toBe(true);
     expect(ok("http://localhost:8787/__content/abc/__plinth/v/2/")).toBe(false);
+    expect(ok("http://localhost:8787/__content/abc/__plinth/runtime.js")).toBe(false);
     // The version path at the app host's root, outside the artifact's own path.
     expect(ok("http://localhost:8787/__plinth/v/1/")).toBe(false);
     expect(ok("http://localhost:8787/__content/abcd/")).toBe(false);
@@ -663,6 +791,7 @@ describe("where the capture browser may go", () => {
     const onRequest = handlers.request as (r: GuardedRequest) => void;
     onRequest(request("https://abc.plinthusercontent.com/__plinth/v/3/", true));
     onRequest(request("https://abc.plinthusercontent.com/", true));
+    onRequest(request("https://abc.plinthusercontent.com/__plinth/v/4/", true));
     onRequest(request("https://abc.plinthusercontent.com/app.js", false));
     onRequest(request("https://evil.example/?d=secret", true));
     onRequest(request("https://evil.example/pixel.gif", false));
@@ -670,7 +799,8 @@ describe("where the capture browser may go", () => {
     await Promise.resolve();
     expect(outcomes).toEqual([
       "continue https://abc.plinthusercontent.com/__plinth/v/3/",
-      "abort(blockedbyclient) https://abc.plinthusercontent.com/",
+      "continue https://abc.plinthusercontent.com/",
+      "abort(blockedbyclient) https://abc.plinthusercontent.com/__plinth/v/4/",
       "continue https://abc.plinthusercontent.com/app.js",
       "abort(blockedbyclient) https://evil.example/?d=secret",
       "abort(blockedbyclient) https://evil.example/pixel.gif",
@@ -703,20 +833,21 @@ describe("where the capture browser may go", () => {
     expect(scopes[1]).toEqual(captureScope(getConfig(env as never), p.id, 2));
   });
 
-  it("navigations stay on the captured version; its pages and subresources still load", () => {
+  it("navigations under /__plinth/ stay on the captured version; the page's own paths load", () => {
     const own = "https://abc.plinthusercontent.com";
     // The captured version's own pages, with or without the trailing slash the host adds.
     expect(allowed(`${own}/__plinth/v/3/`, true)).toBe(true);
     expect(allowed(`${own}/__plinth/v/3`, true)).toBe(true);
     expect(allowed(`${own}/__plinth/v/3/about.html?tab=2#top`, true)).toBe(true);
     expect(allowed(`${own}/__plinth/v/3/docs/`, true)).toBe(true);
-    // The artifact's root is its current version, maybe someone else's code: never navigated to,
-    // top-level or in a frame, under this capture's pass.
-    expect(allowed(`${own}/`, true)).toBe(false);
-    expect(allowed(own, true)).toBe(false);
-    expect(allowed(`${own}/index.html`, true)).toBe(false);
-    expect(allowed(`${own}/about.html`, true)).toBe(false);
-    expect(allowed(`${own}/?__plinth_review=1`, true)).toBe(false);
+    // The artifact's other paths, top-level or in a frame: the capture pass is bound to its
+    // version, so the content host serves them from it (a frame of /chart.html, a redirect to
+    // /docs/, a router's location.replace('/app/')).
+    expect(allowed(`${own}/`, true)).toBe(true);
+    expect(allowed(own, true)).toBe(true);
+    expect(allowed(`${own}/index.html`, true)).toBe(true);
+    expect(allowed(`${own}/chart.html`, true)).toBe(true);
+    expect(allowed(`${own}/docs/?tab=2`, true)).toBe(true);
     // Another version, or one that only looks like this one.
     expect(allowed(`${own}/__plinth/v/4/`, true)).toBe(false);
     expect(allowed(`${own}/__plinth/v/2/`, true)).toBe(false);
@@ -724,7 +855,7 @@ describe("where the capture browser may go", () => {
     expect(allowed(`${own}/__plinth/v/03/`, true)).toBe(false);
     expect(allowed(`${own}/__plinth/v/3%2F..%2F4/`, true)).toBe(false);
     expect(allowed(`${own}/__plinth/v/3/%2e%2e/4/`, true)).toBe(false);
-    expect(allowed(`${own}/__plinth/v/3/../../`, true)).toBe(false);
+    expect(allowed(`${own}/__plinth/v/3/../4/`, true)).toBe(false);
     // Plinth's other paths are never a page the capture opens.
     expect(allowed(`${own}/__plinth/preview`, true)).toBe(false);
     expect(allowed(`${own}/__plinth/runtime.js`, true)).toBe(false);
@@ -767,8 +898,7 @@ describe("where the capture browser may go", () => {
       const next = new URL(s.location, s.url).href;
       expect(next).toBe(`${s.scope.artifact}/__plinth/v/${n}/`);
       expect(captureRequestAllowed(s.scope, next, true)).toBe(true);
-      // The same browser may not go on to the artifact's root or the other version.
-      expect(captureRequestAllowed(s.scope, `${s.scope.artifact}/`, true)).toBe(false);
+      // The same browser may not go on to the other version.
       const other = `${s.scope.artifact}/__plinth/v/${3 - n}/`;
       expect(captureRequestAllowed(s.scope, other, true)).toBe(false);
     }
