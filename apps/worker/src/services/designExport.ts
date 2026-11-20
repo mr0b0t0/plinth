@@ -3,10 +3,20 @@
 // with DESIGN_EXPORT on and the binding (designExportActive); without it people keep the browser's
 // own Print or save as PDF.
 //
-// Who may export: anyone who may view the artifact (requireArtifact "view", the same check as the
-// thumbnail; strangers get 404), at most DESIGN_EXPORTS_PER_HOUR per person, or per client network
-// signed out (lib/ip.ts: an IPv6 /64 is one client). The type is checked after the access
-// decision, so nobody learns whether an artifact they cannot view exists or what type it is.
+// Who may export: anyone who may view the artifact, through the thumbnail's own check
+// (requireArtifact "enter": "view" for everyone but a token limited to one artifact, which gets
+// 403 token_bound, since the render runs the page; strangers get 404). The type is checked after
+// the access decision, so nobody learns whether an artifact they cannot view exists or what type
+// it is.
+//
+// How many: three hourly counters in rate_limits, reserved before the browser starts (raise, then
+// check the count the raise returned, as invitations do) and never given back, whatever the render
+// does: DESIGN_EXPORTS_PER_HOUR per person, or per client network signed out (lib/ip.ts: an IPv6
+// /64 is one client); DESIGN_EXPORTS_PER_ARTIFACT_PER_HOUR for one artifact, by everyone but its
+// owner and editors; and DESIGN_EXPORTS_PER_INSTANCE_PER_HOUR for the whole instance, which bounds
+// the operator's browser hours however many networks ask. A counter already at its limit refuses
+// (429 rate_limited, details.reason artifact_limit or instance_limit) before any is raised or a
+// slot is taken, so refused requests never use up anyone else's budget.
 //
 // At most DESIGN_EXPORT.maxConcurrent exports render at once across the instance, beside the
 // thumbnails' own cap, because Browser Rendering limits the account's concurrent browsers: a lease
@@ -29,8 +39,11 @@
 //
 // Size: the Worker holds the whole file in its 128 MB isolate, so no file passes
 // DESIGN_EXPORT.maxBytes (413 payload_too_large). A PDF is read from the browser in 1 MiB pieces
-// and refused as soon as it passes the cap. A PNG arrives whole, as base64, so the pixel cap keeps
-// even one that does not compress under it; its length is checked before it is decoded, once.
+// and refused as soon as it passes the cap; the pieces are then sent as they are, one after the
+// other, never joined into a second copy. The whole PDF is read before the response starts: a
+// response already under way cannot turn into a 413, and a download cut short could pass for a
+// whole file. A PNG arrives whole, as base64, so the pixel cap keeps even one that does not
+// compress under it; its length is checked before it is decoded, once.
 import puppeteer from "@cloudflare/puppeteer";
 import type { CDPSession } from "@cloudflare/puppeteer-types";
 import {
@@ -46,6 +59,7 @@ import {
   designExportKeepOnlyScript,
   designExportLoadedScript,
   designExportOptionsInput,
+  type EffectiveRole,
   parseDesign,
   TYPE_REGISTRY,
 } from "@plinth/shared";
@@ -53,7 +67,7 @@ import { designExportActive } from "../config.ts";
 import type { ArtifactRow } from "../db/schema.ts";
 import { ApiError } from "../lib/errors.ts";
 import { clientNetwork } from "../lib/ip.ts";
-import { enforce, peek } from "../lib/ratelimit.ts";
+import { peek } from "../lib/ratelimit.ts";
 import { requireArtifact, requireVersion } from "./artifacts.ts";
 import type { Ctx } from "./context.ts";
 import { readText } from "./storage.ts";
@@ -65,6 +79,7 @@ import {
   captureTarget,
   type GuardedPage,
   guardCapturePage,
+  redactUrls,
   withBudget,
 } from "./thumbnails.ts";
 
@@ -121,14 +136,24 @@ export interface ExportJob {
 }
 
 /**
- * Renders an export in a browser and returns the file's bytes. `signal` aborts once the render's
+ * Renders an export in a browser and returns the file: its bytes, or its pieces in order (a PDF
+ * read from the browser's stream), which are sent as they are. `signal` aborts once the render's
  * budget has passed; the shooter then closes its browser and settles.
  */
 export type ExportShooter = (
   browser: Fetcher,
   job: ExportJob,
   signal: AbortSignal,
-) => Promise<Uint8Array>;
+) => Promise<ExportBytes>;
+
+/** A rendered file: one array, or its pieces in order. */
+export type ExportBytes = Uint8Array | readonly Uint8Array[];
+
+/** A rendered file's pieces, in order, and their total size. */
+export function piecesOf(file: ExportBytes): { pieces: Uint8Array[]; size: number } {
+  const pieces = file instanceof Uint8Array ? [file] : [...file];
+  return { pieces, size: pieces.reduce((n, p) => n + p.byteLength, 0) };
+}
 
 type Launch = (binding: Fetcher) => ReturnType<typeof puppeteer.launch>;
 const puppeteerLaunch: Launch = (binding) => puppeteer.launch(binding);
@@ -139,10 +164,7 @@ export function setDesignExportLauncher(l: Launch | null): void {
   launch = l ?? puppeteerLaunch;
 }
 
-/** An error message without any URL in it, so no enter token reaches a log. */
-export function redactUrls(message: string): string {
-  return message.replace(/[a-z][a-z0-9+.-]*:\/\/\S+/gi, "<url>");
-}
+export { redactUrls };
 
 /** A render whose file would pass the job's byte cap (DESIGN_EXPORT.maxBytes): refused, not sent. */
 export class ExportTooLarge extends Error {
@@ -177,14 +199,15 @@ export function decodeBase64(b64: string): Uint8Array {
 /**
  * Read a DevTools stream (a PDF) in EXPORT_RUN.readChunkBytes pieces, and give up with
  * ExportTooLarge as soon as it passes `maxBytes`, so the Worker never holds more than the cap
- * and one piece. The pieces are copied once, into the file, at the end.
+ * and one piece. The pieces are returned as read, in order: the response sends them one after
+ * the other and never joins them into a second copy of the file.
  */
 export async function readCapped(
   cdp: CDPSession,
   handle: string,
   maxBytes: number,
   signal: AbortSignal,
-): Promise<Uint8Array> {
+): Promise<Uint8Array[]> {
   const pieces: Uint8Array[] = [];
   let total = 0;
   try {
@@ -200,14 +223,7 @@ export async function readCapped(
   } finally {
     await cdp.send("IO.close", { handle }).catch(() => undefined);
   }
-  if (pieces.length === 1 && pieces[0]) return pieces[0];
-  const out = new Uint8Array(total);
-  let at = 0;
-  for (const p of pieces) {
-    out.set(p, at);
-    at += p.byteLength;
-  }
-  return out;
+  return pieces;
 }
 
 /** The real shooter: Browser Rendering through @cloudflare/puppeteer. */
@@ -215,7 +231,7 @@ export async function browserExport(
   binding: Fetcher,
   job: ExportJob,
   signal: AbortSignal,
-): Promise<Uint8Array> {
+): Promise<ExportBytes> {
   // One deadline for every wait, launch included, that leaves the print its reserve.
   const printBy = Date.now() + EXPORT_RUN.budgetMs - EXPORT_RUN.renderReserveMs;
   const browser = await launch(binding);
@@ -346,7 +362,7 @@ export function runShooter(
   binding: Fetcher,
   job: ExportJob,
   budgetMs: number,
-): { result: Promise<Uint8Array>; settled: Promise<void> } {
+): { result: Promise<ExportBytes>; settled: Promise<void> } {
   const ctrl = new AbortController();
   const shot = Promise.resolve().then(() => s(binding, job, ctrl.signal));
   const settled = shot.then(
@@ -424,7 +440,7 @@ export async function designExportOptions(
   ref: string,
   raw: Record<string, unknown>,
 ): Promise<DesignExportOptions> {
-  const { artifact } = await requireArtifact(ctx, ref, "view");
+  const { artifact } = await requireArtifact(ctx, ref, "enter");
   requireDesign(artifact);
   const input: DesignExportOptionsInput = parseQuery(designExportOptionsInput, { ...raw, id: ref });
   const version = input.version ?? artifact.currentVersion;
@@ -438,10 +454,7 @@ export async function designExportOptions(
       width: b.width,
       height: b.height,
     })),
-    formats: [...DESIGN_EXPORT.formats],
-    scales: [...DESIGN_EXPORT.scales],
     max_pixels: DESIGN_EXPORT.maxPixels,
-    available: designExportActive(ctx.config, ctx.env),
   };
 }
 
@@ -469,7 +482,10 @@ export function exportFileName(slug: string, board: string | null, format: "png"
 }
 
 export interface DesignExportFile {
-  bytes: Uint8Array;
+  /** The file's pieces, in order: sent one after the other, never joined. */
+  pieces: Uint8Array[];
+  /** Their total size in bytes. */
+  size: number;
   contentType: "image/png" | "application/pdf";
   filename: string;
 }
@@ -532,8 +548,121 @@ function parseQuery<T>(
   return r.data;
 }
 
+/** Why an export over a shared counter was refused (details.reason of its 429). */
+export type ExportLimitReason = "artifact_limit" | "instance_limit";
+
+/** One hourly export counter in rate_limits. */
+interface ExportCounter {
+  key: string;
+  limit: number;
+  /** The 429's message. */
+  message: string;
+  /** details.reason, for the counters others share. */
+  reason?: ExportLimitReason;
+}
+
+/** The instance's counter: every export it renders. */
+export const EXPORT_INSTANCE_KEY = "design-export:instance";
+
+/** One artifact's counter: exports of it by everyone but its owner and editors. */
+export function exportArtifactKey(artifactId: string): string {
+  return `design-export:a:${artifactId}`;
+}
+
+const HOUR_S = 3600;
+
 /**
- * Render a design version as PNG or PDF, as the caller (view rights), within the rate limit and
+ * The counters one export spends, in the order they are checked: the person's, the artifact's
+ * (not for its owner or editors, whose own exports a shared link must not be able to block) and
+ * the instance's.
+ */
+export function exportCounters(
+  ctx: Pick<Ctx, "principal" | "ip" | "config">,
+  artifactId: string,
+  role: EffectiveRole | null,
+): ExportCounter[] {
+  const c = ctx.config;
+  const counters: ExportCounter[] = [
+    {
+      key: exportRateKey(ctx),
+      limit: c.designExportsPerHour,
+      message: `Export limit reached (${c.designExportsPerHour} per hour)`,
+    },
+  ];
+  if (role !== "owner" && role !== "editor") {
+    counters.push({
+      key: exportArtifactKey(artifactId),
+      limit: c.designExportsPerArtifactPerHour,
+      message: `This design's export limit is reached (${c.designExportsPerArtifactPerHour} per hour); try again later`,
+      reason: "artifact_limit",
+    });
+  }
+  counters.push({
+    key: EXPORT_INSTANCE_KEY,
+    limit: c.designExportsPerInstancePerHour,
+    message: `This instance's export limit is reached (${c.designExportsPerInstancePerHour} per hour); try again later`,
+    reason: "instance_limit",
+  });
+  return counters;
+}
+
+function overLimit(counter: ExportCounter, retryAfter: number): ApiError {
+  return new ApiError("rate_limited", counter.message, {
+    retry_after: retryAfter,
+    ...(counter.reason ? { reason: counter.reason } : {}),
+  });
+}
+
+/** The current hourly window's start, and the seconds until it ends. */
+function windowOf(nowMs: number): { start: number; retryAfter: number } {
+  const nowS = Math.floor(nowMs / 1000);
+  const start = nowS - (nowS % HOUR_S);
+  return { start, retryAfter: start + HOUR_S - nowS };
+}
+
+/**
+ * Refuse, raising nothing, when a counter is already at its limit: a refused request never spends
+ * another counter, so requests over one artifact's limit cannot use up the instance's, and
+ * someone over their own limit takes no slot.
+ */
+export async function checkExportCounters(
+  db: D1Database,
+  counters: readonly ExportCounter[],
+  nowMs: number = Date.now(),
+): Promise<void> {
+  const { retryAfter } = windowOf(nowMs);
+  for (const counter of counters) {
+    if ((await peek(db, counter.key, HOUR_S, nowMs)) >= counter.limit) {
+      throw overLimit(counter, retryAfter);
+    }
+  }
+}
+
+/**
+ * Reserve one export on every counter: raise them all in one batch, then check the counts the
+ * raise returned, so two requests cannot both take a counter's last export. Nothing is given
+ * back, not even when the render fails: the browser ran. Throws for the first counter over.
+ */
+export async function reserveExport(
+  db: D1Database,
+  counters: readonly ExportCounter[],
+  nowMs: number = Date.now(),
+): Promise<void> {
+  const { start, retryAfter } = windowOf(nowMs);
+  const raise = db.prepare(
+    `INSERT INTO rate_limits (key, window_start, count) VALUES (?1, ?2, 1)
+     ON CONFLICT (key, window_start) DO UPDATE SET count = count + 1
+     RETURNING count`,
+  );
+  const rows = await db.batch<{ count: number }>(counters.map((c) => raise.bind(c.key, start)));
+  counters.forEach((counter, i) => {
+    const count = rows[i]?.results[0]?.count ?? 1;
+    if (count > counter.limit) throw overLimit(counter, retryAfter);
+  });
+}
+
+/**
+ * Render a design version as PNG or PDF, as the caller (view rights), within the hourly limits and
  * the instance's export slots. `raw` is the request's query, checked against designExportInput
  * once access is decided.
  */
@@ -542,7 +671,7 @@ export async function exportDesign(
   ref: string,
   raw: Record<string, unknown>,
 ): Promise<DesignExportFile> {
-  const { artifact } = await requireArtifact(ctx, ref, "view");
+  const { artifact, role } = await requireArtifact(ctx, ref, "enter");
   requireDesign(artifact);
   const input = parseQuery(designExportInput, { ...raw, id: ref });
   const binding = ctx.env.BROWSER;
@@ -559,14 +688,10 @@ export async function exportDesign(
   const target = await captureTarget(ctx.env.DB, artifact.id, version);
   if (!target) throw new ApiError("not_found", "Not found");
 
-  const limit = ctx.config.designExportsPerHour;
-  const key = exportRateKey(ctx);
-  const limitMessage = `Export limit reached (${limit} per hour)`;
-  // Someone already over the limit is refused without taking a slot; the hit itself is counted
-  // once a slot is held, so a busy answer costs nobody an export.
-  if ((await peek(ctx.env.DB, key, 3600)) >= limit) {
-    await enforce(ctx.env.DB, key, limit, 3600, limitMessage);
-  }
+  const counters = exportCounters(ctx, artifact.id, role);
+  // A counter already at its limit refuses before a slot is taken; the export is counted once a
+  // slot is held, so a busy answer costs nobody an export.
+  await checkExportCounters(ctx.env.DB, counters);
   const slot = await claimExportSlot(ctx.env.DB);
   if (!slot) {
     throw new ApiError(
@@ -580,7 +705,7 @@ export async function exportDesign(
   const scale = input.format === "png" ? (input.scale ?? 1) : 1;
   let job: ExportJob;
   try {
-    await enforce(ctx.env.DB, key, limit, 3600, limitMessage);
+    await reserveExport(ctx.env.DB, counters);
     const { url, cookies } = await captureLoad(ctx.config, target);
     job = {
       format: input.format,
@@ -604,11 +729,11 @@ export async function exportDesign(
   const { result, settled } = runShooter(shooter, binding, job, EXPORT_RUN.budgetMs);
   // The slot is given back once the browser has closed, even after a timed-out response.
   ctx.waitUntil(settled.then(() => releaseExportSlot(ctx.env.DB, slot)).catch(() => undefined));
-  let bytes: Uint8Array;
+  let file: { pieces: Uint8Array[]; size: number };
   try {
-    bytes = await result;
-    if (bytes.byteLength === 0) throw new Error("empty file");
-    if (bytes.byteLength > job.maxBytes) throw new ExportTooLarge(job.maxBytes);
+    file = piecesOf(await result);
+    if (file.size === 0) throw new Error("empty file");
+    if (file.size > job.maxBytes) throw new ExportTooLarge(job.maxBytes);
   } catch (e) {
     // The file, not the moment: trying again gives the same answer, so say what to change.
     if (e instanceof ExportTooLarge) {
@@ -630,8 +755,28 @@ export async function exportDesign(
     );
   }
   return {
-    bytes,
+    ...file,
     contentType: input.format === "png" ? "image/png" : "application/pdf",
     filename: exportFileName(artifact.slug, board?.id ?? null, input.format),
   };
+}
+
+/**
+ * The response body for an export: one piece as it is, or the pieces one after the other through
+ * a stream of the file's exact length (so Content-Length holds), each let go once it is sent.
+ */
+export function exportBody(file: Pick<DesignExportFile, "pieces" | "size">): BodyInit {
+  const pieces = [...file.pieces];
+  if (pieces.length === 1 && pieces[0]) return pieces[0];
+  const source = new ReadableStream<Uint8Array>(
+    {
+      pull(c) {
+        const piece = pieces.shift();
+        if (piece) c.enqueue(piece);
+        else c.close();
+      },
+    },
+    { highWaterMark: 0 },
+  );
+  return source.pipeThrough(new FixedLengthStream(file.size));
 }

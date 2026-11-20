@@ -1,7 +1,8 @@
-// A design's downloads, offered only where the instance renders exports: "Download .png" opens a
-// board picker (names as text) and takes the board at 2x where it fits the pixel cap, else at 1x;
-// "Download .pdf" saves every board straight from the menu with a toast while it renders. Each
-// fetches the file from the app host, saves it, and shows the server's message when refused.
+// A design's downloads, offered only where the instance renders exports: "Download .png" saves a
+// design's one board straight from the menu or opens a board picker (names as text), and takes the
+// board at 2x where it fits the pixel cap, else at 1x; "Download .pdf" saves every board straight
+// from the menu with a toast while it renders. Each fetches the file from the app host, saves it,
+// and shows the server's message when refused (a short one past the shared hourly limits).
 import { DESIGN_EXPORT, type DesignExportOptions } from "@plinth/shared";
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -9,7 +10,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { attachmentName, designExportUrl } from "../../lib/api.ts";
 import { clearToasts, Toaster } from "../ui/index.ts";
 import { DESIGN_EXPORT_DIALOG, downloadDesign } from "./designItems.tsx";
-import { downloadDesignPdf, ExportDialog, pngScale } from "./ExportDialog.tsx";
+import { downloadDesignPdf, ExportDialog, pngScale, TOO_MANY } from "./ExportDialog.tsx";
 import { STAGE_DIALOGS, type StageContext, TYPE_MENU_ITEMS } from "./stageItems.tsx";
 import { apiError, CONFIG, json, stubApi } from "./test-utils.ts";
 
@@ -18,12 +19,9 @@ const OPTIONS: DesignExportOptions = {
   version: 2,
   boards: [
     { id: "home", name: 'Home <img src=x onerror="window.__pwned=1">', width: 393, height: 852 },
-    { id: "poster", name: "Poster", width: 2400, height: 2400 },
+    { id: "poster", name: "Poster", width: 1728, height: 2304 },
   ],
-  formats: ["png", "pdf"],
-  scales: [1, 2],
   max_pixels: DESIGN_EXPORT.maxPixels,
-  available: true,
 };
 
 const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47]);
@@ -77,7 +75,11 @@ describe("the menu items", () => {
       actions: { openDialog },
     }) as unknown as StageContext;
 
-  it("are a design's, only where the instance renders exports", () => {
+  it("are a design's, only where the instance renders exports", async () => {
+    stubApi({
+      handle: (c) =>
+        c.path === "/artifacts/launch-kit/export/options?version=2" ? json(OPTIONS) : undefined,
+    });
     expect(TYPE_MENU_ITEMS.design?.[1]).toBe(downloadDesign);
     expect(TYPE_MENU_ITEMS.doc).not.toContain(downloadDesign);
     expect(downloadDesign(ctx(undefined))).toEqual([]);
@@ -86,10 +88,74 @@ describe("the menu items", () => {
     const [png, pdf] = downloadDesign(ctx(true, open));
     expect(png).toMatchObject({ label: "Download .png" });
     expect(pdf).toMatchObject({ label: "Download .pdf" });
+    // Two boards: the picker.
     (png as { onSelect: () => void }).onSelect();
-    expect(open).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(open).toHaveBeenCalledTimes(1));
     expect(open).toHaveBeenCalledWith(DESIGN_EXPORT_DIALOG);
+    expect(saved).toEqual([]);
     expect(STAGE_DIALOGS.map((d) => d.id)).toContain(DESIGN_EXPORT_DIALOG);
+  });
+
+  it("download a design's one board as a PNG straight from the menu, with no picker", async () => {
+    const one: DesignExportOptions = {
+      ...OPTIONS,
+      boards: [{ id: "post", name: "Launch post", width: 1080, height: 1080 }],
+    };
+    let release: (r: Response) => void = () => undefined;
+    const pending = new Promise<Response>((resolve) => {
+      release = resolve;
+    });
+    const { calls } = stubApi({
+      handle: (c) => {
+        if (c.path === "/artifacts/launch-kit/export/options?version=2") return json(one);
+        if (c.path.startsWith("/artifacts/launch-kit/export?")) return pending;
+        return undefined;
+      },
+    });
+    render(<Toaster />);
+    const open = vi.fn();
+    const [png] = downloadDesign(ctx(true, open));
+    (png as { onSelect: () => void }).onSelect();
+    expect(await screen.findByText("Making the .png…")).toBeTruthy();
+    // A second click while it renders asks for nothing more.
+    (png as { onSelect: () => void }).onSelect();
+    release(file("image/png", "launch-kit-post.png"));
+    await waitFor(() => expect(saved).toHaveLength(1));
+    expect(open).not.toHaveBeenCalled();
+    const exports = calls.filter((c) => c.path.startsWith("/artifacts/launch-kit/export?"));
+    // 1080x1080 is over 4,000,000 px at 2x: 1x.
+    expect(exports.map((c) => c.path)).toEqual([
+      "/artifacts/launch-kit/export?format=png&version=2&board=post&scale=1",
+    ]);
+    expect(saved[0]?.download).toBe("launch-kit-post.png");
+    await waitFor(() => expect(screen.queryByText("Making the .png…")).toBeNull());
+  });
+
+  it("say only that there are too many downloads when the instance's or the design's limit is reached", async () => {
+    for (const reason of ["instance_limit", "artifact_limit"]) {
+      stubApi({
+        handle: (c) =>
+          c.path.includes("/export?")
+            ? new Response(
+                JSON.stringify({
+                  error: {
+                    code: "rate_limited",
+                    message: "This instance's export limit is reached (120 per hour)",
+                    details: { retry_after: 600, reason },
+                  },
+                }),
+                { status: 429, headers: { "Content-Type": "application/json" } },
+              )
+            : undefined,
+      });
+      render(<Toaster />);
+      await downloadDesignPdf("launch-kit", 2);
+      expect(await screen.findByText(TOO_MANY), reason).toBeTruthy();
+      expect(TOO_MANY).toBe("Too many downloads right now. Try again later.");
+      expect(saved).toEqual([]);
+      cleanup();
+      clearToasts();
+    }
   });
 
   it("download every board as a PDF from the menu, with a toast while it renders", async () => {
@@ -148,7 +214,7 @@ describe("ExportDialog", () => {
     // Names are text, never markup.
     expect([...select.options].map((o) => o.textContent)).toEqual([
       'Home <img src=x onerror="window.__pwned=1"> (393 × 852)',
-      "Poster (2400 × 2400)",
+      "Poster (1728 × 2304)",
     ]);
     expect(document.querySelector("img")).toBeNull();
     expect(select.value).toBe("home");
@@ -266,10 +332,14 @@ describe("helpers", () => {
   });
 
   it("pick the PNG scale within the pixel cap", () => {
-    // DESIGN_EXPORT.maxPixels (6,000,000): a PNG that does not compress still fits maxBytes.
-    expect(pngScale({ width: 1440, height: 900 })).toBe(2);
+    // DESIGN_EXPORT.maxPixels (4,000,000): a PNG that does not compress still fits maxBytes.
+    expect(DESIGN_EXPORT.maxPixels).toBe(4_000_000);
+    expect(pngScale({ width: 1000, height: 1000 })).toBe(2);
+    expect(pngScale({ width: 1280, height: 720 })).toBe(2);
+    expect(pngScale({ width: 1080, height: 1080 })).toBe(1);
     expect(pngScale({ width: 1920, height: 1080 })).toBe(1);
-    expect(pngScale({ width: 2000, height: 3000 })).toBe(1);
+    expect(pngScale({ width: 1728, height: 2304 })).toBe(1);
+    expect(pngScale({ width: 2000, height: 3000 })).toBeNull();
     expect(pngScale({ width: 4096, height: 4096 })).toBeNull();
     expect(pngScale({ width: 100, height: 100 }, 20_000)).toBe(1);
   });

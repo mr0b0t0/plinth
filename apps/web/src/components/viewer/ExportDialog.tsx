@@ -1,8 +1,9 @@
-// A design's server-rendered downloads (docs/spec.md "Designs"): "Download .png" opens this dialog
-// to pick one artboard, "Download .pdf" downloads every board straight from the menu. A PNG is at
-// 2x where the board fits the pixel cap, else at 1x. Offered only where the instance renders
-// exports (AppConfig.design_export). Board names come from the design's source, untrusted text,
-// and reach the page only as React text.
+// A design's server-rendered downloads (docs/spec.md "Designs"): "Download .png" downloads a
+// design's one board straight from the menu, or opens this dialog to pick one when it has more;
+// "Download .pdf" downloads every board straight from the menu. A PNG is at 2x where the board
+// fits the pixel cap, else at 1x. Offered only where the instance renders exports
+// (AppConfig.design_export). Board names come from the design's source, untrusted text, and reach
+// the page only as React text.
 import { DownloadSimpleIcon } from "@phosphor-icons/react";
 import { DESIGN_EXPORT, type DesignExportOptions } from "@plinth/shared";
 import { useEffect, useState } from "react";
@@ -41,13 +42,65 @@ export function saveBlob(blob: Blob, filename: string, doc: Document = document)
   setTimeout(() => URL.revokeObjectURL(url), 30_000);
 }
 
+/** The words for a refusal over the instance's or the design's hourly export limit. */
+export const TOO_MANY = "Too many downloads right now. Try again later.";
+
+const TOO_BIG = "Too big for a .png. Download the .pdf.";
+
 function errorText(err: unknown): string {
-  if (err instanceof ApiRequestError) return err.message;
+  if (err instanceof ApiRequestError) {
+    const reason = (err.details as { reason?: unknown } | undefined)?.reason;
+    if (err.code === "rate_limited" && (reason === "instance_limit" || reason === "artifact_limit"))
+      return TOO_MANY;
+    return err.message;
+  }
   return "The export could not be made. Try again.";
 }
 
 /** Designs whose PDF is being made, so a second click waits for the first. */
 const makingPdf = new Set<string>();
+/** Designs whose Download .png is under way, likewise. */
+const makingPng = new Set<string>();
+
+/**
+ * Download .png from the menu: a design with one board downloads it at once, with a toast while
+ * it renders, as Download .pdf does; a design with more opens the board picker (`pick`).
+ */
+export async function downloadDesignPng(
+  artifactRef: string,
+  version: number,
+  pick: () => void,
+): Promise<void> {
+  if (makingPng.has(artifactRef)) return;
+  makingPng.add(artifactRef);
+  let toast: number | null = null;
+  try {
+    const options = await getDesignExportOptions(artifactRef, version);
+    const [board, ...more] = options.boards;
+    if (!board || more.length > 0) {
+      pick();
+      return;
+    }
+    const scale = pngScale(board, options.max_pixels);
+    if (scale === null) {
+      showToast({ title: TOO_BIG, tone: "danger" });
+      return;
+    }
+    toast = showToast({ title: "Making the .png…", duration: 0 });
+    const file = await fetchDesignExport(artifactRef, {
+      format: "png",
+      version: options.version,
+      board: board.id,
+      scale,
+    });
+    saveBlob(file.blob, file.filename);
+  } catch (err) {
+    showToast({ title: errorText(err), tone: "danger" });
+  } finally {
+    if (toast !== null) dismissToast(toast);
+    makingPng.delete(artifactRef);
+  }
+}
 
 /**
  * Download every board of the version on screen as one PDF. A toast shows while the server
@@ -164,7 +217,7 @@ export function ExportDialog({ open, onClose, artifactRef, version }: ExportDial
         )}
         {chosen && scale === null && (
           <p className="pl-field__error" role="alert">
-            Too big for a .png. Download the .pdf.
+            {TOO_BIG}
           </p>
         )}
         {error && (

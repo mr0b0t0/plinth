@@ -4,6 +4,8 @@
 // Worker avoids writing the local SQLite file from another process, which locked it under load.
 // `origin` picks the Worker (the opaque-isolation project runs a second one).
 import type { BrowserContext, Page } from "@playwright/test";
+// The design module is pure (no dependencies), so the suite runs the Worker's own expressions.
+import { designExportKeepOnlyScript } from "../../packages/shared/src/design.ts";
 import { APP_ORIGIN } from "./api.ts";
 
 interface SeedResponse {
@@ -154,15 +156,9 @@ export async function openExport(page: Page, load: CaptureLoad, board: string | 
   await openCapture(page, load);
   if (board === null) return;
   await page.locator("html[data-ready]").waitFor({ state: "attached", timeout: 15_000 });
-  const found = await page.evaluate((id) => {
-    let kept = false;
-    for (const el of document.querySelectorAll(".plinth-design__board")) {
-      if (el.getAttribute("data-board") === id) kept = true;
-      else el.remove();
-    }
-    return kept;
-  }, board);
-  if (!found) throw new Error(`no board ${board}`);
+  // The Worker's own expression (services/designExport.ts evaluates the same text).
+  const found = await page.evaluate(designExportKeepOnlyScript(board));
+  if (found !== true) throw new Error(`no board ${board}`);
 }
 
 /**

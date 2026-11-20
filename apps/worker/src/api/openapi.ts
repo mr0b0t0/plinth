@@ -3004,16 +3004,9 @@ function designExportSchemas(): Record<string, Json> {
           height: int({ minimum: 16, maximum: 4096 }),
         }),
       },
-      formats: { type: "array", items: enumOf(DESIGN_EXPORT.formats) },
-      scales: { type: "array", items: { type: "integer", enum: [...DESIGN_EXPORT.scales] } },
       max_pixels: int({
         description: "The largest PNG, in device pixels (width x height x scale^2)",
       }),
-      available: {
-        type: "boolean",
-        description:
-          "This instance renders exports (DESIGN_EXPORT with a Browser Rendering binding); when false, GET /export answers feature_disabled",
-      },
     }),
   };
 }
@@ -3024,16 +3017,18 @@ function designExportOperations(): Operation[] {
       method: "get",
       path: API.designExportOptions,
       operationId: "getDesignExportOptions",
-      summary: "A design's artboards and the formats it downloads as",
+      summary: "A design's artboards and the PNG pixel cap",
       description:
         "For an artifact of type design the caller may view: its boards (id, name, size) in the " +
-        "version (the current one without `version`). 404 for an artifact of another type.",
+        "version (the current one without `version`) and the largest PNG in pixels. A token " +
+        "limited to one artifact gets 403 `token_bound`, as for the export. 404 for an artifact " +
+        "of another type.",
       tag: "Artifacts",
       auth: "agent",
       scope: "artifacts:read",
       query: [queryVersion],
       ok: [200, "DesignExportOptions"],
-      errors: [400, 401, 404],
+      errors: [400, 401, 403, 404],
     },
     {
       method: "get",
@@ -3048,7 +3043,12 @@ function designExportOperations(): Operation[] {
         `files of at most ${DESIGN_EXPORT.maxBytes / 1_048_576} MB (413 payload_too_large, ` +
         "with max_bytes: export fewer boards or at 1x), and " +
         "DESIGN_EXPORTS_PER_HOUR exports per person, or per client network signed out (an IPv6 " +
-        "/64 as one; 429). 403 feature_disabled where the instance has no Browser Rendering " +
+        "/64 as one; 429), DESIGN_EXPORTS_PER_ARTIFACT_PER_HOUR of one artifact by everyone but " +
+        "its owner and editors (429 with `details.reason` `artifact_limit`) and " +
+        "DESIGN_EXPORTS_PER_INSTANCE_PER_HOUR across the instance (429 with `details.reason` " +
+        "`instance_limit`), each with Retry-After. A token limited to one artifact gets 403 " +
+        "`token_bound`: the render runs the page, as a thumbnail capture does. 403 " +
+        "feature_disabled where the instance has no Browser Rendering " +
         "binding or DESIGN_EXPORT is off; 503 unavailable when the render fails, or with " +
         `Retry-After when ${DESIGN_EXPORT.maxConcurrent} exports are already rendering (not ` +
         "counted). 404 for an artifact of another type.",

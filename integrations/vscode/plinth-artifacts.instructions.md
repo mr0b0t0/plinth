@@ -1166,10 +1166,14 @@ from the browser.
   `?format=pdf` (every board; add `&board=<id>` for one). It downloads for anyone who may view the
   design. Never build images or PDFs of a design yourself.
 - Set an `id` on every artboard you want people to export: the file name and the `board` parameter
-  use it. A PNG must stay within 6,000,000 pixels (width x height x scale²), so a 1920x1080 board
-  exports at 1x only and a 4096x4096 one only as a PDF. No file is over 24 MB:
-  `payload_too_large` means export fewer boards (`board=<id>`) or at 1x, not try again.
-- Exports are rendered on request and limited per person per hour (`rate_limited` past it). Only
-  two render at once on an instance: `unavailable` with `Retry-After` means try again after that
-  many seconds, and it does not count against the hour. There is no MCP tool for them, and an
-  export never changes the design or makes a version.
+  use it. A PNG must stay within 4,000,000 pixels (width x height x scale²), so a board of at most
+  1,000,000 px exports at 2x, a 1080x1080 or 1920x1080 one at 1x only, and a 4096x4096 one only as
+  a PDF. No file is over 24 MB: `payload_too_large` means export fewer boards (`board=<id>`) or at
+  1x, not try again.
+- Exports are rendered on request and limited per hour per person, per design (for everyone but
+  its owner and editors) and for the whole instance: `rate_limited` past any of them, with
+  `details.reason` `artifact_limit` or `instance_limit` for the last two, means wait for the
+  `Retry-After`, not retry now. Only two render at once on an instance: `unavailable` with
+  `Retry-After` means try again after that many seconds, and it does not count against the hour.
+  A token limited to one artifact (a CI token) cannot export (`token_bound`). There is no MCP tool
+  for them, and an export never changes the design or makes a version.

@@ -341,7 +341,9 @@ async function browserShot(
       for (const cookie of cookies) {
         // Without it the capture still runs, as before: boards without their own files.
         await cdp.send("Network.setCookie", cookie).catch((e: unknown) => {
-          console.warn(`capture cookie not set: ${e instanceof Error ? e.message : e}`);
+          console.warn(
+            `capture cookie not set: ${redactUrls(e instanceof Error ? e.message : String(e))}`,
+          );
         });
       }
     }
@@ -484,11 +486,19 @@ export async function captureThumbnail(
     return "ok";
   } catch (e) {
     console.warn(
-      `thumbnail capture failed for ${artifactId} v${n}: ${e instanceof Error ? e.message : e}`,
+      `thumbnail capture failed for ${artifactId} v${n}: ${redactUrls(e instanceof Error ? e.message : String(e))}`,
     );
     await setState(env.DB, target.versionId, "failed").catch(() => undefined);
     return "failed";
   }
+}
+
+/**
+ * An error message without any URL in it, so no enter token reaches a log: puppeteer's
+ * navigation errors quote the URL they failed on, and a capture's URL holds a one-time pass.
+ */
+export function redactUrls(message: string): string {
+  return message.replace(/[a-z][a-z0-9+.-]*:\/\/\S+/gi, "<url>");
 }
 
 /** `p`, or a rejection once `ms` have passed. */

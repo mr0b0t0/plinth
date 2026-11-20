@@ -524,13 +524,8 @@ export interface DesignExportOptions {
   version: number;
   /** The version's artboards, in source order. Names are untrusted text. */
   boards: { id: string; name: string; width: number; height: number }[];
-  formats: ("png" | "pdf")[];
-  /** PNG scales: each CSS px becomes this many device pixels per side. */
-  scales: (1 | 2)[];
   /** The largest PNG, in device pixels (width x height x scale^2). */
   max_pixels: number;
-  /** Whether this instance renders exports (DESIGN_EXPORT with a Browser Rendering binding). */
-  available: boolean;
 }
 
 export interface OperatorInfo {

@@ -163,6 +163,8 @@ export function runtimeBase(repoCfg) {
         "LIVE_VIEW_MAX_SOCKETS_PER_ARTIFACT",
         "SHEET_EVAL_BUDGET",
         "ALLOW_CATEGORY_SHARING",
+        "DESIGN_EXPORTS_PER_INSTANCE_PER_HOUR",
+        "DESIGN_EXPORTS_PER_ARTIFACT_PER_HOUR",
       ]
         .filter((k) => k in (repoCfg.vars ?? {}))
         .map((k) => [k, repoCfg.vars[k]]),

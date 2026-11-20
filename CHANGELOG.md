@@ -167,17 +167,23 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   them. `EMAIL_PROVIDER=console` outside development and `SINGLE_USER_MODE` send no invitations.
   Migration `0021_invitation_opt_outs.sql`.
 - **Download a design as PNG or PDF.** On instances with a Browser Rendering binding, a design's
-  artifact menu has **Download .png** (pick an artboard; 2x where it fits, else 1x, transparent
-  where the board is) and **Download .pdf** (every board, each on a page of its own size) in place
-  of Print or save as PDF, rendered by the server from the version on screen with the same safety
-  as thumbnails. Anyone who may view
-  the design can export it, up to 30 times an hour per person (`DESIGN_EXPORTS_PER_HOUR`; signed
-  out, per network), and at most two render at once across the instance; `DESIGN_EXPORT=false`
-  turns it off. A PNG is at most 6,000,000 pixels (a 1920x1080 board at 1x only) and any file at
-  most 24 MB, so one export cannot run the Worker out of memory. Scripts and agents use
-  `GET /api/v1/artifacts/<id>/export?format=png&board=<id>&scale=1|2` or `?format=pdf` (every board, or `&board=<id>`), with
-  `/export/options` listing the boards. Without the binding nothing changes: Print or save as PDF
-  stays.
+  artifact menu has **Download .png** (the one artboard at once, or pick one when there are more;
+  2x where it fits, else 1x, transparent where the board is) and **Download .pdf** (every board,
+  each on a page of its own size) in place of Print or save as PDF, rendered by the server from
+  the version on screen with the same safety as thumbnails. Anyone who may view the design can
+  export it, except a token limited to one artifact (`token_bound`, as for thumbnails), up to 30
+  times an hour per person (`DESIGN_EXPORTS_PER_HOUR`; signed out, per network), 20 times an hour
+  per design for everyone but its owner and editors (`DESIGN_EXPORTS_PER_ARTIFACT_PER_HOUR`) and
+  120 times an hour for the whole instance (`DESIGN_EXPORTS_PER_INSTANCE_PER_HOUR`), which bounds
+  the operator's browser time; at most two render at once across the instance, and
+  `DESIGN_EXPORT=false` turns it off. A PNG is at most 4,000,000 pixels (a board of up to
+  1,000,000 px at 2x, a 1080x1080 or 1920x1080 one at 1x only) and any file at most 24 MB, so one
+  export cannot run the Worker out of memory. Scripts and agents use
+  `GET /api/v1/artifacts/<id>/export?format=png&board=<id>&scale=1|2` or `?format=pdf` (every
+  board, or `&board=<id>`), with `/export/options` listing the boards. Without the binding nothing
+  changes: Print or save as PDF stays.
+- **Thumbnail capture failures are logged without URLs**, so a capture's one-time enter token
+  never reaches the Worker's logs.
 
 ## 0.6.0 (2026-11-20)
 

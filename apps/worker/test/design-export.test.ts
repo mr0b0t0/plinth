@@ -19,14 +19,18 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ConfigError, designExportActive, getConfig, parseConfig } from "../src/config.ts";
 import { verifyContentCookie, verifyEnterToken } from "../src/content/tokens.ts";
 import worker from "../src/index.ts";
+import { peek } from "../src/lib/ratelimit.ts";
 import {
   base64Size,
   browserExport,
   claimExportSlot,
   decodeBase64,
+  EXPORT_INSTANCE_KEY,
   EXPORT_RUN,
+  type ExportBytes,
   type ExportJob,
   ExportTooLarge,
+  exportArtifactKey,
   exportFileName,
   exportRateKey,
   redactUrls,
@@ -118,7 +122,26 @@ async function publishDesign(
 
 const exportUrl = (ref: string, q: string) => `/api/v1/artifacts/${ref}/export?${q}`;
 
-beforeEach(() => {
+/** A rendered file's bytes, from one array or its pieces. */
+function joined(file: ExportBytes): Uint8Array {
+  const pieces = file instanceof Uint8Array ? [file] : file;
+  const out = new Uint8Array(pieces.reduce((n, p) => n + p.byteLength, 0));
+  let at = 0;
+  for (const p of pieces) {
+    out.set(p, at);
+    at += p.byteLength;
+  }
+  return out;
+}
+
+/** This hour's count on an export counter. */
+const counted = (key: string) => peek(env.DB, key, 3600);
+
+beforeEach(async () => {
+  // The instance's and the artifacts' hourly counters are shared by every test in this file.
+  await env.DB.prepare("DELETE FROM rate_limits WHERE key = ?1 OR key LIKE ?2")
+    .bind(EXPORT_INSTANCE_KEY, `${exportArtifactKey("")}%`)
+    .run();
   jobs = [];
   setDesignExportShooter(async (_browser, job) => {
     jobs.push(job);
@@ -142,16 +165,12 @@ describe("export options", () => {
         { id: "post", name: "Launch post", width: 1080, height: 1080 },
         { id: "mrec", name: "Ad 300x250", width: 300, height: 250 },
       ],
-      formats: ["png", "pdf"],
-      scales: [1, 2],
       max_pixels: DESIGN_EXPORT.maxPixels,
-      available: true,
     });
-    // Without the binding the boards are still listed, and the export says it is unavailable.
-    const off = await json(
-      await run(`/api/v1/artifacts/${d.id}/export/options`, { headers: a.auth }, {}),
-    );
-    expect(off.available).toBe(false);
+    // Without the binding the boards are still listed (the app offers no export there).
+    const off = await run(`/api/v1/artifacts/${d.id}/export/options`, { headers: a.auth }, {});
+    expect(off.status).toBe(200);
+    expect((await json(off)).boards).toHaveLength(3);
 
     const stranger = await agent();
     const denied = await run(`/api/v1/artifacts/${d.id}/export/options`, {
@@ -422,7 +441,7 @@ describe("export", () => {
     const twice = await run(exportUrl(d.id, "format=png&board=hd&scale=2"), { headers: a.auth });
     expect(twice.status).toBe(400);
     const body = await json(twice);
-    expect(body.error.message).toMatch(/3840x2160 px, over the 6,000,000 pixel limit: use scale=1/);
+    expect(body.error.message).toMatch(/3840x2160 px, over the 4,000,000 pixel limit: use scale=1/);
     expect(body.error.details.max_pixels).toBe(DESIGN_EXPORT.maxPixels);
     const once = await run(exportUrl(d.id, "format=png&board=hd"), { headers: a.auth });
     expect(once.status).toBe(200);
@@ -432,7 +451,7 @@ describe("export", () => {
     const poster = await run(exportUrl(d.id, "format=png&board=poster"), { headers: a.auth });
     expect(poster.status).toBe(400);
     expect((await json(poster)).error.message).toMatch(
-      /4096x4096 px, over the 6,000,000 pixel limit: use format=pdf/,
+      /4096x4096 px, over the 4,000,000 pixel limit: use format=pdf/,
     );
     const pdf = await run(exportUrl(d.id, "format=pdf&board=poster"), { headers: a.auth });
     expect(pdf.status).toBe(200);
@@ -530,6 +549,215 @@ describe("export", () => {
     } finally {
       warn.mockRestore();
     }
+  });
+});
+
+describe("tokens limited to one artifact", () => {
+  it("get 403 token_bound from the export and its options; the owner's own token still exports", async () => {
+    const owner = await agent();
+    const d = await publishDesign(owner.auth);
+    const ci = await createToken(owner.user.id, {
+      scopes: "artifacts:read artifacts:write",
+      artifactId: d.id,
+    });
+    const bound = { Authorization: `Bearer ${ci.token}` };
+    for (const path of [
+      exportUrl(d.id, "format=pdf"),
+      exportUrl(d.id, "format=png&board=home"),
+      `/api/v1/artifacts/${d.id}/export/options`,
+    ]) {
+      const res = await run(path, { headers: bound });
+      expect(res.status, path).toBe(403);
+      const body = await json(res);
+      expect(body.error.code, path).toBe("forbidden");
+      expect(body.error.details.reason, path).toBe("token_bound");
+    }
+    // Any other artifact does not exist for it.
+    const other = await publishDesign(owner.auth);
+    expect((await run(exportUrl(other.id, "format=pdf"), { headers: bound })).status).toBe(404);
+    // Nothing rendered and nothing counted.
+    expect(jobs).toHaveLength(0);
+    expect(await counted(EXPORT_INSTANCE_KEY)).toBe(0);
+
+    const mine = await run(exportUrl(d.id, "format=pdf"), { headers: owner.auth });
+    expect(mine.status, await mine.clone().text()).toBe(200);
+    const options = await run(`/api/v1/artifacts/${d.id}/export/options`, {
+      headers: owner.auth,
+    });
+    expect(options.status).toBe(200);
+    expect(jobs).toHaveLength(1);
+  });
+});
+
+describe("the instance's and an artifact's hourly limits", () => {
+  it("DESIGN_EXPORTS_PER_INSTANCE_PER_HOUR bounds every export on the instance, whoever asks", async () => {
+    const vars = { ...ON, DESIGN_EXPORTS_PER_INSTANCE_PER_HOUR: "2" };
+    const people = [await agent(), await agent(), await agent()];
+    const designs = [];
+    for (const p of people) designs.push(await publishDesign(p.auth));
+    for (const i of [0, 1]) {
+      const ok = await run(
+        exportUrl(designs[i]?.id ?? "", "format=pdf"),
+        { headers: people[i]?.auth },
+        vars,
+      );
+      expect(ok.status, await ok.clone().text()).toBe(200);
+    }
+    const over = await run(
+      exportUrl(designs[2]?.id ?? "", "format=pdf"),
+      { headers: people[2]?.auth },
+      vars,
+    );
+    expect(over.status).toBe(429);
+    const body = await json(over);
+    expect(body.error.code).toBe("rate_limited");
+    expect(body.error.details.reason).toBe("instance_limit");
+    expect(body.error.message).toBe(
+      "This instance's export limit is reached (2 per hour); try again later",
+    );
+    const retry = Number(over.headers.get("Retry-After"));
+    expect(retry).toBe(body.error.details.retry_after);
+    expect(retry).toBeGreaterThan(0);
+    expect(retry).toBeLessThanOrEqual(3600);
+    // Refused before the browser and before any counter was raised.
+    expect(jobs).toHaveLength(2);
+    expect(await counted(EXPORT_INSTANCE_KEY)).toBe(2);
+    expect(await counted(`design-export:u:${people[2]?.user.id}`)).toBe(0);
+  });
+
+  it("DESIGN_EXPORTS_PER_ARTIFACT_PER_HOUR bounds one artifact's exports by anyone but its owner and editors", async () => {
+    const vars = { ...ON, DESIGN_EXPORTS_PER_ARTIFACT_PER_HOUR: "2" };
+    const owner = await agent();
+    const d = await publishDesign(owner.auth, { visibility: "unlisted" });
+    // Signed out, from three networks, each well within its own hourly limit.
+    const from = (addr: string) =>
+      run(exportUrl(d.id, "format=pdf"), { headers: { "cf-connecting-ip": addr } }, vars);
+    expect((await from("198.51.100.1")).status).toBe(200);
+    expect((await from("198.51.100.2")).status).toBe(200);
+    const over = await from("198.51.100.3");
+    expect(over.status).toBe(429);
+    const body = await json(over);
+    expect(body.error.code).toBe("rate_limited");
+    expect(body.error.details.reason).toBe("artifact_limit");
+    expect(body.error.message).toBe(
+      "This design's export limit is reached (2 per hour); try again later",
+    );
+    expect(Number(over.headers.get("Retry-After"))).toBe(body.error.details.retry_after);
+    // More refusals spend nothing: not the instance's budget, not the network's.
+    for (let i = 0; i < 5; i++) expect((await from(`198.51.100.${10 + i}`)).status).toBe(429);
+    expect(await counted(EXPORT_INSTANCE_KEY)).toBe(2);
+    expect(await counted(exportArtifactKey(d.id))).toBe(2);
+    expect(await counted("design-export:ip:198.51.100.3")).toBe(0);
+    // The owner still exports, and does not count toward the artifact's limit.
+    const mine = await run(exportUrl(d.id, "format=pdf"), { headers: owner.auth }, vars);
+    expect(mine.status, await mine.clone().text()).toBe(200);
+    expect(await counted(exportArtifactKey(d.id))).toBe(2);
+    expect(await counted(EXPORT_INSTANCE_KEY)).toBe(3);
+    // Another artifact has its own limit.
+    const other = await publishDesign(owner.auth, { visibility: "unlisted" });
+    const theirs = await run(
+      exportUrl(other.id, "format=pdf"),
+      { headers: { "cf-connecting-ip": "198.51.100.40" } },
+      vars,
+    );
+    expect(theirs.status).toBe(200);
+    expect(jobs).toHaveLength(4);
+  });
+
+  it("reserves before rendering and gives nothing back when the render fails", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const vars = { ...ON, DESIGN_EXPORTS_PER_INSTANCE_PER_HOUR: "1" };
+      const a = await agent();
+      const d = await publishDesign(a.auth);
+      let counts: number[] = [];
+      setDesignExportShooter(async () => {
+        // The browser starts only once every counter holds this export.
+        counts = [
+          await counted(EXPORT_INSTANCE_KEY),
+          await counted(`design-export:u:${a.user.id}`),
+        ];
+        throw new Error("browser crashed");
+      });
+      const failed = await run(exportUrl(d.id, "format=pdf"), { headers: a.auth }, vars);
+      expect(failed.status).toBe(503);
+      expect(counts).toEqual([1, 1]);
+      setDesignExportShooter(async () => PDF_BYTES);
+      const next = await run(exportUrl(d.id, "format=pdf"), { headers: a.auth }, vars);
+      expect(next.status).toBe(429);
+      expect((await json(next)).error.details.reason).toBe("instance_limit");
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("parse with their defaults and bounds, and ship in wrangler.jsonc at the defaults", () => {
+    const base = {
+      ENVIRONMENT: "production",
+      APP_HOST: "plinth.example.com",
+      CONTENT_HOST: "plinth-content.example.net",
+      PUBLIC_SCHEME: "https",
+      EMAIL_PROVIDER: "sendgrid",
+      SENDGRID_API_KEY: "SG.x",
+      SESSION_SECRET: "s".repeat(40),
+      TOKEN_SIGNING_KEY: "t".repeat(40),
+    };
+    const c = parseConfig(base);
+    expect(c.designExportsPerInstancePerHour).toBe(120);
+    expect(c.designExportsPerArtifactPerHour).toBe(20);
+    const empty = parseConfig({
+      ...base,
+      DESIGN_EXPORTS_PER_INSTANCE_PER_HOUR: "",
+      DESIGN_EXPORTS_PER_ARTIFACT_PER_HOUR: "",
+    });
+    expect(empty.designExportsPerInstancePerHour).toBe(120);
+    expect(empty.designExportsPerArtifactPerHour).toBe(20);
+    for (const [name, max] of [
+      ["DESIGN_EXPORTS_PER_INSTANCE_PER_HOUR", 100_000],
+      ["DESIGN_EXPORTS_PER_ARTIFACT_PER_HOUR", 10_000],
+    ] as const) {
+      const field =
+        name === "DESIGN_EXPORTS_PER_INSTANCE_PER_HOUR"
+          ? "designExportsPerInstancePerHour"
+          : "designExportsPerArtifactPerHour";
+      for (const v of ["1", String(max)]) {
+        expect(parseConfig({ ...base, [name]: v })[field], v).toBe(Number(v));
+      }
+      for (const v of ["0", String(max + 1), "-1", "1.5", "lots"]) {
+        expect(() => parseConfig({ ...base, [name]: v }), `${name}=${v}`).toThrow(
+          new RegExp(`${name} must be an integer from 1 to ${max}`),
+        );
+      }
+    }
+    const vars = env as unknown as Record<string, unknown>;
+    expect(vars.DESIGN_EXPORTS_PER_INSTANCE_PER_HOUR).toBe(
+      String(DESIGN_EXPORT.perInstancePerHour),
+    );
+    expect(vars.DESIGN_EXPORTS_PER_ARTIFACT_PER_HOUR).toBe(
+      String(DESIGN_EXPORT.perArtifactPerHour),
+    );
+  });
+});
+
+describe("a PDF in pieces", () => {
+  it("is sent piece after piece with its exact length, never joined first", async () => {
+    const a = await agent();
+    const d = await publishDesign(a.auth);
+    const pieces = [bytesOf(1000), bytesOf(2000), bytesOf(5)];
+    setDesignExportShooter(async () => pieces);
+    const res = await run(exportUrl(d.id, "format=pdf"), { headers: a.auth });
+    expect(res.status, await res.clone().text()).toBe(200);
+    expect(res.headers.get("Content-Length")).toBe("3005");
+    expect(new Uint8Array(await res.arrayBuffer())).toEqual(joined(pieces));
+  });
+
+  it("is refused with 413 when the pieces together pass the cap", async () => {
+    const a = await agent();
+    const d = await publishDesign(a.auth);
+    setDesignExportShooter(async (_b, job) => [new Uint8Array(job.maxBytes), new Uint8Array(1)]);
+    const res = await run(exportUrl(d.id, "format=pdf"), { headers: a.auth });
+    expect(res.status).toBe(413);
+    expect((await json(res)).error.code).toBe("payload_too_large");
   });
 });
 
@@ -840,7 +1068,7 @@ describe("the browser's steps", () => {
     setDesignExportLauncher(fake.launch);
     const start = clock.t;
     const bytes = await browserExport(ON.BROWSER, JOB, new AbortController().signal);
-    expect(bytes).toEqual(PDF_BYTES);
+    expect(joined(bytes)).toEqual(PDF_BYTES);
     expect(fake.calls.pdf).toBe(1);
     expect(fake.calls.closed).toBe(1);
     // The document, not network idle, so a slow board cannot fail the load.
@@ -946,12 +1174,18 @@ describe("the browser's steps", () => {
     }
   });
 
-  it("read a PDF from the browser's stream in 1 MiB pieces, and close the stream", async () => {
+  it("read a PDF from the browser's stream in 1 MiB pieces, keep them apart, and close the stream", async () => {
     const file = bytesOf(2 * EXPORT_RUN.readChunkBytes + 12_345);
     const fake = fakeBrowser({ t: 0 }, false, { pdf: file });
     setDesignExportLauncher(fake.launch);
     const bytes = await browserExport(ON.BROWSER, JOB, new AbortController().signal);
-    expect(bytes).toEqual(file);
+    expect(joined(bytes)).toEqual(file);
+    // The pieces as read, never joined into a second copy of the file.
+    expect(Array.isArray(bytes) && bytes.map((p) => p.byteLength)).toEqual([
+      EXPORT_RUN.readChunkBytes,
+      EXPORT_RUN.readChunkBytes,
+      12_345,
+    ]);
     expect(fake.calls.reads).toEqual(Array(3).fill(EXPORT_RUN.readChunkBytes));
     expect(fake.calls.ioClosed).toEqual(["pdf-stream"]);
     expect(fake.calls.printOptions).toMatchObject({

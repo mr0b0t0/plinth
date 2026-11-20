@@ -444,12 +444,23 @@ export const DESIGN_EXPORT = {
   maxBytes: 25_165_824,
   /**
    * The largest PNG, in device pixels: width x height x scale^2. A PNG takes at most about 4 bytes
-   * a pixel (RGBA that does not compress, such as noise), so any PNG within it fits in maxBytes.
+   * a pixel (RGBA that does not compress, such as noise), so any PNG within it fits in maxBytes,
+   * and the browser's base64 message, its string and the decoded file stay near 60 MB together.
+   * A board of at most 1,000,000 px exports at 2x, every preset at 1x.
    */
-  maxPixels: 6_000_000,
+  maxPixels: 4_000_000,
   /** DESIGN_EXPORTS_PER_HOUR's default and bounds. */
   perHour: 30,
   perHourBounds: [1, 1000],
+  /** DESIGN_EXPORTS_PER_INSTANCE_PER_HOUR's default and bounds: every export on the instance. */
+  perInstancePerHour: 120,
+  perInstancePerHourBounds: [1, 100_000],
+  /**
+   * DESIGN_EXPORTS_PER_ARTIFACT_PER_HOUR's default and bounds: exports of one artifact by people
+   * other than its owner and editors.
+   */
+  perArtifactPerHour: 20,
+  perArtifactPerHourBounds: [1, 10_000],
   /**
    * Exports rendering at once across the instance, beside the thumbnails' own two (Browser
    * Rendering limits the account's concurrent browsers).

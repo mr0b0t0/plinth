@@ -198,6 +198,16 @@ export interface Config {
    * out, may start per hour.
    */
   designExportsPerHour: number;
+  /**
+   * DESIGN_EXPORTS_PER_INSTANCE_PER_HOUR (default 120; 1 to 100000): exports the whole instance
+   * renders per hour, whoever asks, which bounds the operator's Browser Rendering time.
+   */
+  designExportsPerInstancePerHour: number;
+  /**
+   * DESIGN_EXPORTS_PER_ARTIFACT_PER_HOUR (default 20; 1 to 10000): exports of one artifact per
+   * hour by everyone but its owner and editors, so one shared link cannot use up the instance's.
+   */
+  designExportsPerArtifactPerHour: number;
   /** OPERATOR_*: who runs this instance, for its legal pages. null when none is published. */
   operator: {
     name: string;
@@ -519,6 +529,18 @@ export function parseConfig(env: Record<string, unknown>): Config {
       "DESIGN_EXPORTS_PER_HOUR",
       DESIGN_EXPORT.perHour,
       ...DESIGN_EXPORT.perHourBounds,
+    ),
+    designExportsPerInstancePerHour: boundedInt(
+      env,
+      "DESIGN_EXPORTS_PER_INSTANCE_PER_HOUR",
+      DESIGN_EXPORT.perInstancePerHour,
+      ...DESIGN_EXPORT.perInstancePerHourBounds,
+    ),
+    designExportsPerArtifactPerHour: boundedInt(
+      env,
+      "DESIGN_EXPORTS_PER_ARTIFACT_PER_HOUR",
+      DESIGN_EXPORT.perArtifactPerHour,
+      ...DESIGN_EXPORT.perArtifactPerHourBounds,
     ),
     operator: parseOperator(env),
     openaiAppsChallenge: parseChallenge(env),

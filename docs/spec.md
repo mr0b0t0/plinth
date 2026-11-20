@@ -232,9 +232,12 @@ to 120. No new setting: a whiteboard needs `ALLOW_SHARED_DATA` and origin isolat
 counts toward the `DATA_*` limits like any page's shared data.
 
 **Design export** ([Designs](#designs-decided-2026-11-19), no migration) stores nothing: every
-file is rendered on request and never kept. It adds two settings, `DESIGN_EXPORT` (on, in effect
-only with a `BROWSER` binding) and `DESIGN_EXPORTS_PER_HOUR` (30, from 1 to 1000), counted in
-`rate_limits` like every other limit. Fixed: PNG at 1x or 2x, at most 6,000,000 device pixels;
+file is rendered on request and never kept. It adds four settings: `DESIGN_EXPORT` (on, in effect
+only with a `BROWSER` binding), `DESIGN_EXPORTS_PER_HOUR` (30 per person, from 1 to 1000),
+`DESIGN_EXPORTS_PER_ARTIFACT_PER_HOUR` (20 per design for everyone but its owner and editors, from
+1 to 10000) and `DESIGN_EXPORTS_PER_INSTANCE_PER_HOUR` (120 for the whole instance, from 1 to
+100000), each counted in `rate_limits` like every other limit. Fixed: PNG at 1x or 2x, at most
+4,000,000 device pixels;
 files of at most 24 MB (`DESIGN_EXPORT.maxBytes`, 413 `payload_too_large` past it); 25 seconds per
 render, of which at most 10 waiting for the boards to load; two exports at once per instance, each
 holding a lease row in `rate_limits` that names no person until its browser closes.
@@ -272,7 +275,8 @@ names one gets `design_system_unavailable` and `get_artifact` shows `design_syst
 It never gets a content pass of its own, which reads the page's shared data: the viewer gate
 (`GET /api/v1/view/:ref`, and its password route) answers 403 `token_bound` on its artifact
 instead of an enter URL, and so does the thumbnail (a capture runs the page, which may draw its
-shared data), whose `thumbnail_url` is null for it. The capture of a version it wrote reads no
+shared data), whose `thumbnail_url` is null for it, and so do a design's PNG and PDF export and
+its options ([Designs](#designs-decided-2026-11-19)), which run the page in the same capture. The capture of a version it wrote reads no
 shared data either, so its page cannot run unattended with the data in Plinth's own browser
 ([Thumbnails and link previews](#thumbnails-and-link-previews)). Its in-chat preview
 (`preview_artifact`) stays, since a preview pass reads no shared data and joins no room. It reads
@@ -1472,23 +1476,34 @@ restoring an older one.
 - **Download PNG or PDF** (decided 2026-11-19), where the instance has a Browser Rendering
   binding (`BROWSER`) and `DESIGN_EXPORT` is on (the default): the artifact menu has "Download
   .png" and "Download .pdf" in place of Print or save as PDF, so it has one way to a PDF, and the
-  server renders the version on screen in Cloudflare Browser Rendering. "Download .png" asks for
-  one board and takes it at 2x, or at 1x where 2x would pass 6,000,000 device pixels (a 1920x1080
-  board; a 4096x4096 one is too big even at 1x and is a PDF's), transparent where the board is.
-  "Download .pdf" downloads every board at once, each on a page of exactly its size, with a toast
-  while it renders. Through the API a PNG is at 1x or 2x and a PDF is every board or one. No file
-  is over 24 MB: the Worker
-  holds the whole file while it sends it, so it reads a PDF from the browser in 1 MiB pieces and
-  answers 413 `payload_too_large` (with `max_bytes`) once it passes that, and the pixel cap keeps
-  even a PNG that does not compress (about 4 bytes a pixel) under it. REST: `GET /api/v1/artifacts/:ref/export/options?version=` lists the
-  version's boards, and `GET /api/v1/artifacts/:ref/export?format=png|pdf&version=&board=&scale=`
-  returns the file as an attachment named `<slug>[-<board>].png` or `.pdf`. Anyone who may view
-  the artifact may export it (the `view` action; strangers get 404), at most
-  `DESIGN_EXPORTS_PER_HOUR` times an hour per person (per confirmed email, or signed out per
-  client network, an IPv6 /64 counting as one client); a refused request (a bad board or scale)
-  is not counted. At most two exports render at once across the instance, beside the thumbnails'
-  two; a request that finds both busy answers 503 `unavailable` with `Retry-After: 10` and is not
-  counted either. The browser opens the exact version as a thumbnail capture does and with the
+  server renders the version on screen in Cloudflare Browser Rendering. "Download .png" downloads
+  a design's one board at once, or asks which board when it has more, and takes the board at 2x,
+  or at 1x where 2x would pass 4,000,000 device pixels, transparent where the board is: a board of
+  at most 1,000,000 px (an iPhone, iPad, A4, Letter, 1280x720 or 1200x630 board) at 2x, a
+  1080x1080, 1440x900 or 1920x1080 one at 1x, and one over 4,000,000 px (2000x3000, 4096x4096) only
+  in the PDF; every size preset fits at 1x. "Download .pdf" downloads every board at once, each on
+  a page of exactly its size, with a toast while it renders. Through the API a PNG is at 1x or 2x
+  and a PDF is every board or one. No file is over 24 MB: the Worker holds the whole file before
+  it answers, so it reads a PDF from the browser in 1 MiB pieces, answers 413
+  `payload_too_large` (with `max_bytes`) once it passes that, and otherwise sends the pieces one
+  after the other without joining them; the pixel cap keeps even a PNG that does not compress
+  (about 4 bytes a pixel) under it. REST: `GET /api/v1/artifacts/:ref/export/options?version=`
+  lists the version's boards and the pixel cap (`max_pixels`), and
+  `GET /api/v1/artifacts/:ref/export?format=png|pdf&version=&board=&scale=` returns the file as an
+  attachment named `<slug>[-<board>].png` or `.pdf`. Anyone who may view the artifact may export
+  it, through the thumbnail's check (the `enter` action: strangers get 404, and a token limited to
+  one artifact gets 403 `token_bound` from both endpoints, since the render runs the page). Three
+  hourly limits apply, each reserved before the browser starts and not given back when a render
+  fails: `DESIGN_EXPORTS_PER_HOUR` per person (per confirmed email, or signed out per client
+  network, an IPv6 /64 counting as one client), `DESIGN_EXPORTS_PER_ARTIFACT_PER_HOUR` per design
+  for everyone but its owner and editors, and `DESIGN_EXPORTS_PER_INSTANCE_PER_HOUR` across the
+  instance, which bounds the operator's browser time however many networks ask. Past the design's
+  or the instance's limit the answer is 429 `rate_limited` with `details.reason` `artifact_limit`
+  or `instance_limit` and `Retry-After`, and the app says "Too many downloads right now. Try again
+  later." A request refused by any limit, or for a bad board or scale, spends none of them. At most
+  two exports render at once across the instance, beside the thumbnails' two; a request that finds
+  both busy answers 503 `unavailable` with `Retry-After: 10` and is not counted either. The browser
+  opens the exact version as a thumbnail capture does and with the
   same safety: a one-time capture pass with no identity, bound to that version and reading no
   shared data when the version's writer may not, the boards' cookie partition given the same pass
   through the DevTools protocol, and every request held to the capture's scope (the version's own
@@ -2450,8 +2465,9 @@ options.
   carries no identity, is bound to that version and is never returned or logged, with every
   request held to the capture's scope. It is served from the app host as an attachment with
   `Content-Security-Policy: sandbox; default-src 'none'`, `nosniff`, CORP `same-origin` and
-  `Cache-Control: private, no-store`, only to people who may view the artifact, within an hourly
-  limit per person ([Designs](#designs-decided-2026-11-19)).
+  `Cache-Control: private, no-store`, only to people who may view the artifact (never to a token
+  limited to one artifact), within hourly limits per person, per design and for the instance
+  ([Designs](#designs-decided-2026-11-19)).
 - **Open counts are aggregates.** One number per artifact per UTC day, never who opened it, shown
   only to the artifact's owner and, summed over the instance, to admins.
 - **Invitation emails are bounded.** Plinth emails someone only when the owner (or the owner's
