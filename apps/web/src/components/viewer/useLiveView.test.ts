@@ -65,7 +65,7 @@ function fakeDoc() {
   return doc;
 }
 
-function setup(current = 3) {
+function setup(current = 3, random: () => number = () => 0.5) {
   const calls: string[] = [];
   const statuses: LiveViewStatus[] = [];
   const state = { current };
@@ -80,13 +80,23 @@ function setup(current = 3) {
   const doc = fakeDoc();
   const conn = new LiveViewConnection("ws://app.test/api/v1/view/a1/watch", on, {
     WebSocket: FakeSocket as unknown as typeof WebSocket,
-    random: () => 0.5,
+    random,
     doc: doc as never,
   });
   return { conn, calls, statuses, state, doc };
 }
 
-const welcome = (version = 3, data = false) => ({ t: "welcome", v: 1, version, data });
+const welcome = (version = 3) => ({ t: "welcome", v: 1, version });
+
+/** How long after now the next socket opens (fake timers), up to `max` ms. */
+function nextConnectAfter(max: number): number {
+  const before = FakeSocket.all.length;
+  for (let ms = 0; ms <= max; ms++) {
+    vi.advanceTimersByTime(ms === 0 ? 0 : 1);
+    if (FakeSocket.all.length > before) return ms;
+  }
+  throw new Error(`no reconnect within ${max} ms`);
+}
 
 beforeEach(() => {
   FakeSocket.all = [];
@@ -221,9 +231,30 @@ describe("LiveViewConnection", () => {
     calls.length = 0;
     FakeSocket.last().drop(4401, "expired");
     expect(calls).toEqual([]);
-    vi.advanceTimersByTime(1500);
+    // random() is 0.5: half of reconnectSpreadMs.
+    expect(nextConnectAfter(LIVE_VIEW_LIMITS.reconnectSpreadMs)).toBe(
+      LIVE_VIEW_LIMITS.reconnectSpreadMs / 2,
+    );
     expect(FakeSocket.all).toHaveLength(3);
     conn.stop();
+  });
+
+  it("4401 expired: the reconnect is spread over [0, reconnectSpreadMs), even after failures", () => {
+    const spread = LIVE_VIEW_LIMITS.reconnectSpreadMs;
+    for (const r of [0, 0.25, 0.999]) {
+      FakeSocket.all = [];
+      const { conn } = setup(3, () => r);
+      conn.start();
+      // Two failed handshakes first; the open socket's welcome then resets the back-off anyway.
+      FakeSocket.last().drop(1006);
+      nextConnectAfter(spread);
+      FakeSocket.last().drop(1006);
+      nextConnectAfter(spread);
+      FakeSocket.last().frame(welcome());
+      FakeSocket.last().drop(4401, "expired");
+      expect(nextConnectAfter(spread)).toBe(Math.floor(r * spread));
+      conn.stop();
+    }
   });
 
   it("4401 access_changed after a large audience's `access` frame: the re-read and the reconnect wait within spread_ms", () => {
@@ -294,10 +325,11 @@ describe("LiveViewConnection", () => {
     }
   });
 
-  it("a dropped connection backs off 1, 2, 5, 10, 30 s (with jitter), polling meanwhile", () => {
+  it("a dropped connection first waits within reconnectSpreadMs, then backs off 1, 2, 5, 10, 30 s, polling meanwhile", () => {
     const { conn, statuses } = setup();
     conn.start();
-    const delays = [1000, 2000, 5000, 10_000, 30_000];
+    // random() is 0.5: the first wait is half the spread, and every step is exact (±25% at 0.5).
+    const delays = [LIVE_VIEW_LIMITS.reconnectSpreadMs / 2, 1000, 2000, 5000, 10_000, 30_000];
     for (const [i, ms] of delays.entries()) {
       FakeSocket.last().drop(1006);
       expect(statuses.at(-1)).toBe("fallback");
@@ -306,12 +338,58 @@ describe("LiveViewConnection", () => {
       vi.advanceTimersByTime(1);
       expect(FakeSocket.all).toHaveLength(i + 2);
     }
-    // A welcome resets the back-off.
+    // Then the refused-retry pace.
+    FakeSocket.last().drop(1006);
+    vi.advanceTimersByTime(LIVE_VIEW_LIMITS.refusedRetryS * 1000 - 1);
+    expect(FakeSocket.all).toHaveLength(7);
+    vi.advanceTimersByTime(1);
+    expect(FakeSocket.all).toHaveLength(8);
+    // A welcome resets the back-off: the next drop waits within the spread again.
     FakeSocket.last().frame(welcome());
     FakeSocket.last().drop(1006);
-    vi.advanceTimersByTime(1000);
-    expect(FakeSocket.all).toHaveLength(7);
+    vi.advanceTimersByTime(LIVE_VIEW_LIMITS.reconnectSpreadMs / 2);
+    expect(FakeSocket.all).toHaveLength(9);
     conn.stop();
+  });
+
+  it("the first reconnect after an open socket drops (a deploy) is spread over [0, reconnectSpreadMs)", () => {
+    const spread = LIVE_VIEW_LIMITS.reconnectSpreadMs;
+    // Many views whose sockets a deploy closes at the same moment, each with its own random().
+    const delays: number[] = [];
+    let seed = 42;
+    const lcg = () => {
+      seed = (seed * 1_103_515_245 + 12_345) % 2_147_483_648;
+      return seed / 2_147_483_648;
+    };
+    for (let v = 0; v < 40; v++) {
+      FakeSocket.all = [];
+      const { conn } = setup(3, lcg);
+      conn.start();
+      FakeSocket.last().frame(welcome());
+      FakeSocket.last().drop(1006);
+      delays.push(nextConnectAfter(spread));
+      conn.stop();
+    }
+    expect(Math.min(...delays)).toBeGreaterThanOrEqual(0);
+    expect(Math.max(...delays)).toBeLessThan(spread);
+    // Spread, not bunched: every quarter of the window gets some.
+    for (let q = 0; q < 4; q++) {
+      const lo = (q * spread) / 4;
+      expect(delays.some((d) => d >= lo && d < lo + spread / 4)).toBe(true);
+    }
+    // The bounds themselves, with random() at its ends.
+    for (const [r, ms] of [
+      [0, 0],
+      [0.999_9, spread - 1],
+    ] as const) {
+      FakeSocket.all = [];
+      const { conn } = setup(3, () => r);
+      conn.start();
+      FakeSocket.last().frame(welcome());
+      FakeSocket.last().drop(1006);
+      expect(nextConnectAfter(spread)).toBe(ms);
+      conn.stop();
+    }
   });
 
   it("closes after 60 s hidden and reconnects when shown again", () => {

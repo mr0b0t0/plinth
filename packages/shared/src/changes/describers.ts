@@ -8,6 +8,7 @@ import { describeDesign, describeHtml } from "./html.ts";
 import { describeSheet } from "./sheet.ts";
 import { describeSlides } from "./slides.ts";
 import type { ChangeCollector } from "./types.ts";
+import { describeWhiteboard } from "./whiteboard.ts";
 
 /**
  * Adds the changes from one source text to another to the collector. False when either text is not
@@ -27,4 +28,5 @@ export const CHANGE_DESCRIBERS: { readonly [K in ArtifactType]: ChangeDescriber 
   design_system: describeDesignSystem,
   design: describeDesign,
   sheet: describeSheet,
+  whiteboard: describeWhiteboard,
 };

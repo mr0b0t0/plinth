@@ -3,8 +3,8 @@
 // formats, a cycle, links, hostile cells shown as text, no request to another host, sort, filter
 // and the formula bar, phones, the dark scheme and print; CSV and .xlsx downloads from the
 // artifact menu (the frame has no buttons of its own); edit_sheet publishing a version the open
-// page picks up, and its one-line diff; and the editor's problem list and save. The opaque case is
-// in typed-sheet-opaque.spec.ts.
+// page picks up, with one stored line changed; and that people never see the source (no Edit,
+// compare as rendered pages). The opaque case is in typed-sheet-opaque.spec.ts.
 import { readFileSync } from "node:fs";
 import { expect, type Frame, type Page, test } from "@playwright/test";
 import { strFromU8, unzipSync } from "fflate";
@@ -14,7 +14,6 @@ import { mcpClient, tool } from "../support/mcp.ts";
 import { seedToken } from "../support/tokens.ts";
 
 const CURRENT_FRAME = "iframe.pl-viewer-frame:not(.pl-viewer-frame--outgoing)";
-const PREVIEW_FRAME = 'iframe[title^="Preview of"]';
 
 const TITLE = "Fruit budget";
 const HEADER = JSON.stringify({
@@ -220,18 +219,23 @@ test.describe("a published sheet", () => {
 
       const [csv] = await Promise.all([
         page.waitForEvent("download"),
-        openMenuItem(page, "Download as CSV"),
+        openMenuItem(page, "Download .csv"),
       ]);
       expect(csv.suggestedFilename()).toBe("Fruit budget.csv");
       const text = readFileSync((await csv.path()) as string, "utf8");
-      expect(text.startsWith("﻿Item,Qty,Price,Total,Bought,Paid,Stage,Shop,Note\r\n")).toBe(true);
-      expect(text).toContain("Apples,3,1.2,3.6,2026-11-02,TRUE,done,https://shop.example/apples,");
+      expect(
+        text.startsWith('﻿"Item","Qty","Price","Total","Bought","Paid","Stage","Shop","Note"\r\n'),
+      ).toBe(true);
+      // Every text value is quoted, so a reader splitting on semicolons keeps it one cell.
+      expect(text).toContain(
+        '"Apples",3,1.2,3.6,2026-11-02,TRUE,"done","https://shop.example/apples",',
+      );
       // Text a spreadsheet would run is guarded.
       expect(text).toContain(`,"'=HYPERLINK(""https://evil.example"",""x"")"`);
 
       const [xlsx] = await Promise.all([
         page.waitForEvent("download"),
-        openMenuItem(page, "Download as Excel (.xlsx)"),
+        openMenuItem(page, "Download .xlsx"),
       ]);
       expect(xlsx.suggestedFilename()).toBe("Fruit budget.xlsx");
       const files = unzipSync(new Uint8Array(readFileSync((await xlsx.path()) as string)));
@@ -273,6 +277,16 @@ test.describe("a published sheet", () => {
           { timeout: 40_000 },
         )
         .toMatch(/12[.,]00/);
+      // Canonical storage: one row changed, so one stored line differs and every other is the same.
+      const v1 = (await apiGet(page.request, `/artifacts/${artifact.id}/versions/1`)).body;
+      const v2 = (await apiGet(page.request, `/artifacts/${artifact.id}/versions/2`)).body;
+      const before = (v1.content as string).split("\n");
+      const after = (v2.content as string).split("\n");
+      expect(after).toHaveLength(before.length);
+      const changed = after.flatMap((line, i) => (line === before[i] ? [] : [i]));
+      expect(changed).toHaveLength(1);
+      expect(before[changed[0] as number]).toContain('["Apples",3,');
+      expect(after[changed[0] as number]).toContain('["Apples",10,');
       await page.goto(`/a/${artifact.slug}/compare?from=1&to=2`);
       // One cell changed, said as a cell and its two values; no sheet lines on the page.
       const changes = page.getByRole("region", { name: "Changes" });
@@ -287,47 +301,42 @@ test.describe("a published sheet", () => {
     }
   });
 
-  test.describe("in the editor", () => {
-    test.skip(({ isMobile }) => isMobile, "the source editor is a desktop task");
+  test("people never see the source: no Edit, and compare shows the rendered versions", async ({
+    page,
+  }) => {
+    test.setTimeout(90_000);
+    const { artifact, client } = await publishSheet(page);
+    try {
+      await page.goto(`/a/${artifact.slug}`);
+      await sheetFrame(page);
+      await page.getByRole("button", { name: "Artifact actions" }).click();
+      await expect(page.getByRole("menuitem", { name: "Download .csv" })).toBeVisible();
+      await expect(page.getByRole("menuitem", { name: /^Edit/ })).toHaveCount(0);
+      await page.keyboard.press("Escape");
 
-    test("lists a bad row's problem, then saves a valid change as v2", async ({ page }) => {
-      test.setTimeout(90_000);
-      const short = [HEADER, JSON.stringify(["Apples", 3, 1.2, "=B2*C2"])].join("\n");
-      const { artifact, client } = await publishSheet(page, short);
-      try {
-        await page.goto(`/a/${artifact.slug}/edit`);
-        await expect(page.getByText("Editing v1")).toBeVisible();
-        const lines = page.locator(".pl-editor .monaco-editor .view-lines").first();
-        await expect(lines).toBeVisible({ timeout: 15_000 });
-        const preview = page.frameLocator(PREVIEW_FRAME);
-        await expect(preview.locator("#__plinth-cell-D2")).toHaveText(/3[.,]60/, {
-          timeout: 15_000,
-        });
+      // The editor's address goes to the sheet's page, with no code on screen.
+      await page.goto(`/a/${artifact.slug}/edit`);
+      await expect(page).toHaveURL(new RegExp(`/a/${artifact.slug}$`));
+      await sheetFrame(page);
+      await expect(page.locator(".monaco-editor")).toHaveCount(0);
 
-        await lines.click();
-        await page.keyboard.press("ControlOrMeta+End");
-        await page.keyboard.press("Enter");
-        await page.keyboard.type('["Pears","five"]', { delay: 20 });
-        const problems = page.locator(".pl-editor__problems");
-        await expect(problems).toContainText('B3: "five" is not a number (column Qty is number)');
-        await expect(page.getByRole("button", { name: "Save", exact: true })).toBeDisabled();
+      const r = await tool<{ version: number }>(client, "edit_sheet", {
+        id: artifact.id,
+        base_version: 1,
+        ops: [{ op: "set", at: "B2", values: [[10]] }],
+      });
+      expect(r.isError, r.text).toBe(false);
 
-        for (let i = 0; i < '"five"]'.length; i++) await page.keyboard.press("Backspace");
-        await page.keyboard.type("5]", { delay: 20 });
-        await expect(problems).toHaveCount(0);
-        await expect(preview.locator("#__plinth-cell-B3")).toHaveText("5");
-        await page.getByRole("button", { name: "Save", exact: true }).click();
-        await expect(page.getByText("Saved as v2")).toBeVisible();
-        const current = await apiGet(page.request, `/artifacts/${artifact.id}`);
-        expect(current.body).toMatchObject({
-          version: 2,
-          type: "sheet",
-          source_path: "sheet.jsonl",
-        });
-        expect(current.body.content.split("\n").at(-1)).toBe('["Pears",5]');
-      } finally {
-        await client.close();
-      }
-    });
+      await page.goto(`/a/${artifact.slug}/compare?from=1&to=2`);
+      const f1 = page.frameLocator(`iframe[title="v1 of ${TITLE}"]`);
+      const f2 = page.frameLocator(`iframe[title="v2 of ${TITLE}"]`);
+      await expect(f1.locator("#__plinth-cell-D2")).toHaveText(/3[.,]60/, { timeout: 15_000 });
+      await expect(f2.locator("#__plinth-cell-D2")).toHaveText(/12[.,]00/, { timeout: 15_000 });
+      await expect(page.getByRole("tab", { name: "Source" })).toHaveCount(0);
+      await expect(page.getByRole("table", { name: /Changes to sheet\.jsonl/ })).toHaveCount(0);
+      await expect(page.getByText('"plinth":"sheet"')).toHaveCount(0);
+    } finally {
+      await client.close();
+    }
   });
 });

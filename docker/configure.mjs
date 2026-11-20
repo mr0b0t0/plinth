@@ -55,13 +55,16 @@ const WORKER_VARS = [
   // these are the switches (docs/docker.md#settings). A reverse proxy must pass WebSocket upgrades.
   "ALLOW_ROOMS",
   "ALLOW_LIVE_EDITING",
-  // Formula steps one read_sheet call may spend (docs/self-hosting.md#settings).
-  "SHEET_EVAL_BUDGET",
   // Live views (docs/docker.md#settings): open pages follow new versions over a socket on the app
   // host, through the same ROOMS binding.
   "ALLOW_LIVE_VIEWS",
+  // Formula steps one read_sheet call may spend (docs/self-hosting.md#settings).
+  "SHEET_EVAL_BUDGET",
   // Owners may share a category with people (docs/docker.md#settings); on unless set to "false".
   "ALLOW_CATEGORY_SHARING",
+  // Invitation emails per UTC day for the instance (0 turns them off) and for one owner.
+  "INVITATION_EMAILS_PER_DAY",
+  "INVITATION_EMAILS_PER_OWNER_PER_DAY",
 ];
 
 // `plinth init` flags and the variables that set them, to name the variable in its errors.

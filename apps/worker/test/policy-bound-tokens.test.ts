@@ -305,13 +305,13 @@ describe("policy: a token bound to one artifact", () => {
       comments: false,
       people: false,
     };
-    expect(pageDataAccess(null, caps, true)).toEqual({
+    expect(pageDataAccess(null, caps, true, "html")).toEqual({
       read: true,
       write: false,
       seeIdentity: false,
     });
-    expect(pageDataAccess(null, caps, true, {}).read).toBe(true);
-    expect(pageDataAccess(null, caps, true, { noData: true }).read).toBe(false);
-    expect(pageDataAccess(null, caps, true, { preview: true }).read).toBe(false);
+    expect(pageDataAccess(null, caps, true, "html", {}).read).toBe(true);
+    expect(pageDataAccess(null, caps, true, "html", { noData: true }).read).toBe(false);
+    expect(pageDataAccess(null, caps, true, "html", { preview: true }).read).toBe(false);
   });
 });

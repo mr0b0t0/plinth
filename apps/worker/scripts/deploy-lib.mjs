@@ -159,9 +159,9 @@ export function runtimeBase(repoCfg) {
         "LIVE_AUTO_CHECKPOINT_MIN_S",
         "LIVE_DRAFT_FLUSH_S",
         "LIVE_DRAFT_RETENTION_DAYS",
-        "SHEET_EVAL_BUDGET",
         "ALLOW_LIVE_VIEWS",
         "LIVE_VIEW_MAX_SOCKETS_PER_ARTIFACT",
+        "SHEET_EVAL_BUDGET",
         "ALLOW_CATEGORY_SHARING",
       ]
         .filter((k) => k in (repoCfg.vars ?? {}))

@@ -4,6 +4,8 @@ import {
   CONTENT_ISOLATION_MODES,
   type ContentIsolation,
   DEFAULTS,
+  INVITATION_BOUNDS,
+  INVITATION_DEFAULTS,
   type InstanceLimits,
   LIMITS,
   LIVE_BOUNDS,
@@ -47,6 +49,8 @@ export interface OptionalVars {
   VIEW_LOG_RETENTION_DAYS?: string;
   REVIEW_LOGIN_EMAIL?: string;
   OPENAI_APPS_CHALLENGE?: string;
+  INVITATION_EMAILS_PER_DAY?: string;
+  INVITATION_EMAILS_PER_OWNER_PER_DAY?: string;
 }
 
 export type Bindings = Omit<Env, "ROOMS"> & Secrets & OptionalBindings & OptionalVars;
@@ -163,11 +167,6 @@ export interface Config {
    */
   reviewLogin: { email: string; passwordHash: string } | null;
   /**
-   * SHEET_EVAL_BUDGET (default 200,000; 10,000 to 20,000,000): formula steps one read_sheet call
-   * may spend. Never affects the browser, which has its own fixed budget.
-   */
-  sheetEvalBudget: number;
-  /**
    * ALLOW_LIVE_VIEWS (default on): open artifact pages get new versions, and pages that keep
    * shared data get its changes, pushed over a watch socket on the app host. Only in effect with a
    * ROOMS binding; see liveViewsActive.
@@ -176,11 +175,18 @@ export interface Config {
   /** Live-view limits (LIVE_VIEW_* env vars). */
   liveViews: LiveViewLimits;
   /**
+   * SHEET_EVAL_BUDGET (default 200,000; 10,000 to 20,000,000): formula steps one read_sheet call
+   * may spend. Never affects the browser, which has its own fixed budget.
+   */
+  sheetEvalBudget: number;
+  /**
    * ALLOW_CATEGORY_SHARING (default on): owners may share a category with people, who then see the
    * artifacts the owner reviewed into it (docs/spec.md "Category sharing and personal categories").
    * Off, category grants count for nothing and the share and portal endpoints are closed.
    */
   allowCategorySharing: boolean;
+  /** Invitation email limits (INVITATION_EMAILS_* env vars; docs/spec.md "Invitation emails"). */
+  invitations: InvitationLimits;
   /** OPERATOR_*: who runs this instance, for its legal pages. null when none is published. */
   operator: {
     name: string;
@@ -218,6 +224,17 @@ export interface RoomLimits {
   maxMessageBytes: number;
   /** ROOM_MESSAGES_PER_SECOND: per connection, with a burst of twice this. */
   messagesPerSecond: number;
+}
+
+export interface InvitationLimits {
+  /**
+   * INVITATION_EMAILS_PER_DAY: invitation emails the whole instance sends per UTC day, every owner
+   * together, so they cannot use up the provider quota sign-in and viewing codes need. 0 turns
+   * invitation emails off.
+   */
+  perDay: number;
+  /** INVITATION_EMAILS_PER_OWNER_PER_DAY: invitation emails one owner's changes send per UTC day. */
+  perOwnerPerDay: number;
 }
 
 export interface LiveViewLimits {
@@ -454,13 +471,6 @@ export function parseConfig(env: Record<string, unknown>): Config {
     allowLiveEditing: boolDefaultOn(env.ALLOW_LIVE_EDITING),
     live: parseLiveEditSettings(env),
     reviewLogin: parseReviewLogin(env),
-    sheetEvalBudget: boundedInt(
-      env,
-      "SHEET_EVAL_BUDGET",
-      DEFAULTS.sheetEvalBudget,
-      SHEET_EVAL_BUDGET_BOUNDS[0],
-      SHEET_EVAL_BUDGET_BOUNDS[1],
-    ),
     allowLiveViews: boolDefaultOn(env.ALLOW_LIVE_VIEWS),
     liveViews: {
       maxSocketsPerArtifact: boundedInt(
@@ -470,7 +480,28 @@ export function parseConfig(env: Record<string, unknown>): Config {
         ...LIVE_VIEW_BOUNDS.maxSocketsPerArtifact,
       ),
     },
+    sheetEvalBudget: boundedInt(
+      env,
+      "SHEET_EVAL_BUDGET",
+      DEFAULTS.sheetEvalBudget,
+      SHEET_EVAL_BUDGET_BOUNDS[0],
+      SHEET_EVAL_BUDGET_BOUNDS[1],
+    ),
     allowCategorySharing: boolDefaultOn(env.ALLOW_CATEGORY_SHARING),
+    invitations: {
+      perDay: boundedInt(
+        env,
+        "INVITATION_EMAILS_PER_DAY",
+        INVITATION_DEFAULTS.perDay,
+        ...INVITATION_BOUNDS.perDay,
+      ),
+      perOwnerPerDay: boundedInt(
+        env,
+        "INVITATION_EMAILS_PER_OWNER_PER_DAY",
+        INVITATION_DEFAULTS.perOwnerPerDay,
+        ...INVITATION_BOUNDS.perOwnerPerDay,
+      ),
+    },
     operator: parseOperator(env),
     openaiAppsChallenge: parseChallenge(env),
   };
@@ -683,6 +714,19 @@ export function liveEditMode(
  */
 export function liveViewsActive(c: Pick<Config, "allowLiveViews">, env: OptionalBindings): boolean {
   return c.allowLiveViews && env.ROOMS !== undefined;
+}
+
+/**
+ * Invitation emails are on: the operator did not set INVITATION_EMAILS_PER_DAY to 0, a real email
+ * provider sends them (EMAIL_PROVIDER=console only writes to the log, so outside development it
+ * counts as off rather than reporting people as emailed), and people other than the admin can sign
+ * in to turn them off for their own address (never in SINGLE_USER_MODE).
+ */
+export function invitationEmailsActive(
+  c: Pick<Config, "invitations" | "emailProvider" | "environment" | "singleUserMode">,
+): boolean {
+  if (c.invitations.perDay <= 0 || c.singleUserMode) return false;
+  return c.emailProvider !== "console" || c.environment === "development";
 }
 
 /** Something on the page that reads the identity claim, and whether it is switched on. */

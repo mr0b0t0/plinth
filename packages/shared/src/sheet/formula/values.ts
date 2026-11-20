@@ -1,4 +1,5 @@
 // Formula values and Excel's coercions between them, and the 1900 date system. Pure.
+import type { Arg, RangeArg } from "./evaluate.ts";
 
 /** Every error a formula value can be: Excel's, plus #CYCLE! and #LIMIT! (Plinth's own). */
 export const SHEET_ERROR_CODES = [
@@ -32,6 +33,11 @@ export function err(code: SheetErrorCode): SheetError {
 
 export function isError(v: unknown): v is SheetError {
   return typeof v === "object" && v !== null && typeof (v as SheetError).error === "string";
+}
+
+/** Whether a function argument is a range (evaluate.ts makes them) rather than a value. */
+export function isRange(a: Arg): a is RangeArg {
+  return typeof a === "object" && a !== null && (a as RangeArg).kind === "range";
 }
 
 /** What each error means, for the renderer's tooltip and the skill. */

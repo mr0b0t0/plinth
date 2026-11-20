@@ -10,6 +10,7 @@ import {
   CI_NO_ARTIFACT_URL,
   CLIENT_TYPES,
   type ClientType,
+  type ConnectionInfo,
   type CreatedToken,
   ciWorkflowSnippet,
   LIMITS,
@@ -20,19 +21,24 @@ import { type FormEvent, useEffect, useRef, useState } from "react";
 import { ApiRequestError, api } from "../../lib/api.ts";
 import { Button, Checkbox, Dialog, Input, Select, Stack } from "../ui/index.ts";
 import { CopyBlock, CopyField } from "./CopyField.tsx";
-import { CLIENT_TYPE_LABEL, SCOPE_META } from "./format.ts";
+import { CLIENT_TYPE_LABEL, mentionReach, SCOPE_META } from "./format.ts";
 import { Note } from "./Note.tsx";
+import { nameHint } from "./nameHint.tsx";
 
 export interface NewTokenDialogProps {
   open: boolean;
   onClose: () => void;
   /** Called once the token exists (to refresh the list). */
   onCreated: (created: CreatedToken) => void;
+  /** The person's connections, so the name hint can say which handle a comment uses. */
+  connections?: readonly ConnectionInfo[];
 }
 
-export function NewTokenDialog({ open, onClose, onCreated }: NewTokenDialogProps) {
+export function NewTokenDialog({ open, onClose, onCreated, connections }: NewTokenDialogProps) {
   // Remount the body each time it opens, so nothing from a previous token survives.
-  return open ? <TokenDialogBody onClose={onClose} onCreated={onCreated} /> : null;
+  return open ? (
+    <TokenDialogBody onClose={onClose} onCreated={onCreated} connections={connections} />
+  ) : null;
 }
 
 /** GET /artifacts answers at most this many, most recent first, and has no next page. */
@@ -134,7 +140,11 @@ function useSettled(value: string, ms: number): string {
   return settled;
 }
 
-function TokenDialogBody({ onClose, onCreated }: Omit<NewTokenDialogProps, "open">) {
+function TokenDialogBody({
+  onClose,
+  onCreated,
+  connections = [],
+}: Omit<NewTokenDialogProps, "open">) {
   const [label, setLabel] = useState("");
   const [clientType, setClientType] = useState<ClientType>("other");
   const [scopes, setScopes] = useState<Scope[]>([...SCOPES]);
@@ -313,7 +323,12 @@ function TokenDialogBody({ onClose, onCreated }: Omit<NewTokenDialogProps, "open
         <Input
           ref={labelRef}
           label="Name"
-          hint="Shown on this page and in the version history of what it publishes."
+          hint={nameHint(
+            "Shown on this page and in the version history of what it publishes.",
+            label.trim() && !limited
+              ? mentionReach(label, connections, { client_type: clientType, scopes: chosen })
+              : null,
+          )}
           value={label}
           maxLength={LIMITS.maxLabelLength}
           error={labelError ?? undefined}
@@ -352,11 +367,6 @@ function TokenDialogBody({ onClose, onCreated }: Omit<NewTokenDialogProps, "open
             value={clientType}
             onChange={(e) => setClientType(e.target.value as ClientType)}
             options={CLIENT_TYPES.map((t) => ({ value: t, label: CLIENT_TYPE_LABEL[t] }))}
-            hint={
-              clientType === "other"
-                ? "Collaborators can reach it by mentioning this token's name in comments."
-                : `Collaborators can reach it with @${clientType} in comments.`
-            }
           />
         )}
         <fieldset

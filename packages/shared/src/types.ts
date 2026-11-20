@@ -14,15 +14,22 @@ import type {
   Role,
   Visibility,
 } from "./constants.ts";
+import type { InvitationReport } from "./invitations.ts";
 import type { LiveMode } from "./liveDoc.ts";
 import type { Anchor } from "./schemas.ts";
 
 export interface Author {
   kind: "user" | "connection";
-  /** Person's name or email, or the connection label. */
+  /** Person's name or email, or the connection label. Display text, never proof of role. */
   label: string;
   user_id: string | null;
   connection_id: string | null;
+  /**
+   * The artifact's owner wrote it (in person or through one of their agents), as the server knows
+   * it, never from the label. The app marks the owner's versions with it, so a name chosen to look
+   * like the owner's visibly lacks the mark. The Worker always sends it; absent reads as false.
+   */
+  is_owner?: boolean;
 }
 
 export interface ArtifactSummary {
@@ -154,6 +161,12 @@ export interface PublishResult {
    * so a new filing is `pending` until the owner reviews it in the app (`review_url`).
    */
   category_share?: CategoryShareResult;
+  /**
+   * A whiteboard publish or update that carried a starting board: how many blocks and arrows were
+   * written to its shared data. Absent otherwise, and when the board was not seeded (the result
+   * then has the warning board_not_seeded).
+   */
+  board?: { blocks: number; arrows: number };
 }
 
 /** Where an artifact stands in its shared category, for its owner's own results. */
@@ -286,7 +299,11 @@ export interface GrantInfo {
   email: string;
   role: Role;
   created_at: string;
-  /** The display name of the account with this email, if it has one (shown to the owner). */
+  /**
+   * The display name of the account with this email, shown to the owner only once its holder has
+   * taken part in the artifact (a comment, a shared-data entry or a version; policy.ts
+   * accessListShowsName). Null until then, and for an address with no account or no name.
+   */
   name: string | null;
 }
 
@@ -300,6 +317,8 @@ export interface SharingSettings {
    * artifact through it, once it is `shared`.
    */
   category_share?: SharingCategoryShare | null;
+  /** PUT only, when it asked to `notify`: who was emailed (docs/spec.md "Invitation emails"). */
+  invitations?: InvitationReport;
 }
 
 /** A category share as an artifact's sharing settings show it. */
@@ -315,7 +334,12 @@ export interface CommentInfo {
   artifact_id: string;
   version_number: number;
   parent_id: string | null;
-  author: { email: string | null; connection_id: string | null; label: string };
+  /**
+   * `label` is display text, never proof of role. `is_owner`: the artifact's owner wrote it (in
+   * person or through one of their agents), as the server knows it; the app marks the owner's
+   * comments with it. The Worker always sends it; absent reads as false.
+   */
+  author: { email: string | null; connection_id: string | null; label: string; is_owner?: boolean };
   body: string;
   anchor: Anchor | null;
   status: CommentStatus;
@@ -475,6 +499,18 @@ export interface AppConfig {
    * absent reads as off.
    */
   category_sharing?: boolean;
+  /**
+   * Every artifact type, and whether this instance publishes it now: a whiteboard needs shared
+   * data on and origin isolation. The Worker always sends it; absent reads as every type available.
+   */
+  artifact_types?: { id: ArtifactType; available: boolean }[];
+  /**
+   * Owners may have Plinth email the people they add (docs/spec.md "Invitation emails"): false when
+   * the operator set INVITATION_EMAILS_PER_DAY=0, with EMAIL_PROVIDER=console outside development,
+   * and in SINGLE_USER_MODE (config.ts invitationEmailsActive). The Worker always sends it; absent
+   * reads as on.
+   */
+  invitation_emails?: boolean;
 }
 
 export interface OperatorInfo {
@@ -509,15 +545,15 @@ export type ViewGate =
        */
       page_comments?: true;
       /**
-       * Who the page shows this viewer as, beyond the email `data` names, and whether it lists
-       * the people it is shared with. Absent when there is nothing to tell.
-       */
-      people?: ViewGatePeople;
-      /**
        * Live views: open the watch socket (GET /api/v1/view/:id/watch) to learn of new versions,
        * and of shared-data changes, as they happen. Absent: poll as before.
        */
       watch?: true;
+      /**
+       * Who the page shows this viewer as, beyond the email `data` names, and whether it lists
+       * the people it is shared with. Absent when there is nothing to tell.
+       */
+      people?: ViewGatePeople;
     }
   | { status: "password_required"; artifact: ViewArtifactStub }
   | { status: "email_required"; artifact: ViewArtifactStub }
@@ -892,6 +928,8 @@ export interface CategoryReviewResult {
 export interface CategoryShareWriteResult {
   share: CategoryShareSummary;
   review: CategoryReviewResult | null;
+  /** When the request asked to `notify`: who was emailed (docs/spec.md "Invitation emails"). */
+  invitations?: InvitationReport;
 }
 
 /** GET /api/v1/portals item: a collection someone shared with the caller. */
@@ -1002,8 +1040,6 @@ export interface SheetRead {
   /** The range to read next when truncated, else null. */
   next_range: string | null;
   warnings: { code: "eval_budget"; message: string }[];
-  /** Owners and editors: unsaved page edits, as on get_artifact. Absent for other roles. */
-  live_draft?: LiveDraftMeta | null;
   untrusted: true;
 }
 

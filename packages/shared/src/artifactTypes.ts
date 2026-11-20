@@ -14,6 +14,7 @@ import { doc } from "./artifactTypes/doc.ts";
 import { html } from "./artifactTypes/html.ts";
 import { sheet } from "./artifactTypes/sheet.ts";
 import { slides } from "./artifactTypes/slides.ts";
+import { whiteboard } from "./artifactTypes/whiteboard.ts";
 import { escapeHtml } from "./markdown.ts";
 
 /** Every type, in registry order. */
@@ -25,11 +26,12 @@ export const ARTIFACT_TYPES = [
   "design_system",
   "design",
   "sheet",
+  "whiteboard",
 ] as const;
 export type ArtifactType = (typeof ARTIFACT_TYPES)[number];
 
 /** The languages the source editor holds. The web app has a Monaco setup for each one. */
-export type EditorLanguage = "html" | "markdown" | "json" | "plaintext";
+export type EditorLanguage = "html" | "markdown" | "json";
 
 export interface ArtifactTypeDef {
   id: ArtifactType;
@@ -58,7 +60,7 @@ export interface ArtifactTypeDef {
    */
   renderer: RendererFiles | null;
   /**
-   * The source editor's settings, or null for a type people never see the source of (a design):
+   * The source editor's settings, or null for a type people never see the source of (a sheet or a design):
    * the app then offers no Edit and no source diff, and agents change it.
    */
   editor: { language: EditorLanguage; wordWrap: "on" | "off" } | null;
@@ -73,17 +75,52 @@ export interface ArtifactTypeDef {
    */
   present?: boolean;
   /**
-   * Files the viewer can download, each built inside the frame by the renderer from what it shows
-   * (a deck's .pptx). Absent means none. Print and PDF are not listed: every renderer prints.
-   */
-  fileExports?: readonly FileExport[];
-  /**
    * The type's page shows author HTML only in nested frames with an opaque origin in every
    * isolation mode (a design's artboards). Its files are then served with
    * Cross-Origin-Resource-Policy: cross-origin, the publish scan reads its references as opaque
    * isolation would, and the content host serves its renderer.frame. Absent means false.
    */
   opaqueFrames?: boolean;
+  /**
+   * Files the viewer can download, each built inside the frame by the renderer from what it shows
+   * (a deck's .pptx). Absent means none. Print and PDF are not listed: every renderer prints.
+   */
+  fileExports?: readonly FileExport[];
+  /**
+   * Where versions.capabilities comes from for a type with a renderer: "fixed", derived by the
+   * server from the version's source (a whiteboard's settings), never declared by a page. Absent
+   * for every other type: an HTML page declares its own (pageDataOf), a doc or a deck has none.
+   * Policy fails closed on fixed capabilities (policy.ts pageWriteFloor).
+   */
+  pageData?: "fixed";
+  /** False: the type takes no files besides its source. Absent means it takes assets. */
+  assets?: false;
+  /** False: no bundle upload (start_upload); the source goes inline. Absent means allowed. */
+  upload?: false;
+  /**
+   * "settings": a version holds only the artifact's settings, not what people see on it (a
+   * whiteboard, whose board is shared data), so the history offers "Restore settings" and says a
+   * restore leaves the rest as it is. Absent: a version holds the whole artifact.
+   */
+  versions?: "settings";
+}
+
+/**
+ * Where a type's versions.capabilities comes from: "declared" by the page itself (an HTML page,
+ * served as-is), "fixed" by the server (pageData), or "none".
+ */
+export function pageDataOf(def: ArtifactTypeDef): "declared" | "fixed" | "none" {
+  if (def.renderer === null) return "declared";
+  return def.pageData === "fixed" ? "fixed" : "none";
+}
+
+/**
+ * Whether the type's page uses the page runtime's shared data and `page` room with its version's
+ * capabilities: a page that declares them, or a type whose capabilities are fixed. False for an
+ * unknown type.
+ */
+export function hasPageCapabilities(def: ArtifactTypeDef | null): boolean {
+  return def !== null && pageDataOf(def) !== "none";
 }
 
 /** A file a renderer builds in the frame for the viewer to download. */
@@ -93,6 +130,8 @@ export type FileExport = "pptx";
 export interface RendererFiles {
   script: string;
   style: string;
+  /** A fixed Plinth page the renderer frames (see ArtifactTypeDef.renderer). */
+  frame?: string;
   /**
    * Scripts the renderer adds to its own page only when someone uses a feature that needs them
    * (a deck's .pptx writer), so the first view never downloads them. Each is built from `entry`
@@ -100,8 +139,11 @@ export interface RendererFiles {
    * served at /__plinth/types/<id>/<file> under the same guard as the script.
    */
   lazy?: readonly { file: string; entry: string }[];
-  /** A fixed Plinth page the renderer frames; see ArtifactTypeDef.renderer. */
-  frame?: string;
+  /**
+   * The shell loads the page runtime (/__plinth/runtime.js) right before the renderer: a type whose
+   * page uses shared data and the live room (pageData "fixed").
+   */
+  runtime?: true;
 }
 
 /** A type module's row: an ArtifactTypeDef whose id is that module's own type. */
@@ -115,6 +157,7 @@ export const TYPE_REGISTRY: { readonly [K in ArtifactType]: TypeModule<K> } = {
   design_system: designSystem,
   design,
   sheet,
+  whiteboard,
 };
 
 /**
@@ -177,6 +220,12 @@ export interface TypedPayload {
    * renderer shows every slide stacked. Absent otherwise, so every other shell is unchanged.
    */
   view?: "overview";
+  /**
+   * The version number this shell shows, set only for a type with opaque frames (a design): its
+   * boards load their files from /__plinth/v/<version>/, never from the current version, which a
+   * later publish replaces. Absent otherwise, so every other shell is unchanged.
+   */
+  version?: number;
 }
 
 const SCRIPT_UNSAFE: Record<string, string> = {
@@ -220,6 +269,7 @@ export function typedShellHtml(
     appOrigin: string;
     live?: "room";
     view?: "overview";
+    version?: number;
   },
 ): string {
   if (!def.renderer) throw new Error(`Type ${def.id} has no renderer`);
@@ -232,7 +282,12 @@ export function typedShellHtml(
     text: o.text,
     ...(o.live ? { live: o.live } : {}),
     ...(o.view ? { view: o.view } : {}),
+    ...(o.version !== undefined ? { version: o.version } : {}),
   };
+  // The page runtime, right before the renderer, for a type whose page uses it (renderer.runtime).
+  const runtime = def.renderer.runtime
+    ? `<script src="${escapeHtml(`${o.base}/__plinth/runtime.js`)}"></script>\n`
+    : "";
   return (
     '<!doctype html><html lang="en"><head>' +
     `<meta http-equiv="Content-Security-Policy" content="${TYPED_SHELL_SCRIPT_SRC}">` +
@@ -244,6 +299,7 @@ export function typedShellHtml(
     "</head><body>\n" +
     `<main id="__plinth-${def.id}" class="plinth-${def.id}" tabindex="-1"></main>\n` +
     `<script type="application/json" id="__plinth-content">${jsonForScript(payload)}</script>\n` +
+    runtime +
     `<script src="${escapeHtml(`${dir}/${def.renderer.script}`)}"></script>\n` +
     "</body></html>"
   );

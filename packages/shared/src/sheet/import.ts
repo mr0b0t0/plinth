@@ -1,10 +1,15 @@
 // Turning a CSV or .xlsx file into a sheet. The first row names the columns; each column's type is
 // inferred from its values (all numbers: number, all dates: date, all TRUE or FALSE: checkbox, all
 // links: url, else text). CSV holds values only: text starting with = stays text (a CSV import
-// never makes a formula), and the ' a CSV export put before =, +, - or @ is dropped. From an
-// .xlsx, a formula is kept when it parses as a sheet formula (the function allowlist, one sheet),
-// otherwise its cached value is used; number formats become the column's format where they map.
-// The result is checked by parseSheet like any published sheet.
+// never makes a formula), and the ' a CSV export put before =, +, - or @ is dropped. A CSV field
+// is a number only when no digit is lost or invented: no leading zero or + (00123 and +351...
+// stay text) and at most 15 significant digits (a 20-digit id stays text). The decimal mark is a
+// point, or a comma in a file separated by semicolons (1,50); thousands separators are read only
+// where they cannot be the decimal mark (1,234.50, 1.234,50, 1,234,567), so 1,500 in a comma
+// file and 1.500 in a semicolon file stay text. From an .xlsx, a formula is kept when it parses
+// as a sheet formula (the function allowlist, one sheet), otherwise its cached value is used;
+// number formats become the column's format where they map. The result is checked by parseSheet
+// like any published sheet.
 import { LIMITS } from "../constants.ts";
 import { utf8Length } from "../utf8.ts";
 import { colLetter } from "./address.ts";
@@ -12,6 +17,7 @@ import { readCsv } from "./csv.ts";
 import {
   type Cell,
   isSheetLinkUrl,
+  MAX_FREEZE_COLS,
   parseSheet,
   type Sheet,
   type SheetColumn,
@@ -19,14 +25,7 @@ import {
   type SheetNumberFormat,
   serializeSheet,
 } from "./format.ts";
-import {
-  isoDateSerial,
-  MAX_CONVERTED_TEXT,
-  MIN_DATE_SERIAL,
-  NUMERIC_TEXT,
-  numberFromText,
-  serialIso,
-} from "./formula/values.ts";
+import { isoDateSerial, MAX_CONVERTED_TEXT, MIN_DATE_SERIAL, serialIso } from "./formula/values.ts";
 import { platform } from "./platform.ts";
 import {
   COLUMN_NAME_SOURCE_CHARS,
@@ -46,9 +45,10 @@ export type SheetContentFormat = (typeof SHEET_CONTENT_FORMATS)[number];
 type In =
   | null
   | { t: "s"; v: string }
-  | { t: "n"; v: number; fmt?: SheetNumberFormat | "date" }
-  | { t: "b"; v: boolean }
+  | { t: "n"; v: number; fmt?: SheetNumberFormat | "date"; raw?: string }
+  | { t: "b"; v: boolean; raw?: string }
   | { t: "f"; f: string; cached: In };
+// raw: a CSV field as written, which a text column keeps (1.50 stays 1.50 beside 00123).
 
 const CONTROL_OR_FORMAT = /[\p{Cc}\p{Cf}]/gu;
 
@@ -104,8 +104,9 @@ function cellFor(v: In, type: SheetColumnType): Cell {
     case "f":
       return `=${v.f}`;
     case "b":
-      return v.v;
+      return type === "text" && v.raw !== undefined ? literal(v.raw) : v.v;
     case "n":
+      if (type === "text" && v.raw !== undefined) return literal(v.raw);
       if (type === "date") return serialIso(v.v);
       if (v.fmt === "date" && type === "text") return serialIso(v.v) ?? v.v;
       return v.v;
@@ -141,7 +142,7 @@ function build(names: string[], data: In[][], widths?: Map<number, number>, free
   }
   const rows = data.map((r) => columns.map((col, c) => cellFor(r[c] ?? null, col.type)));
   const sheet: Sheet = { header: { columns }, rows };
-  const fc = Math.min(5, freezeCols, width);
+  const fc = Math.min(MAX_FREEZE_COLS, freezeCols, width);
   if (fc > 0) sheet.header.freeze = { cols: fc };
   for (const row of rows) {
     for (let c = 0; c < row.length; c++) {
@@ -167,19 +168,60 @@ function build(names: string[], data: In[][], widths?: Map<number, number>, free
 
 const GUARDED = /^'[=+\-@]/;
 
-function csvValue(s: string): In {
+/** A CSV file's decimal mark: a comma when its fields are separated by semicolons. */
+type DecimalMark = "." | ",";
+
+/** The most significant digits a CSV number keeps exactly (a double holds 15 safely). */
+const MAX_CSV_DIGITS = 15;
+
+// Each pattern has one way to read each character, so it runs in time linear in the text. No
+// leading zero but "0" itself (0.5 is a number, 00123 is not) and no "+".
+const PLAIN: Record<DecimalMark, RegExp> = {
+  ".": /^-?(?:(?:0|[1-9]\d*)(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/,
+  ",": /^-?(?:(?:0|[1-9]\d*)(?:,\d*)?|,\d+)(?:[eE][+-]?\d+)?$/,
+};
+// Thousands separators only where they cannot be the decimal mark: followed by a fraction, or in
+// two groups or more.
+const GROUPED: Record<DecimalMark, RegExp> = {
+  ".": /^-?[1-9]\d{0,2}(?:(?:,\d{3})+\.\d+|(?:,\d{3}){2,})$/,
+  ",": /^-?[1-9]\d{0,2}(?:(?:\.\d{3})+,\d+|(?:\.\d{3}){2,})$/,
+};
+
+/** Digits from the first non-zero one to the last of the integer part or the last non-zero one. */
+function significantDigits(plain: string): number {
+  const mantissa = plain.replace(/^-/, "").split(/[eE]/)[0] ?? "";
+  const [whole = "", fraction = ""] = mantissa.split(".");
+  return `${whole}${fraction.replace(/0+$/, "")}`.replace(/^0+/, "").length;
+}
+
+/** The number a CSV field spells with `mark` as its decimal mark, exactly, or null. */
+function csvNumber(t: string, mark: DecimalMark): number | null {
+  const group = mark === "." ? "," : ".";
+  let plain: string;
+  if (PLAIN[mark].test(t)) plain = t;
+  else if (GROUPED[mark].test(t)) plain = t.split(group).join("");
+  else return null;
+  if (mark === ",") plain = plain.replace(",", ".");
+  if (significantDigits(plain) > MAX_CSV_DIGITS) return null;
+  const n = Number(plain);
+  return Number.isFinite(n) ? n : null;
+}
+
+function csvValue(s: string, mark: DecimalMark): In {
   if (s === "") return null;
   // No number, date or boolean is this long, so a long field is text without a pattern run on it
   // (build() refuses it later if it passes the cell limit).
   if (s.length > MAX_CONVERTED_TEXT) return { t: "s", v: GUARDED.test(s) ? s.slice(1) : s };
   const t = s.trim();
-  if (/^(true|false)$/i.test(t)) return { t: "b", v: t.toLowerCase() === "true" };
+  if (/^(true|false)$/i.test(t)) return { t: "b", v: t.toLowerCase() === "true", raw: s };
   const date = isoDateSerial(t);
-  if (date !== null) return { t: "n", v: date, fmt: "date" };
-  if (NUMERIC_TEXT.test(t.endsWith("%") ? t.slice(0, -1) : t)) {
-    const n = numberFromText(t);
-    if (n !== null)
-      return t.endsWith("%") ? { t: "n", v: n, fmt: { style: "percent" } } : { t: "n", v: n };
+  if (date !== null) return { t: "n", v: date, fmt: "date", raw: s };
+  if (t.endsWith("%")) {
+    const n = csvNumber(t.slice(0, -1).trimEnd(), mark);
+    if (n !== null) return { t: "n", v: n / 100, fmt: { style: "percent" }, raw: s };
+  } else {
+    const n = csvNumber(t, mark);
+    if (n !== null) return { t: "n", v: n, raw: s };
   }
   return { t: "s", v: GUARDED.test(s) ? s.slice(1) : s };
 }
@@ -193,7 +235,8 @@ export function sheetFromCsv(text: string): Sheet {
   }
   // Rows past the limit are counted, never built, and the cells are counted before any value is
   // made from them: a long or wide file is a refusal, not a Worker out of memory.
-  const { rows: table, rowCount } = readCsv(text, LIMITS.maxSheetRows);
+  const { rows: table, rowCount, delimiter } = readCsv(text, LIMITS.maxSheetRows);
+  const mark: DecimalMark = delimiter === ";" ? "," : ".";
   if (table.length === 0) throw new SheetImportError("The CSV is empty");
   if (rowCount > LIMITS.maxSheetRows) {
     throw new SheetImportError(
@@ -206,7 +249,7 @@ export function sheetFromCsv(text: string): Sheet {
   for (const r of records) for (const s of r) if (s !== "") bytes += 2;
   checkSheetBytes(bytes);
   const data = records.map((r) => {
-    const out = r.map(csvValue);
+    const out = r.map((s) => csvValue(s, mark));
     while (out.length > 0 && out[out.length - 1] === null) out.pop();
     return out;
   });

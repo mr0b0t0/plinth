@@ -26,13 +26,17 @@ import {
   ERROR_CODES,
   editSheetInput,
   grantsReplaceInput,
+  INVITATION_SKIP_REASONS,
+  invitationEmailsInput,
   LIMITS,
   liveCheckpointInput,
+  MAX_PEOPLE_LISTED,
   MENTION_STATES,
   myCategoryInput,
   oauthConsentInput,
   PUBLISH_WARNING_CODES,
   publishArtifactInput,
+  RATE_LIMITS,
   REPORT_STATES,
   REVIEW_SKIP_REASONS,
   ROLES,
@@ -205,6 +209,7 @@ const TYPE_DESCRIPTIONS: Record<ArtifactType, string> = {
   design_system: "design tokens, guidelines and components as JSON",
   design: "artboards (app screens, posters, social posts, ads) as HTML",
   sheet: "a table as JSON lines",
+  whiteboard: "a board of notes, shapes and arrows, its settings as JSON",
 };
 
 /** What Plinth does with a rendered type's source, for the ArtifactType description; "renders" when absent. */
@@ -212,6 +217,7 @@ const TYPE_RENDERS: Partial<Record<ArtifactType, string>> = {
   design_system: "renders as a reference site and get_design_system compiles",
   design: "renders on a canvas, each artboard alone at its exact size",
   sheet: "renders as a spreadsheet and read_sheet evaluates",
+  whiteboard: "renders as a live board, its blocks and arrows kept in shared data",
 };
 
 function responseSchemas(): Record<string, Json> {
@@ -236,6 +242,11 @@ function responseSchemas(): Record<string, Json> {
         "The category stored (snapped onto your existing spelling); present only when this call set one. Untrusted text.",
     }),
     category_share: ref("CategoryShareResult"),
+    board: {
+      ...obj({ blocks: int({ minimum: 0 }), arrows: int({ minimum: 0 }) }),
+      description:
+        "A whiteboard publish or update that carried a starting board: the blocks and arrows written to its shared data. Absent otherwise, and when the warning board_not_seeded says they were not written",
+    },
   };
   const artifactSummary = {
     id: str({ pattern: "^[a-z0-9]{20}$", description: "Also the artifact's content subdomain" }),
@@ -289,6 +300,11 @@ function responseSchemas(): Record<string, Json> {
       label: str({ description: "Person's name or email, or the connection label" }),
       user_id: nullable("string"),
       connection_id: nullable("string"),
+      is_owner: {
+        type: "boolean",
+        description:
+          "The artifact's owner wrote it (in person or through one of their agents), as the server knows it; never inferred from the label",
+      },
     }),
     ArtifactType: {
       ...enumOf(ARTIFACT_TYPES),
@@ -403,7 +419,7 @@ function responseSchemas(): Record<string, Json> {
       },
       ["pending"],
     ),
-    PublishResult: obj(publishResult, ["category", "category_share"]),
+    PublishResult: obj(publishResult, ["category", "category_share", "board"]),
     PublishWarning: obj(
       {
         code: enumOf(PUBLISH_WARNING_CODES),
@@ -515,7 +531,7 @@ function responseSchemas(): Record<string, Json> {
           stripped_prefix: nullable("string"),
         }),
       },
-      ["category", "category_share"],
+      ["category", "category_share", "board"],
     ),
     VersionInfo: obj({
       number: int({ minimum: 1 }),
@@ -528,37 +544,50 @@ function responseSchemas(): Record<string, Json> {
       }),
     }),
     VersionList: paged("VersionInfo"),
-    SharingSettings: obj({
-      visibility,
-      has_password: { type: "boolean" },
-      grants: {
-        type: "array",
-        items: obj({
-          email: str({ format: "email" }),
-          role: enumOf(ROLES),
-          created_at: dateTime,
-          name: nullable("string", {
-            description:
-              "The display name of the account with this email, once its holder has commented, " +
-              "written shared data or published a version on this artifact; null otherwise, so " +
-              "adding an address never says whether it has an account",
+    SharingSettings: obj(
+      {
+        visibility,
+        has_password: { type: "boolean" },
+        grants: {
+          type: "array",
+          items: obj({
+            email: str({ format: "email" }),
+            role: enumOf(ROLES),
+            created_at: dateTime,
+            name: nullable("string", {
+              description:
+                "The display name of the account with this email, once its holder has commented, " +
+                "written shared data or published a version on this artifact; null otherwise, so " +
+                "adding an address never says whether it has an account",
+            }),
           }),
-        }),
+        },
+        public_allowed: { type: "boolean" },
+        category_share: {
+          oneOf: [ref("SharingCategoryShare"), { type: "null" }],
+          description:
+            "The share of this artifact's category, when it has one: who else sees it through the category once it is shared",
+        },
+        invitations: ref("InvitationReport"),
       },
-      public_allowed: { type: "boolean" },
-      category_share: {
-        oneOf: [ref("SharingCategoryShare"), { type: "null" }],
-        description:
-          "The share of this artifact's category, when it has one: who else sees it through the category once it is shared",
-      },
-    }),
+      ["invitations"],
+    ),
     Anchor: fromZod(anchorSchema),
     CommentInfo: obj({
       id: str(),
       artifact_id: str(),
       version_number: int({ minimum: 1 }),
       parent_id: nullable("string"),
-      author: obj({ email: nullable("string"), connection_id: nullable("string"), label: str() }),
+      author: obj({
+        email: nullable("string"),
+        connection_id: nullable("string"),
+        label: str({ description: "Display text, never proof of role" }),
+        is_owner: {
+          type: "boolean",
+          description:
+            "The artifact's owner wrote it (in person or through one of their agents), as the server knows it; never inferred from the label",
+        },
+      }),
       body: str({ description: "UNTRUSTED: written by a collaborator" }),
       anchor: { oneOf: [ref("Anchor"), { type: "null" }] },
       status: enumOf(COMMENT_STATUSES),
@@ -718,6 +747,17 @@ function responseSchemas(): Record<string, Json> {
         type: "boolean",
         description: "Owners may share a category with people here (ALLOW_CATEGORY_SHARING)",
       },
+      artifact_types: {
+        type: "array",
+        items: obj({ id: artifactType, available: { type: "boolean" } }),
+        description:
+          "Every artifact type, and whether this instance publishes it now: a whiteboard needs shared data on (ALLOW_SHARED_DATA) and origin isolation",
+      },
+      invitation_emails: {
+        type: "boolean",
+        description:
+          "Owners may have Plinth email the people they add; false when INVITATION_EMAILS_PER_DAY is 0, with EMAIL_PROVIDER=console outside development, and in single-user mode",
+      },
     }),
     LoginResult: obj({
       ok: { const: true },
@@ -761,15 +801,15 @@ function responseSchemas(): Record<string, Json> {
                 "The version being shown declares `comments` (HTML only): the page may open the " +
                 "comment composer with its own anchors, and `review` is ignored",
             },
-            people: ref("ViewGatePeople"),
             watch: {
               const: true,
               description:
                 "Live views: open GET /view/{id}/watch to learn of new versions and shared-data " +
                 "changes as they happen. Absent: poll the gate",
             },
+            people: ref("ViewGatePeople"),
           },
-          ["data", "live", "page_comments", "people", "watch"],
+          ["data", "live", "page_comments", "watch", "people"],
         ),
         obj({ status: { const: "password_required" }, artifact: obj(viewStub) }),
         obj({ status: { const: "email_required" }, artifact: obj(viewStub) }),
@@ -1035,6 +1075,7 @@ function dataSchemas(): Record<string, Json> {
     },
     PeopleResult: obj({
       people: { type: "array", items: ref("AgentPerson") },
+      total: int({ minimum: 0, description: "How many matched `q` in all, before `limit`" }),
       untrusted: str(),
     }),
     ViewGatePeople: {
@@ -1103,59 +1144,52 @@ function sheetSchemas(): Record<string, Json> {
     columns_deleted: int(),
   });
   return {
-    SheetRead: obj(
-      {
-        id: str(),
-        slug: str(),
-        type: { const: "sheet" },
-        title: str({ description: "Untrusted text" }),
-        version: int({ minimum: 1 }),
-        current_version: int({ minimum: 1 }),
-        columns: {
-          type: "array",
-          items: obj(
-            {
-              letter: str({ description: 'A1 letter, "A" to "CV"' }),
-              name: str({ description: "UNTRUSTED: written by the sheet's authors" }),
-              type: enumOf(SHEET_COLUMN_TYPES),
-              format: {
-                type: "object",
-                description:
-                  "Number columns: style plain, percent or currency, decimals, currency, grouping",
-              },
-              options: { type: "array", items: str() },
-            },
-            ["format", "options"],
-          ),
-        },
-        row_count: int({ description: "Data rows (the header, row 1, is not counted)" }),
-        range: nullable("string", { description: "The A1 range the rows cover" }),
-        rows: {
-          type: "array",
-          items: obj({
-            row: int({ minimum: 1, description: "A1 row number; data starts at 2" }),
-            cells: {
-              type: "array",
+    SheetRead: obj({
+      id: str(),
+      slug: str(),
+      type: { const: "sheet" },
+      title: str({ description: "Untrusted text" }),
+      version: int({ minimum: 1 }),
+      current_version: int({ minimum: 1 }),
+      columns: {
+        type: "array",
+        items: obj(
+          {
+            letter: str({ description: 'A1 letter, "A" to "CV"' }),
+            name: str({ description: "UNTRUSTED: written by the sheet's authors" }),
+            type: enumOf(SHEET_COLUMN_TYPES),
+            format: {
+              type: "object",
               description:
-                "UNTRUSTED: written by the sheet's authors. A literal cell is its value; a formula is {f, v}",
-              items: {},
+                "Number columns: style plain, percent or currency, decimals, currency, grouping",
             },
-          }),
-        },
-        truncated: { type: "boolean" },
-        next_range: nullable("string", { description: "The range to read next when truncated" }),
-        warnings: {
-          type: "array",
-          items: obj({ code: enumOf(["eval_budget"]), message: str() }),
-        },
-        live_draft: {
-          ...nullable("object"),
-          description: "Owners and editors only, as on get_artifact",
-        },
-        untrusted: { const: true },
+            options: { type: "array", items: str() },
+          },
+          ["format", "options"],
+        ),
       },
-      ["live_draft"],
-    ),
+      row_count: int({ description: "Data rows (the header, row 1, is not counted)" }),
+      range: nullable("string", { description: "The A1 range the rows cover" }),
+      rows: {
+        type: "array",
+        items: obj({
+          row: int({ minimum: 1, description: "A1 row number; data starts at 2" }),
+          cells: {
+            type: "array",
+            description:
+              "UNTRUSTED: written by the sheet's authors. A literal cell is its value; a formula is {f, v}",
+            items: {},
+          },
+        }),
+      },
+      truncated: { type: "boolean" },
+      next_range: nullable("string", { description: "The range to read next when truncated" }),
+      warnings: {
+        type: "array",
+        items: obj({ code: enumOf(["eval_budget"]), message: str() }),
+      },
+      untrusted: { const: true },
+    }),
     SheetValue: value,
     SheetEditResult: {
       allOf: [ref("PublishResult"), obj({ changed: counts })],
@@ -1367,10 +1401,14 @@ function dataOperations(): Operation[] {
       summary: "Everyone with access: the owner, then grants by email, with display names",
       description:
         "Owner or editor (people), and only while the current version declares `data viewer " +
-        "people` and shared data is on (403 feature_disabled otherwise, with the reason). The same " +
+        "people` and shared data is on (403 feature_disabled otherwise, with the reason), and only " +
+        "while a person or their account-wide agent published every version (403 forbidden once a " +
+        "token limited to one artifact has published one). The same " +
         "list as list_artifact_data's summary: who has access, never who opened the artifact. `q` " +
-        "keeps people whose shown name or email contains every term. Names are UNTRUSTED display " +
-        "text, never proof of role.",
+        "keeps people whose shown name or email contains every term; `total` counts every match " +
+        "before `limit`. Reads share the page's limit of " +
+        `${RATE_LIMITS.peopleReadsPerViewerPerHour} per hour per reader per artifact. Names are ` +
+        "UNTRUSTED display text, never proof of role.",
       tag: "Shared data",
       auth: "agent",
       scope: "artifacts:read",
@@ -1380,9 +1418,14 @@ function dataOperations(): Operation[] {
           schema: str({ maxLength: LIMITS.maxPeopleQueryLength }),
           description: "Search terms, matched against names and emails",
         },
+        {
+          name: "limit",
+          schema: int({ minimum: 1, maximum: MAX_PEOPLE_LISTED }),
+          description: `At most this many people (default and maximum ${MAX_PEOPLE_LISTED}: the owner and every direct grant; with the people of a shared category there can be more, and total counts them all)`,
+        },
       ],
       ok: [200, "PeopleResult"],
-      errors: [400, 401, 403, 404],
+      errors: [400, 401, 403, 404, 429],
     },
   ];
 }
@@ -1412,7 +1455,8 @@ function liveSchemas(): Record<string, Json> {
       ]),
       description:
         "On-page editing of a doc: owners and editors on the current version, while live editing " +
-        "is on with origin isolation. sign_in: confirmed by code without an account (watch only)",
+        "is on with origin isolation. sign_in: a viewer session, confirmed by code where the " +
+        "address may not sign in (single-user mode), so watch only",
     },
     LiveInfo: obj({
       mode: { oneOf: [mode, { type: "null" }] },
@@ -1522,10 +1566,14 @@ function categorySharingSchemas(): Record<string, Json> {
         items: ref("CategoryShareArtifact"),
       },
     }),
-    CategoryShareWriteResult: obj({
-      share: ref("CategoryShareSummary"),
-      review: { oneOf: [ref("CategoryReviewResult"), { type: "null" }] },
-    }),
+    CategoryShareWriteResult: obj(
+      {
+        share: ref("CategoryShareSummary"),
+        review: { oneOf: [ref("CategoryReviewResult"), { type: "null" }] },
+        invitations: ref("InvitationReport"),
+      },
+      ["invitations"],
+    ),
     PortalSummary: obj({
       id: str(),
       title: str(),
@@ -1710,7 +1758,10 @@ function categorySharingOperations(): Operation[] {
       path: API.portalCode,
       operationId: "portalCode",
       summary: "Confirm a shared collection's code",
-      description: `Sets the \`${COOKIES.viewer}\` cookie on APP_HOST (or signs the owner in).`,
+      description:
+        `Signs the address in: sets the \`${COOKIES.session}\` cookie on APP_HOST, creating the ` +
+        "account on first use and ending the app session the browser held before. Where the " +
+        `address may not sign in (single-user mode) it sets the \`${COOKIES.viewer}\` cookie instead.`,
       tag: "Viewing",
       auth: "optional",
       body: "ViewerCodeInput",
@@ -2293,13 +2344,15 @@ function operations(): Operation[] {
       summary: "Change who can view (owner only)",
       description:
         "`emails` replaces the viewer allowlist; collaborator roles are kept. `password` is " +
-        "required for password visibility unless one is already set.",
+        "required for password visibility unless one is already set. With `notify: true`, " +
+        "each address `emails` newly adds is emailed a link (`invitations` says who); agents " +
+        "set it only when the user asked.",
       tag: "Artifacts",
       auth: "agent",
       scope: "artifacts:write",
       mcpTool: "set_visibility",
       body: "SetVisibilityInput",
-      ok: [200, "ArtifactSummary"],
+      ok: [200, "VisibilityResult"],
       errors: [400, 401, 403, 404],
     },
     {
@@ -2318,6 +2371,10 @@ function operations(): Operation[] {
       path: API.sharing,
       operationId: "replaceGrants",
       summary: "Replace the allowlist and collaborator roles (owner only)",
+      description:
+        "With `notify: true`, each person who held no grant before is emailed a link and their " +
+        "role on the owner's behalf (`invitations` says who); the app's Notify people box sends " +
+        "it, agents set it only when the user asked. Default false.",
       tag: "Sharing",
       auth: "agent",
       scope: "artifacts:write",
@@ -2378,7 +2435,10 @@ function operations(): Operation[] {
       path: API.viewCode,
       operationId: "viewCode",
       summary: "Confirm an allowlisted email with its code",
-      description: `Sets the \`${COOKIES.viewer}\` cookie on APP_HOST.`,
+      description:
+        `Signs the address in: sets the \`${COOKIES.session}\` cookie on APP_HOST, creating the ` +
+        "account on first use and ending the app session the browser held before. Where the " +
+        `address may not sign in (single-user mode) it sets the \`${COOKIES.viewer}\` cookie instead.`,
       tag: "Viewing",
       auth: "optional",
       body: "ViewerCodeInput",
@@ -2615,14 +2675,16 @@ function liveViewOperations(): Operation[] {
         `same-origin fetch metadata when sent, and the \`${VIEW_WATCH_PROTOCOL}\` subprotocol; ` +
         "access is the gate's view decision with the browser's cookies. The socket is " +
         "receive-only: the client sends the text `ping` (answered `pong`) and nothing else. " +
-        'Server frames are JSON text: `{t:"welcome",v:1,version,data}`, ' +
+        'Server frames are JSON text: `{t:"welcome",v:1,version}`, ' +
         '`{t:"version",version,spread_ms}` (re-read the gate after a random wait up to ' +
-        '`spread_ms`), `{t:"data",spread_ms}` (the page re-reads its shared data) and ' +
-        '`{t:"access",spread_ms}` (sent just before a 4401 `access_changed` close). Close ' +
-        "codes: 4400 invalid, 4401 `access_changed` (after a random wait up to the `access` " +
-        "frame's `spread_ms`, re-read the gate, then reconnect) or `expired` (the socket's " +
-        "lifetime, or the credential it was opened with, ended: reconnect), 4404 gone, 4409 " +
-        "full (poll instead).",
+        '`spread_ms`), `{t:"data",spread_ms}` (the page re-reads its shared data; at most one ' +
+        'per `spread_ms`, and always one after the last change) and `{t:"access",spread_ms}` ' +
+        "(sent just before a 4401 `access_changed` close). Close codes: 4400 invalid, 4401 " +
+        "`access_changed` (after a random wait up to the `access` frame's `spread_ms`, re-read " +
+        "the gate, then reconnect) or `expired` (the socket's lifetime, or the credential it was " +
+        "opened with, ended: reconnect after a random wait up to 10 s), 4404 gone, 4409 full " +
+        "(poll instead). After any other close the first reconnect also waits a random time up " +
+        "to 10 s.",
       tag: "Viewing",
       auth: "browser",
       ok: [101, null],
@@ -2736,8 +2798,9 @@ export function openApiDocument(config: Pick<Config, "appOrigin">): Json {
     ...operations(),
     ...dataOperations(),
     ...liveOperations(),
-    ...liveViewOperations(),
     ...categorySharingOperations(),
+    ...liveViewOperations(),
+    ...invitationOperations(),
   ]) {
     const key = toOpenApiPath(op.path);
     paths[key] ??= {};
@@ -2801,6 +2864,7 @@ export function openApiDocument(config: Pick<Config, "appOrigin">): Json {
         ...categorySharingSchemas(),
         ...designSystemSchemas(),
         ...sheetSchemas(),
+        ...invitationSchemas(),
       }),
       responses: errorResponses,
       securitySchemes: {
@@ -2832,4 +2896,77 @@ export function openApiDocument(config: Pick<Config, "appOrigin">): Json {
       },
     },
   };
+}
+
+// ---------- Invitation emails (docs/spec.md "Invitation emails") ----------
+
+function invitationSchemas(): Record<string, Json> {
+  return {
+    InvitationReport: {
+      ...obj({
+        emailed: {
+          type: "array",
+          items: str({ format: "email" }),
+          description: "Handed to the email provider",
+        },
+        skipped: {
+          type: "array",
+          items: obj({ email: str({ format: "email" }), reason: enumOf(INVITATION_SKIP_REASONS) }),
+          description:
+            "People the change added who were not emailed, and why. `opted_out` means someone " +
+            "signed in as that inbox turned these emails off, so it says the address has signed " +
+            "in here; it costs a place in the change and one of the owner's daily invitations, " +
+            "and is given only while those limits have room",
+        },
+      }),
+      description:
+        "Present only when the request asked to `notify`. People who already had access are in " +
+        "neither list: only a new grant is announced",
+    },
+    VisibilityResult: {
+      allOf: [
+        ref("ArtifactSummary"),
+        obj({ invitations: ref("InvitationReport") }, ["invitations"]),
+      ],
+    },
+    InvitationEmailsInput: fromZod(invitationEmailsInput),
+    InvitationEmailSettings: obj({
+      email: str({ format: "email", description: "The signed-in person's own address" }),
+      receive: {
+        type: "boolean",
+        description: "false: invitation emails to this address are not sent (opted_out)",
+      },
+    }),
+  };
+}
+
+function invitationOperations(): Operation[] {
+  return [
+    {
+      method: "get",
+      path: API.invitationEmails,
+      operationId: "getInvitationEmails",
+      summary: "Whether your own address gets invitation emails",
+      tag: "Account",
+      auth: "user",
+      ok: [200, "InvitationEmailSettings"],
+      errors: [401, 403],
+    },
+    {
+      method: "put",
+      path: API.invitationEmails,
+      operationId: "setInvitationEmails",
+      summary: "Turn invitation emails to your own address off or on",
+      description:
+        "Signed-in people only, for their own address (never agents). Off, an owner who shares " +
+        "with this address, or another address of the same inbox (a +tag, or Gmail's dots), still " +
+        "gives it access, and their result names it `opted_out`, which costs the owner one of " +
+        "their daily invitations.",
+      tag: "Account",
+      auth: "user",
+      body: "InvitationEmailsInput",
+      ok: [200, "InvitationEmailSettings"],
+      errors: [400, 401, 403],
+    },
+  ];
 }

@@ -41,6 +41,9 @@ export interface SheetColumn {
   options?: string[];
 }
 
+/** The most columns a sheet keeps frozen. */
+export const MAX_FREEZE_COLS = 5;
+
 export interface SheetHeader {
   columns: SheetColumn[];
   /** Columns kept in view while the grid scrolls sideways (the header row always is). */
@@ -323,7 +326,7 @@ function parseHeader(line: string, issues: Issues): SheetHeader | null {
       keys.some((k) => k !== "cols") ||
       !Number.isInteger(n) ||
       (n as number) < 0 ||
-      (n as number) > 5 ||
+      (n as number) > MAX_FREEZE_COLS ||
       (n as number) > columns.length
     ) {
       issues.add({

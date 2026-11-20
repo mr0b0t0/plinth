@@ -65,6 +65,7 @@ async function loadTasks(ctx: Ctx, p: AgentPrincipal, where: SQL | undefined, li
       connLabel: agentConnections.label,
       grantRole: accessGrants.role,
       shareId: categoryShares.id,
+      shareOwnerId: categoryShares.ownerId,
       shareKey: categoryShares.categoryKey,
       categoryRole: categoryGrants.role,
     })
@@ -123,8 +124,13 @@ async function loadTasks(ctx: Ctx, p: AgentPrincipal, where: SQL | undefined, li
             : grantedRole(factsOf(r.a), {
                 grantRole: r.grantRole ?? null,
                 categoryGrant:
-                  r.shareId && r.shareKey && r.categoryRole
-                    ? { shareId: r.shareId, shareKey: r.shareKey, role: r.categoryRole }
+                  r.shareId && r.shareOwnerId && r.shareKey && r.categoryRole
+                    ? {
+                        shareId: r.shareId,
+                        shareOwnerId: r.shareOwnerId,
+                        shareKey: r.shareKey,
+                        role: r.categoryRole,
+                      }
                     : null,
                 categorySharing: ctx.config.allowCategorySharing,
                 passwordPassed: false,

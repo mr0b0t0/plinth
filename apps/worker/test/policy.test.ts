@@ -447,7 +447,7 @@ describe("policy: pageDataAccess", () => {
     ];
     expect(rows).toHaveLength(20);
     for (const [c, k, enabled, read, write, seeIdentity] of rows)
-      expect(pageDataAccess(c, k, enabled), JSON.stringify([c, k, enabled])).toEqual({
+      expect(pageDataAccess(c, k, enabled, "html"), JSON.stringify([c, k, enabled])).toEqual({
         read,
         write,
         seeIdentity,
@@ -456,27 +456,27 @@ describe("policy: pageDataAccess", () => {
     // identities, whatever else is true.
     for (const k of [none, off, viewerOnly, dataOnly, both])
       for (const enabled of [T, F]) {
-        expect(pageDataAccess(null, k, enabled).seeIdentity).toBe(false);
-        if (!k?.viewer) expect(pageDataAccess(claim, k, enabled).seeIdentity).toBe(false);
+        expect(pageDataAccess(null, k, enabled, "html").seeIdentity).toBe(false);
+        if (!k?.viewer) expect(pageDataAccess(claim, k, enabled, "html").seeIdentity).toBe(false);
       }
   });
   it("spot checks", () => {
-    expect(pageDataAccess(claim, caps(true, true), true)).toEqual({
+    expect(pageDataAccess(claim, caps(true, true), true, "html")).toEqual({
       read: true,
       write: true,
       seeIdentity: true,
     });
-    expect(pageDataAccess(null, caps(true, true), true)).toEqual({
+    expect(pageDataAccess(null, caps(true, true), true, "html")).toEqual({
       read: true,
       write: false,
       seeIdentity: false,
     });
-    expect(pageDataAccess(claim, caps(false, true), true)).toEqual({
+    expect(pageDataAccess(claim, caps(false, true), true, "html")).toEqual({
       read: false,
       write: false,
       seeIdentity: false,
     });
-    expect(pageDataAccess(claim, caps(true, true), false)).toEqual({
+    expect(pageDataAccess(claim, caps(true, true), false, "html")).toEqual({
       read: false,
       write: false,
       seeIdentity: false,

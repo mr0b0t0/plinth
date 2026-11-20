@@ -29,6 +29,11 @@ export async function refreshSession(): Promise<void> {
   set({ loading: false, me, config });
 }
 
+/** The account as a save already returned it (PATCH /me), without fetching it again. */
+export function setSessionMe(me: Me): void {
+  set({ me });
+}
+
 export function useSession(): SessionState & { refresh: () => Promise<void> } {
   const s = useSyncExternalStore(
     (l) => {

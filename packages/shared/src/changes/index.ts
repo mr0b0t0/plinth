@@ -12,6 +12,7 @@ export type { ChangeDescriber } from "./describers.ts";
 export * from "./diff.ts";
 export * from "./files.ts";
 export * from "./types.ts";
+export { BOARD_OTHER_SETTINGS } from "./whiteboard.ts";
 
 /** Said when a version cannot be read in detail (it fails the type's checks). */
 export const CHANGES_UNREADABLE =

@@ -72,7 +72,67 @@ describe("applySheetOps", () => {
     expect(sheet.rows[4]).toEqual([null, 9, 10]);
     expect(sheet.rows[3]).toEqual([]);
     expect(changed.cells).toBe(2);
+    // Rows 5 and 6 are new, the empty one before the block included.
+    expect(changed.rows_inserted).toBe(2);
     expect(BASE.rows).toHaveLength(3);
+    // A set inside the sheet adds no rows, and one that overlaps its end adds only the new ones.
+    expect(applySheetOps(BASE, [{ op: "set", at: "A2", values: [["x"]] }]).changed).toMatchObject({
+      rows_inserted: 0,
+    });
+    expect(
+      applySheetOps(BASE, [{ op: "set", at: "A4", values: [["x"], ["y"], ["z"]] }]).changed,
+    ).toMatchObject({ rows_inserted: 2 });
+  });
+
+  it("refuses a set that would add more than the cap of empty rows before it", () => {
+    const last = BASE.rows.length + 1;
+    const edge = last + 1 + LIMITS.maxSheetSetGapRows;
+    const fits = applySheetOps(BASE, [{ op: "set", at: `A${edge}`, values: [["x"]] }]);
+    expect(fits.sheet.rows).toHaveLength(BASE.rows.length + LIMITS.maxSheetSetGapRows + 1);
+    expect(fits.changed.rows_inserted).toBe(LIMITS.maxSheetSetGapRows + 1);
+    let caught: unknown;
+    try {
+      applySheetOps(BASE, [{ op: "set", at: `A${edge + 1}`, values: [["x"]] }]);
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBeInstanceOf(SheetOpError);
+    expect((caught as SheetOpError).reason).toBe("too_far_past_end");
+    expect((caught as SheetOpError).message).toMatch(
+      new RegExp(`would add ${LIMITS.maxSheetSetGapRows + 1} empty rows`),
+    );
+  });
+
+  it("keeps frozen columns frozen when columns are inserted or deleted before them", () => {
+    const frozen: Sheet = {
+      ...BASE,
+      header: { ...BASE.header, freeze: { cols: 2 } },
+    };
+    const cols = (ops: SheetOp[]) => applySheetOps(frozen, ops).sheet.header.freeze?.cols;
+    // Inserted among the frozen columns: frozen too, so the same columns stay in view.
+    expect(cols([{ op: "insert_columns", before: "A", columns: [{ name: "N" }] }])).toBe(3);
+    expect(
+      cols([{ op: "insert_columns", before: "B", columns: [{ name: "N" }, { name: "M" }] }]),
+    ).toBe(4);
+    // At or after the first unfrozen column: unchanged.
+    expect(cols([{ op: "insert_columns", before: "C", columns: [{ name: "N" }] }])).toBe(2);
+    // Never past the five a sheet freezes.
+    expect(
+      cols([
+        {
+          op: "insert_columns",
+          before: "A",
+          columns: Array.from({ length: 6 }, (_, k) => ({ name: `n${k}` })),
+        },
+      ]),
+    ).toBe(5);
+    // Deleted frozen columns leave the pane; deleting after it changes nothing.
+    expect(cols([{ op: "delete_columns", from: "A" }])).toBe(1);
+    expect(cols([{ op: "delete_columns", from: "B", count: 2 }])).toBe(1);
+    expect(cols([{ op: "delete_columns", from: "C" }])).toBe(2);
+    const gone = applySheetOps(frozen, [{ op: "delete_columns", from: "A", count: 2 }]).sheet;
+    expect(parseSheet(serializeSheet(gone)).ok).toBe(true);
+    expect(serializeSheet(gone).split("\n")[0]).not.toContain("freeze");
   });
 
   it("appends, inserts and deletes rows, moving formulas", () => {
@@ -139,8 +199,12 @@ describe("applySheetOps", () => {
       expect(() => applySheetOps(BASE, ops)).toThrow(/at most 10000 rows \(2 to 10001\)/);
     }
     // Row 10001 is the last row a sheet holds.
-    const ok = applySheetOps(BASE, [{ op: "set", at: "A10001", values: [["x"]] }]);
+    const tall: Sheet = { ...BASE, rows: Array.from({ length: 9_500 }, () => ["a", 1]) };
+    const ok = applySheetOps(tall, [{ op: "set", at: "A10001", values: [["x"]] }]);
     expect(ok.sheet.rows).toHaveLength(LIMITS.maxSheetRows);
+    expect(() => applySheetOps(tall, [{ op: "set", at: "A10002", values: [["x"]] }])).toThrow(
+      /at most 10000 rows \(2 to 10001\)/,
+    );
     expect(() => applySheetOps(BASE, [{ op: "insert_rows", before: 2, count: 200_000 }])).toThrow(
       /at most 10000 rows/,
     );

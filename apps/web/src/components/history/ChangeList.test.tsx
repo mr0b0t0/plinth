@@ -1,6 +1,7 @@
 import type { ArtifactDetail } from "@plinth/shared";
 import { cleanup, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
+import { BACKGROUND_CHOICES, EDIT_CHOICES } from "../viewer/boardSettings.ts";
 import { ChangeList } from "./ChangeList.tsx";
 import { versionChanges } from "./useChanges.ts";
 
@@ -170,5 +171,26 @@ describe("versionChanges", () => {
         same: 0,
       },
     });
+  });
+
+  it("lists a whiteboard's settings in the Board settings dialog's labels", () => {
+    const board = (background: string, edit: string) =>
+      detail({
+        type: "whiteboard",
+        html: undefined,
+        content: JSON.stringify({ v: 1, background, edit }),
+        source_path: "board.json",
+      });
+    const label = (list: readonly { value: string; label: string }[], v: string) =>
+      list.find((c) => c.value === v)?.label;
+    const { changes } = versionChanges(board("dots", "editors"), board("grid", "commenters"));
+    expect(changes.items.map((i) => i.what)).toEqual([
+      `Background: ${label(BACKGROUND_CHOICES, "dots")} → ${label(BACKGROUND_CHOICES, "grid")}`,
+      `Who can change the board: ${label(EDIT_CHOICES, "editors")} → ${label(EDIT_CHOICES, "commenters")}`,
+    ]);
+    expect(changes.items.map((i) => i.what)).toEqual([
+      "Background: Dots → Grid",
+      "Who can change the board: Editors only → Commenters and editors",
+    ]);
   });
 });
