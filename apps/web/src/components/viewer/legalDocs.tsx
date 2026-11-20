@@ -187,7 +187,7 @@ function privacy(op: OperatorInfo, cfg: LegalConfig): LegalDoc {
               address and role, and by name once that person has commented, entered something or
               published a version on it.
               {!cfg.single_user_mode &&
-                " When someone shares an artifact or a collection with your address, confirming the code we email you there signs you in and creates a Plinth account for that address if it has none, just as signing in does."}
+                " When someone shares an artifact or a category with your address, confirming the code we email you signs you in and creates a Plinth account for that address if it has none."}
             </li>
             <li>
               <strong>Your artifacts</strong>: every version of the pages, files, titles, categories

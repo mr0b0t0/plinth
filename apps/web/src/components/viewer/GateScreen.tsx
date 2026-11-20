@@ -78,7 +78,7 @@ export function GateScreen({ gate, artifactRef, query, onGate }: GateScreenProps
         <p className="pl-gate__lead">
           {password
             ? "Enter the password the owner gave you to open this artifact."
-            : `Only the people the owner listed can open this artifact. Confirm your email address with a one-time code. ${codeLead(codeSignsIn)}`}
+            : `Only the people the owner listed can open this artifact. ${codeLead(codeSignsIn)}`}
         </p>
         {password ? (
           <PasswordForm artifactRef={artifactRef} query={query} onGate={onGate} />

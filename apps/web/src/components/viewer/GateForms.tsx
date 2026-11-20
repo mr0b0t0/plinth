@@ -74,8 +74,8 @@ export function PasswordForm({ artifactRef, query, onGate }: StepProps) {
  */
 export function codeLead(codeSignsIn: boolean): string {
   return codeSignsIn
-    ? "Confirming it signs you in to Plinth with that address, and creates an account for it if it has none."
-    : "You do not need an account.";
+    ? "Sign in with a one-time code. New addresses get an account."
+    : "Confirm your email with a one-time code. You do not need an account.";
 }
 
 /** Does a viewing code sign the address in on this instance? Everywhere but single-user mode. */
@@ -87,20 +87,13 @@ export const codeSignsInFor = (config: { single_user_mode: boolean } | null): bo
  * confirmed for another address signs them in with it instead (DECISIONS 2026-11-19), so switching
  * accounts is never a surprise. The artifact gate and the portal both show it.
  */
-export function SignedInNotice({
-  email,
-  what,
-  codeSignsIn,
-}: {
-  email: string;
-  what: "artifact" | "collection";
-  codeSignsIn: boolean;
-}) {
+export function SignedInNotice({ email, codeSignsIn }: { email: string; codeSignsIn: boolean }) {
   return (
     <p className="pl-gate__signed-in">
-      You are signed in as <strong>{email}</strong>, which is not on the list for this {what}. If
-      another address of yours is, confirm it below
-      {codeSignsIn ? ": you will then be signed in with that address instead." : "."}
+      You are signed in as <strong>{email}</strong>, which has no access.{" "}
+      {codeSignsIn
+        ? "Confirming another address switches you to it."
+        : "You can confirm another address below."}
     </p>
   );
 }
@@ -252,9 +245,7 @@ export function EmailForm({
   return (
     <form onSubmit={submitEmail} noValidate>
       <Stack gap={4}>
-        {signedInEmail && (
-          <SignedInNotice email={signedInEmail} what="artifact" codeSignsIn={codeSignsIn} />
-        )}
+        {signedInEmail && <SignedInNotice email={signedInEmail} codeSignsIn={codeSignsIn} />}
         <Input
           ref={emailRef}
           label="Email"

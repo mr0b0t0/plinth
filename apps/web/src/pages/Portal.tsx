@@ -146,9 +146,7 @@ export function PortalEmailForm({
   return (
     <form onSubmit={askCode} noValidate>
       <Stack gap={4}>
-        {signedInEmail && (
-          <SignedInNotice email={signedInEmail} what="collection" codeSignsIn={codeSignsIn} />
-        )}
+        {signedInEmail && <SignedInNotice email={signedInEmail} codeSignsIn={codeSignsIn} />}
         <Input
           ref={emailRef}
           label="Email"
@@ -227,9 +225,7 @@ export default function Portal({ params }: { params: Record<string, string> }) {
           <h1 id="portal-title" className="pl-gate__title">
             Confirm your email
           </h1>
-          <p className="pl-gate__lead">
-            Enter your email to get a one-time code. {codeLead(codeSignsIn)}
-          </p>
+          <p className="pl-gate__lead">{codeLead(codeSignsIn)}</p>
           <PortalEmailForm
             id={id}
             onGate={(g) => setState({ status: "gate", gate: g })}

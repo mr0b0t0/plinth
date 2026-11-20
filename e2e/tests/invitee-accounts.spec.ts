@@ -32,10 +32,7 @@ test("an invitee confirms the code at the gate, is signed in, and finds the arti
     timeout: 15_000,
   });
   await expect(
-    page.getByText(
-      "Confirming it signs you in to Plinth with that address, and creates an account for it if it has none.",
-      { exact: false },
-    ),
+    page.getByText("Sign in with a one-time code. New addresses get an account.", { exact: false }),
   ).toBeVisible();
 
   const since = new Date(Date.now() - 1000).toISOString();

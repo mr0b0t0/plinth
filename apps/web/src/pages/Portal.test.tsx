@@ -95,9 +95,7 @@ describe("Portal", () => {
     render(<Portal params={{ id: ID }} />);
     await screen.findByRole("heading", { name: "Confirm your email" });
     expect(
-      screen.getByText(
-        "Enter your email to get a one-time code. Confirming it signs you in to Plinth with that address, and creates an account for it if it has none.",
-      ),
+      screen.getByText("Sign in with a one-time code. New addresses get an account."),
     ).toBeTruthy();
     expect(screen.queryByText(/collection/i)).toBeNull();
     await user.type(screen.getByRole("textbox", { name: "Email" }), "client@example.org");
@@ -121,7 +119,7 @@ describe("Portal", () => {
     render(<Portal params={{ id: ID }} />);
     const notice = await screen.findByText(/You are signed in as/);
     expect(notice.textContent).toBe(
-      "You are signed in as ada@example.org, which is not on the list for this collection. If another address of yours is, confirm it below: you will then be signed in with that address instead.",
+      "You are signed in as ada@example.org, which has no access. Confirming another address switches you to it.",
     );
   });
 
@@ -137,8 +135,8 @@ describe("Portal", () => {
     const Portal = await loadPage();
     render(<Portal params={{ id: ID }} />);
     const notice = await screen.findByText(/You are signed in as/);
-    expect(notice.textContent).toContain("If another address of yours is, confirm it below.");
-    expect(notice.textContent).not.toContain("instead");
+    expect(notice.textContent).toContain("You can confirm another address below.");
+    expect(notice.textContent).not.toContain("switches");
     expect(screen.getByText(/You do not need an account\./)).toBeTruthy();
   });
 

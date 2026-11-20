@@ -90,17 +90,17 @@ describe("EmailForm", () => {
     expect(calls.at(-1)).toMatchObject({ method: "GET", path: "/me" });
   });
 
-  it("tells a signed-in person their address is not on the list", () => {
+  it("tells a signed-in person their address has no access", () => {
     stubApi();
     render(
       <EmailForm artifactRef="s1" query={{}} onGate={() => {}} signedInEmail="ada@example.org" />,
     );
     expect(screen.getByText(/You are signed in as/).textContent).toContain(
-      "ada@example.org, which is not on the list",
+      "ada@example.org, which has no access.",
     );
     // Confirming another address signs in with it instead.
     expect(screen.getByText(/You are signed in as/).textContent).toContain(
-      "confirm it below: you will then be signed in with that address instead.",
+      "Confirming another address switches you to it.",
     );
   });
 
@@ -116,19 +116,19 @@ describe("EmailForm", () => {
       />,
     );
     const text = screen.getByText(/You are signed in as/).textContent ?? "";
-    expect(text).toContain("If another address of yours is, confirm it below.");
-    expect(text).not.toContain("instead");
+    expect(text).toContain("You can confirm another address below.");
+    expect(text).not.toContain("switches");
   });
 });
 
 describe("codeLead", () => {
   it("says a code signs the address in and creates an account, except on a single-user instance", () => {
     expect(codeLead(codeSignsInFor({ single_user_mode: false }))).toBe(
-      "Confirming it signs you in to Plinth with that address, and creates an account for it if it has none.",
+      "Sign in with a one-time code. New addresses get an account.",
     );
-    expect(codeLead(codeSignsInFor(null))).toContain("signs you in");
+    expect(codeLead(codeSignsInFor(null))).toContain("Sign in");
     expect(codeLead(codeSignsInFor({ single_user_mode: true }))).toBe(
-      "You do not need an account.",
+      "Confirm your email with a one-time code. You do not need an account.",
     );
   });
 });

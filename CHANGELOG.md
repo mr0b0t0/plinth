@@ -81,7 +81,8 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   the first time, as the owner's own code already did. What is shared with them then shows under
   Shared on their dashboard, they can come back without a new code, and an editor can edit a doc
   on its page. The gate, the email and the privacy notice say so, and the gate and the shared
-  collection tell someone already signed in that confirming another address switches them to it.
+  category's page tell someone already signed in that confirming another address switches them to
+  it.
   The code's email is now a sign-in email ("Your Plinth sign-in code"), warning never to give the
   code to anyone before it shows the title or name the sharer wrote (on one line, so neither can
   add lines of its own), and wrong guesses at it count against the same per-address limit as the
