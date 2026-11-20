@@ -282,13 +282,19 @@ export async function liveCheckpoint(
       }
       return { saved: false, reason: "unchanged" };
     }
-    let held: boolean;
+    // Not resolved (the room unreachable, or this snapshot's lock ran out and another save took
+    // it): nothing is published, so the snapshot's record goes now instead of at the next finish.
+    let held = false;
     try {
       held = await stub.docResolve(snap.lock, text);
     } catch {
+      await abort();
       throw unavailable();
     }
-    if (!held) return { saved: false, reason: "busy" };
+    if (!held) {
+      await abort();
+      return { saved: false, reason: "busy" };
+    }
   } else if (snap.conflict_version !== null) {
     await abort();
     throw new ApiError(

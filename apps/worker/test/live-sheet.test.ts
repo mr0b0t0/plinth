@@ -514,6 +514,39 @@ describe("sheet socket: versions published from outside", () => {
       a.ws.close(1000);
     });
 
+    // Publish mine whose resolve the room did not take (its lock ran out and another save took
+    // it, or the room could not be reached) publishes nothing, and gives up its snapshot then.
+    for (const [how, status, answer] of [
+      ["not held", 200, { saved: false, reason: "busy" }],
+      ["unreachable", 503, null],
+    ] as const) {
+      it(`Publish mine whose resolve is ${how} aborts its snapshot: nothing stays pending`, async () => {
+        const { id, ownerP, a, draft } = await frozen('["Apples",4,true]');
+        await runInDurableObject(stubFor(id), async (room) => {
+          const doc = (room as unknown as { doc: Record<string, unknown> }).doc;
+          doc.resolveWith = async () => {
+            delete doc.resolveWith;
+            if (how === "unreachable") throw new Error("room unreachable");
+            return false;
+          };
+        });
+        const res = await checkpoint(id, ownerP.session.headers, {
+          base_version: 1,
+          rev: 1,
+          reason: "save",
+          resolved_text: draft,
+          conflict_version: 2,
+        });
+        expect(res.status).toBe(status);
+        if (answer) expect(await json(res)).toEqual(answer);
+        expect(await pending(id)).toEqual({ lock: null, saving: 0 });
+        expect(await versionRow(id, 3)).toBeNull();
+        // The next Publish mine takes the lock straight away.
+        expect((await stubFor(id).docSnapshot(id)).state).toBe("conflict");
+        a.ws.close(1000);
+      });
+    }
+
     it("a discard takes the lock before it reads: a save arriving meanwhile is busy", async () => {
       const { id, a } = await frozen('["Apples",4,true]');
       const stub = stubFor(id);
