@@ -95,10 +95,16 @@ const EMIT_RIGHTS: ReadonlySet<string> = new Set(["all", "open", "none"]);
  */
 export const ROOM_NAME_BYTES = 256;
 
-/** A name as the gate sends it: null, or display text with no "@" that fits ROOM_NAME_BYTES. */
+/**
+ * A name as the gate sends it: null, or display text with no "@" that fits ROOM_NAME_BYTES. A
+ * missing name reads as null, so a Worker isolate still running the release before names (whose
+ * header has no `name`) can connect while a deploy rolls out; a present but invalid one is refused.
+ */
 function validName(n: unknown): boolean {
   return (
-    n === null || (typeof n === "string" && !n.includes("@") && utf8Bytes(n) <= ROOM_NAME_BYTES)
+    n === undefined ||
+    n === null ||
+    (typeof n === "string" && !n.includes("@") && utf8Bytes(n) <= ROOM_NAME_BYTES)
   );
 }
 
@@ -108,7 +114,7 @@ function validName(n: unknown): boolean {
  */
 export function encodeConnect(c: RoomConnect): string {
   return JSON.stringify(c).replace(
-    /[\u007f-￿]/g,
+    /[\u007f-\uffff]/g,
     (ch) => `\\u${ch.charCodeAt(0).toString(16).padStart(4, "0")}`,
   );
 }
@@ -152,7 +158,7 @@ export function parseConnect(raw: string | null): RoomConnect | null {
     int(l.maxConnections) &&
     int(l.maxMessageBytes) &&
     int(l.messagesPerSecond);
-  return ok ? (c as unknown as RoomConnect) : null;
+  return ok ? ({ ...c, name: c.name ?? null } as unknown as RoomConnect) : null;
 }
 
 const encoder = new TextEncoder();

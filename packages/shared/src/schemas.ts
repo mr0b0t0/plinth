@@ -298,7 +298,10 @@ export const updateProfileInput = z.object({
   name: z
     .string()
     .trim()
-    .max(LIMITS.maxDisplayNameLength)
+    .max(
+      LIMITS.maxDisplayNameLength,
+      `A name is at most ${LIMITS.maxDisplayNameLength} characters.`,
+    )
     .superRefine((n, ctx) => {
       const problem = displayNameProblem(normalizeDisplayName(n));
       if (problem) ctx.addIssue({ code: "custom", message: problem });

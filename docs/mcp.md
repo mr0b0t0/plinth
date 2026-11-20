@@ -683,6 +683,9 @@ Reply in the thread. If this agent claimed a task on that comment, the reply com
 
 Every comment thread on an artifact, oldest first, each thread's replies after it: author, body,
 status (`open` or `resolved`) and any mention tasks. Needs view access. Scope `artifacts:read`.
+An author's `label` is display text anyone can choose; `author.is_owner` (set by the server from
+ids) says whether the artifact's owner wrote it, in person or through one of their agents.
+`list_versions` authors carry the same `is_owner`.
 
 | Field | Type | Notes |
 | --- | --- | --- |
@@ -739,13 +742,14 @@ refused. Scope `artifacts:read`.
 - No `collection`: `{ capabilities, available, usage: { docs, bytes }, limits, collections: [{
   name, docs, bytes, updated_at }], people?, untrusted }`. `available` says whether pages can use
   shared data right now (feature on, `origin` isolation, current version declares `data`).
-  `people` is there only when the current version declares `data viewer people` and shared data
-  is on: everyone with access, the owner first and then every grant by email, as `{ viewer_id,
+  `people` is there only when the current version declares `data viewer people`, shared data
+  is on and a person or their account-wide agent published that version (a version published with
+  a token limited to one artifact lists nobody): everyone with access, the owner first and then every grant by email, as `{ viewer_id,
   email, name, role }`. It is who has access, never who opened the page. A grant holder's `name`
   is `null` until they have commented, written shared data or published a version on the artifact
   (the owner's name and your own are always there), because the owner typed their address.
-  `GET /api/v1/artifacts/:ref/people?q=` returns the same list for scripts, and answers 403
-  `feature_disabled` where the summary has none. On any page, a `u_` document's id is its
+  `GET /api/v1/artifacts/:ref/people?q=&limit=` returns the same list for scripts, with `total`,
+  and answers 403 `feature_disabled` where the summary has none. On any page, a `u_` document's id is its
   person's `viewer_id`, which its `created_by` carries.
 - A `collection`: `{ docs, next_cursor, untrusted }`, in creation order.
 - A `doc_id`: `{ doc, untrusted }`.

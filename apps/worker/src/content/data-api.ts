@@ -38,7 +38,12 @@ import { z } from "zod";
 import { type Bindings, type Config, contentOrigin, sharedDataActive } from "../config.ts";
 import { ApiError } from "../lib/errors.ts";
 import { type PageClaim, pageDataAccess } from "../policy.ts";
-import { versionCapabilities } from "../services/artifacts.ts";
+import {
+  versionCapabilities,
+  versionWriterOf,
+  WRITER_COLUMNS,
+  WRITER_JOIN,
+} from "../services/artifacts.ts";
 import {
   changes,
   createDoc,
@@ -176,9 +181,11 @@ function intParam(v: string | null, name: string, min: number, max: number): num
 /** Check 7: the artifact and its current version's declaration, in one query. */
 async function loadTarget(env: Bindings, artifactId: string) {
   const row = await env.DB.prepare(
-    `SELECT a.id, a.owner_id, a.access_epoch, a.taken_down_at, v.capabilities
+    `SELECT a.id, a.owner_id, a.access_epoch, a.taken_down_at, v.capabilities,
+            v.id AS version_id, ${WRITER_COLUMNS}
        FROM artifacts a
        LEFT JOIN versions v ON v.artifact_id = a.id AND v.number = a.current_version
+       ${WRITER_JOIN}
       WHERE a.id = ?1 AND a.deleted_at IS NULL`,
   )
     .bind(artifactId)
@@ -188,6 +195,9 @@ async function loadTarget(env: Bindings, artifactId: string) {
       access_epoch: number;
       taken_down_at: string | null;
       capabilities: string | null;
+      version_id: string | null;
+      writer_user: string | null;
+      writer_bound: string | null;
     }>();
   if (!row || row.taken_down_at) return null;
   return {
@@ -197,6 +207,7 @@ async function loadTarget(env: Bindings, artifactId: string) {
       id: row.id,
       ownerId: row.owner_id,
       caps: versionCapabilities(row),
+      writer: row.version_id === null ? null : versionWriterOf(row),
     } satisfies DataTarget,
   };
 }

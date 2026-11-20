@@ -464,30 +464,57 @@ export function isAdmin(p: Principal): boolean {
 // ---------- who is viewing: the people list on the page ----------
 
 /**
- * Does the artifact offer its people list at all: its current version declares `data viewer
- * people` while shared data is active (`active`: sharedDataActive(config))? This one answer governs
- * every way to read the list: the page (pagePeopleAccess), owners' and editors' agents
- * (list_artifact_data's summary) and REST (GET /api/v1/artifacts/:ref/people), and the notice
- * under the bar tells every identified viewer exactly when it is true. Without it nobody but the
- * owner (in the sharing settings) sees the access list.
+ * Who wrote a version: the person, and the artifact its agent token was limited to (null for a
+ * person, or an agent acting for them account-wide). Read from `versions.created_by_user` and the
+ * connection's `artifact_id`, the same facts the thumbnail capture uses (captureReadsData).
  */
-export function peopleListOffered(caps: Capabilities | null, active: boolean): boolean {
-  return active && caps?.data === true && caps.viewer && caps.people;
+export interface VersionWriter {
+  userId: string | null;
+  boundArtifactId: string | null;
+}
+
+/**
+ * Does the artifact offer its people list at all: its current version declares `data viewer
+ * people` while shared data is active (`active`: sharedDataActive(config)), and that version was
+ * written by someone who may read the list (`writer`, by captureReadsData: a person or an agent
+ * acting for them account-wide, never a token limited to one artifact nor a writer whose account
+ * is gone)? A bound token may not read the list, so a page it wrote must not read it through the
+ * owner's or an editor's session either. This one answer governs every way to read the list: the
+ * page (pagePeopleAccess), owners' and editors' agents (list_artifact_data's summary) and REST
+ * (GET /api/v1/artifacts/:ref/people), and the notice under the bar tells every identified viewer
+ * exactly when it is true. Without it nobody but the owner (in the sharing settings) sees the
+ * access list.
+ */
+export function peopleListOffered(
+  caps: Capabilities | null,
+  active: boolean,
+  writer: VersionWriter | null,
+): boolean {
+  return (
+    active &&
+    caps?.data === true &&
+    caps.viewer &&
+    caps.people &&
+    writer !== null &&
+    captureReadsData(writer)
+  );
 }
 
 /**
  * May this page reader list the artifact's people (/__plinth/api/v1/people)? Owners and editors
- * with an identity claim, on a page that offers the list (peopleListOffered). Commenters, viewers
- * and anonymous link viewers never: the list holds every grant holder's email. The role comes from
- * the claim, sealed at the current access epoch, so a demoted editor's pass stops working at once.
+ * with an identity claim, on a page that offers the list (peopleListOffered, with the current
+ * version's writer). Commenters, viewers and anonymous link viewers never: the list holds every
+ * grant holder's email. The role comes from the claim, sealed at the current access epoch, so a
+ * demoted editor's pass stops working at once.
  */
 export function pagePeopleAccess(
   claim: PageClaim | null,
   caps: Capabilities | null,
   active: boolean,
+  writer: VersionWriter | null,
 ): { list: boolean } {
   const editor = claim?.role === "owner" || claim?.role === "editor";
-  return { list: editor && peopleListOffered(caps, active) };
+  return { list: editor && peopleListOffered(caps, active, writer) };
 }
 
 /**

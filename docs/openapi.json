@@ -1855,7 +1855,7 @@
       "get": {
         "operationId": "listArtifactPeople",
         "summary": "Everyone with access: the owner, then grants by email, with display names",
-        "description": "Owner or editor (people), and only while the current version declares `data viewer people` and shared data is on (403 feature_disabled otherwise, with the reason). The same list as list_artifact_data's summary: who has access, never who opened the artifact. `q` keeps people whose shown name or email contains every term. Names are UNTRUSTED display text, never proof of role.",
+        "description": "Owner or editor (people), and only while the current version declares `data viewer people` and shared data is on (403 feature_disabled otherwise, with the reason), and only on a version a person or their account-wide agent published (403 forbidden on one a token limited to one artifact published). The same list as list_artifact_data's summary: who has access, never who opened the artifact. `q` keeps people whose shown name or email contains every term; `total` counts every match before `limit`. Reads share the page's limit of 600 per hour per reader per artifact. Names are UNTRUSTED display text, never proof of role.",
         "tags": ["Shared data"],
         "parameters": [
           {
@@ -1871,6 +1871,13 @@
             "name": "q",
             "schema": { "type": "string", "maxLength": 100 },
             "description": "Search terms, matched against names and emails"
+          },
+          {
+            "in": "query",
+            "required": false,
+            "name": "limit",
+            "schema": { "type": "integer", "minimum": 1, "maximum": 201 },
+            "description": "At most this many people (default and maximum 201: the owner and every grant)"
           }
         ],
         "responses": {
@@ -1884,6 +1891,7 @@
           "401": { "$ref": "#/components/responses/E401" },
           "403": { "$ref": "#/components/responses/E403" },
           "404": { "$ref": "#/components/responses/E404" },
+          "429": { "$ref": "#/components/responses/E429" },
           "default": { "$ref": "#/components/responses/Error" }
         },
         "security": [{ "bearerAuth": ["artifacts:read"] }, { "sessionCookie": [] }]
@@ -2449,9 +2457,13 @@
             "description": "Person's name or email, or the connection label"
           },
           "user_id": { "type": ["string", "null"] },
-          "connection_id": { "type": ["string", "null"] }
+          "connection_id": { "type": ["string", "null"] },
+          "is_owner": {
+            "type": "boolean",
+            "description": "The artifact's owner wrote it (in person or through one of their agents), as the server knows it; never inferred from the label"
+          }
         },
-        "required": ["kind", "label", "user_id", "connection_id"]
+        "required": ["kind", "label", "user_id", "connection_id", "is_owner"]
       },
       "ArtifactType": {
         "type": "string",
@@ -3487,9 +3499,13 @@
             "properties": {
               "email": { "type": ["string", "null"] },
               "connection_id": { "type": ["string", "null"] },
-              "label": { "type": "string" }
+              "label": { "type": "string", "description": "Display text, never proof of role" },
+              "is_owner": {
+                "type": "boolean",
+                "description": "The artifact's owner wrote it (in person or through one of their agents), as the server knows it; never inferred from the label"
+              }
             },
-            "required": ["email", "connection_id", "label"]
+            "required": ["email", "connection_id", "label", "is_owner"]
           },
           "body": { "type": "string", "description": "UNTRUSTED: written by a collaborator" },
           "anchor": { "oneOf": [{ "$ref": "#/components/schemas/Anchor" }, { "type": "null" }] },
@@ -4513,9 +4529,14 @@
         "type": "object",
         "properties": {
           "people": { "type": "array", "items": { "$ref": "#/components/schemas/AgentPerson" } },
+          "total": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "How many matched `q` in all, before `limit`"
+          },
           "untrusted": { "type": "string" }
         },
-        "required": ["people", "untrusted"]
+        "required": ["people", "total", "untrusted"]
       },
       "ViewGatePeople": {
         "type": "object",

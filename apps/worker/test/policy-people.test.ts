@@ -12,6 +12,7 @@ import {
   pagePeopleAccess,
   peopleListOffered,
   scopeFor,
+  type VersionWriter,
 } from "../src/policy.ts";
 
 const caps = (over: Partial<Capabilities> = {}): Capabilities => ({
@@ -24,6 +25,9 @@ const caps = (over: Partial<Capabilities> = {}): Capabilities => ({
   people: true,
   ...over,
 });
+
+/** A person (or an agent acting for them account-wide) wrote the current version. */
+const PERSON: VersionWriter = { userId: "u-owner", boundArtifactId: null };
 
 const claimOf = (role: EffectiveRole): PageClaim => ({
   email: `${role}@example.com`,
@@ -40,7 +44,10 @@ describe("policy: pagePeopleAccess", () => {
           const claim = role ? claimOf(role) : null;
           const c = declared ? caps() : caps({ people: false });
           const want = active && declared && (role === "owner" || role === "editor");
-          expect(pagePeopleAccess(claim, c, active), `${role} ${declared} ${active}`).toEqual({
+          expect(
+            pagePeopleAccess(claim, c, active, PERSON),
+            `${role} ${declared} ${active}`,
+          ).toEqual({
             list: want,
           });
         }
@@ -50,9 +57,11 @@ describe("policy: pagePeopleAccess", () => {
 
   it("needs `data` and `viewer` too, and nothing without a declaration", () => {
     const owner = claimOf("owner");
-    expect(pagePeopleAccess(owner, caps({ viewer: false }), true).list).toBe(false);
-    expect(pagePeopleAccess(owner, caps({ data: false, room: true }), true).list).toBe(false);
-    expect(pagePeopleAccess(owner, null, true).list).toBe(false);
+    expect(pagePeopleAccess(owner, caps({ viewer: false }), true, PERSON).list).toBe(false);
+    expect(pagePeopleAccess(owner, caps({ data: false, room: true }), true, PERSON).list).toBe(
+      false,
+    );
+    expect(pagePeopleAccess(owner, null, true, PERSON).list).toBe(false);
   });
 });
 
@@ -135,12 +144,25 @@ describe("policy: the people action", () => {
 
 describe("policy: peopleListOffered", () => {
   it("is the one switch for the page, agents and REST: `data viewer people` while active", () => {
-    expect(peopleListOffered(caps(), true)).toBe(true);
-    expect(peopleListOffered(caps(), false)).toBe(false);
-    expect(peopleListOffered(caps({ people: false }), true)).toBe(false);
-    expect(peopleListOffered(caps({ viewer: false }), true)).toBe(false);
-    expect(peopleListOffered(caps({ data: false, room: true }), true)).toBe(false);
-    expect(peopleListOffered(null, true)).toBe(false);
+    expect(peopleListOffered(caps(), true, PERSON)).toBe(true);
+    expect(peopleListOffered(caps(), false, PERSON)).toBe(false);
+    expect(peopleListOffered(caps({ people: false }), true, PERSON)).toBe(false);
+    expect(peopleListOffered(caps({ viewer: false }), true, PERSON)).toBe(false);
+    expect(peopleListOffered(caps({ data: false, room: true }), true, PERSON)).toBe(false);
+    expect(peopleListOffered(null, true, PERSON)).toBe(false);
+  });
+
+  it("is off for a version written by a token limited to one artifact, or by nobody known", () => {
+    // A bound token may not read the list, so a page it wrote must not read it through the owner.
+    const bound: VersionWriter = { userId: "u-owner", boundArtifactId: "peopleartifact000001" };
+    expect(peopleListOffered(caps(), true, bound)).toBe(false);
+    // An erased writer, or no version row at all.
+    expect(peopleListOffered(caps(), true, { userId: null, boundArtifactId: null })).toBe(false);
+    expect(peopleListOffered(caps(), true, null)).toBe(false);
+    for (const role of ["owner", "editor"] as const) {
+      expect(pagePeopleAccess(claimOf(role), caps(), true, bound).list).toBe(false);
+      expect(pagePeopleAccess(claimOf(role), caps(), true, null).list).toBe(false);
+    }
   });
 });
 

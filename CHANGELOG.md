@@ -18,7 +18,10 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   `list_artifact_data` and `GET /api/v1/artifacts/:ref/people`; agents see authors' names on any
   page. The list and the owner's sharing settings name a person once they have commented, entered
   something or published a version there, so adding an address never reveals whether it has an
-  account. Names are display text: no `@`, no invisible characters, never a role. Plugin 0.22.0.
+  account. Names are display text: no `@`, no invisible or blank-only characters, never a role;
+  the owner's own comments and versions carry a quiet "Owner" mark (`is_owner`), so a name chosen
+  to look like the owner's visibly lacks it. A version published with a token limited to one
+  artifact lists nobody. Plugin 0.22.0.
 - **Dashboard previews in the list, and one card height.** Each row of the list view starts with a
   small preview of the page, its thumbnail, in place of the page glyph (the glyph stays until a
   thumbnail exists). A card shows its category as plain text on its info line instead of a chip on

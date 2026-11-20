@@ -11,6 +11,7 @@ import {
   type Capabilities,
   type EffectiveRole,
   type PublishResult,
+  pageDisplayName,
   type Role,
   readStoredCapabilities,
   type VersionInfo,
@@ -44,6 +45,7 @@ import {
   seesOwnerMetadata,
   seesPeople,
   seesThumbnails,
+  type VersionWriter,
 } from "../policy.ts";
 import { notifyRoom } from "../rooms/notify.ts";
 import { requireTypeDef, resolveSource, typeHooks } from "./artifactTypes.ts";
@@ -245,9 +247,10 @@ export function toSummary(
     url: appUrl(ctx.config, `/a/${a.slug}`),
     content_url: `${contentOrigin(ctx.config, a.id)}/`,
     // Link viewers (no role) and tokens bound to one artifact do not learn the owner's address or id.
+    // The name cleaned on every read (displayName.ts pageDisplayName), as pages and rooms get it.
     owner: seesPeople(ctx.principal, role)
-      ? { id: owner.id, email: owner.email, name: owner.name }
-      : { id: null, email: null, name: owner.name },
+      ? { id: owner.id, email: owner.email, name: pageDisplayName(owner.name) }
+      : { id: null, email: null, name: pageDisplayName(owner.name) },
     // Callers only build summaries for artifacts the principal may view; viewers get "viewer".
     role: role ?? "viewer",
     taken_down: !!a.takenDownAt,
@@ -298,6 +301,41 @@ export function versionCapabilities(
 ): Capabilities | null {
   if (!row?.capabilities) return null;
   return readStoredCapabilities(row.capabilities);
+}
+
+/**
+ * The SQL that reads who wrote a version (policy.ts VersionWriter) beside a `versions v` row:
+ * select WRITER_COLUMNS and join WRITER_JOIN. The connection row stays after a revoke, so a bound
+ * token's versions keep their `bound_artifact_id`.
+ */
+export const WRITER_COLUMNS = "v.created_by_user AS writer_user, c.artifact_id AS writer_bound";
+export const WRITER_JOIN = "LEFT JOIN agent_connections c ON c.id = v.created_by_connection";
+
+/** A row read with WRITER_COLUMNS as a VersionWriter; null when there was no version row. */
+export function versionWriterOf(
+  row: { writer_user: string | null; writer_bound: string | null } | null | undefined,
+): VersionWriter | null {
+  return row ? { userId: row.writer_user, boundArtifactId: row.writer_bound } : null;
+}
+
+/** A version's declaration and its writer, in one query: null fields when there is no version. */
+export async function versionFacts(
+  d1: D1Database,
+  artifactId: string,
+  n: number,
+): Promise<{ caps: Capabilities | null; writer: VersionWriter | null }> {
+  const row = await d1
+    .prepare(
+      `SELECT v.capabilities, ${WRITER_COLUMNS} FROM versions v ${WRITER_JOIN}
+        WHERE v.artifact_id = ?1 AND v.number = ?2`,
+    )
+    .bind(artifactId, n)
+    .first<{
+      capabilities: string | null;
+      writer_user: string | null;
+      writer_bound: string | null;
+    }>();
+  return { caps: versionCapabilities(row), writer: versionWriterOf(row) };
 }
 
 export async function getVersionRow(
@@ -672,13 +710,18 @@ export async function listVersions(ctx: Ctx, ref: string): Promise<VersionInfo[]
           label: conn.label,
           user_id: people ? v.createdByUser : null,
           connection_id: people ? conn.id : null,
+          is_owner: v.createdByUser !== null && v.createdByUser === artifact.ownerId,
         }
       : {
           kind: "user",
           // Link viewers see a name or the address's local part, never the full email.
-          label: user?.name || (people ? user?.email : user?.email?.split("@")[0]) || "Unknown",
+          label:
+            pageDisplayName(user?.name) ||
+            (people ? user?.email : user?.email?.split("@")[0]) ||
+            "Unknown",
           user_id: people ? v.createdByUser : null,
           connection_id: null,
+          is_owner: v.createdByUser !== null && v.createdByUser === artifact.ownerId,
         };
     return {
       number: v.number,

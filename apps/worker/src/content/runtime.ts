@@ -17,8 +17,9 @@
 //              mine(), setMine(data), deleteMine(), onSnapshot(onDocs, onError, { intervalMs });
 //              a Doc's createdBy and updatedBy are { email, name | null, role, via }
 //   people     who has access (owners and editors, pages that declare `data viewer people`):
-//              list({ q, limit }) -> [{ id, email, name | null, role, you }], get(id) -> that or
-//              null; others get forbidden or unavailable
+//              list({ q, limit }) -> [{ id, email, name | null, role, you }] (with .total, how
+//              many matched before limit), get(id) -> that or null; others get forbidden or
+//              unavailable
 //   PlinthError: .code unavailable | read_only | forbidden | not_found | conflict |
 //              quota_exceeded | too_large | rate_limited | expired | invalid | network;
 //              .retryAfter, .currentRev, .limit

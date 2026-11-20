@@ -7,8 +7,10 @@
 // LIMITS.maxAllowlistEmails grants), and a grant holder's name shows only once they have taken part
 // (policy.ts accessListShowsName): nothing here takes an address the caller typed and says whether
 // it has an account or what it is called. Names, emails and queries are never logged.
-import { type EffectiveRole, pageDisplayName } from "@plinth/shared";
+import { type EffectiveRole, pageDisplayName, RATE_LIMITS } from "@plinth/shared";
 import { viewerIdFor } from "../lib/crypto.ts";
+import { ApiError } from "../lib/errors.ts";
+import { hit } from "../lib/ratelimit.ts";
 import { accessListShowsName } from "../policy.ts";
 
 export interface Person {
@@ -133,6 +135,29 @@ export function matchPeople(people: readonly Person[], q: string | undefined): P
     const hay = [fold(p.email), fold(p.name ?? "")];
     return terms.every((t) => hay.some((h) => h.includes(t)));
   });
+}
+
+/**
+ * Count one read of the list by `reader` (the email that holds the role) on this artifact, or
+ * throw 429 rate_limited: RATE_LIMITS.peopleReadsPerViewerPerHour, one bucket for the page route
+ * and REST together, so a script gets no more reads than the page would.
+ */
+export async function countPeopleRead(
+  d1: D1Database,
+  artifactId: string,
+  reader: string,
+): Promise<void> {
+  const r = await hit(
+    d1,
+    `people:${artifactId}:${reader}`,
+    RATE_LIMITS.peopleReadsPerViewerPerHour,
+    3600,
+  );
+  if (!r.allowed) {
+    throw new ApiError("rate_limited", "Too many requests, try again later", {
+      retry_after: r.retryAfter,
+    });
+  }
 }
 
 /** One person with access by `u_` id, or null when the id is nobody with access now. */

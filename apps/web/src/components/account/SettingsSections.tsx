@@ -442,7 +442,9 @@ export function PeopleSection({
   const [busy, setBusy] = useState(false);
   const emailRef = useRef<HTMLInputElement>(null);
   const grants: GrantDraft[] = sharing.grants.map((g) => ({ email: g.email, role: g.role }));
-  // The display name of the account behind each address, when it has one (display text only).
+  // The display name behind each address (display text only): the server sends it only once its
+  // holder has taken part in the artifact, so adding an address never shows whether it has an
+  // account.
   const names = new Map(sharing.grants.map((g) => [g.email, g.name ?? null]));
 
   const put = async (next: GrantDraft[]): Promise<boolean> => {

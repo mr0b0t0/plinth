@@ -30,7 +30,7 @@ import {
   tool,
 } from "./helpers.ts";
 import { api, errOf, peoplePage, setName } from "./people-helpers.ts";
-import { grant, upgrade } from "./room-helpers.ts";
+import { cookieFor, grant, upgrade } from "./room-helpers.ts";
 
 const DATA_PAGE = `<!doctype html><title>Report</title>
 <meta name="plinth-capabilities" content="data">
@@ -228,6 +228,8 @@ describe("using a token limited to one artifact", () => {
         label: editor.email.split("@")[0],
         user_id: null,
         connection_id: null,
+        // An editor wrote it: no owner's mark (from ids, never from the label).
+        is_owner: false,
       });
       expect(byNumber(1).author).toMatchObject({
         kind: "connection",
@@ -742,6 +744,88 @@ describe("a token limited to one artifact never learns who has access", () => {
     const ws = await upgrade(s.id, cookie);
     expect(ws.status).toBe(403);
     expect(ws.webSocket).toBeFalsy();
+  });
+});
+
+describe("a version a token limited to one artifact wrote never lists the people", () => {
+  /** What the owner gets from each way to read the list while the current version is shown. */
+  async function ownerReads(id: string, h: Record<string, string>, token: string) {
+    const cookie = await cookieFor(id, h);
+    const session = await json(await api(id, "/session", { cookie }));
+    const page = await api(id, "/people", { cookie });
+    const one = await api(id, "/people/u_0123456789abcdef01234567", { cookie });
+    const rest = await req("GET", `/artifacts/${id}/people`, { Authorization: `Bearer ${token}` });
+    const c = await mcpClient(token);
+    const summary = await tool(c, "list_artifact_data", { id });
+    await c.close();
+    const gate = await req("GET", `/view/${id}`, h);
+    return { session, page, one, rest, summary, gate };
+  }
+
+  it("the owner opening it gets no list from the runtime, REST, MCP or the gate; an owner-written version does", async () => {
+    const owner = await agent();
+    const h = await signedIn(owner.user.id);
+    const page = await publish(owner.auth, { title: "Team", html: peoplePage() });
+    expect(page.res.status).toBe(201);
+    const id = page.body.id as string;
+    const editor = await createUser();
+    await grant(id, editor.email, "editor");
+
+    // v1, written by the owner's account-wide token: every way in lists the people.
+    const before = await ownerReads(id, h, owner.token);
+    expect(before.session.can_list_people).toBe(true);
+    expect(before.page.status).toBe(200);
+    expect(JSON.stringify(await json(before.page))).toContain(editor.email);
+    expect(before.rest.status).toBe(200);
+    expect(before.summary.isError, before.summary.text).toBe(false);
+    expect(JSON.stringify(before.summary.data.people)).toContain(editor.email);
+    expect(before.gate.body.people).toMatchObject({ list: true });
+
+    // v2, the same page published by a leaked CI token: nothing lists the people.
+    const t = await boundToken(h, id);
+    const c = await mcpClient(t.token);
+    const up = await tool(c, "update_artifact", {
+      id,
+      html: peoplePage().replace("<p>team</p>", "<p>team v2</p>"),
+      base_version: 1,
+    });
+    expect(up.isError, up.text).toBe(false);
+    await c.close();
+    const after = await ownerReads(id, h, owner.token);
+    expect(after.session.can_list_people).toBe(false);
+    for (const [what, res] of [
+      ["page", after.page],
+      ["one", after.one],
+    ] as const) {
+      expect(res.status, what).toBe(403);
+      const text = await res.text();
+      expect(text, what).not.toContain(editor.email);
+      expect(JSON.parse(text).error, what).toMatchObject({
+        code: "forbidden",
+        message: expect.stringMatching(/token limited to one artifact/),
+      });
+    }
+    expect(after.rest.status).toBe(403);
+    expect(after.rest.body.error.code).toBe("forbidden");
+    expect(after.rest.body.error.message).toMatch(/token limited to one artifact/);
+    expect(JSON.stringify(after.rest.body)).not.toContain(editor.email);
+    expect(after.summary.isError, after.summary.text).toBe(false);
+    expect(after.summary.data.people).toBeUndefined();
+    expect(after.summary.text).not.toContain(editor.email);
+    expect(after.gate.body.status).toBe("ok");
+    expect(after.gate.body.people?.list).toBeUndefined();
+
+    // v3, the owner publishes again: the list is back.
+    const again = await req("PUT", `/artifacts/${id}`, owner.auth, {
+      html: peoplePage(),
+      base_version: 2,
+    });
+    expect(again.status, JSON.stringify(again.body)).toBe(200);
+    const back = await ownerReads(id, h, owner.token);
+    expect(back.session.can_list_people).toBe(true);
+    expect(back.page.status).toBe(200);
+    expect(back.rest.status).toBe(200);
+    expect(back.gate.body.people).toMatchObject({ list: true });
   });
 });
 

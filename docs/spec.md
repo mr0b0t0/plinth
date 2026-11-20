@@ -1013,10 +1013,15 @@ never a directory.
 - **Display names.** `users.name` is the person's display name, set in the app ("Your name…" in
   the account menu) or with `PATCH /api/v1/me`. On write it is stored NFC with whitespace runs
   collapsed and trimmed, at most 100 characters, with no `@`, no character whose compatibility
-  (NFKC) form is `@` (U+FE6B, U+FF20, which render as one) and no control, format (bidi,
-  zero-width) or separator characters; an empty name clears it. Pages, rooms and agents get it
-  cleaned on every read (refused characters and every form of `@` dropped, at most 64 code points, `null` when
-  nothing is left), so names stored before these rules comply too. People confirmed by code
+  (NFKC) form is `@` (U+FE6B, U+FF20, which render as one), no control, format (bidi,
+  zero-width) or separator characters, and at least one letter, number, symbol or punctuation mark
+  that is not blank (the Hangul fillers U+115F, U+1160, U+3164, U+FFA0 and blank Braille U+2800 do
+  not count, nor do combining marks alone); an empty name clears it. A refusal says why in one
+  sentence, the same in the app and in the API's error message. Pages, rooms, agents and the app
+  get it cleaned on every read (refused characters and every form of `@` dropped, at most 64 code
+  points, `null` when nothing visible is left): document authors, room peers, comment and mention
+  authors, the owner's name on summaries and the gate, version labels and stats. So names stored
+  before these rules comply too. People confirmed by code
   without an account have no name. A name is display text, never authority: `role` stays
   server-derived beside it.
 - **Read live, never sealed.** The name is read from `users` by the identity email (the owner's
@@ -1031,12 +1036,17 @@ never a directory.
   people"`) lets the owner and editors list everyone the artifact is shared with: the owner, then
   every grant by email, each with its `u_` id, email, name and role. It counts only with `data` and
   `viewer` and declares nothing on its own; it is stored in `versions.capabilities` only when
-  declared, so every other declaration is stored as before. `GET /__plinth/api/v1/people?q=&limit=`
-  returns `{ people, total }` (`limit` 1 to 201; `q`, at most 100 characters, keeps people whose
-  name or email contains every term) and `GET /__plinth/api/v1/people/<u_id>` one person, or 404
-  when the id is nobody with access now. Each entry has `you` on the reader's own row. The
+  declared, so every other declaration is stored as before. The list is offered only while the
+  current version was written by a person or their account-wide agent: a version published with a
+  token limited to one artifact (a CI token) lists nobody to anyone, the owner included, until a
+  person publishes again (`policy.ts peopleListOffered`, by the writer facts thumbnails use).
+  `GET /__plinth/api/v1/people?q=&limit=` returns `{ people, total }` (`limit` 1 to 201, all by
+  default; `total` counts every match before `limit`; `q`, at most 100 characters, keeps people
+  whose name or email contains every term) and `GET /__plinth/api/v1/people/<u_id>` one person, or
+  404 when the id is nobody with access now. Each entry has `you` on the reader's own row. The
   runtime adds `plinth.canListPeople` (from the session's `can_list_people`) and
-  `plinth.people.list({ q, limit })` and `plinth.people.get(id)`. Commenters, viewers, link
+  `plinth.people.list({ q, limit })` (an array that also carries `total`) and
+  `plinth.people.get(id)`. Commenters, viewers, link
   viewers, previews and captures are refused (`forbidden`, or `unavailable` with `not_identified`,
   `not_declared`, `preview`, `disabled` or `opaque_isolation`); reads are limited to 600 per hour
   per reader per artifact. The routes are entries of the shared-data route table, so the data API's
@@ -1058,15 +1068,22 @@ never a directory.
   address is on the list), and a live room says it "shows it to the other people who have it
   open". Without the block the line reads as before.
 - **In the app.** Once a name is set, the account chip at the foot of the sidebar shows it, and
-  the account menu's "Signed in as" header keeps the email.
+  the account menu's "Signed in as" header keeps the email. Since anyone may choose any name, the
+  owner's own comments and versions carry a quiet "Owner" mark (in a comment's header, beside a
+  version's author in History, "(owner)" in the version picker), from `is_owner`, which the server
+  derives from ids (`author.is_owner` on comments and versions, in REST and MCP alike), never from
+  the name: someone who names themself after the owner visibly lacks it. An agent's comment or
+  version keeps its "Agent" mark instead.
 - **Agents and REST.** No new MCP tool. Document authors gain `name` for owners' and editors'
   agents on any page, beside the `viewer_id` that already tells whose a `u_` document is (only its
   person can create it). The access list reaches agents only where the page offers it: when the
   current version declares `data viewer people` and shared data is on (`policy.ts
   peopleListOffered`, the same answer the page route and the notice use), `list_artifact_data`
   without a collection also returns `people` (`{ viewer_id, email, name, role }`, the same list),
-  and `GET /api/v1/artifacts/:ref/people?q=` mirrors it (policy action `people`: owners and
-  editors, `artifacts:read`; 403 `feature_disabled` with the reason otherwise). Without the
+  and `GET /api/v1/artifacts/:ref/people?q=&limit=` mirrors it with `total` (policy action
+  `people`: owners and editors, `artifacts:read`; 403 `feature_disabled` with the reason
+  otherwise, or `forbidden` on a version a token limited to one artifact wrote, as the page route
+  answers; the page route's 600 reads per hour per reader per artifact, counted together). Without the
   declaration only the owner sees the access list, in the sharing settings, as before; the owner's
   `GET /api/v1/artifacts/:ref/sharing` gains `name` on each grant under the rule above. Names are
   untrusted for agents and the tool descriptions say so.
@@ -1370,8 +1387,9 @@ options.
   Only identified viewers write, stamps come from the server, quotas and write rate limits apply,
   and agents treat every document as untrusted input. Details in `docs/security.md`.
 - **Names are display text; the people list is the access list.** Display names have no `@` (nor
-  the small and fullwidth forms that render as one) and no control or invisible characters, and
-  never stand for a role. A page sees them only where it sees an email. Only the owner and editors
+  the small and fullwidth forms that render as one) and no control or invisible characters, must
+  show something, and never stand for a role: the app marks the owner's comments and versions from
+  ids. A page sees them only where it sees an email. Only the owner and editors
   (and their agents) list who has access, on a page that declares `people`, and every identified
   viewer is told; there is no visit log and no directory search. An access list names a grant
   holder only once they have taken part in the artifact, so the addresses an owner adds never
