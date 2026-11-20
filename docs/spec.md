@@ -43,8 +43,7 @@ account.
   `/__plinth/room/` (see [Live rooms](#live-rooms)).
 - Character-level co-editing (OT or CRDT), and live editing of HTML artifacts' text (pages build
   their own multiplayer with [live rooms](#live-rooms)).
-- On-page editing of HTML artifacts and designs (docs are edited on the page; HTML and designs in
-  the source editor).
+- On-page editing of HTML artifacts (docs are edited on the page; HTML in the source editor).
 - Importing artifacts automatically from Claude or ChatGPT accounts. Agents push; the platform does
   not pull.
 - Team workspaces and billing. Planned, but after the core works.
@@ -1080,9 +1079,11 @@ A visual composition at fixed sizes is a design: artboards on a canvas (app scre
 mockups, posters, social posts, ads and banners, business cards, variants side by side). It is the
 fifth artifact type, `design`. `publish_artifact`, `update_artifact` and `start_upload` take
 `type: "design"` with the source in `content`; a version stores `design.html` and its assets, and
-versions, `base_version` conflicts, restore, history, compare, comments, thumbnails and in-chat
-previews work as for every type. A design is edited in the source editor (HTML mode, with a live
-preview), never on its page.
+versions, `base_version` conflicts, restore, history, comments, thumbnails and in-chat previews
+work as for every type. People see a design, never its source: the app has no editor for it (no
+Edit in any menu; its editor address opens the design) and compares two versions only as rendered
+pages. Agents change it, and each change is a new version, which owners and editors can revert by
+restoring an older one.
 
 - **Source format.** One HTML file: shared `<head>` tags (fonts, Tailwind, a stylesheet) first,
   then artboards. Each artboard starts with a whole line
@@ -1090,13 +1091,13 @@ preview), never on its page.
   every line up to the next marker. Attributes are `name` (required, up to 80 characters), `id`
   (`a-z`, `0-9` and `-`, up to 40; derived from the name when absent), a size (`size="<preset>"`,
   `size="<w>x<h>"`, or `width` and `height`, 16 to 4096 CSS px a side), `background` (a hex color,
-  `transparent` or a color name; white by default) and `section` (consecutive boards of one
-  section form a row). Presets cover phones and desktops, social posts, IAB ads,
+  `transparent` or a color name; white by default) and `section` (a section's boards stay
+  together on one row when they fit). Presets cover phones and desktops, social posts, IAB ads,
   print sizes at 96 px per inch and slides (`packages/shared/src/design.ts`, `DESIGN_PRESETS`).
   At most 60 artboards and 2 MB. A source that is a whole HTML document, has no artboard or has a
   bad marker is refused with a fix-it message for the first problem and every problem with its
   line in `details.issues`. The title is the shared section's `<title>`, else the first board's
-  name. One parser for the Worker, the editor and the renderer.
+  name. One parser for the Worker and the renderer.
 - **Assets.** Images (png, jpg, gif, webp, avif, svg), CSS, JS and mp4 or webm video, referenced by
   relative path. Font files and data files (JSON, text) are refused with what to do instead
   (Google Fonts or a `data:` URL in `@font-face`; data inline in a `<script>`): artboards have an
@@ -1107,15 +1108,19 @@ preview), never on its page.
   embed, unpkg) and `data:` fonts work in an artboard and get no warning.
 - **The canvas.** A fixed Plinth renderer on the artifact's own origin
   (`/__plinth/types/design/`, under the strict typed shell: `script-src 'self'`) lays the boards
-  out in rows by section with the board's name over each; the name zooms to its board. Drag, the
+  out in rows with the board's name over each; the name zooms to its board. Rows are packed for
+  the screen: consecutive sections share a row, a wider gap between sections than between boards,
+  and the row width is the one at which every board shows at the largest scale, so the first view
+  fills the screen. Fit keeps every board clear of the toolbar at the bottom. Drag, the
   wheel and the arrow keys pan; Ctrl or Cmd with the wheel, a trackpad pinch, two fingers, the
   toolbar (Zoom out, the zoom level, which goes to 100%, Zoom in and Fit) and `+`, `-`, `0` (Fit)
   and `1` (100%) zoom between 5% and 400%. After Fit
-  (the button or `0`) the canvas fits again when its frame is resized, until the view is moved or
-  zoomed. Each board is
+  (the button or `0`) the canvas lays the rows out again and fits when its frame is resized, until
+  the view is moved or zoomed. Each board is
   covered so the canvas can be dragged; Interact, on the label of the board last zoomed to (and on
   a label that is hovered or focused), takes that board's cover off so its links, buttons and
-  scripts can be used, and Done, Escape or a click outside puts it back. At most 24 board frames are alive at once; boards far off screen are placeholders until
+  scripts can be used. While a board is in use its label drops Interact and the toolbar holds only
+  Done; Done, Escape or a click outside puts the cover back. At most 24 board frames are alive at once; boards far off screen are placeholders until
   they come back (a board's own state starts again then). `?plinth-board=<id>` shows one board
   alone at 100%.
 - **Artboard frames.** Each board renders alone at its exact size in its own nested frame, opened

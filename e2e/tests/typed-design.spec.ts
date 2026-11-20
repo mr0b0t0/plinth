@@ -2,8 +2,9 @@
 // canvas, each board alone at its size in a nested frame with an opaque origin, loaded from the
 // fixed board loader. Checked here: boards run their own scripts, styles and images and nothing of
 // the shell, the app or each other; nothing reaches another host; zoom, Fit and interact mode; the
-// dark scheme and phone width; printing; a comment pinned to a board; and the editor with its
-// preview, save, compare, restore and conflict. The opaque case is in typed-design-opaque.spec.ts.
+// dark scheme and phone width; printing; a comment pinned to a board; and that people never see
+// its source (no Edit, compare as rendered pages) while an agent's change and a restore are new
+// versions. The opaque case is in typed-design-opaque.spec.ts.
 import { expect, type Frame, type Page, test } from "@playwright/test";
 import { APP_ORIGIN, apiGet, CONTENT_HOST, uniqueEmail } from "../support/api.ts";
 import { captureLoad, openCapture, seedSession } from "../support/db.ts";
@@ -11,7 +12,6 @@ import { mcpClient, tool } from "../support/mcp.ts";
 import { seedToken } from "../support/tokens.ts";
 
 const CURRENT_FRAME = "iframe.pl-viewer-frame:not(.pl-viewer-frame--outgoing)";
-const PREVIEW_FRAME = 'iframe[title^="Preview of"]';
 const WIDE = { width: 1280, height: 860 };
 
 const PIXEL_PNG =
@@ -60,14 +60,6 @@ const DESIGN = [
   HOSTILE,
   LAST_LINE,
 ].join("\n");
-
-/** Puts the editor's cursor at the end of the draft. */
-async function toEnd(page: Page) {
-  await page.locator(".pl-editor .monaco-editor .view-lines").first().click();
-  // Monaco picks its shortcuts from the user agent (the test devices report Windows).
-  const mac = await page.evaluate(() => /Macintosh/.test(navigator.userAgent));
-  await page.keyboard.press(mac ? "Meta+End" : "Control+End");
-}
 
 interface Published {
   id: string;
@@ -236,8 +228,11 @@ test.describe("a published design", () => {
       await expect.poll(() => zoomOf(shell)).toBe(80);
       await page.keyboard.press("0");
       await expect.poll(() => zoomOf(shell)).toBe(fitted);
-      // Fit shows every board whole.
+      // Fit shows every board whole, clear of the toolbar at the bottom.
       const view = await shell.evaluate(() => [window.innerWidth, window.innerHeight]);
+      const barTop = await shell
+        .locator(".plinth-design__toolbar")
+        .evaluate((e) => e.getBoundingClientRect().top);
       for (const id of ["home", "post", "mrec"]) {
         const box = await shell
           .locator(`.plinth-design__board[data-board="${id}"]`)
@@ -248,7 +243,7 @@ test.describe("a published design", () => {
         expect(box[0]).toBeGreaterThanOrEqual(0);
         expect(box[1]).toBeGreaterThanOrEqual(0);
         expect(box[2]).toBeLessThanOrEqual(view[0] ?? 0);
-        expect(box[3]).toBeLessThanOrEqual(view[1] ?? 0);
+        expect(box[3]).toBeLessThanOrEqual(barTop - 16);
       }
 
       // A board's name zooms to it.
@@ -263,10 +258,18 @@ test.describe("a published design", () => {
       const home = await boardFrame(shell, "home");
       await shell.getByRole("button", { name: "Interact with Home" }).click();
       await expect(shell.locator("#__plinth-board-home")).toBeHidden();
+      // One control for the state: the board's label drops Interact, and Done takes the
+      // toolbar's place.
+      await expect(shell.getByRole("button", { name: "Interact with Home" })).toBeHidden();
+      await expect(shell.getByRole("button", { name: "Fit all boards" })).toBeHidden();
+      const done = shell.getByRole("button", { name: "Done interacting" });
+      await expect(done).toBeVisible();
+      expect(await done.evaluate((d) => d.closest(".plinth-design__toolbar") !== null)).toBe(true);
       await home.locator("#tap").click();
       await expect(home.locator("#out")).toHaveText("tapped");
-      await shell.getByRole("button", { name: "Done interacting" }).click();
+      await done.click();
       await expect(shell.locator("#__plinth-board-home")).toBeVisible();
+      await expect(shell.getByRole("button", { name: "Fit all boards" })).toBeVisible();
     } finally {
       await client.close();
     }
@@ -426,57 +429,49 @@ test.describe("comments on a design", () => {
   });
 });
 
-test.describe("editing a design", () => {
+test.describe("changing a design", () => {
   test.use({ viewport: WIDE });
 
-  test("HTML with a live preview, save as v2, compare, restore v1 as v3", async ({ page }) => {
+  test("no Edit and no source for people: an agent's v2, compare as rendered, restore v1 as v3", async ({
+    page,
+  }) => {
     test.setTimeout(90_000);
     const problems = watchConsole(page);
     const { artifact, client } = await publishDesign(page);
     try {
+      await page.goto(`/a/${artifact.slug}`);
+      await shellFrame(page);
+      await page.getByRole("button", { name: "Artifact actions" }).click();
+      await expect(page.getByRole("menuitem", { name: "Print or save as PDF" })).toBeVisible();
+      await expect(page.getByRole("menuitem", { name: /^Edit/ })).toHaveCount(0);
+      await page.keyboard.press("Escape");
+
+      // The editor's address goes to the design's page, with no code on screen.
       await page.goto(`/a/${artifact.slug}/edit`);
-      await expect(page.getByText("Editing v1")).toBeVisible();
-      const lines = page.locator(".pl-editor .monaco-editor .view-lines").first();
-      await expect(lines).toBeVisible({ timeout: 15_000 });
-      await expect(page.locator(".pl-editor-pane__label").first()).toHaveText("Design HTML");
-      const preview = page.frameLocator(PREVIEW_FRAME);
-      await expect(preview.locator(".plinth-design__board")).toHaveCount(3, { timeout: 15_000 });
+      await expect(page).toHaveURL(new RegExp(`/a/${artifact.slug}$`));
+      await shellFrame(page);
+      await expect(page.locator(".monaco-editor")).toHaveCount(0);
 
-      await toEnd(page);
-      await page.keyboard.press("Enter");
-      await page.keyboard.insertText(
-        '<!-- artboard id="banner" name="Banner" size="ad-leaderboard" -->\n<img id="b" src="img/hero.png" alt="" width="20" height="20">',
-      );
-      await expect(page.getByText("Unsaved changes")).toBeVisible();
-      await expect(preview.locator(".plinth-design__board")).toHaveCount(4);
-      // The preview's new board loads the version's image.
-      const previewEl = await page.locator(PREVIEW_FRAME).elementHandle();
-      const previewFrame = await previewEl?.contentFrame();
-      if (!previewFrame) throw new Error("no preview");
-      const banner = await boardFrame(previewFrame, "banner");
-      await expect
-        .poll(() => banner.locator("#b").evaluate((i: HTMLImageElement) => i.naturalWidth))
-        .toBeGreaterThan(0);
-
-      await page.getByRole("button", { name: "Save", exact: true }).click();
-      await expect(page.getByText("Saved as v2")).toBeVisible();
-      const current = await apiGet(page.request, `/artifacts/${artifact.id}`);
-      expect(current.body).toMatchObject({
-        version: 2,
-        type: "design",
-        source_path: "design.html",
+      const banner =
+        '<!-- artboard id="banner" name="Banner" size="ad-leaderboard" -->\n<img id="b" src="img/hero.png" alt="" width="20" height="20">';
+      const updated = await tool<{ version: number }>(client, "update_artifact", {
+        id: artifact.id,
+        content: `${DESIGN}\n${banner}`,
+        base_version: 1,
+        note: "Add a banner",
       });
-      expect(current.body.content).toContain('name="Banner"');
+      expect(updated.isError, updated.text).toBe(false);
+      expect(updated.data.version).toBe(2);
 
+      // Compare shows the two versions rendered, never their source.
       await page.goto(`/a/${artifact.slug}/compare?from=1&to=2`);
-      const diff = page.getByRole("table", { name: /Changes to design\.html from v1 to v2/ });
-      await expect(diff).toBeVisible();
-      await expect(diff.getByRole("row", { name: /Added .*artboard id="banner"/ })).toBeVisible();
-      await page.getByRole("tab", { name: "Rendered" }).click();
       const f1 = page.frameLocator(`iframe[title="v1 of ${TITLE}"]`);
       const f2 = page.frameLocator(`iframe[title="v2 of ${TITLE}"]`);
       await expect(f1.locator(".plinth-design__board")).toHaveCount(3, { timeout: 15_000 });
       await expect(f2.locator(".plinth-design__board")).toHaveCount(4, { timeout: 15_000 });
+      await expect(page.getByRole("tab", { name: "Source" })).toHaveCount(0);
+      await expect(page.getByRole("table", { name: /Changes to design\.html/ })).toHaveCount(0);
+      await expect(page.getByText("artboard id=")).toHaveCount(0);
 
       await page.goto(`/a/${artifact.slug}/history`);
       await page
@@ -497,38 +492,17 @@ test.describe("editing a design", () => {
     }
   });
 
-  test("an agent's update while the editor is open shows the conflict", async ({ page }) => {
-    test.setTimeout(60_000);
+  test("a design's row in the dashboard has no Edit", async ({ page }) => {
     const { artifact, client } = await publishDesign(page);
     try {
-      await page.goto(`/a/${artifact.slug}/edit`);
-      const lines = page.locator(".pl-editor .monaco-editor .view-lines").first();
-      await expect(lines).toBeVisible({ timeout: 15_000 });
-      await toEnd(page);
-      await page.keyboard.press("Enter");
-      await page.keyboard.insertText('<!-- artboard name="Mine" size="a5" -->');
-      await expect(page.getByText("Unsaved changes")).toBeVisible();
-      const agent = '<!-- artboard name="Agent board" size="a4" -->\n<p>Agent version</p>';
-      const updated = await tool<{ version: number }>(client, "update_artifact", {
-        id: artifact.id,
-        content: agent,
-        base_version: 1,
-        note: "Agent change",
-      });
-      expect(updated.isError, updated.text).toBe(false);
-      await page.getByRole("button", { name: "Save", exact: true }).click();
-      await expect(
-        page.getByRole("heading", {
-          name: "v2 was published while you were editing (by Work agent)",
-        }),
-      ).toBeVisible();
-      const conflict = page.locator(".pl-conflict");
-      await expect(conflict).toContainText("Agent version");
-      // The draft is kept next to v2 (its added board is further down the virtualized diff).
-      await expect(conflict).toContainText("Your draft, based on v1");
-      await expect(conflict).toContainText('name="Home"');
-      const now = await apiGet(page.request, `/artifacts/${artifact.id}`);
-      expect(now.body).toMatchObject({ version: 2, content: agent });
+      await page.goto("/dashboard");
+      await page
+        .getByRole("button", { name: `Actions for ${TITLE}` })
+        .first()
+        .click();
+      await expect(page.getByRole("menuitem", { name: "History" })).toBeVisible();
+      await expect(page.getByRole("menuitem", { name: "Edit" })).toHaveCount(0);
+      expect(artifact.type).toBe("design");
     } finally {
       await client.close();
     }

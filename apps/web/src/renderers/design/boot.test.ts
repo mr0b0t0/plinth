@@ -170,9 +170,10 @@ describe("boot", () => {
     expect((window as unknown as { __pwned?: number }).__pwned).toBeUndefined();
     expect(document.querySelectorAll("h2, [role=menu]")).toHaveLength(0);
     expect(
-      Array.from(document.querySelectorAll(".plinth-design__toolbar button"), (b) =>
-        b.getAttribute("aria-label"),
-      ),
+      Array.from(
+        document.querySelectorAll<HTMLButtonElement>(".plinth-design__toolbar button"),
+        (b) => (b.hidden ? null : b.getAttribute("aria-label")),
+      ).filter((l) => l !== null),
     ).toEqual(["Zoom out", "Zoom to 100%", "Zoom in", "Fit all boards"]);
   });
 
@@ -335,11 +336,22 @@ describe("interact mode", () => {
     expect(cover("post").hidden).toBe(true);
     expect(cover("home").hidden).toBe(false);
     expect(frameFor("post")?.tabIndex).toBe(0);
-    const done = document.querySelector(".plinth-design__done") as HTMLButtonElement;
-    expect(done.hidden).toBe(false);
+    // One control for the state: the board's label drops Interact, and the toolbar holds only
+    // Done in place of the zoom controls.
+    expect(labelOf("post").hasAttribute("data-interacting")).toBe(true);
+    const bar = document.querySelector(".plinth-design__toolbar") as HTMLElement;
+    const shown = () =>
+      Array.from(bar.querySelectorAll("button"))
+        .filter((b) => !b.hidden)
+        .map((b) => b.getAttribute("aria-label"));
+    expect(shown()).toEqual(["Done interacting"]);
+    expect(document.querySelectorAll(".plinth-design__done")).toHaveLength(1);
+    const done = bar.querySelector(".plinth-design__done") as HTMLButtonElement;
     done.click();
     expect(cover("post").hidden).toBe(false);
     expect(done.hidden).toBe(true);
+    expect(labelOf("post").hasAttribute("data-interacting")).toBe(false);
+    expect(shown()).toEqual(["Zoom out", "Zoom to 100%", "Zoom in", "Fit all boards"]);
 
     // A double click is not a way in: Interact is.
     cover("home").dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));

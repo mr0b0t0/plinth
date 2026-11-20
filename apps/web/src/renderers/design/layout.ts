@@ -1,21 +1,25 @@
 // Where each artboard sits on the canvas and how the view transforms it. Pure: world coordinates
 // are CSS px at 100%; a transform maps them to the screen as screen = world * scale + (x, y).
 //
-// Boards are laid out in rows, left to right: consecutive boards of one section form a row, and a
-// row that would grow wider than rowMaxWidth wraps. The gaps grow with the design's tallest board
-// (`unit`), so the band for labels, which keep their screen size at every zoom, still has room
-// when a design of big boards is fitted.
+// Boards are laid out in rows, left to right, in source order. Consecutive sections share a row,
+// with a wider gap between sections than between boards, and a section moves to the next row
+// whole when it does not fit. The row width is the one at which the whole layout, fitted into an
+// area of the given aspect ratio, shows at the largest scale, so the first view fills the screen.
+// The gaps grow with the design's tallest board (`unit`), so the band for labels, which keep
+// their screen size at every zoom, still has room when a design of big boards is fitted.
 import { DESIGN_LIMITS, type DesignBoard } from "@plinth/shared";
 
 export const LAYOUT = {
-  /** Between boards in a row. */
+  /** Between boards of one section in a row. */
   gap: 64,
+  /** Between the last board of one section and the first board of the next in a row. */
+  sectionGap: 160,
   /** The label band over each board (its name). */
   label: 28,
   /** Between rows: room for the next row's labels when a design is fitted. */
   rowGap: 96,
-  /** A row wraps before it grows wider than this (a wider board still gets a row of its own). */
-  rowMaxWidth: 8000,
+  /** The aspect ratio (width / height) a layout is made for when the viewport's is unknown. */
+  aspect: 16 / 10,
   /** The tallest board at which the gaps above are used as they are; taller ones scale them. */
   unitHeight: 600,
   maxUnit: 6,
@@ -31,7 +35,6 @@ export interface LayoutItem {
 }
 
 export interface LayoutRow {
-  section: string | null;
   /** The row's top, where its labels begin. */
   y: number;
 }
@@ -67,45 +70,91 @@ export interface Size {
   height: number;
 }
 
+/** Room kept clear on each side of the viewport when fitting. */
+export interface Insets {
+  top: number;
+  right: number;
+  bottom: number;
+  left: number;
+}
+
 type Board = Pick<DesignBoard, "id" | "width" | "height" | "section">;
 
-export function layoutBoards(boards: readonly Board[]): Layout {
-  const unit = layoutUnit(boards.reduce((m, b) => Math.max(m, b.height), 0));
+/** Consecutive boards of one section (or of none). */
+function runsOf(boards: readonly Board[]): Board[][] {
+  const runs: Board[][] = [];
+  for (const b of boards) {
+    const last = runs.at(-1);
+    if (last && (last[0]?.section ?? null) === (b.section ?? null)) last.push(b);
+    else runs.push([b]);
+  }
+  return runs;
+}
+
+/** The rows for one row width: greedy, a section moving to the next row when it does not fit. */
+function pack(runs: readonly Board[][], maxWidth: number, unit: number): Layout {
   const gap = LAYOUT.gap * unit;
+  const sectionGap = LAYOUT.sectionGap * unit;
   const label = LAYOUT.label * unit;
   const rowGap = LAYOUT.rowGap * unit;
   const items: LayoutItem[] = [];
-  const rows: LayoutRow[] = [];
-  let y = 0;
+  const rows: LayoutRow[] = [{ y: 0 }];
   let width = 0;
-  let i = 0;
-  while (i < boards.length) {
-    const section = boards[i]?.section ?? null;
-    // One section: one or more rows.
-    while (i < boards.length && (boards[i]?.section ?? null) === section) {
-      rows.push({ section, y });
-      const top = y + label;
-      let x = 0;
-      let tallest = 0;
-      const row = rows.length - 1;
-      while (i < boards.length && (boards[i]?.section ?? null) === section) {
-        const b = boards[i] as Board;
-        if (x > 0 && x + b.width > LAYOUT.rowMaxWidth) break;
-        items.push({ id: b.id, x, y: top, w: b.width, h: b.height, row });
-        x += b.width + gap;
-        tallest = Math.max(tallest, b.height);
-        i++;
-      }
-      width = Math.max(width, x - gap);
-      y = top + tallest + rowGap;
+  let x = 0;
+  let tallest = 0;
+  const newRow = () => {
+    const prev = rows.at(-1)?.y ?? 0;
+    width = Math.max(width, x);
+    rows.push({ y: prev + label + tallest + rowGap });
+    x = 0;
+    tallest = 0;
+  };
+  for (const run of runs) {
+    const runWidth = run.reduce((s, b) => s + b.width, 0) + gap * (run.length - 1);
+    if (x > 0 && x + sectionGap + runWidth > maxWidth) newRow();
+    run.forEach((b, k) => {
+      if (x > 0 && x + (k === 0 ? sectionGap : gap) + b.width > maxWidth) newRow();
+      const left = x === 0 ? 0 : x + (k === 0 ? sectionGap : gap);
+      const top = (rows.at(-1)?.y ?? 0) + label;
+      items.push({ id: b.id, x: left, y: top, w: b.width, h: b.height, row: rows.length - 1 });
+      x = left + b.width;
+      tallest = Math.max(tallest, b.height);
+    });
+  }
+  width = Math.max(width, x);
+  const h = items.length ? (rows.at(-1)?.y ?? 0) + label + tallest : 0;
+  return { items, rows, bounds: { x: 0, y: 0, w: width, h }, unit };
+}
+
+/**
+ * Lays the boards out for an area of `aspect` (width / height of the room boards are fitted
+ * into). Every width at which a first row could end is tried, and the layout that fits that area
+ * at the largest scale wins; the narrowest wins a tie.
+ */
+export function layoutBoards(boards: readonly Board[], aspect: number = LAYOUT.aspect): Layout {
+  const unit = layoutUnit(boards.reduce((m, b) => Math.max(m, b.height), 0));
+  const runs = runsOf(boards);
+  const ratio = Number.isFinite(aspect) && aspect > 0 ? aspect : LAYOUT.aspect;
+  const widths: number[] = [];
+  let x = 0;
+  for (const [r, run] of runs.entries()) {
+    for (const [k, b] of run.entries()) {
+      if (x > 0) x += (k === 0 && r > 0 ? LAYOUT.sectionGap : LAYOUT.gap) * unit;
+      x += b.width;
+      widths.push(x);
     }
   }
-  return {
-    items,
-    rows,
-    bounds: { x: 0, y: 0, w: Math.max(width, 0), h: Math.max(y - rowGap, 0) },
-    unit,
-  };
+  let best = pack(runs, 0, unit);
+  let bestScale = -1;
+  for (const w of widths) {
+    const l = pack(runs, w, unit);
+    const scale = Math.min(ratio / Math.max(l.bounds.w, 1), 1 / Math.max(l.bounds.h, 1));
+    if (scale > bestScale * (1 + 1e-9)) {
+      best = l;
+      bestScale = scale;
+    }
+  }
+  return best;
 }
 
 export function clampZoom(scale: number): number {
@@ -113,18 +162,28 @@ export function clampZoom(scale: number): number {
   return Math.min(DESIGN_LIMITS.maxZoom, Math.max(DESIGN_LIMITS.minZoom, scale));
 }
 
+const insetsOf = (p: number | Insets): Insets =>
+  typeof p === "number" ? { top: p, right: p, bottom: p, left: p } : p;
+
 /**
- * The transform that shows `rect` whole and centred in the viewport, inside `padding`, never above
- * `maxScale` (100% by default, so a small design is not blown up).
+ * The transform that shows `rect` whole and centred in the room `padding` leaves (one number for
+ * every side, or one per side), never above `maxScale` (100% by default, so a small design is not
+ * blown up).
  */
-export function fitTransform(rect: Rect, viewport: Size, padding = 48, maxScale = 1): Transform {
-  const w = Math.max(viewport.width - 2 * padding, 1);
-  const h = Math.max(viewport.height - 2 * padding, 1);
+export function fitTransform(
+  rect: Rect,
+  viewport: Size,
+  padding: number | Insets = 48,
+  maxScale = 1,
+): Transform {
+  const p = insetsOf(padding);
+  const w = Math.max(viewport.width - p.left - p.right, 1);
+  const h = Math.max(viewport.height - p.top - p.bottom, 1);
   const scale = clampZoom(Math.min(w / Math.max(rect.w, 1), h / Math.max(rect.h, 1), maxScale));
   return {
     scale,
-    x: (viewport.width - rect.w * scale) / 2 - rect.x * scale,
-    y: (viewport.height - rect.h * scale) / 2 - rect.y * scale,
+    x: p.left + (w - rect.w * scale) / 2 - rect.x * scale,
+    y: p.top + (h - rect.h * scale) / 2 - rect.y * scale,
   };
 }
 
@@ -139,7 +198,7 @@ export function zoomAt(t: Transform, factor: number, point: { x: number; y: numb
 export function zoomToBoard(
   item: Rect,
   viewport: Size,
-  padding = 48,
+  padding: number | Insets = 48,
   label: number = LAYOUT.label,
 ): Transform {
   return fitTransform(

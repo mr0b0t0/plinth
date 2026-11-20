@@ -55,7 +55,11 @@ export interface ArtifactTypeDef {
    * content pass, never from the web build.
    */
   renderer: { script: string; style: string; frame?: string } | null;
-  editor: { language: EditorLanguage; wordWrap: "on" | "off" };
+  /**
+   * The source editor's settings, or null for a type people never see the source of (a design):
+   * the app then offers no Edit and no source diff, and agents change it.
+   */
+  editor: { language: EditorLanguage; wordWrap: "on" | "off" } | null;
   /**
    * Owners and editors may edit it on its rendered page, live with each other (#36). Only types
    * whose page is Plinth's own renderer: page scripts in an HTML artifact could forge edits.

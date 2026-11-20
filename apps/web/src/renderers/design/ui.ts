@@ -1,6 +1,7 @@
 // Plinth's own elements on the design canvas, all built with createElement and textContent: the
 // board labels (the name, which zooms to the board, and Interact), the cover over each board frame
-// (the comment anchor, `__plinth-board-<id>`) and the toolbar.
+// (the comment anchor, `__plinth-board-<id>`) and the toolbar (zoom and Fit, or Done while a board
+// is in use).
 // Author markup never reaches this document: boards exist here only as frames.
 import type { DesignBoard } from "@plinth/shared";
 
@@ -40,7 +41,8 @@ export interface LabelActions {
 
 /**
  * A board's label: its name, a button that zooms to the board, then Interact, which shows only on
- * the board last zoomed to and while the label is hovered or holds focus (design.css).
+ * the board last zoomed to and while the label is hovered or holds focus, and never on the board
+ * in use (design.css).
  */
 export function boardLabel(doc: Document, board: DesignBoard, a: LabelActions): HTMLElement {
   const label = el(doc, "div", "plinth-design__label");
@@ -89,11 +91,15 @@ export interface ToolbarActions {
   zoomIn: () => void;
   fit: () => void;
   actual: () => void;
+  done: () => void;
 }
 
 export interface Toolbar {
   el: HTMLElement;
   zoom: HTMLButtonElement;
+  done: HTMLButtonElement;
+  /** While a board is in use, the toolbar holds only Done in place of the zoom controls. */
+  setInteracting: (on: boolean) => void;
 }
 
 export function toolbar(doc: Document, a: ToolbarActions): Toolbar {
@@ -107,11 +113,28 @@ export function toolbar(doc: Document, a: ToolbarActions): Toolbar {
     "100%",
     a.actual,
   );
-  bar.append(
+  const controls = [
     button(doc, "plinth-design__btn", "Zoom out", "−", a.zoomOut),
     zoom,
     button(doc, "plinth-design__btn", "Zoom in", "+", a.zoomIn),
     button(doc, "plinth-design__btn", "Fit all boards", "Fit", a.fit),
+  ];
+  const done = button(
+    doc,
+    "plinth-design__btn plinth-design__done",
+    "Done interacting",
+    "Done",
+    a.done,
   );
-  return { el: bar, zoom };
+  done.hidden = true;
+  bar.append(...controls, done);
+  return {
+    el: bar,
+    zoom,
+    done,
+    setInteracting: (on) => {
+      for (const c of controls) c.hidden = on;
+      done.hidden = !on;
+    },
+  };
 }

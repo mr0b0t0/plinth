@@ -304,10 +304,10 @@ stylesheet) come first; then each artboard starts with a whole line
 `<!-- artboard id="home" name="Home" size="iphone" -->` followed by its HTML fragment. A size is a
 preset (`iphone`, `desktop`, `instagram-post`, `story`, `og-image`, `ad-medium-rectangle`, `a4`,
 `slide-16x9` and others; [spec.md](spec.md#designs-decided-2026-11-19)), `size="1080x1080"`, or
-`width` and `height`, 16 to 4096 px a side; `section` groups boards into rows and `background`
-sets the board's color. Plinth lays the boards out on a canvas people pan and zoom, and renders
-each one alone at its exact size with an opaque origin: inline scripts and allowlisted CDN scripts
-run, but a board cannot fetch the artifact's files or use storage, and font files cannot be assets
+`width` and `height`, 16 to 4096 px a side; `section` keeps a group of boards together on one row
+when they fit, and `background` sets the board's color. Plinth lays the boards out on a canvas
+people pan and zoom, and renders each one alone at its exact size with an opaque origin: inline
+scripts and allowlisted CDN scripts run, but a board cannot fetch the artifact's files or use storage, and font files cannot be assets
 (use Google Fonts or a `data:` URL). Assets are images, CSS, JS and mp4/webm video by relative
 path; `design.html` and `index.html` are reserved. Up to 60 artboards and 2 MB. A source that does
 not parse is refused with `invalid_input`: the message names the first problem and its line, and

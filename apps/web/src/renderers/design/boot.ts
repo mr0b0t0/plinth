@@ -23,8 +23,12 @@ import { bindCanvasInput, type Schedule, Viewport, ZOOM_STEP } from "./canvas.ts
 import { BoardFrames } from "./frames.ts";
 import {
   fitTransform,
+  type Insets,
   LAYOUT,
+  type Layout,
+  type LayoutItem,
   layoutBoards,
+  type Size,
   screenRect,
   type Transform,
   visibleBoards,
@@ -32,13 +36,22 @@ import {
 } from "./layout.ts";
 import { pageName, preparePrint } from "./print.ts";
 import { fromApp, readDesignAppMessage } from "./protocol.ts";
-import { boardLabel, boardSlot, button, el, toolbar } from "./ui.ts";
+import { boardLabel, boardSlot, el, toolbar } from "./ui.ts";
 
 const ROOT_ID = "__plinth-design";
 const DATA_ID = "__plinth-content";
 export const FALLBACK = "This design could not be shown.";
-/** Room the toolbar takes at the bottom, kept clear when fitting. */
-const FIT_PADDING = 72;
+/**
+ * Room kept clear round the boards when fitting, besides the toolbar's at the bottom: 48 px, or
+ * less on a small screen (6% of its shorter side, at least 16 px), so a phone's boards get the room.
+ */
+const fitPadding = (size: Size) =>
+  Math.round(Math.min(48, Math.max(16, Math.min(size.width, size.height) * 0.06)));
+/**
+ * The toolbar's height plus its offset from the bottom (design.css), for when it has no layout
+ * size yet: fitted boards end the fit padding above it.
+ */
+const TOOLBAR_SPACE = 66;
 /** Label band height on screen, over each board. */
 const LABEL_PX = 26;
 /** Below this on-screen board width, a label shows only the board's name. */
@@ -160,9 +173,7 @@ export function boot(win: Window, opts: BootOptions = {}): DesignHandle {
     };
   }
 
-  const layout = layoutBoards(design.boards);
   const byId = new Map(design.boards.map((b) => [b.id, b]));
-  const itemById = new Map(layout.items.map((it) => [it.id, it]));
   root.setAttribute("data-mode", "canvas");
   if (review) root.setAttribute("data-review", "");
 
@@ -189,6 +200,9 @@ export function boot(win: Window, opts: BootOptions = {}): DesignHandle {
 
   let auto = true;
   let view: Viewport;
+  let layout: Layout = layoutBoards(design.boards);
+  let itemById = new Map<string, LayoutItem>();
+
   // The board last zoomed to: its label offers Interact (design.css) until Fit.
   const setActive = (id: string | null) => {
     for (const [bid, label] of labels) label.toggleAttribute("data-active", bid === id);
@@ -198,16 +212,12 @@ export function boot(win: Window, opts: BootOptions = {}): DesignHandle {
     if (!item) return;
     auto = false;
     setActive(id);
-    view.set(zoomToBoard(item, view.size(), FIT_PADDING, LAYOUT.label * layout.unit));
+    const size = view.size();
+    view.set(zoomToBoard(item, size, insets(size), LAYOUT.label * layout.unit));
   };
 
   for (const b of design.boards) {
-    const item = itemById.get(b.id);
-    if (!item) continue;
     const { slot, cover } = boardSlot(doc, b, pageName(b));
-    // Custom properties, so the print layout can drop the position without !important.
-    slot.style.setProperty("--pd-x", `${item.x}px`);
-    slot.style.setProperty("--pd-y", `${item.y}px`);
     world.append(slot);
     frames.add(b, slot);
     covers.set(b.id, cover);
@@ -220,46 +230,6 @@ export function boot(win: Window, opts: BootOptions = {}): DesignHandle {
     labels.set(b.id, label);
   }
 
-  const done = button(doc, "plinth-design__done", "Done interacting", "Done", () =>
-    setInteract(null),
-  );
-  done.hidden = true;
-
-  function setInteract(id: string | null) {
-    if (review) id = null;
-    if (id !== null && !byId.has(id)) return;
-    if (interacting === id) return;
-    if (interacting) {
-      covers.get(interacting)?.removeAttribute("hidden");
-      slots.get(interacting)?.removeAttribute("data-interacting");
-      const f = frames.frameOf(interacting);
-      if (f) f.tabIndex = -1;
-    }
-    interacting = id;
-    frames.pin(id);
-    if (id) {
-      covers.get(id)?.setAttribute("hidden", "");
-      slots.get(id)?.setAttribute("data-interacting", "");
-      const f = frames.frameOf(id);
-      if (f) f.tabIndex = 0;
-      done.hidden = false;
-      announcer.textContent = `Interacting with ${byId.get(id)?.name ?? "the board"}. Press Done or Escape to stop.`;
-    } else {
-      done.hidden = true;
-      announcer.textContent = "";
-    }
-  }
-
-  const fitAll = () => {
-    auto = true;
-    setActive(null);
-    view.set(fitTransform(layout.bounds, view.size(), FIT_PADDING));
-  };
-  const actual = () => {
-    auto = false;
-    view.zoomTo(1);
-  };
-
   const bar = toolbar(doc, {
     zoomOut: () => {
       auto = false;
@@ -269,9 +239,81 @@ export function boot(win: Window, opts: BootOptions = {}): DesignHandle {
       auto = false;
       view.zoomBy(ZOOM_STEP);
     },
-    fit: fitAll,
-    actual,
+    fit: () => fitAll(),
+    actual: () => actual(),
+    done: () => setInteract(null),
   });
+
+  /** The room fitted boards leave: the fit padding on every side, plus the toolbar at the bottom. */
+  function insets(size: Size): Insets {
+    const r = bar.el.getBoundingClientRect();
+    const space = r.height > 0 ? Math.max(size.height - r.top, 0) : TOOLBAR_SPACE;
+    const p = fitPadding(size);
+    return { top: p, right: p, bottom: p + space, left: p };
+  }
+
+  /** Lays the boards out for the room the viewport leaves them. */
+  function relayout(size: Size) {
+    const p = insets(size);
+    layout = layoutBoards(
+      design.boards,
+      (size.width - p.left - p.right) / (size.height - p.top - p.bottom),
+    );
+    itemById = new Map(layout.items.map((it) => [it.id, it]));
+    for (const it of layout.items) {
+      // Custom properties, so the print layout can drop the position without !important.
+      slots.get(it.id)?.style.setProperty("--pd-x", `${it.x}px`);
+      slots.get(it.id)?.style.setProperty("--pd-y", `${it.y}px`);
+    }
+  }
+
+  // While a board is in use, the toolbar holds only Done, and that board's label no Interact.
+  function setInteract(id: string | null) {
+    if (review) id = null;
+    if (id !== null && !byId.has(id)) return;
+    if (interacting === id) return;
+    const prev = interacting;
+    const doneHadFocus = doc.activeElement === bar.done;
+    if (prev) {
+      covers.get(prev)?.removeAttribute("hidden");
+      slots.get(prev)?.removeAttribute("data-interacting");
+      labels.get(prev)?.removeAttribute("data-interacting");
+      const f = frames.frameOf(prev);
+      if (f) f.tabIndex = -1;
+    }
+    interacting = id;
+    frames.pin(id);
+    bar.setInteracting(id !== null);
+    if (id) {
+      const label = labels.get(id);
+      const chipHadFocus = label?.contains(doc.activeElement) ?? false;
+      covers.get(id)?.setAttribute("hidden", "");
+      slots.get(id)?.setAttribute("data-interacting", "");
+      label?.setAttribute("data-interacting", "");
+      const f = frames.frameOf(id);
+      if (f) f.tabIndex = 0;
+      // The Interact button just went away: keep focus on what is in use now.
+      if (chipHadFocus || doneHadFocus) (f ?? bar.done).focus();
+      announcer.textContent = `Interacting with ${byId.get(id)?.name ?? "the board"}. Press Done or Escape to stop.`;
+    } else {
+      announcer.textContent = "";
+      if (doneHadFocus && prev) {
+        labels.get(prev)?.querySelector<HTMLElement>(".plinth-design__label-name")?.focus();
+      }
+    }
+  }
+
+  function fitAll() {
+    auto = true;
+    setActive(null);
+    const size = view.size();
+    relayout(size);
+    view.set(fitTransform(layout.bounds, size, insets(size)));
+  }
+  function actual() {
+    auto = false;
+    view.zoomTo(1);
+  }
 
   // Labels keep their screen size: a label sits over its board, at most as wide as the board
   // (only the name when that is narrow).
@@ -294,7 +336,7 @@ export function boot(win: Window, opts: BootOptions = {}): DesignHandle {
     html.setAttribute("data-zoom", pct);
   });
 
-  root.replaceChildren(canvas, bar.el, done, announcer);
+  root.replaceChildren(canvas, bar.el, announcer);
   html.setAttribute("data-boards", String(design.boards.length));
   html.setAttribute("data-boards-loaded", "0");
 
@@ -306,9 +348,7 @@ export function boot(win: Window, opts: BootOptions = {}): DesignHandle {
         auto = false;
       },
       isControl: (t) =>
-        t.closest(
-          ".plinth-design__toolbar, .plinth-design__label, .plinth-design__done, .plinth-design__frame",
-        ) !== null,
+        t.closest(".plinth-design__toolbar, .plinth-design__label, .plinth-design__frame") !== null,
       backgroundClick: (t) => {
         // A click outside the board being interacted with puts its cover back.
         if (interacting && !t.closest(`[data-board="${interacting}"]`)) setInteract(null);
