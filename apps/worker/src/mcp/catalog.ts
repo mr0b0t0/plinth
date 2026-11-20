@@ -30,6 +30,8 @@ export const MCP_TOOL_SUMMARIES = {
     "Who opened the user's artifacts, when, how often and which version (owner only); without an id, a summary.",
   preview_artifact:
     "Used by Plinth's in-chat preview (MCP Apps hosts) for a short-lived link to show a version; agents never need it.",
+  get_design_system:
+    "Read a design system's tokens, CSS, guidelines and components to build another artifact with it.",
 } as const;
 
 export type McpToolName = keyof typeof MCP_TOOL_SUMMARIES;
@@ -83,4 +85,5 @@ export const MCP_TOOL_ANNOTATIONS: Record<McpToolName, ToolAnnotations> = {
   start_upload: writes("Start upload"),
   get_artifact_stats: reads("Get artifact stats"),
   preview_artifact: reads("Preview artifact"),
+  get_design_system: reads("Get design system"),
 };

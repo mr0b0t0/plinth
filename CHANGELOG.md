@@ -19,6 +19,14 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   with or without the notes. Update the plugin for the agent's slides rules. The Plinth CLI
   publishes a folder with `slides.md` at its top as a deck (`plinth publish`, `plinth upload`).
   Plugin 0.19.0.
+- **Design systems.** Publish tokens, guidelines and components as a design system (`type:
+  "design_system"`, JSON in `system.json`): Plinth shows it as a reference site with color, type,
+  spacing and shadow samples and live component previews in light and dark. Agents read one with
+  the new `get_design_system` tool (or `GET /api/v1/artifacts/:ref/design-system`), copy its CSS
+  into the pages they build, and get a `design_system_outdated` warning when a page was built on
+  an older version. `list_artifacts` takes `type` to find them. The editor checks the JSON as you
+  type. CSS blocks may not hold escapes or `url()`s to other hosts, and a `url()` to a file the
+  design system lacks is a `missing_file` warning. Plugin 0.18.0.
 - **Artifact stats: see who opened your artifacts.** Each artifact's Stats page (`/a/<slug>/stats`,
   linked from its menu and the Share dialog) shows opens and viewers over 7, 30, 90 or 365 days,
   the people who opened it (name and email for people signed in and allowlisted viewers, with the

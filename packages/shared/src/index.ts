@@ -3,6 +3,8 @@ export * from "./artifactTypes.ts";
 export * from "./categories.ts";
 export * from "./constants.ts";
 export * from "./data.ts";
+export * from "./designSystem.ts";
+export * from "./designSystemSchema.ts";
 export * from "./errors.ts";
 export * from "./harnesses.ts";
 export * from "./liveDoc.ts";

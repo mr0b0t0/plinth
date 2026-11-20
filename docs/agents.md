@@ -31,6 +31,15 @@ interactive and custom visual design stay HTML. When unsure and the result is mo
 The type is fixed at publish; the server's instructions and the skill's "Documents (type doc)" and
 "Slides (type slides)" sections say this to every harness.
 
+**Design systems.** A person's tokens, components and guidelines can live on Plinth as a design
+system (`type: "design_system"`, JSON in `content`), shown as a reference site with live component
+previews. An agent asked for a page finds the person's design systems with `list_artifacts` and
+`type: "design_system"`, reads one with `get_design_system`, copies its `css` into the page and
+names it with `<meta name="plinth-design-system" content="<id>@<version>">`, so a later update is
+warned (`design_system_outdated`) when the design system moved on. Pages never load another
+artifact's files at runtime. The skill's "Design systems (type design_system)" section has the
+format; [mcp.md](mcp.md#get_design_system) has the tool.
+
 ## How each harness gets it
 
 Two channels carry these rules, so every harness gets them whatever it supports:

@@ -30,6 +30,12 @@ export const PUBLISH_WARNING_CODES = [
   "slides_setting",
   "slide_empty",
   "slide_dense",
+  "ds_inert_markup",
+  "ds_missing_font",
+  "ds_no_dark_theme",
+  "ds_deprecated_alias",
+  "design_system_unavailable",
+  "design_system_outdated",
 ];
 
 /** Token scopes. A personal access token or OAuth grant carries a space-separated subset. */
@@ -134,6 +140,32 @@ export const LIMITS = {
   maxDataOps: 50,
   /** Collection names in a page's plinth-data-shared tag. */
   maxDataShared: 20,
+  /** Bytes of JSON (system.json) per version of a design system artifact. */
+  maxDesignSystemBytes: 1 * MB,
+  /** The design system format's limits (packages/shared/src/designSystem.ts). */
+  designSystem: {
+    maxTokens: 2000,
+    /** Path segments of one token, its own name included. */
+    maxDepth: 8,
+    maxAliasChain: 16,
+    maxValueLength: 256,
+    maxNameLength: 120,
+    maxDescriptionBytes: 4 * KB,
+    maxGuidelinesBytes: 200 * KB,
+    maxCssBytes: 100 * KB,
+    maxFonts: 16,
+    maxComponents: 200,
+    maxComponentTextBytes: 8 * KB,
+    maxComponentCssBytes: 50 * KB,
+    maxExamples: 20,
+    maxExampleNameLength: 80,
+    maxExampleHtmlBytes: 20 * KB,
+    minExampleHeight: 40,
+    maxExampleHeight: 1200,
+    defaultExampleHeight: 160,
+    /** Errors parseDesignSystem reports, at most. */
+    maxErrors: 50,
+  },
   /** People listed in one artifact's stats (the most recent; `people_total` says how many). */
   maxStatsPeople: 500,
 };

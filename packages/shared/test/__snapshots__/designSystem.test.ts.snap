@@ -1,0 +1,7 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`compiled output > designSystemCss: light, media dark and explicit dark 1`] = `
+":root{--acme-color-brand-500:#3355ff;--acme-color-bg:#ffffff;--acme-color-fg:#1f2328;--acme-color-accent:var(--acme-color-brand-500);--acme-color-p3:color(display-p3 1 0 0 / 0.5);--acme-color-hexobj:#0000ff;--acme-space-1:4px;--acme-space-2:8px;--acme-radius-md:8px;--acme-font-body-font-family:Inter, "Segoe UI", sans-serif;--acme-font-body-font-size:16px;--acme-font-body-font-weight:600;--acme-font-body-line-height:1.5;--acme-font-body:var(--acme-font-body-font-weight) var(--acme-font-body-font-size)/var(--acme-font-body-line-height) var(--acme-font-body-font-family);--acme-font-mono:"Acme Mono", ui-monospace;--acme-shadow-card:0px 1px 3px 0px var(--acme-color-fg);--acme-motion-fast:120ms;--acme-motion-ease:cubic-bezier(0.2, 0, 0, 1);--acme-line:1px solid var(--acme-color-fg);--acme-opacity:0.5;}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){--acme-color-brand-500:#6b8cff;--acme-color-bg:#0d1117;--acme-color-fg:#e6edf3;}}
+:root[data-theme="dark"]{--acme-color-brand-500:#6b8cff;--acme-color-bg:#0d1117;--acme-color-fg:#e6edf3;}"
+`;

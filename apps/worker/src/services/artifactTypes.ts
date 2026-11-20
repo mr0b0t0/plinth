@@ -11,6 +11,7 @@
 // never branch on a type id.
 import {
   ARTIFACT_TYPES,
+  type ArtifactDetailBase,
   type ArtifactType,
   type ArtifactTypeDef,
   type PublishResult,
@@ -19,6 +20,7 @@ import {
   typeDef,
 } from "@plinth/shared";
 import { ApiError } from "../lib/errors.ts";
+import { designSystemHooks } from "./artifactTypes/design_system.ts";
 import { docHooks } from "./artifactTypes/doc.ts";
 import { htmlHooks } from "./artifactTypes/html.ts";
 import { slidesHooks } from "./artifactTypes/slides.ts";
@@ -74,6 +76,20 @@ export interface TypeHooks {
    * the result, with any per-type publish warnings added.
    */
   afterCommit?(ctx: Ctx, v: CommittedVersion): Promise<PublishResult>;
+  /**
+   * Per-type publish warnings about the staged source, before the commit (never on a restore).
+   * `paths` are every file of the version, the source included. Advisory: never blocks a publish.
+   */
+  publishWarnings?(ctx: Ctx, v: StagedSource): Promise<PublishWarning[]>;
+  /** Extra fields of get_artifact for a version of this type, read as the caller. */
+  detail?(ctx: Ctx, text: string): Promise<Partial<ArtifactDetailBase>>;
+}
+
+/** A version's source as publishWarnings sees it, before the commit. */
+export interface StagedSource {
+  def: ArtifactTypeDef;
+  text: string;
+  paths: ReadonlySet<string>;
 }
 
 /** Every type's hooks, keyed by its id. One type per line, in ARTIFACT_TYPES order. */
@@ -81,6 +97,7 @@ const TYPE_HOOKS: { readonly [K in ArtifactType]: TypeHooks } = {
   html: htmlHooks,
   doc: docHooks,
   slides: slidesHooks,
+  design_system: designSystemHooks,
 };
 
 /** The Worker hooks of a registry row. */
@@ -88,10 +105,37 @@ export function typeHooks(def: ArtifactTypeDef): TypeHooks {
   return TYPE_HOOKS[def.id];
 }
 
-/** `pass type "doc" or "slides"`: every type that takes content, from the registry. */
+/** `pass type "doc", "slides" or "design_system"`: every type that takes content, from the registry. */
 const TYPED_CHOICES = ARTIFACT_TYPES.filter((t) => TYPE_REGISTRY[t].sourceField === "content")
   .map((t) => `"${t}"`)
-  .join(" or ");
+  .join(", ")
+  .replace(/, ([^,]*)$/, " or $1");
+
+/**
+ * A type's publish warnings for a staged source. The hook is advisory, so an error inside it (a D1
+ * read that fails) never fails the publish: it is logged by name only and becomes one
+ * `not_scanned` note saying the type's checks did not run.
+ */
+export async function typePublishWarnings(ctx: Ctx, v: StagedSource): Promise<PublishWarning[]> {
+  const hook = typeHooks(v.def).publishWarnings;
+  if (!hook) return [];
+  try {
+    return await hook(ctx, v);
+  } catch (e) {
+    console.error(
+      "publish warnings hook failed:",
+      v.def.id,
+      e instanceof Error ? e.name : "unknown",
+    );
+    return [
+      {
+        code: "not_scanned",
+        file: v.def.sourcePath,
+        message: `The ${v.def.id} checks of ${v.def.sourcePath} did not run (a temporary error), so warnings they give may be missing. The version is published. No action needed`,
+      },
+    ];
+  }
+}
 
 function refuse(def: ArtifactTypeDef, field: string, message: string): ApiError {
   return new ApiError("invalid_input", message, { type: def.id, field });

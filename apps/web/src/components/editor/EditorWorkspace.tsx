@@ -48,6 +48,8 @@ import type { EditorInitial, VersionText } from "./initial.ts";
 import { PreviewFrame } from "./PreviewFrame.tsx";
 import { utf8Bytes } from "./previewProtocol.ts";
 import { SplitPane, type SplitView } from "./SplitPane.tsx";
+import { sourceProblems } from "./sourceChecks.ts";
+import { useLastValid } from "./useLastValid.ts";
 import "./editor.css";
 
 /** Keep the draft in sessionStorage this long after the last change. */
@@ -110,6 +112,8 @@ export default function EditorWorkspace({
   const id = artifact.id;
   const { def } = sourceOf(artifact);
   const label = def.sourceLabel;
+  // The pane header starts with a capital, as "HTML" and "Markdown" do ("Design system JSON").
+  const paneLabel = label.charAt(0).toUpperCase() + label.slice(1);
   const artifactPath = `/a/${encodeURIComponent(artifact.slug)}`;
   const codePaneId = useId();
   const tabHintId = useId();
@@ -132,14 +136,23 @@ export default function EditorWorkspace({
   const dirty = html !== base.html;
   // UTF-8 bytes, as the Worker counts them.
   const tooLarge = useMemo(() => utf8Bytes(html) > def.maxSourceBytes, [html, def]);
+  // A typed format's own problems (a design system's JSON): Save waits until there are none.
+  const problems = useMemo(() => sourceProblems(def.id, html), [def, html]);
+  const invalid = problems.length > 0;
+  // While the draft has problems (listed above the editor), the preview keeps the last draft that
+  // had none instead of repeating them; it stays blank until one does.
+  const shown = useLastValid(html, !invalid);
   const preview = useMemo(
-    () => previewDocument(def, { id, title: artifact.title, text: html, config }),
-    [def, id, artifact.title, html, config],
+    () =>
+      shown === null
+        ? ""
+        : previewDocument(def, { id, title: artifact.title, text: shown, config }),
+    [def, id, artifact.title, shown, config],
   );
 
   // Refs for handlers that must see the newest values (keyboard shortcut, async saves).
-  const latest = useRef({ html, note, base, mode, dirty, active, tooLarge });
-  latest.current = { html, note, base, mode, dirty, active, tooLarge };
+  const latest = useRef({ html, note, base, mode, dirty, active, tooLarge, invalid });
+  latest.current = { html, note, base, mode, dirty, active, tooLarge, invalid };
   const savingRef = useRef(false);
 
   // Keep the draft in this tab so a reload does not lose it.
@@ -270,6 +283,10 @@ export default function EditorWorkspace({
         });
         return;
       }
+      if (s.invalid) {
+        toast.toast({ title: `Fix the ${label} first`, tone: "warning" });
+        return;
+      }
       if (s.dirty) void save();
     };
     window.addEventListener("keydown", onKeyDown, true);
@@ -335,7 +352,7 @@ export default function EditorWorkspace({
   };
 
   const shortcut = isMac() ? "⌘S" : "Ctrl+S";
-  const canSave = dirty && mode !== "conflict" && !tooLarge;
+  const canSave = dirty && mode !== "conflict" && !tooLarge && !invalid;
 
   return (
     <div className="pl-editor" hidden={!active}>
@@ -406,6 +423,23 @@ export default function EditorWorkspace({
           </p>
         </div>
       )}
+      {invalid && (
+        <div
+          className="pl-editor__notice pl-editor__problems"
+          role="status"
+          aria-live="polite"
+          aria-label={`Fix the ${label} to save`}
+        >
+          <InfoIcon aria-hidden="true" />
+          <ul>
+            {problems.slice(0, 5).map((p) => (
+              <li key={`${p.path} ${p.message}`}>
+                <code>{p.path || "(root)"}</code> {p.message}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
       {mode === "edit" && newer !== null && (
         <div className="pl-editor__notice" role="status">
           <InfoIcon aria-hidden="true" />
@@ -474,7 +508,7 @@ export default function EditorWorkspace({
             start={
               <div className="pl-editor-pane">
                 <div className="pl-editor-pane__tools">
-                  <span className="pl-editor-pane__label">{label}</span>
+                  <span className="pl-editor-pane__label">{paneLabel}</span>
                   <span className="pl-editor-pane__hint type-caption text-faint" id={tabHintId}>
                     Tab indents. {TAB_FOCUS_KEYS} makes Tab move focus instead.
                   </span>

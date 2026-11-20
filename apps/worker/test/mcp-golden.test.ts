@@ -1,7 +1,10 @@
 // The MCP surface agents see (tools/list with descriptions, input schemas, annotations and _meta;
 // resources/list and the preview resource; the server instructions) is pinned by hash to the
 // server before tool registration moved into per-feature files (mcp/tools/), so that move changed
-// no byte of it. A change that means to alter the surface updates the hashes here, on purpose.
+// no byte of it. A change that means to alter the surface updates the hashes here, on purpose:
+// the design_system type (get_design_system, list_artifacts' type filter, the publish and update
+// notes, and the server instructions' design system sentence) did, and so did the slides type (its
+// publish note, the type and content descriptions and the instructions' deck sentence).
 import { describe, expect, it } from "vitest";
 import { PREVIEW_RESOURCE_URI } from "../src/mcp/preview.ts";
 import { agent, mcpClient } from "./helpers.ts";
@@ -46,16 +49,17 @@ const NAMES = [
   "list_artifact_data",
   "write_artifact_data",
   "preview_artifact",
+  "get_design_system",
 ];
 
 const RESOURCES = "8c9a70350ae4c13067ef489e651d5f5eafe12471c2c63f7c925f9d3bf5bf5e78";
-const INSTRUCTIONS = "df08ad45142c896f45108c43ba23e4467ccb341351aee40515e7129c729c0837";
+const INSTRUCTIONS = "ca1a080e217664904532f73f57a349d6f22e0f6382606e142f26837a6fe153e7";
 
 describe("MCP surface (golden)", () => {
   it("origin isolation", async () => {
     expect(await surface()).toEqual({
       names: NAMES,
-      tools: "fefb7bd14d515a12d5754ff40ef620512106b0d21e64c0f28cc65cca963e8732",
+      tools: "b27e3cef6d8eb3936e54617da905a9810f6e6d3da4512a99c9cf0abc6ede27c2",
       resources: RESOURCES,
       preview: "fd84092d5ecc5a28f494373097e8a3b6e27065d5ef6928f3e124c634f8cf6f47",
       instructions: INSTRUCTIONS,
@@ -65,7 +69,7 @@ describe("MCP surface (golden)", () => {
   it("opaque isolation", async () => {
     expect(await surface({ CONTENT_ISOLATION: "opaque" })).toEqual({
       names: NAMES,
-      tools: "652035529431d7f7a1d3d38dbdc4af8332d260b20e4bbc860455300f3fa737d9",
+      tools: "7978c67011bb24b1783fdab473b60e549e82f452b4e31fcf786f17017c644f13",
       resources: RESOURCES,
       preview: "257bbf5bb47164c389849fffa7fc1dd46e6e7c20e4ef616b4bffefb53a8fd08b",
       instructions: INSTRUCTIONS,
@@ -77,7 +81,7 @@ describe("MCP surface (golden)", () => {
       await surface({ STAGING_CONTENT_FALLBACK: "true", CONTENT_ISOLATION: "opaque" }),
     ).toEqual({
       names: NAMES,
-      tools: "6846d1ba048efbc6fd3692ba4147cbb73e7be17f5d95201ab74b0e54fb03701b",
+      tools: "893c2225777588517b2514c1a67b5078216feb12c420fa640d27a9bf493073d1",
       resources: RESOURCES,
       preview: "257bbf5bb47164c389849fffa7fc1dd46e6e7c20e4ef616b4bffefb53a8fd08b",
       instructions: INSTRUCTIONS,
