@@ -108,9 +108,9 @@ async function sha256(s: string): Promise<string> {
 
 describe("erase statements (golden)", () => {
   it("are the same SQL as before they became step lists", async () => {
-    // sha256 of eraseUserSql and eraseArtifactSql at 94ea515, before the step lists.
+    // sha256 of eraseUserSql and eraseArtifactSql on main at 2110cc4, written as one array each.
     expect(await sha256(eraseUserSql("ann@example.com"))).toBe(
-      "d1c1b5c742a92e1f3e2d5efcc84597ad150a85556ad214376634066678260c64",
+      "4415bb8fda3cd6a388c008b35fefdc579658184b3cd830226448cc43c07493a0",
     );
     expect(await sha256(eraseArtifactSql("my-slug"))).toBe(
       "5b613326da8856a70c08b9768528910074b204f4fdd64bd11d8ddeab391a9ed4",

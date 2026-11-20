@@ -49,6 +49,7 @@ import { PreviewFrame } from "./PreviewFrame.tsx";
 import { utf8Bytes } from "./previewProtocol.ts";
 import { SplitPane, type SplitView } from "./SplitPane.tsx";
 import { sourceProblems } from "./sourceChecks.ts";
+import { useLastValid } from "./useLastValid.ts";
 import "./editor.css";
 
 /** Keep the draft in sessionStorage this long after the last change. */
@@ -111,6 +112,8 @@ export default function EditorWorkspace({
   const id = artifact.id;
   const { def } = sourceOf(artifact);
   const label = def.sourceLabel;
+  // The pane header starts with a capital, as "HTML" and "Markdown" do ("Design system JSON").
+  const paneLabel = label.charAt(0).toUpperCase() + label.slice(1);
   const artifactPath = `/a/${encodeURIComponent(artifact.slug)}`;
   const codePaneId = useId();
   const tabHintId = useId();
@@ -136,9 +139,15 @@ export default function EditorWorkspace({
   // A typed format's own problems (a design system's JSON): Save waits until there are none.
   const problems = useMemo(() => sourceProblems(def.id, html), [def, html]);
   const invalid = problems.length > 0;
+  // While the draft has problems (listed above the editor), the preview keeps the last draft that
+  // had none instead of repeating them; it stays blank until one does.
+  const shown = useLastValid(html, !invalid);
   const preview = useMemo(
-    () => previewDocument(def, { id, title: artifact.title, text: html, config }),
-    [def, id, artifact.title, html, config],
+    () =>
+      shown === null
+        ? ""
+        : previewDocument(def, { id, title: artifact.title, text: shown, config }),
+    [def, id, artifact.title, shown, config],
   );
 
   // Refs for handlers that must see the newest values (keyboard shortcut, async saves).
@@ -275,11 +284,7 @@ export default function EditorWorkspace({
         return;
       }
       if (s.invalid) {
-        toast.toast({
-          title: `Fix the ${label} first`,
-          description: "The problems under the editor say what to change.",
-          tone: "warning",
-        });
+        toast.toast({ title: `Fix the ${label} first`, tone: "warning" });
         return;
       }
       if (s.dirty) void save();
@@ -419,21 +424,20 @@ export default function EditorWorkspace({
         </div>
       )}
       {invalid && (
-        <div className="pl-editor__notice pl-editor__problems" role="status" aria-live="polite">
+        <div
+          className="pl-editor__notice pl-editor__problems"
+          role="status"
+          aria-live="polite"
+          aria-label={`Fix the ${label} to save`}
+        >
           <InfoIcon aria-hidden="true" />
-          <div>
-            <p>
-              The {label} has {problems.length === 1 ? "a problem" : `${problems.length} problems`}.
-              Fix {problems.length === 1 ? "it" : "them"} to save.
-            </p>
-            <ul>
-              {problems.slice(0, 5).map((p) => (
-                <li key={`${p.path} ${p.message}`}>
-                  <code>{p.path || "(root)"}</code> {p.message}
-                </li>
-              ))}
-            </ul>
-          </div>
+          <ul>
+            {problems.slice(0, 5).map((p) => (
+              <li key={`${p.path} ${p.message}`}>
+                <code>{p.path || "(root)"}</code> {p.message}
+              </li>
+            ))}
+          </ul>
         </div>
       )}
       {mode === "edit" && newer !== null && (
@@ -504,7 +508,7 @@ export default function EditorWorkspace({
             start={
               <div className="pl-editor-pane">
                 <div className="pl-editor-pane__tools">
-                  <span className="pl-editor-pane__label">{label}</span>
+                  <span className="pl-editor-pane__label">{paneLabel}</span>
                   <span className="pl-editor-pane__hint type-caption text-faint" id={tabHintId}>
                     Tab indents. {TAB_FOCUS_KEYS} makes Tab move focus instead.
                   </span>

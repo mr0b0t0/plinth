@@ -42,7 +42,6 @@ describe("renderer protocol kinds", () => {
     ).toEqual([...APP_MESSAGE_KINDS]);
     const all = [
       printMessage(),
-      printMessage(true),
       editMessage(false),
       collectMessage("x".repeat(16)),
       gotoMessage(1),

@@ -114,6 +114,9 @@ describe("ArtifactPage", () => {
     expect(screen.getByRole("menuitem", { name: "Settings" }).getAttribute("href")).toBe(
       "/a/garden-plan/settings",
     );
+    expect(screen.getByRole("menuitem", { name: "Stats" }).getAttribute("href")).toBe(
+      "/a/garden-plan/stats",
+    );
     expect(screen.queryByRole("menuitem", { name: "Report" })).toBeNull();
     await user.keyboard("{Escape}");
     expect(screen.getByText("Visibility:")).toBeTruthy();
