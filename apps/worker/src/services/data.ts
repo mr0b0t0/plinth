@@ -62,10 +62,11 @@ export interface DataTarget {
   ownerId: string;
   caps: Capabilities | null;
   /**
-   * Who wrote the current version (policy.ts peopleListOffered). Absent or null offers no people
-   * list, so a caller that does not load it never opens the list.
+   * Who wrote the versions the content host serves (policy.ts peopleListOffered), loaded only on a
+   * page that declares `people`. Absent or null offers no people list, so a caller that does not
+   * load it never opens the list.
    */
-  writer?: VersionWriter | null;
+  writers?: readonly VersionWriter[] | null;
 }
 
 /** A row of artifact_docs as D1 returns it. */
@@ -171,7 +172,7 @@ export async function session(
         }
       : null,
     can_write: access.write,
-    can_list_people: pagePeopleAccess(claim, target.caps, active, target.writer ?? null).list,
+    can_list_people: pagePeopleAccess(claim, target.caps, active, target.writers ?? null).list,
     capabilities: capabilityList(target.caps),
     shared: target.caps?.shared ?? [],
     limits: limitsOf(config),
@@ -204,7 +205,7 @@ export async function summary(
     )
     .bind(target.id)
     .all<{ name: string; docs: number; bytes: number; updated_at: string }>();
-  const people = peopleListOffered(target.caps, sharedDataActive(config), target.writer ?? null)
+  const people = peopleListOffered(target.caps, sharedDataActive(config), target.writers ?? null)
     ? await peopleWithAccess(d1, config.tokenSigningKey, target.id, readerEmail)
     : null;
   return {

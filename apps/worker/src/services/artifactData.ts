@@ -25,8 +25,8 @@ import {
   grantFor,
   loadArtifactDetail,
   requireArtifact,
+  servedVersionWriters,
   versionCapabilities,
-  versionFacts,
 } from "./artifacts.ts";
 import type { Ctx } from "./context.ts";
 import {
@@ -44,7 +44,7 @@ import {
   toAgentPerson,
   unavailableReason,
 } from "./data.ts";
-import { countPeopleRead, matchPeople, peopleWithAccess } from "./people.ts";
+import { countPeopleRead, matchPeople, PEOPLE_WRITER_REFUSED, peopleWithAccess } from "./people.ts";
 import { namesByEmail } from "./users.ts";
 
 /** Carried by every read result, so the warning travels with the data. */
@@ -67,10 +67,14 @@ async function capsAt(ctx: Ctx, artifactId: string, version: number) {
   return versionCapabilities(row);
 }
 
-/** The artifact as the data service sees it: the current version's declaration and writer govern. */
+/**
+ * The artifact as the data service sees it: the current version's declaration governs, and on a
+ * page that declares `people` the writers of every served version (policy.ts peopleListOffered).
+ */
 async function targetOf(ctx: Ctx, a: ArtifactRow): Promise<DataTarget> {
-  const { caps, writer } = await versionFacts(ctx.env.DB, a.id, a.currentVersion);
-  return { id: a.id, ownerId: a.ownerId, caps, writer };
+  const caps = await capsAt(ctx, a.id, a.currentVersion);
+  const writers = caps?.people ? await servedVersionWriters(ctx.env.DB, a.id) : null;
+  return { id: a.id, ownerId: a.ownerId, caps, writers };
 }
 
 /**
@@ -148,19 +152,16 @@ export async function listArtifactPeople(
   input: { id: string; q?: string; limit?: number },
 ): Promise<PeopleResult> {
   const { artifact } = await requireArtifact(ctx, input.id, "people");
-  const { caps, writer } = await targetOf(ctx, artifact);
-  if (!peopleListOffered(caps, sharedDataActive(ctx.config), writer ?? null)) {
+  const { caps, writers } = await targetOf(ctx, artifact);
+  if (!peopleListOffered(caps, sharedDataActive(ctx.config), writers ?? null)) {
     const declared = caps?.viewer === true && caps.people;
     const reason = unavailableReason(ctx.config, caps) ?? (declared ? null : "not_declared");
     if (reason) {
       throw new ApiError("feature_disabled", "This artifact does not list its people", { reason });
     }
-    // Declared and on, but the current version's writer may not read the list (the page route
+    // Declared and on, but a served version's writer may not read the list (the page route
     // answers the same).
-    throw new ApiError(
-      "forbidden",
-      "This version was published with a token limited to one artifact, so it lists nobody",
-    );
+    throw new ApiError("forbidden", PEOPLE_WRITER_REFUSED);
   }
   const reader = principalEmail(ctx.principal);
   if (!reader) throw new ApiError("forbidden", "Only the owner and editors can see who has access");

@@ -475,35 +475,42 @@ export interface VersionWriter {
 
 /**
  * Does the artifact offer its people list at all: its current version declares `data viewer
- * people` while shared data is active (`active`: sharedDataActive(config)), and that version was
- * written by someone who may read the list (`writer`, by captureReadsData: a person or an agent
- * acting for them account-wide, never a token limited to one artifact nor a writer whose account
- * is gone)? A bound token may not read the list, so a page it wrote must not read it through the
- * owner's or an editor's session either. This one answer governs every way to read the list: the
- * page (pagePeopleAccess), owners' and editors' agents (list_artifact_data's summary) and REST
- * (GET /api/v1/artifacts/:ref/people), and the notice under the bar tells every identified viewer
- * exactly when it is true. Without it nobody but the owner (in the sharing settings) sees the
- * access list.
+ * people` while shared data is active (`active`: sharedDataActive(config)), and every version the
+ * content host serves (1 to the current one, `writers`: their distinct writers) was written by
+ * someone who may read the list (captureReadsData: a person or an agent acting for them
+ * account-wide, never a token limited to one artifact nor a writer whose account is gone)? A bound
+ * token may not read the list, so a page it wrote must not read it through the owner's or an
+ * editor's session either. Every version, not only the current one: the content host serves each
+ * at /__plinth/v/<n>/ on the artifact's one origin under the same pass, so a bound token's old
+ * version opened from History (or still open in a tab, or framing `/`) would call the people route
+ * with the reader's claim, and nothing on a request says which version's code made it. Versions are
+ * never deleted, so once a bound token has published one the artifact lists nobody. `writers` null
+ * or empty (not loaded, or no version) offers nothing. This one answer governs every way to read
+ * the list: the page (pagePeopleAccess), owners' and editors' agents (list_artifact_data's
+ * summary) and REST (GET /api/v1/artifacts/:ref/people), and the notice under the bar tells every
+ * identified viewer exactly when it is true. Without it nobody but the owner (in the sharing
+ * settings) sees the access list.
  */
 export function peopleListOffered(
   caps: Capabilities | null,
   active: boolean,
-  writer: VersionWriter | null,
+  writers: readonly VersionWriter[] | null,
 ): boolean {
   return (
     active &&
     caps?.data === true &&
     caps.viewer &&
     caps.people &&
-    writer !== null &&
-    captureReadsData(writer)
+    writers !== null &&
+    writers.length > 0 &&
+    writers.every(captureReadsData)
   );
 }
 
 /**
  * May this page reader list the artifact's people (/__plinth/api/v1/people)? Owners and editors
- * with an identity claim, on a page that offers the list (peopleListOffered, with the current
- * version's writer). Commenters, viewers and anonymous link viewers never: the list holds every
+ * with an identity claim, on a page that offers the list (peopleListOffered, with the writers of
+ * every served version). Commenters, viewers and anonymous link viewers never: the list holds every
  * grant holder's email. The role comes from the claim, sealed at the current access epoch, so a
  * demoted editor's pass stops working at once.
  */
@@ -511,10 +518,10 @@ export function pagePeopleAccess(
   claim: PageClaim | null,
   caps: Capabilities | null,
   active: boolean,
-  writer: VersionWriter | null,
+  writers: readonly VersionWriter[] | null,
 ): { list: boolean } {
   const editor = claim?.role === "owner" || claim?.role === "editor";
-  return { list: editor && peopleListOffered(caps, active, writer) };
+  return { list: editor && peopleListOffered(caps, active, writers) };
 }
 
 /**

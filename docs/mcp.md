@@ -743,8 +743,8 @@ refused. Scope `artifacts:read`.
   name, docs, bytes, updated_at }], people?, untrusted }`. `available` says whether pages can use
   shared data right now (feature on, `origin` isolation, current version declares `data`).
   `people` is there only when the current version declares `data viewer people`, shared data
-  is on and a person or their account-wide agent published that version (a version published with
-  a token limited to one artifact lists nobody): everyone with access, the owner first and then every grant by email, as `{ viewer_id,
+  is on and a person or their account-wide agent published every version (once a token limited to
+  one artifact has published one, the artifact lists nobody): everyone with access, the owner first and then every grant by email, as `{ viewer_id,
   email, name, role }`. It is who has access, never who opened the page. A grant holder's `name`
   is `null` until they have commented, written shared data or published a version on the artifact
   (the owner's name and your own are always there), because the owner typed their address.

@@ -304,38 +304,27 @@ export function versionCapabilities(
 }
 
 /**
- * The SQL that reads who wrote a version (policy.ts VersionWriter) beside a `versions v` row:
- * select WRITER_COLUMNS and join WRITER_JOIN. The connection row stays after a revoke, so a bound
- * token's versions keep their `bound_artifact_id`.
+ * Who wrote the versions the content host serves (1 to the current one; a leftover row above it is
+ * never served): each distinct pair of `versions.created_by_user` and the connection's
+ * `artifact_id` once (policy.ts VersionWriter), the input of policy.ts peopleListOffered. The
+ * connection row stays after a revoke, so a bound token's versions keep their bound artifact.
+ * Empty when the artifact has no version (or does not exist).
  */
-export const WRITER_COLUMNS = "v.created_by_user AS writer_user, c.artifact_id AS writer_bound";
-export const WRITER_JOIN = "LEFT JOIN agent_connections c ON c.id = v.created_by_connection";
-
-/** A row read with WRITER_COLUMNS as a VersionWriter; null when there was no version row. */
-export function versionWriterOf(
-  row: { writer_user: string | null; writer_bound: string | null } | null | undefined,
-): VersionWriter | null {
-  return row ? { userId: row.writer_user, boundArtifactId: row.writer_bound } : null;
-}
-
-/** A version's declaration and its writer, in one query: null fields when there is no version. */
-export async function versionFacts(
+export async function servedVersionWriters(
   d1: D1Database,
   artifactId: string,
-  n: number,
-): Promise<{ caps: Capabilities | null; writer: VersionWriter | null }> {
-  const row = await d1
+): Promise<VersionWriter[]> {
+  const { results } = await d1
     .prepare(
-      `SELECT v.capabilities, ${WRITER_COLUMNS} FROM versions v ${WRITER_JOIN}
-        WHERE v.artifact_id = ?1 AND v.number = ?2`,
+      `SELECT DISTINCT v.created_by_user AS writer_user, c.artifact_id AS writer_bound
+         FROM versions v
+         JOIN artifacts a ON a.id = v.artifact_id
+         LEFT JOIN agent_connections c ON c.id = v.created_by_connection
+        WHERE v.artifact_id = ?1 AND v.number <= a.current_version`,
     )
-    .bind(artifactId, n)
-    .first<{
-      capabilities: string | null;
-      writer_user: string | null;
-      writer_bound: string | null;
-    }>();
-  return { caps: versionCapabilities(row), writer: versionWriterOf(row) };
+    .bind(artifactId)
+    .all<{ writer_user: string | null; writer_bound: string | null }>();
+  return results.map((r) => ({ userId: r.writer_user, boundArtifactId: r.writer_bound }));
 }
 
 export async function getVersionRow(

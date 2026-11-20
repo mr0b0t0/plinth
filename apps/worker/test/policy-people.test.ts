@@ -27,7 +27,8 @@ const caps = (over: Partial<Capabilities> = {}): Capabilities => ({
 });
 
 /** A person (or an agent acting for them account-wide) wrote the current version. */
-const PERSON: VersionWriter = { userId: "u-owner", boundArtifactId: null };
+/** The writers of every served version: one person. */
+const PERSON: readonly VersionWriter[] = [{ userId: "u-owner", boundArtifactId: null }];
 
 const claimOf = (role: EffectiveRole): PageClaim => ({
   email: `${role}@example.com`,
@@ -152,15 +153,22 @@ describe("policy: peopleListOffered", () => {
     expect(peopleListOffered(null, true, PERSON)).toBe(false);
   });
 
-  it("is off for a version written by a token limited to one artifact, or by nobody known", () => {
+  it("is off when any served version was written by a token limited to one artifact, or by nobody known", () => {
     // A bound token may not read the list, so a page it wrote must not read it through the owner.
+    const owner: VersionWriter = { userId: "u-owner", boundArtifactId: null };
+    const editor: VersionWriter = { userId: "u-editor", boundArtifactId: null };
     const bound: VersionWriter = { userId: "u-owner", boundArtifactId: "peopleartifact000001" };
-    expect(peopleListOffered(caps(), true, bound)).toBe(false);
-    // An erased writer, or no version row at all.
-    expect(peopleListOffered(caps(), true, { userId: null, boundArtifactId: null })).toBe(false);
+    const erased: VersionWriter = { userId: null, boundArtifactId: null };
+    expect(peopleListOffered(caps(), true, [owner, editor])).toBe(true);
+    expect(peopleListOffered(caps(), true, [bound])).toBe(false);
+    // Any version, not only the current one: an older one is served on the same origin and pass.
+    expect(peopleListOffered(caps(), true, [owner, bound, editor])).toBe(false);
+    expect(peopleListOffered(caps(), true, [owner, erased])).toBe(false);
+    // Writers not loaded, or no version at all.
     expect(peopleListOffered(caps(), true, null)).toBe(false);
+    expect(peopleListOffered(caps(), true, [])).toBe(false);
     for (const role of ["owner", "editor"] as const) {
-      expect(pagePeopleAccess(claimOf(role), caps(), true, bound).list).toBe(false);
+      expect(pagePeopleAccess(claimOf(role), caps(), true, [owner, bound]).list).toBe(false);
       expect(pagePeopleAccess(claimOf(role), caps(), true, null).list).toBe(false);
     }
   });

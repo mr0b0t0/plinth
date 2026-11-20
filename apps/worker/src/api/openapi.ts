@@ -1223,8 +1223,8 @@ function dataOperations(): Operation[] {
       description:
         "Owner or editor (people), and only while the current version declares `data viewer " +
         "people` and shared data is on (403 feature_disabled otherwise, with the reason), and only " +
-        "on a version a person or their account-wide agent published (403 forbidden on one a token " +
-        "limited to one artifact published). The same " +
+        "while a person or their account-wide agent published every version (403 forbidden once a " +
+        "token limited to one artifact has published one). The same " +
         "list as list_artifact_data's summary: who has access, never who opened the artifact. `q` " +
         "keeps people whose shown name or email contains every term; `total` counts every match " +
         "before `limit`. Reads share the page's limit of " +

@@ -7,9 +7,9 @@
 //   11. an identity claim (a preview never gets here; capture passes and link viewers carry none):
 //       403 feature_disabled, reason not_identified;
 //   12. the `viewer people` declaration: 403 feature_disabled, reason not_declared;
-//   13. policy (policy.ts pagePeopleAccess): owners and editors only, on a version written by
-//       someone who may read the list (never a token limited to one artifact), 403 forbidden
-//       otherwise;
+//   13. policy (policy.ts pagePeopleAccess): owners and editors only, on an artifact whose every
+//       served version was written by someone who may read the list (never a token limited to one
+//       artifact), 403 forbidden otherwise;
 //   14. a rate limit per reader per artifact (RATE_LIMITS.peopleReadsPerViewerPerHour), 429.
 // The list is who has access (the owner and every grant), never who opened the page. Search runs
 // over that list only. Names, emails and queries are never logged.
@@ -20,6 +20,7 @@ import { type PageClaim, pagePeopleAccess } from "../policy.ts";
 import {
   countPeopleRead,
   matchPeople,
+  PEOPLE_WRITER_REFUSED,
   type Person,
   peopleWithAccess,
   personById,
@@ -47,15 +48,13 @@ async function allowed(c: DataRouteCtx): Promise<PageClaim> {
     });
   }
   if (
-    !pagePeopleAccess(claim, c.target.caps, sharedDataActive(c.config), c.target.writer ?? null)
+    !pagePeopleAccess(claim, c.target.caps, sharedDataActive(c.config), c.target.writers ?? null)
       .list
   ) {
     const editor = claim.role === "owner" || claim.role === "editor";
     throw new ApiError(
       "forbidden",
-      editor
-        ? "This version was published with a token limited to one artifact, so it lists nobody"
-        : "Only the owner and editors can see who has access",
+      editor ? PEOPLE_WRITER_REFUSED : "Only the owner and editors can see who has access",
     );
   }
   await countPeopleRead(c.env.DB, c.target.id, claim.email);

@@ -39,7 +39,7 @@ make a test pass.
 | A person's version hands its capture to the current code | A person's version, captured with a pass that reads the data, loads a root-relative script or worker (`/assets/index.js`), frames a root-relative page, or navigates itself to `/`, where the artifact's current version, which a bound token may have written, would run under that pass | The capture pass is bound to its version (`v`): under it the content host serves every path that is not a version path (the root, `/assets/index.js`, `/chart.html`) from the captured version, never the current one, and answers 404 for another version's path; the capture's browser also aborts a navigation to another version or a Plinth helper path ([Thumbnails and link previews](#thumbnails-and-link-previews)) |
 | Workflow command injection through the Action's log | A title, warning path or server message `::set-output name=x::y` or `::add-mask::` printed by the Action steers the job | Everything the client prints runs between `::stop-commands::<random>` and `::<random>::`; the Action's own annotations escape their text, the summary escapes Markdown and HTML, outputs use random heredoc delimiters; `docs/ci.md` passes outputs to scripts through `env:` ([Publishing from CI](#publishing-from-ci)) |
 | Cross-site WebSocket hijacking of a live room | Artifact B, framed by the app, opens a socket to artifact A's `/__plinth/room/` with A's content cookie from the shared partitioned jar | The upgrade requires an exact `Origin` (absent or `null` refused), same-origin fetch metadata when sent, the `plinth.room.v1` subprotocol and an identified content pass at the current epoch; no CORS anywhere ([Live rooms](#live-rooms)) |
-| Page code harvests names and the access list | A page reads `plinth.viewer.name`, its authors' names or `plinth.people.list()` and copies them where link viewers or every viewer can read them | Names appear only where the email already does (`viewer` declared, identified reader); the people list only for owners and editors on a page that declares `data viewer people` and whose current version a person (or their account-wide agent) wrote, never a token limited to one artifact (`policy.ts peopleListOffered`); every identified viewer is told, under the bar, that the owner and editors can see everyone the page is shared with; the skill forbids copying the list or emails into shared data. WebRTC stays the known CSP gap ([The people list](#the-people-list)) |
+| Page code harvests names and the access list | A page reads `plinth.viewer.name`, its authors' names or `plinth.people.list()` and copies them where link viewers or every viewer can read them | Names appear only where the email already does (`viewer` declared, identified reader); the people list only for owners and editors on a page that declares `data viewer people` and every one of whose served versions a person (or their account-wide agent) wrote, never a token limited to one artifact (`policy.ts peopleListOffered`); every identified viewer is told, under the bar, that the owner and editors can see everyone the page is shared with; the skill forbids copying the list or emails into shared data. WebRTC stays the known CSP gap ([The people list](#the-people-list)) |
 | Display name used to impersonate | Someone sets their name to "Owner", "ana@example.com" or a right-to-left override that reorders the text around it | Names cannot contain `@` or the two characters that render as one (U+FE6B, U+FF20: every character whose NFKC form is `@`), nor control, bidi, zero-width or separator characters, must show something (a name made only of Hangul fillers, blank Braille or combining marks is refused, and reads as no name), are cut to 64 code points on every read, and are never authority: `role`, `comment_author_role` and `is_owner` stay server-derived, and Plinth's own UI marks the owner's comments and versions with "Owner" from `is_owner`, never from the name, so a lookalike visibly lacks it; tool descriptions say names are display text |
 | Enumerating who has an account | A caller tries addresses to learn which ones have a Plinth account or what they are called, for example by adding them as grants on an artifact of their own and reading the people list or the sharing settings back | No route takes an email or a name to look up, and the people list searches only one artifact's access list. Since the owner writes that list without its holders being told, an access list shows a grant holder's name only once that person has taken part in the artifact (a comment, a shared-data entry or a version, which already show their name to the readers of the list), and a name it keeps back is `null` and never matched by `q`, the same as an address with no account (`policy.ts accessListShowsName`) |
 
@@ -550,11 +550,16 @@ comment bodies, commenters' emails or mention tasks. The people list (`people`: 
 /artifacts/:ref/people`) is refused like the rest, and its other ways in need `data_read`
 (`list_artifact_data`'s summary, names on documents) or a content pass (the page's
 `/__plinth/api/v1/people`, room names, the gate's `people` block), so a bound token never learns
-who has access. Nor does a page it wrote: a version written by a bound token offers no people list
-to anyone, not even to the owner who opens it (`peopleListOffered` takes the current version's
-writer, by the same `captureReadsData` facts the thumbnail capture uses), so a leaked CI token
-cannot publish a page that reads the list through the owner's session and copies it where link
-viewers can read it. Calls that are not about one artifact go
+who has access. Nor does a page it wrote: once a bound token has written a version, the artifact
+offers no people list to anyone, not even to the owner who opens it (`peopleListOffered` takes the
+writers of every version the content host serves, 1 to the current one, by the same
+`captureReadsData` facts the thumbnail capture uses), so a leaked CI token cannot publish a page
+that reads the list through the owner's session and copies it where link viewers can read it.
+Every version counts, not only the current one: each is served at `/__plinth/v/<n>/` on the
+artifact's one origin under the same pass, so the token's version opened from History, left open
+in a tab, or framing `/` would call the people route with the reader's claim, and nothing on a
+request says which version's code made it. A person's later version or a restore does not turn the
+list back on, since versions are never deleted. Calls that are not about one artifact go
 through the policy too: `mayCreateArtifacts` refuses `publish_artifact`, `POST /artifacts`,
 `start_upload` and `POST /uploads` without an id, and the redeem of a publish ticket;
 `mayReadStatsSummary` refuses `GET /stats/artifacts` and `get_artifact_stats` without an id with
@@ -1127,8 +1132,8 @@ order (`apps/worker/src/content/people.ts`):
 12. **Declaration.** The current version declares `viewer people`: 403 `not_declared` otherwise.
 13. **Policy.** `pagePeopleAccess` in `policy.ts`: owners and editors only, by the role sealed in
     the claim at the current access epoch, so a demoted editor's pass stops at the next request,
-    and only on a current version written by a person or their account-wide agent (never a token
-    limited to one artifact): 403 `forbidden` otherwise.
+    and only on an artifact every served version of which a person or their account-wide agent
+    wrote (never a token limited to one artifact): 403 `forbidden` otherwise.
 14. **Rate limit.** 600 reads per hour per reader per artifact, then 429 with `Retry-After`. REST
     (`GET /api/v1/artifacts/:ref/people`) counts in the same bucket.
 
@@ -1158,10 +1163,11 @@ editors can see everyone it is shared with.
 **Agents and REST, under the same declaration.** Owners' and editors' agents get the same list in
 `list_artifact_data`'s summary, and `GET /api/v1/artifacts/:ref/people` (policy action `people`,
 `artifacts:read`, `limit` 1 to 201 with `total`, the page's rate limit) mirrors it for scripts,
-only while the current version declares `data viewer people`, shared data is on and that version's
-writer may read the list (`peopleListOffered` in `policy.ts`, the answer the page route and the
+only while the current version declares `data viewer people`, shared data is on and every served
+version's writer may read the list (`peopleListOffered` in `policy.ts`, the answer the page route and the
 notice under the bar also use). Otherwise the summary has no `people` and the route answers 403
-`feature_disabled` with the reason, or 403 `forbidden` on a declared version a bound token wrote.
+`feature_disabled` with the reason, or 403 `forbidden` on a declared page once a bound token has
+written any of its versions.
 So the list is readable exactly while the notice says so. That does not make the declaration the
 owner's alone: an editor can publish a version that adds or drops `people`, and each identified
 viewer is told on their next visit. An agent still tells whose a `u_` document is from the

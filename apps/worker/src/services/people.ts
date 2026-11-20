@@ -13,6 +13,14 @@ import { ApiError } from "../lib/errors.ts";
 import { hit } from "../lib/ratelimit.ts";
 import { accessListShowsName } from "../policy.ts";
 
+/**
+ * The refusal (403 forbidden) for an owner or editor on a page that declares the list while a
+ * served version's writer may not read it (policy.ts peopleListOffered), on the page route and REST.
+ */
+export const PEOPLE_WRITER_REFUSED =
+  "A version of this artifact was published with a token limited to one artifact, or by an " +
+  "account that is gone, so it lists nobody";
+
 export interface Person {
   /** The per-artifact `u_` viewer id (crypto.ts viewerIdFor). */
   id: string;

@@ -762,7 +762,33 @@ describe("a version a token limited to one artifact wrote never lists the people
     return { session, page, one, rest, summary, gate };
   }
 
-  it("the owner opening it gets no list from the runtime, REST, MCP or the gate; an owner-written version does", async () => {
+  /** Every way in refuses the list and names nobody. */
+  async function expectNoList(after: Awaited<ReturnType<typeof ownerReads>>, email: string) {
+    expect(after.session.can_list_people).toBe(false);
+    for (const [what, res] of [
+      ["page", after.page],
+      ["one", after.one],
+    ] as const) {
+      expect(res.status, what).toBe(403);
+      const text = await res.text();
+      expect(text, what).not.toContain(email);
+      expect(JSON.parse(text).error, what).toMatchObject({
+        code: "forbidden",
+        message: expect.stringMatching(/token limited to one artifact/),
+      });
+    }
+    expect(after.rest.status).toBe(403);
+    expect(after.rest.body.error.code).toBe("forbidden");
+    expect(after.rest.body.error.message).toMatch(/token limited to one artifact/);
+    expect(JSON.stringify(after.rest.body)).not.toContain(email);
+    expect(after.summary.isError, after.summary.text).toBe(false);
+    expect(after.summary.data.people).toBeUndefined();
+    expect(after.summary.text).not.toContain(email);
+    expect(after.gate.body.status).toBe("ok");
+    expect(after.gate.body.people?.list).toBeUndefined();
+  }
+
+  it("the owner opening it gets no list from the runtime, REST, MCP or the gate, even after a person's newer version", async () => {
     const owner = await agent();
     const h = await signedIn(owner.user.id);
     const page = await publish(owner.auth, { title: "Team", html: peoplePage() });
@@ -791,41 +817,59 @@ describe("a version a token limited to one artifact wrote never lists the people
     });
     expect(up.isError, up.text).toBe(false);
     await c.close();
-    const after = await ownerReads(id, h, owner.token);
-    expect(after.session.can_list_people).toBe(false);
-    for (const [what, res] of [
-      ["page", after.page],
-      ["one", after.one],
-    ] as const) {
-      expect(res.status, what).toBe(403);
-      const text = await res.text();
-      expect(text, what).not.toContain(editor.email);
-      expect(JSON.parse(text).error, what).toMatchObject({
-        code: "forbidden",
-        message: expect.stringMatching(/token limited to one artifact/),
-      });
-    }
-    expect(after.rest.status).toBe(403);
-    expect(after.rest.body.error.code).toBe("forbidden");
-    expect(after.rest.body.error.message).toMatch(/token limited to one artifact/);
-    expect(JSON.stringify(after.rest.body)).not.toContain(editor.email);
-    expect(after.summary.isError, after.summary.text).toBe(false);
-    expect(after.summary.data.people).toBeUndefined();
-    expect(after.summary.text).not.toContain(editor.email);
-    expect(after.gate.body.status).toBe("ok");
-    expect(after.gate.body.people?.list).toBeUndefined();
+    await expectNoList(await ownerReads(id, h, owner.token), editor.email);
 
-    // v3, the owner publishes again: the list is back.
+    // v3, the owner publishes again. v2 is still served at /__plinth/v/2/ on the same origin and
+    // pass, and nothing on a request says which version's code made it, so the list stays off.
     const again = await req("PUT", `/artifacts/${id}`, owner.auth, {
       html: peoplePage(),
       base_version: 2,
     });
     expect(again.status, JSON.stringify(again.body)).toBe(200);
-    const back = await ownerReads(id, h, owner.token);
-    expect(back.session.can_list_people).toBe(true);
-    expect(back.page.status).toBe(200);
-    expect(back.rest.status).toBe(200);
-    expect(back.gate.body.people).toMatchObject({ list: true });
+    const later = await ownerReads(id, h, owner.token);
+    await expectNoList(later, editor.email);
+
+    // The owner opens v2 from History: the gate sends them to /__plinth/v/2/, which serves the
+    // token's page, and that page's own call to the people route is refused.
+    const gate = await req("GET", `/view/${id}?version=2`, h);
+    expect(gate.body.status).toBe("ok");
+    expect(gate.body.people?.list).toBeUndefined();
+    const cookie = await cookieFor(id, h);
+    const old = await call(`${contentOrigin(id)}/__plinth/v/2/`, { headers: { Cookie: cookie } });
+    expect(old.status).toBe(200);
+    expect(await old.text()).toContain("team v2");
+    const fromOld = await api(id, "/people", { cookie });
+    expect(fromOld.status).toBe(403);
+    expect(await fromOld.text()).not.toContain(editor.email);
+
+    // Restoring the token's v2 as v4 does not turn it back on either.
+    const restored = await req("POST", `/artifacts/${id}/versions/2/restore`, owner.auth, {});
+    expect(restored.status, JSON.stringify(restored.body)).toBe(201);
+    expect(restored.body.version).toBe(4);
+    await expectNoList(await ownerReads(id, h, owner.token), editor.email);
+  });
+
+  it("versions written by the owner and by an editor's account-wide agent keep the list", async () => {
+    const owner = await agent();
+    const h = await signedIn(owner.user.id);
+    const page = await publish(owner.auth, { title: "Team", html: peoplePage() });
+    expect(page.res.status).toBe(201);
+    const id = page.body.id as string;
+    const editor = await agent();
+    await grant(id, editor.user.email, "editor");
+    const up = await req("PUT", `/artifacts/${id}`, editor.auth, {
+      html: peoplePage().replace("<p>team</p>", "<p>team v2</p>"),
+      base_version: 1,
+    });
+    expect(up.status, JSON.stringify(up.body)).toBe(200);
+    const reads = await ownerReads(id, h, owner.token);
+    expect(reads.session.can_list_people).toBe(true);
+    expect(reads.page.status).toBe(200);
+    expect(JSON.stringify(await json(reads.page))).toContain(editor.user.email);
+    expect(reads.rest.status).toBe(200);
+    expect(reads.summary.isError, reads.summary.text).toBe(false);
+    expect(JSON.stringify(reads.summary.data.people)).toContain(editor.user.email);
+    expect(reads.gate.body.people).toMatchObject({ list: true });
   });
 });
 

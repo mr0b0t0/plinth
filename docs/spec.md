@@ -1036,10 +1036,13 @@ never a directory.
   people"`) lets the owner and editors list everyone the artifact is shared with: the owner, then
   every grant by email, each with its `u_` id, email, name and role. It counts only with `data` and
   `viewer` and declares nothing on its own; it is stored in `versions.capabilities` only when
-  declared, so every other declaration is stored as before. The list is offered only while the
-  current version was written by a person or their account-wide agent: a version published with a
-  token limited to one artifact (a CI token) lists nobody to anyone, the owner included, until a
-  person publishes again (`policy.ts peopleListOffered`, by the writer facts thumbnails use).
+  declared, so every other declaration is stored as before. The list is offered only while every
+  version the content host serves (1 to the current one) was written by a person or their
+  account-wide agent: once a token limited to one artifact (a CI token) has published a version, or
+  a version's writer's account is gone, the artifact lists nobody to anyone, the owner included
+  (`policy.ts peopleListOffered`, by the writer facts thumbnails use). Every version counts, not
+  only the current one, because each is served at `/__plinth/v/<n>/` on the same origin under the
+  same pass, and nothing on a request says which version's code made it.
   `GET /__plinth/api/v1/people?q=&limit=` returns `{ people, total }` (`limit` 1 to 201, all by
   default; `total` counts every match before `limit`; `q`, at most 100 characters, keeps people
   whose name or email contains every term) and `GET /__plinth/api/v1/people/<u_id>` one person, or
@@ -1082,8 +1085,8 @@ never a directory.
   without a collection also returns `people` (`{ viewer_id, email, name, role }`, the same list),
   and `GET /api/v1/artifacts/:ref/people?q=&limit=` mirrors it with `total` (policy action
   `people`: owners and editors, `artifacts:read`; 403 `feature_disabled` with the reason
-  otherwise, or `forbidden` on a version a token limited to one artifact wrote, as the page route
-  answers; the page route's 600 reads per hour per reader per artifact, counted together). Without the
+  otherwise, or `forbidden` on an artifact one of whose versions a token limited to one artifact
+  wrote, as the page route answers; the page route's 600 reads per hour per reader per artifact, counted together). Without the
   declaration only the owner sees the access list, in the sharing settings, as before; the owner's
   `GET /api/v1/artifacts/:ref/sharing` gains `name` on each grant under the rule above. Names are
   untrusted for agents and the tool descriptions say so.

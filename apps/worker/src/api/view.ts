@@ -38,8 +38,8 @@ import {
   denialError,
   findArtifact,
   grantFor,
+  servedVersionWriters,
   versionCapabilities,
-  versionFacts,
 } from "../services/artifacts.ts";
 import type { Ctx } from "../services/context.ts";
 import { readLiveDraftInfo } from "../services/live.ts";
@@ -356,14 +356,12 @@ async function gatePeople(
 }
 
 /**
- * policy.ts peopleListOffered for the current version (whose declaration is `caps`), reading its
- * writer only on a page that declares `people`.
+ * policy.ts peopleListOffered for the current version (whose declaration is `caps`), reading the
+ * writers of every served version only on a page that declares `people`.
  */
 async function peopleOffered(ctx: Ctx, a: ArtifactRow, caps: Capabilities): Promise<boolean> {
-  const writer = caps.people
-    ? (await versionFacts(ctx.env.DB, a.id, a.currentVersion)).writer
-    : null;
-  return peopleListOffered(caps, sharedDataActive(ctx.config), writer);
+  const writers = caps.people ? await servedVersionWriters(ctx.env.DB, a.id) : null;
+  return peopleListOffered(caps, sharedDataActive(ctx.config), writers);
 }
 
 function gateOptions(q: (k: string) => string | undefined): GateOptions {
