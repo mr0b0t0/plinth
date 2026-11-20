@@ -76,7 +76,10 @@ export const REFUSED_EDIT =
 export const READ_ONLY_NOTE =
   "This part can't be edited here, so it is shown as it is. An agent can change it.";
 export const EMPTY_DOC = "Write something";
-/** Why a Move or Delete was not made: the blocks around it would have become one. */
+/**
+ * Why a Move, Delete, Turn into or Insert below was not made: the blocks around it would have
+ * become one (or taken in the new block).
+ */
 export const JOINED_BLOCKS =
   "That would run the blocks around it together into one, so nothing was changed.";
 /** Why a block op was not made: the doc has no room for it. */
@@ -349,6 +352,27 @@ export function turnInto(b: RichBlock, kind: BlockKind, near: (string | undefine
         text: runs.length ? `${runs.map(plain).join("\n")}\n` : "",
       } satisfies RichBlock;
   }
+}
+
+/** Text standing in for what will be typed into an empty block, to check where it would go. */
+const PROBE: RichInline = [{ k: "text", text: "x", m: {} }];
+
+/**
+ * Whether `block` (one block's lines) written over `range`, with a blank line where `pad` says,
+ * leaves it one block of its own: true when no block around it joins it, or is taken into it (a
+ * list goes on into an indented block below it, and a list next to one of its marker is one list).
+ */
+function staysOne(lines: readonly string[], range: LineRange, block: string, pad: Pad): boolean {
+  const before = parseBlocks(joinLines(lines));
+  const inside = before.filter(
+    (b) => b.core.start >= range.start && b.core.end <= range.end,
+  ).length;
+  const after = [
+    ...lines.slice(0, range.start),
+    ...blockLines(padded(block, pad)),
+    ...lines.slice(range.end),
+  ];
+  return parseBlocks(joinLines(after)).length === before.length - inside + 1;
 }
 
 /** An empty block of `kind`, for Insert below. */
@@ -925,9 +949,21 @@ export class DocEditor {
     const open = this.open;
     const mine = this.backend.mine;
     if (!open || !mine) return;
-    const next = turnInto(open.rich.model, kind, this.neighbours(mine));
+    const near = this.neighbours(mine);
+    const next = turnInto(open.rich.model, kind, near);
     if (verifyBlock(next, TOOLS, open.env) === null) {
       this.showNotice(FORMAT_LOST);
+      return;
+    }
+    // An empty block is sent once typed into, so it is checked as it will be then.
+    const probe = isEmptyBlock(next) ? turnInto(para(PROBE), kind, near) : next;
+    const core = verifyBlock(probe, TOOLS, open.env);
+    if (
+      core === null ||
+      !staysOne(this.backend.lines, mine, composeBlock(open.prefix, core, open.suffix), this.pad)
+    ) {
+      // The block stays open as it was.
+      this.showNotice(JOINED_BLOCKS);
       return;
     }
     open.rich.setModel(next);
@@ -958,7 +994,17 @@ export class DocEditor {
     this.close(true);
     // close() may have changed the lines (solo): find the block again.
     const again = this.blockAt(start) ?? found;
-    this.openInsert(again.block.end, emptyOf(kind, near));
+    const at = again.block.end;
+    // The new block is sent once typed into, so it is checked as it will be then.
+    const now = this.backend.lines;
+    const pad = { before: at > 0 && !isBlank(now[at - 1]), after: !isBlank(now[at]) };
+    const probe = serializeBlock(turnInto(para(PROBE), kind, near));
+    if (!staysOne(now, { start: at, end: at }, probe, pad)) {
+      this.deselect();
+      this.showNotice(JOINED_BLOCKS);
+      return;
+    }
+    this.openInsert(at, emptyOf(kind, near));
   }
 
   /** Runs `plan` (the range and its text, found again on every try) as a one-edit lease. */
@@ -1129,6 +1175,7 @@ export class DocEditor {
       return {
         text: padded(made.text, pad),
         focus: lease.start + (pad.before ? 1 : 0),
+        blocks: parseBlocks(joinLines(lines)).length + 1,
         ...(made.open ? { open: true } : {}),
       };
     });

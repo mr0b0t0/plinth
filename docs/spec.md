@@ -2724,7 +2724,9 @@ the same leases, room, drafts and Publish as [Editing](#editing).
   its own marker takes another marker, and so does the list after a deleted block, written again
   in the same lease. One that would still join blocks (two numbered lists around it that use both
   `.` and `)`, or an indented block that would continue the list above) is not made, and the page
-  says why. A block op the doc has no room for, or that cannot be sent, says so and changes
+  says why. The same holds for "Turn into" and "Insert below": a new block that would join a block
+  next to it or take one in (a numbered list between lists that use both `.` and `)`, or a list
+  right above an indented block) is not made, the block stays as it was, and the page says why. A block op the doc has no room for, or that cannot be sent, says so and changes
   nothing. So does an Enter or typing that cannot be sent; after an Enter the block stays open
   with what was typed, still waiting to be sent.
 - **Images are agent-only.** An image block's alt text is a field; the image itself, and adding

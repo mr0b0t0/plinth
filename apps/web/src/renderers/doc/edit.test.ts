@@ -532,6 +532,65 @@ describe("DocEditor: the block menu", () => {
     expect(root.querySelectorAll("ul").length).toBe(2);
   });
 
+  it("refuses a Turn into a list that would take in the indented block below", () => {
+    // A list there would continue into the code block, which would render inside its item.
+    const { local, editor } = setup("para\n\n    code line");
+    click(root.querySelector("p") as Element);
+    menu("Bulleted list", "Turn into");
+    expect(local.text).toBe("para\n\n    code line");
+    expect(rich(editor).kind).toBe("paragraph");
+    expect(document.querySelector('[role="status"]')?.textContent).toContain(JOINED_BLOCKS);
+    key(rich(editor).editable, "Escape");
+    expect(local.text).toBe("para\n\n    code line");
+    expect(root.querySelector("pre")).not.toBeNull();
+  });
+
+  it("refuses an Insert below of a list that would take in the indented block below", () => {
+    const { local, editor } = setup("para\n\n    code line");
+    click(root.querySelector("p") as Element);
+    menu("Bulleted list", "Insert below");
+    expect(editor.openEditor).toBeNull();
+    expect(local.mine).toBeNull();
+    expect(local.text).toBe("para\n\n    code line");
+    expect(document.querySelector('[role="status"]')?.textContent).toContain(JOINED_BLOCKS);
+    expect(root.querySelector("pre")).not.toBeNull();
+  });
+
+  it("refuses a Turn into a numbered list when both delimiters are taken around it", () => {
+    const { local, editor } = setup("1. a\n\nmid\n\n1) b");
+    click(root.querySelector("p") as Element);
+    menu("Numbered list", "Turn into");
+    expect(local.text).toBe("1. a\n\nmid\n\n1) b");
+    expect(rich(editor).kind).toBe("paragraph");
+    expect(document.querySelector('[role="status"]')?.textContent).toContain(JOINED_BLOCKS);
+    key(rich(editor).editable, "Escape");
+    expect(root.querySelectorAll("ol").length).toBe(2);
+  });
+
+  it("refuses an Insert below of a numbered list when both delimiters are taken around it", () => {
+    const { local, editor } = setup("1. a\n\n1) b");
+    click(root.querySelector("ol") as Element);
+    menu("Numbered list", "Insert below");
+    expect(editor.openEditor).toBeNull();
+    expect(local.text).toBe("1. a\n\n1) b");
+    expect(document.querySelector('[role="status"]')?.textContent).toContain(JOINED_BLOCKS);
+    expect(root.querySelectorAll("ol").length).toBe(2);
+  });
+
+  it("refuses a Turn into of a new empty block that would join the block below once typed", () => {
+    const { local, editor } = setup("para\n\n    code line");
+    click(root.querySelector("p") as Element);
+    menu("Paragraph", "Insert below");
+    expect(rich(editor).kind).toBe("paragraph");
+    menu("Bulleted list", "Turn into");
+    expect(rich(editor).kind).toBe("paragraph");
+    expect(document.querySelector('[role="status"]')?.textContent).toContain(JOINED_BLOCKS);
+    typeText(rich(editor).editable, "new");
+    key(rich(editor).editable, "Escape");
+    expect(local.text).toBe("para\n\nnew\n\n    code line");
+    expect(root.querySelector("pre")).not.toBeNull();
+  });
+
   it("moves a block up and down, keeping every block's bytes", () => {
     const { local } = setup("# A\n\n1)  x\n\n*c*");
     click(root.querySelector("ol") as Element);
