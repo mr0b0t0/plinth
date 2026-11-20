@@ -343,9 +343,10 @@ export interface FollowOptions {
   random?: () => number;
 }
 
-/** The text of a presenter's Lead viewers toggle: pressed, it shows how many follow. */
+/** The text of a presenter's Lead viewers toggle: pressed, it shows how many follow, if any. */
 export function leadLabel(leading: boolean, audience: number): string {
-  return leading ? `${audience} following` : "Lead viewers";
+  if (!leading) return "Lead viewers";
+  return audience > 0 ? `${audience} following` : "Leading";
 }
 
 /**
@@ -486,7 +487,7 @@ export class Follow {
     if (c.ended === "unauthorized") {
       this.showPill("Your access changed. Reload the page.", null);
     } else if (leader && !c.wantLead) {
-      if (this.following) this.showPill("Following the presenter", null);
+      if (this.following) this.showPill("Following", null);
       else this.showPill("", `Back to slide ${leader.slide}`);
     } else {
       this.pill.hidden = true;

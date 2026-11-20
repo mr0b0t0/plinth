@@ -560,7 +560,30 @@ body {
     min-width: 3.5em;
   }
 
-  /* A presenter's Lead viewers toggle takes the wall clock's place; the timer stays. */
+  /* With a presenter's Lead viewers toggle the bar takes two rows: the timer, the toggle and Exit,
+     then paging on its own, so no control touches another. The toggle takes the wall clock's
+     place. */
+  .plinth-slides__pbar:has(.plinth-slides__lead) {
+    grid-template-columns: auto 1fr;
+    grid-template-areas:
+      "timing end"
+      "paging paging";
+    row-gap: 4px;
+  }
+
+  .plinth-slides__pbar:has(.plinth-slides__lead) > :first-child {
+    grid-area: timing;
+  }
+
+  .plinth-slides__pbar:has(.plinth-slides__lead) > .plinth-slides__group--paging {
+    grid-area: paging;
+    justify-content: center;
+  }
+
+  .plinth-slides__pbar:has(.plinth-slides__lead) > .plinth-slides__group--end {
+    grid-area: end;
+  }
+
   .plinth-slides__group--end:has(.plinth-slides__lead) .plinth-slides__clock {
     display: none;
   }
@@ -780,7 +803,9 @@ body {
 }
 
 /* Following the presenter (follow.ts): a follower's status, the controls' last item. A presenter's
-   Lead viewers toggle is a plain button there and in presenter view. */
+   Lead viewers toggle is a plain button there and in presenter view. Each keeps one width across
+   its labels ("Lead viewers", "Leading", "3 following"; "Following", "Back to slide 12"), so the
+   arrows beside them stay put when the label changes. */
 .plinth-slides__follow {
   display: flex;
   gap: 2px;
@@ -802,12 +827,24 @@ body {
 }
 
 .plinth-slides__lead {
+  min-width: calc(6.5em + 16px);
   white-space: nowrap;
+}
+
+/* In presenter view, the size of the count and the clock beside it. */
+.plinth-slides__pbar .plinth-slides__lead {
+  font-size: 0.875rem;
+}
+
+.plinth-slides__follow-text,
+.plinth-slides__follow .plinth-slides__btn {
+  min-width: calc(7.5em + 16px);
 }
 
 .plinth-slides__follow-text {
   overflow: hidden;
   padding: 0 8px;
+  text-align: center;
   text-overflow: ellipsis;
   white-space: nowrap;
 }

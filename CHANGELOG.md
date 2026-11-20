@@ -168,7 +168,7 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   Migration `0021_invitation_opt_outs.sql`.
 - **Follow the presenter in a deck.** An owner or editor can turn on **Lead viewers** in a deck's
   controls or presenter view, and the people the deck is shared with who have it open follow their
-  slide, shown as "Following the presenter" in the deck's controls; paging by hand pauses it until
+  slide, shown as "Following" in the deck's controls; paging by hand pauses it until
   they choose "Back to slide N". Someone who opens the deck mid-talk lands on the presenter's
   slide. Only slide numbers travel, over the deck's live room; nobody sees who else is watching.
   It needs live rooms (origin isolation and the `ROOMS` binding) and is on by default;

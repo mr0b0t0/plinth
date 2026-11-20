@@ -1,10 +1,9 @@
 // Following the presenter (docs/spec.md "Slides"): the owner of a deck and a viewer it is shared
 // with have it open in two browsers. The viewer is signed in: email codes share one per-hour
 // budget across the whole suite (DEV_IGNORE_CLIENT_IP), and a viewer confirmed by code follows the
-// same way (apps/worker/test/slides-room.test.ts). The owner turns on Lead
-// viewers and pages; the viewer's deck follows with the "Following the presenter" note; the viewer
-// pages back by hand, which pauses following, and "Back to slide N" returns to the owner's
-// slide. A presenter's own audience window follows its presenter window, not the room, so it shows
+// same way (apps/worker/test/slides-room.test.ts). The owner turns on Lead viewers and pages; the
+// viewer's deck follows with the "Following" note; the viewer pages back by hand, which pauses
+// following, and "Back to slide N" returns to the owner's slide. A presenter's own audience window follows its presenter window, not the room, so it shows
 // no note while they lead. A lead carries on when a new version or a sharing change replaces the
 // presenter's frame. An anonymous viewer of an unlisted deck opens no socket and sees no note.
 import { type Browser, expect, type FrameLocator, type Page, test } from "@playwright/test";
@@ -87,7 +86,7 @@ test("viewers follow the presenter's slide, pause by paging, and go back to it",
     await expect(html(viewer)).toHaveAttribute("data-slide", "3", { timeout: 10_000 });
     const note = deck(viewer).locator(".plinth-slides__follow");
     await expect(note).toBeVisible();
-    await expect(note).toContainText("Following the presenter");
+    await expect(note).toContainText("Following");
     await expect(root(viewer)).toHaveAttribute("data-follow", "on");
     // The note names nobody.
     await expect(note).not.toContainText(owner);
@@ -162,7 +161,7 @@ test("the lead carries on when a new version or a sharing change replaces the pr
     await page.keyboard.press("ArrowRight");
     await expect(html(page)).toHaveAttribute("data-slide", String(n));
     await expect(html(viewer)).toHaveAttribute("data-slide", String(n), { timeout: 10_000 });
-    await expect(note).toContainText("Following the presenter");
+    await expect(note).toContainText("Following");
   };
   try {
     // The owner leads from the deck's own controls, outside full screen and presenter view.

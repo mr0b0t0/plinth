@@ -242,7 +242,7 @@ describe("Follow: watching", () => {
     s.frame({ t: "at", slide: 3, by: "s_lead" });
     expect(deck.current).toBe(3);
     expect(f.pill.hidden).toBe(false);
-    expect(f.pill.textContent).toContain("Following the presenter");
+    expect(f.pill.querySelector(".plinth-slides__follow-text")?.textContent).toBe("Following");
     // Following is a status, with nothing to press: paging by hand is how to stop.
     expect(f.pill.querySelector("button")?.hidden).toBe(true);
     expect(root.getAttribute("data-follow")).toBe("on");
@@ -301,6 +301,8 @@ describe("Follow: presenting", () => {
     button.click();
     expect(s.frames()).toEqual([{ t: "start", slide: 2 }]);
     s.frame({ t: "at", slide: 2, by: "s_me" });
+    // Nobody follows yet.
+    expect(button.textContent).toBe("Leading");
     s.frame({ t: "audience", n: 3 });
     expect(button.getAttribute("aria-pressed")).toBe("true");
     expect(button.textContent).toBe("3 following");
@@ -346,7 +348,7 @@ describe("Follow: presenting", () => {
     expect(s.frames().at(-1)).toEqual({ t: "stop" });
     expect(button.getAttribute("aria-pressed")).toBe("false");
     expect(deck.current).toBe(4);
-    expect(f.pill.textContent).toContain("Following the presenter");
+    expect(f.pill.textContent).toContain("Following");
   });
 
   it("takes the lead again after a reconnect, unless someone else leads by then", () => {
@@ -450,7 +452,7 @@ describe("Follow: presenting", () => {
 
   it("labels the toggle by its audience", () => {
     expect(leadLabel(false, 4)).toBe("Lead viewers");
-    expect(leadLabel(true, 0)).toBe("0 following");
+    expect(leadLabel(true, 0)).toBe("Leading");
     expect(leadLabel(true, 1)).toBe("1 following");
   });
 });

@@ -1042,12 +1042,14 @@ source editor work as for docs. A deck is not edited on its page.
 - **Following the presenter (decided 2026-11-19).** Where live rooms run (origin isolation,
   `ALLOW_ROOMS`, the `ROOMS` binding) and `ALLOW_SLIDES_FOLLOW` is on (the default), an owner or
   editor can lead the deck: **Lead viewers**, in the deck's controls and in presenter view (where,
-  at phone width, it takes the wall clock's place), sends each slide they show to the identified
-  viewers who have the deck open (the owner and people it is shared with, signed in or confirmed
-  by code), whose decks follow it, with "Following the presenter" at the end of the deck's
-  controls. Paging by hand pauses following ("Back to slide 7" in its place returns to it), and
-  someone who opens the deck mid-talk lands on the presenter's slide. While on, the toggle shows
-  how many other people have the deck open ("3 following": people, not tabs). The last presenter
+  at phone width, it takes the wall clock's place and paging moves to a second row), sends each
+  slide they show to the identified viewers who have the deck open (the owner and people it is
+  shared with, signed in or confirmed by code), whose decks follow it, with "Following" at the end
+  of the deck's controls. Paging by hand pauses following ("Back to slide 7" in its place returns
+  to it), and someone who opens the deck mid-talk lands on the presenter's slide. While on, the
+  toggle shows how many other people have the deck open ("3 following": people, not tabs), or
+  "Leading" while nobody does. The toggle and the follower's status keep one width across their
+  labels, so the arrows beside them never move. The last presenter
   to turn it on leads; an earlier one stops leading and follows.
   Turning it off, or the leader closing the deck, ends it for everyone. Followers send nothing,
   and no one learns who else is watching or who leads, only the slide. It runs entirely in the
