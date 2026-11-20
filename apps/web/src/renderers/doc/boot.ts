@@ -233,6 +233,8 @@ function live(
           if (!local) editor?.changed();
         },
         status: () => {
+          // A lease asked for over a socket that closed is never answered.
+          if (client && !client.connected && !local) editor?.disconnected();
           if (client?.failed && !local && editor?.editing) {
             // The room never answered: keep editing alone.
             goSolo();

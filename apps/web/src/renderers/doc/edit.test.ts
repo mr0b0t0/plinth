@@ -15,6 +15,7 @@ import {
   EDIT_DEBOUNCE_MS,
   JOINED_BLOCKS,
   LocalDoc,
+  NOT_SENT,
   padded,
   READ_ONLY_NOTE,
   REFUSED_EDIT,
@@ -1281,11 +1282,15 @@ function fakeRoom(text: string, deny: () => LeaseDenial | null = () => null) {
   let n = 0;
   // A lost lease (lose) takes the answers still on their way with it.
   let gen = 0;
+  // Answers held back (hold) until the test lets them through one at a time (step).
+  let held: (() => void)[] | null = null;
   const later = (f: () => void) => {
     const g = gen;
-    queueMicrotask(() => {
+    const run = () => {
       if (g === gen) f();
-    });
+    };
+    if (held) held.push(run);
+    else queueMicrotask(run);
   };
   const backend = {
     lines: text.split("\n"),
@@ -1358,15 +1363,51 @@ function fakeRoom(text: string, deny: () => LeaseDenial | null = () => null) {
   const lose = (reason: LeaseLoss) => {
     mine = null;
     gen++;
+    held = null;
     if (reason === "reconnect") backend.connected = false;
     editor.lost(reason);
+    if (reason === "reconnect") editor.disconnected();
+  };
+  /**
+   * The socket drops, as the client reports it: the answers on their way are lost, a lease it
+   * still counts as its own (one whose release has not come back) is lost with "reconnect", and
+   * then the frame tells the editor the socket is gone.
+   */
+  const drop = () => {
+    gen++;
+    held = null;
+    backend.connected = false;
+    if (mine) {
+      mine = null;
+      editor.lost("reconnect");
+    }
+    editor.disconnected();
+  };
+  const hold = () => {
+    held = [];
+  };
+  /** Lets the next held answer through; false when none is left. */
+  const step = () => {
+    const f = held?.shift();
+    f?.();
+    return f !== undefined;
   };
   /** The socket is back with the room's text: the client says so with a change. */
   const reconnect = () => {
     backend.connected = true;
     editor.changed();
   };
-  return { backend, editor, settle, lose, reconnect, text: () => backend.lines.join("\n") };
+  return {
+    backend,
+    editor,
+    settle,
+    lose,
+    drop,
+    hold,
+    step,
+    reconnect,
+    text: () => backend.lines.join("\n"),
+  };
 }
 
 describe("DocEditor: a cleared block, with a room", () => {
@@ -1633,6 +1674,43 @@ describe("DocEditor: a cleared block, with a room", () => {
     }
   });
 
+  it("closed with typing, a drop while its place is asked for sends it once the draft is back", async () => {
+    // The removal is in and the typing's lease is asked for when the socket drops: before the
+    // removal's lease is let go (the client then reports it lost) and after.
+    for (const released of [false, true]) {
+      fresh();
+      const at = released ? "released" : "not released";
+      const { backend, editor, settle, drop, hold, step, reconnect, text } =
+        fakeRoom("- a\n\nmid\n\n- b");
+      click(root.querySelector("p") as Element);
+      await settle();
+      hold();
+      typeText(rich(editor).editable, "");
+      typeText(rich(editor).editable, "new");
+      key(rich(editor).editable, "Escape");
+      const asked = () => {
+        const r = backend.lease.mock.lastCall?.[0];
+        return backend.lease.mock.calls.length > 2 && r?.start === r?.end;
+      };
+      for (let i = 0; i < 20 && !asked(); i++) step();
+      expect(asked(), at).toBe(true);
+      expect(text(), at).toBe("- a\n\n* b");
+      if (released) step();
+      expect(backend.mine === null, at).toBe(released);
+      drop();
+      await settle();
+      expect(editor.pending, at).toBe(true);
+      reconnect();
+      await settle();
+      vi.advanceTimersByTime(60_000);
+      await settle();
+      expect(text(), at).toBe("- a\n\nnew\n\n* b");
+      expect(editor.pending, at).toBe(false);
+      expect(backend.mine, at).toBeNull();
+      expect(backend.refused, at).toEqual([]);
+    }
+  });
+
   it("a removal refused after the block was closed releases its lease and says so", async () => {
     let why: LeaseDenial | null = null;
     const { backend, editor, settle, text } = fakeRoom("- a\n\nmid\n\n- b", () => why);
@@ -1648,5 +1726,83 @@ describe("DocEditor: a cleared block, with a room", () => {
     expect(editor.pending).toBe(false);
     expect(document.querySelector('[role="status"]')?.textContent).toContain(CLEAR_REFUSED);
     expect(backend.refused).toEqual([]);
+  });
+});
+
+describe("DocEditor: a second drop, with a room", () => {
+  it("a block taken again after a reconnect is asked for again after another drop", async () => {
+    const { backend, editor, settle, lose, drop, hold, reconnect, text } =
+      fakeRoom("one\n\ntwo\n\nthree");
+    click(root.querySelectorAll("p")[1] as Element);
+    await settle();
+    typeText(rich(editor).editable, "two!");
+    // The room has the block's text from before the typing.
+    (backend as { durableText: string | null }).durableText = "two";
+    lose("reconnect");
+    hold();
+    reconnect();
+    // Asked for again, and the socket drops before the room answers.
+    expect(backend.lease).toHaveBeenCalledTimes(2);
+    drop();
+    reconnect();
+    await settle();
+    expect(backend.lease).toHaveBeenCalledTimes(3);
+    expect(backend.mine).toMatchObject({ start: 2, end: 3 });
+    vi.advanceTimersByTime(EDIT_DEBOUNCE_MS);
+    await settle();
+    expect(rich(editor).editable.textContent).toBe("two!");
+    expect(text()).toBe("one\n\ntwo!\n\nthree");
+    expect(backend.refused).toEqual([]);
+  });
+});
+
+describe("DocEditor: a block op, with a room", () => {
+  it("a drop while its lease is asked for leaves editing free, and says it wasn't made", async () => {
+    // Before the open block's lease is let go (the client then reports it lost) and after.
+    const cases = [
+      ["Delete", false, "two\n\nthree"],
+      ["Delete", true, "two\n\nthree"],
+      ["Move down", false, "two\n\none\n\nthree"],
+      ["Move down", true, "two\n\none\n\nthree"],
+    ] as const;
+    for (const [label, released, after] of cases) {
+      document.body.innerHTML = "";
+      root = document.createElement("main");
+      document.body.append(root);
+      const at = `${label}, ${released ? "released" : "not released"}`;
+      const { backend, editor, settle, drop, hold, step, reconnect, text } =
+        fakeRoom("one\n\ntwo\n\nthree");
+      click(root.querySelector("p") as Element);
+      await settle();
+      hold();
+      menu(label);
+      expect(backend.lease, at).toHaveBeenCalledTimes(2);
+      if (released) step();
+      expect(backend.mine === null, at).toBe(released);
+      drop();
+      await settle();
+      expect(text(), at).toBe("one\n\ntwo\n\nthree");
+      expect(editor.pending, at).toBe(false);
+      expect(document.querySelector('[role="status"]')?.textContent, at).toContain(NOT_SENT);
+      reconnect();
+      await settle();
+      vi.advanceTimersByTime(60_000);
+      await settle();
+      // Nothing waits for the op: a block opens at once, and the op can be made again.
+      click(root.querySelectorAll("p")[1] as Element);
+      await settle();
+      expect(backend.lease, at).toHaveBeenCalledTimes(3);
+      expect(rich(editor).editable.textContent, at).toBe("two");
+      key(rich(editor).editable, "Escape");
+      await settle();
+      click(root.querySelector("p") as Element);
+      await settle();
+      menu(label);
+      await settle();
+      expect(text(), at).toBe(after);
+      expect(backend.refused, at).toEqual([]);
+      editor.setEditing(false);
+      await settle();
+    }
   });
 });

@@ -462,6 +462,8 @@ export class DocEditor {
   private queued: (() => void) | null = null;
   /** A cleared block being removed (removeCleared), until the block is open where it was. */
   private clearing: Clearing | null = null;
+  /** A lease request is on its way over the socket and has had no answer yet. */
+  private asking = false;
 
   constructor(
     private readonly root: HTMLElement,
@@ -878,7 +880,7 @@ export class DocEditor {
       caret,
       ...(at ? { at } : {}),
     };
-    if (!b.lease(again)) {
+    if (!this.request(again)) {
       this.want = null;
       this.showNotice("Not connected. Try again in a moment.");
     }
@@ -906,7 +908,7 @@ export class DocEditor {
     }
     this.pad = { before: at > 0 && !isBlank(b.lines[at - 1]), after: !isBlank(b.lines[at]) };
     this.want = { ...range, text: "", insert: true, tries: 0, initial };
-    if (!b.lease(range)) {
+    if (!this.request(range)) {
       this.want = null;
       this.showNotice("Not connected. Try again in a moment.");
     }
@@ -947,7 +949,10 @@ export class DocEditor {
               }
               this.close(true);
               this.want = { start: l.start, end: l.end, text: "", insert: false, tries: 0 };
-              if (this.backend.takeover(l.id)) this.hideNotice();
+              if (this.backend.takeover(l.id)) {
+                this.asking = true;
+                this.hideNotice();
+              }
             },
           }
         : undefined,
@@ -1173,7 +1178,7 @@ export class DocEditor {
       tries: 0,
       op: { build, plan },
     };
-    if (!this.backend.lease(p)) {
+    if (!this.request(p)) {
       this.want = null;
       this.showNotice("Not connected. Try again in a moment.");
     }
@@ -1368,7 +1373,15 @@ export class DocEditor {
 
   // ---------- lease events (from the backend) ----------
 
+  /** Ask the room for `range`; false when it cannot be sent (not connected). */
+  private request(range: LineRange): boolean {
+    const sent = this.backend.lease(range);
+    if (sent) this.asking = true;
+    return sent;
+  }
+
   granted(lease: ClientLease): void {
+    this.asking = false;
     const w = this.want;
     this.want = null;
     const c = this.clearing;
@@ -1625,6 +1638,7 @@ export class DocEditor {
   }
 
   denied(reason: LeaseDenial, by?: string): void {
+    this.asking = false;
     const w = this.want;
     this.want = null;
     if (reason === "stale" && w && w.tries < STALE_RETRIES) {
@@ -1692,7 +1706,7 @@ export class DocEditor {
       const next = { ...w, ...p, tries: w.tries + 1 };
       this.want = next;
       // Not connected: typing kept from a closed block is asked for again once the draft is back.
-      if (!b.lease(p)) this.want = w.kept ? { ...next, tries: 0 } : null;
+      if (!this.request(p)) this.want = w.kept ? { ...next, tries: 0 } : null;
       return;
     }
     const n = w.text === "" ? 0 : w.text.split("\n").length;
@@ -1706,13 +1720,39 @@ export class DocEditor {
         after: !isBlank(b.lines[near]),
       };
       this.want = next;
-      if (!b.lease(next)) this.want = w.keep !== undefined ? { ...w, tries: 0 } : null;
+      if (!this.request(next)) this.want = w.keep !== undefined ? { ...w, tries: 0 } : null;
       return;
     }
     const next = { ...w, start: at, end: w.insert ? at : at + n, tries: w.tries + 1 };
     this.want = next;
     // Not connected: a block with text to keep is tried again once the draft is back.
-    if (!b.lease(next)) this.want = w.keep !== undefined ? { ...w, tries: 0 } : null;
+    if (!this.request(next)) this.want = w.keep !== undefined ? { ...w, tries: 0 } : null;
+  }
+
+  /**
+   * The socket closed (the client reports a lease it still held as lost first). A lease asked for
+   * over it gets no answer, so nothing may wait for one: what keeps typing (a block to take again,
+   * a closed block's typing to write) is asked for again once the draft is back, a cleared block's
+   * removal ends as a lost lease does, and a block op or a block to open is not made, which the
+   * page says.
+   */
+  disconnected(): void {
+    if (this.backend.connected) return;
+    if (this.clearing) this.lost("reconnect");
+    if (!this.asking) return;
+    this.asking = false;
+    const w = this.want;
+    if (!w) return;
+    if (w.kept || w.keep !== undefined) {
+      this.want = { ...w, tries: 0 };
+      this.hooks.status();
+      return;
+    }
+    this.want = null;
+    this.queued = null;
+    this.showNotice(NOT_SENT);
+    this.render();
+    this.hooks.status();
   }
 
   lost(reason: LeaseLoss): void {
@@ -2044,7 +2084,7 @@ export class DocEditor {
       op: { plan, build },
     };
     this.hooks.status();
-    if (!b.lease(p)) {
+    if (!this.request(p)) {
       this.want = null;
       this.clearing = null;
       this.refused(CLEAR_REFUSED);
@@ -2083,7 +2123,7 @@ export class DocEditor {
     this.pad = { before: at > 0 && !isBlank(b.lines[at - 1]), after: !isBlank(b.lines[at]) };
     // One try spent, so a release seen before the grant does not ask again (changed()).
     this.want = { start: at, end: at, text: "", insert: true, keep: "", tries: 1 };
-    if (!b.lease(this.want)) {
+    if (!this.request(this.want)) {
       this.want = null;
       this.clearing = null;
       b.release();

@@ -388,6 +388,70 @@ describe("doc renderer on-page editing (#36)", () => {
     expect(posted("draft")).toHaveLength(0);
     expect(root().classList.contains("plinth-doc--editing")).toBe(true);
   });
+
+  it("with live: room, a block op whose lease request the socket took with it waits for nothing", async () => {
+    vi.useFakeTimers();
+    try {
+      const html = typedShellHtml(TYPE_REGISTRY.doc, {
+        title: "T",
+        text: "",
+        base: "",
+        appOrigin: APP,
+        live: "room",
+      });
+      const main = /<main [^>]*><\/main>/.exec(html)?.[0] ?? "";
+      const data = /<script type="application\/json"[^>]*>[^<]*<\/script>/.exec(html)?.[0] ?? "";
+      document.body.innerHTML = main + data;
+      stop = boot(window);
+      const frame = (i: number, f: unknown) =>
+        sockets[i]?.onmessage?.(new MessageEvent("message", { data: JSON.stringify(f) }));
+      const welcome = (i: number) => {
+        frame(i, {
+          t: "welcome",
+          v: 1,
+          you: { id: `s${i}`, email: "ada@example.org", right: "write" },
+          gen: "g",
+          rev: 1,
+          base_version: 1,
+          flushed_rev: 1,
+          conflict_version: null,
+          last_by_you: false,
+          leases: [],
+          peers: [],
+        });
+        frame(i, { t: "text", gen: "g", part: 0, of: 1, chunk: "one\n\ntwo\n\nthree" });
+      };
+      const sent = (i: number, t: string) =>
+        (sockets[i]?.sent ?? []).map((s) => JSON.parse(s)).filter((f) => f.t === t);
+      welcome(0);
+      post({ ...base, type: "edit", on: true });
+      (root().querySelector("p") as HTMLElement).click();
+      expect(sent(0, "lease")).toHaveLength(1);
+      frame(0, { t: "leased", lease: "l1", start: 0, end: 1, holder: "s0", by: "ada@example.org" });
+      const button = root().querySelector(".plinth-doc__menu-button") as HTMLElement;
+      button.click();
+      const del = [...document.querySelectorAll<HTMLElement>("[role^='menuitem']")].find(
+        (i) => i.textContent === "Delete",
+      ) as HTMLElement;
+      del.click();
+      // The open block's lease is let go and the Delete's asked for; the socket drops before
+      // the room answers either.
+      expect(sent(0, "release")).toHaveLength(1);
+      expect(sent(0, "lease")).toHaveLength(2);
+      const ws = sockets[0] as unknown as { onclose: (e: { code: number }) => void };
+      ws.onclose({ code: 1006 });
+      expect(document.querySelector('[role="status"]')?.textContent).toContain("Not connected");
+      vi.advanceTimersByTime(60_000);
+      expect(sockets).toHaveLength(2);
+      welcome(1);
+      // Nothing waits for the Delete: a click opens a block at once.
+      (root().querySelectorAll("p")[1] as HTMLElement).click();
+      expect(sent(1, "lease")).toEqual([{ t: "lease", rev: 1, start: 2, end: 3 }]);
+      expect(root().textContent).toContain("one");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 describe("doc renderer entry", () => {

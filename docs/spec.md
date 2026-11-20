@@ -2727,7 +2727,10 @@ the same leases, room, drafts and Publish as [Editing](#editing).
   says why. The same holds for "Turn into" and "Insert below": a new block that would join a block
   next to it or take one in (a numbered list between lists that use both `.` and `)`, or a list
   right above an indented block) is not made, the block stays as it was, and the page says why. A block op the doc has no room for, or that cannot be sent, says so and changes
-  nothing. So does an Enter or typing that cannot be sent; after an Enter the block stays open
+  nothing. A block op or a block to open whose lease request is cut off by a dropped connection is
+  not made either, the page says "Not connected. Try again in a moment.", and nothing else waits
+  for it; typing that waits for a lease (a block taken again after a reconnect, or typing kept
+  from a closed block) is asked for again once the draft is back. So does an Enter or typing that cannot be sent; after an Enter the block stays open
   with what was typed, still waiting to be sent. A block whose text is cleared where its empty
   lines would run the blocks around it together is removed at once, by the same one edit as
   "Delete" (the list after it takes another marker), under one lease over its lines and the lines
