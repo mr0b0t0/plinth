@@ -5,7 +5,7 @@
 // bridge (which waits for DOMContentLoaded) sees the finished DOM.
 //
 // The shell's DOM never receives author markup: the shared section and the fragments exist here
-// only as strings posted to board frames, names and sections only as textContent, and ids are
+// only as strings posted to board frames, names only as textContent, and ids are
 // [a-z0-9-]. It reads only window properties the platform defines, never a global by name.
 // <html> carries data-ready ("ok" or "error"), data-boards, data-boards-loaded and data-zoom for
 // tests and thumbnails.
@@ -32,16 +32,15 @@ import {
 } from "./layout.ts";
 import { pageName, preparePrint } from "./print.ts";
 import { fromApp, readDesignAppMessage } from "./protocol.ts";
-import { boardLabel, boardList, boardSlot, button, el, sectionHeading, toolbar } from "./ui.ts";
+import { boardLabel, boardSlot, button, el, toolbar } from "./ui.ts";
 
 const ROOT_ID = "__plinth-design";
 const DATA_ID = "__plinth-content";
 export const FALLBACK = "This design could not be shown.";
 /** Room the toolbar takes at the bottom, kept clear when fitting. */
-const FIT_PADDING = 56;
+const FIT_PADDING = 72;
 /** Label band height on screen, over each board. */
 const LABEL_PX = 26;
-const HEADING_PX = 26;
 /** Below this on-screen board width, a label shows only the board's name. */
 const NARROW_LABEL_PX = 200;
 
@@ -187,14 +186,18 @@ export function boot(win: Window, opts: BootOptions = {}): DesignHandle {
   const covers = new Map<string, HTMLElement>();
   const slots = new Map<string, HTMLElement>();
   const labels = new Map<string, HTMLElement>();
-  const headings: { el: HTMLElement; row: number }[] = [];
 
   let auto = true;
   let view: Viewport;
+  // The board last zoomed to: its label offers Interact (design.css) until Fit.
+  const setActive = (id: string | null) => {
+    for (const [bid, label] of labels) label.toggleAttribute("data-active", bid === id);
+  };
   const zoomTo = (id: string) => {
     const item = itemById.get(id);
     if (!item) return;
     auto = false;
+    setActive(id);
     view.set(zoomToBoard(item, view.size(), FIT_PADDING, LAYOUT.label * layout.unit));
   };
 
@@ -215,12 +218,6 @@ export function boot(win: Window, opts: BootOptions = {}): DesignHandle {
     });
     overlay.append(label);
     labels.set(b.id, label);
-  }
-  for (const [i, row] of layout.rows.entries()) {
-    if (!row.heading || row.section === null) continue;
-    const h = sectionHeading(doc, row.section);
-    overlay.append(h);
-    headings.push({ el: h, row: i });
   }
 
   const done = button(doc, "plinth-design__done", "Done interacting", "Done", () =>
@@ -255,6 +252,7 @@ export function boot(win: Window, opts: BootOptions = {}): DesignHandle {
 
   const fitAll = () => {
     auto = true;
+    setActive(null);
     view.set(fitTransform(layout.bounds, view.size(), FIT_PADDING));
   };
   const actual = () => {
@@ -273,20 +271,10 @@ export function boot(win: Window, opts: BootOptions = {}): DesignHandle {
     },
     fit: fitAll,
     actual,
-    toggleList: () => (list.isOpen() ? list.close() : list.open()),
   });
-  const list = boardList(doc, design.boards, bar.list, (id) => {
-    zoomTo(id);
-    canvas.focus({ preventScroll: true });
-  });
-  bar.el.append(list.el);
 
-  // Labels and headings keep their screen size: a label sits over its board, at most as wide as
-  // the board (only the name when that is narrow), and a heading over its row's labels only where
-  // it clears the row above.
-  const rowBottom = new Map<number, number>();
-  for (const it of layout.items)
-    rowBottom.set(it.row, Math.max(rowBottom.get(it.row) ?? 0, it.y + it.h));
+  // Labels keep their screen size: a label sits over its board, at most as wide as the board
+  // (only the name when that is narrow).
   const place = (t: Transform) => {
     for (const it of layout.items) {
       const label = labels.get(it.id);
@@ -295,16 +283,6 @@ export function boot(win: Window, opts: BootOptions = {}): DesignHandle {
       label.style.transform = `translate(${Math.round(r.x)}px, ${Math.round(r.y - LABEL_PX)}px)`;
       label.style.maxWidth = `${Math.max(Math.round(r.w), 72)}px`;
       label.toggleAttribute("data-narrow", r.w < NARROW_LABEL_PX);
-    }
-    for (const h of headings) {
-      const first = layout.items.find((it) => it.row === h.row);
-      if (!first) continue;
-      const r = screenRect(first, t);
-      const y = r.y - LABEL_PX - HEADING_PX;
-      const above = rowBottom.get(h.row - 1);
-      const clear = above === undefined || t.y + above * t.scale <= y;
-      h.el.style.transform = `translate(${Math.round(r.x)}px, ${Math.round(y)}px)`;
-      h.el.hidden = !clear;
     }
   };
 
@@ -332,20 +310,10 @@ export function boot(win: Window, opts: BootOptions = {}): DesignHandle {
           ".plinth-design__toolbar, .plinth-design__label, .plinth-design__done, .plinth-design__frame",
         ) !== null,
       backgroundClick: (t) => {
-        if (list.isOpen()) list.close();
         // A click outside the board being interacted with puts its cover back.
         if (interacting && !t.closest(`[data-board="${interacting}"]`)) setInteract(null);
       },
-      coverActivate: (t) => {
-        const cover = t.closest(".plinth-design__cover");
-        const id = cover instanceof HTMLElement ? cover.dataset.board : undefined;
-        if (id) setInteract(id);
-      },
       escape: () => {
-        if (list.isOpen()) {
-          list.close();
-          return true;
-        }
         if (interacting) {
           setInteract(null);
           return true;

@@ -1091,7 +1091,7 @@ preview), never on its page.
   (`a-z`, `0-9` and `-`, up to 40; derived from the name when absent), a size (`size="<preset>"`,
   `size="<w>x<h>"`, or `width` and `height`, 16 to 4096 CSS px a side), `background` (a hex color,
   `transparent` or a color name; white by default) and `section` (consecutive boards of one
-  section form a row under its name). Presets cover phones and desktops, social posts, IAB ads,
+  section form a row). Presets cover phones and desktops, social posts, IAB ads,
   print sizes at 96 px per inch and slides (`packages/shared/src/design.ts`, `DESIGN_PRESETS`).
   At most 60 artboards and 2 MB. A source that is a whole HTML document, has no artboard or has a
   bad marker is refused with a fix-it message for the first problem and every problem with its
@@ -1107,14 +1107,15 @@ preview), never on its page.
   embed, unpkg) and `data:` fonts work in an artboard and get no warning.
 - **The canvas.** A fixed Plinth renderer on the artifact's own origin
   (`/__plinth/types/design/`, under the strict typed shell: `script-src 'self'`) lays the boards
-  out in rows by section with a label over each (name, size). Drag, the wheel and the arrow keys
-  pan; Ctrl or Cmd with the wheel, a trackpad pinch, two fingers, the toolbar and `+`, `-`, `0`
-  (Fit) and `1` (100%) zoom between 5% and 400%; the Boards list zooms to one board. After Fit
+  out in rows by section with the board's name over each; the name zooms to its board. Drag, the
+  wheel and the arrow keys pan; Ctrl or Cmd with the wheel, a trackpad pinch, two fingers, the
+  toolbar (Zoom out, the zoom level, which goes to 100%, Zoom in and Fit) and `+`, `-`, `0` (Fit)
+  and `1` (100%) zoom between 5% and 400%. After Fit
   (the button or `0`) the canvas fits again when its frame is resized, until the view is moved or
   zoomed. Each board is
-  covered so the canvas can be dragged; Interact (or a double click or tap) takes one board's cover
-  off so its links, buttons and scripts can be used, and Done, Escape or a click outside puts it
-  back. At most 24 board frames are alive at once; boards far off screen are placeholders until
+  covered so the canvas can be dragged; Interact, on the label of the board last zoomed to (and on
+  a label that is hovered or focused), takes that board's cover off so its links, buttons and
+  scripts can be used, and Done, Escape or a click outside puts it back. At most 24 board frames are alive at once; boards far off screen are placeholders until
   they come back (a board's own state starts again then). `?plinth-board=<id>` shows one board
   alone at 100%.
 - **Artboard frames.** Each board renders alone at its exact size in its own nested frame, opened

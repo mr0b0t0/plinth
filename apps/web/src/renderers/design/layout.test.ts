@@ -23,26 +23,22 @@ const b = (id: string, width: number, height: number, section: string | null = n
 });
 
 describe("layoutBoards", () => {
-  it("puts consecutive boards of one section in a row, headed once", () => {
+  it("puts consecutive boards of one section in a row", () => {
     const l = layoutBoards([
       b("a", 393, 852, "Mobile"),
       b("b", 393, 852, "Mobile"),
       b("c", 1080, 1080, "Social"),
       b("d", 300, 250),
     ]);
-    expect(l.rows.map((r) => [r.section, r.heading])).toEqual([
-      ["Mobile", true],
-      ["Social", true],
-      [null, false],
-    ]);
+    expect(l.rows.map((r) => r.section)).toEqual(["Mobile", "Social", null]);
     // The tallest board is 1080 px, so every gap is 1.8 times its base size.
     const u = l.unit;
     expect(u).toBeCloseTo(1.8);
     const [a, bb, c, d] = l.items;
-    expect(a).toMatchObject({ x: 0, y: (LAYOUT.heading + LAYOUT.label) * u, row: 0 });
+    expect(a).toMatchObject({ x: 0, y: LAYOUT.label * u, row: 0 });
     expect(bb).toMatchObject({ x: 393 + LAYOUT.gap * u, y: a?.y, row: 0 });
     const row1 = (a?.y ?? 0) + 852 + LAYOUT.rowGap * u;
-    expect(c?.y).toBeCloseTo(row1 + (LAYOUT.heading + LAYOUT.label) * u);
+    expect(c?.y).toBeCloseTo(row1 + LAYOUT.label * u);
     expect(c).toMatchObject({ x: 0, row: 1 });
     expect(d?.y).toBeCloseTo((c?.y ?? 0) + 1080 + (LAYOUT.rowGap + LAYOUT.label) * u);
     expect(d).toMatchObject({ x: 0, row: 2 });
@@ -56,11 +52,11 @@ describe("layoutBoards", () => {
     expect(layoutUnit(1200)).toBe(2);
   });
 
-  it("wraps a row that would grow too wide, without a second heading", () => {
+  it("wraps a row that would grow too wide", () => {
     const boards = Array.from({ length: 6 }, (_, i) => b(`s${i}`, 1920, 1080, "Slides"));
     const l = layoutBoards(boards);
     expect(l.rows.length).toBeGreaterThan(1);
-    expect(l.rows.filter((r) => r.heading)).toHaveLength(1);
+    expect(new Set(l.rows.map((r) => r.section))).toEqual(new Set(["Slides"]));
     for (const it of l.items) expect(it.x + it.w).toBeLessThanOrEqual(LAYOUT.rowMaxWidth);
   });
 });

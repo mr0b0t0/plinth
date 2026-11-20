@@ -251,13 +251,14 @@ test.describe("a published design", () => {
         expect(box[3]).toBeLessThanOrEqual(view[1] ?? 0);
       }
 
-      // The Boards list zooms to one board.
-      await shell.getByRole("button", { name: "Boards", exact: true }).click();
-      await shell.getByRole("menuitem", { name: /Ad 300x250/ }).click();
+      // A board's name zooms to it.
+      await shell.getByRole("button", { name: "Zoom to Ad 300x250" }).click();
       await expect.poll(() => zoomOf(shell)).toBe(100);
 
       // Covered, a board takes no clicks; in interact mode it does, and Done covers it again.
       await shell.getByRole("button", { name: "Fit all boards" }).click();
+      // Interact shows on the board zoomed to, not on every label.
+      await expect(shell.getByRole("button", { name: /^Interact with/ })).toHaveCount(0);
       await shell.getByRole("button", { name: "Zoom to Home" }).click();
       const home = await boardFrame(shell, "home");
       await shell.getByRole("button", { name: "Interact with Home" }).click();
@@ -282,9 +283,9 @@ test.describe("a published design", () => {
           .locator(".plinth-design__canvas")
           .evaluate((c) => getComputedStyle(c).backgroundColor);
       await page.emulateMedia({ colorScheme: "light" });
-      await expect.poll(canvasBg).toBe("rgb(236, 238, 241)");
+      await expect.poll(canvasBg).toBe("rgb(241, 240, 236)");
       await page.emulateMedia({ colorScheme: "dark" });
-      await expect.poll(canvasBg).toBe("rgb(21, 24, 29)");
+      await expect.poll(canvasBg).toBe("rgb(20, 22, 25)");
       const widths = await shell.evaluate(() => {
         const root = document.scrollingElement ?? document.documentElement;
         const bar = document.querySelector(".plinth-design__toolbar")?.getBoundingClientRect();

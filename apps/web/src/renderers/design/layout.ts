@@ -1,21 +1,19 @@
 // Where each artboard sits on the canvas and how the view transforms it. Pure: world coordinates
 // are CSS px at 100%; a transform maps them to the screen as screen = world * scale + (x, y).
 //
-// Boards are laid out in rows, left to right: consecutive boards of one section form a row headed
-// by the section's name, and a row that would grow wider than rowMaxWidth wraps. The gaps grow with
-// the design's tallest board (`unit`), so the bands for labels and headings, which keep their
-// screen size at every zoom, still have room when a design of big boards is fitted.
+// Boards are laid out in rows, left to right: consecutive boards of one section form a row, and a
+// row that would grow wider than rowMaxWidth wraps. The gaps grow with the design's tallest board
+// (`unit`), so the band for labels, which keep their screen size at every zoom, still has room
+// when a design of big boards is fitted.
 import { DESIGN_LIMITS, type DesignBoard } from "@plinth/shared";
 
 export const LAYOUT = {
   /** Between boards in a row. */
   gap: 64,
-  /** The label band over each board (name and size). */
+  /** The label band over each board (its name). */
   label: 28,
-  /** Between rows. */
-  rowGap: 48,
-  /** A section heading over its first row. */
-  heading: 44,
+  /** Between rows: room for the next row's labels when a design is fitted. */
+  rowGap: 96,
   /** A row wraps before it grows wider than this (a wider board still gets a row of its own). */
   rowMaxWidth: 8000,
   /** The tallest board at which the gaps above are used as they are; taller ones scale them. */
@@ -34,10 +32,8 @@ export interface LayoutItem {
 
 export interface LayoutRow {
   section: string | null;
-  /** The row's top, where its heading (if it starts a section) or its labels begin. */
+  /** The row's top, where its labels begin. */
   y: number;
-  /** Whether this row starts its section (and shows the heading). */
-  heading: boolean;
 }
 
 export interface Rect {
@@ -78,7 +74,6 @@ export function layoutBoards(boards: readonly Board[]): Layout {
   const gap = LAYOUT.gap * unit;
   const label = LAYOUT.label * unit;
   const rowGap = LAYOUT.rowGap * unit;
-  const headingBand = LAYOUT.heading * unit;
   const items: LayoutItem[] = [];
   const rows: LayoutRow[] = [];
   let y = 0;
@@ -86,12 +81,10 @@ export function layoutBoards(boards: readonly Board[]): Layout {
   let i = 0;
   while (i < boards.length) {
     const section = boards[i]?.section ?? null;
-    let first = true;
     // One section: one or more rows.
     while (i < boards.length && (boards[i]?.section ?? null) === section) {
-      const heading = first && section !== null;
-      rows.push({ section, y, heading });
-      const top = y + (heading ? headingBand : 0) + label;
+      rows.push({ section, y });
+      const top = y + label;
       let x = 0;
       let tallest = 0;
       const row = rows.length - 1;
@@ -105,7 +98,6 @@ export function layoutBoards(boards: readonly Board[]): Layout {
       }
       width = Math.max(width, x - gap);
       y = top + tallest + rowGap;
-      first = false;
     }
   }
   return {

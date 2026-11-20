@@ -703,7 +703,7 @@ pan, zoom and print, each board alone at its exact size.
   `<!-- artboard id="home" name="Home" size="iphone" -->`, then its HTML fragment (what goes in
   `<body>`), up to the next marker line.
 - **Attributes:** `name` (required, up to 80 characters), `id` (`a-z`, `0-9`, `-`, up to 40),
-  a size, `section` (consecutive boards of one section form a row under its name) and
+  a size, `section` (consecutive boards of one section form a row) and
   `background` (hex, `transparent` or a color name; white by default). Values are in double
   quotes and may not contain `<`, `>` or `"` (write `&amp;`, `&lt;`, `&gt;`, `&quot;`).
 - **Sizes:** `size="1080x1080"`, `width` and `height` (16 to 4096 px a side), or a preset:

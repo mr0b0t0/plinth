@@ -160,14 +160,20 @@ describe("boot", () => {
     expect(label?.querySelector(".plinth-design__label-name")?.textContent).toBe(
       "Home <img src=x onerror=window.__pwned=1>",
     );
-    expect(label?.textContent).toContain("393 × 852");
+    // The label is the name and Interact: no size, no section headings, no Boards list.
+    expect(label?.textContent).toBe("Home <img src=x onerror=window.__pwned=1>Interact");
     // Nothing of the fragments or the shared section is in the shell's DOM.
     expect(document.getElementById("frag")).toBeNull();
     expect(document.querySelectorAll("img")).toHaveLength(0);
     expect(document.body.querySelectorAll("script:not([type])")).toHaveLength(0);
     expect(html().dataset.shared).toBeUndefined();
     expect((window as unknown as { __pwned?: number }).__pwned).toBeUndefined();
-    expect(document.querySelectorAll(".plinth-design__section")).toHaveLength(2);
+    expect(document.querySelectorAll("h2, [role=menu]")).toHaveLength(0);
+    expect(
+      Array.from(document.querySelectorAll(".plinth-design__toolbar button"), (b) =>
+        b.getAttribute("aria-label"),
+      ),
+    ).toEqual(["Zoom out", "Zoom to 100%", "Zoom in", "Fit all boards"]);
   });
 
   it("mounts each board in an opaque sandboxed frame at the loader, its size and name", () => {
@@ -298,6 +304,26 @@ describe("boot", () => {
 });
 
 describe("interact mode", () => {
+  const labelOf = (id: string) =>
+    document.querySelector(`.plinth-design__label[data-board="${id}"]`) as HTMLElement;
+  const interactWith = (id: string) =>
+    (labelOf(id).querySelector(".plinth-design__label-interact") as HTMLButtonElement).click();
+
+  it("marks the board zoomed to by its name as the one offering Interact, until Fit", () => {
+    mount();
+    handle = start(framed());
+    expect(document.querySelectorAll(".plinth-design__label[data-active]")).toHaveLength(0);
+    (labelOf("post").querySelector(".plinth-design__label-name") as HTMLButtonElement).click();
+    expect(labelOf("post").hasAttribute("data-active")).toBe(true);
+    (labelOf("home").querySelector(".plinth-design__label-name") as HTMLButtonElement).click();
+    expect(labelOf("post").hasAttribute("data-active")).toBe(false);
+    expect(labelOf("home").hasAttribute("data-active")).toBe(true);
+    (
+      document.querySelector('.plinth-design__btn[aria-label="Fit all boards"]') as HTMLElement
+    ).click();
+    expect(document.querySelectorAll(".plinth-design__label[data-active]")).toHaveLength(0);
+  });
+
   it("takes the cover off one board only, and Done or a background click puts it back", () => {
     mount();
     const f = framed();
@@ -315,7 +341,10 @@ describe("interact mode", () => {
     expect(cover("post").hidden).toBe(false);
     expect(done.hidden).toBe(true);
 
+    // A double click is not a way in: Interact is.
     cover("home").dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+    expect(cover("home").hidden).toBe(false);
+    interactWith("home");
     expect(cover("home").hidden).toBe(true);
     canvas().dispatchEvent(
       new PointerEvent("pointerdown", {
@@ -335,7 +364,8 @@ describe("interact mode", () => {
     );
     expect(cover("home").hidden).toBe(false);
 
-    cover("mrec").dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+    interactWith("mrec");
+    expect(cover("mrec").hidden).toBe(true);
     canvas().dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
     expect(cover("mrec").hidden).toBe(false);
   });
