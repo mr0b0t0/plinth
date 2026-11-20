@@ -178,6 +178,29 @@ function ShareStateBadge({ state }: { state: ArtifactSummary["category_share"] }
   return null;
 }
 
+/**
+ * The row's category as plain text (the owner's own, or the person's own on a shared artifact): on
+ * a card's sub line, and on a phone row's second line, where a badge beside the title would crowd
+ * it. A long name ends in an ellipsis; the full name is its tooltip and is read out whole.
+ */
+function CategoryText({
+  name,
+  className,
+  own = false,
+}: {
+  name: string;
+  className: string;
+  own?: boolean;
+}) {
+  return (
+    <span className={className} title={name}>
+      <FolderSimpleIcon size={13} aria-hidden="true" />
+      <span className="visually-hidden">{own ? "Your category: " : "Category: "}</span>
+      <span className="pl-dash__category-text">{name}</span>
+    </span>
+  );
+}
+
 function Tags({
   artifact: a,
   withCategory = true,
@@ -186,8 +209,8 @@ function Tags({
   /** The card shows the category on its sub line instead. */
   withCategory?: boolean;
 }) {
-  // The category (only ever set for the owner) and the type badge ("Doc"); plain HTML pages have
-  // no type badge.
+  // The category (the owner's own, or the person's own on a shared artifact) and the type badge
+  // ("Doc"); plain HTML pages have no type badge.
   const def = typeDef(a.type);
   const badge = def?.badge ?? null;
   const category = withCategory ? shownCategory(a) : null;
@@ -235,7 +258,51 @@ function RowMenu({
   );
 }
 
-/** The small page glyph at the start of a row. */
+/**
+ * The current version's screenshot, once it has loaded. It answers 404 until its capture lands, so
+ * the caller keeps its placeholder until `show`, and for good if the image fails.
+ */
+function useThumbnail(url: string | null) {
+  const [failed, setFailed] = useState<string | null>(null);
+  const [loaded, setLoaded] = useState<string | null>(null);
+  const src = url && failed !== url ? url : null;
+  return {
+    src,
+    show: src !== null && loaded === src,
+    onLoad: () => setLoaded(src),
+    onError: () => setFailed(src),
+  };
+}
+
+/** The small preview at the start of a row: the screenshot, or a page glyph until it loads. */
+function RowThumb({ url }: { url: string | null }) {
+  const t = useThumbnail(url);
+  return (
+    <span className="pl-dash__glyph" aria-hidden="true">
+      {!t.show && (
+        <>
+          <i />
+          <i />
+          <i />
+        </>
+      )}
+      {t.src && (
+        <img
+          src={t.src}
+          alt=""
+          loading="lazy"
+          decoding="async"
+          className="pl-dash__glyph-img"
+          data-loaded={t.show ? "" : undefined}
+          onLoad={t.onLoad}
+          onError={t.onError}
+        />
+      )}
+    </span>
+  );
+}
+
+/** The page glyph alone, for skeleton rows. */
 function PageGlyph() {
   return (
     <span className="pl-dash__glyph" aria-hidden="true">
@@ -283,7 +350,7 @@ export function ArtifactRow({ artifact: a, now, you, onFile }: ArtifactRowProps)
   const href = route(APP_ROUTES.artifact, { slug: a.slug });
   return (
     <li className="pl-dash__row" data-role={a.role}>
-      <PageGlyph />
+      <RowThumb url={a.thumbnail_url} />
       <span className="pl-dash__title">
         <Link to={href} className="pl-dash__link">
           {a.title}
@@ -295,6 +362,13 @@ export function ArtifactRow({ artifact: a, now, you, onFile }: ArtifactRowProps)
         <span className="visually-hidden">Version </span>v{a.current_version}
       </span>
       <Owner artifact={a} you={you} />
+      {shownCategory(a) && (
+        <CategoryText
+          name={shownCategory(a) as string}
+          className="pl-dash__row-category"
+          own={a.role !== "owner"}
+        />
+      )}
       <Updated iso={a.updated_at} now={now} />
       <RowMenu artifact={a} onFile={onFile} />
     </li>
@@ -314,28 +388,23 @@ export type ArtifactCardProps = ArtifactRowProps;
 export function ArtifactCard({ artifact: a, now, you, onFile }: ArtifactCardProps) {
   const href = route(APP_ROUTES.artifact, { slug: a.slug });
   const AccessIcon = VISIBILITY_META[a.visibility].icon;
-  // The thumbnail answers 404 until its capture lands: show the placeholder until it loads, and
-  // keep it if the image fails.
-  const [failed, setFailed] = useState<string | null>(null);
-  const [loaded, setLoaded] = useState<string | null>(null);
-  const thumb = a.thumbnail_url && failed !== a.thumbnail_url ? a.thumbnail_url : null;
-  const showImage = thumb !== null && loaded === thumb;
+  const t = useThumbnail(a.thumbnail_url);
   return (
     <li className="pl-dash__card" data-role={a.role}>
       <div className="pl-dash__thumb">
-        {thumb && (
+        {t.src && (
           <img
-            src={thumb}
+            src={t.src}
             alt=""
             loading="lazy"
             decoding="async"
             className="pl-dash__thumb-img"
-            data-loaded={showImage ? "" : undefined}
-            onLoad={() => setLoaded(thumb)}
-            onError={() => setFailed(thumb)}
+            data-loaded={t.show ? "" : undefined}
+            onLoad={t.onLoad}
+            onError={t.onError}
           />
         )}
-        {!showImage && (
+        {!t.show && (
           <span className="pl-dash__paper" aria-hidden="true">
             <span className="pl-dash__paper-letters">{thumbLetters(a.title)}</span>
             <i />
@@ -363,13 +432,20 @@ export function ArtifactCard({ artifact: a, now, you, onFile }: ArtifactCardProp
             ·
           </span>
           <Owner artifact={a} you={you} />
+          {shownCategory(a) && (
+            <>
+              <span className="pl-dash__dot" aria-hidden="true">
+                ·
+              </span>
+              <CategoryText
+                name={shownCategory(a) as string}
+                className="pl-dash__card-category"
+                own={a.role !== "owner"}
+              />
+            </>
+          )}
           <Updated iso={a.updated_at} now={now} />
         </span>
-        {shownCategory(a) && (
-          <span className="pl-dash__card-category">
-            <CategoryBadge name={shownCategory(a) as string} own={a.role !== "owner"} />
-          </span>
-        )}
       </div>
       <RowMenu artifact={a} onFile={onFile} />
     </li>

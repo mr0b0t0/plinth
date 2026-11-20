@@ -152,7 +152,11 @@ describe("Dashboard: personal categories", () => {
     const user = userEvent.setup();
     render(<Dashboard />);
     const row = (await screen.findByText("Their page")).closest("li") as HTMLElement;
-    expect(within(row).getByText("Clients")).toBeTruthy();
+    // The badge beside the title and the plain text a phone shows on the second line (one of them
+    // hidden by CSS), both named as the person's own category.
+    expect(within(row).getByText("Clients", { selector: ".pl-dash__category-name" })).toBeTruthy();
+    expect(within(row).getByText("Clients", { selector: ".pl-dash__category-text" })).toBeTruthy();
+    expect(within(row).getAllByText("Your category:", { exact: false })).toHaveLength(2);
     await user.click(screen.getByRole("radio", { name: "Shared" }));
     await user.click(screen.getByRole("button", { name: /^Category: / }));
     const menu = screen.getByRole("menu");
