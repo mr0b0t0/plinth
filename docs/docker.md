@@ -237,6 +237,7 @@ it starts the instance as it is.
 | `PLINTH_ALLOW_SLIDES_FOLLOW` | `true` | Following the presenter in a deck, over the same live rooms; `"false"` turns it off |
 | `PLINTH_ALLOW_CATEGORY_SHARING` | `true` | Owners may share a category with people (a portal page lists what the owner reviewed into it); `"false"` turns it off |
 | `PLINTH_INVITATION_EMAILS_PER_DAY`, `PLINTH_INVITATION_EMAILS_PER_OWNER_PER_DAY` | `1000`, `20` | Invitation emails per UTC day for the whole instance (one cap shared by every owner) and for one owner. Keep the first well under your email provider's daily quota, which sign-in codes share; `0` turns invitation emails off ([self-hosting.md](self-hosting.md#settings)) |
+| `PLINTH_DESIGN_EXPORTS_PER_INSTANCE_PER_HOUR`, `PLINTH_DESIGN_EXPORTS_PER_ARTIFACT_PER_HOUR` | `120`, `20` | Design PNG and PDF exports per hour for the whole instance, and for one design by everyone but its owner and editors. A container has no Browser Rendering binding, so exports are off and these apply only if you add one to its config ([self-hosting.md](self-hosting.md#settings)) |
 | `PLINTH_LISTEN` | `0.0.0.0`; `127.0.0.1` with the tunnel | The address the Worker listens on inside the container |
 
 Each `PLINTH_OPERATOR_*`, limit, `PLINTH_INVITATION_EMAILS_*` and `PLINTH_ALLOW_*` variable sets the Worker setting of the same

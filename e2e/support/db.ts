@@ -4,6 +4,8 @@
 // Worker avoids writing the local SQLite file from another process, which locked it under load.
 // `origin` picks the Worker (the opaque-isolation project runs a second one).
 import type { BrowserContext, Page } from "@playwright/test";
+// The design module is pure (no dependencies), so the suite runs the Worker's own expressions.
+import { designExportKeepOnlyScript } from "../../packages/shared/src/design.ts";
 import { APP_ORIGIN } from "./api.ts";
 
 interface SeedResponse {
@@ -141,4 +143,39 @@ export async function openCapture(page: Page, load: CaptureLoad): Promise<void> 
     await cdp.detach();
   }
   await page.goto(load.url);
+}
+
+/**
+ * Open a version as a design export does in Browser Rendering (services/designExport.ts): the
+ * thumbnail's capture load (captureLoad), with print media emulated before the page loads, which
+ * is what puts the design renderer in its export layout. For one board, every other board leaves
+ * the page before the boards load, as the export does in its own browser.
+ */
+export async function openExport(page: Page, load: CaptureLoad, board: string | null = null) {
+  await page.emulateMedia({ media: "print" });
+  await openCapture(page, load);
+  if (board === null) return;
+  await page.locator("html[data-ready]").waitFor({ state: "attached", timeout: 15_000 });
+  // The Worker's own expression (services/designExport.ts evaluates the same text).
+  const found = await page.evaluate(designExportKeepOnlyScript(board));
+  if (found !== true) throw new Error(`no board ${board}`);
+}
+
+/**
+ * The page sizes of a PDF Chromium printed, in points: [width, height] per page, in order.
+ * Chromium writes a MediaBox on each page object and none on the page tree.
+ */
+export function pdfPageSizes(pdf: Buffer): [number, number][] {
+  const text = pdf.toString("latin1");
+  const sizes: [number, number][] = [];
+  for (const m of text.matchAll(/\/MediaBox\s*\[\s*([\d.\s-]+)\]/g)) {
+    const n = (m[1] ?? "").trim().split(/\s+/).map(Number);
+    sizes.push([(n[2] ?? 0) - (n[0] ?? 0), (n[3] ?? 0) - (n[1] ?? 0)]);
+  }
+  return sizes;
+}
+
+/** A PNG's width and height in pixels, from its IHDR chunk. */
+export function pngSize(png: Buffer): { width: number; height: number } {
+  return { width: png.readUInt32BE(16), height: png.readUInt32BE(20) };
 }

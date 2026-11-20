@@ -164,6 +164,8 @@ export function runtimeBase(repoCfg) {
         "SHEET_EVAL_BUDGET",
         "ALLOW_CATEGORY_SHARING",
         "ALLOW_SLIDES_FOLLOW",
+        "DESIGN_EXPORTS_PER_INSTANCE_PER_HOUR",
+        "DESIGN_EXPORTS_PER_ARTIFACT_PER_HOUR",
       ]
         .filter((k) => k in (repoCfg.vars ?? {}))
         .map((k) => [k, repoCfg.vars[k]]),

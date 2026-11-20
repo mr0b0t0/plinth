@@ -37,7 +37,7 @@ make a test pass.
 | A design's artboard attacks the shell, the app or another board | Board script reads `parent.document`, the content cookie or storage, navigates the app, or posts a look-alike renderer or board message | Every artboard is a nested frame with an opaque origin in every isolation mode (iframe `sandbox` and CSP `sandbox`, never `allow-same-origin`); the shell holds no author markup and runs only Plinth's renderer (`script-src 'self'`); it answers a board's `ready` only from the window of the frame it just made, once, with that board's own document; the app accepts renderer messages only from its own frame's window ([Designs](#designs)) |
 | Another site paints its content into a board loader | A page frames `<id>.<CONTENT_HOST>/__plinth/frames/design/board.html` and writes its own HTML into it | Under origin isolation the loader keeps `frame-ancestors 'self' <app>` for view and capture passes, so only the design's own shell inside the app can frame it; it goes without only under opaque isolation and for a preview pass. In every mode it answers only a request with this artifact's content pass at its epoch, which lives in the app's partitioned jar (and an MCP host's, for a preview), so another site's frame gets the 401 text; what a parent writes runs with an opaque origin, as in a frame of its own ([Designs](#designs)) |
 | Leaked CI secret | A `PLINTH_TOKEN` from a pipeline shows up in a fork's logs or a compromised runner | Make it a token limited to one artifact: it can read that artifact and publish new versions of it, nothing else (every other artifact answers 404 whatever its scopes, checked in `decide` before the scope), a version is never an overwrite and anyone with edit rights can revert it; secrets are not given to fork workflows ([Publishing from CI](#publishing-from-ci)) |
-| A CI token reads shared data through a content pass | A token limited to one artifact (refused `data_read`) asks the viewer gate for an enter URL, redeems it and reads `/__plinth/api/` with a script, or reads a thumbnail of a version that draws the data | The gate and thumbnails ask the policy for `enter`, which is `view` for everyone else and `token_bound` for a bound token, so it never gets an enter URL or a thumbnail; its in-chat preview pass reads no shared data and joins no room ([Authorization](#authorization)) |
+| A CI token reads shared data through a content pass | A token limited to one artifact (refused `data_read`) asks the viewer gate for an enter URL, redeems it and reads `/__plinth/api/` with a script, or reads a thumbnail of a version that draws the data | The gate, thumbnails and design exports ask the policy for `enter`, which is `view` for everyone else and `token_bound` for a bound token, so it never gets an enter URL, a thumbnail or an export; its in-chat preview pass reads no shared data and joins no room ([Authorization](#authorization)) |
 | A CI token's page leaks shared data from the thumbnail capture | A token limited to one artifact publishes a version that declares `data`, reads `/__plinth/api/` and sets `location.href` to an outside URL carrying the documents; the capture after the commit runs it with no viewer involved | The capture of a version a bound token wrote (or whose writer's account is gone) gets a pass that reads no shared data (`reason: "capture"`, `policy.captureReadsData`); every capture's browser aborts any request or navigation outside the artifact's own origin and the CSP's hosts, and closes any window the page opens ([Thumbnails and link previews](#thumbnails-and-link-previews)) |
 | A person's version hands its capture to the current code | A person's version, captured with a pass that reads the data, loads a root-relative script or worker (`/assets/index.js`), frames a root-relative page, or navigates itself to `/`, where the artifact's current version, which a bound token may have written, would run under that pass | The capture pass is bound to its version (`v`): under it the content host serves every path that is not a version path (the root, `/assets/index.js`, `/chart.html`) from the captured version, never the current one, and answers 404 for another version's path; the capture's browser also aborts a navigation to another version or a Plinth helper path ([Thumbnails and link previews](#thumbnails-and-link-previews)) |
 | Workflow command injection through the Action's log | A title, warning path or server message `::set-output name=x::y` or `::add-mask::` printed by the Action steers the job | Everything the client prints runs between `::stop-commands::<random>` and `::<random>::`; the Action's own annotations escape their text, the summary escapes Markdown and HTML, outputs use random heredoc delimiters; `docs/ci.md` passes outputs to scripts through `env:` ([Publishing from CI](#publishing-from-ci)) |
@@ -77,6 +77,11 @@ make a test pass.
 | A forged sheet edit breaks the shared draft | A modified client on the draft socket sends a row the sheet cannot hold, a header with fewer columns, or a struct that moves rows under someone else's open cell | The room checks every row line and header an edit puts in against the sheet's rules in their canonical spelling, re-checks every row when the header changes, applies a struct only from a writer at the current `rev` while nobody else holds a lease, and never merges a version published meanwhile into the draft: it freezes the draft, and a frozen draft is resolved only to itself or to that version exactly ([Live sheets](#live-sheets)) |
 | A version attacks the app through Compare | A version's HTML, Markdown, sheet cells or design-system strings hold `<img onerror>`, `</script>` or a `javascript:` link, and the change list puts them on the app host; or a hostile page makes the list take minutes | The app never renders a version's source: pure describers in `packages/shared/src/changes/` return plain text, which React renders as text nodes; HTML is read by a string scanner with no DOM; the versions render only in their sandboxed frames on the content host; item, excerpt and diff-work caps ([Comparing versions](#comparing-versions)) |
 | A viewer steers the audience's decks | Someone with view access to a deck (or a page script elsewhere) sends `goto` frames on the deck's `slides` socket to move everyone's slide, or reads the socket to learn who is watching | Only owners' and editors' sockets carry `present`, stamped by the gate from policy; a `watch` socket may send nothing but `ping` (anything else is `forbidden` and a rate drop); the handshake has the room's hijacking checks; frames carry only slide numbers, the leading socket's random id and, to the leader alone, a count of viewers ([Live rooms](#live-rooms)) |
+
+| A design export runs author code on the app host | An artboard's HTML or a crafted name ends up in the PNG or PDF response, which the app host serves, and a browser renders it as a page | The file is the browser's own screenshot or print, served as an attachment with `Content-Security-Policy: sandbox; default-src 'none'`, `nosniff` and CORP `same-origin`; the file name is `[a-z0-9-]` only ([Design export](#design-export)) |
+| A design export leaks a pass, an identity or another version | The export's enter URL, or a pass for the person exporting, reaches the page, a log or the caller and opens the artifact as them; or a board's page runs the current version's code, or reads shared data its writer may not | The thumbnail's capture load: a pass with no identity, bound to the exported version, with the no-data flag when a token limited to one artifact wrote it, minted and used inside the Worker's own browser and never returned; every request held to the capture's scope; error messages logged with every URL removed |
+| An address opens the export layout | Someone links people to a shell address that lays every board out, or one board alone, to frame or picture it outside the canvas | No URL parameter or message selects the export layout and there is no single-board view: only a shell that boots top-level in print media, which Plinth's export browser sets through the DevTools protocol, takes it, and one board is the export removing the others from its own copy of the page |
+| Design exports drain Browser Rendering | Someone with a link, or a script with a token, asks for exports in a loop or in parallel to run up the operator's browser hours or take every browser the account may run | Only people who may view the artifact, and no token limited to one artifact; `DESIGN_EXPORTS_PER_HOUR` per person (per client network signed out, an IPv6 /64 as one), `DESIGN_EXPORTS_PER_ARTIFACT_PER_HOUR` per design for everyone but its owner and editors and `DESIGN_EXPORTS_PER_INSTANCE_PER_HOUR` for the whole instance, all reserved before the browser starts and never given back, refused requests spending none; at most two exports at once instance-wide, held until the browser has closed; 25 s per render, then the browser is closed; `DESIGN_EXPORT=false` turns it off |
 
 Out of scope for v1: denial of service beyond Cloudflare's defaults, a compromised Cloudflare
 account, and malicious instance operators.
@@ -1004,7 +1009,10 @@ takedown included), and `token_bound` (403) for a bound token on its artifact, s
 identity claim, no room and no counted open is ever minted for it. Thumbnails are `enter` too
 (`GET /artifacts/:ref/thumbnail` answers 403 `token_bound`, and summaries give the token
 `thumbnail_url: null`, `policy.seesThumbnails`), since Plinth's capture of a person's version runs
-the page with a pass that reads its data and the picture could show it. The capture of a version
+the page with a pass that reads its data and the picture could show it. A design's export and its
+options are `enter` for the same reason (`GET /artifacts/:ref/export` and `/export/options` answer
+403 `token_bound`, [Design export](#design-export)): the export's browser runs the same capture,
+and every render spends the operator's browser time. The capture of a version
 the token itself wrote reads none: the pass Plinth mints for it carries a no-data flag (`d`, only
 ever with the capture flag), and the data API refuses it as it refuses a preview, with
 `reason: "capture"` (`policy.captureReadsData`, [Thumbnails and link previews](#thumbnails-and-link-previews)).
@@ -1260,7 +1268,9 @@ file.
 - **No pictures of error pages.** A capture whose page answers anything but 2xx (an expired link
   after a visibility change, a 404) is recorded as failed, not stored. The whole capture must
   finish within 25 seconds, under the 30 seconds `waitUntil` allows, so it records its failure
-  rather than being cut off while claimed.
+  rather than being cut off while claimed. A failure is logged with every URL removed from the
+  error text (`redactUrls`), since puppeteer's navigation errors quote the enter URL and its
+  one-time token.
 - **The image is ours, not the author's.** The stored JPEG is the browser's own screenshot, served
   as `image/jpeg` with `nosniff`, so serving it from the app host never serves author content.
 - **Who sees it.** `GET /api/v1/artifacts/:ref/thumbnail` uses the policy module's view check,
@@ -1276,6 +1286,104 @@ file.
 - **Cost.** A capture is claimed once per version, at most two run at once, and a failure is
   retried after a day, so neither a burst of dashboard loads nor repeated preview fetches can
   launch a browser per request.
+
+## Design export
+
+A design downloads as a PNG of one artboard or a PDF of its boards, rendered by the same Browser
+Rendering binding as thumbnails ([spec](spec.md#designs-decided-2026-11-19)). It is in effect only
+with `DESIGN_EXPORT` on and the `BROWSER` binding; elsewhere the endpoint answers
+`feature_disabled` and the menu has only the browser's own print.
+
+- **The thumbnail's capture, unchanged.** The export's browser opens the version with exactly a
+  design thumbnail's load (`captureLoad`): a one-time capture pass with no identity claim, 120
+  seconds, this artifact at this epoch, bound to the exported version (`v`) and carrying the
+  no-data flag (`d`) when the version's writer may not read the data (`policy.captureReadsData`),
+  with `next` exactly `/__plinth/v/<n>/`, and the same pass for the boards' cookie partition
+  handed over through the DevTools protocol before the page loads ([Designs](#designs)). It turns
+  on the capture's request interception (`guardCapturePage` with the design's `captureScope`)
+  before anything loads, so the page and its boards reach only that version, the board loader and
+  the CSP's hosts, and any window the page opens is closed. The URL never leaves the Worker: it is
+  not returned, and a failed render is logged with every URL removed from the error text.
+- **No address for the export layout.** The export emulates print media before the page loads,
+  and the design renderer takes its export layout (every board at 100% in normal flow, no canvas,
+  covers or chrome) only when it boots as the top-level document in print media. No URL
+  parameter or message selects it, so nobody can link to it, and in the app, where the shell is a
+  frame, it never applies. There is no single-board view: for one board the export removes every
+  other board from its own copy of the page before they load. Author code still runs only inside
+  the opaque board frames, under the strict typed shell (`script-src 'self'`). A PNG is then taken
+  in screen media, as people see the board.
+- **Who may export.** `GET /api/v1/artifacts/:ref/export` and `/export/options` take the policy
+  module's `enter` check, like the thumbnail: `view` for everyone but a token limited to one
+  artifact, which gets 403 `token_bound` from both, as from the thumbnail, since the export's
+  browser runs the page under a capture pass. A stranger gets the same 404 as for a missing
+  artifact, a signed-out visitor of a private design the same refusal as when viewing it. The
+  type is checked after that, and the query (format, board, scale, version) only then, so the
+  answer never says what type an artifact is to someone who may not view it, and a malformed
+  request from them still gets their 404. Agents' unbound bearer tokens work (`artifacts:read`);
+  there is no MCP tool.
+- **The file is ours, not the author's.** The response is the browser's own PNG or PDF, sent from
+  the app host as an attachment with `Content-Security-Policy: sandbox; default-src 'none'`,
+  `X-Content-Type-Options: nosniff`, `Cross-Origin-Resource-Policy: same-origin`,
+  `Cache-Control: private, no-store` and the app's other headers. Its name is the slug and the
+  board id, `[a-z0-9-]` only. A PDF can hold the boards' links, as a print from the browser does;
+  it holds nothing a viewer of the artifact could not already see.
+- **Cost.** Every export launches a browser, so three hourly counters in `rate_limits` are
+  reserved before the browser starts, after the input checks, so a typo costs nothing: the
+  person's (`DESIGN_EXPORTS_PER_HOUR`, 30 by default, per person, per confirmed email, or signed
+  out per client network), the design's (`DESIGN_EXPORTS_PER_ARTIFACT_PER_HOUR`, 20, for everyone
+  but its owner and editors) and the instance's (`DESIGN_EXPORTS_PER_INSTANCE_PER_HOUR`, 120). A
+  per-network limit alone let a handful of networks on one public or unlisted link keep both
+  slots busy around the clock (about 48 browser hours a day), and every real export then got
+  503; the instance's counter bounds the operator's browser time however many networks ask, at
+  about 120 renders of at most 25 seconds an hour, and the design's keeps one link from using it
+  all up while its owner and editors, whom a link cannot lock out, still export. Each counter is
+  raised in one batch and the returned counts checked (two requests cannot both take the last
+  export), and nothing is given back when a render fails, since the browser ran. A counter already
+  at its limit refuses (429 `rate_limited`, `details.reason` `artifact_limit` or
+  `instance_limit`, `Retry-After` the rest of the hour) before any counter is raised or a slot is
+  taken, so requests over one design's limit cannot spend the instance's, and refusals cost
+  nobody anything. Signed out, the person's key is the network from `lib/ip.ts` (an IPv4 address,
+  or an IPv6 address's /64), so a line that may pick any address in its /64 is still one client.
+  A render has 25 seconds and waits at most 10 for boards to load, every wait ending 7 seconds
+  before the budget so the print still runs; a PNG is at most 4,000,000 device pixels.
+- **Memory.** The Worker holds the whole file in its 128 MB isolate, beside every other request
+  that isolate serves, and a board's scripts decide how well the file compresses (a canvas of
+  noise does not), so the cap is on bytes, not on what the design declares. No export is over
+  24 MB (`DESIGN_EXPORT.maxBytes`). A PDF comes from the browser as a DevTools stream that the
+  Worker reads 1 MiB at a time and stops reading, with 413 `payload_too_large`, as soon as it
+  passes the cap, so 60 boards of rasterised canvas never arrive whole. The pieces are then sent
+  one after the other, as read, through a stream of the file's exact length, and never joined
+  into a second copy, so a PDF at the cap takes about 25 MB, not twice that. The response starts
+  only once the whole file is read and checked: headers already sent could not become a 413, and
+  a download cut short part-way could pass for a whole file. A PNG arrives in one DevTools message
+  as base64; the pixel cap (4,000,000 device pixels) keeps even one at about 4 bytes a pixel near
+  16 MB, its size is checked from the base64 length before it is decoded, and it is decoded once,
+  straight into the bytes sent, so the message, its string and the file stay near 60 MB together
+  and two exports can share an isolate (a 6,000,000 px cap peaked near 90 MB each). A file over
+  the cap is refused, never cut short, and still counts toward the hourly limits, since the
+  browser ran.
+- **Concurrency.** Browser Rendering limits the browsers an account runs at once, and thumbnails
+  already take up to two. At most two exports render at once across the instance: a lease row in
+  `rate_limits` (`design-export:running:<random id>`, no person in it), taken in one guarded
+  statement before the hourly count. A request that finds both taken answers 503 `unavailable`
+  with `Retry-After: 10` and is not counted; a request over any of the hourly limits is refused
+  before taking one. The lease is given back only once the browser has closed: a render past its
+  25 seconds is aborted, which closes the browser, and the Worker keeps running (`waitUntil`)
+  until it has. A lease that is never given back stops counting after 60 seconds. Browser
+  Rendering may still answer busy when the account's other browsers are taken, and the export
+  then answers 503 `unavailable`. Nothing is stored.
+- **Residual risks.** A board's scripts run in the export's browser, as in a thumbnail, and can
+  spend its 25 seconds; their requests reach only the CDN allowlist. A board may open a popup
+  (its sandbox allows them, as every artifact's does): a popup is a page of its own, outside the
+  page's request interception, so its first request may leave for any host before the guard
+  closes it, as in every thumbnail capture. It is a blind GET from Plinth's browser with no
+  viewer's cookies and nothing read back, the same reach as an image tag on any web page.
+  Puppeteer reports a new window only after it has let it start, so the guard cannot close it
+  sooner; the planned fix is Browser Rendering's session guardrails (`allowedDomains` from the
+  capture's scope), once checked against a live binding ([DECISIONS.md](../DECISIONS.md)).
+  Whoever may view a design can export it, so a link viewer of an unlisted design spends the
+  operator's browser time within the per-network, per-design and instance limits; an operator who
+  does not want that sets `DESIGN_EXPORT=false`.
 
 ## In-chat previews
 
@@ -1369,6 +1477,10 @@ version just published appears in the agent's thread.
 | One live-room frame | `ROOM_MAX_MESSAGE_BYTES` (8 KiB; larger closes with 1009, binary with 1003); presence 400 bytes per room; 3 rooms per socket |
 | Live-view watch sockets per artifact | `LIVE_VIEW_MAX_SOCKETS_PER_ARTIFACT` (1000), apart from room sockets, half for the owner and the people it is shared with and half for everyone else; 32 per client; 60 connects per client per minute (close code 4409, then the page polls) |
 | People-list reads per reader per artifact | 600 per hour |
+| Design exports (PNG and PDF) per person, per confirmed email, or per client network signed out (an IPv6 /64 as one) | `DESIGN_EXPORTS_PER_HOUR` (30) |
+| Design exports of one design per hour, by everyone but its owner and editors | `DESIGN_EXPORTS_PER_ARTIFACT_PER_HOUR` (20; `429` with `reason: "artifact_limit"`) |
+| Design exports per hour, instance-wide | `DESIGN_EXPORTS_PER_INSTANCE_PER_HOUR` (120; `429` with `reason: "instance_limit"`) |
+| Design exports rendering at once, instance-wide | 2 (busy answers `503` with `Retry-After: 10`, not counted) |
 
 Limited requests get `429` with `Retry-After`; live-room limits answer on the socket instead.
 Invitation emails over a limit are skipped and named in the result, and the change still applies.

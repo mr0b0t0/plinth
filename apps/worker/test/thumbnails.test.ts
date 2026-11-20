@@ -3,7 +3,7 @@
 // a stub BROWSER binding turns the feature on.
 import { createExecutionContext, waitOnExecutionContext } from "cloudflare:test";
 import { env } from "cloudflare:workers";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { contentOrigin, getConfig } from "../src/config.ts";
 import { contentCookieName } from "../src/content/serve.ts";
 import {
@@ -157,6 +157,26 @@ describe("capture after a commit", () => {
     const id = row?.id as string;
     expect(await claimThumbnail(env.DB, id)).toBe(false);
     expect(await claimThumbnail(env.DB, id, Date.now() + THUMB.retryFailedMs + 1000)).toBe(true);
+  });
+
+  it("logs a failed capture with every URL removed, so no enter token reaches a log", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      setThumbnailShooter(async (_b, url) => {
+        throw new Error(`net::ERR_TIMED_OUT at ${url}`);
+      });
+      const a = await agent();
+      const p = await publish(a.auth);
+      expect((await state(p.id, 1))?.thumbnail).toBe("failed");
+      const logged = warn.mock.calls.map((c) => c.join(" ")).join("\n");
+      expect(logged).toContain(
+        `thumbnail capture failed for ${p.id} v1: net::ERR_TIMED_OUT at <url>`,
+      );
+      expect(logged).not.toMatch(/https?:\/\//);
+      expect(logged).not.toContain("t=");
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it("claims a version once, takes a stale claim again, and caps captures running at once", async () => {

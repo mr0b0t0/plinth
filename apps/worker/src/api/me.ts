@@ -16,7 +16,12 @@ import {
 } from "@plinth/shared";
 import { and, eq, isNull, sql } from "drizzle-orm";
 import { Hono } from "hono";
-import { instanceLimits, invitationEmailsActive, sharedDataActive } from "../config.ts";
+import {
+  designExportActive,
+  instanceLimits,
+  invitationEmailsActive,
+  sharedDataActive,
+} from "../config.ts";
 import { artifacts, users } from "../db/schema.ts";
 import { ApiError, unauthorized } from "../lib/errors.ts";
 import { boundArtifactOf, mayManageInvitationEmails } from "../policy.ts";
@@ -61,6 +66,7 @@ meApi.get("/config", (c) => {
     })),
     invitation_emails: invitationEmailsActive(config),
     live_views: config.allowLiveViews,
+    design_export: designExportActive(config, c.env),
   };
   const res = c.json(body);
   ensureCsrfCookie(c, res.headers);
