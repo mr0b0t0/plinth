@@ -242,7 +242,10 @@ test("an agent's version is merged under the page edits, or frozen for review wh
   const toV3 = review.getByRole("radio", { name: "v3" });
   if (await toV3.isVisible()) await toV3.click();
   await expect(theirs).toContainText("First, rewritten by the agent.");
-  await expect(theirs.getByRole("list", { name: "Changes" })).toContainText("Paragraph changed");
+  // The History describers name a paragraph rewritten past recognition as removed and added.
+  await expect(theirs.getByRole("list", { name: "Changes" })).toContainText(
+    "Paragraph added: First, rewritten by the agent.",
+  );
   // No source is shown: no Markdown field, and no editor.
   await expect(review.locator("textarea, .monaco-editor")).toHaveCount(0);
   // Discard your changes asks first, in the app's own dialog over the dimmed page; Cancel keeps
