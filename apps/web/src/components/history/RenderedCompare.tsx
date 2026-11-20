@@ -1,12 +1,15 @@
 // Side-by-side rendered comparison: each version in its own sandboxed frame on the artifact's
-// content subdomain, loaded through a fresh viewer gate (each enter_url works once).
+// content subdomain, loaded through a fresh viewer gate (each enter_url works once). At phone
+// width the frames are shown one at a time, with a Before and After switch.
 import type { ViewGate } from "@plinth/shared";
 import { artifactIframeSandbox } from "@plinth/shared";
 import { useEffect, useId, useState } from "react";
 import { useSession } from "../../lib/session.ts";
-import { ButtonLink, Skeleton } from "../ui/index.ts";
+import { ButtonLink, SegmentedControl, Skeleton } from "../ui/index.ts";
 import { fetchGate } from "./data.ts";
 import { artifactPath } from "./format.ts";
+
+type Side = "before" | "after";
 
 export function RenderedCompare({
   slug,
@@ -19,11 +22,30 @@ export function RenderedCompare({
   from: number;
   to: number;
 }) {
+  const [shown, setShown] = useState<Side>("after");
+  const id = useId();
   return (
-    <div className="hx-rendered">
-      <VersionFrame slug={slug} title={title} n={from} />
-      <VersionFrame slug={slug} title={title} n={to} />
-    </div>
+    <section className="hx-rendered-section" aria-labelledby={id}>
+      {/* The two captions say which version is which; the heading only names the region. */}
+      <h2 id={id} className="visually-hidden">
+        Side by side
+      </h2>
+      {/* Only shown at phone width (history.css), where one frame fits at a time. */}
+      <SegmentedControl
+        label="Version shown"
+        className="hx-rendered__switch"
+        value={shown}
+        onChange={setShown}
+        options={[
+          { value: "before", label: `Before · v${from}` },
+          { value: "after", label: `After · v${to}` },
+        ]}
+      />
+      <div className="hx-rendered" data-shown={shown}>
+        <VersionFrame slug={slug} title={title} n={from} side="before" />
+        <VersionFrame slug={slug} title={title} n={to} side="after" />
+      </div>
+    </section>
   );
 }
 
@@ -32,7 +54,17 @@ type FrameState =
   | { status: "ok"; url: string }
   | { status: "blocked"; gate: ViewGate["status"] | "error"; message?: string };
 
-function VersionFrame({ slug, title, n }: { slug: string; title: string; n: number }) {
+function VersionFrame({
+  slug,
+  title,
+  n,
+  side,
+}: {
+  slug: string;
+  title: string;
+  n: number;
+  side: Side;
+}) {
   const { config } = useSession();
   const [state, setState] = useState<FrameState>({ status: "loading" });
 
@@ -59,7 +91,7 @@ function VersionFrame({ slug, title, n }: { slug: string; title: string; n: numb
 
   const captionId = useId();
   return (
-    <figure className="hx-frame" aria-labelledby={captionId}>
+    <figure className={`hx-frame hx-frame--${side}`} aria-labelledby={captionId}>
       <figcaption id={captionId} className="hx-frame__label">
         <span className="type-mono">v{n}</span>
       </figcaption>

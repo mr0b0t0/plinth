@@ -465,13 +465,16 @@ test.describe("changing a design", () => {
 
       // Compare shows the two versions rendered, never their source.
       await page.goto(`/a/${artifact.slug}/compare?from=1&to=2`);
+      const changes = page.getByRole("region", { name: "Changes" });
+      await expect(
+        changes.getByRole("listitem").filter({ hasText: "Board “Banner” added" }),
+      ).toBeVisible();
+      await expect(page.locator("main")).not.toContainText("artboard");
       const f1 = page.frameLocator(`iframe[title="v1 of ${TITLE}"]`);
       const f2 = page.frameLocator(`iframe[title="v2 of ${TITLE}"]`);
       await expect(f1.locator(".plinth-design__board")).toHaveCount(3, { timeout: 15_000 });
       await expect(f2.locator(".plinth-design__board")).toHaveCount(4, { timeout: 15_000 });
       await expect(page.getByRole("tab", { name: "Source" })).toHaveCount(0);
-      await expect(page.getByRole("table", { name: /Changes to design\.html/ })).toHaveCount(0);
-      await expect(page.getByText("artboard id=")).toHaveCount(0);
 
       await page.goto(`/a/${artifact.slug}/history`);
       await page

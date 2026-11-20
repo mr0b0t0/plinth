@@ -2,7 +2,7 @@
 // can change the board, each one row of short labels. Native radio buttons in a fieldset, so arrow
 // keys move the choice and Tab enters and leaves a group as one stop. Shared by the board's
 // Settings dialog and the Board section of the settings page; useBoardSettings holds the state.
-import type { BoardBackground, BoardEditMode } from "@plinth/shared";
+import { BOARD_SETTING_LABELS, type BoardBackground, type BoardEditMode } from "@plinth/shared";
 import { Button, SegmentedControl, Spinner } from "../ui/index.ts";
 import { BACKGROUND_CHOICES, EDIT_CHOICES } from "./boardSettings.ts";
 import type { BoardSettingsForm } from "./useBoardSettings.ts";
@@ -30,7 +30,7 @@ export function BoardSettingsFields({ form }: { form: BoardSettingsForm }) {
         </p>
       )}
       <SegmentedControl<BoardBackground>
-        label="Background"
+        label={BOARD_SETTING_LABELS.background}
         showLabel
         options={[...BACKGROUND_CHOICES]}
         value={chosen.background}
@@ -38,7 +38,7 @@ export function BoardSettingsFields({ form }: { form: BoardSettingsForm }) {
         className="pl-board-settings__group"
       />
       <SegmentedControl<BoardEditMode>
-        label="Who can change the board"
+        label={BOARD_SETTING_LABELS.edit}
         showLabel
         options={[...EDIT_CHOICES]}
         value={chosen.edit}

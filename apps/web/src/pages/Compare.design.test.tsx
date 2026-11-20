@@ -1,5 +1,6 @@
-// Compare for a type people never see the source of (a design): only the rendered pages, and no
-// Source tab at any point, the load included. A page keeps both tabs.
+// Compare for a type people never see the source of (a design): the change list and the rendered
+// pages, and no Source tab at any point, the load included. A page compares the same way: Compare
+// shows no source for any type.
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -118,11 +119,13 @@ describe("comparing versions of a design", () => {
     expect(screen.queryByTestId("code-diff")).toBeNull();
   });
 
-  it("keeps the Source and Rendered tabs for a page", async () => {
+  it("compares a page the same way, with no Source or Rendered tab", async () => {
     artifact = async () => json(PAGE);
     detail = PAGE;
     await open();
-    await waitFor(() => expect(screen.getByRole("tab", { name: /source/i })).toBeTruthy());
-    expect(screen.getByRole("tab", { name: /rendered/i })).toBeTruthy();
+    await waitFor(() => expect(screen.getByRole("region", { name: "Changes" })).toBeTruthy());
+    expect(screen.queryByRole("tab", { name: /source/i })).toBeNull();
+    expect(screen.queryByRole("tab", { name: /rendered/i })).toBeNull();
+    expect(screen.queryByTestId("code-diff")).toBeNull();
   });
 });
