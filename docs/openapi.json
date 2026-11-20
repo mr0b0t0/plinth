@@ -1234,6 +1234,13 @@
             "name": "next",
             "schema": { "type": "string" },
             "description": "Path inside the artifact to land on"
+          },
+          {
+            "in": "query",
+            "required": false,
+            "name": "carried",
+            "schema": { "type": "string", "enum": ["1"] },
+            "description": "`next` is a place carried from an older version (live views): land on the root when the current version has no file there"
           }
         ],
         "responses": {
@@ -3436,7 +3443,10 @@
           },
           "capabilities": {
             "type": "array",
-            "items": { "type": "string", "enum": ["data", "viewer", "room", "comments", "people"] },
+            "items": {
+              "type": "string",
+              "enum": ["data", "viewer", "room", "comments", "people", "hold"]
+            },
             "description": "What the returned version declares (shared data, viewer identity)"
           },
           "data_usage": {
@@ -3572,7 +3582,10 @@
           },
           "capabilities": {
             "type": "array",
-            "items": { "type": "string", "enum": ["data", "viewer", "room", "comments", "people"] },
+            "items": {
+              "type": "string",
+              "enum": ["data", "viewer", "room", "comments", "people", "hold"]
+            },
             "description": "What the returned version declares (shared data, viewer identity)"
           },
           "data_usage": {
@@ -3708,7 +3721,10 @@
           },
           "capabilities": {
             "type": "array",
-            "items": { "type": "string", "enum": ["data", "viewer", "room", "comments", "people"] },
+            "items": {
+              "type": "string",
+              "enum": ["data", "viewer", "room", "comments", "people", "hold"]
+            },
             "description": "What the returned version declares (shared data, viewer identity)"
           },
           "data_usage": {
@@ -3844,7 +3860,10 @@
           },
           "capabilities": {
             "type": "array",
-            "items": { "type": "string", "enum": ["data", "viewer", "room", "comments", "people"] },
+            "items": {
+              "type": "string",
+              "enum": ["data", "viewer", "room", "comments", "people", "hold"]
+            },
             "description": "What the returned version declares (shared data, viewer identity)"
           },
           "data_usage": {
@@ -3980,7 +3999,10 @@
           },
           "capabilities": {
             "type": "array",
-            "items": { "type": "string", "enum": ["data", "viewer", "room", "comments", "people"] },
+            "items": {
+              "type": "string",
+              "enum": ["data", "viewer", "room", "comments", "people", "hold"]
+            },
             "description": "What the returned version declares (shared data, viewer identity)"
           },
           "data_usage": {
@@ -4112,7 +4134,10 @@
           },
           "capabilities": {
             "type": "array",
-            "items": { "type": "string", "enum": ["data", "viewer", "room", "comments", "people"] },
+            "items": {
+              "type": "string",
+              "enum": ["data", "viewer", "room", "comments", "people", "hold"]
+            },
             "description": "What the returned version declares (shared data, viewer identity)"
           },
           "data_usage": {
@@ -4248,7 +4273,10 @@
           },
           "capabilities": {
             "type": "array",
-            "items": { "type": "string", "enum": ["data", "viewer", "room", "comments", "people"] },
+            "items": {
+              "type": "string",
+              "enum": ["data", "viewer", "room", "comments", "people", "hold"]
+            },
             "description": "What the returned version declares (shared data, viewer identity)"
           },
           "data_usage": {
@@ -5086,6 +5114,10 @@
               "required": ["id", "available"]
             },
             "description": "Every artifact type, and whether this instance publishes it now: a whiteboard needs shared data on (ALLOW_SHARED_DATA) and origin isolation"
+          },
+          "live_views": {
+            "type": "boolean",
+            "description": "Open views apply new versions while keeping the reader's state here (ALLOW_LIVE_VIEWS): docs update in place, pages with the runtime carry their state, pages that declare `hold` wait while the viewer uses them. Absent or false: a new version replaces the page"
           }
         },
         "required": [
@@ -5107,7 +5139,8 @@
           "review_login",
           "view_log_retention_days",
           "category_sharing",
-          "artifact_types"
+          "artifact_types",
+          "live_views"
         ]
       },
       "LoginResult": {
@@ -5204,7 +5237,11 @@
                 "const": true,
                 "description": "Live views: open GET /view/{id}/watch to learn of new versions and shared-data changes as they happen. Absent: poll the gate"
               },
-              "people": { "$ref": "#/components/schemas/ViewGatePeople" }
+              "people": { "$ref": "#/components/schemas/ViewGatePeople" },
+              "hold": {
+                "const": true,
+                "description": "The current version declares `hold` (HTML only, ALLOW_LIVE_VIEWS on): while the viewer is using the page (focus inside its frame), a newer version waits behind an Update button instead of replacing it"
+              }
             },
             "required": ["status", "artifact", "enter_url", "role"]
           },
@@ -5696,7 +5733,10 @@
           },
           "capabilities": {
             "type": "array",
-            "items": { "type": "string", "enum": ["data", "viewer", "room", "comments", "people"] }
+            "items": {
+              "type": "string",
+              "enum": ["data", "viewer", "room", "comments", "people", "hold"]
+            }
           },
           "identified": {
             "type": "boolean",
@@ -5784,7 +5824,10 @@
         "properties": {
           "capabilities": {
             "type": "array",
-            "items": { "type": "string", "enum": ["data", "viewer", "room", "comments", "people"] }
+            "items": {
+              "type": "string",
+              "enum": ["data", "viewer", "room", "comments", "people", "hold"]
+            }
           },
           "available": {
             "type": "boolean",

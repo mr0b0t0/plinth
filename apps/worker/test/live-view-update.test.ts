@@ -47,7 +47,6 @@ describe("the hold declaration", () => {
       roomOpen: [],
       people: false,
       comments: false,
-      dictation: false,
       hold: true,
     });
     const stored = serializeCapabilities(c as Capabilities);
@@ -58,7 +57,7 @@ describe("the hold declaration", () => {
       ["data viewer", '{"data":true,"viewer":true,"shared":[]}'],
       ["room", '{"data":false,"viewer":false,"shared":[],"room":true,"roomOpen":[]}'],
       ["comments", '{"data":false,"viewer":false,"shared":[],"comments":true}'],
-      ["dictation", '{"data":false,"viewer":false,"shared":[],"dictation":true}'],
+      ["data viewer people", '{"data":true,"viewer":true,"shared":[],"people":true}'],
     ] as const) {
       const parsed = parseCapabilities(`<meta name="plinth-capabilities" content="${content}">`);
       expect(serializeCapabilities(parsed as Capabilities)).toBe(bytes);

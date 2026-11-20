@@ -341,6 +341,7 @@ export function boardCapabilities(s: BoardSettings): Capabilities {
     roomOpen: commenters ? [...BOARD_TOPICS] : [],
     people: false,
     comments: false,
+    hold: false,
     writers: commenters ? "commenter" : "editor",
   };
 }

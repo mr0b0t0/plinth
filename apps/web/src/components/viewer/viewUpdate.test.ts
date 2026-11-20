@@ -24,6 +24,9 @@ describe("planUpdate", () => {
     for (const pause of ["follow", "hold", "present"] as const) {
       expect(plan({ pause, type: "doc" })).toBe("keep");
       expect(plan({ pause, runtimeHello: true })).toBe("keep");
+      // A sheet or a board edited on its page keeps its frame the same way.
+      expect(plan({ pause, type: "sheet" })).toBe("keep");
+      expect(plan({ pause, type: "whiteboard" })).toBe("keep");
     }
     expect(plan({ pinned: true, enabled: false })).toBe("keep");
   });
@@ -73,7 +76,7 @@ describe("planUpdate", () => {
   });
 
   it("swaps the other typed artifacts", () => {
-    for (const type of ["slides", "design_system", "design"] as const) {
+    for (const type of ["slides", "design_system", "design", "sheet", "whiteboard"] as const) {
       expect(plan({ type, holdDeclared: true, frameFocused: true, runtimeHello: true })).toBe(
         "swap",
       );
