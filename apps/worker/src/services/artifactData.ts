@@ -75,14 +75,18 @@ async function capsAt(ctx: Ctx, artifactId: string, version: number) {
 async function targetOf(ctx: Ctx, a: ArtifactRow): Promise<DataTarget> {
   const caps = await capsAt(ctx, a.id, a.currentVersion);
   const writers = caps?.people ? await servedVersionWriters(ctx.env.DB, a.id) : null;
-  return { id: a.id, ownerId: a.ownerId, caps, writers };
+  return { id: a.id, ownerId: a.ownerId, caps, writers, type: a.type };
 }
 
 /**
  * Who is writing: the email that holds the role (the owner's own, or the grant's), stamped via
  * "agent" with the connection label for bearer callers and via "app" for the signed-in app.
  */
-async function writerOf(ctx: Ctx, a: ArtifactRow, role: EffectiveRole | null): Promise<DataWriter> {
+export async function writerOf(
+  ctx: Ctx,
+  a: ArtifactRow,
+  role: EffectiveRole | null,
+): Promise<DataWriter> {
   const own = principalEmail(ctx.principal);
   const email = role === "owner" ? own : ((await grantFor(ctx, a))?.email ?? own);
   if (!email || !role) throw new ApiError("forbidden", "You cannot change this artifact's data");

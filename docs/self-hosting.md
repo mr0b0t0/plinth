@@ -133,7 +133,7 @@ Booleans accept `true`, `1`, `yes` or `on`.
 | `ADMIN_EMAIL` | empty | Instance admins (comma separated): they see the report queue and can take artifacts down. In single-user mode, exactly one address: the owner |
 | `ALLOW_PUBLIC_VISIBILITY` | `false` | Allows `public` visibility. Even then an account needs a verified email and a minimum age |
 | `PUBLIC_MIN_ACCOUNT_AGE_HOURS` | `72` | Account age before `public` unlocks |
-| `ALLOW_SHARED_DATA` | `true` | Lets pages that declare it keep shared data (polls, sign-up sheets, trackers among invited people) and learn who is viewing; see [security.md](security.md#shared-data-api). Empty keeps it on; any other value than `true`, `1`, `yes` or `on` turns it off. Off: no identity claims, pages report shared data as unavailable, and MCP and REST writes are refused while reads still work, so owners can export. Always off under `CONTENT_ISOLATION=opaque` |
+| `ALLOW_SHARED_DATA` | `true` | Lets pages that declare it keep shared data (polls, sign-up sheets, trackers among invited people) and learn who is viewing; see [security.md](security.md#shared-data-api). Empty keeps it on; any other value than `true`, `1`, `yes` or `on` turns it off. Off: no identity claims, pages report shared data as unavailable, and MCP and REST writes are refused while reads still work, so owners can export. Always off under `CONTENT_ISOLATION=opaque`. Whiteboards keep their board in shared data, so while it is off (or under opaque isolation) publishing a whiteboard is refused and `GET /api/v1/config` lists `whiteboard` as unavailable; existing boards then show read-only and empty |
 | `SHOW_SOURCE_LINK` | `true` | Adds "open source", a link to Plinth's GitHub repository, to the banner under every artifact. Empty keeps it on; any other value than `true`, `1`, `yes` or `on` turns it off. The banner belongs to the app's page around the frame: the artifact's own HTML is never changed. Off keeps the banner and its report link |
 | `THUMBNAILS` | `true` | Takes a screenshot of each version for dashboard cards and link previews (`og:image`). Only works with a Browser Rendering binding, which you add to your own wrangler config: `"browser": { "binding": "BROWSER" }`. Without it, or with any other value than `true`, `1`, `yes` or `on`, cards keep their placeholder and link previews have no image. Browser Rendering is billed by Cloudflare per browser hour; local, tunnel and Docker instances run without it |
 | `VIEW_COUNTS` | `true` | Records each open of an artifact by someone other than its owner, for the owner's Stats pages and the admin Stats page: when, which version, and who (the account of people signed in, the email of allowlisted viewers who confirmed it by code; everyone else only as an approximate anonymous visitor, from a random id in the viewing cookie, which then lasts 30 days). No IP addresses or user agents. The owner's own opens, previews, thumbnails, agents and admins reviewing are not counted, and each browser counts at most once every 12 hours. Each counted open costs one D1 row written (plus its index entries). Any value other than `true`, `1`, `yes` or `on` turns recording off; what was recorded stays and owners still see it |
@@ -145,7 +145,7 @@ Booleans accept `true`, `1`, `yes` or `on`.
 | `DATA_MAX_DOC_BYTES` | `16384` (16 KiB) | Size of one shared-data document, `1024` to `65536` |
 | `DATA_WRITES_PER_VIEWER_PER_HOUR` | `300` | Shared-data writes per writer per artifact (page, agent and app writes, deletes included). At least 1 |
 | `DATA_WRITES_PER_ARTIFACT_PER_HOUR` | `2000` | Shared-data writes per artifact by all writers together. At least 1 |
-| `ALLOW_ROOMS` | `true` | Live rooms: pages that declare `room` show who is here and share moments live among invited people (`plinth.room`), and doc editors see each other's page edits as they type. Needs the `ROOMS` Durable Object binding, which every config Plinth generates carries ([deploy-checklist.md](deploy-checklist.md#live-rooms)), and `CONTENT_ISOLATION=origin`. Empty keeps it on; any other value than `true`, `1`, `yes` or `on` turns it off: pages then get `room.ready` with `available: false` and work alone, and doc editors edit on their own and save from the page |
+| `ALLOW_ROOMS` | `true` | Live rooms: pages that declare `room` show who is here and share moments live among invited people (`plinth.room`), and doc editors see each other's page edits as they type. Needs the `ROOMS` Durable Object binding, which every config Plinth generates carries ([deploy-checklist.md](deploy-checklist.md#live-rooms)), and `CONTENT_ISOLATION=origin`. Empty keeps it on; any other value than `true`, `1`, `yes` or `on` turns it off: pages then get `room.ready` with `available: false` and work alone, and doc editors edit on their own and save from the page. Whiteboards keep saving without it; only their live cursors and drags stop |
 | `ROOM_MAX_CONNECTIONS_PER_ARTIFACT` | `50` | Open sockets on one artifact's room, `2` to `1000` |
 | `ROOM_MAX_MESSAGE_BYTES` | `8192` | One message a page sends to its room, `512` to `65536` |
 | `ROOM_MESSAGES_PER_SECOND` | `20` | Messages per connection per second, with bursts of twice that, `1` to `100`. A socket that keeps going over is closed |
@@ -159,6 +159,8 @@ Booleans accept `true`, `1`, `yes` or `on`.
 | `LIVE_VIEW_MAX_SOCKETS_PER_ARTIFACT` | `1000` | Open views of one artifact that get pushed signals, `10` to `10000`, counted apart from `ROOM_MAX_CONNECTIONS_PER_ARTIFACT`: half for the owner and the people it is shared with, half for everyone else. Views over it poll. It also sets how long open views spread their follow-up requests after a signal: 2 ms per socket, at most 10 s (2 s at the default) |
 | `SHEET_EVAL_BUDGET` | `200000` | Formula steps one `read_sheet` call may spend, `10000` to `20000000`: one step per expression and per cell a range visits. Past it, the agent gets the cells it did not reach as `#LIMIT!` with an `eval_budget` warning. Lower it on the Workers Free plan (10 ms of CPU per request) if large sheets time out; raise it on Workers Paid for big sheets. It never changes what viewers see: browsers compute sheets themselves |
 | `ALLOW_CATEGORY_SHARING` | `true` | Owners may share a category with people, who see the artifacts the owner reviews into it on a portal page (`/p/<id>`); filing an artifact under a shared category never shares it ([spec](spec.md#category-sharing-and-personal-categories-decided-2026-11-19)). Only `false`, `0`, `no` or `off` turns it off: category grants then count for nothing, the share and portal endpoints answer `feature_disabled` or 404, and agents are no longer told about shared categories. Passes issued through a share before you turn it off end within 12 hours; `pnpm --filter @plinth/worker admin -- bump-epochs --category-shared --remote` ends them at once. The privacy notice names shared categories while it is on |
+| `INVITATION_EMAILS_PER_DAY` | `1000` | Invitation emails the whole instance sends per UTC day, `0` to `1000000`. One cap shared by every owner: once it is used up, nobody's invitations go out until the next UTC day (sign-in and viewing codes still do; they count separately). They share your email provider's daily quota with those codes, so keep it well under that quota. `0` turns invitation emails off, as do `EMAIL_PROVIDER=console` outside development and `SINGLE_USER_MODE`: the app shows no **Notify people** box, and a request with `notify: true` still applies but emails nobody ([spec](spec.md#invitation-emails-decided-2026-11-19)) |
+| `INVITATION_EMAILS_PER_OWNER_PER_DAY` | `20` | Invitation emails one owner's sharing changes send per UTC day, `1` to `10000`. Keep it a small share of `INVITATION_EMAILS_PER_DAY`, so a few accounts cannot use up the instance cap for everyone |
 | `STAGING_CONTENT_FALLBACK` | `false` | Serves content at `APP_HOST/__content/<id>/` instead of subdomains, for a staging deploy on `workers.dev` without a content domain. All artifacts then share the app's origin, so never use it with real users. Refused in production |
 | `DEV_OUTBOX` | `false` (`true` in the committed local config) | Keeps console emails in D1 and exposes `GET /api/v1/__dev/outbox` for tests. Only honoured when `ENVIRONMENT=development` |
 
@@ -361,6 +363,24 @@ to turn them on or off. See [ci.md](ci.md).
 - **Admin commands on a `plinth deploy` instance.** The quota and erasure commands above run from a
   checkout; point them at the deployment with
   `--config $HOME/.plinth/plinth/cloudflare/wrangler.jsonc`.
+- **Invitation emails.** When an owner adds people with **Notify people** ticked (or an agent passes
+  `notify: true`), each new person gets one email through `EMAIL_PROVIDER`, from `EMAIL_FROM`:
+  who shared what, their role and the link. One change sends at most 40, each owner at most
+  `INVITATION_EMAILS_PER_OWNER_PER_DAY` (20) a day (3 of them to any one address), each address
+  receives at most 10 a day, and the whole instance sends at most `INVITATION_EMAILS_PER_DAY`
+  (1000) a day. That instance cap is shared by all owners: once their invitations together reach
+  it, nobody's go out until the next UTC day. Sign-in and viewing codes have counters of their own,
+  so they still go out, but they use the same provider quota, so set
+  `INVITATION_EMAILS_PER_DAY` well under your provider's daily quota (on a plan of about 100
+  emails a day, for example `30`), or `0` to turn invitation emails off. With
+  `EMAIL_PROVIDER=console` they go to the Worker log like sign-in codes in development, and are
+  off in staging and production (the result says `invitations_off`); they are off in
+  `SINGLE_USER_MODE` too. Each email's footer and `List-Unsubscribe` header link
+  `/invitation-emails`, where the recipient signs in and turns invitations to their address off;
+  those opt-outs (hashed addresses) sit in `invitation_opt_outs` (migration
+  `0021_invitation_opt_outs.sql`) and stay when an account is erased. Their counters (hashed
+  addresses) sit in `rate_limits` and the hourly cron removes them after two days; on an instance
+  without a cron they are pruned with the other rate-limit rows.
 
 ## Docker
 

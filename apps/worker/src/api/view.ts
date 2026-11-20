@@ -3,6 +3,7 @@
 import {
   type Capabilities,
   capabilityList,
+  hasPageCapabilities,
   pageDisplayName,
   RATE_LIMITS,
   REVIEW_MODE_PARAM,
@@ -317,7 +318,7 @@ async function gateData(
     identity &&
     caps?.room === true &&
     caps.viewer &&
-    a.type === "html" &&
+    hasPageCapabilities(typeDef(a.type)) &&
     roomsActive(ctx.config, ctx.env)
       ? identity.email
       : undefined;
@@ -338,7 +339,7 @@ async function gateData(
     available,
     capabilities,
     identified: claim !== null,
-    can_write: pageDataAccess(claim, caps, available).write,
+    can_write: pageDataAccess(claim, caps, available, a.type).write,
     // The viewer is told which email the page sees (their own, or the one holding the grant).
     ...(claim && caps?.viewer && caps.data ? { email: claim.email } : {}),
     ...(roomEmail ? { room_email: roomEmail } : {}),
@@ -362,7 +363,8 @@ async function gatePeople(
   const caps = await versionCaps(ctx, a, a.currentVersion);
   if (caps?.viewer !== true) return undefined;
   const data = sharedDataActive(ctx.config) && caps.data;
-  const room = caps.room && a.type === "html" && roomsActive(ctx.config, ctx.env);
+  const room =
+    caps.room && hasPageCapabilities(typeDef(a.type)) && roomsActive(ctx.config, ctx.env);
   if (!data && !room) return undefined;
   const name = await nameByEmail(ctx.env.DB, identity.email);
   const out: ViewGatePeople = {

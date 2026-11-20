@@ -14,6 +14,7 @@ import type {
   Role,
   Visibility,
 } from "./constants.ts";
+import type { InvitationReport } from "./invitations.ts";
 import type { LiveMode } from "./liveDoc.ts";
 import type { Anchor } from "./schemas.ts";
 
@@ -160,6 +161,12 @@ export interface PublishResult {
    * so a new filing is `pending` until the owner reviews it in the app (`review_url`).
    */
   category_share?: CategoryShareResult;
+  /**
+   * A whiteboard publish or update that carried a starting board: how many blocks and arrows were
+   * written to its shared data. Absent otherwise, and when the board was not seeded (the result
+   * then has the warning board_not_seeded).
+   */
+  board?: { blocks: number; arrows: number };
 }
 
 /** Where an artifact stands in its shared category, for its owner's own results. */
@@ -310,6 +317,8 @@ export interface SharingSettings {
    * artifact through it, once it is `shared`.
    */
   category_share?: SharingCategoryShare | null;
+  /** PUT only, when it asked to `notify`: who was emailed (docs/spec.md "Invitation emails"). */
+  invitations?: InvitationReport;
 }
 
 /** A category share as an artifact's sharing settings show it. */
@@ -490,6 +499,18 @@ export interface AppConfig {
    * absent reads as off.
    */
   category_sharing?: boolean;
+  /**
+   * Every artifact type, and whether this instance publishes it now: a whiteboard needs shared
+   * data on and origin isolation. The Worker always sends it; absent reads as every type available.
+   */
+  artifact_types?: { id: ArtifactType; available: boolean }[];
+  /**
+   * Owners may have Plinth email the people they add (docs/spec.md "Invitation emails"): false when
+   * the operator set INVITATION_EMAILS_PER_DAY=0, with EMAIL_PROVIDER=console outside development,
+   * and in SINGLE_USER_MODE (config.ts invitationEmailsActive). The Worker always sends it; absent
+   * reads as on.
+   */
+  invitation_emails?: boolean;
 }
 
 export interface OperatorInfo {
@@ -907,6 +928,8 @@ export interface CategoryReviewResult {
 export interface CategoryShareWriteResult {
   share: CategoryShareSummary;
   review: CategoryReviewResult | null;
+  /** When the request asked to `notify`: who was emailed (docs/spec.md "Invitation emails"). */
+  invitations?: InvitationReport;
 }
 
 /** GET /api/v1/portals item: a collection someone shared with the caller. */

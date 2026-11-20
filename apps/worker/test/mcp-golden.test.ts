@@ -11,12 +11,16 @@
 // the sheet type (read_sheet and edit_sheet, the publish, update and get_artifact notes, the
 // content and content_format descriptions, the untrusted note's sheet sentence, the instructions'
 // sheet sentence, edit_sheet's cap on the empty rows a set adds and read_sheet's range default),
-// who is viewing (names and the people list in list_artifact_data's description), and live sheets
-// (the live_draft sentences of the publish notes and get_artifact name sheets as well as docs,
-// and say a sheet's page edits are always reviewed, never merged).
+// who is viewing (names and the people list in list_artifact_data's description), the
+// whiteboard type (its publish and update note, the type, content and get_artifact descriptions,
+// list_artifact_data's whiteboard sentence and the instructions' whiteboard sentence, and its
+// default edit setting), and live sheets (the live_draft sentences of the publish notes and
+// get_artifact name sheets as well as docs, and say a sheet's page edits are always reviewed,
+// never merged).
 // Category sharing adds its note to publish_artifact, update_artifact, start_upload and
 // list_artifacts and a sentence to the instructions, only while ALLOW_CATEGORY_SHARING is on: the
 // pins below hold with the switch off, and "category sharing on" pins the surface with it on.
+// Invitation emails add set_visibility's `notify` input and its sentence in the description.
 import { describe, expect, it } from "vitest";
 import { PREVIEW_RESOURCE_URI } from "../src/mcp/preview.ts";
 import { agent, mcpClient } from "./helpers.ts";
@@ -67,7 +71,7 @@ const NAMES = [
 ];
 
 const RESOURCES = "8c9a70350ae4c13067ef489e651d5f5eafe12471c2c63f7c925f9d3bf5bf5e78";
-const INSTRUCTIONS = "e2021d90666eee66533ebff1c798e9c5770fbc9b1796bddfde8d756d98d94ad7";
+const INSTRUCTIONS = "0edcbcaaae65eee9958a8127f6c15519423aba958c405915fcd4103f056231b8";
 /** Every pin but "category sharing on" is the surface with category sharing off. */
 const OFF = { ALLOW_CATEGORY_SHARING: "false" };
 
@@ -75,7 +79,7 @@ describe("MCP surface (golden)", () => {
   it("origin isolation", async () => {
     expect(await surface(OFF)).toEqual({
       names: NAMES,
-      tools: "024adfa4e6c2f543094f19d8dc3ba7371df4763b6410a405687733c356511783",
+      tools: "437f18504eff4972e2fc11735ad3bdf28bed487c3d09feaa6b80ea49df880255",
       resources: RESOURCES,
       preview: "fd84092d5ecc5a28f494373097e8a3b6e27065d5ef6928f3e124c634f8cf6f47",
       instructions: INSTRUCTIONS,
@@ -85,7 +89,7 @@ describe("MCP surface (golden)", () => {
   it("opaque isolation", async () => {
     expect(await surface({ ...OFF, CONTENT_ISOLATION: "opaque" })).toEqual({
       names: NAMES,
-      tools: "1fa87b153e9eb765b8eb26b0432995e384af4e46911363e13994d6b96bc4b642",
+      tools: "4c79f44f073650b3583233d0ad2cf9b925a2398713dc50f353d6251bda2cb763",
       resources: RESOURCES,
       preview: "257bbf5bb47164c389849fffa7fc1dd46e6e7c20e4ef616b4bffefb53a8fd08b",
       instructions: INSTRUCTIONS,
@@ -97,7 +101,7 @@ describe("MCP surface (golden)", () => {
       await surface({ ...OFF, STAGING_CONTENT_FALLBACK: "true", CONTENT_ISOLATION: "opaque" }),
     ).toEqual({
       names: NAMES,
-      tools: "fec23edabee11c6ee41f551240adc8b93258b5fd78d2a15c9427527c241296b1",
+      tools: "1590840cc3c347dee12321f85df3bd8943eec2c873cbd6a977195b6327b4716a",
       resources: RESOURCES,
       preview: "257bbf5bb47164c389849fffa7fc1dd46e6e7c20e4ef616b4bffefb53a8fd08b",
       instructions: INSTRUCTIONS,
@@ -107,10 +111,10 @@ describe("MCP surface (golden)", () => {
   it("category sharing on (the default): the share note and the instructions' sentence", async () => {
     expect(await surface()).toEqual({
       names: NAMES,
-      tools: "3d23d3c05bca253d32eedb6fc8fa6a0ec43116cc12512e3b4a8303ea3ea93d07",
+      tools: "8934e03ac4ce81a2112219be909c4f514d86a9fdb1070f6b99f83438b81cf242",
       resources: RESOURCES,
       preview: "fd84092d5ecc5a28f494373097e8a3b6e27065d5ef6928f3e124c634f8cf6f47",
-      instructions: "7d2ffb9394f0d902e2ddbf6b052d5f89e40a06129bfb7389ef8c7fcff8b126c5",
+      instructions: "c871563d3897950ed2486d494d7f8552b6d0d763fd7301e073a0f1e608e0b156",
     });
   });
 });

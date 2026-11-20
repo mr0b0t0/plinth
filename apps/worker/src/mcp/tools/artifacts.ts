@@ -27,6 +27,7 @@ import {
   DESIGN_PUBLISH_NOTE,
   DESIGN_SYSTEM_PUBLISH_NOTE,
   DOC_PUBLISH_NOTE,
+  INVITATION_NOTE,
   LIVE_DRAFT_NOTE,
   REUSE_NOTE,
   ROOM_PAGE_NOTE,
@@ -34,6 +35,7 @@ import {
   SLIDES_PUBLISH_NOTE,
   TYPE_UPDATE_NOTE,
   UNTRUSTED_NOTE,
+  WHITEBOARD_PUBLISH_NOTE,
 } from "../notes.ts";
 import { run, type ToolRegistrar } from "./context.ts";
 
@@ -56,6 +58,7 @@ export const registerArtifactTools: ToolRegistrar = ({ server, ctx, opaque, prev
         DESIGN_SYSTEM_PUBLISH_NOTE +
         DESIGN_PUBLISH_NOTE +
         SHEET_PUBLISH_NOTE +
+        WHITEBOARD_PUBLISH_NOTE +
         CATEGORY_NOTE +
         categoryShareNote(ctx.config) +
         opaque +
@@ -82,6 +85,7 @@ export const registerArtifactTools: ToolRegistrar = ({ server, ctx, opaque, prev
         REUSE_NOTE +
         BUILD_NOTE +
         TYPE_UPDATE_NOTE +
+        WHITEBOARD_PUBLISH_NOTE +
         opaque +
         DATA_PAGE_NOTE +
         UNTRUSTED_NOTE,
@@ -102,6 +106,7 @@ export const registerArtifactTools: ToolRegistrar = ({ server, ctx, opaque, prev
         'For type "design_system", content is its JSON; get_design_system returns it resolved and compiled. ' +
         'For type "design", content is its artboard HTML (design.html), untrusted like artifact HTML. ' +
         'For type "sheet", content is its JSON lines; read_sheet returns its cells with computed values. ' +
+        'For type "whiteboard", content is its settings (board.json); its blocks and arrows are shared data (list_artifact_data). ' +
         "An HTML page that names its design system (meta plinth-design-system) gets design_system: " +
         "{id, title, version, current_version}, or null when you cannot open it. " +
         "category is the owner's grouping, shown only to the owner (null for everyone else). " +
@@ -175,6 +180,7 @@ export const registerArtifactTools: ToolRegistrar = ({ server, ctx, opaque, prev
         "the link), password (needs password unless one is already set), or allowlist (private: the owner, " +
         "collaborators and the listed emails; viewers confirm their address by code). Passing emails " +
         "replaces the viewer allowlist; allowlist with no emails is private to the owner and collaborators. " +
+        INVITATION_NOTE +
         UNTRUSTED_NOTE,
       inputSchema: setVisibilityInput,
     },

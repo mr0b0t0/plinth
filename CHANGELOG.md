@@ -99,6 +99,47 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   sign-in code. On a single-user instance, where only the admin may sign in, the code still starts
   a viewer session without an account, and viewer sessions started earlier keep working until
   they expire. Plugin 0.29.0.
+- **Whiteboards.** Agents can publish a board of notes, text, boxes, ellipses and arrows that
+  people edit together (`type: "whiteboard"`). The board lives in the artifact's shared data, so
+  everyone it lets edit (editors by default, or commenters too when its settings say so) moves, resizes, writes on,
+  colours, connects and deletes blocks on the page, with live cursors and drags; viewers follow
+  read-only. When two people (or a person and an agent) change one block at once, each keeps the
+  fields they changed; where both changed the same one, the first save stands and the other person
+  is told (for text, with a button to put theirs back). Pan and zoom with the mouse, a trackpad,
+  touch or the keyboard, and download the board as PNG or SVG from the ⋯ menu. The toolbar shows
+  only what applies, in one row: the add buttons for people who may edit, a block's colours,
+  Connect and Delete while it is selected, and who else is here. A version holds only the board's
+  settings (`board.json`), and a new board can start with a list of blocks and arrows, written
+  once into its shared data; the history's restore on a board is Restore settings. Agents read the board with `list_artifact_data` and add or move
+  blocks with `write_artifact_data`. Needs shared data and origin isolation; `GET /api/v1/config`
+  lists which types an instance publishes (`artifact_types`). Plugin: when and how agents
+  publish and change whiteboards.
+- **Board settings for whiteboards.** Owners and editors change a board's background (dots, grid
+  or plain) and who can change it (editors only, or commenters and editors) without typing
+  anything: from **Settings** in the board's ⋯ menu, which is the settings page's new Board section
+  for the owner and a small dialog over the board for an editor. Each save is a new version; if
+  someone published a newer one meanwhile, nothing is overwritten: the newer settings are shown
+  and the board loads that version. Any other refusal shows its own message. The skill tells
+  agents to read a board's settings again before changing them, since people change them too.
+- **Email people when you share with them.** Adding someone to an artifact's People, or to a
+  shared category, with **Notify people** ticked (the default) emails them that you shared it with
+  them, with the title, their role and the link. Only people the change adds are emailed, at most once a
+  day per artifact, within daily limits per owner (20, `INVITATION_EMAILS_PER_OWNER_PER_DAY`),
+  per owner and recipient (3), per recipient (10) and for the whole instance (1000,
+  `INVITATION_EMAILS_PER_DAY`; `0` turns invitation emails off), and only from a verified account. `PUT /api/v1/artifacts/:ref/sharing`, `set_visibility` and the category share
+  endpoints take `notify` (default `false`): agents email people only when asked, and the result's
+  `invitations` says who was emailed and who was not, and why. A change's emails go to the provider
+  in one batch request (Resend) or one at a time, never all at once, so they stay within its
+  request rate and leave room for sign-in codes; one the provider refuses can be sent again by
+  adding the person again. Each email's footer and `List-Unsubscribe` header link
+  `/invitation-emails`, where the recipient signs in and turns invitation emails to their address
+  off (or back on); owners who share with them are told `opted_out`, and the access still applies.
+  The opt-out and the per-address limits cover the inbox, so `bo+x@gmail.com` and `b.o@gmail.com`
+  count as `bo@gmail.com`, and an `opted_out` answer costs the owner one of their daily
+  invitations, as an email would.
+  Host names in titles and names are defanged (`office365-reset[.]co`) so mail clients do not link
+  them. `EMAIL_PROVIDER=console` outside development and `SINGLE_USER_MODE` send no invitations.
+  Migration `0021_invitation_opt_outs.sql`.
 - **Edit a sheet on its page, live with other editors.** Owners and editors turn on Edit on a
   sheet and change cells right in the grid: Enter, a double-click or typing opens a cell, Enter and
   Tab move on, Escape puts it back, a checkbox toggles with Space, and pasting cells from a
@@ -117,7 +158,7 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   While a doc or sheet is edited on its page, a version published meanwhile no longer shows an
   "Updated to" notice (the strip says it, and the version picker follows), and at phone width the
   edit strip keeps to one line. Numbers are typed in your locale. Follows `ALLOW_LIVE_EDITING`.
-  Plugin 0.30.0: the agent's sheet rules say a `live_draft` on a sheet needs no action.
+  The agent's sheet rules say a `live_draft` on a sheet needs no action.
 
 ## 0.6.0 (2026-11-20)
 

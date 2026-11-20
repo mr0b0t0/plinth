@@ -26,6 +26,8 @@ import {
   ERROR_CODES,
   editSheetInput,
   grantsReplaceInput,
+  INVITATION_SKIP_REASONS,
+  invitationEmailsInput,
   LIMITS,
   liveCheckpointInput,
   MAX_PEOPLE_LISTED,
@@ -207,6 +209,7 @@ const TYPE_DESCRIPTIONS: Record<ArtifactType, string> = {
   design_system: "design tokens, guidelines and components as JSON",
   design: "artboards (app screens, posters, social posts, ads) as HTML",
   sheet: "a table as JSON lines",
+  whiteboard: "a board of notes, shapes and arrows, its settings as JSON",
 };
 
 /** What Plinth does with a rendered type's source, for the ArtifactType description; "renders" when absent. */
@@ -214,6 +217,7 @@ const TYPE_RENDERS: Partial<Record<ArtifactType, string>> = {
   design_system: "renders as a reference site and get_design_system compiles",
   design: "renders on a canvas, each artboard alone at its exact size",
   sheet: "renders as a spreadsheet and read_sheet evaluates",
+  whiteboard: "renders as a live board, its blocks and arrows kept in shared data",
 };
 
 function responseSchemas(): Record<string, Json> {
@@ -238,6 +242,11 @@ function responseSchemas(): Record<string, Json> {
         "The category stored (snapped onto your existing spelling); present only when this call set one. Untrusted text.",
     }),
     category_share: ref("CategoryShareResult"),
+    board: {
+      ...obj({ blocks: int({ minimum: 0 }), arrows: int({ minimum: 0 }) }),
+      description:
+        "A whiteboard publish or update that carried a starting board: the blocks and arrows written to its shared data. Absent otherwise, and when the warning board_not_seeded says they were not written",
+    },
   };
   const artifactSummary = {
     id: str({ pattern: "^[a-z0-9]{20}$", description: "Also the artifact's content subdomain" }),
@@ -410,7 +419,7 @@ function responseSchemas(): Record<string, Json> {
       },
       ["pending"],
     ),
-    PublishResult: obj(publishResult, ["category", "category_share"]),
+    PublishResult: obj(publishResult, ["category", "category_share", "board"]),
     PublishWarning: obj(
       {
         code: enumOf(PUBLISH_WARNING_CODES),
@@ -522,7 +531,7 @@ function responseSchemas(): Record<string, Json> {
           stripped_prefix: nullable("string"),
         }),
       },
-      ["category", "category_share"],
+      ["category", "category_share", "board"],
     ),
     VersionInfo: obj({
       number: int({ minimum: 1 }),
@@ -535,30 +544,34 @@ function responseSchemas(): Record<string, Json> {
       }),
     }),
     VersionList: paged("VersionInfo"),
-    SharingSettings: obj({
-      visibility,
-      has_password: { type: "boolean" },
-      grants: {
-        type: "array",
-        items: obj({
-          email: str({ format: "email" }),
-          role: enumOf(ROLES),
-          created_at: dateTime,
-          name: nullable("string", {
-            description:
-              "The display name of the account with this email, once its holder has commented, " +
-              "written shared data or published a version on this artifact; null otherwise, so " +
-              "adding an address never says whether it has an account",
+    SharingSettings: obj(
+      {
+        visibility,
+        has_password: { type: "boolean" },
+        grants: {
+          type: "array",
+          items: obj({
+            email: str({ format: "email" }),
+            role: enumOf(ROLES),
+            created_at: dateTime,
+            name: nullable("string", {
+              description:
+                "The display name of the account with this email, once its holder has commented, " +
+                "written shared data or published a version on this artifact; null otherwise, so " +
+                "adding an address never says whether it has an account",
+            }),
           }),
-        }),
+        },
+        public_allowed: { type: "boolean" },
+        category_share: {
+          oneOf: [ref("SharingCategoryShare"), { type: "null" }],
+          description:
+            "The share of this artifact's category, when it has one: who else sees it through the category once it is shared",
+        },
+        invitations: ref("InvitationReport"),
       },
-      public_allowed: { type: "boolean" },
-      category_share: {
-        oneOf: [ref("SharingCategoryShare"), { type: "null" }],
-        description:
-          "The share of this artifact's category, when it has one: who else sees it through the category once it is shared",
-      },
-    }),
+      ["invitations"],
+    ),
     Anchor: fromZod(anchorSchema),
     CommentInfo: obj({
       id: str(),
@@ -733,6 +746,17 @@ function responseSchemas(): Record<string, Json> {
       category_sharing: {
         type: "boolean",
         description: "Owners may share a category with people here (ALLOW_CATEGORY_SHARING)",
+      },
+      artifact_types: {
+        type: "array",
+        items: obj({ id: artifactType, available: { type: "boolean" } }),
+        description:
+          "Every artifact type, and whether this instance publishes it now: a whiteboard needs shared data on (ALLOW_SHARED_DATA) and origin isolation",
+      },
+      invitation_emails: {
+        type: "boolean",
+        description:
+          "Owners may have Plinth email the people they add; false when INVITATION_EMAILS_PER_DAY is 0, with EMAIL_PROVIDER=console outside development, and in single-user mode",
       },
     }),
     LoginResult: obj({
@@ -1542,10 +1566,14 @@ function categorySharingSchemas(): Record<string, Json> {
         items: ref("CategoryShareArtifact"),
       },
     }),
-    CategoryShareWriteResult: obj({
-      share: ref("CategoryShareSummary"),
-      review: { oneOf: [ref("CategoryReviewResult"), { type: "null" }] },
-    }),
+    CategoryShareWriteResult: obj(
+      {
+        share: ref("CategoryShareSummary"),
+        review: { oneOf: [ref("CategoryReviewResult"), { type: "null" }] },
+        invitations: ref("InvitationReport"),
+      },
+      ["invitations"],
+    ),
     PortalSummary: obj({
       id: str(),
       title: str(),
@@ -2322,13 +2350,15 @@ function operations(): Operation[] {
       summary: "Change who can view (owner only)",
       description:
         "`emails` replaces the viewer allowlist; collaborator roles are kept. `password` is " +
-        "required for password visibility unless one is already set.",
+        "required for password visibility unless one is already set. With `notify: true`, " +
+        "each address `emails` newly adds is emailed a link (`invitations` says who); agents " +
+        "set it only when the user asked.",
       tag: "Artifacts",
       auth: "agent",
       scope: "artifacts:write",
       mcpTool: "set_visibility",
       body: "SetVisibilityInput",
-      ok: [200, "ArtifactSummary"],
+      ok: [200, "VisibilityResult"],
       errors: [400, 401, 403, 404],
     },
     {
@@ -2347,6 +2377,10 @@ function operations(): Operation[] {
       path: API.sharing,
       operationId: "replaceGrants",
       summary: "Replace the allowlist and collaborator roles (owner only)",
+      description:
+        "With `notify: true`, each person who held no grant before is emailed a link and their " +
+        "role on the owner's behalf (`invitations` says who); the app's Notify people box sends " +
+        "it, agents set it only when the user asked. Default false.",
       tag: "Sharing",
       auth: "agent",
       scope: "artifacts:write",
@@ -2772,6 +2806,7 @@ export function openApiDocument(config: Pick<Config, "appOrigin">): Json {
     ...liveOperations(),
     ...categorySharingOperations(),
     ...liveViewOperations(),
+    ...invitationOperations(),
   ]) {
     const key = toOpenApiPath(op.path);
     paths[key] ??= {};
@@ -2836,6 +2871,7 @@ export function openApiDocument(config: Pick<Config, "appOrigin">): Json {
         ...categorySharingSchemas(),
         ...designSystemSchemas(),
         ...sheetSchemas(),
+        ...invitationSchemas(),
       }),
       responses: errorResponses,
       securitySchemes: {
@@ -2867,4 +2903,77 @@ export function openApiDocument(config: Pick<Config, "appOrigin">): Json {
       },
     },
   };
+}
+
+// ---------- Invitation emails (docs/spec.md "Invitation emails") ----------
+
+function invitationSchemas(): Record<string, Json> {
+  return {
+    InvitationReport: {
+      ...obj({
+        emailed: {
+          type: "array",
+          items: str({ format: "email" }),
+          description: "Handed to the email provider",
+        },
+        skipped: {
+          type: "array",
+          items: obj({ email: str({ format: "email" }), reason: enumOf(INVITATION_SKIP_REASONS) }),
+          description:
+            "People the change added who were not emailed, and why. `opted_out` means someone " +
+            "signed in as that inbox turned these emails off, so it says the address has signed " +
+            "in here; it costs a place in the change and one of the owner's daily invitations, " +
+            "and is given only while those limits have room",
+        },
+      }),
+      description:
+        "Present only when the request asked to `notify`. People who already had access are in " +
+        "neither list: only a new grant is announced",
+    },
+    VisibilityResult: {
+      allOf: [
+        ref("ArtifactSummary"),
+        obj({ invitations: ref("InvitationReport") }, ["invitations"]),
+      ],
+    },
+    InvitationEmailsInput: fromZod(invitationEmailsInput),
+    InvitationEmailSettings: obj({
+      email: str({ format: "email", description: "The signed-in person's own address" }),
+      receive: {
+        type: "boolean",
+        description: "false: invitation emails to this address are not sent (opted_out)",
+      },
+    }),
+  };
+}
+
+function invitationOperations(): Operation[] {
+  return [
+    {
+      method: "get",
+      path: API.invitationEmails,
+      operationId: "getInvitationEmails",
+      summary: "Whether your own address gets invitation emails",
+      tag: "Account",
+      auth: "user",
+      ok: [200, "InvitationEmailSettings"],
+      errors: [401, 403],
+    },
+    {
+      method: "put",
+      path: API.invitationEmails,
+      operationId: "setInvitationEmails",
+      summary: "Turn invitation emails to your own address off or on",
+      description:
+        "Signed-in people only, for their own address (never agents). Off, an owner who shares " +
+        "with this address, or another address of the same inbox (a +tag, or Gmail's dots), still " +
+        "gives it access, and their result names it `opted_out`, which costs the owner one of " +
+        "their daily invitations.",
+      tag: "Account",
+      auth: "user",
+      body: "InvitationEmailsInput",
+      ok: [200, "InvitationEmailSettings"],
+      errors: [400, 401, 403],
+    },
+  ];
 }

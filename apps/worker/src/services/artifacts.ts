@@ -6,10 +6,12 @@ import {
   type ArtifactList,
   type ArtifactSummary,
   type ArtifactType,
+  type ArtifactTypeDef,
   type AssetInput,
   type Author,
   type Capabilities,
   type EffectiveRole,
+  type InvitationReport,
   type PublishResult,
   pageDisplayName,
   type Role,
@@ -52,7 +54,7 @@ import {
   type VersionWriter,
 } from "../policy.ts";
 import { notifyRoom } from "../rooms/notify.ts";
-import { requireTypeDef, resolveSource, typeHooks } from "./artifactTypes.ts";
+import { noAssetsError, requireTypeDef, resolveSource, typeHooks } from "./artifactTypes.ts";
 import {
   matchingSpellings,
   ownerCategories,
@@ -72,6 +74,7 @@ import {
 } from "./categoryShares.ts";
 import { artifactWipe } from "./cleanup.ts";
 import type { Ctx } from "./context.ts";
+import { newInvitees, sendInvitations } from "./invitations.ts";
 import { readLiveDraftMeta } from "./live.ts";
 import {
   commitVersion,
@@ -515,8 +518,9 @@ async function withCategoryShare(
  * current version has the same bytes), `{path, sha256}` reuses the current version's file.
  * Cheap checks run before any rate hit or R2 operation.
  */
-function precheckAssets(ctx: Ctx, assets: AssetInput[] | undefined): void {
+function precheckAssets(ctx: Ctx, def: ArtifactTypeDef, assets: AssetInput[] | undefined): void {
   const count = assets?.length ?? 0;
+  if (count > 0 && def.assets === false) throw noAssetsError(def, assets?.[0]?.path);
   if (count > ctx.config.maxAssetsPerVersion) {
     throw tooManyAssets(ctx.config.maxAssetsPerVersion, count);
   }
@@ -588,14 +592,29 @@ export async function publishArtifact(ctx: Ctx, input: PublishInput): Promise<Pu
     throw new ApiError("invalid_input", "A password is required for password visibility");
   }
   checkSourceSize(def, text);
-  precheckAssets(ctx, input.assets);
+  precheckAssets(ctx, def, input.assets);
+  if (target.mode !== "publish") throw new ApiError("internal", "Not a publish");
+  // Per-type preparation before any rate hit or R2 operation (a whiteboard's starting board).
+  const prepared = await typeHooks(def).prepare?.(ctx, {
+    def,
+    text,
+    target: {
+      mode: "publish",
+      artifactId: target.artifactId,
+      ownerId: userId,
+      visibility: input.visibility,
+      hasPassword: input.visibility === "password" && !!input.password,
+    },
+  });
   await enforcePublishRate(ctx);
   const passwordHash =
     input.visibility === "password" && input.password ? await hashPassword(input.password) : null;
-  const result = await writeVersion(ctx, target, (s) => stageInline(s, text, input.assets ?? []), {
+  const staged = prepared?.text ?? text;
+  let result = await writeVersion(ctx, target, (s) => stageInline(s, staged, input.assets ?? []), {
     visibility: input.visibility,
     passwordHash,
   });
+  if (prepared?.afterCommit) result = await prepared.afterCommit(result);
   if (input.emails?.length) await replaceViewerGrants(ctx, result.id, input.emails);
   return withCategoryShare(ctx, withCategory(result, target), "owner");
 }
@@ -624,7 +643,7 @@ export async function updateArtifact(ctx: Ctx, input: UpdateInput): Promise<Publ
   // The type is fixed at publish: the input must carry the artifact's own source field.
   const { def, text } = resolveSource(input, requireTypeDef(target.artifact.type).id);
   checkSourceSize(def, text);
-  precheckAssets(ctx, input.assets);
+  precheckAssets(ctx, def, input.assets);
   // The category is the owner's: an editor's call that carries one is refused here, before the
   // rate limit and any R2 operation, never silently dropped.
   if (input.category !== undefined) {
@@ -636,14 +655,22 @@ export async function updateArtifact(ctx: Ctx, input: UpdateInput): Promise<Publ
       target.artifact.id,
     );
   }
+  // Per-type preparation before any rate hit or R2 operation (a whiteboard's starting board).
+  const prepared = await typeHooks(def).prepare?.(ctx, {
+    def,
+    text,
+    target: { mode: "update", artifact: target.artifact },
+  });
   await enforcePublishRate(ctx);
   // No assets given: the current version's assets are carried forward as references.
-  const result = await writeVersion(
+  const staged = prepared?.text ?? text;
+  let result = await writeVersion(
     ctx,
     target,
-    (s) => stageInline(s, text, input.assets),
+    (s) => stageInline(s, staged, input.assets),
     input.checkpoint ? { liveCheckpoint: true } : {},
   );
+  if (prepared?.afterCommit) result = await prepared.afterCommit(result);
   return withCategoryShare(ctx, withCategory(result, target), target.role);
 }
 
@@ -949,12 +976,15 @@ export async function restoreVersion(
   );
 }
 
-/** Replace the allowlist (viewer grants). Commenter and editor grants are kept. */
+/**
+ * Replace the allowlist (viewer grants). Commenter and editor grants are kept. Returns the
+ * addresses it added, which held no grant before (invitation emails announce only those).
+ */
 export async function replaceViewerGrants(
   ctx: Ctx,
   artifactId: string,
   emails: string[],
-): Promise<void> {
+): Promise<string[]> {
   const wanted = new Set(emails.map((e) => e.toLowerCase()));
   const existing = await ctx.db
     .select()
@@ -983,6 +1013,7 @@ export async function replaceViewerGrants(
   }
   if (toDelete.length) await prunePersonalCategories(ctx.env.DB, { artifactId }).run();
   await bumpAccessEpoch(ctx, artifactId);
+  return toAdd;
 }
 
 /** Invalidate every content-host cookie and password pass for this artifact. */
@@ -1001,9 +1032,14 @@ export interface SetVisibilityInput {
   visibility: Visibility;
   emails?: string[];
   password?: string;
+  /** Email the people `emails` adds (docs/spec.md "Invitation emails"). Default false. */
+  notify?: boolean;
 }
 
-export async function setVisibility(ctx: Ctx, input: SetVisibilityInput): Promise<ArtifactSummary> {
+export async function setVisibility(
+  ctx: Ctx,
+  input: SetVisibilityInput,
+): Promise<ArtifactSummary & { invitations?: InvitationReport }> {
   const { artifact, role } = await requireArtifact(ctx, input.id, "manage");
   if (input.visibility === "public" && artifact.visibility !== "public") {
     await checkPublicAllowed(ctx, artifact.ownerId);
@@ -1019,11 +1055,29 @@ export async function setVisibility(ctx: Ctx, input: SetVisibilityInput): Promis
     .set({ visibility: input.visibility, passwordHash, updatedAt: nowIso() })
     .where(eq(artifacts.id, artifact.id))
     .run();
-  if (input.emails) await replaceViewerGrants(ctx, artifact.id, input.emails);
-  else await bumpAccessEpoch(ctx, artifact.id);
+  const added = input.emails ? await replaceViewerGrants(ctx, artifact.id, input.emails) : [];
+  if (!input.emails) await bumpAccessEpoch(ctx, artifact.id);
   const fresh = await findArtifact(ctx, artifact.id);
   if (!fresh) throw notFound();
-  return summaryFor(ctx, fresh, role);
+  const summary = await summaryFor(ctx, fresh, role);
+  const owner = input.notify ? await getUserById(ctx.db, fresh.ownerId) : null;
+  const invitations = await sendInvitations(ctx, {
+    notify: input.notify === true,
+    owner,
+    target: {
+      kind: "artifact",
+      id: fresh.id,
+      slug: fresh.slug,
+      title: fresh.title,
+      takenDown: fresh.takenDownAt !== null,
+    },
+    invitees: newInvitees(
+      [],
+      added.map((email) => ({ email, role: "viewer" as const })),
+      owner?.email ?? null,
+    ),
+  });
+  return invitations ? { ...summary, invitations } : summary;
 }
 
 /** Rename an artifact (owner only). A title-only patchArtifact. */

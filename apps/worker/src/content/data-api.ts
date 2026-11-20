@@ -182,7 +182,7 @@ function intParam(v: string | null, name: string, min: number, max: number): num
  */
 async function loadTarget(env: Bindings, artifactId: string) {
   const row = await env.DB.prepare(
-    `SELECT a.id, a.owner_id, a.access_epoch, a.taken_down_at, v.capabilities
+    `SELECT a.id, a.owner_id, a.type, a.access_epoch, a.taken_down_at, v.capabilities
        FROM artifacts a
        LEFT JOIN versions v ON v.artifact_id = a.id AND v.number = a.current_version
       WHERE a.id = ?1 AND a.deleted_at IS NULL`,
@@ -191,6 +191,7 @@ async function loadTarget(env: Bindings, artifactId: string) {
     .first<{
       id: string;
       owner_id: string;
+      type: string;
       access_epoch: number;
       taken_down_at: string | null;
       capabilities: string | null;
@@ -205,6 +206,7 @@ async function loadTarget(env: Bindings, artifactId: string) {
       ownerId: row.owner_id,
       caps,
       writers: caps?.people ? await servedVersionWriters(env.DB, row.id) : null,
+      type: row.type,
     } satisfies DataTarget,
   };
 }
@@ -504,7 +506,7 @@ async function handle(
 
   // 10. Policy, then the service (rate limits, quotas, guarded writes).
   const { claim } = pass;
-  const access = pageDataAccess(claim, target.caps, sharedDataActive(config), pass);
+  const access = pageDataAccess(claim, target.caps, sharedDataActive(config), target.type, pass);
   if (!access.read) throw new ApiError("feature_disabled", "Shared data is not available here");
   const writer: DataWriter | null =
     access.write && claim

@@ -36,6 +36,7 @@ export const PUBLISH_WARNING_CODES = [
   "ds_deprecated_alias",
   "design_system_unavailable",
   "design_system_outdated",
+  "board_not_seeded",
 ];
 
 /** Token scopes. A personal access token or OAuth grant carries a space-separated subset. */
@@ -224,6 +225,11 @@ export const LIMITS = {
   maxPageDisplayNameLength: 64,
   /** The `q` of a people search. */
   maxPeopleQueryLength: 100,
+  /**
+   * Bytes of JSON (board.json) a publish or update of a whiteboard may send: its settings and, on
+   * a new or empty board, its starting blocks and arrows (packages/shared/src/whiteboard.ts).
+   */
+  maxBoardBytes: 512 * KB,
 };
 
 /** The windows an owner can pick for one artifact's stats, in UTC days. */
@@ -235,6 +241,18 @@ export const STATS_RANGES = [7, 30, 90, 365];
  */
 export const VIEW_LOG_DEFAULTS = { retentionDays: 365 };
 export const VIEW_LOG_BOUNDS = { retentionDays: [90, 3650] };
+
+/**
+ * Invitation emails an instance sends per UTC day (docs/spec.md "Invitation emails"), set by the
+ * operator because they share the email provider's quota with sign-in and viewing codes.
+ * `perDay` (INVITATION_EMAILS_PER_DAY): every owner together; 0 turns invitation emails off.
+ * `perOwnerPerDay` (INVITATION_EMAILS_PER_OWNER_PER_DAY): one owner's sharing changes.
+ */
+export const INVITATION_DEFAULTS = { perDay: 1000, perOwnerPerDay: 20 };
+export const INVITATION_BOUNDS = {
+  perDay: [0, 1_000_000],
+  perOwnerPerDay: [1, 10_000],
+};
 
 export const TTL = {
   /** Magic link and six-digit code. */
@@ -304,6 +322,15 @@ export const RATE_LIMITS = {
   uploadMissesPerIpPerHour: 60,
   /** Reads of an artifact's people list (/__plinth/api/v1/people) per reader per artifact. */
   peopleReadsPerViewerPerHour: 600,
+  /** Invitation emails one sharing change may send, so one request stays within Worker limits. */
+  invitationsPerChange: 40,
+  /** Invitation emails one address may receive, from every owner together. */
+  invitationsPerRecipientPerDay: 10,
+  /**
+   * Invitation emails one owner may send one address, below invitationsPerRecipientPerDay, so one
+   * account cannot use up an address's daily invitations for everyone else.
+   */
+  invitationsPerOwnerPerRecipientPerDay: 3,
 };
 
 export const DEFAULTS = {

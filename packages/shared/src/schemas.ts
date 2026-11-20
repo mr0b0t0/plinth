@@ -78,7 +78,9 @@ export const contentSchema = z
       'for type "design", shared <head> tags then artboards, each starting with a line ' +
       '<!-- artboard name="Home" size="iphone" --> (stored as design.html); ' +
       'for type "sheet", the sheet\'s JSON lines (stored as sheet.jsonl), or a CSV or a base64 ' +
-      ".xlsx with content_format. Not for html artifacts, which send html.",
+      ".xlsx with content_format; " +
+      'for type "whiteboard", board JSON: settings, plus a starting blocks and arrows list on a new board (the settings are stored as board.json, the blocks and arrows in shared data). ' +
+      "Not for html artifacts, which send html.",
   );
 /** What a sheet's content is: its own JSON lines (default), CSV, or an .xlsx file in base64. */
 export const contentFormatSchema = z
@@ -99,7 +101,8 @@ export const artifactTypeSchema = z
       '"design": artboards (app screens, posters, social posts, ads) as HTML in content, which ' +
       "Plinth renders on a canvas, each artboard alone at its exact size. " +
       '"sheet": a table as JSON lines in content, which Plinth renders as a spreadsheet with ' +
-      "formulas, sort, filter and CSV and .xlsx downloads. Fixed at publish.",
+      "formulas, sort, filter and CSV and .xlsx downloads. " +
+      '"whiteboard": a board of notes, shapes and arrows that people edit together, sent as board JSON in content; its blocks live in shared data. Fixed at publish.',
   );
 export const noteSchema = z.string().trim().max(LIMITS.maxNoteLength);
 export const passwordSchema = z
@@ -399,12 +402,23 @@ export const restoreVersionInput = z.object({
   base_version: versionNumberSchema.optional(),
 });
 
+/** Invitation emails (docs/spec.md "Invitation emails"): off unless the caller asks. */
+const notifySchema = z
+  .boolean()
+  .default(false)
+  .describe(
+    "Email each person this adds a link to it, on the owner's behalf. Default false: set it only " +
+      "when the user asked to notify them",
+  );
+
 export const setVisibilityInput = z.object({
   id: artifactRefSchema,
   visibility: visibilitySchema,
   /** Replaces the allowlist (viewer role) when given. Collaborator roles are kept. */
   emails: z.array(emailSchema).max(LIMITS.maxAllowlistEmails).optional(),
   password: passwordSchema.optional(),
+  /** Email the people `emails` adds (docs/spec.md "Invitation emails"). */
+  notify: notifySchema,
 });
 export type SetVisibilityInput = z.input<typeof setVisibilityInput>;
 
@@ -478,9 +492,17 @@ export const oauthConsentInput = z.object({
   approve: z.boolean(),
 });
 
+/** PUT /me/invitation-emails: whether the signed-in person's own address gets invitations. */
+export const invitationEmailsInput = z.object({
+  receive: z
+    .boolean()
+    .describe("false stops invitation emails to your address; true allows them again"),
+});
+
 export const grantInput = z.object({ email: emailSchema, role: roleSchema });
 export const grantsReplaceInput = z.object({
   grants: z.array(grantInput).max(LIMITS.maxAllowlistEmails),
+  notify: notifySchema,
 });
 
 /**
@@ -544,6 +566,7 @@ export const createCategoryShareInput = z.object({
   title: titleSchema.optional(),
   people: z.array(categoryPersonInput).max(LIMITS.maxAllowlistEmails),
   review: z.array(reviewItemInput).max(MAX_REVIEW_ITEMS),
+  notify: notifySchema,
 });
 
 /**
@@ -554,6 +577,7 @@ export const updateCategoryShareInput = z.object({
   title: titleSchema.optional(),
   people: z.array(categoryPersonInput).max(LIMITS.maxAllowlistEmails).optional(),
   review: z.array(reviewItemInput).max(MAX_REVIEW_ITEMS).optional(),
+  notify: notifySchema,
 });
 
 /** POST /category-shares/:id/review. */

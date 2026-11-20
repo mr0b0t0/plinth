@@ -25,6 +25,7 @@
 import { DurableObject } from "cloudflare:workers";
 import {
   ARTIFACT_ID_RE,
+  ARTIFACT_TYPES,
   type ArtifactType,
   canEmitTopic,
   type EffectiveRole,
@@ -50,7 +51,6 @@ import {
   type RoomServerFrame,
   roomClientFrameSchema,
   spreadMs,
-  typeDef,
   VIEW_WATCH_PROTOCOL,
   type ViewWatchFrame,
 } from "@plinth/shared";
@@ -231,9 +231,7 @@ export function parseConnect(raw: string | null): RoomConnect | null {
   const l = c.limits as Record<string, unknown> | undefined;
   const ok =
     typeof c.artifactId === "string" &&
-    // Any registered type: a doc's or a sheet's draft socket (a type with `liveEdit`), or a page.
-    typeof c.type === "string" &&
-    typeDef(c.type) !== null &&
+    (ARTIFACT_TYPES as readonly unknown[]).includes(c.type) &&
     (c.kind === "page" || c.kind === "doc") &&
     int(c.epoch) &&
     int(c.passExp) &&
