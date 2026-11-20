@@ -20,9 +20,11 @@ import {
   typeDef,
 } from "@plinth/shared";
 import { ApiError } from "../lib/errors.ts";
+import { designHooks } from "./artifactTypes/design.ts";
 import { designSystemHooks } from "./artifactTypes/design_system.ts";
 import { docHooks } from "./artifactTypes/doc.ts";
 import { htmlHooks } from "./artifactTypes/html.ts";
+import { sheetHooks } from "./artifactTypes/sheet.ts";
 import { slidesHooks } from "./artifactTypes/slides.ts";
 import type { Ctx } from "./context.ts";
 
@@ -30,6 +32,8 @@ export interface SourceInput {
   type?: string;
   html?: string;
   content?: string;
+  /** What content is, for a type that imports other formats (a sheet: jsonl, csv or xlsx). */
+  content_format?: string;
 }
 
 /** A version that has just committed, as a type's afterCommit hook sees it. */
@@ -62,6 +66,11 @@ export interface TypeHooks {
   /** Said to the agent when an asset is of a content type the type does not take. */
   assetRule?: string;
   /**
+   * A more specific message than assetRule for an asset the type does not take (a design's font
+   * files), or null for the general one. Called only for content types assetTypes refuses.
+   */
+  assetRefusal?(path: string, contentType: string): string | null;
+  /**
    * Advisory publish warnings about the source itself, given every path of the version's final
    * manifest. Runs where the reference scan runs (never on a restore), and its warnings share the
    * scan's cap. Never throws for a source that validate accepted.
@@ -83,6 +92,16 @@ export interface TypeHooks {
   publishWarnings?(ctx: Ctx, v: StagedSource): Promise<PublishWarning[]>;
   /** Extra fields of get_artifact for a version of this type, read as the caller. */
   detail?(ctx: Ctx, text: string): Promise<Partial<ArtifactDetailBase>>;
+  /**
+   * The text a version stores for a source validate accepted, when the type stores one canonical
+   * spelling (a sheet). Absent: the source is stored as sent.
+   */
+  canonical?(def: ArtifactTypeDef, text: string): string;
+  /**
+   * The type's own source format from content sent in another format (content_format: a sheet
+   * imports csv and xlsx). Absent: content_format is refused for the type. Throws invalid_input.
+   */
+  importSource?(def: ArtifactTypeDef, text: string, format: string): string;
 }
 
 /** A version's source as the warning hooks see it, before the commit. */
@@ -98,6 +117,8 @@ const TYPE_HOOKS: { readonly [K in ArtifactType]: TypeHooks } = {
   doc: docHooks,
   slides: slidesHooks,
   design_system: designSystemHooks,
+  design: designHooks,
+  sheet: sheetHooks,
 };
 
 /** The Worker hooks of a registry row. */
@@ -105,7 +126,7 @@ export function typeHooks(def: ArtifactTypeDef): TypeHooks {
   return TYPE_HOOKS[def.id];
 }
 
-/** `pass type "doc", "slides" or "design_system"`: every type that takes content, from the registry. */
+/** `pass type "doc", "slides", "design_system" or "design"`: every type that takes content, from the registry. */
 const TYPED_CHOICES = ARTIFACT_TYPES.filter((t) => TYPE_REGISTRY[t].sourceField === "content")
   .map((t) => `"${t}"`)
   .join(", ")
@@ -198,6 +219,15 @@ export function resolveSource(
     });
   }
 
+  const hooks = typeHooks(def);
+  if (input.content_format !== undefined && !hooks.importSource) {
+    throw refuse(
+      def,
+      "content_format",
+      `content_format is for type sheet; a ${def.id} sends its ${def.sourceLabel} as ${def.sourceField}`,
+    );
+  }
+
   if (def.sourceField === "html") {
     if (input.content !== undefined) {
       throw refuse(
@@ -228,8 +258,12 @@ export function resolveSource(
     );
   }
   if (input.content === undefined) throw refuse(def, "content", wantsContent);
-  typeHooks(def).validate?.(def, input.content);
-  return { def, text: input.content };
+  const text =
+    input.content_format !== undefined && hooks.importSource
+      ? hooks.importSource(def, input.content, input.content_format)
+      : input.content;
+  hooks.validate?.(def, text);
+  return { def, text: hooks.canonical?.(def, text) ?? text };
 }
 
 /** Refuse an asset at one of the type's reserved paths or of a content type it does not take. */
@@ -245,9 +279,12 @@ export function checkAsset(def: ArtifactTypeDef, path: string, contentType: stri
     );
   }
   if (def.assetTypes && !def.assetTypes.test(contentType)) {
+    const hooks = typeHooks(def);
     throw new ApiError(
       "invalid_input",
-      typeHooks(def).assetRule ?? `Asset ${path} is not a file type a ${def.id} takes`,
+      hooks.assetRefusal?.(path, contentType) ??
+        hooks.assetRule ??
+        `Asset ${path} is not a file type a ${def.id} takes`,
       { type: def.id, field: "assets", path, content_type: contentType },
     );
   }

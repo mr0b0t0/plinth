@@ -205,8 +205,9 @@ describe("runtime: ready", () => {
     expect(s).toEqual({
       available: true,
       reason: null,
-      viewer: { id: SESSION.viewer.id, email: "ann@example.com", role: "commenter" },
+      viewer: { id: SESSION.viewer.id, email: "ann@example.com", name: null, role: "commenter" },
       canWrite: true,
+      canListPeople: false,
       capabilities: ["data", "viewer"],
       shared: [],
       limits: { maxDocBytes: 16384, maxDocs: 1000, maxBytes: 1048576 },
@@ -815,6 +816,7 @@ describe("runtime: plinth.room", () => {
         you: true,
         role: "commenter",
         email: YOU.email,
+        name: null,
         presence: {},
       },
       { id: "s_bo", viewer: "u_bo", you: false, presence: { x: 1 } },
@@ -1019,5 +1021,126 @@ describe("runtime: plinth.room", () => {
     // A room left frees its place.
     room.join("board-4");
     expect(ws.last().sent.at(-1)).toEqual({ t: "join", room: "board-4" });
+  });
+});
+
+describe("runtime: live views (changes pushed by the app)", () => {
+  const APP_ORIGIN = config().appOrigin;
+
+  /** The runtime in a frame whose parent is the app; `message` delivers a postMessage. */
+  function framed(handler: Handler) {
+    const listeners: ((e: Json) => void)[] = [];
+    const posted: unknown[] = [];
+    const parent = {
+      postMessage(m: unknown) {
+        posted.push(m);
+      },
+    };
+    const rt = boot(handler, {
+      win: {
+        parent,
+        addEventListener(type: string, fn: (e: Json) => void) {
+          if (type === "message") listeners.push(fn);
+        },
+      },
+    });
+    const message = async (data: unknown, from: Json = { source: parent, origin: APP_ORIGIN }) => {
+      for (const fn of listeners) fn({ data, ...from });
+      await rt.settle();
+    };
+    const view = (m: Json) => ({ source: "plinth-view", v: 1, ...m });
+    return { ...rt, message, view, parent, posted };
+  }
+
+  it("`push` stretches the /changes poll to 60 s, and back to the page's interval when it ends", async () => {
+    const rt = framed(fakeServer().handler);
+    rt.plinth.db.collection("votes").onSnapshot(() => undefined);
+    await rt.advance(0);
+    await rt.message(rt.view({ type: "push", on: true }));
+    await rt.advance(59_999);
+    expect(rt.count("/changes")).toBe(0);
+    await rt.advance(1);
+    expect(rt.count("/changes")).toBe(1);
+    await rt.advance(60_000);
+    expect(rt.count("/changes")).toBe(2);
+    await rt.message(rt.view({ type: "push", on: false }));
+    await rt.advance(15_000);
+    expect(rt.count("/changes")).toBe(3);
+    await rt.advance(15_000);
+    expect(rt.count("/changes")).toBe(4);
+  });
+
+  it("`intervalMs` applies only while not pushed", async () => {
+    const rt = framed(fakeServer().handler);
+    rt.plinth.db.collection("votes").onSnapshot(() => undefined, undefined, { intervalMs: 10_000 });
+    await rt.advance(0);
+    await rt.message(rt.view({ type: "push", on: true }));
+    await rt.advance(59_999);
+    expect(rt.count("/changes")).toBe(0);
+    await rt.advance(1);
+    expect(rt.count("/changes")).toBe(1);
+  });
+
+  it("`data` reads /changes at once and refetches only when seq moved", async () => {
+    const server = fakeServer();
+    const rt = framed(server.handler);
+    const got: Doc[][] = [];
+    rt.plinth.db.collection("votes").onSnapshot((docs: Doc[]) => got.push(docs));
+    await rt.advance(0);
+    await rt.message(rt.view({ type: "push", on: true }));
+    expect(got).toHaveLength(1);
+    await rt.message(rt.view({ type: "data" }));
+    await rt.advance(0);
+    expect(rt.count("/changes")).toBe(1);
+    expect(got).toHaveLength(1);
+    server.handler("PUT", "/data/votes/x", { data: { v: 1 } });
+    await rt.message(rt.view({ type: "data" }));
+    await rt.advance(0);
+    expect(rt.count("/changes")).toBe(2);
+    expect(got).toHaveLength(2);
+    expect(got[1]?.map((d) => d.id)).toEqual(["x"]);
+    // Pushed, the next backstop poll is a full minute after the last read.
+    await rt.advance(59_999);
+    expect(rt.count("/changes")).toBe(2);
+    await rt.advance(1);
+    expect(rt.count("/changes")).toBe(3);
+  });
+
+  it("ignores messages from another window, another origin, or of another shape", async () => {
+    const rt = framed(fakeServer().handler);
+    rt.plinth.db.collection("votes").onSnapshot(() => undefined);
+    await rt.advance(0);
+    const data = rt.view({ type: "data" });
+    await rt.message(data, { source: {}, origin: APP_ORIGIN });
+    await rt.message(data, { source: rt.parent, origin: "https://evil.example" });
+    await rt.message(data, { source: rt.parent, origin: "null" });
+    await rt.message({ ...data, v: 2 });
+    await rt.message({ ...data, source: "plinth-other" });
+    await rt.message("data");
+    await rt.advance(0);
+    expect(rt.count("/changes")).toBe(0);
+    // Only `on: true` pushes; anything else leaves the page's own poll.
+    await rt.message(rt.view({ type: "push", on: "yes" }));
+    await rt.advance(15_000);
+    expect(rt.count("/changes")).toBe(1);
+    // The runtime itself posts nothing to the app for live views.
+    expect(rt.posted).toEqual([]);
+  });
+
+  it("a `data` while nothing subscribes, or while the tab is hidden, reads nothing", async () => {
+    const rt = framed(fakeServer().handler);
+    await rt.plinth.ready;
+    await rt.message(rt.view({ type: "data" }));
+    await rt.advance(0);
+    expect(rt.count("/changes")).toBe(0);
+    rt.plinth.db.collection("votes").onSnapshot(() => undefined);
+    await rt.advance(0);
+    await rt.setVisible(false);
+    await rt.message(rt.view({ type: "data" }));
+    await rt.advance(60_000);
+    expect(rt.count("/changes")).toBe(0);
+    await rt.setVisible(true);
+    await rt.advance(0);
+    expect(rt.count("/changes")).toBe(1);
   });
 });

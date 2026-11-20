@@ -57,6 +57,27 @@ describe("category shares: who may manage them", () => {
     expect((await json(await send("GET", "/api/v1/category-shares", o.session))).items).toEqual([]);
   });
 
+  it("names a version's author in the review as every read cleans names", async () => {
+    const o = await owner();
+    const a = await filed(o, "Acme", "Q3 report");
+    const made = await shareCategory(o, "acme", [{ email: uniqueEmail("client"), role: "viewer" }]);
+    // A version written in the app (no connection), by a name stored before the name rules.
+    await env.DB.prepare("UPDATE versions SET created_by_connection = NULL WHERE artifact_id = ?1")
+      .bind(a.id)
+      .run();
+    await env.DB.prepare("UPDATE users SET name = ?1 WHERE id = ?2")
+      .bind("‮Ana​ Owner@home\u0007", o.user.id)
+      .run();
+    expect((await shareDetail(o, made.share.id)).artifacts).toEqual([
+      expect.objectContaining({ id: a.id, last_author: "Ana Ownerhome" }),
+    ]);
+    // Nothing visible left: the address shows instead.
+    await env.DB.prepare("UPDATE users SET name = ?1 WHERE id = ?2").bind("ㅤ", o.user.id).run();
+    expect((await shareDetail(o, made.share.id)).artifacts).toEqual([
+      expect.objectContaining({ id: a.id, last_author: o.user.email }),
+    ]);
+  });
+
   it("bearer tokens, MCP-style callers and anonymous callers get no share endpoint", async () => {
     const o = await owner();
     await filed(o, "Acme");

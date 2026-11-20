@@ -61,6 +61,8 @@ const ROOM_VARS = [
   "LIVE_AUTO_CHECKPOINT_MIN_S",
   "LIVE_DRAFT_FLUSH_S",
   "LIVE_DRAFT_RETENTION_DAYS",
+  "ALLOW_LIVE_VIEWS",
+  "LIVE_VIEW_MAX_SOCKETS_PER_ARTIFACT",
 ];
 
 /**
@@ -115,6 +117,9 @@ describe("generated Worker configs carry the flag and the cron", () => {
     assert.deepEqual(repoCfg.durable_objects, ROOMS_DO);
     assert.deepEqual(repoCfg.migrations, ROOMS_MIGRATIONS);
     for (const k of ROOM_VARS) assert.ok(k in repoCfg.vars, `wrangler.jsonc vars.${k}`);
+    // The sheet formula budget ships at its documented default, and the CLI's base copies it.
+    assert.equal(repoCfg.vars.SHEET_EVAL_BUDGET, "200000");
+    assert.equal(runtimeBase(repoCfg).vars.SHEET_EVAL_BUDGET, "200000");
     // Category sharing ships on.
     assert.equal(repoCfg.vars.ALLOW_CATEGORY_SHARING, "true");
   });

@@ -19,10 +19,16 @@ import type { Anchor } from "./schemas.ts";
 
 export interface Author {
   kind: "user" | "connection";
-  /** Person's name or email, or the connection label. */
+  /** Person's name or email, or the connection label. Display text, never proof of role. */
   label: string;
   user_id: string | null;
   connection_id: string | null;
+  /**
+   * The artifact's owner wrote it (in person or through one of their agents), as the server knows
+   * it, never from the label. The app marks the owner's versions with it, so a name chosen to look
+   * like the owner's visibly lacks the mark. The Worker always sends it; absent reads as false.
+   */
+  is_owner?: boolean;
 }
 
 export interface ArtifactSummary {
@@ -206,6 +212,10 @@ export interface InstanceLimits {
   max_bundle_bytes: number;
   /** One file in a bundle. */
   max_bundle_file_bytes: number;
+  /** A sheet's JSON lines (sheet.jsonl), its data rows and its columns. */
+  max_sheet_bytes: number;
+  max_sheet_rows: number;
+  max_sheet_columns: number;
 }
 
 /** POST /api/v1/uploads and the start_upload MCP tool. */
@@ -282,6 +292,12 @@ export interface GrantInfo {
   email: string;
   role: Role;
   created_at: string;
+  /**
+   * The display name of the account with this email, shown to the owner only once its holder has
+   * taken part in the artifact (a comment, a shared-data entry or a version; policy.ts
+   * accessListShowsName). Null until then, and for an address with no account or no name.
+   */
+  name: string | null;
 }
 
 export interface SharingSettings {
@@ -309,7 +325,12 @@ export interface CommentInfo {
   artifact_id: string;
   version_number: number;
   parent_id: string | null;
-  author: { email: string | null; connection_id: string | null; label: string };
+  /**
+   * `label` is display text, never proof of role. `is_owner`: the artifact's owner wrote it (in
+   * person or through one of their agents), as the server knows it; the app marks the owner's
+   * comments with it. The Worker always sends it; absent reads as false.
+   */
+  author: { email: string | null; connection_id: string | null; label: string; is_owner?: boolean };
   body: string;
   anchor: Anchor | null;
   status: CommentStatus;
@@ -502,6 +523,16 @@ export type ViewGate =
        * composer with its own anchors, and the frame never loads in review mode. Absent otherwise.
        */
       page_comments?: true;
+      /**
+       * Live views: open the watch socket (GET /api/v1/view/:id/watch) to learn of new versions,
+       * and of shared-data changes, as they happen. Absent: poll as before.
+       */
+      watch?: true;
+      /**
+       * Who the page shows this viewer as, beyond the email `data` names, and whether it lists
+       * the people it is shared with. Absent when there is nothing to tell.
+       */
+      people?: ViewGatePeople;
     }
   | { status: "password_required"; artifact: ViewArtifactStub }
   | { status: "email_required"; artifact: ViewArtifactStub }
@@ -567,6 +598,17 @@ export interface ViewGateData {
    * declares `room` and `viewer`, rooms are active and the viewer is identified.
    */
   room_email?: string;
+}
+
+/** What the viewer is told about names and the people list (docs/spec.md "Who is viewing"). */
+export interface ViewGatePeople {
+  /**
+   * The viewer's display name, which the page sees and shows wherever it sees their email (the
+   * `email` or `room_email` of the data block). Absent without a name.
+   */
+  name?: string;
+  /** The page declares `people`: its owner and editors can list everyone it is shared with. */
+  list?: true;
 }
 
 export interface ViewArtifactStub {
@@ -939,4 +981,52 @@ export interface DesignSystemRead {
   /** Why a stored version no longer parses (a newer rule, or a restore of an old version). */
   problems: { path: string; message: string }[];
   untrusted: true;
+}
+
+// ---------- sheets (read_sheet, edit_sheet) ----------
+
+/** A computed value: an error is { error: "#DIV/0!" } and the like. */
+export type SheetReadValue = null | number | boolean | string | { error: string };
+
+/** A cell as read_sheet returns it: a literal, or a formula with its computed value. */
+export type SheetReadCell = null | number | boolean | string | { f: string; v?: SheetReadValue };
+
+export interface SheetReadColumn {
+  letter: string;
+  name: string;
+  type: string;
+  format?: { style: string; decimals?: number; currency?: string; grouping?: boolean };
+  options?: string[];
+}
+
+/** read_sheet and GET /api/v1/artifacts/:ref/sheet. */
+export interface SheetRead {
+  id: string;
+  slug: string;
+  type: "sheet";
+  title: string;
+  version: number;
+  current_version: number;
+  columns: SheetReadColumn[];
+  /** Data rows (the header is row 1 and not counted). */
+  row_count: number;
+  /** The range the rows cover, or null when it holds no cells. */
+  range: string | null;
+  rows: { row: number; cells: SheetReadCell[] }[];
+  truncated: boolean;
+  /** The range to read next when truncated, else null. */
+  next_range: string | null;
+  warnings: { code: "eval_budget"; message: string }[];
+  untrusted: true;
+}
+
+/** edit_sheet and POST /api/v1/artifacts/:ref/sheet/edits. */
+export interface SheetEditResult extends PublishResult {
+  changed: {
+    cells: number;
+    rows_inserted: number;
+    rows_deleted: number;
+    columns_inserted: number;
+    columns_deleted: number;
+  };
 }

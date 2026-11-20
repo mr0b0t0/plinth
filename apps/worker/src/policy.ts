@@ -8,6 +8,7 @@ import {
   type ClientType,
   type EffectiveRole,
   isPersonalDocId,
+  type LiveViewPool,
   type Role,
   type RoomDocRight,
   type RoomEmitRight,
@@ -72,6 +73,8 @@ export type ArtifactAction =
    * Agents never (they push versions), and a viewer confirmed by code must sign in first.
    */
   | "live_edit"
+  /** List everyone with access (owner and grants, with names): owners and editors. */
+  | "people"
   /**
    * Read the comment threads (bodies, authors' emails, mention tasks): as view, except that a
    * token bound to one artifact never may.
@@ -148,6 +151,7 @@ const ACTION_SCOPES: Record<ArtifactAction, Scope> = {
   data_clear: "artifacts:write",
   views: "artifacts:read",
   live_edit: "artifacts:write",
+  people: "artifacts:read",
   comments_read: "artifacts:read",
   enter: "artifacts:read",
 };
@@ -259,6 +263,10 @@ export function decide(
         return deny(p.kind === "anonymous" ? "login_required" : "forbidden", role);
       if (p.kind === "user") return { allow: true, role };
       return deny(p.kind === "viewer" ? "account_required" : "forbidden", role);
+    case "people":
+      return role === "owner" || role === "editor"
+        ? { allow: true, role }
+        : deny(p.kind === "anonymous" ? "login_required" : "forbidden", role);
   }
 }
 
@@ -470,6 +478,86 @@ export function isAdmin(p: Principal): boolean {
   return p.kind === "user" && p.isAdmin;
 }
 
+// ---------- who is viewing: the people list on the page ----------
+
+/**
+ * Who wrote a version: the person, and the artifact its agent token was limited to (null for a
+ * person, or an agent acting for them account-wide). Read from `versions.created_by_user` and the
+ * connection's `artifact_id`, the same facts the thumbnail capture uses (captureReadsData).
+ */
+export interface VersionWriter {
+  userId: string | null;
+  boundArtifactId: string | null;
+}
+
+/**
+ * Does the artifact offer its people list at all: its current version declares `data viewer
+ * people` while shared data is active (`active`: sharedDataActive(config)), and every version the
+ * content host serves (1 to the current one, `writers`: their distinct writers) was written by
+ * someone who may read the list (captureReadsData: a person or an agent acting for them
+ * account-wide, never a token limited to one artifact nor a writer whose account is gone)? A bound
+ * token may not read the list, so a page it wrote must not read it through the owner's or an
+ * editor's session either. Every version, not only the current one: the content host serves each
+ * at /__plinth/v/<n>/ on the artifact's one origin under the same pass, so a bound token's old
+ * version opened from History (or still open in a tab, or framing `/`) would call the people route
+ * with the reader's claim, and nothing on a request says which version's code made it. Versions are
+ * never deleted, so once a bound token has published one the artifact lists nobody. `writers` null
+ * or empty (not loaded, or no version) offers nothing. This one answer governs every way to read
+ * the list: the page (pagePeopleAccess), owners' and editors' agents (list_artifact_data's
+ * summary) and REST (GET /api/v1/artifacts/:ref/people), and the notice under the bar tells every
+ * identified viewer exactly when it is true. Without it nobody but the owner (in the sharing
+ * settings) sees the access list.
+ */
+export function peopleListOffered(
+  caps: Capabilities | null,
+  active: boolean,
+  writers: readonly VersionWriter[] | null,
+): boolean {
+  return (
+    active &&
+    caps?.data === true &&
+    caps.viewer &&
+    caps.people &&
+    writers !== null &&
+    writers.length > 0 &&
+    writers.every(captureReadsData)
+  );
+}
+
+/**
+ * May this page reader list the artifact's people (/__plinth/api/v1/people)? Owners and editors
+ * with an identity claim, on a page that offers the list (peopleListOffered, with the writers of
+ * every served version). Commenters, viewers and anonymous link viewers never: the list holds every
+ * grant holder's email. The role comes from the claim, sealed at the current access epoch, so a
+ * demoted editor's pass stops working at once.
+ */
+export function pagePeopleAccess(
+  claim: PageClaim | null,
+  caps: Capabilities | null,
+  active: boolean,
+  writers: readonly VersionWriter[] | null,
+): { list: boolean } {
+  const editor = claim?.role === "owner" || claim?.role === "editor";
+  return { list: editor && peopleListOffered(caps, active, writers) };
+}
+
+/**
+ * May an access list (the people list, the owner's sharing settings) show this person's display
+ * name? The owner types every grant's address and its holder is not told, so a name beside such an
+ * address would say whether it has an account and what that account is called. An access list
+ * therefore names only the owner (whose name the gate already shows every viewer), the reader's own
+ * row, and a grant holder who has taken part in this artifact: written a comment, a shared-data
+ * entry or a version, each of which already shows their name to the people who can read the list.
+ * Everyone else is listed by address alone, whether or not an account stands behind it.
+ */
+export function accessListShowsName(p: {
+  role: EffectiveRole;
+  you: boolean;
+  tookPart: boolean;
+}): boolean {
+  return p.role === "owner" || p.you || p.tookPart;
+}
+
 // ---------- publishing from CI: tokens bound to one artifact (issue #51) ----------
 
 /** What a token bound to one artifact may do there: what a viewer may, plus new versions. */
@@ -526,6 +614,40 @@ export function captureReadsData(writer: {
  */
 export function seesThumbnails(p: Principal): boolean {
   return boundArtifactOf(p) === null;
+}
+
+// ---------- live views: pushed versions and data changes (app host, the watch socket) ----------
+
+/**
+ * May this principal hold a watch socket on the artifact, and does it get `data` signals? `d` is
+ * the view decision (the gate's, `decideFor(ctx, a, "view")`); `active` is liveViewsActive(config,
+ * env); `sharedData` is sharedDataActive(config); `caps` the current version's declaration. Anyone
+ * who may open the artifact may watch (anonymous link viewers included: a watch socket joins no
+ * room, sees no peers and carries no identity), never an agent, which publishes and never pulls.
+ * Data signals follow pageDataAccess's read rule: an HTML page whose current version declares
+ * `data`, with shared data active. The gate and the handshake both ask this, so the decision lives
+ * here.
+ */
+export function liveViewAccess(
+  p: Principal,
+  d: Decision,
+  caps: Capabilities | null,
+  o: { active: boolean; sharedData: boolean; type: ArtifactType },
+): { watch: boolean; data: boolean } {
+  const watch = o.active && d.allow && p.kind !== "agent";
+  return { watch, data: watch && o.type === "html" && caps?.data === true && o.sharedData };
+}
+
+/**
+ * Which cap pool a watch socket counts in (LiveViewPool, packages/shared/src/liveView.ts): `member`
+ * when the view decision has a role (the owner, or a grant to the viewer's email), `open` for
+ * everyone else it lets in (public and unlisted link viewers, signed in or not, password holders,
+ * an admin reviewing a report). The pools never affect each other, so a full `open` pool, the only
+ * one an outsider can fill, says nothing about whether the owner or a collaborator has the
+ * artifact open.
+ */
+export function liveViewPool(d: Extract<Decision, { allow: true }>): LiveViewPool {
+  return d.role === null ? "open" : "member";
 }
 
 // ---------- category sharing (docs/spec.md "Category sharing and personal categories") ----------

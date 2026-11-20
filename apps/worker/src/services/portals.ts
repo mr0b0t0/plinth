@@ -11,6 +11,7 @@ import {
   LIMITS,
   type PortalGate,
   type PortalSummary,
+  pageDisplayName,
   RATE_LIMITS,
   TTL,
 } from "@plinth/shared";
@@ -143,7 +144,8 @@ export async function listPortals(ctx: Ctx): Promise<PortalSummary[]> {
       {
         id: r.id,
         title: r.title,
-        owner_name: r.owner_name,
+        // The name cleaned on read (displayName.ts pageDisplayName), as everywhere else it shows.
+        owner_name: pageDisplayName(r.owner_name),
         count: Math.min(r.count, LIMITS.maxPortalItems),
       },
     ];
@@ -206,7 +208,12 @@ export async function portalGate(ctx: Ctx, id: string): Promise<PortalGate> {
   }
   return {
     status: "ok",
-    portal: { id: share.id, title: share.title, owner_name: owner.name, role: d.role },
+    portal: {
+      id: share.id,
+      title: share.title,
+      owner_name: pageDisplayName(owner.name),
+      role: d.role,
+    },
     items,
   };
 }
@@ -326,7 +333,8 @@ async function sendPortalCode(ctx: Ctx, share: ShareSql, email: string): Promise
     .get();
   const minutes = Math.round(TTL.viewerCodeMs / 60000);
   // Neither the share's title nor the category name: only who shared it.
-  const who = owner?.name ? `${owner.name} shared` : "someone shared";
+  const ownerName = pageDisplayName(owner?.name);
+  const who = ownerName ? `${ownerName} shared` : "someone shared";
   await createEmailAdapter(ctx.config, ctx.env).send({
     to: email,
     subject: "Your Plinth viewing code",

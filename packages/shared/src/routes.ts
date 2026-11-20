@@ -56,6 +56,8 @@ export const API = {
   restore: "/artifacts/:ref/versions/:n/restore", // POST restore_version
   visibility: "/artifacts/:ref/visibility", // PUT set_visibility
   designSystem: "/artifacts/:ref/design-system", // GET get_design_system
+  sheet: "/artifacts/:ref/sheet", // GET read_sheet
+  sheetEdits: "/artifacts/:ref/sheet/edits", // POST edit_sheet
   sharing: "/artifacts/:ref/sharing", // GET settings, PUT grants
   // categories (the caller's own names; rename and merge for the signed-in owner only)
   categories: "/categories", // GET names with counts
@@ -76,6 +78,7 @@ export const API = {
   viewPassword: "/view/:ref/password",
   viewEmail: "/view/:ref/email",
   viewCode: "/view/:ref/code",
+  viewWatch: "/view/:ref/watch", // GET WebSocket upgrade (plinth.view.v1): live views, the app only
   // comments and mentions
   comments: "/artifacts/:ref/comments",
   comment: "/comments/:id",
@@ -93,6 +96,7 @@ export const API = {
   data: "/artifacts/:ref/data", // GET summary, POST ops, DELETE all (signed-in owner)
   dataCollection: "/artifacts/:ref/data/:collection", // GET a page
   dataDoc: "/artifacts/:ref/data/:collection/:doc", // GET one document
+  people: "/artifacts/:ref/people", // GET everyone with access (owner or editor), ?q=
   // on-page doc editing (signed-in owners and editors only; never agents, never MCP)
   live: "/artifacts/:ref/live", // GET LiveInfo
   liveDraft: "/artifacts/:ref/live/draft", // GET the draft text (review), DELETE ?rev=n discards

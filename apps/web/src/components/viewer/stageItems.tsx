@@ -14,6 +14,7 @@ import {
   ClockCounterClockwiseIcon,
   CodeIcon,
   DotsThreeIcon,
+  DownloadSimpleIcon,
   FlagIcon,
   GearSixIcon,
   MoonIcon,
@@ -25,7 +26,13 @@ import {
   ShareNetworkIcon,
   SunIcon,
 } from "@phosphor-icons/react";
-import type { AppConfig, ArtifactType, DataCapability, ViewGate } from "@plinth/shared";
+import {
+  type AppConfig,
+  type ArtifactType,
+  type DataCapability,
+  typeDef,
+  type ViewGate,
+} from "@plinth/shared";
 import type { ReactNode, RefObject } from "react";
 import { Link } from "../../lib/router.tsx";
 import { THEME_NAMES, type Theme } from "../../lib/theme.ts";
@@ -33,7 +40,7 @@ import { Button, buttonClassName, Menu, type MenuEntry, Tooltip } from "../ui/in
 import { DataNotice } from "./DataNotice.tsx";
 import { EditBar } from "./EditBar.tsx";
 import { LiveDraftNotice } from "./LiveDraftNotice.tsx";
-import { postPrint, rendererTargetOrigin } from "./rendererProtocol.ts";
+import { postExport, postPrint, rendererTargetOrigin } from "./rendererProtocol.ts";
 import type { LiveEdit } from "./useLiveEdit.ts";
 import type { Presentation } from "./usePresentation.ts";
 
@@ -123,8 +130,9 @@ const compactSignInToEdit: MenuItem = (c) =>
     ? [{ label: "Sign in to edit", icon: PencilSimpleIcon, href: c.hrefs.signIn }]
     : [];
 
+/** A type with no source editor (a sheet or a design) has no Edit: agents change it. */
 const editSource: MenuItem = (c) =>
-  canEdit(c.gate.role)
+  canEdit(c.gate.role) && typeDef(c.gate.artifact.type)?.editor
     ? [
         {
           label: c.live.available ? "Edit source" : "Edit",
@@ -152,10 +160,45 @@ const printTyped: MenuItem = (c) => [
   },
 ];
 
+/**
+ * A deck as .pptx: the frame builds the file from the slides it shows and downloads it. Only for
+ * a type whose renderer offers it (fileExports), and not twice at once.
+ */
+const downloadPptx: MenuItem = (c) =>
+  c.present.available && typeDef(c.gate.artifact.type)?.fileExports?.includes("pptx")
+    ? [
+        {
+          label: c.present.exporting ? "Making the .pptx…" : "Download .pptx",
+          icon: DownloadSimpleIcon,
+          disabled: c.present.exporting,
+          onSelect: c.present.exportPptx,
+        },
+      ]
+    : [];
+
+/**
+ * A sheet downloads itself: the frame builds the file, the app only names the format. Two items
+ * labelled like a deck's Download .pptx, not a submenu: the menu has none.
+ */
+const downloadSheet: MenuItem = (c) => [
+  {
+    label: "Download .xlsx",
+    icon: DownloadSimpleIcon,
+    onSelect: () => postExport(c.frame, rendererTargetOrigin(c.config, c.contentOrigin), "xlsx"),
+  },
+  {
+    label: "Download .csv",
+    icon: DownloadSimpleIcon,
+    onSelect: () => postExport(c.frame, rendererTargetOrigin(c.config, c.contentOrigin), "csv"),
+  },
+];
+
 /** Menu items for one artifact type, in order, after Settings and Stats. One type per line. */
 export const TYPE_MENU_ITEMS: Partial<Record<ArtifactType, readonly MenuItem[]>> = {
   doc: [printTyped],
-  slides: [printTyped],
+  slides: [printTyped, downloadPptx],
+  design: [printTyped],
+  sheet: [printTyped, downloadSheet],
 };
 
 /**

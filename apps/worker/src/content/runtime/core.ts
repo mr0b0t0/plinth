@@ -84,7 +84,9 @@ export const CORE_HEAD = `/* Plinth page runtime v1: shared data and live rooms.
   }
 
   function author(a) {
-    return a ? { email: a.email, role: a.role, via: a.via } : undefined;
+    return a
+      ? { email: a.email, name: typeof a.name === "string" ? a.name : null, role: a.role, via: a.via }
+      : undefined;
   }
   function toDoc(d) {
     var out = {
@@ -106,6 +108,7 @@ export const CORE_HEAD = `/* Plinth page runtime v1: shared data and live rooms.
     reason: null,
     viewer: null,
     canWrite: false,
+    canListPeople: false,
     capabilities: [],
     shared: [],
     limits: null,
@@ -114,7 +117,13 @@ export const CORE_HEAD = `/* Plinth page runtime v1: shared data and live rooms.
   var lastSeq = null;
 
   function unavailable(reason) {
-    var s = Object.assign({}, state, { available: false, reason: reason, viewer: null, canWrite: false });
+    var s = Object.assign({}, state, {
+      available: false,
+      reason: reason,
+      viewer: null,
+      canWrite: false,
+      canListPeople: false,
+    });
     return s;
   }
 
@@ -127,8 +136,16 @@ export const CORE_HEAD = `/* Plinth page runtime v1: shared data and live rooms.
       return {
         available: true,
         reason: null,
-        viewer: s.viewer ? { id: s.viewer.id, email: s.viewer.email, role: s.viewer.role } : null,
+        viewer: s.viewer
+          ? {
+              id: s.viewer.id,
+              email: s.viewer.email,
+              name: typeof s.viewer.name === "string" ? s.viewer.name : null,
+              role: s.viewer.role,
+            }
+          : null,
         canWrite: !!s.can_write,
+        canListPeople: !!s.can_list_people,
         capabilities: s.capabilities || [],
         shared: s.shared || [],
         limits: s.limits
@@ -146,6 +163,7 @@ export const CORE_HEAD = `/* Plinth page runtime v1: shared data and live rooms.
     available: false,
     viewer: null,
     canWrite: false,
+    canListPeople: false,
     ready: null,
     db: { collection: collection },
   };
@@ -154,6 +172,7 @@ export const CORE_HEAD = `/* Plinth page runtime v1: shared data and live rooms.
     plinth.available = s.available;
     plinth.viewer = s.viewer;
     plinth.canWrite = s.canWrite;
+    plinth.canListPeople = s.canListPeople;
     return s;
   });
 

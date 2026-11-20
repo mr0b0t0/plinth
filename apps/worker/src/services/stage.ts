@@ -25,8 +25,8 @@ import { ApiError, isUniqueViolation, notFound, unauthorized } from "../lib/erro
 import { enforce } from "../lib/ratelimit.ts";
 import { nowIso } from "../lib/time.ts";
 import { mayCreateArtifacts } from "../policy.ts";
-import { notifyRoom } from "../rooms/notify.ts";
-import { getVersionRow, requireArtifact } from "./artifacts.ts";
+import { notifyRoom, notifyViewers } from "../rooms/notify.ts";
+import { getVersionRow, requireArtifact, versionCapabilities } from "./artifacts.ts";
 import {
   checkAsset,
   requireTypeDef,
@@ -600,6 +600,18 @@ export class VersionStager implements Stager {
     await this.put(path, bytes, contentType);
   }
 
+  /** Put the canonical form of a source candidate in place of the bytes that arrived. */
+  private async replacePending(e: Entry, text: string): Promise<void> {
+    const bytes = encoder.encode(text);
+    if (bytes.byteLength > this.def.maxSourceBytes) {
+      throw sourceTooLarge(this.def.sourceLabel, this.def.maxSourceBytes, bytes.byteLength);
+    }
+    this.logicalBytes += bytes.byteLength - e.size_bytes;
+    e.size_bytes = bytes.byteLength;
+    e.sha256 = await sha256Hex(bytes);
+    e.pending = bytes;
+  }
+
   /** The type's source text (inline publish, update and restore). */
   async addSource(text: string | Uint8Array): Promise<void> {
     const bytes = typeof text === "string" ? encoder.encode(text) : text;
@@ -786,9 +798,11 @@ export class VersionStager implements Stager {
     if (source.size_bytes > def.maxSourceBytes) {
       throw sourceTooLarge(def.sourceLabel, def.maxSourceBytes, source.size_bytes);
     }
-    const sourceText = decoder.decode(source.pending);
-    // A doc's source must be Markdown, never a whole HTML document (the bundle path included).
-    resolveSource({ type: def.id, [def.sourceField]: sourceText }, null);
+    const sentText = decoder.decode(source.pending);
+    // A doc's source must be Markdown, never a whole HTML document (the bundle path included). A
+    // type that stores one canonical spelling (a sheet) stores that, here as inline.
+    const sourceText = resolveSource({ type: def.id, [def.sourceField]: sentText }, null).text;
+    if (sourceText !== sentText) await this.replacePending(source, sourceText);
 
     // The source under its own prefix; other source candidates under their final path.
     source.content_type = def.contentType;
@@ -859,7 +873,10 @@ export class VersionStager implements Stager {
         files,
         manifestPaths,
         sources: contentSources(this.ctx.config),
-        isolation: this.ctx.config.contentIsolation,
+        // A type whose page shows author HTML only in opaque frames (a design's artboards) is
+        // checked as opaque isolation would check it, whatever the instance runs.
+        isolation: def.opaqueFrames ? "opaque" : this.ctx.config.contentIsolation,
+        ...(def.opaqueFrames ? { opaqueReason: "artboard" as const } : {}),
         unscanned: this.unscanned.map((p) => byRaw.get(p) ?? p),
         reused,
         typed: typeSourceWarnings(typedSource),
@@ -1099,6 +1116,15 @@ export async function commitVersion(
     scheduleThumbnail(ctx, result.id, result.version);
   } catch {
     // A thumbnail is optional; a reader starts the capture later.
+  }
+  // Open views of the artifact follow the new version (live views, rooms/notify.ts).
+  if (target.mode === "update") {
+    try {
+      const data = versionCapabilities({ capabilities: extra.capabilities })?.data === true;
+      notifyViewers(ctx, result.id, { version: result.version, data });
+    } catch {
+      // Best effort; the room's alarm sends a lost version within a minute.
+    }
   }
   // Room notifications and per-type publish warnings (services/artifactTypes/<type>.ts).
   const def = extra.stager.def;

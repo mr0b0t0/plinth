@@ -181,7 +181,11 @@ function privacy(op: OperatorInfo, cfg: LegalConfig): LegalDoc {
           <ul>
             <li>
               <strong>Your email address</strong>, and a name if you add one: to sign you in and to
-              show who owns, edits or comments on an artifact.
+              show who owns, edits or comments on an artifact. On pages that show who is viewing,
+              they are also shown to the page and to the people it is shared with. A page can also
+              let its owner, its editors and their agents see everyone it is shared with, by email
+              address and role, and by name once that person has commented, entered something or
+              published a version on it.
             </li>
             <li>
               <strong>Your artifacts</strong>: every version of the pages, files, titles, categories
@@ -191,8 +195,9 @@ function privacy(op: OperatorInfo, cfg: LegalConfig): LegalDoc {
             <li>
               <strong>What people enter on shared pages</strong>: some pages can save what their
               viewers enter (votes, sign-ups, entries on a tracker). We store what you enter, with
-              your email address, your role and the time, and show them to the page, its owner and
-              the agents the owner connects. Only people the owner invited can enter anything.
+              your email address, your role and the time, and show them, with your name if you added
+              one, to the page, its owner and the agents the owner connects. Only people the owner
+              invited can enter anything.
             </li>
             <li>
               <strong>Sharing settings</strong>: the email addresses you give access to, and a

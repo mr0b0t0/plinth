@@ -42,6 +42,9 @@ export const DEV_VARS: Record<string, string> = {
   // origin isolation.
   ALLOW_ROOMS: "true",
   ALLOW_LIVE_EDITING: "true",
+  // Live views (docs/spec.md "Live views"): pushed versions and data changes over the app's watch
+  // socket, on both servers (it needs only the ROOMS binding, not origin isolation).
+  ALLOW_LIVE_VIEWS: "true",
   // Category sharing (docs/spec.md "Category sharing and personal categories"), on by default.
   ALLOW_CATEGORY_SHARING: "true",
   // Fresh for every run; never committed, never reused.

@@ -29,10 +29,15 @@ For a memo, plan, spec, proposal, mostly-text report, meeting notes or a how-to,
 heading anchors, tables, code, images from the doc's own files, light and dark, phone width, a print
 stylesheet). For a talk, pitch, review or lesson it publishes `type: "slides"`: Markdown with a line
 `---` between slides and speaker notes after `Note:`, which Plinth renders as a deck people can page
-through, present full screen with a presenter view, and print to PDF. Dashboards, charts, anything
-interactive and custom visual design stay HTML. When unsure and the result is mostly text, a doc.
-The type is fixed at publish; the server's instructions and the skill's "Documents (type doc)" and
-"Slides (type slides)" sections say this to every harness.
+through, present full screen with a presenter view, print to PDF and download as an editable
+`.pptx` (so an agent never builds a PowerPoint file itself). For visual compositions at fixed sizes
+(app screens, landing page mockups, posters, social posts, ads and banners, several variants side by
+side) it publishes `type: "design"`: shared `<head>` tags, then artboards, each a marker line
+(`<!-- artboard name="Home" size="iphone" -->`) and its HTML, which Plinth lays out on a canvas
+people pan, zoom and print, every board alone at its exact size. Dashboards, charts and anything
+interactive stay HTML. When unsure and the result is mostly text, a doc. The type is fixed at
+publish; the server's instructions and the skill's "Documents (type doc)", "Slides (type slides)"
+and "Designs (type design)" sections say this to every harness.
 
 **Design systems.** A person's tokens, components and guidelines can live on Plinth as a design
 system (`type: "design_system"`, JSON in `content`), shown as a reference site with live component
@@ -42,6 +47,16 @@ names it with `<meta name="plinth-design-system" content="<id>@<version>">`, so 
 warned (`design_system_outdated`) when the design system moved on. Pages never load another
 artifact's files at runtime. The skill's "Design systems (type design_system)" section has the
 format; [mcp.md](mcp.md#get_design_system) has the tool.
+
+**Sheets.** For a table people sort, filter, calculate with or download (a budget, a tracker, a
+list of records, a price comparison), an agent publishes `type: "sheet"` with JSON lines in
+`content` instead of an HTML table: a header line naming typed columns, then one JSON array per
+row, with Excel formulas (`=SUM(D2:D9)`) that Plinth computes. People view it with sort, filter
+and a formula bar, and download it as CSV or .xlsx. A CSV or an .xlsx file can be sent as is with
+`content_format`. The agent reads computed values with `read_sheet` and changes cells, rows and
+columns with `edit_sheet` and `base_version`, one version per call; cell text is untrusted. The
+skill's "Sheets (type sheet)" section has the format and the functions;
+[mcp.md](mcp.md#read_sheet) has the tools.
 
 ## How each harness gets it
 
@@ -374,8 +389,10 @@ There is no rendered preview for agents yet. To check that a publish arrived int
 
 ## Multiplayer pages with plinth.room
 
-Shared data keeps what people enter, but it reaches other open pages only on the next 15 s poll.
-For things people do together at the same moment (cursors, who is here, a note moving while it is
+Shared data keeps what people enter, and with live views on it reaches other open pages within
+about a second ([spec](spec.md#live-views-decided-2026-11-19)); without them, on the next 15 s
+poll. Either way it is the stored result, not the moment. For things people do together at the
+same moment (cursors, who is here, a note moving while it is
 dragged), a page also declares `room` and uses `window.plinth.room` from the same runtime
 ([spec](spec.md#live-rooms), [security](security.md#live-rooms)):
 
@@ -452,6 +469,16 @@ board where a click draws a dot and opens the composer on that point (the dot st
 comment is posted), numbered markers drawn by the page, Plinth's pins on the same spots, and the
 picked thread's marker highlighted. The skill's
 "Comments from the page" section has the API.
+
+## Open pages follow new versions
+
+A new version (`update_artifact`, `restore_version`, the source editor, a save on the page) reaches
+every open view of the artifact within seconds: the app page holds a watch socket on the app host
+and re-reads its gate when told ([spec](spec.md#live-views-decided-2026-11-19),
+[security](security.md#live-views)). Agents never hold that socket (a bearer token is refused), and
+never need to tell anyone to reload. Pages that keep shared data get `onSnapshot` pushed the same
+way; do not shorten `intervalMs` to make them faster. With `ALLOW_LIVE_VIEWS=false`, or without the
+`ROOMS` binding, pages poll every 15 s as before.
 
 ## Shared categories
 

@@ -4,13 +4,20 @@
 import { createExecutionContext, waitOnExecutionContext } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { getConfig } from "../src/config.ts";
+import { contentOrigin, getConfig } from "../src/config.ts";
 import { contentCookieName } from "../src/content/serve.ts";
-import { issueEnterUrl, signContentCookie, verifyEnterToken } from "../src/content/tokens.ts";
+import {
+  issueEnterUrl,
+  signContentCookie,
+  verifyContentCookie,
+  verifyEnterToken,
+} from "../src/content/tokens.ts";
 import worker from "../src/index.ts";
 import { signToken } from "../src/lib/crypto.ts";
 import {
+  type CaptureCookie,
   type CaptureScope,
+  captureFrameCookies,
   captureRequestAllowed,
   captureScope,
   claimThumbnail,
@@ -24,6 +31,8 @@ import {
 import { APP, agent, createToken, json } from "./helpers.ts";
 
 const JPEG = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 1, 2, 3, 4, 0xff, 0xd9]);
+const PNG =
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=";
 const ON = { BROWSER: {} as Fetcher };
 const CSRF = "__Host-plinth_csrf=thumbnails-test";
 
@@ -530,6 +539,172 @@ describe("what the capture browser loads", () => {
     expect(seen[0]?.body).toContain("expired");
     expect((await state(p.id, 1))?.thumbnail).toBe("failed");
     expect(await env.FILES.head(thumbnailKey(p.id, 1))).toBeNull();
+  });
+
+  it("hands a design's capture a pass for its boards' cookie partition, and nothing to an HTML page", async () => {
+    const got: { url: string; scope: CaptureScope; cookies: readonly CaptureCookie[] }[] = [];
+    setThumbnailShooter(async (_b, url, scope, cookies) => {
+      got.push({ url, scope, cookies });
+      return JPEG;
+    });
+    const a = await agent();
+    const page = await publish(a.auth);
+    const design = await publish(a.auth, {
+      html: undefined,
+      type: "design",
+      content: '<!-- artboard name="One" size="iphone" -->\n<img src="img/a.png" alt="">',
+      assets: [{ path: "img/a.png", content: PNG, encoding: "base64" }],
+    });
+    expect(got).toHaveLength(2);
+    expect(got[0]?.cookies).toEqual([]);
+    const cookies = got[1]?.cookies ?? [];
+    expect(cookies).toHaveLength(1);
+    const c = cookies[0] as CaptureCookie;
+    const origin = `http://${design.id}.content.localhost:8787`;
+    expect({ ...c, value: "", expires: 0 }).toEqual({
+      name: "__Host-plinth_content",
+      value: "",
+      url: `${origin}/`,
+      path: "/",
+      secure: true,
+      httpOnly: true,
+      sameSite: "None",
+      expires: 0,
+      partitionKey: { topLevelSite: "http://content.localhost", hasCrossSiteAncestor: true },
+    });
+    const now = Math.floor(Date.now() / 1000);
+    expect(c.expires).toBeGreaterThan(now);
+    expect(c.expires).toBeLessThanOrEqual(now + 120);
+    // A capture pass for this artifact only: no identity, bound to the captured version like the
+    // enter's pass, and it opens the boards' files.
+    const pass = await verifyContentCookie(getConfig(env as never), c.value);
+    expect(pass?.a).toBe(design.id);
+    expect(pass?.c).toBe(1);
+    expect(pass?.v).toBe(1);
+    expect(pass?.d).toBeUndefined();
+    expect(pass?.x).toBeUndefined();
+    const cookie = `${c.name}=${c.value}`;
+    const img = await run(`${origin}/__plinth/v/1/img/a.png`, {
+      headers: { Cookie: cookie, "sec-fetch-dest": "image" },
+    });
+    expect(img.status).toBe(200);
+    const other = await run(`http://${page.id}.content.localhost:8787/`, {
+      headers: { Cookie: cookie, "sec-fetch-dest": "iframe" },
+    });
+    expect(other.status).toBe(401);
+    // The boards' frames open the board loader as a navigation: the guard lets exactly that page
+    // through for a design, and the boards' pass gets it.
+    const loader = `${origin}/__plinth/frames/design/board.html`;
+    expect(got[1]?.scope.frame).toBe("/__plinth/frames/design/board.html");
+    expect(captureRequestAllowed(got[1]?.scope as CaptureScope, loader, true)).toBe(true);
+    expect(got[0]?.scope.frame).toBeUndefined();
+    const served = await run(loader, { headers: { Cookie: cookie, "sec-fetch-dest": "iframe" } });
+    expect(served.status).toBe(200);
+    expect(await served.text()).toContain("Plinth board loader");
+
+    // Version 2's capture gets its own pass; version 1's never opens version 2's files.
+    const up = await run(`/api/v1/artifacts/${design.id}`, {
+      method: "PUT",
+      headers: { ...a.auth, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        content: '<!-- artboard name="Two" size="iphone" -->\n<img src="img/a.png" alt="">',
+        assets: [{ path: "img/a.png", content: PNG, encoding: "base64" }],
+        base_version: 1,
+      }),
+    });
+    expect(up.status, await up.clone().text()).toBe(200);
+    expect(got).toHaveLength(3);
+    const c2 = got[2]?.cookies[0] as CaptureCookie;
+    expect((await verifyContentCookie(getConfig(env as never), c2.value))?.v).toBe(2);
+    const v2 = `${origin}/__plinth/v/2/img/a.png`;
+    expect((await run(v2, { headers: { Cookie: cookie, "sec-fetch-dest": "image" } })).status).toBe(
+      404,
+    );
+    expect(
+      (await run(v2, { headers: { Cookie: `${c2.name}=${c2.value}`, "sec-fetch-dest": "image" } }))
+        .status,
+    ).toBe(200);
+  });
+
+  it("gives the boards' pass no shared data when the enter's pass has none", async () => {
+    const got: { url: string; cookies: readonly CaptureCookie[] }[] = [];
+    setThumbnailShooter(async (_b, url, _scope, cookies) => {
+      got.push({ url, cookies });
+      return JPEG;
+    });
+    const owner = await agent();
+    const design = await publish(owner.auth, {
+      html: undefined,
+      type: "design",
+      content: '<!-- artboard name="One" size="iphone" -->\n<p>One</p>',
+    });
+    const ci = await createToken(owner.user.id, {
+      scopes: "artifacts:read artifacts:write",
+      artifactId: design.id,
+    });
+    const up = await run(`/api/v1/artifacts/${design.id}`, {
+      method: "PUT",
+      headers: { Authorization: `Bearer ${ci.token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        content: '<!-- artboard name="Two" size="iphone" -->\n<p>Two</p>',
+        base_version: 1,
+      }),
+    });
+    expect(up.status, await up.clone().text()).toBe(200);
+    expect(got).toHaveLength(2);
+    const config = getConfig(env as never);
+    const passes = await Promise.all(
+      got.map(async (g) => ({
+        enter: (await verifyEnterToken(config, new URL(g.url).searchParams.get("t") ?? ""))?.d,
+        frame: (await verifyContentCookie(config, g.cookies[0]?.value ?? ""))?.d,
+      })),
+    );
+    expect(passes).toEqual([
+      { enter: undefined, frame: undefined },
+      { enter: 1, frame: 1 },
+    ]);
+  });
+
+  it("lets a navigation reach a type's framed page only for that type, and only that file", () => {
+    const config = getConfig(env as never);
+    const id = "aaaaaaaaaaaaaaaaaaaa";
+    const own = contentOrigin(config, id);
+    const design = captureScope(config, id, 3, "design");
+    const page = captureScope(config, id, 3, "html");
+    const loader = `${own}/__plinth/frames/design/board.html`;
+    expect(captureRequestAllowed(design, loader, true)).toBe(true);
+    expect(captureRequestAllowed(page, loader, true)).toBe(false);
+    expect(captureRequestAllowed(captureScope(config, id, 3), loader, true)).toBe(false);
+    expect(captureRequestAllowed(design, `${own}/__plinth/frames/design/other.html`, true)).toBe(
+      false,
+    );
+    expect(captureRequestAllowed(design, `${own}/__plinth/frames/slides/board.html`, true)).toBe(
+      false,
+    );
+    expect(captureRequestAllowed(design, `${own}/__plinth/frames/design/board.html/x`, true)).toBe(
+      false,
+    );
+    // The rest of the version rule is unchanged for a design.
+    expect(captureRequestAllowed(design, `${own}/__plinth/v/4/`, true)).toBe(false);
+    expect(captureRequestAllowed(design, `${own}/__plinth/preview`, true)).toBe(false);
+  });
+
+  it("makes the boards' pass unpartitioned under opaque isolation, and none without Secure", async () => {
+    const config = getConfig(env as never);
+    const target = {
+      artifactId: "aaaaaaaaaaaaaaaaaaaa",
+      accessEpoch: 1,
+      number: 1,
+      readsData: true,
+    };
+    const opaque = await captureFrameCookies({ ...config, contentIsolation: "opaque" }, target);
+    expect(opaque).toHaveLength(1);
+    expect(opaque[0]?.partitionKey).toBeUndefined();
+    const plain = await captureFrameCookies(
+      { ...config, contentHost: "content.example.test", scheme: "http" },
+      target,
+    );
+    expect(plain).toEqual([]);
   });
 
   it("never mints a capture pass that carries an identity", async () => {

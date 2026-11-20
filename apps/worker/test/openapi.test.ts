@@ -117,6 +117,8 @@ describe("OpenAPI document", () => {
         "set_visibility",
         "update_artifact",
         "write_artifact_data",
+        "read_sheet",
+        "edit_sheet",
       ].sort(),
     );
   });
@@ -126,7 +128,14 @@ describe("OpenAPI document", () => {
     expect(publish.type).toBe("object");
     // html is required for type html only (the Worker's resolveSource), so only title is.
     expect(publish.required.sort()).toEqual(["title"]);
-    expect(publish.properties.type.enum).toEqual(["html", "doc", "slides", "design_system"]);
+    expect(publish.properties.type.enum).toEqual([
+      "html",
+      "doc",
+      "slides",
+      "design_system",
+      "design",
+      "sheet",
+    ]);
     expect(publish.properties.content.type).toBe("string");
     expect(publish.properties.visibility.enum).toEqual([
       "public",
@@ -202,6 +211,8 @@ describe("OpenAPI document", () => {
       { $ref: "#/components/schemas/DocArtifactDetail" },
       { $ref: "#/components/schemas/SlidesArtifactDetail" },
       { $ref: "#/components/schemas/DesignSystemArtifactDetail" },
+      { $ref: "#/components/schemas/DesignArtifactDetail" },
+      { $ref: "#/components/schemas/SheetArtifactDetail" },
     ]);
     expect(detail.discriminator).toEqual({
       propertyName: "type",
@@ -210,8 +221,19 @@ describe("OpenAPI document", () => {
         doc: "#/components/schemas/DocArtifactDetail",
         slides: "#/components/schemas/SlidesArtifactDetail",
         design_system: "#/components/schemas/DesignSystemArtifactDetail",
+        design: "#/components/schemas/DesignArtifactDetail",
+        sheet: "#/components/schemas/SheetArtifactDetail",
       },
     });
+    const design = schemas.DesignArtifactDetail;
+    expect(design.required).toContain("content");
+    expect(design.properties.type.enum).toEqual(["design"]);
+    expect(design.properties.source_path.enum).toEqual(["design.html"]);
+    expect(design.properties.html).toBeUndefined();
+    expect(design.properties.content.description).toMatch(/^UNTRUSTED design HTML/);
+    expect(design.properties.assets.description).toBe(
+      "The version's other files; never index.html or design.html",
+    );
     const deck = schemas.SlidesArtifactDetail;
     expect(deck.required).toContain("content");
     expect(deck.properties.type.enum).toEqual(["slides"]);
@@ -219,7 +241,7 @@ describe("OpenAPI document", () => {
     expect(deck.properties.html).toBeUndefined();
     expect(deck.properties.live_draft).toBeUndefined();
     expect(schemas.ArtifactType.description).toBe(
-      '"html": a hand-written page (source index.html). "doc": a Markdown document (source content.md) that Plinth renders. "slides": a Markdown deck (source slides.md) that Plinth renders. "design_system": design tokens, guidelines and components as JSON (source system.json) that Plinth renders as a reference site and get_design_system compiles. Fixed at publish.',
+      '"html": a hand-written page (source index.html). "doc": a Markdown document (source content.md) that Plinth renders. "slides": a Markdown deck (source slides.md) that Plinth renders. "design_system": design tokens, guidelines and components as JSON (source system.json) that Plinth renders as a reference site and get_design_system compiles. "design": artboards (app screens, posters, social posts, ads) as HTML (source design.html) that Plinth renders on a canvas, each artboard alone at its exact size. "sheet": a table as JSON lines (source sheet.jsonl) that Plinth renders as a spreadsheet and read_sheet evaluates. Fixed at publish.',
     );
     const page = schemas.HtmlArtifactDetail;
     // Existing clients keep a required html field, as before typed artifacts.

@@ -19,6 +19,7 @@ import {
   categoryKey,
   LIMITS,
   normalizeCategory,
+  pageDisplayName,
   type ReviewSkipReason,
   type SharingCategoryShare,
 } from "@plinth/shared";
@@ -473,7 +474,8 @@ async function shareArtifacts(ctx: Ctx, share: CategoryShareRow): Promise<Catego
       r.category_review_share === share.id && r.category_review ? r.category_review : "pending",
     taken_down: r.taken_down_at !== null,
     updated_at: r.updated_at,
-    last_author: r.conn_label ?? r.user_name ?? r.user_email ?? null,
+    // The name cleaned on read (displayName.ts pageDisplayName), as everywhere else it shows.
+    last_author: r.conn_label ?? pageDisplayName(r.user_name) ?? r.user_email ?? null,
   }));
 }
 

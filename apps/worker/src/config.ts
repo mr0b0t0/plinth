@@ -8,6 +8,8 @@ import {
   LIMITS,
   LIVE_BOUNDS,
   LIVE_DEFAULTS,
+  LIVE_VIEW_BOUNDS,
+  LIVE_VIEW_DEFAULTS,
   ROOM_BOUNDS,
   ROOM_DEFAULTS,
   VIEW_LOG_BOUNDS,
@@ -161,6 +163,19 @@ export interface Config {
    */
   reviewLogin: { email: string; passwordHash: string } | null;
   /**
+   * ALLOW_LIVE_VIEWS (default on): open artifact pages get new versions, and pages that keep
+   * shared data get its changes, pushed over a watch socket on the app host. Only in effect with a
+   * ROOMS binding; see liveViewsActive.
+   */
+  allowLiveViews: boolean;
+  /** Live-view limits (LIVE_VIEW_* env vars). */
+  liveViews: LiveViewLimits;
+  /**
+   * SHEET_EVAL_BUDGET (default 200,000; 10,000 to 20,000,000): formula steps one read_sheet call
+   * may spend. Never affects the browser, which has its own fixed budget.
+   */
+  sheetEvalBudget: number;
+  /**
    * ALLOW_CATEGORY_SHARING (default on): owners may share a category with people, who then see the
    * artifacts the owner reviewed into it (docs/spec.md "Category sharing and personal categories").
    * Off, category grants count for nothing and the share and portal endpoints are closed.
@@ -205,6 +220,11 @@ export interface RoomLimits {
   messagesPerSecond: number;
 }
 
+export interface LiveViewLimits {
+  /** LIVE_VIEW_MAX_SOCKETS_PER_ARTIFACT: watch sockets on one artifact, apart from room sockets. */
+  maxSocketsPerArtifact: number;
+}
+
 export interface LiveEditSettings {
   /** LIVE_CHECKPOINT_IDLE_S: quiet seconds before an autosave; 0 means explicit saves only. */
   checkpointIdleS: number;
@@ -217,6 +237,9 @@ export interface LiveEditSettings {
 }
 
 export class ConfigError extends Error {}
+
+/** SHEET_EVAL_BUDGET's bounds. */
+export const SHEET_EVAL_BUDGET_BOUNDS = [10_000, 20_000_000] as const;
 
 /** The smallest MAX_VERSION_BYTES an instance may set (1 MB). */
 export const MIN_VERSION_BYTES = 1024 * 1024;
@@ -431,6 +454,22 @@ export function parseConfig(env: Record<string, unknown>): Config {
     allowLiveEditing: boolDefaultOn(env.ALLOW_LIVE_EDITING),
     live: parseLiveEditSettings(env),
     reviewLogin: parseReviewLogin(env),
+    allowLiveViews: boolDefaultOn(env.ALLOW_LIVE_VIEWS),
+    liveViews: {
+      maxSocketsPerArtifact: boundedInt(
+        env,
+        "LIVE_VIEW_MAX_SOCKETS_PER_ARTIFACT",
+        LIVE_VIEW_DEFAULTS.maxSocketsPerArtifact,
+        ...LIVE_VIEW_BOUNDS.maxSocketsPerArtifact,
+      ),
+    },
+    sheetEvalBudget: boundedInt(
+      env,
+      "SHEET_EVAL_BUDGET",
+      DEFAULTS.sheetEvalBudget,
+      SHEET_EVAL_BUDGET_BOUNDS[0],
+      SHEET_EVAL_BUDGET_BOUNDS[1],
+    ),
     allowCategorySharing: boolDefaultOn(env.ALLOW_CATEGORY_SHARING),
     operator: parseOperator(env),
     openaiAppsChallenge: parseChallenge(env),
@@ -635,6 +674,17 @@ export function liveEditMode(
   return roomsActive(c, env) ? "room" : "solo";
 }
 
+/**
+ * Live views are in effect: ALLOW_LIVE_VIEWS is on and the deploy has the ROOMS binding (watch
+ * sockets live in the artifact's ArtifactRoom). They do not need ALLOW_ROOMS or origin isolation:
+ * the socket is on the app host, and carries only version numbers and change signals. Without the
+ * binding they are off; that is not a configuration error. Data signals also need shared data
+ * (sharedDataActive), since only then does a page keep any.
+ */
+export function liveViewsActive(c: Pick<Config, "allowLiveViews">, env: OptionalBindings): boolean {
+  return c.allowLiveViews && env.ROOMS !== undefined;
+}
+
 /** Something on the page that reads the identity claim, and whether it is switched on. */
 export interface IdentityReader {
   name: string;
@@ -691,6 +741,9 @@ export function instanceLimits(
     max_request_bytes: LIMITS.maxInlineRequestBytes,
     max_bundle_bytes: maxBundleBytes(c),
     max_bundle_file_bytes: LIMITS.maxBundleFileBytes,
+    max_sheet_bytes: LIMITS.maxSheetBytes,
+    max_sheet_rows: LIMITS.maxSheetRows,
+    max_sheet_columns: LIMITS.maxSheetColumns,
   };
 }
 

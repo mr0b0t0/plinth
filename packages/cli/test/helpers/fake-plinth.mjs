@@ -18,7 +18,27 @@ const rid = (n = 20) =>
 export const PAT = "plinth_pat_testtoken";
 
 /** Each type's source file, as the server's registry has it; Markdown types send `content`. */
-const SOURCES = { html: "index.html", doc: "content.md", slides: "slides.md" };
+const SOURCES = {
+  html: "index.html",
+  doc: "content.md",
+  slides: "slides.md",
+  design: "design.html",
+  sheet: "sheet.jsonl",
+};
+
+/**
+ * A sheet's source as the server stores it: canonical. The fake drops a final newline (the real
+ * one re-serialises every line; `state.canonicalSheet`, a text-to-text function, stands in for
+ * that when set), and an import (content_format csv or xlsx) becomes a one-row stand-in sheet that
+ * names the format.
+ */
+function storedSheet(text, format, canonical) {
+  if (format === "csv" || format === "xlsx") {
+    return `{"plinth":"sheet","v":1,"columns":[{"name":"Imported","type":"text"}]}\n["${format}"]`;
+  }
+  if (canonical) return canonical(text);
+  return text.endsWith("\n") ? text.slice(0, -1) : text;
+}
 const sourceOf = (type) => SOURCES[type] ?? "index.html";
 
 export async function startFakePlinth(options = {}) {
@@ -354,7 +374,17 @@ export async function startFakePlinth(options = {}) {
         if (dropping === "before") return drop(res);
         state.lastBundle = raw;
         const entries = readTar(raw);
-        const files = new Map(entries.map((e) => [e.path, e.bytes]));
+        const files = new Map(
+          entries.map((e) => [
+            e.path,
+            t.type === "sheet" && e.path === "sheet.jsonl"
+              ? Buffer.from(
+                  storedSheet(e.bytes.toString("utf8"), undefined, state.canonicalSheet),
+                  "utf8",
+                )
+              : e.bytes,
+          ]),
+        );
         let a;
         if (t.mode === "publish") {
           a = { id: t.reserved, slug: `page-${rid(6)}`, type: t.type, versions: [] };
@@ -403,6 +433,30 @@ export async function startFakePlinth(options = {}) {
             ? { id: "u1", email: who.email }
             : { id: "u1", connection: { id: "c1", label: "CI", bound: true, artifact: b ?? null } },
         );
+      }
+      if (p === "/api/v1/artifacts" && req.method === "POST") {
+        const input = JSON.parse((await body(req)).toString() || "{}");
+        state.lastPost = input;
+        if (input.type !== "sheet" || typeof input.content !== "string")
+          return apiError(res, 400, "invalid_input", "The fake publishes sheets inline only");
+        const a = {
+          id: rid(20),
+          slug: `sheet-${rid(6)}`,
+          type: "sheet",
+          title: input.title,
+          versions: [],
+        };
+        state.artifacts.set(a.id, a);
+        const files = new Map([
+          [
+            "sheet.jsonl",
+            Buffer.from(
+              storedSheet(input.content, input.content_format, state.canonicalSheet),
+              "utf8",
+            ),
+          ],
+        ]);
+        return send(res, 201, commit(a, files, input.category));
       }
       if (p === "/api/v1/uploads" && req.method === "POST") {
         const input = JSON.parse((await body(req)).toString() || "{}");
@@ -501,7 +555,15 @@ export async function startFakePlinth(options = {}) {
               "invalid_input",
               `This artifact is a ${a.type}: send ${field === "html" ? "its HTML as html" : "its Markdown as content"}. The type cannot change.`,
             );
-          files.set(sourceOf(a.type), Buffer.from(src, "utf8"));
+          files.set(
+            sourceOf(a.type),
+            Buffer.from(
+              a.type === "sheet"
+                ? storedSheet(src, input.content_format, state.canonicalSheet)
+                : src,
+              "utf8",
+            ),
+          );
           const missing = [];
           for (const x of input.assets ?? []) {
             if (x.content !== undefined) {

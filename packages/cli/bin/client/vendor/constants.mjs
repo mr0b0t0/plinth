@@ -144,6 +144,8 @@ export const LIMITS = {
   maxDataOps: 50,
   /** Collection names in a page's plinth-data-shared tag. */
   maxDataShared: 20,
+  /** Bytes of design HTML (design.html) per version of a design artifact. */
+  maxDesignBytes: 2 * MB,
   /** Bytes of JSON (system.json) per version of a design system artifact. */
   maxDesignSystemBytes: 1 * MB,
   /** The design system format's limits (packages/shared/src/designSystem.ts). */
@@ -172,6 +174,56 @@ export const LIMITS = {
   },
   /** People listed in one artifact's stats (the most recent; `people_total` says how many). */
   maxStatsPeople: 500,
+  // Sheets (docs/spec.md "Sheets", packages/shared/src/sheet/). Fixed, like the doc limits.
+  /** Bytes of JSON lines (sheet.jsonl) per version of a sheet. */
+  maxSheetBytes: 1 * MB,
+  /** Data rows (lines after the header). */
+  maxSheetRows: 10_000,
+  /** Columns, A to CV. */
+  maxSheetColumns: 100,
+  /** Bytes of one row line. */
+  maxSheetRowBytes: 32 * KB,
+  /** Characters in one cell. */
+  maxSheetCellChars: 4_000,
+  /** Characters in one formula, its = included. */
+  maxSheetFormulaChars: 2_000,
+  /** Formula cells in one sheet. */
+  maxSheetFormulaCells: 50_000,
+  /** Parentheses, calls and signs nested in one formula. */
+  maxSheetFormulaDepth: 32,
+  /** Ops in one edit_sheet call. */
+  maxSheetOps: 200,
+  /** Cells one edit_sheet call writes. */
+  maxSheetOpCells: 10_000,
+  /**
+   * Empty rows one edit_sheet set may add between the sheet's last row and the row it writes
+   * (a set at B5000 on a sheet of 10 data rows would add 4,988). Past it the op is refused with
+   * reason "too_far_past_end": append_rows or insert_rows add rows on purpose.
+   */
+  maxSheetSetGapRows: 1_000,
+  /**
+   * Formula characters one edit_sheet call rewrites. Each insert or delete of rows or columns
+   * re-reads every formula in the sheet to move its references, so this bounds the call's CPU:
+   * four passes over a sheet that is all formulas.
+   */
+  maxSheetOpShiftChars: 4 * MB,
+  /** Cells one read_sheet call returns, at most. */
+  maxSheetReadCells: 10_000,
+  /** Cells read_sheet returns when the call names no limit. */
+  defaultSheetReadCells: 2_000,
+  /** Formula steps the renderer spends on one sheet (the Worker uses SHEET_EVAL_BUDGET). */
+  sheetEvalBrowserBudget: 20_000_000,
+  /** Bytes of a CSV or .xlsx file a publish or update imports. */
+  maxSheetImportBytes: 2 * MB,
+  /** Bytes an .xlsx import may decompress in all (its parts' XML). */
+  maxSheetImportInflatedBytes: 24 * MB,
+  // Who is viewing (docs/spec.md "Who is viewing: names and the people list").
+  /** A display name as stored (users.name, PATCH /api/v1/me). */
+  maxDisplayNameLength: 100,
+  /** Code points of a display name as pages, rooms and agents see it. */
+  maxPageDisplayNameLength: 64,
+  /** The `q` of a people search. */
+  maxPeopleQueryLength: 100,
 };
 
 /** The windows an owner can pick for one artifact's stats, in UTC days. */
@@ -250,6 +302,8 @@ export const RATE_LIMITS = {
    * a revoked credential). Real clients miss rarely; this bounds the D1 reads guessing costs.
    */
   uploadMissesPerIpPerHour: 60,
+  /** Reads of an artifact's people list (/__plinth/api/v1/people) per reader per artifact. */
+  peopleReadsPerViewerPerHour: 600,
 };
 
 export const DEFAULTS = {
@@ -280,6 +334,8 @@ export const DEFAULTS = {
     writesPerViewerPerHour: 300,
     writesPerArtifactPerHour: 2000,
   },
+  /** Formula steps one read_sheet call may spend (SHEET_EVAL_BUDGET, 10,000 to 20,000,000). */
+  sheetEvalBudget: 200_000,
 };
 
 /**
@@ -332,12 +388,14 @@ export const CONTENT_DATA_HEADER = "x-plinth-data";
  * `room` is the live room (presence and broadcast, packages/shared/src/room.ts), not shared data.
  * `comments`: the page may open the comment composer with its own anchors (`plinth.comments`,
  * packages/shared/src/pageComments.ts). It is not shared data either.
+ * `people` lets the owner and editors list, from the page, everyone the artifact is shared with.
  */
 export const CAPABILITY_TOKENS = [
   { token: "data", declares: true, needs: [], stored: "always" },
   { token: "viewer", declares: false, needs: [], stored: "always" },
   { token: "room", declares: true, needs: [], stored: "declared" },
   { token: "comments", declares: true, needs: [], stored: "declared" },
+  { token: "people", declares: false, needs: ["data", "viewer"], stored: "declared" },
 ];
 
 export const DATA_CAPABILITIES = CAPABILITY_TOKENS.map((t) => t.token);
@@ -351,6 +409,9 @@ export const BRIDGE_MESSAGE_SOURCE = "plinth-bridge";
 /** postMessage protocol between the app and a typed artifact's renderer (artifactTypes.ts). */
 export const RENDERER_MESSAGE_SOURCE = "plinth-renderer";
 export const RENDERER_PROTOCOL_VERSION = 1;
+
+/** The files a sheet's frame builds when the app asks it to (the renderer message `export`). */
+export const SHEET_EXPORT_FORMATS = ["csv", "xlsx"];
 
 /**
  * CONTENT_ISOLATION. `origin`: each artifact is its own origin. `opaque`: artifact documents get an

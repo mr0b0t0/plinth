@@ -67,14 +67,23 @@
       "assetTypes": "/^image\\/(png|jpeg|gif|webp|avif|svg\\+xml)$/",
       "renderer": {
         "script": "slides.js",
-        "style": "slides.css"
+        "style": "slides.css",
+        "lazy": [
+          {
+            "file": "slides-pptx.js",
+            "entry": "pptx.ts"
+          }
+        ]
       },
       "editor": {
         "language": "markdown",
         "wordWrap": "on"
       },
       "liveEdit": false,
-      "present": true
+      "present": true,
+      "fileExports": [
+        "pptx"
+      ]
     }
   ],
   [
@@ -101,6 +110,56 @@
         "language": "json",
         "wordWrap": "off"
       },
+      "liveEdit": false
+    }
+  ],
+  [
+    "design",
+    {
+      "id": "design",
+      "label": "Design",
+      "badge": "Design",
+      "sourcePath": "design.html",
+      "sourceField": "content",
+      "sourceLabel": "design HTML",
+      "contentType": "text/html; charset=utf-8",
+      "maxSourceBytes": 2097152,
+      "reservedPaths": [
+        "index.html",
+        "design.html"
+      ],
+      "assetTypes": "/^(image\\/(png|jpeg|gif|webp|avif|svg\\+xml)|text\\/css|text\\/javascript|application\\/javascript|video\\/(mp4|webm))(;|$)/",
+      "renderer": {
+        "script": "design.js",
+        "style": "design.css",
+        "frame": "board.html"
+      },
+      "editor": null,
+      "liveEdit": false,
+      "opaqueFrames": true
+    }
+  ],
+  [
+    "sheet",
+    {
+      "id": "sheet",
+      "label": "Sheet",
+      "badge": "Sheet",
+      "sourcePath": "sheet.jsonl",
+      "sourceField": "content",
+      "sourceLabel": "sheet JSON lines",
+      "contentType": "text/plain; charset=utf-8",
+      "maxSourceBytes": 1048576,
+      "reservedPaths": [
+        "index.html",
+        "sheet.jsonl"
+      ],
+      "assetTypes": "/(?!)/",
+      "renderer": {
+        "script": "sheet.js",
+        "style": "sheet.css"
+      },
+      "editor": null,
       "liveEdit": false
     }
   ]

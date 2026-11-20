@@ -4,8 +4,14 @@
 // no byte of it. A change that means to alter the surface updates the hashes here, on purpose:
 // the design_system type (get_design_system, list_artifacts' type filter, the publish and update
 // notes, and the server instructions' design system sentence) did, so did the slides type (its
-// publish note, the type and content descriptions and the instructions' deck sentence), and so did
-// comments from the page (the page anchor note in list_comments and list_mentions).
+// publish note, the type and content descriptions and the instructions' deck sentence), comments
+// from the page (the page anchor note in list_comments and list_mentions), the slides .pptx
+// download (its clause in the slides publish note), the design type (its publish note, the
+// type, content, update and get_artifact descriptions and the instructions' design sentence),
+// the sheet type (read_sheet and edit_sheet, the publish, update and get_artifact notes, the
+// content and content_format descriptions, the untrusted note's sheet sentence, the instructions'
+// sheet sentence, edit_sheet's cap on the empty rows a set adds and read_sheet's range default),
+// and who is viewing (names and the people list in list_artifact_data's description).
 // Category sharing adds its note to publish_artifact, update_artifact, start_upload and
 // list_artifacts and a sentence to the instructions, only while ALLOW_CATEGORY_SHARING is on: the
 // pins below hold with the switch off, and "category sharing on" pins the surface with it on.
@@ -54,10 +60,12 @@ const NAMES = [
   "write_artifact_data",
   "preview_artifact",
   "get_design_system",
+  "read_sheet",
+  "edit_sheet",
 ];
 
 const RESOURCES = "8c9a70350ae4c13067ef489e651d5f5eafe12471c2c63f7c925f9d3bf5bf5e78";
-const INSTRUCTIONS = "8daece5aa1ae373f7bf0790a789834c922c56339db2a009b44e928ad9d831d4c";
+const INSTRUCTIONS = "e2021d90666eee66533ebff1c798e9c5770fbc9b1796bddfde8d756d98d94ad7";
 /** Every pin but "category sharing on" is the surface with category sharing off. */
 const OFF = { ALLOW_CATEGORY_SHARING: "false" };
 
@@ -65,7 +73,7 @@ describe("MCP surface (golden)", () => {
   it("origin isolation", async () => {
     expect(await surface(OFF)).toEqual({
       names: NAMES,
-      tools: "8dea298e5057a85fafd2779917de9949c74a4759f29992cf186947b081b1269c",
+      tools: "5f99bc1a6c9bac70dcf09c70f6e65a6e3d1bc227671243dbb0ea363a727afad0",
       resources: RESOURCES,
       preview: "fd84092d5ecc5a28f494373097e8a3b6e27065d5ef6928f3e124c634f8cf6f47",
       instructions: INSTRUCTIONS,
@@ -75,7 +83,7 @@ describe("MCP surface (golden)", () => {
   it("opaque isolation", async () => {
     expect(await surface({ ...OFF, CONTENT_ISOLATION: "opaque" })).toEqual({
       names: NAMES,
-      tools: "3956cefbccd8069c268ce59c29e3c7e7093a97c9fa37144fbe8d1c5fb1c23471",
+      tools: "0937b239495004c14c12bd0815a9fe3ee69a974695131d7a583641e987e52a81",
       resources: RESOURCES,
       preview: "257bbf5bb47164c389849fffa7fc1dd46e6e7c20e4ef616b4bffefb53a8fd08b",
       instructions: INSTRUCTIONS,
@@ -87,7 +95,7 @@ describe("MCP surface (golden)", () => {
       await surface({ ...OFF, STAGING_CONTENT_FALLBACK: "true", CONTENT_ISOLATION: "opaque" }),
     ).toEqual({
       names: NAMES,
-      tools: "28e908154676e2fe47fe39500677f871aca5092fc2854ef457291d574a0b4f33",
+      tools: "982ee0e7bdbee2ad44f523671ebb4dafbb78ace61e92e12eaa7f7e365af25e1e",
       resources: RESOURCES,
       preview: "257bbf5bb47164c389849fffa7fc1dd46e6e7c20e4ef616b4bffefb53a8fd08b",
       instructions: INSTRUCTIONS,
@@ -97,10 +105,10 @@ describe("MCP surface (golden)", () => {
   it("category sharing on (the default): the share note and the instructions' sentence", async () => {
     expect(await surface()).toEqual({
       names: NAMES,
-      tools: "c94c70da3ffc22922f2ac6cc408c3b78b5abd250f754221398c9b7fa6e9f0784",
+      tools: "664d594d86034f835d8a15e1196bd18f462e08bc7297013cbbb49412a3197496",
       resources: RESOURCES,
       preview: "fd84092d5ecc5a28f494373097e8a3b6e27065d5ef6928f3e124c634f8cf6f47",
-      instructions: "234ecae9094b71ba17500a6edffb9aa70659feda54d45a2c841c70ae3ccf161c",
+      instructions: "7d2ffb9394f0d902e2ddbf6b052d5f89e40a06129bfb7389ef8c7fcff8b126c5",
     });
   });
 });

@@ -451,6 +451,10 @@ export function PeopleSection({
   const [busy, setBusy] = useState(false);
   const emailRef = useRef<HTMLInputElement>(null);
   const grants: GrantDraft[] = sharing.grants.map((g) => ({ email: g.email, role: g.role }));
+  // The display name behind each address (display text only): the server sends it only once its
+  // holder has taken part in the artifact, so adding an address never shows whether it has an
+  // account.
+  const names = new Map(sharing.grants.map((g) => [g.email, g.name ?? null]));
 
   const put = async (next: GrantDraft[]): Promise<boolean> => {
     setBusy(true);
@@ -517,7 +521,16 @@ export function PeopleSection({
         <ul className="pl-acct-people" aria-busy={busy || undefined}>
           {grants.map((g) => (
             <li key={g.email} className="pl-acct-person">
-              <span className="pl-acct-person__email">{g.email}</span>
+              <span className="pl-acct-person__email">
+                {names.get(g.email) ? (
+                  <>
+                    <span className="pl-acct-person__name">{names.get(g.email)}</span>{" "}
+                    <span className="text-muted">{g.email}</span>
+                  </>
+                ) : (
+                  g.email
+                )}
+              </span>
               <div className="pl-acct-person__controls">
                 <Select
                   label={`Role for ${g.email}`}

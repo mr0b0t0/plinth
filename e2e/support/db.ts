@@ -3,7 +3,7 @@
 // (POST /__dev/seed, served only with ENVIRONMENT=development and DEV_SEED=true). Going through the
 // Worker avoids writing the local SQLite file from another process, which locked it under load.
 // `origin` picks the Worker (the opaque-isolation project runs a second one).
-import type { BrowserContext } from "@playwright/test";
+import type { BrowserContext, Page } from "@playwright/test";
 import { APP_ORIGIN } from "./api.ts";
 
 interface SeedResponse {
@@ -97,4 +97,48 @@ export async function dataCounts(
   if (res.status !== 200)
     throw new Error(`data counts failed: ${res.status} ${text.slice(0, 300)}`);
   return JSON.parse(text) as { docs: number; usage_rows: number };
+}
+
+/** What a thumbnail capture opens: its enter URL and the cookies its browser sets first. */
+export interface CaptureLoad {
+  url: string;
+  /** Network.setCookie parameters (DevTools protocol), partition key included. */
+  cookies: Record<string, unknown>[];
+}
+
+/**
+ * What a thumbnail capture opens for version `version` (POST /__dev/capture-url, development
+ * only, with DEV_SEED): the one-time enter URL of a capture pass, no identity, served top-level,
+ * and the cookies services/thumbnails.ts sets in its browser before it loads the page.
+ */
+export async function captureLoad(
+  artifactId: string,
+  version: number,
+  origin = APP_ORIGIN,
+): Promise<CaptureLoad> {
+  const res = await fetch(`${origin}/__dev/capture-url`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ artifact_id: artifactId, version }),
+  });
+  const text = await res.text();
+  if (res.status !== 201)
+    throw new Error(`capture url failed: ${res.status} ${text.slice(0, 300)}`);
+  return JSON.parse(text) as CaptureLoad;
+}
+
+/**
+ * Open a capture as services/thumbnails.ts does in Browser Rendering: set its cookies through the
+ * DevTools protocol, then load the enter URL top-level.
+ */
+export async function openCapture(page: Page, load: CaptureLoad): Promise<void> {
+  const cdp = await page.context().newCDPSession(page);
+  try {
+    for (const cookie of load.cookies) {
+      await cdp.send("Network.setCookie", cookie as never);
+    }
+  } finally {
+    await cdp.detach();
+  }
+  await page.goto(load.url);
 }

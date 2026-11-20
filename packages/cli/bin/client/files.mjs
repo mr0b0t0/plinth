@@ -7,15 +7,87 @@ import { CliError, formatBytes } from "./http.mjs";
 import { ASSET_PATH_RE, DEFAULTS, LIMITS } from "./vendor/constants.mjs";
 
 /** The source file of each artifact type, at the top of the folder (the first one found wins). */
-export const SOURCE_FILES = { html: "index.html", doc: "content.md", slides: "slides.md" };
+export const SOURCE_FILES = {
+  html: "index.html",
+  doc: "content.md",
+  slides: "slides.md",
+  design: "design.html",
+  sheet: "sheet.jsonl",
+};
 
-/** The field a type's source goes in on PUT /artifacts: html for a page, content for Markdown. */
+/** One file a publish imports as a sheet (the server converts it): its content_format by extension. */
+export const IMPORT_FORMATS = { ".csv": "csv", ".xlsx": "xlsx" };
+
+const isPlainObject = (v) => typeof v === "object" && v !== null && !Array.isArray(v);
+const nfc = (v) => (typeof v === "string" ? v.normalize("NFC") : v);
+
+/**
+ * A sheet file's text in the canonical spelling the server stores (serializeSheet in
+ * packages/shared/src/sheet/format.ts, restated here because the client has no dependencies): the
+ * header's keys in a fixed order, a column's type "text" when absent, names and options in NFC, no
+ * freeze of 0 columns, one JSON.stringify per row with trailing empty cells trimmed, no final
+ * newline. It does not check the sheet (the server does): null when the text is not JSON lines
+ * with a header object and array rows, which the server refuses anyway. A test pins it to the
+ * shared serializer.
+ */
+export function canonicalSheet(text) {
+  const body = text.replace(/^﻿/, "");
+  const lines = (body.endsWith("\n") ? body.slice(0, -1) : body)
+    .split("\n")
+    .map((l) => l.replace(/\r$/, ""));
+  let raw;
+  try {
+    raw = JSON.parse(lines[0]);
+  } catch {
+    return null;
+  }
+  if (!isPlainObject(raw) || !Array.isArray(raw.columns)) return null;
+  const columns = [];
+  for (const c of raw.columns) {
+    if (!isPlainObject(c)) return null;
+    const col = { name: nfc(c.name), type: c.type === undefined ? "text" : c.type };
+    if (c.width !== undefined) col.width = c.width;
+    if (c.format !== undefined) {
+      if (!isPlainObject(c.format)) return null;
+      const f = { style: c.format.style };
+      if (c.format.currency !== undefined) f.currency = c.format.currency;
+      if (c.format.decimals !== undefined) f.decimals = c.format.decimals;
+      if (c.format.grouping !== undefined) f.grouping = c.format.grouping;
+      col.format = f;
+    }
+    if (c.options !== undefined) {
+      if (!Array.isArray(c.options)) return null;
+      col.options = c.options.map(nfc);
+    }
+    columns.push(col);
+  }
+  const header = { plinth: "sheet", v: 1, columns };
+  if (isPlainObject(raw.freeze) && raw.freeze.cols > 0) header.freeze = { cols: raw.freeze.cols };
+  const out = [JSON.stringify(header)];
+  for (const line of lines.slice(1)) {
+    let row;
+    try {
+      row = JSON.parse(line);
+    } catch {
+      return null;
+    }
+    if (!Array.isArray(row)) return null;
+    let end = row.length;
+    while (end > 0 && (row[end - 1] === null || row[end - 1] === undefined)) end--;
+    out.push(JSON.stringify(row.slice(0, end).map((c) => (c === undefined ? null : c))));
+  }
+  return out.join("\n");
+}
+
+/** The field a type's source goes in on PUT /artifacts: html for a page, content for every typed one. */
 export const sourceField = (type) => (type === "html" ? "html" : "content");
 
-/** The most bytes a type's source may hold: the instance's limit, or the fixed deck limit. */
+/** The most bytes a type's source may hold: the instance's limit, or the type's fixed limit. */
 export function sourceMaxBytes(type, limits) {
   if (type === "doc") return limits.max_doc_bytes;
   if (type === "slides") return LIMITS.maxSlidesBytes;
+  if (type === "design") return LIMITS.maxDesignBytes;
+  if (type === "sheet") return limits.max_sheet_bytes ?? LIMITS.maxSheetBytes;
   return limits.max_html_bytes;
 }
 
@@ -103,6 +175,9 @@ export function defaultLimits() {
     max_request_bytes: LIMITS.maxInlineRequestBytes,
     max_bundle_bytes: DEFAULTS.maxVersionBytes + LIMITS.bundleOverheadBytes,
     max_bundle_file_bytes: LIMITS.maxBundleFileBytes,
+    max_sheet_bytes: LIMITS.maxSheetBytes,
+    max_sheet_rows: LIMITS.maxSheetRows,
+    max_sheet_columns: LIMITS.maxSheetColumns,
   };
 }
 
