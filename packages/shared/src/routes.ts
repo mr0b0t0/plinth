@@ -33,6 +33,8 @@ export const API_PREFIX = "/api/v1";
 export const API = {
   config: "/config",
   me: "/me",
+  /** GET or PUT whether the signed-in person's own address gets invitation emails (session only). */
+  invitationEmails: "/me/invitation-emails",
   // auth (people)
   loginRequest: "/auth/login",
   loginVerifyCode: "/auth/verify-code",
@@ -135,6 +137,8 @@ export const APP_ROUTES = {
   terms: "/legal/terms",
   privacy: "/legal/privacy",
   acceptableUse: "/legal/acceptable-use",
+  /** Turn invitation emails to your own address off or on again (the emails' footer and header). */
+  invitationEmails: "/invitation-emails",
 } as const;
 
 /** Fill `:params` in a route pattern. */

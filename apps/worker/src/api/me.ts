@@ -1,7 +1,10 @@
 import {
+  API,
   type AppConfig,
   ARTIFACT_TYPES,
   type BoundMe,
+  type InvitationEmailSettings,
+  invitationEmailsInput,
   type Me,
   type MeConnection,
   normalizeDisplayName,
@@ -13,11 +16,12 @@ import {
 } from "@plinth/shared";
 import { and, eq, isNull, sql } from "drizzle-orm";
 import { Hono } from "hono";
-import { instanceLimits, sharedDataActive } from "../config.ts";
+import { instanceLimits, invitationEmailsActive, sharedDataActive } from "../config.ts";
 import { artifacts, users } from "../db/schema.ts";
 import { ApiError, unauthorized } from "../lib/errors.ts";
-import { boundArtifactOf } from "../policy.ts";
+import { boundArtifactOf, mayManageInvitationEmails } from "../policy.ts";
 import { decideFor, findArtifact } from "../services/artifacts.ts";
+import { receivesInvitations, setReceivesInvitations } from "../services/invitations.ts";
 import { artifactLimitFor, getUserById } from "../services/users.ts";
 import {
   type AppContext,
@@ -55,6 +59,7 @@ meApi.get("/config", (c) => {
       id,
       available: pageDataOf(TYPE_REGISTRY[id]) !== "fixed" || sharedDataActive(config),
     })),
+    invitation_emails: invitationEmailsActive(config),
     live_views: config.allowLiveViews,
   };
   const res = c.json(body);
@@ -147,3 +152,36 @@ async function meConnection(c: AppContext): Promise<MeConnection | null> {
   }
   return { id: p.connectionId, label: p.connectionLabel, bound: bound !== null, artifact };
 }
+
+// ---------- Invitation emails (docs/spec.md "Invitation emails") ----------
+
+/**
+ * Whether the signed-in person's own address gets invitation emails, and turning them off or on.
+ * The address is the session's, never a parameter, so nobody can change or learn it for another
+ * address. People only (policy.ts mayManageInvitationEmails); writes carry the CSRF pair.
+ */
+function invitationEmailsOwner(c: AppContext): string {
+  const may = mayManageInvitationEmails(c.get("principal"));
+  if (may.allow) return may.email;
+  if (may.reason === "not_a_person") {
+    throw new ApiError("forbidden", "Only the person can change their invitation emails");
+  }
+  throw unauthorized();
+}
+
+meApi.get(API.invitationEmails, async (c) => {
+  const email = invitationEmailsOwner(c);
+  const body: InvitationEmailSettings = {
+    email,
+    receive: await receivesInvitations(c.env.DB, email),
+  };
+  return c.json(body);
+});
+
+meApi.put(API.invitationEmails, async (c) => {
+  const email = invitationEmailsOwner(c);
+  const { receive } = await parseBody(c, invitationEmailsInput);
+  await setReceivesInvitations(c.env.DB, email, receive);
+  const body: InvitationEmailSettings = { email, receive };
+  return c.json(body);
+});

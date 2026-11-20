@@ -43,8 +43,63 @@ export const PUBLISH_WARNING_CODES = [
   "design_system_unavailable",
   "design_system_outdated",
   "board_not_seeded",
+  "sensitive_file",
 ] as const;
 export type PublishWarningCode = (typeof PUBLISH_WARNING_CODES)[number];
+
+/**
+ * The local record of which project files a user chose for which artifact (docs/spec.md, "Project
+ * files for a page"). Agents keep it at the project root, never publish it and never commit it: it
+ * lists artifact ids, and an id opens an unlisted artifact.
+ */
+export const PROJECT_FILES_RECORD = ".plinth-files.json";
+
+/**
+ * One rule of SENSITIVE_PATH_RULES, matched against a lowercased path segment. `name`: the whole
+ * segment. `prefix`: the segment starts with `value` (and ends with `suffix` when given), unless it
+ * is one of `except`. `extension`: the last segment ends with `value`. `folder`: a segment before
+ * the last one.
+ */
+export type SensitivePathRule =
+  | { kind: "name"; value: string }
+  | { kind: "prefix"; value: string; suffix?: string; except?: readonly string[] }
+  | { kind: "extension"; value: string }
+  | { kind: "folder"; value: string };
+
+/**
+ * File names that usually hold secrets, for the advisory sensitive_file publish warning. Names only:
+ * a secret in an ordinary file name is not caught. The project files record is on the list because
+ * its artifact ids open unlisted artifacts, not because it holds a key. One rule per line.
+ */
+export const SENSITIVE_PATH_RULES: readonly SensitivePathRule[] = [
+  { kind: "name", value: ".env" },
+  { kind: "name", value: ".npmrc" },
+  { kind: "name", value: ".pypirc" },
+  { kind: "name", value: ".netrc" },
+  { kind: "name", value: ".git-credentials" },
+  { kind: "name", value: ".dev.vars" },
+  { kind: "name", value: ".htpasswd" },
+  { kind: "name", value: "id_rsa" },
+  { kind: "name", value: "id_dsa" },
+  { kind: "name", value: "id_ecdsa" },
+  { kind: "name", value: "id_ed25519" },
+  { kind: "name", value: "credentials.json" },
+  { kind: "name", value: "terraform.tfstate" },
+  { kind: "name", value: PROJECT_FILES_RECORD },
+  { kind: "prefix", value: ".env.", except: [".env.example", ".env.sample", ".env.template"] },
+  { kind: "prefix", value: "service-account", suffix: ".json" },
+  { kind: "extension", value: ".pem" },
+  { kind: "extension", value: ".key" },
+  { kind: "extension", value: ".p12" },
+  { kind: "extension", value: ".pfx" },
+  { kind: "extension", value: ".keystore" },
+  { kind: "extension", value: ".jks" },
+  { kind: "extension", value: ".tfstate" },
+  { kind: "folder", value: ".git" },
+  { kind: "folder", value: ".ssh" },
+  { kind: "folder", value: ".aws" },
+  { kind: "folder", value: ".gnupg" },
+];
 
 /** Token scopes. A personal access token or OAuth grant carries a space-separated subset. */
 export const SCOPES = ["artifacts:read", "artifacts:write", "mentions"] as const;
@@ -249,6 +304,18 @@ export const STATS_RANGES = [7, 30, 90, 365] as const;
 export const VIEW_LOG_DEFAULTS = { retentionDays: 365 } as const;
 export const VIEW_LOG_BOUNDS = { retentionDays: [90, 3650] } as const;
 
+/**
+ * Invitation emails an instance sends per UTC day (docs/spec.md "Invitation emails"), set by the
+ * operator because they share the email provider's quota with sign-in and viewing codes.
+ * `perDay` (INVITATION_EMAILS_PER_DAY): every owner together; 0 turns invitation emails off.
+ * `perOwnerPerDay` (INVITATION_EMAILS_PER_OWNER_PER_DAY): one owner's sharing changes.
+ */
+export const INVITATION_DEFAULTS = { perDay: 1000, perOwnerPerDay: 20 } as const;
+export const INVITATION_BOUNDS = {
+  perDay: [0, 1_000_000],
+  perOwnerPerDay: [1, 10_000],
+} as const;
+
 export const TTL = {
   /** Magic link and six-digit code. */
   loginCodeMs: 15 * 60 * 1000,
@@ -317,6 +384,15 @@ export const RATE_LIMITS = {
   uploadMissesPerIpPerHour: 60,
   /** Reads of an artifact's people list (/__plinth/api/v1/people) per reader per artifact. */
   peopleReadsPerViewerPerHour: 600,
+  /** Invitation emails one sharing change may send, so one request stays within Worker limits. */
+  invitationsPerChange: 40,
+  /** Invitation emails one address may receive, from every owner together. */
+  invitationsPerRecipientPerDay: 10,
+  /**
+   * Invitation emails one owner may send one address, below invitationsPerRecipientPerDay, so one
+   * account cannot use up an address's daily invitations for everyone else.
+   */
+  invitationsPerOwnerPerRecipientPerDay: 3,
 } as const;
 
 export const DEFAULTS = {

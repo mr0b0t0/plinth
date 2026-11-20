@@ -233,6 +233,17 @@ describe("tar formats real archivers write", () => {
     ]);
   });
 
+  it("skips the project files record like any dotfile, at the top or in a folder", async () => {
+    const body = tar([
+      ...site,
+      { name: ".plinth-files.json", data: "{}" },
+      { name: "files/.plinth-files.json", data: "{}" },
+    ]);
+    const { files, summary } = await read(body);
+    expect(files.map((f) => f.path)).toEqual(["index.html", "assets/app.js"]);
+    expect(summary.skipped).toEqual([".plinth-files.json", "files/.plinth-files.json"]);
+  });
+
   it("caps the skipped list at 50 names", async () => {
     const dots = Array.from({ length: 60 }, (_, i) => ({ name: `.d${i}`, data: "x" }));
     const { summary } = await read(tar([...site, ...dots]));

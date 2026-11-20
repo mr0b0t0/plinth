@@ -10,6 +10,21 @@ Add a line under **Unreleased** in the pull request that makes a change people w
 
 ## Unreleased
 
+- **Project files for a page.** Agents now have a recipe for pages that show files from a project
+  (a log viewer, a CSV explorer, a code tour): publish copies of the files the user chose under
+  `files/` and read them by relative URL; a refresh is a new version. Only the user in the session
+  chooses the files: a mention, even from the owner, never makes the agent read one, and agents can
+  remember the user's choice in a local `.plinth-files.json` that is never published or committed.
+  Project files that Plinth would serve as a page or code (`.html`, `.svg`, `.js`, `.css`…) go up
+  with `.txt` added, so opening one never runs it, or are embedded in the page as JSON with every
+  `<` escaped, so a `</script>` in the file cannot end the block. A big refresh through an upload
+  or the CLI holds the page and every file it keeps. Update the plugin for the agent's project
+  files rules. Plugin 0.26.0.
+- **A `sensitive_file` publish warning.** A publish, update or upload that sends a file whose name
+  usually holds secrets (`.env`, `*.pem`, `id_rsa`, `credentials.json`), or a `.plinth-files.json`
+  record, lists `sensitive_file` first, so the agent stops and asks before handing over the link.
+  It checks names only, never blocks, and is not reported for files carried forward, reused by
+  hash or restored.
 - **Dashboard previews in the list, and one card height.** Each row of the list view starts with a
   small preview of the page, its thumbnail, in place of the page glyph (the glyph stays until a
   thumbnail exists). A card shows its category as plain text on its info line instead of a chip on
@@ -121,6 +136,25 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   someone published a newer one meanwhile, nothing is overwritten: the newer settings are shown
   and the board loads that version. Any other refusal shows its own message. The skill tells
   agents to read a board's settings again before changing them, since people change them too.
+- **Email people when you share with them.** Adding someone to an artifact's People, or to a
+  shared category, with **Notify people** ticked (the default) emails them that you shared it with
+  them, with the title, their role and the link. Only people the change adds are emailed, at most once a
+  day per artifact, within daily limits per owner (20, `INVITATION_EMAILS_PER_OWNER_PER_DAY`),
+  per owner and recipient (3), per recipient (10) and for the whole instance (1000,
+  `INVITATION_EMAILS_PER_DAY`; `0` turns invitation emails off), and only from a verified account. `PUT /api/v1/artifacts/:ref/sharing`, `set_visibility` and the category share
+  endpoints take `notify` (default `false`): agents email people only when asked, and the result's
+  `invitations` says who was emailed and who was not, and why. A change's emails go to the provider
+  in one batch request (Resend) or one at a time, never all at once, so they stay within its
+  request rate and leave room for sign-in codes; one the provider refuses can be sent again by
+  adding the person again. Each email's footer and `List-Unsubscribe` header link
+  `/invitation-emails`, where the recipient signs in and turns invitation emails to their address
+  off (or back on); owners who share with them are told `opted_out`, and the access still applies.
+  The opt-out and the per-address limits cover the inbox, so `bo+x@gmail.com` and `b.o@gmail.com`
+  count as `bo@gmail.com`, and an `opted_out` answer costs the owner one of their daily
+  invitations, as an email would.
+  Host names in titles and names are defanged (`office365-reset[.]co`) so mail clients do not link
+  them. `EMAIL_PROVIDER=console` outside development and `SINGLE_USER_MODE` send no invitations.
+  Migration `0021_invitation_opt_outs.sql`.
 - **Open pages keep their place when a new version arrives.** A doc updates in place: the frame is
   not reloaded and the heading you were reading stays where it was. A page that loads
   `/__plinth/runtime.js` keeps its scroll position and where it was inside the artifact (a

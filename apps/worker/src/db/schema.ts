@@ -371,3 +371,11 @@ export type ConnectionRow = typeof agentConnections.$inferSelect;
 export type CommentRow = typeof comments.$inferSelect;
 export type MentionTaskRow = typeof mentionTasks.$inferSelect;
 export type GrantRow = typeof accessGrants.$inferSelect;
+
+// Invitation emails (migrations/0021_invitation_opt_outs.sql): mailboxes, by their invitation
+// hash (services/invitations.ts invitationAddressHash, of invitationMailbox), that turned
+// invitation emails off.
+export const invitationOptOuts = sqliteTable("invitation_opt_outs", {
+  addressHash: text("address_hash").primaryKey(),
+  createdAt: text("created_at").notNull(),
+});
