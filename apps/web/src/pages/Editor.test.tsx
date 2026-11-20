@@ -150,7 +150,8 @@ describe("Editor page", () => {
     expect(await screen.findByRole("heading", { level: 1, name: "Sign in to edit" })).toBeTruthy();
     const links = screen.getAllByRole("link", { name: "Sign in" });
     expect(links.at(-1)?.getAttribute("href")).toBe("/login?next=%2Fa%2Fdemo%2Fedit");
-    expect(document.title).toBe("Sign in to edit · Plinth");
+    // The title is set in an effect after the heading renders; wait for it rather than race it.
+    await waitFor(() => expect(document.title).toBe("Sign in to edit · Plinth"));
   });
 
   for (const role of ["viewer", "commenter"]) {
@@ -224,7 +225,7 @@ describe("Editor page", () => {
     expect(screen.getByRole("link", { name: "Version history" }).getAttribute("href")).toBe(
       "/a/demo/history",
     );
-    expect(document.title).toBe("Edit Demo piece · Plinth");
+    await waitFor(() => expect(document.title).toBe("Edit Demo piece · Plinth"));
     expect(document.querySelector(".pl-editor")).toBeNull();
   });
 
