@@ -17,7 +17,7 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   nobody touched byte for byte. A Move, Delete, Turn into or Insert below never runs the blocks
   around it together, even with no blank lines between them (a list that would join another takes a different bullet or
   number style, which looks the same), and neither does clearing a block's text, which removes the
-  block the same way at once, so a Publish made while it is still open never has the old text. The menu of a new, still empty block acts on that block. A
+  block the same way at once, so a Publish made while it is still open never has the old text, and what is typed in it meanwhile reaches the doc even when the block is closed first. The menu of a new, still empty block acts on that block. A
   link can go to any address the page links, spaces and
   accented letters included. A change the doc cannot take (at its size limit, or while not
   connected) says so and keeps the block open with what was typed. An image's alt text is a

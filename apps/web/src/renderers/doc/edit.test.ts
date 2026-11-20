@@ -5,7 +5,7 @@
 // blocks the model cannot show are read-only with Ask an agent; images keep their bytes.
 import { LIMITS } from "@plinth/shared";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { ClientLease, LeaseDenial } from "../common/live.ts";
+import type { ClientLease, LeaseDenial, LeaseLoss } from "../common/live.ts";
 import { FORMAT_LOST, type RichBlockEditor } from "../common/richblock.ts";
 import {
   CLEAR_REFUSED,
@@ -1279,7 +1279,14 @@ describe("DocEditor: holders and reconnects", () => {
 function fakeRoom(text: string, deny: () => LeaseDenial | null = () => null) {
   let mine: ClientLease | null = null;
   let n = 0;
-  const later = (f: () => void) => queueMicrotask(f);
+  // A lost lease (lose) takes the answers still on their way with it.
+  let gen = 0;
+  const later = (f: () => void) => {
+    const g = gen;
+    queueMicrotask(() => {
+      if (g === gen) f();
+    });
+  };
   const backend = {
     lines: text.split("\n"),
     ready: true,
@@ -1295,6 +1302,7 @@ function fakeRoom(text: string, deny: () => LeaseDenial | null = () => null) {
     durableText: null,
     refused: [] as string[],
     lease: vi.fn((r: { start: number; end: number }) => {
+      if (!backend.connected) return false;
       later(() => {
         const why = deny();
         if (why) {
@@ -1314,7 +1322,7 @@ function fakeRoom(text: string, deny: () => LeaseDenial | null = () => null) {
     }),
     edit: vi.fn((t: string) => {
       const id = mine?.id;
-      if (!id) return false;
+      if (!id || !backend.connected) return false;
       later(() => {
         const l = mine;
         if (l?.id !== id) {
@@ -1346,7 +1354,19 @@ function fakeRoom(text: string, deny: () => LeaseDenial | null = () => null) {
   const settle = async () => {
     for (let i = 0; i < 30; i++) await Promise.resolve();
   };
-  return { backend, editor, settle, text: () => backend.lines.join("\n") };
+  /** The room ends the lease held (a reconnect drops the socket too), as the client reports it. */
+  const lose = (reason: LeaseLoss) => {
+    mine = null;
+    gen++;
+    if (reason === "reconnect") backend.connected = false;
+    editor.lost(reason);
+  };
+  /** The socket is back with the room's text: the client says so with a change. */
+  const reconnect = () => {
+    backend.connected = true;
+    editor.changed();
+  };
+  return { backend, editor, settle, lose, reconnect, text: () => backend.lines.join("\n") };
 }
 
 describe("DocEditor: a cleared block, with a room", () => {
@@ -1480,6 +1500,137 @@ describe("DocEditor: a cleared block, with a room", () => {
     await settle();
     expect(text()).toBe("- a\n\nmid!\n\n- b");
     expect(backend.refused).toEqual([]);
+  });
+
+  /** A fresh page for each case of a loop. */
+  const fresh = () => {
+    document.body.innerHTML = "";
+    root = document.createElement("main");
+    document.body.append(root);
+  };
+
+  it("typed into, then closed before the room answers, it still sends what was typed", async () => {
+    // Escape, a click on another block, Tab and Done, at each step of the removal: before its
+    // lease, once its edit is sent, and while the place the block stays open at is asked for.
+    const ends: Record<string, (editor: DocEditor) => void> = {
+      escape: (editor) => key(rich(editor).editable, "Escape"),
+      click: () => click(root.querySelectorAll("ul")[1] as Element),
+      tab: (editor) => key(rich(editor).editable, "Tab"),
+      done: (editor) => editor.setEditing(false),
+    };
+    for (const [how, end] of Object.entries(ends)) {
+      for (const steps of [0, 1, 2]) {
+        fresh();
+        const at = `${how} after ${steps}`;
+        const { backend, editor, settle, text } = fakeRoom("- a\n\nmid\n\n- b");
+        click(root.querySelector("p") as Element);
+        await settle();
+        typeText(rich(editor).editable, "");
+        for (let i = 0; i < steps; i++) await Promise.resolve();
+        typeText(rich(editor).editable, "new");
+        end(editor);
+        // Until the doc has it, the app sees unsent changes.
+        expect(editor.pending, at).toBe(true);
+        await settle();
+        expect(text(), at).toBe("- a\n\nnew\n\n* b");
+        expect(editor.pending, at).toBe(false);
+        expect(backend.refused, at).toEqual([]);
+        if (how === "click" || how === "tab") {
+          expect(rich(editor).editable.textContent, at).toBe("b");
+        } else expect(backend.mine, at).toBeNull();
+        editor.setEditing(false);
+        await settle();
+      }
+    }
+  });
+
+  it("typed into, then refused its removal, it keeps the typing and sends it in its place", async () => {
+    let why: LeaseDenial | null = null;
+    const once = () => {
+      const w = why;
+      why = null;
+      return w;
+    };
+    const { backend, editor, settle, text } = fakeRoom("- a\n\nmid\n\n- b", once);
+    click(root.querySelector("p") as Element);
+    await settle();
+    why = "held";
+    typeText(rich(editor).editable, "");
+    typeText(rich(editor).editable, "new");
+    await settle();
+    expect(rich(editor).editable.textContent).toBe("new");
+    vi.advanceTimersByTime(EDIT_DEBOUNCE_MS);
+    await settle();
+    expect(text()).toBe("- a\n\nnew\n\n- b");
+    expect(editor.pending).toBe(false);
+    // Closed before the refusal arrives: the same, and the block's lease is let go.
+    why = "held";
+    typeText(rich(editor).editable, "");
+    typeText(rich(editor).editable, "newer");
+    key(rich(editor).editable, "Escape");
+    expect(editor.pending).toBe(true);
+    await settle();
+    expect(text()).toBe("- a\n\nnewer\n\n- b");
+    expect(backend.mine).toBeNull();
+    expect(editor.pending).toBe(false);
+    expect(backend.refused).toEqual([]);
+  });
+
+  it("a reconnect or a merge while its removal is on its way keeps the block and its typing", async () => {
+    // Before the removal's lease and once its edit is sent, the removal is lost with the lease:
+    // the typing goes in place of the block. Once the removal is in, it goes where the block was.
+    const want = ["- a\n\nnew\n\n- b", "- a\n\nnew\n\n- b", "- a\n\nnew\n\n* b"];
+    for (const reason of ["reconnect", "rebased"] as const) {
+      for (const steps of [0, 1, 2]) {
+        fresh();
+        const at = `${reason} after ${steps}`;
+        const { backend, editor, settle, lose, reconnect, text } = fakeRoom("- a\n\nmid\n\n- b");
+        click(root.querySelector("p") as Element);
+        await settle();
+        typeText(rich(editor).editable, "");
+        for (let i = 0; i < steps; i++) await Promise.resolve();
+        typeText(rich(editor).editable, "new");
+        lose(reason);
+        await settle();
+        expect(rich(editor).editable.textContent, at).toBe("new");
+        reconnect();
+        await settle();
+        vi.advanceTimersByTime(0);
+        await settle();
+        expect(rich(editor).editable.textContent, at).toBe("new");
+        expect(text(), at).toBe(want[steps]);
+        expect(editor.pending, at).toBe(false);
+        expect(backend.refused, at).toEqual([]);
+        editor.setEditing(false);
+        await settle();
+      }
+    }
+  });
+
+  it("closed with typing, then a reconnect, sends the typing once the draft is back", async () => {
+    const want = ["- a\n\nnew\n\n- b", "- a\n\nnew\n\n- b", "- a\n\nnew\n\n* b"];
+    for (const steps of [0, 1, 2]) {
+      fresh();
+      const at = `after ${steps}`;
+      const { backend, editor, settle, lose, reconnect, text } = fakeRoom("- a\n\nmid\n\n- b");
+      click(root.querySelector("p") as Element);
+      await settle();
+      typeText(rich(editor).editable, "");
+      for (let i = 0; i < steps; i++) await Promise.resolve();
+      typeText(rich(editor).editable, "new");
+      key(rich(editor).editable, "Escape");
+      lose("reconnect");
+      await settle();
+      // Nothing can be sent while the socket is away, and the app still sees unsent changes.
+      expect(editor.pending, at).toBe(true);
+      reconnect();
+      await settle();
+      expect(text(), at).toBe(want[steps]);
+      expect(editor.openEditor, at).toBeNull();
+      expect(backend.mine, at).toBeNull();
+      expect(editor.pending, at).toBe(false);
+      expect(backend.refused, at).toEqual([]);
+    }
   });
 
   it("a removal refused after the block was closed releases its lease and says so", async () => {

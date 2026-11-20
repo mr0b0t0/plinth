@@ -99,6 +99,11 @@ const CHANGED_MEANWHILE = "The doc changed meanwhile. Try again.";
  * stays open with its last text, which is what the doc has.
  */
 export const CLEAR_REFUSED = "Couldn't remove this block now. Try again.";
+/**
+ * Why what was typed in a block closed while it was being removed (removeCleared) did not reach
+ * the doc: the place it was going to changed, or someone else holds it.
+ */
+export const NOT_KEPT = "What you typed in the block you closed couldn't be added. Type it again.";
 
 /** What the editor needs of the live draft: the room's (LiveDocClient) or a local one. */
 export type DocBackend = LiveBackend;
@@ -212,6 +217,12 @@ interface Want extends LineRange {
   at?: { x: number; y: number };
   /** Where the caret goes otherwise. */
   caret?: "start" | "end";
+  /**
+   * The op writes what was typed in a cleared block closed while it was being removed (keepTyped):
+   * the frame reports unsent changes until it is made, and it is asked for again once the draft is
+   * back after a reconnect.
+   */
+  kept?: true;
 }
 
 interface Pad {
@@ -230,7 +241,8 @@ type Place = { start: number } | { above: number | null };
  * A cleared block being removed (removeCleared). "lease": the lease on its lines and the blocks
  * the removal writes again is asked for, in place of the block's own; "sent": the edit is sent;
  * "insert": the insert point the block stays open at is asked for. `drop` once the block was
- * closed meanwhile: the removal ends as a Delete does, and the lease is released where it lands.
+ * closed meanwhile: the removal ends as a Delete does, and the lease is released where it lands,
+ * after what was typed in the block meanwhile (`keep`) is written by itself (keepTyped).
  */
 interface Clearing {
   phase: "lease" | "sent" | "insert";
@@ -239,6 +251,17 @@ interface Clearing {
   text: string;
   lease: string;
   at: number;
+  /** The block's own lease when it was cleared: its first line, its text and its padding. */
+  from: number;
+  own: string;
+  pad: Pad;
+  /** The lines kept around the block's core (Open.prefix and Open.suffix). */
+  prefix: string[];
+  suffix: string[];
+  /** What was typed in the block before it was closed (its core, as Markdown), or null. */
+  keep: string | null;
+  /** The insert point the block stays open at, once the doc has the removal. */
+  point: number | null;
 }
 
 /** The block being edited: its formatted-text editor and the lines kept around its core. */
@@ -458,9 +481,12 @@ export class DocEditor {
     return this.want?.op !== undefined;
   }
 
-  /** A block's text is waiting in the debounce, or a cleared block's removal is on its way. */
+  /**
+   * A block's text is waiting in the debounce, a cleared block's removal is on its way, or what was
+   * typed in one closed meanwhile is.
+   */
   get pending(): boolean {
-    return this.timer !== null || this.clearing !== null;
+    return this.timer !== null || this.clearing !== null || this.want?.kept === true;
   }
 
   /** A block op or a cleared block's removal is on its way: other ops and opens wait for it. */
@@ -1351,6 +1377,10 @@ export class DocEditor {
       // The place a cleared block stays open at, once its removal is in (removeCleared).
       this.clearing = null;
       if (c.drop || !this.open || !this.editing) {
+        if (c.keep !== null) {
+          this.keepTyped(c, c.keep);
+          return;
+        }
         this.backend.release();
         this.render();
         this.hooks.status();
@@ -1530,8 +1560,23 @@ export class DocEditor {
     if (c) {
       if (refusal !== null || !result || "refusal" in checked) {
         // Checked before the lease was asked for, so the doc changed meanwhile. The lease now
-        // covers the blocks around the cleared one too, so the block closes with its last text.
+        // covers the blocks around the cleared one too, so the block closes with its last text;
+        // what was typed in it meanwhile goes in its place (keepTyped), or, while it is open, the
+        // block is taken again with its text, as after a reconnect.
         this.clearing = null;
+        const typed = c.drop ? c.keep : this.typedCore();
+        if (typed !== null && !c.drop && this.open && this.editing) {
+          this.backend.release();
+          this.retakeTyped(c);
+          this.render();
+          this.hooks.status();
+          return;
+        }
+        if (typed !== null) {
+          this.dropOpen();
+          this.keepTyped(c, typed);
+          return;
+        }
         this.backend.release();
         this.dropOpen();
         this.held = null;
@@ -1550,8 +1595,9 @@ export class DocEditor {
     this.backend.release();
     if (refusal !== null || !result) {
       // Nothing changed, so nothing is opened or selected for it.
-      this.showNotice(refusal ?? CHANGED_MEANWHILE);
+      this.showNotice(w.kept ? NOT_KEPT : (refusal ?? CHANGED_MEANWHILE));
       this.render();
+      this.hooks.status();
       return;
     }
     if (result.focus !== undefined) this.after = { line: result.focus, open: !!result.open };
@@ -1594,8 +1640,13 @@ export class DocEditor {
     }
     if (c) {
       // The removal is in, but not the place the block stays open at: what is typed in it stays
-      // on the page to copy, as after a reconnect (below); an empty one closes.
+      // on the page to copy, as after a reconnect (below); an empty one closes. What was typed in
+      // one closed meanwhile is written by itself.
       this.clearing = null;
+      if (c.drop && c.keep !== null) {
+        this.keepTyped(c, c.keep);
+        return;
+      }
       this.backend.release();
       if (c.drop || !this.open || isEmptyBlock(this.open.rich.model)) {
         this.dropOpen();
@@ -1604,6 +1655,12 @@ export class DocEditor {
         this.hooks.status();
         return;
       }
+    }
+    if (w?.kept) {
+      this.showNotice(NOT_KEPT);
+      this.render();
+      this.hooks.status();
+      return;
     }
     if (w?.op) {
       this.showNotice(
@@ -1634,7 +1691,8 @@ export class DocEditor {
       if (!p) return;
       const next = { ...w, ...p, tries: w.tries + 1 };
       this.want = next;
-      if (!b.lease(p)) this.want = null;
+      // Not connected: typing kept from a closed block is asked for again once the draft is back.
+      if (!b.lease(p)) this.want = w.kept ? { ...next, tries: 0 } : null;
       return;
     }
     const n = w.text === "" ? 0 : w.text.split("\n").length;
@@ -1663,14 +1721,35 @@ export class DocEditor {
     this.cancelTimer();
     const c = this.clearing;
     if (c) {
-      // A cleared block's lease ended while it was being removed: the block closes as the doc
-      // has it, and the page says so when the removal was not made.
+      // A cleared block's lease ended while it was being removed. What was typed in it meanwhile
+      // is kept: after a reconnect or a merge an open block stays open with it and is taken again
+      // (as below), and a closed one's typing is written once the draft is back (keepTyped).
+      // Otherwise the block closes as the doc has it, and the page says so when the removal was
+      // not made.
       this.clearing = null;
       this.want = null;
+      const typed = c.drop ? c.keep : this.typedCore();
+      const again = reason === "reconnect" || reason === "rebased";
+      if (typed !== null && again && !c.drop && open && held && this.editing) {
+        this.retakeTyped(c);
+        this.hooks.status();
+        return;
+      }
+      if (typed !== null && again) {
+        this.dropOpen();
+        this.keepTyped(c, typed);
+        return;
+      }
       this.dropOpen();
       this.held = null;
       this.render();
-      if (c.phase === "lease") this.showNotice(CLEAR_REFUSED);
+      if (typed !== null) {
+        this.showNotice(
+          reason === "takeover"
+            ? "Someone else took over this block."
+            : "Editing is paused: the draft changed. Your block was closed.",
+        );
+      } else if (c.phase === "lease") this.showNotice(CLEAR_REFUSED);
       this.hooks.status();
       return;
     }
@@ -1707,8 +1786,15 @@ export class DocEditor {
   changed(): void {
     const w = this.want;
     const b = this.backend;
-    if (w?.keep !== undefined && !b.mine && b.connected && b.settled && w.tries === 0) {
-      // A block to re-take after a reconnect or a merge.
+    if (
+      w &&
+      (w.keep !== undefined || w.kept) &&
+      !b.mine &&
+      b.connected &&
+      b.settled &&
+      w.tries === 0
+    ) {
+      // A block to re-take after a reconnect or a merge, or a closed block's typing to write.
       this.want = null;
       this.retake(w);
     }
@@ -1934,7 +2020,21 @@ export class DocEditor {
       this.refused(CLEAR_REFUSED);
       return;
     }
-    this.clearing = { phase: "lease", drop: false, text: "", lease: "", at: 0 };
+    const open = this.open;
+    this.clearing = {
+      phase: "lease",
+      drop: false,
+      text: "",
+      lease: "",
+      at: 0,
+      from: mine.start,
+      own: joinLines(b.lines.slice(mine.start, mine.end)),
+      pad: { ...this.pad },
+      prefix: open ? [...open.prefix] : [],
+      suffix: open ? [...open.suffix] : [],
+      keep: null,
+      point: null,
+    };
     this.want = {
       start: p.start,
       end: p.end,
@@ -1965,8 +2065,13 @@ export class DocEditor {
     const n = blockLines(c.text).length;
     if (m.end - m.start !== n || joinLines(b.lines.slice(m.start, m.end)) !== c.text) return;
     const at = m.start + c.at;
+    c.point = at;
     if (c.drop || !this.open || !this.editing) {
       this.clearing = null;
+      if (c.keep !== null) {
+        this.keepTyped(c, c.keep);
+        return;
+      }
       b.release();
       if (this.editing) this.after = { line: at, open: false };
       this.render();
@@ -1993,19 +2098,107 @@ export class DocEditor {
   /**
    * A cleared block's removal was refused, or no longer applies. Not granted, the block's own
    * lease is as it was: the block stays open with its last text, which the doc has, and the page
-   * says so. Closed meanwhile, the lease is released and the block shows that text.
+   * says so. Closed meanwhile, the lease is released and the block shows that text. What was typed
+   * in it meanwhile is not empty, so it needs no removal: it is sent under that lease, as any
+   * typing is.
    */
   private clearFailed(): void {
     const c = this.clearing;
     this.clearing = null;
     if (!c) return;
     if (!c.drop && this.open) {
-      this.refused(CLEAR_REFUSED);
+      if (this.typedCore() !== null) this.schedule(0);
+      else this.refused(CLEAR_REFUSED);
       this.render();
+      return;
+    }
+    if (c.keep !== null) {
+      this.keepTyped(c, c.keep);
       return;
     }
     if (this.backend.mine) this.backend.release();
     this.showNotice(CLEAR_REFUSED);
+    this.render();
+    this.hooks.status();
+  }
+
+  /**
+   * What is typed in the open block, as Markdown: null when it is empty, or when it cannot be
+   * written, which the page then says.
+   */
+  private typedCore(): string | null {
+    const open = this.open;
+    if (!open || isEmptyBlock(open.rich.model)) return null;
+    const core = verifyBlock(open.rich.model, TOOLS, open.env);
+    if (core === null) this.showNotice(FORMAT_LOST);
+    return core ? core : null;
+  }
+
+  /**
+   * A cleared block typed into is still open, but its removal's lease is gone (refused once
+   * granted, a reconnect, a merge): it stays where it was with its text and is taken again, as after
+   * a reconnect. Until the removal is in, that is its own lines (or, when they are gone, a new block
+   * near them); after, the place it stays open at.
+   */
+  private retakeTyped(c: Clearing): void {
+    const keep = this.currentText() ?? "";
+    this.want =
+      c.point !== null
+        ? { start: c.point, end: c.point, text: "", insert: true, keep, tries: 0 }
+        : {
+            start: c.from,
+            end: c.from + blockLines(c.own).length,
+            text: c.own,
+            insert: false,
+            keep,
+            tries: 0,
+          };
+  }
+
+  /**
+   * What was typed in a cleared block that closed while its removal was on its way (or as its
+   * lease ended), written by itself as a block op: in place of the block while the doc does not
+   * have the removal, where the block was once it does. The lease held is used when it is the one
+   * the op needs, and released otherwise. Until the op is made the frame reports unsent changes,
+   * and after a reconnect it is asked for again once the draft is back. A refusal says so.
+   */
+  private keepTyped(c: Clearing, core: string): void {
+    const b = this.backend;
+    const block = composeBlock(c.prefix, core, c.suffix);
+    const plan = () => {
+      const lines = b.lines;
+      if (c.point === null) {
+        const at = locateBlock(lines, c.own, c.from);
+        if (at >= 0) return { start: at, end: at + blockLines(c.own).length, text: c.own };
+      }
+      const near = Math.min(c.point ?? c.from, lines.length);
+      const inside = parseBlocks(joinLines(lines)).find((x) => x.start < near && near < x.end);
+      const at = inside ? inside.end : near;
+      return { start: at, end: at, text: "" };
+    };
+    const build: OpBuild = (lines, lease) => {
+      if (lease.end > lease.start) return { text: padded(block, c.pad) };
+      const pad = {
+        before: lease.start > 0 && !isBlank(lines[lease.start - 1]),
+        after: !isBlank(lines[lease.start]),
+      };
+      return { text: padded(core, pad), blocks: parseBlocks(joinLines(lines)).length + 1 };
+    };
+    this.dropOpen();
+    this.held = null;
+    const p = plan();
+    const w: Want = { ...p, insert: false, tries: 0, op: { plan, build }, kept: true };
+    const m = b.mine;
+    if (m && m.start === p.start && m.end === p.end) {
+      if (joinLines(b.lines.slice(m.start, m.end)) === p.text) {
+        this.want = null;
+        this.runGranted(w, m);
+        return;
+      }
+    }
+    if (m) b.release();
+    this.want = w;
+    if (b.connected && b.settled) this.retake(w);
     this.render();
     this.hooks.status();
   }
@@ -2051,7 +2244,8 @@ export class DocEditor {
   /**
    * Close the open block: send what is pending, release the lease, show the block again. While a
    * cleared block is being removed (removeCleared) its lease is changing hands: the removal ends as
-   * a Delete does, and the lease is released where it lands.
+   * a Delete does, and the lease is released where it lands, once what was typed in the block
+   * meanwhile is written there (keepTyped).
    */
   close(release: boolean, refocus = false): void {
     const open = this.open;
@@ -2059,8 +2253,11 @@ export class DocEditor {
     if (this.want && !this.want.op && !this.clearing) this.want = null;
     if (!open) return;
     this.flush();
-    if (this.clearing) this.clearing.drop = true;
-    else if (release && this.backend.mine) this.backend.release();
+    const c = this.clearing;
+    if (c) {
+      c.drop = true;
+      c.keep = this.typedCore();
+    } else if (release && this.backend.mine) this.backend.release();
     this.dropOpen();
     this.held = null;
     this.render();

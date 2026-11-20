@@ -2736,7 +2736,13 @@ the same leases, room, drafts and Publish as [Editing](#editing).
   open, empty, where it was, and what is typed in it becomes a new block there. When the removal
   is refused (someone holds the lines next to it, the page is not connected, or the doc cannot
   take it), the block stays open with its last text, which is what the doc has, and the page says
-  so: "Couldn't remove this block now. Try again.", or why the doc cannot take it. A new block
+  so: "Couldn't remove this block now. Try again.", or why the doc cannot take it. Nothing typed
+  in the block while its removal is on its way is lost: it goes into the doc once the removal is
+  in, also when the block is closed first (Esc, Tab, a click on another block or Done), in which
+  case the page reports unsent changes until it is; it takes the block's place when the removal is
+  refused or lost with a reconnect; and an open block keeps it on screen through a reconnect, as
+  any block does. When even that cannot be written, the page says "What you typed in the block you
+  closed couldn't be added. Type it again." A new block
   not typed into yet has no lines in the doc: its menu's "Insert below" puts the block where the
   new one is, "Move up" and "Move down" are off, and "Delete" gives it up, leaving the doc as it
   was.
