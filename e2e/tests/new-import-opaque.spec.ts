@@ -15,13 +15,9 @@ test("New offers only Import; an imported sheet opens on its page and can be rep
   await seedSession(page.context(), email, OPAQUE_APP_ORIGIN);
   await page.goto("/dashboard");
   await expect(page.getByText("Nothing on display yet")).toBeVisible();
-  await expect(page.getByText("Or import a spreadsheet with New.")).toBeVisible();
   await page.getByRole("button", { name: "New", exact: true }).click();
   const menu = page.getByRole("menu", { name: "New" });
-  await expect(menu.getByRole("menuitem")).toHaveText([
-    "Import a spreadsheet (.xlsx, .csv)…",
-    "Connect an agentPages and designs are made by your agents.",
-  ]);
+  await expect(menu.getByRole("menuitem")).toHaveText(["Import a spreadsheet…"]);
   await page.keyboard.press("Escape");
 
   await page.getByTestId("new-import-file").setInputFiles({
@@ -36,14 +32,15 @@ test("New offers only Import; an imported sheet opens on its page and can be rep
   expect(await page.locator(CURRENT_FRAME).getAttribute("src")).not.toContain("#plinth-k=");
 
   await page.getByRole("button", { name: "Artifact actions" }).click();
+  const chooser = page.waitForEvent("filechooser");
   await page.getByRole("menuitem", { name: "Replace with a file…" }).click();
-  const dialog = page.getByRole("dialog", { name: "Replace with a file" });
-  await page.getByTestId("replace-sheet-file").setInputFiles({
+  await (await chooser).setFiles({
     name: "fruit-2.csv",
     mimeType: "text/csv",
     buffer: Buffer.from("Item,Qty\nPears,5\n"),
   });
-  await expect(dialog).toContainText("This makes v2 from fruit-2.csv.");
+  const dialog = page.getByRole("dialog", { name: "Replace with a file" });
+  await expect(dialog).toContainText("fruit-2.csv becomes v2.");
   await dialog.getByRole("button", { name: "Replace", exact: true }).click();
   await expect(dialog).toHaveCount(0);
   await expect(frame.locator("#__plinth-cell-A2")).toHaveText("Pears", { timeout: 15_000 });

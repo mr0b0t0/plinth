@@ -2684,11 +2684,10 @@ pages and designs come only from agents.
 
 - **New.** The dashboard's **New** button (in the top bar; while there is nothing yet, in the empty
   state beside "Connect an agent") opens a menu built from the type registry's `create` rows:
-  "Document" and "Sheet", then "Import a spreadsheet (.xlsx, .csv)…", then "Connect an agent",
-  described "Pages and designs are made by your agents.". The blank items are offered only where
-  editing on the page works here (`inline_editing` in `GET /api/v1/config` is not null) and for
-  types the instance publishes now (`artifact_types`); Import is offered wherever sheets are. Only
-  types edited on the page have a `create` row (docs and sheets).
+  "Document" and "Sheet", then "Import a spreadsheet…", and nothing else. The blank items are
+  offered only where editing on the page works here (`inline_editing` in `GET /api/v1/config` is not
+  null) and for types the instance publishes now (`artifact_types`); Import is offered wherever
+  sheets are. Only types edited on the page have a `create` row (docs and sheets).
 - **A blank artifact is a placeholder v1.** New publishes the type's `create` row with the signed-in
   session over `POST /api/v1/artifacts`, the route agents use: a doc titled "Untitled document"
   whose Markdown is `# Untitled document`, or a sheet titled "Untitled sheet" with three text
@@ -2698,12 +2697,13 @@ pages and designs come only from agents.
   toward `MAX_PUBLISHES_PER_HOUR`, the artifact quota and the storage quota. A token limited to one
   artifact cannot create one (`mayCreateArtifacts`), as everywhere.
 - **Import.** A file input for `.xlsx`, `.csv` and `.tsv`, at most 2 MB. The app sends the file as
-  it is: CSV and TSV as text and an .xlsx as base64, with `content_format` `csv` or `xlsx`, the
-  file name without its extension as the title, and the note "Imported from <file name>". The
-  Worker converts and checks it exactly as it does for agents (see Imports under
+  it is: CSV and TSV as text and an .xlsx as base64, with `content_format` `csv` or `xlsx`, the file
+  name without its extension as the title, and the note "Imported from <file name>". The Worker
+  converts and checks it exactly as it does for agents (see Imports under
   [Sheets](#sheets-decided-2026-11-19)), so the app carries no spreadsheet reader of its own. A
-  refusal shows the Worker's sentence and the cells it names ("B7: …"), never code. The sheet then
-  opens in edit mode where editing on the page works, and on its page otherwise.
+  refusal ("Could not import <file name>") shows the Worker's sentence and the cells it names
+  ("B7: …"), never code. The sheet then opens in edit mode where editing on the page works, and on
+  its page otherwise.
 - **`?edit` starts editing.** On the artifact page, `?edit` for an owner or editor who may edit
   there (the gate's `live`, without `sign_in`) is dropped from the address and the page opens in
   edit mode. The app focuses the frame and posts `edit { on: true, focus: "first" }` (again on the
@@ -2712,21 +2712,21 @@ pages and designs come only from agents.
   sheet renderer focuses cell A2 (A1 when there are no rows). When someone else holds that block,
   or the person cannot write, it only takes the focus and nothing is asked of the room. Every
   other case of `?edit` is described under [Ask an agent](#ask-an-agent-decided-2026-11-19).
-- **Replace with a file.** A sheet's ⋯ menu has "Replace with a file…" for owners and editors on
-  the current version. It takes the same files and limits as Import and confirms first ("This
-  makes v6 from sales.xlsx. Comments and sharing stay. v5 stays in history."), then sends `PUT
+- **Replace with a file.** A sheet's ⋯ menu has "Replace with a file…" for owners and editors on the
+  current version. It opens the file picker at once, takes the same files and limits as Import, and
+  confirms the chosen file first ("sales.xlsx becomes v6. v5 stays in history."), then sends `PUT
   /api/v1/artifacts/:ref` with `content_format`, `content`, `base_version` (the version on screen)
   and the note "Replaced from <file name>". The new version keeps the link, the sharing and the
-  comments. When a newer version was published since, the save is refused (409) and the dialog
-  asks again against it ("v6 was published by Ana since you chose the file. Replace v6 too?"), or
-  the person cancels. A file chosen after that is confirmed against the newer version. While the
-  sheet has unpublished changes on its page or someone is editing it there, the item is off and
-  says "Publish or discard the unpublished changes first", and the dialog checks the same again
-  when Replace is pressed. A draft someone starts after that press is never overwritten: one with
-  changes is frozen for review against the new version, as for any version published meanwhile
-  ("Versions from elsewhere" under Sheets), and one without moves to it. An
-  editor confirmed by code without an account sees the item off with "Sign in to replace it with
-  a file", since publishing a version needs an account; the dialog tells them the same if the
+  comments. When a newer version was published since, the save is refused (409) and the dialog asks
+  again against it ("v6 was published by Ana meanwhile. Replace v6 too?"), or the person cancels. A
+  file chosen after that is confirmed against the newer version. While the sheet has unpublished
+  changes on its page or someone is editing it there, the item is off and says "Publish or discard
+  changes first", and the dialog checks the same again when Replace is pressed. A draft someone
+  starts after that press is never overwritten: one with changes is frozen for review against the
+  new version, as for any version published meanwhile ("Versions from elsewhere" under Sheets), and
+  one without moves to it. An editor confirmed by code without an account sees the item off with
+  "Sign in first", since publishing a version needs an account; where the gate does not say so, the
+  item opens "Sign in to replace this sheet." without a picker, and the dialog says the same if the
   save is refused for that reason. After a replace the page shows the new version.
 - **Where editing on the page is off** (`ALLOW_LIVE_EDITING=false`, opaque isolation, the path
   fallback): New offers only Import, and an imported sheet opens on its page. Import and "Replace

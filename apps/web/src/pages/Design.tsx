@@ -1060,7 +1060,7 @@ function ComponentSpecimens() {
               { label: "Settings", icon: GearIcon, onSelect: () => undefined },
             ]}
           />
-          {/* The dashboard's New menu (NewMenu.tsx), with a second line on two items. */}
+          {/* The dashboard's New menu (NewMenu.tsx). */}
           <Menu
             label="New"
             icon={PlusIcon}
@@ -1069,18 +1069,19 @@ function ComponentSpecimens() {
               { label: "Document", onSelect: () => toast.success("New is a demo here") },
               { label: "Sheet", onSelect: () => toast.success("New is a demo here") },
               { type: "separator" },
-              { label: "Import a spreadsheet (.xlsx, .csv)…", onSelect: () => undefined },
+              { label: "Import a spreadsheet…", onSelect: () => undefined },
+            ]}
+          />
+          {/* An item that is off says why on a second line (a sheet's Replace with a file…). */}
+          <Menu
+            label="Sheet actions"
+            icon={DotsThreeIcon}
+            variant="ghost"
+            items={[
               {
                 label: "Replace with a file…",
                 disabled: true,
-                description: "Publish or discard the unpublished changes first",
-              },
-              { type: "separator" },
-              {
-                label: "Connect an agent",
-                icon: PlugIcon,
-                onSelect: () => undefined,
-                description: "Pages and designs are made by your agents.",
+                description: "Publish or discard changes first",
               },
             ]}
           />

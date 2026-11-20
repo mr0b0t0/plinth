@@ -48,7 +48,7 @@ import {
   useSignOut,
 } from "../components/account/hooks.tsx";
 import { MyCategoryDialog } from "../components/account/MyCategoryDialog.tsx";
-import { NewMenu, newHint } from "../components/account/NewMenu.tsx";
+import { NewMenu } from "../components/account/NewMenu.tsx";
 import { Note } from "../components/account/Note.tsx";
 import { CONNECT_AGENT_HREF } from "../components/account/nav.ts";
 import { RenameCategoryDialog } from "../components/account/RenameCategoryDialog.tsx";
@@ -590,7 +590,6 @@ export default function Dashboard() {
                 Connect an agent, then ask it to publish something. Whatever it publishes stands
                 here, and you decide who can see it.
               </p>
-              {newHint(config) && <p>{newHint(config)}</p>}
               <CopyField
                 label="MCP server URL"
                 value={mcpUrl(config?.app_origin)}

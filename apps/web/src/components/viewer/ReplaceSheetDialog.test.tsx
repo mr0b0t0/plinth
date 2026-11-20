@@ -1,6 +1,6 @@
 // "Replace with a file…" on a sheet (docs/spec.md "New and Import"): the ⋯ item for owners and
-// editors on the current version, off with its reason while page changes exist or someone edits;
-// the dialog confirms before sending, sends the file as it is with base_version and the note, asks
+// editors on the current version, off with its reason while page changes exist or someone edits,
+// opens the file picker straight away; the dialog confirms the chosen file before sending, sends the file as it is with base_version and the note, asks
 // again against a version published meanwhile (naming who published it), and shows a refusal with
 // the cells it names. A file picked after that conflict is confirmed against the newer version;
 // Replace waits while a draft started after the dialog opened; a person without an account is told
@@ -10,6 +10,7 @@ import { cleanup, render, screen, waitFor, within } from "@testing-library/react
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { refreshSession } from "../../lib/session.ts";
+import { PICKER_ATTR } from "../account/newArtifact.ts";
 import { Toaster } from "../ui/index.ts";
 import {
   confirmText,
@@ -109,12 +110,30 @@ describe("the ⋯ item", () => {
     expect(STAGE_DIALOGS.map((d) => d.id)).toContain(REPLACE_SHEET_DIALOG);
   });
 
-  it("is for owners and editors on the current version, and opens the dialog", () => {
+  it("is for owners and editors on the current version, and opens the file picker first", async () => {
+    stubApi({ me: ME });
+    await refreshSession();
+    const click = vi.spyOn(HTMLInputElement.prototype, "click").mockImplementation(() => {});
     const { c, openDialog } = context({});
     const [entry] = replaceSheet(c);
     expect(entry).toMatchObject({ label: REPLACE_LABEL, disabled: false });
     (entry as { onSelect: () => void }).onSelect();
+    expect(click).toHaveBeenCalledTimes(1);
+    expect(openDialog).not.toHaveBeenCalled();
+    const input = document.querySelector(`input[${PICKER_ATTR}]`) as HTMLInputElement;
+    expect(input.accept).toContain(".xlsx");
+    const file = new File(["a\n1\n"], "sales.csv");
+    Object.defineProperty(input, "files", { value: [file] });
+    input.dispatchEvent(new Event("change"));
     expect(openDialog).toHaveBeenCalledWith(REPLACE_SHEET_DIALOG);
+    expect(document.querySelector(`input[${PICKER_ATTR}]`)).toBeNull();
+    const dialog = STAGE_DIALOGS.find((d) => d.id === REPLACE_SHEET_DIALOG);
+    if (!dialog) throw new Error("no Replace dialog in STAGE_DIALOGS");
+    const props = () => (dialog.render(c, vi.fn()) as { props: ReplaceSheetDialogProps }).props;
+    expect(props().file).toBe(file);
+    // Closing forgets the file.
+    props().onClose();
+    expect(props().file).toBeNull();
     expect(replaceSheet(context({ role: "editor" }).c)).toHaveLength(1);
     expect(replaceSheet(context({ role: "commenter" }).c)).toEqual([]);
     expect(replaceSheet(context({ role: "viewer" }).c)).toEqual([]);
@@ -136,7 +155,7 @@ describe("the ⋯ item", () => {
         description: REPLACE_BLOCKED,
       });
     }
-    expect(REPLACE_BLOCKED).toBe("Publish or discard the unpublished changes first");
+    expect(REPLACE_BLOCKED).toBe("Publish or discard changes first");
     expect(off({ status: STATUS })).toMatchObject({ disabled: false });
   });
 
@@ -147,7 +166,18 @@ describe("the ⋯ item", () => {
       disabled: true,
       description: REPLACE_SIGN_IN,
     });
-    expect(REPLACE_SIGN_IN).toBe("Sign in to replace it with a file");
+    expect(REPLACE_SIGN_IN).toBe("Sign in first");
+  });
+
+  it("opens the sign-in step without a picker for a person without an account", async () => {
+    stubApi({ me: null });
+    await refreshSession();
+    const click = vi.spyOn(HTMLInputElement.prototype, "click").mockImplementation(() => {});
+    const { c, openDialog } = context({ role: "editor" });
+    const [entry] = replaceSheet(c);
+    (entry as { onSelect: () => void }).onSelect();
+    expect(click).not.toHaveBeenCalled();
+    expect(openDialog).toHaveBeenCalledWith(REPLACE_SHEET_DIALOG);
   });
 
   it("gives the dialog the reason to wait, read from the stage on every render", () => {
@@ -245,15 +275,13 @@ describe("the dialog", () => {
   it("confirms before sending, then sends the file as it is with base_version and the note", async () => {
     const { calls } = backend([ok(6)]);
     const user = userEvent.setup();
-    const { onReplaced, dialog } = await open();
-    await user.upload(
-      screen.getByTestId("replace-sheet-file") as HTMLInputElement,
-      new File(["Item,Qty\nApples,3\n"], "sales.csv"),
-    );
+    const { onReplaced, dialog } = await open(vi.fn(), vi.fn(), {
+      file: new File(["Item,Qty\nApples,3\n"], "sales.csv"),
+    });
     expect(await within(dialog).findByText(confirmText("sales.csv", 5))).toBeTruthy();
-    expect(confirmText("sales.csv", 5)).toBe(
-      "This makes v6 from sales.csv. Comments and sharing stay. v5 stays in history.",
-    );
+    expect(confirmText("sales.csv", 5)).toBe("sales.csv becomes v6. v5 stays in history.");
+    // Confirm only: no description, no second picker.
+    expect(within(dialog).queryByRole("button", { name: /Choose/ })).toBeNull();
     expect(puts(calls)).toHaveLength(0);
     await user.click(within(dialog).getByRole("button", { name: "Replace" }));
     await waitFor(() => expect(onReplaced).toHaveBeenCalledWith(6));
@@ -271,16 +299,12 @@ describe("the dialog", () => {
   it("asks again against a version published meanwhile, naming who published it", async () => {
     const { calls } = backend([stale(6), ok(7)]);
     const user = userEvent.setup();
-    const { onReplaced, dialog } = await open();
-    await user.upload(
-      screen.getByTestId("replace-sheet-file") as HTMLInputElement,
-      new File([new Uint8Array([0x50, 0x4b, 3, 4])], "sales.xlsx"),
-    );
+    const { onReplaced, dialog } = await open(vi.fn(), vi.fn(), {
+      file: new File([new Uint8Array([0x50, 0x4b, 3, 4])], "sales.xlsx"),
+    });
     await user.click(await within(dialog).findByRole("button", { name: "Replace" }));
     expect(await within(dialog).findByText(conflictText(6, "Ana"))).toBeTruthy();
-    expect(conflictText(6, "Ana")).toBe(
-      "v6 was published by Ana since you chose the file. Replace v6 too?",
-    );
+    expect(conflictText(6, "Ana")).toBe("v6 was published by Ana meanwhile. Replace v6 too?");
     expect(onReplaced).not.toHaveBeenCalled();
     await user.click(within(dialog).getByRole("button", { name: "Replace v6" }));
     await waitFor(() => expect(onReplaced).toHaveBeenCalledWith(7));
@@ -291,22 +315,27 @@ describe("the dialog", () => {
   });
 
   it("confirms a file picked after a conflict against the newer version, not the one first shown", async () => {
-    const { calls } = backend([stale(6), ok(7)]);
+    const refused = () =>
+      json({ error: { code: "invalid_input", message: "This sheet has 1 problem" } }, 400);
+    const { calls } = backend([stale(6), refused, ok(7)]);
     const user = userEvent.setup();
-    const { onReplaced, dialog } = await open();
-    const input = screen.getByTestId("replace-sheet-file") as HTMLInputElement;
-    await user.upload(input, new File(["a\n1\n"], "a.csv"));
+    const { onReplaced, dialog } = await open(vi.fn(), vi.fn(), {
+      file: new File(["a\n1\n"], "a.csv"),
+    });
     await user.click(await within(dialog).findByRole("button", { name: "Replace" }));
     expect(await within(dialog).findByText(conflictText(6, "Ana"))).toBeTruthy();
+    await user.click(within(dialog).getByRole("button", { name: "Replace v6" }));
+    await within(dialog).findByRole("alert");
+    expect(within(dialog).getByRole("button", { name: "Choose another file…" })).toBeTruthy();
+    const input = screen.getByTestId("replace-sheet-file") as HTMLInputElement;
     await user.upload(input, new File(["b\n2\n"], "b.csv"));
     expect(await within(dialog).findByText(confirmText("b.csv", 6))).toBeTruthy();
-    expect(confirmText("b.csv", 6)).toBe(
-      "This makes v7 from b.csv. Comments and sharing stay. v6 stays in history.",
-    );
+    expect(confirmText("b.csv", 6)).toBe("b.csv becomes v7. v6 stays in history.");
     await user.click(within(dialog).getByRole("button", { name: "Replace" }));
     await waitFor(() => expect(onReplaced).toHaveBeenCalledWith(7));
     expect(puts(calls).map((c) => c.body)).toEqual([
       expect.objectContaining({ base_version: 5, note: "Replaced from a.csv" }),
+      expect.objectContaining({ base_version: 6, note: "Replaced from a.csv" }),
       expect.objectContaining({ base_version: 6, content: "b\n2\n", note: "Replaced from b.csv" }),
     ]);
   });
@@ -314,11 +343,9 @@ describe("the dialog", () => {
   it("waits, sending nothing, when a draft started while the dialog was open", async () => {
     const { calls } = backend([ok(6)]);
     const user = userEvent.setup();
-    const { onReplaced, dialog, rerender } = await open();
-    await user.upload(
-      screen.getByTestId("replace-sheet-file") as HTMLInputElement,
-      new File(["a\n1\n"], "a.csv"),
-    );
+    const { onReplaced, dialog, rerender } = await open(vi.fn(), vi.fn(), {
+      file: new File(["a\n1\n"], "a.csv"),
+    });
     await within(dialog).findByText(confirmText("a.csv", 5));
     rerender({ blocked: REPLACE_BLOCKED });
     const replace = within(dialog).getByRole("button", { name: "Replace" }) as HTMLButtonElement;
@@ -343,9 +370,7 @@ describe("the dialog", () => {
     expect(screen.queryByTestId("replace-sheet-file")).toBeNull();
     expect(within(dialog).queryByRole("button", { name: /Choose/ })).toBeNull();
     expect(puts(calls)).toHaveLength(0);
-    expect(SIGN_IN_TEXT).toBe(
-      "Sign in to replace this sheet with a file. Publishing a version needs an account.",
-    );
+    expect(SIGN_IN_TEXT).toBe("Sign in to replace this sheet.");
   });
 
   it("tells the person to sign in when the save is refused for want of an account", async () => {
@@ -357,11 +382,7 @@ describe("the dialog", () => {
         ),
     ]);
     const user = userEvent.setup();
-    const { dialog } = await open();
-    await user.upload(
-      screen.getByTestId("replace-sheet-file") as HTMLInputElement,
-      new File(["a\n1\n"], "sales.csv"),
-    );
+    const { dialog } = await open(vi.fn(), vi.fn(), { file: new File(["a\n1\n"], "sales.csv") });
     await user.click(await within(dialog).findByRole("button", { name: "Replace" }));
     expect(await within(dialog).findByText(SIGN_IN_TEXT)).toBeTruthy();
     expect(within(dialog).queryByRole("alert")).toBeNull();
@@ -387,11 +408,9 @@ describe("the dialog", () => {
         ),
     ]);
     const user = userEvent.setup();
-    const { onClose, dialog } = await open();
-    await user.upload(
-      screen.getByTestId("replace-sheet-file") as HTMLInputElement,
-      new File(["a\n1\n"], "long.csv"),
-    );
+    const { onClose, dialog } = await open(vi.fn(), vi.fn(), {
+      file: new File(["a\n1\n"], "long.csv"),
+    });
     await user.click(await within(dialog).findByRole("button", { name: "Replace" }));
     const alert = await within(dialog).findByRole("alert");
     expect(alert.textContent).toContain("long.csv could not be used: This sheet has 1 problem");

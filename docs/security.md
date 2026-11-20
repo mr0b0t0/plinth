@@ -2692,8 +2692,8 @@ flag, env var or MCP tool was added.
   without moves to it.
 - **An account publishes.** A version is stamped with the account that made it, so an editor
   confirmed by code without an account cannot publish one: the Worker refuses the save (401), the
-  item is off with "Sign in to replace it with a file" when the gate says `sign_in`, and the dialog
-  says to sign in instead of offering a file picker.
+  item is off with "Sign in first" when the gate says `sign_in`, and otherwise opens the dialog's
+  sign-in step instead of a file picker.
 - **Files are read on the server only.** The app sends a picked file as it is (CSV and TSV as
   text, an .xlsx as base64) and never parses it: the bounded importer of
   [Sheets](#sheets) converts and checks it, and its refusal reaches the app as a sentence and cell

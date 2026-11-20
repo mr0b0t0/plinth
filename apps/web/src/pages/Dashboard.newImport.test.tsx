@@ -79,7 +79,7 @@ async function openNew(user: ReturnType<typeof userEvent.setup>) {
 }
 
 describe("the New menu", () => {
-  it("offers a document, a sheet and Import, and says pages and designs come from agents", async () => {
+  it("offers a document, a sheet and Import, and nothing else", async () => {
     backend(ROOM);
     const Dashboard = await loadPage();
     const user = userEvent.setup();
@@ -90,17 +90,9 @@ describe("the New menu", () => {
       within(menu)
         .getAllByRole("menuitem")
         .map((i) => i.firstChild && i.textContent),
-    ).toEqual([
-      "Document",
-      "Sheet",
-      "Import a spreadsheet (.xlsx, .csv)…",
-      "Connect an agentPages and designs are made by your agents.",
-    ]);
-    const connect = within(menu).getByRole("menuitem", { name: "Connect an agent" });
-    expect(connect.getAttribute("href")).toBe("/connections?connect=1");
-    expect(
-      document.getElementById(connect.getAttribute("aria-describedby") ?? "")?.textContent,
-    ).toBe("Pages and designs are made by your agents.");
+    ).toEqual(["Document", "Sheet", "Import a spreadsheet…"]);
+    // Connect an agent has its own ways in (the sidebar, the empty state), not this menu.
+    expect(within(menu).queryByRole("menuitem", { name: "Connect an agent" })).toBeNull();
   });
 
   it("offers only Import where editing on the page is off", async () => {
@@ -113,7 +105,7 @@ describe("the New menu", () => {
     const names = within(menu)
       .getAllByRole("menuitem")
       .map((i) => i.getAttribute("aria-describedby") === null && i.textContent);
-    expect(names).toEqual(["Import a spreadsheet (.xlsx, .csv)…", false]);
+    expect(names).toEqual(["Import a spreadsheet…"]);
   });
 
   it("publishes a blank document as v1 'Created in the app' and opens it in edit mode", async () => {
@@ -224,17 +216,13 @@ describe("Import", () => {
     await screen.findByText("Report");
     const input = screen.getByTestId("new-import-file") as HTMLInputElement;
     await user.upload(input, new File(["%PDF"], "notes.pdf"));
-    const first = await screen.findByRole("alertdialog", {
-      name: "This file could not be imported",
-    });
-    expect(first.textContent).toContain("notes.pdf: Pick a .xlsx, .csv or .tsv file.");
+    const first = await screen.findByRole("alertdialog", { name: "Could not import notes.pdf" });
+    expect(first.textContent).toContain("Pick a .xlsx, .csv or .tsv file.");
     expect(posts(calls)).toHaveLength(0);
     await user.click(within(first).getByRole("button", { name: "Cancel" }));
 
     await user.upload(input, new File(["a,b\n1,2\n"], "long.csv"));
-    const dialog = await screen.findByRole("alertdialog", {
-      name: "This file could not be imported",
-    });
+    const dialog = await screen.findByRole("alertdialog", { name: "Could not import long.csv" });
     expect(
       within(dialog)
         .getAllByRole("listitem")
@@ -245,7 +233,7 @@ describe("Import", () => {
 });
 
 describe("the empty state", () => {
-  it("puts New beside Connect an agent and says what it can start", async () => {
+  it("puts New beside Connect an agent, with no extra paragraph", async () => {
     backend(ROOM, { items: [] });
     const Dashboard = await loadPage();
     render(<Dashboard />);
@@ -256,17 +244,6 @@ describe("the empty state", () => {
     expect(within(actions).getByRole("button", { name: "New" })).toBeTruthy();
     // Not twice: the top bar has no New while the empty state shows one.
     expect(screen.getAllByRole("button", { name: "New" })).toHaveLength(1);
-    expect(
-      screen.getByText(
-        "Or start a document or a sheet yourself with New, or import a spreadsheet.",
-      ),
-    ).toBeTruthy();
-  });
-
-  it("says only Import where editing on the page is off", async () => {
-    backend(OFF, { items: [] });
-    const Dashboard = await loadPage();
-    render(<Dashboard />);
-    expect(await screen.findByText("Or import a spreadsheet with New.")).toBeTruthy();
+    expect(screen.queryByText(/with New/)).toBeNull();
   });
 });

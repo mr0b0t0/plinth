@@ -1,6 +1,6 @@
-// "Replace with a file…" on a sheet's page (docs/spec.md "New and Import"): the person picks a
-// .xlsx, .csv or .tsv file, confirms, and the file becomes the sheet's next version, which keeps
-// its link, sharing and comments. The file goes as it is (`content_format`), the Worker converts
+// "Replace with a file…" on a sheet's page (docs/spec.md "New and Import"): the ⋯ item opens the
+// file picker, this dialog confirms the chosen .xlsx, .csv or .tsv file, and the file becomes the
+// sheet's next version, which keeps its link, sharing and comments. The file goes as it is (`content_format`), the Worker converts
 // it, and the save names the version on screen as `base_version`: when someone published a newer
 // version since, the Worker refuses it (409) and the dialog asks again against that version, so
 // nothing is overwritten unseen. Any other refusal shows the Worker's sentence and the cells it
@@ -27,6 +27,8 @@ export interface ReplaceSheetDialogProps {
   artifactId: string;
   /** The version on screen: the file replaces it, and the save is refused if it is not current. */
   version: number;
+  /** The file the ⋯ item's picker gave, confirmed first; null opens on "Choose a file…". */
+  file?: File | null;
   /**
    * Why Replace must wait now (unpublished page changes, or someone editing on the page), or
    * null. Read again when Replace is pressed, so a draft started while the dialog was open stops
@@ -49,26 +51,26 @@ interface Picked {
 
 type Step =
   | { kind: "pick" }
+  | { kind: "reading" }
   | ({ kind: "confirm"; base: number } & Picked)
   | ({ kind: "conflict"; base: number; by: string | null } & Picked)
   | ({ kind: "problem"; file: string } & ImportProblem)
   | { kind: "sign_in" };
 
 /** What a person confirmed by code without an account is told: a version needs an account. */
-export const SIGN_IN_TEXT =
-  "Sign in to replace this sheet with a file. Publishing a version needs an account.";
+export const SIGN_IN_TEXT = "Sign in to replace this sheet.";
 
 /** The version note of a replacement. */
 export const replacedNote = (file: string) => `Replaced from ${file}`;
 
 /** What the confirmation says before anything is sent. */
 export function confirmText(file: string, base: number): string {
-  return `This makes v${base + 1} from ${file}. Comments and sharing stay. v${base} stays in history.`;
+  return `${file} becomes v${base + 1}. v${base} stays in history.`;
 }
 
 /** What the dialog asks after a newer version was published since the file was chosen. */
 export function conflictText(current: number, by: string | null): string {
-  return `v${current} was published${by ? ` by ${by}` : ""} since you chose the file. Replace v${current} too?`;
+  return `v${current} was published${by ? ` by ${by}` : ""} meanwhile. Replace v${current} too?`;
 }
 
 /** The current version a 409 names, or null for any other refusal. */
@@ -81,6 +83,7 @@ function currentOf(e: unknown): number | null {
 export function ReplaceSheetDialog({
   artifactId,
   version,
+  file = null,
   blocked = null,
   signInHref,
   mustSignIn = false,
@@ -92,7 +95,7 @@ export function ReplaceSheetDialog({
   // Confirmed by code (no account): the Worker refuses the save, so say so before a file is picked.
   const noAccount = mustSignIn || (!session.loading && session.me === null);
   const input = useRef<HTMLInputElement>(null);
-  const [step, setStep] = useState<Step>({ kind: "pick" });
+  const [step, setStep] = useState<Step>(() => (file ? { kind: "reading" } : { kind: "pick" }));
   const [saving, setSaving] = useState(false);
   // The newest version known to be current: the one on screen, or a newer one a 409 named. A file
   // picked after a conflict is confirmed against it, never against the stale `version`.
@@ -109,14 +112,23 @@ export function ReplaceSheetDialog({
 
   const choose = () => input.current?.click();
 
-  const onFile = async (file: File) => {
+  const onFile = async (f: File) => {
     try {
-      const sent = await readSpreadsheet(file);
-      if (alive.current) setStep({ kind: "confirm", base: known.current, file: file.name, sent });
+      const sent = await readSpreadsheet(f);
+      if (alive.current) setStep({ kind: "confirm", base: known.current, file: f.name, sent });
     } catch (e) {
-      if (alive.current) setStep({ kind: "problem", file: file.name, ...importProblem(e) });
+      if (alive.current) setStep({ kind: "problem", file: f.name, ...importProblem(e) });
     }
   };
+
+  // The file the ⋯ item's picker gave: read once, then confirmed. After `alive` is set above.
+  const first = useRef(file);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: once, for the file the dialog opened with
+  useEffect(() => {
+    const f = first.current;
+    first.current = null;
+    if (f) void onFile(f);
+  }, []);
 
   /** Who published version n, as History names them, or null when that cannot be read. */
   const publisherOf = async (n: number): Promise<string | null> => {
@@ -179,7 +191,7 @@ export function ReplaceSheetDialog({
     </Button>
   );
   const another = (
-    <Button variant="secondary" icon={FileArrowUpIcon} onClick={choose} disabled={saving}>
+    <Button variant="primary" icon={FileArrowUpIcon} onClick={choose} disabled={saving}>
       {step.kind === "pick" ? "Choose a file…" : "Choose another file…"}
     </Button>
   );
@@ -195,7 +207,6 @@ export function ReplaceSheetDialog({
   ) : step.kind === "confirm" || step.kind === "conflict" ? (
     <>
       {cancel}
-      {another}
       <Button
         variant="primary"
         loading={saving}
@@ -205,6 +216,8 @@ export function ReplaceSheetDialog({
         {step.kind === "conflict" ? `Replace v${step.base}` : "Replace"}
       </Button>
     </>
+  ) : step.kind === "reading" ? (
+    cancel
   ) : (
     <>
       {cancel}
@@ -213,13 +226,7 @@ export function ReplaceSheetDialog({
   );
 
   return (
-    <Dialog
-      open
-      onClose={onClose}
-      title="Replace with a file"
-      description="Pick a .xlsx, .csv or .tsv file of at most 2 MB. Its first row names the columns, and it becomes this sheet's next version."
-      footer={footer}
-    >
+    <Dialog open onClose={onClose} title="Replace with a file" footer={footer}>
       {!signIn && picker}
       <div role="status" className="pl-replace-sheet__status">
         {signIn && <p>{SIGN_IN_TEXT}</p>}

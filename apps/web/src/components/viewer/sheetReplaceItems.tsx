@@ -1,11 +1,15 @@
 // A sheet's ⋯ menu item, "Replace with a file…", and the dialog it opens (ReplaceSheetDialog).
 // Owners and editors only, on the current version: they are the roles that may publish a version,
-// which the API checks again on the save. While the sheet has unpublished page changes or someone
-// is editing it on the page, the item is off with its reason; the dialog checks the same again when
+// which the API checks again on the save. The item opens the file picker straight away, and the
+// dialog only confirms the chosen file. While the sheet has unpublished page changes or someone is
+// editing it on the page, the item is off with its reason; the dialog checks the same again when
 // Replace is pressed. A draft someone starts after that press meets the room's review of a version
 // published meanwhile, as for an agent's version. A person confirmed by code without an account
-// may not publish a version, so the item is off with "Sign in" as its reason, like the live Edit.
+// may not publish a version: the item is off with "Sign in first" when the gate says so, and
+// otherwise opens the dialog's sign-in step without a picker.
 import { FileArrowUpIcon } from "@phosphor-icons/react";
+import { currentSession } from "../../lib/session.ts";
+import { pickSpreadsheetFile } from "../account/newArtifact.ts";
 import { noticeKind } from "./LiveDraftNotice.tsx";
 import { ReplaceSheetDialog } from "./ReplaceSheetDialog.tsx";
 // Types only: stageItems.tsx imports this file, so a value import back would be a cycle.
@@ -15,8 +19,12 @@ import type { MenuItem, StageContext, StageDialog } from "./stageItems.tsx";
 export const REPLACE_SHEET_DIALOG = "replace-sheet";
 
 export const REPLACE_LABEL = "Replace with a file…";
-export const REPLACE_BLOCKED = "Publish or discard the unpublished changes first";
-export const REPLACE_SIGN_IN = "Sign in to replace it with a file";
+export const REPLACE_BLOCKED = "Publish or discard changes first";
+export const REPLACE_SIGN_IN = "Sign in first";
+
+// The file the picker gave, held from the item's click until the dialog it opens closes. The
+// stage opens a dialog by id only, and one dialog is open at a time.
+let picked: File | null = null;
 
 /** Unpublished page changes exist, or someone is on the page editing it, or this person is. */
 export function replaceBlocked(c: StageContext): boolean {
@@ -43,26 +51,46 @@ export const replaceSheet: MenuItem = (c) => {
       icon: FileArrowUpIcon,
       disabled: reason !== null,
       ...(reason ? { description: reason } : {}),
-      onSelect: () => c.actions.openDialog(REPLACE_SHEET_DIALOG),
+      onSelect: () => {
+        const session = currentSession();
+        if (!session.loading && session.me === null) {
+          // No account: the dialog says to sign in, with no picker first.
+          picked = null;
+          c.actions.openDialog(REPLACE_SHEET_DIALOG);
+          return;
+        }
+        // Inside the click, so the browser lets the picker open.
+        pickSpreadsheetFile((file) => {
+          picked = file;
+          c.actions.openDialog(REPLACE_SHEET_DIALOG);
+        });
+      },
     },
   ];
 };
 
 export const replaceSheetDialog: StageDialog = {
   id: REPLACE_SHEET_DIALOG,
-  render: (c, close) => (
-    <ReplaceSheetDialog
-      artifactId={c.gate.artifact.id}
-      version={c.gate.artifact.version}
-      blocked={replaceBlocked(c) ? REPLACE_BLOCKED : null}
-      signInHref={c.hrefs.signIn}
-      mustSignIn={c.gate.live?.sign_in === true}
-      onClose={close}
-      onReplaced={() => {
-        close();
-        // The frame reloads on the new version; other open pages follow it on their own.
-        c.actions.reload();
-      }}
-    />
-  ),
+  render: (c, close) => {
+    const done = () => {
+      picked = null;
+      close();
+    };
+    return (
+      <ReplaceSheetDialog
+        artifactId={c.gate.artifact.id}
+        version={c.gate.artifact.version}
+        file={picked}
+        blocked={replaceBlocked(c) ? REPLACE_BLOCKED : null}
+        signInHref={c.hrefs.signIn}
+        mustSignIn={c.gate.live?.sign_in === true}
+        onClose={done}
+        onReplaced={() => {
+          done();
+          // The frame reloads on the new version; other open pages follow it on their own.
+          c.actions.reload();
+        }}
+      />
+    );
+  },
 };

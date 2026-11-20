@@ -25,9 +25,6 @@ export const CREATED_NOTE = "Created in the app";
 export const SPREADSHEET_ACCEPT =
   ".csv,.tsv,.xlsx,text/csv,text/tab-separated-values,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 
-/** What the menus call a spreadsheet file. */
-export const SPREADSHEET_KINDS = ".xlsx, .csv";
-
 export interface BlankItem {
   type: ArtifactType;
   create: CreateRow;
@@ -76,6 +73,33 @@ export function blankBody(item: BlankItem): {
 }
 
 export type SpreadsheetFormat = "csv" | "xlsx";
+
+/** The data attribute of the short-lived input pickSpreadsheetFile opens. */
+export const PICKER_ATTR = "data-plinth-spreadsheet-picker";
+
+/**
+ * Open the browser's file picker for a spreadsheet, straight from a menu item: a hidden input
+ * added to the page for this one pick, clicked inside the person's click (so the browser lets it
+ * open), and removed once a file is chosen or the picker is cancelled. Nothing happens on cancel.
+ */
+export function pickSpreadsheetFile(onPick: (file: File) => void): void {
+  for (const old of document.querySelectorAll(`input[${PICKER_ATTR}]`)) old.remove();
+  const input = document.createElement("input");
+  input.type = "file";
+  input.accept = SPREADSHEET_ACCEPT;
+  input.hidden = true;
+  input.tabIndex = -1;
+  input.setAttribute("aria-hidden", "true");
+  input.setAttribute(PICKER_ATTR, "");
+  input.addEventListener("change", () => {
+    const file = input.files?.[0];
+    input.remove();
+    if (file) onPick(file);
+  });
+  input.addEventListener("cancel", () => input.remove());
+  document.body.append(input);
+  input.click();
+}
 
 /** The format a file name says, or null for a file Import does not take. */
 export function formatOf(name: string): SpreadsheetFormat | null {

@@ -22,7 +22,7 @@ describe("Menu item descriptions", () => {
           {
             label: "Replace with a file…",
             disabled: true,
-            description: "Publish or discard the unpublished changes first",
+            description: "Publish or discard changes first",
           },
           {
             label: "Connect an agent",
@@ -35,8 +35,8 @@ describe("Menu item descriptions", () => {
     await user.click(screen.getByRole("button", { name: "New" }));
     const off = screen.getByRole("menuitem", { name: "Replace with a file…" });
     expect(off.getAttribute("aria-disabled")).toBe("true");
-    expect(description(off)).toBe("Publish or discard the unpublished changes first");
-    expect(off.textContent).toContain("Publish or discard the unpublished changes first");
+    expect(description(off)).toBe("Publish or discard changes first");
+    expect(off.textContent).toContain("Publish or discard changes first");
     const link = screen.getByRole("menuitem", { name: "Connect an agent" });
     expect(description(link)).toBe("Pages come from agents.");
     const plain = screen.getByRole("menuitem", { name: "Document" });

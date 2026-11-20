@@ -46,3 +46,8 @@ export function useSession(): SessionState & { refresh: () => Promise<void> } {
   }, []);
   return { ...s, refresh: refreshSession };
 }
+
+/** The session as last loaded, for code outside React (a menu item's click). */
+export function currentSession(): SessionState {
+  return state;
+}

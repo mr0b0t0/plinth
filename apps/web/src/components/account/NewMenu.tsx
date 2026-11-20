@@ -1,25 +1,18 @@
 // "New" on the dashboard (docs/spec.md "New and Import"): a blank document or sheet that opens
 // straight in edit mode, or a sheet imported from a spreadsheet file. HTML pages and designs come
-// only from agents, which the menu says, with a link to connect one.
+// only from agents, which Connect an agent (the sidebar, the empty state) is the way to.
 //
 // A blank artifact is the registry's `create` row published as a placeholder v1 ("Created in the
 // app") over the ordinary REST publish with the signed-in session, private like every publish;
 // the page then opens with `?edit`. Import sends the file as it is and the Worker converts it.
 // Blank items are offered only where editing on the page works here (AppConfig.inline_editing);
 // Import always, where the instance takes sheets.
-import {
-  FileArrowUpIcon,
-  FileTextIcon,
-  PlugIcon,
-  PlusIcon,
-  TableIcon,
-} from "@phosphor-icons/react";
+import { FileArrowUpIcon, FileTextIcon, PlusIcon, TableIcon } from "@phosphor-icons/react";
 import { API, type AppConfig, type ArtifactType, type PublishResult } from "@plinth/shared";
 import { useId, useRef, useState } from "react";
 import { api } from "../../lib/api.ts";
 import { navigate } from "../../lib/router.tsx";
 import { Button, Dialog, type Icon, Menu, type MenuEntry, useToast } from "../ui/index.ts";
-import { CONNECT_AGENT_HREF } from "./nav.ts";
 import {
   blankBody,
   blankItems,
@@ -28,7 +21,6 @@ import {
   openHref,
   readSpreadsheet,
   SPREADSHEET_ACCEPT,
-  SPREADSHEET_KINDS,
   sheetsAvailable,
   titleFromFileName,
 } from "./newArtifact.ts";
@@ -38,8 +30,7 @@ const TYPE_ICON: Partial<Record<ArtifactType, Icon>> = {
   sheet: TableIcon,
 };
 
-export const IMPORT_LABEL = `Import a spreadsheet (${SPREADSHEET_KINDS})…`;
-export const AGENTS_NOTE = "Pages and designs are made by your agents.";
+export const IMPORT_LABEL = "Import a spreadsheet…";
 
 export interface NewMenuProps {
   config: AppConfig | null;
@@ -47,14 +38,6 @@ export interface NewMenuProps {
   variant?: "primary" | "secondary";
   /** Extra class on the menu. */
   className?: string;
-}
-
-/** What the empty state adds under "Connect an agent…", from what New offers here. */
-export function newHint(config: AppConfig | null): string | null {
-  if (blankItems(config).length > 0) {
-    return "Or start a document or a sheet yourself with New, or import a spreadsheet.";
-  }
-  return sheetsAvailable(config) ? "Or import a spreadsheet with New." : null;
 }
 
 export function NewMenu({ config, variant = "primary", className }: NewMenuProps) {
@@ -127,13 +110,6 @@ export function NewMenu({ config, variant = "primary", className }: NewMenuProps
           },
         ]
       : []),
-    { type: "separator" },
-    {
-      label: "Connect an agent",
-      icon: PlugIcon,
-      href: CONNECT_AGENT_HREF,
-      description: AGENTS_NOTE,
-    },
   ];
 
   return (
@@ -168,8 +144,8 @@ export function NewMenu({ config, variant = "primary", className }: NewMenuProps
         open={problem !== null}
         onClose={() => setProblem(null)}
         role="alertdialog"
-        title="This file could not be imported"
-        description={problem ? `${problem.file}: ${problem.message}` : undefined}
+        title={problem ? `Could not import ${problem.file}` : "Could not import the file"}
+        description={problem?.message}
         footer={
           <>
             <Button variant="ghost" onClick={() => setProblem(null)}>

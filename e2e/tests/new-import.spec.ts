@@ -35,8 +35,7 @@ test("New document: v1 'Created in the app' opens in edit mode on its title, and
   await expect(menu.getByRole("menuitem")).toHaveText([
     "Document",
     "Sheet",
-    "Import a spreadsheet (.xlsx, .csv)…",
-    "Connect an agentPages and designs are made by your agents.",
+    "Import a spreadsheet…",
   ]);
   const axe = await new AxeBuilder({ page }).include(".pl-menu__list").analyze();
   expect(axe.violations).toEqual([]);
@@ -128,8 +127,8 @@ test("Import refuses a file it cannot read and says why, creating nothing", asyn
     mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     buffer: Buffer.from("not a zip"),
   });
-  const dialog = page.getByRole("alertdialog", { name: "This file could not be imported" });
-  await expect(dialog).toContainText("broken.xlsx: The xlsx file could not be imported");
+  const dialog = page.getByRole("alertdialog", { name: "Could not import broken.xlsx" });
+  await expect(dialog).toContainText("The xlsx file could not be imported");
   await dialog.getByRole("button", { name: "Cancel" }).click();
   const list = await apiGet(page.request, "/artifacts");
   expect(list.body.items).toEqual([]);
@@ -157,17 +156,17 @@ test("Replace a sheet with a file: confirm, a version published meanwhile, and o
   await page.goto(`/a/${art.slug}`);
   await expect(cell(page, "A2")).toHaveText("Figs", { timeout: 15_000 });
 
+  // The item opens the file picker straight away; the dialog only confirms.
   let menu = await openActions(page);
+  const chooser = page.waitForEvent("filechooser");
   await menu.getByRole("menuitem", { name: "Replace with a file…" }).click();
-  const dialog = page.getByRole("dialog", { name: "Replace with a file" });
-  await page.getByTestId("replace-sheet-file").setInputFiles({
+  await (await chooser).setFiles({
     name: "fruit.csv",
     mimeType: "text/csv",
     buffer: Buffer.from("Item,Qty\nApples,3\nPears,5\n"),
   });
-  await expect(dialog).toContainText(
-    "This makes v2 from fruit.csv. Comments and sharing stay. v1 stays in history.",
-  );
+  const dialog = page.getByRole("dialog", { name: "Replace with a file" });
+  await expect(dialog).toContainText("fruit.csv becomes v2. v1 stays in history.");
   // The agent publishes v2 before the person confirms.
   const agentV2 = await apiPut(
     page.request,
@@ -177,9 +176,7 @@ test("Replace a sheet with a file: confirm, a version published meanwhile, and o
   );
   expect(agentV2.status).toBe(200);
   await dialog.getByRole("button", { name: "Replace", exact: true }).click();
-  await expect(dialog).toContainText(
-    "v2 was published by Work agent since you chose the file. Replace v2 too?",
-  );
+  await expect(dialog).toContainText("v2 was published by Work agent meanwhile. Replace v2 too?");
   await dialog.getByRole("button", { name: "Replace v2" }).click();
   await expect(dialog).toHaveCount(0);
   await expect(cell(page, "B3")).toHaveText("5", { timeout: 15_000 });
@@ -204,5 +201,5 @@ test("Replace a sheet with a file: confirm, a version published meanwhile, and o
   menu = await openActions(page);
   const off = menu.getByRole("menuitem", { name: "Replace with a file…" });
   await expect(off).toHaveAttribute("aria-disabled", "true");
-  await expect(off).toContainText("Publish or discard the unpublished changes first");
+  await expect(off).toContainText("Publish or discard changes first");
 });
