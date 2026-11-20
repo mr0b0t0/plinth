@@ -494,10 +494,6 @@
   .pl-dash-bar__category .pl-menu__list {
     left: 0;
   }
-  /* Leave the title most of a phone row; a longer category name wraps inside its badge. */
-  .pl-dash__category {
-    max-width: 6.5rem;
-  }
   .pl-dash__head {
     display: none;
   }
