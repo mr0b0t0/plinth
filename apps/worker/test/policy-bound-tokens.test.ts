@@ -2,6 +2,7 @@
 // each still needing the person's role and the token's scope; every other artifact is not_found for
 // every action and every scope set (the binding is checked before the scope); takedown and delete
 // still win; and the helpers outside decide.
+import type { Capabilities } from "@plinth/shared";
 import { describe, expect, it } from "vitest";
 import {
   type AccessFacts,
@@ -9,12 +10,15 @@ import {
   type ArtifactFacts,
   boundArtifactOf,
   canActOnMention,
+  captureReadsData,
   decide,
   mayCreateArtifacts,
   type Principal,
+  pageDataAccess,
   scopeFor,
   seesOwnerMetadata,
   seesPeople,
+  seesThumbnails,
 } from "../src/policy.ts";
 
 const OWNER = "u-owner";
@@ -37,6 +41,7 @@ const ACTIONS = Object.keys({
   live_edit: true,
   people: true,
   comments_read: true,
+  enter: true,
 } satisfies Record<ArtifactAction, true>) as ArtifactAction[];
 
 const ALL = ["artifacts:read", "artifacts:write", "mentions"] as const;
@@ -202,6 +207,58 @@ describe("policy: a token bound to one artifact", () => {
     }
   });
 
+  it("enter: refused for a bound token, exactly view for everyone else, takedowns included", () => {
+    expect(scopeFor("enter")).toBe("artifacts:read");
+    expect(decide(boundAgent(ALL), "enter", art(), access())).toEqual({
+      allow: false,
+      reason: "token_bound",
+      role: "owner",
+    });
+    // A page the token could open signed out: it still gets no pass of its own.
+    expect(decide(boundAgent(ALL), "enter", art({ visibility: "public" }), access())).toEqual({
+      allow: false,
+      reason: "token_bound",
+      role: "owner",
+    });
+    const wide: Principal = {
+      ...(boundAgent(ALL) as Extract<Principal, { kind: "agent" }>),
+      boundArtifactId: null,
+    };
+    const noRead: Principal = {
+      ...(boundAgent(["artifacts:write"]) as Extract<Principal, { kind: "agent" }>),
+      boundArtifactId: null,
+    };
+    const user: Principal = { kind: "user", userId: "u-x", email: "x@example.com", isAdmin: false };
+    const admin: Principal = { ...user, isAdmin: true };
+    const owner: Principal = {
+      kind: "user",
+      userId: OWNER,
+      email: "o@example.com",
+      isAdmin: false,
+    };
+    const viewer: Principal = { kind: "viewer", email: "v@example.com" };
+    const anon: Principal = { kind: "anonymous" };
+    for (const p of [wide, noRead, user, admin, owner, viewer, anon]) {
+      for (const visibility of ["public", "unlisted", "allowlist", "password"] as const) {
+        for (const grantRole of [null, "viewer", "commenter", "editor"] as const) {
+          for (const takenDown of [false, true]) {
+            for (const passwordPassed of [false, true]) {
+              const facts = art({ visibility, hasPassword: visibility === "password", takenDown });
+              const acc = access({ grantRole, passwordPassed, isAdmin: p === admin });
+              expect(
+                decide(p, "enter", facts, acc),
+                `${p.kind} ${visibility} ${grantRole} ${takenDown} ${passwordPassed}`,
+              ).toEqual(decide(p, "view", facts, acc));
+            }
+          }
+        }
+      }
+      // A summary's thumbnail_url follows the same rule.
+      expect(seesThumbnails(p), p.kind).toBe(true);
+    }
+    expect(seesThumbnails(boundAgent(ALL))).toBe(false);
+  });
+
   it("the helpers: boundArtifactOf, mayCreateArtifacts, seesOwnerMetadata, seesPeople, canActOnMention", () => {
     const wide = {
       ...(boundAgent(ALL) as Extract<Principal, { kind: "agent" }>),
@@ -230,5 +287,31 @@ describe("policy: a token bound to one artifact", () => {
     const task = { targetConnection: "c-ci", targetClientType: null };
     expect(canActOnMention(boundAgent(ALL), task, OWNER)).toBe(false);
     expect(canActOnMention({ ...wide, connectionId: "c-ci" }, task, OWNER)).toBe(true);
+  });
+
+  it("a capture of a version a bound token wrote reads no shared data; a person's capture does", () => {
+    // Who wrote the version decides the capture's pass.
+    expect(captureReadsData({ userId: OWNER, boundArtifactId: null })).toBe(true);
+    expect(captureReadsData({ userId: OWNER, boundArtifactId: BOUND })).toBe(false);
+    // A writer whose account was erased is nobody anyone can vouch for.
+    expect(captureReadsData({ userId: null, boundArtifactId: null })).toBe(false);
+    // The pass then reads nothing, exactly as an in-chat preview reads nothing.
+    const caps: Capabilities = {
+      data: true,
+      viewer: false,
+      shared: [],
+      room: false,
+      roomOpen: [],
+      comments: false,
+      people: false,
+    };
+    expect(pageDataAccess(null, caps, true)).toEqual({
+      read: true,
+      write: false,
+      seeIdentity: false,
+    });
+    expect(pageDataAccess(null, caps, true, {}).read).toBe(true);
+    expect(pageDataAccess(null, caps, true, { noData: true }).read).toBe(false);
+    expect(pageDataAccess(null, caps, true, { preview: true }).read).toBe(false);
   });
 });

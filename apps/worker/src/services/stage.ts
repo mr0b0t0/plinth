@@ -27,7 +27,14 @@ import { nowIso } from "../lib/time.ts";
 import { mayCreateArtifacts } from "../policy.ts";
 import { notifyRoom, notifyViewers } from "../rooms/notify.ts";
 import { getVersionRow, requireArtifact, versionCapabilities } from "./artifacts.ts";
-import { checkAsset, requireTypeDef, resolveSource, typeHooks } from "./artifactTypes.ts";
+import {
+  checkAsset,
+  requireTypeDef,
+  resolveSource,
+  typeHooks,
+  typePublishWarnings,
+  typeSourceWarnings,
+} from "./artifactTypes.ts";
 import {
   ATTEMPT_GUARD,
   attemptCutoff,
@@ -376,12 +383,6 @@ export class VersionStager implements Stager {
   private readonly scanText = new Map<string, Uint8Array>();
   private scanBytes = 0;
   private readonly unscanned: string[] = [];
-  /**
-   * Raw paths whose bytes this request carried (addFile only), for sensitive_file. Never filled by
-   * addRef, addRefTyped, carry or carryCurrent: the server reports what a request sent, and makes
-   * no claim about who chose a path that was carried or referenced.
-   */
-  private readonly sentPaths = new Set<string>();
   private readonly running = new Set<Promise<void>>();
   private inflightBytes = 0;
   private failure: unknown = null;
@@ -575,7 +576,6 @@ export class VersionStager implements Stager {
       own: false,
     };
     this.entries.set(path, entry);
-    if (this.scan) this.sentPaths.add(path);
     this.checkCount();
     this.countBytes(bytes.byteLength);
     this.keepForScan(path, contentType, bytes);
@@ -866,10 +866,9 @@ export class VersionStager implements Stager {
       // Per-type warnings about the source (services/artifactTypes/<type>.ts), capped with the
       // reference warnings: the type's own source checks first (sourceWarnings), the ones that
       // read other artifacts after the reference warnings (publishWarnings).
-      const typeWarnings = typeHooks(def).publishWarnings;
-      const extra = typeWarnings
-        ? await typeWarnings(this.ctx, { def, text: sourceText, paths: manifestPaths })
-        : [];
+      // Both are advisory: a hook that throws becomes a not_scanned note, never a failed publish.
+      const typedSource = { def, text: sourceText, paths: manifestPaths };
+      const extra = await typePublishWarnings(this.ctx, typedSource);
       warnings = scanPublish({
         files,
         manifestPaths,
@@ -878,10 +877,9 @@ export class VersionStager implements Stager {
         // checked as opaque isolation would check it, whatever the instance runs.
         isolation: def.opaqueFrames ? "opaque" : this.ctx.config.contentIsolation,
         ...(def.opaqueFrames ? { opaqueReason: "artboard" as const } : {}),
-        sent: [...this.sentPaths].map((p) => byRaw.get(p) ?? p),
         unscanned: this.unscanned.map((p) => byRaw.get(p) ?? p),
         reused,
-        typed: typeHooks(def).sourceWarnings?.(def, sourceText, manifestPaths),
+        typed: typeSourceWarnings(typedSource),
         extra,
       });
       this.scanText.clear();

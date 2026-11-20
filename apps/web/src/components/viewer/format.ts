@@ -25,3 +25,15 @@ export function timeAgo(iso: string | null | undefined, now: number = Date.now()
   const d = Math.floor(s / 86_400);
   return d === 1 ? "1 day ago" : `${d} days ago`;
 }
+
+/** "12 Nov 2026" for a UTC day ("2026-11-12"); the raw value when it does not parse. */
+export function formatDay(day: string): string {
+  const d = new Date(`${day}T00:00:00Z`);
+  if (Number.isNaN(d.getTime())) return day;
+  return new Intl.DateTimeFormat("en-GB", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+    timeZone: "UTC",
+  }).format(d);
+}

@@ -524,6 +524,43 @@ describe("invitation emails: category shares", () => {
     expect(await outboxFor(first)).toHaveLength(0);
     expect(await outboxFor(second)).toHaveLength(1);
   });
+
+  it("a token limited to one artifact gets token_bound with notify, and nobody is emailed", async () => {
+    const o = await owner();
+    const a = await filed(o, "Gamma", "Board deck");
+    const first = uniqueEmail("first");
+    const made = await shareCategory(o, "gamma", [{ email: first, role: "viewer" }]);
+    const minted = await send("POST", "/api/v1/connections", o.session, {
+      label: "CI: deck",
+      artifact: a.id,
+    });
+    expect(minted.status).toBe(201);
+    const bound = { Authorization: `Bearer ${(await json(minted)).token}` };
+    const fresh = uniqueEmail("fresh");
+    const people = [
+      { email: first, role: "viewer" },
+      { email: fresh, role: "viewer" },
+    ];
+    const calls: [string, string, unknown][] = [
+      ["POST", "/api/v1/category-shares", { category: "Other", people, review: [], notify: true }],
+      ["PATCH", `/api/v1/category-shares/${made.share.id}`, { people, review: [], notify: true }],
+      // On its own artifact the token may view and edit, never manage, so sharing is refused too.
+      ["PUT", `/api/v1/artifacts/${a.id}/sharing`, { grants: people, notify: true }],
+      [
+        "PUT",
+        `/api/v1/artifacts/${a.id}/visibility`,
+        { visibility: "allowlist", emails: [fresh], notify: true },
+      ],
+    ];
+    for (const [method, path, body] of calls) {
+      const res = await send(method, path, bound, body);
+      const out = await json(res);
+      expect(res.status, `${method} ${path}: ${JSON.stringify(out)}`).toBe(403);
+      expect(out.error.details?.reason, `${method} ${path}`).toBe("token_bound");
+    }
+    expect(await outboxFor(fresh)).toHaveLength(0);
+    expect(await outboxFor(first)).toHaveLength(0);
+  });
 });
 
 describe("invitation emails: the message", () => {

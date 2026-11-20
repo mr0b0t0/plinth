@@ -9,9 +9,9 @@ import {
   type EffectiveRole,
   LIMITS,
 } from "./constants.ts";
-import { utf8Bytes } from "./pageComments.ts";
 import { ROOM_LIMITS, ROOM_OPEN_ALL, ROOM_OPEN_META, ROOM_TOPIC_RE } from "./room.ts";
 import { artifactRefSchema } from "./schemas.ts";
+import { utf8Length } from "./utf8.ts";
 
 // ---------- capabilities ----------
 
@@ -27,28 +27,13 @@ export interface Capabilities {
   room: boolean;
   /** Topics commenters may emit too (plinth-room-open); `*` opens all. Viewers never emit. */
   roomOpen: string[];
+  /** The page may open the comment composer with its own anchors (`plinth.comments`). */
+  comments: boolean;
   /**
    * The owner and editors may list everyone with access from the page (/__plinth/api/v1/people).
    * Counts only with `data` and `viewer`.
    */
   people: boolean;
-  /** The page may open the comment composer with its own anchors (`plinth.comments`). */
-  comments: boolean;
-  /**
-   * The page may receive words the viewer dictates (`plinth.dictation`, run by the app). Not shared
-   * data, not a room, and never the microphone.
-   */
-  dictation: boolean;
-  /**
-   * While the viewer is using the page (focus inside its frame), a newer version waits behind an
-   * Update button instead of replacing it (docs/spec.md "Live views"). Not shared data, no API.
-   */
-  hold: boolean;
-  /**
-   * Files people add from the page (`plinth.files`): raster images, PDFs, video and audio kept in
-   * the artifact's own store. Not shared data; `viewer` adds who uploaded each file.
-   */
-  files: boolean;
 }
 
 export const CAPABILITIES_META = "plinth-capabilities";
@@ -115,11 +100,8 @@ export const DECLARATION_FIELDS: readonly DeclarationField[] = [
     accept: (t) => t === ROOM_OPEN_ALL || ROOM_TOPIC_RE.test(t),
     checkOnRead: true,
   },
-  { kind: "token", key: "people" },
   { kind: "token", key: "comments" },
-  { kind: "token", key: "dictation" },
-  { kind: "token", key: "hold" },
-  { kind: "token", key: "files" },
+  { kind: "token", key: "people" },
 ];
 
 const TOKEN_INFO = new Map<string, (typeof CAPABILITY_TOKENS)[number]>(
@@ -182,11 +164,10 @@ function tokens(content: string): string[] {
  * order and quote style, names compared case-insensitively, tags inside HTML comments ignored.
  * Every meta tag is read, so a registered meta after the others is never missed. Unknown tokens
  * are ignored, and so are list entries that break their rule; at most each list's `max` are kept
- * (LIMITS.maxDataShared, ROOM_LIMITS.maxOpenTopics). Returns null unless `data`, `room`,
- * `comments`, `dictation`, `hold` or `files` is declared: the viewer is learned through the data API
- * or the room, so `viewer` alone declares nothing, and neither does a list alone. Shared names
- * count only with `data`, open topics only with `room`. A page that declares only `comments`,
- * `dictation`, `hold` or `files` has no document store and no room.
+ * (LIMITS.maxDataShared, ROOM_LIMITS.maxOpenTopics). Returns null unless `data`, `room` or
+ * `comments` is declared: the viewer is learned through the data API or the room, so `viewer`
+ * alone declares nothing, and neither does a list alone. Shared names count only with `data`,
+ * open topics only with `room`.
  */
 export function parseCapabilities(html: string): Capabilities | null {
   if (!/plinth-/i.test(html)) return null;
@@ -302,10 +283,7 @@ export const dataDocIdSchema = z
   )
   .describe("Document id, or ~me for your own personal document");
 
-/** UTF-8 length of a string, without TextEncoder (this package targets plain ES2023). */
-export function utf8Length(s: string): number {
-  return utf8Bytes(s);
-}
+export { utf8Length };
 
 /** UTF-8 bytes of a document's JSON, as stored. */
 export function dataByteSize(data: unknown): number {
@@ -409,9 +387,16 @@ export type DataVia = "page" | "agent" | "app";
 
 /**
  * Why shared data is unavailable to a page. `preview`: the page is shown in an agent's thread
- * (an MCP App), through a read-only pass that carries no identity.
+ * (an MCP App), through a read-only pass that carries no identity. `capture`: Plinth's thumbnail
+ * browser is taking a picture of a version whose writer may not read the data (a token limited to
+ * one artifact wrote it).
  */
-export type DataUnavailableReason = "opaque_isolation" | "disabled" | "not_declared" | "preview";
+export type DataUnavailableReason =
+  | "opaque_isolation"
+  | "disabled"
+  | "not_declared"
+  | "preview"
+  | "capture";
 
 /** Server-derived author of a write, as a page sees it (only with `viewer` and when identified). */
 export interface PageDocAuthor {

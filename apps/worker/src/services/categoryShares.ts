@@ -28,7 +28,12 @@ import type { ArtifactRow, CategoryShareRow } from "../db/schema.ts";
 import { newId } from "../lib/crypto.ts";
 import { ApiError, isUniqueViolation, notFound, unauthorized } from "../lib/errors.ts";
 import { nowIso } from "../lib/time.ts";
-import { type CategoryGrantFacts, mayManageCategoryShares } from "../policy.ts";
+import {
+  type CategoryGrantFacts,
+  mayManageCategoryShares,
+  type Principal,
+  seesCategorySharing,
+} from "../policy.ts";
 import { notifyRoom } from "../rooms/notify.ts";
 import { matchingSpellings, prunePersonalCategories } from "./categories.ts";
 import type { Ctx } from "./context.ts";
@@ -237,8 +242,25 @@ function toRow(s: ShareSql): CategoryShareRow {
   };
 }
 
+/**
+ * A token limited to one artifact gets 403 `token_bound` from every share, portal and
+ * personal-category endpoint, first, so the answer is the same whatever the switch or the id.
+ */
+export function refuseBoundToken(p: Principal): void {
+  if (seesCategorySharing(p)) return;
+  throw new ApiError(
+    "forbidden",
+    "This token is limited to one artifact and has no category shares",
+    {
+      reason: "token_bound",
+      next: "Category shares are managed in the app; use the app, or a token without that limit",
+    },
+  );
+}
+
 /** The signed-in owner, with the feature on. Agents and bearer tokens get 403, never a write. */
 function requireShareOwner(ctx: Ctx): { userId: string; email: string } {
+  refuseBoundToken(ctx.principal);
   if (!ctx.config.allowCategorySharing) {
     throw new ApiError("feature_disabled", "Sharing categories is not enabled on this instance");
   }

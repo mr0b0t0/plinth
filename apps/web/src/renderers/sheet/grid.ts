@@ -1,8 +1,11 @@
-// The sheet's DOM: a toolbar (title, row count, filter, downloads), a formula bar, then the grid,
-// a <table> with the column letters and the header row in a sticky <thead>, frozen columns kept
-// in view by left offsets, and the data rows in <tbody> chunks of 200 that the browser skips
-// laying out while they are off screen (content-visibility), so comment pins, find in page, print
-// and screen readers still see every cell.
+// The sheet's DOM: the title (for print and screen readers; the app's bar shows it on screen), one
+// bar with the selected cell's address and raw text on the left and the filter on the right, then
+// the grid, a <table> with the column letters and the header row in a sticky <thead>, frozen
+// columns kept in view by left offsets (unless they would take more than half the frame), and the
+// data rows in <tbody> chunks of 200 that the browser skips laying out while they are off screen
+// (content-visibility), so comment pins, find in page, print and screen readers still see every
+// cell. Downloads and print are in the app's
+// artifact menu, which asks the frame (boot.ts).
 //
 // Built with createElement and textContent only: no data string is ever parsed as HTML. The only
 // attributes taken from data are href (a link that passes isSheetLinkUrl again here), title (an
@@ -19,7 +22,6 @@ import {
   type Value,
 } from "@plinth/shared";
 import { type Display, displayValue } from "./format.ts";
-import type { SheetExportFormat } from "./protocol.ts";
 import { nextSort, rowMatches, type SortState, sortedOrder } from "./view.ts";
 
 export const CHUNK_ROWS = 200;
@@ -30,7 +32,6 @@ const MAX_WIDTH = 800;
 
 export interface GridOptions {
   title: string;
-  onDownload: (format: SheetExportFormat) => void;
   /** Some formulas were not computed within the browser's budget. */
   exhausted: boolean;
 }
@@ -69,6 +70,14 @@ export function frozenOffsets(columns: readonly SheetColumn[], freeze: number): 
     x += columnWidth(columns[i] as SheetColumn);
   }
   return out;
+}
+
+/** The width of the first `freeze` columns, row numbers not included. */
+export function frozenWidthOf(columns: readonly SheetColumn[], freeze: number): number {
+  let w = 0;
+  for (let i = 0; i < Math.min(freeze, columns.length); i++)
+    w += columnWidth(columns[i] as SheetColumn);
+  return w;
 }
 
 /** The text the formula bar shows for a stored cell: exactly what the sheet holds. */
@@ -126,52 +135,33 @@ export function buildGrid(
   const lefts = frozenOffsets(cols, freeze);
   const root = el(doc, "div", "plinth-sheet__page");
 
-  // ---------- toolbar ----------
-  const bar = el(doc, "div", "plinth-sheet__bar");
+  // ---------- title and bar ----------
   const heading = el(doc, "h1", "plinth-sheet__title", opts.title || "Sheet");
-  const count = el(doc, "span", "plinth-sheet__count");
-  count.setAttribute("aria-live", "polite");
-  const filterLabel = el(doc, "label", "plinth-sheet__filter");
-  const filterText = el(doc, "span", "plinth-sheet__filter-label", "Filter");
-  const filterInput = el(doc, "input", "plinth-sheet__filter-input");
-  filterInput.type = "search";
-  filterInput.autocomplete = "off";
-  filterInput.spellcheck = false;
-  filterLabel.append(filterText, filterInput);
-  const downloads = el(doc, "div", "plinth-sheet__downloads");
-  downloads.setAttribute("role", "group");
-  downloads.setAttribute("aria-label", "Download");
-  downloads.append(el(doc, "span", "plinth-sheet__downloads-label", "Download"));
-  for (const [format, label, name] of [
-    ["csv", "CSV", "Download as CSV"],
-    ["xlsx", "Excel", "Download as Excel (.xlsx)"],
-  ] as const) {
-    const b = el(doc, "button", "plinth-sheet__btn", label);
-    b.type = "button";
-    b.setAttribute("aria-label", name);
-    b.dataset.format = format;
-    b.addEventListener("click", () => opts.onDownload(format));
-    downloads.append(b);
-  }
-  bar.append(heading, count, filterLabel, downloads);
-  if (opts.exhausted) {
-    bar.append(
-      el(
-        doc,
-        "p",
-        "plinth-sheet__note",
-        "Some formulas were not calculated in the browser (#LIMIT!): this sheet needs more steps than a page may spend. A download opened in a spreadsheet app calculates them.",
-      ),
-    );
-  }
-
-  // ---------- formula bar ----------
+  const bar = el(doc, "div", "plinth-sheet__bar");
   const fx = el(doc, "div", "plinth-sheet__fx");
   fx.setAttribute("role", "group");
   fx.setAttribute("aria-label", "Selected cell");
   const fxAddr = el(doc, "span", "plinth-sheet__fx-addr");
   const fxRaw = el(doc, "span", "plinth-sheet__fx-raw");
   fx.append(fxAddr, fxRaw);
+  // Shown only while a filter is set: "3 of 40 rows".
+  const count = el(doc, "span", "plinth-sheet__count");
+  count.setAttribute("aria-live", "polite");
+  const filterInput = el(doc, "input", "plinth-sheet__filter-input");
+  filterInput.type = "search";
+  filterInput.placeholder = "Filter";
+  filterInput.setAttribute("aria-label", "Filter rows");
+  filterInput.autocomplete = "off";
+  filterInput.spellcheck = false;
+  bar.append(fx, count, filterInput);
+  const note = opts.exhausted
+    ? el(
+        doc,
+        "p",
+        "plinth-sheet__note",
+        "Some formulas were not calculated here (#LIMIT!). A download calculates them.",
+      )
+    : null;
 
   // ---------- grid ----------
   const scroll = el(doc, "div", "plinth-sheet__scroll");
@@ -194,12 +184,14 @@ export function buildGrid(
   table.style.width = `${total}px`;
   table.append(colgroup);
 
+  const frozenCells: [HTMLElement, number][] = [];
   const freezeCell = (cell: HTMLElement, c: number) => {
     const left = lefts[c];
     if (left === undefined) return;
     cell.classList.add("plinth-sheet__frozen");
     if (c === freeze - 1) cell.classList.add("plinth-sheet__frozen--last");
     cell.style.left = `${left}px`;
+    frozenCells.push([cell, left]);
   };
 
   const thead = el(doc, "thead");
@@ -232,6 +224,7 @@ export function buildGrid(
     b.addEventListener("click", () => grid.sortBy(i));
     th.append(b);
     if (c.type === "number" || c.type === "date") th.classList.add("plinth-sheet__name--num");
+    if (c.type === "checkbox") th.classList.add("plinth-sheet__name--check");
     headers.push(th);
     names.append(th);
   });
@@ -289,7 +282,7 @@ export function buildGrid(
     const shown = rows.filter((tr) => !tr.hidden).length;
     const all = rows.length;
     const noun = all === 1 ? "row" : "rows";
-    count.textContent = filterValue.trim() ? `${shown} of ${all} ${noun}` : `${all} ${noun}`;
+    count.textContent = filterValue.trim() ? `${shown} of ${all} ${noun}` : "";
   };
   updateCount();
 
@@ -304,8 +297,13 @@ export function buildGrid(
       selected = cell;
       cell.classList.add("plinth-sheet__selected");
       fxAddr.textContent = a1(row, col);
-      fxRaw.textContent =
-        row === 1 ? (cols[col]?.name ?? "") : rawText((sheet.rows[row - 2] ?? [])[col] ?? null);
+      const stored = row === 1 ? null : ((sheet.rows[row - 2] ?? [])[col] ?? null);
+      fxRaw.textContent = row === 1 ? (cols[col]?.name ?? "") : rawText(stored);
+      // Monospace only for a formula, so a plain value reads as it does in the grid.
+      fxRaw.classList.toggle(
+        "plinth-sheet__fx-raw--formula",
+        typeof stored === "string" && stored.startsWith("="),
+      );
     },
     sortBy(col) {
       sort = nextSort(sort, col);
@@ -365,7 +363,23 @@ export function buildGrid(
   const first = rows[0]?.cells[1];
   if (first) first.tabIndex = 0;
 
-  root.append(bar, fx, scroll);
+  // Frozen columns wider than half the frame would leave a phone almost nothing to scroll, so
+  // there they scroll with the rest (sheet.css, plinth-sheet--unfrozen).
+  const frozenWidth = freeze > 0 ? ROW_NUMBER_WIDTH + frozenWidthOf(cols, freeze) : 0;
+  const narrow =
+    frozenWidth > 0 ? doc.defaultView?.matchMedia?.(`(max-width: ${frozenWidth * 2}px)`) : null;
+  if (narrow) {
+    const apply = () => {
+      root.classList.toggle("plinth-sheet--unfrozen", narrow.matches);
+      for (const [cell, left] of frozenCells) cell.style.left = narrow.matches ? "" : `${left}px`;
+    };
+    apply();
+    narrow.addEventListener?.("change", apply);
+  }
+
+  root.append(heading, bar);
+  if (note) root.append(note);
+  root.append(scroll);
   if (rows.length > 0) grid.select(2, 0);
   else grid.select(1, 0);
   return grid;

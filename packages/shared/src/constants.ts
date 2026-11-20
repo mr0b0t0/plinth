@@ -42,64 +42,8 @@ export const PUBLISH_WARNING_CODES = [
   "ds_deprecated_alias",
   "design_system_unavailable",
   "design_system_outdated",
-  "blocked_feature",
-  "sensitive_file",
 ] as const;
 export type PublishWarningCode = (typeof PUBLISH_WARNING_CODES)[number];
-
-/**
- * The local record of which project files a user chose for which artifact (docs/spec.md, "Project
- * files for a page"). Agents keep it at the project root, never publish it and never commit it: it
- * lists artifact ids, and an id opens an unlisted artifact.
- */
-export const PROJECT_FILES_RECORD = ".plinth-files.json";
-
-/**
- * One rule of SENSITIVE_PATH_RULES, matched against a lowercased path segment. `name`: the whole
- * segment. `prefix`: the segment starts with `value` (and ends with `suffix` when given), unless it
- * is one of `except`. `extension`: the last segment ends with `value`. `folder`: a segment before
- * the last one.
- */
-export type SensitivePathRule =
-  | { kind: "name"; value: string }
-  | { kind: "prefix"; value: string; suffix?: string; except?: readonly string[] }
-  | { kind: "extension"; value: string }
-  | { kind: "folder"; value: string };
-
-/**
- * File names that usually hold secrets, for the advisory sensitive_file publish warning. Names only:
- * a secret in an ordinary file name is not caught. The project files record is on the list because
- * its artifact ids open unlisted artifacts, not because it holds a key. One rule per line.
- */
-export const SENSITIVE_PATH_RULES: readonly SensitivePathRule[] = [
-  { kind: "name", value: ".env" },
-  { kind: "name", value: ".npmrc" },
-  { kind: "name", value: ".pypirc" },
-  { kind: "name", value: ".netrc" },
-  { kind: "name", value: ".git-credentials" },
-  { kind: "name", value: ".dev.vars" },
-  { kind: "name", value: ".htpasswd" },
-  { kind: "name", value: "id_rsa" },
-  { kind: "name", value: "id_dsa" },
-  { kind: "name", value: "id_ecdsa" },
-  { kind: "name", value: "id_ed25519" },
-  { kind: "name", value: "credentials.json" },
-  { kind: "name", value: "terraform.tfstate" },
-  { kind: "name", value: PROJECT_FILES_RECORD },
-  { kind: "prefix", value: ".env.", except: [".env.example", ".env.sample", ".env.template"] },
-  { kind: "prefix", value: "service-account", suffix: ".json" },
-  { kind: "extension", value: ".pem" },
-  { kind: "extension", value: ".key" },
-  { kind: "extension", value: ".p12" },
-  { kind: "extension", value: ".pfx" },
-  { kind: "extension", value: ".keystore" },
-  { kind: "extension", value: ".jks" },
-  { kind: "extension", value: ".tfstate" },
-  { kind: "folder", value: ".git" },
-  { kind: "folder", value: ".ssh" },
-  { kind: "folder", value: ".aws" },
-  { kind: "folder", value: ".gnupg" },
-];
 
 /** Token scopes. A personal access token or OAuth grant carries a space-separated subset. */
 export const SCOPES = ["artifacts:read", "artifacts:write", "mentions"] as const;
@@ -207,13 +151,6 @@ export const LIMITS = {
   maxDataOps: 50,
   /** Collection names in a page's plinth-data-shared tag. */
   maxDataShared: 20,
-  // Who is viewing (docs/spec.md "Who is viewing: names and the people list").
-  /** A display name as stored (users.name, PATCH /api/v1/me). */
-  maxDisplayNameLength: 100,
-  /** Code points of a display name as pages, rooms and agents see it. */
-  maxPageDisplayNameLength: 64,
-  /** The `q` of a people search. */
-  maxPeopleQueryLength: 100,
   /** Bytes of design HTML (design.html) per version of a design artifact. */
   maxDesignBytes: 2 * MB,
   /** Bytes of JSON (system.json) per version of a design system artifact. */
@@ -242,6 +179,15 @@ export const LIMITS = {
     /** Errors parseDesignSystem reports, at most. */
     maxErrors: 50,
   },
+  /** People listed in one artifact's stats (the most recent; `people_total` says how many). */
+  maxStatsPeople: 500,
+  // Who is viewing (docs/spec.md "Who is viewing: names and the people list").
+  /** A display name as stored (users.name, PATCH /api/v1/me). */
+  maxDisplayNameLength: 100,
+  /** Code points of a display name as pages, rooms and agents see it. */
+  maxPageDisplayNameLength: 64,
+  /** The `q` of a people search. */
+  maxPeopleQueryLength: 100,
   // Sheets (docs/spec.md "Sheets", packages/shared/src/sheet/). Fixed, like the doc limits.
   /** Bytes of JSON lines (sheet.jsonl) per version of a sheet. */
   maxSheetBytes: 1 * MB,
@@ -281,6 +227,16 @@ export const LIMITS = {
   maxSheetImportInflatedBytes: 24 * MB,
 } as const;
 
+/** The windows an owner can pick for one artifact's stats, in UTC days. */
+export const STATS_RANGES = [7, 30, 90, 365] as const;
+
+/**
+ * VIEW_LOG_RETENTION_DAYS: how long each counted open is kept with who made it, before the cron
+ * folds it into the artifact's all-time count. The minimum keeps the 90-day trends whole.
+ */
+export const VIEW_LOG_DEFAULTS = { retentionDays: 365 } as const;
+export const VIEW_LOG_BOUNDS = { retentionDays: [90, 3650] } as const;
+
 export const TTL = {
   /** Magic link and six-digit code. */
   loginCodeMs: 15 * 60 * 1000,
@@ -290,6 +246,12 @@ export const TTL = {
   viewerTokenMs: 60 * 1000,
   /** Host-only viewer cookie on one artifact's content subdomain. */
   contentCookieS: 12 * 60 * 60,
+  /**
+   * How long the content cookie stays in the browser while VIEW_COUNTS is on, so its anonymous
+   * visitor id outlives the 12-hour pass (docs/spec.md "Artifact stats"). The pass inside still
+   * expires after contentCookieS; past that the cookie only carries the visitor id.
+   */
+  visitorIdS: 30 * 24 * 60 * 60,
   /**
    * An in-chat preview's content cookie (MCP Apps, docs/spec.md "In-chat previews"): one look at
    * one version in an agent's thread. Each render mints a fresh one, so it is kept short.
@@ -321,6 +283,13 @@ export const RATE_LIMITS = {
   loginPerEmailPerHour: 5,
   loginPerIpPerHour: 20,
   codeAttemptsPerEmailPerHour: 10,
+  /** Review-account password sign-ins (REVIEW_LOGIN_*) from one address, right or wrong. */
+  reviewLoginAttemptsPerIpPerHour: 10,
+  /**
+   * Wrong review-account passwords across all addresses before that sign-in locks for the rest of
+   * the hour, so guessing cannot be spread over many IPs.
+   */
+  reviewLoginFailuresPerHour: 20,
   passwordAttemptsPerArtifactPerIpPerHour: 10,
   /** Across all addresses, so guessing cannot be spread over many IPs. */
   passwordAttemptsPerArtifactPerHour: 100,
@@ -429,23 +398,16 @@ export const CONTENT_DATA_HEADER = "x-plinth-data";
  * - `stored`: `always` keys are in every stored declaration; `declared` keys only when the token
  *   is declared, so a declaration without it is stored byte for byte as before the token existed.
  * `room` is the live room (presence and broadcast, packages/shared/src/room.ts), not shared data.
- * `people` lets the owner and editors list, from the page, everyone the artifact is shared with.
  * `comments`: the page may open the comment composer with its own anchors (`plinth.comments`,
  * packages/shared/src/pageComments.ts). It is not shared data either.
- * `dictation` lets the page receive words the viewer dictates (packages/shared/src/voice.ts): not
- * shared data, not a room, and never the microphone.
- * `hold`: while the viewer is using the page (focus inside its frame), a newer version waits behind
- * an Update button instead of replacing it (docs/spec.md "Live views"). Not shared data either.
+ * `people` lets the owner and editors list, from the page, everyone the artifact is shared with.
  */
 export const CAPABILITY_TOKENS = [
   { token: "data", declares: true, needs: [], stored: "always" },
   { token: "viewer", declares: false, needs: [], stored: "always" },
   { token: "room", declares: true, needs: [], stored: "declared" },
-  { token: "people", declares: false, needs: ["data", "viewer"], stored: "declared" },
   { token: "comments", declares: true, needs: [], stored: "declared" },
-  { token: "dictation", declares: true, needs: [], stored: "declared" },
-  { token: "hold", declares: true, needs: [], stored: "declared" },
-  { token: "files", declares: true, needs: [], stored: "declared" },
+  { token: "people", declares: false, needs: ["data", "viewer"], stored: "declared" },
 ] as const satisfies readonly {
   token: string;
   declares: boolean;

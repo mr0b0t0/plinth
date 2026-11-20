@@ -17,7 +17,7 @@ import { appCookieName } from "../lib/cookies.ts";
 import { hashToken, newId, newToken } from "../lib/crypto.ts";
 import { ApiError } from "../lib/errors.ts";
 import { isoIn, nowIso } from "../lib/time.ts";
-import { captureLoad } from "../services/thumbnails.ts";
+import { captureLoad, captureTarget } from "../services/thumbnails.ts";
 import { getOrCreateUser } from "../services/users.ts";
 
 const seedInput = z.object({
@@ -113,17 +113,9 @@ devSeed.post("/__dev/capture-url", async (c) => {
   if (!parsed.success)
     throw new ApiError("invalid_input", "Invalid input", { issues: parsed.error.issues });
   const { artifact_id: id, version } = parsed.data;
-  const row = await c.env.DB.prepare(
-    "SELECT access_epoch AS e, type FROM artifacts WHERE id = ?1 AND deleted_at IS NULL",
-  )
-    .bind(id)
-    .first<{ e: number; type: string }>();
-  if (!row) throw new ApiError("not_found", "Not found");
-  const load = await captureLoad(config, {
-    artifactId: id,
-    accessEpoch: row.e,
-    type: row.type,
-    number: version,
-  });
+  // The same target the capture uses, so the pass reads shared data exactly when it would.
+  const target = await captureTarget(c.env.DB, id, version);
+  if (!target) throw new ApiError("not_found", "Not found");
+  const load = await captureLoad(config, target);
   return c.json(load, 201);
 });

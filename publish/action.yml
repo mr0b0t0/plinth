@@ -9,7 +9,7 @@ inputs:
     description: "A Plinth personal access token, ideally one limited to the artifact. Pass a secret: ${{ secrets.PLINTH_TOKEN }}"
     required: true
   path:
-    description: A build folder with index.html (or content.md) at its top, or one .html or .md file
+    description: A build folder with the artifact's source at its top (index.html, content.md for a document, slides.md for a deck, system.json to update a design system), or one .html or .md file
     required: true
   id:
     description: "The artifact to update (id or slug). Empty: the token's artifact if it is limited to one, else a new private artifact"
@@ -67,7 +67,7 @@ outputs:
   version-url:
     description: This version's permanent page
   compare-url:
-    description: The rendered comparison with the previous version (empty for v1)
+    description: The rendered comparison with the previous version (empty for v1, and for nothing_to_publish)
   outcome:
     description: published, nothing_to_publish, already_published, dry_run, conflict, unknown or error
   current-version:

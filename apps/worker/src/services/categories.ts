@@ -26,7 +26,7 @@ import {
 } from "../policy.ts";
 import { notifyRoom } from "../rooms/notify.ts";
 import { decideFor, findArtifact, requireArtifact, summaryFor } from "./artifacts.ts";
-import { ownerShareIdsByKey, ownerShareNames } from "./categoryShares.ts";
+import { ownerShareIdsByKey, ownerShareNames, refuseBoundToken } from "./categoryShares.ts";
 import type { Ctx } from "./context.ts";
 
 // ---------- the category columns (migration 0013) ----------
@@ -505,6 +505,7 @@ export async function setMyCategory(
 ): Promise<ArtifactSummary> {
   const p = ctx.principal;
   if (p.kind === "anonymous") throw unauthorized();
+  refuseBoundToken(p);
   if (p.kind !== "user") {
     throw new ApiError("forbidden", "Set your own category in the app", {
       reason: "app_only",

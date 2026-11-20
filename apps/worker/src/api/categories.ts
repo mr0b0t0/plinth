@@ -5,6 +5,7 @@
 import { API, myCategoryInput, renameCategoryInput } from "@plinth/shared";
 import { Hono } from "hono";
 import { listCategories, renameCategory, setMyCategory } from "../services/categories.ts";
+import { refuseBoundTokens } from "./categoryShares.ts";
 import { type AppEnv, parseBody, serviceCtx } from "./context.ts";
 
 export const categoriesApi = new Hono<AppEnv>();
@@ -23,7 +24,7 @@ categoriesApi.post(API.categoryRename, async (c) => {
  * The signed-in person's own category for an artifact shared with them (issue #42): seen and set
  * by that person only, never by an agent or bearer token, never on their own artifacts.
  */
-categoriesApi.put(API.myCategory, async (c) => {
+categoriesApi.put(API.myCategory, refuseBoundTokens, async (c) => {
   const ctx = serviceCtx(c);
   const { category } = await parseBody(c, myCategoryInput);
   return c.json(await setMyCategory(ctx, c.req.param("ref"), category));
