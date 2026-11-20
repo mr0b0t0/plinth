@@ -8,9 +8,9 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { attachmentName, designExportUrl } from "../../lib/api.ts";
 import { clearToasts, Toaster } from "../ui/index.ts";
-import { downloadDesign } from "./designItems.ts";
+import { DESIGN_EXPORT_DIALOG, downloadDesign } from "./designItems.tsx";
 import { ExportDialog, fitsPixels } from "./ExportDialog.tsx";
-import { type StageContext, TYPE_MENU_ITEMS } from "./stageItems.tsx";
+import { STAGE_DIALOGS, type StageContext, TYPE_MENU_ITEMS } from "./stageItems.tsx";
 import { apiError, CONFIG, json, stubApi } from "./test-utils.ts";
 
 const OPTIONS: DesignExportOptions = {
@@ -70,10 +70,10 @@ function renderDialog(onClose = vi.fn()) {
 }
 
 describe("the menu item", () => {
-  const ctx = (designExport: boolean | undefined, openExport = vi.fn()) =>
+  const ctx = (designExport: boolean | undefined, openDialog = vi.fn()) =>
     ({
       config: { ...CONFIG, design_export: designExport },
-      actions: { openExport },
+      actions: { openDialog },
     }) as unknown as StageContext;
 
   it("is a design's, after Print, and only where the instance renders exports", () => {
@@ -86,6 +86,8 @@ describe("the menu item", () => {
     expect(entry).toMatchObject({ label: "Download PNG or PDF…" });
     (entry as { onSelect: () => void }).onSelect();
     expect(open).toHaveBeenCalledTimes(1);
+    expect(open).toHaveBeenCalledWith(DESIGN_EXPORT_DIALOG);
+    expect(STAGE_DIALOGS.map((d) => d.id)).toContain(DESIGN_EXPORT_DIALOG);
   });
 });
 
@@ -196,7 +198,7 @@ describe("ExportDialog", () => {
         return undefined;
       },
     });
-    // The viewer keeps the dialog mounted, so its choices outlive a close.
+    // A dialog kept mounted across a close keeps its choices.
     const view = (open: boolean) => (
       <ExportDialog open={open} onClose={vi.fn()} artifactRef="launch-kit" version={2} />
     );

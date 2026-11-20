@@ -2,15 +2,22 @@
 // /export/options (the boards). A fake browser replaces Browser Rendering
 // (setDesignExportShooter); a stub BROWSER binding turns the feature on. Checked here: who may
 // export (view rights, strangers 404), the type check, the switch and the binding, input
-// validation, the pixel cap, the hourly limit, what the browser is asked to open (a capture pass
-// at the version's export layout, never an identity), the response headers and file names, a
-// failed render, the app config flag and the env vars.
+// validation, the pixel cap, the hourly limit, what the browser is asked to open (a thumbnail's
+// capture pass bound to the exported version, no identity, no shared data for a version a token
+// limited to one artifact wrote, and every request held to the capture's scope), how the browser
+// reaches the export layout (print media as the page boots, nothing in the URL), the response
+// headers and file names, a failed render, the app config flag and the env vars.
 import { createExecutionContext, waitOnExecutionContext } from "cloudflare:test";
 import { env } from "cloudflare:workers";
-import { DESIGN_EXPORT } from "@plinth/shared";
+import {
+  DESIGN_EXPORT,
+  DESIGN_EXPORT_LAYOUT_SCRIPT,
+  designExportKeepOnlyScript,
+  designExportLoadedScript,
+} from "@plinth/shared";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ConfigError, designExportActive, getConfig, parseConfig } from "../src/config.ts";
-import { verifyEnterToken } from "../src/content/tokens.ts";
+import { verifyContentCookie, verifyEnterToken } from "../src/content/tokens.ts";
 import worker from "../src/index.ts";
 import {
   browserExport,
@@ -18,7 +25,6 @@ import {
   EXPORT_RUN,
   type ExportJob,
   exportFileName,
-  exportPath,
   exportRateKey,
   redactUrls,
   releaseExportSlot,
@@ -27,7 +33,8 @@ import {
   setDesignExportShooter,
   stepTimeout,
 } from "../src/services/designExport.ts";
-import { APP, agent, browserSession, createUser, json, publish } from "./helpers.ts";
+import { captureRequestAllowed, captureScope } from "../src/services/thumbnails.ts";
+import { APP, agent, browserSession, createToken, createUser, json, publish } from "./helpers.ts";
 
 const ON = { BROWSER: {} as Fetcher };
 const PNG_BYTES = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3]);
@@ -173,7 +180,7 @@ describe("export options", () => {
 });
 
 describe("export", () => {
-  it("renders one board as PNG from the version's export layout with a capture pass", async () => {
+  it("renders one board as PNG with a thumbnail's capture pass for the exact version", async () => {
     const a = await agent();
     const d = await publishDesign(a.auth);
     const res = await run(exportUrl(d.id, "format=png&board=home&scale=2"), { headers: a.auth });
@@ -199,20 +206,73 @@ describe("export", () => {
     const url = new URL(job.url);
     expect(url.host).toBe(`${d.id}.content.localhost:8787`);
     expect(url.pathname).toBe("/__plinth/enter");
-    expect(url.searchParams.get("next")).toBe("/__plinth/v/1/?plinth-print=1&plinth-board=home");
+    // The version's own path and nothing else: no query selects the export layout.
+    expect(url.searchParams.getAll("next")).toEqual(["/__plinth/v/1/"]);
     // A capture pass: no identity, the page sees a signed-out viewer, never the person exporting.
-    const token = await verifyEnterToken(
-      getConfig(env as never),
-      url.searchParams.get("t") as string,
-    );
+    // It is bound to the exported version and reads shared data (an unbound token wrote it).
+    const config = getConfig(env as never);
+    const token = await verifyEnterToken(config, url.searchParams.get("t") as string);
     expect(token?.a).toBe(d.id);
     expect(token?.c).toBe(1);
+    expect(token?.v).toBe(1);
     expect(token?.x).toBeUndefined();
+    expect(token?.d).toBeUndefined();
     // The boards' cookie partition gets the same capture pass, never in a URL.
     for (const c of job.cookies) {
       expect(c.url).toBe(`http://${d.id}.content.localhost:8787/`);
       expect(job.url).not.toContain(c.value);
+      const pass = await verifyContentCookie(config, c.value);
+      expect(pass?.c).toBe(1);
+      expect(pass?.v).toBe(1);
+      expect(pass?.x).toBeUndefined();
     }
+    // Every request the page makes is held to the capture's scope for this version.
+    expect(job.scope).toEqual(captureScope(config, d.id, 1, "design"));
+    expect(job.scope.frame).toBe("/__plinth/frames/design/board.html");
+    expect(captureRequestAllowed(job.scope, job.url, true)).toBe(true);
+    expect(
+      captureRequestAllowed(job.scope, `http://${d.id}.content.localhost:8787/__plinth/v/2/`, true),
+    ).toBe(false);
+  });
+
+  it("reads no shared data for a version a token limited to this artifact wrote", async () => {
+    const owner = await agent();
+    const d = await publishDesign(owner.auth);
+    const ci = await createToken(owner.user.id, {
+      scopes: "artifacts:read artifacts:write",
+      artifactId: d.id,
+    });
+    const up = await run(
+      `/api/v1/artifacts/${d.id}`,
+      {
+        method: "PUT",
+        headers: { Authorization: `Bearer ${ci.token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ content: DESIGN.replace("Ship faster", "Ship"), base_version: 1 }),
+      },
+      {},
+    );
+    expect(up.status, await up.clone().text()).toBe(200);
+    const config = getConfig(env as never);
+    for (const version of [1, 2]) {
+      const res = await run(exportUrl(d.id, `format=pdf&version=${version}`), {
+        headers: owner.auth,
+      });
+      expect(res.status, await res.clone().text()).toBe(200);
+    }
+    const passes = await Promise.all(
+      jobs.map(async (job) => {
+        const url = new URL(job.url);
+        return {
+          next: url.searchParams.get("next"),
+          enter: (await verifyEnterToken(config, url.searchParams.get("t") ?? ""))?.d,
+          frame: (await verifyContentCookie(config, job.cookies[0]?.value ?? ""))?.d,
+        };
+      }),
+    );
+    expect(passes).toEqual([
+      { next: "/__plinth/v/1/", enter: undefined, frame: undefined },
+      { next: "/__plinth/v/2/", enter: 1, frame: 1 },
+    ]);
   });
 
   it("renders every board as one PDF, or only the board named", async () => {
@@ -232,11 +292,11 @@ describe("export", () => {
     expect(every.board).toBeNull();
     expect(every.boards).toBe(3);
     expect(every.viewport).toEqual({ width: 1080, height: 1080, deviceScaleFactor: 1 });
-    expect(new URL(every.url).searchParams.get("next")).toBe("/__plinth/v/1/?plinth-print=1");
+    expect(new URL(every.url).searchParams.get("next")).toBe("/__plinth/v/1/");
     expect(single.boards).toBe(1);
-    expect(new URL(single.url).searchParams.get("next")).toBe(
-      "/__plinth/v/1/?plinth-print=1&plinth-board=post",
-    );
+    expect(single.board).toBe("post");
+    // One board is the export's own choice, made in its browser: the page it opens is the same.
+    expect(new URL(single.url).searchParams.get("next")).toBe("/__plinth/v/1/");
   });
 
   it("is for anyone who may view: a signed-in collaborator, a link viewer; strangers get 404", async () => {
@@ -537,17 +597,57 @@ describe("the browser's steps", () => {
     waitUntil?: string;
     closed: number;
     pdf: number;
+    /** Every page call in order, by name (media types as media:<type>). */
+    steps: string[];
+    evaluated: string[];
+    waitedFor: string[];
+    requestHandler?: (req: {
+      url(): string;
+      isNavigationRequest(): boolean;
+      isInterceptResolutionHandled(): boolean;
+      continue(): Promise<void>;
+      abort(): Promise<void>;
+    }) => void;
   };
 
-  /** A fake puppeteer browser on a fake clock: launch 3 s, the document 9 s, boards never load. */
-  function fakeBrowser(clock: { t: number }, hangGoto = false) {
-    const calls: Calls = { timeouts: {}, closed: 0, pdf: 0 };
+  /**
+   * A fake puppeteer browser on a fake clock: launch 3 s, the document 9 s, boards never load.
+   * `layout` is whether the page took the export layout; `board` whether the one board is there.
+   */
+  function fakeBrowser(
+    clock: { t: number },
+    hangGoto = false,
+    page$: { layout?: boolean; board?: boolean } = {},
+  ) {
+    const calls: Calls = {
+      timeouts: {},
+      closed: 0,
+      pdf: 0,
+      steps: [],
+      evaluated: [],
+      waitedFor: [],
+    };
     let rejectGoto: (e: Error) => void = () => undefined;
     const page = {
-      createCDPSession: async () => ({ send: async () => undefined }),
+      setRequestInterception: async (on: boolean) => {
+        calls.steps.push(`intercept:${on}`);
+      },
+      on: (event: string, handler: Calls["requestHandler"]) => {
+        calls.steps.push(`on:${event}`);
+        if (event === "request") calls.requestHandler = handler;
+      },
+      createCDPSession: async () => ({
+        send: async () => {
+          calls.steps.push("cookie");
+        },
+      }),
       setViewport: async () => undefined,
       emulateMediaFeatures: async () => undefined,
+      emulateMediaType: async (type: string) => {
+        calls.steps.push(`media:${type}`);
+      },
       goto: async (_url: string, o: { waitUntil?: string; timeout?: number }) => {
+        calls.steps.push("goto");
         calls.timeouts.goto = o.timeout ?? -1;
         calls.waitUntil = o.waitUntil;
         if (hangGoto) {
@@ -559,6 +659,7 @@ describe("the browser's steps", () => {
         return { ok: () => true, status: () => 200, url: () => "" };
       },
       waitForFunction: async (expression: string, o: { timeout?: number }) => {
+        calls.waitedFor.push(expression);
         if (expression.includes("data-ready")) {
           calls.timeouts.ready = o.timeout ?? -1;
           return true;
@@ -567,14 +668,23 @@ describe("the browser's steps", () => {
         clock.t += o.timeout ?? 0;
         throw new Error("waiting failed: timeout");
       },
-      evaluate: async () => "ok",
+      evaluate: async (expression: string) => {
+        calls.evaluated.push(expression);
+        if (expression === DESIGN_EXPORT_LAYOUT_SCRIPT) return page$.layout ?? true;
+        if (expression.includes("el.remove()")) return page$.board ?? true;
+        return "ok";
+      },
       pdf: async () => {
+        calls.steps.push("pdf");
         calls.pdf += 1;
         calls.timeouts.printAt = clock.t;
         return PDF_BYTES;
       },
-      $: async () => null,
-      screenshot: async () => PNG_BYTES,
+      $: async () => ({ boundingBox: async () => ({ x: 0, y: 0, width: 300, height: 250 }) }),
+      screenshot: async () => {
+        calls.steps.push("screenshot");
+        return PNG_BYTES;
+      },
     };
     const browser = {
       newPage: async () => page,
@@ -592,10 +702,12 @@ describe("the browser's steps", () => {
     };
   }
 
+  const ID = "aaaaaaaaaaaaaaaaaaaa";
   const JOB: ExportJob = {
     format: "pdf",
-    url: "http://x.content.localhost:8787/__plinth/enter",
+    url: `http://${ID}.content.localhost:8787/__plinth/enter`,
     cookies: [],
+    scope: captureScope(getConfig(env as never), ID, 1, "design"),
     viewport: { width: 300, height: 250, deviceScaleFactor: 1 },
     boards: 3,
     board: null,
@@ -639,6 +751,86 @@ describe("the browser's steps", () => {
     expect(fake.calls.pdf).toBe(0);
   });
 
+  it("hold every request to the capture's scope and emulate print media before the page opens", async () => {
+    const fake = fakeBrowser({ t: 0 });
+    setDesignExportLauncher(fake.launch);
+    const cookie = { ...(JOB.cookies[0] ?? {}) } as ExportJob["cookies"][number];
+    await browserExport(ON.BROWSER, { ...JOB, cookies: [cookie] }, new AbortController().signal);
+    const at = (step: string) => fake.calls.steps.indexOf(step);
+    expect(at("intercept:true")).toBeGreaterThanOrEqual(0);
+    expect(at("intercept:true")).toBeLessThan(at("cookie"));
+    expect(at("on:popup")).toBeGreaterThanOrEqual(0);
+    expect(at("on:popup")).toBeLessThan(at("goto"));
+    expect(at("media:print")).toBeGreaterThanOrEqual(0);
+    expect(at("media:print")).toBeLessThan(at("goto"));
+    // A PDF prints in print media, every board counted, and nothing removed from the page.
+    expect(fake.calls.steps).not.toContain("media:screen");
+    expect(fake.calls.evaluated).toContain(DESIGN_EXPORT_LAYOUT_SCRIPT);
+    expect(fake.calls.evaluated.some((e) => e.includes("el.remove()"))).toBe(false);
+    expect(fake.calls.waitedFor).toContain(designExportLoadedScript(null, 3));
+    // The guard the page runs under: its own version and the board loader, nothing else.
+    const decide = (url: string, navigation: boolean) => {
+      let verdict = "";
+      fake.calls.requestHandler?.({
+        url: () => url,
+        isNavigationRequest: () => navigation,
+        isInterceptResolutionHandled: () => false,
+        continue: async () => {
+          verdict = "continue";
+        },
+        abort: async () => {
+          verdict = "abort";
+        },
+      });
+      return verdict;
+    };
+    const own = `http://${ID}.content.localhost:8787`;
+    expect(decide(`${own}/__plinth/v/1/`, true)).toBe("continue");
+    expect(decide(`${own}/__plinth/frames/design/board.html`, true)).toBe("continue");
+    expect(decide(`${own}/__plinth/v/2/`, true)).toBe("abort");
+    expect(
+      decide(`${own}/__plinth/enter?next=%2F__plinth%2Fv%2F1%2F%3Fplinth-print%3D1`, true),
+    ).toBe("abort");
+    expect(decide("https://evil.example/x.png", false)).toBe("abort");
+  });
+
+  it("keep only the one board on the page for it, and take a PNG in screen media", async () => {
+    const fake = fakeBrowser({ t: 0 });
+    setDesignExportLauncher(fake.launch);
+    const bytes = await browserExport(
+      ON.BROWSER,
+      { ...JOB, format: "png", board: "mrec", boards: 1 },
+      new AbortController().signal,
+    );
+    expect(bytes).toEqual(PNG_BYTES);
+    expect(fake.calls.evaluated).toContain(designExportKeepOnlyScript("mrec"));
+    expect(fake.calls.waitedFor).toContain(designExportLoadedScript("mrec", 1));
+    const at = (step: string) => fake.calls.steps.indexOf(step);
+    expect(at("media:print")).toBeGreaterThanOrEqual(0);
+    expect(at("media:print")).toBeLessThan(at("goto"));
+    expect(at("media:screen")).toBeGreaterThan(at("goto"));
+    expect(at("media:screen")).toBeLessThan(at("screenshot"));
+  });
+
+  it("refuse a page that did not take the export layout, or lacks the board", async () => {
+    for (const [state, message] of [
+      [{ layout: false }, /export layout/],
+      [{ board: false }, /not on the page/],
+    ] as const) {
+      const fake = fakeBrowser({ t: 0 }, false, state);
+      setDesignExportLauncher(fake.launch);
+      await expect(
+        browserExport(
+          ON.BROWSER,
+          { ...JOB, format: "png", board: "mrec", boards: 1 },
+          new AbortController().signal,
+        ),
+      ).rejects.toThrow(message);
+      expect(fake.calls.steps).not.toContain("screenshot");
+      expect(fake.calls.closed).toBe(1);
+    }
+  });
+
   it("cut a step's timeout to what is left, never below 1 ms", () => {
     expect(stepTimeout(10_000, 20_000, 5_000)).toBe(10_000);
     expect(stepTimeout(10_000, 20_000, 14_000)).toBe(6_000);
@@ -654,9 +846,13 @@ describe("helpers", () => {
     expect(exportFileName("", null, "pdf")).toBe("design.pdf");
   });
 
-  it("open the version's export layout, one board or every board", () => {
-    expect(exportPath(3, null)).toBe("/__plinth/v/3/?plinth-print=1");
-    expect(exportPath(3, "home")).toBe("/__plinth/v/3/?plinth-print=1&plinth-board=home");
+  it("wait for the one board by its id, or for every board by count", () => {
+    expect(designExportLoadedScript("home", 1)).toBe(
+      'document.querySelector(".plinth-design__board[data-board=\\"home\\"][data-loaded]") !== null',
+    );
+    expect(designExportLoadedScript(null, 3)).toBe(
+      'Number(document.documentElement.getAttribute("data-boards-loaded") || "0") >= 3',
+    );
   });
 
   it("strip URLs from error messages", () => {
@@ -717,15 +913,6 @@ describe("settings", () => {
       (await json(await run("/api/v1/config", {}, { ...ON, DESIGN_EXPORT: "false" })))
         .design_export,
     ).toBe(false);
-  });
-
-  it("POST /__dev/export-url is not served unless DEV_SEED is on in development", async () => {
-    const res = await run("/__dev/export-url", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ artifact_id: "aaaaaaaaaaaaaaaaaaaa", version: 1, board: null }),
-    });
-    expect(res.status).toBe(404);
   });
 
   it("the shipped wrangler.jsonc lists them with the documented defaults", () => {

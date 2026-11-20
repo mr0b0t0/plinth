@@ -5,8 +5,8 @@ import {
   type ContentIsolation,
   DEFAULTS,
   DESIGN_EXPORT,
-  FILE_BOUNDS,
-  FILE_DEFAULTS,
+  INVITATION_BOUNDS,
+  INVITATION_DEFAULTS,
   type InstanceLimits,
   LIMITS,
   LIVE_BOUNDS,
@@ -15,8 +15,11 @@ import {
   LIVE_VIEW_DEFAULTS,
   ROOM_BOUNDS,
   ROOM_DEFAULTS,
+  VIEW_LOG_BOUNDS,
+  VIEW_LOG_DEFAULTS,
 } from "@plinth/shared";
 import { getDomain } from "tldts";
+import { PASSWORD_HASH_RE } from "./lib/crypto.ts";
 import type { ArtifactRoom } from "./rooms/ArtifactRoom.ts";
 
 /** Secrets are set with `wrangler secret put` (or .dev.vars locally); not in wrangler.jsonc. */
@@ -26,12 +29,14 @@ export interface Secrets {
   ADMIN_TOKEN?: string;
   SENDGRID_API_KEY?: string;
   RESEND_API_KEY?: string;
+  /** The review account's password, hashed (apps/worker/scripts/review-login-hash.mjs). */
+  REVIEW_LOGIN_PASSWORD_HASH?: string;
 }
 
 /**
  * Bindings a deploy may lack. BROWSER is Cloudflare Browser Rendering (`"browser": { "binding":
- * "BROWSER" }`), used for thumbnails and design exports, which an operator adds by hand; local, tunnel and Docker
- * instances run without it. ROOMS is the live-room Durable Object namespace (class ArtifactRoom),
+ * "BROWSER" }`), used for thumbnails and design exports, which an operator adds by hand; local,
+ * tunnel and Docker instances run without it. ROOMS is the live-room Durable Object namespace (class ArtifactRoom),
  * which every config Plinth generates carries; an older config without it simply has rooms off.
  */
 export interface OptionalBindings {
@@ -42,6 +47,11 @@ export interface OptionalBindings {
 /** Vars an operator may set that the shipped wrangler.jsonc leaves out (their defaults apply). */
 export interface OptionalVars {
   VIEW_COUNTS?: string;
+  VIEW_LOG_RETENTION_DAYS?: string;
+  REVIEW_LOGIN_EMAIL?: string;
+  OPENAI_APPS_CHALLENGE?: string;
+  INVITATION_EMAILS_PER_DAY?: string;
+  INVITATION_EMAILS_PER_OWNER_PER_DAY?: string;
 }
 
 export type Bindings = Omit<Env, "ROOMS"> & Secrets & OptionalBindings & OptionalVars;
@@ -127,9 +137,15 @@ export interface Config {
    */
   thumbnails: boolean;
   /**
-   * VIEW_COUNTS (default on): count artifact opens per UTC day, aggregate only (docs/spec.md).
+   * VIEW_COUNTS (default on): record each counted open of an artifact, with who opened it, for the
+   * owner's stats (docs/spec.md "Artifact stats"). Off stops recording; what was recorded stays.
    */
   viewCounts: boolean;
+  /**
+   * VIEW_LOG_RETENTION_DAYS (default 365, from 90 to 3650): opens older than this are folded into
+   * the artifact's all-time count and deleted, so who opened it is kept only this long.
+   */
+  viewLogRetentionDays: number;
   /**
    * ALLOW_ROOMS (default on): pages that declare `room` get live presence and broadcast, and doc
    * editors see each other's page edits live. Only in effect with origin isolation and a ROOMS
@@ -146,18 +162,11 @@ export interface Config {
   /** Live editing timings (LIVE_* env vars). */
   live: LiveEditSettings;
   /**
-   * ALLOW_DICTATION (default off): pages that declare `dictation` may receive words the viewer
-   * speaks. The app (never the artifact) runs the browser's speech recognizer. Only in effect with
-   * origin isolation (not opaque, not the path fallback); see dictationActive. Off keeps the app's
-   * Permissions-Policy at microphone=().
+   * REVIEW_LOGIN_EMAIL and REVIEW_LOGIN_PASSWORD_HASH: one ordinary account that may also sign in
+   * with a password at /login/review, for a directory's reviewers, who cannot receive sign-in
+   * emails. null (the route is a 404) unless both are set; deleting the secret turns it off.
    */
-  allowDictation: boolean;
-  /**
-   * ALLOW_CATEGORY_SHARING (default on): owners may share a category with people, who then see the
-   * artifacts the owner reviewed into it (docs/spec.md "Category sharing and personal categories").
-   * Off, category grants count for nothing and the share and portal endpoints are closed.
-   */
-  allowCategorySharing: boolean;
+  reviewLogin: { email: string; passwordHash: string } | null;
   /**
    * ALLOW_LIVE_VIEWS (default on): open artifact pages get new versions, and pages that keep
    * shared data get its changes, pushed over a watch socket on the app host. Only in effect with a
@@ -172,19 +181,13 @@ export interface Config {
    */
   sheetEvalBudget: number;
   /**
-   * ALLOW_SLIDES_FOLLOW (default on): an owner or editor may lead the identified viewers who have a
-   * deck open, who follow the presenter's slide. Only in effect where live rooms are; see
-   * slidesFollowActive.
+   * ALLOW_CATEGORY_SHARING (default on): owners may share a category with people, who then see the
+   * artifacts the owner reviewed into it (docs/spec.md "Category sharing and personal categories").
+   * Off, category grants count for nothing and the share and portal endpoints are closed.
    */
-  allowSlidesFollow: boolean;
-  /**
-   * ALLOW_FILES (default off): pages that declare `files` let identified viewers upload raster
-   * images, PDFs, video and audio, which people with access can see. Only in effect with origin
-   * isolation; see filesActive.
-   */
-  allowFiles: boolean;
-  /** Limits on files people add to pages (FILES_* env vars). */
-  files: FileLimits;
+  allowCategorySharing: boolean;
+  /** Invitation email limits (INVITATION_EMAILS_* env vars; docs/spec.md "Invitation emails"). */
+  invitations: InvitationLimits;
   /**
    * DESIGN_EXPORT (default on): designs can be downloaded as PNG or PDF rendered by Browser
    * Rendering. Only in effect with a BROWSER binding; see designExportActive.
@@ -203,6 +206,11 @@ export interface Config {
     email: string;
     hosting: string;
   } | null;
+  /**
+   * OPENAI_APPS_CHALLENGE: the domain verification token OpenAI's plugin portal shows for this MCP
+   * server, served as plain text at /.well-known/openai-apps-challenge. Unset: that path is 404.
+   */
+  openaiAppsChallenge: string | null;
 }
 
 export interface SharedDataLimits {
@@ -229,26 +237,20 @@ export interface RoomLimits {
   messagesPerSecond: number;
 }
 
+export interface InvitationLimits {
+  /**
+   * INVITATION_EMAILS_PER_DAY: invitation emails the whole instance sends per UTC day, every owner
+   * together, so they cannot use up the provider quota sign-in and viewing codes need. 0 turns
+   * invitation emails off.
+   */
+  perDay: number;
+  /** INVITATION_EMAILS_PER_OWNER_PER_DAY: invitation emails one owner's changes send per UTC day. */
+  perOwnerPerDay: number;
+}
+
 export interface LiveViewLimits {
   /** LIVE_VIEW_MAX_SOCKETS_PER_ARTIFACT: watch sockets on one artifact, apart from room sockets. */
   maxSocketsPerArtifact: number;
-}
-
-export interface FileLimits {
-  /** FILES_MAX_FILE_BYTES: one file, 1 MiB to 100 MiB. */
-  maxFileBytes: number;
-  /** FILES_MAX_PER_ARTIFACT: files (ready or uploading) on one artifact. */
-  maxFilesPerArtifact: number;
-  /** FILES_MAX_BYTES_PER_ARTIFACT: bytes of files on one artifact. */
-  maxBytesPerArtifact: number;
-  /** FILES_MAX_BYTES_PER_UPLOADER: one person's files on one artifact (the owner is exempt). */
-  maxBytesPerUploader: number;
-  /** FILES_MAX_BYTES_PER_USER: files across all of an owner's live artifacts. */
-  maxBytesPerUser: number;
-  /** FILES_UPLOADS_PER_UPLOADER_PER_HOUR: uploads one person starts on one artifact. */
-  uploadsPerUploaderPerHour: number;
-  /** FILES_UPLOADS_PER_ARTIFACT_PER_HOUR: uploads everyone starts on one artifact. */
-  uploadsPerArtifactPerHour: number;
 }
 
 export interface LiveEditSettings {
@@ -327,6 +329,27 @@ const CDN_HOST_RE = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9
 const OPERATOR_EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 /**
+ * REVIEW_LOGIN_EMAIL and REVIEW_LOGIN_PASSWORD_HASH. Either one missing turns the review sign-in
+ * off rather than failing, since removing the secret is how an operator ends a review. A hash that
+ * is set but malformed is refused, so a typo never leaves a login nobody can use, or one that
+ * checks fewer iterations.
+ */
+function parseReviewLogin(env: Record<string, unknown>): Config["reviewLogin"] {
+  const email = str(env.REVIEW_LOGIN_EMAIL).toLowerCase();
+  const passwordHash = str(env.REVIEW_LOGIN_PASSWORD_HASH);
+  if (!email || !passwordHash) return null;
+  if (!OPERATOR_EMAIL_RE.test(email)) {
+    throw new ConfigError("REVIEW_LOGIN_EMAIL is not an email address");
+  }
+  if (!PASSWORD_HASH_RE.test(passwordHash)) {
+    throw new ConfigError(
+      "REVIEW_LOGIN_PASSWORD_HASH is not a hash from apps/worker/scripts/review-login-hash.mjs (pbkdf2-sha256$100000$<salt>$<hash>)",
+    );
+  }
+  return { email, passwordHash };
+}
+
+/**
  * OPERATOR_NAME, OPERATOR_ADDRESS, OPERATOR_REGISTRATION, OPERATOR_EMAIL, OPERATOR_HOSTING: the
  * operator named in the instance's terms and privacy notice. All unset: no legal pages (a personal
  * instance). A name needs a contact email, and the reverse.
@@ -345,6 +368,20 @@ function parseOperator(env: Record<string, unknown>): Config["operator"] {
     email,
     hosting: str(env.OPERATOR_HOSTING) || "Cloudflare",
   };
+}
+
+// A verification token is one printable ASCII word; anything else is a paste mistake.
+const CHALLENGE_RE = /^[\x21-\x7e]{1,512}$/;
+
+function parseChallenge(env: Record<string, unknown>): string | null {
+  const token = str(env.OPENAI_APPS_CHALLENGE);
+  if (!token) return null;
+  if (!CHALLENGE_RE.test(token)) {
+    throw new ConfigError(
+      "OPENAI_APPS_CHALLENGE must be the token alone: printable ASCII, no spaces, at most 512 characters",
+    );
+  }
+  return token;
 }
 
 export function parseConfig(env: Record<string, unknown>): Config {
@@ -439,12 +476,12 @@ export function parseConfig(env: Record<string, unknown>): Config {
     showSourceLink: boolDefaultOn(env.SHOW_SOURCE_LINK),
     thumbnails: boolDefaultOn(env.THUMBNAILS),
     viewCounts: boolDefaultOn(env.VIEW_COUNTS),
+    viewLogRetentionDays: parseViewLogRetentionDays(env),
     allowRooms: boolDefaultOn(env.ALLOW_ROOMS),
     rooms: parseRoomLimits(env),
     allowLiveEditing: boolDefaultOn(env.ALLOW_LIVE_EDITING),
     live: parseLiveEditSettings(env),
-    allowDictation: bool(env.ALLOW_DICTATION),
-    allowCategorySharing: boolDefaultOn(env.ALLOW_CATEGORY_SHARING),
+    reviewLogin: parseReviewLogin(env),
     allowLiveViews: boolDefaultOn(env.ALLOW_LIVE_VIEWS),
     liveViews: {
       maxSocketsPerArtifact: boundedInt(
@@ -461,9 +498,21 @@ export function parseConfig(env: Record<string, unknown>): Config {
       SHEET_EVAL_BUDGET_BOUNDS[0],
       SHEET_EVAL_BUDGET_BOUNDS[1],
     ),
-    allowSlidesFollow: boolDefaultOn(env.ALLOW_SLIDES_FOLLOW),
-    allowFiles: bool(env.ALLOW_FILES),
-    files: parseFileLimits(env),
+    allowCategorySharing: boolDefaultOn(env.ALLOW_CATEGORY_SHARING),
+    invitations: {
+      perDay: boundedInt(
+        env,
+        "INVITATION_EMAILS_PER_DAY",
+        INVITATION_DEFAULTS.perDay,
+        ...INVITATION_BOUNDS.perDay,
+      ),
+      perOwnerPerDay: boundedInt(
+        env,
+        "INVITATION_EMAILS_PER_OWNER_PER_DAY",
+        INVITATION_DEFAULTS.perOwnerPerDay,
+        ...INVITATION_BOUNDS.perOwnerPerDay,
+      ),
+    },
     designExport: boolDefaultOn(env.DESIGN_EXPORT),
     designExportsPerHour: boundedInt(
       env,
@@ -472,6 +521,7 @@ export function parseConfig(env: Record<string, unknown>): Config {
       ...DESIGN_EXPORT.perHourBounds,
     ),
     operator: parseOperator(env),
+    openaiAppsChallenge: parseChallenge(env),
   };
   validate(config);
   return config;
@@ -496,6 +546,20 @@ function validate(c: Config): void {
     throw new ConfigError("SENDGRID_API_KEY is not set");
   if (c.emailProvider === "resend" && !c.resendApiKey)
     throw new ConfigError("RESEND_API_KEY is not set");
+  if (c.reviewLogin) {
+    // The review account is an ordinary user. A shared password must never reach the admin pages,
+    // and in single-user mode only the admin may sign in at all.
+    if (c.adminEmails.includes(c.reviewLogin.email)) {
+      throw new ConfigError(
+        "REVIEW_LOGIN_EMAIL must not be an ADMIN_EMAIL address: the review account is an ordinary user",
+      );
+    }
+    if (c.singleUserMode) {
+      throw new ConfigError(
+        "REVIEW_LOGIN_EMAIL cannot be used with SINGLE_USER_MODE (only the admin signs in there)",
+      );
+    }
+  }
   if (c.sessionSecret === c.tokenSigningKey) {
     throw new ConfigError("SESSION_SECRET and TOKEN_SIGNING_KEY must be different values");
   }
@@ -558,6 +622,16 @@ function parseRoomLimits(env: Record<string, unknown>): RoomLimits {
   };
 }
 
+/** VIEW_LOG_RETENTION_DAYS alone, so the cron can read it without the host configuration. */
+export function parseViewLogRetentionDays(env: Record<string, unknown>): number {
+  return boundedInt(
+    env,
+    "VIEW_LOG_RETENTION_DAYS",
+    VIEW_LOG_DEFAULTS.retentionDays,
+    ...VIEW_LOG_BOUNDS.retentionDays,
+  );
+}
+
 function parseLiveEditSettings(env: Record<string, unknown>): LiveEditSettings {
   const b = LIVE_BOUNDS;
   const idle = boundedInt(
@@ -590,69 +664,6 @@ function parseLiveEditSettings(env: Record<string, unknown>): LiveEditSettings {
       "LIVE_DRAFT_RETENTION_DAYS",
       LIVE_DEFAULTS.draftRetentionDays,
       ...b.draftRetentionDays,
-    ),
-  };
-}
-
-function parseFileLimits(env: Record<string, unknown>): FileLimits {
-  const d = FILE_DEFAULTS;
-  const b = FILE_BOUNDS;
-  const atLeast = (name: string, fallback: number, min: number) => {
-    const raw = str(env[name]);
-    if (raw === "") return fallback;
-    const n = /^\d+$/.test(raw) ? Number(raw) : Number.NaN;
-    if (!Number.isSafeInteger(n) || n < min) {
-      throw new ConfigError(`${name} must be an integer of at least ${min}`);
-    }
-    return n;
-  };
-  const maxFileBytes = boundedInt(env, "FILES_MAX_FILE_BYTES", d.maxFileBytes, ...b.maxFileBytes);
-  const maxBytesPerArtifact = atLeast(
-    "FILES_MAX_BYTES_PER_ARTIFACT",
-    Math.max(d.maxBytesPerArtifact, maxFileBytes),
-    1,
-  );
-  if (maxBytesPerArtifact < maxFileBytes) {
-    throw new ConfigError("FILES_MAX_BYTES_PER_ARTIFACT must be at least FILES_MAX_FILE_BYTES");
-  }
-  const maxBytesPerUploader = atLeast(
-    "FILES_MAX_BYTES_PER_UPLOADER",
-    Math.min(Math.max(d.maxBytesPerUploader, maxFileBytes), maxBytesPerArtifact),
-    1,
-  );
-  if (maxBytesPerUploader < maxFileBytes || maxBytesPerUploader > maxBytesPerArtifact) {
-    throw new ConfigError(
-      "FILES_MAX_BYTES_PER_UPLOADER must be from FILES_MAX_FILE_BYTES to FILES_MAX_BYTES_PER_ARTIFACT",
-    );
-  }
-  const maxBytesPerUser = atLeast(
-    "FILES_MAX_BYTES_PER_USER",
-    Math.max(d.maxBytesPerUser, maxBytesPerArtifact),
-    1,
-  );
-  if (maxBytesPerUser < maxBytesPerArtifact) {
-    throw new ConfigError("FILES_MAX_BYTES_PER_USER must be at least FILES_MAX_BYTES_PER_ARTIFACT");
-  }
-  return {
-    maxFileBytes,
-    maxFilesPerArtifact: boundedInt(
-      env,
-      "FILES_MAX_PER_ARTIFACT",
-      d.maxFilesPerArtifact,
-      ...b.maxFilesPerArtifact,
-    ),
-    maxBytesPerArtifact,
-    maxBytesPerUploader,
-    maxBytesPerUser,
-    uploadsPerUploaderPerHour: atLeast(
-      "FILES_UPLOADS_PER_UPLOADER_PER_HOUR",
-      d.uploadsPerUploaderPerHour,
-      1,
-    ),
-    uploadsPerArtifactPerHour: atLeast(
-      "FILES_UPLOADS_PER_ARTIFACT_PER_HOUR",
-      d.uploadsPerArtifactPerHour,
-      1,
     ),
   };
 }
@@ -713,17 +724,6 @@ export function liveEditMode(
 }
 
 /**
- * Dictation is in effect: ALLOW_DICTATION is on and each artifact is its own origin. Under opaque
- * isolation (the path fallback included, which config forces to opaque) the app could post the
- * viewer's words only with targetOrigin "*", to a frame that may have navigated, so it is off
- * there; that is not a configuration error. Only then does the app's Permissions-Policy allow the
- * microphone, and only for the app's own origin.
- */
-export function dictationActive(c: Pick<Config, "allowDictation" | "contentIsolation">): boolean {
-  return c.allowDictation && c.contentIsolation === "origin";
-}
-
-/**
  * Live views are in effect: ALLOW_LIVE_VIEWS is on and the deploy has the ROOMS binding (watch
  * sockets live in the artifact's ArtifactRoom). They do not need ALLOW_ROOMS or origin isolation:
  * the socket is on the app host, and carries only version numbers and change signals. Without the
@@ -735,25 +735,16 @@ export function liveViewsActive(c: Pick<Config, "allowLiveViews">, env: Optional
 }
 
 /**
- * Following the presenter is in effect: ALLOW_SLIDES_FOLLOW is on and live rooms are active (the
- * `slides` socket is a room socket, so it needs ALLOW_ROOMS, the ROOMS binding and origin
- * isolation). Off is not a configuration error: decks then page alone, as before.
+ * Invitation emails are on: the operator did not set INVITATION_EMAILS_PER_DAY to 0, a real email
+ * provider sends them (EMAIL_PROVIDER=console only writes to the log, so outside development it
+ * counts as off rather than reporting people as emailed), and people other than the admin can sign
+ * in to turn them off for their own address (never in SINGLE_USER_MODE).
  */
-export function slidesFollowActive(
-  c: Pick<Config, "allowSlidesFollow" | "allowRooms" | "contentIsolation">,
-  env: OptionalBindings,
+export function invitationEmailsActive(
+  c: Pick<Config, "invitations" | "emailProvider" | "environment" | "singleUserMode">,
 ): boolean {
-  return c.allowSlidesFollow && roomsActive(c, env);
-}
-
-/**
- * Files people add to a page are in effect: ALLOW_FILES is on and each artifact is its own origin.
- * Under opaque isolation (the path fallback included, which config forces to opaque) a page has no
- * cookies, so nobody could be identified to upload and files are off there; that is not a
- * configuration error.
- */
-export function filesActive(c: Pick<Config, "allowFiles" | "contentIsolation">): boolean {
-  return c.allowFiles && c.contentIsolation === "origin";
+  if (c.invitations.perDay <= 0 || c.singleUserMode) return false;
+  return c.emailProvider !== "console" || c.environment === "development";
 }
 
 /** Something on the page that reads the identity claim, and whether it is switched on. */
@@ -769,13 +760,12 @@ export interface IdentityReader {
 export const IDENTITY_READERS: readonly IdentityReader[] = [
   { name: "shared data", active: (c) => c.allowSharedData },
   { name: "live rooms", active: roomsActive },
-  { name: "files", active: (c) => c.allowFiles },
 ];
 
 /**
  * Whether the gate seals an identity claim into identified viewers' content passes: only with
- * origin isolation, and only while something on the page reads it (IDENTITY_READERS: shared data,
- * rooms or files).
+ * origin isolation, and only while something on the page reads it (IDENTITY_READERS: shared data
+ * or rooms).
  */
 export function identityClaimsActive(c: Config, env: OptionalBindings): boolean {
   return c.contentIsolation === "origin" && IDENTITY_READERS.some((r) => r.active(c, env));

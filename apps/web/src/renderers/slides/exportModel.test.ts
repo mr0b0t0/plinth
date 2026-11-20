@@ -78,7 +78,7 @@ function geometry(views: SlideView[]): Geometry {
         textAlign: tag === "td" && el.textContent === "2" ? "right" : "start",
         color: tag === "a" ? "rgb(10, 88, 202)" : "rgb(31, 35, 40)",
         lineHeight: "40.5px",
-        marginTop: tag === "li" ? "9px" : "0px",
+        marginTop: tag === "li" ? "9px" : tag === "ul" || tag === "ol" ? "8.1px" : "0px",
         backgroundColor: el.localName === "section" ? "rgb(21, 24, 28)" : "rgba(0, 0, 0, 0)",
         objectFit: tag === "img" ? "contain" : "fill",
         borderBottomColor: "rgb(216, 222, 228)",
@@ -153,13 +153,15 @@ describe("buildExportModel", () => {
     expect(texts(items)).toContain("Sub web and [bad](javascript:alert(1)) and two and far");
   });
 
-  it("reads lists as bulleted paragraphs with levels", () => {
+  it("reads lists as bulleted paragraphs with levels and the gaps above them", () => {
     const ps = paras(model().slides[1]?.items ?? []).filter((p) => p.bullet !== "none");
+    // An item's top margin, and a nested list's own above its first item; the top-level list's
+    // margin is outside its box.
     expect(ps.map((p) => [p.runs[0]?.text, p.bullet, p.level, p.spaceBefore])).toEqual([
       ["a", "disc", 0, 0],
-      ["b", "disc", 1, 0],
+      ["b", "disc", 1, 6.1],
       ["c", "disc", 0, 6.8],
-      ["inner", "number", 1, 0],
+      ["inner", "number", 1, 6.1],
     ]);
   });
 
@@ -195,6 +197,9 @@ describe("buildExportModel", () => {
     // The footer is text, never Markdown, and the number is the slide's.
     expect(texts(one?.items ?? [])).toEqual(expect.arrayContaining(["Q4 <b>review</b>", "1"]));
     expect(texts(items)).toContain("2");
+    // Both stay on one line, as on screen; the body's text wraps.
+    const oneLine = (one?.items ?? []).filter((i) => i.kind === "text" && i.oneLine);
+    expect(texts(oneLine).sort()).toEqual(["1", "Q4 <b>review</b>"]);
   });
 
   it("keeps a code block's blank lines, and draws no line for its closing newline", () => {

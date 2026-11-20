@@ -17,7 +17,7 @@
   --slides-accent: #0a58ca;
   --slides-rule: #d8dee4;
   --slides-code-bg: #f3f5f7;
-  --slides-ctl-bg: rgb(255 255 255 / 0.94);
+  --slides-ctl-bg: rgb(255 255 255 / 0.72);
   --slides-ctl-fg: #1f2328;
   --slides-warn: #9a3412;
   --slides-focus: #0a58ca;
@@ -41,7 +41,7 @@
   --slides-accent: #6cb2ff;
   --slides-rule: #343a42;
   --slides-code-bg: #1f242b;
-  --slides-ctl-bg: rgb(28 32 38 / 0.94);
+  --slides-ctl-bg: rgb(28 32 38 / 0.72);
   --slides-ctl-fg: #e6eaee;
   --slides-warn: #fdba74;
   --slides-focus: #6cb2ff;
@@ -59,7 +59,7 @@
     --slides-accent: #6cb2ff;
     --slides-rule: #343a42;
     --slides-code-bg: #1f242b;
-    --slides-ctl-bg: rgb(28 32 38 / 0.94);
+    --slides-ctl-bg: rgb(28 32 38 / 0.72);
     --slides-ctl-fg: #e6eaee;
     --slides-warn: #fdba74;
     --slides-focus: #6cb2ff;
@@ -136,7 +136,6 @@ body {
   overflow: hidden;
 }
 
-.plinth-slides__label,
 .plinth-slides__handout {
   display: none;
 }
@@ -375,126 +374,115 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
-/* ---------- the overview: every slide stacked ---------- */
-
-.plinth-slides[data-mode="overview"] .plinth-slides__deck,
-.plinth-slides[data-print] .plinth-slides__deck,
-.plinth-slides[data-export] .plinth-slides__deck {
-  position: static;
-  flex-direction: column;
-  gap: 24px;
-  padding: 16px 0 40px;
-}
-
-/* While printing, every slide is laid out on screen too, so each can be fitted first. A .pptx
-   export does the same for one synchronous measure (export.ts), so it is never painted. */
-.plinth-slides[data-print][data-mode] .plinth-slides__deck,
-.plinth-slides[data-export][data-mode] .plinth-slides__deck {
-  display: flex;
-}
-
-.plinth-slides[data-print][data-mode] .plinth-slides__frame:not([data-print-x]),
-.plinth-slides[data-export][data-mode] .plinth-slides__frame:not([data-print-x]) {
-  display: block;
-}
-
-.plinth-slides[data-mode="overview"] .plinth-slides__canvas {
-  border-radius: 6px;
-  box-shadow:
-    0 0 0 1px var(--slides-rule),
-    0 2px 8px rgb(0 0 0 / 0.08);
-}
-
-.plinth-slides[data-mode="overview"] .plinth-slides__frame {
-  cursor: pointer;
-}
-
-.plinth-slides[data-mode="overview"] .plinth-slides__frame[data-active] .plinth-slides__canvas {
-  box-shadow:
-    0 0 0 3px var(--slides-accent),
-    0 2px 8px rgb(0 0 0 / 0.08);
-}
-
-.plinth-slides[data-mode="overview"] .plinth-slides__label {
-  display: block;
-  margin: 0 0 6px;
-  color: var(--slides-muted);
-  font-size: 0.8125rem;
-  font-variant-numeric: tabular-nums;
-}
-
-.plinth-slides__pane--current .plinth-slides__slide[data-overflow]::after,
-.plinth-slides[data-mode="overview"] .plinth-slides__slide[data-overflow]::after {
-  content: "This slide overflows";
-  position: absolute;
-  top: 16px;
-  right: 16px;
-  padding: 4px 12px;
-  border-radius: 6px;
-  background: var(--slides-warn);
-  color: var(--slides-bg);
-  font-size: 20px;
-}
-
 /* ---------- presenter view (presenter.ts) ---------- */
+/* Two columns: the current slide with the bar directly under it on the left (--pcol, the slide's
+   width, from presenterLayout), the next slide and the notes on the right. Both columns are
+   --prow tall (the slide and the bar), so the next slide's top is level with the current slide's
+   and the notes end with the bar; the "Next" caption has the row above, and the whole is centred
+   in the frame's height. One column on a narrow or portrait frame ([data-narrow]): current, bar,
+   next, notes. The slides and the notes share one card edge; the gaps are presenter.ts's
+   constants. */
 
 .plinth-slides__presenter {
   position: absolute;
   inset: 0;
   display: grid;
-  grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
-  grid-template-rows: minmax(0, 1fr) auto;
-  gap: 16px;
+  grid-template-columns: var(--pcol, minmax(0, 2fr)) minmax(0, 1fr);
+  grid-template-rows: 24px var(--prow, minmax(0, 1fr));
+  align-content: center;
+  column-gap: 24px;
   padding: 16px;
+  overflow: hidden;
   background: var(--slides-stage);
   color: var(--slides-fg);
   font-size: 1rem;
 }
 
+.plinth-slides__presenter[data-narrow] {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow-y: auto;
+}
+
+.plinth-slides__main {
+  grid-area: 2 / 1;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+  min-height: 0;
+}
+
 .plinth-slides__pane {
   position: relative;
   display: flex;
-  align-items: center;
-  justify-content: center;
+  flex: none;
+  align-items: flex-start;
+  justify-content: flex-start;
   min-width: 0;
-  min-height: 0;
   overflow: hidden;
 }
 
-.plinth-slides__presenter .plinth-slides__pane .plinth-slides__label,
+/* One card edge for both slide panes and the notes: square, as the slide is in every view. */
+.plinth-slides__pane .plinth-slides__canvas,
+.plinth-slides__notes {
+  box-shadow: 0 0 0 1px var(--slides-rule);
+}
+
 .plinth-slides__presenter .plinth-slides__pane .plinth-slides__handout {
   display: none;
 }
 
 .plinth-slides__side {
+  grid-area: 2 / 2;
   display: flex;
   flex-direction: column;
   gap: 8px;
+  min-width: 0;
   min-height: 0;
 }
 
-.plinth-slides__pane--next {
-  flex: 0 0 36%;
+.plinth-slides__presenter[data-narrow] .plinth-slides__side {
+  flex: 1 0 auto;
 }
 
 .plinth-slides__caption {
   margin: 0;
   color: var(--slides-muted);
-  font-size: 0.8125rem;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
+  font-size: 0.75rem;
+  font-weight: 500;
+  line-height: 16px;
+}
+
+/* In the row above the columns, 8 px over the next slide. */
+.plinth-slides__caption--next {
+  grid-area: 1 / 2;
+  align-self: end;
+  margin-bottom: 8px;
+}
+
+.plinth-slides__presenter[data-narrow] .plinth-slides__caption--next {
+  align-self: auto;
+  margin-bottom: -4px;
+}
+
+.plinth-slides__caption--notes {
+  margin-top: 8px;
 }
 
 .plinth-slides__notes {
   flex: 1;
   min-height: 0;
   padding: 12px 16px;
-  border-radius: 8px;
   background: var(--slides-bg);
   overflow: auto;
   font-size: 1.125rem;
   line-height: 1.55;
+}
+
+.plinth-slides__presenter[data-narrow] .plinth-slides__notes {
+  flex: 1 0 6em;
 }
 
 .plinth-slides__notes > :first-child {
@@ -510,71 +498,161 @@ body {
   color: var(--slides-accent);
 }
 
-.plinth-slides__empty,
 .plinth-slides__end {
   margin: 0;
   color: var(--slides-muted);
 }
 
+/* Directly under the current slide and as wide: the timer and pause on the left, paging in the
+   middle, the clock and Exit on the right, in one row at every width. */
 .plinth-slides__pbar {
-  display: flex;
-  flex-wrap: wrap;
-  grid-column: 1 / -1;
-  gap: 8px 12px;
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  gap: 12px;
   align-items: center;
+  min-height: 40px;
+}
+
+.plinth-slides__group {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  min-width: 0;
+}
+
+.plinth-slides__group--end {
+  justify-content: flex-end;
+  gap: 8px;
 }
 
 .plinth-slides__timer {
-  font-size: 1.5rem;
+  min-width: 3em;
+  font-size: 1.25rem;
   font-variant-numeric: tabular-nums;
   font-weight: 600;
 }
 
-.plinth-slides__clock,
-.plinth-slides__count {
+.plinth-slides__count,
+.plinth-slides__clock {
   color: var(--slides-muted);
+  font-size: 0.875rem;
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
-.plinth-slides__warning {
-  color: var(--slides-warn);
-  font-weight: 600;
+.plinth-slides__count {
+  min-width: 4.5em;
+  text-align: center;
 }
 
-@media (max-width: 900px) {
-  .plinth-slides__presenter {
-    grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: minmax(0, 45%) minmax(0, 1fr) auto;
+@media (max-width: 480px) {
+  .plinth-slides__pbar,
+  .plinth-slides__group--end {
+    gap: 4px;
   }
 
-  .plinth-slides__side {
-    flex-direction: column-reverse;
-    justify-content: flex-end;
+  .plinth-slides__timer {
+    min-width: 0;
+    font-size: 1rem;
   }
 
-  .plinth-slides__pane--next {
-    flex-basis: 30%;
+  .plinth-slides__count {
+    min-width: 3.5em;
   }
+}
+
+/* ---------- the overview: a grid of thumbnails, or one column when narrow ---------- */
+
+.plinth-slides[data-print] .plinth-slides__deck,
+.plinth-slides[data-export] .plinth-slides__deck {
+  position: static;
+  flex-direction: column;
+  gap: 24px;
+  padding: 16px 0 40px;
+}
+
+/* --cols comes from stage.ts overviewColumns; the gap and the padding are GUTTER. */
+.plinth-slides[data-mode="overview"]:not([data-print], [data-export]) .plinth-slides__deck {
+  position: static;
+  display: grid;
+  grid-template-columns: repeat(var(--cols, 1), max-content);
+  gap: 16px;
+  justify-content: center;
+  align-content: start;
+  padding: 16px;
+}
+
+/* Room to scroll the last row clear of the controls, which show over the stage. */
+.plinth-slides[data-mode="overview"]:not([data-fixed]) .plinth-slides__deck {
+  padding-bottom: 64px;
+}
+
+/* While printing, every slide is laid out on screen too, so each can be fitted first. A .pptx
+   export does the same for one synchronous measure (export.ts), so it is never painted. */
+.plinth-slides[data-print][data-mode] .plinth-slides__deck,
+.plinth-slides[data-export][data-mode] .plinth-slides__deck {
+  display: flex;
+}
+
+.plinth-slides[data-print][data-mode] .plinth-slides__frame:not([data-print-x]),
+.plinth-slides[data-export][data-mode] .plinth-slides__frame:not([data-print-x]) {
+  display: block;
+}
+
+.plinth-slides[data-mode="overview"] .plinth-slides__canvas {
+  box-shadow:
+    0 0 0 1px var(--slides-rule),
+    0 2px 8px rgb(0 0 0 / 0.08);
+}
+
+.plinth-slides[data-mode="overview"]:not([data-fixed]) .plinth-slides__frame {
+  cursor: pointer;
+}
+
+.plinth-slides[data-mode="overview"][data-mark]
+  .plinth-slides__frame[data-active]
+  .plinth-slides__canvas {
+  box-shadow:
+    0 0 0 3px var(--slides-accent),
+    0 2px 8px rgb(0 0 0 / 0.08);
+}
+
+.plinth-slides__pane--current .plinth-slides__slide[data-overflow]::after,
+.plinth-slides[data-mode="overview"] .plinth-slides__slide[data-overflow]::after {
+  content: "This slide overflows";
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  padding: 4px 12px;
+  border-radius: 6px;
+  background: var(--slides-warn);
+  color: var(--slides-bg);
+  font-size: 20px;
 }
 
 /* ---------- controls ---------- */
+/* One pill floating over the bottom centre of the slide, on a translucent surface: previous,
+   "3 / 20" (only when the deck shows no page numbers of its own), next, and the overview toggle.
+   It shows on pointer moves, taps and keys, stays while hovered or focused, and hides after
+   CONTROLS_IDLE_MS, so it reserves no room. */
 
 .plinth-slides__controls {
   position: fixed;
-  bottom: 12px;
+  bottom: var(--controls-bottom, 16px);
   left: 50%;
   display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
-  max-width: calc(100% - 24px);
-  gap: 4px;
+  gap: 2px;
   align-items: center;
-  padding: 4px;
+  padding: 2px;
   border-radius: 10px;
   background: var(--slides-ctl-bg);
-  box-shadow: 0 2px 12px rgb(0 0 0 / 0.18);
+  -webkit-backdrop-filter: blur(12px) saturate(1.4);
+  backdrop-filter: blur(12px) saturate(1.4);
+  box-shadow:
+    0 0 0 1px var(--slides-rule),
+    0 2px 8px rgb(0 0 0 / 0.12);
   color: var(--slides-ctl-fg);
-  font-size: 0.875rem;
+  font-size: 0.8125rem;
   opacity: 0;
   pointer-events: none;
   transform: translateX(-50%);
@@ -587,41 +665,108 @@ body {
   pointer-events: auto;
 }
 
-.plinth-slides[data-mode="presenter"] .plinth-slides__controls {
+/* A pointer resting on the shown pill keeps it (not on touch, where hover sticks after a tap). */
+@media (hover: hover) {
+  .plinth-slides__controls:hover {
+    opacity: 1;
+    pointer-events: auto;
+  }
+}
+
+.plinth-slides[data-mode="presenter"] .plinth-slides__controls,
+.plinth-slides[data-fixed] .plinth-slides__controls {
   display: none;
 }
 
 .plinth-slides__counter {
-  min-width: 4.5em;
+  min-width: 4em;
   text-align: center;
   font-variant-numeric: tabular-nums;
 }
 
+.plinth-slides__sep {
+  width: 1px;
+  height: 18px;
+  margin: 0 2px;
+  background: var(--slides-rule);
+}
+
 .plinth-slides__btn {
-  min-width: 36px;
-  min-height: 36px;
-  padding: 4px 10px;
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 32px;
+  min-height: 32px;
+  padding: 0 8px;
   border: 0;
-  border-radius: 6px;
+  border-radius: 8px;
   background: transparent;
   color: inherit;
   font: inherit;
   cursor: pointer;
 }
 
-.plinth-slides__presenter .plinth-slides__btn {
-  border: 1px solid var(--slides-rule);
-  background: var(--slides-bg);
+.plinth-slides__btn--icon {
+  width: 32px;
+  padding: 0;
 }
 
 .plinth-slides__btn:hover {
   background: var(--slides-code-bg);
 }
 
+/* A toggle that is on (the overview). */
+.plinth-slides__btn[aria-pressed="true"] {
+  background: var(--slides-code-bg);
+  color: var(--slides-accent);
+}
+
 .plinth-slides__btn:focus-visible,
 .plinth-slides__body a:focus-visible {
   outline: 2px solid var(--slides-focus);
   outline-offset: 2px;
+}
+
+/* The tooltip: the button's name above it, on hover and keyboard focus. */
+.plinth-slides__btn[data-tip]::after {
+  content: attr(data-tip);
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 50%;
+  padding: 3px 8px;
+  border-radius: 6px;
+  background: var(--slides-heading);
+  color: var(--slides-bg);
+  font-size: 0.75rem;
+  font-weight: 400;
+  line-height: 1.4;
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateX(-50%);
+  transition: opacity 0.12s ease;
+}
+
+.plinth-slides__btn[data-tip]:hover::after {
+  transition-delay: 0.35s;
+  opacity: 1;
+}
+
+.plinth-slides__btn[data-tip]:focus-visible::after {
+  opacity: 1;
+}
+
+/* Tooltips at the bar's ends stay on screen. */
+.plinth-slides__group--end .plinth-slides__btn[data-tip]::after {
+  right: 0;
+  left: auto;
+  transform: none;
+}
+
+.plinth-slides__group:first-child .plinth-slides__btn[data-tip]::after {
+  left: 0;
+  transform: none;
 }
 
 .plinth-slides__live {
@@ -633,72 +778,9 @@ body {
   white-space: nowrap;
 }
 
-/* Following the presenter (follow.ts): the follower's status, and a presenter's toggle. */
-.plinth-slides__follow {
-  position: fixed;
-  z-index: 1;
-  top: 12px;
-  right: 12px;
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  max-width: calc(100% - 24px);
-  padding: 4px 4px 4px 12px;
-  border-radius: 10px;
-  background: var(--slides-ctl-bg);
-  box-shadow: 0 2px 12px rgb(0 0 0 / 0.18);
-  color: var(--slides-ctl-fg);
-  font-size: 0.875rem;
-}
-
-.plinth-slides__follow[hidden],
-.plinth-slides__follow [hidden] {
-  display: none;
-}
-
-.plinth-slides__follow-text {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.plinth-slides__lead[aria-pressed="true"] {
-  background: var(--slides-accent);
-  color: var(--slides-bg);
-}
-
-.plinth-slides__btn:disabled {
-  cursor: default;
-  opacity: 0.5;
-}
-
-/* The .pptx is ready (export.ts): a Download button that starts it from a click in the frame. */
-.plinth-slides__ready {
-  position: fixed;
-  z-index: 1;
-  top: 12px;
-  left: 50%;
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  max-width: calc(100% - 32px);
-  padding: 4px 4px 4px 14px;
-  border-radius: 10px;
-  background: var(--slides-ctl-bg);
-  box-shadow: 0 2px 12px rgb(0 0 0 / 0.18);
-  color: var(--slides-ctl-fg);
-  font-size: 0.875rem;
-  transform: translateX(-50%);
-}
-
-.plinth-slides__ready-text {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 @media (prefers-reduced-motion: reduce) {
-  .plinth-slides__controls {
+  .plinth-slides__controls,
+  .plinth-slides__btn[data-tip]::after {
     transition: none;
   }
 }
@@ -726,11 +808,8 @@ body {
   }
 
   html .plinth-slides[data-mode] .plinth-slides__controls,
-  html .plinth-slides[data-mode] .plinth-slides__follow,
-  html .plinth-slides[data-mode] .plinth-slides__ready,
   html .plinth-slides[data-mode] .plinth-slides__presenter,
-  html .plinth-slides[data-mode] .plinth-slides__live,
-  html .plinth-slides[data-mode] .plinth-slides__label {
+  html .plinth-slides[data-mode] .plinth-slides__live {
     display: none;
   }
 
@@ -754,7 +833,6 @@ body {
   html .plinth-slides[data-mode] .plinth-slides__canvas {
     width: var(--w);
     height: var(--h);
-    border-radius: 0;
     box-shadow: none;
   }
 

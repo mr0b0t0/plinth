@@ -9,15 +9,10 @@
 //   app -> frame: view { mode }            a deck switches view: deck, presenter or overview
 //   app -> frame: export { format, nonce } a deck builds its .pptx and downloads it in the frame
 //   app -> frame: export { format }        a sheet downloads itself as "csv" or "xlsx"
-//   app -> frame: paired                   a deck is an audience window: it follows its presenter
-//                                          window, never the presenter in the room
-//   app -> frame: version { n, nonce }     a doc shows version n in place (live views), keeping the
-//                                          reader's place; exact origin only
+//   app -> frame: export { format }        a whiteboard downloads itself as "png" or "svg"
 //   frame -> app: live { ...status }       numbers, booleans and co-editor emails; never text
 //   frame -> app: save                     Cmd/Ctrl+S inside the frame
 //   frame -> app: draft { nonce, text }    the answer to collect, solo mode only
-//   frame -> app: shown { n, nonce, ok }   the answer to version: shown in place, or not (the app
-//                                          then loads a fresh frame)
 //
 // The renderer acts on a message only when event.source is its parent and event.origin is the app
 // origin. Print carries no data, so under opaque isolation and in the path fallback (frames whose
@@ -36,23 +31,17 @@ import {
   LIMITS,
   RENDERER_MESSAGE_SOURCE,
   RENDERER_PROTOCOL_VERSION,
+  type SheetExportFormat,
 } from "@plinth/shared";
 
 export interface PrintMessage {
   source: typeof RENDERER_MESSAGE_SOURCE;
   v: typeof RENDERER_PROTOCOL_VERSION;
   type: "print";
-  /** A deck prints the handout with speaker notes. The doc renderer ignores it. */
-  notes?: true;
 }
 
-export function printMessage(notes = false): PrintMessage {
-  return {
-    source: RENDERER_MESSAGE_SOURCE,
-    v: RENDERER_PROTOCOL_VERSION,
-    type: "print",
-    ...(notes ? { notes: true as const } : {}),
-  };
+export function printMessage(): PrintMessage {
+  return { source: RENDERER_MESSAGE_SOURCE, v: RENDERER_PROTOCOL_VERSION, type: "print" };
 }
 
 /**
@@ -68,14 +57,10 @@ export function rendererTargetOrigin(
 }
 
 /** Ask the renderer in `frame` to print. False when there is no frame window or target. */
-export function postPrint(
-  frame: HTMLIFrameElement | null,
-  targetOrigin: string | null,
-  notes = false,
-): boolean {
+export function postPrint(frame: HTMLIFrameElement | null, targetOrigin: string | null): boolean {
   const win = frame?.contentWindow;
   if (!win || !targetOrigin) return false;
-  win.postMessage(printMessage(notes), targetOrigin);
+  win.postMessage(printMessage(), targetOrigin);
   return true;
 }
 
@@ -106,7 +91,6 @@ export function viewMessage(mode: DeckView): ViewMessage {
   return { source: RENDERER_MESSAGE_SOURCE, v: RENDERER_PROTOCOL_VERSION, type: "view", mode };
 }
 
-/** A deck's export request. Sheets send the same kind with their own formats (SheetExportMessage). */
 export interface DeckExportMessage {
   source: typeof RENDERER_MESSAGE_SOURCE;
   v: typeof RENDERER_PROTOCOL_VERSION;
@@ -127,21 +111,6 @@ export function exportMessage(nonce: string): DeckExportMessage {
 }
 
 /**
- * A deck's frame is an audience window, kept in step by its presenter window (`goto` over the
- * pair's BroadcastChannel): it stops following the presenter over the room and shows no note or
- * Lead viewers toggle. It carries no data.
- */
-export interface PairedMessage {
-  source: typeof RENDERER_MESSAGE_SOURCE;
-  v: typeof RENDERER_PROTOCOL_VERSION;
-  type: "paired";
-}
-
-export function pairedMessage(): PairedMessage {
-  return { source: RENDERER_MESSAGE_SOURCE, v: RENDERER_PROTOCOL_VERSION, type: "paired" };
-}
-
-/**
  * Post a deck message (a slide number, a view name, or an export request with the app's own
  * nonce: nothing the frame does not already have) to the frame at `targetOrigin`, "*" included for
  * opaque frames. False when it cannot.
@@ -149,7 +118,7 @@ export function pairedMessage(): PairedMessage {
 export function postToDeck(
   frame: HTMLIFrameElement | null,
   targetOrigin: string | null,
-  message: GotoMessage | ViewMessage | DeckExportMessage | PairedMessage,
+  message: GotoMessage | ViewMessage | DeckExportMessage,
 ): boolean {
   const win = frame?.contentWindow;
   if (!win || !targetOrigin) return false;
@@ -159,8 +128,7 @@ export function postToDeck(
 
 // ---------- sheets (the sheet type) ----------
 
-export type SheetExportFormat = "csv" | "xlsx";
-
+/** A sheet's export: the frame builds the file and downloads it, and answers nothing. */
 export interface SheetExportMessage {
   source: typeof RENDERER_MESSAGE_SOURCE;
   v: typeof RENDERER_PROTOCOL_VERSION;
@@ -173,15 +141,14 @@ export function sheetExportMessage(format: SheetExportFormat): SheetExportMessag
 }
 
 /**
- * The one `export` kind: a deck asks for "pptx" with a nonce, a sheet for "csv" or "xlsx". Each
- * renderer reads only its own formats and ignores the others.
+ * The export kind: a deck's .pptx (with the app's nonce), a sheet's .csv or .xlsx, or a
+ * whiteboard's .png or .svg.
  */
-export type ExportMessage = DeckExportMessage | SheetExportMessage;
+export type ExportMessage = DeckExportMessage | SheetExportMessage | BoardExportMessage;
 
 /**
- * Ask a sheet's frame to download itself. The message names only a format, which the frame's
- * own toolbar offers anyway, so it may go to "*" for opaque frames, like print. False when it
- * cannot be sent.
+ * Ask a sheet's frame to download itself. The message names only a format and carries no data,
+ * so it may go to "*" for opaque frames, like print. False when it cannot be sent.
  */
 export function postExport(
   frame: HTMLIFrameElement | null,
@@ -191,6 +158,37 @@ export function postExport(
   const win = frame?.contentWindow;
   if (!win || !targetOrigin) return false;
   win.postMessage(sheetExportMessage(format), targetOrigin);
+  return true;
+}
+
+// ---------- whiteboards (the whiteboard type) ----------
+
+export type BoardExportFormat = "png" | "svg";
+
+/** A whiteboard's export: the frame draws the whole board and downloads it, and answers nothing. */
+export interface BoardExportMessage {
+  source: typeof RENDERER_MESSAGE_SOURCE;
+  v: typeof RENDERER_PROTOCOL_VERSION;
+  type: "export";
+  format: BoardExportFormat;
+}
+
+export function boardExportMessage(format: BoardExportFormat): BoardExportMessage {
+  return { source: RENDERER_MESSAGE_SOURCE, v: RENDERER_PROTOCOL_VERSION, type: "export", format };
+}
+
+/**
+ * Ask a whiteboard's frame to download itself as a PNG or an SVG. Like a sheet's export, the
+ * message names only a format and carries no data. False when it cannot be sent.
+ */
+export function postBoardExport(
+  frame: HTMLIFrameElement | null,
+  targetOrigin: string | null,
+  format: BoardExportFormat,
+): boolean {
+  const win = frame?.contentWindow;
+  if (!win || !targetOrigin) return false;
+  win.postMessage(boardExportMessage(format), targetOrigin);
   return true;
 }
 
@@ -236,8 +234,7 @@ export interface LiveFrameStatus {
 export type FrameMessage =
   | { type: "live"; status: LiveFrameStatus }
   | { type: "save" }
-  | { type: "draft"; nonce: string; text: string }
-  | { type: "shown"; n: number; nonce: string; ok: boolean };
+  | { type: "draft"; nonce: string; text: string };
 
 export const NONCE_RE = /^[A-Za-z0-9_-]{16,64}$/;
 const MAX_EDITORS = 50;
@@ -273,28 +270,6 @@ export function editTargetOrigin(
   return t === "*" ? null : t;
 }
 
-// ---------- live views: a doc shows a newer version in place ----------
-
-export interface VersionMessage {
-  source: typeof RENDERER_MESSAGE_SOURCE;
-  v: typeof RENDERER_PROTOCOL_VERSION;
-  type: "version";
-  /** The version to show: the renderer fetches its source from /__plinth/v/<n>/. */
-  n: number;
-  /** The app's own random nonce, echoed in the frame's `shown` answer. */
-  nonce: string;
-}
-
-export function versionMessage(n: number, nonce: string): VersionMessage {
-  return {
-    source: RENDERER_MESSAGE_SOURCE,
-    v: RENDERER_PROTOCOL_VERSION,
-    type: "version",
-    n,
-    nonce,
-  };
-}
-
 /** Every app -> frame message kind, in the order they were added. */
 // biome-ignore format: one kind per line, so each feature adds its own line
 export const APP_MESSAGE_KINDS = [
@@ -304,8 +279,6 @@ export const APP_MESSAGE_KINDS = [
   "goto",
   "view",
   "export",
-  "paired",
-  "version",
 ] as const;
 export type AppMessageKind = (typeof APP_MESSAGE_KINDS)[number];
 
@@ -316,18 +289,13 @@ export type AppToFrameMessage =
   | CollectMessage
   | GotoMessage
   | ViewMessage
-  | ExportMessage
-  | PairedMessage
-  | VersionMessage;
+  | ExportMessage;
 
-/**
- * Post an editing or version message to the frame's window at the exact origin, never "*". False
- * when it cannot.
- */
+/** Post an editing message to the frame's window at the exact origin. False when it cannot. */
 export function postToRenderer(
   frame: HTMLIFrameElement | null,
   targetOrigin: string | null,
-  message: EditMessage | CollectMessage | VersionMessage,
+  message: EditMessage | CollectMessage,
 ): boolean {
   const win = frame?.contentWindow;
   if (!win || !targetOrigin || targetOrigin === "*") return false;
@@ -380,8 +348,6 @@ interface ReadOptions {
   solo: boolean;
   nonce: string | null;
   maxDocBytes?: number;
-  /** The nonce of the `version` message the app is waiting on; `shown` is read only for it. */
-  shown?: string | null;
 }
 
 /** Each frame -> app kind's validator: the message, or null when any field is wrong. */
@@ -403,10 +369,6 @@ const FRAME_READERS: {
     const max = opts.maxDocBytes ?? LIMITS.maxDocBytes;
     if (m.text.length > max || new TextEncoder().encode(m.text).byteLength > max) return null;
     return { type: "draft", nonce: m.nonce, text: m.text };
-  },
-  shown(m, opts) {
-    if (!opts.shown || m.nonce !== opts.shown || !isInt(m.n, 1) || !isBool(m.ok)) return null;
-    return { type: "shown", n: m.n, nonce: m.nonce, ok: m.ok };
   },
 };
 
@@ -436,7 +398,6 @@ export function readFrameMessage(
     solo: boolean;
     nonce: string | null;
     maxDocBytes?: number;
-    shown?: string | null;
   },
 ): FrameMessage | null {
   const win = opts.frame?.contentWindow;

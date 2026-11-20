@@ -43,6 +43,7 @@ export function RenameCategoryDialog({
   category,
   categories,
   personal = false,
+  whose,
   onClose,
   onDone,
 }: {
@@ -52,6 +53,11 @@ export function RenameCategoryDialog({
   categories: readonly CategoryCount[];
   /** The person's own category for artifacts shared with them, not an owner category. */
   personal?: boolean;
+  /**
+   * "own" when the name is also one of the person's categories for shared artifacts (the All
+   * view): the dialog then says it changes the person's own artifacts only.
+   */
+  whose?: "own";
   onClose: () => void;
   /** After a change: the stored name, or null when the category was removed. */
   onDone: (stored: string | null) => void;
@@ -83,7 +89,7 @@ export function RenameCategoryDialog({
       else if (res.pending) {
         toast.success(
           "Categories merged",
-          `${artifactsText(res.pending)} wait for your review before ${res.category}'s people can see them`,
+          `${artifactsText(res.pending)} to review in ${res.category}`,
         );
       } else
         toast.success(plan.into ? "Categories merged" : "Category renamed", res.category ?? "");
@@ -149,7 +155,11 @@ export function RenameCategoryDialog({
       open
       onClose={onClose}
       title="Rename category"
-      description={`“${category.name}” is on ${artifactsText(category.count)}. Type a new name, or an existing category's name to merge them.`}
+      description={
+        whose === "own"
+          ? `“${category.name}” is on ${artifactsText(category.count)} of yours. Artifacts shared with you keep it: rename those under Shared. Type a new name, or an existing category's name to merge them.`
+          : `“${category.name}” is on ${artifactsText(category.count)}. Type a new name, or an existing category's name to merge them.`
+      }
       footer={
         <>
           <Button variant="danger" onClick={() => setConfirming(true)} disabled={busy === "save"}>

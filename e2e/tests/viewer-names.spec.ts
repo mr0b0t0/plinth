@@ -1,9 +1,9 @@
 // Who is viewing (docs/spec.md "Who is viewing: names and the people list"), end to end: the owner
 // sets a name from the account menu; a page that declares `data viewer people` shows the viewer's
 // name, lists everyone with access for the owner and an editor, and names the authors of its
-// sign-ups; a viewer confirmed by code (no account) has no name and gets `forbidden` from the list
-// but is told about it; an anonymous link viewer sees no viewer, no authors and no list; and in a
-// live room a peer's cursor is labelled with their name.
+// sign-ups; a viewer confirmed by code (signed in by it, with no name set) has no name and gets
+// `forbidden` from the list but is told about it; an anonymous link viewer sees no viewer, no
+// authors and no list; and in a live room a peer's cursor is labelled with their name.
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { type Browser, expect, type FrameLocator, type Page, test } from "@playwright/test";
@@ -14,7 +14,8 @@ import { ROOT } from "../support/paths.ts";
 import { seedToken } from "../support/tokens.ts";
 
 const CURRENT_FRAME = "iframe.pl-viewer-frame:not(.pl-viewer-frame--outgoing)";
-const PEOPLE_SENTENCE = "The owner and editors can see everyone this page is shared with.";
+const PEOPLE_CLAUSE = "the owner and editors see who has access.";
+const ENTRIES = "People with access see entries and who wrote them;";
 
 const TEAM_HTML = `<!doctype html>
 <html lang="en">
@@ -124,8 +125,16 @@ test("names and the people list on a page shared with a team", async ({ page, br
   await dialog.getByRole("button", { name: "Save" }).click();
   await expect(page.getByText("Name saved")).toBeVisible();
   await expect(dialog).toBeHidden();
+  // One layer at a time: on a phone the slide-over closed when the dialog opened.
+  await expect(page.getByRole("dialog", { name: "Sidebar" })).toHaveCount(0);
+  // The sidebar's account chip now shows the name; the menu keeps the email.
+  await openNav(page);
+  await page.getByRole("button", { name: "Account: Ana Owner" }).click();
+  await expect(page.getByText(owner, { exact: true })).toBeVisible();
+  await page.keyboard.press("Escape");
 
-  // 2. The owner's agent publishes the page and shares it: an editor, and a viewer with no account.
+  // 2. The owner's agent publishes the page and shares it: an editor, and a viewer with no
+  // account yet.
   const art = await publishArtifact(page.request, token, {
     title: "Team list",
     html: TEAM_HTML,
@@ -153,11 +162,9 @@ test("names and the people list on a page shared with a team", async ({ page, br
   await expect(ownerList.nth(0)).toHaveText("Ana Owner · owner · you");
   await expect(frame(page).locator("#people")).toContainText(`${editor} · editor`);
   await expect(frame(page).locator("#people")).toContainText(`${viewer} · viewer`);
-  await expect(notice(page)).toContainText(`This page can see that you are ${owner}`);
-  await expect(notice(page)).toContainText(
-    "The page also sees your name, Ana Owner, and shows it wherever it shows your email.",
+  await expect(notice(page)).toHaveText(
+    `This page sees you as Ana Owner (${owner}) and saves what you enter. ${ENTRIES} ${PEOPLE_CLAUSE}`,
   );
-  await expect(notice(page)).toContainText(PEOPLE_SENTENCE);
   await frame(page).getByRole("button", { name: "Sign up" }).click();
   await expect(frame(page).locator("#signups")).toHaveText("Ana Owner");
 
@@ -187,7 +194,8 @@ test("names and the people list on a page shared with a team", async ({ page, br
     await expect(frame(page).locator("#people")).toContainText("Bo Editor · editor");
     await expect(frame(page).locator("#signups")).toContainText("Bo Editor");
 
-    // 5. The viewer confirms by code: no account, so no name; no list, but they are told.
+    // 5. The viewer confirms by code, which signs them in with a new account and no name; no
+    // list, but they are told.
     const vw = await listedViewer(browser, art.url, viewer);
     pages.push(vw);
     await expect(frame(vw).locator("#me")).toHaveText(viewer);
@@ -195,8 +203,9 @@ test("names and the people list on a page shared with a team", async ({ page, br
     await expect(frame(vw).locator("#people-error")).toHaveText("forbidden");
     await expect(frame(vw).locator("#people li")).toHaveCount(0);
     await expect(frame(vw).locator("#signups li")).toHaveText(["Ana Owner", "Bo Editor"]);
-    await expect(notice(vw)).toContainText(PEOPLE_SENTENCE);
-    await expect(notice(vw)).not.toContainText("also sees your name");
+    await expect(notice(vw)).toHaveText(
+      `This page sees you as ${viewer} and saves what you enter. ${ENTRIES} ${PEOPLE_CLAUSE}`,
+    );
 
     // 6. An unlisted copy opened anonymously: no viewer, no authors, no list.
     const link = await publishArtifact(page.request, token, {
@@ -219,7 +228,7 @@ test("names and the people list on a page shared with a team", async ({ page, br
     await expect(frame(anon).locator("body")).not.toContainText("Ana Owner");
     await expect(frame(anon).locator("body")).not.toContainText("@");
     await expect(frame(anon).getByRole("button", { name: "Sign up" })).toBeDisabled();
-    await expect(notice(anon)).not.toContainText(PEOPLE_SENTENCE);
+    await expect(notice(anon)).not.toContainText("who has access");
   } finally {
     for (const p of pages) await p.context().close();
   }

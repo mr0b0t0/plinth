@@ -12,6 +12,8 @@ import {
   grantedRole,
   mayManageCategoryShares,
   type Principal,
+  roleOf,
+  seesCategorySharing,
   seesPersonalCategory,
   strongerRole,
 } from "../src/policy.ts";
@@ -52,7 +54,7 @@ const art = (extra: Partial<ArtifactFacts> = {}): ArtifactFacts => ({
 });
 const access = (extra: Partial<AccessFacts> = {}): AccessFacts => ({
   grantRole: null,
-  categoryGrant: { shareId: SHARE, shareKey: KEY, role: "commenter" },
+  categoryGrant: { shareId: SHARE, shareOwnerId: OWNER, shareKey: KEY, role: "commenter" },
   categorySharing: true,
   passwordPassed: false,
   ...extra,
@@ -64,7 +66,9 @@ describe("categoryRoleOf: the filing safeguard", () => {
     expect(
       categoryRoleOf(
         art(),
-        access({ categoryGrant: { shareId: SHARE, shareKey: KEY, role: "viewer" } }),
+        access({
+          categoryGrant: { shareId: SHARE, shareOwnerId: OWNER, shareKey: KEY, role: "viewer" },
+        }),
       ),
     ).toBe("viewer");
   });
@@ -103,7 +107,26 @@ describe("categoryRoleOf: the filing safeguard", () => {
     [
       "a grant on the share of another key",
       art(),
-      access({ categoryGrant: { shareId: SHARE, shareKey: "other", role: "commenter" } }),
+      access({
+        categoryGrant: {
+          shareId: SHARE,
+          shareOwnerId: OWNER,
+          shareKey: "other",
+          role: "commenter",
+        },
+      }),
+    ],
+    [
+      "a grant on a share another owner holds",
+      art(),
+      access({
+        categoryGrant: {
+          shareId: SHARE,
+          shareOwnerId: "someone-else",
+          shareKey: KEY,
+          role: "commenter",
+        },
+      }),
     ],
   ])("gives nothing: %s", (_label, a, x) => {
     expect(categoryRoleOf(a, x)).toBeNull();
@@ -111,7 +134,7 @@ describe("categoryRoleOf: the filing safeguard", () => {
   });
 
   it("clamps a stray role to viewer", () => {
-    const stray = { shareId: SHARE, shareKey: KEY, role: "editor" as never };
+    const stray = { shareId: SHARE, shareOwnerId: OWNER, shareKey: KEY, role: "editor" as never };
     expect(categoryRoleOf(art(), access({ categoryGrant: stray }))).toBe("viewer");
   });
 });
@@ -140,7 +163,9 @@ describe("decide with a category grant", () => {
     }
     expect(allow(client, "comment")).toBe(true);
     expect(allow(client, "mention")).toBe(true);
-    const asViewer = access({ categoryGrant: { shareId: SHARE, shareKey: KEY, role: "viewer" } });
+    const asViewer = access({
+      categoryGrant: { shareId: SHARE, shareOwnerId: OWNER, shareKey: KEY, role: "viewer" },
+    });
     expect(allow(client, "view", art(), asViewer)).toBe(true);
     expect(allow(client, "comment", art(), asViewer)).toBe(false);
     // A viewer confirmed by code holds it too.
@@ -227,5 +252,41 @@ describe("who manages shares, opens portals and files personally", () => {
     expect(seesPersonalCategory(client, null)).toBe(false);
     expect(seesPersonalCategory(agentOf("client", "client@example.com"), "viewer")).toBe(false);
     expect(seesPersonalCategory(viewer, "viewer")).toBe(false);
+  });
+});
+
+describe("a token limited to one artifact", () => {
+  const bound = (userId: string, email: string): Principal => ({
+    kind: "agent",
+    userId,
+    email,
+    connectionId: "c-ci",
+    connectionLabel: "CI: report",
+    clientType: "other",
+    scopes: new Set(["artifacts:read", "artifacts:write"] as const),
+    boundArtifactId: "art-1",
+  });
+
+  it("never sees category sharing, even the owner's own token", () => {
+    expect(seesCategorySharing(bound(OWNER, "o@example.com"))).toBe(false);
+    expect(seesCategorySharing(bound("client", "client@example.com"))).toBe(false);
+    expect(seesCategorySharing(agentOf("client", "client@example.com"))).toBe(true);
+    expect(seesCategorySharing(client)).toBe(true);
+    expect(seesCategorySharing(viewer)).toBe(true);
+  });
+
+  it("holds the direct grant only: a category grant gives it no role", () => {
+    const t = bound("client", "client@example.com");
+    expect(roleOf(t, art(), access())).toBeNull();
+    expect(decide(t, "view", art(), access())).toMatchObject({ allow: false });
+    expect(roleOf(t, art(), access({ grantRole: "editor" }))).toBe("editor");
+    expect(decide(t, "edit", art(), access({ grantRole: "editor" }))).toMatchObject({
+      allow: true,
+      role: "editor",
+    });
+    // The same person's account-wide agent keeps the category's role.
+    expect(roleOf(agentOf("client", "client@example.com"), art(), access())).toBe("commenter");
+    // The owner's own bound token is still the owner.
+    expect(roleOf(bound(OWNER, "o@example.com"), art(), access())).toBe("owner");
   });
 });

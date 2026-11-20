@@ -10,22 +10,21 @@
 // Message contents are never logged.
 //
 // A doc artifact's room also carries Plinth's own doc editing channel (kind "doc", rooms/doc.ts):
-// the live draft, its leases and its D1 flush, and the checkpoint RPCs the app host calls. A deck's
-// room carries Plinth's own follow-the-presenter channel (kind "slides", rooms/slides.ts): slide
-// numbers from owners and editors to the identified viewers who have the deck open.
+// the live draft, its leases and its D1 flush, and the checkpoint RPCs the app host calls.
 //
 // Live views share the object (kind "watch", docs/spec.md "Live views"): receive-only sockets the
 // app page opens on the app host (api/watch.ts), for anyone who may open the artifact. A watch
 // socket joins no room, is never a peer and carries no identity; it gets only frames the room
 // makes from integers: `welcome`, `version` (published, or the alarm's catch-up), `data`
-// (dataChanged) and `access` (just before a sharing change closes it). Watch sockets are counted
-// apart from room sockets, so viewers never fill a room, and in two pools of their own (`member`,
-// `open`), so an outsider who fills the open pool learns nothing about the people the artifact is
-// shared with. No frame depends on how many sockets are open: `spread_ms` comes from the
-// instance's cap alone.
+// (dataChanged, at most one per spread_ms) and `access` (just before a sharing change closes it).
+// Watch sockets are counted apart from room sockets, so viewers never fill a room, and in two
+// pools of their own (`member`, `open`), so an outsider who fills the open pool learns nothing
+// about the people the artifact is shared with. No frame depends on how many sockets are open:
+// `spread_ms` comes from the instance's cap alone.
 import { DurableObject } from "cloudflare:workers";
 import {
   ARTIFACT_ID_RE,
+  ARTIFACT_TYPES,
   type ArtifactType,
   canEmitTopic,
   type EffectiveRole,
@@ -36,9 +35,7 @@ import {
   liveDocClientFrameSchema,
   livePoolCap,
   mergePresence,
-  parseSlidesClientFrame,
   ROOM_CLOSE,
-  ROOM_KINDS,
   ROOM_LIMITS,
   ROOM_OPEN_ALL,
   ROOM_PROTOCOL,
@@ -51,12 +48,8 @@ import {
   type RoomKind,
   type RoomPeer,
   type RoomServerFrame,
-  type RoomSlidesRight,
   roomClientFrameSchema,
-  SLIDES_FRAME_BYTES,
-  type SlidesServerFrame,
   spreadMs,
-  typeDef,
   VIEW_WATCH_PROTOCOL,
   type ViewWatchFrame,
 } from "@plinth/shared";
@@ -65,7 +58,7 @@ import { randomString } from "../lib/crypto.ts";
 import { versionCapabilities } from "../services/artifacts.ts";
 import { type DocSnapshot, LiveDoc, type StoredLease } from "./doc.ts";
 import { roomDeclaration } from "./notify.ts";
-import { SlidesChannel } from "./slides.ts";
+import { TrailingThrottle } from "./throttle.ts";
 
 /** The header the gate puts on the internal connect request: a JSON RoomConnect. */
 export const ROOM_CONNECT_HEADER = "x-plinth-room";
@@ -171,11 +164,6 @@ export interface RoomConnect {
   /** The page's declared open topics (re-checked against each new declaration). */
   openTopics: string[];
   doc: RoomDocRight;
-  /**
-   * A slides socket's right: `present` (owners and editors) or `watch`. Absent (or `none`) on every
-   * other kind.
-   */
-  slides?: RoomSlidesRight;
   /** The instance's ROOM_* limits, as the Worker parsed them. */
   limits: { maxConnections: number; maxMessageBytes: number; messagesPerSecond: number };
 }
@@ -188,8 +176,6 @@ interface SocketState extends RoomConnect {
   rooms: Record<string, Record<string, unknown>>;
   /** A doc socket's lease on the live draft (rooms/doc.ts). */
   lease?: StoredLease | null;
-  /** A slides socket that presents: its slide, and when it started (rooms/slides.ts). */
-  presenting?: { slide: number; since: number } | null;
 }
 
 /** Any socket's attachment: a room socket (page or doc) or a watch socket. */
@@ -198,7 +184,6 @@ type AnyState = SocketState | WatchState;
 const ROLES: ReadonlySet<string> = new Set(["owner", "editor", "commenter", "viewer"]);
 const DOC_RIGHTS: ReadonlySet<string> = new Set(["none", "watch", "write"]);
 const EMIT_RIGHTS: ReadonlySet<string> = new Set(["all", "open", "none"]);
-const SLIDES_RIGHTS: ReadonlySet<string> = new Set(["present", "watch"]);
 
 /**
  * UTF-8 bytes a socket's display name may take in its attachment: 64 code points of at most 4
@@ -206,10 +191,16 @@ const SLIDES_RIGHTS: ReadonlySet<string> = new Set(["present", "watch"]);
  */
 export const ROOM_NAME_BYTES = 256;
 
-/** A name as the gate sends it: null, or display text with no "@" that fits ROOM_NAME_BYTES. */
+/**
+ * A name as the gate sends it: null, or display text with no "@" that fits ROOM_NAME_BYTES. A
+ * missing name reads as null, so a Worker isolate still running the release before names (whose
+ * header has no `name`) can connect while a deploy rolls out; a present but invalid one is refused.
+ */
 function validName(n: unknown): boolean {
   return (
-    n === null || (typeof n === "string" && !n.includes("@") && utf8Bytes(n) <= ROOM_NAME_BYTES)
+    n === undefined ||
+    n === null ||
+    (typeof n === "string" && !n.includes("@") && utf8Bytes(n) <= ROOM_NAME_BYTES)
   );
 }
 
@@ -219,7 +210,7 @@ function validName(n: unknown): boolean {
  */
 export function encodeConnect(c: RoomConnect): string {
   return JSON.stringify(c).replace(
-    /[\u007f-￿]/g,
+    /[\u007f-\uffff]/g,
     (ch) => `\\u${ch.charCodeAt(0).toString(16).padStart(4, "0")}`,
   );
 }
@@ -237,18 +228,10 @@ export function parseConnect(raw: string | null): RoomConnect | null {
   const c = v as Record<string, unknown>;
   const int = (n: unknown) => typeof n === "number" && Number.isSafeInteger(n) && n >= 0;
   const l = c.limits as Record<string, unknown> | undefined;
-  // A slides socket has a present or watch right; every other kind has none.
-  const slidesOk =
-    c.kind === "slides"
-      ? typeof c.slides === "string" && SLIDES_RIGHTS.has(c.slides)
-      : c.slides === undefined || c.slides === "none";
   const ok =
     typeof c.artifactId === "string" &&
-    typeof c.type === "string" &&
-    typeDef(c.type) !== null &&
-    typeof c.kind === "string" &&
-    (ROOM_KINDS as readonly string[]).includes(c.kind) &&
-    slidesOk &&
+    (ARTIFACT_TYPES as readonly unknown[]).includes(c.type) &&
+    (c.kind === "page" || c.kind === "doc") &&
     int(c.epoch) &&
     int(c.passExp) &&
     typeof c.viewer === "string" &&
@@ -271,7 +254,7 @@ export function parseConnect(raw: string | null): RoomConnect | null {
     int(l.maxConnections) &&
     int(l.maxMessageBytes) &&
     int(l.messagesPerSecond);
-  return ok ? (c as unknown as RoomConnect) : null;
+  return ok ? ({ ...c, name: c.name ?? null } as unknown as RoomConnect) : null;
 }
 
 const encoder = new TextEncoder();
@@ -296,8 +279,8 @@ export class ArtifactRoom extends DurableObject<Bindings> {
   private readonly watchConnects = new Map<string, number[]>();
   /** The live draft of a doc artifact (kind "doc" sockets and the checkpoint RPCs). */
   private readonly doc: LiveDoc;
-  /** A deck's follow-the-presenter channel (kind "slides" sockets). */
-  private readonly slides: SlidesChannel<SocketState>;
+  /** Live views: `data` frames, at most one per spread_ms. In memory, like the buckets. */
+  private readonly dataFrames = new TrailingThrottle(() => this.sendData());
 
   constructor(ctx: DurableObjectState, env: Bindings) {
     super(ctx, env);
@@ -310,11 +293,6 @@ export class ArtifactRoom extends DurableObject<Bindings> {
         this.doc.reset();
         for (const { ws } of this.everyone()) this.drop(ws, ROOM_CLOSE.gone, "gone");
       },
-    });
-    this.slides = new SlidesChannel<SocketState>({
-      sockets: () => this.sockets("slides"),
-      send: (ws, frame) => this.sendSlides(ws, frame),
-      save: (ws, s) => this.save(ws, s),
     });
     // The client's keep-alive, answered without waking the object.
     ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair("ping", "pong"));
@@ -330,8 +308,6 @@ export class ArtifactRoom extends DurableObject<Bindings> {
     if (!info) return new Response(null, { status: 400 });
     // A doc socket is for owners and editors (watch or write); the gate never sends "none".
     if (info.kind === "doc" && info.doc === "none") return new Response(null, { status: 403 });
-    // A slides socket presents or watches; parseConnect refused anything else.
-    if (info.kind === "slides" && !info.slides) return new Response(null, { status: 403 });
 
     // A doc's draft is loaded (and rebased onto a newer version) before the socket joins, so the
     // socket's first frame is its welcome.
@@ -353,7 +329,6 @@ export class ArtifactRoom extends DurableObject<Bindings> {
       id: `s_${randomString(16)}`,
       rooms: {},
       ...(info.kind === "doc" ? { lease: null } : {}),
-      ...(info.kind === "slides" ? { presenting: null } : {}),
     };
     this.ctx.acceptWebSocket(server, [`k:${info.kind}`, `v:${info.viewer}`, `e:${info.epoch}`]);
     if (!this.save(server, state)) {
@@ -365,8 +340,6 @@ export class ArtifactRoom extends DurableObject<Bindings> {
         this.drop(server, ROOM_CLOSE.gone, "gone");
         return new Response(null, { status: 101, webSocket: client, headers });
       }
-    } else if (info.kind === "slides") {
-      this.slides.welcome(server, state);
     } else {
       this.send(server, {
         t: "welcome",
@@ -387,11 +360,10 @@ export class ArtifactRoom extends DurableObject<Bindings> {
 
   /**
    * The per-artifact, per-viewer and per-minute caps. Records the connect when it is allowed. Only
-   * room sockets (page, doc and slides) count: watch sockets have caps of their own.
+   * room sockets (page and doc) count: watch sockets have caps of their own.
    */
   private isFull(info: RoomConnect): boolean {
-    let room = 0;
-    for (const kind of ROOM_KINDS) room += this.ctx.getWebSockets(`k:${kind}`).length;
+    const room = this.ctx.getWebSockets("k:page").length + this.ctx.getWebSockets("k:doc").length;
     if (room >= info.limits.maxConnections) return true;
     if (this.ctx.getWebSockets(`v:${info.viewer}`).length >= ROOM_LIMITS.socketsPerViewer) {
       return true;
@@ -434,7 +406,7 @@ export class ArtifactRoom extends DurableObject<Bindings> {
       server.close(ROOM_CLOSE.invalid, "invalid");
       return new Response(null, { status: 101, webSocket: client, headers });
     }
-    this.sendWatch(server, { t: "welcome", v: 1, version: info.version, data: info.data });
+    this.sendWatch(server, { t: "welcome", v: 1, version: info.version });
     if ((await this.ctx.storage.getAlarm()) === null) {
       await this.ctx.storage.setAlarm(Date.now() + ROOM_LIMITS.recheckIntervalS * 1000);
     }
@@ -487,11 +459,28 @@ export class ArtifactRoom extends DurableObject<Bindings> {
     return behind.length;
   }
 
-  /** The artifact's shared data changed: watch sockets with the data right get a `data` frame. */
+  /**
+   * The artifact's shared data changed: watch sockets with the data right get a `data` frame, at
+   * most one per spread_ms (rooms/throttle.ts). A write in a quiet window sends it at once; the
+   * writes after it join one frame at the window's end, which goes to the sockets open then. So
+   * however fast the page is written, its views re-read at most once per spread_ms each, and the
+   * last write is always followed by a frame. Returns how many sockets hold the data right.
+   */
   async dataChanged(): Promise<number> {
-    const to = this.watchSockets().filter(({ s }) => s.data);
-    for (const { ws, s } of to) this.sendWatch(ws, { t: "data", spread_ms: spreadOf(s) });
+    const to = this.dataSockets();
+    if (!to.length) return 0;
+    this.dataFrames.request(Math.max(...to.map(({ s }) => spreadOf(s))));
     return to.length;
+  }
+
+  private dataSockets(): { ws: WebSocket; s: WatchState }[] {
+    return this.watchSockets().filter(({ s }) => s.data);
+  }
+
+  private sendData(): void {
+    for (const { ws, s } of this.dataSockets()) {
+      this.sendWatch(ws, { t: "data", spread_ms: spreadOf(s) });
+    }
   }
 
   /** How many watch sockets are open (tests and diagnostics; never who). */
@@ -529,10 +518,10 @@ export class ArtifactRoom extends DurableObject<Bindings> {
     return out;
   }
 
-  /** Open room sockets (every kind, or one), with their state. Never watch sockets. */
+  /** Open room sockets (page and doc, or one kind), with their state. Never watch sockets. */
   private sockets(kind?: RoomKind): { ws: WebSocket; s: SocketState }[] {
     if (kind) return this.open<SocketState>(`k:${kind}`);
-    return ROOM_KINDS.flatMap((k) => this.open<SocketState>(`k:${k}`));
+    return [...this.open<SocketState>("k:page"), ...this.open<SocketState>("k:doc")];
   }
 
   /** Open watch sockets, with their state. */
@@ -554,15 +543,6 @@ export class ArtifactRoom extends DurableObject<Bindings> {
       ws.send(JSON.stringify(frame));
     } catch {
       // The socket is closing; its close handler tidies up.
-    }
-  }
-
-  private sendSlides(ws: WebSocket, frame: SlidesServerFrame): void {
-    if (this.closed.has(ws)) return;
-    try {
-      ws.send(JSON.stringify(frame));
-    } catch {
-      // Closing.
     }
   }
 
@@ -607,24 +587,14 @@ export class ArtifactRoom extends DurableObject<Bindings> {
   /** Close a socket, telling its rooms' peers first. */
   private drop(ws: WebSocket, code: number, reason: string): void {
     if (this.closed.has(ws)) return;
-    this.goneOut(ws);
+    this.leaveAll(ws);
+    this.closed.add(ws);
+    this.docGone(ws);
     try {
       ws.close(code, reason);
     } catch {
       // Already closed.
     }
-  }
-
-  /**
-   * A socket is gone (closed by us or by the client, or failed): its peers are told, its doc lease
-   * ends, and a deck's leader hands over. Never twice for one socket.
-   */
-  private goneOut(ws: WebSocket): void {
-    const s = this.state(ws);
-    this.leaveAll(ws);
-    this.closed.add(ws);
-    this.docGone(ws);
-    if (s?.kind === "slides") this.slides.left(ws, s);
   }
 
   private leaveAll(ws: WebSocket): void {
@@ -678,15 +648,9 @@ export class ArtifactRoom extends DurableObject<Bindings> {
       return;
     }
     // Sizes and kinds are checked on the raw frame, before anything is parsed. A doc frame may
-    // carry a block's text, so it gets the fixed doc limit instead of the page one; a slides frame
-    // carries a slide number, so it gets the small fixed one.
+    // carry a block's text, so it gets the fixed doc limit instead of the page one.
     if (typeof message !== "string") return this.drop(ws, 1003, "binary");
-    const max =
-      s.kind === "doc"
-        ? LIMITS.liveDocFrameBytes
-        : s.kind === "slides"
-          ? SLIDES_FRAME_BYTES
-          : s.limits.maxMessageBytes;
+    const max = s.kind === "doc" ? LIMITS.liveDocFrameBytes : s.limits.maxMessageBytes;
     if (message.length > max || utf8Bytes(message) > max) {
       return this.drop(ws, 1009, "too_large");
     }
@@ -703,11 +667,9 @@ export class ArtifactRoom extends DurableObject<Bindings> {
     if (rate === "close") return this.drop(ws, ROOM_CLOSE.rate, "rate");
     if (rate === "drop") {
       if (s.kind === "doc") return this.sendDoc(ws, { t: "error", code: "rate_limited" });
-      if (s.kind === "slides") return this.sendSlides(ws, { t: "error", code: "rate_limited" });
       return this.error(ws, "rate_limited");
     }
     if (s.kind === "doc") return this.docMessage(ws, s, message);
-    if (s.kind === "slides") return this.slidesMessage(ws, s, message);
     let frame: RoomClientFrame;
     try {
       const parsed = roomClientFrameSchema.safeParse(JSON.parse(message));
@@ -802,25 +764,6 @@ export class ArtifactRoom extends DurableObject<Bindings> {
     }
   }
 
-  /**
-   * A slides frame. A refused one (a watcher sending anything, a malformed frame) also counts as a
-   * rate drop, so a socket that keeps sending them is closed (4429) as one over the rate would be.
-   */
-  private slidesMessage(ws: WebSocket, s: SocketState, message: string): void {
-    const outcome = this.slides.message(ws, s, parseSlidesClientFrame(message), Date.now());
-    if (outcome === "refused" && this.strike(s)) this.drop(ws, ROOM_CLOSE.rate, "rate");
-  }
-
-  /** Records a refused frame as a rate drop; true when the socket has dropped too many. */
-  private strike(s: SocketState): boolean {
-    const now = Date.now();
-    const b = this.buckets.get(s.id);
-    if (!b) return false;
-    b.drops = b.drops.filter((t) => now - t < ROOM_LIMITS.rateDropWindowS * 1000);
-    b.drops.push(now);
-    return b.drops.length >= ROOM_LIMITS.rateDropsToClose;
-  }
-
   /** A doc socket is gone (closed by us or by the client): its lease ends. */
   private docGone(ws: WebSocket): void {
     const s = this.state(ws);
@@ -833,7 +776,13 @@ export class ArtifactRoom extends DurableObject<Bindings> {
   }
 
   override async webSocketClose(ws: WebSocket, code: number): Promise<void> {
-    if (!this.closed.has(ws)) this.goneOut(ws);
+    const ours = this.closed.has(ws);
+    if (!ours) {
+      this.leaveAll(ws);
+      this.closed.add(ws);
+      this.docGone(ws);
+    }
+    this.closed.add(ws);
     try {
       // Complete the closing handshake (a no-op where the runtime already replied).
       ws.close(code === 1005 || code === 1006 ? 1000 : code, "closed");
@@ -843,7 +792,11 @@ export class ArtifactRoom extends DurableObject<Bindings> {
   }
 
   override async webSocketError(ws: WebSocket): Promise<void> {
-    if (!this.closed.has(ws)) this.goneOut(ws);
+    if (!this.closed.has(ws)) {
+      this.leaveAll(ws);
+      this.closed.add(ws);
+      this.docGone(ws);
+    }
   }
 
   // ---------- revocation (Worker RPC, and the alarm as its backstop) ----------
@@ -898,7 +851,7 @@ export class ArtifactRoom extends DurableObject<Bindings> {
     return n;
   }
 
-  /** How many room sockets (page, doc and slides) are open (tests and diagnostics; never who). */
+  /** How many room sockets (page and doc) are open (tests and diagnostics; never who). */
   async size(): Promise<number> {
     return this.sockets().length;
   }

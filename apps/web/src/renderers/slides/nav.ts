@@ -46,6 +46,8 @@ export interface InputHandlers {
   activity(): void;
   /** The overview stays (review mode, the editor preview): o and Escape do nothing. */
   fixedOverview: boolean;
+  /** Columns of the overview grid, so the up and down arrows move a row. */
+  columns(): number;
 }
 
 const NEXT_KEYS = new Set(["ArrowRight", "ArrowDown", "PageDown", " ", "Enter", "n", "N"]);
@@ -76,6 +78,31 @@ export function bindInput(
   const doc = win.document;
   let digits = "";
 
+  // In the overview the arrows move the selected slide (a row for up and down) and Enter or Space
+  // opens it. Moving picks the overview, so the selection shows even where it opened by itself.
+  const overviewKey = (e: KeyboardEvent) => {
+    const cols = Math.max(1, h.columns());
+    const moves: Record<string, number> = {
+      ArrowLeft: -1,
+      ArrowRight: 1,
+      ArrowUp: -cols,
+      ArrowDown: cols,
+    };
+    const by = moves[e.key];
+    if (by !== undefined) {
+      h.setMode("overview");
+      deck.go(deck.current + by);
+      e.preventDefault();
+    } else if (e.key === "Home" || e.key === "End") {
+      h.setMode("overview");
+      deck.go(e.key === "Home" ? 1 : deck.count);
+      e.preventDefault();
+    } else if (e.key === "Enter" || e.key === " ") {
+      h.setMode("deck");
+      e.preventDefault();
+    }
+  };
+
   const onKey = (e: KeyboardEvent) => {
     if (e.defaultPrevented || isEditable(e.target)) return;
     h.activity();
@@ -85,8 +112,12 @@ export function bindInput(
       return;
     }
     if (e.ctrlKey || e.metaKey || e.altKey) return;
-    // Space, Enter and the arrows on a focused control act on that control.
-    if (interactive(e.target) && (e.key === " " || e.key === "Enter")) return;
+    // Space and Enter on a focused control act on that control, and end any slide number typed
+    // before them.
+    if (interactive(e.target) && (e.key === " " || e.key === "Enter")) {
+      digits = "";
+      return;
+    }
     if (/^[0-9]$/.test(e.key)) {
       digits = (digits + e.key).slice(-4);
       e.preventDefault();
@@ -122,7 +153,11 @@ export function bindInput(
       e.preventDefault();
       return;
     }
-    if (mode === "overview") return;
+    if (mode === "overview") {
+      if (h.fixedOverview) return;
+      overviewKey(e);
+      return;
+    }
     if (NEXT_KEYS.has(e.key)) {
       deck.next();
       e.preventDefault();

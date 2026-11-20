@@ -1,7 +1,7 @@
-// The part of @cloudflare/puppeteer that services/thumbnails.ts and designExport.ts use. TypeScript reads this file
-// instead of the package's own declarations (tsconfig "paths"), because those reference Node's
-// global types, which would change setTimeout and friends for the whole Worker. Wrangler still
-// bundles the real package.
+// The part of @cloudflare/puppeteer that services/thumbnails.ts and designExport.ts use. TypeScript
+// reads this file instead of the package's own declarations (tsconfig "paths"), because those
+// reference Node's global types, which would change setTimeout and friends for the whole Worker.
+// Wrangler still bundles the real package.
 declare module "@cloudflare/puppeteer-types" {
   export interface Page {
     setViewport(v: { width: number; height: number; deviceScaleFactor?: number }): Promise<void>;
@@ -19,6 +19,8 @@ declare module "@cloudflare/puppeteer-types" {
     }): Promise<Uint8Array>;
     createCDPSession(): Promise<CDPSession>;
     // services/designExport.ts
+    /** "print" puts the design renderer in its export layout as the page boots. */
+    emulateMediaType(type: "print" | "screen"): Promise<void>;
     /** Resolves once the expression (evaluated in the page) is truthy. */
     waitForFunction(expression: string, opts?: { timeout?: number }): Promise<unknown>;
     /** The expression's value in the page. */

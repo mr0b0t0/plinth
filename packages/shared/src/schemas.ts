@@ -20,11 +20,12 @@ import { displayNameProblem, normalizeDisplayName } from "./displayName.ts";
 import {
   PAGE_ANCHOR_DATA_KEY_RE,
   PAGE_ANCHOR_KEY_RE,
+  PAGE_ANCHOR_UNSAFE_RE,
   PAGE_COMMENT_LIMITS,
-  utf8Bytes,
 } from "./pageComments.ts";
 import { SHEET_COLUMN_TYPES, SHEET_NUMBER_STYLES } from "./sheet/format.ts";
 import { SHEET_CONTENT_FORMATS } from "./sheet/import.ts";
+import { utf8Length } from "./utf8.ts";
 
 /** Artifact ids are DNS labels: lowercase letters and digits, 20 characters. */
 export const ARTIFACT_ID_RE = /^[a-z0-9]{20}$/;
@@ -78,7 +79,9 @@ export const contentSchema = z
       'for type "design", shared <head> tags then artboards, each starting with a line ' +
       '<!-- artboard name="Home" size="iphone" --> (stored as design.html); ' +
       'for type "sheet", the sheet\'s JSON lines (stored as sheet.jsonl), or a CSV or a base64 ' +
-      ".xlsx with content_format. Not for html artifacts, which send html.",
+      ".xlsx with content_format; " +
+      'for type "whiteboard", board JSON: settings, plus a starting blocks and arrows list on a new board (the settings are stored as board.json, the blocks and arrows in shared data). ' +
+      "Not for html artifacts, which send html.",
   );
 /** What a sheet's content is: its own JSON lines (default), CSV, or an .xlsx file in base64. */
 export const contentFormatSchema = z
@@ -99,7 +102,8 @@ export const artifactTypeSchema = z
       '"design": artboards (app screens, posters, social posts, ads) as HTML in content, which ' +
       "Plinth renders on a canvas, each artboard alone at its exact size. " +
       '"sheet": a table as JSON lines in content, which Plinth renders as a spreadsheet with ' +
-      "formulas, sort, filter and CSV and .xlsx downloads. Fixed at publish.",
+      "formulas, sort, filter and CSV and .xlsx downloads. " +
+      '"whiteboard": a board of notes, shapes and arrows that people edit together, sent as board JSON in content; its blocks live in shared data. Fixed at publish.',
   );
 export const noteSchema = z.string().trim().max(LIMITS.maxNoteLength);
 export const passwordSchema = z
@@ -391,7 +395,7 @@ export const readSheetInput = z.object({
     .max(40)
     .optional()
     .describe(
-      'A1 range, e.g. "A1:F200", "B:D" (whole columns) or "2:50" (rows); default the whole sheet',
+      'A1 range, e.g. "A1:F200", "B:D" (whole columns) or "2:50" (rows); default every data row (row 2 down, every column)',
     ),
   values: z
     .boolean()
@@ -426,12 +430,23 @@ export const restoreVersionInput = z.object({
   base_version: versionNumberSchema.optional(),
 });
 
+/** Invitation emails (docs/spec.md "Invitation emails"): off unless the caller asks. */
+const notifySchema = z
+  .boolean()
+  .default(false)
+  .describe(
+    "Email each person this adds a link to it, on the owner's behalf. Default false: set it only " +
+      "when the user asked to notify them",
+  );
+
 export const setVisibilityInput = z.object({
   id: artifactRefSchema,
   visibility: visibilitySchema,
   /** Replaces the allowlist (viewer role) when given. Collaborator roles are kept. */
   emails: z.array(emailSchema).max(LIMITS.maxAllowlistEmails).optional(),
   password: passwordSchema.optional(),
+  /** Email the people `emails` adds (docs/spec.md "Invitation emails"). */
+  notify: notifySchema,
 });
 export type SetVisibilityInput = z.input<typeof setVisibilityInput>;
 
@@ -466,6 +481,10 @@ export const verifyLoginCodeInput = z.object({
   code: z.string().regex(/^\d{6}$/, "Six digits"),
 });
 export const verifyMagicLinkInput = z.object({ token: z.string().min(10).max(200) });
+export const reviewLoginInput = z.object({
+  email: emailSchema,
+  password: z.string().min(1).max(256),
+});
 export const updateProfileInput = z.object({
   // No "@": a display name must not look like an email address (or an agent mention) to agents
   // reading comment authors. No control, bidi or zero-width characters either (displayName.ts);
@@ -473,7 +492,10 @@ export const updateProfileInput = z.object({
   name: z
     .string()
     .trim()
-    .max(LIMITS.maxDisplayNameLength)
+    .max(
+      LIMITS.maxDisplayNameLength,
+      `A name is at most ${LIMITS.maxDisplayNameLength} characters.`,
+    )
     .superRefine((n, ctx) => {
       const problem = displayNameProblem(normalizeDisplayName(n));
       if (problem) ctx.addIssue({ code: "custom", message: problem });
@@ -498,9 +520,17 @@ export const oauthConsentInput = z.object({
   approve: z.boolean(),
 });
 
+/** PUT /me/invitation-emails: whether the signed-in person's own address gets invitations. */
+export const invitationEmailsInput = z.object({
+  receive: z
+    .boolean()
+    .describe("false stops invitation emails to your address; true allows them again"),
+});
+
 export const grantInput = z.object({ email: emailSchema, role: roleSchema });
 export const grantsReplaceInput = z.object({
   grants: z.array(grantInput).max(LIMITS.maxAllowlistEmails),
+  notify: notifySchema,
 });
 
 /**
@@ -564,6 +594,7 @@ export const createCategoryShareInput = z.object({
   title: titleSchema.optional(),
   people: z.array(categoryPersonInput).max(LIMITS.maxAllowlistEmails),
   review: z.array(reviewItemInput).max(MAX_REVIEW_ITEMS),
+  notify: notifySchema,
 });
 
 /**
@@ -574,6 +605,7 @@ export const updateCategoryShareInput = z.object({
   title: titleSchema.optional(),
   people: z.array(categoryPersonInput).max(LIMITS.maxAllowlistEmails).optional(),
   review: z.array(reviewItemInput).max(MAX_REVIEW_ITEMS).optional(),
+  notify: notifySchema,
 });
 
 /** POST /category-shares/:id/review. */
@@ -594,9 +626,20 @@ export const viewerCodeInput = z.object({
 });
 
 /** A comment pinned to an element: what the review-mode bridge picks. Stored without a `kind`. */
+const UNSAFE_ALL = new RegExp(PAGE_ANCHOR_UNSAFE_RE.source, "gu");
+
 export const elementAnchorSchema = z.object({
   selector: z.string().max(1000),
-  text: z.string().max(500).optional(),
+  /**
+   * The element's text, for the label. It comes from the page's DOM, where soft hyphens and emoji
+   * joiners are common, so control and format characters are removed rather than refused (stored
+   * anchors read back the same way).
+   */
+  text: z
+    .string()
+    .max(500)
+    .transform((t) => t.replace(UNSAFE_ALL, ""))
+    .optional(),
   /** Position inside the element, 0..1 of its box, so a pin lands where it was dropped. */
   x: z.number().min(0).max(1).optional(),
   y: z.number().min(0).max(1).optional(),
@@ -604,8 +647,17 @@ export const elementAnchorSchema = z.object({
   kind: z.never().optional(),
 });
 
+/** Plain text the page chose: no control or format characters (bidi overrides, zero-width). */
+const pageText = (max: number) =>
+  z
+    .string()
+    .max(max)
+    .refine((t) => !PAGE_ANCHOR_UNSAFE_RE.test(t), {
+      message: "No control or format characters (bidi, zero-width)",
+    });
+
 const anchorDataValue = z.union([
-  z.string().max(PAGE_COMMENT_LIMITS.maxDataString),
+  pageText(PAGE_COMMENT_LIMITS.maxDataString),
   z.number().finite(),
   z.boolean(),
   z.null(),
@@ -626,21 +678,26 @@ export const pageAnchorSchema = z
     /** What the page anchors to, in its own terms: "canvas", "slide-3", "node:42". */
     key: z
       .string()
-      .regex(PAGE_ANCHOR_KEY_RE, "Key: a letter or digit, then up to 127 of A-Z a-z 0-9 _ . : / -"),
+      .regex(
+        PAGE_ANCHOR_KEY_RE,
+        `Key: a letter or digit, then up to ${PAGE_COMMENT_LIMITS.maxKey - 1} of A-Z a-z 0-9 _ . : / -`,
+      ),
     /** A point in the page's own coordinates (canvas pixels, diagram units). */
     x: pageCoord.optional(),
     y: pageCoord.optional(),
     /** A short label for the anchor chip ("Slide 3, top left"). Plain text. */
-    text: z.string().max(PAGE_COMMENT_LIMITS.maxText).optional(),
+    text: pageText(PAGE_COMMENT_LIMITS.maxText).optional(),
     /** Extra page-defined fields (zoom, layer): flat, at most 16 keys and 1 KiB as JSON. */
     data: z
       .record(z.string().regex(PAGE_ANCHOR_DATA_KEY_RE), anchorDataValue)
       .refine((d) => Object.keys(d).length <= PAGE_COMMENT_LIMITS.maxDataKeys, {
         message: `At most ${PAGE_COMMENT_LIMITS.maxDataKeys} data keys`,
       })
-      .refine((d) => utf8Bytes(JSON.stringify(d)) <= PAGE_COMMENT_LIMITS.maxDataBytes, {
+      .refine((d) => utf8Length(JSON.stringify(d)) <= PAGE_COMMENT_LIMITS.maxDataBytes, {
         message: `Data is over ${PAGE_COMMENT_LIMITS.maxDataBytes} bytes`,
       })
+      // The key count is a refinement, which JSON Schema cannot express; say it for OpenAPI.
+      .meta({ maxProperties: PAGE_COMMENT_LIMITS.maxDataKeys })
       .optional(),
   })
   .strict();
@@ -677,4 +734,13 @@ export const reportDecisionInput = z.object({
 /** GET /api/v1/admin/stats?days=: the trend window in UTC days. */
 export const adminStatsQuerySchema = z.object({
   days: z.enum(["7", "30", "90"]).default("30"),
+});
+/** GET /api/v1/artifacts/:ref/stats?days=: the owner's window in UTC days. */
+export const artifactStatsQuerySchema = z.object({
+  days: z.enum(["7", "30", "90", "365"]).default("30"),
+});
+/** get_artifact_stats: one artifact's stats with an id, the caller's summary without. */
+export const getArtifactStatsInput = z.object({
+  id: artifactRefSchema.optional(),
+  days: z.union([z.literal(7), z.literal(30), z.literal(90), z.literal(365)]).optional(),
 });

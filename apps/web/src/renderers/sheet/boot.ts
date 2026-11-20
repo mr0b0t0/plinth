@@ -69,7 +69,7 @@ export function boot(win: Window, opts: BootOptions = {}): () => void {
   });
   const title = doc.title;
   const download = (format: "csv" | "xlsx") => exportSheet(win, sheet, ev, title, format);
-  const grid = buildGrid(doc, sheet, ev, { title, onDownload: download, exhausted: ev.exhausted });
+  const grid = buildGrid(doc, sheet, ev, { title, exhausted: ev.exhausted });
   root.replaceChildren(grid.el);
   html.setAttribute("data-ready", "ok");
   html.setAttribute("data-rows", String(sheet.rows.length));

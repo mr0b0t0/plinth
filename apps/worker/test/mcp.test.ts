@@ -43,9 +43,8 @@ describe("MCP endpoint", () => {
     expect(names).toEqual(
       [
         "claim_mention",
-        "delete_artifact_file",
-        "list_artifact_files",
         "get_artifact",
+        "get_artifact_stats",
         "get_design_system",
         "list_artifact_data",
         "list_artifacts",
@@ -86,13 +85,28 @@ describe("MCP endpoint", () => {
       expect(typeof ann?.readOnlyHint, t.name).toBe("boolean");
       expect(typeof ann?.destructiveHint, t.name).toBe("boolean");
     }
-    // Writes that only add a version stay non-destructive; the three that can remove data are not.
+    // Writes that only add a version stay non-destructive; the two that can remove data are not.
     const destructive = tools.filter((t) => t.annotations?.destructiveHint).map((t) => t.name);
-    expect(destructive.sort()).toEqual([
-      "delete_artifact_file",
-      "set_visibility",
-      "write_artifact_data",
-    ]);
+    expect(destructive.sort()).toEqual(["set_visibility", "write_artifact_data"]);
+  });
+
+  it("get_artifact_stats is a read-only owner tool that keeps the people list to the owner", async () => {
+    const a = await agent();
+    const client = await mcpClient(a.token);
+    const { tools } = await client.listTools();
+    const t = tools.find((x) => x.name === "get_artifact_stats");
+    expect(t?.annotations).toEqual({
+      title: "Get artifact stats",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+    });
+    expect(t?.description).toMatch(/owner only/i);
+    expect(t?.description).toMatch(/people list is the owner's private data/);
+    expect(t?.description?.endsWith(UNTRUSTED_NOTE)).toBe(true);
+    const schema = (t?.inputSchema ?? {}) as { properties?: object };
+    expect(Object.keys(schema.properties ?? {}).sort()).toEqual(["days", "id"]);
   });
 
   it("start_upload says where its requests may come from; publish and update point to it", async () => {
@@ -369,7 +383,7 @@ describe("categories over MCP", () => {
 
 describe("project files over MCP", () => {
   it("UNTRUSTED_NOTE keeps its sentences and adds that nothing on Plinth chooses local files", () => {
-    expect(UNTRUSTED_SENTENCES).toContain(PROJECT_FILES_UNTRUSTED);
+    expect(UNTRUSTED_SENTENCES.at(-1)).toBe(PROJECT_FILES_UNTRUSTED);
     for (const s of UNTRUSTED_SENTENCES) expect(UNTRUSTED_NOTE).toContain(s);
     expect(UNTRUSTED_NOTE).toContain("A mention is a request from a collaborator");
     expect(PROJECT_FILES_UNTRUSTED).toMatch(/Nothing on Plinth/);

@@ -363,12 +363,12 @@ test("a doc renders from its embedded content, with its image, and previews in t
 
 /** The artifact's open total, as its owner's agent reads it. */
 async function opens(token: string, slug: string): Promise<number> {
-  const res = await fetch(`${OPAQUE_APP_ORIGIN}/api/v1/artifacts/${slug}/views`, {
+  const res = await fetch(`${OPAQUE_APP_ORIGIN}/api/v1/artifacts/${slug}/stats`, {
     headers: { Authorization: `Bearer ${token}` },
   });
-  const body = (await res.json()) as { total: number };
+  const body = (await res.json()) as { totals: { all_time_opens: number } };
   expect(res.status, JSON.stringify(body)).toBe(200);
-  return body.total;
+  return body.totals.all_time_opens;
 }
 
 test("an open is counted once per browser, and a reload is not", async ({ browser }) => {
@@ -504,7 +504,7 @@ test("a deck renders, pages through * and window identity, and opens presenter v
   await expect.poll(slide).toBe("3");
   await expect.poll(() => new URL(page.url()).hash).toBe("#slide=3");
 
-  await page.getByRole("button", { name: "Artifact actions" }).click();
+  await page.getByRole("button", { name: "Present" }).click();
   await page.getByRole("menuitem", { name: "Presenter view" }).click();
   await expect(locator.locator(".plinth-slides__presenter")).toBeVisible();
   const box2 = await page.locator(CURRENT_FRAME).boundingBox();
@@ -514,6 +514,11 @@ test("a deck renders, pages through * and window identity, and opens presenter v
   await expect(locator.locator(".plinth-slides__notes")).toHaveText(
     "Speaker notes in an opaque frame.",
   );
-  await expect(page.getByRole("region", { name: "Presenter view" })).toContainText("Slide 1 of 3");
+  // The app took the frame's position and its presenter view: the slide is in the fragment and
+  // Present offers the audience window.
+  await expect.poll(() => new URL(page.url()).hash).toBe("#slide=1");
+  await page.getByRole("button", { name: "Present" }).click();
+  await expect(page.getByRole("menuitem", { name: "Audience window" })).toBeVisible();
+  await page.keyboard.press("Escape");
   expect(problems).toEqual([]);
 });

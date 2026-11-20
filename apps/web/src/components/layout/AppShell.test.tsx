@@ -73,6 +73,71 @@ describe("AppShell", () => {
     expect(onSignOut).toHaveBeenCalledTimes(1);
   });
 
+  it("labels the account chip with the name once set, and keeps the email in the menu", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.endsWith("/config")) return json({ single_user_mode: false });
+        if (url.endsWith("/me")) return json({ id: "u1", email: "ada@example.org", name: "Ada" });
+        return json({}, 404);
+      }),
+    );
+    const { AppShell } = await loadShell();
+    const user = userEvent.setup();
+    render(
+      <AppShell>
+        <p>Page body</p>
+      </AppShell>,
+    );
+    const chip = await screen.findByRole("button", { name: "Account: Ada" });
+    expect(chip.textContent).toBe("Ada");
+    await user.click(chip);
+    expect(screen.getByRole("menu").parentElement?.textContent).toContain(
+      "Signed in asada@example.org",
+    );
+    await user.click(screen.getByRole("menuitem", { name: "Your name…" }));
+    expect(screen.getByRole("dialog", { name: "Your name" })).toBeTruthy();
+  });
+
+  it("shows a saved name from the save's answer, without fetching the account again", async () => {
+    const gets: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        const method = init?.method ?? "GET";
+        if (url.endsWith("/config")) return json({ single_user_mode: false });
+        if (url.endsWith("/me") && method === "PATCH") {
+          const { name } = JSON.parse(String(init?.body)) as { name: string };
+          return json({ id: "u1", email: "ada@example.org", name });
+        }
+        if (url.endsWith("/me")) {
+          gets.push(url);
+          return json({ id: "u1", email: "ada@example.org", name: "Ada" });
+        }
+        return json({}, 404);
+      }),
+    );
+    vi.spyOn(document, "cookie", "get").mockReturnValue("__Host-plinth_csrf=tok; plinth_csrf=tok");
+    const { AppShell } = await loadShell();
+    const user = userEvent.setup();
+    render(
+      <AppShell>
+        <p>Page body</p>
+      </AppShell>,
+    );
+    await user.click(await screen.findByRole("button", { name: "Account: Ada" }));
+    await user.click(screen.getByRole("menuitem", { name: "Your name…" }));
+    const before = gets.length;
+    const field = screen.getByRole("textbox", { name: "Name" });
+    await user.clear(field);
+    await user.type(field, "Ada Lovelace");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    expect(await screen.findByRole("button", { name: "Account: Ada Lovelace" })).toBeTruthy();
+    expect(gets.length).toBe(before);
+  });
+
   it("gives admins Stats and Reports, once each, and nobody else either", async () => {
     const stub = (isAdmin: boolean) =>
       vi.stubGlobal(
@@ -110,5 +175,7 @@ describe("AppShell", () => {
     const plain = await screen.findByRole("navigation", { name: "Primary" });
     expect(plain.querySelector('a[href="/admin/stats"]')).toBeNull();
     expect(plain.querySelector('a[href="/admin/reports"]')).toBeNull();
+    // Artifact stats live on each artifact (its Stats page), not in the sidebar.
+    expect(plain.querySelector('a[href="/stats"]')).toBeNull();
   });
 });

@@ -9,9 +9,9 @@ import {
   type EffectiveRole,
   LIMITS,
 } from "./constants.ts";
-import { utf8Bytes } from "./pageComments.ts";
 import { ROOM_LIMITS, ROOM_OPEN_ALL, ROOM_OPEN_META, ROOM_TOPIC_RE } from "./room.ts";
 import { artifactRefSchema } from "./schemas.ts";
+import { utf8Length } from "./utf8.ts";
 
 // ---------- capabilities ----------
 
@@ -27,39 +27,36 @@ export interface Capabilities {
   room: boolean;
   /** Topics commenters may emit too (plinth-room-open); `*` opens all. Viewers never emit. */
   roomOpen: string[];
+  /** The page may open the comment composer with its own anchors (`plinth.comments`). */
+  comments: boolean;
   /**
    * The owner and editors may list everyone with access from the page (/__plinth/api/v1/people).
    * Counts only with `data` and `viewer`.
    */
   people: boolean;
-  /** The page may open the comment composer with its own anchors (`plinth.comments`). */
-  comments: boolean;
   /**
-   * The page may receive words the viewer dictates (`plinth.dictation`, run by the app). Not shared
-   * data, not a room, and never the microphone.
+   * Set by the server for a type whose capabilities are fixed (a whiteboard's, from its settings),
+   * never read from HTML: the lowest role that may write shared data and emit open topics from the
+   * page. Policy (policy.ts pageWriteFloor) treats a missing or unknown value on such a type as
+   * "editor", never as "any viewer". Absent on every HTML declaration.
    */
-  dictation: boolean;
-  /**
-   * While the viewer is using the page (focus inside its frame), a newer version waits behind an
-   * Update button instead of replacing it (docs/spec.md "Live views"). Not shared data, no API.
-   */
-  hold: boolean;
-  /**
-   * Files people add from the page (`plinth.files`): raster images, PDFs, video and audio kept in
-   * the artifact's own store. Not shared data; `viewer` adds who uploaded each file.
-   */
-  files: boolean;
+  writers?: PageWriters;
 }
+
+/** The roles a server-set write floor may name (Capabilities.writers). */
+export const PAGE_WRITERS = ["commenter", "editor"] as const;
+export type PageWriters = (typeof PAGE_WRITERS)[number];
 
 export const CAPABILITIES_META = "plinth-capabilities";
 export const DATA_SHARED_META = "plinth-data-shared";
 
 type TokenKey = {
-  [K in keyof Capabilities]: Capabilities[K] extends boolean ? K : never;
+  [K in keyof Capabilities]-?: Capabilities[K] extends boolean ? K : never;
 }[keyof Capabilities];
 type ListKey = {
-  [K in keyof Capabilities]: Capabilities[K] extends string[] ? K : never;
+  [K in keyof Capabilities]-?: Capabilities[K] extends string[] ? K : never;
 }[keyof Capabilities];
+type ServerKey = Exclude<keyof Capabilities, TokenKey | ListKey>;
 
 /** A capability token (constants.ts CAPABILITY_TOKENS) at its place in the stored JSON. */
 interface TokenField {
@@ -83,7 +80,18 @@ interface ListField {
   checkOnRead: boolean;
 }
 
-export type DeclarationField = TokenField | ListField;
+/**
+ * A field the server sets for a type with fixed capabilities (artifactTypes.ts pageData "fixed"),
+ * never parsed from a page: stored only when set, and read back only when `accept` takes the
+ * stored value (anything else is dropped, and policy applies its fail-closed default).
+ */
+interface ServerField {
+  kind: "server";
+  key: ServerKey;
+  accept: (value: unknown) => boolean;
+}
+
+export type DeclarationField = TokenField | ListField | ServerField;
 
 /**
  * The declaration registry: every field of Capabilities, one per line, in the order the stored
@@ -115,11 +123,13 @@ export const DECLARATION_FIELDS: readonly DeclarationField[] = [
     accept: (t) => t === ROOM_OPEN_ALL || ROOM_TOPIC_RE.test(t),
     checkOnRead: true,
   },
-  { kind: "token", key: "people" },
   { kind: "token", key: "comments" },
-  { kind: "token", key: "dictation" },
-  { kind: "token", key: "hold" },
-  { kind: "token", key: "files" },
+  { kind: "token", key: "people" },
+  {
+    kind: "server",
+    key: "writers",
+    accept: (v) => (PAGE_WRITERS as readonly unknown[]).includes(v),
+  },
 ];
 
 const TOKEN_INFO = new Map<string, (typeof CAPABILITY_TOKENS)[number]>(
@@ -132,6 +142,7 @@ function tokenInfo(token: DataCapability): (typeof CAPABILITY_TOKENS)[number] {
 
 /** Whether a field is in the stored JSON of this declaration. */
 function isStored(f: DeclarationField, c: Capabilities): boolean {
+  if (f.kind === "server") return c[f.key] !== undefined;
   if (f.kind === "token") return tokenInfo(f.key).stored === "always" || c[f.key] === true;
   return f.stored === "always" || c[f.stored] === true;
 }
@@ -182,11 +193,10 @@ function tokens(content: string): string[] {
  * order and quote style, names compared case-insensitively, tags inside HTML comments ignored.
  * Every meta tag is read, so a registered meta after the others is never missed. Unknown tokens
  * are ignored, and so are list entries that break their rule; at most each list's `max` are kept
- * (LIMITS.maxDataShared, ROOM_LIMITS.maxOpenTopics). Returns null unless `data`, `room`,
- * `comments`, `dictation`, `hold` or `files` is declared: the viewer is learned through the data API
- * or the room, so `viewer` alone declares nothing, and neither does a list alone. Shared names
- * count only with `data`, open topics only with `room`. A page that declares only `comments`,
- * `dictation`, `hold` or `files` has no document store and no room.
+ * (LIMITS.maxDataShared, ROOM_LIMITS.maxOpenTopics). Returns null unless `data`, `room` or
+ * `comments` is declared: the viewer is learned through the data API or the room, so `viewer`
+ * alone declares nothing, and neither does a list alone. Shared names count only with `data`,
+ * open topics only with `room`.
  */
 export function parseCapabilities(html: string): Capabilities | null {
   if (!/plinth-/i.test(html)) return null;
@@ -205,6 +215,8 @@ export function parseCapabilities(html: string): Capabilities | null {
   if (!declaresSomething(counted)) return null;
   const out: Record<string, boolean | string[]> = {};
   for (const f of DECLARATION_FIELDS) {
+    // A server-set field is never read from a page.
+    if (f.kind === "server") continue;
     if (f.kind === "token") {
       out[f.key] = counted.has(f.key);
       continue;
@@ -254,8 +266,13 @@ export function readStoredCapabilities(json: string): Capabilities | null {
   }
   const counted = countedTokens(declared);
   if (!declaresSomething(counted)) return null;
-  const out: Record<string, boolean | string[]> = {};
+  const out: Record<string, boolean | string | string[]> = {};
   for (const f of DECLARATION_FIELDS) {
+    if (f.kind === "server") {
+      const value = row[f.key];
+      if (f.accept(value)) out[f.key] = value as string;
+      continue;
+    }
     if (f.kind === "token") {
       out[f.key] = counted.has(f.key);
       continue;
@@ -302,10 +319,7 @@ export const dataDocIdSchema = z
   )
   .describe("Document id, or ~me for your own personal document");
 
-/** UTF-8 length of a string, without TextEncoder (this package targets plain ES2023). */
-export function utf8Length(s: string): number {
-  return utf8Bytes(s);
-}
+export { utf8Length };
 
 /** UTF-8 bytes of a document's JSON, as stored. */
 export function dataByteSize(data: unknown): number {
@@ -409,9 +423,16 @@ export type DataVia = "page" | "agent" | "app";
 
 /**
  * Why shared data is unavailable to a page. `preview`: the page is shown in an agent's thread
- * (an MCP App), through a read-only pass that carries no identity.
+ * (an MCP App), through a read-only pass that carries no identity. `capture`: Plinth's thumbnail
+ * browser is taking a picture of a version whose writer may not read the data (a token limited to
+ * one artifact wrote it).
  */
-export type DataUnavailableReason = "opaque_isolation" | "disabled" | "not_declared" | "preview";
+export type DataUnavailableReason =
+  | "opaque_isolation"
+  | "disabled"
+  | "not_declared"
+  | "preview"
+  | "capture";
 
 /** Server-derived author of a write, as a page sees it (only with `viewer` and when identified). */
 export interface PageDocAuthor {
@@ -545,8 +566,16 @@ export interface AgentPerson {
 /** GET /api/v1/artifacts/:ref/people */
 export interface PeopleResult {
   people: AgentPerson[];
+  /** How many matched `q` in all, before `limit`. */
+  total: number;
   untrusted: string;
 }
+
+/**
+ * The most people one list returns: the owner and every direct grant (LIMITS.maxAllowlistEmails).
+ * With a shared category's people the list can be longer; `total` counts them all.
+ */
+export const MAX_PEOPLE_LISTED = LIMITS.maxAllowlistEmails + 1;
 
 /** A people search: every whitespace-separated term must match a name or an email. */
 export const peopleQuerySchema = z
@@ -559,6 +588,7 @@ export const peopleQuerySchema = z
 export const listArtifactPeopleInput = z.object({
   id: artifactRefSchema,
   q: peopleQuerySchema.optional(),
+  limit: z.number().int().min(1).max(MAX_PEOPLE_LISTED).optional(),
 });
 
 /** list_artifact_data with a collection. */

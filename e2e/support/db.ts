@@ -144,25 +144,25 @@ export async function openCapture(page: Page, load: CaptureLoad): Promise<void> 
 }
 
 /**
- * What a design export opens for version `version` (POST /__dev/export-url, development only,
- * with DEV_SEED): the enter URL of a capture pass at the version's export layout (one board, or
- * every board when `board` is null) and the cookies services/designExport.ts sets first. Open it
- * with openCapture, then print or screenshot the page as Browser Rendering would.
+ * Open a version as a design export does in Browser Rendering (services/designExport.ts): the
+ * thumbnail's capture load (captureLoad), with print media emulated before the page loads, which
+ * is what puts the design renderer in its export layout. For one board, every other board leaves
+ * the page before the boards load, as the export does in its own browser.
  */
-export async function exportLoad(
-  artifactId: string,
-  version: number,
-  board: string | null,
-  origin = APP_ORIGIN,
-): Promise<CaptureLoad> {
-  const res = await fetch(`${origin}/__dev/export-url`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ artifact_id: artifactId, version, board }),
-  });
-  const text = await res.text();
-  if (res.status !== 201) throw new Error(`export url failed: ${res.status} ${text.slice(0, 300)}`);
-  return JSON.parse(text) as CaptureLoad;
+export async function openExport(page: Page, load: CaptureLoad, board: string | null = null) {
+  await page.emulateMedia({ media: "print" });
+  await openCapture(page, load);
+  if (board === null) return;
+  await page.locator("html[data-ready]").waitFor({ state: "attached", timeout: 15_000 });
+  const found = await page.evaluate((id) => {
+    let kept = false;
+    for (const el of document.querySelectorAll(".plinth-design__board")) {
+      if (el.getAttribute("data-board") === id) kept = true;
+      else el.remove();
+    }
+    return kept;
+  }, board);
+  if (!found) throw new Error(`no board ${board}`);
 }
 
 /**

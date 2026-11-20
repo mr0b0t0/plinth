@@ -1,8 +1,7 @@
 // Live rooms on an artifact's own content origin (#36, docs/security.md#live-rooms).
 //
-// /__plinth/room/v1/page (an HTML page that declares `room`), /__plinth/room/v1/doc (Plinth's
-// own doc editing channel) and /__plinth/room/v1/slides (Plinth's own follow-the-presenter channel
-// for decks) upgrade to a WebSocket served by the artifact's Durable Object. Every
+// /__plinth/room/v1/page (an HTML page that declares `room`) and /__plinth/room/v1/doc (Plinth's
+// own doc editing channel) upgrade to a WebSocket served by the artifact's Durable Object. Every
 // framed artifact shares one partitioned SameSite=None cookie jar, so a sibling artifact's
 // `new WebSocket()` would carry this artifact's content cookie: a WebSocket handshake is not
 // subject to CORS, and cross-site WebSocket hijacking is the threat. The checks, in this order,
@@ -20,8 +19,8 @@
 //   7. the content pass at the current epoch, with an identity claim; preview and capture passes
 //      never join. It comes before the kind check, so a caller without a pass learns no more than
 //      the content path tells them (that the artifact exists), never its type or declaration;
-//   8. the kind the path names (an HTML page that declares `room`; a doc, which also needs
-//      ALLOW_LIVE_EDITING; or a type with `follow`, which also needs ALLOW_SLIDES_FOLLOW);
+//   8. the kind the path names (an HTML page that declares `room`, or a doc, which also needs
+//      ALLOW_LIVE_EDITING);
 //   9. policy (policy.ts roomAccess).
 // The room then gets a fresh internal request whose only header is the one built here; no client
 // header is copied. Only the status and a reason code are logged, never bodies.
@@ -30,7 +29,7 @@
 // tells the page's runtime whether it may join, before it opens a socket.
 import {
   type ArtifactType,
-  ROOM_KINDS,
+  hasPageCapabilities,
   ROOM_LIMITS,
   ROOM_PATH_PREFIX,
   ROOM_PROTOCOL,
@@ -39,14 +38,7 @@ import {
   type RoomUnavailableReason,
   typeDef,
 } from "@plinth/shared";
-import {
-  type Bindings,
-  type Config,
-  contentOrigin,
-  liveEditMode,
-  roomsActive,
-  slidesFollowActive,
-} from "../config.ts";
+import { type Bindings, type Config, contentOrigin, liveEditMode, roomsActive } from "../config.ts";
 import { ApiError } from "../lib/errors.ts";
 import { roomAccess } from "../policy.ts";
 import {
@@ -56,7 +48,7 @@ import {
   type RoomConnect,
 } from "../rooms/ArtifactRoom.ts";
 import { versionCapabilities } from "../services/artifacts.ts";
-import { namesByEmail } from "../services/users.ts";
+import { nameByEmail } from "../services/users.ts";
 import { applyContentHeaders } from "./csp.ts";
 import type { HostRoute } from "./serve.ts";
 import { readContentPass } from "./serve.ts";
@@ -114,11 +106,6 @@ async function loadRoomTarget(env: Bindings, artifactId: string): Promise<RoomTa
   };
 }
 
-/** One person's display name, as pages see it (displayName.ts), or null. */
-async function nameOf(env: Bindings, email: string): Promise<string | null> {
-  return (await namesByEmail(env.DB, [email])).get(email) ?? null;
-}
-
 /** The room part of GET /__plinth/api/v1/room, after the data API's caller checks passed. */
 export async function roomInfo(
   request: Request,
@@ -138,7 +125,7 @@ export async function roomInfo(
   }
   if (pass.preview) return { available: false, reason: "preview" };
   if (pass.capture || !pass.claim) return { available: false, reason: "not_identified" };
-  if (target.type !== "html" || target.caps?.room !== true) {
+  if (!hasPageCapabilities(typeDef(target.type)) || target.caps?.room !== true) {
     return { available: false, reason: "not_declared" };
   }
   const access = roomAccess(pass.claim, target.caps, "page", {
@@ -153,7 +140,7 @@ export async function roomInfo(
       viewer: pass.claim.viewerId,
       role: pass.claim.role,
       email: access.seeIdentity ? pass.claim.email : null,
-      name: access.seeIdentity ? await nameOf(env, pass.claim.email) : null,
+      name: access.seeIdentity ? await nameByEmail(env.DB, pass.claim.email) : null,
     },
     can_emit: access.emit,
     open_topics: access.openTopics,
@@ -181,21 +168,9 @@ function refuse(
 
 /** The kind of room a path names, or null for anything else under the prefix. */
 function kindOf(path: string): RoomKind | null {
-  if (!path.startsWith(ROOM_PATH_PREFIX)) return null;
-  const name = path.slice(ROOM_PATH_PREFIX.length);
-  return (ROOM_KINDS as readonly string[]).includes(name) ? (name as RoomKind) : null;
-}
-
-/** Step 8: whether the artifact has the room the path names. */
-function fitsKind(kind: RoomKind, target: RoomTarget, config: Config, env: Bindings): boolean {
-  switch (kind) {
-    case "page":
-      return target.type === "html" && target.caps?.room === true;
-    case "doc":
-      return typeDef(target.type)?.liveEdit === true && liveEditMode(config, env) === "room";
-    case "slides":
-      return typeDef(target.type)?.follow === true && slidesFollowActive(config, env);
-  }
+  if (path === `${ROOM_PATH_PREFIX}page`) return "page";
+  if (path === `${ROOM_PATH_PREFIX}doc`) return "doc";
+  return null;
 }
 
 function offersProtocol(header: string | null): boolean {
@@ -252,15 +227,20 @@ async function upgrade(
   if (pass.preview) return refuse(config, 403, "preview");
   if (pass.capture || !pass.claim) return refuse(config, 403, "not_identified");
   // 8. The path matching the type. A doc socket also needs on-page editing on
-  // (ALLOW_LIVE_EDITING), a slides socket following on (ALLOW_SLIDES_FOLLOW).
-  if (!fitsKind(kind, target, config, env)) return refuse(config, 404, "not_declared");
+  // (ALLOW_LIVE_EDITING).
+  const fits =
+    kind === "page"
+      ? hasPageCapabilities(typeDef(target.type)) && target.caps?.room === true
+      : typeDef(target.type)?.liveEdit === true && liveEditMode(config, env) === "room";
+  if (!fits) return refuse(config, 404, "not_declared");
   // 9. Policy.
   const access = roomAccess(pass.claim, target.caps, kind, { active: true, type: target.type });
   if (!access.join) return refuse(config, 403, "forbidden");
   // The display name, read live only for a socket whose identity peers may see on a page room
   // (a refused upgrade never reads it; a doc socket shows emails only). A rename reaches the room
   // on the next connect.
-  const name = kind === "page" && access.seeIdentity ? await nameOf(env, pass.claim.email) : null;
+  const name =
+    kind === "page" && access.seeIdentity ? await nameByEmail(env.DB, pass.claim.email) : null;
 
   const connect: RoomConnect = {
     artifactId,
@@ -276,7 +256,6 @@ async function upgrade(
     emit: access.emit,
     openTopics: access.openTopics,
     doc: access.doc,
-    ...(access.slides ? { slides: access.slides } : {}),
     limits: {
       maxConnections: config.rooms.maxConnectionsPerArtifact,
       maxMessageBytes: config.rooms.maxMessageBytes,

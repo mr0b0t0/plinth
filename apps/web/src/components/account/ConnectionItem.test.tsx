@@ -29,32 +29,44 @@ function renderItem(c: ConnectionInfo, all: ConnectionInfo[] = [c]) {
   );
 }
 
-describe("ConnectionItem mention line", () => {
-  it("shows the handle a label becomes", () => {
+describe("ConnectionItem mention warning", () => {
+  it("a row that mentions reach says nothing about mentions", () => {
     renderItem(conn({}));
-    expect(screen.getByText("@claude-code").closest("p")?.textContent).toBe(
-      "Mention as @claude-code",
-    );
+    expect(screen.queryByText(/Mention as|@claude-code/)).toBeNull();
+    expect(document.querySelector(".pl-acct-conn__mention")).toBeNull();
   });
 
   it("warns when an older connection takes the handle, or the name is an agent name", () => {
     const older = conn({ id: "c0", label: "claude-code", created_at: "2026-11-01T00:00:00Z" });
     const { unmount } = renderItem(conn({}), [older, conn({})]);
-    const line = screen.getByText(/reaches “claude-code” instead/);
-    expect(line.getAttribute("data-warn")).toBe("true");
+    const line = screen.getByText(
+      "@claude-code reaches “claude-code” instead. Rename one of them.",
+    );
+    expect(line.className).toBe("pl-acct-conn__mention");
     unmount();
 
-    renderItem(conn({ label: "Claude", client_type: "other" }));
+    const other = renderItem(conn({ label: "Claude", client_type: "other" }));
     expect(
-      screen.getByText(
-        "@claude always means your Claude connections, so this name does not reach it. Pick another name.",
-      ),
+      screen.getByText("@claude means your Claude connections. Pick another name."),
     ).toBeTruthy();
+    other.unmount();
+
+    // A Claude connection named Claude is reached by @claude: nothing to warn about.
+    renderItem(conn({ label: "Claude" }));
+    expect(document.querySelector(".pl-acct-conn__mention")).toBeNull();
   });
 
-  it("says nothing about mentions on a revoked connection", () => {
-    renderItem(conn({ revoked_at: "2026-11-12T00:00:00Z" }));
-    expect(screen.queryByText(/Mention as|Collaborators reach/)).toBeNull();
+  it("says nothing about mentions where the row already shows that none reach it", () => {
+    const revoked = renderItem(conn({ revoked_at: "2026-11-12T00:00:00Z" }));
+    expect(screen.queryByText(/Mention as|reaches|Pick another/)).toBeNull();
+    revoked.unmount();
+    // Without the mentions scope, the permissions list says so.
+    const scoped = renderItem(conn({ scopes: ["artifacts:read"] }));
+    expect(screen.queryByText(/Mention as|mentions permission/)).toBeNull();
+    scoped.unmount();
+    // Limited to one artifact: the row names the artifact.
+    renderItem(conn({ artifact: { id: "a1", slug: "a1", title: "Coverage report" } }));
+    expect(screen.queryByText(/Mention as|one artifact, so/)).toBeNull();
   });
 
   it("the rename dialog's hint follows the typed name", async () => {
@@ -62,25 +74,20 @@ describe("ConnectionItem mention line", () => {
     renderItem(conn({ label: "Laptop" }));
     await user.click(screen.getByRole("button", { name: /Rename/ }));
     const input = screen.getByLabelText("Name");
-    expect(
-      screen.getByText("Collaborators reach it by writing @laptop in a comment."),
-    ).toBeTruthy();
+    // A Claude connection: its own handle and @claude, in one sentence.
+    expect(screen.getByText("Mention as @laptop or @claude.")).toBeTruthy();
     await user.clear(input);
     await user.type(input, "Gemini CLI");
-    expect(
-      screen.getByText("Collaborators reach it by writing @gemini-cli in a comment."),
-    ).toBeTruthy();
+    expect(screen.getByText("Mention as @gemini-cli or @claude.")).toBeTruthy();
     await user.clear(input);
     await user.type(input, "???");
-    expect(
-      screen.getByText("This name cannot be mentioned. Start it with a letter or digit."),
-    ).toBeTruthy();
+    // A name no mention reaches: the warning alone, in the warning colour.
+    const warning = screen.getByText("Cannot be mentioned: start the name with a letter or digit.");
+    expect(warning.className).toBe("pl-acct-warn");
     await user.clear(input);
     await user.type(input, "claude");
     expect(
-      screen.getByText(
-        "Collaborators reach it with @claude, together with your other Claude connections.",
-      ),
+      screen.getByText("Mention as @claude, with your other Claude connections."),
     ).toBeTruthy();
   });
 });

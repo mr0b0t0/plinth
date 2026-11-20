@@ -515,13 +515,6 @@ describe("runtimeBase (packages/cli runtime/wrangler.base.json)", () => {
     },
   };
 
-  it("copies ALLOW_DICTATION with its committed default", () => {
-    const b = runtimeBase({ ...repo, vars: { ...repo.vars, ALLOW_DICTATION: "false" } }) as {
-      vars: Record<string, string>;
-    };
-    expect(b.vars.ALLOW_DICTATION).toBe("false");
-  });
-
   it("copies the Durable Object binding, its migration and the room vars, not the hosts", () => {
     const b = runtimeBase(repo) as {
       durable_objects: unknown;

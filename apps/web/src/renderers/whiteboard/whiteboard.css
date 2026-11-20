@@ -1,0 +1,580 @@
+/* The whiteboard: Plinth's own board page. Light and dark tokens; the toolbar sits on the board's
+   own background as one row, and at phone width its tools scroll sideways inside a 16 px gutter
+   while the page never does (the board pans inside its viewport). Hit targets are at least 32 px. */
+:root {
+  --wb-bg: #f6f5f1;
+  --wb-dot: #d6d2c8;
+  --wb-surface: #ffffff;
+  --wb-fg: #1d1c1a;
+  --wb-muted: #5f5b53;
+  --wb-border: #d9d5cb;
+  --wb-accent: #8a5a1c;
+  --wb-accent-fg: #ffffff;
+  --wb-focus: #2f5fb3;
+  --wb-arrow: #6b675e;
+  --wb-block-fg: #1d1c1a;
+  --wb-shape-border: #8a857a;
+  --wb-fill-none: #ffffff;
+  --wb-fill-yellow: #fcefa8;
+  --wb-fill-green: #cdebc5;
+  --wb-fill-blue: #c9def5;
+  --wb-fill-pink: #f6d0dc;
+  --wb-fill-purple: #e2d5f5;
+  --wb-fill-gray: #e4e2dc;
+  --wb-shadow: 0 1px 2px rgb(0 0 0 / 12%), 0 4px 12px rgb(0 0 0 / 8%);
+  color-scheme: light dark;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --wb-bg: #161614;
+    --wb-dot: #34322d;
+    --wb-surface: #201f1c;
+    --wb-fg: #ecebe6;
+    --wb-muted: #aaa69c;
+    --wb-border: #3a3832;
+    --wb-accent: #d9a35a;
+    --wb-accent-fg: #1d1c1a;
+    --wb-focus: #8fb2f0;
+    --wb-arrow: #aaa69c;
+    --wb-block-fg: #f3f1ea;
+    --wb-shape-border: #8d897f;
+    --wb-fill-none: #26251f;
+    --wb-fill-yellow: #5c4a1e;
+    --wb-fill-green: #2c4a2a;
+    --wb-fill-blue: #233a57;
+    --wb-fill-pink: #57283a;
+    --wb-fill-purple: #3d2f57;
+    --wb-fill-gray: #3a3933;
+    --wb-shadow: 0 1px 2px rgb(0 0 0 / 50%), 0 4px 12px rgb(0 0 0 / 35%);
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+  background: var(--wb-bg);
+  color: var(--wb-fg);
+  font:
+    15px / 1.45 system-ui,
+    -apple-system,
+    "Segoe UI",
+    Roboto,
+    sans-serif;
+}
+
+.plinth-whiteboard {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  outline: none;
+}
+
+/* On the board's background, with no band of its own: the page reads as the app's header and the
+   board. */
+.wb-toolbar {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 16px;
+  background: var(--wb-bg);
+}
+
+/* The one swatch that opens the colours is for phone widths only. */
+.wb-pick {
+  display: none;
+}
+
+/* The reason a board is read-only is for screen readers: the line itself says "View only". */
+.wb-why {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.wb-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 12px;
+  min-width: 0;
+}
+
+.wb-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+/* Controls that do not apply right now (nothing selected, a read-only board) are not shown, nor
+   is the toolbar for a viewer the board cannot identify (a thumbnail capture). */
+.wb-toolbar[hidden],
+.wb-toolbar [hidden] {
+  display: none;
+}
+
+/* Who else is here, the room's state when it is not live, and Fit, on the right. */
+.wb-end {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  min-width: 0;
+}
+
+.wb-toolbar button,
+.wb-msg button {
+  font: inherit;
+  font-size: 14px;
+  color: var(--wb-fg);
+  background: var(--wb-surface);
+  border: 1px solid var(--wb-border);
+  border-radius: 6px;
+  padding: 4px 10px;
+  min-height: 32px;
+  min-width: 32px;
+  cursor: pointer;
+}
+
+.wb-toolbar button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.wb-toolbar button[aria-pressed="true"] {
+  border-color: var(--wb-accent);
+  box-shadow: inset 0 0 0 1px var(--wb-accent);
+}
+
+button:focus-visible,
+.wb-viewport:focus-visible,
+.wb-block:focus-visible {
+  outline: 2px solid var(--wb-focus);
+  outline-offset: 2px;
+}
+
+.wb-swatch {
+  padding: 0;
+  width: 32px;
+}
+
+.wb-swatch::before {
+  content: "";
+  display: block;
+  width: 16px;
+  height: 16px;
+  margin: auto;
+  border-radius: 4px;
+  border: 1px solid var(--wb-shape-border);
+  background: var(--wb-fill-yellow);
+}
+
+.wb-swatch[data-color=""]::before {
+  background: var(--wb-fill-none);
+}
+.wb-swatch[data-color="green"]::before {
+  background: var(--wb-fill-green);
+}
+.wb-swatch[data-color="blue"]::before {
+  background: var(--wb-fill-blue);
+}
+.wb-swatch[data-color="pink"]::before {
+  background: var(--wb-fill-pink);
+}
+.wb-swatch[data-color="purple"]::before {
+  background: var(--wb-fill-purple);
+}
+.wb-swatch[data-color="gray"]::before {
+  background: var(--wb-fill-gray);
+}
+
+.wb-status {
+  font-size: 13px;
+  color: var(--wb-muted);
+}
+
+.wb-status:empty,
+.wb-people:empty {
+  display: none;
+}
+
+.wb-people {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 13px;
+  color: var(--wb-muted);
+  min-width: 0;
+}
+
+.wb-people li {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 160px;
+  min-width: 0;
+}
+
+.wb-people span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wb-people i {
+  flex: none;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+}
+
+.wb-msg {
+  margin: 0;
+  padding: 6px 16px;
+  font-size: 14px;
+  border-bottom: 1px solid var(--wb-border);
+  overflow-wrap: anywhere;
+}
+
+.wb-banner {
+  flex: 0 1 auto;
+  min-width: 0;
+  margin: 0;
+  font-size: 14px;
+  color: var(--wb-muted);
+  overflow-wrap: anywhere;
+}
+
+.wb-banner:empty,
+.wb-msg:empty {
+  display: none;
+}
+
+.wb-viewport {
+  position: relative;
+  flex: 1;
+  min-height: 240px;
+  overflow: hidden;
+  touch-action: none;
+  overscroll-behavior: contain;
+  background-color: var(--wb-bg);
+  cursor: grab;
+}
+
+.wb-viewport[data-bg="dots"] {
+  background-image: radial-gradient(var(--wb-dot) 1.5px, transparent 1.5px);
+}
+
+.wb-viewport[data-bg="grid"] {
+  background-image:
+    linear-gradient(var(--wb-dot) 1px, transparent 1px),
+    linear-gradient(90deg, var(--wb-dot) 1px, transparent 1px);
+}
+
+.wb-world {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 0;
+  height: 0;
+  transform-origin: 0 0;
+}
+
+.wb-arrows {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 1px;
+  height: 1px;
+  overflow: visible;
+}
+
+.wb-arrow {
+  stroke: var(--wb-arrow);
+  stroke-width: 2;
+  fill: none;
+  pointer-events: none;
+}
+
+.wb-arrow.dashed {
+  stroke-dasharray: 6 4;
+}
+
+.wb-arrow.selected {
+  stroke: var(--wb-accent);
+  stroke-width: 3;
+}
+
+.wb-arrow-hit {
+  stroke: transparent;
+  stroke-width: 14;
+  pointer-events: stroke;
+  cursor: pointer;
+}
+
+.wb-arrows marker path {
+  fill: var(--wb-arrow);
+}
+
+/* A halo in the board's colour keeps the label clear of its line and arrowhead. */
+.wb-arrow-label {
+  fill: var(--wb-fg);
+  font-size: 13px;
+  pointer-events: none;
+  paint-order: stroke;
+  stroke: var(--wb-bg);
+  stroke-width: 4px;
+  stroke-linejoin: round;
+}
+
+.wb-block {
+  position: absolute;
+  display: flex;
+  border-radius: 6px;
+  color: var(--wb-block-fg);
+  background: var(--wb-fill-yellow);
+  box-shadow: var(--wb-shadow);
+  cursor: move;
+  touch-action: none;
+  user-select: none;
+}
+
+.wb-block[data-color="green"] {
+  background: var(--wb-fill-green);
+}
+.wb-block[data-color="blue"] {
+  background: var(--wb-fill-blue);
+}
+.wb-block[data-color="pink"] {
+  background: var(--wb-fill-pink);
+}
+.wb-block[data-color="purple"] {
+  background: var(--wb-fill-purple);
+}
+.wb-block[data-color="gray"] {
+  background: var(--wb-fill-gray);
+}
+.wb-block[data-color="yellow"] {
+  background: var(--wb-fill-yellow);
+}
+
+.wb-block[data-kind="text"] {
+  background: transparent;
+  box-shadow: none;
+}
+
+.wb-block[data-kind="rect"],
+.wb-block[data-kind="ellipse"] {
+  border: 1.5px solid var(--wb-shape-border);
+  box-shadow: none;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  border-radius: 2px;
+}
+
+.wb-block[data-kind="rect"][data-color=""],
+.wb-block[data-kind="ellipse"][data-color=""] {
+  background: var(--wb-fill-none);
+}
+
+.wb-block[data-kind="ellipse"] {
+  border-radius: 50%;
+}
+
+.wb-block.selected {
+  outline: 2px solid var(--wb-accent);
+  outline-offset: 2px;
+}
+
+.wb-block.peer-selected:not(.selected) {
+  outline: 2px dashed var(--wb-peer);
+  outline-offset: 3px;
+}
+
+.wb-block.moving {
+  transition:
+    left 90ms linear,
+    top 90ms linear;
+}
+
+html[data-readonly="true"] .wb-block {
+  cursor: default;
+}
+
+.wb-text {
+  padding: 8px 10px;
+  font-size: 14px;
+  line-height: 18px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  overflow: hidden;
+  width: 100%;
+}
+
+.wb-edit {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  resize: none;
+  border: 0;
+  padding: 8px 10px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 14px;
+  line-height: 18px;
+  outline: none;
+  user-select: text;
+  border-radius: inherit;
+}
+
+/* A block being written in: a quiet ring inside its edge, with the caret, in place of the
+   selection's outline. */
+.wb-edit:focus {
+  box-shadow: inset 0 0 0 2px var(--wb-focus);
+}
+
+.wb-block.selected:has(> .wb-edit:focus) {
+  outline: none;
+}
+
+.wb-resize {
+  position: absolute;
+  right: -8px;
+  bottom: -8px;
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
+  background: var(--wb-accent);
+  border: 2px solid var(--wb-surface);
+  cursor: nwse-resize;
+}
+
+.wb-cursor {
+  position: absolute;
+  pointer-events: none;
+  z-index: 100000;
+  transform: scale(var(--wb-unzoom, 1));
+  transform-origin: 0 0;
+}
+
+.wb-cursor svg {
+  display: block;
+}
+
+/* The name tag sits below and right of the pointer, or below and left near the viewport's right
+   edge (.flip), so it never runs off the board. */
+.wb-cursor span {
+  position: absolute;
+  top: 18px;
+  left: 12px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 12px;
+  color: #fff;
+  white-space: nowrap;
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.wb-cursor.flip span {
+  left: auto;
+  right: 4px;
+}
+
+.wb-problem {
+  margin: 16px;
+}
+
+@media (pointer: coarse) {
+  .wb-edit {
+    font-size: 16px;
+  }
+}
+
+/* At phone width the bar stays one row: the tools scroll sideways if they must, a selection's
+   controls take the add buttons' place, one swatch stands for the colours, and the people here
+   are coloured dots (their names on hover and for screen readers). */
+@media (max-width: 560px) {
+  .wb-toolbar {
+    gap: 8px;
+    padding: 5px 16px;
+  }
+  /* The padding keeps focus rings inside the scrolling row. */
+  .wb-tools {
+    flex: 1 1 auto;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: none;
+    padding: 3px;
+    margin: 0 -3px;
+  }
+  .wb-tools > *,
+  .wb-group {
+    flex: none;
+    flex-wrap: nowrap;
+  }
+  .wb-toolbar[data-selection="true"] .wb-adds {
+    display: none;
+  }
+  .wb-end {
+    flex: none;
+  }
+  /* One swatch in the current colour; it opens the others under the bar, outside the scrolling
+     row (the toolbar is their containing block), so the row never shows half a swatch. */
+  .wb-pick {
+    display: block;
+  }
+  .wb-palette {
+    display: none;
+  }
+  .wb-colour[data-open="true"] .wb-palette {
+    display: flex;
+    position: absolute;
+    top: calc(100% - 2px);
+    left: 16px;
+    padding: 4px;
+    background: var(--wb-surface);
+    border: 1px solid var(--wb-border);
+    border-radius: 8px;
+    box-shadow: var(--wb-shadow);
+  }
+  .wb-colour[data-open="true"] .wb-pick {
+    border-color: var(--wb-accent);
+  }
+  .wb-people li {
+    gap: 0;
+  }
+  .wb-people span {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+}
+
+@media print {
+  .wb-toolbar,
+  .wb-msg {
+    display: none;
+  }
+}

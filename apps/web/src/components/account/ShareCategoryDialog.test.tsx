@@ -1,12 +1,18 @@
 // The Share category dialog: a new share sends one POST with the review of every row; a people
-// change on an existing share sends one PATCH with the people and the review; a title change alone
-// sends PATCH { title }; skipped items reload the list with a note.
+// change on an existing share sends one PATCH with the people and the review of the listed rows
+// (rows waiting for review are not listed and stay waiting); a title change alone sends
+// PATCH { title }; skipped items reload the list with a note (a new share's, in edit mode).
 import type { CategoryShareArtifact } from "@plinth/shared";
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { json, stubApi } from "../viewer/test-utils.ts";
-import { reviewItems, ShareCategoryDialog, skippedText } from "./ShareCategoryDialog.tsx";
+import { apiError, json, stubApi } from "../viewer/test-utils.ts";
+import {
+  listedRows,
+  reviewItems,
+  ShareCategoryDialog,
+  skippedText,
+} from "./ShareCategoryDialog.tsx";
 
 const row = (id: string, over: Partial<CategoryShareArtifact> = {}): CategoryShareArtifact => ({
   id,
@@ -39,14 +45,17 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe("reviewItems", () => {
+describe("listedRows and reviewItems", () => {
   it("shares ticked rows, keeps the rest private, and leaves taken-down rows out", () => {
-    expect(
-      reviewItems([row("a"), row("b"), row("c", { taken_down: true })], new Set(["a"])),
-    ).toEqual([
+    const rows = listedRows([row("a"), row("b"), row("c", { taken_down: true })], false);
+    expect(reviewItems(rows, new Set(["a"]))).toEqual([
       { id: "a", version: 2, category_rev: 1, decision: "shared" },
       { id: "b", version: 2, category_rev: 1, decision: "private" },
     ]);
+  });
+  it("on an existing share, leaves rows waiting for review out", () => {
+    const rows = [row("a", { state: "shared" }), row("b"), row("c", { state: "private" })];
+    expect(listedRows(rows, true).map((r) => r.id)).toEqual(["a", "c"]);
   });
 });
 
@@ -107,6 +116,8 @@ describe("ShareCategoryDialog", () => {
         { id: "a", version: 2, category_rev: 1, decision: "shared" },
         { id: "b", version: 2, category_rev: 1, decision: "private" },
       ],
+      // "Notify people" is ticked by default and someone new is on the list.
+      notify: true,
     });
   });
 
@@ -115,7 +126,10 @@ describe("ShareCategoryDialog", () => {
     const api = stubApi({
       handle: (c) => {
         if (c.method === "GET" && c.path === `/category-shares/${SHARE.id}`)
-          return json({ ...SHARE, artifacts: [row("a", { state: "shared" }), row("b")] });
+          return json({
+            ...SHARE,
+            artifacts: [row("a", { state: "shared" }), row("b"), row("c", { state: "private" })],
+          });
         if (c.method === "PATCH")
           return json({ share: SHARE, review: { shared: 1, private: 1, skipped: [] } });
         return undefined;
@@ -126,9 +140,13 @@ describe("ShareCategoryDialog", () => {
       <ShareCategoryDialog category="Acme" shareId={SHARE.id} onClose={vi.fn()} onDone={onDone} />,
     );
     await screen.findByText("Report a");
-    // Pending rows show who filed them and stay unticked.
-    expect(screen.getByText(/Waiting for your review · filed by Work Claude/)).toBeTruthy();
-    expect((screen.getByRole("checkbox", { name: /Report b/ }) as HTMLInputElement).checked).toBe(
+    // The dialog opens on the email field.
+    expect(document.activeElement).toBe(screen.getByRole("textbox", { name: "Email address" }));
+    // A row waiting for review is decided in the review dialog only: it is not listed here, and
+    // the people change leaves it waiting (no review item for it).
+    expect(screen.queryByRole("checkbox", { name: /Report b/ })).toBeNull();
+    expect(screen.queryByText("Needs review")).toBeNull();
+    expect((screen.getByRole("checkbox", { name: /Report c/ }) as HTMLInputElement).checked).toBe(
       false,
     );
     await user.click(screen.getByRole("button", { name: "Remove client@example.org" }));
@@ -140,7 +158,7 @@ describe("ShareCategoryDialog", () => {
       people: [],
       review: [
         { id: "a", version: 2, category_rev: 1, decision: "shared" },
-        { id: "b", version: 2, category_rev: 1, decision: "private" },
+        { id: "c", version: 2, category_rev: 1, decision: "private" },
       ],
     });
   });
@@ -169,14 +187,67 @@ describe("ShareCategoryDialog", () => {
     ]);
   });
 
-  it("skipped items reload the list with a note", async () => {
-    let gets = 0;
-    stubApi({
+  it("skipped items on a new share reload that share in edit mode, with a note", async () => {
+    let previews = 0;
+    let shareGets = 0;
+    const api = stubApi({
       handle: (c) => {
         if (c.path.startsWith("/category-shares/preview")) {
-          gets += 1;
-          return json({ category: "Acme", artifacts: [row("a")] });
+          previews += 1;
+          // Once the share exists, its preview answers already_shared.
+          if (previews > 1)
+            return apiError(409, "already_shared", "This category is already shared.");
+          return json({ category: "Acme", artifacts: [row("a"), row("b")] });
         }
+        if (c.method === "POST")
+          return json(
+            {
+              share: SHARE,
+              review: { shared: 1, private: 0, skipped: [{ id: "a", reason: "changed" }] },
+            },
+            201,
+          );
+        if (c.method === "GET" && c.path === `/category-shares/${SHARE.id}`) {
+          shareGets += 1;
+          return json({
+            ...SHARE,
+            artifacts: [row("a"), row("b", { state: "shared" })],
+          });
+        }
+        if (c.method === "PATCH")
+          return json({ share: SHARE, review: { shared: 1, private: 0, skipped: [] } });
+        return undefined;
+      },
+    });
+    const user = userEvent.setup();
+    const onDone = vi.fn();
+    const onClose = vi.fn();
+    render(
+      <ShareCategoryDialog category="Acme" shareId={null} onClose={onClose} onDone={onDone} />,
+    );
+    await screen.findByText("Report a");
+    await user.click(screen.getByRole("button", { name: "Share" }));
+    expect(await screen.findByText(/changed since you opened this/)).toBeTruthy();
+    await waitFor(() => expect(shareGets).toBe(1));
+    expect(previews).toBe(1);
+    // Now in edit mode on the created share: Save, the link, and no error.
+    expect(await screen.findByRole("button", { name: "Save" })).toBeTruthy();
+    expect(screen.queryByText(/already shared/)).toBeNull();
+    expect(onDone).not.toHaveBeenCalled();
+    // A second press saves the share instead of posting a new one.
+    await user.type(screen.getByRole("textbox", { name: "Email address" }), "b@example.org");
+    await user.click(screen.getByRole("button", { name: "Add" }));
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(onDone).toHaveBeenCalledWith({ id: SHARE.id }));
+    expect(api.calls.filter((c) => c.method === "POST")).toHaveLength(1);
+    expect(api.calls.filter((c) => c.method === "PATCH")).toHaveLength(1);
+  });
+
+  it("closing after a new share's skipped items still tells the parent the share exists", async () => {
+    stubApi({
+      handle: (c) => {
+        if (c.path.startsWith("/category-shares/preview"))
+          return json({ category: "Acme", artifacts: [row("a")] });
         if (c.method === "POST")
           return json(
             {
@@ -185,18 +256,21 @@ describe("ShareCategoryDialog", () => {
             },
             201,
           );
+        if (c.method === "GET") return json({ ...SHARE, artifacts: [row("a")] });
         return undefined;
       },
     });
     const user = userEvent.setup();
     const onDone = vi.fn();
+    const onClose = vi.fn();
     render(
-      <ShareCategoryDialog category="Acme" shareId={null} onClose={vi.fn()} onDone={onDone} />,
+      <ShareCategoryDialog category="Acme" shareId={null} onClose={onClose} onDone={onDone} />,
     );
     await screen.findByText("Report a");
     await user.click(screen.getByRole("button", { name: "Share" }));
-    expect(await screen.findByText(/changed since you opened this/)).toBeTruthy();
-    await waitFor(() => expect(gets).toBe(2));
-    expect(onDone).not.toHaveBeenCalled();
+    await screen.findByRole("button", { name: "Save" });
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(onDone).toHaveBeenCalledWith({ id: SHARE.id });
+    expect(onClose).not.toHaveBeenCalled();
   });
 });

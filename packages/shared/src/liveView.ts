@@ -33,8 +33,8 @@ export const LIVE_VIEW_LIMITS = {
   /** Watch connects one client may make to one artifact per minute. */
   connectsPerClientPerMinute: 60,
   /**
-   * A watch socket lives at most as long as a content pass: the room closes it with 4401 when it
-   * expires, and the app re-reads the gate and reconnects.
+   * A watch socket lives at most as long as a content pass (less up to lifetimeJitterS, at
+   * random): the room closes it with 4401 `expired` then, and the app reconnects.
    */
   socketTtlS: TTL.contentCookieS,
   /**
@@ -57,32 +57,29 @@ export const LIVE_VIEW_LIMITS = {
   pingIntervalS: 30,
   /** After a refusal (full, rate, invalid), the app polls and tries the socket again after this. */
   refusedRetryS: 300,
-  /** Reconnect delays in seconds after a network failure; the last one repeats. */
+  /**
+   * The first reconnect after a socket closed on its own (a dropped network, a Worker deploy that
+   * restarts every object, a lifetime that ended) waits random(0, reconnectSpreadMs): full jitter.
+   * A deploy closes every watch socket on the instance at the same moment, so without it every open
+   * view would reconnect, a handshake with its D1 reads and then a data re-read, within a second.
+   * 10 s, the widest signal spread, so 1000 views of one artifact reconnect at about 100 a second.
+   */
+  reconnectSpreadMs: 10_000,
+  /** Later reconnect delays in seconds while the socket keeps failing; then refusedRetryS. */
   backoffS: [1, 2, 5, 10, 30],
   /**
-   * Applying a new version while keeping the reader's state (docs/spec.md "Live views"): how long
-   * the app waits for the page runtime's answer to `update` before deciding itself.
+   * A socket's lifetime (socketTtlS) ends up to this much earlier, at random per handshake, so the
+   * sockets one reconnect wave opened do not all reach their lifetime in the same alarm 12 hours
+   * later and reconnect together again. The room's 60 s alarm closes them, so 300 s spreads one
+   * wave over five or six alarms.
    */
-  updateReplyMs: 1000,
-  /** How long the page's onVersion handlers may take, all together, before the runtime answers. */
-  versionBudgetMs: 800,
-  /** How long the app waits for the doc renderer to show a version in place before it swaps. */
-  inPlaceReplyMs: 5000,
-  /** Page state (plinth.onVersion's `{ state }`) handed to the next version, as JSON. */
-  carryMaxBytes: 16384,
-  /** A carry record older than this is ignored (and removed). */
-  carryMaxAgeS: 30,
-  /** The longest path inside the artifact a frame may report to land the next version on. */
-  maxCarryPathLength: 2048,
+  lifetimeJitterS: 300,
 } as const;
-
-/** The content origin's sessionStorage key for the state carried to the next version. */
-export const VIEW_CARRY_KEY = "__plinth_carry";
 
 /** Server -> client, JSON text frames. The client only ever sends the text "ping". */
 export type ViewWatchFrame =
-  /** First frame: the current version, and whether this socket gets `data` signals. */
-  | { t: "welcome"; v: 1; version: number; data: boolean }
+  /** First frame: the current version. */
+  | { t: "welcome"; v: 1; version: number }
   /** A new version was published: re-read the gate (after random(0, spread_ms) ms). */
   | { t: "version"; version: number; spread_ms: number }
   /** The page's shared data changed: the page re-reads it (after random(0, spread_ms) ms). */
@@ -141,34 +138,7 @@ export type ViewFrameMessage =
       v: typeof VIEW_MESSAGE_VERSION;
       type: "push";
       on: boolean;
-    }
-  /**
-   * A newer version is about to replace the page (the runtime's version fragment): the page's
-   * onVersion handlers run, and the runtime records scroll, location and the page's own state in
-   * the content origin's sessionStorage, or answers `update:hold`. `force`: the viewer asked for
-   * it, so a hold does not count. The nonce is the app's own; the answer echoes it.
-   */
-  | {
-      source: typeof VIEW_MESSAGE_SOURCE;
-      v: typeof VIEW_MESSAGE_VERSION;
-      type: "update";
-      from: number;
-      to: number;
-      nonce: string;
-      force: boolean;
     };
-
-/**
- * Frame -> app messages from the page runtime, posted only to the parent at the app origin. The app
- * reads them only from the frame it holds, at the exact content origin (origin isolation), and
- * treats them as untrusted: `hello` (this frame can answer `update`), `update:ok` (carry recorded;
- * `path` is where the page is, which only becomes the gate's `next`) and `update:hold` (the page
- * asks to keep it until the viewer chooses Update).
- */
-export type ViewPageMessage =
-  | { type: "hello" }
-  | { type: "update:ok"; nonce: string; path: string | null }
-  | { type: "update:hold"; nonce: string };
 
 /** Parse one watch frame from the server, or null when it is not one. */
 export function readViewWatchFrame(raw: unknown): ViewWatchFrame | null {
@@ -183,8 +153,8 @@ export function readViewWatchFrame(raw: unknown): ViewWatchFrame | null {
   const f = v as Record<string, unknown>;
   const count = (n: unknown) => typeof n === "number" && Number.isSafeInteger(n) && n >= 0;
   const spread = (n: unknown) => count(n) && (n as number) <= LIVE_VIEW_LIMITS.spreadMaxMs;
-  if (f.t === "welcome" && f.v === 1 && count(f.version) && typeof f.data === "boolean") {
-    return { t: "welcome", v: 1, version: f.version as number, data: f.data };
+  if (f.t === "welcome" && f.v === 1 && count(f.version)) {
+    return { t: "welcome", v: 1, version: f.version as number };
   }
   if (f.t === "version" && count(f.version) && spread(f.spread_ms)) {
     return { t: "version", version: f.version as number, spread_ms: f.spread_ms as number };

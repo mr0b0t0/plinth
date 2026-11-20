@@ -15,31 +15,35 @@
 // render past its budget is aborted, which closes the browser, and the Worker waits for that
 // (waitUntil) before it gives the slot back.
 //
-// How: the browser opens the exact version on its own content origin with a fresh capture pass,
-// as a thumbnail does (no identity, top-level, the pass for the boards' cookie partition handed to
-// the browser through the DevTools protocol, never in a URL), at ?plinth-print=1, where the
-// renderer lays the boards out at 100% and mounts every one (with ?plinth-board=<id>, one). It
-// waits until the renderer reports every board loaded, then takes a PNG of the board's box or
-// prints a PDF with the renderer's named @page per board size. The enter URL is minted and used
-// inside the Worker; it is never returned or logged.
+// How: the browser opens the version exactly as a thumbnail capture does (captureLoad and
+// captureScope in thumbnails.ts): a fresh capture pass with no identity, bound to the exported
+// version, reading no shared data when the version's writer may not (policy.captureReadsData), the
+// same pass for the boards' cookie partition handed over through the DevTools protocol (never in a
+// URL), and every request held to the capture's scope (guardCapturePage). It emulates print media
+// before the page loads, which is the one thing that puts the renderer in its export layout: every
+// board at 100%, none of the canvas. No URL or message selects that layout, so it is no address
+// anyone can open. For one board the browser removes every other board from its own copy of the
+// page before they load. It then waits for the boards and takes a PNG of the board's box (in
+// screen media again) or prints a PDF with the renderer's named @page per board size. The enter URL
+// is minted and used inside the Worker; it is never returned or logged.
 import puppeteer from "@cloudflare/puppeteer";
 import {
-  CONTENT_RESERVED_PREFIX,
-  DESIGN_BOARD_PARAM,
   DESIGN_EXPORT,
-  DESIGN_PRINT_PARAM,
+  DESIGN_EXPORT_LAYOUT_SCRIPT,
   type DesignBoard,
   type DesignExportInput,
   type DesignExportOptions,
   type DesignExportOptionsInput,
   type DesignSource,
+  designExportBoardSelector,
   designExportInput,
+  designExportKeepOnlyScript,
+  designExportLoadedScript,
   designExportOptionsInput,
   parseDesign,
   TYPE_REGISTRY,
 } from "@plinth/shared";
-import { type Config, designExportActive } from "../config.ts";
-import { issueEnterUrl } from "../content/tokens.ts";
+import { designExportActive } from "../config.ts";
 import type { ArtifactRow } from "../db/schema.ts";
 import { ApiError } from "../lib/errors.ts";
 import { clientNetwork } from "../lib/ip.ts";
@@ -47,7 +51,16 @@ import { enforce, peek } from "../lib/ratelimit.ts";
 import { requireArtifact, requireVersion } from "./artifacts.ts";
 import type { Ctx } from "./context.ts";
 import { readText } from "./storage.ts";
-import { type CaptureCookie, captureFrameCookies, withBudget } from "./thumbnails.ts";
+import {
+  type CaptureCookie,
+  type CaptureScope,
+  captureLoad,
+  captureScope,
+  captureTarget,
+  type GuardedPage,
+  guardCapturePage,
+  withBudget,
+} from "./thumbnails.ts";
 
 const DEF = TYPE_REGISTRY.design;
 
@@ -88,10 +101,12 @@ export interface ExportJob {
   url: string;
   /** Set in the browser before the page opens (Network.setCookie). */
   cookies: readonly CaptureCookie[];
+  /** Where the page may go (captureScope): every request is held to it. */
+  scope: CaptureScope;
   viewport: { width: number; height: number; deviceScaleFactor: number };
-  /** Boards the page lays out, which the renderer counts as they load. */
+  /** Boards the export holds: every board of the version, or 1 for one board. */
   boards: number;
-  /** For png: the board whose box is the picture. */
+  /** The one board exported (always for png), or null for every board. */
   board: string | null;
 }
 
@@ -134,6 +149,9 @@ export async function browserExport(
   else signal.addEventListener("abort", close, { once: true });
   try {
     const page = await browser.newPage();
+    // Before anything loads: the page reaches only its own version, the board loader and the
+    // CSP's hosts, and any window it opens is closed (as for a thumbnail).
+    await guardCapturePage(page as unknown as GuardedPage, job.scope);
     if (job.cookies.length > 0) {
       const cdp = await page.createCDPSession();
       for (const cookie of job.cookies) {
@@ -147,6 +165,8 @@ export async function browserExport(
     }
     await page.setViewport(job.viewport);
     await page.emulateMediaFeatures([{ name: "prefers-color-scheme", value: "light" }]);
+    // Print media as the shell boots, top-level: the renderer's export layout (boot.ts).
+    await page.emulateMediaType("print");
     // The document, not network idle: a slow board must not fail the load, only be left out.
     const res = await page.goto(job.url, {
       waitUntil: "domcontentloaded",
@@ -160,20 +180,33 @@ export async function browserExport(
     });
     const ready = await page.evaluate('document.documentElement.getAttribute("data-ready")');
     if (ready !== "ok") throw new Error("the design did not render");
+    // Never hand out a picture of the canvas: only the export layout is exported.
+    if ((await page.evaluate(DESIGN_EXPORT_LAYOUT_SCRIPT)) !== true) {
+      throw new Error("the design did not take the export layout");
+    }
+    // One board: the others leave this copy of the page before they load.
+    if (
+      job.board !== null &&
+      (await page.evaluate(designExportKeepOnlyScript(job.board))) !== true
+    ) {
+      throw new Error("the board is not on the page");
+    }
     // Render what has loaded once the cap or the deadline passes, as Print does.
     await page
-      .waitForFunction(
-        `Number(document.documentElement.getAttribute("data-boards-loaded") || "0") >= ${Math.trunc(job.boards)}`,
-        { timeout: stepTimeout(EXPORT_RUN.boardsTimeoutMs, printBy) },
-      )
+      .waitForFunction(designExportLoadedScript(job.board, job.boards), {
+        timeout: stepTimeout(EXPORT_RUN.boardsTimeoutMs, printBy),
+      })
       .catch(() => undefined);
     if (signal.aborted) throw new Error("the render ran out of time");
+    // A PNG is the board as people see it on screen; a PDF prints.
+    if (job.format === "png") await page.emulateMediaType("screen");
     await new Promise((r) => setTimeout(r, EXPORT_RUN.settleMs));
     if (job.format === "pdf") {
       const pdf = await page.pdf({ printBackground: true, preferCSSPageSize: true });
       return new Uint8Array(pdf);
     }
-    const el = await page.$(`.plinth-design__board[data-board="${job.board ?? ""}"]`);
+    if (job.board === null) throw new Error("a PNG is one board");
+    const el = await page.$(designExportBoardSelector(job.board));
     const box = el ? await el.boundingBox() : null;
     if (!box) throw new Error("the board is not on the page");
     const shot = await page.screenshot({
@@ -373,34 +406,6 @@ function pickBoard(design: DesignSource, input: DesignExportInput): DesignBoard 
   return board;
 }
 
-/** The page the browser opens: the version's export layout, one board or every board. */
-export function exportPath(n: number, board: string | null): string {
-  const q = new URLSearchParams({ [DESIGN_PRINT_PARAM]: "1" });
-  if (board) q.set(DESIGN_BOARD_PARAM, board);
-  return `${CONTENT_RESERVED_PREFIX}v/${n}/?${q}`;
-}
-
-/**
- * What the export's browser opens for version `n` (one board, or every board when `board` is
- * null), and the cookies it holds first: a capture pass, top-level, and the same pass for the
- * boards' cookie partition (captureFrameCookies), as for a design's thumbnail.
- */
-export async function exportLoad(
-  config: Config,
-  target: { artifactId: string; accessEpoch: number },
-  n: number,
-  board: string | null,
-): Promise<{ url: string; cookies: CaptureCookie[] }> {
-  const url = await issueEnterUrl(
-    config,
-    { id: target.artifactId, accessEpoch: target.accessEpoch },
-    exportPath(n, board),
-    undefined,
-    { capture: true },
-  );
-  return { url, cookies: await captureFrameCookies(config, target) };
-}
-
 /**
  * Validate the query after the access decision, so a caller who may not view the artifact gets
  * its 404 (or 401/403) whatever the query says, never a 400 that answers before policy did.
@@ -441,6 +446,9 @@ export async function exportDesign(
   const version = input.version ?? artifact.currentVersion;
   const design = await storedDesign(ctx, artifact, version);
   const board = pickBoard(design, input);
+  // The capture's own view of the version: its writer decides whether the pass reads shared data.
+  const target = await captureTarget(ctx.env.DB, artifact.id, version);
+  if (!target) throw new ApiError("not_found", "Not found");
 
   const limit = ctx.config.designExportsPerHour;
   const key = exportRateKey(ctx);
@@ -464,16 +472,12 @@ export async function exportDesign(
   let job: ExportJob;
   try {
     await enforce(ctx.env.DB, key, limit, 3600, limitMessage);
-    const { url, cookies } = await exportLoad(
-      ctx.config,
-      { artifactId: artifact.id, accessEpoch: artifact.accessEpoch },
-      version,
-      board?.id ?? null,
-    );
+    const { url, cookies } = await captureLoad(ctx.config, target);
     job = {
       format: input.format,
       url,
       cookies,
+      scope: captureScope(ctx.config, target.artifactId, target.number, target.type),
       viewport: {
         width: Math.max(...boards.map((b) => b.width)),
         height: Math.max(...boards.map((b) => b.height)),

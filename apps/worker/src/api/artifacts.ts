@@ -108,11 +108,13 @@ artifactsApi.put("/artifacts/:ref/visibility", async (c) => {
 /**
  * A version's thumbnail (the current version without ?version), for anyone who may view the
  * artifact: the same access check as reading it. 404 until the capture lands; a missing one starts
- * a capture, which is how versions published before thumbnails existed get theirs.
+ * a capture, which is how versions published before thumbnails existed get theirs. The action is
+ * `enter`, which is `view` for everyone but a token limited to one artifact: a capture runs the
+ * page, which may draw its shared data, and such a token is refused shared data.
  */
 artifactsApi.get("/artifacts/:ref/thumbnail", async (c) => {
   const ctx = serviceCtx(c);
-  const { artifact } = await requireArtifact(ctx, c.req.param("ref"), "view");
+  const { artifact } = await requireArtifact(ctx, c.req.param("ref"), "enter");
   const q = c.req.query("version");
   const n = q === undefined ? artifact.currentVersion : Number(q);
   const headers = new Headers();

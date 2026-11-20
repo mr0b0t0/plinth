@@ -7,6 +7,7 @@ import {
   mcpUrl,
   mentionReach,
   mentionReachText,
+  mentionReachWarns,
   quotaText,
   scopeLabel,
   versionsText,
@@ -183,7 +184,7 @@ describe("mentionReach", () => {
       handle: "gemini-cli-laptop",
     });
     expect(mentionReachText({ kind: "handle", handle: "claude-code" })).toBe(
-      "Collaborators reach it by writing @claude-code in a comment.",
+      "Mention as @claude-code.",
     );
   });
 
@@ -195,8 +196,9 @@ describe("mentionReach", () => {
     });
     const codex = mentionReach("codex", [], self);
     expect(codex).toEqual({ kind: "agent_name", handle: "codex", reached: false });
-    expect(mentionReachText(codex)).toBe(
-      "@codex always means your Codex connections, so this name does not reach it. Pick another name.",
+    expect(mentionReachText(codex)).toBe("@codex means your Codex connections. Pick another name.");
+    expect(mentionReachText({ kind: "agent_name", handle: "claude", reached: true })).toBe(
+      "Mention as @claude, with your other Claude connections.",
     );
   });
 
@@ -234,7 +236,7 @@ describe("mentionReach", () => {
     expect(mentionReach("-dash", [], self)).toEqual({ kind: "none" });
     expect(mentionReach("ends.", [], self)).toEqual({ kind: "none" });
     expect(mentionReachText({ kind: "none" })).toBe(
-      "This name cannot be mentioned. Start it with a letter or digit.",
+      "Cannot be mentioned: start the name with a letter or digit.",
     );
   });
 
@@ -249,5 +251,27 @@ describe("mentionReach", () => {
       kind: "handle",
       handle: "ci",
     });
+    // The row and the dialog already show both, so the hints add nothing.
+    expect(mentionReachText({ kind: "artifact_only" })).toBeNull();
+    expect(mentionReachText({ kind: "no_mentions" })).toBeNull();
+  });
+
+  it("a Claude or Codex connection is also reached by its client name", () => {
+    const claude = mentionReach("Laptop", [], { ...self, client_type: "claude" });
+    expect(claude).toEqual({ kind: "handle", handle: "laptop", also: "claude" });
+    expect(mentionReachText(claude)).toBe("Mention as @laptop or @claude.");
+    expect(mentionReachText(mentionReach("Laptop", [], { ...self, client_type: "codex" }))).toBe(
+      "Mention as @laptop or @codex.",
+    );
+  });
+
+  it("warns only when no mention reaches the connection by its name", () => {
+    expect(mentionReachWarns({ kind: "shadowed", handle: "a", by: "A" })).toBe(true);
+    expect(mentionReachWarns({ kind: "none" })).toBe(true);
+    expect(mentionReachWarns({ kind: "agent_name", handle: "claude", reached: false })).toBe(true);
+    expect(mentionReachWarns({ kind: "agent_name", handle: "claude", reached: true })).toBe(false);
+    expect(mentionReachWarns({ kind: "handle", handle: "a" })).toBe(false);
+    expect(mentionReachWarns({ kind: "artifact_only" })).toBe(false);
+    expect(mentionReachWarns({ kind: "no_mentions" })).toBe(false);
   });
 });
