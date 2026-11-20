@@ -71,7 +71,7 @@ const NAMES = [
 ];
 
 const RESOURCES = "8c9a70350ae4c13067ef489e651d5f5eafe12471c2c63f7c925f9d3bf5bf5e78";
-const INSTRUCTIONS = "0edcbcaaae65eee9958a8127f6c15519423aba958c405915fcd4103f056231b8";
+const INSTRUCTIONS = "ab97877c49ee7ea237d6ebfb16e54edec8553b614e7ac8c834b16b2695edd8eb";
 /** Every pin but "category sharing on" is the surface with category sharing off. */
 const OFF = { ALLOW_CATEGORY_SHARING: "false" };
 
@@ -79,7 +79,7 @@ describe("MCP surface (golden)", () => {
   it("origin isolation", async () => {
     expect(await surface(OFF)).toEqual({
       names: NAMES,
-      tools: "437f18504eff4972e2fc11735ad3bdf28bed487c3d09feaa6b80ea49df880255",
+      tools: "26fc1f438a44c2e4dd14469ee3914ff82a89411bfe99471f03aed99caeb4ad8d",
       resources: RESOURCES,
       preview: "fd84092d5ecc5a28f494373097e8a3b6e27065d5ef6928f3e124c634f8cf6f47",
       instructions: INSTRUCTIONS,
@@ -89,7 +89,7 @@ describe("MCP surface (golden)", () => {
   it("opaque isolation", async () => {
     expect(await surface({ ...OFF, CONTENT_ISOLATION: "opaque" })).toEqual({
       names: NAMES,
-      tools: "4c79f44f073650b3583233d0ad2cf9b925a2398713dc50f353d6251bda2cb763",
+      tools: "5d2b83b3ea02e4533282ad80435bdd09647ec53e8417d5179e55e5d036cffbdd",
       resources: RESOURCES,
       preview: "257bbf5bb47164c389849fffa7fc1dd46e6e7c20e4ef616b4bffefb53a8fd08b",
       instructions: INSTRUCTIONS,
@@ -101,7 +101,7 @@ describe("MCP surface (golden)", () => {
       await surface({ ...OFF, STAGING_CONTENT_FALLBACK: "true", CONTENT_ISOLATION: "opaque" }),
     ).toEqual({
       names: NAMES,
-      tools: "1590840cc3c347dee12321f85df3bd8943eec2c873cbd6a977195b6327b4716a",
+      tools: "57277f6b660611201d01c44d57b01423088eff425388c3896ad4b720736be81e",
       resources: RESOURCES,
       preview: "257bbf5bb47164c389849fffa7fc1dd46e6e7c20e4ef616b4bffefb53a8fd08b",
       instructions: INSTRUCTIONS,
@@ -111,10 +111,10 @@ describe("MCP surface (golden)", () => {
   it("category sharing on (the default): the share note and the instructions' sentence", async () => {
     expect(await surface()).toEqual({
       names: NAMES,
-      tools: "8934e03ac4ce81a2112219be909c4f514d86a9fdb1070f6b99f83438b81cf242",
+      tools: "196e3a924f3fe0e83156b37d70de8a3b6da43365d6315eb0f597625894af004b",
       resources: RESOURCES,
       preview: "fd84092d5ecc5a28f494373097e8a3b6e27065d5ef6928f3e124c634f8cf6f47",
-      instructions: "c871563d3897950ed2486d494d7f8552b6d0d763fd7301e073a0f1e608e0b156",
+      instructions: "dcf077349eac3dad2bcd66acfd1cfa4a6dd4da4ede190eb983d35fc4e3aff528",
     });
   });
 });

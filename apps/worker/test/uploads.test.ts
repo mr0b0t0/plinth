@@ -1262,6 +1262,60 @@ describe("end to end with the real stager", () => {
     expect((await json(b)).bundle.entries).toBe(2);
   });
 
+  it("sensitive_file names every bundled file whose name holds secrets, binaries included, first", async () => {
+    const a = await agent();
+    const t = await mint(a);
+    const res = await postBundle(t.upload_url, {
+      token: t.upload_token,
+      body: tar([
+        { name: "index.html", data: '<!doctype html><title>t</title><img src="gone.png">' },
+        { name: "files/id_rsa", data: "-----BEGIN OPENSSH PRIVATE KEY-----\n" },
+        { name: "files/cert.p12", data: new Uint8Array([0x30, 0x82, 0x00, 0xff]) },
+      ]),
+    });
+    expect(res.status).toBe(201);
+    const out = await json(res);
+    expect(out.warnings.map((w: { code: string; file: string }) => [w.code, w.file])).toEqual([
+      ["sensitive_file", "files/id_rsa"],
+      ["sensitive_file", "files/cert.p12"],
+      ["missing_file", "index.html"],
+    ]);
+  });
+
+  it("sensitive_file reports a bundle's final paths, after its top directory is stripped", async () => {
+    const a = await agent();
+    const t = await mint(a);
+    const res = await postBundle(t.upload_url, {
+      token: t.upload_token,
+      body: tar([
+        { name: "site/index.html", data: "<!doctype html><title>t</title>" },
+        { name: "site/files/id_rsa", data: "key" },
+      ]),
+    });
+    const out = await json(res);
+    expect(out.bundle.stripped_prefix).toBe("site/");
+    expect(out.warnings).toEqual([
+      expect.objectContaining({ code: "sensitive_file", file: "files/id_rsa" }),
+    ]);
+  });
+
+  it("a bundled .plinth-files.json is skipped like any dotfile: no bytes stored, no warning", async () => {
+    const a = await agent();
+    const t = await mint(a);
+    const res = await postBundle(t.upload_url, {
+      token: t.upload_token,
+      body: tar([
+        { name: "index.html", data: "<!doctype html><title>t</title>" },
+        { name: ".plinth-files.json", data: '{"plinth_project_files":1,"artifacts":[]}' },
+      ]),
+    });
+    expect(res.status).toBe(201);
+    const out = await json(res);
+    expect(out.bundle.skipped).toEqual([".plinth-files.json"]);
+    expect(out.warnings).toEqual([]);
+    expect(out.stored.files).toBe(1);
+  });
+
   it("a 50 MB, 511-file bundle passes through the real stager in the Workers pool", {
     timeout: BIG_BUNDLE_TIMEOUT_MS,
   }, async () => {

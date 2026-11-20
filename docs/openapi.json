@@ -4494,7 +4494,8 @@
               "ds_deprecated_alias",
               "design_system_unavailable",
               "design_system_outdated",
-              "board_not_seeded"
+              "board_not_seeded",
+              "sensitive_file"
             ]
           },
           "file": { "type": "string", "description": "The version file the reference is in" },

@@ -29,6 +29,7 @@ import {
   DOC_PUBLISH_NOTE,
   INVITATION_NOTE,
   LIVE_DRAFT_NOTE,
+  PROJECT_FILES_NOTE,
   REUSE_NOTE,
   ROOM_PAGE_NOTE,
   SHEET_PUBLISH_NOTE,
@@ -64,6 +65,7 @@ export const registerArtifactTools: ToolRegistrar = ({ server, ctx, opaque, prev
         opaque +
         DATA_PAGE_NOTE +
         ROOM_PAGE_NOTE +
+        PROJECT_FILES_NOTE +
         UNTRUSTED_NOTE,
       inputSchema: publishArtifactInput,
       ...preview,
@@ -88,6 +90,7 @@ export const registerArtifactTools: ToolRegistrar = ({ server, ctx, opaque, prev
         WHITEBOARD_PUBLISH_NOTE +
         opaque +
         DATA_PAGE_NOTE +
+        PROJECT_FILES_NOTE +
         UNTRUSTED_NOTE,
       inputSchema: updateArtifactInput,
       ...preview,
