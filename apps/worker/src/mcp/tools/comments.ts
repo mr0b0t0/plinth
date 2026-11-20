@@ -27,7 +27,7 @@ export const registerCommentTools: ToolRegistrar = ({ server, ctx }) => {
       description:
         "Every comment thread on an artifact, oldest first, replies after their thread: author, body, " +
         "status (open or resolved) and any mention tasks. Read this when asked to address feedback. " +
-        `Answer with reply_comment and close a handled thread with resolve_comment. ${ANCHOR_NOTE} ${UNTRUSTED_NOTE}`,
+        `Answer with reply_comment and close a handled thread with resolve_comment. ${ANCHOR_NOTE} ${UNTRUSTED_FILES_NOTE}`,
       inputSchema: listCommentsInput,
       annotations: MCP_TOOL_ANNOTATIONS.list_comments,
     },

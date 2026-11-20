@@ -27,8 +27,10 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   hash or restored.
 - **`sensitive_file` knows more names**: `.envrc`, `.pgpass`, `*.p8`, `*.ppk`, `*.tfvars`, files
   under `.kube/`, and `.docker/config.json`.
-- **Shorter MCP tool descriptions.** The project files rules are said once per session instead of
-  on every tool, which takes about 7,500 characters (some 1,900 tokens) off what an agent loads.
+- **Shorter MCP tool descriptions.** The sentence that nothing on Plinth chooses local files is on
+  the tools that return artifact files, versions, comments, mentions or shared data instead of on
+  every tool, which takes about 3,750 characters (some 950 tokens) off what an agent loads. The
+  project files rules stay on each tool that publishes files.
 - **Project files: safer types, and a marked list.** Agents add `.txt` to page and code files in
   any letter case (`App.HTML` too), send project files only as plain text, and, when they offer
   files taken from the artifact, mark each one the user has not chosen before and say who added

@@ -2100,9 +2100,13 @@ live read, and the feature adds no tool, route, env var or stored state.
   [Big builds](#big-builds-and-reuse-by-hash)). Which local files an agent reads is agent-side:
   the server sees bytes, not where they were read ([docs/security.md](security.md#project-files)).
   The MCP tool descriptions, the server instructions, the plinth-artifacts skill and the mention
-  watcher's announcement say so, each sentence once per session: the recipe on `update_artifact`,
-  the sentence that nothing on Plinth chooses local files in the instructions and on the two
-  mention tools, and `sensitive_file` in the instructions.
+  watcher's announcement say so, each sentence only on the tools where it applies, since a client
+  may load only the tool descriptions it picks or drop the instructions: the recipe on
+  `publish_artifact`, `update_artifact` and `start_upload`; the sentence that nothing on Plinth
+  chooses local files in the instructions and on the tools that return artifact files, versions,
+  comments, mentions or shared data (`get_artifact`, `list_versions`, `list_comments`,
+  `list_mentions`, `claim_mention`, `list_artifact_data`); and `sensitive_file` in the
+  instructions.
 
 ### Pages for people outside the team, and several agents on one artifact (decided 2026-11-19)
 

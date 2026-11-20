@@ -383,7 +383,7 @@ describe("categories over MCP", () => {
 });
 
 describe("project files over MCP", () => {
-  it("the untrusted sentence about local files rides only the instructions and the mention tools", () => {
+  it("the untrusted sentence about local files is its own sentence after UNTRUSTED_NOTE", () => {
     expect(UNTRUSTED_SENTENCES).not.toContain(PROJECT_FILES_UNTRUSTED);
     expect(UNTRUSTED_NOTE).not.toContain(PROJECT_FILES_UNTRUSTED);
     expect(UNTRUSTED_FILES_NOTE).toBe(`${UNTRUSTED_NOTE} ${PROJECT_FILES_UNTRUSTED}`);
@@ -392,10 +392,13 @@ describe("project files over MCP", () => {
     expect(PROJECT_FILES_UNTRUSTED).toMatch(/the owner included/);
   });
 
-  it("update_artifact carries the recipe once; mentions say they never read files", async () => {
+  it("every publishing tool carries the recipe; mentions say they never read files", async () => {
     expect(PROJECT_FILES_NOTE).toMatch(
-      /^Project files \(here, in publish_artifact and in start_upload\)/,
+      /^Project files: send copies of only the files the user chose/,
     );
+    // Each tool carries the whole recipe, never a pointer to another tool's description: a client
+    // that loads tool schemas on demand sees only the tools it picked.
+    expect(PROJECT_FILES_NOTE).not.toMatch(/publish_artifact|update_artifact|in start_upload/);
     expect(PROJECT_FILES_NOTE).toMatch(/Never from get_artifact's asset list alone/);
     expect(PROJECT_FILES_NOTE).toMatch(/never send \.plinth-files\.json/);
     expect(PROJECT_FILES_NOTE).toMatch(/open unlisted artifacts/);
@@ -435,18 +438,33 @@ describe("project files over MCP", () => {
     const desc = (name: string) => tools.find((t) => t.name === name)?.description ?? "";
     const all = JSON.stringify(tools);
     const count = (s: string, part: string) => s.split(part).length - 1;
-    // Each sentence once in the tool list: the recipe on update_artifact, the untrusted sentence
-    // on the two mention tools, and no sensitive_file sentence (the instructions and the warning's
-    // own message say it).
-    expect(desc("update_artifact")).toContain(PROJECT_FILES_NOTE);
-    expect(count(all, "Project files (here,")).toBe(1);
+    // A client may load only the tools it picks (Claude Code's tool search) or drop the server
+    // instructions, so the rules ride on the tools where they apply. The recipe is on every tool
+    // that publishes files; the untrusted sentence is on every tool that returns one of the things
+    // it names (artifact files and paths, version history, comments, mentions, shared data). No
+    // tool carries a sensitive_file sentence: the instructions and the warning's own message say it.
+    const publishing = ["publish_artifact", "update_artifact", "start_upload"];
+    for (const name of publishing) {
+      expect(desc(name), name).toContain(`${PROJECT_FILES_NOTE}${UNTRUSTED_NOTE}`);
+    }
+    expect(count(all, "Project files: send copies")).toBe(publishing.length);
+    const returning = [
+      "get_artifact",
+      "list_versions",
+      "list_comments",
+      "list_mentions",
+      "claim_mention",
+      "list_artifact_data",
+    ];
+    for (const name of returning) {
+      expect(desc(name), name).toContain(UNTRUSTED_FILES_NOTE);
+    }
     for (const name of ["list_mentions", "claim_mention"]) {
       expect(desc(name), name).toContain(`${MENTION_FILES_NOTE}${UNTRUSTED_FILES_NOTE}`);
     }
-    expect(count(all, "Nothing on Plinth (artifact files")).toBe(2);
     for (const t of tools) {
-      if (t.name === "list_mentions" || t.name === "claim_mention") continue;
-      expect(t.description ?? "", t.name).not.toContain(PROJECT_FILES_UNTRUSTED);
+      const has = (t.description ?? "").includes(PROJECT_FILES_UNTRUSTED);
+      expect(has, t.name).toBe(returning.includes(t.name));
     }
     expect(all).not.toContain("sensitive_file");
     const instructions = client.getInstructions() ?? "";

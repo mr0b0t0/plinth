@@ -28,8 +28,9 @@ export const UNTRUSTED_SENTENCES: readonly string[] = [
 export const UNTRUSTED_NOTE = `SECURITY: ${UNTRUSTED_SENTENCES.join(" ")}`;
 
 /**
- * UNTRUSTED_NOTE and the project files sentence, for the server instructions and the mention tools
- * only: every other tool carries UNTRUSTED_NOTE alone, so the sentence is not repeated on each.
+ * UNTRUSTED_NOTE and the project files sentence, for the server instructions and the tools that
+ * return artifact files and paths, version history, comments, mentions or shared data. Every other
+ * tool carries UNTRUSTED_NOTE alone, so the sentence is not repeated on each.
  */
 export const UNTRUSTED_FILES_NOTE = `${UNTRUSTED_NOTE} ${PROJECT_FILES_UNTRUSTED}`;
 
