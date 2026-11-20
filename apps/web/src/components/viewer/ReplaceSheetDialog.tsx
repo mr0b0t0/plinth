@@ -3,8 +3,10 @@
 // sheet's next version, which keeps its link, sharing and comments. The file goes as it is (`content_format`), the Worker converts
 // it, and the save names the version on screen as `base_version`: when someone published a newer
 // version since, the Worker refuses it (409) and the dialog asks again against that version, so
-// nothing is overwritten unseen. Any other refusal shows the Worker's sentence and the cells it
-// names. Owners and editors only; the API checks the role again. A person confirmed by code
+// nothing is overwritten unseen. Any other refusal reads as New's Import error: "Could not use
+// <file>" as the title, the Worker's sentence under it, and the cells it names. Every step's
+// sentence is the dialog's muted description. Owners and editors only; the API checks the role
+// again. A person confirmed by code
 // without an account is told to sign in instead: a version needs an account. Replace waits while
 // unpublished page changes exist or someone edits on the page (`blocked`), checked again on the
 // press, and a draft started after the press meets the room's "published meanwhile" review.
@@ -13,7 +15,9 @@ import { API, type PublishResult, route, type VersionInfo } from "@plinth/shared
 import { useEffect, useRef, useState } from "react";
 import { ApiRequestError, api } from "../../lib/api.ts";
 import { useSession } from "../../lib/session.ts";
+import { hasIssues, ImportIssues } from "../account/ImportIssues.tsx";
 import {
+  CHOOSE_ANOTHER_LABEL,
   type ImportProblem,
   importProblem,
   readSpreadsheet,
@@ -21,7 +25,6 @@ import {
   type SpreadsheetFormat,
 } from "../account/newArtifact.ts";
 import { Button, ButtonLink, Dialog, useToast } from "../ui/index.ts";
-import "../account/account.css";
 
 export interface ReplaceSheetDialogProps {
   artifactId: string;
@@ -76,9 +79,9 @@ export function conflictText(current: number, by: string | null, file: string): 
   return `${news} Replace it with ${file}?`;
 }
 
-/** What the dialog says when the file cannot be used. */
-export function problemText(file: string, message: string): string {
-  return `Could not use ${file}. ${message}`;
+/** The dialog's title when the file cannot be used; the Worker's sentence goes under it. */
+export function problemTitle(file: string): string {
+  return `Could not use ${file}`;
 }
 
 /** The current version a 409 names, or null for any other refusal. */
@@ -200,7 +203,7 @@ export function ReplaceSheetDialog({
   );
   const another = (
     <Button variant="primary" icon={FileArrowUpIcon} onClick={choose} disabled={saving}>
-      {step.kind === "pick" ? "Choose a file…" : "Choose another file…"}
+      {step.kind === "pick" ? "Choose a file…" : CHOOSE_ANOTHER_LABEL}
     </Button>
   );
 
@@ -233,35 +236,41 @@ export function ReplaceSheetDialog({
     </>
   );
 
+  const sentence = signIn
+    ? SIGN_IN_TEXT
+    : step.kind === "confirm"
+      ? confirmText(step.file, step.base)
+      : step.kind === "conflict"
+        ? conflictText(step.base, step.by, step.file)
+        : step.kind === "problem"
+          ? step.message
+          : "";
+  const waiting =
+    !signIn && blocked !== null && (step.kind === "confirm" || step.kind === "conflict");
+
   return (
-    <Dialog open onClose={onClose} title="Replace with a file" footer={footer}>
-      {!signIn && picker}
-      <div role="status" className="pl-replace-sheet__status">
-        {signIn && <p>{SIGN_IN_TEXT}</p>}
-        {!signIn && step.kind === "confirm" && <p>{confirmText(step.file, step.base)}</p>}
-        {!signIn && step.kind === "conflict" && (
-          <p>{conflictText(step.base, step.by, step.file)}</p>
-        )}
-        {!signIn && blocked !== null && (step.kind === "confirm" || step.kind === "conflict") && (
-          <p>{blocked}</p>
-        )}
-      </div>
-      {!signIn && step.kind === "problem" && (
-        <div role="alert" className="pl-replace-sheet__problem">
-          <p>{problemText(step.file, step.message)}</p>
-          {step.issues.length > 0 && (
-            <ul className="pl-import-issues">
-              {step.issues.map((m, i) => (
-                // biome-ignore lint/suspicious/noArrayIndexKey: two issues may read the same
-                <li key={i}>{m}</li>
-              ))}
-            </ul>
-          )}
-          {step.count > step.issues.length && (
-            <p className="text-muted">{`and ${step.count - step.issues.length} more`}</p>
-          )}
-        </div>
-      )}
+    <Dialog
+      open
+      onClose={onClose}
+      title={!signIn && step.kind === "problem" ? problemTitle(step.file) : "Replace with a file"}
+      // One live region from the moment a file is being read, so every later step is announced.
+      description={
+        !signIn && step.kind === "pick" ? undefined : <span role="status">{sentence}</span>
+      }
+      // The hidden picker sits in the footer, where it takes no room: the body renders only when
+      // it has something to show, so every step keeps the same title-to-text gap.
+      footer={
+        <>
+          {!signIn && picker}
+          {footer}
+        </>
+      }
+    >
+      {waiting ? (
+        <p role="status">{blocked}</p>
+      ) : !signIn && step.kind === "problem" && hasIssues(step) ? (
+        <ImportIssues problem={step} />
+      ) : null}
     </Dialog>
   );
 }

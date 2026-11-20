@@ -11,11 +11,12 @@ import { cleanup, render, screen, waitFor, within } from "@testing-library/react
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { refreshSession } from "../../lib/session.ts";
-import { PICKER_ATTR } from "../account/newArtifact.ts";
+import { CHOOSE_ANOTHER_LABEL, PICKER_ATTR } from "../account/newArtifact.ts";
 import { Toaster } from "../ui/index.ts";
 import {
   confirmText,
   conflictText,
+  problemTitle,
   ReplaceSheetDialog,
   type ReplaceSheetDialogProps,
   SIGN_IN_TEXT,
@@ -281,9 +282,11 @@ describe("the dialog", () => {
     const { onReplaced, dialog } = await open(vi.fn(), vi.fn(), {
       file: new File(["Item,Qty\nApples,3\n"], "sales.csv"),
     });
-    expect(await within(dialog).findByText(confirmText("sales.csv", 5))).toBeTruthy();
+    const sentence = await within(dialog).findByText(confirmText("sales.csv", 5));
     expect(confirmText("sales.csv", 5)).toBe("sales.csv becomes v6. v5 stays in history.");
-    // Confirm only: no description, no second picker.
+    // The sentence is the dialog's one muted description line, with no body and no second picker.
+    expect(sentence.closest(".pl-dialog__description")).toBeTruthy();
+    expect(dialog.querySelector(".pl-dialog__body")).toBeNull();
     expect(within(dialog).queryByRole("button", { name: /Choose/ })).toBeNull();
     expect(puts(calls)).toHaveLength(0);
     await user.click(within(dialog).getByRole("button", { name: "Replace" }));
@@ -306,7 +309,8 @@ describe("the dialog", () => {
       file: new File([new Uint8Array([0x50, 0x4b, 3, 4])], "sales.xlsx"),
     });
     await user.click(await within(dialog).findByRole("button", { name: "Replace" }));
-    expect(await within(dialog).findByText(conflictText(6, "Ana", "sales.xlsx"))).toBeTruthy();
+    const asked = await within(dialog).findByText(conflictText(6, "Ana", "sales.xlsx"));
+    expect(asked.closest(".pl-dialog__description")).toBeTruthy();
     expect(conflictText(6, "Ana", "sales.csv")).toBe(
       "Ana published v6 meanwhile. Replace it with sales.csv?",
     );
@@ -333,8 +337,8 @@ describe("the dialog", () => {
     await user.click(await within(dialog).findByRole("button", { name: "Replace" }));
     expect(await within(dialog).findByText(conflictText(6, "Ana", "a.csv"))).toBeTruthy();
     await user.click(within(dialog).getByRole("button", { name: "Replace" }));
-    await within(dialog).findByRole("alert");
-    expect(within(dialog).getByRole("button", { name: "Choose another file…" })).toBeTruthy();
+    await within(dialog).findByRole("heading", { name: problemTitle("a.csv") });
+    expect(within(dialog).getByRole("button", { name: CHOOSE_ANOTHER_LABEL })).toBeTruthy();
     const input = screen.getByTestId("replace-sheet-file") as HTMLInputElement;
     await user.upload(input, new File(["b\n2\n"], "b.csv"));
     expect(await within(dialog).findByText(confirmText("b.csv", 6))).toBeTruthy();
@@ -371,7 +375,7 @@ describe("the dialog", () => {
   it("tells a person without an account to sign in, with no file picker", async () => {
     const { calls } = backend([], [], null);
     const { dialog } = await open();
-    expect(within(dialog).getByText(SIGN_IN_TEXT)).toBeTruthy();
+    expect(within(dialog).getByText(SIGN_IN_TEXT).closest(".pl-dialog__description")).toBeTruthy();
     expect(within(dialog).getByRole("link", { name: "Sign in" }).getAttribute("href")).toBe(
       "/login?next=%2Fa%2Fsales",
     );
@@ -420,9 +424,16 @@ describe("the dialog", () => {
       file: new File(["a\n1\n"], "long.csv"),
     });
     await user.click(await within(dialog).findByRole("button", { name: "Replace" }));
-    const alert = await within(dialog).findByRole("alert");
-    expect(alert.textContent).toContain("Could not use long.csv. This sheet has 1 problem");
-    expect(within(alert).getByRole("listitem").textContent).toBe("B3: the text is too long");
+    // Laid out as New's Import error: the problem as the title, the cause as the description,
+    // the cells in the body, and Cancel beside "Choose another file…".
+    await within(dialog).findByRole("heading", { name: problemTitle("long.csv") });
+    expect(problemTitle("long.csv")).toBe("Could not use long.csv");
+    expect(screen.getByRole("dialog", { name: "Could not use long.csv" })).toBe(dialog);
+    expect(dialog.querySelector(".pl-dialog__description")?.textContent).toBe(
+      "This sheet has 1 problem; the first ones are listed in details.issues",
+    );
+    expect(within(dialog).getByRole("listitem").textContent).toBe("B3: the text is too long");
+    expect(within(dialog).getByRole("button", { name: CHOOSE_ANOTHER_LABEL })).toBeTruthy();
     await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
     expect(onClose).toHaveBeenCalled();
     expect(puts(calls)).toHaveLength(1);

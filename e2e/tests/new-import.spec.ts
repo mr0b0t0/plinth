@@ -134,6 +134,7 @@ test("Import refuses a file it cannot read and says why, creating nothing", asyn
   await expect(dialog).toContainText("This is not an .xlsx file.");
   await expect(dialog).not.toContainText("could not be imported:");
   await expect(dialog).not.toContainText("ZIP");
+  await expect(dialog.getByRole("button", { name: "Choose another file…" })).toBeVisible();
   await dialog.getByRole("button", { name: "Cancel" }).click();
   const list = await apiGet(page.request, "/artifacts");
   expect(list.body.items).toEqual([]);

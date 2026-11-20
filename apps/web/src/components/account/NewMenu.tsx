@@ -13,9 +13,11 @@ import { useId, useRef, useState } from "react";
 import { api } from "../../lib/api.ts";
 import { navigate } from "../../lib/router.tsx";
 import { Button, Dialog, type Icon, Menu, type MenuEntry, useToast } from "../ui/index.ts";
+import { hasIssues, ImportIssues } from "./ImportIssues.tsx";
 import {
   blankBody,
   blankItems,
+  CHOOSE_ANOTHER_LABEL,
   type ImportProblem,
   importProblem,
   openHref,
@@ -160,24 +162,12 @@ export function NewMenu({ config, variant = "primary", className }: NewMenuProps
                 setProblem(null);
               }}
             >
-              Choose another file
+              {CHOOSE_ANOTHER_LABEL}
             </Button>
           </>
         }
       >
-        {problem && problem.issues.length > 0 && (
-          <>
-            <ul className="pl-import-issues">
-              {problem.issues.map((m, i) => (
-                // biome-ignore lint/suspicious/noArrayIndexKey: two issues may read the same
-                <li key={i}>{m}</li>
-              ))}
-            </ul>
-            {problem.count > problem.issues.length && (
-              <p className="text-muted">{`and ${problem.count - problem.issues.length} more`}</p>
-            )}
-          </>
-        )}
+        {problem && hasIssues(problem) && <ImportIssues problem={problem} />}
       </Dialog>
     </>
   );

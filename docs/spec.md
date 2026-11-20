@@ -2700,7 +2700,8 @@ pages and designs come only from agents.
   name without its extension as the title, and the note "Imported from <file name>". The Worker
   converts and checks it exactly as it does for agents (see Imports under
   [Sheets](#sheets-decided-2026-11-19)), so the app carries no spreadsheet reader of its own. A
-  refusal ("Could not import <file name>") shows the plain cause and the cells it names ("B7: …"),
+  refusal is a dialog titled "Could not import <file name>" with the plain cause as its one line
+  and the cells it names ("B7: …") under it, then Cancel and "Choose another file…". The cause is
   never code: the Worker's sentence without its "The xlsx file could not be imported:" lead and
   without a closing parenthetical of parser detail ("This is not an .xlsx file."). Agents get the
   whole sentence. The sheet then opens in edit mode where editing on the page works, and on its
@@ -2724,7 +2725,7 @@ pages and designs come only from agents.
   a newer version was published since, the save is refused (409) and the dialog asks again against
   it ("Ana published v6 meanwhile. Replace it with sales.xlsx?", with the same Replace button), or
   the person cancels. A file chosen after that is confirmed against the newer version. A file the
-  Worker refuses is shown as "Could not use <file name>." with the plain cause, as for Import.
+  Worker refuses is shown as Import shows a refusal, titled "Could not use <file name>".
   While the sheet has unpublished changes on its page or someone is editing it there, the item is
   hidden, and the dialog checks the same again when Replace is pressed ("Publish or discard changes
   first"). A draft someone starts after that press is never overwritten: one with changes is frozen

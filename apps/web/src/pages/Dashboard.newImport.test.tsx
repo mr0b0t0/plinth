@@ -7,6 +7,7 @@ import type { AppConfig, ArtifactSummary } from "@plinth/shared";
 import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { CHOOSE_ANOTHER_LABEL } from "../components/account/newArtifact.ts";
 import { type Call, CONFIG, json, ME, stubApi } from "../components/viewer/test-utils.ts";
 
 async function loadPage() {
@@ -217,7 +218,13 @@ describe("Import", () => {
     const input = screen.getByTestId("new-import-file") as HTMLInputElement;
     await user.upload(input, new File(["%PDF"], "notes.pdf"));
     const first = await screen.findByRole("alertdialog", { name: "Could not import notes.pdf" });
-    expect(first.textContent).toContain("Pick a .xlsx, .csv or .tsv file.");
+    // The problem as the title, the cause as the one description line, the same buttons as a
+    // sheet's Replace problem.
+    expect(
+      screen.getByRole("alertdialog", { description: "Pick a .xlsx, .csv or .tsv file." }),
+    ).toBe(first);
+    expect(within(first).getByRole("button", { name: CHOOSE_ANOTHER_LABEL })).toBeTruthy();
+    expect(CHOOSE_ANOTHER_LABEL).toBe("Choose another file…");
     expect(posts(calls)).toHaveLength(0);
     await user.click(within(first).getByRole("button", { name: "Cancel" }));
 

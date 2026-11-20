@@ -155,6 +155,9 @@ export function base64Of(bytes: Uint8Array): string {
   return btoa(bin);
 }
 
+/** The primary button of a refused file's dialog, on the dashboard and on a sheet's page alike. */
+export const CHOOSE_ANOTHER_LABEL = "Choose another file…";
+
 /** A refusal as the person reads it: the server's sentence, and the cells it names. */
 export interface ImportProblem {
   message: string;
