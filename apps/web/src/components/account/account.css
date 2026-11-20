@@ -41,15 +41,16 @@
 .pl-acct-note__body {
   min-width: 0;
 }
-/* The New token dialog's artifact choice when there is no list: a note, or an error and a retry. */
+/* The New token dialog's artifact choice: the search box (when the list is full), the select, and
+   Try again after a failed load. */
 .pl-acct-picker {
   display: flex;
   flex-direction: column;
-  align-items: flex-start;
-  gap: var(--space-2);
+  gap: var(--space-4);
 }
-.pl-acct-picker > .pl-acct-note {
-  align-self: stretch;
+.pl-acct-picker > .pl-button {
+  align-self: flex-start;
+  margin-top: calc(var(--space-2) - var(--space-4));
 }
 
 .pl-acct-error {
@@ -493,6 +494,8 @@
   overflow-wrap: anywhere;
 }
 .pl-acct-block__code--nowrap {
+  /* No min-content width of its own, so a long line scrolls here instead of widening the dialog. */
+  width: 0;
   overflow-x: auto;
   white-space: pre;
   overflow-wrap: normal;

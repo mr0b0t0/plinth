@@ -160,13 +160,20 @@ describe("New token: Limit to one artifact", () => {
     const user = userEvent.setup();
     renderDialog();
     await user.click(screen.getByRole("checkbox", { name: "Limit to one artifact" }));
-    const how = await screen.findByRole("link", { name: "how" });
+    const how = await screen.findByRole("link", { name: "Publish one first" });
     expect(how.getAttribute("href")).toBe(CI_NO_ARTIFACT_URL);
     expect(CI_NO_ARTIFACT_URL).toMatch(/docs\/ci\.md#no-artifact-yet$/);
-    expect(document.body.textContent).toContain("You own or edit no artifact yet.");
-    expect(screen.queryByLabelText("Artifact")).toBeNull();
+    // The select stays where it always is, disabled, and says why; the link is its hint.
+    const select = screen.getByLabelText("Artifact") as HTMLSelectElement;
+    expect(select.disabled).toBe(true);
+    expect(select.selectedOptions[0]?.textContent).toBe("No artifact yet");
+    expect(select.getAttribute("aria-describedby")).toContain(
+      how.closest("p")?.getAttribute("id") ?? "missing",
+    );
     // It says what the token is, not "act as you".
-    expect(document.body.textContent).toContain("reads one artifact");
+    expect(document.body.textContent).toContain(
+      "For scripts and CI: one artifact and nothing else.",
+    );
     expect(document.body.textContent).not.toContain("act as you");
   });
 
@@ -183,6 +190,10 @@ describe("New token: Limit to one artifact", () => {
     renderDialog();
     await user.click(screen.getByRole("checkbox", { name: "Limit to one artifact" }));
     expect((await screen.findByRole("alert")).textContent).toBe("Could not load your artifacts.");
+    // The error belongs to the Artifact select, which stays in its place.
+    const select = screen.getByLabelText("Artifact") as HTMLSelectElement;
+    expect(select.disabled).toBe(true);
+    expect(select.getAttribute("aria-invalid")).toBe("true");
     await user.click(screen.getByRole("button", { name: "Try again" }));
     await screen.findByRole("option", { name: "Coverage report" });
   });
@@ -234,7 +245,9 @@ describe("New token: Limit to one artifact", () => {
     await user.click(screen.getByRole("checkbox", { name: "Limit to one artifact" }));
     await screen.findByRole("option", { name: "Recent 0" });
     expect(screen.queryByRole("option", { name: "Old notes" })).toBeNull();
-    await user.type(screen.getByLabelText("Find an artifact"), "old");
+    const find = screen.getByLabelText("Find an artifact") as HTMLInputElement;
+    expect(find.placeholder).toBe("Title or slug");
+    await user.type(find, "old");
     await screen.findByRole("option", { name: "Old notes" });
     expect(s.calls.some((c) => c.path === "/artifacts?query=old")).toBe(true);
     await user.selectOptions(screen.getByLabelText("Artifact"), old.id);
@@ -251,10 +264,8 @@ describe("New token: Limit to one artifact", () => {
       ciWorkflowSnippet({ id: ID, appOrigin: HOSTED_ORIGIN, type }).split("\n")[2];
     expect(path("html")).toBe("    path: dist");
     expect(path("doc")).toBe("    path: content.md");
-    expect(path("slides")).toBe("    path: slides # a folder with slides.md at its top");
-    expect(path("design_system")).toBe(
-      "    path: design-system # a folder with system.json at its top",
-    );
+    expect(path("slides")).toBe("    path: slides # holds slides.md");
+    expect(path("design_system")).toBe("    path: design-system # holds system.json");
   });
 
   it("the workflow step leaves url out on the hosted instance", () => {

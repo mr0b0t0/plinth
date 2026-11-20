@@ -202,11 +202,10 @@ describe("Connections: tokens limited to one artifact", () => {
     render(<Connections />);
     const link = await screen.findByRole("link", { name: "Coverage <b>report</b>" });
     expect(link.getAttribute("href")).toBe("/a/coverage");
-    // One line: the artifact first, then the permissions in short labels.
+    // One line: the artifact first, then one short label for what it may do there.
     const line = link.closest("p") as HTMLElement;
-    expect(line.textContent).toBe(
-      "Only Coverage <b>report</b>Permissions: ReadPublish new versions",
-    );
+    expect(line.textContent).toBe("Only Coverage <b>report</b>Permissions: Publish new versions");
+    expect(screen.getByText("Read only")).toBeTruthy();
     const item = link.closest("li") as HTMLElement;
     expect(item.querySelectorAll("p.pl-acct-conn__scopes")).toHaveLength(1);
     // A key, not initials, so it does not read as another agent; and no client badge.

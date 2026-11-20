@@ -24,8 +24,8 @@ is publish a version, which anyone with edit rights can revert.
    once. The dialog also shows the workflow step with the artifact's id filled in.
 
 The owner and editors of an artifact can make such a token. The Connections page lists it under
-**Advanced**, with a key, the artifact's title and what it may do (Read, Publish new versions), and
-revokes it like any other token. Deleting the artifact revokes it, and removing your access to the
+**Advanced**, with a key, the artifact's title and what it may do (Publish new versions, or Read
+only), and revokes it like any other token. Deleting the artifact revokes it, and removing your access to the
 artifact stops it.
 
 ### No artifact yet?

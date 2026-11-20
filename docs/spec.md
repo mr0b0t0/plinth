@@ -1041,12 +1041,14 @@ keeps every run. Guide: `docs/ci.md`.
   artifact", then the artifact) and then shows the workflow step with the id filled in, on
   unwrapped lines that scroll sideways, and a `path:` that fits the type (`content.md` for a doc,
   a folder otherwise). The choice is one select of what the person owns or edits, most recent
-  first; a title that another one shares shows its slug too. When the list comes back at its
-  maximum (500), a search box above it finds older ones by title or slug. With nothing to choose
-  it points to the guide's "No artifact yet?" section, and a failed load offers Try again. A bound token is not an agent: the page lists it under
-  Advanced, beside New token, with a key for a mark, no kind or client badge, and one line naming
-  the artifact and its permissions ("<title> · Read · Publish new versions"); the Connected agents
-  count and the sidebar's agents leave it out.
+  first, which stays in its place whatever the state; a title that another one shares shows its
+  slug too. When the list comes back at its maximum (500), a search box above it finds older ones
+  by title or slug. With nothing to choose the select is disabled ("No artifact yet") and its hint
+  links the guide's "No artifact yet?" section; a failed load is the select's error, with Try
+  again. A bound token is not an agent: the page lists it under Advanced, beside New token, with a
+  key for a mark, no kind or client badge, and one line naming the artifact and what it may do
+  there ("<title> · Publish new versions", or "<title> · Read only"); the Connected agents count
+  and the sidebar's agents leave it out.
 - **Other CI and cron** use the CLI with an exact version (`npx @mr0b0t0/plinth@<version>
   publish`), with `PLINTH_TOKEN` (and `PLINTH_URL`) from the environment.
 

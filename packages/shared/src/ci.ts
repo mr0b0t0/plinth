@@ -25,8 +25,8 @@ export const CI_CLI_VERSION = ACTION_REF.slice(ACTION_REF.indexOf("@v") + 2);
 const CI_PATHS: Partial<Record<ArtifactType, string>> = {
   html: "dist",
   doc: "content.md",
-  slides: "slides # a folder with slides.md at its top",
-  design_system: "design-system # a folder with system.json at its top",
+  slides: "slides # holds slides.md",
+  design_system: "design-system # holds system.json",
 };
 
 /**

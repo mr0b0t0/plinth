@@ -1,6 +1,6 @@
 // One agent connection: label, client, kind, permissions, dates; rename and revoke. A token
-// limited to one artifact shows a key instead of initials, and names the artifact before its
-// permissions.
+// limited to one artifact shows a key instead of initials, and names the artifact before what it
+// may do there.
 import { KeyIcon, PlugsConnectedIcon } from "@phosphor-icons/react";
 import { API, APP_ROUTES, type ConnectionInfo, LIMITS, route } from "@plinth/shared";
 import { type FormEvent, useState } from "react";
@@ -16,11 +16,14 @@ import {
   scopeLabel,
 } from "./format.ts";
 
-/** What a token limited to one artifact may do there: it reads it, and may publish versions. */
-function boundScopeLabel(scope: string): string {
-  if (scope === "artifacts:read") return "Read";
-  if (scope === "artifacts:write") return "Publish new versions";
-  return scopeLabel(scope);
+/**
+ * What a token limited to one artifact may do there, in one label: it always reads it, so that is
+ * said only when it is all it may do.
+ */
+function boundScopes(scopes: string[]): { scope: string; label: string }[] {
+  return scopes.includes("artifacts:write")
+    ? [{ scope: "artifacts:write", label: "Publish new versions" }]
+    : [{ scope: "artifacts:read", label: "Read only" }];
 }
 
 export interface ConnectionItemProps {
@@ -89,9 +92,12 @@ export function ConnectionItem({ connection: c, now, onChanged }: ConnectionItem
             </span>
           )}
           <span className="visually-hidden">Permissions: </span>
-          {c.scopes.map((s) => (
-            <span key={s} className="pl-acct-conn__scope" title={s}>
-              {c.artifact ? boundScopeLabel(s) : scopeLabel(s)}
+          {(c.artifact
+            ? boundScopes(c.scopes)
+            : c.scopes.map((s) => ({ scope: s, label: scopeLabel(s) }))
+          ).map(({ scope, label }) => (
+            <span key={scope} className="pl-acct-conn__scope" title={scope}>
+              {label}
             </span>
           ))}
         </p>

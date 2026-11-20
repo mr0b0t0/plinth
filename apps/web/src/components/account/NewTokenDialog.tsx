@@ -266,7 +266,7 @@ function TokenDialogBody({ onClose, onCreated }: Omit<NewTokenDialogProps, "open
       title="New token"
       description={
         limited
-          ? "A token for scripts and CI that reads one artifact and can publish its next versions, nothing else."
+          ? "For scripts and CI: one artifact and nothing else."
           : "A personal access token lets an agent without OAuth, or a script, act as you."
       }
       size="md"
@@ -388,9 +388,10 @@ interface ArtifactPickerProps {
 }
 
 /**
- * The artifact a limited token is for: one select of what the person owns or edits; a search box
- * above it only when the list is full (older artifacts are found by title or slug); a pointer to
- * the guide when there is nothing to choose; Try again after a failed load.
+ * The artifact a limited token is for: one select of what the person owns or edits, in the same
+ * place whatever the state. A search box above it only when the list is full (older artifacts are
+ * found by title or slug); a link to the guide when there is nothing to choose; Try again after a
+ * failed load.
  */
 function ArtifactPicker({
   editable,
@@ -402,33 +403,9 @@ function ArtifactPicker({
   onPick,
   error,
 }: ArtifactPickerProps) {
-  if (editable.status === "error") {
-    return (
-      <div className="pl-acct-picker">
-        <p className="pl-field__error" role="alert">
-          Could not load your artifacts.
-        </p>
-        <Button size="sm" variant="secondary" onClick={retry}>
-          Try again
-        </Button>
-      </div>
-    );
-  }
+  const failed = editable.status === "error";
   const ready = editable.status === "ready" ? editable : null;
-  if (ready && !full && !ready.query && ready.items.length === 0) {
-    return (
-      <div className="pl-acct-picker">
-        <Note>
-          You own or edit no artifact yet. Publish its first version, then make the token:{" "}
-          <a href={CI_NO_ARTIFACT_URL} target="_blank" rel="noreferrer">
-            how
-          </a>
-          .
-        </Note>
-        {error && <p className="pl-field__error">{error}</p>}
-      </div>
-    );
-  }
+  const none = ready !== null && !full && !ready.query && ready.items.length === 0;
   // The chosen artifact stays in the list while a search shows others.
   const items = ready
     ? picked && !ready.items.some((a) => a.id === picked.id)
@@ -436,17 +413,21 @@ function ArtifactPicker({
       : ready.items
     : [];
   const labels = optionLabels(items);
-  const placeholder = !ready
-    ? "Loading artifacts…"
-    : ready.items.length === 0
-      ? "No artifact matches"
-      : "Choose an artifact";
+  const placeholder = failed
+    ? "Choose an artifact"
+    : !ready
+      ? "Loading artifacts…"
+      : none
+        ? "No artifact yet"
+        : ready.items.length === 0
+          ? "No artifact matches"
+          : "Choose an artifact";
   return (
-    <>
+    <div className="pl-acct-picker">
       {full ? (
         <Input
           label="Find an artifact"
-          hint={`Only your ${LIST_MAX} most recent are listed. Search by title or slug for an older one.`}
+          placeholder="Title or slug"
           value={search}
           maxLength={200}
           onChange={(e) => onSearch(e.target.value)}
@@ -457,13 +438,27 @@ function ArtifactPicker({
         label="Artifact"
         value={picked?.id ?? ""}
         onChange={(e) => onPick(items.find((a) => a.id === e.target.value) ?? null)}
-        disabled={!ready}
-        error={error ?? undefined}
+        disabled={!ready || none}
+        error={
+          failed ? <span role="alert">Could not load your artifacts.</span> : (error ?? undefined)
+        }
+        hint={
+          none ? (
+            <a href={CI_NO_ARTIFACT_URL} target="_blank" rel="noreferrer">
+              Publish one first
+            </a>
+          ) : undefined
+        }
         options={[
           { value: "", label: placeholder },
           ...items.map((a) => ({ value: a.id, label: labels.get(a.id) ?? a.title })),
         ]}
       />
-    </>
+      {failed && (
+        <Button size="sm" variant="secondary" onClick={retry}>
+          Try again
+        </Button>
+      )}
+    </div>
   );
 }
