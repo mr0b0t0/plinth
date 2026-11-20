@@ -1,37 +1,55 @@
 // A deck's chrome: one Present control (a menu with Full screen and Presenter view, which becomes
-// Audience window while presenter view is on) and, in the ⋯ menu, only the print item (the frame
-// prints the handout with notes from presenter view).
+// Audience window while presenter view is on) and, in the ⋯ menu, the print item (the frame
+// prints the handout with notes from presenter view) and Download .pptx.
 import { describe, expect, it, vi } from "vitest";
 import type { StageContext } from "./stageItems.tsx";
 import { presentEntries, TYPE_MENU_ITEMS } from "./stageItems.tsx";
 import type { Presentation, PresentMode } from "./usePresentation.ts";
 
-function presentation(mode: PresentMode) {
+function presentation(mode: PresentMode, exporting = false) {
   return {
     available: true,
     mode,
     present: vi.fn(),
     presenterView: vi.fn(),
     openAudience: vi.fn(),
+    exporting,
+    exportPptx: vi.fn(),
   } as unknown as Presentation;
 }
 
-function context(mode: PresentMode) {
-  const present = presentation(mode);
-  return { present, frame: null, config: null, contentOrigin: "" } as unknown as StageContext;
+function context(mode: PresentMode, exporting = false) {
+  const present = presentation(mode, exporting);
+  return {
+    present,
+    gate: { artifact: { type: "slides" } },
+    frame: null,
+    config: null,
+    contentOrigin: "",
+  } as unknown as StageContext;
 }
 
 const labels = (entries: ReturnType<typeof presentEntries>) =>
   entries.map((e) => ("label" in e ? e.label : ""));
 
+const deckMenu = (c: StageContext) => (TYPE_MENU_ITEMS.slides ?? []).flatMap((item) => item(c));
+
 describe("a deck's ⋯ menu", () => {
-  it("offers only the print item, in every mode", () => {
+  it("offers the print item and Download .pptx, in every mode", () => {
     for (const mode of ["off", "presenter", "audience"] as const) {
-      const c = context(mode);
-      expect(labels((TYPE_MENU_ITEMS.slides ?? []).flatMap((item) => item(c)))).toEqual([
-        "Print or save as PDF",
-      ]);
+      expect(labels(deckMenu(context(mode)))).toEqual(["Print or save as PDF", "Download .pptx"]);
     }
+  });
+
+  it("asks the frame for the .pptx, and is disabled while one is being made", () => {
+    const c = context("off");
+    const item = deckMenu(c)[1];
+    if (item && "onSelect" in item) item.onSelect?.();
+    expect(c.present.exportPptx).toHaveBeenCalledTimes(1);
+
+    const busy = deckMenu(context("off", true))[1];
+    expect(busy && "label" in busy ? busy.label : "").toBe("Making the .pptx…");
+    expect(busy && "disabled" in busy ? busy.disabled : false).toBe(true);
   });
 });
 

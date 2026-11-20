@@ -7,6 +7,7 @@
 //   app -> frame: collect { nonce }        solo mode only: send me the edited text
 //   app -> frame: goto { slide }           a deck shows slide N (slidesProtocol.ts)
 //   app -> frame: view { mode }            a deck switches view: deck, presenter or overview
+//   app -> frame: export { format, nonce } a deck builds its .pptx and downloads it in the frame
 //   frame -> app: live { ...status }       numbers, booleans and co-editor emails; never text
 //   frame -> app: save                     Cmd/Ctrl+S inside the frame
 //   frame -> app: draft { nonce, text }    the answer to collect, solo mode only
@@ -87,14 +88,34 @@ export function viewMessage(mode: DeckView): ViewMessage {
   return { source: RENDERER_MESSAGE_SOURCE, v: RENDERER_PROTOCOL_VERSION, type: "view", mode };
 }
 
+export interface ExportMessage {
+  source: typeof RENDERER_MESSAGE_SOURCE;
+  v: typeof RENDERER_PROTOCOL_VERSION;
+  type: "export";
+  format: "pptx";
+  /** The app's own random nonce, echoed in the frame's `exported` answer. */
+  nonce: string;
+}
+
+export function exportMessage(nonce: string): ExportMessage {
+  return {
+    source: RENDERER_MESSAGE_SOURCE,
+    v: RENDERER_PROTOCOL_VERSION,
+    type: "export",
+    format: "pptx",
+    nonce,
+  };
+}
+
 /**
- * Post a deck message (a slide number or a view name, which the frame already knows) to the frame
- * at `targetOrigin`, "*" included for opaque frames. False when it cannot.
+ * Post a deck message (a slide number, a view name, or an export request with the app's own
+ * nonce: nothing the frame does not already have) to the frame at `targetOrigin`, "*" included for
+ * opaque frames. False when it cannot.
  */
 export function postToDeck(
   frame: HTMLIFrameElement | null,
   targetOrigin: string | null,
-  message: GotoMessage | ViewMessage,
+  message: GotoMessage | ViewMessage | ExportMessage,
 ): boolean {
   const win = frame?.contentWindow;
   if (!win || !targetOrigin) return false;
@@ -188,6 +209,7 @@ export const APP_MESSAGE_KINDS = [
   "collect",
   "goto",
   "view",
+  "export",
 ] as const;
 export type AppMessageKind = (typeof APP_MESSAGE_KINDS)[number];
 
@@ -197,7 +219,8 @@ export type AppToFrameMessage =
   | EditMessage
   | CollectMessage
   | GotoMessage
-  | ViewMessage;
+  | ViewMessage
+  | ExportMessage;
 
 /** Post an editing message to the frame's window at the exact origin. False when it cannot. */
 export function postToRenderer(

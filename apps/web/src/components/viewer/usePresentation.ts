@@ -1,8 +1,9 @@
 // Presenting a deck (an artifact whose type has `present`, the slides type) from the viewer: the
-// slide the frame is on, Present (the app puts its own frame full screen), and Presenter view (the
-// frame shows notes, the next slide and a timer) with an optional audience window in step. The app
-// only ever handles slide numbers, version numbers and view names; the deck's text stays in the
-// frame, on the artifact's own origin.
+// slide the frame is on, Present (the app puts its own frame full screen), Presenter view (the
+// frame shows notes, the next slide and a timer) with an optional audience window in step, and the
+// .pptx download (the frame builds and saves the file; the app sends a nonce and hears back
+// booleans and a count). The app only ever handles slide numbers, version numbers and view names;
+// the deck's text stays in the frame, on the artifact's own origin.
 //
 // The slide is kept in the app URL's fragment (#slide=N), written with history.replaceState and
 // never sent to the server, so a reload or a shared link opens the same slide. A new frame (a newer
@@ -33,6 +34,7 @@ import {
   writeFragment,
 } from "./presentChannel.ts";
 import {
+  exportMessage,
   gotoMessage,
   newNonce,
   postToDeck,
@@ -61,6 +63,49 @@ export interface Presentation {
   present(): void;
   presenterView(): void;
   openAudience(): void;
+  /** A .pptx is being made in the frame. */
+  exporting: boolean;
+  /** Ask the frame to build the deck as .pptx and download it. */
+  exportPptx(): void;
+}
+
+/** How long the app waits for the frame's answer to an export before it gives up. */
+export const EXPORT_TIMEOUT_MS = 90_000;
+
+/** The toast when the deck's frame is replaced while it makes the file. */
+export const EXPORT_INTERRUPTED_TOAST = {
+  title: "The .pptx download was interrupted",
+  tone: "warning",
+} as const;
+
+/**
+ * The toast for a finished export, or null for a clean one: the browser shows its own download.
+ * Exported for tests.
+ */
+export function exportedToast(m: { ok: boolean; images_skipped: number; opaque: boolean }): {
+  title: string;
+  description?: string;
+  tone: "warning" | "danger";
+} | null {
+  if (!m.ok) {
+    return { title: "The .pptx could not be made", tone: "danger" };
+  }
+  if (m.images_skipped === 0) return null;
+  if (m.opaque) {
+    return {
+      title: "Downloaded the .pptx",
+      description: "Images were left out.",
+      tone: "warning",
+    };
+  }
+  return {
+    title: "Downloaded the .pptx",
+    description:
+      m.images_skipped === 1
+        ? "1 image could not be added."
+        : `${m.images_skipped} images could not be added.`,
+    tone: "warning",
+  };
 }
 
 export interface PresentationOptions {
@@ -120,6 +165,13 @@ export function usePresentation(o: PresentationOptions): Presentation {
   );
   const [fullscreen, setFullscreen] = useState(false);
   const [paired, setPaired] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  /** The export the app is waiting for: its nonce, its timeout and the frame it was sent to. */
+  const pendingExport = useRef<{
+    nonce: string;
+    timer: ReturnType<typeof setTimeout>;
+    frame: HTMLIFrameElement | null;
+  } | null>(null);
 
   const wanted = useRef<number | null>(initial.slide);
   const modeRef = useRef(mode);
@@ -205,6 +257,16 @@ export function usePresentation(o: PresentationOptions): Presentation {
         requestFullscreen(() => showToast({ title: "Use Present in the bar" }));
         return;
       }
+      if (m.type === "exported") {
+        const pending = pendingExport.current;
+        if (!pending || m.nonce !== pending.nonce) return;
+        clearTimeout(pending.timer);
+        pendingExport.current = null;
+        setExporting(false);
+        const toast = exportedToast(m);
+        if (toast) showToast(toast);
+        return;
+      }
       if (m.type === "view") {
         // An audience window shows the deck view, whatever its own frame switched to.
         if (audience) {
@@ -265,6 +327,17 @@ export function usePresentation(o: PresentationOptions): Presentation {
     leaveReviewFirst,
   ]);
 
+  // A new frame (a newer version, review mode) replaced the one making the file: its answer can no
+  // longer be heard, so the app stops waiting now rather than at the timeout.
+  useEffect(() => {
+    const pending = pendingExport.current;
+    if (!pending || pending.frame === frame) return;
+    clearTimeout(pending.timer);
+    pendingExport.current = null;
+    setExporting(false);
+    showToast(EXPORT_INTERRUPTED_TOAST);
+  }, [frame]);
+
   useEffect(() => {
     if (!available) return;
     const onChange = () => setFullscreen(document.fullscreenElement != null);
@@ -294,7 +367,13 @@ export function usePresentation(o: PresentationOptions): Presentation {
     return () => ch?.close();
   }, [available, mode, initial.pair, artifactId, slug, goto, showDeck]);
 
-  useEffect(() => () => channel.current?.close(), []);
+  useEffect(
+    () => () => {
+      channel.current?.close();
+      if (pendingExport.current) clearTimeout(pendingExport.current.timer);
+    },
+    [],
+  );
 
   const present = useCallback(() => {
     if (!available || leaveReviewFirst("fullscreen")) return;
@@ -322,6 +401,23 @@ export function usePresentation(o: PresentationOptions): Presentation {
     window.open(audienceHref(slug, pairRef.current, versionRef.current), "_blank", "noopener");
   }, [available, artifactId, slug, tellAudience]);
 
+  const exportPptx = useCallback(() => {
+    if (!available || pendingExport.current) return;
+    const nonce = newNonce();
+    if (!postToDeck(frameRef.current, targetRef.current, exportMessage(nonce))) {
+      showToast({ title: "The .pptx could not be made", tone: "danger" });
+      return;
+    }
+    const timer = setTimeout(() => {
+      if (pendingExport.current?.nonce !== nonce) return;
+      pendingExport.current = null;
+      setExporting(false);
+      showToast({ title: "The .pptx could not be made", tone: "danger" });
+    }, EXPORT_TIMEOUT_MS);
+    pendingExport.current = { nonce, timer, frame: frameRef.current };
+    setExporting(true);
+  }, [available]);
+
   const presenting = available && (fullscreen || mode === "presenter");
   return {
     available,
@@ -331,5 +427,7 @@ export function usePresentation(o: PresentationOptions): Presentation {
     present,
     presenterView,
     openAudience,
+    exporting,
+    exportPptx,
   };
 }
