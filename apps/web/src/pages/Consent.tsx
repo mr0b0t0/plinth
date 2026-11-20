@@ -24,10 +24,12 @@ import {
   CLIENT_TYPE_LABEL,
   defaultConnectionLabel,
   guessClientType,
+  mentionReach,
   SCOPE_META,
 } from "../components/account/format.ts";
 import { useDocumentTitle, useSignInRedirect } from "../components/account/hooks.tsx";
 import { Note } from "../components/account/Note.tsx";
+import { nameHint } from "../components/account/nameHint.tsx";
 import { LogoMark } from "../components/Logo.tsx";
 import { PublicShell } from "../components/layout/PublicShell.tsx";
 import {
@@ -63,6 +65,7 @@ export default function Consent() {
   const [label, setLabel] = useState("");
   const [defaultLabel, setDefaultLabel] = useState("Agent");
   const [clientType, setClientType] = useState<ClientType>("other");
+  const [connections, setConnections] = useState<ConnectionInfo[]>([]);
   const [editing, setEditing] = useState(false);
   const editId = useId();
   const [submitting, setSubmitting] = useState<"allow" | "deny" | null>(null);
@@ -75,15 +78,18 @@ export default function Consent() {
       return;
     }
     const ctrl = new AbortController();
-    // The existing labels only make the default name distinct; without them it is still usable.
-    const labels = api<Paged<ConnectionInfo>>(API.connections, { signal: ctrl.signal })
-      .then((res) => res.items.filter((c) => !c.revoked_at).map((c) => c.label))
-      .catch(() => [] as string[]);
+    // The existing connections only make the default name distinct and say which handle a name
+    // becomes; without them the page is still usable.
+    const live = api<Paged<ConnectionInfo>>(API.connections, { signal: ctrl.signal })
+      .then((res) => res.items.filter((c) => !c.revoked_at))
+      .catch(() => [] as ConnectionInfo[]);
     Promise.all([
       api<OAuthRequestInfo>(route(API.oauthRequest, { id: requestId }), { signal: ctrl.signal }),
-      labels,
+      live,
     ])
-      .then(([req, taken]) => {
+      .then(([req, existing]) => {
+        setConnections(existing);
+        const taken = existing.map((c) => c.label);
         const name = defaultConnectionLabel(req.client_name, taken, LIMITS.maxLabelLength);
         setDefaultLabel(name);
         setLabel(name);
@@ -247,7 +253,14 @@ export default function Consent() {
                 <div id={editId} className="pl-acct-form">
                   <Input
                     label="Name this connection"
-                    hint="Shown on your Connections page and next to what it publishes. Collaborators can mention it by this name."
+                    hint={nameHint(
+                      "Shown on your Connections page and next to what it publishes.",
+                      mentionReach(label.trim() || defaultLabel, connections, {
+                        client_type: clientType,
+                        // The grant holds exactly what the client asked for.
+                        scopes: state.req.scopes,
+                      }),
+                    )}
                     value={label}
                     maxLength={LIMITS.maxLabelLength}
                     placeholder={defaultLabel}
@@ -259,7 +272,6 @@ export default function Consent() {
                     value={clientType}
                     onChange={(e) => setClientType(e.target.value as ClientType)}
                     options={CLIENT_TYPES.map((t) => ({ value: t, label: CLIENT_TYPE_LABEL[t] }))}
-                    hint="Mentions of @claude or @codex in comments go to connections of that kind."
                   />
                 </div>
               )}

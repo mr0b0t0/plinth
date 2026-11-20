@@ -284,6 +284,15 @@
   font-size: var(--text-xs);
   color: var(--color-ink-muted);
 }
+.pl-acct-conn__mention {
+  font-size: var(--text-xs);
+  color: var(--color-warning);
+  overflow-wrap: anywhere;
+}
+/* A name field's mention warning: it replaces the usual hint, in the row's warning colour. */
+.pl-acct-warn {
+  color: var(--color-warning);
+}
 .pl-acct-conn__scope {
   position: relative;
   padding-left: var(--space-3);

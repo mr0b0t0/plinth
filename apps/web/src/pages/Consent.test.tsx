@@ -143,6 +143,43 @@ describe("Consent", () => {
     expect(consents[0]?.body).toMatchObject({ label: "Laptop Claude", client_type: "claude" });
   });
 
+  it("says how comments reach the connection, from the scopes the client asked for", async () => {
+    backend({ req: REQ({ client_name: "Gemini CLI" }) });
+    const Consent = await loadPage();
+    const user = userEvent.setup();
+    render(<Consent />);
+    await screen.findByRole("heading", { level: 1 });
+    await user.click(screen.getByRole("button", { name: "Change name" }));
+    const name = screen.getByLabelText("Name this connection");
+    const hint = document.getElementById(`${name.id}-hint`)?.textContent ?? "";
+    expect(hint).toBe(
+      "Shown on your Connections page and next to what it publishes. Mention as @gemini-cli.",
+    );
+    // One mention sentence on the form: the Client field adds none, and picking Claude folds
+    // @claude into the name's hint.
+    const clientSelect = screen.getByLabelText(/Client/);
+    expect(document.getElementById(`${clientSelect.id}-hint`)).toBeNull();
+    await user.selectOptions(clientSelect, "claude");
+    expect(document.getElementById(`${name.id}-hint`)?.textContent).toBe(
+      "Shown on your Connections page and next to what it publishes. Mention as @gemini-cli or @claude.",
+    );
+  });
+
+  it("names no handle for a client without the mentions scope", async () => {
+    backend({
+      req: REQ({ client_name: "Gemini CLI", scopes: ["artifacts:read", "artifacts:write"] }),
+    });
+    const Consent = await loadPage();
+    const user = userEvent.setup();
+    render(<Consent />);
+    await screen.findByRole("heading", { level: 1 });
+    await user.click(screen.getByRole("button", { name: "Change name" }));
+    const name = screen.getByLabelText("Name this connection");
+    const hint = document.getElementById(`${name.id}-hint`)?.textContent ?? "";
+    // The permissions list above the field already leaves Answer mentions out.
+    expect(hint).toBe("Shown on your Connections page and next to what it publishes.");
+  });
+
   it("falls back to the default name when the field is cleared", async () => {
     const consents = backend({});
     const Consent = await loadPage();

@@ -96,4 +96,51 @@ describe("NewTokenDialog", () => {
     expect(screen.getByText("Choose at least one permission.")).toBeTruthy();
     expect(fetch).not.toHaveBeenCalled();
   });
+
+  it("says which handle the typed name becomes, and when it cannot be reached", async () => {
+    vi.stubGlobal("fetch", vi.fn());
+    const user = userEvent.setup();
+    const existing = {
+      id: "c0",
+      label: "Nightly CI",
+      client_type: "other" as const,
+      kind: "token" as const,
+      scopes: ["artifacts:read", "artifacts:write", "mentions"],
+      created_at: "2026-11-01T00:00:00Z",
+      last_used_at: null,
+      revoked_at: null,
+      artifact: null,
+    };
+    render(
+      <NewTokenDialog
+        open
+        connections={[existing]}
+        onClose={() => undefined}
+        onCreated={() => undefined}
+      />,
+    );
+    const name = screen.getByLabelText("Name");
+    const hint = () => document.getElementById(`${name.id}-hint`)?.textContent ?? "";
+    expect(hint()).toBe("Shown on this page and in the version history of what it publishes.");
+    await user.type(name, "Gemini CLI");
+    expect(hint()).toBe(
+      "Shown on this page and in the version history of what it publishes. Mention as @gemini-cli.",
+    );
+    // Claude and Codex add their client name to the same sentence; the Client field has no hint.
+    const clientSelect = screen.getByLabelText("Client");
+    await user.selectOptions(clientSelect, "claude");
+    expect(hint()).toBe(
+      "Shown on this page and in the version history of what it publishes. Mention as @gemini-cli or @claude.",
+    );
+    expect(document.getElementById(`${clientSelect.id}-hint`)).toBeNull();
+    await user.selectOptions(clientSelect, "other");
+    // A name another connection takes: the warning replaces the usual line, in the warning colour.
+    await user.clear(name);
+    await user.type(name, "nightly ci");
+    expect(hint()).toBe("@nightly-ci reaches “Nightly CI” instead. Rename one of them.");
+    expect(document.querySelector(`#${CSS.escape(`${name.id}-hint`)} .pl-acct-warn`)).toBeTruthy();
+    // Without Answer mentions, the unticked box says it; the hint adds nothing.
+    await user.click(screen.getByRole("checkbox", { name: /Answer mentions/ }));
+    expect(hint()).toBe("Shown on this page and in the version history of what it publishes.");
+  });
 });
