@@ -1677,11 +1677,11 @@ when the user told it to.
   and the artifact is not taken down.
 - **Bounds.** At most one invitation per artifact (or share) and address within a day, counted
   across the previous and the current UTC day, so removing and re-adding someone does not email
-  them again. At most `RATE_LIMITS.invitationsPerChange` (40) invitations per change,
-  `RATE_LIMITS.invitationsPerOwnerPerDay` (100) per owner,
+  them again. At most `RATE_LIMITS.invitationsPerChange` (40) invitations per change, and per UTC
+  day `INVITATION_EMAILS_PER_OWNER_PER_DAY` (100) per owner, `INVITATION_EMAILS_PER_DAY` (1000)
+  for the whole instance, every owner together,
   `RATE_LIMITS.invitationsPerOwnerPerRecipientPerDay` (3) from one owner to one address and
-  `RATE_LIMITS.invitationsPerRecipientPerDay` (10) per address, from every owner together, per UTC
-  day. Each limit is reserved before an email goes (the counter is raised, then checked, and what
+  `RATE_LIMITS.invitationsPerRecipientPerDay` (10) per address, from every owner together. Each limit is reserved before an email goes (the counter is raised, then checked, and what
   was not used is given back), so parallel changes cannot pass it. The counters sit in
   `rate_limits` under keys holding a hash of the address, never the address, are read and written
   in a fixed number of statements whatever the number of people, and the hourly cron deletes them
@@ -1689,7 +1689,8 @@ when the user told it to.
 - **What the result says.** With `notify: true`, the result adds `invitations`: `emailed` (the
   addresses handed to the email provider) and `skipped` (`{ email, reason }`, with `reason` one of
   `owner_unverified`, `taken_down`, `already_emailed`, `change_limit`, `owner_limit`,
-  `recipient_limit`, which covers both per-address limits). Without it, the result is exactly as
+  `recipient_limit`, which covers both per-address limits, `instance_limit` and
+  `invitations_off`). Without it, the result is exactly as
   before. A skipped invitation never fails the change: the grants are
   saved either way. The app names the people it did not email, and why, in a toast.
 - **The email.** Subject `<owner name> (<owner email>) shared "<title>" with you`, or the email
@@ -1704,8 +1705,14 @@ when the user told it to.
   link, the artifact's. It goes through the instance's email provider (`EMAIL_PROVIDER`; the
   console provider in development) after the response, and a provider failure is logged without
   the address, the title or the message.
-- **No setting.** Invitations go through the email provider sign-in already uses, so there is no
-  new environment variable.
+- **Settings.** Invitations go through the email provider sign-in and viewing codes use, and share
+  its daily quota, so the operator sets how many go out: `INVITATION_EMAILS_PER_DAY` (default
+  1000, `0` to `1000000`) caps the whole instance per UTC day, and `0` turns invitation emails off;
+  `INVITATION_EMAILS_PER_OWNER_PER_DAY` (default 100, `1` to `10000`) caps one owner. An operator
+  sets the instance cap well under the provider's daily quota, so codes always have room. Off, the
+  app has no **Notify people** box (`GET /api/v1/config` says `invitation_emails: false`), a
+  request with `notify: true` still applies, and every person added is reported as
+  `invitations_off`; nothing is counted.
 
 ### Big builds and reuse by hash
 

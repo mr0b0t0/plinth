@@ -115,6 +115,11 @@ export interface ShareCategoryDialogProps {
   onClose: () => void;
   /** After a change: the share (null once it stopped). */
   onDone: (share: { id: string } | null) => void;
+  /**
+   * The instance sends invitation emails (AppConfig.invitation_emails). Off, the dialog has no
+   * Notify people box and never asks to notify.
+   */
+  invitations?: boolean;
 }
 
 export function ShareCategoryDialog({
@@ -122,6 +127,7 @@ export function ShareCategoryDialog({
   shareId,
   onClose,
   onDone,
+  invitations = true,
 }: ShareCategoryDialogProps) {
   const toast = useToast();
   const formId = useId();
@@ -179,7 +185,8 @@ export function ShareCategoryDialog({
   const peopleChanged = JSON.stringify(people) !== loadedPeople;
   // Ask to email only when the box is ticked and someone new is on the list.
   const had = new Set((JSON.parse(loadedPeople) as CategoryPerson[]).map((p) => p.email));
-  const invite = notify && people.some((p) => !had.has(p.email)) ? { notify: true } : {};
+  const invite =
+    invitations && notify && people.some((p) => !had.has(p.email)) ? { notify: true } : {};
   const reviewChanged =
     share !== null && rows.some((r) => (r.state === "shared") !== ticked.has(r.id));
 
@@ -428,12 +435,14 @@ export function ShareCategoryDialog({
               />
               <Button onClick={() => addPerson()}>Add</Button>
             </div>
-            <Checkbox
-              label="Notify people"
-              hint="When you save, email the people you add the link to this collection, in your name."
-              checked={notify}
-              onChange={(e) => setNotify(e.target.checked)}
-            />
+            {invitations && (
+              <Checkbox
+                label="Notify people"
+                hint="When you save, email the people you add the link to this collection, in your name."
+                checked={notify}
+                onChange={(e) => setNotify(e.target.checked)}
+              />
+            )}
           </fieldset>
           <fieldset className="pl-share-cat__artifacts">
             <legend>Artifacts they see</legend>

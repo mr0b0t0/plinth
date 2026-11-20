@@ -911,7 +911,9 @@ unless asked, and you ask only when the person told you to ("share it with Bo an
   Without `notify` (the default), nobody is emailed.
 - The result's `invitations` says who was emailed (`emailed`) and who was not and why (`skipped`:
   `owner_unverified`, `taken_down`, `already_emailed`, `change_limit` (40 per call),
-  `owner_limit`, `recipient_limit`, which also covers 3 a day from one owner to one address). The
+  `owner_limit`, `recipient_limit`, which also covers 3 a day from one owner to one address,
+  `instance_limit` (the instance's daily total) or `invitations_off` (the instance sends no
+  invitation emails)). The
   access was granted either way; tell the person whom to
   send the link to themselves.
 - The email names the person who shared it, the title, the role and the link, and nothing else to

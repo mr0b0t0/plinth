@@ -230,6 +230,18 @@ export const STATS_RANGES = [7, 30, 90, 365];
 export const VIEW_LOG_DEFAULTS = { retentionDays: 365 };
 export const VIEW_LOG_BOUNDS = { retentionDays: [90, 3650] };
 
+/**
+ * Invitation emails an instance sends per UTC day (docs/spec.md "Invitation emails"), set by the
+ * operator because they share the email provider's quota with sign-in and viewing codes.
+ * `perDay` (INVITATION_EMAILS_PER_DAY): every owner together; 0 turns invitation emails off.
+ * `perOwnerPerDay` (INVITATION_EMAILS_PER_OWNER_PER_DAY): one owner's sharing changes.
+ */
+export const INVITATION_DEFAULTS = { perDay: 1000, perOwnerPerDay: 100 };
+export const INVITATION_BOUNDS = {
+  perDay: [0, 1_000_000],
+  perOwnerPerDay: [1, 10_000],
+};
+
 export const TTL = {
   /** Magic link and six-digit code. */
   loginCodeMs: 15 * 60 * 1000,
@@ -298,8 +310,6 @@ export const RATE_LIMITS = {
   uploadMissesPerIpPerHour: 60,
   /** Reads of an artifact's people list (/__plinth/api/v1/people) per reader per artifact. */
   peopleReadsPerViewerPerHour: 600,
-  /** Invitation emails one owner's sharing changes may send (docs/spec.md "Invitation emails"). */
-  invitationsPerOwnerPerDay: 100,
   /** Invitation emails one sharing change may send, so one request stays within Worker limits. */
   invitationsPerChange: 40,
   /** Invitation emails one address may receive, from every owner together. */

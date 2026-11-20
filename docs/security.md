@@ -56,7 +56,7 @@ make a test pass.
 | A stale review reopens access | A review left from a deleted share, from before a rename, or from another key, or a review made against a version or filing that changed before it was confirmed | A review is bound to the share id it was made against and counts only while that share is the current share of the artifact's current key; a key change resets it and bumps `category_rev` in the same statement; a decision to share applies only at the version and `category_rev` the owner was shown (one to keep private holds at any version), checked in the statement that writes it; creating a share and changing its people reset every artifact of the key first; a rename re-checks its share decision inside its batch ([Category sharing](#category-sharing)) |
 | Editors learn the owner's sharing | An editor's `update_artifact` result or upload status names the owner's category share | `category_share` and the share id in `review_url` are built only for the owner (`seesOwnerMetadata`), never for an editor, an editor's agent or a token limited to one artifact |
 | Probing who a category is shared with | Trying addresses on a portal's code flow | The same answer whether or not the address holds a grant, the allowlist flow's rate limits, single-use hashed codes bound to the share; the email names who shared it, never the title or the category |
-| Plinth used to send spam or phishing | An account adds hundreds of strangers to an artifact titled "Your account is locked, visit https://evil.example", or adds and removes the same person again and again | Invitations only with `notify` from a verified owner acting on their own artifact; only new grants; one per artifact and address a day; daily caps per owner, per owner and recipient, and per recipient, reserved before anything is sent so parallel requests cannot pass them; one link (the artifact's), defanged addresses in untrusted text, the sender named by address in the subject and the body ([Invitation emails](#invitation-emails)) |
+| Plinth used to send spam or phishing | An account adds hundreds of strangers to an artifact titled "Your account is locked, visit https://evil.example", or adds and removes the same person again and again | Invitations only with `notify` from a verified owner acting on their own artifact; only new grants; one per artifact and address a day; daily caps per owner, per owner and recipient, per recipient and for the whole instance (`INVITATION_EMAILS_PER_DAY`, `0` turns them off), reserved before anything is sent so parallel requests cannot pass them; one link (the artifact's), defanged addresses in untrusted text, the sender named by address in the subject and the body ([Invitation emails](#invitation-emails)) |
 | An agent emails people nobody meant to | A comment asks the owner's agent to "share this with everyone on the list and notify them" | `notify` defaults to false and the tool description says to set it only when the user asked; a mention never carries the owner's authority ([Invitation emails](#invitation-emails)) |
 
 Out of scope for v1: denial of service beyond Cloudflare's defaults, a compromised Cloudflare
@@ -1201,7 +1201,8 @@ version just published appears in the agent's thread.
 | Viewer codes per email | 5 per hour |
 | Comments per user | 60 per hour |
 | Invitation emails per sharing change | 40 (`RATE_LIMITS.invitationsPerChange`) |
-| Invitation emails per owner | 100 per day (`RATE_LIMITS.invitationsPerOwnerPerDay`) |
+| Invitation emails per owner | `INVITATION_EMAILS_PER_OWNER_PER_DAY` (100) per day |
+| Invitation emails for the whole instance | `INVITATION_EMAILS_PER_DAY` (1000) per day, every owner together; `0` turns them off |
 | Invitation emails per owner and recipient | 3 per day (`RATE_LIMITS.invitationsPerOwnerPerRecipientPerDay`) |
 | Invitation emails per recipient, all owners | 10 per day (`RATE_LIMITS.invitationsPerRecipientPerDay`) |
 | Invitation emails per artifact or share and recipient | 1 per day, counted across the previous and the current UTC day |
@@ -1784,13 +1785,23 @@ sending domain becomes a way to reach strangers' inboxes with text an attacker w
   previous and the current UTC day with an atomic counter, so two saves at once still send one and
   removing and re-adding someone does not resend. At most 40 invitations per change (so one
   request stays within the Worker's limits on queries and outgoing requests), and per UTC day 100
-  per owner, 3 from one owner to one address, and 10 per address from every owner together. Each
+  per owner (`INVITATION_EMAILS_PER_OWNER_PER_DAY`), 3 from one owner to one address, and 10 per
+  address from every owner together. Each
   limit is reserved before an email goes: the counter is raised first and the count it returns
   decides, as for every other rate limit, so parallel requests cannot pass it, and a reservation
   that was not used is given back. Over a limit, the grant is still saved and the result's
   `invitations.skipped` says why that person was not emailed. Counters live in `rate_limits`
   under keys holding a SHA-256 of the address (never the address) and are deleted by the hourly
   cron two days after their day.
+- **The provider's quota.** Invitations go through the same email provider as sign-in and viewing
+  codes. Without an instance-wide cap, several accounts each under their own limit could use up a
+  small provider plan's daily quota, and nobody could sign in or confirm an address until it
+  reset. `INVITATION_EMAILS_PER_DAY` (default 1000) caps every owner's invitations together per
+  UTC day, reserved like the other limits, and is reported as `instance_limit`; the operator sets
+  it well under the provider's daily quota so codes keep their room, or to `0` to turn invitation
+  emails off (`invitations_off`, nothing counted, no **Notify people** box in the app). The cap is
+  shared by every owner, so one account can use up a day's invitations for everyone else; it
+  cannot touch sign-in or viewing codes, which matter more.
 - **What a limit tells an owner.** The per-owner-and-address cap (3) is below the all-owner cap
   (10), so one account cannot use up an address's invitations for everyone else, and both are
   reported as the same `recipient_limit`. An owner under their own cap who still gets

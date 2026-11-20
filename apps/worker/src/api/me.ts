@@ -10,7 +10,7 @@ import {
 } from "@plinth/shared";
 import { and, eq, isNull, sql } from "drizzle-orm";
 import { Hono } from "hono";
-import { instanceLimits } from "../config.ts";
+import { instanceLimits, invitationEmailsActive } from "../config.ts";
 import { artifacts, users } from "../db/schema.ts";
 import { ApiError, unauthorized } from "../lib/errors.ts";
 import { boundArtifactOf } from "../policy.ts";
@@ -47,6 +47,7 @@ meApi.get("/config", (c) => {
     review_login: config.reviewLogin !== null,
     view_log_retention_days: config.viewLogRetentionDays,
     category_sharing: config.allowCategorySharing,
+    invitation_emails: invitationEmailsActive(config),
   };
   const res = c.json(body);
   ensureCsrfCookie(c, res.headers);

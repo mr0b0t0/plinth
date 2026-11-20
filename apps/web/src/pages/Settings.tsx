@@ -207,6 +207,7 @@ export default function Settings({ params }: { params: Record<string, string> })
             artifact={state.artifact}
             sharing={state.sharing}
             ownerEmail={me?.email ?? null}
+            invitations={config?.invitation_emails !== false}
             onChange={(sharing) => setState((s) => (s.status === "ready" ? { ...s, sharing } : s))}
           />
           <DeleteSection artifact={state.artifact} />

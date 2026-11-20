@@ -7,8 +7,11 @@ import { RATE_LIMITS } from "./constants.ts";
  * Why a person added with `notify` was not emailed. `owner_unverified`: the owner's address is not
  * verified; `taken_down`: the artifact is taken down, so the link would not open; `already_emailed`:
  * this person was emailed about the same artifact or share within the last day; `change_limit`,
- * `owner_limit` and `recipient_limit`: RATE_LIMITS.invitationsPerChange, invitationsPerOwnerPerDay,
- * or invitationsPerOwnerPerRecipientPerDay or invitationsPerRecipientPerDay (one reason for both).
+ * `owner_limit` and `recipient_limit`: RATE_LIMITS.invitationsPerChange,
+ * INVITATION_EMAILS_PER_OWNER_PER_DAY, or invitationsPerOwnerPerRecipientPerDay or
+ * invitationsPerRecipientPerDay (one reason for both); `instance_limit`: the instance's
+ * INVITATION_EMAILS_PER_DAY, every owner together; `invitations_off`: the operator turned
+ * invitation emails off (INVITATION_EMAILS_PER_DAY=0).
  */
 export const INVITATION_SKIP_REASONS = [
   "owner_unverified",
@@ -17,6 +20,8 @@ export const INVITATION_SKIP_REASONS = [
   "change_limit",
   "owner_limit",
   "recipient_limit",
+  "instance_limit",
+  "invitations_off",
 ] as const;
 export type InvitationSkipReason = (typeof INVITATION_SKIP_REASONS)[number];
 
@@ -46,6 +51,10 @@ export function invitationSkipText(reason: InvitationSkipReason): string {
       return "You reached today's limit of invitation emails. Send them the link yourself.";
     case "recipient_limit":
       return "That address cannot get more invitations today. Send them the link yourself.";
+    case "instance_limit":
+      return "This instance sent all the invitation emails it sends in a day. Send them the link yourself.";
+    case "invitations_off":
+      return "This instance does not send invitation emails. Send them the link yourself.";
   }
 }
 

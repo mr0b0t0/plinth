@@ -79,8 +79,9 @@ Add a line under **Unreleased** in the pull request that makes a change people w
 - **Email people when you share with them.** Adding someone to an artifact's People, or to a
   shared category, with **Notify people** ticked (the default) emails them that you shared it with
   them, with the title, their role and the link. Only people the change adds are emailed, at most once a
-  day per artifact, within daily limits per owner (100), per owner and recipient (3) and per
-  recipient (10), and only from a verified account. `PUT /api/v1/artifacts/:ref/sharing`, `set_visibility` and the category share
+  day per artifact, within daily limits per owner (100, `INVITATION_EMAILS_PER_OWNER_PER_DAY`),
+  per owner and recipient (3), per recipient (10) and for the whole instance (1000,
+  `INVITATION_EMAILS_PER_DAY`; `0` turns invitation emails off), and only from a verified account. `PUT /api/v1/artifacts/:ref/sharing`, `set_visibility` and the category share
   endpoints take `notify` (default `false`): agents email people only when asked, and the result's
   `invitations` says who was emailed and who was not, and why.
 

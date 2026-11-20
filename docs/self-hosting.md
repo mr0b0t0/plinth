@@ -156,6 +156,8 @@ Booleans accept `true`, `1`, `yes` or `on`.
 | `ALLOW_LIVE_VIEWS` | `true` | Live views: open artifact pages pick up a new version within seconds, and pages that keep shared data learn of changes without waiting for their 15 s poll, over one WebSocket the app page opens on `APP_HOST` (`/api/v1/view/<id>/watch`). It carries only version numbers and change signals. Needs the `ROOMS` Durable Object binding (the same as live rooms), but neither `ALLOW_ROOMS` nor origin isolation; data signals also need shared data. Empty keeps it on; any other value than `true`, `1`, `yes` or `on` turns it off, and pages poll as before. Each open view, version and shared-data write then costs a Durable Object request ([deploy-checklist.md](deploy-checklist.md#live-views)); on the Workers Free plan a busy instance may prefer it off |
 | `LIVE_VIEW_MAX_SOCKETS_PER_ARTIFACT` | `1000` | Open views of one artifact that get pushed signals, `10` to `10000`, counted apart from `ROOM_MAX_CONNECTIONS_PER_ARTIFACT`: half for the owner and the people it is shared with, half for everyone else. Views over it poll. It also sets how long open views spread their follow-up requests after a signal: 2 ms per socket, at most 10 s (2 s at the default) |
 | `ALLOW_CATEGORY_SHARING` | `true` | Owners may share a category with people, who see the artifacts the owner reviews into it on a portal page (`/p/<id>`); filing an artifact under a shared category never shares it ([spec](spec.md#category-sharing-and-personal-categories-decided-2026-11-19)). Only `false`, `0`, `no` or `off` turns it off: category grants then count for nothing, the share and portal endpoints answer `feature_disabled` or 404, and agents are no longer told about shared categories. Passes issued through a share before you turn it off end within 12 hours; `pnpm --filter @plinth/worker admin -- bump-epochs --category-shared --remote` ends them at once. The privacy notice names shared categories while it is on |
+| `INVITATION_EMAILS_PER_DAY` | `1000` | Invitation emails the whole instance sends per UTC day, every owner together, `0` to `1000000`. They share your email provider's daily quota with sign-in and viewing codes, so keep it well under that quota. `0` turns invitation emails off: the app shows no **Notify people** box, and a request with `notify: true` still applies but emails nobody ([spec](spec.md#invitation-emails-decided-2026-11-19)) |
+| `INVITATION_EMAILS_PER_OWNER_PER_DAY` | `100` | Invitation emails one owner's sharing changes send per UTC day, `1` to `10000` |
 | `STAGING_CONTENT_FALLBACK` | `false` | Serves content at `APP_HOST/__content/<id>/` instead of subdomains, for a staging deploy on `workers.dev` without a content domain. All artifacts then share the app's origin, so never use it with real users. Refused in production |
 | `DEV_OUTBOX` | `false` (`true` in the committed local config) | Keeps console emails in D1 and exposes `GET /api/v1/__dev/outbox` for tests. Only honoured when `ENVIRONMENT=development` |
 
@@ -360,11 +362,12 @@ to turn them on or off. See [ci.md](ci.md).
   `--config $HOME/.plinth/plinth/cloudflare/wrangler.jsonc`.
 - **Invitation emails.** When an owner adds people with **Notify people** ticked (or an agent passes
   `notify: true`), each new person gets one email through `EMAIL_PROVIDER`, from `EMAIL_FROM`:
-  who shared what, their role and the link. There is no setting of its own. One change sends at
-  most 40, each owner at most 100 a day (3 of them to any one address) and each address receives
-  at most 10 a day, so plan your
-  provider's daily quota
-  with sign-in emails and invitations together. With `EMAIL_PROVIDER=console` they go to the Worker
+  who shared what, their role and the link. One change sends at most 40, each owner at most
+  `INVITATION_EMAILS_PER_OWNER_PER_DAY` (100) a day (3 of them to any one address), each address
+  receives at most 10 a day, and the whole instance sends at most `INVITATION_EMAILS_PER_DAY`
+  (1000) a day. Sign-in and viewing codes use the same provider quota, so set
+  `INVITATION_EMAILS_PER_DAY` well under your provider's daily quota (on a plan of about 100
+  emails a day, for example `30`), or `0` to turn invitation emails off. With `EMAIL_PROVIDER=console` they go to the Worker
   log like sign-in codes. Their counters (hashed addresses) sit in `rate_limits` and the hourly
   cron removes them after two days; on an instance without a cron they are pruned with the other
   rate-limit rows.

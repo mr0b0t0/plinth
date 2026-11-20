@@ -478,6 +478,11 @@ export interface AppConfig {
    * absent reads as off.
    */
   category_sharing?: boolean;
+  /**
+   * Owners may have Plinth email the people they add (docs/spec.md "Invitation emails"): false when
+   * the operator set INVITATION_EMAILS_PER_DAY=0. The Worker always sends it; absent reads as on.
+   */
+  invitation_emails?: boolean;
 }
 
 export interface OperatorInfo {

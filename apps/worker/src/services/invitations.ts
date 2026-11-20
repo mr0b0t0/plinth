@@ -5,16 +5,25 @@
 //
 // Bounds, in this order, per person: only a new grant (an address that held none before the
 // change), never the owner's own address, policy.ts mayEmailInvitations (asked, the owner acting,
-// a verified owner, not taken down), one email per artifact or share and address within a day
-// (`already_emailed`), RATE_LIMITS.invitationsPerChange, invitationsPerOwnerPerDay,
-// invitationsPerRecipientPerDay and invitationsPerOwnerPerRecipientPerDay. The counters live in
-// `rate_limits` under keys that hold a hash of the address, never the address. One query reads
-// them; then each limit is reserved before anything is sent (raise the counter, check the count it
-// returns, give back what was not used), so parallel changes cannot pass a limit. The number of
-// statements does not grow with the number of people; the hourly cron removes the counters after
-// two days (pruneInvitationMarks). Titles and names are never logged.
-import { type InvitationReport, pageDisplayName, RATE_LIMITS, type Role } from "@plinth/shared";
-import { appUrl } from "../config.ts";
+// a verified owner, not taken down), the operator's switch (INVITATION_EMAILS_PER_DAY=0 is off),
+// one email per artifact or share and address within a day (`already_emailed`),
+// RATE_LIMITS.invitationsPerChange, INVITATION_EMAILS_PER_OWNER_PER_DAY, the instance's
+// INVITATION_EMAILS_PER_DAY (every owner together, so invitations cannot use up the provider quota
+// sign-in and viewing codes need), invitationsPerRecipientPerDay and
+// invitationsPerOwnerPerRecipientPerDay. The counters live in `rate_limits` under keys that hold a
+// hash of the address, never the address. One query reads them; then each limit is reserved before
+// anything is sent (raise the counter, check the count it returns, give back what was not used),
+// so parallel changes cannot pass a limit. The number of statements does not grow with the number
+// of people; the hourly cron removes the counters after two days (pruneInvitationMarks). Titles
+// and names are never logged.
+import {
+  type InvitationReport,
+  type InvitationSkipReason,
+  pageDisplayName,
+  RATE_LIMITS,
+  type Role,
+} from "@plinth/shared";
+import { appUrl, invitationEmailsActive } from "../config.ts";
 import type { UserRow } from "../db/schema.ts";
 import { createEmailAdapter } from "../email/index.ts";
 import { invitationEmail } from "../email/templates.ts";
@@ -89,18 +98,27 @@ export async function sendInvitations(
     ownerVerified: owner.emailVerifiedAt !== null,
     takenDown: target.kind === "artifact" && target.takenDown,
   });
-  if (!may.allow) {
-    // The routes are the owner's alone, so another caller never gets this far.
-    if (may.reason === "not_owner" || may.reason === "not_requested") throw forbidden();
-    for (const p of opts.invitees) report.skipped.push({ email: p.email, reason: may.reason });
+  // With invitation emails off on this instance, nobody is emailed whatever else holds.
+  const off = !invitationEmailsActive(ctx.config);
+  if (off || !may.allow) {
+    let reason: InvitationSkipReason = "invitations_off";
+    if (!may.allow) {
+      // The routes are the owner's alone, so another caller never gets this far.
+      if (may.reason === "not_owner" || may.reason === "not_requested") throw forbidden();
+      if (!off) reason = may.reason;
+    }
+    for (const p of opts.invitees) report.skipped.push({ email: p.email, reason });
     return report;
   }
 
+  const limits = ctx.config.invitations;
   const DB = ctx.env.DB;
   const nowS = Math.floor(Date.now() / 1000);
   const today = nowS - (nowS % DAY_S);
   const yesterday = today - DAY_S;
   const ownerKey = `${KEY_PREFIX}owner:${owner.id}`;
+  /** Every owner's invitations together, against INVITATION_EMAILS_PER_DAY. */
+  const instanceKey = `${KEY_PREFIX}instance`;
   const scope = `${KEY_PREFIX}sent:${target.kind === "artifact" ? "a" : "s"}:${target.id}:`;
   const people = await Promise.all(
     opts.invitees.map(async (p) => {
@@ -117,7 +135,7 @@ export async function sendInvitations(
 
   // One read for every counter this change may touch, today's and yesterday's. It picks who to
   // try and gives the usual reasons; the reservations below are what actually holds the limits.
-  const keys = [ownerKey, ...people.flatMap((p) => [p.mark, p.to, p.pair])];
+  const keys = [ownerKey, instanceKey, ...people.flatMap((p) => [p.mark, p.to, p.pair])];
   const { results } = await DB.prepare(
     `SELECT key, window_start, count FROM rate_limits
       WHERE key IN (SELECT value FROM json_each(?1)) AND window_start IN (?2, ?3)`,
@@ -131,6 +149,7 @@ export async function sendInvitations(
     at(p.pair) > RATE_LIMITS.invitationsPerOwnerPerRecipientPerDay;
 
   let ownerSent = count(ownerKey, today);
+  let instanceSent = count(instanceKey, today);
   const chosen: Person[] = [];
   for (const p of people) {
     // The mark of the previous day counts too, so "within a day" never resets at midnight UTC.
@@ -138,12 +157,15 @@ export async function sendInvitations(
       report.skipped.push({ email: p.email, reason: "already_emailed" });
     } else if (chosen.length >= RATE_LIMITS.invitationsPerChange) {
       report.skipped.push({ email: p.email, reason: "change_limit" });
-    } else if (ownerSent >= RATE_LIMITS.invitationsPerOwnerPerDay) {
+    } else if (ownerSent >= limits.perOwnerPerDay) {
       report.skipped.push({ email: p.email, reason: "owner_limit" });
+    } else if (instanceSent >= limits.perDay) {
+      report.skipped.push({ email: p.email, reason: "instance_limit" });
     } else if (recipientFull(p, (key) => count(key, today) + 1)) {
       report.skipped.push({ email: p.email, reason: "recipient_limit" });
     } else {
       ownerSent += 1;
+      instanceSent += 1;
       chosen.push(p);
     }
   }
@@ -153,7 +175,8 @@ export async function sendInvitations(
   // and the count it returns decides, so changes running at the same time can never send more
   // than a limit allows. What a person was not sent is given back at the end.
   const giveBack: string[] = [];
-  let ownerGiveBack = 0;
+  /** Reservations to give back on both day counters, the owner's and the instance's. */
+  let dayGiveBack = 0;
   const reserved = await DB.prepare(`${COUNT_EACH} RETURNING key, count`)
     .bind(JSON.stringify(chosen.flatMap((p) => [p.to, p.pair])), today)
     .all<{ key: string; count: number }>();
@@ -168,19 +191,30 @@ export async function sendInvitations(
 
   let marking: Person[] = [];
   if (recipientOk.length > 0) {
+    // The owner's and the instance's day counters are raised by the number left, in one batch;
+    // the smaller room left under either limit is how many go on.
     const n = recipientOk.length;
-    const row = await DB.prepare(
-      `INSERT INTO rate_limits (key, window_start, count) VALUES (?1, ?2, ?3)
-       ON CONFLICT (key, window_start) DO UPDATE SET count = count + ?3 RETURNING count`,
-    )
-      .bind(ownerKey, today, n)
-      .first<{ count: number }>();
-    const before = (row?.count ?? Number.POSITIVE_INFINITY) - n;
-    const room = Math.max(0, Math.min(n, RATE_LIMITS.invitationsPerOwnerPerDay - before));
+    const raise = (key: string) =>
+      DB.prepare(
+        `INSERT INTO rate_limits (key, window_start, count) VALUES (?1, ?2, ?3)
+         ON CONFLICT (key, window_start) DO UPDATE SET count = count + ?3 RETURNING count`,
+      ).bind(key, today, n);
+    const [ownerRow, instanceRow] = await DB.batch<{ count: number }>([
+      raise(ownerKey),
+      raise(instanceKey),
+    ]);
+    const roomUnder = (rows: D1Result<{ count: number }> | undefined, limit: number) => {
+      const before = (rows?.results[0]?.count ?? Number.POSITIVE_INFINITY) - n;
+      return Math.max(0, Math.min(n, limit - before));
+    };
+    const ownerRoom = roomUnder(ownerRow, limits.perOwnerPerDay);
+    const instanceRoom = roomUnder(instanceRow, limits.perDay);
+    const room = Math.min(ownerRoom, instanceRoom);
+    const reason = ownerRoom <= instanceRoom ? "owner_limit" : "instance_limit";
     marking = recipientOk.slice(0, room);
-    ownerGiveBack += n - room;
+    dayGiveBack += n - room;
     for (const p of recipientOk.slice(room)) {
-      report.skipped.push({ email: p.email, reason: "owner_limit" });
+      report.skipped.push({ email: p.email, reason });
       giveBack.push(p.to, p.pair);
     }
   }
@@ -198,7 +232,7 @@ export async function sendInvitations(
       if (first.has(p.mark)) continue;
       report.skipped.push({ email: p.email, reason: "already_emailed" });
       giveBack.push(p.to, p.pair);
-      ownerGiveBack += 1;
+      dayGiveBack += 1;
     }
   }
 
@@ -211,11 +245,12 @@ export async function sendInvitations(
       ).bind(JSON.stringify(giveBack), today),
     );
   }
-  if (ownerGiveBack > 0) {
+  if (dayGiveBack > 0) {
     returns.push(
       DB.prepare(
-        `UPDATE rate_limits SET count = MAX(count - ?3, 0) WHERE key = ?1 AND window_start = ?2`,
-      ).bind(ownerKey, today, ownerGiveBack),
+        `UPDATE rate_limits SET count = MAX(count - ?3, 0)
+          WHERE key IN (?1, ?4) AND window_start = ?2`,
+      ).bind(ownerKey, today, dayGiveBack, instanceKey),
     );
   }
   if (returns.length > 0) await DB.batch(returns);

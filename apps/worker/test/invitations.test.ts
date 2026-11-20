@@ -4,8 +4,9 @@
 // an unverified owner or for a taken-down artifact, within a per-owner and a per-recipient daily
 // limit. The message carries the one link and the role; titles and names are cleaned and escaped.
 import { env } from "cloudflare:workers";
-import { RATE_LIMITS } from "@plinth/shared";
+import { INVITATION_DEFAULTS, RATE_LIMITS } from "@plinth/shared";
 import { describe, expect, it } from "vitest";
+import { ConfigError, invitationEmailsActive, parseConfig } from "../src/config.ts";
 import { escapeHtml, invitationEmail } from "../src/email/templates.ts";
 import {
   invitationAddressHash,
@@ -187,7 +188,7 @@ describe("invitation emails: the sharing list", () => {
     const o = await owner();
     const a = await artifactOf(o);
     await env.DB.prepare("INSERT INTO rate_limits (key, window_start, count) VALUES (?1, ?2, ?3)")
-      .bind(`invite:owner:${o.user.id}`, windowStart(), RATE_LIMITS.invitationsPerOwnerPerDay)
+      .bind(`invite:owner:${o.user.id}`, windowStart(), INVITATION_DEFAULTS.perOwnerPerDay)
       .run();
     const bo = uniqueEmail("bo");
     const capped = await json(
@@ -306,7 +307,7 @@ const counterOf = async (key: string) =>
 describe("invitation emails: limits hold under parallel changes", () => {
   it("parallel changes never pass the owner's daily limit, and give back what they did not use", async () => {
     const o = await owner();
-    const start = RATE_LIMITS.invitationsPerOwnerPerDay - 40;
+    const start = INVITATION_DEFAULTS.perOwnerPerDay - 40;
     await env.DB.prepare("INSERT INTO rate_limits (key, window_start, count) VALUES (?1, ?2, ?3)")
       .bind(`invite:owner:${o.user.id}`, windowStart(), start)
       .run();
@@ -321,14 +322,12 @@ describe("invitation emails: limits hold under parallel changes", () => {
       arts.map(async (a, i) => json(await putSharing(o, a.id, lists[i] ?? [], { notify: true }))),
     );
     const emailed = bodies.flatMap((b) => b.invitations.emailed as string[]);
-    expect(emailed).toHaveLength(RATE_LIMITS.invitationsPerOwnerPerDay - start);
+    expect(emailed).toHaveLength(INVITATION_DEFAULTS.perOwnerPerDay - start);
     for (const b of bodies) {
       const reasons = new Set((b.invitations.skipped as { reason: string }[]).map((x) => x.reason));
       for (const r of reasons) expect(r).toBe("owner_limit");
     }
-    expect(await counterOf(`invite:owner:${o.user.id}`)).toBe(
-      RATE_LIMITS.invitationsPerOwnerPerDay,
-    );
+    expect(await counterOf(`invite:owner:${o.user.id}`)).toBe(INVITATION_DEFAULTS.perOwnerPerDay);
     // Someone who was not emailed gets their recipient counters back.
     const notSent = lists.flat().find((p) => !emailed.includes(p.email));
     expect(notSent).toBeDefined();
@@ -418,6 +417,188 @@ describe("invitation emails: limits hold under parallel changes", () => {
     // The losers give their reservations back: one email, one count.
     expect(await counterOf(`invite:to:${await addressHash(bo)}`)).toBe(1);
     expect(await counterOf(`invite:owner:${o.user.id}`)).toBe(1);
+  });
+});
+
+describe("invitation emails: the operator's limits", () => {
+  const sharingWith = (o: Owner, id: string, emails: string[], vars: Record<string, string>) =>
+    send(
+      "PUT",
+      `/api/v1/artifacts/${id}/sharing`,
+      o.session,
+      { grants: emails.map((email) => ({ email, role: "viewer" })), notify: true },
+      vars,
+    );
+
+  it("INVITATION_EMAILS_PER_DAY counts every owner together, and gives back what it did not use", async () => {
+    const used = await counterOf("invite:instance");
+    const vars = { INVITATION_EMAILS_PER_DAY: String(used + 2) };
+    const o1 = await owner();
+    const a1 = await artifactOf(o1);
+    const bo = uniqueEmail("bo");
+    const first = await json(await sharingWith(o1, a1.id, [bo], vars));
+    expect(first.invitations).toEqual({ emailed: [bo], skipped: [] });
+
+    // Another owner, well under their own limit, gets the one email left.
+    const o2 = await owner();
+    const a2 = await artifactOf(o2);
+    const cy = uniqueEmail("cy");
+    const di = uniqueEmail("di");
+    const res = await sharingWith(o2, a2.id, [cy, di], vars);
+    expect(res.status).toBe(200);
+    const second = await json(res);
+    expect(second.grants).toHaveLength(2);
+    expect(second.invitations).toEqual({
+      emailed: [cy],
+      skipped: [{ email: di, reason: "instance_limit" }],
+    });
+    expect(await outboxFor(di)).toHaveLength(0);
+    expect(await counterOf("invite:instance")).toBe(used + 2);
+    expect(await counterOf(`invite:owner:${o2.user.id}`)).toBe(1);
+    expect(await counterOf(`invite:to:${await addressHash(di)}`)).toBe(0);
+
+    const o3 = await owner();
+    const a3 = await artifactOf(o3);
+    const ed = uniqueEmail("ed");
+    const third = await json(await sharingWith(o3, a3.id, [ed], vars));
+    expect(third.invitations).toEqual({
+      emailed: [],
+      skipped: [{ email: ed, reason: "instance_limit" }],
+    });
+    expect(await outboxFor(ed)).toHaveLength(0);
+    expect(await counterOf("invite:instance")).toBe(used + 2);
+  });
+
+  it("parallel changes from many owners never pass INVITATION_EMAILS_PER_DAY", async () => {
+    const used = await counterOf("invite:instance");
+    const left = 3;
+    const vars = { INVITATION_EMAILS_PER_DAY: String(used + left) };
+    const owners = await Promise.all([1, 2, 3, 4].map(() => owner()));
+    const arts = await Promise.all(owners.map((o) => artifactOf(o)));
+    const bodies = await Promise.all(
+      owners.map(async (o, i) =>
+        json(
+          await sharingWith(
+            o,
+            arts[i]?.id ?? "",
+            [uniqueEmail(`inst${i}a-`), uniqueEmail(`inst${i}b-`)],
+            vars,
+          ),
+        ),
+      ),
+    );
+    const emailed = bodies.flatMap((b) => b.invitations.emailed as string[]);
+    expect(emailed).toHaveLength(left);
+    for (const b of bodies) {
+      for (const s of b.invitations.skipped as { reason: string }[]) {
+        expect(s.reason).toBe("instance_limit");
+      }
+    }
+    expect(await counterOf("invite:instance")).toBe(used + left);
+    const owned = await Promise.all(owners.map((o) => counterOf(`invite:owner:${o.user.id}`)));
+    expect(owned.reduce((x, y) => x + y, 0)).toBe(left);
+  });
+
+  it("INVITATION_EMAILS_PER_OWNER_PER_DAY sets one owner's daily limit", async () => {
+    const vars = { INVITATION_EMAILS_PER_OWNER_PER_DAY: "2" };
+    const o = await owner();
+    const a = await artifactOf(o);
+    const people = [uniqueEmail("p1-"), uniqueEmail("p2-"), uniqueEmail("p3-")];
+    const res = await json(await sharingWith(o, a.id, people, vars));
+    expect(res.invitations).toEqual({
+      emailed: people.slice(0, 2),
+      skipped: [{ email: people[2], reason: "owner_limit" }],
+    });
+    expect(await counterOf(`invite:owner:${o.user.id}`)).toBe(2);
+    expect(await outboxFor(people[2] ?? "")).toHaveLength(0);
+  });
+
+  it("INVITATION_EMAILS_PER_DAY=0 turns them off: nobody is emailed, nothing is counted", async () => {
+    const off = { INVITATION_EMAILS_PER_DAY: "0" };
+    expect((await json(await send("GET", "/api/v1/config", {}))).invitation_emails).toBe(true);
+    expect(
+      (await json(await send("GET", "/api/v1/config", {}, undefined, off))).invitation_emails,
+    ).toBe(false);
+
+    const used = await counterOf("invite:instance");
+    const o = await owner();
+    const a = await artifactOf(o);
+    const bo = uniqueEmail("bo");
+    const res = await sharingWith(o, a.id, [bo], off);
+    expect(res.status).toBe(200);
+    const body = await json(res);
+    expect(body.grants).toEqual([expect.objectContaining({ email: bo, role: "viewer" })]);
+    expect(body.invitations).toEqual({
+      emailed: [],
+      skipped: [{ email: bo, reason: "invitations_off" }],
+    });
+
+    // set_visibility and a category share say the same.
+    const client = await mcpClient(o.token, off);
+    try {
+      const cy = uniqueEmail("cy");
+      const vis = await tool(client, "set_visibility", {
+        id: a.id,
+        visibility: "allowlist",
+        emails: [bo, cy],
+        notify: true,
+      });
+      expect(vis.isError).toBe(false);
+      expect(vis.data.invitations).toEqual({
+        emailed: [],
+        skipped: [{ email: cy, reason: "invitations_off" }],
+      });
+      expect(await outboxFor(cy)).toHaveLength(0);
+    } finally {
+      await client.close();
+    }
+    await filed(o, "Delta", "Plan");
+    const dee = uniqueEmail("dee");
+    const share = await send(
+      "POST",
+      "/api/v1/category-shares",
+      o.session,
+      {
+        category: "delta",
+        people: [{ email: dee, role: "viewer" }],
+        review: reviewOf(await rowsOf(o, "delta"), () => true),
+        notify: true,
+      },
+      off,
+    );
+    expect(share.status).toBe(201);
+    expect((await json(share)).invitations).toEqual({
+      emailed: [],
+      skipped: [{ email: dee, reason: "invitations_off" }],
+    });
+
+    expect(await outboxFor(bo)).toHaveLength(0);
+    expect(await outboxFor(dee)).toHaveLength(0);
+    expect(await counterOf(`invite:owner:${o.user.id}`)).toBe(0);
+    expect(await counterOf("invite:instance")).toBe(used);
+  });
+
+  it("parses INVITATION_EMAILS_PER_DAY and INVITATION_EMAILS_PER_OWNER_PER_DAY within bounds", () => {
+    const vars = { ...(env as unknown as Record<string, unknown>) };
+    expect(parseConfig(vars).invitations).toEqual({
+      perDay: INVITATION_DEFAULTS.perDay,
+      perOwnerPerDay: INVITATION_DEFAULTS.perOwnerPerDay,
+    });
+    const set = parseConfig({
+      ...vars,
+      INVITATION_EMAILS_PER_DAY: "0",
+      INVITATION_EMAILS_PER_OWNER_PER_DAY: "25",
+    });
+    expect(set.invitations).toEqual({ perDay: 0, perOwnerPerDay: 25 });
+    expect(invitationEmailsActive(set)).toBe(false);
+    for (const bad of ["-1", "1.5", "lots", "1000001"]) {
+      expect(() => parseConfig({ ...vars, INVITATION_EMAILS_PER_DAY: bad })).toThrow(ConfigError);
+    }
+    for (const bad of ["0", "10001"]) {
+      expect(() => parseConfig({ ...vars, INVITATION_EMAILS_PER_OWNER_PER_DAY: bad })).toThrow(
+        ConfigError,
+      );
+    }
   });
 });
 

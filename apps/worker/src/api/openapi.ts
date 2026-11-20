@@ -723,6 +723,11 @@ function responseSchemas(): Record<string, Json> {
         type: "boolean",
         description: "Owners may share a category with people here (ALLOW_CATEGORY_SHARING)",
       },
+      invitation_emails: {
+        type: "boolean",
+        description:
+          "Owners may have Plinth email the people they add; false when INVITATION_EMAILS_PER_DAY is 0",
+      },
     }),
     LoginResult: obj({
       ok: { const: true },

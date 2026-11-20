@@ -4913,6 +4913,10 @@
           "category_sharing": {
             "type": "boolean",
             "description": "Owners may share a category with people here (ALLOW_CATEGORY_SHARING)"
+          },
+          "invitation_emails": {
+            "type": "boolean",
+            "description": "Owners may have Plinth email the people they add; false when INVITATION_EMAILS_PER_DAY is 0"
           }
         },
         "required": [
@@ -4933,7 +4937,8 @@
           "upload_ticket_ttl_s",
           "review_login",
           "view_log_retention_days",
-          "category_sharing"
+          "category_sharing",
+          "invitation_emails"
         ]
       },
       "LoginResult": {
@@ -6582,7 +6587,9 @@
                     "already_emailed",
                     "change_limit",
                     "owner_limit",
-                    "recipient_limit"
+                    "recipient_limit",
+                    "instance_limit",
+                    "invitations_off"
                   ]
                 }
               },

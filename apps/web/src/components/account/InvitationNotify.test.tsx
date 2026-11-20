@@ -172,3 +172,75 @@ describe("ShareCategoryDialog: Notify people", () => {
     expect(api.calls.find((c) => c.method === "POST")?.body).not.toHaveProperty("notify");
   });
 });
+
+describe("Notify people when the instance sends no invitation emails", () => {
+  it("PeopleSection has no box and adding a person sends no notify", async () => {
+    const api = stubApi({
+      handle: (c) => (c.method === "PUT" ? json(settings()) : undefined),
+    });
+    const onChange = vi.fn();
+    render(
+      <>
+        <PeopleSection
+          artifact={artifact}
+          sharing={settings()}
+          ownerEmail="ada@example.org"
+          onChange={onChange}
+          invitations={false}
+        />
+        <Toaster />
+      </>,
+    );
+    expect(screen.queryByRole("checkbox", { name: /Notify people/ })).toBeNull();
+    const user = userEvent.setup();
+    await user.type(screen.getByRole("textbox", { name: "Email address" }), "bo@example.org");
+    await user.click(screen.getByRole("button", { name: "Add person" }));
+    await waitFor(() => expect(onChange).toHaveBeenCalled());
+    expect(api.calls.find((c) => c.method === "PUT")?.body).toEqual({
+      grants: [{ email: "bo@example.org", role: "viewer" }],
+    });
+  });
+
+  it("ShareCategoryDialog has no box and a new share sends no notify", async () => {
+    const api = stubApi({
+      handle: (c) => {
+        if (c.path.startsWith("/category-shares/preview"))
+          return json({ category: "Acme", artifacts: [] });
+        if (c.method === "POST")
+          return json(
+            {
+              share: {
+                id: "share00000000000000a",
+                category: "Acme",
+                title: "Acme",
+                portal_url: "http://app.localhost:8787/p/share00000000000000a",
+                people: [],
+                counts: { shared: 0, pending: 0, private: 0 },
+              },
+              review: { shared: 0, private: 0, skipped: [] },
+            },
+            201,
+          );
+        return undefined;
+      },
+    });
+    const onDone = vi.fn();
+    render(
+      <ShareCategoryDialog
+        category="Acme"
+        shareId={null}
+        onClose={vi.fn()}
+        onDone={onDone}
+        invitations={false}
+      />,
+    );
+    const user = userEvent.setup();
+    await screen.findByText("This category has no artifacts yet.");
+    expect(screen.queryByRole("checkbox", { name: /Notify people/ })).toBeNull();
+    await user.type(screen.getByRole("textbox", { name: "Email address" }), "client@example.org");
+    await user.click(screen.getByRole("button", { name: "Add" }));
+    await user.click(screen.getByRole("button", { name: "Share" }));
+    await waitFor(() => expect(onDone).toHaveBeenCalled());
+    expect(api.calls.find((c) => c.method === "POST")?.body).not.toHaveProperty("notify");
+  });
+});

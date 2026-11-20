@@ -440,11 +440,17 @@ export function PeopleSection({
   sharing,
   ownerEmail,
   onChange,
+  invitations = true,
 }: {
   artifact: ArtifactSummary;
   sharing: SharingSettings;
   ownerEmail: string | null;
   onChange: (next: SharingSettings) => void;
+  /**
+   * The instance sends invitation emails (AppConfig.invitation_emails). Off, there is no Notify
+   * people box and adding a person never asks to notify.
+   */
+  invitations?: boolean;
 }) {
   const toast = useToast();
   const [email, setEmail] = useState("");
@@ -488,7 +494,7 @@ export function PeopleSection({
     }
     setError(null);
     const added = r.grants[r.grants.length - 1];
-    const res = await put(r.grants, notify);
+    const res = await put(r.grants, invitations && notify);
     if (res) {
       setEmail("");
       const emailed = added && res.invitations?.emailed.includes(added.email);
@@ -604,13 +610,15 @@ export function PeopleSection({
         <Button type="submit" icon={UserPlusIcon} loading={busy} className="pl-acct-add__button">
           Add person
         </Button>
-        <Checkbox
-          label="Notify people"
-          hint="Email the person you add the link to this artifact, in your name."
-          checked={notify}
-          className="pl-acct-add__notify"
-          onChange={(e) => setNotify(e.target.checked)}
-        />
+        {invitations && (
+          <Checkbox
+            label="Notify people"
+            hint="Email the person you add the link to this artifact, in your name."
+            checked={notify}
+            className="pl-acct-add__notify"
+            onChange={(e) => setNotify(e.target.checked)}
+          />
+        )}
       </form>
       <p className="type-small text-muted">
         Changes apply at once. Anyone who has it open now will need to open the link again.
