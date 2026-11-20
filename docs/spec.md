@@ -1743,7 +1743,8 @@ its review has exactly two choices (below).
   line or the column's definition under the same columns, and dropped with "The sheet changed
   meanwhile" when it is gone; a write is made from the row as it is when the lease is granted.
   When a freeze or a takeover closes an open cell, the notice quotes what was typed there and not
-  yet applied, so it can be typed again.
+  yet applied, so it can be typed again: one line, at most 40 characters of it, all of it on hover.
+  A double-click outside an open cell never selects words in the grid.
   Rows other people hold are tinted, with no badge (the holder's name on the row number on hover
   and for screen readers), and their typing arrives as it is typed. Opening a
   held row does nothing on screen and tells a screen reader who holds it; a notice with Take over

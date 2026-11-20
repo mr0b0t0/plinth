@@ -134,3 +134,17 @@
     display: none;
   }
 }
+
+/* At phone width the review is a bottom sheet flush with the screen's edge, so nothing of the page
+   shows under it. */
+@media (max-width: 30rem) {
+  .pl-dialog-root:has(.pl-sheetreview) {
+    padding-bottom: 0;
+  }
+  .pl-dialog:has(.pl-sheetreview) {
+    padding-bottom: calc(var(--space-4) + env(safe-area-inset-bottom, 0px));
+    border-bottom: 0;
+    border-bottom-right-radius: 0;
+    border-bottom-left-radius: 0;
+  }
+}

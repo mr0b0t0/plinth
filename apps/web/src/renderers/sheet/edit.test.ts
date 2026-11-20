@@ -11,6 +11,7 @@ import {
 } from "@plinth/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { boot } from "./boot.ts";
+import { notKept } from "./edit.ts";
 import { cellFromInput, inputText, numberLocale, parseLocaleNumber, parseTsv } from "./input.ts";
 
 const APP = "https://plinth.example.com";
@@ -129,6 +130,18 @@ afterEach(() => {
   FakeSocket.all = [];
   document.body.innerHTML = "";
   vi.useRealTimers();
+});
+
+describe("dropped text in a notice", () => {
+  it("is quoted whole when short, and cut to 40 characters with an ellipsis when long", () => {
+    expect(notKept("12", "B3")).toBe('Not kept in B3: "12"');
+    expect(notKept("  two\n lines ")).toBe('Not kept: "two lines"');
+    // At a space when one is near the cut, else mid-word.
+    expect(notKept("Conference travel, Lisbon and Porto, incl. the two train passes", "A4")).toBe(
+      'Not kept in A4: "Conference travel, Lisbon and Porto…"',
+    );
+    expect(notKept("x".repeat(100))).toBe(`Not kept: "${"x".repeat(39)}…"`);
+  });
 });
 
 describe("typed values", () => {
@@ -473,6 +486,14 @@ describe("room editing", () => {
     await tick();
     expect(text("A2")).toBe("Apricots");
     const before = ws.sent.length;
+    // The double-click's second press selects no words in the held cell.
+    const press = (el: Element, detail: number) => {
+      const e = new MouseEvent("mousedown", { bubbles: true, cancelable: true, detail });
+      el.dispatchEvent(e);
+      return e.defaultPrevented;
+    };
+    expect(press(cell("A2"), 1)).toBe(false);
+    expect(press(cell("A2"), 2)).toBe(true);
     dbl(cell("A2"));
     expect(ws.sent.length).toBe(before);
     // The tint already shows it: no notice on screen, a screen reader is told.
@@ -507,9 +528,28 @@ describe("room editing", () => {
     ws.frame({ t: "lease_lost", lease: "l1", reason: "closed" });
     await tick();
     expect(field()).toBeNull();
-    expect(notice()).toContain(
-      "Editing is paused: the sheet changed. Your cell was closed. Your text in B3 was not kept: 6",
+    expect(notice()).toContain('Paused. Not kept in B3: "6"');
+  });
+
+  it("the notice quotes a long unsent text on one line, cut to 40 characters", async () => {
+    const { ws } = start();
+    dbl(cell("A3"));
+    ws.frame({ t: "leased", lease: "l1", start: 2, end: 3, holder: "s1", by: YOU.email });
+    const long = "Pears from the market on Saturday, the big green ones, two boxes";
+    type(field() as HTMLInputElement, long);
+    // Inside the open field a double-click still selects a word.
+    const twice = new MouseEvent("mousedown", { bubbles: true, cancelable: true, detail: 2 });
+    field()?.dispatchEvent(twice);
+    expect(twice.defaultPrevented).toBe(false);
+    ws.frame({ t: "conflict", version: 4 });
+    ws.frame({ t: "lease_lost", lease: "l1", reason: "closed" });
+    await tick();
+    const shown = document.querySelector(".plinth-sheet__notice > span") as HTMLElement;
+    expect(shown.textContent).toBe(
+      'Paused. Not kept in A3: "Pears from the market on Saturday, the…"',
     );
+    // The whole text stays on the notice for a pointer, so it can be typed again.
+    expect(shown.title).toBe(long);
   });
 
   it("typing the room already applied is not quoted when the cell is closed", async () => {

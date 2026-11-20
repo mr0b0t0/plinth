@@ -350,10 +350,12 @@ export class SheetEditor {
     const t = grid.table;
     if (on) {
       t.addEventListener("keydown", this.onKey);
+      t.addEventListener("mousedown", this.onPress);
       t.addEventListener("dblclick", this.onDouble);
       t.addEventListener("paste", this.onPaste);
     } else {
       t.removeEventListener("keydown", this.onKey);
+      t.removeEventListener("mousedown", this.onPress);
       t.removeEventListener("dblclick", this.onDouble);
       t.removeEventListener("paste", this.onPaste);
     }
@@ -449,6 +451,14 @@ export class SheetEditor {
       e.preventDefault();
       this.openCell(at.row, at.col, e.key);
     }
+  };
+
+  /**
+   * A double-click outside an open field selects no words: it opens the cell or, on a row someone
+   * else holds or a cell that cannot be edited, does nothing, and the row's tint is the one cue.
+   */
+  private readonly onPress = (e: MouseEvent) => {
+    if (e.detail > 1 && !this.open?.td.contains(e.target as Node)) e.preventDefault();
   };
 
   private readonly onDouble = (e: MouseEvent) => {
@@ -806,16 +816,16 @@ export class SheetEditor {
       return;
     }
     // What was typed since the room's last ack (the last moments before a freeze) is quoted, so
-    // the person can type it again.
+    // the person can type it again. One line: the edit bar already says the sheet changed.
     const unsent = this.unsent(o);
     this.closeField();
-    const said =
-      reason === "takeover"
-        ? "Someone else took over this row."
-        : "Editing is paused: the sheet changed. Your cell was closed.";
-    this.showNotice(
-      unsent === null ? said : `${said} Your text in ${a1(o.row, o.col)} was not kept: ${unsent}`,
-    );
+    const takeover = reason === "takeover";
+    if (unsent === null) {
+      this.showNotice(takeover ? "Someone else took over this row." : "Paused: the sheet changed.");
+    } else {
+      const said = `${takeover ? "Taken over." : "Paused."} ${notKept(unsent, a1(o.row, o.col))}`;
+      this.showNotice(said, undefined, unsent);
+    }
     this.hooks.status();
   }
 
@@ -851,9 +861,7 @@ export class SheetEditor {
   private dropKept(w: Extract<Want, { kind: "cell" }>): void {
     const text = w.keep ?? "";
     this.closeField();
-    this.showNotice(
-      `${a1(w.row, w.col)} changed while you were away. Your text was not kept: ${text}`,
-    );
+    this.showNotice(`${a1(w.row, w.col)} changed meanwhile. ${notKept(text)}`, undefined, text);
     this.hooks.status();
   }
 
@@ -1472,7 +1480,12 @@ export class SheetEditor {
     if (this.editing) this.showNotice(text);
   }
 
-  private showNotice(text: string, action?: { label: string; run: () => void }): void {
+  private showNotice(
+    text: string,
+    action?: { label: string; run: () => void },
+    /** The whole text when the notice quotes only its start. */
+    full?: string,
+  ): void {
     let el = this.notice;
     if (!el) {
       el = this.doc.createElement("div");
@@ -1483,6 +1496,7 @@ export class SheetEditor {
     }
     const msg = this.doc.createElement("span");
     msg.textContent = text;
+    if (full !== undefined) msg.title = full;
     const parts: Node[] = [msg];
     if (action) {
       const btn = this.doc.createElement("button");
@@ -1531,4 +1545,22 @@ export class SheetEditor {
   get field(): Field | null {
     return this.open?.field ?? null;
   }
+}
+
+/** Characters of dropped text a notice quotes; the whole text is the notice's title. */
+const NOT_KEPT_CHARS = 40;
+
+/**
+ * The text a closed cell dropped, quoted on one line and cut to NOT_KEPT_CHARS (at a space when
+ * one is near the end).
+ */
+export function notKept(text: string, at?: string): string {
+  const chars = [...text.replace(/\s+/g, " ").trim()];
+  let shown = chars.join("");
+  if (chars.length > NOT_KEPT_CHARS) {
+    const cut = chars.slice(0, NOT_KEPT_CHARS - 1).join("");
+    const space = cut.lastIndexOf(" ");
+    shown = `${(space >= NOT_KEPT_CHARS / 2 ? cut.slice(0, space) : cut).replace(/[\s,;:]+$/, "")}…`;
+  }
+  return `Not kept${at ? ` in ${at}` : ""}: "${shown}"`;
 }
