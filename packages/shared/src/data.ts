@@ -535,7 +535,10 @@ export interface PeopleResult {
   untrusted: string;
 }
 
-/** The most people one list returns: the owner and every grant (LIMITS.maxAllowlistEmails). */
+/**
+ * The most people one list returns: the owner and every direct grant (LIMITS.maxAllowlistEmails).
+ * With a shared category's people the list can be longer; `total` counts them all.
+ */
 export const MAX_PEOPLE_LISTED = LIMITS.maxAllowlistEmails + 1;
 
 /** A people search: every whitespace-separated term must match a name or an email. */

@@ -662,6 +662,12 @@ export interface ArtifactCategoryFacts {
   reviewShareId: string | null;
 }
 
+/**
+ * The artifact facts the category rules read: its owner and its category review. Every
+ * ArtifactFacts is one; the people list (services/people.ts) reads just these from its own query.
+ */
+export type CategoryArtifactFacts = Pick<ArtifactFacts, "ownerId" | "categoryShare">;
+
 /** A person's grant on the share of an owner's category key, as the loader found it. */
 export interface CategoryGrantFacts {
   shareId: string;
@@ -686,7 +692,10 @@ export function strongerRole(a: Role | null, b: Role | null): Role | null {
  * share is the one on the artifact's current key and the feature is on. Pending, private, moved,
  * stale or unbackfilled artifacts give the category's people nothing. Never more than commenter.
  */
-export function categoryRoleOf(artifact: ArtifactFacts, access: AccessFacts): CategoryRole | null {
+export function categoryRoleOf(
+  artifact: CategoryArtifactFacts,
+  access: AccessFacts,
+): CategoryRole | null {
   const c = artifact.categoryShare;
   const g = access.categoryGrant;
   if (access.categorySharing !== true || !c || !g) return null;
@@ -699,7 +708,7 @@ export function categoryRoleOf(artifact: ArtifactFacts, access: AccessFacts): Ca
 }
 
 /** The grant role that counts: the stronger of the direct grant and categoryRoleOf. */
-export function grantedRole(artifact: ArtifactFacts, access: AccessFacts): Role | null {
+export function grantedRole(artifact: CategoryArtifactFacts, access: AccessFacts): Role | null {
   return strongerRole(access.grantRole, categoryRoleOf(artifact, access));
 }
 

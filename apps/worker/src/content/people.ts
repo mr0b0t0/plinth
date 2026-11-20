@@ -86,7 +86,13 @@ export async function listPeopleRoute(c: DataRouteCtx): Promise<PagePeopleList> 
   const limit = limitParam(c.url.searchParams.get("limit"));
   const reader = await allowed(c);
   const matched = matchPeople(
-    await peopleWithAccess(c.env.DB, c.config.tokenSigningKey, c.target.id, reader.email),
+    await peopleWithAccess(
+      c.env.DB,
+      c.config.tokenSigningKey,
+      c.target.id,
+      reader.email,
+      c.config.allowCategorySharing,
+    ),
     q,
   );
   return {
@@ -101,7 +107,13 @@ export async function getPersonRoute(c: DataRouteCtx): Promise<PagePerson> {
   const reader = await allowed(c);
   const person = PERSON_ID_RE.test(id)
     ? personById(
-        await peopleWithAccess(c.env.DB, c.config.tokenSigningKey, c.target.id, reader.email),
+        await peopleWithAccess(
+          c.env.DB,
+          c.config.tokenSigningKey,
+          c.target.id,
+          reader.email,
+          c.config.allowCategorySharing,
+        ),
         id,
       )
     : null;

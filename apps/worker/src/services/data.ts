@@ -206,7 +206,13 @@ export async function summary(
     .bind(target.id)
     .all<{ name: string; docs: number; bytes: number; updated_at: string }>();
   const people = peopleListOffered(target.caps, sharedDataActive(config), target.writers ?? null)
-    ? await peopleWithAccess(d1, config.tokenSigningKey, target.id, readerEmail)
+    ? await peopleWithAccess(
+        d1,
+        config.tokenSigningKey,
+        target.id,
+        readerEmail,
+        config.allowCategorySharing,
+      )
     : null;
   return {
     capabilities: capabilityList(target.caps),

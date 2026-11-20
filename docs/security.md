@@ -1558,15 +1558,26 @@ order (`apps/worker/src/content/people.ts`):
 14. **Rate limit.** 600 reads per hour per reader per artifact, then 429 with `Retry-After`. REST
     (`GET /api/v1/artifacts/:ref/people`) counts in the same bucket.
 
-The list is the owner and every grant (at most 201 people), with `u_` id, email, name and role. It
-is who has access, never who opened the page or when: no visit is recorded. `q` searches that list
+The list is the owner and every grant, with `u_` id, email, name and role. With
+`ALLOW_CATEGORY_SHARING` on, the grants include the people on the current share of the artifact's
+category, each counted only when `policy.ts categoryRoleOf` lets their grant count: the owner
+reviewed this artifact as `shared` into that very share, the share is the artifact owner's own,
+and the role is at most commenter ([Category sharing](#category-sharing)). The people list reads
+those facts in its one statement and asks `grantedRole`, the function every other access check
+uses, so it never lists someone the artifact is not shown to, and a pending, private or moved
+artifact lists none of the share's people. Each person appears once, at the stronger of a direct
+and a category grant. With the switch off the statement never reads a share. At most 401 people
+(the owner, 200 direct grants and one share's 200 people); `limit` keeps its 1 to 201 bounds and
+`total` counts them all. Every table in the statement is reached by key. It is who has access,
+never who opened the page or when: no visit is recorded. `q` searches that list
 only, so nothing anywhere takes an arbitrary email or name and says whether it has an account. The
 routes are GET only, take no body and never log names, emails or queries.
 
 **Names on an access list.** The owner writes every grant's address, adding one sends nothing to
 its holder, and a name beside an address says that it has an account. So an access list (this
 list, its agent and REST copies, and the owner's sharing settings) names a grant holder only after
-they have taken part in the artifact: written a comment, a shared-data entry or a version. Those
+they have taken part in the artifact (a direct or a category grant alike): written a comment, a
+shared-data entry or a version. Those
 already show their name to everyone who can read the list, so the list tells no reader anything
 new. The owner's own name (which the gate shows every viewer) and the reader's own row are always
 named. A name kept back reads as `null`, exactly like an address without an account, and `q` only
@@ -1752,7 +1763,9 @@ report under a shared category. Filing and sharing are separate acts, and these 
    no-op (409 `sharing_changed`). Kept reviews are those bound to the share that is on the new key
    after the batch's own move.
 7. A pending or private artifact answers a category grantee as a stranger's private artifact does:
-   404, absent from lists, portals and mention roles, and no code from the allowlist code flow.
+   404, absent from lists, portals, mention roles and its people list, and no code from the
+   allowlist code flow. The people list counts a category grant with the same `grantedRole` call
+   ([The people list](#the-people-list), `people-category.test.ts`).
 8. The owner's agents learn about it (`category_share.state: "pending"`, `review_url`), so the hold
    is never invisible; editors' agents learn nothing about the owner's sharing.
 9. A token limited to one artifact never sees or manages category sharing

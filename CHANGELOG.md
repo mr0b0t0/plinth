@@ -83,7 +83,8 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   taken-down artifact never waits for review. On by default; `ALLOW_CATEGORY_SHARING` turns it
   off. A token limited to one artifact never sees or manages category sharing: it holds no role
   through a category grant, and the share, portal and personal-category routes answer it 403
-  `token_bound`. Migration `0013_category_sharing.sql`. Plugin 0.28.0.
+  `token_bound`. On a page that lists who has access, the owner and editors see the category's
+  people too, each once at their highest role. Migration `0013_category_sharing.sql`. Plugin 0.28.0.
 
 ## 0.6.0 (2026-11-20)
 

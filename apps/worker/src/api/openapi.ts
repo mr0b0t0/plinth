@@ -1397,7 +1397,7 @@ function dataOperations(): Operation[] {
         {
           name: "limit",
           schema: int({ minimum: 1, maximum: MAX_PEOPLE_LISTED }),
-          description: `At most this many people (default and maximum ${MAX_PEOPLE_LISTED}: the owner and every grant)`,
+          description: `At most this many people (default and maximum ${MAX_PEOPLE_LISTED}: the owner and every direct grant; with the people of a shared category there can be more, and total counts them all)`,
         },
       ],
       ok: [200, "PeopleResult"],

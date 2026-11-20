@@ -172,6 +172,7 @@ export async function listArtifactPeople(
     ctx.config.tokenSigningKey,
     artifact.id,
     reader,
+    ctx.config.allowCategorySharing,
   );
   const matched = matchPeople(people, input.q);
   return {

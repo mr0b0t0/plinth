@@ -1133,7 +1133,16 @@ never a directory.
   `room.ready.you` carry `name` beside `email`. Link viewers, previews and captures see none.
 - **People list.** `people` in `<meta name="plinth-capabilities">` (`content="data viewer
   people"`) lets the owner and editors list everyone the artifact is shared with: the owner, then
-  every grant by email, each with its `u_` id, email, name and role. It counts only with `data` and
+  every grant by email, each with its `u_` id, email, name and role. With `ALLOW_CATEGORY_SHARING`
+  on, "every grant" includes the people the artifact reaches through its shared category
+  ([below](#category-sharing-and-personal-categories-decided-2026-11-19)): a grant on the current
+  share of the owner's category key counts exactly when `policy.ts categoryRoleOf` lets it (the
+  owner reviewed this artifact as `shared` into that very share, the share is the owner's own, and
+  never above commenter), so a pending or private artifact, or one filed elsewhere, lists none of
+  them. Each person appears once, at the stronger of a direct grant and a category grant. With the
+  switch off the list is the direct grants alone. The owner, at most 200 direct grants and one
+  share's 200 people make the longest list 401 entries; `limit` keeps its bounds, so `total` says
+  when there are more than one page shows. It counts only with `data` and
   `viewer` and declares nothing on its own; it is stored in `versions.capabilities` only when
   declared, so every other declaration is stored as before. The list is offered only while every
   version the content host serves (1 to the current one) was written by a person or their
@@ -1156,7 +1165,8 @@ never a directory.
   that one list: nothing takes an arbitrary email or name and says whether it has an account.
 - **Names on the access list.** The owner types every grant's address and its holder is not told,
   so an access list (the people list for the page, agents and REST, and the owner's sharing
-  settings) shows a grant holder's name only once that person has taken part in the artifact:
+  settings) shows a grant holder's name, a category grant's holder included, only once that person
+  has taken part in the artifact:
   written a comment, a shared-data entry or a version of it, each of which already shows their name
   to the people who can read the list. The owner's name and the reader's own row are always shown.
   Until then the entry has `name: null`, exactly like an address with no account, and `q` does not
@@ -1647,7 +1657,9 @@ delete beats it. `list_artifacts` lists the artifacts shared with the caller thr
 (never taken-down ones; owner and direct-grant rows list as before), with the role it gives. A
 token limited to one artifact never holds a role through a category grant: it opens its artifact
 with its person's direct grant only (`roleOf`), so once that grant goes it answers as viewing does,
-even while the person still sees the artifact through the category in the app.
+even while the person still sees the artifact through the category in the app. On a page that
+offers its people list, the owner and editors see category grantees on it like direct grantees,
+under the same name rule ([The people list](#who-is-viewing-names-and-the-people-list-decided-2026-11-19)).
 
 **Access ends at once.** Every change that can take access away (people removed, a share deleted, an
 artifact kept private, a key change away from a shared review, a rename or clear) gives the

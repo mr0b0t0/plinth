@@ -1983,7 +1983,7 @@
             "required": false,
             "name": "limit",
             "schema": { "type": "integer", "minimum": 1, "maximum": 201 },
-            "description": "At most this many people (default and maximum 201: the owner and every grant)"
+            "description": "At most this many people (default and maximum 201: the owner and every direct grant; with the people of a shared category there can be more, and total counts them all)"
           }
         ],
         "responses": {
