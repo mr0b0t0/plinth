@@ -11,7 +11,8 @@ Add a line under **Unreleased** in the pull request that makes a change people w
 ## Unreleased
 
 - **Edit docs as formatted text.** On a doc's page, a block opens as formatted text, with a
-  toolbar (bold, italic, code, link, strikethrough) and a block menu: **Turn into** another kind,
+  format bar at selected text (bold, italic, code, strikethrough, link) and a block menu at its
+  corner: **Turn into** another kind,
   **Insert below** (any kind, a divider, a table or an image), **Move up**, **Move down** and
   **Delete**. No
   Markdown is shown anywhere; Plinth writes the changes back as Markdown and keeps every block
@@ -23,11 +24,14 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   accented letters included. A change the doc cannot take (at its size limit, or while not
   connected) says so and keeps the block open with what was typed. A block op cut off by a dropped
   connection says so and leaves editing free, and typing waiting for a lease is asked for again once
-  the draft is back. An image's alt text is a
-  field, and its **Ask an agent** (or **Insert below**, **Image**) opens the Ask dialog. Blocks the
+  the draft is back. An image's alt text opens from its menu (**Alt text**), and its **Ask an
+  agent** (or **Insert below**, **Image**) opens the Ask dialog, which says what kind of block it
+  is about ("About: image"). Blocks the
   page cannot show faithfully as formatted text are shown as they are, with **Ask an agent** and
   the block menu (Move and Delete). The **+** between blocks is gone: **Insert below** or Enter
-  adds a block. Opening a block moves nothing on the page: its toolbar floats over it.
+  adds a block. Opening a block moves nothing on the page and hides next to nothing: the format bar
+  shows only for selected text, the block's menu sits on its edge, and heading anchors are hidden
+  while editing.
 
 - **Ask an agent.** People change an HTML page or a design by asking the owner's agent: **Ask an
   agent** (in the bar for owners and editors, in the ⋯ menu for commenters and at phone width, and

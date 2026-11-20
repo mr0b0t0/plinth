@@ -14,7 +14,7 @@
 // editing message to the app carries the frame key the app put in the address
 // (common/frameKey.ts), which is taken out of it before anything renders. Blocks are edited as
 // formatted text (edit.ts); "Ask an agent" on a block posts `ask` with a structural anchor
-// ("block-3", "block-3:image"), and the app opens its Ask dialog.
+// ("block-3", "block-3:image") and the kind of block ("list"), and the app opens its Ask dialog.
 //
 // Live views: { type: "version", n, nonce } shows version n in place (follow.ts) and answers
 // { type: "shown", n, nonce, ok }. It is refused (ok: false, and the app loads a fresh frame) while
@@ -28,7 +28,7 @@ import {
   TYPED_PAYLOAD_VERSION,
   type TypedPayload,
 } from "@plinth/shared";
-import type { LiveFrameStatus } from "../../components/viewer/rendererProtocol.ts";
+import type { AskWhat, LiveFrameStatus } from "../../components/viewer/rendererProtocol.ts";
 import {
   appPoster,
   type EditAppMessage,
@@ -193,8 +193,10 @@ function live(
       return client && client.baseVersion > 0 ? client.baseVersion : null;
     },
     // A place the person wants an agent to change (an image, a block shown read-only): the app
-    // opens its Ask dialog. The anchor is a structural name, never the block's text.
-    ask: (anchor: { key: string; text: string }) => post({ type: "ask", anchor }),
+    // opens its Ask dialog. The anchor is a structural name, never the block's text; `what` is the
+    // kind of block, for the dialog's "About" line only.
+    ask: (anchor: { key: string; text: string }, what: AskWhat) =>
+      post({ type: "ask", anchor, what }),
   };
   const events = {
     granted: (l: Parameters<DocEditor["granted"]>[0]) => editor?.granted(l),

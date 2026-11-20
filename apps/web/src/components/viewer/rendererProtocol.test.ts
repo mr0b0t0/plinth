@@ -433,6 +433,27 @@ describe("renderer protocol: the frame key and the review", () => {
     expect(ask({ key: "x", text: "a" }, "z".repeat(43))).toBeNull();
   });
 
+  it("reads the kind of block an ask is about only from its fixed list", () => {
+    const { frame, src } = framed();
+    const ask = (what: unknown) =>
+      read(src, frame, {
+        ...base,
+        type: "ask",
+        anchor: { key: "block-2", text: "" },
+        what,
+        key: KEY,
+      });
+    expect(ask("list")).toEqual({
+      type: "ask",
+      anchor: { key: "block-2", text: "" },
+      what: "list",
+    });
+    expect(ask("code block")).toMatchObject({ what: "code block" });
+    for (const bad of ["List", "secret text", "", 3, null]) {
+      expect(ask(bad), JSON.stringify(bad)).toBeNull();
+    }
+  });
+
   it("drops an ask without the frame key while the app is editing", () => {
     const { frame, src } = framed();
     const anchor = { key: "block-1", text: "Intro" };

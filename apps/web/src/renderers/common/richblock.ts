@@ -562,7 +562,7 @@ function readBlock(shape: RichBlock, content: HTMLElement, probes: Probe[]): Ric
 // ---------- the editor ----------
 
 export interface RichOptions {
-  /** Extra controls at the end of the toolbar (the block menu). */
+  /** The controls at the block's corner (an image's Ask an agent, the block menu). */
   extra?: HTMLElement[];
   /** The block's name for assistive technology ("Block 3, paragraph"). */
   label: string;
@@ -595,11 +595,46 @@ export function kindName(b: RichBlock): string {
 /** Whether a block's text is edited in place (not a divider or an image). */
 const hasText = (b: RichBlock) => b.t !== "divider" && b.t !== "image";
 
+/** Whether a block's text takes marks (the format bar and its shortcuts): not a code block. */
+const takesMarks = (b: RichBlock) => hasText(b) && b.t !== "code" && b.t !== "indented";
+
+/** How far a floating bar keeps from the frame's edges and from what it points at. */
+const EDGE = 8;
+/** How much of the page a revealed block keeps around it (its tint reaches 8px past it). */
+const MARGIN = 16;
+
+/**
+ * Scrolls the frame by the least that puts all of `rects` on screen; when they cannot all fit,
+ * the first one (the bar or field just opened) wins.
+ */
+export function reveal(win: Window | null, all: DOMRect[]): void {
+  // A hidden element has no box to show.
+  const rects = all.filter((r) => r.width > 0 || r.height > 0);
+  const first = rects[0];
+  if (!win || !first) return;
+  const h = win.innerHeight;
+  let top = Math.min(...rects.map((r) => r.top));
+  let bottom = Math.max(...rects.map((r) => r.bottom));
+  if (bottom - top > h - 2 * MARGIN) {
+    top = first.top;
+    bottom = first.bottom;
+  }
+  let dy = 0;
+  if (bottom > h - MARGIN) dy = bottom - (h - MARGIN);
+  if (top - dy < MARGIN) dy = top - MARGIN;
+  if (Math.abs(dy) >= 1) win.scrollBy(0, Math.round(dy));
+}
+
 export class RichBlockEditor {
   readonly el: HTMLElement;
   private readonly doc: Document;
+  /** The format bar: shown only while text is selected, next to the selection. */
   private readonly toolbar: HTMLElement;
+  /** The block's corner: its menu (and an image's Ask an agent), the rest of the time. */
+  private readonly corner: HTMLElement;
   private readonly linkForm: HTMLElement;
+  /** An image's alt text field, opened from its menu in the corner's place. */
+  private readonly altForm: HTMLElement;
   private readonly linkInput: HTMLInputElement;
   /** "Remove link", shown only when the text being linked already has a link. */
   private readonly removeButton: HTMLButtonElement;
@@ -623,6 +658,12 @@ export class RichBlockEditor {
     this.toolbar = el(doc, "div", "plinth-rich__toolbar");
     this.toolbar.setAttribute("role", "toolbar");
     this.toolbar.setAttribute("aria-label", "Formatting");
+    this.toolbar.hidden = true;
+    this.corner = el(doc, "div", "plinth-rich__corner");
+    this.corner.setAttribute("role", "group");
+    this.corner.setAttribute("aria-label", opts.label);
+    this.altForm = el(doc, "div", "plinth-rich__alt");
+    this.altForm.hidden = true;
     for (const f of FORMATS) {
       const b = this.button(f.text, `${f.label} (${shortcut(f.key, f.shift)})`, () =>
         this.toggle(f.mark),
@@ -660,8 +701,16 @@ export class RichBlockEditor {
       false,
     );
     this.linkForm.append(this.linkInput, apply, this.removeButton);
-    for (const x of opts.extra ?? []) this.toolbar.append(x);
-    this.el.append(this.toolbar, this.linkForm);
+    for (const x of opts.extra ?? []) this.corner.append(x);
+    this.corner.hidden = this.corner.childElementCount === 0;
+    this.corner.addEventListener("keydown", (e) => {
+      // Esc on the corner's own buttons gives the block back (the menu handles its own keys).
+      if (e.key === "Escape" && !e.defaultPrevented && (e.target as Element).closest("button")) {
+        e.preventDefault();
+        this.host.escape();
+      }
+    });
+    this.el.append(this.corner, this.altForm, this.toolbar, this.linkForm);
     this.draw();
     this.el.addEventListener("keydown", this.onKey);
     this.el.addEventListener("input", this.onInput);
@@ -758,33 +807,111 @@ export class RichBlockEditor {
     } else {
       content.tabIndex = -1;
     }
-    for (const [, btn] of this.buttons)
-      btn.hidden = !hasText(b) || b.t === "code" || b.t === "indented";
     this.linkForm.hidden = true;
-    this.toolbar.querySelector(":scope > .plinth-rich__alt")?.remove();
+    this.toolbar.hidden = true;
+    this.closeAlt(false);
     if (b.t === "image") {
-      const label = el(this.doc, "label", "plinth-rich__alt");
-      const span = el(this.doc, "span");
-      span.textContent = "Alt text";
       const input = el(this.doc, "input");
       input.type = "text";
       input.value = b.alt;
       input.maxLength = 500;
+      input.placeholder = "Alt text";
+      input.setAttribute("aria-label", "Alt text");
       input.addEventListener("input", () => this.host.changed());
-      label.append(span, input);
+      this.altForm.replaceChildren(input);
       this.altInput = input;
-      // The field sits in the toolbar, which floats over the page, so the image keeps its place.
-      this.toolbar.prepend(label);
-    } else this.altInput = null;
+    } else {
+      this.altForm.replaceChildren();
+      this.altInput = null;
+    }
     if (old) old.replaceWith(content);
     else this.el.append(content);
     this.content = content;
   }
 
+  /**
+   * Opens an image's alt text field in the corner's place (its menu's "Alt text"), with the image
+   * and the field on screen.
+   */
+  editAlt(): void {
+    const input = this.altInput;
+    if (!input) return;
+    this.altForm.hidden = false;
+    this.corner.hidden = true;
+    input.focus({ preventScroll: true });
+    reveal(this.doc.defaultView, [
+      this.altForm.getBoundingClientRect(),
+      this.el.getBoundingClientRect(),
+    ]);
+  }
+
+  /** Puts the corner back in the alt text field's place, with focus on the block menu. */
+  private closeAlt(refocus: boolean): void {
+    if (this.altForm.hidden) return;
+    this.altForm.hidden = true;
+    this.corner.hidden = this.corner.childElementCount === 0;
+    if (refocus) (this.corner.lastElementChild as HTMLElement | null)?.focus();
+  }
+
+  /**
+   * Places a floating bar (the format bar or the link field) next to `at`, a rectangle in the
+   * frame: above it, or below it when there is no room above, or on touch screens, where the
+   * browser's own selection menu takes the place above. Kept inside the frame's width.
+   */
+  private float(box: HTMLElement, at: DOMRect): void {
+    const win = this.doc.defaultView;
+    const host = this.el.getBoundingClientRect();
+    const w = box.offsetWidth;
+    const h = box.offsetHeight;
+    const vw = win?.innerWidth ?? host.right;
+    const vh = win?.innerHeight ?? host.bottom;
+    const touch = win?.matchMedia?.("(pointer: coarse)").matches === true;
+    const fitsAbove = at.top - h - EDGE >= EDGE;
+    const fitsBelow = at.bottom + EDGE + h <= vh - EDGE;
+    const above = touch ? !fitsBelow && fitsAbove : fitsAbove || !fitsBelow;
+    const top = above ? at.top - h - EDGE : at.bottom + EDGE;
+    const left = Math.max(EDGE, Math.min(vw - w - EDGE, (at.left + at.right) / 2 - w / 2));
+    box.style.top = `${Math.round(top - host.top)}px`;
+    box.style.left = `${Math.round(left - host.left)}px`;
+  }
+
+  /** The selection's rectangle, or the block's when it has none. */
+  private selectionRect(): DOMRect {
+    const sel = this.doc.getSelection?.();
+    const range = sel && sel.rangeCount > 0 ? sel.getRangeAt(0) : null;
+    const r = range?.getBoundingClientRect?.();
+    if (r && (r.width > 0 || r.height > 0)) return r;
+    return this.content.getBoundingClientRect();
+  }
+
+  /** Shows the format bar at a selection of text that takes marks, and hides it otherwise. */
+  private updateBar(s: { from: RichPoint; to: RichPoint } | null): void {
+    const show =
+      s !== null &&
+      takesMarks(this.shape) &&
+      this.linkForm.hidden &&
+      (s.from.leaf !== s.to.leaf || s.from.offset !== s.to.offset);
+    if (!show) {
+      // Focus on the bar itself keeps it (its buttons keep the selection in the text).
+      if (!this.toolbar.contains(this.doc.activeElement)) this.toolbar.hidden = true;
+      return;
+    }
+    const was = this.toolbar.hidden;
+    this.toolbar.hidden = false;
+    this.float(this.toolbar, this.selectionRect());
+    if (was) reveal(this.doc.defaultView, [this.toolbar.getBoundingClientRect()]);
+  }
+
+  /** Whether the format bar is showing (a selection of text that takes marks). */
+  get formatting(): boolean {
+    return !this.toolbar.hidden;
+  }
+
   /** Puts the caret at the start or the end of the block. */
   focus(where: "start" | "end" | RichPoint): void {
     if (this.shape.t === "image") {
-      this.altInput?.focus();
+      // Nothing in an image is typed into here: focus goes to its corner (Ask an agent).
+      (this.corner.querySelector("button") as HTMLElement | null)?.focus({ preventScroll: true });
       return;
     }
     if (typeof where === "object") {
@@ -922,6 +1049,7 @@ export class RichBlockEditor {
 
   private readonly onSelection = () => {
     const s = this.selection();
+    this.updateBar(s);
     if (!s) return;
     const refs = leafRefs(this.read([]));
     const c = refs[s.from.leaf]?.get() ?? [];
@@ -939,24 +1067,26 @@ export class RichBlockEditor {
   private readonly onKey = (e: KeyboardEvent) => {
     if (e.target === this.linkInput) return;
     const mod = (e.metaKey || e.ctrlKey) && !e.altKey;
-    if (mod && hasText(this.shape)) {
+    if (mod && takesMarks(this.shape)) {
       const k = e.key.toLowerCase();
       const f = FORMATS.find((x) => x.key === k && !!x.shift === e.shiftKey);
-      if (f && this.shape.t !== "code" && this.shape.t !== "indented") {
+      if (f) {
         e.preventDefault();
         this.toggle(f.mark);
         return;
       }
-      if (k === "k" && !e.shiftKey && this.shape.t !== "code" && this.shape.t !== "indented") {
+      if (k === "k" && !e.shiftKey) {
         e.preventDefault();
         this.openLink();
         return;
       }
     }
     if (e.target === this.altInput) {
-      if (e.key === "Escape") {
+      if (e.key === "Escape" || e.key === "Enter") {
+        // The field closes into the corner again; Esc there gives the block back.
         e.preventDefault();
-        this.host.escape();
+        e.stopPropagation();
+        this.closeAlt(true);
       } else if (e.key === "Tab" && !e.altKey && !e.ctrlKey && !e.metaKey) {
         e.preventDefault();
         this.host.tab(e.shiftKey);
@@ -1069,8 +1199,17 @@ export class RichBlockEditor {
     const href = linkAt(c, range.from.offset)?.href ?? "";
     this.linkInput.value = href;
     this.removeButton.hidden = href === "";
+    // The field takes the format bar's place, at the text it links, with both on screen.
+    const at = this.selectionRect();
+    this.toolbar.hidden = true;
     this.linkForm.hidden = false;
-    this.linkInput.focus();
+    this.float(this.linkForm, at);
+    this.linkInput.focus({ preventScroll: true });
+    reveal(this.doc.defaultView, [
+      this.linkForm.getBoundingClientRect(),
+      at,
+      this.el.getBoundingClientRect(),
+    ]);
   }
 
   private closeLink(refocus: boolean): void {

@@ -33,7 +33,7 @@ import { type AskAnchor, pageAnchorOf, useAskAgent } from "./askAgent.tsx";
 import { DictationConsent } from "./DictationConsent.tsx";
 import { ExportDialog } from "./ExportDialog.tsx";
 import { contentOriginOf, shareLink } from "./gate.ts";
-import { newFrameKey, withFrameKey } from "./rendererProtocol.ts";
+import { type AskWhat, newFrameKey, withFrameKey } from "./rendererProtocol.ts";
 import { ShareDialog } from "./ShareDialog.tsx";
 import { StageFrame } from "./StageFrame.tsx";
 import {
@@ -200,7 +200,7 @@ export function ViewerStage({
   // One key per frame load: a new enter_url is a new load, a refreshed gate for the same frame is
   // not.
   // Ask an agent from the frame (an in-frame `ask`): answered once the hook below exists.
-  const askFromFrame = useRef<(anchor: AskAnchor | null) => void>(() => undefined);
+  const askFromFrame = useRef<(anchor: AskAnchor | null, what?: AskWhat) => void>(() => undefined);
   const editable = gate.live !== undefined;
   const frameKey = useMemo(
     () => (editable && gate.enter_url ? newFrameKey() : null),
@@ -216,7 +216,7 @@ export function ViewerStage({
     frameKey,
     onReload: onReload ?? (() => undefined),
     onLeave: () => barRef.current?.focus(),
-    onAsk: (anchor) => askFromFrame.current(pageAnchorOf(anchor)),
+    onAsk: (anchor, what) => askFromFrame.current(pageAnchorOf(anchor), what),
   });
   const editing = live.editing;
   // Presenting a deck: the slide, full screen, presenter view and its audience window.

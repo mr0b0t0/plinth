@@ -25,7 +25,7 @@ import {
 
 let root: HTMLElement;
 let save: ReturnType<typeof vi.fn<() => void>>;
-let ask: ReturnType<typeof vi.fn<(a: { key: string; text: string }) => void>>;
+let ask: ReturnType<typeof vi.fn<(a: { key: string; text: string }, what: string) => void>>;
 
 function setup(text: string, extra: Record<string, unknown> = {}) {
   const events = {
@@ -122,7 +122,7 @@ beforeEach(() => {
   root.id = "__plinth-doc";
   document.body.append(root);
   save = vi.fn<() => void>();
-  ask = vi.fn<(a: { key: string; text: string }) => void>();
+  ask = vi.fn<(a: { key: string; text: string }, what: string) => void>();
 });
 
 afterEach(() => {
@@ -551,14 +551,17 @@ describe("DocEditor: the block menu", () => {
     expect(again.classList.contains("plinth-doc__menu--pointer")).toBe(false);
   });
 
-  it("floats the toolbar above the open block, or below it when there is no room above", () => {
+  it("puts the block's corner on its top edge, or its bottom edge when there is no room above", () => {
     const top = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect");
     try {
       setup("one\n\ntwo");
       top.mockReturnValue(new DOMRect(0, 200, 600, 40));
       click(root.querySelectorAll("p")[1] as Element);
       const open = document.querySelector(".plinth-doc__open") as HTMLElement;
-      expect(open.querySelector(":scope > .plinth-rich__toolbar")).not.toBeNull();
+      // The rest of the time an open block shows only its corner: the block menu.
+      const corner = open.querySelector(":scope > .plinth-rich__corner") as HTMLElement;
+      expect(corner.children).toHaveLength(1);
+      expect(corner.firstElementChild?.getAttribute("aria-label")).toBe("Block actions");
       expect(open.classList.contains("plinth-rich--below")).toBe(false);
       top.mockReturnValue(new DOMRect(0, 4, 600, 40));
       click(root.querySelector("p") as Element);
@@ -568,6 +571,62 @@ describe("DocEditor: the block menu", () => {
     } finally {
       top.mockRestore();
     }
+  });
+
+  it("scrolls a block opened below the frame into view, with its corner", async () => {
+    const rect = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect");
+    const scroll = vi.spyOn(window, "scrollBy").mockImplementation(() => undefined);
+    try {
+      setup("one\n\ntwo");
+      rect.mockReturnValue(new DOMRect(0, window.innerHeight + 100, 600, 40));
+      click(root.querySelectorAll("p")[1] as Element);
+      await Promise.resolve();
+      expect(scroll).toHaveBeenCalledWith(0, 156);
+    } finally {
+      rect.mockRestore();
+      scroll.mockRestore();
+    }
+  });
+
+  it("shows the format bar only while text is selected, and never in a code block", () => {
+    const { editor } = setup("one two\n\n```\ncode\n```");
+    click(root.querySelector("p") as Element);
+    const r = rich(editor);
+    const bar = r.el.querySelector(":scope > .plinth-rich__toolbar") as HTMLElement;
+    expect(bar.getAttribute("aria-label")).toBe("Formatting");
+    const change = () => document.dispatchEvent(new Event("selectionchange"));
+    select(r.editable, 2);
+    change();
+    expect(bar.hidden).toBe(true);
+    select(r.editable, 0, 3);
+    change();
+    expect(bar.hidden).toBe(false);
+    expect(r.formatting).toBe(true);
+    expect([...bar.querySelectorAll("button")].map((b) => b.textContent)).toEqual([
+      "B",
+      "I",
+      "</>",
+      "S",
+      "Link",
+    ]);
+    // The link field takes its place while it is open.
+    key(r.editable, "k", { metaKey: true });
+    const link = r.el.querySelector(":scope > .plinth-rich__link") as HTMLElement;
+    expect(link.hidden).toBe(false);
+    expect(bar.hidden).toBe(true);
+    key(link.querySelector("input") as HTMLElement, "Escape");
+    expect(link.hidden).toBe(true);
+    select(r.editable, 3);
+    change();
+    expect(bar.hidden).toBe(true);
+    key(r.editable, "Escape");
+    click(root.querySelector("pre") as Element);
+    const code = rich(editor);
+    select(code.editable.querySelector("code") as Node, 0, 2);
+    change();
+    expect((code.el.querySelector(":scope > .plinth-rich__toolbar") as HTMLElement).hidden).toBe(
+      true,
+    );
   });
 
   it("turns a block into another kind, keeping its text and marks", () => {
@@ -978,7 +1037,7 @@ describe("DocEditor: read-only blocks and images", () => {
     expect(bar.children).toHaveLength(2);
     click(askButton);
     // A structural key and no label (no block number, none of its text).
-    expect(ask).toHaveBeenCalledWith({ key: "block-2", text: "" });
+    expect(ask).toHaveBeenCalledWith({ key: "block-2", text: "" }, "list");
     expect(root.querySelector(".plinth-doc__selected")).toBeNull();
     // Move and Delete keep its bytes.
     click(root.querySelector("ul") as Element);
@@ -1009,15 +1068,32 @@ describe("DocEditor: read-only blocks and images", () => {
     click(root.querySelector("p") as Element);
     const r = rich(editor);
     expect(r.kind).toBe("image");
+    // Its corner has what an image's bar has: Ask an agent and the block menu. Focus is on Ask.
+    const corner = r.el.querySelector(":scope > .plinth-rich__corner") as HTMLElement;
+    expect([...corner.querySelectorAll("button")].map((b) => b.textContent)).toEqual([
+      "Ask an agent",
+      "⋯",
+    ]);
+    expect(document.activeElement?.textContent).toBe("Ask an agent");
+    // The alt text is a field the menu's "Alt text" opens in the corner's place, floating over
+    // the page like the corner, so the image keeps the place it had unopened.
     const alt = r.el.querySelector<HTMLInputElement>(".plinth-rich__alt input") as HTMLInputElement;
     expect(alt.value).toBe("Chart");
-    // The field is in the floating toolbar, so the image keeps the place it had unopened.
-    expect(alt.closest(".plinth-rich__toolbar")).not.toBeNull();
+    expect((alt.parentElement as HTMLElement).hidden).toBe(true);
+    menu("Alt text");
+    expect((alt.parentElement as HTMLElement).hidden).toBe(false);
+    expect(corner.hidden).toBe(true);
+    expect(document.activeElement).toBe(alt);
     expect(r.editable.matches("p.plinth-rich__image")).toBe(true);
     alt.value = "Sales [chart]";
     alt.dispatchEvent(new Event("input", { bubbles: true }));
     vi.advanceTimersByTime(EDIT_DEBOUNCE_MS);
     expect(local.text).toBe('![Sales \\[chart\\]](chart.png "Sales")\n\nText');
+    // Esc (or Enter) closes the field into the corner again, with the block still open.
+    key(alt, "Escape");
+    expect((alt.parentElement as HTMLElement).hidden).toBe(true);
+    expect(corner.hidden).toBe(false);
+    expect(editor.openEditor).toBe(r);
     // An image block's Insert below has no Image of its own: its Ask an agent is the way in.
     const button = [...document.querySelectorAll<HTMLElement>(".plinth-doc__menu-button")].at(-1);
     click(button as Element);
@@ -1027,7 +1103,7 @@ describe("DocEditor: read-only blocks and images", () => {
     click(
       [...r.el.querySelectorAll("button")].find((b) => b.textContent === "Ask an agent") as Element,
     );
-    expect(ask).toHaveBeenCalledWith({ key: "block-1:image", text: "" });
+    expect(ask).toHaveBeenCalledWith({ key: "block-1:image", text: "" }, "image");
     expect(editor.openEditor).toBeNull();
   });
 
@@ -1035,7 +1111,7 @@ describe("DocEditor: read-only blocks and images", () => {
     setup("one\n\ntwo");
     click(root.querySelectorAll("p")[1] as Element);
     menu("Image", "Insert below");
-    expect(ask).toHaveBeenCalledWith({ key: "block-2:image", text: "" });
+    expect(ask).toHaveBeenCalledWith({ key: "block-2:image", text: "" }, "image");
   });
 
   it("the menu's top level is five items; Turn into and Insert below open in its place", () => {

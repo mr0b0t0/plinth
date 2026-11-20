@@ -1,8 +1,9 @@
 // On-page editing of a doc (#36), as formatted text (doc-blocks): nobody sees Markdown. The page
 // shows the doc block by block (blocks.ts); in edit mode a click (or Enter) on a block asks for a
 // lease on its lines, and once it is granted the block is drawn again as formatted text that can be
-// edited in place (../common/richblock.ts), with a toolbar (bold, italic, code, link,
-// strikethrough) and the block menu (Turn into, Insert below, Move up and down, Delete). Typing
+// edited in place (../common/richblock.ts), with a format bar at selected text (bold, italic,
+// code, strikethrough, link) and the block menu at its corner (Turn into, Insert below, Move up
+// and down, Delete). Typing
 // sends the whole block, re-written as Markdown by @plinth/shared's serializer, at most every
 // 250 ms; Esc or moving focus elsewhere in the page releases it. Blocks other people hold show a
 // bronze rule with their email and their text as it arrives.
@@ -12,9 +13,9 @@
 // a list item holding a code fence) is shown read-only, with "Ask an agent" and the block menu
 // (its Move and Delete move or remove its lines byte for byte). Untouched blocks keep their bytes:
 // only the leased block's lines are ever replaced, and the reference definitions that follow a
-// block stay as they are. Images are agent-only: an image block's alt text is a field and its
-// "Ask an agent" asks the app to open its Ask dialog about the image; "Insert below", "Image" asks
-// for a new one.
+// block stay as they are. Images are agent-only: an image block's menu has "Alt text", which opens
+// a field at its corner, and its "Ask an agent" asks the app to open its Ask dialog about the
+// image; "Insert below", "Image" asks for a new one.
 //
 // Two backends: the room's doc socket (../common/live.ts, "room" mode), or a local copy of the
 // text that only this frame edits ("solo" mode, where the app saves it through its own session).
@@ -47,6 +48,7 @@ import {
   splitLines,
   verifyBlock,
 } from "@plinth/shared";
+import type { AskWhat } from "../../components/viewer/rendererProtocol.ts";
 import { pinFiles } from "../common/files.ts";
 import {
   type ClientLease,
@@ -55,7 +57,13 @@ import {
   type LiveBackend,
   locateBlock,
 } from "../common/live.ts";
-import { FORMAT_LOST, kindName, RichBlockEditor, type RichHost } from "../common/richblock.ts";
+import {
+  FORMAT_LOST,
+  kindName,
+  RichBlockEditor,
+  type RichHost,
+  reveal,
+} from "../common/richblock.ts";
 import { type Block, BlockCache, parseBlocks, rangeOf, reconcile } from "./blocks.ts";
 import {
   docEnv,
@@ -187,8 +195,54 @@ export interface EditorHooks {
   leave?(): void;
   /** The version whose files the draft is drawn with (its base), or null for the page's own. */
   fileVersion?(): number | null;
-  /** Ask an agent about a place in the doc (the app's Ask dialog). */
-  ask?(anchor: AskAnchor): void;
+  /**
+   * Ask an agent about a place in the doc (the app's Ask dialog), with what kind of block it is
+   * for the dialog's "About" line.
+   */
+  ask?(anchor: AskAnchor, what: AskWhat): void;
+}
+
+/** What a drawn block is, in the Ask dialog's words ("About: list"); its text stays here. */
+function whatOf(nodes: Node[]): AskWhat {
+  const el = nodes.find((n): n is Element => n.nodeType === 1);
+  if (!el) return "block";
+  if (el.classList.contains("plinth-doc__table")) return "table";
+  switch (el.tagName) {
+    case "H1":
+    case "H2":
+    case "H3":
+    case "H4":
+    case "H5":
+    case "H6":
+      return "heading";
+    case "UL":
+    case "OL":
+      return "list";
+    case "BLOCKQUOTE":
+      return "quote";
+    case "PRE":
+      return "code block";
+    case "HR":
+      return "divider";
+    case "P":
+      return el.querySelector("img") && !el.textContent?.trim() ? "image" : "paragraph";
+    default:
+      return "block";
+  }
+}
+
+/** The same for a block's model (an open block). */
+function whatOfModel(b: RichBlock): AskWhat {
+  switch (b.t) {
+    case "bullet":
+    case "ordered":
+      return "list";
+    case "code":
+    case "indented":
+      return "code block";
+    default:
+      return b.t;
+  }
 }
 
 /** What a granted op lease writes, from the lines it covers; null when it no longer applies. */
@@ -614,18 +668,24 @@ export class DocEditor {
   }
 
   /**
-   * The open block's toolbar, or a selected block's bar, floats over the page above the block, so
-   * opening it moves nothing. When the block opens too near the top of the frame for the bar to
-   * be seen there, the bar floats below it instead. Placed once per block, not while typing.
+   * The open or selected block's corner (its menu, and Ask an agent where it has one) floats on
+   * the block's top edge, so opening it moves nothing and covers next to nothing. When the block
+   * opens too near the top of the frame for the corner to be seen there, it sits on the bottom
+   * edge instead. Once the caret is placed, the block and its corner are scrolled into view.
+   * Placed once per block, not while typing.
    */
   private placeBar(): void {
     const host = this.open?.rich.el ?? this.selected?.panel ?? null;
     if (host === this.barHost) return;
     this.barHost = host;
     if (!host?.isConnected) return;
-    const bar = host.querySelector<HTMLElement>(":scope > .plinth-rich__toolbar");
+    const bar = host.querySelector<HTMLElement>(":scope > .plinth-rich__corner");
     const room = host.getBoundingClientRect().top;
-    host.classList.toggle("plinth-rich--below", room < (bar?.offsetHeight ?? 0) + 16);
+    host.classList.toggle("plinth-rich--below", room < (bar?.offsetHeight ?? 0) / 2 + 16);
+    queueMicrotask(() => {
+      if (this.barHost !== host || !host.isConnected || !bar) return;
+      reveal(this.win, [bar.getBoundingClientRect(), host.getBoundingClientRect()]);
+    });
   }
 
   private makePlaceholder(): HTMLElement {
@@ -979,9 +1039,9 @@ export class DocEditor {
     const index = this.blockAt(block.start)?.index ?? 0;
     const panel = this.doc.createElement("div");
     panel.className = "plinth-doc__selected";
-    // The open block's toolbar look, with what can be done with this one.
+    // An open block's corner, with what can be done with this one.
     const bar = this.doc.createElement("div");
-    bar.className = "plinth-rich__toolbar plinth-doc__blockbar";
+    bar.className = "plinth-rich__corner plinth-doc__blockbar";
     bar.setAttribute("role", "group");
     bar.setAttribute("aria-label", `Block ${index + 1}`);
     const ask = this.doc.createElement("button");
@@ -1000,7 +1060,7 @@ export class DocEditor {
     bar.append(ask, menu.button);
     this.selected = { start: block.start, panel, bar, menu };
     this.render();
-    ask.focus();
+    ask.focus({ preventScroll: true });
   }
 
   private deselect(refocus = false): void {
@@ -1021,7 +1081,12 @@ export class DocEditor {
 
   // ---------- the block menu ----------
 
-  private menuGroups(place: Place, model: RichBlock | null, table: TableForm): MenuGroup[] {
+  private menuGroups(
+    place: Place,
+    model: RichBlock | null,
+    table: TableForm,
+    alt?: () => void,
+  ): MenuGroup[] {
     // A new block with nothing in the doc yet acts as the block above it would: what it inserts
     // below lands where it is, and it cannot move. Delete gives it up.
     const start = "start" in place ? place.start : place.above;
@@ -1045,6 +1110,8 @@ export class DocEditor {
       });
     }
     const make: MenuItem[] = [];
+    // An image's alt text opens as a field at its corner, as a link's address does at its text.
+    if (model?.t === "image" && alt) make.push({ label: "Alt text", run: alt });
     if (model && own !== null) {
       make.push({
         label: "Turn into",
@@ -1085,12 +1152,21 @@ export class DocEditor {
   /** Ask an agent about block `start` (its image, with `image`): the app opens its Ask dialog. */
   private ask(start: number, image: boolean): void {
     const index = this.blockAt(start)?.index ?? 0;
+    const sel = this.selected;
+    const open = this.open?.rich.model;
+    const what: AskWhat = image
+      ? "image"
+      : sel?.start === start
+        ? whatOf(Array.from(sel.panel.childNodes).filter((n) => n !== sel.bar))
+        : open
+          ? whatOfModel(open)
+          : "block";
     this.close(true);
     this.deselect();
     const n = index + 1;
-    // A structural key and no label: the dialog opens from the place itself, a block's number
-    // would mean nothing to the person asking, and its text stays in the frame.
-    this.hooks.ask?.({ key: image ? `block-${n}:image` : `block-${n}`, text: "" });
+    // A structural key and no label: a block's number would mean nothing to the person asking,
+    // and its text stays in the frame. The dialog says only what kind of block it is about.
+    this.hooks.ask?.({ key: image ? `block-${n}:image` : `block-${n}`, text: "" }, what);
   }
 
   private turn(kind: BlockKind): void {
@@ -1523,12 +1599,17 @@ export class DocEditor {
     const label = `${n === null ? "New block" : `Block ${n}`}, ${kindName(model)}`;
     const holder: { open: Open | null } = { open: null };
     const menu = new BlockMenu(this.doc, () =>
-      this.menuGroups(this.openPlace(start), holder.open?.rich.model ?? model, {
-        insert: (rows, cols) => {
-          const place = this.openPlace(start);
-          this.insertTable("start" in place ? place.start : place.above, rows, cols);
+      this.menuGroups(
+        this.openPlace(start),
+        holder.open?.rich.model ?? model,
+        {
+          insert: (rows, cols) => {
+            const place = this.openPlace(start);
+            this.insertTable("start" in place ? place.start : place.above, rows, cols);
+          },
         },
-      }),
+        () => holder.open?.rich.editAlt(),
+      ),
     );
     const extra: HTMLElement[] = [];
     if (model.t === "image") {

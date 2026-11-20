@@ -45,6 +45,7 @@ import { ApiRequestError, api, liveCheckpoint, liveDiscard, liveInfo } from "../
 import { clearPageDraft, loadPageDraft, type PageDraft, savePageDraft } from "../editor/draft.ts";
 import { showToast } from "../ui/index.ts";
 import {
+  type AskWhat,
   collectMessage,
   editMessage,
   editTargetOrigin,
@@ -97,8 +98,8 @@ export interface UseLiveEditOptions {
   onReload: () => void;
   /** Esc at the top level of edit mode in the frame. */
   onLeave?: () => void;
-  /** "Ask an agent" about a place on the page, from the frame. */
-  onAsk?: (anchor: { key: string; text: string } | null) => void;
+  /** "Ask an agent" about a place on the page, from the frame (with the kind of block it is). */
+  onAsk?: (anchor: { key: string; text: string } | null, what?: AskWhat) => void;
 }
 
 export interface LiveEdit {
@@ -347,8 +348,8 @@ export function useLiveEdit({
         resolved(r) {
           onResolvedRef.current(r);
         },
-        ask({ anchor }) {
-          latest.current.onAsk?.(anchor);
+        ask({ anchor, what }) {
+          latest.current.onAsk?.(anchor, what);
         },
         leave() {
           latest.current.onLeave?.();

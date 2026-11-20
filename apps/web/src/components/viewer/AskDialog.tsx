@@ -21,6 +21,7 @@ import { excerpt } from "../comments/model.ts";
 import { Button, Checkbox, Dialog, showToast, Textarea } from "../ui/index.ts";
 // Types only: askAgent.tsx imports this file.
 import type { AskAnchor } from "./askAgent.tsx";
+import type { AskWhat } from "./rendererProtocol.ts";
 import type { LiveEdit } from "./useLiveEdit.ts";
 
 export interface AskDialogProps {
@@ -31,6 +32,8 @@ export interface AskDialogProps {
   owner: boolean;
   /** The place the renderer named (an in-frame `ask`), or null for the whole page. */
   anchor: AskAnchor | null;
+  /** What kind of block that place is, for an anchor without text ("About: list"). */
+  what?: AskWhat | null;
   live: Pick<LiveEdit, "status" | "mode" | "publishFirst">;
   /** The version being edited. */
   version: number;
@@ -65,6 +68,7 @@ export function AskDialog({
   targets: initialTargets,
   owner,
   anchor,
+  what = null,
   live,
   version,
   onClose,
@@ -158,11 +162,6 @@ export function AskDialog({
       open
       onClose={onClose}
       title="Ask an agent"
-      description={
-        anchor
-          ? "Describe the change. The request goes to the owner's agent, pointing at this place."
-          : "Describe the change. The request goes to the owner's agent."
-      }
       footer={
         unpublished ? (
           <>
@@ -196,14 +195,17 @@ export function AskDialog({
       }
     >
       <form id={formId} onSubmit={submit} noValidate className="pl-ask">
-        {anchor?.text && (
+        {anchor?.text ? (
           <p className="pl-ask__anchor">
             About: <q>{excerpt(anchor.text, 60)}</q>
           </p>
+        ) : (
+          anchor &&
+          what && <p className="pl-ask__anchor">About: {what === "block" ? "this block" : what}</p>
         )}
         <Textarea
           label="What should change?"
-          hint="Describe the change. Ctrl or ⌘ + Enter sends."
+          hint="Ctrl or ⌘ + Enter sends."
           value={body}
           rows={4}
           maxLength={LIMITS.maxCommentLength}

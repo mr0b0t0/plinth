@@ -611,10 +611,18 @@ test.describe("editing a doc on its page as formatted text", () => {
       await expect(frame.locator(".plinth-doc__open h2")).toHaveText("Last paragraph.");
       await frame.locator(".plinth-doc__open h2").press("Escape");
 
-      // The image's alt text is a field; the image itself is changed by an agent.
+      // The image's alt text is a field its menu opens; the image itself is changed by an agent.
       await frame.locator("p", { has: frame.locator('img[alt="A tiny square"]') }).click();
+      await frame
+        .locator(".plinth-doc__open")
+        .getByRole("button", { name: "Block actions" })
+        .click();
+      await frame.getByRole("menuitem", { name: "Alt text" }).click();
       await frame.getByLabel("Alt text").fill("A small square");
+      // Esc closes the field into the block's corner, and Esc there gives the block back.
       await frame.getByLabel("Alt text").press("Escape");
+      await expect(frame.getByLabel("Alt text")).toBeHidden();
+      await page.keyboard.press("Escape");
       await expect(frame.locator('img[alt="A small square"]')).toHaveCount(1);
 
       // A block the editor cannot show faithfully is read-only, with Ask an agent.
@@ -624,7 +632,9 @@ test.describe("editing a doc on its page as formatted text", () => {
       await expect(askAgent).toHaveAttribute("title", /can't be edited here/);
       await askAgent.click();
       const dialog = page.getByRole("dialog", { name: "Ask an agent" });
-      await expect(dialog).not.toContainText("About");
+      // It says what kind of block it is about, never the block's text.
+      await expect(dialog).toContainText("About: list");
+      await expect(dialog).not.toContainText("An item");
       await dialog.getByRole("button", { name: "Cancel" }).click();
       await expect(dialog).toHaveCount(0);
 

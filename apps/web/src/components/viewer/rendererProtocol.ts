@@ -295,6 +295,23 @@ export interface LiveFrameStatus {
   unavailable?: "too_large";
 }
 
+/**
+ * What kind of block an `ask` is about, for the Ask dialog's "About" line when the anchor has no
+ * text (a doc names its blocks by number and keeps their text in the frame). Never posted.
+ */
+export const ASK_WHAT = [
+  "paragraph",
+  "heading",
+  "list",
+  "quote",
+  "code block",
+  "table",
+  "divider",
+  "image",
+  "block",
+] as const;
+export type AskWhat = (typeof ASK_WHAT)[number];
+
 /** The review's choice, as the frame sends it. */
 export type ReviewChoice =
   | { outcome: "publish"; version?: number; rev?: number; text?: string; note?: string }
@@ -306,7 +323,7 @@ export type FrameMessage =
   | { type: "save" }
   | { type: "draft"; nonce: string; text: string }
   | ({ type: "resolved"; nonce: string } & ReviewChoice)
-  | { type: "ask"; anchor: { key: string; text: string } | null }
+  | { type: "ask"; anchor: { key: string; text: string } | null; what?: AskWhat }
   | { type: "leave" }
   | { type: "shown"; n: number; nonce: string; ok: boolean };
 
@@ -615,7 +632,9 @@ const FRAME_READERS: {
     if (typeof text !== "string" || text.length > PAGE_COMMENT_LIMITS.maxText || hasControl(text)) {
       return null;
     }
-    return { type: "ask", anchor: { key, text } };
+    if (m.what === undefined) return { type: "ask", anchor: { key, text } };
+    if (!(ASK_WHAT as readonly unknown[]).includes(m.what)) return null;
+    return { type: "ask", anchor: { key, text }, what: m.what as AskWhat };
   },
   leave: () => ({ type: "leave" }),
   shown(m, opts) {

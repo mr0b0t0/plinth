@@ -26,6 +26,7 @@ import {
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Button, Tooltip } from "../ui/index.ts";
 import { AskDialog } from "./AskDialog.tsx";
+import type { AskWhat } from "./rendererProtocol.ts";
 // Types only: stageItems.tsx imports this file, so a value import back would be a cycle.
 import type { MenuItem, StageContext, StageDialog, StageNode } from "./stageItems.tsx";
 
@@ -71,9 +72,11 @@ export interface AskAgent {
   reason: string | null;
   targets: ClientType[];
   /** Open Ask an agent: the Ask dialog in edit mode, the comments panel in request mode otherwise. */
-  open(anchor?: AskAnchor | null): void;
+  open(anchor?: AskAnchor | null, what?: AskWhat): void;
   /** The anchor the Ask dialog opened with (edit mode), or null for the whole page. */
   dialogAnchor: AskAnchor | null;
+  /** What kind of block that anchor is, when the frame said (a doc block, which has no text). */
+  dialogWhat: AskWhat | null;
   /** The `?edit` notice, or null. */
   notice: EditNotice | null;
   dismissNotice(): void;
@@ -108,16 +111,18 @@ export function useAskAgent({
   const inSlot = available && (def?.edit === "ask" || gate.live_off !== undefined);
   const reason = gate.live_off ? LIVE_OFF_TEXT[gate.live_off.reason] : null;
   const [dialogAnchor, setDialogAnchor] = useState<AskAnchor | null>(null);
+  const [dialogWhat, setDialogWhat] = useState<AskWhat | null>(null);
   const [notice, setNotice] = useState<EditNotice | null>(null);
 
   const latest = useRef({ editing, openDialog, openRequest, available });
   latest.current = { editing, openDialog, openRequest, available };
-  const open = useCallback((anchor: AskAnchor | null = null) => {
+  const open = useCallback((anchor: AskAnchor | null = null, what?: AskWhat) => {
     const l = latest.current;
     if (!l.available) return;
     setNotice(null);
     if (l.editing) {
       setDialogAnchor(anchor);
+      setDialogWhat(anchor ? (what ?? null) : null);
       l.openDialog(ASK_DIALOG);
     } else {
       l.openRequest(anchor);
@@ -158,6 +163,7 @@ export function useAskAgent({
     targets: gate.ask?.targets ?? [],
     open,
     dialogAnchor,
+    dialogWhat,
     notice,
     dismissNotice: () => setNotice(null),
   };
@@ -220,6 +226,7 @@ export const askAgentDialog: StageDialog = {
       targets={c.ask.targets}
       owner={c.gate.role === "owner"}
       anchor={c.ask.dialogAnchor}
+      what={c.ask.dialogWhat}
       live={c.live}
       version={c.live.status?.base_version || c.gate.artifact.version}
       onClose={close}

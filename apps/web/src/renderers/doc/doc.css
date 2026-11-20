@@ -132,6 +132,15 @@
   --doc-block-hover: color-mix(in srgb, var(--doc-live) 6%, transparent);
   --doc-block-open: color-mix(in srgb, var(--doc-live) 12%, transparent);
 }
+/* A table's cells keep the page's own background (and stripes), so a tint on a table shows only
+   around it, never in some rows and not others. */
+.plinth-doc--editing td {
+  background-color: var(--doc-bg);
+}
+/* Heading anchors are links to follow, which the editor does not: no "#" while editing. */
+.plinth-doc--editing .plinth-doc__anchor {
+  display: none;
+}
 .plinth-doc--editing > :not(.plinth-doc__holder):not(.plinth-doc__open):not(.plinth-doc__selected) {
   cursor: text;
   border-radius: 4px;
@@ -151,7 +160,7 @@
 }
 /* The block being edited, as formatted text: the page's own look in its own place, tinted, with a
    bronze edge. A block shown as it is (it cannot be edited in place), selected, is drawn the same
-   way, with its bar of what can be done with it in the toolbar's place. */
+   way, with what can be done with it at its corner, where an open block has its menu. */
 .plinth-doc__open,
 .plinth-doc__selected,
 .plinth-doc__held {
@@ -170,9 +179,15 @@
   background: var(--doc-block-open);
   pointer-events: none;
 }
-/* A table scrolls in its own box, which would clip the fill around it. */
+/* A table scrolls in its own box, which would clip the fill around it: a ring of the same tint
+   (opaque, so the edge under it shows only at the left) and the bronze edge, drawn outside it. */
 .plinth-doc__table.plinth-doc__held {
-  background-image: linear-gradient(var(--doc-block-open), var(--doc-block-open));
+  box-shadow:
+    0 0 0 var(--doc-block-pad) color-mix(in srgb, var(--doc-live) 12%, var(--doc-bg)),
+    -3px 0 0 var(--doc-block-pad) var(--doc-live);
+}
+.plinth-doc__table.plinth-doc__held::before {
+  content: none;
 }
 .plinth-doc__selected > :focus-visible {
   outline: 2px solid var(--doc-live);
@@ -403,7 +418,9 @@
   .plinth-doc__notice,
   .plinth-doc__blockbar,
   .plinth-rich__toolbar,
-  .plinth-rich__link {
+  .plinth-rich__link,
+  .plinth-rich__corner,
+  .plinth-rich__alt {
     display: none;
   }
 }

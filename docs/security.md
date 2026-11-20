@@ -2670,7 +2670,9 @@ CSP, sandbox flag or env var was added.
 - **Ask an agent from a block.** The renderer's `ask` carries a structural anchor (`block-3`,
   `block-3:image`) and no label, never the block's text, so no draft text
   reaches the app page; the app accepts it only as an editing message, with the frame key (see
-  [Ask an agent](#ask-an-agent)).
+  [Ask an agent](#ask-an-agent)). Its `what`, the kind of block for the dialog's "About" line, is
+  one of a fixed list of words (`paragraph`, `list`, `image` and the like): the app refuses the
+  message for any other value, renders it as text, and never posts it.
 
 ## Comparing versions
 
