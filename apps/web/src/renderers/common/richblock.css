@@ -42,13 +42,18 @@
   width: min(28rem, 100%);
   gap: 0.25rem;
 }
-/* At phone width it docks in the block, under its text, and covers nothing. */
+/* At phone width it docks in the block, under its text, and covers nothing. As the block's last
+   line it keeps the block's own gap below (a paragraph's 1.1em), so the open block's tint ends
+   before the next block, as it does without the field. */
 @media (max-width: 480px) {
   .plinth-rich__link {
     position: static;
     width: auto;
-    margin-top: 0.5rem;
+    margin: 0.5rem 0 1.1rem;
     box-shadow: none;
+  }
+  .plinth-rich__content:has(+ .plinth-rich__link:not([hidden])) {
+    margin-bottom: 0;
   }
 }
 /* On the open block's top right edge, half over the gap above it, so it covers next to nothing. */

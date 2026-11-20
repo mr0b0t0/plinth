@@ -208,6 +208,7 @@
   margin-top: 0;
 }
 .plinth-doc > :last-child > .plinth-rich__content,
+.plinth-doc > :last-child > .plinth-rich__link,
 .plinth-doc > .plinth-doc__selected:last-child > :last-child {
   margin-bottom: 0;
 }

@@ -26,7 +26,8 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   connection says so and leaves editing free, and typing waiting for a lease is asked for again once
   the draft is back. An image's alt text opens from its menu (**Alt text**), and its **Ask an
   agent** (or **Insert below**, **Image**) opens the Ask dialog, which names the block by its
-  first words as published ("About: “Maria: launch post…”"), or by its kind when it has none
+  first words as published, a list's items apart ("About: “Maria: launch post · Ana: …”"), or by
+  its kind when it has none
   ("About: the image"). The link field opens under the selected text (docked in the block at phone
   width), and the block menu stays inside the frame. Blocks the
   page cannot show faithfully as formatted text are shown as they are, with **Ask an agent** and

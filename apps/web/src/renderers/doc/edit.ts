@@ -210,7 +210,6 @@ export interface EditorHooks {
 const WORD_BREAKS = new Set([
   "BR",
   "P",
-  "LI",
   "TD",
   "TH",
   "TR",
@@ -227,26 +226,38 @@ const WORD_BREAKS = new Set([
 
 /**
  * The first words of a block as the person sees them, for the Ask dialog's "About" line: spaces
- * between cells, items and lines, every run of white space or control characters one space, at
- * most the page anchor's length.
+ * between cells and lines, " · " between a list's items, every run of white space or control
+ * characters one space, at most the page anchor's length.
  */
 export function blockWords(nodes: Node[]): string {
-  const parts: string[] = [];
+  // Runs of text, cut at each list item's edges.
+  const runs: string[] = [""];
+  const add = (s: string) => {
+    runs[runs.length - 1] += s;
+  };
   const walk = (n: Node) => {
-    if (n.nodeType === 3) parts.push(n.nodeValue ?? "");
+    if (n.nodeType === 3) add(n.nodeValue ?? "");
     else if (n.nodeType === 1) {
       // A heading's "#" link is not its text.
       if ((n as Element).classList.contains("plinth-doc__anchor")) return;
-      const br = WORD_BREAKS.has((n as Element).tagName);
-      if (br) parts.push(" ");
+      const tag = (n as Element).tagName;
+      const item = tag === "LI";
+      const br = WORD_BREAKS.has(tag);
+      if (item) runs.push("");
+      else if (br) add(" ");
       for (const c of Array.from(n.childNodes)) walk(c);
-      if (br) parts.push(" ");
+      if (item) runs.push("");
+      else if (br) add(" ");
     }
   };
   for (const n of nodes) walk(n);
   // Control characters (none of them shown) read as spaces, as white space does.
-  const spaced = Array.from(parts.join(""), (c) => (c < " " || c === "\u007f" ? " " : c));
-  const text = spaced.join("").replace(/\s+/g, " ").trim();
+  const words = (run: string) =>
+    Array.from(run, (c) => (c < " " || c === "\u007f" ? " " : c))
+      .join("")
+      .replace(/\s+/g, " ")
+      .trim();
+  const text = runs.map(words).filter(Boolean).join(" · ");
   return Array.from(text).slice(0, PAGE_COMMENT_LIMITS.maxText).join("").trimEnd();
 }
 

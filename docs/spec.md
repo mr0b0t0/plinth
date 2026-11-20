@@ -2766,7 +2766,8 @@ the same leases, room, drafts and Publish as [Editing](#editing).
   adding one, are left to agents through Ask an agent, whose page anchor names the place
   (`block-3`, or `block-3:image`, never a block number the person would have to count) with the
   block's first words, or an image's alt text, as its text, so the Ask dialog's "About" line reads
-  as the block does ("About: “Maria: launch post and pricing page…”"). The frame posts those
+  as the block does, a list's items with " · " between them ("About: “Maria: launch post and
+  pricing page · Ana: onboarding…”"). The frame posts those
   words only when a block of the published version has the same words, so no draft text reaches
   the app; otherwise, and for a block with no text, the line names the kind of block ("About: the
   list", "About: the image"). An open image block has its
@@ -2780,7 +2781,7 @@ the same leases, room, drafts and Publish as [Editing](#editing).
   image's alt text field hangs from the same edge over the image. The format bar and the link
   field show only for selected text; the link field opens under that text, inside the block's
   column, so it covers neither the text nor a heading above it, and at phone width it docks in the
-  block under its text. The block menu opens below its button, above it when there is no room
+  block under its text, with the block's usual gap below it. The block menu opens below its button, above it when there is no room
   below, or moved up as far as it must, so every item ("Table" and "Image" at the end of "Insert
   below" too) shows without scrolling the frame. Opening a block, its link field or its alt text field scrolls
   the page by the least that shows the block and the field. A selected read-only block and a block

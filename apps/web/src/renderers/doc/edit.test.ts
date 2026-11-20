@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ClientLease, LeaseDenial, LeaseLoss } from "../common/live.ts";
 import { FORMAT_LOST, type RichBlockEditor } from "../common/richblock.ts";
 import {
+  blockWords,
   CLEAR_REFUSED,
   composeBlock,
   DOC_FULL,
@@ -2042,5 +2043,16 @@ describe("DocEditor: a block op, with a room", () => {
       editor.setEditing(false);
       await settle();
     }
+  });
+});
+
+describe("blockWords", () => {
+  it("reads a list's items apart, with a dot between them, and a table's cells with spaces", () => {
+    const host = document.createElement("div");
+    host.innerHTML =
+      "<ul><li>Maria: launch post</li><li>Ana: emails<pre>subject: Hi</pre></li><li> </li></ul>";
+    expect(blockWords([...host.childNodes])).toBe("Maria: launch post · Ana: emails subject: Hi");
+    host.innerHTML = "<table><tr><th>Risk</th><th>Owner</th></tr><tr><td>PSL</td></tr></table>";
+    expect(blockWords([...host.childNodes])).toBe("Risk Owner PSL");
   });
 });
