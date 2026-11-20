@@ -5,6 +5,7 @@
 // fast the machine is.
 import { describe, expect, it, vi } from "vitest";
 import { CHANGE_LIMITS, type ChangeItem, describeChanges, diffSequence } from "../src/index.ts";
+import { expectLinear, expectWithin } from "./timing.ts";
 
 vi.mock("diff", async (importOriginal) => ({
   ...(await importOriginal<typeof import("diff")>()),
@@ -295,17 +296,32 @@ describe("a region the diff gave up on", () => {
   });
 
   it("matches slides of one title in linear time, and edits in place are not moves", () => {
-    const slides = Array.from({ length: 20_000 }, (_, k) => `# Same\n\nText ${k}`);
-    const t = Date.now();
-    const list = describeChanges(
-      "slides",
-      slides.join("\n\n---\n\n"),
-      slides.map((s) => `${s}!`).join("\n\n---\n\n"),
+    /** A deck of `n` slides titled by `title`, and the deck with every one edited in place. */
+    const decks = (n: number, title: (k: number) => string) => {
+      const slides = Array.from({ length: n }, (_, k) => `# ${title(k)}\n\nText ${k}`);
+      return [slides.join("\n\n---\n\n"), slides.map((s) => `${s}!`).join("\n\n---\n\n")] as const;
+    };
+    const same = decks(20_000, () => "Same");
+    const own = decks(20_000, (k) => `T${k}x`);
+    let list = describeChanges("slides", ...own);
+    // One title for all 20,000 slides against a title of its own per slide, in the same run: the
+    // same work, so about 1 time. Copying the waiting list on every push, as the old matching did,
+    // takes 4 times; copying it and scanning it per slide, 5.
+    expectWithin(
+      () => {
+        list = describeChanges("slides", ...same);
+      },
+      () => describeChanges("slides", ...own),
+      { factor: 3 },
     );
-    expect(Date.now() - t).toBeLessThan(2000);
     expect(list.items).toHaveLength(CHANGE_LIMITS.maxItems);
     expect(list.items.some((i) => i.kind === "moved")).toBe(false);
-  });
+    // And 20,000 slides against 2,000: about 10 times (26 loaded), under the 50 allowed.
+    expectLinear((n) => {
+      const [a, b] = decks(n, () => "Same");
+      return () => describeChanges("slides", a, b);
+    }, 20_000);
+  }, 60_000);
 
   it("does not call an unchanged column of a sheet renamed", () => {
     const sheet = (names: string[]) =>

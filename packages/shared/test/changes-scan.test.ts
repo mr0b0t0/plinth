@@ -4,8 +4,17 @@ import { describe, expect, it } from "vitest";
 import { markupSignature, scanHtml } from "../src/changes/htmlScan.ts";
 import { markdownBlocks } from "../src/changes/markdownText.ts";
 import { describeChanges } from "../src/index.ts";
+import { expectLinear } from "./timing.ts";
 
 const texts = (html: string) => scanHtml(html).runs.map((r) => r.text);
+
+/**
+ * A megabyte against a tenth of it may take 50 times as long, or 2 s, whichever is more (a
+ * baseline under 40 ms counts as 40). The ratio alone does not hold under load: a string that
+ * size loses the cache the tenth keeps, and the ratio reached 36 in a full `pnpm test` and 85 with
+ * twelve runs in parallel, at 0.3 s or less. A quadratic scan takes 100 times, and minutes.
+ */
+const SCAN = { floorMs: 40 };
 
 describe("scanHtml", () => {
   it("finds visible text, the title and the nearest heading", () => {
@@ -93,21 +102,27 @@ describe("scanHtml", () => {
   });
 
   it("is linear: a megabyte of hostile input scans quickly", () => {
+    // Each pattern, a megabyte of it against a tenth of that (expectLinear).
     const inputs = [
-      "<".repeat(1_000_000),
-      "<a ".repeat(330_000),
-      `<p title="${"x".repeat(1_000_000)}`,
-      "<!--".repeat(250_000),
-      "&#".repeat(500_000),
-      "<script>".repeat(125_000),
-      "</".repeat(500_000),
+      (n: number) => "<".repeat(n),
+      (n: number) => "<a ".repeat(n / 3),
+      (n: number) => `<p title="${"x".repeat(n)}`,
+      (n: number) => "<!--".repeat(n / 4),
+      (n: number) => "&#".repeat(n / 2),
+      (n: number) => "<script>".repeat(n / 8),
+      (n: number) => "</".repeat(n / 2),
     ];
     for (const input of inputs) {
-      const t = Date.now();
-      scanHtml(input);
-      expect(Date.now() - t).toBeLessThan(1500);
+      expectLinear(
+        (n) => {
+          const src = input(n);
+          return () => scanHtml(src);
+        },
+        1_000_000,
+        SCAN,
+      );
     }
-  });
+  }, 60_000);
 });
 
 describe("markupSignature", () => {
@@ -121,43 +136,57 @@ describe("markupSignature", () => {
   });
 
   it("is linear: a megabyte of hostile input scans quickly", () => {
+    // Each pattern, a megabyte of it against a tenth of that (expectLinear). About 0.05 s on an
+    // idle machine; a scan that is quadratic here would take minutes.
     for (const input of [
-      "<".repeat(1_000_000),
-      "<a ".repeat(330_000),
-      "<a b=c>".repeat(140_000),
-      "<pre>".repeat(200_000),
-      "<!x".repeat(330_000),
-      "<?>".repeat(330_000),
-      "<!--".repeat(250_000),
-      "&#".repeat(500_000),
-      "<template>".repeat(100_000),
-      "</".repeat(500_000),
+      (n: number) => "<".repeat(n),
+      (n: number) => "<a ".repeat(n / 3),
+      (n: number) => "<a b=c>".repeat(n / 7),
+      (n: number) => "<pre>".repeat(n / 5),
+      (n: number) => "<!x".repeat(n / 3),
+      (n: number) => "<?>".repeat(n / 3),
+      (n: number) => "<!--".repeat(n / 4),
+      (n: number) => "&#".repeat(n / 2),
+      (n: number) => "<template>".repeat(n / 10),
+      (n: number) => "</".repeat(n / 2),
     ]) {
-      const t = Date.now();
-      markupSignature(input);
-      // About 0.1 s on an idle machine; a scan that is quadratic here would take minutes.
-      expect(Date.now() - t).toBeLessThan(5000);
+      expectLinear(
+        (n) => {
+          const src = input(n);
+          return () => markupSignature(src);
+        },
+        1_000_000,
+        SCAN,
+      );
     }
   }, 60_000);
 });
 
 describe("markdownBlocks", () => {
   it("is linear on long lines of syntax characters", () => {
+    // Each pattern, half a megabyte of it against a tenth of that (expectLinear).
     for (const input of [
-      `# ${" ".repeat(500_000)}x`,
-      "#".repeat(500_000),
-      "*_".repeat(250_000),
-      "![".repeat(250_000),
-      "[a](".repeat(125_000),
-      "`".repeat(500_000),
-      "|".repeat(500_000),
+      (n: number) => `# ${" ".repeat(n)}x`,
+      (n: number) => "#".repeat(n),
+      (n: number) => "*_".repeat(n / 2),
+      (n: number) => "![".repeat(n / 2),
+      (n: number) => "[a](".repeat(n / 4),
+      (n: number) => "`".repeat(n),
+      (n: number) => "|".repeat(n),
     ]) {
-      const t = Date.now();
-      markdownBlocks(input);
-      describeChanges("doc", input, `${input}x`);
-      expect(Date.now() - t).toBeLessThan(3000);
+      expectLinear(
+        (n) => {
+          const src = input(n);
+          return () => {
+            markdownBlocks(src);
+            describeChanges("doc", src, `${src}x`);
+          };
+        },
+        500_000,
+        SCAN,
+      );
     }
-  });
+  }, 60_000);
 });
 
 describe("changes modules", () => {
