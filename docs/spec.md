@@ -194,8 +194,9 @@ one field to the stored declaration and a second kind of comment anchor:
 settings: `ALLOW_LIVE_VIEWS` (on) and `LIVE_VIEW_MAX_SOCKETS_PER_ARTIFACT` (1000, from 10 to
 10000, half for the people an artifact is shared with and half for everyone else). Fixed: 32
 watch sockets per client and 60 connects per client per minute on one artifact, a socket lifetime
-of 12 hours (the content pass's, or less when the session or password pass it was opened with ends
-sooner), a spread of 2 ms per socket the cap allows (at most 10 s, 2 s at the default),
+of 12 hours less up to 5 minutes at random (the content pass's, or less when the session or
+password pass it was opened with ends sooner), a spread of 2 ms per socket the cap allows (at most
+10 s, 2 s at the default), at most one data signal per spread, a first reconnect within 10 s,
 backstop polls every 60 s (the page's data) and 5 minutes (the app's gate), and a tab hidden for
 60 s closes its socket.
 
@@ -1108,16 +1109,19 @@ document through the gate and the shared-data API, with all of their checks.
   (`liveViewAccess` in `policy.ts`); see [docs/security.md](security.md#live-views). The socket is
   served by the artifact's `ArtifactRoom` with the Hibernation API. The app's CSP `connect-src`
   names its own `wss:` origin and nothing else.
-- **Signals.** JSON frames the room builds from integers: `welcome` (the current version, and
-  whether this socket gets data signals), `version` (a version was published: by an agent, the
+- **Signals.** JSON frames the room builds from integers: `welcome` (the current version),
+  `version` (a version was published: by an agent, the
   source editor, a restore or an on-page checkpoint), `data` (the page's shared data changed:
-  a write from the page, an agent or the app, or the owner's "Delete all shared data") and `access`
-  (sent just before a sharing change closes the socket). The client
+  a write from the page, an agent or the app, or the owner's "Delete all shared data"; at most one
+  per `spread_ms` per artifact: a write in a quiet window sends it at once, and the writes after
+  it share one frame at the window's end, so the last write is always followed by one) and
+  `access` (sent just before a sharing change closes the socket). The client
   sends only the text `ping`. Each signal carries `spread_ms`, which depends only on the
   instance's cap, never on the audience: 2 ms per socket an artifact may hold, at most 10 s (2 s
   at the default). Each open view waits a random time up to it before it acts, so at most about
   500 follow-up requests a second reach one artifact at the default cap (cap ÷ spread, 1000 at the
-  top bound), and no frame says anything about who else has the artifact open.
+  top bound), however fast its data is written, and no frame says anything about who else has the
+  artifact open.
 - **What the page does.** On `version` the app re-reads its own gate at once and shows the new
   version as it did after a poll ("Updated to vN"; a pinned `/v/n` link only learns the number).
   One such notice shows at a time: a newer version's replaces the last, so versions published in
@@ -1138,17 +1142,21 @@ document through the gate and the shared-data API, with all of their checks.
   artifact, so the page shows a gate that now asks for an email or a password, or refuses, and
   otherwise loads a fresh frame, as for a new version. While a deck is presented or a doc is edited
   on its page the frame stays, as it does for a new version, and is renewed once that ends. A
-  takedown or delete closes them (4404). A socket also closes at the content pass's lifetime, or
+  takedown or delete closes them (4404). A socket also closes at the content pass's lifetime, less
+  a random time up to 5 minutes so that sockets opened together do not all close together, or
   earlier when the app session, viewer session or password pass it was opened with expires (4401,
-  reason `expired`), and the page reconnects, which decides again. While
+  reason `expired`), and the page reconnects after a random time up to 10 s, which decides again.
+  While
   sockets are open the room re-checks D1 every 60 s: it closes what a lost call left open, sends a
   `version` whose notify was lost, and takes the data right away when the current version no
   longer declares `data`. A tab hidden for 60 s closes its socket and reconnects when shown.
 - **Fallback.** Without the socket (live views off, no `ROOMS` binding, refused, full, dropped, or no
   WebSocket in the browser) the app polls its gate every 15 s and the runtime polls the change
   counter every 15 s, as before. While the socket is open the app still reads its gate every
-  5 minutes as a backstop. A refused or full socket is tried again after 5 minutes; a dropped one
-  reconnects after 1, 2, 5, 10 and 30 s.
+  5 minutes as a backstop. A refused or full socket is tried again after 5 minutes. A dropped one
+  (a lost network, or a Worker deploy, which closes every socket on the instance at once) first
+  reconnects after a random time up to 10 s, so the views do not all come back in the same
+  second, then after 1, 2, 5, 10 and 30 s while it keeps failing.
 - **Limits.** `ALLOW_LIVE_VIEWS` (on) and `LIVE_VIEW_MAX_SOCKETS_PER_ARTIFACT` (1000, from 10 to
   10000), counted apart from room sockets so viewers never crowd out a room, and split into two
   pools of half each that never affect each other: one for the owner and the people the artifact

@@ -1135,7 +1135,7 @@ never names a content host.
 header is `x-plinth-watch`, built from the checks above (artifact, epoch, socket expiry, current
 version, the data right, a client key, its cap pool and the caps); no client header is copied,
 and the room parses it as strictly as a room's. The room sends only frames it makes from integers: `welcome {
-version, data }`, `version { version, spread_ms }`, `data { spread_ms }` and, just before a
+version }`, `version { version, spread_ms }`, `data { spread_ms }` and, just before a
 sharing change closes the socket, `access { spread_ms }`. Never artifact
 content, document data, emails, names, peers or anything a page wrote. A watch socket joins no
 room and is never a peer: room traffic never reaches it, and it never appears in `peers`. The
@@ -1183,7 +1183,8 @@ data (through the shared-data API, with all of its checks) or change its own pol
 `postMessage`.
 
 **Revocation.** A watch socket is admitted at one access epoch and lives at most a content pass's
-lifetime (12 hours), and never past the earliest expiry of the app session, viewer session or
+lifetime (12 hours, less a random time up to 5 minutes so one wave of sockets does not expire in
+one alarm), and never past the earliest expiry of the app session, viewer session or
 password pass the handshake carried. A sharing change closes it (`revoke`, 4401, reason
 `access_changed`), and the app re-reads its gate, which may now ask for an email or a password, or
 refuse; a takedown or delete closes it (4404). The room's 60 s alarm backs both up, closes sockets
@@ -1206,7 +1207,11 @@ up to it before it re-reads (under 100 ms, on an instance capped below 50, it ac
 artifact never holds more sockets than the cap, so it sees at most cap ÷ spread follow-up requests
 a second: about 500 at the default, 1000 at the top bound. A sharing change closes every view at
 once, so its `access` frame carries the same spread, and each view waits within it before it
-re-reads its gate and reconnects.
+re-reads its gate and reconnects. The room sends at most one `data` frame per spread (the writes
+after one share a frame at the window's end), so however fast a page is written, each view
+re-reads at most once per spread. A Worker deploy closes every watch socket on the instance at
+once; the first reconnect after a dropped socket or an `expired` close waits a random time up to
+10 s (`reconnectSpreadMs`), so the handshakes and their D1 reads arrive spread out.
 Notifies are best effort (`waitUntil`, one retry); losses are caught by the alarm within a minute
 for versions and by the runtime's 60 s backstop poll for data. Refusals log the status and a reason
 code only; the socket URL holds only the artifact id.

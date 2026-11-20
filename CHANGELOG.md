@@ -19,7 +19,9 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   configured (also under opaque isolation, for versions); `ALLOW_LIVE_VIEWS=false` turns it off and
   pages poll as before. `LIVE_VIEW_MAX_SOCKETS_PER_ARTIFACT` (1000) caps the open views that get
   pushes, half for the people an artifact is shared with and half for everyone else, so a link
-  viewer can never tell from the socket whether the owner or a collaborator has the page open. A
+  viewer can never tell from the socket whether the owner or a collaborator has the page open.
+  After a deploy, open pages reconnect spread over 10 seconds, and a busy shared page sends its
+  views at most one "data changed" signal per spread (2 s at the default). A
   reverse proxy must pass WebSocket upgrades on the app host too. Plugin 0.28.0: the agent's rule
   never to tell people to reload.
 - **Dashboard previews in the list, and one card height.** Each row of the list view starts with a

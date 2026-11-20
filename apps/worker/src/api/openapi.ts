@@ -2055,14 +2055,16 @@ function liveViewOperations(): Operation[] {
         `same-origin fetch metadata when sent, and the \`${VIEW_WATCH_PROTOCOL}\` subprotocol; ` +
         "access is the gate's view decision with the browser's cookies. The socket is " +
         "receive-only: the client sends the text `ping` (answered `pong`) and nothing else. " +
-        'Server frames are JSON text: `{t:"welcome",v:1,version,data}`, ' +
+        'Server frames are JSON text: `{t:"welcome",v:1,version}`, ' +
         '`{t:"version",version,spread_ms}` (re-read the gate after a random wait up to ' +
-        '`spread_ms`), `{t:"data",spread_ms}` (the page re-reads its shared data) and ' +
-        '`{t:"access",spread_ms}` (sent just before a 4401 `access_changed` close). Close ' +
-        "codes: 4400 invalid, 4401 `access_changed` (after a random wait up to the `access` " +
-        "frame's `spread_ms`, re-read the gate, then reconnect) or `expired` (the socket's " +
-        "lifetime, or the credential it was opened with, ended: reconnect), 4404 gone, 4409 " +
-        "full (poll instead).",
+        '`spread_ms`), `{t:"data",spread_ms}` (the page re-reads its shared data; at most one ' +
+        'per `spread_ms`, and always one after the last change) and `{t:"access",spread_ms}` ' +
+        "(sent just before a 4401 `access_changed` close). Close codes: 4400 invalid, 4401 " +
+        "`access_changed` (after a random wait up to the `access` frame's `spread_ms`, re-read " +
+        "the gate, then reconnect) or `expired` (the socket's lifetime, or the credential it was " +
+        "opened with, ended: reconnect after a random wait up to 10 s), 4404 gone, 4409 full " +
+        "(poll instead). After any other close the first reconnect also waits a random time up " +
+        "to 10 s.",
       tag: "Viewing",
       auth: "browser",
       ok: [101, null],
