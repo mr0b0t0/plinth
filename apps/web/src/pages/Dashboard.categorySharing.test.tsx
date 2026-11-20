@@ -1,5 +1,5 @@
-// The dashboard with category sharing and personal categories: the review banner and ?review=, the
-// owner's review badge, and filing a shared artifact under the person's own category.
+// The dashboard with category sharing and personal categories: the one review line and ?review=
+// (rows carry no review badge), and filing a shared artifact under the person's own category.
 import type { ArtifactSummary } from "@plinth/shared";
 import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -90,21 +90,36 @@ const fixture = () => [
 ];
 
 describe("Dashboard: category sharing", () => {
-  it("shows the review banner and the owner's review badge", async () => {
+  it("shows one review line, and no review badge on the rows", async () => {
     const api = backend(fixture());
     const Dashboard = await loadPage();
+    const user = userEvent.setup();
     render(<Dashboard />);
-    expect(await screen.findByText("2 artifacts to review in Acme")).toBeTruthy();
+    const line = (await screen.findByText(/2 to review in Acme/)).closest("p") as HTMLElement;
+    expect(within(line).getByRole("button", { name: "Review" })).toBeTruthy();
     const region = screen.getByRole("region", { name: "Artifacts" });
     const waiting = within(region).getByText("Waiting report").closest("li") as HTMLElement;
-    expect(within(waiting).getByText("Needs review")).toBeTruthy();
-    // The Taken down badge stays beside it.
+    expect(within(waiting).queryByText("Needs review")).toBeNull();
     expect(within(waiting).getByText("Taken down")).toBeTruthy();
     // A shared row carries no badge of its own: its category's share dialog lists it.
     const shared = within(region).getByText("Shared report").closest("li") as HTMLElement;
     expect(within(shared).queryByText("Shared")).toBeNull();
-    // The dashboard does not list the collections shared with the person.
+    // The dashboard does not list the categories shared with the person.
     expect(api.calls.some((c) => c.path === "/portals")).toBe(false);
+    // Under Shared, the line is gone.
+    await user.click(screen.getByRole("radio", { name: "Shared" }));
+    expect(screen.queryByText(/to review/)).toBeNull();
+  });
+
+  it("reviewText names the category only when one has artifacts waiting", async () => {
+    const { reviewText } = await import("./Dashboard.tsx");
+    expect(reviewText([{ category: "Acme", pending: 1 }])).toBe("1 to review in Acme");
+    expect(
+      reviewText([
+        { category: "Acme", pending: 2 },
+        { category: "Internal", pending: 3 },
+      ]),
+    ).toBe("5 to review");
   });
 
   it("?review= opens the review dialog", async () => {
@@ -112,7 +127,7 @@ describe("Dashboard: category sharing", () => {
     backend(fixture());
     const Dashboard = await loadPage();
     render(<Dashboard />);
-    expect(await screen.findByRole("dialog", { name: "Review for “Acme Corp”" })).toBeTruthy();
+    expect(await screen.findByRole("dialog", { name: "Review “Acme”" })).toBeTruthy();
   });
 
   it("offers Share category for an owner category", async () => {

@@ -156,19 +156,6 @@ function CategoryBadge({ name, own = false }: { name: string; own?: boolean }) {
 }
 
 /**
- * The owner's badge for an artifact waiting for review in a shared category. Shared and kept-private
- * rows carry none: who sees an artifact is on its Settings page and in the category's share dialog.
- */
-function ReviewBadge({ state }: { state: ArtifactSummary["category_share"] }) {
-  if (state !== "pending") return null;
-  return (
-    <Badge tone="warning" title="Its category's people do not see it until you review it">
-      Needs review
-    </Badge>
-  );
-}
-
-/**
  * The row's category as plain text (the owner's own, or the person's own on a shared artifact): on
  * a card's sub line, and on a phone row's second line, where a badge beside the title would crowd
  * it. A long name ends in an ellipsis; the full name is its tooltip and is read out whole.
@@ -204,13 +191,10 @@ function Tags({
   const def = typeDef(a.type);
   const badge = def?.badge ?? null;
   const category = withCategory ? shownCategory(a) : null;
-  const share = a.role === "owner" ? (a.category_share ?? null) : null;
-  const review = share === "pending";
-  if (!category && !badge && !a.taken_down && !review && a.role === "owner") return null;
+  if (!category && !badge && !a.taken_down && a.role === "owner") return null;
   return (
     <span className="pl-dash__tags">
       {category && <CategoryBadge name={category} own={a.role !== "owner"} />}
-      <ReviewBadge state={share} />
       {badge && <Badge title={def?.label}>{badge}</Badge>}
       {a.taken_down && <Badge tone="danger">Taken down</Badge>}
       {a.role !== "owner" && (
@@ -376,34 +360,44 @@ function thumbLetters(title: string): string {
 
 export type ArtifactCardProps = ArtifactRowProps;
 
+/**
+ * A card's preview: the screenshot, or a quiet sheet with the title's initials until it loads. The
+ * dashboard grid and the portal page (/p/:id) share it.
+ */
+export function CardThumb({ title, url }: { title: string; url: string | null }) {
+  const t = useThumbnail(url);
+  return (
+    <div className="pl-dash__thumb">
+      {t.src && (
+        <img
+          src={t.src}
+          alt=""
+          loading="lazy"
+          decoding="async"
+          className="pl-dash__thumb-img"
+          data-loaded={t.show ? "" : undefined}
+          onLoad={t.onLoad}
+          onError={t.onError}
+        />
+      )}
+      {!t.show && (
+        <span className="pl-dash__paper" aria-hidden="true">
+          <span className="pl-dash__paper-letters">{thumbLetters(title)}</span>
+          <i />
+          <i />
+          <i />
+        </span>
+      )}
+    </div>
+  );
+}
+
 export function ArtifactCard({ artifact: a, now, you, onFile }: ArtifactCardProps) {
   const href = route(APP_ROUTES.artifact, { slug: a.slug });
   const AccessIcon = VISIBILITY_META[a.visibility].icon;
-  const t = useThumbnail(a.thumbnail_url);
   return (
     <li className="pl-dash__card" data-role={a.role}>
-      <div className="pl-dash__thumb">
-        {t.src && (
-          <img
-            src={t.src}
-            alt=""
-            loading="lazy"
-            decoding="async"
-            className="pl-dash__thumb-img"
-            data-loaded={t.show ? "" : undefined}
-            onLoad={t.onLoad}
-            onError={t.onError}
-          />
-        )}
-        {!t.show && (
-          <span className="pl-dash__paper" aria-hidden="true">
-            <span className="pl-dash__paper-letters">{thumbLetters(a.title)}</span>
-            <i />
-            <i />
-            <i />
-          </span>
-        )}
-      </div>
+      <CardThumb title={a.title} url={a.thumbnail_url} />
       <div className="pl-dash__card-meta">
         <span className="pl-dash__title">
           <Link to={href} className="pl-dash__link">

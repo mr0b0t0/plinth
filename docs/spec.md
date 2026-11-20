@@ -1215,15 +1215,19 @@ mention or page.
 **In the app.** The dashboard's category menu covers the owner's categories under Mine, the
 person's own under Shared, and both under All; a shared row shows the person's own category, and
 its menu's "Move to category…" sets it. With sharing on, a selected owner category offers "Share
-category" (title, people with roles, the artifacts to show, the portal link, Stop sharing). The
-one way into a review is the dashboard: a banner line per share with artifacts waiting ("2
-artifacts to review in Acme", Review), and `?review=<share id>` for the link agents are given;
-the review sets Share or Keep private per artifact. A waiting row carries "Needs review"; shared
-rows carry no badge. The Settings page's category hint says when the name typed is a shared
-category, and its People section names who else sees the artifact through one, with a link to the
-category on the dashboard. The dashboard does not list the collections shared with the person;
+category" (people with roles, the artifacts to show, the name people see, the portal link, Stop
+sharing); its list leaves out artifacts waiting for review, and a people change leaves them
+waiting. The one way into a review is the dashboard: one quiet line on All and Mine, or on the
+shared category's own view ("2 to review in Acme", or "5 to review" across several, with a Review
+link), and `?review=<share id>` for the link agents are given. The review applies Share or Keep
+private per artifact at once and closes after the last one. Rows carry no review badge. Dialogs
+name the owner's category ("Share “Acme”", "Review “Acme”"); only the portal shows the name people
+see. The Settings page's category hint says when the name typed is a shared category, and its
+People section names how many people see the artifact through it, in one line with a link to the
+category on the dashboard. The dashboard does not list the categories shared with the person;
 they reach `/p/<id>` from the link the owner sends, and every artifact shared with them is under
-Shared. `/p/<id>` is the portal (never stored or indexed).
+Shared. `/p/<id>` is the portal (never stored or indexed); its email gate asks for an email in one
+line, and its cards use the dashboard's previews.
 
 ### Big builds and reuse by hash
 

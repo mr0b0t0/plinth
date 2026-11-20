@@ -44,7 +44,6 @@ import {
   useSignOut,
 } from "../components/account/hooks.tsx";
 import { MyCategoryDialog } from "../components/account/MyCategoryDialog.tsx";
-import { Note } from "../components/account/Note.tsx";
 import { CONNECT_AGENT_HREF } from "../components/account/nav.ts";
 import { RenameCategoryDialog } from "../components/account/RenameCategoryDialog.tsx";
 import { ShareCategoryDialog } from "../components/account/ShareCategoryDialog.tsx";
@@ -133,9 +132,14 @@ export function filterByCategory(
   });
 }
 
-/** The review banner's line for one shared category. */
-export function reviewText(pending: number, category: string): string {
-  return `${pending} ${pending === 1 ? "artifact" : "artifacts"} to review in ${category}`;
+/**
+ * The dashboard's one review line: how many artifacts wait, and in which shared category when only
+ * one has any.
+ */
+export function reviewText(waiting: readonly { category: string; pending: number }[]): string {
+  const total = waiting.reduce((n, s) => n + s.pending, 0);
+  const only = waiting.length === 1 ? waiting[0] : undefined;
+  return only ? `${total} to review in ${only.category}` : `${total} to review`;
 }
 
 /** One list of names from two (counts summed by key, the first list's spelling kept). */
@@ -394,7 +398,13 @@ export default function Dashboard() {
     selectedOwn && selected
       ? (shares.find((s) => categoryKey(s.category) === categoryKey(selected.name)) ?? null)
       : null;
-  const waiting = shares.filter((s) => s.counts.pending > 0);
+  // The review line: on All and Mine with no category picked, every share with waiting artifacts;
+  // with a category picked, only that category's share.
+  const waiting = shares.filter(
+    (s) =>
+      s.counts.pending > 0 &&
+      (byCategory ? selectedShare?.id === s.id : filter !== "shared" && category === null),
+  );
   const byName = [...categories].sort((a, b) =>
     a.name.localeCompare(b.name, undefined, { sensitivity: "base" }),
   );
@@ -494,16 +504,17 @@ export default function Dashboard() {
       )}
 
       {waiting.length > 0 && (
-        <div className="pl-dash__notices">
-          {waiting.map((s) => (
-            <Note key={s.id} tone="warning">
-              <span>{reviewText(s.counts.pending, s.category)}</span>{" "}
-              <Button size="sm" onClick={() => setReviewing(s.id)}>
-                Review
-              </Button>
-            </Note>
-          ))}
-        </div>
+        <p className="pl-dash__review">
+          {reviewText(waiting.map((s) => ({ category: s.category, pending: s.counts.pending })))}
+          <span aria-hidden="true"> · </span>
+          <button
+            type="button"
+            className="pl-dash__review-link"
+            onClick={() => setReviewing(waiting[0]?.id ?? null)}
+          >
+            Review
+          </button>
+        </p>
       )}
 
       {pending || list.status === "loading" ? (

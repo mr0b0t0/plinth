@@ -236,7 +236,7 @@ export function CategorySection({
     <Section
       id={CATEGORY_SECTION_ID}
       title="Category"
-      description="Group this artifact with others on your dashboard. Only you see it; people you share it with do not."
+      description="Group this artifact on your dashboard."
     >
       <form
         className="pl-acct-form"
@@ -247,6 +247,7 @@ export function CategorySection({
         <Input
           label="Category"
           hideLabel
+          className="pl-category-field"
           value={value}
           list={listId}
           maxLength={LIMITS.maxCategoryLength}
@@ -407,9 +408,11 @@ export function AccessSection({
             }}
           />
         )}
-        {visibility === "allowlist" && people === 0 && (
-          <Note>Only you can open it for now. Add people below to share it with them.</Note>
-        )}
+        {visibility === "allowlist" &&
+          people === 0 &&
+          sharing.category_share?.state !== "shared" && (
+            <Note>Only you can open it for now. Add people below to share it with them.</Note>
+          )}
         {error && visibility !== "password" && (
           <p className="pl-field__error" role="alert">
             {error}
@@ -501,24 +504,15 @@ export function PeopleSection({
     }
   };
 
-  const viaCategory = sharing.category_share ?? null;
+  // People who see it through its shared category: one line, managed from the dashboard.
+  const via = sharing.category_share ?? null;
+  const viaShare = via?.state === "shared" && artifact.category ? via : null;
   return (
     <Section
       id="settings-people"
       title="People"
       description="Viewers can open it while it is private. Commenters can also comment; editors can also publish new versions."
     >
-      {viaCategory?.state === "shared" && (
-        <Note>
-          Also shared with {viaCategory.people.length}{" "}
-          {viaCategory.people.length === 1 ? "person" : "people"} through “{viaCategory.title}”.{" "}
-          <Link
-            to={`${APP_ROUTES.dashboard}?category=${encodeURIComponent(artifact.category ?? "")}`}
-          >
-            Manage
-          </Link>
-        </Note>
-      )}
       {grants.length > 0 ? (
         <ul className="pl-acct-people" aria-busy={busy || undefined}>
           {grants.map((g) => (
@@ -545,8 +539,19 @@ export function PeopleSection({
             </li>
           ))}
         </ul>
-      ) : (
+      ) : viaShare ? null : (
         <p className="pl-acct-group__empty">Nobody else has access yet.</p>
+      )}
+      {viaShare && (
+        <p className="pl-acct-via">
+          {viaShare.people.length} {viaShare.people.length === 1 ? "person" : "people"} via{" "}
+          {artifact.category} ·{" "}
+          <Link
+            to={`${APP_ROUTES.dashboard}?category=${encodeURIComponent(artifact.category ?? "")}`}
+          >
+            Manage
+          </Link>
+        </p>
       )}
       <form className="pl-acct-add" onSubmit={add} noValidate>
         <Input

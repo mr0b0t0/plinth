@@ -1,10 +1,12 @@
-// Page: /p/:id. A collection someone shared with you through a category (docs/spec.md "Category
-// sharing and personal categories"): its title, who shared it, and the artifacts the owner chose to
-// show, each opening on its own page. Someone not yet known confirms their email by a one-time code
+// Page: /p/:id. A category someone shared with you (docs/spec.md "Category sharing and personal
+// categories"): the name they gave it, who shared it, and the artifacts the owner chose to show,
+// each opening on its own page. Someone not yet known confirms their email by a one-time code
 // first, as on a private artifact; that one confirmation then opens every artifact listed here.
 import { FolderSimpleIcon } from "@phosphor-icons/react";
 import { API, APP_ROUTES, type PortalGate, route } from "@plinth/shared";
 import { type FormEvent, useEffect, useRef, useState } from "react";
+import { CardThumb } from "../components/account/ArtifactRow.tsx";
+import "../components/account/dashboard.css";
 import { formatDateTime, formatRelativeShort } from "../components/account/format.ts";
 import { PublicShell } from "../components/layout/PublicShell.tsx";
 import { Button, ICON_SIZE, Input, Spinner, Stack } from "../components/ui/index.ts";
@@ -179,7 +181,7 @@ export default function Portal({ params }: { params: Record<string, string> }) {
   const title =
     state.status === "gate" && state.gate.status === "ok" ? state.gate.portal.title : null;
   useEffect(() => {
-    document.title = title ? `${title} · Plinth` : "Shared collection · Plinth";
+    document.title = title ? `${title} · Plinth` : "Shared category · Plinth";
   }, [title]);
 
   if (state.status === "not_found") return <NotFound />;
@@ -195,7 +197,7 @@ export default function Portal({ params }: { params: Record<string, string> }) {
       <PublicShell centered width="reading">
         <section className="pl-gate pl-gate--notice" aria-labelledby="portal-title">
           <h1 id="portal-title" className="pl-gate__title">
-            Could not load this collection
+            Could not load this category
           </h1>
           <p className="pl-gate__lead">{state.message}</p>
         </section>
@@ -209,14 +211,10 @@ export default function Portal({ params }: { params: Record<string, string> }) {
       <PublicShell centered>
         <section className="pl-gate" aria-labelledby="portal-title">
           <FolderSimpleIcon size={ICON_SIZE.xl} aria-hidden="true" className="pl-gate__icon" />
-          <p className="pl-gate__eyebrow">Shared collection</p>
           <h1 id="portal-title" className="pl-gate__title">
             Confirm your email
           </h1>
-          <p className="pl-gate__lead">
-            Only the people this collection is shared with can open it. Confirm your email address
-            with a one-time code. You do not need an account.
-          </p>
+          <p className="pl-gate__lead">Enter your email to get a one-time code.</p>
           <PortalEmailForm id={id} onGate={(g) => setState({ status: "gate", gate: g })} />
         </section>
       </PublicShell>
@@ -244,18 +242,7 @@ export default function Portal({ params }: { params: Record<string, string> }) {
           <ul className="pl-portal__items">
             {gate.items.map((a) => (
               <li key={a.id} className="pl-portal__item">
-                <span className="pl-portal__thumb" aria-hidden="true">
-                  {a.thumbnail_url && (
-                    <img
-                      src={a.thumbnail_url}
-                      alt=""
-                      loading="lazy"
-                      onError={(e) => {
-                        e.currentTarget.hidden = true;
-                      }}
-                    />
-                  )}
-                </span>
+                <CardThumb title={a.title} url={a.thumbnail_url} />
                 <Link to={route(APP_ROUTES.artifact, { slug: a.slug })} className="pl-portal__link">
                   <span className="pl-portal__item-title">{a.title}</span>
                 </Link>

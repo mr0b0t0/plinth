@@ -1,5 +1,5 @@
 // /p/:id: email_required asks for an email and a code against the portal endpoints; ok lists the
-// collection's artifacts, each linking to its page; an empty collection says so; 404 is not found.
+// shared category's artifacts, each linking to its page; an empty one says so; 404 is not found.
 import type { ArtifactSummary } from "@plinth/shared";
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -47,7 +47,7 @@ afterEach(() => {
 });
 
 describe("Portal", () => {
-  it("lists the collection's artifacts with who shared it", async () => {
+  it("lists the shared category's artifacts with who shared it", async () => {
     stubApi({ handle: (c) => (c.path === `/portals/${ID}` ? json(OK) : undefined) });
     const Portal = await loadPage();
     render(<Portal params={{ id: ID }} />);
@@ -76,7 +76,7 @@ describe("Portal", () => {
     expect(await screen.findByText("Nothing here yet.")).toBeTruthy();
   });
 
-  it("asks for an email and a code, then shows the collection", async () => {
+  it("asks for an email and a code, then shows the shared category", async () => {
     let confirmed = false;
     const api = stubApi({
       handle: (c) => {
@@ -94,6 +94,8 @@ describe("Portal", () => {
     const user = userEvent.setup();
     render(<Portal params={{ id: ID }} />);
     await screen.findByRole("heading", { name: "Confirm your email" });
+    expect(screen.getByText("Enter your email to get a one-time code.")).toBeTruthy();
+    expect(screen.queryByText(/collection/i)).toBeNull();
     await user.type(screen.getByRole("textbox", { name: "Email" }), "client@example.org");
     await user.click(screen.getByRole("button", { name: "Send code" }));
     await user.type(await screen.findByRole("textbox", { name: "Six-digit code" }), "123456");

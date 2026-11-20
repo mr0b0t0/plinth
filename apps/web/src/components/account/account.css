@@ -934,3 +934,17 @@ ul.pl-acct-steps > li::before {
 .pl-acct-advanced[open] > summary::before {
   transform: rotate(45deg);
 }
+
+/* ---------- category sharing (docs/spec.md "Category sharing and personal categories") ---------- */
+
+/* Category fields suggest names from a datalist: no native picker arrow beside the text. */
+.pl-category-field .pl-control::-webkit-calendar-picker-indicator {
+  /* biome-ignore lint/complexity/noImportantStyles: Chromium's own style for a datalist's indicator is !important */
+  display: none !important;
+}
+/* People: who else sees it through its shared category, one line. */
+.pl-acct-via {
+  padding-block: var(--space-2);
+  color: var(--color-ink-muted);
+  font-size: var(--text-sm);
+}

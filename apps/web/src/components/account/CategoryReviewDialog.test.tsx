@@ -1,10 +1,11 @@
-// The review dialog sends each decision with the version and the category_rev the owner was shown.
+// The review dialog applies each row's choice at once, with the version and the category_rev the
+// owner was shown, and closes once nothing waits.
 import type { CategoryShareArtifact } from "@plinth/shared";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { json, stubApi } from "../viewer/test-utils.ts";
-import { CategoryReviewDialog, decisionsToItems } from "./CategoryReviewDialog.tsx";
+import { CategoryReviewDialog, decisionItem } from "./CategoryReviewDialog.tsx";
 
 const row = (id: string, over: Partial<CategoryShareArtifact> = {}): CategoryShareArtifact => ({
   id,
@@ -38,43 +39,76 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+const rowOf = (title: string) => screen.getByText(title).closest("li") as HTMLElement;
+
 describe("CategoryReviewDialog", () => {
-  it("decisionsToItems carries version and category_rev", () => {
-    expect(decisionsToItems([row("a"), row("b")], new Map([["b", "private"]]))).toEqual([
-      { id: "b", version: 3, category_rev: 2, decision: "private" },
-    ]);
+  it("decisionItem carries version and category_rev", () => {
+    expect(decisionItem(row("b"), "private")).toEqual({
+      id: "b",
+      version: 3,
+      category_rev: 2,
+      decision: "private",
+    });
   });
 
-  it("lists only pending artifacts and sends the decisions made", async () => {
+  it("lists only pending artifacts and applies each choice at once", async () => {
     const onDone = vi.fn();
+    const onClose = vi.fn();
     const api = stubApi({
       handle: (c) => {
         if (c.method === "GET") return json(detail);
-        if (c.method === "POST") return json({ shared: 1, private: 1, skipped: [] });
+        if (c.method === "POST") return json({ shared: 1, private: 0, skipped: [] });
         return undefined;
       },
     });
     const user = userEvent.setup();
-    render(<CategoryReviewDialog shareId={detail.id} onClose={vi.fn()} onDone={onDone} />);
+    render(<CategoryReviewDialog shareId={detail.id} onClose={onClose} onDone={onDone} />);
+    const dialog = await screen.findByRole("dialog", { name: "Review “Acme”" });
     await screen.findByText("Report a");
     expect(screen.queryByText("Report c")).toBeNull();
-    expect(screen.getAllByText(/filed by Work Claude/)).toHaveLength(2);
-    await user.click(
-      screen
-        .getByRole("group", { name: "Decision for Report a" })
-        .querySelector("input") as HTMLElement,
-    );
-    const b = screen.getByRole("group", { name: "Decision for Report b" });
-    await user.click(b.querySelectorAll("input")[1] as HTMLElement);
-    await user.click(screen.getByRole("button", { name: "Save" }));
+    expect(screen.getAllByText(/Work Claude/)).toHaveLength(2);
+    // No Save and no second close: the header's close button is the only way out.
+    expect(within(dialog).queryByRole("button", { name: "Save" })).toBeNull();
+    expect(within(dialog).getAllByRole("button", { name: "Close" })).toHaveLength(1);
+    // Focus does not start on the close button.
+    expect(document.activeElement?.getAttribute("aria-label")).not.toBe("Close");
+
+    await user.click(within(rowOf("Report a")).getByRole("button", { name: "Share" }));
+    await waitFor(() => expect(screen.queryByText("Report a")).toBeNull());
+    expect(onDone).not.toHaveBeenCalled();
+    await user.click(within(rowOf("Report b")).getByRole("button", { name: "Keep private" }));
     await waitFor(() => expect(onDone).toHaveBeenCalled());
-    const post = api.calls.find((c) => c.method === "POST");
-    expect(post?.path).toBe(`/category-shares/${detail.id}/review`);
-    expect(post?.body).toEqual({
-      items: [
-        { id: "a", version: 3, category_rev: 2, decision: "shared" },
-        { id: "b", version: 3, category_rev: 2, decision: "private" },
-      ],
+    const posts = api.calls.filter((c) => c.method === "POST");
+    expect(posts.map((c) => c.path)).toEqual([
+      `/category-shares/${detail.id}/review`,
+      `/category-shares/${detail.id}/review`,
+    ]);
+    expect(posts.map((c) => c.body)).toEqual([
+      { items: [{ id: "a", version: 3, category_rev: 2, decision: "shared" }] },
+      { items: [{ id: "b", version: 3, category_rev: 2, decision: "private" }] },
+    ]);
+  });
+
+  it("a skipped share reloads the list with a note", async () => {
+    let gets = 0;
+    stubApi({
+      handle: (c) => {
+        if (c.method === "GET") {
+          gets += 1;
+          return json(detail);
+        }
+        if (c.method === "POST")
+          return json({ shared: 0, private: 0, skipped: [{ id: "a", reason: "changed" }] });
+        return undefined;
+      },
     });
+    const user = userEvent.setup();
+    const onDone = vi.fn();
+    render(<CategoryReviewDialog shareId={detail.id} onClose={vi.fn()} onDone={onDone} />);
+    await screen.findByText("Report a");
+    await user.click(within(rowOf("Report a")).getByRole("button", { name: "Share" }));
+    expect(await screen.findByText(/changed since you opened this/)).toBeTruthy();
+    await waitFor(() => expect(gets).toBe(2));
+    expect(onDone).not.toHaveBeenCalled();
   });
 });

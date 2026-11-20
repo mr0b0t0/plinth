@@ -1,12 +1,18 @@
 // The Share category dialog: a new share sends one POST with the review of every row; a people
-// change on an existing share sends one PATCH with the people and the review; a title change alone
-// sends PATCH { title }; skipped items reload the list with a note.
+// change on an existing share sends one PATCH with the people and the review of the listed rows
+// (rows waiting for review are not listed and stay waiting); a title change alone sends
+// PATCH { title }; skipped items reload the list with a note.
 import type { CategoryShareArtifact } from "@plinth/shared";
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { json, stubApi } from "../viewer/test-utils.ts";
-import { reviewItems, ShareCategoryDialog, skippedText } from "./ShareCategoryDialog.tsx";
+import {
+  listedRows,
+  reviewItems,
+  ShareCategoryDialog,
+  skippedText,
+} from "./ShareCategoryDialog.tsx";
 
 const row = (id: string, over: Partial<CategoryShareArtifact> = {}): CategoryShareArtifact => ({
   id,
@@ -39,14 +45,17 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe("reviewItems", () => {
+describe("listedRows and reviewItems", () => {
   it("shares ticked rows, keeps the rest private, and leaves taken-down rows out", () => {
-    expect(
-      reviewItems([row("a"), row("b"), row("c", { taken_down: true })], new Set(["a"])),
-    ).toEqual([
+    const rows = listedRows([row("a"), row("b"), row("c", { taken_down: true })], false);
+    expect(reviewItems(rows, new Set(["a"]))).toEqual([
       { id: "a", version: 2, category_rev: 1, decision: "shared" },
       { id: "b", version: 2, category_rev: 1, decision: "private" },
     ]);
+  });
+  it("on an existing share, leaves rows waiting for review out", () => {
+    const rows = [row("a", { state: "shared" }), row("b"), row("c", { state: "private" })];
+    expect(listedRows(rows, true).map((r) => r.id)).toEqual(["a", "c"]);
   });
 });
 
@@ -115,7 +124,10 @@ describe("ShareCategoryDialog", () => {
     const api = stubApi({
       handle: (c) => {
         if (c.method === "GET" && c.path === `/category-shares/${SHARE.id}`)
-          return json({ ...SHARE, artifacts: [row("a", { state: "shared" }), row("b")] });
+          return json({
+            ...SHARE,
+            artifacts: [row("a", { state: "shared" }), row("b"), row("c", { state: "private" })],
+          });
         if (c.method === "PATCH")
           return json({ share: SHARE, review: { shared: 1, private: 1, skipped: [] } });
         return undefined;
@@ -126,9 +138,13 @@ describe("ShareCategoryDialog", () => {
       <ShareCategoryDialog category="Acme" shareId={SHARE.id} onClose={vi.fn()} onDone={onDone} />,
     );
     await screen.findByText("Report a");
-    // Pending rows say so and stay unticked.
-    expect(screen.getByText("Needs review")).toBeTruthy();
-    expect((screen.getByRole("checkbox", { name: /Report b/ }) as HTMLInputElement).checked).toBe(
+    // The dialog opens on the email field.
+    expect(document.activeElement).toBe(screen.getByRole("textbox", { name: "Email address" }));
+    // A row waiting for review is decided in the review dialog only: it is not listed here, and
+    // the people change leaves it waiting (no review item for it).
+    expect(screen.queryByRole("checkbox", { name: /Report b/ })).toBeNull();
+    expect(screen.queryByText("Needs review")).toBeNull();
+    expect((screen.getByRole("checkbox", { name: /Report c/ }) as HTMLInputElement).checked).toBe(
       false,
     );
     await user.click(screen.getByRole("button", { name: "Remove client@example.org" }));
@@ -140,7 +156,7 @@ describe("ShareCategoryDialog", () => {
       people: [],
       review: [
         { id: "a", version: 2, category_rev: 1, decision: "shared" },
-        { id: "b", version: 2, category_rev: 1, decision: "private" },
+        { id: "c", version: 2, category_rev: 1, decision: "private" },
       ],
     });
   });

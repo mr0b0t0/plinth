@@ -79,7 +79,12 @@ export function MyCategoryDialog({
       footer={
         <>
           {current !== null && (
-            <Button variant="danger" onClick={() => void put(null)} loading={busy === "remove"}>
+            <Button
+              variant="ghost"
+              className="pl-dialog-start"
+              onClick={() => void put(null)}
+              loading={busy === "remove"}
+            >
               Remove category
             </Button>
           )}
@@ -101,6 +106,7 @@ export function MyCategoryDialog({
       <form id={formId} onSubmit={submit} noValidate>
         <Input
           label="Your category"
+          className="pl-category-field"
           value={typed}
           maxLength={LIMITS.maxCategoryLength}
           list={listId}

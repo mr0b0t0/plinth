@@ -569,21 +569,9 @@
 .pl-portal__item:focus-within {
   border-color: var(--color-border-strong);
 }
-.pl-portal__thumb {
-  position: relative;
-  display: block;
-  height: 132px;
+/* The preview is the dashboard card's (CardThumb, dashboard.css). */
+.pl-portal__item .pl-dash__thumb {
   margin-bottom: var(--space-1);
-  border-bottom: var(--border-width) solid var(--color-border);
-  background: var(--color-sidebar);
-}
-.pl-portal__thumb img {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  object-position: top center;
 }
 .pl-portal__link {
   padding-inline: 10px;
