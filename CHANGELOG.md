@@ -21,6 +21,12 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   viewer can never tell from the socket whether the owner or a collaborator has the page open. A
   reverse proxy must pass WebSocket upgrades on the app host too. Plugin 0.28.0: the agent's rule
   never to tell people to reload.
+- **Dashboard previews in the list, and one card height.** Each row of the list view starts with a
+  small preview of the page, its thumbnail, in place of the page glyph (the glyph stays until a
+  thumbnail exists). A card shows its category as plain text on its info line instead of a chip on
+  a line of its own, so every card in the grid has the same height; a long name ends in "…" and
+  shows in full on hover. On phones the category moves from beside the title to a row's second
+  line, and on a card it takes the place of "You".
 
 ## 0.6.0 (2026-11-20)
 
