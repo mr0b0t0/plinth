@@ -5,11 +5,13 @@
 // each read-only by the type's own renderer and against the files it would publish: the page
 // changes against their base version's files, vN against vN's. Above each is its change list from
 // the shared describers (what the page changes did since the base, and what vN did since the
-// base, with vN's files when it changed any). Then exactly two choices, and Back:
+// base, with vN's files when it changed any; a changed text shows only the words that changed).
+// Each pane marks what changed since the base (the type's blocks or cells) and opens at its first
+// change. Then exactly two choices, and Back:
 // - "Publish your changes": they become the next version, with the files they were made with,
 //   over vN, which stays in History;
-// - "Discard your changes": after a confirmation that names what will be lost, the page goes back
-//   to vN.
+// - "Discard your changes": the app confirms it with its own dialog over the dimmed page, then
+//   the page goes back to vN.
 // Short labels only: the edit strip above the frame says what happened, so the review has no
 // heading of its own; the two panes show the rest. Back is its one way out (the strip shows no
 // Done while it is open), and its styles follow the app's (ink primary, bronze live state).
@@ -23,6 +25,7 @@ import {
   type ChangeItem,
   type ChangeList,
   describeChanges,
+  diffSequence,
   type FileChange,
   type FileChangeSummary,
   type LiveTypeRules,
@@ -34,11 +37,20 @@ import { fetchVersionSource, fileUrl } from "./files.ts";
 export interface ReviewPane {
   /**
    * Draw `text` (the type's live form) into `el`, resolving every file through `fileUrl(version,
-   * …)`. Returns a function that brings the pane to the place a change item names (false when it
-   * cannot find it), or null.
+   * …)`, and mark what differs from `base` (the base version's live form, null when it could not
+   * be read) with CHANGED_ATTR. Returns a function that brings the pane to the place a change item
+   * names (false when it cannot find it), or null.
    */
-  render(el: HTMLElement, text: string, version: number): ((item: ChangeItem) => boolean) | null;
+  render(
+    el: HTMLElement,
+    text: string,
+    version: number,
+    base: string | null,
+  ): ((item: ChangeItem) => boolean) | null;
 }
+
+/** The attribute a pane sets on each block or cell that changed since the base. */
+export const CHANGED_ATTR = "data-review-changed";
 
 export type ReviewOutcome = "publish" | "discard" | "cancelled";
 
@@ -65,8 +77,6 @@ export interface ReviewState {
   files: FileChangeSummary | null;
   /** The draft, in the type's live form. */
   draft: string;
-  /** Room mode: the others editing, by email, for the Discard confirmation. */
-  editors: readonly string[];
 }
 
 /** The review's words (exported for tests). One noun throughout: "your changes". */
@@ -79,44 +89,66 @@ export const REVIEW_WORDS = {
   busy: "Another editor is choosing right now",
   unpublishable: "These changes can't be published yet.",
   label: (from: number, to: number) => `Review ${versionRange(from, to)} and your changes`,
-  /** The Discard confirmation, worded as the edit strip's own. */
-  confirmTitle: "Discard unpublished changes?",
-  confirmAction: "Discard changes",
 } as const;
-
-const MAX_SUMMARY = 3;
 
 /** "Slide 2: Title changed" style text for one item. */
 export function itemText(item: ChangeItem): string {
   return item.where ? `${item.where}: ${item.what}` : item.what;
 }
 
-/** The Discard confirmation's description: what will be lost, from the page changes' list. */
-export function discardDescription(
-  list: ChangeList | null,
-  to: number,
-  mode: "room" | "solo",
-  editors: readonly string[],
-): string {
-  const items = list?.items ?? [];
-  const n = items.length;
-  let lost: string;
-  if (n === 0) lost = "Your changes will be lost.";
-  else {
-    const shown = items.slice(0, MAX_SUMMARY).map(itemText);
-    const more = n - shown.length + (list?.truncated ? 1 : 0);
-    const what = more > 0 ? `${shown.join(", ")}, and ${more} more` : shown.join(", ");
-    lost =
-      n === 1 && !list?.truncated
-        ? `This change will be lost: ${what}.`
-        : `These ${list?.truncated ? `${n}+` : n} changes will be lost: ${what}.`;
+/** One run of a changed text: words both sides share, or words only one side has. */
+export interface WordRun {
+  kind: "same" | "removed" | "added";
+  text: string;
+}
+
+/** Words of context kept on each side of a change. */
+const CONTEXT_WORDS = 3;
+/** Changes shown in one item's words; more end with "…". */
+const MAX_HUNKS = 2;
+/** Words shown of one removed or added run; a longer one ends with "…". */
+const MAX_RUN_WORDS = 12;
+
+/**
+ * What changed between two short texts (a change item's `before` and `after`), as runs: only the
+ * words that differ, with a few words of context around each change and "…" where text is left
+ * out, so a change deep in a long paragraph is what shows, not the opening both sides share. Empty
+ * when the two do not differ in their words (the change lies past both excerpts).
+ */
+export function changedWords(before: string, after: string): WordRun[] {
+  const a = before.split(/\s+/).filter(Boolean);
+  const b = after.split(/\s+/).filter(Boolean);
+  const { hunks } = diffSequence(a, b, { maxEdits: 200 });
+  if (hunks.length === 0) return [];
+  const runs: WordRun[] = [];
+  const push = (kind: WordRun["kind"], words: string[]) => {
+    if (words.length === 0) return;
+    const cut = words.length > MAX_RUN_WORDS ? [...words.slice(0, MAX_RUN_WORDS), "…"] : words;
+    // A "…" stays on the line of the word beside it (a no-break space).
+    const text = cut.join(" ").replace(/^… /, "… ").replace(/ …$/, " …");
+    const last = runs.at(-1);
+    if (last && last.kind === kind) last.text += ` ${text}`;
+    else runs.push({ kind, text });
+  };
+  const shown = hunks.slice(0, MAX_HUNKS);
+  let j = 0;
+  for (const [i, h] of shown.entries()) {
+    // Context before: what follows the previous change, cut to a few words on each side (before
+    // the first change, only the words just before it, after a "…").
+    const gap = b.slice(j, h.bStart);
+    const lead = i === 0 ? 0 : CONTEXT_WORDS;
+    if (gap.length > lead + CONTEXT_WORDS) {
+      push("same", [...gap.slice(0, lead), "…", ...gap.slice(-CONTEXT_WORDS)]);
+    } else push("same", gap);
+    push("removed", a.slice(h.aStart, h.aEnd));
+    push("added", b.slice(h.bStart, h.bEnd));
+    j = h.bEnd;
   }
-  if (mode === "solo") return `${lost} The page will show v${to}.`;
-  const who =
-    editors.length > 0
-      ? ` (${editors.slice(0, 5).join(", ")}${editors.length > 5 ? ", and others" : ""})`
-      : "";
-  return `${lost} The page will show v${to} for everyone editing${who}.`;
+  const tail = b.slice(j);
+  const more = hunks.length > shown.length;
+  if (tail.length > CONTEXT_WORDS || more) push("same", [...tail.slice(0, CONTEXT_WORDS), "…"]);
+  else push("same", tail);
+  return runs;
 }
 
 /** "chart.png replaced" style lines for vN's files part, and how many more there are. */
@@ -141,24 +173,6 @@ function el<K extends keyof HTMLElementTagNameMap>(
   return e;
 }
 
-/** The app's close glyph (Phosphor X, regular), built as DOM: no markup string is parsed. */
-function closeIcon(doc: Document): SVGElement {
-  const ns = "http://www.w3.org/2000/svg";
-  const svg = doc.createElementNS(ns, "svg");
-  svg.setAttribute("viewBox", "0 0 256 256");
-  svg.setAttribute("width", "16");
-  svg.setAttribute("height", "16");
-  svg.setAttribute("aria-hidden", "true");
-  svg.setAttribute("fill", "currentColor");
-  const path = doc.createElementNS(ns, "path");
-  path.setAttribute(
-    "d",
-    "M205.66,194.34a8,8,0,0,1-11.32,11.32L128,139.31,61.66,205.66a8,8,0,0,1-11.32-11.32L116.69,128,50.34,61.66A8,8,0,0,1,61.66,50.34L128,116.69l66.34-66.35a8,8,0,0,1,11.32,11.32L139.31,128Z",
-  );
-  svg.append(path);
-  return svg;
-}
-
 let ids = 0;
 const nextId = (p: string) => `plinth-review-${p}-${++ids}`;
 
@@ -171,9 +185,8 @@ export class DraftReview {
   private reason: HTMLElement | null = null;
   private busyTimer: ReturnType<typeof setTimeout> | null = null;
   private pending: ReviewOutcome | null = null;
-  private confirm: HTMLElement | null = null;
+  private discardButton: HTMLButtonElement | null = null;
   private opened = 0;
-  private mineList: ChangeList | null = null;
 
   constructor(private readonly setup: ReviewSetup) {}
 
@@ -226,10 +239,10 @@ export class DraftReview {
     const { rules, type } = this.setup;
     const baseText = baseRaw === null ? null : rules.toLive(baseRaw);
     const theirs = theirsRaw === null ? null : rules.toLive(theirsRaw);
-    this.mineList = baseText === null ? null : describeChanges(type, baseText, state.draft);
+    const mineList = baseText === null ? null : describeChanges(type, baseText, state.draft);
     const theirList =
       baseText === null || theirs === null ? null : describeChanges(type, baseText, theirs);
-    this.draw(state, theirs, theirList);
+    this.draw(state, baseText, theirs, mineList, theirList);
     if (reopened) {
       this.announce(
         `v${state.n} was published too. The review now covers ${versionRange(state.base + 1, state.n)}.`,
@@ -237,12 +250,17 @@ export class DraftReview {
     }
   }
 
-  private draw(state: ReviewState, theirs: string | null, theirList: ChangeList | null): void {
+  private draw(
+    state: ReviewState,
+    base: string | null,
+    theirs: string | null,
+    mineList: ChangeList | null,
+    theirList: ChangeList | null,
+  ): void {
     const d = this.doc;
     const from = state.base + 1;
     const to = state.n;
     this.root?.remove();
-    this.closeConfirm();
     const root = el(d, "section", "plinth-review");
     root.setAttribute("role", "region");
     root.setAttribute("aria-label", REVIEW_WORDS.label(from, to));
@@ -270,6 +288,8 @@ export class DraftReview {
         for (const o of swButtons) {
           o.setAttribute("aria-checked", o.dataset.side === side ? "true" : "false");
         }
+        // A side hidden until now opens at its first change, as the other did.
+        toFirstChange();
       });
       return b;
     });
@@ -303,7 +323,7 @@ export class DraftReview {
         gotos.push(null);
       } else {
         try {
-          gotos.push(this.setup.pane.render(body, text, version));
+          gotos.push(this.setup.pane.render(body, text, version, base));
         } catch {
           body.replaceChildren(el(d, "p", "plinth-review__missing", "This could not be shown."));
           gotos.push(null);
@@ -322,15 +342,33 @@ export class DraftReview {
     };
     panes.append(
       // Page changes never change files, so only vN's side can list any.
-      pane("mine", REVIEW_WORDS.mine, this.mineList, fileLines(null), state.draft, state.base),
+      pane("mine", REVIEW_WORDS.mine, mineList, fileLines(null), state.draft, state.base),
       pane("theirs", REVIEW_WORDS.theirs(to), theirList, fileLines(state.files), theirs, to),
     );
+    // Each side opens at its first change (once it is shown: one at a time at phone width), without
+    // moving the other side with it.
+    const placed = new Set<HTMLElement>();
+    let quiet = 0;
+    const toFirstChange = () => {
+      const win = this.setup.win;
+      for (const b of bodies) {
+        if (placed.has(b) || b.getClientRects().length === 0) continue;
+        placed.add(b);
+        const first = b.querySelector(`[${CHANGED_ATTR}]`);
+        if (first && scrollIntoPane(b, first)) {
+          quiet++;
+          // Scroll events fire on the next frame; the sync below skips those.
+          win.requestAnimationFrame(() => win.requestAnimationFrame(() => quiet--));
+        }
+      }
+      edges();
+    };
     // The two sides scroll together.
     let syncing = false;
     for (const [i, b] of bodies.entries()) {
       b.addEventListener("scroll", () => {
         edges();
-        if (syncing) return;
+        if (syncing || quiet > 0) return;
         const other = bodies[1 - i];
         if (!other) return;
         const max = b.scrollHeight - b.clientHeight;
@@ -351,7 +389,8 @@ export class DraftReview {
     publish.addEventListener("click", () => this.choose("publish"));
     const discard = el(d, "button", "plinth-review__danger", REVIEW_WORDS.discard);
     discard.type = "button";
-    discard.addEventListener("click", () => this.openConfirm(discard));
+    // The app asks first, with its own confirmation over the dimmed page.
+    discard.addEventListener("click", () => this.choose("discard"));
     const back = el(d, "button", "plinth-review__ghost", REVIEW_WORDS.back);
     back.type = "button";
     back.setAttribute("aria-keyshortcuts", "Escape");
@@ -371,11 +410,12 @@ export class DraftReview {
     choices.append(reason, back, discard, publish);
     this.buttons = [publish, discard];
     this.publishButton = publish;
+    this.discardButton = discard;
     this.reason = reason;
 
     root.append(sw, panes, choices);
     root.addEventListener("keydown", (e) => {
-      if (e.key === "Escape" && !this.confirm) {
+      if (e.key === "Escape") {
         e.stopPropagation();
         this.setup.choose("cancelled");
         this.close();
@@ -385,7 +425,7 @@ export class DraftReview {
     d.documentElement.classList.add("plinth-reviewing");
     this.root = root;
     root.focus();
-    edges();
+    toFirstChange();
   }
 
   /** One side's change list, and its files when it changed any. Items are buttons that bring both
@@ -411,16 +451,8 @@ export class DraftReview {
         b.type = "button";
         b.addEventListener("click", () => goTo(item));
         li.append(b);
-        if (item.before !== undefined || item.after !== undefined) {
-          li.append(
-            el(
-              d,
-              "span",
-              "plinth-review__values",
-              `${item.before ?? "(empty)"} → ${item.after ?? "(empty)"}`,
-            ),
-          );
-        }
+        const values = this.values(item);
+        if (values) li.append(values);
         ul.append(li);
       }
       if (list.truncated) ul.append(el(d, "li", "plinth-review__item", "and more"));
@@ -445,10 +477,49 @@ export class DraftReview {
     return s;
   }
 
+  /**
+   * An item's values: a short value as "18 → 24", a longer text as only the words that changed
+   * (removed ones struck through), or nothing when the excerpts do not show the change.
+   */
+  private values(item: ChangeItem): HTMLElement | null {
+    const d = this.doc;
+    const { before, after } = item;
+    if (before === undefined && after === undefined) return null;
+    const span = el(d, "span", "plinth-review__values");
+    if (before === undefined || after === undefined) {
+      span.textContent = before ?? after ?? "";
+      return span;
+    }
+    const runs = changedWords(before, after);
+    if (runs.length === 0) return null;
+    if (runs.every((r) => r.kind !== "same")) {
+      // The whole value changed: one plain line.
+      span.textContent = `${before} → ${after}`;
+      return span;
+    }
+    for (const [i, r] of runs.entries()) {
+      if (i > 0) span.append(" ");
+      if (r.kind === "same") {
+        span.append(r.text);
+        continue;
+      }
+      const mark = el(d, r.kind === "removed" ? "del" : "ins", "plinth-review__word");
+      // Screen readers do not announce del and ins, so the words say which they are.
+      mark.append(
+        el(d, "span", "plinth-review__sr", r.kind === "removed" ? "removed: " : "added: "),
+      );
+      mark.append(r.text);
+      span.append(mark);
+    }
+    return span;
+  }
+
   private choose(outcome: "publish" | "discard", note?: string): void {
     if (!this.state || this.pending) return;
     this.pending = outcome;
-    this.setButtons(false, outcome === "publish" ? "Publishing…" : "Discarding…");
+    // A Discard waits on the app's confirmation, whose backdrop covers the frame: the buttons
+    // stay as they are behind it (a second choice waits on the answer all the same).
+    if (outcome === "publish") this.setButtons(false, "Publishing…");
     this.setup.choose(outcome, note);
   }
 
@@ -483,7 +554,9 @@ export class DraftReview {
         this.setButtons(true, "A newer version was published. Review it too.");
         return;
       case "failed":
+        // Also the answer to a Discard whose confirmation was cancelled: back to the button.
         this.setButtons(true, "");
+        if (chose === "discard") this.discardButton?.focus();
         return;
       case "done":
         this.close(
@@ -493,87 +566,11 @@ export class DraftReview {
     }
   }
 
-  private openConfirm(from: HTMLElement): void {
-    const s = this.state;
-    if (!s || this.confirm) return;
-    const d = this.doc;
-    const box = el(d, "div", "plinth-review__confirm");
-    box.setAttribute("role", "alertdialog");
-    box.setAttribute("aria-modal", "true");
-    const head = el(d, "div", "plinth-review__confirm-head");
-    const t = el(d, "h3", "plinth-review__confirm-title", REVIEW_WORDS.confirmTitle);
-    t.id = nextId("confirm");
-    const x = el(d, "button", "plinth-review__close");
-    x.type = "button";
-    x.setAttribute("aria-label", "Close");
-    x.append(closeIcon(d));
-    head.append(t, x);
-    const p = el(
-      d,
-      "p",
-      "plinth-review__confirm-text",
-      discardDescription(this.mineList, s.n, s.mode, s.editors),
-    );
-    p.id = nextId("confirm-text");
-    box.setAttribute("aria-labelledby", t.id);
-    box.setAttribute("aria-describedby", p.id);
-    const no = el(d, "button", "plinth-review__ghost", "Cancel");
-    no.type = "button";
-    const yes = el(d, "button", "plinth-review__danger-solid", REVIEW_WORDS.confirmAction);
-    yes.type = "button";
-    const done = () => {
-      this.closeConfirm();
-      from.focus();
-    };
-    no.addEventListener("click", done);
-    x.addEventListener("click", done);
-    yes.addEventListener("click", () => {
-      this.closeConfirm();
-      this.choose("discard");
-    });
-    box.addEventListener("keydown", (e) => {
-      if (e.key === "Escape") {
-        e.preventDefault();
-        e.stopPropagation();
-        done();
-      } else if (e.key === "Tab") {
-        // Focus stays in the confirmation.
-        const first = x;
-        const last = yes;
-        if (e.shiftKey && d.activeElement === first) {
-          e.preventDefault();
-          last.focus();
-        } else if (!e.shiftKey && d.activeElement === last) {
-          e.preventDefault();
-          first.focus();
-        }
-      }
-    });
-    const actions = el(d, "div", "plinth-review__confirm-actions");
-    actions.append(no, yes);
-    box.append(head, p, actions);
-    const scrim = el(d, "div", "plinth-review__scrim");
-    scrim.append(box);
-    // A click beside the confirmation closes it, as beside the app's dialogs.
-    scrim.addEventListener("click", (e) => {
-      if (e.target === scrim) done();
-    });
-    this.root?.append(scrim);
-    this.confirm = scrim;
-    no.focus();
-  }
-
-  private closeConfirm(): void {
-    this.confirm?.remove();
-    this.confirm = null;
-  }
-
   /** Close the review, saying why when someone else's choice (or a version) closed it. */
   close(message?: string): void {
     this.opened++;
     if (this.busyTimer) clearTimeout(this.busyTimer);
     this.busyTimer = null;
-    this.closeConfirm();
     this.root?.remove();
     this.root = null;
     this.state = null;
@@ -581,6 +578,79 @@ export class DraftReview {
     this.doc.documentElement.classList.remove("plinth-reviewing");
     if (message) this.announce(message);
   }
+}
+
+/**
+ * Scroll `pane` so `target` is in view, centred, when it is not already wholly in view (a sheet's
+ * sticky header row and column stay clear of a centred cell). True when it scrolled.
+ */
+function scrollIntoPane(pane: HTMLElement, target: Element): boolean {
+  const p = pane.getBoundingClientRect();
+  const t = target.getBoundingClientRect();
+  let moved = false;
+  if (t.top < p.top || t.bottom > p.bottom) {
+    pane.scrollTop += t.top - p.top - Math.max(0, (p.height - t.height) / 2);
+    moved = true;
+  }
+  if (t.left < p.left || t.right > p.right) {
+    pane.scrollLeft += t.left - p.left - Math.max(0, (p.width - t.width) / 2);
+    moved = true;
+  }
+  return moved;
+}
+
+/** A thin mark where blocks were removed, for `parent` (an item in a list). */
+function goneMarker(parent: Element): Element {
+  const gone = parent.ownerDocument.createElement(/^(UL|OL)$/.test(parent.tagName) ? "li" : "div");
+  gone.className = "plinth-review__gone";
+  gone.setAttribute(CHANGED_ATTR, "");
+  gone.setAttribute("aria-hidden", "true");
+  return gone;
+}
+
+/**
+ * Marks the children of `after` that differ from those of `before` (the same content rendered
+ * from the base) with CHANGED_ATTR: a changed or added child is marked, a list, quote or table
+ * whose items changed has those items marked instead, and where children were removed a thin
+ * marker stands in their place. For the panes that draw blocks (a doc). Returns how many it marked.
+ */
+export function markChangedChildren(before: Element, after: Element, depth = 0): number {
+  const a = [...before.children];
+  const b = [...after.children];
+  const { hunks } = diffSequence(
+    a.map((e) => e.outerHTML),
+    b.map((e) => e.outerHTML),
+  );
+  let marked = 0;
+  for (const h of hunks) {
+    if (h.bStart === h.bEnd) {
+      // Only removed here: a marker where they were (none inside a table).
+      if (/^(TABLE|THEAD|TBODY|TR)$/.test(after.tagName)) continue;
+      after.insertBefore(goneMarker(after), b[h.bStart] ?? null);
+      marked++;
+      continue;
+    }
+    const pairs = Math.min(h.aEnd - h.aStart, h.bEnd - h.bStart);
+    if (h.aEnd - h.aStart > pairs && !/^(TABLE|THEAD|TBODY|TR)$/.test(after.tagName)) {
+      // More went than came: a marker after what came, for the rest.
+      after.insertBefore(goneMarker(after), b[h.bEnd] ?? null);
+      marked++;
+    }
+    for (let k = h.bStart; k < h.bEnd; k++) {
+      const nb = b[k] as Element;
+      const na = k - h.bStart < pairs ? a[h.aStart + (k - h.bStart)] : undefined;
+      const inner =
+        na &&
+        depth < 3 &&
+        na.tagName === nb.tagName &&
+        /^(UL|OL|BLOCKQUOTE|TABLE|THEAD|TBODY)$/.test(nb.tagName)
+          ? markChangedChildren(na, nb, depth + 1)
+          : 0;
+      if (inner === 0) nb.setAttribute(CHANGED_ATTR, "");
+      marked += Math.max(1, inner);
+    }
+  }
+  return marked;
 }
 
 /** Where a version's file is, for panes that draw images (re-exported for the type panes). */

@@ -321,10 +321,30 @@ describe("useLiveEdit", () => {
       c.method === "DELETE" ? new Response(null, { status: 204 }) : undefined,
     );
     fromFrame({ type: "resolved", nonce: t.nonce, outcome: "discard", version: 4, rev: 7 });
+    // The app confirms it first, with its own dialog: nothing is deleted until then.
+    expect(t.result.current.discardAsk).toBe(4);
+    expect(t.calls.some((c) => c.method === "DELETE")).toBe(false);
+    act(() => t.result.current.answerDiscard(true));
+    expect(t.result.current.discardAsk).toBeNull();
     await waitFor(() => expect(t.reviewed()).toEqual(["done"]));
     expect(t.calls.find((c) => c.method === "DELETE")?.path).toBe(
       "/artifacts/art1/live/draft?rev=7&conflict_version=4",
     );
+  });
+
+  it("a cancelled Discard confirmation deletes nothing and gives the review its buttons back", async () => {
+    const t = await inReview(() => undefined);
+    fromFrame({ type: "resolved", nonce: t.nonce, outcome: "discard", version: 4, rev: 7 });
+    expect(t.result.current.discardAsk).toBe(4);
+    act(() => t.result.current.answerDiscard(false));
+    expect(t.result.current.discardAsk).toBeNull();
+    expect(t.reviewed()).toEqual(["failed"]);
+    expect(t.calls.some((c) => c.method === "DELETE")).toBe(false);
+    expect(t.result.current.review).not.toBeNull();
+    // Back in the frame closes the confirmation's request with the review.
+    fromFrame({ type: "resolved", nonce: t.nonce, outcome: "discard", version: 4, rev: 7 });
+    fromFrame({ type: "resolved", nonce: t.nonce, outcome: "cancelled" });
+    expect(t.result.current.discardAsk).toBeNull();
   });
 
   it("maps busy, resolved, conflict and a moved draft to the frame's answer", async () => {
@@ -496,6 +516,8 @@ describe("useLiveEdit", () => {
     await waitFor(() => expect(sentToFrame("review")).toHaveLength(1));
     const r = sentToFrame("review")[0]?.[0].nonce as string;
     fromFrame({ type: "resolved", nonce: r, outcome: "discard" });
+    expect(onReload).not.toHaveBeenCalled();
+    act(() => result.current.answerDiscard(true));
     expect(onReload).toHaveBeenCalled();
     expect(result.current.review).toBeNull();
   });
@@ -709,6 +731,7 @@ describe("useLiveEdit", () => {
     await waitFor(() => expect(sentToFrame("review")).toHaveLength(1));
     const nonce = sentToFrame("review")[0]?.[0].nonce as string;
     fromFrame({ type: "resolved", nonce, outcome: "discard" });
+    act(() => result.current.answerDiscard(true));
     expect(result.current.restore).toBeNull();
     expect(result.current.review).toBeNull();
     expect(sessionStorage.length).toBe(0);

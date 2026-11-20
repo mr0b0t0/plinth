@@ -16,11 +16,10 @@
   --review-primary-hover: #34322d;
   --review-on-primary: #fbfaf8;
   --review-danger: #b4352b;
-  --review-danger-hover: #96291f;
   --review-danger-soft: #f9e5e2;
-  --review-on-danger: #ffffff;
   --review-live: #8f5a2a;
-  --review-shadow: 0 2px 6px rgb(28 24 18 / 0.05), 0 16px 40px -8px rgb(28 24 18 / 0.16);
+  /* What changed since the base: a bronze tint behind it and a bronze bar at its left edge. */
+  --review-changed: rgb(143 90 42 / 0.1);
   --review-font:
     system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif;
 }
@@ -38,12 +37,9 @@
     --review-primary-hover: #ffffff;
     --review-on-primary: #0f1012;
     --review-danger: #ec8b80;
-    --review-danger-hover: #f2a79e;
     --review-danger-soft: #2c1a18;
-    --review-on-danger: #1b0b09;
     --review-live: #d39a62;
-    /* The app's dark mode draws no shadows, but this dialog has no dimmed backdrop to stand on. */
-    --review-shadow: 0 16px 40px -8px rgb(0 0 0 / 0.7);
+    --review-changed: rgb(211 154 98 / 0.14);
   }
 }
 
@@ -174,6 +170,22 @@ html.plinth-reviewing body {
   color: var(--review-muted);
 }
 
+/* Only the words that changed: removed ones struck through, added ones on the changed tint. */
+.plinth-review__word {
+  border-radius: 2px;
+}
+
+del.plinth-review__word {
+  text-decoration: line-through;
+}
+
+ins.plinth-review__word {
+  padding: 0 2px;
+  background: var(--review-changed);
+  color: var(--review-fg);
+  text-decoration: none;
+}
+
 .plinth-review__files {
   margin-top: 4px;
   color: var(--review-muted);
@@ -199,10 +211,34 @@ html.plinth-reviewing body {
   flex: none;
 }
 
-/* A doc's side starts at the top of its pane, without the page's own top margin. */
+/* A doc's side starts at the top of its pane, without the page's own top margin; its sides leave
+   room for the change marks. */
 .plinth-review__body > .plinth-review__doc {
   width: 100%;
-  padding: 8px 4px 16px;
+  padding: 8px 12px 16px;
+}
+
+/* What changed since the base, the same in both kinds of pane: a tint behind it (over its own
+   background, which a sheet's sticky cells need) and a bar at its left edge. */
+.plinth-review__body [data-review-changed] {
+  background-image: linear-gradient(var(--review-changed), var(--review-changed));
+  box-shadow: inset 2px 0 0 var(--review-live);
+}
+
+/* A doc's block reaches a little beyond its text on both sides, so the text does not move. */
+.plinth-review__doc [data-review-changed]:not(li, tr, td, th) {
+  margin-inline: -8px;
+  padding-inline: 8px;
+}
+
+/* Where blocks were only removed: a short bar in their place. */
+.plinth-review__body .plinth-review__gone {
+  width: 24px;
+  height: 2px;
+  margin: 6px 0 6px -8px;
+  padding: 0;
+  list-style: none;
+  background: var(--review-live);
 }
 
 /* A side that scrolls sideways (a wide sheet at phone width) fades at the edge it scrolls to. */
@@ -248,8 +284,7 @@ html.plinth-reviewing body {
 
 .plinth-review__primary,
 .plinth-review__ghost,
-.plinth-review__danger,
-.plinth-review__danger-solid {
+.plinth-review__danger {
   min-height: 28px;
   padding: 0 10px;
   border: 1px solid transparent;
@@ -286,15 +321,6 @@ html.plinth-reviewing body {
   background: var(--review-danger-soft);
 }
 
-.plinth-review__danger-solid {
-  background: var(--review-danger);
-  color: var(--review-on-danger);
-}
-
-.plinth-review__danger-solid:hover:not(:disabled) {
-  background: var(--review-danger-hover);
-}
-
 .plinth-review button:disabled {
   opacity: 0.45;
   cursor: not-allowed;
@@ -316,83 +342,8 @@ html.plinth-reviewing body {
   display: none;
 }
 
-/* ---- the Discard confirmation, as the app's ConfirmDialog. The frame cannot dim the app
-   around it, so it dims nothing: the dialog stands on its shadow and border. ---- */
-
-.plinth-review__scrim {
-  position: fixed;
-  inset: 0;
-  z-index: 21;
-  display: grid;
-  place-items: center;
-  padding: 16px;
-  margin: 0;
-}
-
-.plinth-review__confirm {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-  width: 100%;
-  max-width: 384px;
-  padding: 20px;
-  border: 1px solid var(--review-border);
-  border-radius: 8px;
-  background: var(--review-raised);
-  color: var(--review-fg);
-  box-shadow: var(--review-shadow);
-}
-
-.plinth-review__confirm-head {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.plinth-review__confirm-title {
-  margin: 0;
-  padding-top: 3px;
-  font-size: 15px;
-  font-weight: 600;
-  line-height: 22px;
-}
-
-.plinth-review__close {
-  display: inline-grid;
-  place-items: center;
-  flex: none;
-  width: 28px;
-  height: 28px;
-  margin: -4px -8px 0 0;
-  padding: 0;
-  border: 0;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--review-muted);
-  cursor: pointer;
-}
-
-.plinth-review__close:hover {
-  background: var(--review-hover);
-  color: var(--review-fg);
-}
-
-.plinth-review__confirm-text {
-  margin: -12px 0 0;
-  color: var(--review-muted);
-  overflow-wrap: anywhere;
-}
-
-.plinth-review__confirm-actions {
-  display: flex;
-  flex-wrap: wrap-reverse;
-  justify-content: flex-end;
-  gap: 8px;
-  padding-top: 4px;
-}
-
-.plinth-review__announce {
+.plinth-review__announce,
+.plinth-review__sr {
   position: absolute;
   width: 1px;
   height: 1px;
@@ -434,22 +385,6 @@ html.plinth-reviewing body {
   .plinth-review__ghost,
   .plinth-review__danger {
     flex: 1 1 0;
-  }
-}
-
-/* The confirmation sits at the bottom at phone width, as the app's dialogs do. */
-@media (max-width: 480px) {
-  .plinth-review__scrim {
-    align-items: end;
-    padding: 8px;
-  }
-
-  .plinth-review__confirm {
-    padding: 16px;
-  }
-
-  .plinth-review__confirm-actions > * {
-    flex: 1 1 auto;
   }
 }
 

@@ -35,7 +35,14 @@ import {
 import type { ReactNode, RefObject } from "react";
 import { Link } from "../../lib/router.tsx";
 import { THEME_NAMES, type Theme } from "../../lib/theme.ts";
-import { Button, buttonClassName, Menu, type MenuEntry, Tooltip } from "../ui/index.ts";
+import {
+  Button,
+  buttonClassName,
+  ConfirmDialog,
+  Menu,
+  type MenuEntry,
+  Tooltip,
+} from "../ui/index.ts";
 import { boardSettings, boardSettingsDialog } from "./boardSettingsItems.tsx";
 import { DataNotice } from "./DataNotice.tsx";
 import { DictationControl } from "./DictationControl.tsx";
@@ -511,6 +518,26 @@ const liveDraftNotice: StageNode = ({ editing, live, gate, actions }) =>
     />
   );
 
+/**
+ * The whole-draft review's Discard, confirmed with the edit strip's own words and dialog, which
+ * dims the page, the frame and its review included.
+ */
+const reviewDiscard: StageNode = ({ live }) => (
+  <ConfirmDialog
+    open={live.discardAsk !== null}
+    onClose={() => live.answerDiscard(false)}
+    onConfirm={() => live.answerDiscard(true)}
+    title="Discard unpublished changes?"
+    description={
+      live.mode === "room"
+        ? `The page goes back to v${live.discardAsk} for everyone editing it.`
+        : `The page goes back to v${live.discardAsk}.`
+    }
+    confirmLabel="Discard changes"
+    danger
+  />
+);
+
 const presentStrip: StageNode = ({ present, gate: { artifact }, actions }) => (
   <PresentStrip
     present={present}
@@ -528,5 +555,6 @@ export const STRIP_ITEMS: readonly StageItem[] = [
   { id: "sources-notice", render: sourcesNotice },
   { id: "edit-bar", render: editBar },
   { id: "live-draft", render: liveDraftNotice },
+  { id: "review-discard", render: reviewDiscard },
   { id: "present", render: presentStrip },
 ];

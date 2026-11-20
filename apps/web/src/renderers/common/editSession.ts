@@ -208,7 +208,6 @@ export class ReviewSession {
         n: c.conflictVersion,
         files: c.conflictFiles,
         draft: c.text,
-        editors: c.editors.filter((e) => e !== c.you?.email),
       });
       return;
     }
@@ -231,7 +230,6 @@ export class ReviewSession {
       n: m.n,
       files: m.files ?? null,
       draft: text,
-      editors: [],
     });
   }
 
@@ -258,7 +256,6 @@ export class ReviewSession {
         n,
         files: c.conflictFiles,
         draft: c.text,
-        editors: c.editors.filter((e) => e !== c.you?.email),
       });
       return;
     }

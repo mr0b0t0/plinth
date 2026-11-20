@@ -215,6 +215,11 @@ test("an agent's edit_sheet during the page edits is never merged: the review pu
   await expect(mine).toContainText("B2 changed");
   await expect(mine).toContainText("3 → 4");
   await expect(mine.locator("table")).toBeVisible();
+  // The cell it changed is marked, and in view.
+  const marked = mine.locator("td[data-review-changed]");
+  await expect(marked).toHaveCount(1);
+  await expect(marked).toHaveText("4");
+  await expect(marked).toBeInViewport();
   // At phone width one sheet shows at a time, with a switch between them.
   const toV2 = review.getByRole("radio", { name: "v2" });
   if (await toV2.isVisible()) {
@@ -243,17 +248,15 @@ test("an agent's edit_sheet during the page edits is never merged: the review pu
   });
   expect(versions.body.items[1]).toMatchObject({ number: 2 });
 
-  // Editing resumes on v3. Discard your changes asks first, naming what would be lost.
+  // Editing resumes on v3. Discard your changes asks first, in the app's own dialog.
   await type("B2", "7");
   await agentSets("B4", 9, 3);
   await expect(bar).toContainText("v4 was published while you edited", { timeout: 10_000 });
   await bar.getByRole("button", { name: "Review changes" }).click();
   const second = frameOf(page).getByRole("region", { name: "Review v4 and your changes" });
   await second.getByRole("button", { name: "Discard your changes" }).click();
-  const confirm = frameOf(page).getByRole("alertdialog", { name: "Discard unpublished changes?" });
-  await expect(confirm).toContainText("This change will be lost:");
-  await expect(confirm).toContainText("B2 changed");
-  await expect(confirm).toContainText("The page will show v4 for everyone editing.");
+  const confirm = page.getByRole("alertdialog", { name: "Discard unpublished changes?" });
+  await expect(confirm).toContainText("The page goes back to v4 for everyone editing it.");
   // The strip carries the news of v4: no "Updated to v4" notification repeats it while editing.
   await expect(page.getByText("Updated to v4")).toHaveCount(0);
   // Clicked with the pointer left resting on any notification first: no toast covers the

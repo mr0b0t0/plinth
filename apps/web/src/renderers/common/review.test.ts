@@ -3,7 +3,7 @@
 // exactly two choices and Back, the Discard confirmation, the busy state, what closes it, and the
 // phone switch. Also the frame key (frameKey.ts) and the file pinning (files.ts).
 // @vitest-environment happy-dom
-import { type ChangeItem, liveRules } from "@plinth/shared";
+import { liveRules } from "@plinth/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { renderMarkdown } from "../doc/markdown.ts";
 import { sanitizeHtml } from "../doc/sanitize.ts";
@@ -11,7 +11,13 @@ import { ReviewSession, readEditMessage } from "./editSession.ts";
 import { fileUrl, pinFiles, pinnedSrc } from "./files.ts";
 import { takeFrameKey } from "./frameKey.ts";
 import type { LiveDocClient } from "./live.ts";
-import { DraftReview, discardDescription, type ReviewPane } from "./review.ts";
+import {
+  CHANGED_ATTR,
+  changedWords,
+  DraftReview,
+  markChangedChildren,
+  type ReviewPane,
+} from "./review.ts";
 
 const RULES = liveRules("doc");
 if (!RULES) throw new Error("no doc rules");
@@ -69,7 +75,7 @@ const panes = () => [...document.querySelectorAll(".plinth-review__pane")] as HT
 describe("the whole-draft review", () => {
   it("renders both sides read-only, each against the files it would publish", async () => {
     const { review } = setup();
-    await review.open({ mode: "room", base: 5, n: 6, files: FILES, draft: MINE, editors: [] });
+    await review.open({ mode: "room", base: 5, n: 6, files: FILES, draft: MINE });
     expect(region().getAttribute("aria-label")).toBe("Review v6 and your changes");
     // No heading: the edit strip above the frame already says what happened. Focus moves to the
     // named review itself.
@@ -95,7 +101,7 @@ describe("the whole-draft review", () => {
 
   it("lists both sides' changes, with vN's files: none listed for your changes", async () => {
     const { review } = setup();
-    await review.open({ mode: "room", base: 5, n: 6, files: FILES, draft: MINE, editors: [] });
+    await review.open({ mode: "room", base: 5, n: 6, files: FILES, draft: MINE });
     const [mine, theirs] = panes();
     expect(mine?.querySelector('[aria-label="Changes"]')).not.toBeNull();
     expect(theirs?.querySelector('[aria-label="Changes"]')).not.toBeNull();
@@ -111,14 +117,14 @@ describe("the whole-draft review", () => {
 
   it("names a range in the region, and the newest version on its side", async () => {
     const { review } = setup();
-    await review.open({ mode: "room", base: 5, n: 7, files: null, draft: MINE, editors: [] });
+    await review.open({ mode: "room", base: 5, n: 7, files: null, draft: MINE });
     expect(region().getAttribute("aria-label")).toBe("Review v6 to v7 and your changes");
     expect(panes()[1]?.querySelector("h3")?.textContent).toBe("v7");
   });
 
   it("Publish your changes asks the app; the buttons go off until the answer", async () => {
     const { review, choose } = setup();
-    await review.open({ mode: "room", base: 5, n: 6, files: null, draft: MINE, editors: [] });
+    await review.open({ mode: "room", base: 5, n: 6, files: null, draft: MINE });
     // Exactly two choices and Back: no separate "with a note" path, and one way out.
     expect(
       [...region().querySelectorAll(".plinth-review__choices button")].map((b) => b.textContent),
@@ -137,7 +143,7 @@ describe("the whole-draft review", () => {
   it("re-enables the choices a while after busy, and keeps them for a failed answer", async () => {
     vi.useFakeTimers();
     const { review } = setup();
-    await review.open({ mode: "room", base: 5, n: 6, files: null, draft: MINE, editors: [] });
+    await review.open({ mode: "room", base: 5, n: 6, files: null, draft: MINE });
     button("Publish your changes")?.click();
     review.answer("busy");
     vi.advanceTimersByTime(5000);
@@ -148,66 +154,29 @@ describe("the whole-draft review", () => {
     expect(review.isOpen).toBe(true);
   });
 
-  it("Discard your changes asks first, naming what will be lost, and goes only on confirm", async () => {
+  it("Discard your changes asks the app, which confirms it; a cancelled confirmation comes back", async () => {
     const { review, choose } = setup();
-    await review.open({
-      mode: "room",
-      base: 5,
-      n: 6,
-      files: null,
-      draft: MINE,
-      editors: ["ana@example.org", "ben@example.org"],
-    });
+    await review.open({ mode: "room", base: 5, n: 6, files: null, draft: MINE });
     button("Discard your changes")?.click();
-    const dialog = document.querySelector('[role="alertdialog"]') as HTMLElement;
-    expect(dialog.getAttribute("aria-modal")).toBe("true");
-    // Worded and laid out as the edit strip's own confirmation: a close button, Cancel, and the
-    // named danger action last.
-    expect(dialog.querySelector("h3")?.textContent).toBe("Discard unpublished changes?");
-    expect(
-      [...dialog.querySelectorAll("button")].map(
-        (b) => b.getAttribute("aria-label") ?? b.textContent,
-      ),
-    ).toEqual(["Close", "Cancel", "Discard changes"]);
-    expect(dialog.textContent).toMatch(/This change will be lost: .+\./);
-    expect(dialog.textContent).toContain(
-      "The page will show v6 for everyone editing (ana@example.org, ben@example.org).",
-    );
-    // Focus starts on Cancel.
-    expect(document.activeElement?.textContent).toBe("Cancel");
-    (document.activeElement as HTMLButtonElement).click();
-    expect(choose).not.toHaveBeenCalled();
-    expect(document.querySelector('[role="alertdialog"]')).toBeNull();
-    // The close button and a click beside the confirmation close it too.
-    button("Discard your changes")?.click();
-    (document.querySelector('[aria-label="Close"]') as HTMLButtonElement).click();
-    expect(document.querySelector('[role="alertdialog"]')).toBeNull();
-    button("Discard your changes")?.click();
-    (document.querySelector(".plinth-review__scrim") as HTMLElement).click();
-    expect(document.querySelector('[role="alertdialog"]')).toBeNull();
-    expect(choose).not.toHaveBeenCalled();
-    button("Discard your changes")?.click();
-    button("Discard changes")?.click();
+    // The app confirms it with its own dialog over the dimmed page: the frame shows none.
     expect(choose).toHaveBeenCalledWith("discard", undefined);
-  });
-
-  it("says how many changes a discard drops, and that solo drops only this tab's", () => {
-    const items: ChangeItem[] = Array.from({ length: 7 }, (_, i) => ({
-      kind: "changed",
-      where: `Slide ${i + 1}`,
-      what: "Title changed",
-    }));
-    expect(discardDescription({ items, truncated: false }, 6, "solo", [])).toBe(
-      "These 7 changes will be lost: Slide 1: Title changed, Slide 2: Title changed, Slide 3: Title changed, and 4 more. The page will show v6.",
-    );
-    expect(discardDescription({ items: [], truncated: false }, 7, "room", [])).toBe(
-      "Your changes will be lost. The page will show v7 for everyone editing.",
-    );
+    expect(document.querySelector('[role="alertdialog"]')).toBeNull();
+    // The buttons stay as they are behind the app's backdrop, and nothing says "Discarding…".
+    expect(region().querySelector(".plinth-review__reason")?.textContent).toBe("");
+    expect(button("Publish your changes")?.disabled).toBe(false);
+    // A second choice waits on the app's answer.
+    button("Publish your changes")?.click();
+    expect(choose).toHaveBeenCalledTimes(1);
+    // Cancel there answers failed: the buttons come back, with focus on Discard.
+    review.answer("failed");
+    expect(button("Discard your changes")?.disabled).toBe(false);
+    expect(document.activeElement).toBe(button("Discard your changes"));
+    expect(review.isOpen).toBe(true);
   });
 
   it("Back closes the review and tells the app; the draft stays frozen", async () => {
     const { review, choose } = setup();
-    await review.open({ mode: "room", base: 5, n: 6, files: null, draft: MINE, editors: [] });
+    await review.open({ mode: "room", base: 5, n: 6, files: null, draft: MINE });
     button("Back")?.click();
     expect(choose).toHaveBeenCalledWith("cancelled");
     expect(review.isOpen).toBe(false);
@@ -216,7 +185,7 @@ describe("the whole-draft review", () => {
 
   it("at phone width shows one side at a time, with a Your changes and v6 switch", async () => {
     const { review } = setup();
-    await review.open({ mode: "room", base: 5, n: 6, files: null, draft: MINE, editors: [] });
+    await review.open({ mode: "room", base: 5, n: 6, files: null, draft: MINE });
     const options = [...document.querySelectorAll('[role="radio"]')] as HTMLButtonElement[];
     expect(options.map((o) => o.textContent)).toEqual(["Your changes", "v6"]);
     expect(region().dataset.show).toBe("mine");
@@ -228,14 +197,14 @@ describe("the whole-draft review", () => {
   it("an item brings both panes to its place", async () => {
     const goto = vi.fn(() => true);
     const { review } = setup({ pane: { render: () => goto } });
-    await review.open({ mode: "room", base: 5, n: 6, files: null, draft: MINE, editors: [] });
+    await review.open({ mode: "room", base: 5, n: 6, files: null, draft: MINE });
     (document.querySelector(".plinth-review__item-button") as HTMLButtonElement).click();
     expect(goto).toHaveBeenCalledTimes(2);
   });
 
   it("marks a side that scrolls sideways until it reaches the end", async () => {
     const { review } = setup();
-    await review.open({ mode: "room", base: 5, n: 6, files: null, draft: MINE, editors: [] });
+    await review.open({ mode: "room", base: 5, n: 6, files: null, draft: MINE });
     const body = document.querySelector(".plinth-review__body") as HTMLElement;
     Object.defineProperty(body, "scrollWidth", { value: 600, configurable: true });
     Object.defineProperty(body, "clientWidth", { value: 300, configurable: true });
@@ -244,6 +213,109 @@ describe("the whole-draft review", () => {
     Object.defineProperty(body, "scrollLeft", { value: 300, configurable: true });
     body.dispatchEvent(new Event("scroll"));
     expect(body.dataset.more).toBeUndefined();
+  });
+});
+
+describe("what changed, in the review", () => {
+  it("each pane gets the base to mark its changes against", async () => {
+    const render = vi.fn<ReviewPane["render"]>(() => null);
+    const { review } = setup({ pane: { render } });
+    await review.open({ mode: "room", base: 5, n: 6, files: null, draft: MINE });
+    expect(render.mock.calls.map((c) => [c[2], c[3]])).toEqual([
+      [5, BASE],
+      [6, BASE],
+    ]);
+  });
+
+  it("shows only the words that changed, never two openings cut alike", () => {
+    const before =
+      "We ship the hosted beta to the first 200 teams on 2 December, with self-hosting docs the same week.";
+    const after =
+      "We ship the hosted beta (moved up a week) to the first 200 teams on 2 December, with self-hosting docs the same week.";
+    expect(changedWords(before, after)).toEqual([
+      { kind: "same", text: "…\u00a0the hosted beta" },
+      { kind: "added", text: "(moved up a week)" },
+      { kind: "same", text: "to the first\u00a0…" },
+    ]);
+    expect(changedWords("Reach 50 teams.", "Reach 80 teams.")).toEqual([
+      { kind: "same", text: "Reach" },
+      { kind: "removed", text: "50" },
+      { kind: "added", text: "80" },
+      { kind: "same", text: "teams." },
+    ]);
+    // Excerpts that agree in every word say nothing: the item's line is enough.
+    expect(changedWords("Same words…", "Same words…")).toEqual([]);
+  });
+
+  it("renders a short value as before → after, and a text as its changed words", () => {
+    const { review } = setup();
+    const values = (item: object) =>
+      (review as unknown as { values(i: object): HTMLElement | null }).values(item);
+    const text = values({
+      kind: "changed",
+      where: "Under “Goals”",
+      what: "Paragraph changed",
+      before: "Reach 50 weekly active teams by the end of the quarter.",
+      after: "Reach 80 weekly active teams by the end of the quarter.",
+    });
+    expect(text?.querySelector("del")?.textContent).toBe("removed: 50");
+    expect(text?.querySelector("ins")?.textContent).toBe("added: 80");
+    expect(text?.textContent).toBe("Reach removed: 50 added: 80 weekly active teams\u00a0…");
+    // A value that changed whole (a sheet's cell): one plain line.
+    const cell = values({
+      kind: "changed",
+      where: "",
+      what: "B3 changed",
+      before: "18",
+      after: "24",
+    });
+    expect(cell?.textContent).toBe("18 → 24");
+    expect(cell?.querySelector("del, ins")).toBeNull();
+    // Excerpts that show no difference: no values line at all.
+    expect(
+      values({ kind: "changed", where: "", what: "Paragraph changed", before: "A…", after: "A…" }),
+    ).toBeNull();
+  });
+
+  it("marks the blocks that changed, the items of a list, and where blocks went", () => {
+    const html = (md: string) => {
+      const el = document.createElement("div");
+      el.append(sanitizeHtml(renderMarkdown(md), document));
+      return el;
+    };
+    const after = html("# Plan\n\nFirst, changed.\n\n- one\n- two, changed\n\nLast.\n");
+    const n = markChangedChildren(
+      html("# Plan\n\nFirst.\n\n- one\n- two\n\nGone.\n\nLast.\n"),
+      after,
+    );
+    const marked = [...after.querySelectorAll(`[${CHANGED_ATTR}]`)];
+    expect(marked.map((e) => e.tagName)).toEqual(["P", "LI", "DIV"]);
+    expect(marked[0]?.textContent).toBe("First, changed.");
+    expect(marked[1]?.textContent).toBe("two, changed");
+    // The removed paragraph leaves a marker in its place, hidden from screen readers.
+    expect(marked[2]?.className).toBe("plinth-review__gone");
+    expect(marked[2]?.getAttribute("aria-hidden")).toBe("true");
+    expect(n).toBe(3);
+  });
+
+  it("opens a pane scrolled to its first change when that is out of view", async () => {
+    const pane: ReviewPane = {
+      render(el) {
+        const far = document.createElement("p");
+        far.setAttribute(CHANGED_ATTR, "");
+        el.append(far);
+        // Laid out below and to the right of what the pane shows.
+        far.getBoundingClientRect = () => new DOMRect(500, 900, 80, 20);
+        el.getBoundingClientRect = () => new DOMRect(0, 0, 300, 400);
+        el.getClientRects = () => [new DOMRect(0, 0, 300, 400)] as unknown as DOMRectList;
+        return null;
+      },
+    };
+    const { review } = setup({ pane });
+    await review.open({ mode: "room", base: 5, n: 6, files: null, draft: MINE });
+    const body = document.querySelector(".plinth-review__body") as HTMLElement;
+    expect(body.scrollTop).toBe(900 - 190);
+    expect(body.scrollLeft).toBe(500 - 110);
   });
 });
 

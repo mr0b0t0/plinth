@@ -21,6 +21,7 @@ import {
   applySheetStruct,
   type ChangeItem,
   colIndex,
+  diffSequence,
   evaluateSheet,
   joinLines,
   LIMITS,
@@ -35,7 +36,7 @@ import type { LiveFrameStatus } from "../../components/viewer/rendererProtocol.t
 import { appPoster, ReviewSession } from "../common/editSession.ts";
 import { takeFrameKey } from "../common/frameKey.ts";
 import { type ClientLease, LiveDocClient } from "../common/live.ts";
-import { DraftReview, type ReviewPane } from "../common/review.ts";
+import { CHANGED_ATTR, DraftReview, type ReviewPane } from "../common/review.ts";
 import { LocalSheet, type SheetBackend, SheetEditor } from "./edit.ts";
 import { exportSheet } from "./export.ts";
 import { buildGrid, type Grid } from "./grid.ts";
@@ -65,10 +66,44 @@ function gridGoto(grid: Grid): (item: ChangeItem) => boolean {
   };
 }
 
-/** The sheet's side of the review: its grid, read-only (no editing is attached to it). */
+/**
+ * The cells of `sheet` that differ from `base`, as A1 [row, col] (row 1 is the header): rows are
+ * matched as the change list matches them, then compared cell by cell; a row with no match in the
+ * base has every cell listed.
+ */
+export function changedCells(base: Sheet, sheet: Sheet): [number, number][] {
+  const out: [number, number][] = [];
+  const cols = Math.max(base.header.columns.length, sheet.header.columns.length);
+  for (let c = 0; c < sheet.header.columns.length; c++) {
+    if (JSON.stringify(base.header.columns[c]) !== JSON.stringify(sheet.header.columns[c])) {
+      out.push([1, c]);
+    }
+  }
+  const key = (r: readonly unknown[]) => JSON.stringify(r);
+  const { hunks } = diffSequence(base.rows.map(key), sheet.rows.map(key));
+  for (const h of hunks) {
+    const pairs = Math.min(h.aEnd - h.aStart, h.bEnd - h.bStart);
+    for (let i = h.bStart; i < h.bEnd; i++) {
+      const row = sheet.rows[i] ?? [];
+      const was = i - h.bStart < pairs ? (base.rows[h.aStart + (i - h.bStart)] ?? []) : null;
+      for (let c = 0; c < cols; c++) {
+        const v = row[c] ?? null;
+        if (was === null ? v !== null : v !== (was[c] ?? null)) out.push([i + 2, c]);
+      }
+      // A new row that is empty still shows where it went in.
+      if (was === null && row.every((v) => v === null)) out.push([i + 2, 0]);
+    }
+  }
+  return out;
+}
+
+/**
+ * The sheet's side of the review: its grid, read-only (no editing is attached to it), with the
+ * cells that differ from the base marked.
+ */
 function sheetPane(doc: Document, evaluate: (s: Sheet) => SheetEvaluation): ReviewPane {
   return {
-    render(el, text) {
+    render(el, text, _version, base) {
       const p = parseSheet(text);
       if (!p.ok) {
         const msg = doc.createElement("p");
@@ -83,6 +118,12 @@ function sheetPane(doc: Document, evaluate: (s: Sheet) => SheetEvaluation): Revi
         exhausted: ev.exhausted,
       });
       el.replaceChildren(grid.el);
+      const was = base === null ? null : parseSheet(base);
+      if (was?.ok) {
+        for (const [r, c] of changedCells(was.sheet, p.sheet)) {
+          grid.cell(r, c)?.setAttribute(CHANGED_ATTR, "");
+        }
+      }
       return gridGoto(grid);
     },
   };

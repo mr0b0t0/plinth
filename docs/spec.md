@@ -669,21 +669,29 @@ page shows the strip and makes the REST calls, and renders no content.
   the base version's files, vN against vN's. Each side grows with its content up to a maximum
   height and scrolls beyond it; one wider than its pane fades at the edge it scrolls to. Each side
   starts with its plain-language change list since the draft's base, from the History's
-  describers ([Comparing versions](#comparing-versions-decided-2026-11-19)). vN's side also names
-  each file it added, removed or replaced, at most 50 of each kind, then "and N more files"; page
-  changes never change files, so their side lists none. Pressing an item brings both sides to the
-  place it names. The versions reviewed are every version since the draft's base; the strip and
+  describers ([Comparing versions](#comparing-versions-decided-2026-11-19)), one line per change:
+  a value that changed whole as "18 → 24", a longer text as only the words that changed (removed
+  ones struck through, added ones tinted, a few words of context and "…" around them), and nothing
+  more when the excerpts do not reach the change. vN's side also names each file it added, removed
+  or replaced, at most 50 of each kind, then "and N more files"; page changes never change files,
+  so their side lists none. Pressing an item brings both sides to the place it names. Each side
+  marks what changed since the base in the drawing itself, the same way in both themes (a bronze
+  tint and a bar at the left edge): a doc's changed blocks (a list's or a table's changed items),
+  with a short bar where blocks were removed, and a sheet's changed cells, by their entered value
+  or formula. Each side opens scrolled to its first change when that is out of view (at phone
+  width, when the switch first shows it). The versions reviewed are every version since the draft's base; the strip and
   the version note name the whole range ("v6 to v7"), and the newer side is the newest version.
   The review looks like the app around it (ink primary, bronze for the live state, the app's
   compact buttons) and has no explanatory paragraphs: exactly two choices, and Back:
   - **Publish your changes**: the room's own frozen draft, byte for byte, becomes the next version on top
     of vN, with the files of the draft's base version, and the note "Edited on the page. Replaces
     the changes in v6." (or "… in v6 to v7."). vN stays in History and can be restored.
-  - **Discard your changes** asks first, with the strip's own words and layout ("Discard
-    unpublished changes?", Cancel and "Discard changes"), naming what will be lost ("These 7
-    changes will be lost: …, and 4 more. The page will show v6."; in room mode "… for everyone
-    editing", by name), then returns the page to vN for everyone. The frame cannot dim the app
-    around it, so the confirmation dims nothing.
+  - **Discard your changes** asks first, in the app's own confirmation over the dimmed page, as
+    the strip's Discard does ("Discard unpublished changes?", "The page goes back to v6 for
+    everyone editing it." or, solo, "The page goes back to v6.", Cancel and "Discard changes"),
+    then returns the page to vN for everyone. The frame only asks: its choice reaches the app as
+    before, and the app discards only on confirm; Cancel answers the frame `failed`, so the review
+    stays open with focus on its Discard.
   - **Back** (or Esc), the review's one way out, closes it; the draft stays frozen and kept.
 
   Both choices, every Publish and the strip's "Discard unpublished changes" take the room's
@@ -2515,8 +2523,8 @@ and the whole-draft review is the only way on (below).
   see the whole-draft review ([Editing](#editing)): the draft and vN as read-only grids side by
   side, with what each changed since the draft's base ("B7: 12 → 14", "Row 10 added (Pears)"), and
   exactly two choices, Publish your changes (the room's own draft as vN+1, on top of vN, which
-  stays in the history) or Discard your changes (back to vN for everyone, after a confirmation that
-  names what will be lost). The two cases that need no review are a version whose sheet and files equal the
+  stays in the history) or Discard your changes (back to vN for everyone, after the app's
+  confirmation). The changed cells are marked in both grids. The two cases that need no review are a version whose sheet and files equal the
   draft's base (it changed only the title, or restored the same content), which moves the base
   under the draft's lines as they are, and a version equal to the draft, which ends it. Both
   choices, and the strip's Discard, run under the room's checkpoint lock against the version and

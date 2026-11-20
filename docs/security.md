@@ -2584,8 +2584,10 @@ cookie, CSP, sandbox flag or setting was added, and the content host still sends
   key, for the nonce of the review the app opened, with field checks (a room choice names a
   version and a revision and no text; a solo one carries the frame's own text within the type's
   size, and for the review of a kept copy the app publishes the copy it sent, not the text that
-  comes back). Even then the server decides, under the policy of any Publish or discard (`live_edit`,
-  `edit`), against the room's own state.
+  comes back). A Discard your changes from the frame never discards by itself: the app asks first
+  in its own confirmation, worded only from the version number it already holds, so a frame that
+  sends the message unasked still needs the person's click. Even then the server decides, under the
+  policy of any Publish or discard (`live_edit`, `edit`), against the room's own state.
 - **Renderers stay free of HTML parsing.** The review is built with `createElement` and
   `textContent`; each side is drawn by the type's renderer through its sanitizer, the same as the
   page, and its images resolve against that version's files (`/__plinth/v/<n>/`).

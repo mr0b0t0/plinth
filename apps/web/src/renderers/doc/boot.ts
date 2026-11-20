@@ -37,7 +37,7 @@ import {
 import { pinFiles } from "../common/files.ts";
 import { takeFrameKey } from "../common/frameKey.ts";
 import { LiveDocClient } from "../common/live.ts";
-import { DraftReview, type ReviewPane } from "../common/review.ts";
+import { DraftReview, markChangedChildren, type ReviewPane } from "../common/review.ts";
 import { type DocBackend, DocEditor, LocalDoc, REFUSED_EDIT } from "./edit.ts";
 import { showVersion } from "./follow.ts";
 import { renderMarkdown } from "./markdown.ts";
@@ -116,13 +116,22 @@ function docGoto(root: HTMLElement): (item: ChangeItem) => boolean {
   };
 }
 
-/** The doc's side of the review: its blocks, drawn read-only with that version's files. */
-function docPane(doc: Document): ReviewPane {
+/**
+ * The doc's side of the review: its blocks, drawn read-only with that version's files, with the
+ * blocks that differ from the base marked.
+ */
+export function docPane(doc: Document): ReviewPane {
   return {
-    render(el, text, version) {
+    render(el, text, version, base) {
       const wrap = doc.createElement("div");
       wrap.className = "plinth-doc plinth-review__doc";
       wrap.append(sanitizeHtml(renderMarkdown(text), doc));
+      if (base !== null) {
+        // Compared before the files are pinned, so a block differs only when its source does.
+        const was = doc.createElement("div");
+        was.append(sanitizeHtml(renderMarkdown(base), doc));
+        markChangedChildren(was, wrap);
+      }
       pinFiles(wrap, version);
       el.replaceChildren(wrap);
       return docGoto(wrap);

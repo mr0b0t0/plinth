@@ -19,8 +19,9 @@
 // A version published while the page changes were not combined with it freezes them: the frame
 // shows the whole-draft review (renderers/common/review.ts), and the person's choice comes back as
 // `resolved`. "Publish your changes" is POST live/checkpoint with conflict_version (room), or PUT with
-// base_version: n and files_from_version: the draft's base (solo); "Discard your changes" is DELETE
-// live/draft with conflict_version (room), or dropping the tab copy (solo). The app answers the
+// base_version: n and files_from_version: the draft's base (solo); "Discard your changes", once the
+// app's own confirmation (discardAsk) says so, is DELETE live/draft with conflict_version (room),
+// or dropping the tab copy (solo); a cancelled confirmation answers `failed`. The app answers the
 // frame with `reviewed`, so its buttons say when another editor is choosing.
 //
 // Phases: idle (not editing, no room), watching (not editing, the frame follows the room),
@@ -61,6 +62,7 @@ import {
 import type { WatchPause } from "./useVersionWatch.ts";
 
 type OkGate = Extract<ViewGate, { status: "ok" }>;
+type Resolved = Extract<FrameMessage, { type: "resolved" }>;
 
 export type LivePhase = "idle" | "watching" | "editing" | "dirty" | "saving" | "conflict" | "solo";
 
@@ -124,6 +126,13 @@ export interface LiveEdit {
   /** The review open in the frame, if any. */
   review: LiveReview | null;
   reviewing: boolean;
+  /**
+   * The review's "Discard your changes" waits for the app's confirmation (the app's own dialog,
+   * over the dimmed page): the version the page goes back to, or null.
+   */
+  discardAsk: number | null;
+  /** The person's answer to discardAsk: true discards, false goes back to the review. */
+  answerDiscard(ok: boolean): void;
   /** Solo: page edits this tab kept from before a reload. */
   restore: PageDraft | null;
   pause: WatchPause;
@@ -182,6 +191,8 @@ export function useLiveEdit({
   const [savedVersion, setSavedVersion] = useState<number | null>(null);
   const [rebasedVersion, setRebasedVersion] = useState<number | null>(null);
   const [review, setReview] = useState<LiveReview | null>(null);
+  /** The review's Discard, waiting for the app's confirmation. */
+  const [discardAsk, setDiscardAsk] = useState<Resolved | null>(null);
   const [info, setInfo] = useState<LiveInfo | null>(null);
   const [restore, setRestore] = useState<PageDraft | null>(null);
   /** An idle autosave refused as too soon: try again after `ms`, unless the draft moved on. */
@@ -295,9 +306,7 @@ export function useLiveEdit({
 
   // ---------- frame messages ----------
 
-  const onResolvedRef = useRef<(m: Extract<FrameMessage, { type: "resolved" }>) => void>(
-    () => undefined,
-  );
+  const onResolvedRef = useRef<(m: Resolved, confirmed?: boolean) => void>(() => undefined);
 
   useEffect(() => {
     if (!available) return;
@@ -493,13 +502,32 @@ export function useLiveEdit({
   const publishRef = useRef(publish);
   publishRef.current = () => publish();
 
+  const answerDiscard = useCallback(
+    (ok: boolean) => {
+      const m = discardAsk;
+      setDiscardAsk(null);
+      const r = reviewRef.current;
+      if (!m || !r || m.nonce !== r.nonce) return;
+      // Cancel answers "failed": the review's buttons come back on, focus on its Discard.
+      if (ok) onResolvedRef.current(m, true);
+      else answer(r.nonce, "failed");
+    },
+    [discardAsk, answer],
+  );
+
   // ---------- the review's choice ----------
 
-  onResolvedRef.current = (m) => {
+  onResolvedRef.current = (m, confirmed = false) => {
     const r = reviewRef.current;
     if (!r || m.nonce !== r.nonce) return;
     if (m.outcome === "cancelled") {
+      setDiscardAsk(null);
       setReview(null);
+      return;
+    }
+    if (m.outcome === "discard" && !confirmed) {
+      // The frame cannot dim the app around it, so the app asks, as the strip's Discard does.
+      setDiscardAsk(m);
       return;
     }
     const done = (result: ReviewResult) => answer(r.nonce, result);
@@ -774,6 +802,8 @@ export function useLiveEdit({
     newerVersion,
     review,
     reviewing: review !== null,
+    discardAsk: discardAsk && review && discardAsk.nonce === review.nonce ? review.current : null,
+    answerDiscard,
     restore,
     pause,
     roomReady,
