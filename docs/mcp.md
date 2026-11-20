@@ -273,9 +273,10 @@ A deck (type `slides`): send Markdown in `content` with a line `---` between sli
 matter sets `aspect` (`16:9` or `4:3`), `theme` (`auto`, `light`, `dark`), `paginate` and a plain-text
 `footer`; a line starting `Note:` starts the slide's speaker notes; lines `|||` split a slide into
 2 or 3 columns; `[text](#3)` links to slide 3. Plinth renders fixed 16:9 or 4:3 slides with automatic
-layouts, text that shrinks to fit, paging, Present, a presenter view and printing to PDF (with or
-without notes). Speaker notes are visible to anyone who can open the deck. Assets are images;
-`slides.md` and `index.html` are reserved. A deck needs at least one slide and holds at most 500.
+layouts, text that shrinks to fit, paging, Present, a presenter view, printing to PDF (with or
+without notes) and a `.pptx` download that viewers make from the deck's menu, in their browser.
+Speaker notes are visible to anyone who can open the deck, and are in the `.pptx`. Assets are
+images; `slides.md` and `index.html` are reserved. A deck needs at least one slide and holds at most 500.
 
 ```json
 {
