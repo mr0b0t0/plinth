@@ -5,8 +5,10 @@
 //
 // Bounds, in this order, per person: only a new grant (an address that held none before the
 // change), never the owner's own address, policy.ts mayEmailInvitations (asked, the owner acting,
-// a verified owner, not taken down), the operator's switch (INVITATION_EMAILS_PER_DAY=0 is off),
-// one email per artifact or share and address within a day (`already_emailed`),
+// a verified owner, not taken down), the operator's switch (config.ts invitationEmailsActive), the
+// person's own opt-out (`opted_out`: invitation_opt_outs, set on the app's /invitation-emails page
+// after signing in as that address; checked before any counter, so it uses none), one email per
+// artifact or share and address within a day (`already_emailed`),
 // RATE_LIMITS.invitationsPerChange, INVITATION_EMAILS_PER_OWNER_PER_DAY, the instance's
 // INVITATION_EMAILS_PER_DAY (every owner together, so invitations cannot use up the provider quota
 // sign-in and viewing codes need), invitationsPerRecipientPerDay and
@@ -19,6 +21,7 @@
 // requests or one at a time, never all at once (deliverInvitations), and an invitation the
 // provider refused gets its mark and counters back.
 import {
+  APP_ROUTES,
   type InvitationReport,
   type InvitationSkipReason,
   pageDisplayName,
@@ -36,6 +39,7 @@ import {
 import { invitationEmail } from "../email/templates.ts";
 import { sha256Hex } from "../lib/crypto.ts";
 import { forbidden } from "../lib/errors.ts";
+import { nowIso } from "../lib/time.ts";
 import { mayEmailInvitations } from "../policy.ts";
 import type { Ctx } from "./context.ts";
 
@@ -133,6 +137,7 @@ export async function sendInvitations(
       const h = await invitationAddressHash(p.email);
       return {
         ...p,
+        hash: h,
         mark: `${scope}${h}`,
         to: `${KEY_PREFIX}to:${h}`,
         pair: `${KEY_PREFIX}pair:${owner.id}:${h}`,
@@ -141,15 +146,26 @@ export async function sendInvitations(
   );
   type Person = (typeof people)[number];
 
-  // One read for every counter this change may touch, today's and yesterday's. It picks who to
-  // try and gives the usual reasons; the reservations below are what actually holds the limits.
+  // One round trip reads who turned invitations off and every counter this change may touch,
+  // today's and yesterday's. It picks who to try and gives the usual reasons; the reservations
+  // below are what actually holds the limits.
   const keys = [ownerKey, instanceKey, ...people.flatMap((p) => [p.mark, p.to, p.pair])];
-  const { results } = await DB.prepare(
-    `SELECT key, window_start, count FROM rate_limits
-      WHERE key IN (SELECT value FROM json_each(?1)) AND window_start IN (?2, ?3)`,
-  )
-    .bind(JSON.stringify(keys), today, yesterday)
-    .all<{ key: string; window_start: number; count: number }>();
+  const [optedOut, counted] = await DB.batch([
+    DB.prepare(
+      `SELECT address_hash AS h FROM invitation_opt_outs
+        WHERE address_hash IN (SELECT value FROM json_each(?1))`,
+    ).bind(JSON.stringify(people.map((p) => p.hash))),
+    DB.prepare(
+      `SELECT key, window_start, count FROM rate_limits
+        WHERE key IN (SELECT value FROM json_each(?1)) AND window_start IN (?2, ?3)`,
+    ).bind(JSON.stringify(keys), today, yesterday),
+  ]);
+  const optedOutHashes = new Set(((optedOut?.results ?? []) as { h: string }[]).map((r) => r.h));
+  const results = (counted?.results ?? []) as {
+    key: string;
+    window_start: number;
+    count: number;
+  }[];
   const counts = new Map(results.map((r) => [`${r.key}\n${r.window_start}`, r.count]));
   const count = (key: string, window: number) => counts.get(`${key}\n${window}`) ?? 0;
   const recipientFull = (p: Person, at: (key: string) => number) =>
@@ -160,8 +176,11 @@ export async function sendInvitations(
   let instanceSent = count(instanceKey, today);
   const chosen: Person[] = [];
   for (const p of people) {
-    // The mark of the previous day counts too, so "within a day" never resets at midnight UTC.
-    if (count(p.mark, today) + count(p.mark, yesterday) > 0) {
+    if (optedOutHashes.has(p.hash)) {
+      // Their own choice comes first, and it uses no counter.
+      report.skipped.push({ email: p.email, reason: "opted_out" });
+    } else if (count(p.mark, today) + count(p.mark, yesterday) > 0) {
+      // The mark of the previous day counts too, so "within a day" never resets at midnight UTC.
       report.skipped.push({ email: p.email, reason: "already_emailed" });
     } else if (chosen.length >= RATE_LIMITS.invitationsPerChange) {
       report.skipped.push({ email: p.email, reason: "change_limit" });
@@ -269,6 +288,7 @@ export async function sendInvitations(
       ? appUrl(ctx.config, `/a/${target.slug}`)
       : appUrl(ctx.config, `/p/${target.id}`);
   const ownerName = pageDisplayName(owner.name);
+  const optOutLink = appUrl(ctx.config, APP_ROUTES.invitationEmails);
   const messages = sending.map((p) => {
     report.emailed.push(p.email);
     return invitationEmail({
@@ -279,6 +299,7 @@ export async function sendInvitations(
       title: target.title,
       role: p.role,
       link,
+      optOutLink,
     });
   });
   ctx.waitUntil(
@@ -386,5 +407,37 @@ export async function pruneInvitationMarks(d1: D1Database, at: number): Promise<
   await d1
     .prepare("DELETE FROM rate_limits WHERE key LIKE ?1 AND window_start < ?2")
     .bind(`${KEY_PREFIX}%`, nowS - 2 * DAY_S)
+    .run();
+}
+
+/**
+ * Whether `email` (the signed-in person's own address) gets invitation emails: true unless its
+ * holder turned them off. Read and changed only through the /me/invitation-emails routes, which
+ * take the address from the session, never from the request.
+ */
+export async function receivesInvitations(d1: D1Database, email: string): Promise<boolean> {
+  const row = await d1
+    .prepare("SELECT 1 AS x FROM invitation_opt_outs WHERE address_hash = ?1")
+    .bind(await invitationAddressHash(email))
+    .first<{ x: number }>();
+  return row === null;
+}
+
+/** Turn invitation emails to `email` off (`receive` false) or back on. Idempotent. */
+export async function setReceivesInvitations(
+  d1: D1Database,
+  email: string,
+  receive: boolean,
+): Promise<void> {
+  const h = await invitationAddressHash(email);
+  if (receive) {
+    await d1.prepare("DELETE FROM invitation_opt_outs WHERE address_hash = ?1").bind(h).run();
+    return;
+  }
+  await d1
+    .prepare(
+      "INSERT INTO invitation_opt_outs (address_hash, created_at) VALUES (?1, ?2) ON CONFLICT (address_hash) DO NOTHING",
+    )
+    .bind(h, nowIso())
     .run();
 }

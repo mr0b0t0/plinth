@@ -2548,6 +2548,56 @@
           { "sessionCookie": [], "csrfHeader": [] }
         ]
       }
+    },
+    "/me/invitation-emails": {
+      "get": {
+        "operationId": "getInvitationEmails",
+        "summary": "Whether your own address gets invitation emails",
+        "tags": ["Account"],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/InvitationEmailSettings" }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/E401" },
+          "403": { "$ref": "#/components/responses/E403" },
+          "default": { "$ref": "#/components/responses/Error" }
+        },
+        "security": [{ "sessionCookie": [] }]
+      },
+      "put": {
+        "operationId": "setInvitationEmails",
+        "summary": "Turn invitation emails to your own address off or on",
+        "description": "Signed-in people only, for their own address (never agents). Off, an owner who shares with this address still gives it access, and their result names it `opted_out`.",
+        "tags": ["Account"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/InvitationEmailsInput" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/InvitationEmailSettings" }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/E400" },
+          "401": { "$ref": "#/components/responses/E401" },
+          "403": { "$ref": "#/components/responses/E403" },
+          "default": { "$ref": "#/components/responses/Error" }
+        },
+        "security": [{ "sessionCookie": [], "csrfHeader": [] }]
+      }
     }
   },
   "components": {
@@ -4916,7 +4966,7 @@
           },
           "invitation_emails": {
             "type": "boolean",
-            "description": "Owners may have Plinth email the people they add; false when INVITATION_EMAILS_PER_DAY is 0"
+            "description": "Owners may have Plinth email the people they add; false when INVITATION_EMAILS_PER_DAY is 0, with EMAIL_PROVIDER=console outside development, and in single-user mode"
           }
         },
         "required": [
@@ -6589,7 +6639,8 @@
                     "owner_limit",
                     "recipient_limit",
                     "instance_limit",
-                    "invitations_off"
+                    "invitations_off",
+                    "opted_out"
                   ]
                 }
               },
@@ -6610,6 +6661,31 @@
             "required": []
           }
         ]
+      },
+      "InvitationEmailsInput": {
+        "type": "object",
+        "properties": {
+          "receive": {
+            "type": "boolean",
+            "description": "false stops invitation emails to your address; true allows them again"
+          }
+        },
+        "required": ["receive"]
+      },
+      "InvitationEmailSettings": {
+        "type": "object",
+        "properties": {
+          "email": {
+            "type": "string",
+            "format": "email",
+            "description": "The signed-in person's own address"
+          },
+          "receive": {
+            "type": "boolean",
+            "description": "false: invitation emails to this address are not sent (opted_out)"
+          }
+        },
+        "required": ["email", "receive"]
       }
     },
     "responses": {

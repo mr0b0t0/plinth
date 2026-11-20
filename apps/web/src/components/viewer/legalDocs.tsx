@@ -219,7 +219,9 @@ function privacy(op: OperatorInfo, cfg: LegalConfig): LegalDoc {
               {cfg.category_sharing ? " (or the name they chose for the category)" : ""}, your role
               and the link. When you notify the people you add, we send them those details about
               you. So that nobody gets the same invitation twice, we keep a scrambled (hashed) form
-              of the address for up to three days.
+              of the address for up to three days. If you turn invitation emails off (the link at
+              the end of each one), we keep a scrambled form of your address so that none reach you,
+              until you turn them back on.
             </li>
             <li>
               <strong>Comments</strong>: their text, who wrote them, and requests made to agents.
@@ -301,6 +303,10 @@ function privacy(op: OperatorInfo, cfg: LegalConfig): LegalDoc {
             <li>When you ask us to close your account, we erase it with everything above.</li>
             <li>Sign-in and viewing codes: 15 minutes. Technical logs: a few days.</li>
             <li>The scrambled record that an invitation was sent: up to three days.</li>
+            <li>
+              The scrambled record that you turned invitation emails off: until you turn them back
+              on. It stays when your account is closed, so that invitations do not start again.
+            </li>
           </ul>
         ),
       },

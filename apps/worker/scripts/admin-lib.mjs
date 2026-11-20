@@ -409,6 +409,8 @@ export const ERASE_USER_STEPS = [
  */
 export const ERASE_USER_KEPT = {
   dev_outbox: "development only: the console email provider's outbox, never written in production",
+  invitation_opt_outs:
+    "an address's own opt-out of invitation emails, by hash only: erasing it would let invitations reach that inbox again",
 };
 
 /**

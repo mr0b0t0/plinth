@@ -13,6 +13,11 @@ export interface EmailMessage {
   subject: string;
   text: string;
   html?: string;
+  /**
+   * Extra message headers, from Plinth's own templates only (never from user input), such as an
+   * invitation's List-Unsubscribe.
+   */
+  headers?: Readonly<Record<string, string>>;
 }
 
 export interface EmailAdapter {
@@ -88,7 +93,12 @@ export class ConsoleEmailAdapter implements EmailAdapter {
   readonly name = "console";
   constructor(private readonly outbox: D1Database | null) {}
   async send(m: EmailMessage): Promise<void> {
-    console.log(`[email:console] to=${m.to} subject=${JSON.stringify(m.subject)}\n${m.text}`);
+    const headers = Object.entries(m.headers ?? {})
+      .map(([k, v]) => `\n${k}: ${v}`)
+      .join("");
+    console.log(
+      `[email:console] to=${m.to} subject=${JSON.stringify(m.subject)}${headers}\n${m.text}`,
+    );
     if (this.outbox) {
       await getDb(this.outbox)
         .insert(devOutbox)
@@ -117,7 +127,7 @@ export class SendGridEmailAdapter implements EmailAdapter {
     // text/plain must come before text/html in SendGrid's content array.
     const content = [{ type: "text/plain", value: m.text }];
     if (m.html) content.push({ type: "text/html", value: m.html });
-    const body = {
+    const body: Record<string, unknown> = {
       personalizations: [{ to: [{ email: m.to }] }],
       from: parseFrom(this.from),
       subject: m.subject,
@@ -125,6 +135,7 @@ export class SendGridEmailAdapter implements EmailAdapter {
       // Sign-in links must reach the user unchanged; click tracking would rewrite them.
       tracking_settings: { click_tracking: { enable: false, enable_text: false } },
     };
+    if (m.headers && Object.keys(m.headers).length > 0) body.headers = { ...m.headers };
     await post(this.name, this.fetchFn, SendGridEmailAdapter.endpoint, this.apiKey, body);
   }
 }
@@ -153,6 +164,7 @@ export class ResendEmailAdapter implements EmailAdapter {
       text: m.text,
     };
     if (m.html) body.html = m.html;
+    if (m.headers && Object.keys(m.headers).length > 0) body.headers = { ...m.headers };
     return body;
   }
   async send(m: EmailMessage): Promise<void> {

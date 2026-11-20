@@ -1675,35 +1675,54 @@ when the user told it to.
   `policy.ts mayEmailInvitations`: the request asked, the caller is the owner acting on their own
   artifact or share (the signed-in owner or the owner's own agent), the owner's address is verified,
   and the artifact is not taken down.
+- **Turning them off.** Every invitation's footer and its `List-Unsubscribe` header point to the
+  app's `/invitation-emails` page, whose URL holds no token and no address. After the usual email
+  code sign-in, the person turns invitation emails to their own address off with one button
+  (**Stop these emails**), and back on from the same page (`GET` and `PUT
+  /api/v1/me/invitation-emails`, `{ receive }`, signed-in people only, never agents; the address is
+  always the session's). Off is kept as a hash of the address in `invitation_opt_outs` (migration
+  `0021_invitation_opt_outs.sql`, the same hash the counters use), never the address, and an
+  account's erasure keeps it, since dropping it would let invitations reach the inbox again. An
+  owner who shares with that address still gives it access; the person is reported as
+  `opted_out` ("They turned these emails off"), and no counter is used. There is no
+  `List-Unsubscribe-Post` (RFC 8058 one-click): that request arrives with no session, so it would
+  need a token in the URL saying whose address to stop.
 - **Bounds.** At most one invitation per artifact (or share) and address within a day, counted
   across the previous and the current UTC day, so removing and re-adding someone does not email
   them again. At most `RATE_LIMITS.invitationsPerChange` (40) invitations per change, and per UTC
-  day `INVITATION_EMAILS_PER_OWNER_PER_DAY` (100) per owner, `INVITATION_EMAILS_PER_DAY` (1000)
+  day `INVITATION_EMAILS_PER_OWNER_PER_DAY` (20) per owner, `INVITATION_EMAILS_PER_DAY` (1000)
   for the whole instance, every owner together,
   `RATE_LIMITS.invitationsPerOwnerPerRecipientPerDay` (3) from one owner to one address and
   `RATE_LIMITS.invitationsPerRecipientPerDay` (10) per address, from every owner together. Each limit is reserved before an email goes (the counter is raised, then checked, and what
   was not used is given back), so parallel changes cannot pass it. The counters sit in
   `rate_limits` under keys holding a hash of the address, never the address, are read and written
   in a fixed number of statements whatever the number of people, and the hourly cron deletes them
-  two days after their day. Nothing else is stored.
+  two days after their day. Nothing else is stored, apart from the opt-outs above. Sign-in and
+  viewing codes have counters of their own (`login:` keys), so a used-up invitation budget never
+  holds back a code.
 - **What the result says.** With `notify: true`, the result adds `invitations`: `emailed` (the
   addresses handed to the email provider) and `skipped` (`{ email, reason }`, with `reason` one of
   `owner_unverified`, `taken_down`, `already_emailed`, `change_limit`, `owner_limit`,
-  `recipient_limit`, which covers both per-address limits, `instance_limit` and
-  `invitations_off`). Without it, the result is exactly as
+  `recipient_limit`, which covers both per-address limits, `instance_limit`,
+  `invitations_off` and `opted_out`). Without it, the result is exactly as
   before. A skipped invitation never fails the change: the grants are
   saved either way. The app names the people it did not email, and why, in the change's one toast
   (a warning in place of the success toast).
 - **The email.** Subject `<owner name> (<owner email>) shared "<title>" with you`, or the email
   alone when the owner has no display name; the body names the
   owner by display name and address, the title (for a category, the name its people see, never the
-  category's own name), the role in plain words, the one link (`/a/<slug>`, or the portal
+  category's own name), the role in plain words, the link (`/a/<slug>`, or the portal
   `/p/<id>` for a category share), a line saying the title and name were written by the person who
-  shared it, and why the recipient got it. It carries no code, token or other secret: the person
+  shared it, why the recipient got it, and one footer line linking `/invitation-emails` to stop
+  these emails. It carries no code, token or other secret: the person
   still confirms their address when the link asks. Titles and names are untrusted: control and
-  format characters and line breaks are removed, they are shortened, anything that reads as a web
-  address is defanged (`https[:]//`, `www[.]`), and the HTML part escapes every value and has one
-  link, the artifact's. It goes through the instance's email provider (`EMAIL_PROVIDER`; the
+  format characters and line breaks are removed, they are shortened, and anything that reads as a
+  web address is defanged in the subject and both parts: `https[:]//`, `www[.]`, and every host
+  name whose last labels are a public suffix the pinned `tldts` knows (ICANN or the list's private
+  part) with each dot written `[.]` (`office365-reset[.]co`, `bob@evil[.]com`), while dotted words
+  whose last label is no suffix (`Node.js`, `v1.2.3`, `e.g.`) stay as written. The HTML part
+  escapes every value and has two links, both on the app host: the artifact's and the opt-out
+  page. It goes through the instance's email provider (`EMAIL_PROVIDER`; the
   console provider in development) after the response, and a provider failure is logged without
   the address, the title or the message. Providers limit requests per second, and sign-in and
   viewing codes share that limit, so a change's invitations never go all at once: in one batch
@@ -1716,12 +1735,17 @@ when the user told it to.
   who was handed over.
 - **Settings.** Invitations go through the email provider sign-in and viewing codes use, and share
   its daily quota, so the operator sets how many go out: `INVITATION_EMAILS_PER_DAY` (default
-  1000, `0` to `1000000`) caps the whole instance per UTC day, and `0` turns invitation emails off;
-  `INVITATION_EMAILS_PER_OWNER_PER_DAY` (default 100, `1` to `10000`) caps one owner. An operator
-  sets the instance cap well under the provider's daily quota, so codes always have room. Off, the
+  1000, `0` to `1000000`) caps the whole instance per UTC day, every owner together, and `0`
+  turns invitation emails off; `INVITATION_EMAILS_PER_OWNER_PER_DAY` (default 20, `1` to
+  `10000`) caps one owner, low enough that a handful of new accounts cannot use up the instance
+  cap for everyone. An operator sets the instance cap well under the provider's daily quota, so
+  codes always have room. Invitation emails are also off with `EMAIL_PROVIDER=console` outside
+  development (that provider only writes to the log, so nobody would be emailed) and in
+  `SINGLE_USER_MODE` (only the admin can sign in, so nobody else could turn them off). Off, the
   app has no **Notify people** box (`GET /api/v1/config` says `invitation_emails: false`), a
   request with `notify: true` still applies, and every person added is reported as
-  `invitations_off`; nothing is counted.
+  `invitations_off`; nothing is counted. In development the console provider prints invitations
+  to the log, and `emailed` names who was handed to it.
 
 ### Big builds and reuse by hash
 
@@ -1974,8 +1998,9 @@ options.
   only to the artifact's owner and, summed over the instance, to admins.
 - **Invitation emails are bounded.** Plinth emails someone only when the owner (or the owner's
   agent, told by the user) adds them with `notify`, from a verified owner, once per artifact and
-  address a day, within daily caps per owner, per owner and recipient, and per recipient. The email has one link and no
-  secret, and its untrusted title and name are cleaned and escaped
+  address a day, within daily caps per owner, per owner and recipient, and per recipient. The email has the artifact's link, a
+  link to turn these emails off (`/invitation-emails`, after signing in as that address) and no
+  secret, and its untrusted title and name are cleaned, defanged and escaped
   ([Invitation emails](#invitation-emails-decided-2026-11-19)).
 - **Quotas and rate limits.** Each account is limited to 100 artifacts by default, set by an
   environment variable with a per-account override. Storage and publishes per hour are capped too.

@@ -27,6 +27,7 @@ import {
   editSheetInput,
   grantsReplaceInput,
   INVITATION_SKIP_REASONS,
+  invitationEmailsInput,
   LIMITS,
   liveCheckpointInput,
   MENTION_STATES,
@@ -726,7 +727,7 @@ function responseSchemas(): Record<string, Json> {
       invitation_emails: {
         type: "boolean",
         description:
-          "Owners may have Plinth email the people they add; false when INVITATION_EMAILS_PER_DAY is 0",
+          "Owners may have Plinth email the people they add; false when INVITATION_EMAILS_PER_DAY is 0, with EMAIL_PROVIDER=console outside development, and in single-user mode",
       },
     }),
     LoginResult: obj({
@@ -2758,6 +2759,7 @@ export function openApiDocument(config: Pick<Config, "appOrigin">): Json {
     ...liveOperations(),
     ...liveViewOperations(),
     ...categorySharingOperations(),
+    ...invitationOperations(),
   ]) {
     const key = toOpenApiPath(op.path);
     paths[key] ??= {};
@@ -2882,5 +2884,42 @@ function invitationSchemas(): Record<string, Json> {
         obj({ invitations: ref("InvitationReport") }, ["invitations"]),
       ],
     },
+    InvitationEmailsInput: fromZod(invitationEmailsInput),
+    InvitationEmailSettings: obj({
+      email: str({ format: "email", description: "The signed-in person's own address" }),
+      receive: {
+        type: "boolean",
+        description: "false: invitation emails to this address are not sent (opted_out)",
+      },
+    }),
   };
+}
+
+function invitationOperations(): Operation[] {
+  return [
+    {
+      method: "get",
+      path: API.invitationEmails,
+      operationId: "getInvitationEmails",
+      summary: "Whether your own address gets invitation emails",
+      tag: "Account",
+      auth: "user",
+      ok: [200, "InvitationEmailSettings"],
+      errors: [401, 403],
+    },
+    {
+      method: "put",
+      path: API.invitationEmails,
+      operationId: "setInvitationEmails",
+      summary: "Turn invitation emails to your own address off or on",
+      description:
+        "Signed-in people only, for their own address (never agents). Off, an owner who shares " +
+        "with this address still gives it access, and their result names it `opted_out`.",
+      tag: "Account",
+      auth: "user",
+      body: "InvitationEmailsInput",
+      ok: [200, "InvitationEmailSettings"],
+      errors: [400, 401, 403],
+    },
+  ];
 }

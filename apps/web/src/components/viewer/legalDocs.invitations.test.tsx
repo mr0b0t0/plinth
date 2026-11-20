@@ -18,6 +18,10 @@ describe("privacy notice: invitations", () => {
       expect(t).toContain("email you on their behalf: their name and email address");
       expect(t).toContain("When you notify the people you add, we send them those details about");
       expect(t).toContain("for up to three days");
+      // The opt-out record: kept until turned back on, and past an account's closing.
+      expect(t).toContain("If you turn invitation emails off (the link at");
+      expect(t).toContain("until you turn them back on");
+      expect(t).toContain("It stays when your account is closed, so that invitations do not");
     }
   });
 

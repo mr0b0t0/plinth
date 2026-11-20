@@ -741,3 +741,17 @@ export function mayEmailInvitations(f: {
   if (f.takenDown) return { allow: false, reason: "taken_down" };
   return { allow: true };
 }
+
+/**
+ * May this caller read or change whether invitation emails reach an address
+ * (GET and PUT /me/invitation-emails)? Only a signed-in person (session), and only for their own
+ * address, which the route takes from the principal: never an agent, a viewer cookie or anyone
+ * anonymous, so the page cannot turn off someone else's emails or say whether they did.
+ */
+export function mayManageInvitationEmails(
+  p: Principal,
+): { allow: true; email: string } | { allow: false; reason: "unauthenticated" | "not_a_person" } {
+  if (p.kind === "user") return { allow: true, email: p.email };
+  if (p.kind === "agent") return { allow: false, reason: "not_a_person" };
+  return { allow: false, reason: "unauthenticated" };
+}

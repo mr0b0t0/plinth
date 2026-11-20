@@ -243,7 +243,7 @@ export const VIEW_LOG_BOUNDS = { retentionDays: [90, 3650] } as const;
  * `perDay` (INVITATION_EMAILS_PER_DAY): every owner together; 0 turns invitation emails off.
  * `perOwnerPerDay` (INVITATION_EMAILS_PER_OWNER_PER_DAY): one owner's sharing changes.
  */
-export const INVITATION_DEFAULTS = { perDay: 1000, perOwnerPerDay: 100 } as const;
+export const INVITATION_DEFAULTS = { perDay: 1000, perOwnerPerDay: 20 } as const;
 export const INVITATION_BOUNDS = {
   perDay: [0, 1_000_000],
   perOwnerPerDay: [1, 10_000],

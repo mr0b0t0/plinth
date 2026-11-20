@@ -485,6 +485,13 @@ export const oauthConsentInput = z.object({
   approve: z.boolean(),
 });
 
+/** PUT /me/invitation-emails: whether the signed-in person's own address gets invitations. */
+export const invitationEmailsInput = z.object({
+  receive: z
+    .boolean()
+    .describe("false stops invitation emails to your address; true allows them again"),
+});
+
 export const grantInput = z.object({ email: emailSchema, role: roleSchema });
 export const grantsReplaceInput = z.object({
   grants: z.array(grantInput).max(LIMITS.maxAllowlistEmails),

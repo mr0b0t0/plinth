@@ -43,7 +43,11 @@ const putSharing = (
   grants: { email: string; role: string }[],
   extra: Record<string, unknown> = {},
   headers: Record<string, string> = o.session,
-) => send("PUT", `/api/v1/artifacts/${id}/sharing`, headers, { grants, ...extra });
+  vars: Record<string, unknown> = {},
+) => send("PUT", `/api/v1/artifacts/${id}/sharing`, headers, { grants, ...extra }, vars);
+
+/** An owner limit above invitationsPerChange, for tests about the per-change cap. */
+const ROOMY_OWNER = { INVITATION_EMAILS_PER_OWNER_PER_DAY: "200" };
 
 const DAY = 86_400;
 const windowStart = (now = Date.now()) => {
@@ -68,8 +72,12 @@ describe("invitation emails: the sharing list", () => {
     expect(mail[0]?.subject).toBe(`${o.user.email} shared "Q3 plan" with you`);
     expect(mail[0]?.text).toContain(`${APP}/a/${a.slug}`);
     expect(mail[0]?.text).toContain("You can view it and comment on it.");
-    // One link, and no code or token of any kind.
-    expect(mail[0]?.text.match(/https?:\/\//g)).toHaveLength(1);
+    // Two links, both on the app host: the artifact and the page that turns these emails off,
+    // which carries no token or address. No code or token of any kind.
+    expect(mail[0]?.text.match(/https?:\/\/\S+/g)).toEqual([
+      `${APP}/a/${a.slug}`,
+      `${APP}/invitation-emails`,
+    ]);
     expect(mail[0]?.text).not.toMatch(/\b\d{6}\b/);
     expect(mail[0]?.text).not.toContain("plinth_");
   });
@@ -224,7 +232,9 @@ describe("invitation emails: the sharing list", () => {
       email: uniqueEmail(`many${i}-`),
       role: "viewer",
     }));
-    const res = await json(await putSharing(o, a.id, people, { notify: true }));
+    const res = await json(
+      await putSharing(o, a.id, people, { notify: true }, o.session, ROOMY_OWNER),
+    );
     expect(res.grants).toHaveLength(n);
     expect(res.invitations.emailed).toEqual(
       people.slice(0, RATE_LIMITS.invitationsPerChange).map((p) => p.email),
@@ -309,7 +319,7 @@ const counterOf = async (key: string) =>
 describe("invitation emails: limits hold under parallel changes", () => {
   it("parallel changes never pass the owner's daily limit, and give back what they did not use", async () => {
     const o = await owner();
-    const start = INVITATION_DEFAULTS.perOwnerPerDay - 40;
+    const start = Math.max(0, INVITATION_DEFAULTS.perOwnerPerDay - 40);
     await env.DB.prepare("INSERT INTO rate_limits (key, window_start, count) VALUES (?1, ?2, ?3)")
       .bind(`invite:owner:${o.user.id}`, windowStart(), start)
       .run();
@@ -969,9 +979,10 @@ describe("invitation emails: the message", () => {
     title: "Plan",
     role: "viewer" as const,
     link: "https://app.example/a/abc",
+    optOutLink: "https://app.example/invitation-emails",
   };
 
-  it("escapes titles and names in HTML and offers no link but the artifact's", () => {
+  it("escapes titles and names in HTML and offers no link but the artifact's and the opt-out page", () => {
     const m = invitationEmail({
       ...base,
       ownerName: 'Eve "Admin" <b>visit https://phish.example</b>',
@@ -980,8 +991,10 @@ describe("invitation emails: the message", () => {
     expect(m.html).not.toContain("<img");
     expect(m.html).not.toContain("<b>");
     expect(m.html).toContain("&lt;img src=x onerror=alert(1)&gt;");
-    expect(m.html?.match(/<a /g)).toHaveLength(1);
-    expect(m.html).toContain(`<a href="${escapeHtml(base.link)}">`);
+    expect(m.html?.match(/<a href="[^"]*"/g)).toEqual([
+      `<a href="${escapeHtml(base.link)}"`,
+      `<a href="${escapeHtml(base.optOutLink)}"`,
+    ]);
     for (const body of [m.text, m.html ?? "", m.subject]) {
       expect(body).not.toContain("https://evil.example");
       expect(body).not.toContain("https://phish.example");
@@ -989,7 +1002,7 @@ describe("invitation emails: the message", () => {
     }
     expect(m.text).toContain("https[:]//evil.example/login");
     expect(m.text).toContain("www[.]evil.example");
-    expect(m.text.match(/https?:\/\//g)).toEqual(["https://"]);
+    expect(m.text.match(/https?:\/\/\S+/g)).toEqual([base.link, base.optOutLink]);
     // Who shared it is named with the address, so a name cannot pass for someone else.
     expect(m.text).toContain("(ada@example.org) shared");
     expect(m.text).toContain("written by the person who shared it");

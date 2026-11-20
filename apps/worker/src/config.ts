@@ -716,9 +716,17 @@ export function liveViewsActive(c: Pick<Config, "allowLiveViews">, env: Optional
   return c.allowLiveViews && env.ROOMS !== undefined;
 }
 
-/** Invitation emails are on: the operator did not set INVITATION_EMAILS_PER_DAY to 0. */
-export function invitationEmailsActive(c: Pick<Config, "invitations">): boolean {
-  return c.invitations.perDay > 0;
+/**
+ * Invitation emails are on: the operator did not set INVITATION_EMAILS_PER_DAY to 0, a real email
+ * provider sends them (EMAIL_PROVIDER=console only writes to the log, so outside development it
+ * counts as off rather than reporting people as emailed), and people other than the admin can sign
+ * in to turn them off for their own address (never in SINGLE_USER_MODE).
+ */
+export function invitationEmailsActive(
+  c: Pick<Config, "invitations" | "emailProvider" | "environment" | "singleUserMode">,
+): boolean {
+  if (c.invitations.perDay <= 0 || c.singleUserMode) return false;
+  return c.emailProvider !== "console" || c.environment === "development";
 }
 
 /** Something on the page that reads the identity claim, and whether it is switched on. */

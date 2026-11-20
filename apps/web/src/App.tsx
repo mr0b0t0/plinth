@@ -28,6 +28,7 @@ const AdminReports = page(() => import("./pages/AdminReports.tsx"));
 const AdminStats = page(() => import("./pages/AdminStats.tsx"));
 const Design = page(() => import("./pages/Design.tsx"));
 const Legal = page(() => import("./pages/Legal.tsx"));
+const InvitationEmails = page(() => import("./pages/InvitationEmails.tsx"));
 const NotFound = page(() => import("./pages/NotFound.tsx"));
 
 export const ROUTES: [string, Page][] = [
@@ -52,6 +53,7 @@ export const ROUTES: [string, Page][] = [
   [APP_ROUTES.adminStats, AdminStats],
   [APP_ROUTES.design, Design],
   ["/legal/:doc", Legal],
+  [APP_ROUTES.invitationEmails, InvitationEmails],
 ];
 
 export function App() {
