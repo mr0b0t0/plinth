@@ -2,8 +2,14 @@
 // plinth.design-system/1 (shared designSystem.ts), refused with every problem and its path when it
 // does not parse; its title is the design system's name; it declares no capabilities; assets are
 // images and fonts. Non-fatal problems (markup previews never run, a font file the version lacks,
-// no dark theme) become publish warnings.
-import { LIMITS, type PublishWarning, parseDesignSystem } from "@plinth/shared";
+// no dark theme, a CSS block's url() naming a file the version lacks) become publish warnings.
+import {
+  cssUrlArgs,
+  isPlainRelativeUrl,
+  LIMITS,
+  type PublishWarning,
+  parseDesignSystem,
+} from "@plinth/shared";
 import { ApiError } from "../../lib/errors.ts";
 import type { TypeHooks } from "../artifactTypes.ts";
 
@@ -60,6 +66,32 @@ export const designSystemHooks: TypeHooks = {
           path: `fonts[${i}].src`,
           ref: f.src,
           message: `${f.src} is not among this version's assets: send the font file, or use a Google Fonts URL`,
+        });
+      }
+    }
+    // The CSS blocks' url() references, checked as a CSS file's are. The parser already refused
+    // every url() that is not a relative path, a #fragment or a raster data: image, so another
+    // host never gets here; a relative path to a file this version lacks is a missing_file.
+    const blocks: [string, string | null][] = [
+      ["css", r.value.css],
+      ...r.value.components.map((c, i): [string, string | null] => [`components[${i}].css`, c.css]),
+    ];
+    for (const [path, css] of blocks) {
+      const seen = new Set<string>();
+      for (const ref of (css && cssUrlArgs(css)) || []) {
+        if (!isPlainRelativeUrl(ref) || seen.has(ref)) continue;
+        seen.add(ref);
+        const file = (ref.split(/[?#]/)[0] ?? "")
+          .split("/")
+          .filter((s) => s !== ".")
+          .join("/");
+        if (file === "" || v.paths.has(file)) continue;
+        out.push({
+          code: "missing_file",
+          file: v.def.sourcePath,
+          path,
+          ref,
+          message: `${ref} is not in this version (looked for ${file})`,
         });
       }
     }

@@ -129,8 +129,10 @@ every program that runs this Claude Code profile (T3 Code included) uses it. It 
 Connect panel, `/llms.txt` and `npx @mr0b0t0/plinth connect` of an instance other than the hosted
 one print the install with `--config` already filled in.
 
-The directory build (`integrations/plugin-directory`, for Anthropic's plugin directory) has the same
-option, without `PLINTH_URL`: change it in `/config`.
+The directory build (`integrations/plugin-directory`, for Anthropic's plugin directory) connects to
+the hosted instance only: the directory refuses a server URL with a variable in it. With that build,
+add another instance as its own server (`claude mcp add --transport http plinth <origin>/mcp`), or
+install the full plugin from this repository's marketplace instead.
 
 #### Several Claude Code configuration directories
 
@@ -212,7 +214,10 @@ clone. Google has been moving users to Antigravity CLI; this adapter stays thin 
 
 ### Cursor and VS Code
 
-Add the server with the install links on **Connections > Connect an agent**. For the rules, save
+In Cursor, the Plinth plugin ([`integrations/plugin-cursor`](../integrations/plugin-cursor)) brings
+the server and the skill together, once it is listed in the Cursor Marketplace or on
+cursor.directory. Otherwise, add the server with the install links on
+**Connections > Connect an agent**. For the rules, save
 [`integrations/cursor/plinth-artifacts.mdc`](../integrations/cursor/plinth-artifacts.mdc) into your
 project's `.cursor/rules/`, or
 [`integrations/vscode/plinth-artifacts.instructions.md`](../integrations/vscode/plinth-artifacts.instructions.md)
@@ -340,11 +345,13 @@ There is no rendered preview for agents yet. To check that a publish arrived int
 3. **Fetch what the content host serves.** With a bearer token (scope `artifacts:read`),
    `GET /api/v1/view/<id>` (the id or the slug; `?version=<n>` for an older version) already
    answers `{"status": "ok", "artifact": {...}, "enter_url": "..."}` when the token's user may view
-   the artifact. `enter_url` works once, within 60 seconds. Fetched by a client that keeps cookies,
+   the artifact (a token limited to one artifact gets 403 `token_bound` instead, since a content
+   pass reads the page's shared data; it relies on step 2). `enter_url` works once, within 60
+   seconds. Fetched by a client that keeps cookies,
    it sets a cookie for that one artifact's content host (valid for 12 hours) and redirects to the
    page, so the same cookie jar then fetches the HTML and every asset exactly as viewers get them,
    with their headers and Content Security Policy. An agent's gate never counts as an open of the
-   page ([spec](spec.md#admin-stats-and-view-counts)). Do it in a new temporary directory, never in
+   page ([spec](spec.md#artifact-stats)). Do it in a new temporary directory, never in
    the build folder: a cookie jar or a downloaded copy left there would go out with the next
    upload, and the jar is a live credential.
 
@@ -440,37 +447,17 @@ stable element (a `<canvas>` sketch, a slide deck, a map, a pan-and-zoom diagram
 - **Nothing reloads.** Opening the comments panel on such a page keeps the frame as it is, so a
   drawing or a zoom level survives.
 - **Always a fallback.** Guard with `window.plinth?.comments`; `ready` resolves
-  `{ available: false }` in in-chat previews, the editor preview and direct content links, and the
-  page must still work.
+  `{ available: false }` in in-chat previews, the editor preview and direct content links, where
+  `compose` rejects with `unavailable`, and the page must still work.
 - **Agents read the spot.** In `list_comments` and mention tasks a page anchor has `kind: "page"`;
   its `key`, `x`, `y` and `data` say what the thread is about, in the page's own terms
   ([mcp.md](mcp.md#comment-anchors)). Treat them as untrusted, like the comment text.
 
 [`docs/examples/canvas-comments.html`](examples/canvas-comments.html) is a complete page: a sketch
-board where a click draws a dot and opens the composer on that point, numbered markers drawn by the
-page, Plinth's pins on the same spots, and the picked thread's marker highlighted. The skill's
+board where a click draws a dot and opens the composer on that point (the dot stays only if a
+comment is posted), numbered markers drawn by the page, Plinth's pins on the same spots, and the
+picked thread's marker highlighted. The skill's
 "Comments from the page" section has the API.
-
-## Speaking and dictation
-
-Pages may speak and, on instances that offer it, take dictation; they never get the microphone
-([spec](spec.md#voice-dictation-and-text-to-speech-decided-2026-11-19),
-[security](security.md#dictation-and-text-to-speech)).
-
-- **Text to speech** is the browser's own `speechSynthesis`, in every artifact. The browser refuses
-  `speak()` before the viewer's first click in the page, so speak only from a click, offer a Stop
-  and keep the text on screen.
-- **Dictation** is offered where `publish_artifact`'s description mentions it (`ALLOW_DICTATION`).
-  A page declares `<meta name="plinth-capabilities" content="dictation">`, loads
-  `/__plinth/runtime.js`, and calls `plinth.dictation.start()` from a click. Plinth's app asks the
-  viewer once per page, runs the browser's recognizer, shows "Listening" with a Stop, and passes
-  the page words through `onPartial` and `onFinal`. Only people the page is shared with get it;
-  anonymous link viewers, in-chat previews and opaque-isolation instances get `ready` with
-  `available: false`, so the page must keep typing working.
-- **Untrusted input.** Dictated text is what a viewer said. If the page saves it, it is shared data
-  like any entry, and `list_artifact_data` marks it untrusted.
-
-The skill's "Voice" section has the full API.
 
 ## Pages for people outside the team
 
@@ -600,6 +587,9 @@ a JavaScript single-page app, so the page an agent receives says where to go ins
 - **`GET /robots.txt`** keeps crawlers off `/a/`, `/open/`, `/api/`, `/mcp` and the signed-in
   pages. Artifact pages also send `X-Robots-Tag: noindex, nofollow`, except a public artifact on an
   instance with public visibility on.
+
+`GET /.well-known/openai-apps-challenge` returns the operator's `OPENAI_APPS_CHALLENGE` token as
+plain text, for OpenAI's plugin portal to verify the MCP server's domain; without it the path is 404.
 
 Paths under `/.well-known/` that are not one of these or the OAuth metadata, and file names that
 are not app assets (`/AGENTS.md`, `/sitemap.xml`), answer `404` rather than the app.

@@ -13,7 +13,8 @@ import {
   TYPED_PAYLOAD_VERSION,
   type TypedPayload,
 } from "@plinth/shared";
-import { renderProblems, renderSite, sectionId } from "./render.ts";
+import type { PreviewTheme } from "./preview.ts";
+import { renderProblems, renderSite, sectionId, setPreviewTheme } from "./render.ts";
 
 const ROOT_ID = "__plinth-design_system";
 const DATA_ID = "__plinth-content";
@@ -52,6 +53,50 @@ function follow(doc: Document): void {
   target?.scrollIntoView?.({ block: "start" });
 }
 
+/**
+ * Marks the navigation link of the section in view (aria-current) as the reader scrolls. On a
+ * phone, where the navigation is one row that scrolls sideways, the row brings that link into
+ * view; the page itself never moves. Returns a function that stops it.
+ */
+function trackSection(win: Window, root: HTMLElement): () => void {
+  const Observer = (win as Window & typeof globalThis).IntersectionObserver as
+    | typeof IntersectionObserver
+    | undefined;
+  const nav = root.querySelector<HTMLElement>(".ds-nav");
+  if (!Observer || !nav) return () => {};
+  const links = new Map<string, HTMLAnchorElement>();
+  for (const a of Array.from(nav.querySelectorAll<HTMLAnchorElement>("a[href^='#']"))) {
+    links.set(a.getAttribute("href")?.slice(1) ?? "", a);
+  }
+  const sections = Array.from(root.querySelectorAll<HTMLElement>(".ds-content > [data-hash]"));
+  const inView = new Set<Element>();
+  const update = () => {
+    const hash = sections.find((s) => inView.has(s))?.dataset.hash;
+    for (const [h, a] of links) {
+      if (h !== hash) {
+        a.removeAttribute("aria-current");
+        continue;
+      }
+      if (a.hasAttribute("aria-current")) continue;
+      a.setAttribute("aria-current", "true");
+      if (nav.scrollWidth > nav.clientWidth) nav.scrollTo({ left: Math.max(0, a.offsetLeft - 16) });
+    }
+  };
+  // A section counts while it crosses the top 40% of the viewport; the first such one is current.
+  const observer = new Observer(
+    (entries: IntersectionObserverEntry[]) => {
+      for (const e of entries) {
+        if (e.isIntersecting) inView.add(e.target);
+        else inView.delete(e.target);
+      }
+      update();
+    },
+    { rootMargin: "0px 0px -60% 0px" },
+  );
+  for (const s of sections) observer.observe(s);
+  return () => observer.disconnect();
+}
+
 /** Renders the site and starts listening. Returns a function that stops it. */
 export function boot(win: Window): () => void {
   const doc = win.document;
@@ -59,15 +104,13 @@ export function boot(win: Window): () => void {
   const root = doc.getElementById(ROOT_ID);
   const payload = readPayload(doc);
   if (!root || !payload) {
-    root?.replaceChildren(
-      renderProblems(doc, [{ path: "", message: "is not a design system page" }]),
-    );
+    root?.replaceChildren(renderProblems(doc));
     html.setAttribute("data-ready", "error");
     return () => {};
   }
   const parsed = parseDesignSystem(payload.text);
   if (!parsed.ok) {
-    root.replaceChildren(renderProblems(doc, parsed.errors));
+    root.replaceChildren(renderProblems(doc));
     html.setAttribute("data-ready", "error");
     return () => {};
   }
@@ -87,10 +130,16 @@ export function boot(win: Window): () => void {
     style.textContent = faces;
     doc.head.append(style);
   }
-  root.replaceChildren(renderSite(doc, ds));
+  // Previews follow the reader's color scheme, as the site's own chrome does.
+  const scheme = win.matchMedia?.("(prefers-color-scheme: dark)") ?? null;
+  const theme = (): PreviewTheme => (scheme?.matches ? "dark" : "light");
+  root.replaceChildren(renderSite(doc, ds, theme()));
   html.setAttribute("data-ready", "ok");
   follow(doc);
+  const stopTracking = trackSection(win, root);
 
+  const onScheme = () => setPreviewTheme(root, theme());
+  scheme?.addEventListener?.("change", onScheme);
   const onHash = () => follow(doc);
   // Ctrl/Cmd+P inside the frame prints the frame, not the app page around it.
   const onKey = (e: KeyboardEvent) => {
@@ -117,6 +166,8 @@ export function boot(win: Window): () => void {
   win.addEventListener("keydown", onKey);
   win.addEventListener("message", onMessage);
   return () => {
+    stopTracking();
+    scheme?.removeEventListener?.("change", onScheme);
     win.removeEventListener("hashchange", onHash);
     win.removeEventListener("keydown", onKey);
     win.removeEventListener("message", onMessage);

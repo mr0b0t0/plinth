@@ -92,8 +92,8 @@ write). Every endpoint is in [docs/openapi.json](docs/openapi.json).
 ### From CI
 
 Publish a build on every run as the next version of one artifact, with a token that can only
-read that artifact and publish new versions of it (the artifact's **Settings**, **Publish from
-CI**):
+read that artifact and publish new versions of it (Connections, **New token**, **Limit to one
+artifact**):
 
 ```yaml
 - uses: mr0b0t0/plinth/publish@v0.6.0

@@ -65,7 +65,7 @@ describe("NewTokenDialog", () => {
     const field = (await screen.findByLabelText("Token")) as HTMLTextAreaElement;
     expect(field.value).toBe(TOKEN);
     expect(field.readOnly).toBe(true);
-    expect(screen.getByText(/won't see this token again/)).toBeTruthy();
+    expect(screen.getByText(/Shown only once/)).toBeTruthy();
     expect(posted[0]).toEqual({
       label: "Codex laptop",
       client_type: "codex",

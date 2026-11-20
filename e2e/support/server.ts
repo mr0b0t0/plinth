@@ -42,9 +42,6 @@ export const DEV_VARS: Record<string, string> = {
   // origin isolation.
   ALLOW_ROOMS: "true",
   ALLOW_LIVE_EDITING: "true",
-  // Dictation run by the app (docs/spec.md "Voice: dictation and text to speech"), off by default
-  // on real instances. On the opaque server it has no effect: dictation needs origin isolation.
-  ALLOW_DICTATION: "true",
   // Fresh for every run; never committed, never reused.
   SESSION_SECRET: randomBytes(48).toString("base64url"),
   TOKEN_SIGNING_KEY: randomBytes(48).toString("base64url"),
