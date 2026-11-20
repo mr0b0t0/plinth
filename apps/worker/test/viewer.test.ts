@@ -148,8 +148,11 @@ describe("allowlist viewers", () => {
       "This code signs you in to Plinth with this address, and creates a Plinth account for it if it has none.",
     );
     expect(text).toContain(
-      "Enter it only on app.localhost:8787, on the page where you asked for it. Never give it to anyone or reply with it: whoever enters it is signed in as you.",
+      "Type it only into Plinth's own sign-in form, never into a page you are viewing. Never give it to anyone or reply with it: whoever enters it is signed in as you.",
     );
+    // Artifacts are framed on app-host pages, so naming the host would not tell a fake code box
+    // from Plinth's own form.
+    expect(text).not.toContain("app.localhost:8787");
     expect(text).toContain(
       `The page's title, written by whoever shared it and not by Plinth, is "Private board deck".`,
     );

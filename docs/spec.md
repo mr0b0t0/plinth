@@ -1700,12 +1700,13 @@ anyone signed in.
   confirming it signs the person in: the artifact gate's lead ends "Sign in with a one-time code.",
   and the portal's heading is "Sign in". A signed-in person whose own address has no access is
   told instead, on both, that confirming another address signs them in with it, and reads no
-  invitation to sign in beside that. On the code step the line saying where the code went is the
-  only text above the field. The code's email is then a sign-in email: subject "Your Plinth
-  sign-in code", the sign-in sentence first (it says an account is created for the address if it
-  has none, so that is said before the code is typed), a warning to enter the code only on the app
-  host and never give it to anyone or reply with it, and only then the artifact's title (or the
-  sharer's name, for a portal), labelled as the sharer's text. The privacy notice says it too.
+  invitation to sign in beside that: the portal's heading for them is "Confirm your email". On the
+  code step the line saying where the code went is the only text above the field. The code's
+  email is then a sign-in email: subject "Your Plinth sign-in code", the sign-in sentence first
+  (it says an account is created for the address if it has none, so that is said before the code
+  is typed), a warning to type the code only into Plinth's own sign-in form, never into a page
+  being viewed, and never give it to anyone or reply with it, and only then the artifact's title
+  (or the sharer's name, for a portal), labelled as the sharer's text. The privacy notice says it too.
   The title or name is quoted on one line: its line breaks and other whitespace become single
   spaces and invisible characters are dropped, so it cannot start lines that read as Plinth's. On a
   single-user instance they say that no account is needed, and the email stays the "viewing code"

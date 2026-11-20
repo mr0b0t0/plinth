@@ -214,7 +214,9 @@ export function viewerCodeEmail(
       "",
       codeLine,
       "",
-      `Enter it only on ${ctx.config.appHost}, on the page where you asked for it. Never give it to anyone or reply with it: whoever enters it is signed in as you.`,
+      // Not "only on APP_HOST": artifacts are framed on app-host pages, so a page could draw a code
+      // box under that very host. The one safe place to type it is the app's own form.
+      "Type it only into Plinth's own sign-in form, never into a page you are viewing. Never give it to anyone or reply with it: whoever enters it is signed in as you.",
       "",
       lines.signIn,
       "",

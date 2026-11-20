@@ -82,9 +82,10 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   Shared on their dashboard, they can come back without a new code, and an editor can edit a doc
   on its page. The gate and the shared category's page say "Sign in", the email and the privacy
   notice say that an account is created, and someone already signed in is told instead that
-  confirming another address switches them to it.
-  The code's email is now a sign-in email ("Your Plinth sign-in code"), warning never to give the
-  code to anyone before it shows the title or name the sharer wrote (on one line, so neither can
+  confirming another address switches them to it. The privacy notice says their opens are
+  recorded as a signed-in person's.
+  The code's email is now a sign-in email ("Your Plinth sign-in code"), warning to type the code
+  only into Plinth's own sign-in form and never to give it to anyone before it shows the title or name the sharer wrote (on one line, so neither can
   add lines of its own), and wrong guesses at it count against the same per-address limit as the
   sign-in code. On a single-user instance, where only the admin may sign in, the code still starts
   a viewer session without an account, and viewer sessions started earlier keep working until

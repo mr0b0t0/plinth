@@ -123,6 +123,9 @@ describe("Portal", () => {
     );
     // The notice is the only explanation: no lead asking a signed-in person to sign in.
     expect(screen.queryByText("Enter your email to get a one-time code.")).toBeNull();
+    // Nor a heading that does: the person is signed in already.
+    expect(screen.getByRole("heading", { name: "Confirm your email" })).toBeTruthy();
+    expect(screen.queryByRole("heading", { name: "Sign in" })).toBeNull();
   });
 
   it("on a single-user instance, the notice does not say the code switches accounts", async () => {

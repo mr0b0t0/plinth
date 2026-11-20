@@ -228,11 +228,14 @@ function privacy(op: OperatorInfo, cfg: LegalConfig): LegalDoc {
             <li>
               <strong>Who opened a page</strong>: when someone other than its owner opens a page, we
               record when, which version, and who it was: the name and email address of people
-              signed in to this service, and the email address of viewers who confirmed it with a
-              code. Anyone else is recorded only by a random id in their viewing cookie, so the
-              owner sees an approximate number of anonymous visitors, never who they are. No IP
-              address or browser details are kept with an open. The page's owner sees this for their
-              own pages, and the people who run this service see only totals across all pages.
+              signed in to this service
+              {cfg.single_user_mode
+                ? ", and the email address of viewers who confirmed it with a code."
+                : ", including anyone who confirmed their address with a code we emailed them."}{" "}
+              Anyone else is recorded only by a random id in their viewing cookie, so the owner sees
+              an approximate number of anonymous visitors, never who they are. No IP address or
+              browser details are kept with an open. The page's owner sees this for their own pages,
+              and the people who run this service see only totals across all pages.
             </li>
             <li>
               <strong>Unsaved page edits</strong>: when you edit a document on its page, we keep the

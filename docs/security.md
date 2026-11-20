@@ -1784,9 +1784,11 @@ got a viewer session.
   one 10 an hour, as before invitees were signed in.
 - **The email is a sign-in email.** Where the code signs the address in, the email's subject is
   "Your Plinth sign-in code", its first line says the code signs the reader in and creates an
-  account if there is none, and before anything the sharer wrote it warns to enter the code only
-  on `APP_HOST` and never to give it to anyone or reply with it. The artifact's title (or, for a
-  portal, the sharer's name) comes after, labelled as written by whoever shared it and not by
+  account if there is none, and before anything the sharer wrote it warns to type the code only
+  into Plinth's own sign-in form, never into a page being viewed, and never to give it to anyone
+  or reply with it. It does not name `APP_HOST` as the safe place: artifacts are framed on
+  app-host pages, so a page could draw a code box of its own under that host. The artifact's
+  title (or, for a portal, the sharer's name) comes after, labelled as written by whoever shared it and not by
   Plinth. The title or name is quoted on one line (`email/templates.ts oneLine`): every run of
   whitespace or control characters in it becomes one space and format characters (bidi overrides,
   zero-width) are dropped. A title set through publish or update keeps inner line breaks, and a

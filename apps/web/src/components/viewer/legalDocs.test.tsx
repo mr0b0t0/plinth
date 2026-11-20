@@ -35,4 +35,13 @@ describe("privacy notice: a viewing code signs the address in", () => {
     expect(forMode(false)).toContain(sentence);
     expect(forMode(true)).not.toContain(sentence);
   });
+
+  it("records people who confirmed a code as signed in, except on a single-user instance", () => {
+    const signedIn = "including anyone who confirmed their address with a code we emailed them.";
+    const viewer = "and the email address of viewers who confirmed it with a code.";
+    expect(forMode(false)).toContain(signedIn);
+    expect(forMode(false)).not.toContain(viewer);
+    expect(forMode(true)).toContain(viewer);
+    expect(forMode(true)).not.toContain(signedIn);
+  });
 });

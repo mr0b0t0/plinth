@@ -228,7 +228,8 @@ export default function Portal({ params }: { params: Record<string, string> }) {
         <section className="pl-gate" aria-labelledby="portal-title">
           <FolderSimpleIcon size={ICON_SIZE.xl} aria-hidden="true" className="pl-gate__icon" />
           <h1 id="portal-title" className="pl-gate__title">
-            {codeSignsIn ? "Sign in" : "Confirm your email"}
+            {/* Neutral for a signed-in person: the notice under it says who they are. */}
+            {codeSignsIn && !me?.email ? "Sign in" : "Confirm your email"}
           </h1>
           {/* One explanation at a time: none beside the signed-in notice or the sent-code line. */}
           {step === "email" && !me?.email && (
