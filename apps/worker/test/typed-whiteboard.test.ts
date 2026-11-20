@@ -14,6 +14,11 @@ import { prepareBoardSource, seedBoard } from "../src/services/board.ts";
 import { measureDoc } from "../src/services/data.ts";
 import { titleFromSource } from "../src/services/stage.ts";
 import {
+  owner as categoryOwner,
+  person as categoryPerson,
+  shareCategory,
+} from "./category-helpers.ts";
+import {
   agent,
   agentPrincipal,
   browserSession,
@@ -42,7 +47,9 @@ const BLOCKS = [
 ];
 const ARROWS = [{ id: "a1", from: "goal", to: "risk", label: "blocks" }];
 const SEEDED = JSON.stringify({ v: 1, blocks: BLOCKS, arrows: ARROWS });
-const SETTINGS = (edit = "commenters", background = "dots") =>
+/** The same starting board on a board whose settings open it to commenters. */
+const OPEN = JSON.stringify({ v: 1, edit: "commenters", blocks: BLOCKS, arrows: ARROWS });
+const SETTINGS = (edit = "editors", background = "dots") =>
   `{\n  "v": 1,\n  "background": "${background}",\n  "edit": "${edit}"\n}\n`;
 
 const boardBody = (content: string, more: Record<string, unknown> = {}) => ({
@@ -164,8 +171,8 @@ describe("publishing a whiteboard", () => {
         viewer: true,
         shared: ["blocks", "arrows"],
         room: true,
-        roomOpen: [...BOARD_TOPICS],
-        writers: "commenter",
+        roomOpen: [],
+        writers: "editor",
       }),
     );
     expect(await r2Keys(v1?.r2Prefix ?? "-")).toEqual([`${v1?.r2Prefix}board.json`]);
@@ -225,6 +232,15 @@ describe("publishing a whiteboard", () => {
     const rows = await docRows(body.id);
     expect(rows).toHaveLength(4);
     for (const r of rows) expect(r).toMatchObject({ created_via: "app", created_by_role: "owner" });
+  });
+
+  it("a board whose settings open it to commenters stores that, and the board's topics", async () => {
+    const { id } = await board(OPEN);
+    expect(await (await storedFile(id, 1, "board.json"))?.text()).toBe(SETTINGS("commenters"));
+    expect(JSON.parse((await versionRow(id, 1))?.capabilities ?? "{}")).toMatchObject({
+      roomOpen: [...BOARD_TOPICS],
+      writers: "commenter",
+    });
   });
 
   it("a board without a starting board writes no shared data and carries no board field", async () => {
@@ -464,7 +480,7 @@ describe("updating and restoring a whiteboard", () => {
   });
 
   it("a restore brings the old settings and capabilities back and leaves the board's data alone", async () => {
-    const { owner, id } = await board();
+    const { owner, id } = await board(OPEN);
     expect(
       (await put(owner.auth, id, { content: '{"v":1,"edit":"editors"}', base_version: 1 })).status,
     ).toBe(200);
@@ -475,7 +491,7 @@ describe("updating and restoring a whiteboard", () => {
       body: JSON.stringify({}),
     });
     expect(res.status, await res.clone().text()).toBe(201);
-    expect(await (await storedFile(id, 3, "board.json"))?.text()).toBe(SETTINGS());
+    expect(await (await storedFile(id, 3, "board.json"))?.text()).toBe(SETTINGS("commenters"));
     const v3 = await versionRow(id, 3);
     const v1 = await versionRow(id, 1);
     expect(v3?.capabilities).toBe(v1?.capabilities);
@@ -506,8 +522,69 @@ describe("the page's data API on a whiteboard", () => {
     }
   });
 
+  it("on a board with the default settings a commenter cannot create, move, retext or delete; an editor can", async () => {
+    const { id } = await board();
+    const c = await person(id, "commenter");
+    const e = await person(id, "editor");
+    expect((await json(await api(id, "/session", c.cookie))).can_write).toBe(false);
+    expect(c.gate.data).toMatchObject({ can_write: false });
+    const goal = () => docRows(id).then((rows) => rows.find((r) => r.doc_id === "goal"));
+    const before = await docRows(id);
+    const writes = async (cookie: string) => {
+      const g = await goal();
+      return [
+        await api(id, "/data/blocks", cookie, "POST", { data: block() }),
+        await api(id, "/data/blocks/goal", cookie, "PUT", {
+          data: block({ x: 400 }),
+          if_rev: g?.rev,
+        }),
+        await api(id, "/data/blocks/goal", cookie, "PUT", {
+          data: block({ x: 400, text: "Rewritten" }),
+          if_rev: (await goal())?.rev,
+        }),
+        await api(id, "/data/blocks/risk", cookie, "DELETE"),
+      ];
+    };
+    for (const res of await writes(c.cookie)) {
+      expect(res.status).toBe(403);
+      expect((await json(res)).error.details).toMatchObject({ reason: "read_only" });
+    }
+    expect(await docRows(id)).toEqual(before);
+    const [created, moved, retexted, deleted] = await writes(e.cookie);
+    expect(created?.status).toBe(201);
+    expect(moved?.status).toBe(200);
+    expect(retexted?.status).toBe(200);
+    expect(deleted?.status).toBe(204);
+  });
+
+  it("a commenter from a category share cannot change a board with the default settings", async () => {
+    const o = await categoryOwner();
+    const { res, body } = await publish(
+      o.auth,
+      boardBody(SEEDED, { title: "Retro", category: "Acme" }),
+    );
+    expect(res.status, JSON.stringify(body)).toBe(201);
+    const c = await categoryPerson();
+    await shareCategory(o, "Acme", [{ email: c.email, role: "commenter" }]);
+    const { cookie, gate } = await cookieOf(body.id, c.session);
+    expect(gate.role).toBe("commenter");
+    expect(gate.data).toMatchObject({ can_write: false });
+    const before = await docRows(body.id);
+    const goal = before.find((r) => r.doc_id === "goal");
+    for (const [method, path, data] of [
+      ["POST", "/data/blocks", { data: block() }],
+      ["PUT", "/data/blocks/goal", { data: block({ text: "Gone" }), if_rev: goal?.rev }],
+      ["DELETE", "/data/blocks/goal", undefined],
+    ] as const) {
+      expect((await api(body.id, path, cookie, method, data)).status, `${method} ${path}`).toBe(
+        403,
+      );
+    }
+    expect(await docRows(body.id)).toEqual(before);
+  });
+
   it("a commenter writes on a commenters board and stops at once when it becomes an editors board", async () => {
-    const { owner, id } = await board();
+    const { owner, id } = await board(OPEN);
     const c = await person(id, "commenter");
     const e = await person(id, "editor");
     expect((await json(await api(id, "/session", c.cookie))).can_write).toBe(true);
@@ -533,10 +610,11 @@ describe("the page's data API on a whiteboard", () => {
     expect((await api(id, "/data/blocks", e.cookie, "POST", { data: block() })).status).toBe(201);
   });
 
-  it("fails closed when the stored floor is missing or unknown", async () => {
-    const { id } = await board('{"v":1,"edit":"editors"}');
+  it("fails closed to editors when the stored floor is missing or unknown", async () => {
+    const { id } = await board('{"v":1,"edit":"commenters"}');
     const v = await person(id, "viewer");
     const c = await person(id, "commenter");
+    const e = await person(id, "editor");
     for (const writers of [undefined, "viewer"]) {
       const caps = {
         data: true,
@@ -552,7 +630,8 @@ describe("the page's data API on a whiteboard", () => {
         .where(and(eq(versions.artifactId, id), eq(versions.number, 1)))
         .run();
       expect((await api(id, "/data/blocks", v.cookie, "POST", { data: block() })).status).toBe(403);
-      expect((await api(id, "/data/blocks", c.cookie, "POST", { data: block() })).status).toBe(201);
+      expect((await api(id, "/data/blocks", c.cookie, "POST", { data: block() })).status).toBe(403);
+      expect((await api(id, "/data/blocks", e.cookie, "POST", { data: block() })).status).toBe(201);
     }
   });
 
@@ -624,7 +703,15 @@ describe("the page's data API on a whiteboard", () => {
 
 describe("the board's live room", () => {
   it("answers /room for a whiteboard and lets each role emit what the policy says", async () => {
-    const { id, cookie } = await board();
+    // With the default settings a commenter emits nothing.
+    const closed = await board();
+    const cc = await person(closed.id, "commenter");
+    expect(await json(await info(closed.id, cc.cookie))).toMatchObject({
+      available: true,
+      can_emit: "none",
+      open_topics: [],
+    });
+    const { id, cookie } = await board(OPEN);
     const c = await person(id, "commenter");
     const v = await person(id, "viewer");
     expect(await json(await info(id, cookie))).toMatchObject({ available: true, can_emit: "all" });
@@ -644,14 +731,18 @@ describe("the board's live room", () => {
   });
 
   it("a settings version that lets only editors change the board closes sockets with 4410 at once", async () => {
-    const { owner, id, cookie } = await board();
+    const { owner, id, cookie } = await board(OPEN);
     const c = await person(id, "commenter");
     const o = await connect(id, cookie);
     const cs = await connect(id, c.cookie);
     // Background only: the same declaration, nothing closes.
     expect(
-      (await put(owner.auth, id, { content: '{"v":1,"background":"grid"}', base_version: 1 }))
-        .status,
+      (
+        await put(owner.auth, id, {
+          content: '{"v":1,"edit":"commenters","background":"grid"}',
+          base_version: 1,
+        })
+      ).status,
     ).toBe(200);
     expect(await within(cs.closed, 500)).toBe("timeout");
     // Editors only: both sockets reconnect, well before the 60 s alarm.
@@ -701,7 +792,7 @@ describe("the board's live room", () => {
 
 describe("the viewer gate and the content host", () => {
   it("tells each viewer their email is shown, and whether they can change the board", async () => {
-    const { owner, id } = await board();
+    const { owner, id } = await board(OPEN);
     const v = await person(id, "viewer");
     const c = await person(id, "commenter");
     expect(v.gate.data).toMatchObject({

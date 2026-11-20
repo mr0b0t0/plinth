@@ -48,11 +48,19 @@ function problem(text: string): { path: string; message: string } {
 }
 
 describe("parseBoardContent", () => {
-  it("accepts the minimal board and fills the default settings", () => {
+  it("accepts the minimal board and fills the default settings: only editors change it", () => {
     expect(parseBoardContent('{"v":1}')).toEqual({
-      settings: { v: 1, background: "dots", edit: "commenters" },
+      settings: { v: 1, background: "dots", edit: "editors" },
       seed: [],
     });
+    expect(boardCapabilities(parseBoardContent('{"v":1}').settings).writers).toBe("editor");
+  });
+
+  it("keeps a board that opens itself to commenters", () => {
+    const { settings } = parseBoardContent('{"v":1,"edit":"commenters"}');
+    expect(settings.edit).toBe("commenters");
+    expect(boardCapabilities(settings).writers).toBe("commenter");
+    expect(parseBoardSettings(boardSettingsText(settings)).edit).toBe("commenters");
   });
 
   it("accepts a full starting board, blocks then arrows", () => {
@@ -195,9 +203,9 @@ describe("settings", () => {
     expect(parseBoardSettings(text)).toEqual(settings);
   });
 
-  it("reads a malformed stored file as the defaults", () => {
-    for (const t of ["", "nope", "[]", '{"v":1,"edit":"everyone","background":7}']) {
-      expect(parseBoardSettings(t)).toEqual({ v: 1, background: "dots", edit: "commenters" });
+  it("reads a malformed stored file, or one with no edit, as the defaults", () => {
+    for (const t of ["", "nope", "[]", '{"v":1,"edit":"everyone","background":7}', '{"v":1}']) {
+      expect(parseBoardSettings(t)).toEqual({ v: 1, background: "dots", edit: "editors" });
     }
   });
 });

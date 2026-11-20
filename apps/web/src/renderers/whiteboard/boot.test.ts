@@ -5,7 +5,7 @@
 // before anything else, so an element the page adds later cannot stand in for it.
 import { BOARD_LIMITS, boardDocError, TYPE_REGISTRY, typedShellHtml } from "@plinth/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { boot } from "./boot.ts";
+import { boot, EDITORS_ONLY_TEXT } from "./boot.ts";
 import { READ_ONLY_TEXT } from "./sync.ts";
 
 const APP = "https://plinth.example";
@@ -24,6 +24,14 @@ function mount(text: string) {
   document.documentElement.removeAttribute("data-ready");
 }
 
+/** The session of a signed-in person with this role (the owner by default). */
+const signedIn = (canWrite: boolean, role = "owner") => ({
+  available: true,
+  reason: null,
+  canWrite,
+  viewer: { id: "u_0123456789abcdef01234567", email: "ada@example.org", name: null, role },
+});
+
 interface Stub {
   runtime: Record<string, unknown>;
   calls: string[];
@@ -33,7 +41,7 @@ interface Stub {
 
 /** A window.plinth whose every data and room method records that it was called. */
 function stubRuntime(
-  session: Record<string, unknown> = { available: true, reason: null, canWrite: true },
+  session: Record<string, unknown> = signedIn(true),
   docs: Record<string, unknown[]> = {},
 ): Stub {
   const calls: string[] = [];
@@ -119,10 +127,7 @@ const LABEL = {
 
 describe("whiteboard boot", () => {
   it("shows the selection's controls only while something is selected", async () => {
-    stubRuntime(
-      { available: true, reason: null, canWrite: true },
-      { blocks: [NOTE, LABEL], arrows: [] },
-    );
+    stubRuntime(signedIn(true), { blocks: [NOTE, LABEL], arrows: [] });
     mount('{"v":1}');
     boot(window);
     await flush();
@@ -154,7 +159,7 @@ describe("whiteboard boot", () => {
   });
 
   it("hides the edit tools from a viewer, who sees a short read-only line", async () => {
-    stubRuntime({ available: true, reason: null, canWrite: false }, { blocks: [NOTE], arrows: [] });
+    stubRuntime(signedIn(false, "viewer"), { blocks: [NOTE], arrows: [] });
     mount('{"v":1}');
     boot(window);
     await flush();
@@ -166,6 +171,45 @@ describe("whiteboard boot", () => {
       ?.dispatchEvent(new FocusEvent("focusin", { bubbles: true }));
     for (const label of ["Green", "Connect", "Delete"]) expect(shown(label), label).toBe(false);
     expect(shown("Fit the board")).toBe(true);
+  });
+
+  it("tells a commenter on a board only editors change why it is read-only", async () => {
+    stubRuntime(signedIn(false, "commenter"), { blocks: [NOTE], arrows: [] });
+    mount('{"v":1}');
+    boot(window);
+    await flush();
+    await flush();
+    expect(banner()).toBe(EDITORS_ONLY_TEXT);
+    expect(shown("Add note")).toBe(false);
+  });
+
+  it("captures and link viewers: the board as it is, with no status, notice or room", async () => {
+    vi.useFakeTimers();
+    try {
+      // A thumbnail capture's pass, like a link viewer's, carries no identity: viewer is null.
+      const stub = stubRuntime(
+        { available: true, reason: null, canWrite: false, viewer: null },
+        { blocks: [NOTE], arrows: [] },
+      );
+      mount('{"v":1}');
+      boot(window);
+      await vi.advanceTimersByTimeAsync(0);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(ready()).toBe("ok");
+      expect(document.querySelector(".wb-block")?.textContent).toBe("Ship v2");
+      expect(banner()).toBe("");
+      expect(document.querySelector(".wb-status")?.textContent).toBe("");
+      expect(document.querySelector(".wb-msg")?.textContent ?? "").toBe("");
+      expect(document.documentElement.dataset.readonly).toBe("true");
+      expect(shown("Add note")).toBe(false);
+      expect(stub.roomTouched()).toBe(false);
+      // Nothing turns up later either (the old notice stayed 6 s).
+      await vi.advanceTimersByTimeAsync(7000);
+      expect(document.querySelector(".wb-msg")?.textContent ?? "").toBe("");
+      expect(document.querySelector(".wb-status")?.textContent).toBe("");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("downloads only when the app page that frames it asks", () => {
@@ -214,19 +258,16 @@ describe("whiteboard boot", () => {
   });
 
   it("live: draws the snapshots, then follows the room's answer", async () => {
-    const stub = stubRuntime(
-      { available: true, reason: null, canWrite: true },
-      {
-        blocks: [
-          {
-            id: "goal",
-            data: { kind: "note", x: 0, y: 0, w: 200, h: 140, text: "<b>x</b>" },
-            rev: 3,
-          },
-        ],
-        arrows: [],
-      },
-    );
+    const stub = stubRuntime(signedIn(true), {
+      blocks: [
+        {
+          id: "goal",
+          data: { kind: "note", x: 0, y: 0, w: 200, h: 140, text: "<b>x</b>" },
+          rev: 3,
+        },
+      ],
+      arrows: [],
+    });
     mount('{"v":1,"background":"grid"}');
     boot(window);
     await flush();
@@ -242,19 +283,16 @@ describe("whiteboard boot", () => {
   });
 
   it("adds a block in front, at most at the largest z, when a block is already there", async () => {
-    const stub = stubRuntime(
-      { available: true, reason: null, canWrite: true },
-      {
-        blocks: [
-          {
-            id: "top",
-            data: { kind: "note", x: 0, y: 0, w: 200, h: 140, text: "", z: BOARD_LIMITS.maxZ },
-            rev: 3,
-          },
-        ],
-        arrows: [],
-      },
-    );
+    const stub = stubRuntime(signedIn(true), {
+      blocks: [
+        {
+          id: "top",
+          data: { kind: "note", x: 0, y: 0, w: 200, h: 140, text: "", z: BOARD_LIMITS.maxZ },
+          rev: 3,
+        },
+      ],
+      arrows: [],
+    });
     mount('{"v":1}');
     boot(window);
     await flush();
@@ -280,7 +318,7 @@ describe("whiteboard boot", () => {
     decoy.id = "plinth";
     document.body.append(decoy);
     Object.defineProperty(window, "plinth", { value: decoy, configurable: true, writable: true });
-    resolve({ available: true, reason: null, canWrite: true });
+    resolve(signedIn(true));
     await flush();
     await flush();
     expect(stub.collection).toHaveBeenCalledWith("blocks");

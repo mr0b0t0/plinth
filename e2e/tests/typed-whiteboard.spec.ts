@@ -1,5 +1,6 @@
 // Whiteboards (type "whiteboard") in the browser: a board published over MCP with a starting set of
-// blocks and an arrow, its blocks in shared data. The owner and a commenter see each other's
+// blocks and an arrow, its blocks in shared data. On a board open to commenters (`edit:
+// "commenters"`; the default is editors only), the owner and a commenter see each other's
 // cursors, a drag shows live and is saved; a person with view access gets a read-only board whose
 // direct writes the server refuses; a settings version that makes the board editors-only turns
 // the commenter's board read-only as their socket reconnects; an agent's block shows up; the
@@ -33,13 +34,14 @@ async function boardFrame(page: Page): Promise<Frame> {
   return frame;
 }
 
-async function publishBoard(page: Page, owner: string) {
+/** Publish the board; `edit` "commenters" opens it to commenters (the default is editors only). */
+async function publishBoard(page: Page, owner: string, edit?: "commenters") {
   const { token } = await seedToken(owner, { label: "Board agent", clientType: "claude" });
   const client = await mcpClient(token);
   const r = await tool(client, "publish_artifact", {
     title: "Launch board",
     type: "whiteboard",
-    content: BOARD,
+    content: edit ? JSON.stringify({ ...JSON.parse(BOARD), edit }) : BOARD,
   });
   expect(r.isError, r.text).toBe(false);
   expect(r.data.board).toEqual({ blocks: 3, arrows: 1 });
@@ -86,7 +88,7 @@ test("a shared board: cursors, a live drag that saves, viewers read-only, editor
   const owner = uniqueEmail("wb-owner");
   const guest = uniqueEmail("wb-guest");
   const watcher = uniqueEmail("wb-watcher");
-  const { token, client, id, slug } = await publishBoard(page, owner);
+  const { token, client, id, slug } = await publishBoard(page, owner, "commenters");
   const shared = await apiPut(
     page.request,
     `/artifacts/${id}/sharing`,

@@ -128,7 +128,9 @@ export const SHEET_UNTRUSTED_NOTE =
 /** What publish_artifact and update_artifact say about the whiteboard type. */
 export const WHITEBOARD_PUBLISH_NOTE =
   'Pass type "whiteboard" with board JSON in content for a board people edit together: ' +
-  '{"v": 1, "background": "dots"|"grid"|"plain", "edit": "commenters"|"editors"} and, on a new ' +
+  '{"v": 1, "background": "dots"|"grid"|"plain", "edit": "commenters"|"editors"} (a setting ' +
+  "left out takes its default: dots, and editors, so commenters only view and comment unless " +
+  'edit is "commenters") and, on a new ' +
   'or empty board only, a starting "blocks" list ({id, kind: note|text|rect|ellipse, x, y, w, h, ' +
   "text, color?: yellow|green|blue|pink|purple|gray, z?}, whole numbers, w and h 24 to 4000, text " +
   'up to 2000 characters) and "arrows" list ({id, from, to, label?, style?: solid|dashed, head?: ' +

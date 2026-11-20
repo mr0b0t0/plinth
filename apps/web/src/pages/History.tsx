@@ -6,7 +6,7 @@ import {
   DotsThreeIcon,
   EyeIcon,
 } from "@phosphor-icons/react";
-import type { VersionInfo } from "@plinth/shared";
+import { typeDef, type VersionInfo } from "@plinth/shared";
 import { useState } from "react";
 import {
   AccessProblem,
@@ -21,6 +21,7 @@ import {
   artifactPath,
   comparePath,
   formatBytes,
+  restoreWording,
   versionPath,
 } from "../components/history/format.ts";
 import {
@@ -64,6 +65,8 @@ export default function History({ params }: { params: Record<string, string> }) 
   const items = versions.data?.items;
   const current = a?.current_version ?? items?.[0]?.number ?? 0;
   const canRestore = a?.role === "owner" || a?.role === "editor";
+  const def = a ? typeDef(a.type) : null;
+  const wording = (n: number) => restoreWording(def, n, current);
 
   const toggle = (n: number, on: boolean) =>
     setSelected((s) =>
@@ -81,10 +84,8 @@ export default function History({ params }: { params: Record<string, string> }) 
     setRestoring(true);
     try {
       const result = await restoreVersion(slug, n, current);
-      toast.success(
-        `Restored v${n}`,
-        `Its content is now the current version, v${result.version}.`,
-      );
+      const w = wording(n);
+      toast.success(w.done, w.doneDetail(result.version));
     } catch (e) {
       if (e instanceof ApiRequestError && e.status === 409) {
         toast.error(
@@ -150,6 +151,7 @@ export default function History({ params }: { params: Record<string, string> }) 
               checked={selected.includes(v.number)}
               onCheck={(on) => toggle(v.number, on)}
               canRestore={canRestore}
+              restoreLabel={wording(v.number).action}
               onRestore={() => setRestoreTarget(v.number)}
             />
           ))}
@@ -192,9 +194,9 @@ export default function History({ params }: { params: Record<string, string> }) 
         onClose={() => !restoring && setRestoreTarget(null)}
         onConfirm={confirmRestore}
         loading={restoring}
-        title={`Restore v${restoreTarget}?`}
-        description={`This publishes v${restoreTarget}'s content as v${current + 1}. Nothing is lost: v${current} and every other version stay in the history.`}
-        confirmLabel={`Restore v${restoreTarget}`}
+        title={restoreTarget === null ? "" : wording(restoreTarget).title}
+        description={restoreTarget === null ? "" : wording(restoreTarget).description}
+        confirmLabel={restoreTarget === null ? "" : wording(restoreTarget).action}
       />
     </HistoryShell>
   );
@@ -207,6 +209,7 @@ function VersionRow({
   checked,
   onCheck,
   canRestore,
+  restoreLabel,
   onRestore,
 }: {
   slug: string;
@@ -215,6 +218,7 @@ function VersionRow({
   checked: boolean;
   onCheck: (on: boolean) => void;
   canRestore: boolean;
+  restoreLabel: string;
   onRestore: () => void;
 }) {
   const isCurrent = v.number === current;
@@ -235,7 +239,7 @@ function VersionRow({
   if (canRestore && !isCurrent) {
     actions.push(
       { type: "separator" },
-      { label: `Restore v${v.number}`, icon: ArrowCounterClockwiseIcon, onSelect: onRestore },
+      { label: restoreLabel, icon: ArrowCounterClockwiseIcon, onSelect: onRestore },
     );
   }
   return (

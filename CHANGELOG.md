@@ -78,7 +78,7 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   `token_bound`. Migration `0013_category_sharing.sql`. Plugin 0.28.0.
 - **Whiteboards.** Agents can publish a board of notes, text, boxes, ellipses and arrows that
   people edit together (`type: "whiteboard"`). The board lives in the artifact's shared data, so
-  everyone it lets edit (commenters by default, or editors only) moves, resizes, writes on,
+  everyone it lets edit (editors by default, or commenters too when its settings say so) moves, resizes, writes on,
   colours, connects and deletes blocks on the page, with live cursors and drags; viewers follow
   read-only. When two people (or a person and an agent) change one block at once, each keeps the
   fields they changed; where both changed the same one, the first save stands and the other person
@@ -87,7 +87,7 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   only what applies, in one row: the add buttons for people who may edit, a block's colours,
   Connect and Delete while it is selected, and who else is here. A version holds only the board's
   settings (`board.json`), and a new board can start with a list of blocks and arrows, written
-  once into its shared data. Agents read the board with `list_artifact_data` and add or move
+  once into its shared data; the history's restore on a board is Restore settings. Agents read the board with `list_artifact_data` and add or move
   blocks with `write_artifact_data`. Needs shared data and origin isolation; `GET /api/v1/config`
   lists which types an instance publishes (`artifact_types`). Plugin 0.29.0: when and how agents
   publish and change whiteboards.

@@ -191,7 +191,8 @@
       "liveEdit": false,
       "pageData": "fixed",
       "assets": false,
-      "upload": false
+      "upload": false,
+      "versions": "settings"
     }
   ]
 ]

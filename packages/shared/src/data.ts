@@ -38,7 +38,7 @@ export interface Capabilities {
    * Set by the server for a type whose capabilities are fixed (a whiteboard's, from its settings),
    * never read from HTML: the lowest role that may write shared data and emit open topics from the
    * page. Policy (policy.ts pageWriteFloor) treats a missing or unknown value on such a type as
-   * "commenter", never as "any viewer". Absent on every HTML declaration.
+   * "editor", never as "any viewer". Absent on every HTML declaration.
    */
   writers?: PageWriters;
 }
