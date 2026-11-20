@@ -2,11 +2,12 @@
 // page placed itself through plinth.comments), send. In request mode (Ask an agent) the same form
 // asks the owner's agent for a change: "Point at something" (an icon button) picks the element, the
 // text describes the change, and, when the owner has more than one, the person picks which agent
-// gets it, beside Send. Closing the panel ends request mode: the form has no close button of its own.
+// gets it ("Ask: Claude | Codex", on its own row above Send). Closing the panel ends request mode:
+// the form has no close button of its own.
 import { MapPinIcon, PaperPlaneRightIcon, XIcon } from "@phosphor-icons/react";
 import { type ClientType, isPageAnchor, LIMITS, type PageAnchor } from "@plinth/shared";
 import { type RefObject, useId } from "react";
-import { Button, ICON_SIZE, IconButton, SegmentedControl, Tooltip } from "../ui/index.ts";
+import { Button, ICON_SIZE, IconButton, SegmentedControl, Select, Tooltip } from "../ui/index.ts";
 import { askTargetInText, askTargetName } from "./askTargets.ts";
 import type { PickedAnchor } from "./bridge.ts";
 import { MentionTextarea } from "./MentionTextarea.tsx";
@@ -40,23 +41,38 @@ export interface AskRequestProps {
   owner: boolean;
 }
 
-/** The agent choice of request mode: shown only when there is more than one agent to pick. */
+/**
+ * The agent choice of request mode, labelled "Ask" and kept apart from the buttons: two agents are
+ * a segmented control, three a select. None when there is only one agent to pick.
+ */
 export function AgentChoice({
   targets,
   to,
   onTo,
   owner,
-  className,
-}: Pick<AskRequestProps, "targets" | "to" | "onTo" | "owner"> & { className?: string }) {
+}: Pick<AskRequestProps, "targets" | "to" | "onTo" | "owner">) {
   if (targets.length < 2 || !to) return null;
+  const options = targets.map((t) => ({ value: t, label: askTargetName(t, owner) }));
+  if (targets.length > 2) {
+    return (
+      <Select
+        label="Ask"
+        className="cm-ask-to cm-ask-to--select"
+        value={to}
+        onChange={(e) => onTo(e.target.value as ClientType)}
+        options={options}
+      />
+    );
+  }
   return (
     <SegmentedControl<ClientType>
-      label="Send to"
+      label="Ask"
+      showLabel
       size="sm"
-      className={className}
+      className="cm-ask-to"
       value={to}
       onChange={onTo}
-      options={targets.map((t) => ({ value: t, label: askTargetName(t, owner) }))}
+      options={options}
     />
   );
 }
@@ -195,6 +211,7 @@ export function Composer({
           maxLength={LIMITS.maxCommentLength}
         />
       </div>
+      {asking && !picking && <AgentChoice {...request} />}
       <div className="cm-actions" hidden={picking}>
         {!anchor && onStartPick && asking ? (
           <Tooltip content="Point at something">
@@ -217,14 +234,7 @@ export function Composer({
             Pin to an element
           </Button>
         ) : null}
-        {asking ? (
-          <div className="cm-actions__send">
-            <AgentChoice {...request} />
-            {send}
-          </div>
-        ) : (
-          send
-        )}
+        {asking ? <div className="cm-actions__send">{send}</div> : send}
       </div>
     </form>
   );

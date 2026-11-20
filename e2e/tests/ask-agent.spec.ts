@@ -90,7 +90,8 @@ test("a commenter points at a heading and asks Claude; the owner's Claude claims
   const { panel, form } = await requestForm(page);
   // Only the client type is shown, never the connection's label; one agent needs no choice.
   await expect(form.getByRole("button", { name: "Send to Claude" })).toBeVisible();
-  await expect(form.getByRole("group", { name: "Send to" })).toHaveCount(0);
+  await expect(form.getByRole("group", { name: "Ask" })).toHaveCount(0);
+  await expect(form.getByRole("combobox", { name: "Ask" })).toHaveCount(0);
   await expect(panel).not.toContainText("Work Claude");
 
   await form.getByRole("button", { name: "Point at something" }).click();

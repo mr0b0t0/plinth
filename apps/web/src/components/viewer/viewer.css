@@ -744,11 +744,6 @@
   grid-template-columns: minmax(0, 1fr);
   gap: var(--space-4);
 }
-/* The agent choice in the footer, between Cancel and Send, as in the request composer. */
-.pl-dialog__footer > .pl-ask__to {
-  flex: none;
-  align-self: center;
-}
 .pl-ask__error {
   margin: 0;
   color: var(--color-danger);

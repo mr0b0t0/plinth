@@ -2626,9 +2626,9 @@ authority, whoever sends it (only `comment_author_role` says the owner did).
     opens the source editor for owners and editors).
 - **Not editing: the comments panel in request mode.** Ask an agent opens the comments panel (one
   reload into review mode, as when comments open, which the pick needs; nothing is unpublished
-  then). The composer is titled "Ask an agent" and has the description ("Describe the change…")
-  and one row under it: "Point at something" (an icon button with that tooltip: the review-mode
-  pick, an element on an HTML page, a board on a design), then the agent choice and Send. The place
+  then). The composer is titled "Ask an agent" and has the description ("Describe the change…"),
+  the agent choice, and one row under them: "Point at something" (an icon button with that
+  tooltip: the review-mode pick, an element on an HTML page, a board on a design), then Send. The place
   picked shows as a "Pointing at “…”" chip whose button drops it. An empty list shows only its
   title, with no hint. It posts a comment with `request_to` against the version on view.
   It has no close button of its own: request mode lasts as long as the panel it opened, and once
@@ -2641,8 +2641,8 @@ authority, whoever sends it (only `comment_author_role` says the owner did).
   mode, an `ask` without the frame's key is dropped like any other editing message; only outside
   edit mode does a keyless `ask` open the comments panel in request mode. It has the composer's
   "Pointing at “…”" chip when the renderer named a place (dropping it makes the request about the
-  whole page), the description, "Publish my changes first", and, as in the composer, the agent
-  choice next to Send (Cancel, the choice, Send). "Publish my changes first" is off by default and
+  whole page), the description, the agent choice as in the composer, and "Publish my changes
+  first"; the footer holds only Cancel and Send. "Publish my changes first" is off by default and
   shown only when there are unpublished changes ("Otherwise the agent works from v5.", plus, in room mode while others edit,
   "This also publishes the others' changes."). With it on, the request is posted after the strip's
   Publish succeeds, against the version it made; if that Publish does not succeed (a conflict, busy, a draft that
@@ -2654,8 +2654,10 @@ authority, whoever sends it (only `comment_author_role` says the owner did).
   mention, lists the distinct client types of the owner's connections that can take mentions (not
   revoked, not limited to one artifact, with the `mentions` scope), in `claude`, `codex`, `other`
   order. Labels and ids never leave the owner. With one target there is no choice and the button
-  names it ("Send to Claude"); with more, a compact choice of "Claude", "Codex" and "The owner's
-  other agent" (the owner: "My other agent") sits beside "Send". With no target Ask an agent is not
+  names it ("Send to Claude"). With more, the choice has its own row under the description,
+  labelled "Ask", apart from the buttons: two agents are a segmented control ("Ask: Claude |
+  Codex") whose chosen agent is raised, three a select ("Claude", "Codex" and "The owner's other
+  agent"; the owner: "My other agent"). With no target Ask an agent is not
   offered. A connection revoked between the gate and the post gives `no_agent`: the composer reads
   the targets again and says "That agent was disconnected. Pick another, or post as a comment.";
   with none left, its button posts a plain comment ("Post as a comment").
