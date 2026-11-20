@@ -9,6 +9,7 @@ export * from "./designSystemSchema.ts";
 export * from "./errors.ts";
 export * from "./harnesses.ts";
 export * from "./liveDoc.ts";
+export * from "./liveView.ts";
 export * from "./markdown.ts";
 export * from "./mentions.ts";
 export * from "./merge3.ts";

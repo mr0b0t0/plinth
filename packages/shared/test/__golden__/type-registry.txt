@@ -67,14 +67,23 @@
       "assetTypes": "/^image\\/(png|jpeg|gif|webp|avif|svg\\+xml)$/",
       "renderer": {
         "script": "slides.js",
-        "style": "slides.css"
+        "style": "slides.css",
+        "lazy": [
+          {
+            "file": "slides-pptx.js",
+            "entry": "pptx.ts"
+          }
+        ]
       },
       "editor": {
         "language": "markdown",
         "wordWrap": "on"
       },
       "liveEdit": false,
-      "present": true
+      "present": true,
+      "fileExports": [
+        "pptx"
+      ]
     }
   ],
   [

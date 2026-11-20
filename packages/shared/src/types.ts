@@ -457,6 +457,11 @@ export type ViewGate =
        * composer with its own anchors, and the frame never loads in review mode. Absent otherwise.
        */
       page_comments?: true;
+      /**
+       * Live views: open the watch socket (GET /api/v1/view/:id/watch) to learn of new versions,
+       * and of shared-data changes, as they happen. Absent: poll as before.
+       */
+      watch?: true;
     }
   | { status: "password_required"; artifact: ViewArtifactStub }
   | { status: "email_required"; artifact: ViewArtifactStub }

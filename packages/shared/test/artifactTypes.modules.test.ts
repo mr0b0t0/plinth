@@ -23,6 +23,8 @@ describe("type modules", () => {
     expect(rendererFiles(TYPE_REGISTRY.slides)).toEqual([
       { name: "slides.js", contentType: "text/javascript" },
       { name: "slides.css", contentType: "text/css" },
+      // The lazy .pptx writer.
+      { name: "slides-pptx.js", contentType: "text/javascript" },
     ]);
     for (const t of ARTIFACT_TYPES) {
       const names = rendererFiles(TYPE_REGISTRY[t]).map((f) => f.name);

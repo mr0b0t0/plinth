@@ -32,7 +32,13 @@ const read = (
 
 describe("readSlidesFrameMessage", () => {
   it("lists the deck's frame kinds", () => {
-    expect([...SLIDES_FRAME_KINDS]).toEqual(["ready", "position", "view", "fullscreen"]);
+    expect([...SLIDES_FRAME_KINDS]).toEqual([
+      "ready",
+      "position",
+      "view",
+      "fullscreen",
+      "exported",
+    ]);
   });
 
   it("accepts ready, position, view and fullscreen from the frame at the exact content origin", () => {

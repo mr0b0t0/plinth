@@ -160,6 +160,22 @@ const printTyped: MenuItem = (c) => [
   },
 ];
 
+/**
+ * A deck as .pptx: the frame builds the file from the slides it shows and downloads it. Only for
+ * a type whose renderer offers it (fileExports), and not twice at once.
+ */
+const downloadPptx: MenuItem = (c) =>
+  c.present.available && typeDef(c.gate.artifact.type)?.fileExports?.includes("pptx")
+    ? [
+        {
+          label: c.present.exporting ? "Making the .pptx…" : "Download .pptx",
+          icon: DownloadSimpleIcon,
+          disabled: c.present.exporting,
+          onSelect: c.present.exportPptx,
+        },
+      ]
+    : [];
+
 /** A sheet downloads itself: the frame builds the file, the app only names the format. */
 const downloadSheet: MenuItem = (c) => [
   {
@@ -177,7 +193,7 @@ const downloadSheet: MenuItem = (c) => [
 /** Menu items for one artifact type, in order, after Settings and Stats. One type per line. */
 export const TYPE_MENU_ITEMS: Partial<Record<ArtifactType, readonly MenuItem[]>> = {
   doc: [printTyped],
-  slides: [printTyped],
+  slides: [printTyped, downloadPptx],
   sheet: [downloadSheet, printTyped],
 };
 

@@ -6,8 +6,9 @@
 // notes, and the server instructions' design system sentence) did, so did the slides type (its
 // publish note, the type and content descriptions and the instructions' deck sentence), so did
 // comments from the page (the page anchor note in list_comments and list_mentions), and so did the
-// sheet type (read_sheet and edit_sheet, the publish, update and get_artifact notes, the content
-// and content_format descriptions, the untrusted note's sheet sentence, the instructions' sheet
+// slides .pptx download (its clause in the slides publish note), and so did the sheet type
+// (read_sheet and edit_sheet, the publish, update and get_artifact notes, the content and
+// content_format descriptions, the untrusted note's sheet sentence, the instructions' sheet
 // sentence, edit_sheet's cap on the empty rows a set adds and read_sheet's range default).
 import { describe, expect, it } from "vitest";
 import { PREVIEW_RESOURCE_URI } from "../src/mcp/preview.ts";
@@ -65,7 +66,7 @@ describe("MCP surface (golden)", () => {
   it("origin isolation", async () => {
     expect(await surface()).toEqual({
       names: NAMES,
-      tools: "17a91ddc625c642a267f54fbd800db91f2d23f78066673c3191de049cf6778e4",
+      tools: "740e0084e1aeee81777aca8721f5bd98f38eeba36e6d23fecbcde9d20b28149c",
       resources: RESOURCES,
       preview: "fd84092d5ecc5a28f494373097e8a3b6e27065d5ef6928f3e124c634f8cf6f47",
       instructions: INSTRUCTIONS,
@@ -75,7 +76,7 @@ describe("MCP surface (golden)", () => {
   it("opaque isolation", async () => {
     expect(await surface({ CONTENT_ISOLATION: "opaque" })).toEqual({
       names: NAMES,
-      tools: "e901c4b565d46eb54a4eeef3a5778fee0c9e2b405dfefdf3eddfb416bbdbfa96",
+      tools: "8398bfc23f6c3dcb8fcbf63dfb82c283b9f8da84e19b7df18a7fbdc62bce2d48",
       resources: RESOURCES,
       preview: "257bbf5bb47164c389849fffa7fc1dd46e6e7c20e4ef616b4bffefb53a8fd08b",
       instructions: INSTRUCTIONS,
@@ -87,7 +88,7 @@ describe("MCP surface (golden)", () => {
       await surface({ STAGING_CONTENT_FALLBACK: "true", CONTENT_ISOLATION: "opaque" }),
     ).toEqual({
       names: NAMES,
-      tools: "42e514727bfeec9c846c74167c42bf2b0e6c6e8d0db9137b44c538968ec3bacc",
+      tools: "e7e55457ce697541912121f815cf69c2cc6d88351971e31a43bc6725f8f5ed5a",
       resources: RESOURCES,
       preview: "257bbf5bb47164c389849fffa7fc1dd46e6e7c20e4ef616b4bffefb53a8fd08b",
       instructions: INSTRUCTIONS,

@@ -7,6 +7,7 @@
 //   app -> frame: collect { nonce }        solo mode only: send me the edited text
 //   app -> frame: goto { slide }           a deck shows slide N (slidesProtocol.ts)
 //   app -> frame: view { mode }            a deck switches view: deck, presenter or overview
+//   app -> frame: export { format, nonce } a deck builds its .pptx and downloads it in the frame
 //   app -> frame: export { format }        a sheet downloads itself as "csv" or "xlsx"
 //   frame -> app: live { ...status }       numbers, booleans and co-editor emails; never text
 //   frame -> app: save                     Cmd/Ctrl+S inside the frame
@@ -89,14 +90,34 @@ export function viewMessage(mode: DeckView): ViewMessage {
   return { source: RENDERER_MESSAGE_SOURCE, v: RENDERER_PROTOCOL_VERSION, type: "view", mode };
 }
 
+export interface DeckExportMessage {
+  source: typeof RENDERER_MESSAGE_SOURCE;
+  v: typeof RENDERER_PROTOCOL_VERSION;
+  type: "export";
+  format: "pptx";
+  /** The app's own random nonce, echoed in the frame's `exported` answer. */
+  nonce: string;
+}
+
+export function exportMessage(nonce: string): DeckExportMessage {
+  return {
+    source: RENDERER_MESSAGE_SOURCE,
+    v: RENDERER_PROTOCOL_VERSION,
+    type: "export",
+    format: "pptx",
+    nonce,
+  };
+}
+
 /**
- * Post a deck message (a slide number or a view name, which the frame already knows) to the frame
- * at `targetOrigin`, "*" included for opaque frames. False when it cannot.
+ * Post a deck message (a slide number, a view name, or an export request with the app's own
+ * nonce: nothing the frame does not already have) to the frame at `targetOrigin`, "*" included for
+ * opaque frames. False when it cannot.
  */
 export function postToDeck(
   frame: HTMLIFrameElement | null,
   targetOrigin: string | null,
-  message: GotoMessage | ViewMessage,
+  message: GotoMessage | ViewMessage | DeckExportMessage,
 ): boolean {
   const win = frame?.contentWindow;
   if (!win || !targetOrigin) return false;
@@ -106,16 +127,20 @@ export function postToDeck(
 
 // ---------- sheets (the sheet type) ----------
 
-export interface ExportMessage {
+/** A sheet's export: the frame builds the file and downloads it, and answers nothing. */
+export interface SheetExportMessage {
   source: typeof RENDERER_MESSAGE_SOURCE;
   v: typeof RENDERER_PROTOCOL_VERSION;
   type: "export";
   format: SheetExportFormat;
 }
 
-export function exportMessage(format: SheetExportFormat): ExportMessage {
+export function sheetExportMessage(format: SheetExportFormat): SheetExportMessage {
   return { source: RENDERER_MESSAGE_SOURCE, v: RENDERER_PROTOCOL_VERSION, type: "export", format };
 }
+
+/** The export kind: a deck's .pptx (with the app's nonce) or a sheet's .csv or .xlsx. */
+export type ExportMessage = DeckExportMessage | SheetExportMessage;
 
 /**
  * Ask a sheet's frame to download itself. The message names only a format and carries no data,
@@ -128,7 +153,7 @@ export function postExport(
 ): boolean {
   const win = frame?.contentWindow;
   if (!win || !targetOrigin) return false;
-  win.postMessage(exportMessage(format), targetOrigin);
+  win.postMessage(sheetExportMessage(format), targetOrigin);
   return true;
 }
 

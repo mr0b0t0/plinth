@@ -49,7 +49,7 @@ export interface ArtifactTypeDef {
   /** Allowed asset content types, or null for any. */
   assetTypes: RegExp | null;
   /** Renderer files under /__plinth/types/<id>/, or null for a type served as-is. */
-  renderer: { script: string; style: string } | null;
+  renderer: RendererFiles | null;
   /**
    * The source editor's settings, or null for a type people never see the source of (a sheet):
    * the app then offers no Edit and no source diff, and agents change it.
@@ -65,6 +65,27 @@ export interface ArtifactTypeDef {
    * every page stacked (payload `view: "overview"`). Absent means false.
    */
   present?: boolean;
+  /**
+   * Files the viewer can download, each built inside the frame by the renderer from what it shows
+   * (a deck's .pptx). Absent means none. Print and PDF are not listed: every renderer prints.
+   */
+  fileExports?: readonly FileExport[];
+}
+
+/** A file a renderer builds in the frame for the viewer to download. */
+export type FileExport = "pptx";
+
+/** A renderer's files: one script and one style, plus scripts it loads only when needed. */
+export interface RendererFiles {
+  script: string;
+  style: string;
+  /**
+   * Scripts the renderer adds to its own page only when someone uses a feature that needs them
+   * (a deck's .pptx writer), so the first view never downloads them. Each is built from `entry`
+   * (a file in the renderer's directory) as its own IIFE with no exports and no globals, and
+   * served at /__plinth/types/<id>/<file> under the same guard as the script.
+   */
+  lazy?: readonly { file: string; entry: string }[];
 }
 
 /** A type module's row: an ArtifactTypeDef whose id is that module's own type. */
@@ -80,7 +101,8 @@ export const TYPE_REGISTRY: { readonly [K in ArtifactType]: TypeModule<K> } = {
 };
 
 /**
- * The files a type's renderer is made of, each with the only Content-Type it may be served as.
+ * The files a type's renderer is made of (its script, its style and its lazy scripts), each with
+ * the only Content-Type it may be served as.
  * The web build emits exactly these (apps/web/build/renderers.ts) and the content host serves
  * only these (content/typed.ts serveRendererFile). Empty for a type without a renderer.
  */
@@ -91,6 +113,10 @@ export function rendererFiles(
   return [
     { name: def.renderer.script, contentType: "text/javascript" },
     { name: def.renderer.style, contentType: "text/css" },
+    ...(def.renderer.lazy ?? []).map((l) => ({
+      name: l.file,
+      contentType: "text/javascript" as const,
+    })),
   ];
 }
 

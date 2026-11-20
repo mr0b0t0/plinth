@@ -78,9 +78,10 @@ export const SLIDES_PUBLISH_NOTE =
   "matter between two --- lines, starting on line 1 (aspect: 16:9 or 4:3, theme: auto, light or " +
   "dark, paginate, footer); speaker notes after a " +
   'line starting "Note:"; a line ||| splits a slide into columns; #N links to slide N. Plinth renders ' +
-  "fixed 16:9 or 4:3 slides with automatic layouts, shrink to fit, paging, presenter view and PDF " +
-  "export. Raw HTML shows as text. Assets are images; at most 500 slides and 1 MB. Speaker notes are " +
-  "visible to anyone who can open the deck. ";
+  "fixed 16:9 or 4:3 slides with automatic layouts, shrink to fit, paging, presenter view, PDF " +
+  "export and a .pptx download (viewers download it from the deck's menu; do not build one). Raw " +
+  "HTML shows as text. Assets are images; at most 500 slides and 1 MB. Speaker notes are visible to " +
+  "anyone who can open the deck. ";
 
 /** What publish_artifact says about the design_system type. */
 export const DESIGN_SYSTEM_PUBLISH_NOTE =

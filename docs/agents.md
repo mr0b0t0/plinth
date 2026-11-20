@@ -29,7 +29,8 @@ For a memo, plan, spec, proposal, mostly-text report, meeting notes or a how-to,
 heading anchors, tables, code, images from the doc's own files, light and dark, phone width, a print
 stylesheet). For a talk, pitch, review or lesson it publishes `type: "slides"`: Markdown with a line
 `---` between slides and speaker notes after `Note:`, which Plinth renders as a deck people can page
-through, present full screen with a presenter view, and print to PDF. Dashboards, charts, anything
+through, present full screen with a presenter view, print to PDF and download as an editable
+`.pptx` (so an agent never builds a PowerPoint file itself). Dashboards, charts, anything
 interactive and custom visual design stay HTML. When unsure and the result is mostly text, a doc.
 The type is fixed at publish; the server's instructions and the skill's "Documents (type doc)" and
 "Slides (type slides)" sections say this to every harness.
@@ -384,8 +385,10 @@ There is no rendered preview for agents yet. To check that a publish arrived int
 
 ## Multiplayer pages with plinth.room
 
-Shared data keeps what people enter, but it reaches other open pages only on the next 15 s poll.
-For things people do together at the same moment (cursors, who is here, a note moving while it is
+Shared data keeps what people enter, and with live views on it reaches other open pages within
+about a second ([spec](spec.md#live-views-decided-2026-11-19)); without them, on the next 15 s
+poll. Either way it is the stored result, not the moment. For things people do together at the
+same moment (cursors, who is here, a note moving while it is
 dragged), a page also declares `room` and uses `window.plinth.room` from the same runtime
 ([spec](spec.md#live-rooms), [security](security.md#live-rooms)):
 
@@ -462,6 +465,16 @@ board where a click draws a dot and opens the composer on that point (the dot st
 comment is posted), numbered markers drawn by the page, Plinth's pins on the same spots, and the
 picked thread's marker highlighted. The skill's
 "Comments from the page" section has the API.
+
+## Open pages follow new versions
+
+A new version (`update_artifact`, `restore_version`, the source editor, a save on the page) reaches
+every open view of the artifact within seconds: the app page holds a watch socket on the app host
+and re-reads its gate when told ([spec](spec.md#live-views-decided-2026-11-19),
+[security](security.md#live-views)). Agents never hold that socket (a bearer token is refused), and
+never need to tell anyone to reload. Pages that keep shared data get `onSnapshot` pushed the same
+way; do not shorten `intervalMs` to make them faster. With `ALLOW_LIVE_VIEWS=false`, or without the
+`ROOMS` binding, pages poll every 15 s as before.
 
 ## Agent discovery
 

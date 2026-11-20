@@ -12,6 +12,7 @@ import {
   matchFrameMessage,
   printMessage,
   readFrameMessage,
+  sheetExportMessage,
   viewMessage,
 } from "./rendererProtocol.ts";
 
@@ -37,7 +38,7 @@ describe("renderer protocol kinds", () => {
         collectMessage("n".repeat(16)),
         gotoMessage(2),
         viewMessage("presenter"),
-        exportMessage("csv"),
+        exportMessage("n".repeat(16)),
       ].map((m) => m.type),
     ).toEqual([...APP_MESSAGE_KINDS]);
     const all = [
@@ -46,6 +47,8 @@ describe("renderer protocol kinds", () => {
       collectMessage("x".repeat(16)),
       gotoMessage(1),
       viewMessage("deck"),
+      exportMessage("x".repeat(16)),
+      sheetExportMessage("csv"),
     ];
     for (const m of all) {
       expect(m).toMatchObject({ source: "plinth-renderer", v: 1 });

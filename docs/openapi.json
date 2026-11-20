@@ -2095,6 +2095,44 @@
         },
         "security": [{ "sessionCookie": [], "csrfHeader": [] }]
       }
+    },
+    "/view/{ref}/watch": {
+      "get": {
+        "operationId": "viewWatch",
+        "summary": "Live views: a WebSocket that pushes new versions and shared-data changes",
+        "description": "For the web app in a browser only, never for agents: a request with an `Authorization` header is refused. `ref` is the artifact id (`artifact.id` from the gate), opened when the gate says `watch: true`. The handshake needs `Origin` exactly the app's origin, same-origin fetch metadata when sent, and the `plinth.view.v1` subprotocol; access is the gate's view decision with the browser's cookies. The socket is receive-only: the client sends the text `ping` (answered `pong`) and nothing else. Server frames are JSON text: `{t:\"welcome\",v:1,version}`, `{t:\"version\",version,spread_ms}` (re-read the gate after a random wait up to `spread_ms`), `{t:\"data\",spread_ms}` (the page re-reads its shared data; at most one per `spread_ms`, and always one after the last change) and `{t:\"access\",spread_ms}` (sent just before a 4401 `access_changed` close). Close codes: 4400 invalid, 4401 `access_changed` (after a random wait up to the `access` frame's `spread_ms`, re-read the gate, then reconnect) or `expired` (the socket's lifetime, or the credential it was opened with, ended: reconnect after a random wait up to 10 s), 4404 gone, 4409 full (poll instead). After any other close the first reconnect also waits a random time up to 10 s.",
+        "tags": ["Viewing"],
+        "parameters": [
+          {
+            "in": "path",
+            "required": true,
+            "name": "ref",
+            "schema": { "type": "string", "minLength": 1, "maxLength": 80 },
+            "description": "Artifact id or slug"
+          }
+        ],
+        "responses": {
+          "101": { "description": "Switching protocols: the watch socket is open" },
+          "400": {
+            "description": "The plinth.view.v1 subprotocol was not offered",
+            "content": { "text/plain": { "schema": { "type": "string" } } }
+          },
+          "403": {
+            "description": "Wrong or missing Origin, cross-site fetch metadata, or a bearer token",
+            "content": { "text/plain": { "schema": { "type": "string" } } }
+          },
+          "404": {
+            "description": "Live views are off, or the artifact is not there for this browser",
+            "content": { "text/plain": { "schema": { "type": "string" } } }
+          },
+          "426": {
+            "description": "Not a WebSocket upgrade",
+            "content": { "text/plain": { "schema": { "type": "string" } } }
+          },
+          "default": { "$ref": "#/components/responses/Error" }
+        },
+        "security": [{}, { "sessionCookie": [] }]
+      }
     }
   },
   "components": {
@@ -4318,6 +4356,10 @@
               "page_comments": {
                 "const": true,
                 "description": "The version being shown declares `comments` (HTML only): the page may open the comment composer with its own anchors, and `review` is ignored"
+              },
+              "watch": {
+                "const": true,
+                "description": "Live views: open GET /view/{id}/watch to learn of new versions and shared-data changes as they happen. Absent: poll the gate"
               }
             },
             "required": ["status", "artifact", "enter_url", "role"]
