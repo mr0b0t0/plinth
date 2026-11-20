@@ -12,8 +12,8 @@ import {
 } from "../src/index.ts";
 
 describe("sheet type", () => {
-  it("is its own module, listed after design_system", () => {
-    expect(ARTIFACT_TYPES.indexOf("sheet")).toBe(ARTIFACT_TYPES.indexOf("design_system") + 1);
+  it("is its own module, listed after design", () => {
+    expect(ARTIFACT_TYPES.indexOf("sheet")).toBe(ARTIFACT_TYPES.indexOf("design") + 1);
     expect(TYPE_REGISTRY.sheet).toBe(sheet);
     expect(typeDef("sheet")).toBe(sheet);
   });
