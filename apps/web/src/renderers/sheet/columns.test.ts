@@ -12,6 +12,7 @@ import {
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { type BootOptions, boot } from "./boot.ts";
 import { headerFrozen, readOptions } from "./edit.ts";
+import { shownWidths } from "./grid.ts";
 
 const APP = "https://plinth.example.com";
 const COLUMNS = [
@@ -1043,14 +1044,19 @@ describe("a sheet with no rows", () => {
 });
 
 describe("the docked cell editor (phone width)", () => {
-  it("opens a cell's field at the bottom with the column's name and Done", async () => {
+  it("opens a cell's field at the bottom under its address and column, saved by a check", async () => {
     const f = solo({ dock: true });
     cell("B3").focus();
     key(cell("B3"), "Enter");
     const dock = document.querySelector(".plinth-sheet__dock") as HTMLElement;
     expect(dock.getAttribute("role")).toBe("group");
     expect(dock.getAttribute("aria-label")).toBe("Edit B3");
+    expect(dock.querySelector(".plinth-sheet__dock-label")?.textContent).toBe("B3Qty");
     expect(dock.querySelector(".plinth-sheet__dock-name")?.textContent).toBe("Qty");
+    // One "Done" on the page (the edit bar's): the dock's button is a check named Save cell.
+    expect([...dock.querySelectorAll("button")].map((b) => b.textContent)).toEqual([""]);
+    const save = dock.querySelector("button") as HTMLButtonElement;
+    expect(save.getAttribute("aria-label")).toBe("Save cell");
     const input = field() as HTMLInputElement;
     expect(dock.contains(input)).toBe(true);
     expect(cell("B3").contains(input)).toBe(false);
@@ -1061,7 +1067,7 @@ describe("the docked cell editor (phone width)", () => {
     expect(document.body.classList.contains("plinth-sheet--docked")).toBe(true);
     input.value = "7";
     input.dispatchEvent(new Event("input"));
-    (dock.querySelector(".plinth-sheet__dock-done") as HTMLButtonElement).click();
+    save.click();
     expect(document.querySelector(".plinth-sheet__dock")).toBeNull();
     expect(document.body.classList.contains("plinth-sheet--docked")).toBe(false);
     expect(text("B3")).toBe("7");
@@ -1081,6 +1087,18 @@ describe("the docked cell editor (phone width)", () => {
     key(input, "Escape");
     expect(document.querySelector(".plinth-sheet__dock")).toBeNull();
     expect(await collected(f)).toEqual(LINES);
+  });
+
+  it("narrows frozen columns at phone width to 40% of the frame with the row numbers", () => {
+    // 360 px: 144 px for the row numbers (48) and the frozen columns.
+    expect(shownWidths([220, 120, 120], 1, 360)).toEqual([96, 120, 120]);
+    // Each frozen column keeps at least 40 px.
+    expect(shownWidths([120, 72, 120], 2, 360)).toEqual([60, 40, 120]);
+    // Columns that fit, a wider frame, an unknown one, or nothing frozen: as stored.
+    expect(shownWidths([80, 120], 1, 360)).toEqual([80, 120]);
+    expect(shownWidths([220, 120], 1, 1280)).toEqual([220, 120]);
+    expect(shownWidths([220, 120], 1, 0)).toEqual([220, 120]);
+    expect(shownWidths([220, 120], 0, 360)).toEqual([220, 120]);
   });
 
   it("shows the menus as full-width sheets", () => {

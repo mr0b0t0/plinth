@@ -1932,9 +1932,11 @@ editors also edit a sheet on its page, live with each other
   parses formulas and never evaluates them.
 - **Viewing.** The page shows a toolbar (title, row count, a filter box, Download CSV and Excel), a
   formula bar with the selected cell's address and its raw text, and the grid: column letters and
-  the header row stay at the top, frozen columns at the left, numbers right-aligned in their
-  format, dates as `YYYY-MM-DD`, checkboxes as a symbol with a spoken Yes or No, links that open in
-  a new tab, and errors with what they mean. Clicking a header sorts ascending, descending, then
+  the header row stay at the top, frozen columns at the left (at phone width, a frame of 640
+  pixels or less, frozen columns that with the row numbers would take more than 40% of the frame
+  are drawn narrower together to fit, none under 40 pixels, their stored widths unchanged),
+  numbers right-aligned in their format, dates as `YYYY-MM-DD`, checkboxes as a symbol with a
+  spoken Yes or No, links that open in a new tab, and errors with what they mean. Clicking a header sorts ascending, descending, then
   back to the stored order; the filter keeps rows whose shown text contains it. Sort and filter
   are the viewer's only and never saved. Arrow keys move between cells. Rows are in chunks of 200
   that the browser lays out only on screen, so 10,000 rows stay usable while find in page, comment
@@ -2576,8 +2578,9 @@ and the whole-draft review is the only way on (below).
   Rows other people hold show their email, and their typing arrives as it is typed. Sort and filter stay the viewer's own while editing; downloads give what the page
   shows.
 - **At phone width** (a frame 640 pixels wide or less) an open cell's field is docked at the
-  bottom of the page with the column's name, the cell's address and Done, and the page keeps the
-  cell in view above it; the row and column menus and the column settings are sheets across the
+  bottom of the page under the cell's address and the column's name ("B6 · Owner"), with one
+  button, a check named "Save cell" (Enter saves too); the formula bar is hidden while it is open,
+  and the page keeps the cell, ringed, in view above it; the row and column menus and the column settings are sheets across the
   bottom, titled with the row or the column ("Row 6", "Column C"), the settings with Cancel and
   Apply pinned under fields that scroll, and touch targets are at least 44 pixels. A cell that is
   focused or opened is scrolled sideways clear of the frozen columns, its start first when it is

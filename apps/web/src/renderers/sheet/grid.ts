@@ -43,6 +43,10 @@ export const ROW_NUMBER_WIDTH = 48;
 export const DEFAULT_WIDTH = 120;
 export const MIN_WIDTH = 40;
 export const MAX_WIDTH = 800;
+/** At phone width (a frame this wide or less) the frozen columns are drawn narrower to fit. */
+export const NARROW_FRAME = 640;
+/** There, the row numbers and the frozen columns take at most this share of the frame. */
+export const FROZEN_SHARE = 0.4;
 
 export interface GridOptions {
   title: string;
@@ -129,12 +133,35 @@ export function columnWidth(c: SheetColumn): number {
 
 /** The left offset of each frozen column (the row numbers come first). */
 export function frozenOffsets(columns: readonly SheetColumn[], freeze: number): number[] {
+  return offsetsOf(columns.map(columnWidth), freeze);
+}
+
+function offsetsOf(widths: readonly number[], freeze: number): number[] {
   const out: number[] = [];
   let x = ROW_NUMBER_WIDTH;
-  for (let i = 0; i < Math.min(freeze, columns.length); i++) {
+  for (let i = 0; i < Math.min(freeze, widths.length); i++) {
     out.push(x);
-    x += columnWidth(columns[i] as SheetColumn);
+    x += widths[i] as number;
   }
+  return out;
+}
+
+/**
+ * The widths the columns are drawn at in a frame `frame` pixels wide: as stored, except at phone
+ * width, where frozen columns that with the row numbers would take more than FROZEN_SHARE of the
+ * frame are narrowed together to fit (none under MIN_WIDTH), so most of the grid still scrolls.
+ * The stored widths never change.
+ */
+export function shownWidths(widths: readonly number[], freeze: number, frame: number): number[] {
+  const out = widths.slice();
+  const n = Math.min(freeze, widths.length);
+  if (n <= 0 || !(frame > 0) || frame > NARROW_FRAME) return out;
+  const room = Math.floor(frame * FROZEN_SHARE) - ROW_NUMBER_WIDTH;
+  let sum = 0;
+  for (let c = 0; c < n; c++) sum += widths[c] as number;
+  if (sum <= room) return out;
+  const k = Math.max(room, 0) / sum;
+  for (let c = 0; c < n; c++) out[c] = Math.max(MIN_WIDTH, Math.floor((widths[c] as number) * k));
   return out;
 }
 
@@ -190,7 +217,12 @@ export function buildGrid(
 ): Grid {
   const cols = sheet.header.columns;
   const freeze = Math.min(5, sheet.header.freeze?.cols ?? 0, cols.length);
-  const lefts = frozenOffsets(cols, freeze);
+  /** The frame's width, which caps the frozen columns at phone width (0 when unknown). */
+  const frame = () => doc.documentElement?.clientWidth ?? 0;
+  /** The stored widths, and the widths drawn (frozen columns narrowed at phone width). */
+  const widths = cols.map(columnWidth);
+  let shown = shownWidths(widths, freeze, frame());
+  let lefts = offsetsOf(shown, freeze);
   const root = el(doc, "div", "plinth-sheet__page");
 
   // ---------- toolbar ----------
@@ -256,9 +288,8 @@ export function buildGrid(
   const numCol = el(doc, "col", "plinth-sheet__col-num");
   numCol.style.width = `${ROW_NUMBER_WIDTH}px`;
   colgroup.append(numCol);
-  const widths = cols.map(columnWidth);
   const colEls: HTMLTableColElement[] = [];
-  for (const w of widths) {
+  for (const w of shown) {
     const col = el(doc, "col");
     col.style.width = `${w}px`;
     colEls.push(col);
@@ -267,14 +298,29 @@ export function buildGrid(
   /** Where the row numbers and the frozen columns end, from the scroll container's left. */
   let frozenEdge = ROW_NUMBER_WIDTH;
   const sizeTable = () => {
-    table.style.width = `${widths.reduce((t, w) => t + w, ROW_NUMBER_WIDTH)}px`;
+    table.style.width = `${shown.reduce((t, w) => t + w, ROW_NUMBER_WIDTH)}px`;
     // A cell scrolled into view (focused, opened) clears the row numbers and the frozen columns.
     frozenEdge = ROW_NUMBER_WIDTH;
-    for (let c = 0; c < freeze; c++) frozenEdge += widths[c] as number;
+    for (let c = 0; c < freeze; c++) frozenEdge += shown[c] as number;
     scroll.style.scrollPaddingLeft = `${frozenEdge}px`;
   };
   sizeTable();
   table.append(colgroup);
+  /** Draw the columns at their widths again: after a width changes, or the frame does. */
+  const fitColumns = () => {
+    const next = shownWidths(widths, freeze, frame());
+    next.forEach((w, i) => {
+      const ce = colEls[i];
+      if (ce && w !== shown[i]) ce.style.width = `${w}px`;
+    });
+    shown = next;
+    sizeTable();
+    // The frozen columns to the right of a changed one move with it.
+    lefts = offsetsOf(shown, freeze);
+    for (let c = 0; c < freeze; c++) {
+      for (const cell of frozen[c] ?? []) cell.style.left = `${lefts[c]}px`;
+    }
+  };
 
   // The cells kept in view while the grid scrolls sideways, by column, so a width can move them.
   const frozen: HTMLElement[][] = cols.map(() => []);
@@ -562,17 +608,8 @@ export function buildGrid(
     },
     setWidth(col, px) {
       if (col < 0 || col >= widths.length) return;
-      const w = clampWidth(px);
-      widths[col] = w;
-      const ce = colEls[col];
-      if (ce) ce.style.width = `${w}px`;
-      sizeTable();
-      // The frozen columns to its right move with it.
-      let x = ROW_NUMBER_WIDTH;
-      for (let c = 0; c < freeze; c++) {
-        for (const cell of frozen[c] ?? []) cell.style.left = `${x}px`;
-        x += widths[c] as number;
-      }
+      widths[col] = clampWidth(px);
+      fitColumns();
     },
     width: (col) => widths[col] ?? DEFAULT_WIDTH,
     focusSelected() {
@@ -682,6 +719,10 @@ export function buildGrid(
   });
 
   root.append(bar, fx, scroll);
+  // At phone width a frame that turns or resizes draws the frozen columns to fit again.
+  if (freeze > 0 && typeof doc.defaultView?.ResizeObserver === "function") {
+    new doc.defaultView.ResizeObserver(() => fitColumns()).observe(root);
+  }
   if (rows.length > 0) grid.select(2, 0);
   else grid.select(1, 0);
   return grid;

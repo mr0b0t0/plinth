@@ -19,8 +19,9 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   a column's width. The column settings add thousands separators, and a select column's options as
   a list to rename, reorder, add to (type it and press Enter) and remove from; renaming an option
   renames it in the cells that hold it. The settings open under their column's header. At phone
-  width a cell opens in an editor docked at the bottom of the page, with the column's name and
-  Done, and the menus and the settings are sheets across the bottom. The grid
+  width a cell opens in an editor docked at the bottom of the page, under its address and the
+  column's name, saved with Enter or its check button; the menus and the settings are sheets
+  across the bottom, and frozen columns take at most 40% of the screen. The grid
   is now a proper grid for keyboards and screen readers: one tab stop, the arrows, Home and End,
   and cells someone else is editing say so. When someone else's change redraws the grid, the
   focus stays where you were typing (the column settings, the filter or a cell).

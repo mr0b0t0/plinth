@@ -20,7 +20,8 @@
 // rules), so a refused value never leaves the frame and the room's draft is always a valid sheet.
 //
 // At phone width an open cell's field is not in the cell: it is docked at the bottom of the page
-// with the column's name and a Done button, and the menus and the settings are full-width sheets.
+// under its address and column's name, with a check button that saves it (as Enter does), and
+// the menus and the settings are full-width sheets.
 //
 // Two backends, as for docs: the room's socket (../common/live.ts, "room" mode) or a local copy of
 // the lines that only this frame edits (LocalSheet, "solo" mode). Everything is built with
@@ -1210,7 +1211,7 @@ export class SheetEditor {
       setTimeout(() => {
         if (this.open?.field !== field || this.doc.activeElement === field) return;
         if (!this.doc.hasFocus()) return;
-        // The docked panel's own Done button commits by itself.
+        // The docked panel's own Save cell button commits by itself.
         if (this.dock?.contains(this.doc.activeElement)) return;
         if (this.want?.kind === "cell" && this.want.keep !== undefined) return;
         if (!this.commit()) this.cancel();
@@ -1368,19 +1369,21 @@ export class SheetEditor {
       this.dock = dock;
     }
     dock.setAttribute("aria-label", `Edit ${where}`);
+    // "B6 · Owner": the formula bar is hidden while the dock is open, so the value shows once.
     const label = d.createElement("div");
     label.className = "plinth-sheet__dock-label";
-    const strong = d.createElement("span");
-    strong.className = "plinth-sheet__dock-name";
-    strong.textContent = name;
     const addr = d.createElement("span");
     addr.className = "plinth-sheet__dock-addr";
     addr.textContent = where;
-    label.append(strong, addr);
+    const strong = d.createElement("span");
+    strong.className = "plinth-sheet__dock-name";
+    strong.textContent = name;
+    label.append(addr, strong);
+    // A check, not a second "Done" beside the edit bar's: Enter commits too.
     const done = d.createElement("button");
     done.type = "button";
-    done.className = "plinth-sheet__btn plinth-sheet__dock-done";
-    done.textContent = "Done";
+    done.className = "plinth-sheet__btn plinth-sheet__dock-save";
+    done.setAttribute("aria-label", "Save cell");
     done.addEventListener("click", () => {
       const at = this.open;
       if (!at) return;

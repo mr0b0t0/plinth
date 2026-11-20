@@ -356,6 +356,11 @@ test("column settings, widths, freezing, options and row moves on the page publi
   // Item stays in view; Qty two steps wider with the keyboard.
   await columnMenu(page, "A1", "Freeze up to this column");
   await expect(cell(page, "A2")).toHaveClass(/plinth-sheet__frozen/);
+  // At phone width the frozen pane takes at most 40% of the frame (144 px of 360), so Item is
+  // drawn at 96 px there; elsewhere at its stored 120 px.
+  const frozenBox = await cell(page, "A2").boundingBox();
+  if ((page.viewportSize()?.width ?? 1024) <= 640) expect(frozenBox?.width).toBeLessThanOrEqual(97);
+  else expect(frozenBox?.width).toBeGreaterThanOrEqual(119);
   await cell(page, "B1").locator(".plinth-sheet__sort").focus();
   await page.keyboard.press("Alt+ArrowRight");
   await page.keyboard.press("Alt+ArrowRight");
@@ -419,9 +424,14 @@ test("a cell opens in a docked editor at phone width, and in the cell otherwise"
     // The docked editor fits the page: no sideways scroll.
     const box = await dock.boundingBox();
     expect(box && box.x >= 0 && box.x + box.width <= 361).toBe(true);
+    // The value shows once: the formula bar steps aside while the dock is open.
+    await expect(frame.locator(".plinth-sheet__fx")).toBeHidden();
     await field.fill("12");
-    await dock.getByRole("button", { name: "Done" }).click();
+    // One "Done" on the page, the edit bar's: the dock saves with a check.
+    await expect(dock.getByRole("button", { name: "Done" })).toHaveCount(0);
+    await dock.getByRole("button", { name: "Save cell" }).click();
     await expect(dock).toHaveCount(0);
+    await expect(frame.locator(".plinth-sheet__fx")).toBeVisible();
   } else {
     await expect(dock).toHaveCount(0);
     await expect(cell(page, "B3").locator(".plinth-sheet__input")).toHaveCount(1);

@@ -23,6 +23,8 @@
   --sheet-live: #8f5a2a;
   --sheet-live-soft: #f0e8e0;
   --sheet-invalid: #b42318;
+  /* The app's focus ring (--color-focus): the column settings' fields and the cell editor. */
+  --sheet-focus: #8f5a2a;
   --sheet-font:
     system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif,
     "Apple Color Emoji", "Segoe UI Emoji";
@@ -52,6 +54,7 @@
     --sheet-live: #d39a62;
     --sheet-live-soft: #27211c;
     --sheet-invalid: #ff8a80;
+    --sheet-focus: #d39a62;
   }
 }
 
@@ -452,6 +455,20 @@ body {
   font: inherit;
 }
 
+.plinth-sheet__panel input:not([type="checkbox"]):focus-visible,
+.plinth-sheet__panel select:focus-visible,
+.plinth-sheet__panel textarea:focus-visible {
+  outline: none;
+  border-color: var(--sheet-focus);
+  box-shadow: 0 0 0 1px var(--sheet-focus);
+}
+
+.plinth-sheet__panel input[type="checkbox"]:focus-visible,
+.plinth-sheet__panel .plinth-sheet__btn:focus-visible {
+  outline: 2px solid var(--sheet-focus);
+  outline-offset: 2px;
+}
+
 .plinth-sheet__panel-actions {
   display: flex;
   flex: none;
@@ -508,7 +525,7 @@ body {
   margin: 0;
   padding: 0 8px;
   border: 0;
-  outline: 2px solid var(--sheet-live);
+  outline: 2px solid var(--sheet-focus);
   outline-offset: -2px;
   background: var(--sheet-bg);
   color: var(--sheet-fg);
@@ -782,14 +799,10 @@ body {
   min-width: 0;
 }
 
-/* The options read as a list: a field's edge shows on hover and focus. */
+/* The options read as a list: a field's edge shows on hover, and the focus ring on focus. */
 .plinth-sheet__panel .plinth-sheet__option input {
   border-color: transparent;
   background: transparent;
-}
-
-.plinth-sheet__panel .plinth-sheet__option input:focus {
-  border-color: var(--sheet-rule-strong);
 }
 
 @media (hover: hover) {
@@ -818,7 +831,7 @@ body {
 }
 
 .plinth-sheet__ghost:focus-visible {
-  outline: 2px solid var(--sheet-accent);
+  outline: 2px solid var(--sheet-focus);
   outline-offset: -2px;
 }
 
@@ -860,23 +873,25 @@ body {
 .plinth-sheet__dock-label {
   grid-column: 1 / -1;
   display: flex;
-  gap: 8px;
+  gap: 6px;
   min-width: 0;
   color: var(--sheet-muted);
+}
+
+.plinth-sheet__dock-addr {
+  flex: none;
 }
 
 .plinth-sheet__dock-name {
   min-width: 0;
   overflow: hidden;
-  color: var(--sheet-fg);
-  font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.plinth-sheet__dock-addr {
-  flex: none;
-  font-family: var(--sheet-mono);
+.plinth-sheet__dock-name:not(:empty)::before {
+  content: "\00B7" / "";
+  margin-right: 6px;
 }
 
 .plinth-sheet__dock .plinth-sheet__input {
@@ -888,17 +903,42 @@ body {
 }
 
 .plinth-sheet__dock .plinth-sheet__input:focus-visible {
-  outline: 2px solid var(--sheet-live);
-  outline-offset: 0;
+  border-color: var(--sheet-focus);
+  box-shadow: 0 0 0 1px var(--sheet-focus);
 }
 
 .plinth-sheet__dock .plinth-sheet__input[aria-invalid="true"] {
   border-color: var(--sheet-invalid);
+  box-shadow: 0 0 0 1px var(--sheet-invalid);
 }
 
-.plinth-sheet__dock-done {
-  min-height: 44px;
-  min-width: 64px;
+/* The dock's one action: a check that saves the cell, as Enter does. */
+.plinth-sheet__dock-save {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+}
+
+.plinth-sheet__dock-save::before {
+  content: "";
+  width: 7px;
+  height: 13px;
+  margin-top: -3px;
+  border: solid currentColor;
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+}
+
+.plinth-sheet__dock-save:focus-visible {
+  outline: 2px solid var(--sheet-focus);
+  outline-offset: 2px;
+}
+
+/* While the dock is open it shows the cell's text, so the formula bar steps aside. */
+body.plinth-sheet--docked .plinth-sheet__fx {
+  display: none;
 }
 
 .plinth-sheet__grid .plinth-sheet__cell--docked {
