@@ -25,11 +25,11 @@ import {
   defaultConnectionLabel,
   guessClientType,
   mentionReach,
-  mentionReachText,
   SCOPE_META,
 } from "../components/account/format.ts";
 import { useDocumentTitle, useSignInRedirect } from "../components/account/hooks.tsx";
 import { Note } from "../components/account/Note.tsx";
+import { nameHint } from "../components/account/nameHint.tsx";
 import { LogoMark } from "../components/Logo.tsx";
 import { PublicShell } from "../components/layout/PublicShell.tsx";
 import {
@@ -253,18 +253,14 @@ export default function Consent() {
                 <div id={editId} className="pl-acct-form">
                   <Input
                     label="Name this connection"
-                    hint={[
+                    hint={nameHint(
                       "Shown on your Connections page and next to what it publishes.",
-                      mentionReachText(
-                        mentionReach(label.trim() || defaultLabel, connections, {
-                          client_type: clientType,
-                          // The grant holds exactly what the client asked for.
-                          scopes: state.req.scopes,
-                        }),
-                      ),
-                    ]
-                      .filter(Boolean)
-                      .join(" ")}
+                      mentionReach(label.trim() || defaultLabel, connections, {
+                        client_type: clientType,
+                        // The grant holds exactly what the client asked for.
+                        scopes: state.req.scopes,
+                      }),
+                    )}
                     value={label}
                     maxLength={LIMITS.maxLabelLength}
                     placeholder={defaultLabel}
@@ -276,7 +272,6 @@ export default function Consent() {
                     value={clientType}
                     onChange={(e) => setClientType(e.target.value as ClientType)}
                     options={CLIENT_TYPES.map((t) => ({ value: t, label: CLIENT_TYPE_LABEL[t] }))}
-                    hint="Mentions of @claude or @codex in comments go to connections of that kind."
                   />
                 </div>
               )}

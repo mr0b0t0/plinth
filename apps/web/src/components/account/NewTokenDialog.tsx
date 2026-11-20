@@ -21,8 +21,9 @@ import { type FormEvent, useEffect, useRef, useState } from "react";
 import { ApiRequestError, api } from "../../lib/api.ts";
 import { Button, Checkbox, Dialog, Input, Select, Stack } from "../ui/index.ts";
 import { CopyBlock, CopyField } from "./CopyField.tsx";
-import { CLIENT_TYPE_LABEL, mentionReach, mentionReachText, SCOPE_META } from "./format.ts";
+import { CLIENT_TYPE_LABEL, mentionReach, SCOPE_META } from "./format.ts";
 import { Note } from "./Note.tsx";
+import { nameHint } from "./nameHint.tsx";
 
 export interface NewTokenDialogProps {
   open: boolean;
@@ -322,16 +323,12 @@ function TokenDialogBody({
         <Input
           ref={labelRef}
           label="Name"
-          hint={[
+          hint={nameHint(
             "Shown on this page and in the version history of what it publishes.",
             label.trim() && !limited
-              ? mentionReachText(
-                  mentionReach(label, connections, { client_type: clientType, scopes: chosen }),
-                )
+              ? mentionReach(label, connections, { client_type: clientType, scopes: chosen })
               : null,
-          ]
-            .filter(Boolean)
-            .join(" ")}
+          )}
           value={label}
           maxLength={LIMITS.maxLabelLength}
           error={labelError ?? undefined}
@@ -370,11 +367,6 @@ function TokenDialogBody({
             value={clientType}
             onChange={(e) => setClientType(e.target.value as ClientType)}
             options={CLIENT_TYPES.map((t) => ({ value: t, label: CLIENT_TYPE_LABEL[t] }))}
-            hint={
-              clientType === "other"
-                ? undefined
-                : `Collaborators can reach it with @${clientType} in comments.`
-            }
           />
         )}
         <fieldset

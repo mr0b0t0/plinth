@@ -29,12 +29,11 @@ function renderItem(c: ConnectionInfo, all: ConnectionInfo[] = [c]) {
   );
 }
 
-describe("ConnectionItem mention line", () => {
-  it("shows the handle a label becomes", () => {
+describe("ConnectionItem mention warning", () => {
+  it("a row that mentions reach says nothing about mentions", () => {
     renderItem(conn({}));
-    expect(screen.getByText("@claude-code").closest("p")?.textContent).toBe(
-      "Mention as @claude-code",
-    );
+    expect(screen.queryByText(/Mention as|@claude-code/)).toBeNull();
+    expect(document.querySelector(".pl-acct-conn__mention")).toBeNull();
   });
 
   it("warns when an older connection takes the handle, or the name is an agent name", () => {
@@ -43,7 +42,7 @@ describe("ConnectionItem mention line", () => {
     const line = screen.getByText(
       "@claude-code reaches “claude-code” instead. Rename one of them.",
     );
-    expect(line.getAttribute("data-warn")).toBe("true");
+    expect(line.className).toBe("pl-acct-conn__mention");
     unmount();
 
     const other = renderItem(conn({ label: "Claude", client_type: "other" }));
@@ -52,9 +51,9 @@ describe("ConnectionItem mention line", () => {
     ).toBeTruthy();
     other.unmount();
 
-    // A Claude connection named Claude is reached by @claude: the row shows the handle.
+    // A Claude connection named Claude is reached by @claude: nothing to warn about.
     renderItem(conn({ label: "Claude" }));
-    expect(screen.getByText("@claude").closest("p")?.textContent).toBe("Mention as @claude");
+    expect(document.querySelector(".pl-acct-conn__mention")).toBeNull();
   });
 
   it("says nothing about mentions where the row already shows that none reach it", () => {
@@ -75,15 +74,16 @@ describe("ConnectionItem mention line", () => {
     renderItem(conn({ label: "Laptop" }));
     await user.click(screen.getByRole("button", { name: /Rename/ }));
     const input = screen.getByLabelText("Name");
-    expect(screen.getByText("Mention as @laptop.")).toBeTruthy();
+    // A Claude connection: its own handle and @claude, in one sentence.
+    expect(screen.getByText("Mention as @laptop or @claude.")).toBeTruthy();
     await user.clear(input);
     await user.type(input, "Gemini CLI");
-    expect(screen.getByText("Mention as @gemini-cli.")).toBeTruthy();
+    expect(screen.getByText("Mention as @gemini-cli or @claude.")).toBeTruthy();
     await user.clear(input);
     await user.type(input, "???");
-    expect(
-      screen.getByText("Cannot be mentioned: start the name with a letter or digit."),
-    ).toBeTruthy();
+    // A name no mention reaches: the warning alone, in the warning colour.
+    const warning = screen.getByText("Cannot be mentioned: start the name with a letter or digit.");
+    expect(warning.className).toBe("pl-acct-warn");
     await user.clear(input);
     await user.type(input, "claude");
     expect(

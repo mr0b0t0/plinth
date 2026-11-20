@@ -716,8 +716,8 @@ connection and name.
 - `@claude` and `@codex` reach every connection of the owner with that client type, as one
   request: the first `claim_mention` wins, and on `conflict` you leave it.
 - `@<name>` reaches one connection: its name lowercased, spaces turned into `-`, other characters
-  dropped (`Gemini CLI` is `@gemini-cli`). `claude` and `codex` always mean the client types. The
-  Connections page shows each connection's handle.
+  dropped (`Gemini CLI` is `@gemini-cli`). `claude` and `codex` always mean the client types.
+  Renaming a connection on the Connections page shows its handle.
 - Your own comments and replies never create requests, so you cannot hand work to another agent:
   tell the person to mention it.
 - Always publish with `base_version`; on `conflict`, read the newer version and make your change

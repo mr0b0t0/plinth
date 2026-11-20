@@ -155,6 +155,14 @@ describe("Consent", () => {
     expect(hint).toBe(
       "Shown on your Connections page and next to what it publishes. Mention as @gemini-cli.",
     );
+    // One mention sentence on the form: the Client field adds none, and picking Claude folds
+    // @claude into the name's hint.
+    const clientSelect = screen.getByLabelText(/Client/);
+    expect(document.getElementById(`${clientSelect.id}-hint`)).toBeNull();
+    await user.selectOptions(clientSelect, "claude");
+    expect(document.getElementById(`${name.id}-hint`)?.textContent).toBe(
+      "Shown on your Connections page and next to what it publishes. Mention as @gemini-cli or @claude.",
+    );
   });
 
   it("names no handle for a client without the mentions scope", async () => {

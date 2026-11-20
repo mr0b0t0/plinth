@@ -511,9 +511,10 @@ the Connections page to short names people can type in a comment: `Gemini`, `Cur
 Only the artifact owner's connections are ever reached, and only the owner, editors and
 commenters create requests. A personal access token is of type Other unless its creator picks
 another, so `@claude` never reaches a CI token by accident, and a token limited to one artifact is
-never reached at all. The Connections page shows each connection's handle under its name, and
-warns when a name cannot be reached (an older connection has the same handle, the name is `Claude`
-or `Codex` on a connection of another type, or it has no letter or digit to start with).
+never reached at all. Renaming a connection or creating a token shows the handle the name
+becomes, and the Connections page warns on a connection's row when a name cannot be reached (an
+older connection has the same handle, the name is `Claude` or `Codex` on a connection of another
+type, or it has no letter or digit to start with).
 
 **Picking a request up.** In Claude Code with the Plinth plugin, the mention watcher wakes the
 session when a request arrives (`/plinth:watch-mentions`). Every other harness checks when the

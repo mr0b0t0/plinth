@@ -16,9 +16,9 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   stays in the page's versions; what they contribute is shared data stamped with who wrote it, and
   the pages count only what those stamps vouch for. A new guide covers Claude, Codex, Gemini CLI,
   Cursor and scripts working on one artifact: which mention reaches which agent, hand-offs,
-  conflicts and who did what. The Connections page now shows the handle each connection is
-  mentioned by (`Claude Code` is `@claude-code`) and warns when a name cannot be reached; the
-  rename, new-token and consent dialogs show it as you type. Plugin 0.27.0.
+  conflicts and who did what. The rename, new-token and consent dialogs show the handle a name
+  is mentioned by as you type (`Claude Code` is `@claude-code`), and the Connections page warns on
+  a connection's row when a name cannot be reached. Plugin 0.27.0.
 - **No `root_absolute` warning for Plinth's runtime.** A page that loads `/__plinth/runtime.js`
   (shared data, rooms, page comments) no longer gets a publish warning it could not fix.
 - **Dashboard previews in the list, and one card height.** Each row of the list view starts with a

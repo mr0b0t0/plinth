@@ -7,6 +7,7 @@ import {
   mcpUrl,
   mentionReach,
   mentionReachText,
+  mentionReachWarns,
   quotaText,
   scopeLabel,
   versionsText,
@@ -253,5 +254,24 @@ describe("mentionReach", () => {
     // The row and the dialog already show both, so the hints add nothing.
     expect(mentionReachText({ kind: "artifact_only" })).toBeNull();
     expect(mentionReachText({ kind: "no_mentions" })).toBeNull();
+  });
+
+  it("a Claude or Codex connection is also reached by its client name", () => {
+    const claude = mentionReach("Laptop", [], { ...self, client_type: "claude" });
+    expect(claude).toEqual({ kind: "handle", handle: "laptop", also: "claude" });
+    expect(mentionReachText(claude)).toBe("Mention as @laptop or @claude.");
+    expect(mentionReachText(mentionReach("Laptop", [], { ...self, client_type: "codex" }))).toBe(
+      "Mention as @laptop or @codex.",
+    );
+  });
+
+  it("warns only when no mention reaches the connection by its name", () => {
+    expect(mentionReachWarns({ kind: "shadowed", handle: "a", by: "A" })).toBe(true);
+    expect(mentionReachWarns({ kind: "none" })).toBe(true);
+    expect(mentionReachWarns({ kind: "agent_name", handle: "claude", reached: false })).toBe(true);
+    expect(mentionReachWarns({ kind: "agent_name", handle: "claude", reached: true })).toBe(false);
+    expect(mentionReachWarns({ kind: "handle", handle: "a" })).toBe(false);
+    expect(mentionReachWarns({ kind: "artifact_only" })).toBe(false);
+    expect(mentionReachWarns({ kind: "no_mentions" })).toBe(false);
   });
 });

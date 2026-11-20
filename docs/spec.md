@@ -1106,14 +1106,17 @@ agents on one artifact").
   agent never create tasks, so agents do not hand work to each other: a person mentions the next
   one. Collaborators' own agents act with their own role and are never mention targets. Every
   version, comment and data write names the connection that made it.
-- **The handle in the app.** The Connections page shows each connection's handle under its name
-  ("Mention as `@claude-code`"), and the rename, new-token and consent dialogs show it live for the
-  name being typed. They warn when the name cannot be reached: an older live connection has the
-  same handle, the handle is `claude` or `codex` on a connection of another client type, or the
-  name has no letter or digit to start a handle with. A token without the `mentions` scope or
-  limited to one artifact shows no handle; its permissions and artifact already say it answers no
-  mentions. Only the owner sees these pages, and only their own labels; the comment composer's
-  suggestions for collaborators stay `@claude` and `@codex`.
+- **The handle in the app.** The rename, new-token and consent dialogs show the handle of the
+  name being typed in its hint, one sentence that also names `@claude` or `@codex` for a
+  connection of that client type ("Mention as `@laptop` or `@claude`."); the Client field adds
+  none. When no mention can reach the name (an older live connection has the same handle, the
+  handle is `claude` or `codex` on a connection of another client type, or the name has no letter
+  or digit to start a handle with), that warning replaces the hint, in the warning colour, and the
+  Connections page shows it as one line on the connection's row. A row that mentions reach shows
+  no handle. A token without the `mentions` scope or limited to one artifact gets neither; its
+  permissions and artifact already say it answers no mentions. Only the owner sees these pages,
+  and only their own labels; the comment composer's suggestions for collaborators stay `@claude`
+  and `@codex`.
 
 ### Big builds and reuse by hash
 

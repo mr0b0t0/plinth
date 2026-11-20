@@ -1,6 +1,6 @@
-// One agent connection: label, client, kind, permissions, how a comment mentions it, dates;
-// rename and revoke. A token limited to one artifact shows a key instead of initials, and names
-// the artifact before what it may do there.
+// One agent connection: label, client, kind, permissions, dates, and a warning when a comment
+// cannot mention it by name; rename and revoke. A token limited to one artifact shows a key
+// instead of initials, and names the artifact before what it may do there.
 import { KeyIcon, PlugsConnectedIcon } from "@phosphor-icons/react";
 import { API, APP_ROUTES, type ConnectionInfo, LIMITS, route } from "@plinth/shared";
 import { type FormEvent, useState } from "react";
@@ -13,11 +13,12 @@ import {
   formatDate,
   formatDateTime,
   formatRelative,
-  type MentionReach,
   mentionReach,
   mentionReachText,
+  mentionReachWarns,
   scopeLabel,
 } from "./format.ts";
+import { nameHint } from "./nameHint.tsx";
 
 /**
  * What a token limited to one artifact may do there, in one label: it always reads it, so that is
@@ -33,28 +34,8 @@ export interface ConnectionItemProps {
   connection: ConnectionInfo;
   now: number;
   onChanged: (next: ConnectionInfo) => void;
-  /** Every connection on the page, so the mention line can tell when an older one takes the handle. */
+  /** Every connection on the page, so the row can tell when an older one takes the handle. */
   connections?: readonly ConnectionInfo[];
-}
-
-/**
- * The row's mention line: the handle when a comment reaches the connection, a warning when a name
- * cannot, and nothing for a token the row already shows answers no mentions.
- */
-function MentionLine({ reach }: { reach: MentionReach }) {
-  if (reach.kind === "handle" || (reach.kind === "agent_name" && reach.reached)) {
-    return (
-      <p className="pl-acct-conn__mention">
-        Mention as <code>@{reach.handle}</code>
-      </p>
-    );
-  }
-  const text = mentionReachText(reach);
-  return text ? (
-    <p className="pl-acct-conn__mention" data-warn="true">
-      {text}
-    </p>
-  ) : null;
 }
 
 export function ConnectionItem({
@@ -69,7 +50,10 @@ export function ConnectionItem({
   const [busy, setBusy] = useState(false);
   const revoked = c.revoked_at !== null;
   const KindIcon = c.kind === "oauth" ? PlugsConnectedIcon : KeyIcon;
+  // A healthy row says nothing about mentions (the rename dialog shows the handle); one that a
+  // mention cannot reach by name gets one warning line.
   const reach = revoked ? null : mentionReach(c.label, connections, c);
+  const warning = reach && mentionReachWarns(reach) ? mentionReachText(reach) : null;
 
   const revoke = async () => {
     setBusy(true);
@@ -109,7 +93,7 @@ export function ConnectionItem({
           )}
           {revoked && <Badge tone="danger">Revoked</Badge>}
         </div>
-        {reach && <MentionLine reach={reach} />}
+        {warning && <p className="pl-acct-conn__mention">{warning}</p>}
         <p className="pl-acct-conn__scopes">
           {c.artifact && (
             <span className="pl-acct-conn__scope">
@@ -245,8 +229,7 @@ function RenameDialog({
           maxLength={LIMITS.maxLabelLength}
           error={error ?? undefined}
           hint={
-            (label.trim() && mentionReachText(mentionReach(label, connections, connection))) ||
-            undefined
+            label.trim() ? nameHint(null, mentionReach(label, connections, connection)) : undefined
           }
           onChange={(e) => {
             setLabel(e.target.value);

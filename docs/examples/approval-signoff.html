@@ -108,6 +108,10 @@
     resize: vertical;
   }
   .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+  #mine { margin: 0 0 12px; }
+  #mine[hidden] { display: none; }
+  /* Withdraw is a quiet text link next to the person's own decision, not a third button. */
+  button.link { min-height: 0; padding: 0; border: 0; background: none; color: var(--muted); font-size: inherit; text-decoration: underline; text-underline-offset: 2px; }
   button {
     font: inherit;
     font-size: 15px;
@@ -125,12 +129,11 @@
   #list { list-style: none; margin: 16px 0 0; padding: 0; }
   #list li { border-top: 1px solid var(--border); padding: 10px 0; }
   #list li[data-counted="false"] { opacity: 0.8; }
-  .who { font-weight: 600; }
-  .decision { margin-left: 6px; }
+  .who { display: block; font-weight: 600; }
   .decision[data-decision="approve"] { color: var(--accent); }
   .decision[data-decision="changes"] { color: var(--warn); }
   .meta { display: block; color: var(--muted); font-size: 14px; }
-  .tag { display: inline-block; margin-left: 6px; padding: 0 6px; border-radius: 4px; background: var(--chip); font-size: 13px; color: var(--fg); }
+  .tag { display: inline-block; padding: 0 6px; border-radius: 4px; background: var(--chip); font-size: 13px; color: var(--fg); }
   .note { margin: 4px 0 0; white-space: pre-wrap; }
   #empty { color: var(--muted); margin: 12px 0 0; }
   footer { color: var(--muted); font-size: 14px; margin: 16px 0 24px; }
@@ -140,7 +143,6 @@
 <body>
 <div class="wrap">
   <header>
-    <p>Approval requested</p>
     <h1>Website redesign proposal</h1>
     <p>Read the proposal, then approve it or say what should change.</p>
   </header>
@@ -172,19 +174,19 @@
   <section id="signoff" class="card" aria-labelledby="signoff-title">
     <h2 id="signoff-title">Sign-off</h2>
     <p id="status" role="status" data-state="pending"></p>
+    <p id="mine" hidden><span id="mine-text"></span> · <button type="button" id="withdraw" class="link">Withdraw</button></p>
     <label for="note">Note (needed to request changes)</label>
     <textarea id="note" maxlength="1000" disabled></textarea>
     <div class="actions">
       <button type="button" id="approve" class="primary" disabled>Approve</button>
       <button type="button" id="changes" disabled>Request changes</button>
-      <button type="button" id="withdraw" hidden>Withdraw</button>
     </div>
     <p id="msg" role="alert"></p>
     <ul id="list" aria-label="Sign-offs"></ul>
     <p id="empty">No sign-offs yet.</p>
   </section>
 
-  <footer>Plinth records who clicked and when. This is not an electronic signature.</footer>
+  <footer>This is not an electronic signature.</footer>
 </div>
 <script>
 "use strict";
@@ -208,6 +210,8 @@ const noteEl = document.getElementById("note");
 const approveBtn = document.getElementById("approve");
 const changesBtn = document.getElementById("changes");
 const withdrawBtn = document.getElementById("withdraw");
+const mineEl = document.getElementById("mine");
+const mineText = document.getElementById("mine-text");
 const list = document.getElementById("list");
 const empty = document.getElementById("empty");
 
@@ -234,9 +238,13 @@ function who(a) {
   return a.email || a.name || "Someone";
 }
 
+/** A date with the month's name ("Nov 20", with the year when it is not this year). */
 function when(iso) {
   const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? "" : d.toLocaleString();
+  if (Number.isNaN(d.getTime())) return "";
+  const opts = { month: "short", day: "numeric" };
+  if (d.getFullYear() !== new Date().getFullYear()) opts.year = "numeric";
+  return d.toLocaleDateString(undefined, opts);
 }
 
 /** The reader gets Plinth's stamps on this document (link viewers never do). */
@@ -279,12 +287,13 @@ function row(doc, s, counted) {
   const li = document.createElement("li");
   li.dataset.counted = String(counted);
   li.dataset.decision = s.decision;
+  // The name on its own line, then the decision, so a long email never splits the decision.
   li.append(el("span", "who", who(doc.createdBy)));
+  const meta = el("span", "meta");
   const decision = el("span", "decision", s.decision === "approve" ? "Approved" : "Requested changes");
   decision.dataset.decision = s.decision;
-  li.append(decision);
-  const meta = el("span", "meta", `on revision ${s.revision}`);
-  if (s.revision < REVISION) meta.append(el("span", "tag", "earlier revision"));
+  meta.append(decision);
+  if (s.revision < REVISION) meta.append(" · ", el("span", "tag", "earlier revision"));
   const time = el("time", "", when(doc.updatedAt));
   time.dateTime = doc.updatedAt;
   meta.append(" · ", time);
@@ -337,8 +346,12 @@ function setControls() {
   noteEl.disabled = !on;
   approveBtn.disabled = !on;
   changesBtn.disabled = !on;
-  // Only someone with a sign-off of their own has anything to withdraw.
-  withdrawBtn.hidden = !mine;
+  // Only someone with a sign-off of their own sees it, with Withdraw beside it.
+  mineEl.hidden = !mine;
+  if (mine) {
+    const earlier = mine.revision < REVISION ? " an earlier revision" : "";
+    mineText.textContent = mine.decision === "approve" ? `You approved${earlier}` : `You requested changes${earlier ? ` on${earlier}` : ""}`;
+  }
   withdrawBtn.disabled = !on || !mine;
 }
 
@@ -357,9 +370,9 @@ function errorText(e) {
   return "Could not save. Try again.";
 }
 
+/** The viewer's own sign-off; its note shows in the list, so the box stays free for a new one. */
 function showMine(s) {
   mine = s;
-  if (s) noteEl.value = s.note;
   setControls();
 }
 
@@ -381,6 +394,7 @@ async function write(action) {
       showMine(null);
     } else {
       const doc = await signoffs.setMine({ decision: action, revision: REVISION, note });
+      noteEl.value = "";
       showMine(clean(doc.data));
     }
   } catch (e) {

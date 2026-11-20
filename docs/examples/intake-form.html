@@ -120,6 +120,7 @@
   .response dd { margin: 0 0 8px; white-space: pre-wrap; }
   #none { color: var(--muted); }
   footer { color: var(--muted); font-size: 14px; margin: 16px 0 24px; }
+  .tag { display: inline-block; padding: 0 6px; border-radius: 4px; background: var(--chip); font-size: 13px; color: var(--fg); }
 </style>
 <script src="/__plinth/runtime.js"></script>
 <script>
@@ -138,7 +139,6 @@ const FIELDS = [
 <body>
 <div class="wrap">
   <header>
-    <p>Project intake</p>
     <h1>Tell us about your project</h1>
     <p>Your answers help us prepare the first meeting. You can save a draft and come back.</p>
   </header>
@@ -154,7 +154,7 @@ const FIELDS = [
       <div id="response-list"></div>
     </section>
   </main>
-  <footer>Everyone this page is shared with can read the answers on it. Do not enter passwords, payment details or other secrets.</footer>
+  <footer>Do not enter passwords, payment details or other secrets.</footer>
 </div>
 <script>
 "use strict";
@@ -300,9 +300,13 @@ function clean(d) {
   };
 }
 
+/** A date with the month's name ("Nov 20", with the year when it is not this year). */
 function when(iso) {
   const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? "" : d.toLocaleString();
+  if (Number.isNaN(d.getTime())) return "";
+  const opts = { month: "short", day: "numeric" };
+  if (d.getFullYear() !== new Date().getFullYear()) opts.year = "numeric";
+  return d.toLocaleDateString(undefined, opts);
 }
 
 function who(a) {
@@ -390,8 +394,10 @@ function renderResponses(docs) {
     if (!s) continue;
     const box = el("article", "response");
     box.append(el("h3", "", who(doc.createdBy)));
-    const state = s.submitted ? "Sent" : "Draft";
-    box.append(el("p", "meta", `${state} · form revision ${s.formRevision} · last change ${when(doc.updatedAt)}`));
+    const meta = el("p", "meta", `${s.submitted ? "Sent" : "Draft"} · ${when(doc.updatedAt)}`);
+    // Answers given before the questions last changed (FORM_REVISION) may miss the new ones.
+    if (s.formRevision < FORM_REVISION) meta.append(" ", el("span", "tag", "earlier questions"));
+    box.append(meta);
     const dl = document.createElement("dl");
     for (const f of QUESTIONS) {
       if (!(f.id in s.answers)) continue;
