@@ -4,7 +4,8 @@
 // - in-place (docs): asks the doc renderer to show the version (`version`), and on its `shown`
 //   answer keeps the frame and its enter URL, so nothing reloads; otherwise, or after 5 s, swaps.
 // - hold (HTML that declares `hold`, focus in the frame, with or without the runtime): only the
-//   count of versions moves on and the stage offers "vN is available · Update".
+//   count of versions moves on and the stage offers "vN is available · Update", which loads it
+//   without an "Updated" toast (the viewer chose it).
 // - ask (HTML with the runtime): posts `update` at the exact content origin; on `update:ok` the new
 //   version lands where the page was (one more gate read with `next`), on `update:hold` it waits;
 //   a page that declares `hold` and got focus while the app waited is held either way; with no
@@ -38,8 +39,11 @@ type OkGate = Extract<ViewGate, { status: "ok" }>;
 export interface UpdateHandlers {
   /** A fresh gate for a newer version, waiting to be applied; null when none. */
   pending: OkGate | null;
-  /** Show this gate (it replaces the frame unless its enter URL is the shown one) and say so. */
-  apply: (gate: OkGate) => void;
+  /**
+   * Show this gate (it replaces the frame unless its enter URL is the shown one) and say so, unless
+   * `quiet`: the viewer chose Update, and the new version on screen says it.
+   */
+  apply: (gate: OkGate, quiet?: boolean) => void;
   /** Show this gate without saying "Updated" (only the count of versions moved). */
   count: (gate: OkGate) => void;
   /** Forget `pending` (it is no newer than what is on view). */
@@ -286,7 +290,7 @@ export function useViewUpdate(o: {
         const g = await latest.current.handlers?.fetchGate(path).catch(() => null);
         if (g) {
           setHeld(null);
-          latest.current.handlers?.apply(g);
+          latest.current.handlers?.apply(g, true);
         }
       } finally {
         busy.current = false;

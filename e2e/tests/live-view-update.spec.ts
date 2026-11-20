@@ -231,7 +231,8 @@ test("a page that declares hold waits while the viewer types, and Update loads i
   await expect(page.getByText("Updated to v2")).toHaveCount(0);
 
   await page.getByRole("button", { name: "Update" }).click();
-  await expect(page.getByText("Updated to v2")).toBeVisible();
   await expect(page.frameLocator('iframe[title$="version 2"]').locator("h1")).toHaveText("Second");
   await expect(notice).toHaveCount(0);
+  // The viewer chose it: no "Updated" toast after the notice.
+  await expect(page.getByText("Updated to v2")).toHaveCount(0);
 });

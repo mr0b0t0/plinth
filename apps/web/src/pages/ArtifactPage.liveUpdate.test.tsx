@@ -154,8 +154,10 @@ describe("ArtifactPage: applying a newer version (live views)", () => {
     const next = await screen.findByTitle("Garden plan, version 4");
     fireEvent.load(next);
     expect(next.getAttribute("src")).toBe(ENTER(s.reads.length));
-    expect(await screen.findByText("Updated to v4")).toBeTruthy();
+    // The viewer chose it: the new version on screen is the only sign, no "Updated" toast.
     expect(screen.queryByText(/is available/)).toBeNull();
+    await vi.advanceTimersByTimeAsync(100);
+    expect(screen.queryByText("Updated to v4")).toBeNull();
   });
 
   it("replaces a page that declares hold when focus is elsewhere, and one that does not", async () => {

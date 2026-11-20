@@ -53,11 +53,11 @@ export default function ArtifactPage({ params }: { params: Record<string, string
   // A fresh gate for a newer version waits here until the stage has applied it: in place for a
   // doc, with the page's state, or held while the viewer uses it (useViewUpdate.ts).
   const [pending, setPending] = useState<OkGate | null>(null);
-  const show = (gate: OkGate) => {
+  const show = (gate: OkGate, quiet = false) => {
     const moved = gate.artifact.version !== shown?.artifact.version;
     setPending(null);
     setGate(gate);
-    if (!pinned && moved) {
+    if (!pinned && moved && !quiet) {
       if (updatedToast.current !== null) dismissToast(updatedToast.current);
       updatedToast.current = showToast({ title: `Updated to v${gate.artifact.version}` });
     }
@@ -117,7 +117,7 @@ export default function ArtifactPage({ params }: { params: Record<string, string
   const pageComments = shown?.page_comments === true;
   const updateHandlers: UpdateHandlers = {
     pending,
-    apply: (gate) => latest.current.show(gate),
+    apply: (gate, quiet) => latest.current.show(gate, quiet),
     count: (gate) => {
       setPending(null);
       setGate(gate);

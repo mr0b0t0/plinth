@@ -1441,7 +1441,8 @@ the app applies it so the reader keeps their place where it can:
   it, with or without the runtime: when the new version arrives with focus inside its frame, or
   focus moves there while the runtime answers, only the count of versions moves on and the stage
   shows "v5 is available · Update"; the runtime is asked only when the viewer chooses Update. Update
-  reads a fresh gate and loads it (with the runtime's carry, when the page has the runtime). A
+  reads a fresh gate and loads it (with the runtime's carry, when the page has the runtime), with no
+  "Updated to vN" toast after it: one notice per update. A
   version that arrives while focus is elsewhere replaces the page as before. `hold` is not shared
   data and not a room, works under every isolation mode, and is stored only when declared. **Every
   other page is replaced at once, as before** (the 2026-11-14 "follows new versions live"
