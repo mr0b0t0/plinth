@@ -637,6 +637,7 @@ body {
   background: var(--sheet-bg);
   color: var(--sheet-fg);
   font: inherit;
+  text-align: inherit;
 }
 
 .plinth-sheet__input[aria-invalid="true"] {
@@ -655,24 +656,9 @@ body {
   cursor: not-allowed;
 }
 
-/* A held row's number makes room for the holder's initials, inside the cell. */
+/* A held row: tinted, with an accent on its row number. */
 .plinth-sheet__grid .plinth-sheet__row--held .plinth-sheet__rownum {
-  padding: 0 24px 0 4px;
   box-shadow: inset 3px 0 0 var(--sheet-live);
-}
-
-.plinth-sheet__holder {
-  position: absolute;
-  top: 50%;
-  right: 4px;
-  min-width: 18px;
-  padding: 0 3px;
-  border-radius: 8px;
-  background: var(--sheet-live);
-  color: var(--sheet-bg);
-  font: 600 10px / 16px var(--sheet-font);
-  text-align: center;
-  transform: translateY(-50%);
 }
 
 /* For screen readers only. */
@@ -770,8 +756,7 @@ body {
   .plinth-sheet__bar,
   .plinth-sheet__slot,
   .plinth-sheet__notice,
-  .plinth-sheet__panel,
-  .plinth-sheet__holder {
+  .plinth-sheet__panel {
     display: none;
   }
 

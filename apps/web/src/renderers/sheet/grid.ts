@@ -14,8 +14,8 @@
 //
 // On-page editing (#36, edit.ts) keeps the grid and changes what it shows: update() repaints the
 // cells whose computed value changed when the rows and columns are the same (a rebuild otherwise,
-// with the view carried over), setHolders() marks the rows other people hold with their initials
-// in the row number, the editor's Row and Column menus sit in the bar (`tools`), and the slot
+// with the view carried over), setHolders() tints the rows other people hold (the holder named on
+// the row number for a pointer and a screen reader), the editor's Row and Column menus sit in the bar (`tools`), and the slot
 // between the bar and the cells is kept for what the editor adds there.
 import {
   a1,
@@ -68,7 +68,7 @@ export interface Grid {
   update(sheet: Sheet, ev: SheetEvaluation): boolean;
   /** Paint a cell again from its computed value (after its field closed). */
   repaint(row: number, col: number): void;
-  /** Rows other people hold: A1 row to the holder's email (shown as initials, named in full). */
+  /** Rows other people hold: A1 row to the holder's email (tinted, the name on the row number). */
   setHolders(rows: ReadonlyMap<number, string>): void;
   /** Cells the grid must not repaint (the one being edited). */
   setLocked(locked: (td: HTMLElement) => boolean): void;
@@ -96,21 +96,6 @@ function el<K extends keyof HTMLElementTagNameMap>(
   if (className) e.className = className;
   if (text !== undefined) e.textContent = text;
   return e;
-}
-
-/** "ana.costa-x1@example.com" -> "AC": two letters from an email's name part, for a held row. */
-export function initialsOf(email: string): string {
-  const words = email
-    .replace(/@.*$/, "")
-    .split(/[\s._+-]+/)
-    .filter((w) => /^\p{L}/u.test(w));
-  const letters =
-    words.length > 1
-      ? `${Array.from(words[0] ?? "")[0] ?? ""}${Array.from(words[1] ?? "")[0] ?? ""}`
-      : Array.from(words[0] ?? "")
-          .slice(0, 2)
-          .join("");
-  return letters.toLocaleUpperCase() || "?";
 }
 
 /** "ana.costa-x1@example.com" -> "Ana": a first name from an email, for short notes. */
@@ -471,6 +456,7 @@ export function buildGrid(
     setHolders(held) {
       for (const [row, tag] of holderTags) {
         if (held.has(row)) continue;
+        tag.parentElement?.removeAttribute("title");
         tag.remove();
         holderTags.delete(row);
         const tr = row === 1 ? names : rows[row - 2];
@@ -483,16 +469,15 @@ export function buildGrid(
         tr.classList.add("plinth-sheet__row--held");
         let tag = holderTags.get(row);
         if (!tag) {
-          tag = el(doc, "span", "plinth-sheet__holder");
+          tag = el(doc, "span", "plinth-sheet__holder plinth-sheet__sr");
           holderTags.set(row, tag);
           num.append(tag);
         }
-        // Initials inside the row number; the name in full for a pointer and a screen reader.
+        // The tint is the one cue on screen; the row number names the holder for a pointer and a
+        // screen reader (the edit bar lists who is editing).
         const said = `${personName(email)} is editing`;
-        const short = el(doc, "span", undefined, initialsOf(email));
-        short.setAttribute("aria-hidden", "true");
-        tag.replaceChildren(short, el(doc, "span", "plinth-sheet__sr", said));
-        tag.title = said;
+        tag.textContent = said;
+        num.title = said;
       }
     },
     setLocked(fn) {

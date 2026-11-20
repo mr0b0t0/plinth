@@ -103,10 +103,11 @@ test("two editors on one sheet: a held row, typing that arrives live, a row both
   await expect(field).toHaveValue("3");
   await field.fill("30");
 
-  // The editor sees the row held, with the owner's initials in it, and the value as it arrives.
-  const holder = frameOf(other).locator("tr.plinth-sheet__row--held .plinth-sheet__holder");
-  await expect(holder).toHaveAttribute("title", "Sheet is editing");
-  await expect(holder.locator("[aria-hidden=true]")).toHaveText("SO");
+  // The editor sees the row held (tinted, the owner named on its number), and the value as it
+  // arrives.
+  const held = frameOf(other).locator("tr.plinth-sheet__row--held th.plinth-sheet__rownum");
+  await expect(held).toHaveAttribute("title", "Sheet is editing");
+  await expect(held.locator(".plinth-sheet__holder")).toHaveText("Sheet is editing");
   await expect(cell(other, "B2")).toHaveText("30");
   await expect(cell(other, "B5")).toHaveText("37");
   await expect(other.getByRole("region", { name: "Editing on the page" })).toContainText(s.owner);

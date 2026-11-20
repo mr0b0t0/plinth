@@ -81,7 +81,7 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   Tab move on, Escape puts it back, a checkbox toggles with Space, and pasting cells from a
   spreadsheet fills the rows they cover. Row and Column menus in the sheet's bar insert and
   delete rows and columns and change a column's name, type and format. The others editing see
-  each change as it is typed, and rows someone holds are tinted with their initials. Save version
+  each change as it is typed, and rows someone holds are tinted. Save version
   (or a pause) makes the next version, as for docs. On-page editing is a sheet's one Edit: the
   menu offers no source editor beside it.
   A version published meanwhile (by an agent, the CLI, REST or a restore) is never merged into the

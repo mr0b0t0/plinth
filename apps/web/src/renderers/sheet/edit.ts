@@ -501,8 +501,9 @@ export class SheetEditor {
   }
 
   /**
-   * A held row: its tint and initials say who holds it, so only a screen reader is told, unless
-   * the holder went idle and the row can be taken over (a choice, so a notice with the button).
+   * A held row: its tint says it is held (the name on its row number), so only a screen reader
+   * is told, unless the holder went idle and the row can be taken over (a choice, so a notice
+   * with the button).
    */
   private explainHeld(l: ClientLease, what: string): void {
     const idle = Date.now() - l.at >= LIMITS.liveLeaseIdleS * 1000;
@@ -1344,17 +1345,17 @@ export class SheetEditor {
     for (const t of SHEET_COLUMN_TYPES) {
       const o = d.createElement("option");
       o.value = t;
-      o.textContent = t;
+      o.textContent = t === "url" ? "URL" : `${t[0]?.toUpperCase()}${t.slice(1)}`;
       type.append(o);
     }
     type.value = c.type;
     field("Type", type);
     const style = d.createElement("select");
     for (const [v, t] of [
-      ["", "automatic"],
-      ["plain", "plain"],
-      ["percent", "percent"],
-      ["currency", "currency"],
+      ["", "Automatic"],
+      ["plain", "Plain"],
+      ["percent", "Percent"],
+      ["currency", "Currency"],
     ] as const) {
       const o = d.createElement("option");
       o.value = v;

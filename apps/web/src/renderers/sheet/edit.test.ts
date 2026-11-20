@@ -364,6 +364,22 @@ describe("solo editing", () => {
     expect(form.getAttribute("aria-label")).toBe("Column B settings");
     const actions = [...form.querySelectorAll("button")].map((b) => b.textContent);
     expect(actions).toEqual(["Cancel", "Apply"]);
+    // The selects show words, and keep the stored values.
+    const [types, formats] = [...form.querySelectorAll("select")];
+    expect([...(types?.options ?? [])].map((o) => [o.value, o.text])).toEqual([
+      ["text", "Text"],
+      ["number", "Number"],
+      ["date", "Date"],
+      ["checkbox", "Checkbox"],
+      ["select", "Select"],
+      ["url", "URL"],
+    ]);
+    expect([...(formats?.options ?? [])].map((o) => o.text)).toEqual([
+      "Automatic",
+      "Plain",
+      "Percent",
+      "Currency",
+    ]);
     key(form.querySelector("input") as HTMLInputElement, "Escape");
     expect(document.querySelector(".plinth-sheet__panel")).toBeNull();
     expect(document.activeElement).toBe(cell("B2"));
@@ -432,11 +448,16 @@ describe("room editing", () => {
     const { ws } = start();
     ws.frame({ t: "leased", lease: "l9", start: 1, end: 2, holder: "s2", by: "bo@example.org" });
     await tick();
-    // Initials inside the row number; the name for a pointer and a screen reader.
-    const tag = cell("A2").closest("tr")?.querySelector(".plinth-sheet__holder");
-    expect(tag?.querySelector("[aria-hidden=true]")?.textContent).toBe("BO");
-    expect(tag?.querySelector(".plinth-sheet__sr")?.textContent).toBe("Bo is editing");
-    expect(tag?.getAttribute("title")).toBe("Bo is editing");
+    // The row is tinted, with no badge; its number names the holder for a pointer and a screen
+    // reader.
+    const held = cell("A2").closest("tr");
+    expect(held?.classList.contains("plinth-sheet__row--held")).toBe(true);
+    const num = held?.querySelector("th.plinth-sheet__rownum");
+    expect(num?.getAttribute("title")).toBe("Bo is editing");
+    expect(num?.querySelector(".plinth-sheet__holder.plinth-sheet__sr")?.textContent).toBe(
+      "Bo is editing",
+    );
+    expect(num?.textContent).toBe("2Bo is editing");
     // Their typing arrives.
     ws.frame({
       t: "op",
@@ -466,6 +487,7 @@ describe("room editing", () => {
     ws.frame({ t: "released", lease: "l9" });
     await tick();
     expect(cell("A2").closest("tr")?.querySelector(".plinth-sheet__holder")).toBeNull();
+    expect(cell("A2").closest("tr")?.querySelector("th")?.hasAttribute("title")).toBe(false);
     button("Insert below").click();
     const op = { op: "insert_rows", before: 4, count: 1 };
     expect(ws.sent.at(-1)).toEqual({ t: "struct", rev: 4, op });
