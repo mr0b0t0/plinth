@@ -1,7 +1,7 @@
 // /invitation-emails: signed-in people turn invitation emails to their own address off and on
 // again; without a session the page sends them to sign in and comes back here.
 import { invitationSkippedSummary } from "@plinth/shared";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { json, ME, stubApi } from "../components/viewer/test-utils.ts";
@@ -41,10 +41,16 @@ describe("InvitationEmails", () => {
     const Page = await loadPage();
     render(<Page />);
     expect(await screen.findByText(ME.email)).toBeTruthy();
-    expect(screen.getByText(/are on\./)).toBeTruthy();
+    // The page is its title, one sentence and one button, in either state.
+    const page = () => within(screen.getByRole("main"));
+    const onlyText = () =>
+      [...screen.getByRole("main").querySelectorAll("p")].map((p) => p.textContent);
+    expect(onlyText()).toEqual([`Invitation emails to ${ME.email} are on.`]);
+    expect(page().getAllByRole("button")).toHaveLength(1);
     await userEvent.click(screen.getByRole("button", { name: "Stop these emails" }));
     expect(await screen.findByRole("button", { name: "Turn them back on" })).toBeTruthy();
-    expect(screen.getByText(/are off\./)).toBeTruthy();
+    expect(onlyText()).toEqual([`Invitation emails to ${ME.email} are off.`]);
+    expect(page().getAllByRole("button")).toHaveLength(1);
     await userEvent.click(screen.getByRole("button", { name: "Turn them back on" }));
     expect(await screen.findByRole("button", { name: "Stop these emails" })).toBeTruthy();
     // Only the setting goes up: never an address.

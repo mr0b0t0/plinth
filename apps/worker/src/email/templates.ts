@@ -136,9 +136,8 @@ export function invitationEmail(opts: {
   // in an inbox list either.
   const subject = `${who} shared "${subjectTitle}" with you`;
   const role = ROLE_SENTENCE[opts.kind][opts.role];
-  const authored = `The title${name ? " and the name" : ""} above were written by the person who shared it, not by ${PRODUCT_NAME}.`;
+  const authored = `${name ? "The title and the name above were" : "The title above was"} written by the person who shared it, not by ${PRODUCT_NAME}.`;
   const why = `You got this email because ${opts.ownerEmail} added ${opts.to} on ${PRODUCT_NAME}. If you did not expect it, you can ignore it.`;
-  const stop = `To stop these emails from everyone on ${PRODUCT_NAME}, sign in at:`;
   const text = [
     `${who} shared "${title}" with you on ${PRODUCT_NAME}.`,
     role,
@@ -148,8 +147,7 @@ export function invitationEmail(opts: {
     "",
     authored,
     why,
-    stop,
-    opts.optOutLink,
+    `Stop these emails: ${opts.optOutLink}`,
   ].join("\n");
   // The footer is dimmed with opacity, not a fixed grey, so it stays legible in dark mail clients.
   const html = `<!doctype html><html lang="en"><body style="font-family:system-ui,sans-serif;line-height:1.5">

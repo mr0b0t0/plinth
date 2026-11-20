@@ -365,10 +365,29 @@ describe("invitation emails: List-Unsubscribe and the footer", () => {
     expect(m.headers).toEqual({ "List-Unsubscribe": "<https://app.example/invitation-emails>" });
     // RFC 8058 one-click needs a token in the URL; there is none (DECISIONS.md).
     expect(Object.keys(m.headers ?? {})).not.toContain("List-Unsubscribe-Post");
-    expect(m.text).toContain("To stop these emails from everyone on Plinth, sign in at:");
-    expect(m.text.trimEnd().endsWith("https://app.example/invitation-emails")).toBe(true);
+    expect(m.text.trimEnd().split("\n").at(-1)).toBe(
+      "Stop these emails: https://app.example/invitation-emails",
+    );
     expect(m.html).toContain(
       '<a href="https://app.example/invitation-emails">Stop these emails</a>',
+    );
+  });
+
+  it("the footer's first line agrees with what it names: the title, or the title and the name", () => {
+    const base = {
+      to: "bo@example.org",
+      kind: "artifact" as const,
+      ownerEmail: "ada@example.org",
+      title: "Plan",
+      role: "viewer" as const,
+      link: "https://app.example/a/abc",
+      optOutLink: "https://app.example/invitation-emails",
+    };
+    expect(invitationEmail({ ...base, ownerName: null }).text).toContain(
+      "The title above was written by the person who shared it, not by Plinth.",
+    );
+    expect(invitationEmail({ ...base, ownerName: "Ada" }).text).toContain(
+      "The title and the name above were written by the person who shared it, not by Plinth.",
     );
   });
 

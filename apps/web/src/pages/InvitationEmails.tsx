@@ -76,16 +76,7 @@ export default function InvitationEmails() {
     body = (
       <Stack gap={4}>
         <p role="status">
-          {receive ? (
-            <>
-              Invitation emails to <strong>{email}</strong> are on.
-            </>
-          ) : (
-            <>
-              Invitation emails to <strong>{email}</strong> are off. People can still share with
-              you; they are told you turned these emails off.
-            </>
-          )}
+          Invitation emails to <strong>{email}</strong> are {receive ? "on" : "off"}.
         </p>
         {error && (
           <p className="text-danger" role="alert">
@@ -109,10 +100,7 @@ export default function InvitationEmails() {
 
   return (
     <PublicShell width="reading">
-      <PageHeader
-        title="Invitation emails"
-        description="When someone shares an artifact or a category with you, they can have Plinth email you the link."
-      />
+      <PageHeader title="Invitation emails" />
       {body}
     </PublicShell>
   );
