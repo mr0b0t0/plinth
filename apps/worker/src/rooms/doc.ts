@@ -1000,6 +1000,11 @@ export class LiveDoc {
    * It is still this checkpoint's when version `n` holds exactly the text it saved and the draft
    * is at or past the snapshot's rev: the draft goes on from `n` (a freeze against `n` ends as
    * `rebased`, with the lines and the edits since kept).
+   *
+   * A deploy window, at most once per room: `kept` is null only until the room first stores its
+   * record (a snapshot, a new epoch), and code with the record always stores one before a save,
+   * so only a save started under code without it can arrive here. It loses nothing: a finish it
+   * refuses goes to `outside`, which keeps the draft and freezes it for review.
    */
   private async unrecordedOwn(
     doc: Loaded,
