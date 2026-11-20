@@ -11,8 +11,8 @@ Add a line under **Unreleased** in the pull request that makes a change people w
 ## Unreleased
 
 - **Who is viewing: names and the people list.** Set your name from the account menu ("Your
-  name…"); pages that show who is viewing now show it beside your email, on `plinth.viewer`, on
-  the entries you write and in live rooms. A page that declares `data viewer people` lets its
+  name…") and the sidebar shows it; pages that show who is viewing now show it beside your email,
+  on `plinth.viewer`, on the entries you write and in live rooms. A page that declares `data viewer people` lets its
   owner and editors list everyone it is shared with (`plinth.people.list()`, with search), and the
   line under the bar tells every invited viewer. On such a page their agents get the same list in
   `list_artifact_data` and `GET /api/v1/artifacts/:ref/people`; agents see authors' names on any

@@ -1001,10 +1001,15 @@ never a directory.
   Until then the entry has `name: null`, exactly like an address with no account, and `q` does not
   match the name, so adding addresses never tells the owner which have an account or what they are
   called (`policy.ts accessListShowsName`).
-- **Telling the viewer.** The gate's `people` block (`name`, `list`) adds to the line under the
-  bar: the name the page sees beside the email, and, on a page that declares `people`, "The owner
-  and editors can see who has access", shown to every identified viewer since their address is on
-  the list.
+- **Telling the viewer.** With the gate's `people` block (`name`, `list`), the line under the bar
+  says in two sentences who the page sees, what it saves and who sees what: "This page sees you as
+  {name} ({email}) and saves what you enter. People with access see entries and who wrote them; the
+  owner and editors see who has access." The email stands alone without a name, the list clause is
+  there only on a page that declares `people` (shown to every identified viewer, since their
+  address is on the list), and a live room says it "shows it to the other people who have it
+  open". Without the block the line reads as before.
+- **In the app.** Once a name is set, the account chip at the foot of the sidebar shows it, and
+  the account menu's "Signed in as" header keeps the email.
 - **Agents and REST.** No new MCP tool. Document authors gain `name` for owners' and editors'
   agents on any page, beside the `viewer_id` that already tells whose a `u_` document is (only its
   person can create it). The access list reaches agents only where the page offers it: when the

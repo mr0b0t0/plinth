@@ -73,6 +73,33 @@ describe("AppShell", () => {
     expect(onSignOut).toHaveBeenCalledTimes(1);
   });
 
+  it("labels the account chip with the name once set, and keeps the email in the menu", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.endsWith("/config")) return json({ single_user_mode: false });
+        if (url.endsWith("/me")) return json({ id: "u1", email: "ada@example.org", name: "Ada" });
+        return json({}, 404);
+      }),
+    );
+    const { AppShell } = await loadShell();
+    const user = userEvent.setup();
+    render(
+      <AppShell>
+        <p>Page body</p>
+      </AppShell>,
+    );
+    const chip = await screen.findByRole("button", { name: "Account: Ada" });
+    expect(chip.textContent).toBe("Ada");
+    await user.click(chip);
+    expect(screen.getByRole("menu").parentElement?.textContent).toContain(
+      "Signed in asada@example.org",
+    );
+    await user.click(screen.getByRole("menuitem", { name: "Your name…" }));
+    expect(screen.getByRole("dialog", { name: "Your name" })).toBeTruthy();
+  });
+
   it("gives admins Stats and Reports, once each, and nobody else either", async () => {
     const stub = (isAdmin: boolean) =>
       vi.stubGlobal(

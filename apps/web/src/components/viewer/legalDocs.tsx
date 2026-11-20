@@ -11,7 +11,7 @@ export const LEGAL_DOC_IDS = ["terms", "privacy", "acceptable-use"] as const;
 export type LegalDocId = (typeof LEGAL_DOC_IDS)[number];
 
 /** When the text of these pages last changed. Update it with any change to the wording. */
-export const LEGAL_UPDATED = "19 November 2026";
+export const LEGAL_UPDATED = "20 November 2026";
 
 export const isLegalDocId = (v: string): v is LegalDocId =>
   (LEGAL_DOC_IDS as readonly string[]).includes(v);
@@ -180,12 +180,12 @@ function privacy(op: OperatorInfo, cfg: LegalConfig): LegalDoc {
         body: (
           <ul>
             <li>
-              <strong>Your email address</strong>, and a name if you add one: to sign you in, to
-              show who owns, edits or comments on an artifact and, on pages that show who is
-              viewing, to the page and the people it is shared with. A page can also let its owner,
-              its editors and their agents see everyone it is shared with, by email address and
-              role, and by name once that person has commented, entered something or published a
-              version on it.
+              <strong>Your email address</strong>, and a name if you add one: to sign you in and to
+              show who owns, edits or comments on an artifact. On pages that show who is viewing,
+              they are also shown to the page and to the people it is shared with. A page can also
+              let its owner, its editors and their agents see everyone it is shared with, by email
+              address and role, and by name once that person has commented, entered something or
+              published a version on it.
             </li>
             <li>
               <strong>Your artifacts</strong>: every version of the pages, files, titles, categories
