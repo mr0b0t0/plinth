@@ -20,6 +20,7 @@ import { lstatSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import {
   badPaths,
+  canonicalSheet,
   checkLimits,
   defaultLimits,
   hashFiles,
@@ -523,16 +524,14 @@ async function verify(api, result, files) {
   const source = d.html ?? d.content;
   const local = new Map(files.map((f) => [f.path, f.sha256]));
   // A sheet's JSON lines are stored in their canonical spelling, which can differ from the file
-  // byte for byte: the source is checked to be there, not compared.
+  // byte for byte (key order, spaces, a final newline): both sides are compared in that spelling.
   const canonical = d.type === "sheet" && typeof source === "string";
-  if (canonical) {
-    const file = files.find((f) => f.path === d.source_path);
-    if (file) remote.set(file.path, file.sha256);
-  } else if (typeof source === "string") {
-    remote.set(d.source_path, sourceTextHash(source));
+  if (typeof source === "string") {
+    const spell = canonical ? (text) => canonicalSheet(text) ?? text : (text) => text;
+    remote.set(d.source_path, sourceTextHash(spell(source)));
     const file = files.find((f) => f.path === d.source_path);
     if (file)
-      local.set(file.path, sourceTextHash(new TextDecoder().decode(readFileSync(file.abs))));
+      local.set(file.path, sourceTextHash(spell(new TextDecoder().decode(readFileSync(file.abs)))));
   }
   const differ = files.filter(
     (f) =>

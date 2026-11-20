@@ -1108,7 +1108,8 @@ not edited on its page yet.
 - **Canonical storage.** The Worker stores every accepted sheet re-serialised: the header's keys in
   a fixed order, one `JSON.stringify` per row with trailing empty cells trimmed, no final newline.
   Each row therefore has one spelling, and a version diff shows only the rows that changed. This
-  holds for inline publishes, updates and bundles alike; the CLI's read-back allows for it.
+  holds for inline publishes, updates and bundles alike; the CLI's read-back allows for it by
+  comparing the stored sheet with the folder's in that canonical spelling, never by skipping it.
 - **Formulas.** Plinth's own Excel-compatible interpreter (`packages/shared/src/sheet/formula/`),
   the same code in the Worker and in the browser: A1 references (`B7`, `$B$7`), ranges (`A1:B5`,
   `B:B`, `2:5`), Excel's operators and precedence (`-2^2` is 4), and these functions, each with

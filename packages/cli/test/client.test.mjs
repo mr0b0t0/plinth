@@ -20,8 +20,9 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { after, before, beforeEach, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
+import { parseSheet, serializeSheet } from "../../shared/src/sheet/format.ts";
 import { claudeCodeConnectText } from "../bin/client/connect.mjs";
-import { checkLimits } from "../bin/client/files.mjs";
+import { canonicalSheet, checkLimits } from "../bin/client/files.mjs";
 import { ApiError } from "../bin/client/http.mjs";
 import { HOSTED_ORIGIN, resolveOrigin } from "../bin/client/origin.mjs";
 import { isVersionConflict, splitWarnings } from "../bin/client/publish.mjs";
@@ -402,6 +403,110 @@ describe("plinth publish", () => {
     const stored = fake.state.artifacts.get(out.id).versions[0];
     // The fake stores it without the final newline, as the server's canonical form may differ.
     assert.equal(stored.get("sheet.jsonl").bytes.toString(), sheet.slice(0, -1));
+  });
+
+  describe("a sheet's read-back compares sheet.jsonl in its canonical spelling", () => {
+    const v1 =
+      '{"plinth":"sheet","v":1,"columns":[{"name":"Item"},{"name":"Qty","type":"number"}]}\n["Apples",3]\n';
+    const v2 = v1.replace('["Apples",3]', '["Apples",4]');
+    // The same sheet as v1, spelled the way people write it: keys out of order, no column type,
+    // spaces, a number as 3.0, CRLF line ends.
+    const v1Loose =
+      '{ "columns": [ {"name": "Item"}, {"type": "number", "name": "Qty"} ], "v": 1, "plinth": "sheet" }\r\n[ "Apples", 3.0 ]\r\n';
+    const writes = (from) => since(from).filter((q) => q.method === "PUT" || q.method === "POST");
+    const publishNew = async (text) => {
+      const r = await plinth(["publish", build({ "sheet.jsonl": text }), "--json"], {
+        extraEnv: asPat(),
+      });
+      assert.equal(r.code, 0, r.stderr);
+      return fake.state.artifacts.get(JSON.parse(r.stdout).id);
+    };
+    const rerun = (dir, a) =>
+      plinth(["publish", dir, "--id", a.id, "--base-version", "1", "--json"], {
+        extraEnv: asPat(),
+      });
+    const storedText = (a, n) => a.versions[n - 1].get("sheet.jsonl").bytes.toString();
+
+    it("matches the shared serializer on every rule it restates", () => {
+      const cases = [
+        v1,
+        v1Loose,
+        '{"plinth":"sheet","v":1,"freeze":{"cols":0},"columns":[{"name":"A"},{"name":"B"}]}\n[]\n[null,null]\n["a",null]',
+        '{"freeze":{"cols":2},"plinth":"sheet","v":1,"columns":[{"name":"A"},{"name":"B"}]}\n["x",1e2]',
+        '{"plinth":"sheet","v":1,"columns":[{"options":["Café","Tea"],"type":"select","name":"Café"}]}\n["Tea"]',
+        '{"plinth":"sheet","v":1,"columns":[{"name":"P","width":120,"type":"number","format":{"grouping":false,"decimals":2,"currency":"EUR","style":"currency"}}]}\n[12.50]\n["=SUM(A2:A2)"]',
+        '﻿{"plinth":"sheet","v":1,"columns":[{"name":"T"},{"name":"C","type":"checkbox"}]}\n["\\u0041\\n\\"q\\"",true]\n[-0,false]\n',
+      ];
+      for (const text of cases) {
+        // The server receives the text without a leading BOM (it is dropped on decoding).
+        const parsed = parseSheet(text.replace(/^﻿/, ""));
+        assert.ok(parsed.ok, `${text}: ${JSON.stringify(parsed.errors)}`);
+        assert.equal(canonicalSheet(text), serializeSheet(parsed.sheet), text);
+        // The canonical form is a fixed point, so comparing both sides in it is safe.
+        assert.equal(canonicalSheet(serializeSheet(parsed.sheet)), serializeSheet(parsed.sheet));
+      }
+      assert.equal(canonicalSheet("not json"), null);
+      assert.equal(
+        canonicalSheet('{"plinth":"sheet","v":1,"columns":[{"name":"A"}]}\n\n[1]'),
+        null,
+      );
+      assert.equal(canonicalSheet('{"plinth":"sheet","v":1,"columns":[{"name":"A"}]}\n{}'), null);
+    });
+
+    it("--base-version N with a changed cell publishes N+1 (it is not 'nothing to publish')", async () => {
+      const a = await publishNew(v1);
+      const dir = build({ "sheet.jsonl": v2 });
+      const r = await rerun(dir, a);
+      assert.equal(r.code, 0, r.stderr);
+      const out = JSON.parse(r.stdout);
+      assert.equal(out.outcome, undefined);
+      assert.equal(out.version, 2);
+      assert.equal(out.verified, true);
+      assert.equal(a.versions.length, 2);
+      assert.equal(storedText(a, 2), v2.slice(0, -1));
+    });
+
+    it("--base-version N when someone else made N+1: a conflict (exit 3), nothing sent", async () => {
+      const a = await publishNew(v1);
+      fake.commitFiles(a, { "sheet.jsonl": v1.replace("Apples", "Pears").slice(0, -1) });
+      const from = fake.state.requests.length;
+      const r = await rerun(build({ "sheet.jsonl": v2 }), a);
+      assert.equal(r.code, 3, r.stderr);
+      assert.match(r.stderr, /changed since v1 \(now v2\)/);
+      assert.equal(writes(from).length, 0);
+      assert.equal(a.versions.length, 2);
+    });
+
+    it("a folder spelled differently from the stored sheet still matches it", async () => {
+      fake.state.canonicalSheet = (text) => serializeSheet(parseSheet(text).sheet);
+      try {
+        const a = await publishNew(v1Loose);
+        assert.notEqual(storedText(a, 1), v1Loose);
+        const same = await rerun(build({ "sheet.jsonl": v1Loose }), a);
+        assert.equal(same.code, 0, same.stderr);
+        assert.equal(JSON.parse(same.stdout).outcome, "nothing_to_publish");
+        const changed = await rerun(build({ "sheet.jsonl": v1Loose.replace("3.0", "5") }), a);
+        assert.equal(changed.code, 0, changed.stderr);
+        assert.equal(JSON.parse(changed.stdout).version, 2);
+        assert.equal(JSON.parse(changed.stdout).verified, true);
+      } finally {
+        fake.state.canonicalSheet = undefined;
+      }
+    });
+
+    it("fails verification when the stored sheet really differs", async () => {
+      const a = await publishNew(v1);
+      fake.state.tamperSource = true;
+      try {
+        const r = await plinth(["publish", build({ "sheet.jsonl": v2 }), "--id", a.id], {
+          extraEnv: asPat(),
+        });
+        assert.equal(r.code, 1, r.stderr);
+        assert.match(r.stdout, /Verification failed[\s\S]*differs: sheet\.jsonl/);
+      } finally {
+        fake.state.tamperSource = false;
+      }
+    });
   });
 
   it("imports one .csv file as a new sheet, and an .xlsx as the next version of one", async () => {

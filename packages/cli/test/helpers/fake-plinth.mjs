@@ -27,13 +27,15 @@ const SOURCES = {
 
 /**
  * A sheet's source as the server stores it: canonical. The fake drops a final newline (the real
- * one re-serialises every line), and an import (content_format csv or xlsx) becomes a one-row
- * stand-in sheet that names the format.
+ * one re-serialises every line; `state.canonicalSheet`, a text-to-text function, stands in for
+ * that when set), and an import (content_format csv or xlsx) becomes a one-row stand-in sheet that
+ * names the format.
  */
-function storedSheet(text, format) {
+function storedSheet(text, format, canonical) {
   if (format === "csv" || format === "xlsx") {
     return `{"plinth":"sheet","v":1,"columns":[{"name":"Imported","type":"text"}]}\n["${format}"]`;
   }
+  if (canonical) return canonical(text);
   return text.endsWith("\n") ? text.slice(0, -1) : text;
 }
 const sourceOf = (type) => SOURCES[type] ?? "index.html";
@@ -375,7 +377,10 @@ export async function startFakePlinth(options = {}) {
           entries.map((e) => [
             e.path,
             t.type === "sheet" && e.path === "sheet.jsonl"
-              ? Buffer.from(storedSheet(e.bytes.toString("utf8")), "utf8")
+              ? Buffer.from(
+                  storedSheet(e.bytes.toString("utf8"), undefined, state.canonicalSheet),
+                  "utf8",
+                )
               : e.bytes,
           ]),
         );
@@ -442,7 +447,13 @@ export async function startFakePlinth(options = {}) {
         };
         state.artifacts.set(a.id, a);
         const files = new Map([
-          ["sheet.jsonl", Buffer.from(storedSheet(input.content, input.content_format), "utf8")],
+          [
+            "sheet.jsonl",
+            Buffer.from(
+              storedSheet(input.content, input.content_format, state.canonicalSheet),
+              "utf8",
+            ),
+          ],
         ]);
         return send(res, 201, commit(a, files, input.category));
       }
@@ -545,7 +556,12 @@ export async function startFakePlinth(options = {}) {
             );
           files.set(
             sourceOf(a.type),
-            Buffer.from(a.type === "sheet" ? storedSheet(src, input.content_format) : src, "utf8"),
+            Buffer.from(
+              a.type === "sheet"
+                ? storedSheet(src, input.content_format, state.canonicalSheet)
+                : src,
+              "utf8",
+            ),
           );
           const missing = [];
           for (const x of input.assets ?? []) {
