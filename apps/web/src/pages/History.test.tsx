@@ -92,9 +92,8 @@ describe("History: restore", () => {
     expect(screen.queryByRole("menuitem", { name: "Restore v1" })).toBeNull();
     const { user, dialog } = await openRestore("Restore settings");
     expect(within(dialog).getByText("Restore v1's settings?")).toBeTruthy();
-    expect(dialog.textContent).toContain("This publishes v1's settings as v3.");
     expect(dialog.textContent).toContain(
-      "what is on the whiteboard is not kept in versions, so it stays as it is now",
+      "This publishes v1's settings as v3. What is on the whiteboard stays as it is.",
     );
     await user.click(within(dialog).getByRole("button", { name: "Restore settings" }));
     expect(
