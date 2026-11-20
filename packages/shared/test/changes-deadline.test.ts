@@ -95,8 +95,12 @@ function expectBoardEdits(items: ChangeItem[]): void {
   });
 }
 
-/** `describeChanges` and its wall-clock time in ms. */
+/**
+ * `describeChanges` and its wall-clock time in ms, on a clock that stands still: the item cap has
+ * to stop the list, since a slow machine can never reach the deadline first.
+ */
 function timed(...args: Parameters<typeof describeChanges>) {
+  vi.spyOn(changeClock, "now").mockReturnValue(0);
   const t = Date.now();
   const list = describeChanges(...args);
   return { list, ms: Date.now() - t };
@@ -137,11 +141,13 @@ describe("the collector's deadline", () => {
 });
 
 describe("one deadline for a whole change list", () => {
-  const margin = 500;
+  // About three times what CI takes for the doc of 2,000 lists (0.7 to 1 s; 0.3 s on a laptop),
+  // so a busy machine passes; work that ran on past the item cap would take ten times as long.
+  const bound = 3000;
 
-  it(`stops a doc of ${N} changed lists at the item cap, within totalMs`, () => {
+  it(`stops a doc of ${N} changed lists at the item cap, not the deadline`, () => {
     const { list, ms } = timed("doc", crates(N, false), crates(N, true));
-    expect(ms).toBeLessThan(CHANGE_LIMITS.totalMs + margin);
+    expect(ms).toBeLessThan(bound);
     expect(list.truncated).toBe(true);
     expect(list.items).toHaveLength(CHANGE_LIMITS.maxItems);
     expectCrateEdits(list.items);
@@ -158,7 +164,7 @@ describe("one deadline for a whole change list", () => {
         ).join("\n"),
       ).join("\n\n");
     const { list, ms } = timed("doc", lists(false), lists(true));
-    expect(ms).toBeLessThan(CHANGE_LIMITS.totalMs + margin);
+    expect(ms).toBeLessThan(bound);
     expect(list.truncated).toBe(true);
     expect(list.items).toHaveLength(CHANGE_LIMITS.maxItems);
     list.items.forEach((item, n) => {
@@ -189,9 +195,9 @@ describe("one deadline for a whole change list", () => {
     expectCrateEdits(list.items);
   });
 
-  it(`stops a design of ${BOARDS} changed boards at the item cap, within totalMs`, () => {
+  it(`stops a design of ${BOARDS} changed boards at the item cap, not the deadline`, () => {
     const { list, ms } = timed("design", boards(false), boards(true));
-    expect(ms).toBeLessThan(CHANGE_LIMITS.totalMs + margin);
+    expect(ms).toBeLessThan(bound);
     expect(list.truncated).toBe(true);
     expect(list.items).toHaveLength(CHANGE_LIMITS.maxItems);
     expectBoardEdits(list.items);

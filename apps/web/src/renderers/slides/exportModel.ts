@@ -32,6 +32,7 @@ export type StyleOf = (
   | "backgroundColor"
   | "objectFit"
   | "borderBottomColor"
+  | "paddingTop"
 >;
 
 export interface Rect {
@@ -295,6 +296,16 @@ function tableItem(c: SlideCtx, table: HTMLTableElement, items: Item[]): void {
   if (rows.length === 0) return;
   const box = boxOf(c, c.g.rect(table));
   if (!box) return;
+  // The file draws a line's text lower in its line than the screen does (PowerPoint puts the
+  // leading of an exact line spacing above the text, CSS splits it above and below), so a table
+  // right under text would sit closer to its last line than on screen: it moves down by half that
+  // line's leading, which gives back the gap the screen shows.
+  const above = items[items.length - 1];
+  const last = above?.kind === "text" && !above.oneLine ? above.paras.at(-1) : undefined;
+  if (last && last.lineHeight > 1) {
+    const shift = round(((last.lineHeight - 1) * last.size) / 2 / 72);
+    box.y = round(Math.min(box.y + shift, c.canvas.height / PX_PER_INCH));
+  }
   const firstRow = table.rows[0];
   const colW = Array.from(firstRow?.cells ?? []).map((cell) =>
     round(c.g.rect(cell).width / c.scale / PX_PER_INCH),
@@ -302,11 +313,17 @@ function tableItem(c: SlideCtx, table: HTMLTableElement, items: Item[]): void {
   const st = c.g.style(table);
   const td = table.querySelector("td");
   const th = table.querySelector("th");
+  // The cells' top padding on screen, in inches, so each row's text sits as far below its rule as
+  // on screen. Only the vertical one: Arial is wider than the screen's font, so the side padding
+  // stays narrow in the file, or a header would wrap in its column. At most half an inch.
+  const padded = th ?? td;
+  const padY = padded ? Math.min(0.5, round(px(c.g.style(padded).paddingTop) / PX_PER_INCH)) : 0;
   items.push({
     kind: "table",
     box,
     rows,
     colW,
+    ...(padY > 0 ? { padY } : {}),
     size: round((px(st.fontSize) || 22) * PT_PER_PX, 1),
     color: hexColor(st.color) ?? c.fallbackColor,
     headColor: (th && hexColor(c.g.style(th).color)) ?? hexColor(st.color) ?? c.fallbackColor,

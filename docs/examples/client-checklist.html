@@ -197,7 +197,7 @@ function el(tag, className, text) {
 function who(a) {
   if (!a) return "Someone";
   if (a.name && a.email) return `${a.name} (${a.email})`;
-  return a.email || a.name || "Someone";
+  return a.email || "Someone";
 }
 
 /** A date with the month's name ("Nov 20", with the year when it is not this year). */

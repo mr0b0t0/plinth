@@ -11,6 +11,7 @@ import {
   STOPWORDS,
   similarity,
 } from "../src/index.ts";
+import { expectWithin } from "./timing.ts";
 
 const items = (type: Parameters<typeof describeChanges>[0], a: string, b: string) =>
   describeChanges(type, a, b).items;
@@ -524,16 +525,27 @@ describe("alignRegion", () => {
   });
 
   it("stays fast on a deck of many same-titled slides", () => {
-    const slides = Array.from({ length: 200 }, (_, k) => `# Same\n\nText ${k}`);
-    const t = Date.now();
-    const list = describeChanges(
-      "slides",
-      slides.join("\n\n---\n\n"),
-      slides.map((s) => `${s}, edited`).join("\n\n---\n\n"),
-    );
-    expect(Date.now() - t).toBeLessThan(200);
+    /** 200 slides, every one edited, titled by `title`. */
+    const decks = (title: (k: number) => string) => {
+      const slides = Array.from({ length: 200 }, (_, k) => `# ${title(k)}\n\nText ${k}`);
+      return [
+        slides.join("\n\n---\n\n"),
+        slides.map((s) => `${s}, edited`).join("\n\n---\n\n"),
+      ] as const;
+    };
+    const [a, b] = decks(() => "Same");
+    const list = describeChanges("slides", a, b);
     expect(list.items).toHaveLength(CHANGE_LIMITS.maxItems);
     expect(list.items.every((i) => i.kind === "changed")).toBe(true);
     expect(list.items[42]).toMatchObject({ where: "Slide 43", before: "Text 42" });
-  });
+    // Every pair of same-titled slides is as alike as the next, so the alignment breaks a tie in
+    // every cell of the 200 × 200 region. That must cost about what the same deck with a title of
+    // its own per slide costs in the same run (1.1 to 1.7 times, 3.3 with the machine loaded).
+    const [c, d] = decks((k) => `T${k}x`);
+    expectWithin(
+      () => describeChanges("slides", a, b),
+      () => describeChanges("slides", c, d),
+      { factor: 10 },
+    );
+  }, 60_000);
 });

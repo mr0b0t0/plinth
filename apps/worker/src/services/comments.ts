@@ -17,6 +17,7 @@ import {
   RATE_LIMITS,
 } from "@plinth/shared";
 import { and, asc, eq, inArray, isNull, type SQL, sql } from "drizzle-orm";
+import { parseScopes } from "../auth/principal.ts";
 import {
   type ArtifactRow,
   agentConnections,
@@ -318,9 +319,10 @@ export async function insertComment(
  *   turn into a request that looks like it came from the owner.
  * - "@claude" and "@codex" target the owner's connections of that client type.
  * - "@<handle>" targets the artifact owner's non-revoked connection whose label normalizes to that
- *   handle (mentionHandle), leaving out tokens limited to one artifact (they never hold
- *   mentions). Agent names win over a label with the same handle; if several labels share a
- *   handle, the oldest connection is the target. Never another user's connections.
+ *   handle (mentionHandle), leaving out tokens limited to one artifact and connections without
+ *   the `mentions` scope (neither could claim the task). Agent names win over a label with the
+ *   same handle; if several labels share a handle, the oldest connection is the target. Never
+ *   another user's connections.
  * - Anything else stays plain text.
  */
 async function mentionTasksFor(
@@ -347,19 +349,28 @@ async function mentionTasksFor(
   const tasks: MentionTaskRow[] = [];
   const labelNames = names.filter((n) => !MENTION_AGENT_NAMES[n]);
   const owned = labelNames.length
-    ? await ctx.db
-        .select({ id: agentConnections.id, label: agentConnections.label })
-        .from(agentConnections)
-        .where(
-          and(
-            eq(agentConnections.userId, artifact.ownerId),
-            isNull(agentConnections.revokedAt),
-            // A token limited to one artifact never holds mentions, so it could never claim one.
-            isNull(agentConnections.artifactId),
-          ),
-        )
-        .orderBy(asc(agentConnections.createdAt), sql`${agentConnections}.rowid`)
-        .all()
+    ? (
+        await ctx.db
+          .select({
+            id: agentConnections.id,
+            label: agentConnections.label,
+            scopes: agentConnections.scopes,
+          })
+          .from(agentConnections)
+          .where(
+            and(
+              eq(agentConnections.userId, artifact.ownerId),
+              isNull(agentConnections.revokedAt),
+              // A token limited to one artifact never holds mentions, so it could never claim one.
+              isNull(agentConnections.artifactId),
+            ),
+          )
+          .orderBy(asc(agentConnections.createdAt), sql`${agentConnections}.rowid`)
+          .all()
+      )
+        // Nor could a connection without the mentions scope: it never takes a handle, so a newer
+        // one with the same handle that can answer gets the task.
+        .filter((c) => parseScopes(c.scopes).has("mentions"))
     : [];
   const seenConnections = new Set<string>();
   for (const name of names) {

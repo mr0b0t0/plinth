@@ -1041,7 +1041,8 @@ Only the owner's own connections can be mentioned, and only commenters and edito
 - **The handle of a label.** `@<label>` uses the label lowercased, with spaces turned into `-` and
   other characters dropped: `Claude Code` is `@claude-code`. `claude` and `codex` always mean the
   client types, so a connection labelled `Claude` is reached only as a Claude-type connection. When
-  two labels make the same handle, the older connection gets it. Renaming a connection shows its
+  two labels make the same handle, the older connection gets it; a connection without the
+  `mentions` scope never takes a handle. Renaming a connection shows its
   handle, and the Connections page warns when a name cannot be reached.
 - **Agents do not hand work to each other.** A comment or reply written by an agent never creates
   a task, whatever it mentions. To pass work on, a person mentions the next agent.

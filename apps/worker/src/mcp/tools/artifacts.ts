@@ -35,6 +35,7 @@ import {
   SHEET_PUBLISH_NOTE,
   SLIDES_PUBLISH_NOTE,
   TYPE_UPDATE_NOTE,
+  UNTRUSTED_FILES_NOTE,
   UNTRUSTED_NOTE,
   WHITEBOARD_PUBLISH_NOTE,
 } from "../notes.ts";
@@ -114,7 +115,7 @@ export const registerArtifactTools: ToolRegistrar = ({ server, ctx, opaque, prev
         "{id, title, version, current_version}, or null when you cannot open it. " +
         "category is the owner's grouping, shown only to the owner (null for everyone else). " +
         LIVE_DRAFT_NOTE +
-        UNTRUSTED_NOTE,
+        UNTRUSTED_FILES_NOTE,
       inputSchema: getArtifactInput,
       annotations: MCP_TOOL_ANNOTATIONS.get_artifact,
     },
@@ -152,7 +153,7 @@ export const registerArtifactTools: ToolRegistrar = ({ server, ctx, opaque, prev
       title: "List versions",
       description:
         "Version history of an artifact: number, author (person or connection label), note and date. " +
-        UNTRUSTED_NOTE,
+        UNTRUSTED_FILES_NOTE,
       inputSchema: listVersionsInput,
       annotations: MCP_TOOL_ANNOTATIONS.list_versions,
     },

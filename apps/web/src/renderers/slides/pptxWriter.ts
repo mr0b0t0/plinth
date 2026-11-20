@@ -122,7 +122,7 @@ function addItem(slide: Slide, item: Item, images: ReadonlyMap<string, string>):
         fontFace: SANS,
         fontSize: item.size,
         color: item.color,
-        margin: [0.04, 0.08, 0.04, 0.08],
+        margin: [item.padY ?? 0.04, 0.08, item.padY ?? 0.04, 0.08],
         autoPage: false,
       },
     );
