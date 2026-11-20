@@ -10,6 +10,18 @@ Add a line under **Unreleased** in the pull request that makes a change people w
 
 ## Unreleased
 
+- **Dashboard previews in the list, and one card height.** Each row of the list view starts with a
+  small preview of the page, its thumbnail, in place of the page glyph (the glyph stays until a
+  thumbnail exists). A card shows its category as plain text on its info line instead of a chip on
+  a line of its own, so every card in the grid has the same height; a long name ends in "…" and
+  shows in full on hover. On phones the category moves from beside the title to a row's second
+  line, and on a card it takes the place of "You".
+- **Download a deck as .pptx.** **Download .pptx** in a deck's menu saves it as an editable
+  PowerPoint file (Keynote and Google Slides open it too): one slide per slide with its text,
+  lists, tables, images, links, footer, slide numbers and speaker notes, in the colours on screen.
+  The file is built in the viewer's browser from the slides as shown; nothing goes to the server.
+  On instances with opaque content isolation the file leaves out the deck's image files, and says
+  so. Plugin 0.23.0.
 - **Open pages follow new versions at once.** An artifact page that is open picks up a version an
   agent or editor publishes within seconds, without waiting for its 15 s check (one "Updated to
   vN" notice at a time, however many versions arrive in a row), and pages that keep
@@ -22,14 +34,8 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   viewer can never tell from the socket whether the owner or a collaborator has the page open.
   After a deploy, open pages reconnect spread over 10 seconds, and a busy shared page sends its
   views at most one "data changed" signal per spread (2 s at the default). A
-  reverse proxy must pass WebSocket upgrades on the app host too. Plugin 0.28.0: the agent's rule
+  reverse proxy must pass WebSocket upgrades on the app host too. Plugin 0.24.0: the agent's rule
   never to tell people to reload.
-- **Dashboard previews in the list, and one card height.** Each row of the list view starts with a
-  small preview of the page, its thumbnail, in place of the page glyph (the glyph stays until a
-  thumbnail exists). A card shows its category as plain text on its info line instead of a chip on
-  a line of its own, so every card in the grid has the same height; a long name ends in "…" and
-  shows in full on hover. On phones the category moves from beside the title to a row's second
-  line, and on a card it takes the place of "You".
 
 ## 0.6.0 (2026-11-20)
 

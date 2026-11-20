@@ -364,7 +364,8 @@ between slides, stored as `slides.md`, rendered as a deck by the same kind of fi
 The third is `design_system` (decided 2026-11-19): design tokens, guidelines and components as
 JSON, which agents read with `get_design_system` to build other pages; see
 [Design systems](#design-systems-decided-2026-11-19). Sheets join the same type registry
-(`packages/shared/src/artifactTypes.ts`) later; no .docx or .pptx export yet. Design:
+(`packages/shared/src/artifactTypes.ts`) later. A deck downloads as an editable `.pptx`, built in
+the viewer's browser ([Slides](#slides-decided-2026-11-19)); there is no `.docx` export. Design:
 `docs/superpowers/specs/2026-11-14-typed-outputs-doc-design.md`.
 
 ## Features
@@ -910,8 +911,36 @@ source editor work as for docs. A deck is not edited on its page.
   deck's size (an `@page` size in inches); from presenter view it prints a handout with each slide
   over its notes. The frame prints itself, after its images have decoded. Browsers that ignore
   `@page` sizes print on their own paper size, one slide per page.
+- **Download as .pptx (decided 2026-11-19).** "Download .pptx" in the ⋯ menu saves the deck as an
+  editable PowerPoint file, which Keynote and Google Slides open too. The frame builds it in the
+  viewer's browser from the slides as they are rendered, so the file matches the screen: one slide
+  per slide at 13.333x7.5 in (16:9) or 10.667x8 in (4:3), each heading, paragraph, list (with its
+  levels), code block, quote and table as editable text in a box where the screen shows it, at
+  the size the slide was fitted to, in the colours of the theme on screen (`auto` follows the
+  viewer's scheme), with Arial and Courier New; web and mail links, `#N` links to slides, the
+  footer and the slide numbers (each on one line, as on screen), the images and the speaker
+  notes. The writer (PptxGenJS 4.0.1, about
+  370 kB) is a second renderer file, `/__plinth/types/slides/slides-pptx.js`, which the deck
+  loads from its own origin only when someone downloads, so a first view never fetches it. Images
+  are the deck's own files, read by the frame from its own origin, with SVG, WebP and AVIF drawn
+  to PNG; under opaque isolation and the path fallback the frame cannot read its own files, so
+  file images are left out (inline `data:` images stay) and the app says so, counting each image
+  file once however many slides use it. Code blocks keep their blank lines, and characters an
+  XML file cannot hold (control characters other than tab and line breaks, such as a pasted
+  terminal colour code) are left out of the text, the notes and the title, so PowerPoint opens the
+  file without repairing it. Lines are spaced in exact points, the line height on screen, so each
+  box holds its text at the height measured on screen. The browser saves the file from the frame
+  and shows its own download; the app adds a toast only when images were left out or the file
+  could not be made, and the frame shows no notice of its own. While the file is being made the
+  menu item reads "Making the .pptx…" and is disabled. Asking again while a file is being made makes no second
+  one: that one answers the newer request. If the deck's frame is replaced while it makes
+  the file (a newer version, review mode), the app stops waiting at once and says to download
+  again if no file was saved. Nothing is sent to the server, and the file holds only
+  what the viewer can already read, notes included. There is no switch: it is part of the deck
+  type, and costs the instance nothing.
 - **Speaker notes are not secret.** Anyone who can open the deck can read them (presenter view,
-  the handout, the source). Agents treat deck text, notes included, as untrusted data.
+  the handout, the `.pptx`, the source). Agents treat deck text, notes included, as untrusted
+  data.
 - **Warnings.** A publish lists `slides_setting`, `slide_empty`, `slide_dense` and `missing_file`
   for the deck (see [Big builds](#big-builds-and-reuse-by-hash), "Publish warnings"); they never
   block. A deck with no slide or more than 500 is refused with a fix-it message. A warning that
@@ -922,12 +951,14 @@ source editor work as for docs. A deck is not edited on its page.
   deck (`plinth publish <dir>`), updates one with the Markdown in `content` (`--id`), and sends one
   with `plinth upload`, the `commands.npx` that `start_upload` returns.
 - **Security.** Deck Markdown and notes are rendered only on the artifact's content origin. The app
-  and the frame exchange only slide numbers, counts, view names and booleans (renderer protocol
-  version 1: `goto`, `view` and `print` from the app; `ready`, `position`, `view` and
-  `fullscreen` from the frame); see [docs/security.md](security.md#typed-artifacts).
-- **Not in this slice.** `.pptx` export and following a presenter over a live room come later;
-  transitions, builds, custom themes and fonts, math, diagrams and video are not planned for
-  slides.
+  and the frame exchange only slide numbers, counts, view names, booleans and the app's own nonce
+  (renderer protocol version 1: `goto`, `view`, `print` and `export { format, nonce }`
+  from the app; `ready`, `position`, `view`, `fullscreen` and
+  `exported { nonce, ok, images_skipped, opaque }` from the frame); see
+  [docs/security.md](security.md#typed-artifacts).
+- **Not in this slice.** Following a presenter over a live room comes later; transitions, builds,
+  custom themes and fonts, math, diagrams and video are not planned for slides, and a `.pptx` is
+  never imported.
 
 ### Comments from the page (decided 2026-11-19)
 

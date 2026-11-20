@@ -563,7 +563,8 @@ body {
 
 /* ---------- the overview: a grid of thumbnails, or one column when narrow ---------- */
 
-.plinth-slides[data-print] .plinth-slides__deck {
+.plinth-slides[data-print] .plinth-slides__deck,
+.plinth-slides[data-export] .plinth-slides__deck {
   position: static;
   flex-direction: column;
   gap: 24px;
@@ -571,7 +572,7 @@ body {
 }
 
 /* --cols comes from stage.ts overviewColumns; the gap and the padding are GUTTER. */
-.plinth-slides[data-mode="overview"]:not([data-print]) .plinth-slides__deck {
+.plinth-slides[data-mode="overview"]:not([data-print], [data-export]) .plinth-slides__deck {
   position: static;
   display: grid;
   grid-template-columns: repeat(var(--cols, 1), max-content);
@@ -586,12 +587,15 @@ body {
   padding-bottom: 64px;
 }
 
-/* While printing, every slide is laid out on screen too, so each can be fitted first. */
-.plinth-slides[data-print][data-mode] .plinth-slides__deck {
+/* While printing, every slide is laid out on screen too, so each can be fitted first. A .pptx
+   export does the same for one synchronous measure (export.ts), so it is never painted. */
+.plinth-slides[data-print][data-mode] .plinth-slides__deck,
+.plinth-slides[data-export][data-mode] .plinth-slides__deck {
   display: flex;
 }
 
-.plinth-slides[data-print][data-mode] .plinth-slides__frame:not([data-print-x]) {
+.plinth-slides[data-print][data-mode] .plinth-slides__frame:not([data-print-x]),
+.plinth-slides[data-export][data-mode] .plinth-slides__frame:not([data-print-x]) {
   display: block;
 }
 
