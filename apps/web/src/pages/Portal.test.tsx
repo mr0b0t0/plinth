@@ -93,14 +93,14 @@ describe("Portal", () => {
     const Portal = await loadPage();
     const user = userEvent.setup();
     render(<Portal params={{ id: ID }} />);
-    await screen.findByRole("heading", { name: "Confirm your email" });
-    expect(
-      screen.getByText("Sign in with a one-time code. New addresses get an account."),
-    ).toBeTruthy();
+    await screen.findByRole("heading", { name: "Sign in" });
+    expect(screen.getByText("Enter your email to get a one-time code.")).toBeTruthy();
     expect(screen.queryByText(/collection/i)).toBeNull();
     await user.type(screen.getByRole("textbox", { name: "Email" }), "client@example.org");
     await user.click(screen.getByRole("button", { name: "Send code" }));
     await user.type(await screen.findByRole("textbox", { name: "Six-digit code" }), "123456");
+    // The sent-code line is the only text above the code field.
+    expect(screen.queryByText("Enter your email to get a one-time code.")).toBeNull();
     await user.click(screen.getByRole("button", { name: "Confirm code" }));
     expect(await screen.findByRole("heading", { name: "Acme Corp: reports" })).toBeTruthy();
     const code = api.calls.find((c) => c.path === `/portals/${ID}/code`);
@@ -121,6 +121,8 @@ describe("Portal", () => {
     expect(notice.textContent).toBe(
       "You are signed in as ada@example.org, which has no access. Confirming another address switches you to it.",
     );
+    // The notice is the only explanation: no lead asking a signed-in person to sign in.
+    expect(screen.queryByText("Enter your email to get a one-time code.")).toBeNull();
   });
 
   it("on a single-user instance, the notice does not say the code switches accounts", async () => {
@@ -137,7 +139,7 @@ describe("Portal", () => {
     const notice = await screen.findByText(/You are signed in as/);
     expect(notice.textContent).toContain("You can confirm another address below.");
     expect(notice.textContent).not.toContain("switches");
-    expect(screen.getByText(/You do not need an account\./)).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Confirm your email" })).toBeTruthy();
   });
 
   it("an unknown portal is not found", async () => {

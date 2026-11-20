@@ -31,14 +31,14 @@ test("an invitee confirms the code at the gate, is signed in, and finds the arti
   await expect(page.getByRole("heading", { level: 1, name: title })).toBeVisible({
     timeout: 15_000,
   });
-  await expect(
-    page.getByText("Sign in with a one-time code. New addresses get an account.", { exact: false }),
-  ).toBeVisible();
+  await expect(page.getByText("Sign in with a one-time code.", { exact: false })).toBeVisible();
 
   const since = new Date(Date.now() - 1000).toISOString();
   await page.getByLabel("Email").fill(invitee);
   await page.getByRole("button", { name: "Send code" }).click();
   await expect(page.getByText("If this address has access, we sent a code")).toBeVisible();
+  // On the code step the sent-code line is the only text above the field.
+  await expect(page.getByText("Sign in with a one-time code.", { exact: false })).toBeHidden();
   const code = await latestCode(page.request, invitee, { since });
   await page.getByLabel("Six-digit code").fill(code);
   await page.getByRole("button", { name: "Confirm code" }).click();

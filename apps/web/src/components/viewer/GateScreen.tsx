@@ -2,13 +2,13 @@
 // takedown notice, or not found. Used by the artifact page and by /open (direct content links).
 import { LockSimpleIcon, ProhibitIcon, UserListIcon } from "@phosphor-icons/react";
 import { APP_ROUTES, type ViewGate } from "@plinth/shared";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { Link } from "../../lib/router.tsx";
 import { useSession } from "../../lib/session.ts";
 import NotFound from "../../pages/NotFound.tsx";
 import { PublicShell } from "../layout/PublicShell.tsx";
 import { ButtonLink, ICON_SIZE } from "../ui/index.ts";
-import { codeLead, codeSignsInFor, EmailForm, PasswordForm } from "./GateForms.tsx";
+import { type CodeStep, codeLead, codeSignsInFor, EmailForm, PasswordForm } from "./GateForms.tsx";
 import type { GateQuery } from "./gate.ts";
 import "./viewer.css";
 
@@ -25,6 +25,7 @@ export interface GateScreenProps {
 export function GateScreen({ gate, artifactRef, query, onGate }: GateScreenProps) {
   const { me, config } = useSession();
   const codeSignsIn = codeSignsInFor(config);
+  const [step, setStep] = useState<CodeStep>("email");
   const title = gate.status === "not_found" ? null : gate.artifact.title;
 
   useEffect(() => {
@@ -67,6 +68,16 @@ export function GateScreen({ gate, artifactRef, query, onGate }: GateScreenProps
 
   const password = gate.status === "password_required";
   const Icon = password ? LockSimpleIcon : UserListIcon;
+  const signedInEmail = me?.email ?? null;
+  // One explanation at a time: the code step's sent line stands alone, and a signed-in person
+  // reads the signed-in notice rather than an invitation to sign in.
+  const lead = password
+    ? "Enter the password the owner gave you to open this artifact."
+    : step === "code"
+      ? null
+      : signedInEmail
+        ? "Only the people the owner listed can open this artifact."
+        : `Only the people the owner listed can open this artifact. ${codeLead(codeSignsIn)}`;
   return (
     <PublicShell centered>
       <section className="pl-gate" aria-labelledby="gate-title">
@@ -75,11 +86,7 @@ export function GateScreen({ gate, artifactRef, query, onGate }: GateScreenProps
         <h1 id="gate-title" className="pl-gate__title">
           {gate.artifact.title}
         </h1>
-        <p className="pl-gate__lead">
-          {password
-            ? "Enter the password the owner gave you to open this artifact."
-            : `Only the people the owner listed can open this artifact. ${codeLead(codeSignsIn)}`}
-        </p>
+        {lead && <p className="pl-gate__lead">{lead}</p>}
         {password ? (
           <PasswordForm artifactRef={artifactRef} query={query} onGate={onGate} />
         ) : (
@@ -87,8 +94,9 @@ export function GateScreen({ gate, artifactRef, query, onGate }: GateScreenProps
             artifactRef={artifactRef}
             query={query}
             onGate={onGate}
-            signedInEmail={me?.email ?? null}
+            signedInEmail={signedInEmail}
             codeSignsIn={codeSignsIn}
+            onStep={setStep}
           />
         )}
       </section>

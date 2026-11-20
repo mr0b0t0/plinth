@@ -1697,10 +1697,13 @@ anyone signed in.
   address beside their session (the gate and the identity claim then use that address),
   and its email opens an artifact but never files it under a personal category (`no_grant`).
 - **What people are told.** The gate and the portal say, before the code is asked for, that
-  confirming it signs the person in with that address and creates an account for it if it has none.
-  A signed-in person whose own address has no access is told, on both, that confirming another
-  address signs them in with it instead. The code's email is then a sign-in email: subject "Your
-  Plinth sign-in code", the sign-in sentence first, a warning to enter the code only on the app
+  confirming it signs the person in: the artifact gate's lead ends "Sign in with a one-time code.",
+  and the portal's heading is "Sign in". A signed-in person whose own address has no access is
+  told instead, on both, that confirming another address signs them in with it, and reads no
+  invitation to sign in beside that. On the code step the line saying where the code went is the
+  only text above the field. The code's email is then a sign-in email: subject "Your Plinth
+  sign-in code", the sign-in sentence first (it says an account is created for the address if it
+  has none, so that is said before the code is typed), a warning to enter the code only on the app
   host and never give it to anyone or reply with it, and only then the artifact's title (or the
   sharer's name, for a portal), labelled as the sharer's text. The privacy notice says it too.
   The title or name is quoted on one line: its line breaks and other whitespace become single

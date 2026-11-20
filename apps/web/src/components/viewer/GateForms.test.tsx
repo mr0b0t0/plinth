@@ -122,9 +122,9 @@ describe("EmailForm", () => {
 });
 
 describe("codeLead", () => {
-  it("says a code signs the address in and creates an account, except on a single-user instance", () => {
+  it("says a code signs the address in, except on a single-user instance", () => {
     expect(codeLead(codeSignsInFor({ single_user_mode: false }))).toBe(
-      "Sign in with a one-time code. New addresses get an account.",
+      "Sign in with a one-time code.",
     );
     expect(codeLead(codeSignsInFor(null))).toContain("Sign in");
     expect(codeLead(codeSignsInFor({ single_user_mode: true }))).toBe(
