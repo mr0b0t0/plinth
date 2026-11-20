@@ -56,7 +56,7 @@ make a test pass.
 | A stale review reopens access | A review left from a deleted share, from before a rename, or from another key, or a review made against a version or filing that changed before it was confirmed | A review is bound to the share id it was made against and counts only while that share is the current share of the artifact's current key; a key change resets it and bumps `category_rev` in the same statement; a decision to share applies only at the version and `category_rev` the owner was shown (one to keep private holds at any version), checked in the statement that writes it; creating a share and changing its people reset every artifact of the key first; a rename re-checks its share decision inside its batch ([Category sharing](#category-sharing)) |
 | Editors learn the owner's sharing | An editor's `update_artifact` result or upload status names the owner's category share | `category_share` and the share id in `review_url` are built only for the owner (`seesOwnerMetadata`), never for an editor, an editor's agent or a token limited to one artifact |
 | Probing who a category is shared with | Trying addresses on a portal's code flow | The same answer whether or not the address holds a grant, the allowlist flow's rate limits, single-use hashed codes bound to the share; the email names who shared it, never the title or the category |
-| A viewer changes a whiteboard | A person with view access posts or moves blocks through `/__plinth/api/v1/data/blocks`, or a stored row lost its write floor | Fixed capabilities carry `writers`, read back through `versionCapabilities` on every request; `pageWriteFloor` fails closed to commenter for every type whose page does not declare its capabilities, and `roomAccess` uses the same floor ([Whiteboards](#whiteboards)) |
+| A viewer changes a whiteboard | A person with view access posts or moves blocks through `/__plinth/api/v1/data/blocks`, or a stored row lost its write floor | Fixed capabilities carry `writers`, read back through `versionCapabilities` on every request; `pageWriteFloor` fails closed to editor (a board's default) for every type whose page does not declare its capabilities, and `roomAccess` uses the same floor ([Whiteboards](#whiteboards)) |
 | A whiteboard's room keeps old rights | A commenter keeps emitting `block.move` after the owner made the board editors-only | The settings version changes the effective open topics, so its sockets close with 4410 as it commits and reconnect with no right to emit; the data API refuses their writes from the next request |
 | Another page makes a board download itself | A page that frames or opens a whiteboard posts it export messages | The board acts on an export message only from its parent window at the app origin (the app's ⋯ menu), and the message names only a format; what it downloads is the board its viewer already sees |
 | Board settings overwrite a newer version, or carry more than settings | Someone opens Board settings, an agent publishes new settings meanwhile, and the stale dialog saves over them; or the dialog's save smuggles blocks or another key into board.json | The dialog saves with the version it read as `base_version`, so a stale save is refused with 409 and the dialog shows the newer settings without saving; any other refusal only shows its message. The app builds board.json from two known values only, and the Worker checks it with `parseBoardContent` like any update ([Whiteboards](#whiteboards)) |
@@ -797,9 +797,14 @@ Whiteboards](spec.md#whiteboards-decided-2026-11-19)).
   `versionCapabilities`, which keeps `writers` only when it is `commenter` or `editor`. Policy
   (`policy.ts pageWriteFloor`) applies it on every page write and in `roomAccess`, and fails
   closed: on any type whose page does not declare its own capabilities (a whiteboard, or a type a
-  newer Worker wrote after a rollback), a missing or unknown `writers` counts as `commenter`. An
+  newer Worker wrote after a rollback), a missing or unknown `writers` counts as `editor`. An
   HTML page keeps its rule (any identified viewer writes), and no HTML declaration can set
   `writers`. A viewer therefore never writes a board from its page, whatever a stored row says.
+- **Commenters change a board only when its settings say so.** Both collections are shared, so
+  anyone who may write the board may move, rewrite or delete every block, the owner's and agents'
+  included, and board edits are not versioned. The default `edit` is `editors`: a commenter
+  (directly or through a category share) views and comments, as the role says, until the owner's
+  settings version sets `commenters`.
 - **The floor moves at once.** The data API reads the current version on every request, so a
   settings version that lets only editors change the board refuses a commenter's next write. The
   room declaration compares the effective open topics (none when `writers` is `editor`), so the

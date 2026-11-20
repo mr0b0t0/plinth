@@ -17,8 +17,9 @@ export const BACKGROUND_CHOICES: readonly { value: BoardBackground; label: strin
 ];
 
 export const EDIT_CHOICES: readonly { value: BoardEditMode; label: string }[] = [
-  { value: "commenters", label: "Commenters and editors" },
+  // The default (DEFAULT_BOARD_SETTINGS) first.
   { value: "editors", label: "Editors only" },
+  { value: "commenters", label: "Commenters and editors" },
 ];
 
 const labelOf = <T extends string>(list: readonly { value: T; label: string }[], v: T) =>

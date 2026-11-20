@@ -26,4 +26,5 @@ export const whiteboard: TypeModule<"whiteboard"> = {
   pageData: "fixed",
   assets: false,
   upload: false,
+  versions: "settings",
 };

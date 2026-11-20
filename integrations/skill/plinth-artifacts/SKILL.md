@@ -906,9 +906,10 @@ boxes, ellipses and arrows on a canvas they pan and zoom, with live cursors, exp
   HTML page instead. No `assets`, no `start_upload`: board.json goes inline.
 - **board.json** is the settings, plus a starting board on a new board:
   `{"v": 1, "background": "dots" | "grid" | "plain", "edit": "commenters" | "editors", "blocks":
-  [...], "arrows": [...]}`. `edit` is the lowest role that may change the board from its page
-  (commenters by default); viewers never may. Unknown keys are refused, with the path of the
-  problem (`blocks[2].w`).
+  [...], "arrows": [...]}`. `edit` is the lowest role that may change the board from its page:
+  editors by default, so commenters only view and comment; send `"edit": "commenters"` for a
+  board everyone it is shared with should move things on (a retro, a brainstorm). Viewers never
+  may. Unknown keys are refused, with the path of the problem (`blocks[2].w`).
 - **A block:** `{ "id", "kind": "note" | "text" | "rect" | "ellipse", "x", "y", "w", "h", "text",
   "color"?: "yellow" | "green" | "blue" | "pink" | "purple" | "gray", "z"? }`. Whole numbers: `x`
   and `y` within ±1,000,000, `w` and `h` 24 to 4,000, `z` the draw order. `text` up to 2,000
@@ -944,7 +945,8 @@ what is missing with `write_artifact_data`.
   ones) at the `rev` you read. On `conflict`, read it again and redo the change.
 - **Delete** a block with a `delete` op at its `rev`, and its arrows with it.
 - **Settings** (`edit`, `background`) change with `update_artifact`, `content` and `base_version`.
-  It takes blocks only while the board has none (`board_not_empty` otherwise).
+  Send both: one you leave out takes its default (`edit` editors, `background` dots). It takes
+  blocks only while the board has none (`board_not_empty` otherwise).
 - **People change the settings too**, from Board settings on the board's page, and each change is
   a new version. Read the current version with `get_artifact` before you change them, and on
   `conflict` read it again: keep what a person chose unless you were asked to change it.

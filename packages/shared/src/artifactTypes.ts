@@ -97,6 +97,12 @@ export interface ArtifactTypeDef {
   assets?: false;
   /** False: no bundle upload (start_upload); the source goes inline. Absent means allowed. */
   upload?: false;
+  /**
+   * "settings": a version holds only the artifact's settings, not what people see on it (a
+   * whiteboard, whose board is shared data), so the history offers "Restore settings" and says a
+   * restore leaves the rest as it is. Absent: a version holds the whole artifact.
+   */
+  versions?: "settings";
 }
 
 /**

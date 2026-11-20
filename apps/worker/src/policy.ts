@@ -432,7 +432,8 @@ export function roomAccess(
       : claim.role === "commenter" && meetsFloor("commenter", floor)
         ? "open"
         : "none",
-    openTopics: roomOpenTopics(caps),
+    // None on a board whose floor is above commenters, a stored row with no floor included.
+    openTopics: meetsFloor("commenter", floor) ? roomOpenTopics(caps) : [],
     seeIdentity: caps.viewer === true,
     doc: "none",
   };
@@ -741,14 +742,15 @@ const EFFECTIVE_RANK: Record<EffectiveRole, number> = {
  * The lowest role that may write shared data from the page, or emit a board's open topics. A type
  * whose page declares its own capabilities (an HTML page) keeps the rule it always had: any
  * identified viewer. Every other type fails closed: the stored `writers` (set by the server for a
- * whiteboard, read back by versionCapabilities), or "commenter" when it is missing or unknown. An
- * unknown type (a newer Worker's row after a rollback) counts as fixed.
+ * whiteboard, read back by versionCapabilities), or "editor" when it is missing or unknown, as a
+ * board's default is (commenters change a board only when its settings say so). An unknown type
+ * (a newer Worker's row after a rollback) counts as fixed.
  */
 export function pageWriteFloor(type: string, caps: Capabilities | null): EffectiveRole {
   const w = caps?.writers;
   if (w === "commenter" || w === "editor") return w;
   const def = typeDef(type);
-  return def && pageDataOf(def) === "declared" ? "viewer" : "commenter";
+  return def && pageDataOf(def) === "declared" ? "viewer" : "editor";
 }
 
 /** Whether `role` is at or above `floor` (viewer < commenter < editor < owner). */

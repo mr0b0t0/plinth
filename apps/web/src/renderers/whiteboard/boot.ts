@@ -4,7 +4,7 @@
 // - Without the runtime, or when the runtime says shared data is unavailable: an empty, read-only
 //   board that says why.
 // - Live: the board's blocks and arrows from shared data (snapshots, with writes through BoardSync)
-//   and the room for cursors and drags (Live).
+//   and, for a viewer the board can identify, the room for cursors and drags (Live).
 //
 // Either way the app's menu may ask for a PNG or SVG download (protocol.ts).
 //
@@ -15,7 +15,13 @@ import { Board } from "./board.ts";
 import { loadCamera } from "./camera.ts";
 import { Live } from "./live.ts";
 import { fromApp, readBoardAppMessage } from "./protocol.ts";
-import { type PlinthRuntime, type RoomStatus, type RuntimeError, runtimeOf } from "./runtime.ts";
+import {
+  type PlinthRuntime,
+  type RoomStatus,
+  type RuntimeError,
+  readSessionCanWrite,
+  runtimeOf,
+} from "./runtime.ts";
 import { BoardSync, READ_ONLY_TEXT } from "./sync.ts";
 
 const ROOT_ID = "__plinth-whiteboard";
@@ -172,7 +178,16 @@ async function startLive(win: Window, board: Board, runtime: PlinthRuntime): Pro
     }
   }, onError);
 
-  if (!session.canWrite) board.banner(READ_ONLY_TEXT);
+  // Someone the board cannot identify (a link viewer who is not signed in, or a thumbnail
+  // capture) never joins the room and cannot change the board: they see it as it is, with no
+  // "View only" or live-cursor status and no notice about either.
+  if (session.viewer === null) {
+    board.setStatus("", "unavailable");
+    return;
+  }
+  // A commenter is read-only only because the board's settings let editors alone change it.
+  const lockedText = session.viewer.role === "commenter" ? EDITORS_ONLY_TEXT : READ_ONLY_TEXT;
+  if (!session.canWrite) board.banner(lockedText);
   board.setStatus(STATUS_TEXT.connecting, "connecting");
   const live = new Live(runtime.room, session.canWrite, {
     peers: (list) => board.setPeers(list),
@@ -181,10 +196,9 @@ async function startLive(win: Window, board: Board, runtime: PlinthRuntime): Pro
     status: (s) => board.setStatus(STATUS_TEXT[s], s),
     canWrite: (may) => {
       board.setReadOnly(!may);
-      if (!may && session.canWrite) {
-        board.banner(EDITORS_ONLY_TEXT);
-      } else if (may) board.banner("");
+      board.banner(may ? "" : lockedText);
     },
+    recheck: () => readSessionCanWrite(win),
   });
   board.live = live;
   const ready = await live.start();

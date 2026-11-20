@@ -223,7 +223,7 @@ declaration:
 
 | Table or column | Key fields | Notes |
 | --- | --- | --- |
-| `versions.capabilities` | adds `writers` (`commenter` or `editor`) | Set by the server for a whiteboard's versions only, from the board's `edit` setting; never read from a page, so no HTML declaration can carry it and every other declaration is stored exactly as before. Read back through one function (`versionCapabilities`), which keeps only `commenter` or `editor`. On any type whose capabilities its page does not declare, a missing or unknown value counts as `commenter`, never as "any viewer" |
+| `versions.capabilities` | adds `writers` (`commenter` or `editor`) | Set by the server for a whiteboard's versions only, from the board's `edit` setting; never read from a page, so no HTML declaration can carry it and every other declaration is stored exactly as before. Read back through one function (`versionCapabilities`), which keeps only `commenter` or `editor`. On any type whose capabilities its page does not declare, a missing or unknown value counts as `editor` (a board's default), never as "any viewer" |
 
 Fixed: board.json of at most 512 KiB on input; a starting board of at most 500 blocks and arrows;
 block positions within ±1,000,000, sizes 24 to 4,000, text up to 2,000 characters, arrow labels up
@@ -1692,9 +1692,12 @@ its page without a new version each time, and agents add and move blocks with
 
 - **Settings, in versions.** A version stores one file, `board.json`:
   `{"v": 1, "background": "dots" | "grid" | "plain", "edit": "commenters" | "editors"}`, stored as
-  canonical JSON. `edit` is the lowest role that may change the board from its page (commenters by
-  default); viewers never may. Unknown keys are refused. The title is the publish's `title`.
-  Settings changes are versions with `base_version`, and restore brings old settings back.
+  canonical JSON. `edit` is the lowest role that may change the board from its page: `editors`
+  by default, so a commenter's role means what it says (view and comment) until the board's
+  settings open it with `commenters`; viewers never may. Unknown keys are refused, and a setting
+  left out takes its default. The title is the publish's `title`. Settings changes are versions
+  with `base_version`, and restore brings old settings back (the history calls it Restore
+  settings: the board's blocks and arrows are not in versions and stay as they are).
 - **The board, in shared data.** Two collections, both shared (any permitted writer may move any
   block): `blocks`, each `{ kind: "note" | "text" | "rect" | "ellipse", x, y, w, h, text,
   color?: "yellow" | "green" | "blue" | "pink" | "purple" | "gray", z? }` (whole numbers; `x` and
@@ -1723,7 +1726,9 @@ its page without a new version each time, and agents add and move blocks with
   topics (`block.move`, `block.saved`, `arrow.saved`) open to commenters on a `commenters` board,
   and the write floor `writers` ([write floor](#shared-data-and-viewer-identity)). A settings
   version that changes `edit` reconnects the board's room sockets as it commits, so a commenter's
-  board turns read-only at once; the data API refuses their next write in any case.
+  board turns read-only at once, or editable when the version opens it to commenters (the page
+  reads its session again on the reconnect); the data API refuses a write below the floor in any
+  case.
 - **The renderer.** Plinth's own renderer on the artifact's origin
   (`/__plinth/types/whiteboard/`), under the strict typed shell (`script-src 'self'`). The shell
   loads `/__plinth/runtime.js` right before it, and the renderer reads `window.plinth` before
@@ -1773,11 +1778,15 @@ its page without a new version each time, and agents add and move blocks with
   the change is a new version under the person's name, which owners and editors can restore from
   History. When a newer version was published meanwhile, the save is refused (409, `conflict`):
   the dialog then shows that version's settings and says so ("v5 was published meanwhile. These
-  are its settings."), and nothing is saved until the person saves again. Only that refusal counts as a conflict: error code `conflict`, no
-  `reason` in its details, and a `current_version` above the version the dialog read. Any other
-  refusal, every other 409 included ("Another version is being written; try again shortly", an
-  expired attempt, a refusal with a `reason`), shows the server's message, keeps the person's
-  choice for another try and offers no newer settings.
+  are its settings."), and nothing is saved until the person saves again. Only that refusal
+  counts as a conflict: error code `conflict`, no `reason` in its details, and a `current_version`
+  above the version the dialog read. Any other refusal, every other 409 included ("Another version
+  is being written; try again shortly", an expired attempt, a refusal with a `reason`), shows the
+  server's message, keeps the person's choice for another try and offers no newer settings.
+- **Thumbnails.** A board's card shows its thumbnail as the version was captured, the blocks of
+  that moment included. Board edits are not versions, so the thumbnail changes only with a new
+  settings version. A capture, like a link viewer who is not signed in, sees the board with no
+  "View only" or live-cursor status and no notice.
 - **Availability.** A whiteboard needs shared data on (`ALLOW_SHARED_DATA`) and origin isolation:
   otherwise publishing one is refused with `feature_disabled`, and `GET /api/v1/config` says so in
   `artifact_types` (`{ id, available }` for every type). Live cursors also need rooms

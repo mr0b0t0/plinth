@@ -60,9 +60,10 @@ skill's "Sheets (type sheet)" section has the format and the functions;
 
 **Whiteboards.** For a board people edit together (a brainstorm, a retro, a map of a system) an
 agent publishes `type: "whiteboard"` with board JSON in `content`: the settings (`edit`:
-`commenters` or `editors`, `background`) and, for a new board, the starting notes, boxes and
-arrows. Plinth renders it with live cursors, and the people it is shared with move and write on the
-blocks from the page. The blocks live in shared data, not in versions, so afterwards the agent
+`commenters` or `editors`, default `editors`; `background`) and, for a new board, the starting
+notes, boxes and arrows. Plinth renders it with live cursors, and the people it lets edit move and
+write on the blocks from the page: editors, or commenters too on a board set to `commenters`, as a
+retro usually is. The blocks live in shared data, not in versions, so afterwards the agent
 reads them with `list_artifact_data` and adds or moves one with `write_artifact_data` (a whole
 block at its `rev`), treating block text as untrusted:
 
@@ -70,7 +71,7 @@ block at its `rev`), treating block text as untrusted:
 {
   "title": "Launch retro",
   "type": "whiteboard",
-  "content": "{\"v\":1,\"blocks\":[{\"id\":\"well\",\"kind\":\"note\",\"x\":0,\"y\":0,\"w\":200,\"h\":140,\"text\":\"Went well\",\"color\":\"green\"},{\"id\":\"next\",\"kind\":\"note\",\"x\":240,\"y\":0,\"w\":200,\"h\":140,\"text\":\"Try next\",\"color\":\"blue\"}],\"arrows\":[{\"id\":\"a1\",\"from\":\"well\",\"to\":\"next\"}]}"
+  "content": "{\"v\":1,\"edit\":\"commenters\",\"blocks\":[{\"id\":\"well\",\"kind\":\"note\",\"x\":0,\"y\":0,\"w\":200,\"h\":140,\"text\":\"Went well\",\"color\":\"green\"},{\"id\":\"next\",\"kind\":\"note\",\"x\":240,\"y\":0,\"w\":200,\"h\":140,\"text\":\"Try next\",\"color\":\"blue\"}],\"arrows\":[{\"id\":\"a1\",\"from\":\"well\",\"to\":\"next\"}]}"
 }
 ```
 

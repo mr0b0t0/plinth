@@ -1,5 +1,6 @@
 // Whiteboards (type "whiteboard") in the browser: a board published over MCP with a starting set of
-// blocks and an arrow, its blocks in shared data. The owner and a commenter see each other's
+// blocks and an arrow, its blocks in shared data. On a board open to commenters (`edit:
+// "commenters"`; the default is editors only), the owner and a commenter see each other's
 // cursors, a drag shows live and is saved; a person with view access gets a read-only board whose
 // direct writes the server refuses; a settings version that makes the board editors-only turns
 // the commenter's board read-only as their socket reconnects; an agent's block shows up; the
@@ -34,13 +35,14 @@ async function boardFrame(page: Page): Promise<Frame> {
   return frame;
 }
 
-async function publishBoard(page: Page, owner: string) {
+/** Publish the board; `edit` "commenters" opens it to commenters (the default is editors only). */
+async function publishBoard(page: Page, owner: string, edit?: "commenters") {
   const { token } = await seedToken(owner, { label: "Board agent", clientType: "claude" });
   const client = await mcpClient(token);
   const r = await tool(client, "publish_artifact", {
     title: "Launch board",
     type: "whiteboard",
-    content: BOARD,
+    content: edit ? JSON.stringify({ ...JSON.parse(BOARD), edit }) : BOARD,
   });
   expect(r.isError, r.text).toBe(false);
   expect(r.data.board).toEqual({ blocks: 3, arrows: 1 });
@@ -87,7 +89,7 @@ test("a shared board: cursors, a live drag that saves, viewers read-only, editor
   const owner = uniqueEmail("wb-owner");
   const guest = uniqueEmail("wb-guest");
   const watcher = uniqueEmail("wb-watcher");
-  const { token, client, id, slug } = await publishBoard(page, owner);
+  const { token, client, id, slug } = await publishBoard(page, owner, "commenters");
   const shared = await apiPut(
     page.request,
     `/artifacts/${id}/sharing`,
@@ -362,7 +364,8 @@ test("Board settings: the ⋯ dialog saves a version, and a newer version is sho
 
     const dialog = page.getByRole("dialog", { name: "Board settings" });
     await expect(dialog.getByRole("radio", { name: /^Dots/ })).toBeChecked();
-    await expect(dialog.getByRole("radio", { name: /^Commenters and editors/ })).toBeChecked();
+    // The default: only editors change the board.
+    await expect(dialog.getByRole("radio", { name: /^Editors only/ })).toBeChecked();
     await expect(dialog.getByRole("textbox")).toHaveCount(0);
     // Let the dialog's entrance animation settle so axe sees its final colours.
     await page.waitForFunction(() =>
@@ -383,7 +386,7 @@ test("Board settings: the ⋯ dialog saves a version, and a newer version is sho
     );
     const v2 = await tool(client, "get_artifact", { id });
     expect(v2.data.version).toBe(2);
-    expect(JSON.parse(v2.data.content)).toEqual({ v: 1, background: "grid", edit: "commenters" });
+    expect(JSON.parse(v2.data.content)).toEqual({ v: 1, background: "grid", edit: "editors" });
     // The blocks stay: a settings version never touches the board's shared data.
     await expect(page.frameLocator(CURRENT_FRAME).locator(".wb-block")).toHaveCount(3);
 
@@ -393,7 +396,7 @@ test("Board settings: the ⋯ dialog saves a version, and a newer version is sho
     await expect(dialog.getByRole("radio", { name: /^Grid/ })).toBeChecked();
     const v3 = await tool(client, "update_artifact", {
       id,
-      content: '{"v":1,"background":"plain","edit":"editors"}',
+      content: '{"v":1,"background":"plain","edit":"commenters"}',
       base_version: 2,
     });
     expect(v3.isError, v3.text).toBe(false);
@@ -403,17 +406,17 @@ test("Board settings: the ⋯ dialog saves a version, and a newer version is sho
       dialog.getByText("v3 was published meanwhile. These are its settings."),
     ).toBeVisible();
     await expect(dialog.getByRole("radio", { name: /^Plain/ })).toBeChecked();
-    await expect(dialog.getByRole("radio", { name: /^Editors only/ })).toBeChecked();
+    await expect(dialog.getByRole("radio", { name: /^Commenters and editors/ })).toBeChecked();
     await expect(dialog.getByRole("button", { name: "Save" })).toBeDisabled();
     expect((await tool(client, "get_artifact", { id })).data.version).toBe(3);
 
     // Saving again goes against v3.
-    await dialog.getByRole("radio", { name: /^Commenters and editors/ }).check();
+    await dialog.getByRole("radio", { name: /^Editors only/ }).check();
     await dialog.getByRole("button", { name: "Save" }).click();
     await expect(dialog).toHaveCount(0);
     const v4 = await tool(client, "get_artifact", { id });
     expect(v4.data.version).toBe(4);
-    expect(JSON.parse(v4.data.content)).toEqual({ v: 1, background: "plain", edit: "commenters" });
+    expect(JSON.parse(v4.data.content)).toEqual({ v: 1, background: "plain", edit: "editors" });
   } finally {
     await client.close();
   }

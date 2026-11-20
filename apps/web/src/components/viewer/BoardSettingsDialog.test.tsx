@@ -316,12 +316,12 @@ describe("BoardSettingsDialog", () => {
     await screen.findByText("Something went wrong");
     fail = false;
     await user.click(screen.getByRole("button", { name: "Try again" }));
-    // Defaults for the keys board.json leaves out.
+    // Defaults for the keys board.json leaves out: dots, and editors only.
     expect(
       ((await screen.findByRole("radio", { name: /^Dots/ })) as HTMLInputElement).checked,
     ).toBe(true);
     expect(
-      (screen.getByRole("radio", { name: /^Commenters and editors/ }) as HTMLInputElement).checked,
+      (screen.getByRole("radio", { name: /^Editors only/ }) as HTMLInputElement).checked,
     ).toBe(true);
   });
 });

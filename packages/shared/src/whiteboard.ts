@@ -23,7 +23,11 @@ export const BOARD_COLORS = ["yellow", "green", "blue", "pink", "purple", "gray"
 export type BoardColor = (typeof BOARD_COLORS)[number];
 export const BOARD_BACKGROUNDS = ["dots", "grid", "plain"] as const;
 export type BoardBackground = (typeof BOARD_BACKGROUNDS)[number];
-/** The lowest role that may change the board from its page. Viewers never may. */
+/**
+ * The lowest role that may change the board from its page: "editors" unless the settings say
+ * "commenters", so a commenter's role means view and comment until the owner opens the board.
+ * Viewers never may.
+ */
 export const BOARD_EDIT_MODES = ["commenters", "editors"] as const;
 export type BoardEditMode = (typeof BOARD_EDIT_MODES)[number];
 export const ARROW_STYLES = ["solid", "dashed"] as const;
@@ -77,7 +81,7 @@ export interface BoardSettings {
 export const DEFAULT_BOARD_SETTINGS: BoardSettings = {
   v: BOARD_FORMAT_VERSION,
   background: "dots",
-  edit: "commenters",
+  edit: "editors",
 };
 
 export type SeedDoc =

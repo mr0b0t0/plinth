@@ -331,8 +331,9 @@ not parse is refused with `invalid_input`: the message names the first problem a
 
 A whiteboard (type `whiteboard`): send board JSON in `content`, no `html` and no `assets`. The
 version stores only the settings (`board.json`): `v` (always `1`), `background` (`dots`, `grid` or
-`plain`, default `dots`) and `edit` (`commenters` or `editors`, default `commenters`: the lowest role
-that may change the board from its page; viewers never may). A new board, or an update of a board
+`plain`, default `dots`) and `edit` (`commenters` or `editors`, default `editors`: the lowest role
+that may change the board from its page; viewers never may). A setting left out takes its default,
+on an update too. A new board, or an update of a board
 whose shared data has no blocks or arrows, may also send a starting `blocks` and `arrows` list. They
 go into the board's shared data, never into the version, and the result's `board` counts what was
 written (`{ "blocks": 2, "arrows": 1 }`), or the warning `board_not_seeded` says it was not.
