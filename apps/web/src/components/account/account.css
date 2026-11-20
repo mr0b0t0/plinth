@@ -504,6 +504,16 @@
   outline: var(--focus-ring-width) solid var(--color-focus);
   outline-offset: 2px;
 }
+/* A line still runs past the edge (a long self-hosted url): fade it, so the cut reads as scroll. */
+.pl-acct-block__code--more {
+  mask-image: linear-gradient(to left, transparent, #000 var(--space-6));
+}
+/* Phone width: a step's lines (`token: ${{ secrets.PLINTH_TOKEN }}`) fit beside the copy button. */
+@media (max-width: 40rem) {
+  .pl-acct-block__code--nowrap {
+    font-size: var(--text-2xs);
+  }
+}
 
 /* Advanced: personal access tokens, collapsed by default. */
 .pl-acct-advanced {

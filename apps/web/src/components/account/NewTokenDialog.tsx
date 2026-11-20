@@ -90,16 +90,29 @@ function useEditableArtifacts(load: boolean, query: string) {
   return { state, full, retry: () => setAttempt((n) => n + 1) };
 }
 
-/** Each artifact's option text: its title, and its slug when another one has the same title. */
+/** The random end of a slug (`weekly-report-1sxs6tzyab` gives `1sxs6tzyab`), or all of it. */
+const slugEnd = (slug: string) => slug.slice(slug.lastIndexOf("-") + 1) || slug;
+
+/**
+ * Each artifact's option text: its title and, when another one has the same title, the end of its
+ * slug after a dot (short, so a narrow select still shows the part that tells them apart). The
+ * whole slug when two of them end the same way.
+ */
 function optionLabels(items: Pickable[]): Map<string, string> {
   const key = (t: string) => t.trim().toLowerCase();
-  const seen = new Map<string, number>();
-  for (const a of items) seen.set(key(a.title), (seen.get(key(a.title)) ?? 0) + 1);
+  const endKey = (a: Pickable) => `${key(a.title)}\n${slugEnd(a.slug)}`;
+  const titles = new Map<string, number>();
+  const ends = new Map<string, number>();
+  for (const a of items) {
+    titles.set(key(a.title), (titles.get(key(a.title)) ?? 0) + 1);
+    ends.set(endKey(a), (ends.get(endKey(a)) ?? 0) + 1);
+  }
   return new Map(
-    items.map((a) => [
-      a.id,
-      (seen.get(key(a.title)) ?? 0) > 1 ? `${a.title} (${a.slug})` : a.title || a.slug,
-    ]),
+    items.map((a) => {
+      if ((titles.get(key(a.title)) ?? 0) < 2) return [a.id, a.title || a.slug];
+      const end = (ends.get(endKey(a)) ?? 0) < 2 ? slugEnd(a.slug) : a.slug;
+      return [a.id, `${a.title} · ${end}`];
+    }),
   );
 }
 
@@ -245,9 +258,7 @@ function TokenDialogBody({ onClose, onCreated }: Omit<NewTokenDialogProps, "open
           ) : (
             <>
               <Note tone="warning">
-                You won't see this token again. Copy it now and keep it somewhere safe, like your
-                agent's settings, a CI secret or a password manager. If you lose it, revoke it and
-                create a new one.
+                Shown only once. Keep it in your agent's settings or a password manager.
               </Note>
               <p className="type-small text-muted">
                 Agents send it as <code>Authorization: Bearer …</code> to the MCP server URL.

@@ -198,18 +198,27 @@ describe("New token: Limit to one artifact", () => {
     await screen.findByRole("option", { name: "Coverage report" });
   });
 
-  it("tells equal titles apart by slug", async () => {
+  it("tells equal titles apart by the end of the slug", async () => {
     backend([
-      summary(),
-      summary({ id: "second00000000000000", slug: "coverage-2", title: "coverage report " }),
-      summary({ id: "other000000000000000", slug: "bench", title: "Bench" }),
+      summary({ slug: "coverage-report-k3x9mq2v7d" }),
+      summary({
+        id: "second00000000000000",
+        slug: "coverage-report-a8b2c4d6e0",
+        title: "coverage report ",
+      }),
+      summary({ id: "other000000000000000", slug: "bench-p0q1r2s3t4", title: "Bench" }),
+      // Two whose slugs end the same way show the whole slug.
+      summary({ id: "notes100000000000000", slug: "notes-x-abcdefghij", title: "Notes" }),
+      summary({ id: "notes200000000000000", slug: "notes-y-abcdefghij", title: "Notes" }),
     ]);
     const user = userEvent.setup();
     renderDialog();
     await user.click(screen.getByRole("checkbox", { name: "Limit to one artifact" }));
-    await screen.findByRole("option", { name: "Coverage report (coverage)" });
-    expect(screen.getByRole("option", { name: "coverage report (coverage-2)" })).toBeTruthy();
+    await screen.findByRole("option", { name: "Coverage report · k3x9mq2v7d" });
+    expect(screen.getByRole("option", { name: "coverage report · a8b2c4d6e0" })).toBeTruthy();
     expect(screen.getByRole("option", { name: "Bench" })).toBeTruthy();
+    expect(screen.getByRole("option", { name: "Notes · notes-x-abcdefghij" })).toBeTruthy();
+    expect(screen.getByRole("option", { name: "Notes · notes-y-abcdefghij" })).toBeTruthy();
   });
 
   it("past the list's 500, a search finds older artifacts, and the step fits a doc", async () => {
@@ -264,8 +273,8 @@ describe("New token: Limit to one artifact", () => {
       ciWorkflowSnippet({ id: ID, appOrigin: HOSTED_ORIGIN, type }).split("\n")[2];
     expect(path("html")).toBe("    path: dist");
     expect(path("doc")).toBe("    path: content.md");
-    expect(path("slides")).toBe("    path: slides # holds slides.md");
-    expect(path("design_system")).toBe("    path: design-system # holds system.json");
+    expect(path("slides")).toBe("    path: slides");
+    expect(path("design_system")).toBe("    path: design-system");
   });
 
   it("the workflow step leaves url out on the hosted instance", () => {

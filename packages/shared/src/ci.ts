@@ -19,14 +19,15 @@ export const CI_CLI_VERSION = ACTION_REF.slice(ACTION_REF.indexOf("@v") + 2);
 
 /**
  * The step's `path:` for each type: what the Action publishes as that type's next version. A doc
- * can be one Markdown file; a deck and a design system are folders with their source at the top.
- * A type without an entry gets a build folder.
+ * can be one Markdown file; a deck and a design system are folders with their source at the top
+ * (`slides.md`, `system.json`; the CI guide says so, and no comment lengthens the line). A type
+ * without an entry gets a build folder.
  */
 const CI_PATHS: Partial<Record<ArtifactType, string>> = {
   html: "dist",
   doc: "content.md",
-  slides: "slides # holds slides.md",
-  design_system: "design-system # holds system.json",
+  slides: "slides",
+  design_system: "design-system",
 };
 
 /**
