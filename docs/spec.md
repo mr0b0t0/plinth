@@ -240,8 +240,11 @@ viewer's browser (the content origin's `sessionStorage`), not in D1.
 
 **Following the presenter** ([Slides](#slides-decided-2026-11-19), no migration) stores nothing
 and adds one setting, `ALLOW_SLIDES_FOLLOW` (on), in effect only where live rooms are. Fixed: a
-slides-socket frame of 128 bytes; the room's other caps (`ROOM_MAX_CONNECTIONS_PER_ARTIFACT`, 8
-sockets per viewer, 20 connects per viewer per minute, the message rate) apply unchanged.
+slides-socket frame of 128 bytes; 4 of the room's `ROOM_MAX_CONNECTIONS_PER_ARTIFACT` slots (at
+most half of them) kept for presenters, so a slides socket that watches is refused once the room
+holds the rest; a leader's `goto` at most every 100 ms (every second after the room said
+`rate_limited`). The room's other caps (8 sockets per viewer, 20 connects per viewer per minute,
+the message rate) apply unchanged.
 
 ## Auth and permissions
 
@@ -1077,7 +1080,18 @@ source editor work as for docs. A deck is not edited on its page.
   full screen and presenter view) it asks the new one to lead again (`lead`, after the slide), so
   the audience keeps following; it is remembered for the open page only. While a deck follows,
   the presenter's slide wins over a `goto` from the app. A slide the presenter moves to before the
-  room confirms the lead is sent once it does. Anonymous link viewers, in-chat previews,
+  room confirms the lead is sent once it does. The lead is kept for one deck: the page showing
+  another artifact forgets it. A presenter whose connection drops keeps leading when it
+  reconnects: the room may still list its old socket as the leader, and the deck knows that socket
+  was its own, so it takes over at once instead of giving the lead up, and followers carry on (had
+  the room already seen the old socket go, they get `stopped` and follow again as soon as the
+  presenter is back). Paging faster than
+  the room's message rate (a held arrow key) never leaves followers behind: the deck sends the
+  slide on screen at most every 100 ms, always ending on the last one, and if the room still
+  drops a frame (`rate_limited`, an instance with a low `ROOM_MESSAGES_PER_SECOND`) it sends what
+  the room may have missed a second later and then at most once a second. Watchers can never fill
+  the deck's room: 4 slots of `ROOM_MAX_CONNECTIONS_PER_ARTIFACT` (at most half) are kept for
+  owners and editors. Anonymous link viewers, in-chat previews,
   thumbnail captures, review mode, the editor preview and a permanent version link never follow
   or lead, and under opaque isolation and the path fallback nothing connects. A sharing change
   closes every socket on the deck (followers see "Your access changed. Reload the page.", as on

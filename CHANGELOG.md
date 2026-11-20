@@ -10,6 +10,11 @@ Add a line under **Unreleased** in the pull request that makes a change people w
 
 ## Unreleased
 
+- **Leading a deck is steadier.** A presenter whose connection drops keeps the lead when it comes
+  back, instead of turning Lead viewers off and following its own old connection. Paging quickly (a held arrow key) always leaves
+  followers on the presenter's last slide. A deck's room keeps 4 of its slots for owners and
+  editors, so viewers' tabs can never lock the presenter out. Opening another deck in the same tab
+  no longer leads that deck's viewers.
 - **A held page stays held after you switch apps.** A page that declares `hold` was replaced by a
   new version once its window lost focus, so text you were typing before switching to another app
   or tab could be lost; it now waits for Update as long as focus is still in the page. State a page

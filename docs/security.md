@@ -1527,7 +1527,15 @@ the audience (a count of distinct viewers, its own left out), so a follower lear
 who else is watching or who presents. The room stores nothing: the position lives in the
 presenter's hibernation attachment, and when the leader leaves the next presenter leads or every
 socket gets `stopped`. Slides sockets count toward `ROOM_MAX_CONNECTIONS_PER_ARTIFACT` and the
-per-viewer caps like page and doc sockets.
+per-viewer caps like page and doc sockets, except that 4 of the room's slots (at most half the
+cap, `SLIDES_PRESENTER_SLOTS`) are kept for `present` sockets: a `watch` socket is refused (4409)
+once the room holds the rest, so the people a deck is shared with, however many tabs they open,
+cannot lock its owners and editors out of presenting. Which slots are free says no more than any
+full room did before: a watcher who fills the watch slots learns only that the room is full, and
+presenters may still take a slot below the line. A reconnecting presenter whose old socket the
+room still lists as leading starts again at once (the deck remembers its earlier socket ids, which
+never leave the frame), and the room's ordinary rule (the last `start` leads) makes the new socket
+the leader, so followers do not get `stopped` while the room has not yet seen the old socket go.
 
 **Caps.** Per artifact, per viewer and per connection, with a connect throttle (see
 [Rate limits and quotas](#rate-limits-and-quotas)); a socket's hibernation attachment stays under
