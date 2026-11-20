@@ -1,6 +1,7 @@
-// Change lists when the sequence diff gives up (its edit or time cap): the changed middle is one
-// region, paired in order, and an unchanged block in it must not be listed as a change. The diff
-// is made to give up every time here, so the shape does not depend on how fast the machine is.
+// Change lists when the sequence diff gives up (its edit or time cap): the changed middle is
+// anchored on blocks found once on each side, then each gap is paired in order. An unchanged block
+// must not be listed as a change, even after a block added or removed earlier in the region. The
+// diff is made to give up every time here, so the shape does not depend on how fast the machine is.
 import { describe, expect, it, vi } from "vitest";
 import { CHANGE_LIMITS, type ChangeItem, describeChanges, diffSequence } from "../src/index.ts";
 
@@ -28,6 +29,35 @@ function expectOnlyEdits(items: ChangeItem[], n: number, what: string): void {
   expect(items.map((i) => i.what)).toEqual(expected.map(() => what));
   expect(items.map((i) => i.before)).toEqual(expected.map((r) => `${r} ok`));
   expect(items.map((i) => i.after)).toEqual(expected.map((r) => `${r} edited`));
+}
+
+/** Rows as `rows(n, true)`, with a new row after row 1 and row 4 (unchanged) taken out. */
+function shifted(n: number): string[] {
+  const out = rows(n, true);
+  out.splice(4, 1);
+  out.splice(2, 0, "Brand new paragraph");
+  return out;
+}
+
+/** What the list says for `shifted`: each edit in place, the added row and the removed one. */
+function expectShifted(
+  items: ChangeItem[],
+  n: number,
+  words: { changed: string; added: string; removed: string },
+): void {
+  const expected: Pick<ChangeItem, "what" | "before" | "after">[] = [];
+  for (let k = 0; k < n && expected.length < CHANGE_LIMITS.maxItems; k++) {
+    if (k % 3 === 0) {
+      expected.push({ what: words.changed, before: `Row ${k} ok`, after: `Row ${k} edited` });
+    }
+    if (k === 1) expected.push({ what: words.added, after: "Brand new paragraph" });
+    if (k === 4) expected.push({ what: words.removed, before: "Row 4 ok" });
+  }
+  expect(items.map((i) => ({ what: i.what, before: i.before, after: i.after }))).toEqual(
+    expected
+      .slice(0, CHANGE_LIMITS.maxItems)
+      .map((e) => ({ before: undefined, after: undefined, ...e })),
+  );
 }
 
 describe("a region the diff gave up on", () => {
@@ -81,6 +111,93 @@ describe("a region the diff gave up on", () => {
       expectOnlyEdits(list.items, n, "Text changed");
     });
   }
+
+  for (const n of [3000, 300]) {
+    it(`keeps the paragraphs of an HTML page in place around an insertion and a removal (${n})`, () => {
+      const page = (list: string[]) =>
+        `<h1>Rows</h1>\n${list.map((r) => `<p>${r}</p>`).join("\n")}`;
+      const list = describeChanges("html", page(rows(n, false)), page(shifted(n)));
+      expect(list.truncated).toBe(true);
+      expectShifted(list.items, n, {
+        changed: "Text changed",
+        added: "Text added",
+        removed: "Text removed",
+      });
+    });
+
+    it(`keeps the paragraphs of a doc in place around an insertion and a removal (${n})`, () => {
+      const doc = (list: string[]) => ["# Rows", ...list].join("\n\n");
+      const list = describeChanges("doc", doc(rows(n, false)), doc(shifted(n)));
+      expect(list.truncated).toBe(true);
+      expectShifted(list.items, n, {
+        changed: "Paragraph changed",
+        added: "Paragraph added",
+        removed: "Paragraph removed",
+      });
+    });
+
+    it(`keeps a design board's paragraphs in place around an insertion and a removal (${n})`, () => {
+      const design = (list: string[]) =>
+        ['<!-- artboard name="Home" size="desktop" -->', ...list.map((r) => `<p>${r}</p>`)].join(
+          "\n",
+        );
+      const list = describeChanges("design", design(rows(n, false)), design(shifted(n)));
+      expect(list.truncated).toBe(true);
+      expectShifted(list.items, n, {
+        changed: "Text changed",
+        added: "Text added",
+        removed: "Text removed",
+      });
+    });
+  }
+
+  it("keeps a deck's slides in place around an insertion and a removal", () => {
+    const deck = (list: string[]) =>
+      list.map((r) => `# ${r.split(" ").slice(0, 2).join(" ")}\n\n${r}`).join("\n\n---\n\n");
+    const list = describeChanges("slides", deck(rows(300, false)), deck(shifted(300)));
+    expect(list.truncated).toBe(true);
+    expect(list.items.filter((i) => i.kind === "moved")).toEqual([]);
+    expect(list.items.filter((i) => i.kind === "added").map((i) => i.what)).toEqual([
+      "Slide 3 “Brand new” added",
+    ]);
+    expect(list.items.filter((i) => i.kind === "removed").map((i) => i.what)).toEqual([
+      "Slide 5 “Row 4” removed",
+    ]);
+    const changed = list.items.filter((i) => i.kind === "changed");
+    expect(changed.map((i) => [i.before, i.after])).toEqual(
+      editedRows(300).map((r) => [`${r} ok`, `${r} edited`]),
+    );
+  });
+
+  it("keeps a sheet's rows in place around an insertion and a removal", () => {
+    const sheet = (list: string[]) =>
+      `${JSON.stringify({
+        plinth: "sheet",
+        v: 1,
+        columns: [
+          { name: "Name", type: "text" },
+          { name: "Note", type: "text" },
+        ],
+      })}\n${list.map((r) => JSON.stringify([r.split(" ").slice(0, 2).join(" "), r])).join("\n")}\n`;
+    const list = describeChanges("sheet", sheet(rows(300, false)), sheet(shifted(300)));
+    expect(list.truncated).toBe(true);
+    const changed = list.items.filter((i) => i.kind === "changed");
+    expect(changed.map((i) => [i.before, i.after])).toEqual(
+      editedRows(300).map((r) => [`${r} ok`, `${r} edited`]),
+    );
+    expect(list.items.filter((i) => i.kind !== "changed")).toHaveLength(2);
+  });
+
+  it("anchors on items found once on each side, and keeps a moved one out of the anchors", () => {
+    const d = diffSequence(["x", "a", "m", "b", "c", "y"], ["x", "a2", "b", "c", "m", "n", "y"]);
+    expect(d).toEqual({
+      exact: false,
+      hunks: [
+        { aStart: 1, aEnd: 3, bStart: 1, bEnd: 2 },
+        { aStart: 5, aEnd: 5, bStart: 4, bEnd: 6 },
+      ],
+    });
+  });
 
   it("lists only the edited slides of a deck", () => {
     const deck = (edit: boolean) =>

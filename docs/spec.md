@@ -1713,8 +1713,11 @@ from discovery tags) stays.
   JSON, then "and N more files", so the same summary fits one socket frame when the page's editors
   review a draft.
 - **Limits.** At most 200 items and 160 characters an excerpt or value. A diff stops looking for
-  the smallest set of edits past 4,000 edits or 400 ms and reports the region as replaced (its
-  items still paired in order, the unchanged ones left out). The list
+  the smallest set of edits past 4,000 edits or 400 ms. It then anchors the region on the blocks
+  found exactly once in each version, keeping the longest run of them in the same order as
+  unchanged (one level of a patience diff, O(n log n)), so a block added or removed does not shift
+  every later pair; what lies between two anchors is paired in order, the unchanged items left
+  out. The list
   says when it was cut, and the two rendered versions below it always show everything. A version
   the type's checks refuse is not described in detail ("One of the two versions cannot be read in
   detail"); two texts that differ in nothing a person sees say "Nothing visible changed, only how

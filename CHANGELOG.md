@@ -84,7 +84,8 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   formatting changed". A heading or row added before another reads as added, not as the next one
   renamed, items come in the order the page reads, a changed list names only the item that
   changed, and a sheet total that only recomputed for an added row is left out. A large edit the
-  diff gives up on still lists only the blocks that changed, and two same-titled slides edited in
+  diff gives up on still lists only the blocks that changed, a block added or removed in it
+  included, and two same-titled slides edited in
   place are not listed as moved. Every type
   compares this way, designs included. The two
   versions are still rendered side by side below the list, one at a time with a Before and After
