@@ -19,18 +19,22 @@ const SVG_NS = "http://www.w3.org/2000/svg";
 export const KIND_LABELS = { note: "Note", text: "Text", rect: "Box", ellipse: "Ellipse" } as const;
 export type ToolKind = keyof typeof KIND_LABELS;
 
-/** The toolbar's controls, kept to enable, disable and label them. */
+/**
+ * The toolbar's controls, kept to show, enable and label them. The add buttons show only to
+ * people who may edit, and the selection's controls (colour, connect, delete) only while
+ * something is selected. Zoom is the wheel, a pinch or the keys; export is in the app's menu.
+ */
 export interface Toolbar {
   el: HTMLElement;
+  /** The add buttons' group. */
+  adds: HTMLElement;
   add: Record<ToolKind, HTMLButtonElement>;
+  /** The colour swatches' group. */
+  palette: HTMLElement;
   colors: Record<BoardColor, HTMLButtonElement>;
   connect: HTMLButtonElement;
   remove: HTMLButtonElement;
-  zoomOut: HTMLButtonElement;
-  zoomIn: HTMLButtonElement;
   fit: HTMLButtonElement;
-  png: HTMLButtonElement;
-  svg: HTMLButtonElement;
   status: HTMLElement;
   people: HTMLUListElement;
 }
@@ -38,6 +42,7 @@ export interface Toolbar {
 export interface ViewEls {
   root: HTMLElement;
   toolbar: Toolbar;
+  /** A short standing line in the toolbar ("View only", or why the board is unavailable). */
   banner: HTMLElement;
   msg: HTMLElement;
   viewport: HTMLElement;
@@ -66,7 +71,7 @@ function group(doc: Document, label: string, ...items: HTMLElement[]): HTMLEleme
   return g;
 }
 
-function buildToolbar(doc: Document): Toolbar {
+function buildToolbar(doc: Document, banner: HTMLElement): Toolbar {
   const el = doc.createElement("div");
   el.className = "wb-toolbar";
   el.setAttribute("role", "toolbar");
@@ -81,41 +86,34 @@ function buildToolbar(doc: Document): Toolbar {
     const b = button(doc, "", `${c[0]?.toUpperCase()}${c.slice(1)}`);
     b.className = "wb-swatch";
     b.dataset.color = c;
-    b.setAttribute("aria-pressed", String(c === "yellow"));
+    b.setAttribute("aria-pressed", "false");
     colors[c] = b;
   }
   const connect = button(doc, "Connect");
   connect.setAttribute("aria-pressed", "false");
   const remove = button(doc, "Delete");
-  const zoomOut = button(doc, "−", "Zoom out");
-  const zoomIn = button(doc, "+", "Zoom in");
   const fit = button(doc, "Fit", "Fit the board");
-  const png = button(doc, "PNG", "Export as PNG");
-  const svg = button(doc, "SVG", "Export as SVG");
   const status = doc.createElement("span");
   status.className = "wb-status";
   status.setAttribute("role", "status");
   const people = doc.createElement("ul");
   people.className = "wb-people";
   people.setAttribute("aria-label", "People here");
-  el.append(
-    group(doc, "Add", ...Object.values(add)),
-    group(doc, "Colour", ...Object.values(colors)),
-    group(doc, "Edit", connect, remove),
-    group(doc, "Zoom", zoomOut, zoomIn, fit),
-    group(doc, "Export", png, svg),
-    status,
-    people,
-  );
-  return { el, add, colors, connect, remove, zoomOut, zoomIn, fit, png, svg, status, people };
+  const adds = group(doc, "Add", ...Object.values(add));
+  const palette = group(doc, "Colour", ...Object.values(colors));
+  const end = doc.createElement("div");
+  end.className = "wb-end";
+  end.append(people, status, fit);
+  el.append(banner, adds, palette, connect, remove, end);
+  return { el, adds, add, palette, colors, connect, remove, fit, status, people };
 }
 
 /** Build the board's DOM into `root`, replacing what it held. */
 export function buildView(doc: Document, root: HTMLElement, background: BoardBackground): ViewEls {
-  const toolbar = buildToolbar(doc);
   const banner = doc.createElement("p");
   banner.className = "wb-banner";
   banner.setAttribute("role", "status");
+  const toolbar = buildToolbar(doc, banner);
   const msg = doc.createElement("p");
   msg.className = "wb-msg";
   msg.setAttribute("role", "alert");
@@ -155,7 +153,7 @@ export function buildView(doc: Document, root: HTMLElement, background: BoardBac
   viewport.append(world);
   // Named, so the frame's main landmark differs from the app's around it.
   root.setAttribute("aria-label", "Whiteboard");
-  root.replaceChildren(toolbar.el, banner, msg, viewport);
+  root.replaceChildren(toolbar.el, msg, viewport);
   return {
     root,
     toolbar,
@@ -323,17 +321,25 @@ export function personName(p: RuntimePeer): string {
 
 const finite = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
 
-/** The people list and peers' cursors (presence { x, y } in board units). */
+/**
+ * The people list (everyone else here; empty, and so hidden, when the viewer is alone) and peers'
+ * cursors (presence { x, y } in board units).
+ */
 export function drawPeers(doc: Document, v: ViewEls, peers: readonly RuntimePeer[], zoom: number) {
-  // One person with two tabs is two peers with the same viewer id: list them once.
+  // One person with two tabs is two peers with the same viewer id: list them once, and never list
+  // the viewer, whose other tabs share their id.
+  const mine = new Set(peers.filter((p) => p.you).map((p) => p.viewer));
   const byViewer = new Map<string, RuntimePeer>();
-  for (const p of peers) if (!byViewer.has(p.viewer) || p.you) byViewer.set(p.viewer, p);
+  for (const p of peers)
+    if (!mine.has(p.viewer) && !byViewer.has(p.viewer)) byViewer.set(p.viewer, p);
   v.toolbar.people.replaceChildren(
     ...[...byViewer.values()].map((p) => {
       const li = doc.createElement("li");
       const dot = doc.createElement("i");
       dot.style.background = `hsl(${hueOf(p.viewer)} 65% 45%)`;
-      li.append(dot, doc.createTextNode(personName(p)));
+      const name = doc.createElement("span");
+      name.textContent = personName(p);
+      li.append(dot, name);
       return li;
     }),
   );

@@ -97,8 +97,6 @@ export interface ArtifactTypeDef {
   assets?: false;
   /** False: no bundle upload (start_upload); the source goes inline. Absent means allowed. */
   upload?: false;
-  /** The viewer menu's label for the source editor, where "Edit" would mislead (a board). */
-  editLabel?: string;
 }
 
 /**
@@ -216,13 +214,6 @@ export interface TypedPayload {
    * renderer shows every slide stacked. Absent otherwise, so every other shell is unchanged.
    */
   view?: "overview";
-  /**
-   * Set only by the app's editor preview (previewDocument): the renderer then makes no
-   * shared-data or room call and shows only the draft. The Worker never sets it, so a served shell
-   * has today's bytes. It only narrows what Plinth's own renderer does: no server decision reads
-   * it, so a forged flag grants nothing.
-   */
-  preview?: true;
 }
 
 const SCRIPT_UNSAFE: Record<string, string> = {
@@ -266,7 +257,6 @@ export function typedShellHtml(
     appOrigin: string;
     live?: "room";
     view?: "overview";
-    preview?: true;
   },
 ): string {
   if (!def.renderer) throw new Error(`Type ${def.id} has no renderer`);
@@ -279,7 +269,6 @@ export function typedShellHtml(
     text: o.text,
     ...(o.live ? { live: o.live } : {}),
     ...(o.view ? { view: o.view } : {}),
-    ...(o.preview ? { preview: true as const } : {}),
   };
   // The page runtime, right before the renderer, for a type whose page uses it (renderer.runtime).
   const runtime = def.renderer.runtime

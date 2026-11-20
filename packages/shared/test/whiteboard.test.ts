@@ -327,13 +327,12 @@ describe("the whiteboard type", () => {
     expect(hasPageCapabilities(null)).toBe(false);
   });
 
-  const shell = (o: { preview?: true } = {}) =>
+  const shell = () =>
     typedShellHtml(TYPE_REGISTRY.whiteboard, {
       title: "Board",
       text: '{"v":1}',
       base: "",
       appOrigin: "https://plinth.example",
-      ...o,
     });
   const payload = (html: string) =>
     JSON.parse(/id="__plinth-content">([^<]*)<\/script>/.exec(html)?.[1] ?? "null");
@@ -351,9 +350,10 @@ describe("the whiteboard type", () => {
     expect(html.indexOf("runtime.js")).toBeGreaterThan(html.indexOf("__plinth-content"));
   });
 
-  it("marks the payload preview only when asked", () => {
-    expect(payload(shell())).not.toHaveProperty("preview");
-    expect(payload(shell({ preview: true }))).toMatchObject({ preview: true, type: "whiteboard" });
+  it("has no source editor, and its payload carries no preview flag", () => {
+    // People change a board on its page; agents change its settings with update_artifact.
+    expect(TYPE_REGISTRY.whiteboard.editor).toBeNull();
+    expect(Object.keys(payload(shell())).sort()).toEqual(["app_origin", "path", "text", "type", "v"]);
   });
 
   it("leaves the doc shell without the runtime", () => {

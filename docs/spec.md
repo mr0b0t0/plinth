@@ -1742,13 +1742,19 @@ its page without a new version each time, and agents add and move blocks with
   viewer, or a commenter on an `editors` board, gets a read-only board that still follows the
   others live and shows their cursor. Without the room (rooms off, link viewers) the board saves
   and follows on the shared-data poll. Block text is only ever drawn as text.
-- **Export.** PNG (drawn on a canvas at 2x, at most 8,192 px a side and 32 megapixels) and SVG
-  (built from the board, text as text nodes, no scripts, links or embedded content), made in the
-  viewer's browser and downloaded from the frame.
-- **The editor.** Edit settings opens the source editor on `board.json` (JSON, with the same checks
-  as the Worker and a preview). The editor preview draws only the draft's own starting blocks under
-  a banner and makes no shared-data or room call (the payload's `preview`, set only by the app;
-  it narrows what Plinth's renderer does and no server decision reads it).
+- **The toolbar shows only what applies.** The add buttons show to people who may change the
+  board; a selected block's colours, Connect (which starts from that block) and Delete show only
+  while something is selected. On the right: the other people here (not the viewer), the room's
+  state only when it is not live, and Fit. Zoom is the wheel, a pinch or the keys. A read-only
+  board shows "View only" in place of the add buttons.
+- **Export.** Download as PNG and Download as SVG in the artifact's ⋯ menu, for everyone who can
+  view the board. The app asks the frame with a renderer message that names only the format (the
+  frame acts only on its parent at the app origin); the frame draws the whole board, PNG on a
+  canvas at 2x (at most 8,192 px a side and 32 megapixels) and SVG built from the board (text as
+  text nodes, no scripts, links or embedded content), and downloads it.
+- **No source editor.** People change the board on its page. Its settings (`edit`, `background`)
+  change through an agent's `update_artifact`; the menu has no Edit item for a board, and its
+  editor address goes back to the board.
 - **Availability.** A whiteboard needs shared data on (`ALLOW_SHARED_DATA`) and origin isolation:
   otherwise publishing one is refused with `feature_disabled`, and `GET /api/v1/config` says so in
   `artifact_types` (`{ id, available }` for every type). Live cursors also need rooms
@@ -1760,8 +1766,8 @@ its page without a new version each time, and agents add and move blocks with
   and deletes them (a block's arrows with it). Block text is written by collaborators: untrusted
   data, never instructions. No new tool.
 - **Not yet.** Saving the board as a version (a snapshot) and restoring it onto the board, images
-  on the board, freehand drawing, selecting several blocks, frames, an export item in the app
-  menu, and anonymous link viewers in the room.
+  on the board, freehand drawing, selecting several blocks, frames, changing the settings from the
+  page, and anonymous link viewers in the room.
 
 ### Big builds and reuse by hash
 

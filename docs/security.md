@@ -58,7 +58,7 @@ make a test pass.
 | Probing who a category is shared with | Trying addresses on a portal's code flow | The same answer whether or not the address holds a grant, the allowlist flow's rate limits, single-use hashed codes bound to the share; the email names who shared it, never the title or the category |
 | A viewer changes a whiteboard | A person with view access posts or moves blocks through `/__plinth/api/v1/data/blocks`, or a stored row lost its write floor | Fixed capabilities carry `writers`, read back through `versionCapabilities` on every request; `pageWriteFloor` fails closed to commenter for every type whose page does not declare its capabilities, and `roomAccess` uses the same floor ([Whiteboards](#whiteboards)) |
 | A whiteboard's room keeps old rights | A commenter keeps emitting `block.move` after the owner made the board editors-only | The settings version changes the effective open topics, so its sockets close with 4410 as it commits and reconnect with no right to emit; the data API refuses their writes from the next request |
-| The editor preview writes to the live board | The owner's draft in the editor drives the board through the preview frame's content pass | The app's preview sets `preview` and the whiteboard renderer then makes no shared-data or room call; only Plinth's code runs in that frame |
+| Another page makes a board download itself | A page that frames or opens a whiteboard posts it export messages | The board acts on an export message only from its parent window at the app origin (the app's ⋯ menu), and the message names only a format; what it downloads is the board its viewer already sees |
 | A starting board writes shared data unchecked | An agent's publish or update carries blocks it may not write, or races another write | A `data_write` decision before staging and again after the commit, whose role stamps the documents; one all-or-none statement that never overwrites, and `board_not_empty` on an update of a board with blocks |
 
 Out of scope for v1: denial of service beyond Cloudflare's defaults, a compromised Cloudflare
@@ -830,11 +830,8 @@ Whiteboards](spec.md#whiteboards-decided-2026-11-19)).
   viewer is editing is held the same way, and the edit is written at the rev it began from, so a
   peer's text saved meanwhile is a conflict: theirs is kept, and the viewer's text replaces it
   only if the viewer presses "Use mine".
-- **The editor preview.** The preview loader frame holds the owner's content pass, so the
-  renderer must not act there: the app's editor preview alone sets the payload's `preview`, and
-  then the renderer makes no shared-data or room call and draws only the draft's own starting
-  blocks. The flag only narrows what Plinth's renderer does; the Worker never sets it, no server
-  decision reads it, and a forged one grants nothing.
+- **No editor preview.** A whiteboard has no source editor, so the app never renders a board in
+  the editor's preview frame, which holds the owner's content pass.
 - **The runtime cannot be replaced by the page.** The shell has only fixed ids, the runtime defines
   `window.plinth` as a non-writable, non-configurable property before the renderer runs, and the
   renderer reads it once before it builds any DOM. It never sets an `id` or a `name` from data.
@@ -842,9 +839,11 @@ Whiteboards](spec.md#whiteboards-decided-2026-11-19)).
   renderer puts them in the page only through `textContent` and SVG text nodes, and attributes only
   take validated numbers and fixed values. Agents get them from `list_artifact_data` marked
   `untrusted`, and the tool descriptions and the skill say block text is never instructions.
-- **Export stays in the frame.** PNG is drawn with Canvas 2D and SVG built with DOM APIs from the
-  board, with no `foreignObject`, scripts, links or image loads, and downloaded through a `blob:`
-  link (the frame's existing `allow-downloads`). No CSP change.
+- **Export stays in the frame.** The app's ⋯ menu asks the frame with a renderer message that
+  names only `png` or `svg`, and the frame acts on it only from its parent window at the app
+  origin. PNG is drawn with Canvas 2D and SVG built with DOM APIs from the board, with no
+  `foreignObject`, scripts, links or image loads, and downloaded through a `blob:` link (the
+  frame's existing `allow-downloads`). No CSP change.
 - **No assets, no bundle.** A whiteboard takes no files besides `board.json`, and `start_upload`
   refuses it, so a starting board is always checked by the inline publish. `board.json` is served
   as `application/json` with `script-src 'none'`.

@@ -40,7 +40,12 @@ import { Button, buttonClassName, Menu, type MenuEntry, Tooltip } from "../ui/in
 import { DataNotice } from "./DataNotice.tsx";
 import { EditBar } from "./EditBar.tsx";
 import { LiveDraftNotice } from "./LiveDraftNotice.tsx";
-import { postExport, postPrint, rendererTargetOrigin } from "./rendererProtocol.ts";
+import {
+  postBoardExport,
+  postExport,
+  postPrint,
+  rendererTargetOrigin,
+} from "./rendererProtocol.ts";
 import type { LiveEdit } from "./useLiveEdit.ts";
 import type { Presentation } from "./usePresentation.ts";
 
@@ -135,9 +140,7 @@ const editSource: MenuItem = (c) =>
   canEdit(c.gate.role) && typeDef(c.gate.artifact.type)?.editor
     ? [
         {
-          label: c.live.available
-            ? "Edit source"
-            : (typeDef(c.gate.artifact.type)?.editLabel ?? "Edit"),
+          label: c.live.available ? "Edit source" : "Edit",
           icon: c.live.available ? CodeIcon : PencilSimpleIcon,
           href: c.hrefs.edit,
         },
@@ -192,12 +195,29 @@ const downloadSheet: MenuItem = (c) => [
   },
 ];
 
+/** A whiteboard downloads itself the same way, as a PNG or an SVG of the whole board. */
+const downloadBoard: MenuItem = (c) => [
+  {
+    label: "Download as PNG",
+    icon: DownloadSimpleIcon,
+    onSelect: () =>
+      postBoardExport(c.frame, rendererTargetOrigin(c.config, c.contentOrigin), "png"),
+  },
+  {
+    label: "Download as SVG",
+    icon: DownloadSimpleIcon,
+    onSelect: () =>
+      postBoardExport(c.frame, rendererTargetOrigin(c.config, c.contentOrigin), "svg"),
+  },
+];
+
 /** Menu items for one artifact type, in order, after Settings and Stats. One type per line. */
 export const TYPE_MENU_ITEMS: Partial<Record<ArtifactType, readonly MenuItem[]>> = {
   doc: [printTyped],
   slides: [printTyped, downloadPptx],
   design: [printTyped],
   sheet: [downloadSheet, printTyped],
+  whiteboard: [downloadBoard],
 };
 
 /**

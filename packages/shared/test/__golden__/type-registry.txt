@@ -187,15 +187,11 @@
         "style": "whiteboard.css",
         "runtime": true
       },
-      "editor": {
-        "language": "json",
-        "wordWrap": "on"
-      },
+      "editor": null,
       "liveEdit": false,
       "pageData": "fixed",
       "assets": false,
-      "upload": false,
-      "editLabel": "Edit settings"
+      "upload": false
     }
   ]
 ]

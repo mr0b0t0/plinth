@@ -158,12 +158,25 @@ export class Board {
     this.redraw();
   }
 
+  /**
+   * Only what the viewer can use now shows: the add buttons to people who may edit, the colours
+   * for a selected note or shape, Connect for a selected block (or while connecting), Delete for
+   * anything selected.
+   */
   private updateButtons(): void {
     const t = this.view.toolbar;
     for (const b of Object.values(t.add)) b.disabled = this.readOnly;
-    for (const b of Object.values(t.colors)) b.disabled = this.readOnly;
-    t.connect.disabled = this.readOnly || this.model.blocks.size < 2;
-    t.remove.disabled = this.readOnly || this.selected === null;
+    t.adds.hidden = this.readOnly;
+    const id = this.selected;
+    const block = id ? this.model.blocks.get(id)?.data : undefined;
+    const edit = !this.readOnly;
+    t.palette.hidden = !edit || !block || block.kind === "text";
+    for (const [c, b] of Object.entries(t.colors) as [BoardColor, HTMLButtonElement][]) {
+      b.setAttribute("aria-pressed", String(block?.color === c));
+    }
+    t.connect.hidden = !edit || (!block && !this.connecting);
+    t.connect.disabled = this.model.blocks.size < 2;
+    t.remove.hidden = !edit || id === null;
   }
 
   banner(text: string): void {
@@ -217,12 +230,14 @@ export class Board {
     this.redraw();
   }
 
+  /** Connect starts from the selected block, so the viewer then picks the other end. */
   private setConnecting(on: boolean): void {
     this.connecting = on;
-    this.connectFrom = null;
+    this.connectFrom =
+      on && this.selected && this.model.blocks.has(this.selected) ? this.selected : null;
     const b = this.view.toolbar.connect;
     b.setAttribute("aria-pressed", String(on));
-    b.textContent = on ? "Pick two blocks…" : "Connect";
+    b.textContent = on ? (this.connectFrom ? "Pick a block…" : "Pick two blocks…") : "Connect";
   }
 
   // ---------- edits ----------
@@ -419,27 +434,25 @@ export class Board {
     }
     for (const [c, b] of Object.entries(t.colors) as [BoardColor, HTMLButtonElement][]) {
       b.addEventListener("click", () => {
+        // The colour of the selected block, and of the next block this viewer adds.
         this.color = c;
-        for (const o of Object.values(t.colors)) o.setAttribute("aria-pressed", String(o === b));
         const id = this.selected;
         const blk = id ? this.model.blocks.get(id)?.data : undefined;
         if (id && blk && blk.kind !== "text") this.save(id, { color: c });
+        this.redraw();
       });
     }
     t.connect.addEventListener("click", () => {
       if (!this.readOnly) this.setConnecting(!this.connecting);
       this.redraw();
     });
-    t.remove.addEventListener("click", () => void this.deleteSelected());
-    const zoomBy = (f: number) => {
-      const vp = v.viewport;
-      this.setCamera(zoomAt(this.camera, vp.clientWidth / 2, vp.clientHeight / 2, f));
-    };
-    t.zoomIn.addEventListener("click", () => zoomBy(1.25));
-    t.zoomOut.addEventListener("click", () => zoomBy(0.8));
+    // Delete hides itself with the selection: keep the keyboard's place on the board.
+    t.remove.addEventListener("click", () => {
+      void this.deleteSelected().then(() => {
+        if (t.remove.hidden) v.viewport.focus();
+      });
+    });
     t.fit.addEventListener("click", () => this.fitBoard());
-    t.png.addEventListener("click", () => void this.exportAs("png"));
-    t.svg.addEventListener("click", () => void this.exportAs("svg"));
 
     const vp = v.viewport;
     vp.addEventListener("pointerdown", (e) => this.onPointerDown(e));

@@ -92,6 +92,20 @@ body {
   gap: 4px;
 }
 
+/* Controls that do not apply right now (nothing selected, a read-only board) are not shown. */
+.wb-toolbar [hidden] {
+  display: none;
+}
+
+/* Who else is here, the room's state when it is not live, and Fit, on the right. */
+.wb-end {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  min-width: 0;
+}
+
 .wb-toolbar button,
 .wb-msg button {
   font: inherit;
@@ -160,11 +174,16 @@ button:focus-visible,
   color: var(--wb-muted);
 }
 
+.wb-status:empty,
+.wb-people:empty {
+  display: none;
+}
+
 .wb-people {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
-  margin: 0 0 0 auto;
+  margin: 0;
   padding: 0;
   list-style: none;
   font-size: 13px;
@@ -176,7 +195,11 @@ button:focus-visible,
   display: flex;
   align-items: center;
   gap: 5px;
-  max-width: 200px;
+  max-width: 160px;
+  min-width: 0;
+}
+
+.wb-people span {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -189,7 +212,6 @@ button:focus-visible,
   border-radius: 50%;
 }
 
-.wb-banner,
 .wb-msg {
   margin: 0;
   padding: 6px 16px;
@@ -199,8 +221,12 @@ button:focus-visible,
 }
 
 .wb-banner {
-  background: var(--wb-surface);
+  flex: 0 1 auto;
+  min-width: 0;
+  margin: 0;
+  font-size: 14px;
   color: var(--wb-muted);
+  overflow-wrap: anywhere;
 }
 
 .wb-banner:empty,
@@ -433,9 +459,8 @@ html[data-readonly="true"] .wb-block {
   .wb-toolbar {
     gap: 6px 8px;
   }
-  .wb-people {
-    margin-left: 0;
-    width: 100%;
+  .wb-people li {
+    max-width: 120px;
   }
 }
 

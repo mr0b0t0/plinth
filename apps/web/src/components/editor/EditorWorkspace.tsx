@@ -97,9 +97,6 @@ export function previewDocument(
     appOrigin: o.config.app_origin,
     // A deck's preview shows every slide stacked, so the author sees the whole deck.
     ...(def.present ? { view: "overview" as const } : {}),
-    // A renderer that uses the page runtime (a whiteboard) makes no shared-data or room call in
-    // the preview: it shows the draft alone. Other shells keep their bytes.
-    ...(def.renderer.runtime ? { preview: true as const } : {}),
   });
 }
 

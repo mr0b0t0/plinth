@@ -9,6 +9,7 @@
 //   app -> frame: view { mode }            a deck switches view: deck, presenter or overview
 //   app -> frame: export { format, nonce } a deck builds its .pptx and downloads it in the frame
 //   app -> frame: export { format }        a sheet downloads itself as "csv" or "xlsx"
+//   app -> frame: export { format }        a whiteboard downloads itself as "png" or "svg"
 //   frame -> app: live { ...status }       numbers, booleans and co-editor emails; never text
 //   frame -> app: save                     Cmd/Ctrl+S inside the frame
 //   frame -> app: draft { nonce, text }    the answer to collect, solo mode only
@@ -141,8 +142,11 @@ export function sheetExportMessage(format: SheetExportFormat): SheetExportMessag
   return { source: RENDERER_MESSAGE_SOURCE, v: RENDERER_PROTOCOL_VERSION, type: "export", format };
 }
 
-/** The export kind: a deck's .pptx (with the app's nonce) or a sheet's .csv or .xlsx. */
-export type ExportMessage = DeckExportMessage | SheetExportMessage;
+/**
+ * The export kind: a deck's .pptx (with the app's nonce), a sheet's .csv or .xlsx, or a
+ * whiteboard's .png or .svg.
+ */
+export type ExportMessage = DeckExportMessage | SheetExportMessage | BoardExportMessage;
 
 /**
  * Ask a sheet's frame to download itself. The message names only a format and carries no data,
@@ -156,6 +160,37 @@ export function postExport(
   const win = frame?.contentWindow;
   if (!win || !targetOrigin) return false;
   win.postMessage(sheetExportMessage(format), targetOrigin);
+  return true;
+}
+
+// ---------- whiteboards (the whiteboard type) ----------
+
+export type BoardExportFormat = "png" | "svg";
+
+/** A whiteboard's export: the frame draws the whole board and downloads it, and answers nothing. */
+export interface BoardExportMessage {
+  source: typeof RENDERER_MESSAGE_SOURCE;
+  v: typeof RENDERER_PROTOCOL_VERSION;
+  type: "export";
+  format: BoardExportFormat;
+}
+
+export function boardExportMessage(format: BoardExportFormat): BoardExportMessage {
+  return { source: RENDERER_MESSAGE_SOURCE, v: RENDERER_PROTOCOL_VERSION, type: "export", format };
+}
+
+/**
+ * Ask a whiteboard's frame to download itself as a PNG or an SVG. Like a sheet's export, the
+ * message names only a format and carries no data. False when it cannot be sent.
+ */
+export function postBoardExport(
+  frame: HTMLIFrameElement | null,
+  targetOrigin: string | null,
+  format: BoardExportFormat,
+): boolean {
+  const win = frame?.contentWindow;
+  if (!win || !targetOrigin) return false;
+  win.postMessage(boardExportMessage(format), targetOrigin);
   return true;
 }
 
