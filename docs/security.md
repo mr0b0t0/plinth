@@ -1801,7 +1801,13 @@ sending domain becomes a way to reach strangers' inboxes with text an attacker w
   it well under the provider's daily quota so codes keep their room, or to `0` to turn invitation
   emails off (`invitations_off`, nothing counted, no **Notify people** box in the app). The cap is
   shared by every owner, so one account can use up a day's invitations for everyone else; it
-  cannot touch sign-in or viewing codes, which matter more.
+  cannot touch sign-in or viewing codes, which matter more. The provider also limits requests per
+  second (Resend's default is a few per team), and codes share that too, so a change's invitations
+  go in one batch request where the provider has one and one at a time otherwise, never in
+  parallel; a 429 is retried at most twice, waiting at most 5 seconds, and then the rest of the
+  change is dropped rather than kept knocking. A refused invitation gets its counters back; one
+  whose outcome is unknown keeps them, so a provider error can never let an address get more
+  than its limits allow.
 - **What a limit tells an owner.** The per-owner-and-address cap (3) is below the all-owner cap
   (10), so one account cannot use up an address's invitations for everyone else, and both are
   reported as the same `recipient_limit`. An owner under their own cap who still gets

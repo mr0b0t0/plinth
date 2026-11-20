@@ -5,10 +5,12 @@
 // limit. The message carries the one link and the role; titles and names are cleaned and escaped.
 import { env } from "cloudflare:workers";
 import { INVITATION_DEFAULTS, RATE_LIMITS } from "@plinth/shared";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { ConfigError, invitationEmailsActive, parseConfig } from "../src/config.ts";
+import { type EmailAdapter, type EmailMessage, EmailSendError } from "../src/email/index.ts";
 import { escapeHtml, invitationEmail } from "../src/email/templates.ts";
 import {
+  deliverInvitations,
   invitationAddressHash,
   newInvitees,
   pruneInvitationMarks,
@@ -741,6 +743,220 @@ describe("invitation emails: category shares", () => {
     }
     expect(await outboxFor(fresh)).toHaveLength(0);
     expect(await outboxFor(first)).toHaveLength(0);
+  });
+});
+
+describe("invitation emails: the provider's request rate", () => {
+  const RESEND = { EMAIL_PROVIDER: "resend", RESEND_API_KEY: "re_test_invitations" };
+
+  /**
+   * Resend at the HTTP layer, limiting requests the way its per-team rate does: past `perWindow`
+   * requests it answers 429 (the window never ends within a test). `answer` overrides the reply.
+   */
+  function fakeResend(opts: { perWindow?: number; answer?: (n: number) => Response | null } = {}) {
+    const real = globalThis.fetch;
+    const accepted: string[] = [];
+    const requests: string[] = [];
+    let inFlight = 0;
+    let maxInFlight = 0;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const req = new Request(input as RequestInfo, init);
+      if (new URL(req.url).host !== "api.resend.com") return real(input, init);
+      requests.push(new URL(req.url).pathname);
+      inFlight += 1;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      try {
+        const body = (await req.json()) as { to: string[] } | { to: string[] }[];
+        await new Promise((r) => setTimeout(r, 1));
+        const own = opts.answer?.(requests.length);
+        if (own) return own;
+        if (requests.length > (opts.perWindow ?? 2)) {
+          return Response.json(
+            { name: "rate_limit_exceeded", message: "Too many requests" },
+            { status: 429, headers: { "retry-after": "0" } },
+          );
+        }
+        for (const m of Array.isArray(body) ? body : [body]) accepted.push(...m.to);
+        return Response.json({ data: [] });
+      } finally {
+        inFlight -= 1;
+      }
+    });
+    return { accepted, requests, maxInFlight: () => maxInFlight };
+  }
+
+  const shareWith = (o: Owner, id: string, emails: string[]) =>
+    send(
+      "PUT",
+      `/api/v1/artifacts/${id}/sharing`,
+      o.session,
+      { grants: emails.map((email) => ({ email, role: "viewer" })), notify: true },
+      RESEND,
+    );
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("twenty people at once stay within a provider that allows two requests at a time", async () => {
+    const resend = fakeResend({ perWindow: 2 });
+    const o = await owner();
+    const a = await artifactOf(o);
+    const people = Array.from({ length: 20 }, (_, i) => uniqueEmail(`rate${i}-`));
+    const body = await json(await shareWith(o, a.id, people));
+    expect(body.invitations).toEqual({ emailed: people, skipped: [] });
+    // One batch request carries them all: nothing is refused, and no burst takes the room sign-in
+    // codes need.
+    expect(resend.requests).toEqual(["/emails/batch"]);
+    expect(resend.maxInFlight()).toBe(1);
+    expect(resend.accepted.sort()).toEqual([...people].sort());
+  });
+
+  it("a 429 is tried again after Retry-After, and the counters stay used", async () => {
+    let first = true;
+    const resend = fakeResend({
+      perWindow: 10,
+      answer: () => {
+        if (!first) return null;
+        first = false;
+        return Response.json(
+          { message: "Too many requests" },
+          { status: 429, headers: { "retry-after": "0" } },
+        );
+      },
+    });
+    const o = await owner();
+    const a = await artifactOf(o);
+    const bo = uniqueEmail("retry-bo");
+    const body = await json(await shareWith(o, a.id, [bo]));
+    expect(body.invitations).toEqual({ emailed: [bo], skipped: [] });
+    expect(resend.requests).toEqual(["/emails/batch", "/emails/batch"]);
+    expect(resend.accepted).toEqual([bo]);
+    expect(await counterOf(`invite:owner:${o.user.id}`)).toBe(1);
+    expect(await counterOf(`invite:sent:a:${a.id}:${await addressHash(bo)}`)).toBe(1);
+  });
+
+  it("what the provider refuses gets its mark and counters back, so adding the person again emails them", async () => {
+    const err = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const used = await counterOf("invite:instance");
+    let refuse = true;
+    const resend = fakeResend({
+      perWindow: 10,
+      answer: () =>
+        refuse
+          ? Response.json(
+              { message: "Too many requests" },
+              { status: 429, headers: { "retry-after": "0" } },
+            )
+          : null,
+    });
+    const o = await owner();
+    const a = await artifactOf(o);
+    const bo = uniqueEmail("refused-bo");
+    const h = await addressHash(bo);
+    const body = await json(await shareWith(o, a.id, [bo]));
+    expect(body.invitations).toEqual({ emailed: [bo], skipped: [] });
+    // Tried three times, then given up on, logged without the address.
+    expect(resend.requests).toHaveLength(3);
+    expect(resend.accepted).toEqual([]);
+    expect(err).toHaveBeenCalledWith(expect.stringContaining("1 of 1 not sent"));
+    expect(JSON.stringify(err.mock.calls)).not.toContain(bo);
+    expect(await counterOf(`invite:sent:a:${a.id}:${h}`)).toBe(0);
+    expect(await counterOf(`invite:to:${h}`)).toBe(0);
+    expect(await counterOf(`invite:pair:${o.user.id}:${h}`)).toBe(0);
+    expect(await counterOf(`invite:owner:${o.user.id}`)).toBe(0);
+    expect(await counterOf("invite:instance")).toBe(used);
+
+    // Removed and added back once the provider takes mail again: the email goes.
+    refuse = false;
+    await send("PUT", `/api/v1/artifacts/${a.id}/sharing`, o.session, { grants: [] }, RESEND);
+    const again = await json(await shareWith(o, a.id, [bo]));
+    expect(again.invitations).toEqual({ emailed: [bo], skipped: [] });
+    expect(resend.accepted).toEqual([bo]);
+    expect(await counterOf(`invite:owner:${o.user.id}`)).toBe(1);
+  });
+
+  it("a send whose outcome is unknown keeps its counters", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    fakeResend({ answer: () => Response.json({ message: "upstream" }, { status: 503 }) });
+    const o = await owner();
+    const a = await artifactOf(o);
+    const bo = uniqueEmail("unknown-bo");
+    await shareWith(o, a.id, [bo]);
+    expect(await counterOf(`invite:sent:a:${a.id}:${await addressHash(bo)}`)).toBe(1);
+    expect(await counterOf(`invite:owner:${o.user.id}`)).toBe(1);
+  });
+});
+
+describe("invitation emails: handing messages to the provider", () => {
+  const message = (i: number): EmailMessage => ({
+    to: `p${i}@example.org`,
+    subject: "s",
+    text: "t",
+  });
+
+  /** A provider without a batch endpoint that records how many sends overlap. */
+  function oneByOne(refuse: (to: string, attempt: number) => EmailSendError | null = () => null) {
+    const sent: string[] = [];
+    const attempts = new Map<string, number>();
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const adapter: EmailAdapter = {
+      name: "test",
+      async send(m) {
+        inFlight += 1;
+        maxInFlight = Math.max(maxInFlight, inFlight);
+        try {
+          await new Promise((r) => setTimeout(r, 1));
+          const n = (attempts.get(m.to) ?? 0) + 1;
+          attempts.set(m.to, n);
+          const e = refuse(m.to, n);
+          if (e) throw e;
+          sent.push(m.to);
+        } finally {
+          inFlight -= 1;
+        }
+      },
+    };
+    return { adapter, sent, maxInFlight: () => maxInFlight };
+  }
+
+  it("sends one at a time when the provider has no batch endpoint", async () => {
+    const p = oneByOne();
+    const messages = Array.from({ length: 12 }, (_, i) => message(i));
+    const out = await deliverInvitations(p.adapter, messages, async () => undefined);
+    expect(out).toEqual({ refused: [], unknown: [], why: null });
+    expect(p.maxInFlight()).toBe(1);
+    expect(p.sent).toEqual(messages.map((m) => m.to));
+  });
+
+  it("waits as Retry-After says, at most five seconds, and stops when the rate does not clear", async () => {
+    const waits: number[] = [];
+    const p = oneByOne((to) =>
+      to === "p1@example.org" ? new EmailSendError("test", 429, null, 60) : null,
+    );
+    const messages = [message(0), message(1), message(2), message(3)];
+    const out = await deliverInvitations(p.adapter, messages, async (ms) => {
+      waits.push(ms);
+    });
+    expect(waits).toEqual([5000, 5000]);
+    expect(p.sent).toEqual(["p0@example.org"]);
+    // The one refused and the two not tried are all refused: none of them was sent.
+    expect(out.refused).toEqual([1, 2, 3]);
+    expect(out.unknown).toEqual([]);
+    expect(out.why).toContain("429");
+  });
+
+  it("a refusal is not tried again and the rest still go; an unknown outcome is kept apart", async () => {
+    const p = oneByOne((to) => {
+      if (to === "p0@example.org") return new EmailSendError("test", 422, "invalid");
+      if (to === "p1@example.org") return new EmailSendError("test", null);
+      return null;
+    });
+    const out = await deliverInvitations(p.adapter, [message(0), message(1), message(2)]);
+    expect(out.refused).toEqual([0]);
+    expect(out.unknown).toEqual([1]);
+    expect(p.sent).toEqual(["p2@example.org"]);
   });
 });
 

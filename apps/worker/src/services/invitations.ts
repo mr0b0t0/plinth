@@ -15,7 +15,9 @@
 // anything is sent (raise the counter, check the count it returns, give back what was not used),
 // so parallel changes cannot pass a limit. The number of statements does not grow with the number
 // of people; the hourly cron removes the counters after two days (pruneInvitationMarks). Titles
-// and names are never logged.
+// and names are never logged. The messages go to the provider after the response, in batch
+// requests or one at a time, never all at once (deliverInvitations), and an invitation the
+// provider refused gets its mark and counters back.
 import {
   type InvitationReport,
   type InvitationSkipReason,
@@ -25,7 +27,12 @@ import {
 } from "@plinth/shared";
 import { appUrl, invitationEmailsActive } from "../config.ts";
 import type { UserRow } from "../db/schema.ts";
-import { createEmailAdapter } from "../email/index.ts";
+import {
+  createEmailAdapter,
+  type EmailAdapter,
+  type EmailMessage,
+  EmailSendError,
+} from "../email/index.ts";
 import { invitationEmail } from "../email/templates.ts";
 import { sha256Hex } from "../lib/crypto.ts";
 import { forbidden } from "../lib/errors.ts";
@@ -76,7 +83,8 @@ const COUNT_EACH = `INSERT INTO rate_limits (key, window_start, count)
  * Email the people a sharing change added, as far as the bounds allow. Undefined when the request
  * did not ask (`notify` false), so results without it keep their shape. Counters are written
  * before the result returns; the messages go out after the response (waitUntil), and a provider
- * failure is logged without the address, the title or the message.
+ * failure is logged without the address, the title or the message. What the provider refused is
+ * given back then, so `emailed` names who was handed over, not who the provider took.
  */
 export async function sendInvitations(
   ctx: Ctx,
@@ -275,19 +283,101 @@ export async function sendInvitations(
   });
   ctx.waitUntil(
     (async () => {
-      const adapter = createEmailAdapter(ctx.config, ctx.env);
-      const sent = await Promise.allSettled(messages.map((m) => adapter.send(m)));
-      const failed = sent.filter((r) => r.status === "rejected");
-      if (failed.length > 0) {
-        const reason = (failed[0] as PromiseRejectedResult).reason;
-        const why = reason instanceof Error ? reason.message : "unknown";
-        console.error(`invitation email: ${failed.length} of ${sent.length} failed: ${why}`);
+      let delivery: Delivery;
+      try {
+        delivery = await deliverInvitations(createEmailAdapter(ctx.config, ctx.env), messages);
+      } catch {
+        console.error("invitation email: the email provider is not configured");
+        delivery = { refused: messages.map((_, i) => i), unknown: [], why: null };
       }
+      const { refused, unknown, why } = delivery;
+      if (refused.length + unknown.length > 0 && why !== null) {
+        console.error(
+          `invitation email: ${refused.length + unknown.length} of ${messages.length} not sent: ${why}`,
+        );
+      }
+      // The provider did not take these, so nothing reached them: their mark and every counter
+      // they reserved go back, and adding the person again can email them. A send whose outcome is
+      // unknown (no answer, or a 5xx) keeps its counters, since it may have gone.
+      const back = refused.map((i) => sending[i]).filter((p): p is Person => p !== undefined);
+      if (back.length === 0) return;
+      await DB.batch([
+        DB.prepare(
+          `UPDATE rate_limits SET count = MAX(count - 1, 0)
+            WHERE window_start = ?2 AND key IN (SELECT value FROM json_each(?1))`,
+        ).bind(JSON.stringify(back.flatMap((p) => [p.mark, p.to, p.pair])), today),
+        DB.prepare(
+          `UPDATE rate_limits SET count = MAX(count - ?3, 0)
+            WHERE key IN (?1, ?4) AND window_start = ?2`,
+        ).bind(ownerKey, today, back.length, instanceKey),
+      ]);
     })().catch(() => {
-      console.error("invitation email: the email provider is not configured");
+      console.error("invitation email: the counters of unsent invitations were not given back");
     }),
   );
   return report;
+}
+
+/** How often a request the provider refused for its rate (HTTP 429) is tried again. */
+const RATE_RETRIES = 2;
+/** The longest wait before trying again, whatever `Retry-After` says (waitUntil is bounded). */
+const RATE_WAIT_MAX_S = 5;
+
+export interface Delivery {
+  /** Indexes of the messages the provider refused (an HTTP 4xx answer): they were not sent. */
+  refused: number[];
+  /** Indexes whose outcome is unknown (no answer, or an HTTP 5xx): they may have been sent. */
+  unknown: number[];
+  /** The first failure's message, already redacted by the adapter. */
+  why: string | null;
+}
+
+/**
+ * Hand invitations to the provider without a burst. Providers limit requests per second (Resend's
+ * default is a few per team), and sign-in and viewing codes share that limit, so the messages go in
+ * batch requests where the adapter has a batch endpoint and one at a time otherwise, never in
+ * parallel. A 429 is tried again after `Retry-After` (1 s when it does not say, at most
+ * RATE_WAIT_MAX_S), RATE_RETRIES times; when that does not clear it, the rest are not tried and
+ * count as refused.
+ */
+export async function deliverInvitations(
+  adapter: EmailAdapter,
+  messages: readonly EmailMessage[],
+  sleep: (ms: number) => Promise<void> = (ms) => new Promise((r) => setTimeout(r, ms)),
+): Promise<Delivery> {
+  const out: Delivery = { refused: [], unknown: [], why: null };
+  const size = adapter.sendBatch ? Math.max(1, adapter.batchMax ?? 1) : 1;
+  for (let start = 0; start < messages.length; start += size) {
+    const group = messages.slice(start, start + size);
+    const indexes = group.map((_, i) => start + i);
+    for (let tries = 0; ; tries++) {
+      try {
+        if (adapter.sendBatch) await adapter.sendBatch(group);
+        else if (group[0]) await adapter.send(group[0]);
+        break;
+      } catch (e) {
+        const status = e instanceof EmailSendError ? e.status : null;
+        if (status === 429 && tries < RATE_RETRIES) {
+          const waitS = Math.min(
+            Math.max((e as EmailSendError).retryAfterS ?? 1, 0),
+            RATE_WAIT_MAX_S,
+          );
+          await sleep(waitS * 1000);
+          continue;
+        }
+        out.why ??= e instanceof Error ? e.message : "unknown";
+        if (status === 429) {
+          // Still over the provider's rate: stop here rather than keep it busy.
+          for (let i = start; i < messages.length; i++) out.refused.push(i);
+          return out;
+        }
+        const refused = status !== null && status >= 400 && status < 500;
+        (refused ? out.refused : out.unknown).push(...indexes);
+        break;
+      }
+    }
+  }
+  return out;
 }
 
 /** The hourly cron: invitation counters whose window ended more than two days ago. */

@@ -1704,7 +1704,15 @@ when the user told it to.
   address is defanged (`https[:]//`, `www[.]`), and the HTML part escapes every value and has one
   link, the artifact's. It goes through the instance's email provider (`EMAIL_PROVIDER`; the
   console provider in development) after the response, and a provider failure is logged without
-  the address, the title or the message.
+  the address, the title or the message. Providers limit requests per second, and sign-in and
+  viewing codes share that limit, so a change's invitations never go all at once: in one batch
+  request where the provider has one (Resend's `/emails/batch`, up to 100), one at a time
+  otherwise. A 429 is tried again after the provider's `Retry-After` (1 second when it does not
+  say, at most 5), twice; if that does not clear it, the rest of the change is not tried. An
+  invitation the provider refused (an HTTP 4xx answer, or not tried) gets its de-dupe mark and
+  every counter back, so adding the person again emails them; one whose outcome is unknown (no
+  answer, or a 5xx) keeps them, since it may have gone. `emailed` is decided before that and names
+  who was handed over.
 - **Settings.** Invitations go through the email provider sign-in and viewing codes use, and share
   its daily quota, so the operator sets how many go out: `INVITATION_EMAILS_PER_DAY` (default
   1000, `0` to `1000000`) caps the whole instance per UTC day, and `0` turns invitation emails off;

@@ -83,7 +83,10 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   per owner and recipient (3), per recipient (10) and for the whole instance (1000,
   `INVITATION_EMAILS_PER_DAY`; `0` turns invitation emails off), and only from a verified account. `PUT /api/v1/artifacts/:ref/sharing`, `set_visibility` and the category share
   endpoints take `notify` (default `false`): agents email people only when asked, and the result's
-  `invitations` says who was emailed and who was not, and why.
+  `invitations` says who was emailed and who was not, and why. A change's emails go to the provider
+  in one batch request (Resend) or one at a time, never all at once, so they stay within its
+  request rate and leave room for sign-in codes; one the provider refuses can be sent again by
+  adding the person again.
 
 ## 0.6.0 (2026-11-20)
 

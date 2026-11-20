@@ -18,6 +18,13 @@ export interface EmailMessage {
 export interface EmailAdapter {
   readonly name: string;
   send(message: EmailMessage): Promise<void>;
+  /**
+   * Hand several messages to the provider in one request, all or none, so a burst of mail counts
+   * once against the provider's request rate. Only an adapter whose provider has a batch endpoint
+   * has it, taking at most `batchMax` messages per call.
+   */
+  sendBatch?(messages: readonly EmailMessage[]): Promise<void>;
+  readonly batchMax?: number;
 }
 
 export type FetchFn = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
@@ -29,6 +36,8 @@ export class EmailSendError extends Error {
     readonly status: number | null,
     /** The provider's own error text, redacted (no keys, no addresses) and truncated. */
     readonly reason: string | null = null,
+    /** Seconds the provider asked to wait (`Retry-After`, as on a 429), when it said. */
+    readonly retryAfterS: number | null = null,
   ) {
     super(
       status === null
@@ -120,16 +129,23 @@ export class SendGridEmailAdapter implements EmailAdapter {
   }
 }
 
-/** Resend: POST /emails, bearer API key, 200 with an id on success. */
+/**
+ * Resend: POST /emails, bearer API key, 200 with an id on success. Several messages go in one
+ * POST /emails/batch (up to 100, validated all or none): Resend limits requests per second per
+ * team, so a burst of single sends would be refused with 429 and take the room sign-in and viewing
+ * codes need.
+ */
 export class ResendEmailAdapter implements EmailAdapter {
   readonly name = "resend";
   static readonly endpoint = "https://api.resend.com/emails";
+  static readonly batchEndpoint = "https://api.resend.com/emails/batch";
+  readonly batchMax = 100;
   constructor(
     private readonly apiKey: string,
     private readonly from: string,
     private readonly fetchFn: FetchFn = (i, init) => fetch(i, init),
   ) {}
-  async send(m: EmailMessage): Promise<void> {
+  private body(m: EmailMessage): Record<string, unknown> {
     const body: Record<string, unknown> = {
       from: this.from,
       to: [m.to],
@@ -137,7 +153,16 @@ export class ResendEmailAdapter implements EmailAdapter {
       text: m.text,
     };
     if (m.html) body.html = m.html;
-    await post(this.name, this.fetchFn, ResendEmailAdapter.endpoint, this.apiKey, body);
+    return body;
+  }
+  async send(m: EmailMessage): Promise<void> {
+    await post(this.name, this.fetchFn, ResendEmailAdapter.endpoint, this.apiKey, this.body(m));
+  }
+  async sendBatch(messages: readonly EmailMessage[]): Promise<void> {
+    if (messages.length === 0) return;
+    if (messages.length > this.batchMax) throw new Error("resend: too many messages in one batch");
+    const body = messages.map((m) => this.body(m));
+    await post(this.name, this.fetchFn, ResendEmailAdapter.batchEndpoint, this.apiKey, body);
   }
 }
 
@@ -161,7 +186,20 @@ async function post(
   }
   // Read the body so the connection is released. On failure, only a redacted reason is kept.
   const text = await res.text().catch(() => "");
-  if (!res.ok) throw new EmailSendError(provider, res.status, providerReason(text, apiKey));
+  if (!res.ok) {
+    throw new EmailSendError(
+      provider,
+      res.status,
+      providerReason(text, apiKey),
+      retryAfterSeconds(res.headers.get("retry-after")),
+    );
+  }
+}
+
+/** `Retry-After` in seconds (its delta form; an HTTP date counts as not said). */
+function retryAfterSeconds(value: string | null): number | null {
+  if (value === null || !/^\s*\d+(\.\d+)?\s*$/.test(value)) return null;
+  return Number(value);
 }
 
 export function createEmailAdapter(config: Config, env: { DB: D1Database }): EmailAdapter {
