@@ -1,13 +1,12 @@
 // The MCP surface agents see (tools/list with descriptions, input schemas, annotations and _meta;
 // resources/list and the preview resource; the server instructions) is pinned by hash to the
 // server before tool registration moved into per-feature files (mcp/tools/), so that move changed
-// no byte of it. A change that means to alter the surface updates the hashes here, on purpose
-// (viewer identity: names on document authors and the people list; page comments: the anchor note
-// in list_comments and list_mentions; the design_system type: get_design_system, list_artifacts'
-// type filter, the publish and update notes, and the server instructions' design system sentence;
-// the slides type: its publish note, the type and content descriptions and the instructions' deck
-// sentence; publishing from CI: the instructions' sentence on tokens limited to one artifact;
-// project files: the publish, update and upload recipe, the mention note, the sensitive_file
+// no byte of it. A change that means to alter the surface updates the hashes here, on purpose:
+// the design_system type (get_design_system, list_artifacts' type filter, the publish and update
+// notes, and the server instructions' design system sentence) did, so did the slides type (its
+// publish note, the type and content descriptions and the instructions' deck sentence), so did
+// comments from the page (the page anchor note in list_comments and list_mentions), and so did
+// project files (the publish, update and upload recipe, the mention note, the sensitive_file
 // sentences and the UNTRUSTED_NOTE sentence that nothing on Plinth chooses local files).
 import { describe, expect, it } from "vitest";
 import { PREVIEW_RESOURCE_URI } from "../src/mcp/preview.ts";
@@ -49,6 +48,7 @@ const NAMES = [
   "claim_mention",
   "reply_comment",
   "start_upload",
+  "get_artifact_stats",
   "list_artifact_data",
   "write_artifact_data",
   "preview_artifact",
@@ -62,7 +62,7 @@ describe("MCP surface (golden)", () => {
   it("origin isolation", async () => {
     expect(await surface()).toEqual({
       names: NAMES,
-      tools: "4979d56be45fb9ee976d2c28d73f6a9755aa4cc45ca17cd9389202caaca6f1ee",
+      tools: "834cc25616f2e608ca62f45a0d19e46c8fde98fabaf59dc1c3597212248cc4c5",
       resources: RESOURCES,
       preview: "fd84092d5ecc5a28f494373097e8a3b6e27065d5ef6928f3e124c634f8cf6f47",
       instructions: INSTRUCTIONS,
@@ -72,7 +72,7 @@ describe("MCP surface (golden)", () => {
   it("opaque isolation", async () => {
     expect(await surface({ CONTENT_ISOLATION: "opaque" })).toEqual({
       names: NAMES,
-      tools: "f250dfe988f13d51301c83fcd934a597fb9ddda0985c05e39a013018dfd0b452",
+      tools: "4b1b78afcdd7be04845fa50a146440af383cc6c81534bc7c460d798b81f1b863",
       resources: RESOURCES,
       preview: "257bbf5bb47164c389849fffa7fc1dd46e6e7c20e4ef616b4bffefb53a8fd08b",
       instructions: INSTRUCTIONS,
@@ -84,7 +84,7 @@ describe("MCP surface (golden)", () => {
       await surface({ STAGING_CONTENT_FALLBACK: "true", CONTENT_ISOLATION: "opaque" }),
     ).toEqual({
       names: NAMES,
-      tools: "09f8e1042af5acf87fc5e17c354b77b554f53df9b879aa9aa78805927d1a97e0",
+      tools: "aa316f30e8995c7af50ce8fa38333936d840caedef8de200431d829e3b64e332",
       resources: RESOURCES,
       preview: "257bbf5bb47164c389849fffa7fc1dd46e6e7c20e4ef616b4bffefb53a8fd08b",
       instructions: INSTRUCTIONS,

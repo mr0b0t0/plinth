@@ -14,7 +14,10 @@ export interface CopyFieldProps {
   copyLabel?: string;
   /** Toast title after copying, e.g. "Token copied". */
   copiedMessage?: string;
-  /** Wraps long values (tokens) instead of scrolling them. */
+  /**
+   * Wraps long values (tokens) instead of scrolling them, in a box with the copy button inside,
+   * like CopyBlock's.
+   */
   multiline?: boolean;
   className?: string;
 }
@@ -55,7 +58,7 @@ export function CopyField({
   return (
     <Field label={label} hint={hint} hideLabel={hideLabel} className={className}>
       {(p) => (
-        <div className="pl-acct-copy">
+        <div className={multiline ? "pl-acct-copy pl-acct-copy--box" : "pl-acct-copy"}>
           {multiline ? (
             <textarea
               {...p}
@@ -63,7 +66,7 @@ export function CopyField({
               rows={2}
               value={value}
               spellCheck={false}
-              className="pl-control pl-control--mono pl-acct-copy__value pl-acct-copy__value--wrap"
+              className="pl-acct-copy__value pl-acct-copy__value--wrap"
               onFocus={(e) => e.currentTarget.select()}
             />
           ) : (
@@ -97,16 +100,56 @@ export interface CopyBlockProps {
   /** Accessible name of the button, e.g. "Copy commands". */
   copyLabel: string;
   copiedMessage?: string;
+  /** false keeps each line whole and scrolls sideways (YAML, where a wrapped line reads wrong). */
+  wrap?: boolean;
 }
 
-/** Preformatted text (commands, JSON) with a copy button. Wraps instead of scrolling. */
-export function CopyBlock({ label, value, copyLabel, copiedMessage = "Copied" }: CopyBlockProps) {
+/** True while `el` has more to show past its right edge (scrolled sideways, or not yet). */
+function useMoreToTheRight(el: HTMLElement | null, value: string): boolean {
+  const [more, setMore] = useState(false);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: a new `value` can change the width
+  useEffect(() => {
+    if (!el) return;
+    const measure = () => setMore(el.scrollLeft + el.clientWidth < el.scrollWidth - 1);
+    measure();
+    el.addEventListener("scroll", measure, { passive: true });
+    window.addEventListener("resize", measure);
+    const ro = typeof ResizeObserver === "function" ? new ResizeObserver(measure) : null;
+    ro?.observe(el);
+    return () => {
+      el.removeEventListener("scroll", measure);
+      window.removeEventListener("resize", measure);
+      ro?.disconnect();
+    };
+  }, [el, value]);
+  return more;
+}
+
+/** Preformatted text (commands, JSON) with a copy button. Wraps instead of scrolling by default. */
+export function CopyBlock({
+  label,
+  value,
+  copyLabel,
+  copiedMessage = "Copied",
+  wrap = true,
+}: CopyBlockProps) {
   const { copied, onCopy } = useCopy(value, copiedMessage);
+  const [pre, setPre] = useState<HTMLPreElement | null>(null);
+  const more = useMoreToTheRight(wrap ? null : pre, value);
   return (
     <figure className="pl-acct-block">
       <figcaption className="pl-acct-block__label">{label}</figcaption>
       <div className="pl-acct-copy">
-        <pre className="pl-acct-block__code">
+        <pre
+          ref={setPre}
+          className={
+            wrap
+              ? "pl-acct-block__code"
+              : `pl-acct-block__code pl-acct-block__code--nowrap${more ? " pl-acct-block__code--more" : ""}`
+          }
+          // A scrolling region is reachable by keyboard.
+          tabIndex={wrap ? undefined : 0}
+        >
           <code>{value}</code>
         </pre>
         <Tooltip content={copyLabel}>
