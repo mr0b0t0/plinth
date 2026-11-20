@@ -40,7 +40,7 @@ import { THEME_NAMES, type Theme } from "../../lib/theme.ts";
 import { Button, buttonClassName, Menu, type MenuEntry, Tooltip } from "../ui/index.ts";
 import { boardSettings, boardSettingsDialog } from "./boardSettingsItems.tsx";
 import { DataNotice } from "./DataNotice.tsx";
-import { designExportDialog, downloadDesign } from "./designItems.tsx";
+import { designExportDialog, downloadDesign, unlessExports } from "./designItems.tsx";
 import { EditBar } from "./EditBar.tsx";
 import { LiveDraftNotice } from "./LiveDraftNotice.tsx";
 import {
@@ -230,7 +230,7 @@ const downloadBoard: MenuItem = (c) => [
 export const TYPE_MENU_ITEMS: Partial<Record<ArtifactType, readonly MenuItem[]>> = {
   doc: [printTyped],
   slides: [printTyped, downloadPptx],
-  design: [printTyped, downloadDesign],
+  design: [unlessExports(printTyped), downloadDesign],
   sheet: [printTyped, downloadSheet],
   whiteboard: [boardSettings, downloadBoard],
 };

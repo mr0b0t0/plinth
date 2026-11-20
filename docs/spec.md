@@ -1464,16 +1464,20 @@ restoring an older one.
   `Cross-Origin-Resource-Policy: cross-origin` (artboards load them from an opaque origin) and
   never run script; its `design.html`, which no board loads, is served as text with
   `same-origin`.
-- **Print or save as PDF** is in the artifact menu: every board is mounted and laid out at 100%,
-  printing waits for them to load (at most 10 seconds), and each board prints on its own page of
-  exactly its size (a named `@page` per size). Ctrl or Cmd+P in the frame does the same. Browsers
-  other than Chromium may ignore per-board page sizes.
+- **Print or save as PDF** is in the artifact menu where the server does not export designs
+  (below): every board is mounted and laid out at 100%, printing waits for them to load (at most
+  10 seconds), and each board prints on its own page of exactly its size (a named `@page` per
+  size). Ctrl or Cmd+P in the frame does the same on every instance. Browsers other than Chromium
+  may ignore per-board page sizes.
 - **Download PNG or PDF** (decided 2026-11-19), where the instance has a Browser Rendering
-  binding (`BROWSER`) and `DESIGN_EXPORT` is on (the default): the artifact menu's "Download PNG or
-  PDF…" picks a board and a format, and the server renders the version on screen in Cloudflare
-  Browser Rendering. A PNG is one board at 1x or 2x (at most 6,000,000 device pixels, so a
-  1920x1080 board only at 1x and a 4096x4096 one only as a PDF), transparent where the board is; a
-  PDF is every board, or one, each on a page of exactly its size. No file is over 24 MB: the Worker
+  binding (`BROWSER`) and `DESIGN_EXPORT` is on (the default): the artifact menu has "Download
+  .png" and "Download .pdf" in place of Print or save as PDF, so it has one way to a PDF, and the
+  server renders the version on screen in Cloudflare Browser Rendering. "Download .png" asks for
+  one board and takes it at 2x, or at 1x where 2x would pass 6,000,000 device pixels (a 1920x1080
+  board; a 4096x4096 one is too big even at 1x and is a PDF's), transparent where the board is.
+  "Download .pdf" downloads every board at once, each on a page of exactly its size, with a toast
+  while it renders. Through the API a PNG is at 1x or 2x and a PDF is every board or one. No file
+  is over 24 MB: the Worker
   holds the whole file while it sends it, so it reads a PDF from the browser in 1 MiB pieces and
   answers 413 `payload_too_large` (with `max_bytes`) once it passes that, and the pixel cap keeps
   even a PNG that does not compress (about 4 bytes a pixel) under it. REST: `GET /api/v1/artifacts/:ref/export/options?version=` lists the
@@ -1498,7 +1502,7 @@ restoring an older one.
   before that so a slow board still leaves a file of the boards that loaded; a render past its
   25 seconds is stopped and its browser closed. A failure answers 503 `unavailable`, an instance
   without the binding or with `DESIGN_EXPORT` off answers 403 `feature_disabled` and its menu has
-  only Print. Agents have no export tool; the endpoint takes their bearer tokens like the
+  Print instead. Agents have no export tool; the endpoint takes their bearer tokens like the
   thumbnail's. Each export spends Browser Rendering time, which Cloudflare bills per browser hour.
 - **Comments.** Review mode keeps every cover on, so a comment pins to a board's cover
   (`#__plinth-board-<id>`) and stays on the board at every zoom and across versions while its `id`

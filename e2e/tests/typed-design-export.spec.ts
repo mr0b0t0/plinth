@@ -173,5 +173,5 @@ test("without a Browser Rendering binding the menu offers no export and the endp
   await page.goto(`/a/${art.slug}`);
   await page.getByRole("button", { name: "Artifact actions" }).click();
   await expect(page.getByRole("menuitem", { name: "Print or save as PDF" })).toBeVisible();
-  await expect(page.getByRole("menuitem", { name: /Download PNG or PDF/ })).toHaveCount(0);
+  await expect(page.getByRole("menuitem", { name: /^Download \.(png|pdf)$/ })).toHaveCount(0);
 });

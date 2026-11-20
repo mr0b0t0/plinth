@@ -49,13 +49,19 @@ describe("a design in the dashboard", () => {
 });
 
 describe("a design's menu", () => {
-  it("offers Print or save as PDF, as a doc does, then the server export, and an HTML page has neither", () => {
-    // Print first, as for a doc; then "Download PNG or PDF…" (designItems.ts), which shows only
-    // where the instance renders exports (ExportDialog.test.tsx).
-    expect(TYPE_MENU_ITEMS.design?.[0]).toBe(TYPE_MENU_ITEMS.doc?.[0]);
+  const designLabels = (designExport: boolean) => {
+    const c = { config: { design_export: designExport } } as unknown as StageContext;
+    return labels((TYPE_MENU_ITEMS.design ?? []).flatMap((item) => item(c)));
+  };
+
+  it("offers Print or save as PDF, as a doc does, where the server does not export, and an HTML page has neither", () => {
+    expect(designLabels(false)).toEqual(["Print or save as PDF"]);
     expect(TYPE_MENU_ITEMS.doc).toHaveLength(1);
-    expect(TYPE_MENU_ITEMS.design).toHaveLength(2);
     expect(TYPE_MENU_ITEMS.html).toBeUndefined();
+  });
+
+  it("offers the server's downloads instead where it exports: one way to a PDF", () => {
+    expect(designLabels(true)).toEqual(["Download .png", "Download .pdf"]);
   });
 });
 

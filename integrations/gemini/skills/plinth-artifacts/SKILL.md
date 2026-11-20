@@ -1156,11 +1156,11 @@ connection and name.
 ## Design exports (PNG and PDF)
 
 On instances that render them (`design_export: true` in `GET /api/v1/config`), people download a
-design from the artifact menu with **Download PNG or PDF…**: a PNG of one artboard at 1x or 2x, or
-a PDF with each board on a page of its own size. Elsewhere they print or save as PDF from the
-browser.
+design from the artifact menu with **Download .png** (one artboard, at 2x where it fits) or
+**Download .pdf** (every board, each on a page of its own size). Elsewhere they print or save as PDF
+from the browser.
 
-- When someone asks for a PNG or PDF of a design, point them to that menu item, or give them the
+- When someone asks for a PNG or PDF of a design, point them to those menu items, or give them the
   link `<origin>/api/v1/artifacts/<id>/export?format=png&board=<board id>&scale=2` (PNG) or
   `?format=pdf` (every board; add `&board=<id>` for one). It downloads for anyone who may view the
   design. Never build images or PDFs of a design yourself.
