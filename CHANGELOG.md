@@ -27,7 +27,7 @@ Add a line under **Unreleased** in the pull request that makes a change people w
   field, and its **Ask an agent** (or **Insert below**, **Image**) opens the Ask dialog. Blocks the
   page cannot show faithfully as formatted text are shown as they are, with **Ask an agent** and
   the block menu (Move and Delete). The **+** between blocks is gone: **Insert below** or Enter
-  adds a block.
+  adds a block. Opening a block moves nothing on the page: its toolbar floats over it.
 
 - **Ask an agent.** People change an HTML page or a design by asking the owner's agent: **Ask an
   agent** (in the bar for owners and editors, in the ⋯ menu for commenters and at phone width, and

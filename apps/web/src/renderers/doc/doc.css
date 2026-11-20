@@ -125,49 +125,76 @@
 
 .plinth-doc--editing {
   position: relative;
+  /* One tint for blocks, drawn outside the layout so opening a block moves nothing: a faint
+     bronze fill on hover, the same fill a step deeper with a bronze edge when a block is open,
+     selected or held by someone else. */
+  --doc-block-pad: 8px;
+  --doc-block-hover: color-mix(in srgb, var(--doc-live) 6%, transparent);
+  --doc-block-open: color-mix(in srgb, var(--doc-live) 12%, transparent);
 }
 .plinth-doc--editing > :not(.plinth-doc__holder):not(.plinth-doc__open):not(.plinth-doc__selected) {
   cursor: text;
   border-radius: 4px;
 }
-/* Hover: a soft tint over the block's own box, which is where its open panel starts. */
-.plinth-doc--editing
-  > :not(.plinth-doc__holder):not(.plinth-doc__open):not(.plinth-doc__selected):not(
-    .plinth-doc__held
-  ):hover {
-  background-image: linear-gradient(
-    color-mix(in srgb, var(--doc-fg) 4%, transparent),
-    color-mix(in srgb, var(--doc-fg) 4%, transparent)
-  );
+@media (hover: hover) {
+  .plinth-doc--editing
+    > :not(.plinth-doc__holder):not(.plinth-doc__open):not(.plinth-doc__selected):not(
+      .plinth-doc__held
+    ):hover {
+    background-image: linear-gradient(var(--doc-block-hover), var(--doc-block-hover));
+    box-shadow: 0 0 0 var(--doc-block-pad) var(--doc-block-hover);
+  }
 }
 .plinth-doc--editing > :focus-visible {
   outline: 2px solid var(--doc-live);
-  outline-offset: 2px;
+  outline-offset: var(--doc-block-pad);
 }
-/* The block being edited, as formatted text: the page's own look, with a bronze rule. A block
-   shown as it is (it cannot be edited in place), selected, is drawn the same way, with its bar of
-   what can be done with it in the toolbar's place. */
+/* The block being edited, as formatted text: the page's own look in its own place, tinted, with a
+   bronze edge. A block shown as it is (it cannot be edited in place), selected, is drawn the same
+   way, with its bar of what can be done with it in the toolbar's place. */
 .plinth-doc__open,
-.plinth-doc__selected {
+.plinth-doc__selected,
+.plinth-doc__held {
   position: relative;
-  margin: 0.5em 0;
-  padding: 0.25em 0.75em 0.25em 0.75em;
+}
+.plinth-doc__open::before,
+.plinth-doc__selected::before,
+.plinth-doc__held::before {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  inset: calc(-1 * var(--doc-block-pad));
+  left: calc(-1 * var(--doc-block-pad) - 3px);
   border-left: 3px solid var(--doc-live);
-  border-radius: 4px;
-  background: var(--doc-live-soft);
+  border-radius: 6px;
+  background: var(--doc-block-open);
+  pointer-events: none;
 }
-.plinth-doc__selected > .plinth-doc__blockbar + * {
-  margin-top: 0;
-}
-.plinth-doc__selected > :last-child {
-  margin-bottom: 0.25em;
+/* A table scrolls in its own box, which would clip the fill around it. */
+.plinth-doc__table.plinth-doc__held {
+  background-image: linear-gradient(var(--doc-block-open), var(--doc-block-open));
 }
 .plinth-doc__selected > :focus-visible {
   outline: 2px solid var(--doc-live);
   outline-offset: 2px;
 }
-.plinth-doc__open .plinth-rich__content {
+.plinth-doc__open .plinth-rich__content,
+.plinth-doc__open .plinth-rich__content code {
   outline: none;
+}
+/* A table's cells are edited one at a time: the cell with the caret takes the accent ring. */
+.plinth-doc__open .plinth-rich__content :is(th, td):focus {
+  outline: 2px solid var(--doc-live);
+  outline-offset: -2px;
+}
+/* A panel's first and last blocks keep the page's outer margins, as they had unopened. */
+.plinth-doc > :first-child > .plinth-rich__content,
+.plinth-doc > .plinth-doc__selected:first-child > .plinth-doc__blockbar + * {
+  margin-top: 0;
+}
+.plinth-doc > :last-child > .plinth-rich__content,
+.plinth-doc > .plinth-doc__selected:last-child > :last-child {
+  margin-bottom: 0;
 }
 .plinth-doc__placeholder {
   color: var(--doc-muted);
@@ -208,13 +235,20 @@
   text-align: left;
   cursor: pointer;
 }
-.plinth-doc__menu-item:hover,
 .plinth-doc__menu-item:focus-visible {
   background: var(--doc-code-bg);
   outline: none;
-}
-.plinth-doc__menu-item:focus-visible {
   box-shadow: inset 0 0 0 2px var(--doc-live);
+}
+/* Opened with a pointer, the menu shows no focus ring until a key is pressed in it. */
+.plinth-doc__menu--pointer .plinth-doc__menu-item:focus-visible {
+  background: none;
+  box-shadow: none;
+}
+@media (hover: hover) {
+  .plinth-doc__menu .plinth-doc__menu-item:hover {
+    background: var(--doc-code-bg);
+  }
 }
 .plinth-doc__menu-item[aria-checked="true"]::after {
   /* Drawn only: aria-checked says it, and the glyphs stay out of the items' names. */
@@ -288,10 +322,12 @@
   color: var(--doc-bg);
   font-weight: 600;
 }
-.plinth-doc__menu-table .plinth-doc__menu-item:hover {
-  background: color-mix(in srgb, var(--doc-live) 85%, var(--doc-fg));
+@media (hover: hover) {
+  .plinth-doc__menu .plinth-doc__menu-table .plinth-doc__menu-item:hover {
+    background: color-mix(in srgb, var(--doc-live) 85%, var(--doc-fg));
+  }
 }
-.plinth-doc__menu-table .plinth-doc__menu-item:focus-visible {
+.plinth-doc__menu .plinth-doc__menu-table .plinth-doc__menu-item:focus-visible {
   background: var(--doc-live);
   outline: 2px solid var(--doc-live);
   outline-offset: 2px;
@@ -303,10 +339,9 @@
     font-size: 16px;
   }
 }
-/* Blocks someone else holds: a bronze rule and their email; their text arrives as they type. */
+/* Blocks someone else holds: tinted like an open block, with their email; their text arrives as
+   they type. */
 .plinth-doc__held {
-  box-shadow: -10px 0 0 -7px var(--doc-live);
-  background: var(--doc-live-soft);
   cursor: not-allowed;
 }
 .plinth-doc__holder {
@@ -368,8 +403,7 @@
   .plinth-doc__notice,
   .plinth-doc__blockbar,
   .plinth-rich__toolbar,
-  .plinth-rich__link,
-  .plinth-rich__alt {
+  .plinth-rich__link {
     display: none;
   }
 }

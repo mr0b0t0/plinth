@@ -761,6 +761,7 @@ export class RichBlockEditor {
     for (const [, btn] of this.buttons)
       btn.hidden = !hasText(b) || b.t === "code" || b.t === "indented";
     this.linkForm.hidden = true;
+    this.toolbar.querySelector(":scope > .plinth-rich__alt")?.remove();
     if (b.t === "image") {
       const label = el(this.doc, "label", "plinth-rich__alt");
       const span = el(this.doc, "span");
@@ -772,14 +773,9 @@ export class RichBlockEditor {
       input.addEventListener("input", () => this.host.changed());
       label.append(span, input);
       this.altInput = input;
-      const wrap = el(this.doc, "div", "plinth-rich__image-wrap");
-      wrap.append(content, label);
-      if (old) old.replaceWith(wrap);
-      else this.el.append(wrap);
-      this.content = wrap;
-      return;
-    }
-    this.altInput = null;
+      // The field sits in the toolbar, which floats over the page, so the image keeps its place.
+      this.toolbar.prepend(label);
+    } else this.altInput = null;
     if (old) old.replaceWith(content);
     else this.el.append(content);
     this.content = content;

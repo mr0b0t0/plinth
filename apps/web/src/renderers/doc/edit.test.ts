@@ -532,6 +532,44 @@ describe("DocEditor: formatted text", () => {
 });
 
 describe("DocEditor: the block menu", () => {
+  it("opened with a pointer, shows no focus ring until a key is pressed in it", () => {
+    setup("one\n\ntwo");
+    click(root.querySelector("p") as Element);
+    const button = document.querySelector(".plinth-doc__menu-button") as HTMLElement;
+    // A mouse or touch click (detail 1): the first item has focus, drawn without its ring.
+    button.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, detail: 1 }));
+    const panel = document.querySelector(".plinth-doc__menu") as HTMLElement;
+    expect(panel.classList.contains("plinth-doc__menu--pointer")).toBe(true);
+    expect(document.activeElement).toBe(menuItem("Turn into"));
+    key(panel, "ArrowDown");
+    expect(panel.classList.contains("plinth-doc__menu--pointer")).toBe(false);
+    expect(document.activeElement).toBe(menuItem("Insert below"));
+    key(panel, "Escape");
+    // Enter or Space on the button (a click with detail 0) keeps the ring from the start.
+    click(button);
+    const again = document.querySelector(".plinth-doc__menu") as HTMLElement;
+    expect(again.classList.contains("plinth-doc__menu--pointer")).toBe(false);
+  });
+
+  it("floats the toolbar above the open block, or below it when there is no room above", () => {
+    const top = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect");
+    try {
+      setup("one\n\ntwo");
+      top.mockReturnValue(new DOMRect(0, 200, 600, 40));
+      click(root.querySelectorAll("p")[1] as Element);
+      const open = document.querySelector(".plinth-doc__open") as HTMLElement;
+      expect(open.querySelector(":scope > .plinth-rich__toolbar")).not.toBeNull();
+      expect(open.classList.contains("plinth-rich--below")).toBe(false);
+      top.mockReturnValue(new DOMRect(0, 4, 600, 40));
+      click(root.querySelector("p") as Element);
+      const first = document.querySelector(".plinth-doc__open") as HTMLElement;
+      expect(first).not.toBe(open);
+      expect(first.classList.contains("plinth-rich--below")).toBe(true);
+    } finally {
+      top.mockRestore();
+    }
+  });
+
   it("turns a block into another kind, keeping its text and marks", () => {
     const { local, editor } = setup("one *two*\n\nnext");
     click(root.querySelector("p") as Element);
@@ -973,6 +1011,9 @@ describe("DocEditor: read-only blocks and images", () => {
     expect(r.kind).toBe("image");
     const alt = r.el.querySelector<HTMLInputElement>(".plinth-rich__alt input") as HTMLInputElement;
     expect(alt.value).toBe("Chart");
+    // The field is in the floating toolbar, so the image keeps the place it had unopened.
+    expect(alt.closest(".plinth-rich__toolbar")).not.toBeNull();
+    expect(r.editable.matches("p.plinth-rich__image")).toBe(true);
     alt.value = "Sales [chart]";
     alt.dispatchEvent(new Event("input", { bubbles: true }));
     vi.advanceTimersByTime(EDIT_DEBOUNCE_MS);

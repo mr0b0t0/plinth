@@ -2759,6 +2759,13 @@ the same leases, room, drafts and Publish as [Editing](#editing).
   `block-3:image`) with no label, never its text, so the Ask dialog shows no "About" line for it. An open image block has its own "Ask an agent" for its image,
   and its "Insert below" has no "Image" (it would ask the same).
 - **An empty doc** shows "Write something", which starts a new paragraph.
+- **Opening a block moves nothing.** An open block keeps its place and the page's look: its tint
+  and bronze edge are drawn outside the layout, and its toolbar (with an image's alt text field,
+  and the link field in its place while that is open) floats over the page above the block's right
+  end, or below the block when it opens too near the top of the frame. A selected read-only block
+  and a block someone else holds are drawn the same way. Hovering a block gives it a fainter tint
+  of the same colour, only on devices that hover, so a tap leaves none. The block menu opened with
+  a pointer shows no focus ring until a key is pressed in it; opened from the keyboard, it does.
 - **Security.** Nothing new reaches the content host or the app: the room accepts any doc lines as
   before and checks the doc's rules, the sanitizer runs on every rendered block and every kept part,
   and the editor builds its DOM with `createElement` and `textContent` only. The serializer only

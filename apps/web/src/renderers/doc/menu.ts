@@ -56,7 +56,8 @@ export class BlockMenu {
     b.addEventListener("click", (e) => {
       e.preventDefault();
       if (this.panel) this.close(true);
-      else this.open();
+      // A click with a pointer (detail > 0) opens it with no focus ring; a key brings the ring back.
+      else this.open(e.detail > 0);
     });
     b.addEventListener("keydown", (e) => {
       if (e.key === "ArrowDown" && !this.panel) {
@@ -71,10 +72,10 @@ export class BlockMenu {
     return this.panel !== null;
   }
 
-  open(): void {
+  open(pointer = false): void {
     this.close(false);
     const panel = this.doc.createElement("div");
-    panel.className = "plinth-doc__menu";
+    panel.className = pointer ? "plinth-doc__menu plinth-doc__menu--pointer" : "plinth-doc__menu";
     panel.setAttribute("role", "menu");
     panel.id = `plinth-doc-menu-${++counter}`;
     panel.setAttribute("aria-label", this.button.getAttribute("aria-label") ?? "Block actions");
@@ -250,6 +251,7 @@ export class BlockMenu {
   }
 
   private readonly onKey = (e: KeyboardEvent) => {
+    this.panel?.classList.remove("plinth-doc__menu--pointer");
     const items = this.items();
     const active = this.doc.activeElement as HTMLElement;
     const i = items.indexOf(active);

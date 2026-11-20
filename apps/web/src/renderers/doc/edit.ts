@@ -466,6 +466,8 @@ export class DocEditor {
     menu: BlockMenu;
   } | null = null;
   private placeholder: HTMLElement | null = null;
+  /** The open or selected block whose floating bar was last placed (placeBar). */
+  private barHost: HTMLElement | null = null;
   /** After an op: the line of the block to focus (and open, or select) once it is drawn. */
   private after: { line: number; open: boolean; insert?: RichBlock } | null = null;
   private afterCaret: "start" | "end" = "end";
@@ -602,12 +604,28 @@ export class DocEditor {
     // In edit mode the draft is drawn with its base's files, which are the ones a Publish keeps;
     // view mode keeps the page's own addresses, as before.
     pinFiles(this.root, this.editing ? (this.hooks.fileVersion?.() ?? null) : null);
+    this.placeBar();
     this.focusAfter(blocks);
     const q = this.queued;
     if (q && !this.busy && !this.backend.mine && !this.after) {
       this.queued = null;
       q();
     }
+  }
+
+  /**
+   * The open block's toolbar, or a selected block's bar, floats over the page above the block, so
+   * opening it moves nothing. When the block opens too near the top of the frame for the bar to
+   * be seen there, the bar floats below it instead. Placed once per block, not while typing.
+   */
+  private placeBar(): void {
+    const host = this.open?.rich.el ?? this.selected?.panel ?? null;
+    if (host === this.barHost) return;
+    this.barHost = host;
+    if (!host?.isConnected) return;
+    const bar = host.querySelector<HTMLElement>(":scope > .plinth-rich__toolbar");
+    const room = host.getBoundingClientRect().top;
+    host.classList.toggle("plinth-rich--below", room < (bar?.offsetHeight ?? 0) + 16);
   }
 
   private makePlaceholder(): HTMLElement {
